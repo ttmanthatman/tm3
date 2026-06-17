@@ -2432,8 +2432,23 @@ app.delete("/api/admin/messages/:id", { preHandler: requireAdmin }, async (reque
   return { success: true, deleted };
 });
 
-app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request) => {
+app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request, reply) => {
   const query = request.query as { channelId?: string };
+  if (request.body !== undefined && (typeof request.body !== "object" || Array.isArray(request.body))) {
+    return reply.code(400).send({ success: false, message: "聊天记录参数无效" });
+  }
+  const body = request.body || {};
+  const parsedBody = z.object({ ids: z.array(z.number().int().positive()).max(200).optional() }).strict().safeParse(body);
+  if (!parsedBody.success) return reply.code(400).send({ success: false, message: "聊天记录参数无效" });
+  const ids = parsedBody.success ? parsedBody.data.ids || [] : [];
+  if (ids.length) {
+    const messages = await prisma.message.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, channelId: true, filePath: true }
+    });
+    const deleted = await deleteMessages(messages);
+    return { success: true, deleted };
+  }
   const channelId = Number(query.channelId || 0);
   const messages = await prisma.message.findMany({
     where: channelId ? { channelId } : {},

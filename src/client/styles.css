@@ -688,8 +688,34 @@ button {
   margin: 8px 0;
 }
 
+.message-row.selecting {
+  align-items: center;
+}
+
+.message-row.selected .bubble {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 62%, transparent);
+}
+
 .message-row.mine {
   flex-direction: row-reverse;
+}
+
+.message-select-btn {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: transparent;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+
+.message-select-btn.selected {
+  border-color: var(--accent);
+  color: var(--button-text);
+  background: var(--accent);
 }
 
 .message-row.mention-alert .avatar::after {
@@ -1789,15 +1815,21 @@ button {
 .tabs {
   display: flex;
   overflow-x: auto;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--line);
 }
 
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
 .tabs button {
-  min-height: 44px;
-  padding: 0 14px;
+  min-height: 48px;
+  padding: 0 16px;
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   white-space: nowrap;
 }
 
@@ -1857,6 +1889,33 @@ button {
   grid-template-columns: minmax(130px, auto) minmax(180px, 1fr) auto auto;
   gap: 10px;
   align-items: center;
+}
+
+.data-toolbar-compact {
+  grid-template-columns: minmax(150px, 1fr) auto auto;
+}
+
+.admin-inline-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+}
+
+.admin-inline-card > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.admin-inline-card small {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .admin-data-list {
@@ -2270,6 +2329,23 @@ button {
   display: grid;
 }
 
+.message-selection-bar {
+  min-height: 50px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+}
+
+.message-selection-bar span {
+  min-width: 0;
+  flex: 1;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .channel-admin-list {
   display: grid;
   gap: 10px;
@@ -2679,18 +2755,59 @@ button {
   .user-admin-row,
   .channel-admin-row,
   .admin-data-row,
-  .admin-data-row.attachment-row,
-  .data-toolbar {
-    grid-template-columns: 34px minmax(0, 1fr);
+  .admin-data-row.attachment-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-toolbar,
+  .data-toolbar-compact,
+  .admin-inline-card,
+  .theme-editor-head,
+  .color-row,
+  .theme-admin-row {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .device-row .mini-btn,
   .user-admin-actions,
+  .channel-icon-admin,
   .channel-admin-row .mini-btn,
   .admin-data-row .mini-btn,
+  .admin-inline-card .primary-btn,
   .data-toolbar input,
   .data-toolbar select {
     grid-column: 1 / -1;
+  }
+
+  .channel-icon-admin {
+    width: 100%;
+    grid-template-columns: 46px minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+  }
+
+  .channel-icon-admin .mini-btn,
+  .data-toolbar .mini-btn,
+  .admin-data-row .mini-btn,
+  .admin-inline-card .primary-btn {
+    width: 100%;
+  }
+
+  .admin-body {
+    padding: 12px;
+  }
+
+  .tabs button {
+    min-height: 46px;
+    padding: 0 12px;
+  }
+
+  .message-selection-bar {
+    flex-wrap: wrap;
+  }
+
+  .message-selection-bar span {
+    flex-basis: 100%;
   }
 
   .user-admin-actions {

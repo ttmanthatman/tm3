@@ -50,7 +50,6 @@ import {
 import type {
   AccountDTO,
   AdminAttachmentDTO,
-  AdminMessageDTO,
   AppearanceDTO,
   ChainPayload,
   ChannelDTO,
@@ -133,11 +132,9 @@ const loginAppearanceEdit = ref({
   wallpaperFit: "cover" as WallpaperFit,
   registrationEnabled: false
 });
-const adminMessages = ref<AdminMessageDTO[]>([]);
 const adminAttachments = ref<AdminAttachmentDTO[]>([]);
 const selectedAttachmentIds = ref<string[]>([]);
 const dataChannelFilter = ref(0);
-const dataSearch = ref("");
 const devices = ref<DeviceSessionDTO[]>([]);
 const notificationMsg = ref("");
 const notificationPublicKey = ref("");
@@ -152,12 +149,14 @@ const chainTopic = ref("");
 const pendingChain = ref<MessageDTO | null>(null);
 const pendingDownload = ref<MessageDTO | null>(null);
 const pendingRecall = ref<MessageDTO | null>(null);
+const pendingPrayer = ref<MessageDTO | null>(null);
 const previewMessage = ref<MessageDTO | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptPosition = ref({ x: 0, y: 0 });
 const downloadPromptPosition = ref({ x: 0, y: 0 });
 const recallPromptPosition = ref({ x: 0, y: 0 });
+const prayerPromptPosition = ref({ x: 0, y: 0 });
 const memberPromptPosition = ref({ x: 0, y: 0 });
 type MemberActionTarget = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
 const selectedMember = ref<MemberActionTarget | null>(null);
@@ -174,6 +173,8 @@ const mentionToasts = ref<MentionToast[]>([]);
 const acknowledgedMentionIds = ref<Set<number>>(new Set());
 const topNoticeIndex = ref(0);
 const pausedEffectIds = ref<Set<number>>(new Set());
+const messageSelectionMode = ref(false);
+const selectedMessageIds = ref<Set<number>>(new Set());
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const composerPanel = ref<"voice" | "more" | null>(null);
 const mediaRecorder = ref<MediaRecorder | null>(null);
@@ -326,7 +327,7 @@ onMounted(async () => {
 });
 
 watch(
-  () => store.currentChannelId,
+  () => [store.currentChannelId, store.prayerOnly] as const,
   () => {
     stopAllVoicePlayback();
     selectedMember.value = null;
@@ -334,6 +335,9 @@ watch(
     pendingChain.value = null;
     pendingDownload.value = null;
     pendingRecall.value = null;
+    pendingPrayer.value = null;
+    selectedMessageIds.value = new Set();
+    messageSelectionMode.value = false;
     composerPanel.value = null;
     nextTick(() => {
       scrollBottom(false);
@@ -471,6 +475,9 @@ const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => releas
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
 const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
+const selectableMessages = computed(() => store.messages.filter((message) => message.id > 0));
+const selectedMessageCount = computed(() => selectedMessageIds.value.size);
+const visibleMessagesSelected = computed(() => selectableMessages.value.length > 0 && selectableMessages.value.every((message) => selectedMessageIds.value.has(message.id)));
 const notificationSupported = computed(() => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 const notificationPermissionLabel = computed(() => {
   if (!notificationSupported.value) return "当前浏览器不支持";
@@ -538,6 +545,10 @@ const downloadPromptStyle = computed(() => ({
 const recallPromptStyle = computed(() => ({
   left: `${recallPromptPosition.value.x}px`,
   top: `${recallPromptPosition.value.y}px`
+}));
+const prayerPromptStyle = computed(() => ({
+  left: `${prayerPromptPosition.value.x}px`,
+  top: `${prayerPromptPosition.value.y}px`
 }));
 const updateProgress = computed(() => Math.min(100, Math.max(0, Number(updateStatus.value?.progress || 0))));
 const updateStateText = computed(() => {
@@ -1250,7 +1261,7 @@ function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
   if (isMobileChatInteraction()) return;
   if (message.type === "system" || event.button !== 0) return;
   const target = event.target;
-  if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, a, audio, video, iframe")) return;
+  if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-select-btn, a, audio, video, iframe")) return;
   longPressStartedAt = { x: event.clientX, y: event.clientY };
   clearMessageLongPress();
   longPressTimer = window.setTimeout(() => {
@@ -1279,6 +1290,12 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     event.stopPropagation();
     return;
   }
+  if (messageSelectionMode.value && isAdmin.value && message.id > 0) {
+    toggleMessageSelected(message);
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   acknowledgeMentionAlert(message);
   if (canRecallMessage(message)) {
     openRecallPrompt(message, event);
@@ -1303,6 +1320,10 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
 function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) return;
   if (event) event.stopPropagation();
+  if (messageSelectionMode.value && isAdmin.value && message.id > 0) {
+    toggleMessageSelected(message);
+    return;
+  }
   if (canRecallMessage(message)) {
     openRecallPrompt(message, event);
     return;
@@ -1417,6 +1438,17 @@ function requestDownload(message: MessageDTO, event?: MouseEvent) {
   pendingDownload.value = message;
   pendingChain.value = null;
   pendingRecall.value = null;
+  pendingPrayer.value = null;
+  selectedMember.value = null;
+}
+
+function requestPrayerPrayed(message: MessageDTO, event?: MouseEvent) {
+  if (prayerPayload(message).status !== "active") return;
+  prayerPromptPosition.value = positionPromptNearEvent(event, { width: 238, height: 104 });
+  pendingPrayer.value = message;
+  pendingChain.value = null;
+  pendingDownload.value = null;
+  pendingRecall.value = null;
   selectedMember.value = null;
 }
 
@@ -1509,6 +1541,7 @@ function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
   chainPromptPosition.value = positionPromptNearEvent(event, { width: 164, height: 82 });
   pendingChain.value = message;
   pendingRecall.value = null;
+  pendingPrayer.value = null;
   selectedMember.value = null;
 }
 
@@ -1537,9 +1570,53 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
   if (pendingRecall.value && !target.closest("[data-recall-popover]") && !target.closest(".bubble")) {
     pendingRecall.value = null;
   }
+  if (pendingPrayer.value && !target.closest("[data-prayer-popover]") && !target.closest(".prayer-actions")) {
+    pendingPrayer.value = null;
+  }
   if (selectedMember.value && !target.closest("[data-member-popover]") && !target.closest(".member-row")) {
     selectedMember.value = null;
   }
+}
+
+function toggleMessageSelectionMode() {
+  messageSelectionMode.value = !messageSelectionMode.value;
+  selectedMessageIds.value = new Set();
+  pendingChain.value = null;
+  pendingDownload.value = null;
+  pendingRecall.value = null;
+  pendingPrayer.value = null;
+}
+
+function startMessageSelectionMode() {
+  showAdmin.value = false;
+  messageSelectionMode.value = true;
+  selectedMessageIds.value = new Set();
+  nextTick(() => scrollBottom(false));
+}
+
+function toggleMessageSelected(message: MessageDTO) {
+  if (message.id <= 0) return;
+  const next = new Set(selectedMessageIds.value);
+  if (next.has(message.id)) next.delete(message.id);
+  else next.add(message.id);
+  selectedMessageIds.value = next;
+}
+
+function toggleVisibleMessageSelection() {
+  selectedMessageIds.value = visibleMessagesSelected.value ? new Set() : new Set(selectableMessages.value.map((message) => message.id));
+}
+
+async function deleteSelectedMessages() {
+  const ids = [...selectedMessageIds.value];
+  if (!ids.length) return;
+  if (!confirm(`删除选中的 ${ids.length} 条聊天记录？附件文件也会一并删除。`)) return;
+  const result = await api<{ deleted: number }>("/api/admin/messages", {
+    method: "DELETE",
+    body: JSON.stringify({ ids })
+  });
+  adminMsg.value = `已删除 ${result.deleted} 条聊天记录`;
+  selectedMessageIds.value = new Set();
+  await store.loadMessages();
 }
 
 async function joinPendingChain() {
@@ -2030,6 +2107,7 @@ function prayerLatestTime(message: MessageDTO) {
 
 async function markPrayerPrayed(message: MessageDTO) {
   await api(`/api/messages/${message.id}/prayed`, { method: "POST", body: JSON.stringify({}) });
+  pendingPrayer.value = null;
   await store.loadMessages();
 }
 
@@ -2066,6 +2144,7 @@ function openRecallPrompt(message: MessageDTO, event?: MouseEvent) {
   pendingRecall.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
+  pendingPrayer.value = null;
   selectedMember.value = null;
 }
 
@@ -2109,15 +2188,7 @@ async function loadAdmin() {
 }
 
 async function loadAdminData() {
-  await Promise.all([loadAdminMessages(), loadAdminAttachments()]);
-}
-
-async function loadAdminMessages() {
-  const params = new URLSearchParams({ limit: "100" });
-  if (dataChannelFilter.value) params.set("channelId", String(dataChannelFilter.value));
-  if (dataSearch.value.trim()) params.set("q", dataSearch.value.trim());
-  const result = await api<{ messages: AdminMessageDTO[] }>(`/api/admin/messages?${params.toString()}`);
-  adminMessages.value = result.messages;
+  await loadAdminAttachments();
 }
 
 async function loadAdminAttachments() {
@@ -2132,16 +2203,6 @@ function adminDate(value?: string | null) {
   return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function adminMessageKind(message: AdminMessageDTO) {
-  if (message.type === "image") return "图片";
-  if (message.fileName && /\.(webm|mp3|m4a|wav|ogg|aac|mp4)$/i.test(message.fileName)) return "语音";
-  if (message.type === "file") return "文件";
-  if (message.type === "chain") return "接龙";
-  if (message.type === "prayer") return "代祷";
-  if (message.type === "system") return "系统";
-  return "文本";
-}
-
 function attachmentKindLabel(kind: AdminAttachmentDTO["kind"]) {
   if (kind === "avatar") return "头像";
   if (kind === "background") return "图片";
@@ -2154,15 +2215,6 @@ function attachmentUsage(item: AdminAttachmentDTO) {
 
 function toggleAllAttachments() {
   selectedAttachmentIds.value = allAttachmentsSelected.value ? [] : adminAttachments.value.map((item) => item.id);
-}
-
-async function deleteAdminMessage(message: AdminMessageDTO) {
-  if (!confirm(`删除 #${message.id} 这条聊天记录？附件文件也会一并删除。`)) return;
-  const result = await api<{ deleted: number }>(`/api/admin/messages/${message.id}`, { method: "DELETE" });
-  adminMsg.value = `已删除 ${result.deleted} 条聊天记录`;
-  await loadAdminMessages();
-  await loadAdminAttachments();
-  await store.loadMessages();
 }
 
 async function clearAdminMessages(channelId = dataChannelFilter.value) {
@@ -2634,8 +2686,16 @@ async function toggleVirtual(character: any) {
         </button>
         <button v-if="currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
         <button v-if="canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
+        <button v-if="isAdmin" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
       </header>
+
+      <section v-if="messageSelectionMode" class="message-selection-bar">
+        <span>已选择 {{ selectedMessageCount }} 条</span>
+        <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
+        <button class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
+        <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
+      </section>
 
       <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`">
         <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind === 'mention' }" @click="openTopNotice(activeTopNotice)">
@@ -2670,9 +2730,18 @@ async function toggleVirtual(character: any) {
           <article
             v-else
             class="message-row"
-            :class="{ mine: isMine(row.message), virtual: row.message.sender.kind === 'virtual', 'mention-alert': isMentionAlertActive(row.message) }"
+            :class="{ mine: isMine(row.message), virtual: row.message.sender.kind === 'virtual', 'mention-alert': isMentionAlertActive(row.message), selecting: messageSelectionMode, selected: selectedMessageIds.has(row.message.id) }"
             :data-message-id="row.message.id"
           >
+            <button
+              v-if="messageSelectionMode && row.message.id > 0"
+              class="message-select-btn"
+              :class="{ selected: selectedMessageIds.has(row.message.id) }"
+              @click.stop="toggleMessageSelected(row.message)"
+              :aria-label="selectedMessageIds.has(row.message.id) ? '取消选择消息' : '选择消息'"
+            >
+              <CheckCircle2 :size="18" />
+            </button>
             <div class="avatar presence-avatar" :class="{ bot: row.message.sender.kind === 'virtual' }">
               <img v-if="avatarUrl(row.message.sender.avatarPath)" :src="avatarUrl(row.message.sender.avatarPath)" alt="" />
               <span v-else>{{ avatarText(row.message.sender.displayName) }}</span>
@@ -2712,7 +2781,7 @@ async function toggleVirtual(character: any) {
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'prayer'">
-                  <div class="prayer-card" :class="`status-${prayerPayload(row.message).status}`" @click.stop="prayerPayload(row.message).status === 'active' && markPrayerPrayed(row.message)">
+                  <div class="prayer-card" :class="`status-${prayerPayload(row.message).status}`">
                     <div class="prayer-card-head">
                       <span><HeartHandshake :size="17" /></span>
                       <strong>代祷事项</strong>
@@ -2730,7 +2799,7 @@ async function toggleVirtual(character: any) {
                       </span>
                     </div>
                     <div class="prayer-actions">
-                      <button v-if="prayerPayload(row.message).status === 'active'" class="mini-btn" @click.stop="markPrayerPrayed(row.message)">
+                      <button v-if="prayerPayload(row.message).status === 'active'" class="mini-btn" @click.stop="requestPrayerPrayed(row.message, $event)">
                         <CheckCircle2 :size="15" />{{ prayerPayload(row.message).currentUserPrayed ? "再次记录祷告" : "我已祷告" }}
                       </button>
                       <template v-if="isMine(row.message) && prayerPayload(row.message).status === 'active'">
@@ -3001,6 +3070,19 @@ async function toggleVirtual(character: any) {
           <div class="compact-actions">
             <button class="mini-btn secondary" @click="pendingRecall = null">取消</button>
             <button class="mini-btn danger-soft" @click="recallPendingMessage">撤回</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="pendingPrayer" class="tap-popover prayer-popover" :style="prayerPromptStyle" data-prayer-popover>
+      <div class="tap-popover-card">
+        <div class="compact-confirm">
+          <span>{{ prayerPayload(pendingPrayer).currentUserPrayed ? "再次记录祷告？" : "记录已祷告？" }}</span>
+          <small>{{ prayerPayload(pendingPrayer).currentUserPrayed ? "会为这张卡片再增加一次祷告记录" : "确认后大家会看到你已经为此祷告" }}</small>
+          <div class="compact-actions">
+            <button class="mini-btn secondary" @click="pendingPrayer = null">不小心点错了</button>
+            <button class="mini-btn" @click="markPrayerPrayed(pendingPrayer)">我确实为此祷告过了</button>
           </div>
         </div>
       </div>
@@ -3379,29 +3461,21 @@ async function toggleVirtual(character: any) {
                 <input class="hidden" type="file" accept="application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
               </label>
             </div>
-            <label>聊天记录管理</label>
-            <div class="data-toolbar">
-              <select v-model.number="dataChannelFilter" aria-label="筛选频道" @change="loadAdminMessages">
+            <label>聊天记录删除</label>
+            <div class="admin-inline-card">
+              <div>
+                <strong>在主聊天界面多选删除</strong>
+                <small>回到当前频道后，可以按真实上下文选择多条消息并一次删除。</small>
+              </div>
+              <button class="primary-btn" @click="startMessageSelectionMode"><CheckCircle2 :size="16" />进入多选</button>
+            </div>
+            <div class="data-toolbar data-toolbar-compact">
+              <select v-model.number="dataChannelFilter" aria-label="筛选频道">
                 <option :value="0">全部频道</option>
                 <option v-for="channel in store.channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
               </select>
-              <input v-model="dataSearch" placeholder="搜索内容、发送人或文件名" @keyup.enter="loadAdminMessages" />
-              <button class="mini-btn secondary" @click="loadAdminMessages"><RotateCcw :size="15" />刷新</button>
-            </div>
-            <div class="action-grid">
               <button class="mini-btn danger-action" :disabled="!dataChannelFilter" @click="clearAdminMessages(dataChannelFilter)"><Trash2 :size="15" />清空当前频道</button>
               <button class="mini-btn danger-action" @click="clearAdminMessages(0)"><Trash2 :size="15" />清空全部记录</button>
-            </div>
-            <div class="admin-data-list">
-              <article v-for="message in adminMessages" :key="message.id" class="admin-data-row">
-                <div class="admin-data-main">
-                  <strong>#{{ message.id }} · {{ adminMessageKind(message) }} · {{ message.channelName }}</strong>
-                  <span>{{ message.content || message.fileName || "空消息" }}</span>
-                  <small>{{ message.senderName }} · {{ adminDate(message.createdAt) }}<template v-if="message.fileSize"> · {{ compactBytes(message.fileSize) }}</template></small>
-                </div>
-                <button class="mini-btn danger-action" @click="deleteAdminMessage(message)"><Trash2 :size="15" />删除</button>
-              </article>
-              <p v-if="!adminMessages.length" class="empty-note">没有匹配的聊天记录</p>
             </div>
             <label>附件管理</label>
             <div class="data-toolbar">
