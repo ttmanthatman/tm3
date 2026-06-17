@@ -8,6 +8,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  CloudRain,
+  Droplet,
   Download,
   FilePlus,
   FileUp,
@@ -28,6 +30,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  PartyPopper,
   Pin,
   Plane,
   Play,
@@ -39,11 +42,13 @@ import {
   Smartphone,
   Settings,
   Square,
+  Sun,
   Tablet,
   Trash2,
   Upload,
   Users,
   Vibrate,
+  Waves,
   WandSparkles,
   X
 } from "lucide-vue-next";
@@ -99,6 +104,8 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const rainCanvas = ref<HTMLCanvasElement | null>(null);
+const dripLayer = ref<HTMLElement | null>(null);
 const adminTab = ref<"users" | "channels" | "virtuals" | "pin" | "appearance" | "data" | "release">("pin");
 const settingsTab = ref<"appearance" | "devices" | "notifications" | "release">("appearance");
 const adminMsg = ref("");
@@ -200,17 +207,29 @@ const staleVersionMessage = ref("");
 const updateCheck = ref<UpdateCheckDTO | null>(null);
 const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
+const rainActive = ref(false);
+const waterTilt = ref({ x: 0, y: 0 });
 let recordingTimer: number | undefined;
 let versionCheckTimer: number | undefined;
 let updateStatusTimer: number | undefined;
+let rainAnimationFrame: number | undefined;
+let rainUntil = 0;
+let rainDrops: RainDrop[] = [];
+let dripAnimationFrame: number | undefined;
+let dripLastFrame = 0;
+let dripLastSpawn = 0;
+let dripParticles: DripParticle[] = [];
 const voicePlayers = new Map<number, HTMLAudioElement>();
 const longPressMs = 520;
+const rainDurationMs = 15_000;
+const playedRainEffectIds = new Set<number>();
 let longPressTimer: number | undefined;
 let longPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
 let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let imagePinchStart: { distance: number; scale: number } | null = null;
 let topNoticeTimer: number | undefined;
+let deviceOrientationPermissionRequested = false;
 const defaultPalette: ThemePaletteDTO = {
   accent: "#1aad19",
   accentDark: "#129611",
@@ -299,15 +318,31 @@ const colorFields: Array<{ key: keyof ThemePaletteDTO; label: string }> = [
   { key: "line", label: "边框线" }
 ];
 const customThemeEdit = ref<ThemeDTO>({ id: "", name: "我的主题", palette: { ...defaultPalette } });
-const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: typeof Sparkles }> = [
+type IconComponent = typeof Sparkles;
+type RainDrop = { x: number; y: number; length: number; speed: number; width: number; sway: number; alpha: number };
+type DripParticle = {
+  el: HTMLSpanElement;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  sourceId: number;
+};
+const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: IconComponent }> = [
   { command: "/闪动", effect: "flash", label: "闪动", hint: "气泡持续换色", icon: Sparkles },
   { command: "/流光", effect: "shine", label: "流光", hint: "文字金属反光", icon: WandSparkles },
   { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
-  { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane }
+  { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane },
+  { command: "/光芒万丈", effect: "sunburst", label: "光芒万丈", hint: "气泡向外放射太阳光", icon: Sun },
+  { command: "/跑马灯", effect: "marquee", label: "跑马灯", hint: "节日彩灯绕气泡追逐", icon: PartyPopper },
+  { command: "/水波", effect: "water", label: "水波", hint: "气泡像水面一样荡漾", icon: Waves },
+  { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
+  { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
 type SlashCommandSuggestion =
-  | { kind: "prayer"; command: string; label: string; hint: string; icon: typeof HeartHandshake }
+  | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
 type VoicePayload = {
@@ -318,7 +353,9 @@ type VoicePayload = {
 };
 
 onMounted(async () => {
+  hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
+  window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   await store.bootstrap();
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
@@ -359,8 +396,19 @@ watch(
 watch(
   () => store.lastIncomingMessage?.id,
   () => {
-    if (store.lastIncomingMessage) queueMentionToast(store.lastIncomingMessage);
+    if (store.lastIncomingMessage) {
+      queueMentionToast(store.lastIncomingMessage);
+      triggerOneShotMessageEffects(store.lastIncomingMessage);
+    }
   }
+);
+
+watch(
+  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(",")] as const,
+  () => {
+    nextTick(() => ensureDripPhysics());
+  },
+  { flush: "post" }
 );
 
 watch(
@@ -408,9 +456,12 @@ watch(adminTab, (tab) => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
+  window.removeEventListener("deviceorientation", handleDeviceOrientation);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
+  stopRainEffect();
+  stopDripPhysics(true);
   stopAllVoicePlayback();
   resetRecording();
 });
@@ -449,6 +500,9 @@ const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wa
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
+  "--water-tilt-x": `${waterTilt.value.x.toFixed(2)}px`,
+  "--water-tilt-y": `${waterTilt.value.y.toFixed(2)}px`,
+  "--water-tilt-rotate": `${(waterTilt.value.x * 0.26).toFixed(2)}deg`,
   "--wallpaper-image": hasWallpaper.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
   "--wallpaper-size": wallpaperBackground.value.size,
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
@@ -1234,7 +1288,8 @@ function isMessageEffectPaused(message: MessageDTO) {
 }
 
 function toggleMessageEffect(message: MessageDTO) {
-  if (!messageEffect(message)) return false;
+  const effect = messageEffect(message);
+  if (!effect || effect === "rain") return false;
   const next = new Set(pausedEffectIds.value);
   if (next.has(message.id)) next.delete(message.id);
   else next.add(message.id);
@@ -1249,8 +1304,326 @@ function messageEffectClass(message: MessageDTO) {
     "message-effect-flash": effect === "flash",
     "message-effect-shine": effect === "shine",
     "message-effect-shake": effect === "shake",
-    "message-effect-fly": effect === "fly"
+    "message-effect-fly": effect === "fly",
+    "message-effect-sunburst": effect === "sunburst",
+    "message-effect-marquee": effect === "marquee",
+    "message-effect-water": effect === "water",
+    "message-effect-drip": effect === "drip",
+    "message-effect-rain": effect === "rain"
   };
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function handleDeviceOrientation(event: DeviceOrientationEvent) {
+  const gamma = Number.isFinite(event.gamma) ? Number(event.gamma) : 0;
+  const beta = Number.isFinite(event.beta) ? Number(event.beta) : 0;
+  waterTilt.value = {
+    x: clamp(gamma, -36, 36) * 0.42,
+    y: clamp(beta - 35, -42, 42) * 0.28
+  };
+}
+
+function requestDeviceOrientationPermissionOnce() {
+  if (deviceOrientationPermissionRequested || typeof DeviceOrientationEvent === "undefined") return;
+  const eventWithPermission = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+    requestPermission?: () => Promise<"granted" | "denied">;
+  };
+  if (!eventWithPermission.requestPermission) return;
+  deviceOrientationPermissionRequested = true;
+  void eventWithPermission.requestPermission().catch(() => undefined);
+}
+
+function handleBubblePointerMove(message: MessageDTO, event: PointerEvent) {
+  moveMessageLongPress(event);
+  stirWaterMessage(message, event);
+}
+
+function handleBubblePointerLeave(message: MessageDTO, event: PointerEvent) {
+  clearMessageLongPress();
+  settleWaterMessage(message, event);
+}
+
+function stirWaterMessage(message: MessageDTO, event: PointerEvent) {
+  if (messageEffect(message) !== "water" || isMessageEffectPaused(message)) return;
+  const bubble = event.currentTarget;
+  if (!(bubble instanceof HTMLElement)) return;
+  const rect = bubble.getBoundingClientRect();
+  const x = clamp(((event.clientX - rect.left) / Math.max(1, rect.width)) * 100, 0, 100);
+  const y = clamp(((event.clientY - rect.top) / Math.max(1, rect.height)) * 100, 0, 100);
+  bubble.style.setProperty("--water-pointer-x", `${x.toFixed(1)}%`);
+  bubble.style.setProperty("--water-pointer-y", `${y.toFixed(1)}%`);
+  bubble.style.setProperty("--water-stir-size", "38%");
+  bubble.style.setProperty("--water-stir-opacity", "0.54");
+  bubble.style.setProperty("--water-ripple-wide", "200px");
+  bubble.style.setProperty("--water-ripple-tall", "82px");
+  bubble.style.setProperty("--water-ripple-opacity", "0.87");
+}
+
+function settleWaterMessage(message: MessageDTO, event: PointerEvent) {
+  if (messageEffect(message) !== "water") return;
+  const bubble = event.currentTarget;
+  if (bubble instanceof HTMLElement) {
+    bubble.style.setProperty("--water-stir-size", "20%");
+    bubble.style.setProperty("--water-stir-opacity", "0.12");
+    bubble.style.setProperty("--water-ripple-wide", "130px");
+    bubble.style.setProperty("--water-ripple-tall", "54px");
+    bubble.style.setProperty("--water-ripple-opacity", "0.55");
+  }
+}
+
+function triggerOneShotMessageEffects(message: MessageDTO) {
+  if (messageEffect(message) === "rain") void startRainForMessage(message.id);
+}
+
+function hydratePlayedRainEffectIds() {
+  playedRainEffectIds.clear();
+  for (const id of readPlayedRainEffectIds()) playedRainEffectIds.add(id);
+}
+
+function readPlayedRainEffectIds() {
+  try {
+    return JSON.parse(localStorage.getItem("team-chat-played-rain-effects") || "[]")
+      .map((value: unknown) => Number(value))
+      .filter((value: number) => Number.isFinite(value) && value > 0)
+      .slice(-180);
+  } catch {
+    return [];
+  }
+}
+
+function persistPlayedRainEffectIds() {
+  try {
+    localStorage.setItem("team-chat-played-rain-effects", JSON.stringify([...playedRainEffectIds].slice(-180)));
+  } catch {
+    // Private browsing or quota limits should not block chat effects.
+  }
+}
+
+async function startRainForMessage(messageId: number) {
+  if (messageId <= 0 || playedRainEffectIds.has(messageId)) return;
+  playedRainEffectIds.add(messageId);
+  persistPlayedRainEffectIds();
+  if (rainActive.value) return;
+  rainActive.value = true;
+  rainUntil = performance.now() + rainDurationMs;
+  await nextTick();
+  const canvas = rainCanvas.value;
+  if (!canvas) {
+    rainActive.value = false;
+    return;
+  }
+  rainDrops = [];
+  rainAnimationFrame = requestAnimationFrame(drawRainFrame);
+}
+
+function stopRainEffect() {
+  if (rainAnimationFrame) window.cancelAnimationFrame(rainAnimationFrame);
+  rainAnimationFrame = undefined;
+  rainActive.value = false;
+  rainUntil = 0;
+  rainDrops = [];
+  const canvas = rainCanvas.value;
+  const context = canvas?.getContext("2d");
+  if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function drawRainFrame(now: number) {
+  const canvas = rainCanvas.value;
+  const context = canvas?.getContext("2d");
+  if (!canvas || !context || now >= rainUntil) {
+    stopRainEffect();
+    return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    rainDrops = [];
+  }
+  if (!rainDrops.length) rainDrops = makeRainDrops(width, height);
+  const remaining = clamp((rainUntil - now) / rainDurationMs, 0, 1);
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = `rgba(12, 24, 38, ${0.12 * Math.min(1, remaining + 0.35)})`;
+  context.fillRect(0, 0, width, height);
+  context.lineCap = "round";
+  for (const drop of rainDrops) {
+    drop.y += drop.speed;
+    drop.x += drop.sway;
+    if (drop.y > height + drop.length) {
+      drop.y = -drop.length - Math.random() * height * 0.45;
+      drop.x = Math.random() * width;
+    }
+    if (drop.x > width + 28) drop.x = -28;
+    if (drop.x < -28) drop.x = width + 28;
+    context.globalAlpha = drop.alpha * Math.min(1, remaining * 1.7);
+    context.lineWidth = drop.width;
+    context.strokeStyle = "#d9f2ff";
+    context.beginPath();
+    context.moveTo(drop.x, drop.y);
+    context.lineTo(drop.x - drop.length * 0.25, drop.y + drop.length);
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+  rainAnimationFrame = requestAnimationFrame(drawRainFrame);
+}
+
+function makeRainDrops(width: number, height: number): RainDrop[] {
+  const count = Math.min(260, Math.max(110, Math.floor((width * height) / 3200)));
+  return Array.from({ length: count }, () => ({
+    x: Math.random() * width,
+    y: Math.random() * height - height,
+    length: 13 + Math.random() * 24,
+    speed: 9 + Math.random() * 15,
+    width: 0.7 + Math.random() * 1.3,
+    sway: -1.9 - Math.random() * 1.4,
+    alpha: 0.28 + Math.random() * 0.52
+  }));
+}
+
+function ensureDripPhysics() {
+  const active = hasActiveDripMessages();
+  if ((active || dripParticles.length) && !dripAnimationFrame) {
+    dripLastFrame = 0;
+    dripLastSpawn = 0;
+    dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
+  }
+}
+
+function stopDripPhysics(clear = false) {
+  if (dripAnimationFrame) window.cancelAnimationFrame(dripAnimationFrame);
+  dripAnimationFrame = undefined;
+  dripLastFrame = 0;
+  dripLastSpawn = 0;
+  if (clear) {
+    for (const particle of dripParticles) particle.el.remove();
+    dripParticles = [];
+    dripLayer.value?.querySelectorAll(".water-splash").forEach((node) => node.remove());
+  }
+}
+
+function hasActiveDripMessages() {
+  return store.messages.some((message) => messageEffect(message) === "drip" && !isMessageEffectPaused(message));
+}
+
+function updateDripPhysics(now: number) {
+  const layer = dripLayer.value;
+  if (!layer) {
+    stopDripPhysics(true);
+    return;
+  }
+  const active = hasActiveDripMessages();
+  const dt = Math.min(2.2, Math.max(0.6, ((dripLastFrame ? now - dripLastFrame : 16) / 16.67)));
+  dripLastFrame = now;
+  if (active && now - dripLastSpawn > 520) {
+    spawnDripParticles(layer);
+    dripLastSpawn = now;
+  }
+  const layerRect = layer.getBoundingClientRect();
+  const nextParticles: DripParticle[] = [];
+  for (const particle of dripParticles) {
+    particle.vy += 0.26 * dt;
+    particle.x += particle.vx * dt;
+    particle.y += particle.vy * dt;
+    const hit = findDripHit(layer, particle);
+    if (hit) {
+      particle.el.remove();
+      createWaterSplash(layer, particle.x, hit.y);
+      continue;
+    }
+    if (particle.y > layerRect.height + 28) {
+      particle.el.remove();
+      continue;
+    }
+    particle.el.style.transform = `translate3d(${particle.x.toFixed(1)}px, ${particle.y.toFixed(1)}px, 0)`;
+    nextParticles.push(particle);
+  }
+  dripParticles = nextParticles;
+  if (active || dripParticles.length) {
+    dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
+  } else {
+    stopDripPhysics();
+  }
+}
+
+function spawnDripParticles(layer: HTMLElement) {
+  const layerRect = layer.getBoundingClientRect();
+  for (const { message, bubble } of activeDripBubbles().slice(-6)) {
+    const rect = bubble.getBoundingClientRect();
+    if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
+    const count = Math.random() > 0.74 ? 2 : 1;
+    for (let i = 0; i < count; i += 1) {
+      const radius = 3 + Math.random() * 2.6;
+      const el = document.createElement("span");
+      el.className = "drip-drop";
+      el.style.width = `${radius * 2}px`;
+      el.style.height = `${radius * 2}px`;
+      layer.appendChild(el);
+      const x = rect.left - layerRect.left + 8 + Math.random() * Math.max(8, rect.width - 16);
+      const y = rect.bottom - layerRect.top - radius;
+      const particle: DripParticle = {
+        el,
+        x,
+        y,
+        vx: (Math.random() - 0.5) * 0.9,
+        vy: 0.35 + Math.random() * 0.5,
+        radius,
+        sourceId: message.id
+      };
+      el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
+      dripParticles.push(particle);
+    }
+  }
+}
+
+function activeDripBubbles() {
+  const root = scroller.value;
+  if (!root) return [];
+  return store.messages
+    .filter((message) => messageEffect(message) === "drip" && !isMessageEffectPaused(message))
+    .map((message) => {
+      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
+      const bubble = row?.querySelector<HTMLElement>(".message-effect-drip");
+      return bubble ? { message, bubble } : null;
+    })
+    .filter((item): item is { message: MessageDTO; bubble: HTMLElement } => !!item);
+}
+
+function findDripHit(layer: HTMLElement, particle: DripParticle) {
+  const root = scroller.value;
+  if (!root) return null;
+  const layerRect = layer.getBoundingClientRect();
+  const particleBottom = particle.y + particle.radius * 2;
+  for (const row of root.querySelectorAll<HTMLElement>(".message-row[data-message-id]")) {
+    const id = Number(row.dataset.messageId || 0);
+    if (!id || id === particle.sourceId) continue;
+    const bubble = row.querySelector<HTMLElement>(".bubble");
+    if (!bubble) continue;
+    const rect = bubble.getBoundingClientRect();
+    const left = rect.left - layerRect.left;
+    const right = rect.right - layerRect.left;
+    const top = rect.top - layerRect.top;
+    const bottom = rect.bottom - layerRect.top;
+    if (particle.x >= left - particle.radius && particle.x <= right + particle.radius && particleBottom >= top && particle.y <= bottom) {
+      return { x: particle.x, y: top };
+    }
+  }
+  return null;
+}
+
+function createWaterSplash(layer: HTMLElement, x: number, y: number) {
+  const splash = document.createElement("span");
+  splash.className = "water-splash";
+  splash.style.setProperty("--splash-x", `${x.toFixed(1)}px`);
+  splash.style.setProperty("--splash-y", `${y.toFixed(1)}px`);
+  layer.appendChild(splash);
+  window.setTimeout(() => splash.remove(), 620);
 }
 
 function isMobileChatInteraction() {
@@ -1258,6 +1631,7 @@ function isMobileChatInteraction() {
 }
 
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
+  if (messageEffect(message) === "water") requestDeviceOrientationPermissionOnce();
   if (isMobileChatInteraction()) return;
   if (message.type === "system" || event.button !== 0) return;
   const target = event.target;
@@ -2673,6 +3047,8 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <section class="chat-pane">
+      <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
+      <div ref="dripLayer" class="drip-layer" aria-hidden="true"></div>
       <header class="chat-head">
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
@@ -2757,10 +3133,10 @@ async function toggleVirtual(character: any) {
                 :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer' }, messageEffectClass(row.message)]"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
                 @pointerdown="beginMessageLongPress(row.message, $event)"
-                @pointermove="moveMessageLongPress"
+                @pointermove="handleBubblePointerMove(row.message, $event)"
                 @pointerup="clearMessageLongPress"
-                @pointercancel="clearMessageLongPress"
-                @pointerleave="clearMessageLongPress"
+                @pointercancel="handleBubblePointerLeave(row.message, $event)"
+                @pointerleave="handleBubblePointerLeave(row.message, $event)"
                 @contextmenu.prevent
                 @click="handleBubbleClick(row.message, $event)"
               >

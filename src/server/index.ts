@@ -42,7 +42,7 @@ const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED
   .filter(Boolean);
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const THEMES = new Set(["wechat", "jade", "paper", "night"]);
-const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly"]);
+const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "sunburst", "marquee", "water", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
 const DEFAULT_LOGIN_TITLE = "Team Chat";

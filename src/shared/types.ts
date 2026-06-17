@@ -1,6 +1,6 @@
 export type ActorKind = "human" | "virtual" | "system";
 export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "system";
-export type MessageEffect = "flash" | "shine" | "shake" | "fly";
+export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "sunburst" | "marquee" | "water" | "drip" | "rain";
 export type PrayerStatus = "active" | "closed" | "answered";
 
 export interface ActorDTO {

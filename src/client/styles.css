@@ -509,6 +509,7 @@ button {
 }
 
 .chat-pane {
+  position: relative;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -519,6 +520,25 @@ button {
     linear-gradient(var(--chat-wallpaper-overlay), var(--chat-wallpaper-overlay)),
     var(--wallpaper-image) center / var(--wallpaper-size) var(--wallpaper-repeat),
     var(--chat-bg);
+}
+
+.rain-canvas,
+.drip-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.rain-canvas {
+  z-index: 6;
+  mix-blend-mode: screen;
+}
+
+.drip-layer {
+  z-index: 4;
+  overflow: hidden;
 }
 
 .chat-pane > * {
@@ -779,6 +799,7 @@ button {
 
 .bubble {
   position: relative;
+  z-index: 0;
   border-radius: 6px;
   padding: 9px 11px;
   background: var(--bubble-other);
@@ -787,6 +808,11 @@ button {
   word-break: break-word;
   user-select: text;
   -webkit-user-select: text;
+}
+
+.bubble > * {
+  position: relative;
+  z-index: 1;
 }
 
 .message-row.mine .bubble {
@@ -854,6 +880,238 @@ button {
 
 .message-effect-fly .message-text {
   white-space: nowrap;
+}
+
+.message-effect-sunburst,
+.message-effect-marquee,
+.message-effect-water,
+.message-effect-drip,
+.message-effect-rain {
+  isolation: isolate;
+}
+
+.message-effect-sunburst {
+  box-shadow:
+    0 0 0 1px rgba(250, 204, 21, 0.34),
+    0 0 18px rgba(250, 204, 21, 0.76),
+    0 0 42px rgba(251, 146, 60, 0.54);
+  animation: messageSunPulse 2.7s ease-in-out infinite;
+}
+
+.message-effect-sunburst::before,
+.message-effect-sunburst::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.message-effect-sunburst::before {
+  inset: -24px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 6deg, rgba(253, 224, 71, 0.78) 0 7deg, transparent 7deg 15deg);
+  filter: blur(0.3px);
+  opacity: 0.72;
+  animation: messageSunRays 5.8s linear infinite;
+}
+
+.message-effect-sunburst::after {
+  inset: -18px;
+  border-radius: 18px;
+  background: radial-gradient(circle, rgba(254, 240, 138, 0.66), rgba(251, 146, 60, 0.22) 46%, transparent 72%);
+  animation: messageSunHalo 2.2s ease-in-out infinite;
+}
+
+.message-effect-marquee {
+  box-shadow: 0 5px 18px rgba(15, 23, 42, 0.12);
+}
+
+.message-effect-marquee::before,
+.message-effect-marquee::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.message-effect-marquee::before {
+  inset: -4px;
+  border-radius: 10px;
+  background: conic-gradient(from 0deg, #ef4444, #f59e0b, #fde047, #22c55e, #38bdf8, #6366f1, #ec4899, #ef4444);
+  animation: messageMarqueeSpin 1.1s linear infinite;
+}
+
+.message-effect-marquee::after {
+  inset: -7px;
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 12% 0%, #fff 0 2px, transparent 3px),
+    radial-gradient(circle at 40% 100%, #fff 0 2px, transparent 3px),
+    radial-gradient(circle at 75% 0%, #fff 0 2px, transparent 3px),
+    radial-gradient(circle at 100% 58%, #fff 0 2px, transparent 3px);
+  filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.86));
+  opacity: 0.92;
+  animation: messageMarqueeBulbs 0.7s steps(2, end) infinite;
+}
+
+.message-effect-water {
+  --water-pointer-x: 50%;
+  --water-pointer-y: 50%;
+  --water-stir-size: 20%;
+  --water-stir-opacity: 0.12;
+  --water-ripple-wide: 130px;
+  --water-ripple-tall: 54px;
+  --water-ripple-opacity: 0.55;
+  overflow: hidden;
+  color: #062a3a;
+  background:
+    radial-gradient(circle at var(--water-pointer-x) var(--water-pointer-y), rgba(255, 255, 255, var(--water-stir-opacity)), transparent var(--water-stir-size)),
+    linear-gradient(180deg, rgba(240, 249, 255, 0.9) 0%, rgba(125, 211, 252, 0.66) calc(46% + var(--water-tilt-y)), rgba(14, 165, 233, 0.64) calc(48% + var(--water-tilt-y)), rgba(7, 89, 133, 0.4) 100%);
+  box-shadow:
+    inset 0 1px 8px rgba(255, 255, 255, 0.72),
+    inset 0 -8px 18px rgba(2, 132, 199, 0.2),
+    0 8px 24px rgba(14, 116, 144, 0.2);
+  transition: background-position 0.14s ease;
+}
+
+.message-effect-water::after {
+  content: "";
+  position: absolute;
+  inset: -34%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 50%, transparent 0 38%, rgba(255, 255, 255, 0.46) 42%, transparent 48%),
+    repeating-radial-gradient(ellipse at calc(50% + var(--water-tilt-x)) calc(52% + var(--water-tilt-y)), rgba(255, 255, 255, 0.2) 0 2px, transparent 3px 16px);
+  background-size:
+    var(--water-ripple-wide) var(--water-ripple-tall),
+    108px 42px;
+  transform: translate3d(var(--water-tilt-x), var(--water-tilt-y), 0) rotate(var(--water-tilt-rotate));
+  opacity: var(--water-ripple-opacity);
+  mix-blend-mode: screen;
+  animation: messageWaterRipple 4.2s linear infinite;
+}
+
+.message-effect-water .reply-preview {
+  color: inherit;
+  background: rgba(255, 255, 255, 0.28);
+  border-left-color: rgba(6, 42, 58, 0.36);
+}
+
+.message-effect-drip {
+  overflow: visible;
+  color: #062a3a;
+  background:
+    linear-gradient(180deg, rgba(240, 249, 255, 0.96), rgba(125, 211, 252, 0.72) 54%, rgba(14, 165, 233, 0.58)),
+    var(--bubble-other);
+  box-shadow:
+    inset 0 1px 7px rgba(255, 255, 255, 0.76),
+    inset 0 -7px 15px rgba(2, 132, 199, 0.18),
+    0 8px 18px rgba(14, 116, 144, 0.14);
+}
+
+.message-row.mine .message-effect-drip {
+  background:
+    linear-gradient(180deg, rgba(232, 252, 246, 0.96), rgba(125, 211, 252, 0.58) 58%, rgba(14, 165, 233, 0.42)),
+    var(--bubble-mine);
+}
+
+.message-effect-drip::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  bottom: -9px;
+  z-index: -1;
+  width: 8px;
+  height: 12px;
+  border-radius: 50% 50% 58% 58%;
+  background: linear-gradient(180deg, rgba(224, 247, 255, 0.96), rgba(14, 165, 233, 0.78));
+  box-shadow:
+    34px -2px 0 -1px rgba(56, 189, 248, 0.82),
+    72px 0 0 -2px rgba(186, 230, 253, 0.88);
+  filter: drop-shadow(0 3px 4px rgba(14, 116, 144, 0.28));
+  animation: messageDripBeads 2.6s ease-in-out infinite;
+}
+
+.message-effect-rain {
+  color: #082f49;
+  background:
+    linear-gradient(115deg, rgba(224, 242, 254, 0.88), rgba(125, 211, 252, 0.68)),
+    var(--bubble-other);
+  box-shadow:
+    inset 0 0 0 1px rgba(14, 165, 233, 0.18),
+    0 7px 18px rgba(14, 116, 144, 0.16);
+}
+
+.message-effect-rain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: repeating-linear-gradient(112deg, transparent 0 8px, rgba(255, 255, 255, 0.42) 9px 11px, transparent 12px 20px);
+  opacity: 0.58;
+  animation: messageRainLines 0.7s linear infinite;
+}
+
+.prayer-bubble.message-effect-sunburst,
+.prayer-bubble.message-effect-marquee,
+.prayer-bubble.message-effect-drip {
+  overflow: visible;
+}
+
+.prayer-bubble.message-effect-sunburst .prayer-card,
+.prayer-bubble.message-effect-marquee .prayer-card,
+.prayer-bubble.message-effect-drip .prayer-card {
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.drip-drop {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 50% 50% 58% 58%;
+  background:
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.92) 0 18%, transparent 19%),
+    linear-gradient(180deg, rgba(186, 230, 253, 0.96), rgba(14, 165, 233, 0.82));
+  box-shadow: 0 4px 8px rgba(3, 105, 161, 0.24);
+  will-change: transform;
+}
+
+.water-splash {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 34px;
+  height: 18px;
+  border-radius: 50%;
+  border-top: 2px solid rgba(125, 211, 252, 0.92);
+  opacity: 0;
+  animation: waterSplash 0.58s ease-out both;
+}
+
+.water-splash::before,
+.water-splash::after {
+  content: "";
+  position: absolute;
+  bottom: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(186, 230, 253, 0.94);
+  box-shadow: 14px -3px 0 -2px rgba(14, 165, 233, 0.85);
+}
+
+.water-splash::before {
+  left: 3px;
+  transform: rotate(-22deg);
+}
+
+.water-splash::after {
+  right: 3px;
+  transform: rotate(22deg);
 }
 
 .media-bubble {
@@ -2474,6 +2732,113 @@ button {
   }
   100% {
     transform: translateX(-72vw);
+  }
+}
+
+@keyframes messageSunPulse {
+  0%,
+  100% {
+    filter: saturate(1);
+  }
+  50% {
+    filter: saturate(1.25) brightness(1.05);
+  }
+}
+
+@keyframes messageSunRays {
+  0% {
+    transform: rotate(0deg) scale(0.96);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.96);
+  }
+}
+
+@keyframes messageSunHalo {
+  0%,
+  100% {
+    opacity: 0.56;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.86;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes messageMarqueeSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes messageMarqueeBulbs {
+  0%,
+  100% {
+    opacity: 0.98;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.9));
+  }
+  50% {
+    opacity: 0.48;
+    filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.5));
+  }
+}
+
+@keyframes messageWaterRipple {
+  0% {
+    background-position:
+      0 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      130px 54px,
+      -108px 42px;
+  }
+}
+
+@keyframes messageDripBeads {
+  0%,
+  100% {
+    opacity: 0.42;
+    transform: translateY(-2px) scaleY(0.72);
+  }
+  45% {
+    opacity: 1;
+    transform: translateY(4px) scaleY(1.1);
+  }
+  68% {
+    opacity: 0.76;
+    transform: translateY(9px) scaleY(1.22);
+  }
+}
+
+@keyframes messageRainLines {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: -18px 28px;
+  }
+}
+
+@keyframes waterSplash {
+  0% {
+    opacity: 0;
+    transform: translate3d(calc(var(--splash-x, 0px) - 17px), calc(var(--splash-y, 0px) - 9px), 0) scale(0.35);
+  }
+  18% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(calc(var(--splash-x, 0px) - 17px), calc(var(--splash-y, 0px) - 9px), 0) scale(1.4);
   }
 }
 

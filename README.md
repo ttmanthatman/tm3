@@ -1,44 +1,138 @@
 # Team Chat
 
-Language: **English** | [中文](#中文说明)
+Team Chat 是一个面向小团队、家庭、小组和私密社区的轻量网页聊天室。它同时照顾手机和桌面端使用，提供频道、私聊、文件、语音、提醒、主题、代祷卡片、消息特效、管理后台、数据导入导出和服务器自更新能力。
 
-Team Chat is a lightweight web chat app for small groups. It works well on phones and desktops, and includes voice messages, file sharing, image previews, channels, direct chats, mentions, prayer cards, pinned notices, push notifications, themes, version-aware refresh, and admin tools.
+项目以 **GPL-3.0-only** 发布。
 
-## One-Click VPS Install
+## 功能概览
 
-Use a fresh Ubuntu or Debian VPS. Point your domain to the VPS first if you want HTTPS.
+### 聊天与频道
+
+- 支持公开频道、私密频道和一对一私聊。
+- 频道列表显示频道图标、频道名称和私密状态。
+- 私聊频道只对参与双方可见，关闭私聊只会从自己的频道列表移除，不会删除历史记录。
+- 频道创建者和管理员可以更新频道名称、描述和图标，也可以删除非默认频道。
+- 聊天区按时间显示消息分隔，短消息频道也会保持完整聊天背景。
+- 成员列表显示当前频道成员、虚拟角色和在线状态。
+
+### 消息能力
+
+- 支持文字消息、图片消息、普通文件、音频文件、视频文件和语音消息。
+- 文字消息会做服务端清洗，只保留安全的基础格式和链接。
+- 输入 `@` 会弹出成员补全，支持键盘选择和点击选择。
+- 被 @ 的用户会看到顶部提醒，提醒可点击定位到对应消息。
+- 支持回复消息，桌面端长按气泡引用，移动端点按普通消息引用。
+- 自己发送的普通消息在 2 分钟内可以撤回，撤回后频道内显示系统提示。
+- 管理员可以在聊天区进入多选模式，按当前上下文批量删除聊天记录。
+
+### 斜杠命令与消息特效
+
+在输入框输入 `/` 会显示可用命令。特效会保存在消息 payload 中，其他用户实时看到同样效果。多数持续特效可以点按气泡暂停或恢复。
+
+- `/闪动`：气泡持续切换颜色，自动搭配可读文字色。
+- `/流光`：文字呈现金属扫光效果。
+- `/震动`：气泡持续轻微摇晃。
+- `/飞机`：文字在聊天区横向循环飞行。
+- `/光芒万丈`：消息气泡向外放射太阳般的光芒。
+- `/跑马灯`：气泡外圈出现彩色 chasing light，适合节日氛围。
+- `/水波`：气泡变成水面，带波纹和高光；手机倾斜时水面会跟随移动，桌面端鼠标划过会搅动水波。
+- `/水滴`：气泡底部凝结水滴，液滴带重力下落，碰到其他消息气泡会溅开水花。
+- `/下雨`：一次性聊天室天气效果。消息发出后整个聊天区下 15 秒大雨；同一条消息不会因为再次点击而重播，播放中点击也不会中断。
+
+### 代祷卡片
+
+- 输入 `/代祷 内容` 可以生成频道代祷卡片。
+- `/代祷` 后可以叠加消息特效，例如 `/代祷 /流光 请为今晚休息祷告`。
+- 代祷卡片显示状态、祷告人数、最近祷告记录和参与者头像。
+- 成员可以记录“我已祷告”，也可以再次记录祷告。
+- 发起者可以把代祷事项标记为“无需再代祷”或“已蒙应允”，也可以撤回事项。
+- 每个频道都有“代祷事项”子入口，用来集中查看该频道的代祷卡片。
+
+### 语音、图片和文件
+
+- 语音消息发送后立即出现在聊天区，并显示上传进度。
+- 语音上传失败时保留失败状态，可以重试或移除。
+- 语音消息显示波形、时长、播放进度和未收听状态。
+- 图片可在聊天中预览，点击后进入沉浸式大图查看，支持放大和拖动。
+- 常见文档显示本地风格文件图标，包括 PDF、Word、Excel、PowerPoint、文本和通用文件。
+- 可预览的媒体尽量直接打开，不适合预览的文件会走下载确认。
+
+### 通知与在线状态
+
+- 支持浏览器推送通知，桌面端和移动端都可以接收新消息提醒。
+- 通知点击后会回到聊天室并自动切换到对应频道。
+- 设置页可以为当前设备开启或关闭通知。
+- 支持按频道静音普通消息；管理员置顶公告不受频道静音影响。
+- 成员列表和消息头像旁显示在线绿点。
+- 多人正在输入时，顶部提示会轮换显示。
+
+### 外观与个性化
+
+- 内置微信绿、竹影、纸墨和夜间主题。
+- 管理员可以创建自定义主题，调整按钮、背景、面板、文字和气泡颜色。
+- 支持聊天室壁纸，壁纸可选择填满、适合、拉伸或平铺。
+- 登录页支持自定义图标、标题、副标题、背景图和表单位置。
+- 手机端使用安全区变量和动态高度，适配 Safari 底栏、键盘和添加到主屏幕后运行的场景。
+
+### 管理后台
+
+- 管理员可以创建用户、修改显示名、重置密码和授予管理员权限。
+- 管理员可以创建虚拟角色，用于外部角色引擎或自动化接入。
+- 管理员可以创建、编辑、删除频道，并维护频道图标。
+- 支持频道置顶公告或置顶消息。
+- 数据页可以搜索聊天记录、删除单条记录、清空当前频道或清空全部频道。
+- 附件管理可以查看上传文件、语音、头像、壁纸、登录图和频道图标，并支持单个、勾选批量或全部删除。
+- 删除聊天记录会同步清理相关上传文件；删除附件会保留消息并显示删除提示。
+
+### 版本与更新
+
+- 应用内设置页和管理员版本页显示当前版本号、发布日期、开发者名和完整更新记录。
+- 客户端会定期检查服务器版本；手机或旧浏览器发现服务器已更新后，会自动刷新或提示手动刷新。
+- 管理员版本页可以检测 GitHub 最新版本，并触发服务器自更新。
+- 自更新过程显示状态、进度和最近日志。
+- 部署环境可通过 `APP_RELEASE_DEVELOPER` 覆盖版本页显示的开发者名。
+
+### 数据导入导出
+
+- 管理员可以导出频道、成员、消息、置顶、语音收听状态和代祷记录。
+- 管理员可以导入备份数据，用于迁移或恢复。
+- 支持按用户导出其附件 ZIP。
+- 支持删除指定用户历史附件，并保留对应消息记录。
+- 运行时数据应放在源码目录外或被 `.gitignore` 排除，不应提交 `.env`、数据库、上传文件和部署私密说明。
+
+## 一键 VPS 部署
+
+建议使用全新的 Ubuntu 或 Debian VPS。若需要 HTTPS，请先把域名解析到服务器。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ttmanthatman/tm3/main/scripts/deploy-vps.sh -o deploy-vps.sh
 sudo env DOMAIN=chat.example.com EMAIL=you@example.com bash deploy-vps.sh
 ```
 
-Replace:
+替换：
 
-- `chat.example.com` with your domain.
-- `you@example.com` with the email used for the HTTPS certificate.
+- `chat.example.com`：你的公开访问域名。
+- `you@example.com`：申请 HTTPS 证书使用的邮箱。
 
-When the installer finishes, it prints the login address and the first admin password. Save that password immediately.
-
-If you do not have a domain yet, you can still install over plain HTTP:
+没有域名时也可以先用 HTTP 安装：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ttmanthatman/tm3/main/scripts/deploy-vps.sh -o deploy-vps.sh
 sudo bash deploy-vps.sh
 ```
 
-The installer will:
+安装脚本会完成：
 
-- install Node.js 22, MySQL, Nginx, PM2, ffmpeg, and build tools;
-- create a MySQL database and app user;
-- generate app secrets and a first admin password;
-- build Team Chat;
-- start it with PM2;
-- configure Nginx as a reverse proxy;
-- request a Let's Encrypt certificate when `DOMAIN` and `EMAIL` are provided;
-- write updater settings so admins can later check GitHub for a newer version from the app.
+- 安装 Node.js 22、MySQL、Nginx、PM2、ffmpeg 和编译工具。
+- 创建 MySQL 数据库和应用账号。
+- 生成应用密钥和初始管理员密码。
+- 安装依赖并构建 Team Chat。
+- 用 PM2 启动服务。
+- 配置 Nginx 反向代理。
+- 在提供 `DOMAIN` 和 `EMAIL` 时申请 Let's Encrypt HTTPS 证书。
+- 写入更新器配置，让管理员之后可以在应用内检查并执行 GitHub 更新。
 
-Useful server commands:
+常用服务命令：
 
 ```bash
 pm2 status team-chat
@@ -46,156 +140,13 @@ pm2 logs team-chat
 pm2 restart team-chat --update-env
 ```
 
-## What You Can Do
-
-- Chat in public or private channels.
-- Send text, images, files, and voice messages.
-- See voice upload progress immediately after sending.
-- Mention people with `@` suggestions.
-- Use message effects from slash commands.
-- Send `/代祷` prayer cards, record who has prayed, and keep channel prayer items together.
-- Recall your own messages within 2 minutes.
-- Refresh stale mobile clients automatically when the server version is newer.
-- Pin notices or messages for a channel.
-- Manage users, channels, avatars, themes, files, and notification settings from the app.
-- Check GitHub for newer releases and run an in-app server update with progress details.
-- Import or export chat data from the admin tools.
-
-## Manual Setup
-
-Requirements:
-
-- Node.js 22 or newer
-- MySQL-compatible database
-- `ffmpeg` for compact voice message transcoding
-
-Install dependencies:
-
-```bash
-npm install
-```
-
-Copy the example environment file:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env`, then prepare the database:
-
-```bash
-npm run prisma:generate
-npm run prisma:push
-```
-
-Start development mode:
-
-```bash
-npm run dev
-```
-
-Build and run production mode:
-
-```bash
-npm run build
-npm start
-```
-
-## Configuration
-
-Important environment variables:
-
-- `DATABASE_URL`: MySQL connection string.
-- `JWT_SECRET`: secret used to sign login sessions.
-- `DEFAULT_ADMIN_PASSWORD`: password used for the first `admin` account when the database is empty.
-- `PORT`: server port. Defaults to `3003`.
-- `STORAGE_ROOT`: directory for uploads, avatars, and backgrounds.
-- `CORS_ORIGINS`: comma-separated list of public origins allowed to call the app.
-- `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`: optional web push settings.
-- `ENGINE_API_TOKEN`: optional token for the virtual character engine API.
-- `APP_RELEASE_DEVELOPER`: optional display name shown on the in-app version page.
-- `UPDATE_REPO_URL`, `UPDATE_BRANCH`, `UPDATE_PM2_APP`: optional settings for the admin GitHub update tool.
-
-## Data And Privacy
-
-Runtime data is stored outside the source code in `storage/` and in the configured database. Do not commit `.env`, `storage/`, database dumps, uploaded files, or deployment notes.
-
-## License
-
-Team Chat is released under the GNU General Public License v3.0. See [LICENSE](LICENSE).
-
----
-
-# 中文说明
-
-语言：[English](#team-chat) | **中文**
-
-Team Chat 是一个适合小团队使用的轻量聊天室。它支持手机和电脑访问，包含语音消息、文件分享、图片预览、频道、私聊、@ 提醒、代祷卡片、置顶公告、浏览器通知、主题、版本刷新和管理工具。
-
-## VPS 一键部署
-
-建议使用全新的 Ubuntu 或 Debian VPS。如果你想启用 HTTPS，请先把域名解析到这台 VPS。
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ttmanthatman/tm3/main/scripts/deploy-vps.sh -o deploy-vps.sh
-sudo env DOMAIN=chat.example.com EMAIL=you@example.com bash deploy-vps.sh
-```
-
-把下面两项替换成你自己的信息：
-
-- `chat.example.com`：你的域名。
-- `you@example.com`：用于申请 HTTPS 证书的邮箱。
-
-安装完成后，脚本会显示访问地址和初始管理员密码。请立刻保存这个密码。
-
-如果你还没有域名，也可以先用 HTTP 安装：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/ttmanthatman/tm3/main/scripts/deploy-vps.sh -o deploy-vps.sh
-sudo bash deploy-vps.sh
-```
-
-脚本会自动完成：
-
-- 安装 Node.js 22、MySQL、Nginx、PM2、ffmpeg 和编译工具；
-- 创建 MySQL 数据库和应用账号；
-- 生成应用密钥和初始管理员密码；
-- 构建 Team Chat；
-- 用 PM2 启动服务；
-- 配置 Nginx 反向代理；
-- 在提供 `DOMAIN` 和 `EMAIL` 时申请 Let's Encrypt HTTPS 证书；
-- 写入更新器配置，之后管理员可以在应用内检查 GitHub 新版本。
-
-常用服务器命令：
-
-```bash
-pm2 status team-chat
-pm2 logs team-chat
-pm2 restart team-chat --update-env
-```
-
-## 主要功能
-
-- 在公开频道或私密频道聊天。
-- 发送文字、图片、文件和语音消息。
-- 语音发送后立即显示上传进度。
-- 输入 `@` 时补全成员。
-- 使用斜杠命令发送消息特效。
-- 发送 `/代祷` 代祷卡片，记录已祷告成员，并集中查看频道代祷事项。
-- 自己发送的消息 2 分钟内可以撤回。
-- 手机或旧浏览器版本落后于服务器时会自动刷新或提示刷新。
-- 为频道置顶公告或消息。
-- 在应用内管理用户、频道、头像、主题、文件和通知设置。
-- 管理员可以检测 GitHub 新版本，并在应用内带进度执行服务器更新。
-- 在管理工具中导入或导出聊天数据。
-
-## 手动安装
+## 手动开发与部署
 
 环境要求：
 
-- Node.js 22 或更新版本
-- MySQL 兼容数据库
-- 用于语音压缩转码的 `ffmpeg`
+- Node.js 22 或更新版本。
+- MySQL 兼容数据库。
+- `ffmpeg`，用于语音消息压缩转码。
 
 安装依赖：
 
@@ -222,32 +173,44 @@ npm run prisma:push
 npm run dev
 ```
 
-构建并以生产模式运行：
+类型检查：
+
+```bash
+npm run check
+```
+
+构建生产版本：
 
 ```bash
 npm run build
+```
+
+启动生产服务：
+
+```bash
 npm start
 ```
 
-## 配置说明
-
-常用环境变量：
+## 重要环境变量
 
 - `DATABASE_URL`：MySQL 连接字符串。
 - `JWT_SECRET`：登录会话签名密钥。
-- `DEFAULT_ADMIN_PASSWORD`：数据库为空时创建第一个 `admin` 用户所用的密码。
+- `DEFAULT_ADMIN_PASSWORD`：数据库为空时创建初始 `admin` 账号使用的密码。
 - `PORT`：服务端口，默认 `3003`。
-- `STORAGE_ROOT`：上传文件、头像和背景图的存储目录。
-- `CORS_ORIGINS`：允许访问应用 API 的公开域名，多个值用英文逗号分隔。
-- `VAPID_SUBJECT`、`VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY`：可选的浏览器推送配置。
-- `ENGINE_API_TOKEN`：可选的虚拟角色引擎 API token。
-- `APP_RELEASE_DEVELOPER`：可选，显示在应用版本页的开发者名称。
-- `UPDATE_REPO_URL`、`UPDATE_BRANCH`、`UPDATE_PM2_APP`：可选，管理员 GitHub 更新工具使用的仓库、分支和 PM2 应用名。
+- `STORAGE_ROOT`：上传文件、头像和背景图存储目录。
+- `CORS_ORIGINS`：允许调用应用的公开来源，多个来源用逗号分隔。
+- `VAPID_SUBJECT`、`VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY`：浏览器推送通知配置。
+- `ENGINE_API_TOKEN`：虚拟角色引擎接口令牌。
+- `APP_RELEASE_DEVELOPER`：应用内版本页显示的开发者名。
+- `UPDATE_REPO_URL`、`UPDATE_BRANCH`、`UPDATE_PM2_APP`：管理员自更新功能使用的 GitHub 仓库、分支和 PM2 应用名。
 
-## 数据与隐私
+## 安全与发布注意事项
 
-运行时数据保存在 `storage/` 和配置的数据库中。不要提交 `.env`、`storage/`、数据库备份、上传文件或部署笔记。
+- 不要提交 `.env`、`storage/`、数据库文件、上传附件、服务器地址或私有部署说明。
+- 公开发布前确认 `package.json` 保持 `GPL-3.0-only`。
+- 部署前先本地运行 `npm run check` 和 `npm run build`。
+- 如果启用自更新，确保运行用户只拥有当前应用所需权限。
 
-## 许可证
+## License
 
-Team Chat 使用 GNU General Public License v3.0 发布，详见 [LICENSE](LICENSE)。
+Team Chat is released under the GNU General Public License v3.0 only. See [LICENSE](LICENSE).
