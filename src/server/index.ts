@@ -88,8 +88,32 @@ function socketCorsOrigin(origin: string | undefined, callback: (error: Error | 
 }
 
 const prisma = new PrismaClient();
+
+function redactRequestUrl(rawUrl?: string) {
+  if (!rawUrl || !rawUrl.includes("token=")) return rawUrl || "";
+  try {
+    const url = new URL(rawUrl, "http://local");
+    if (url.searchParams.has("token")) url.searchParams.set("token", "[redacted]");
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return rawUrl.replace(/([?&]token=)[^&]+/g, "$1[redacted]");
+  }
+}
+
 const app = Fastify({
-  logger: true,
+  logger: {
+    serializers: {
+      req(request) {
+        return {
+          method: request.method,
+          url: redactRequestUrl(request.url),
+          host: request.headers.host,
+          remoteAddress: request.socket.remoteAddress,
+          remotePort: request.socket.remotePort
+        };
+      }
+    }
+  },
   bodyLimit: 8 * 1024 * 1024,
   trustProxy: true
 });
