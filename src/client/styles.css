@@ -288,6 +288,34 @@ button {
   grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 
+.version-refresh-banner {
+  position: fixed;
+  top: max(10px, calc(var(--safe-top) + 8px));
+  left: 50%;
+  z-index: 45;
+  width: min(520px, calc(100vw - 24px));
+  min-height: 42px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--panel) 94%, #ffffff 6%);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+}
+
+.version-refresh-banner span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .channel-pane,
 .member-pane {
   min-width: 0;
@@ -1593,6 +1621,11 @@ button {
   justify-items: center;
 }
 
+.compact-confirm small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .compact-confirm span {
   font-size: 14px;
   font-weight: 600;
@@ -2153,11 +2186,60 @@ button {
 
 .release-current,
 .release-entry,
+.release-update-card,
 .channel-admin-row {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px;
   background: var(--panel);
+}
+
+.release-update-card {
+  display: grid;
+  gap: 10px;
+}
+
+.release-update-card > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.release-update-card small {
+  color: var(--muted);
+}
+
+.release-update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.update-progress {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.update-progress span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #f59e0b);
+  transition: width 0.25s ease;
+}
+
+.update-log {
+  max-height: 156px;
+  overflow: auto;
+  border-radius: 6px;
+  padding: 8px 8px 8px 22px !important;
+  background: #111827;
+  color: #e5e7eb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }
 
 .release-history {

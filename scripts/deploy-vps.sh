@@ -6,6 +6,9 @@ APP_DIR="${APP_DIR:-/opt/team-chat}"
 REPO_URL="${REPO_URL:-https://github.com/ttmanthatman/tm3.git}"
 BRANCH="${BRANCH:-main}"
 PORT="${PORT:-3003}"
+APP_RELEASE_DEVELOPER="${APP_RELEASE_DEVELOPER:-Team Chat}"
+UPDATE_REPO_URL="${UPDATE_REPO_URL:-$REPO_URL}"
+UPDATE_BRANCH="${UPDATE_BRANCH:-$BRANCH}"
 DOMAIN="${DOMAIN:-}"
 EMAIL="${EMAIL:-}"
 ENABLE_SSL="${ENABLE_SSL:-auto}"
@@ -158,6 +161,10 @@ CORS_ORIGINS="$(public_origins)"
 VAPID_SUBJECT="mailto:${EMAIL:-admin@example.com}"
 VAPID_PUBLIC_KEY=""
 VAPID_PRIVATE_KEY=""
+APP_RELEASE_DEVELOPER="${APP_RELEASE_DEVELOPER}"
+UPDATE_REPO_URL="${UPDATE_REPO_URL}"
+UPDATE_BRANCH="${UPDATE_BRANCH}"
+UPDATE_PM2_APP="${APP_NAME}"
 EOF_ENV
   chmod 600 "$APP_DIR/.env"
 }
@@ -165,6 +172,7 @@ EOF_ENV
 build_app() {
   info "Installing app dependencies and building"
   cd "$APP_DIR"
+  chmod +x scripts/self-update.sh
   npm ci
   npm run prisma:generate
   npm run prisma:push

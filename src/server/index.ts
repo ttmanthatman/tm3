@@ -17,6 +17,7 @@ import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
 import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -29,6 +30,12 @@ const PORT = Number(process.env.PORT || 3003);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
+const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
+const UPDATE_REPO_URL = process.env.UPDATE_REPO_URL || process.env.REPO_URL || "https://github.com/ttmanthatman/tm3.git";
+const UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
+const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
+const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
+const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
 const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -98,6 +105,70 @@ function redactRequestUrl(rawUrl?: string) {
   } catch {
     return rawUrl.replace(/([?&]token=)[^&]+/g, "$1[redacted]");
   }
+}
+
+function compareVersions(a: string, b: string) {
+  const left = a.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+  const right = b.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
+    const diff = (left[i] || 0) - (right[i] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+function parseGitHubRepo(url: string) {
+  const trimmed = url.trim().replace(/\.git$/, "");
+  const ssh = trimmed.match(/github\.com[:/]([^/]+)\/([^/]+)$/);
+  if (ssh) return { owner: ssh[1], repo: ssh[2] };
+  try {
+    const parsed = new URL(trimmed);
+    if (!/github\.com$/i.test(parsed.hostname)) return null;
+    const [owner, repo] = parsed.pathname.replace(/^\/+/, "").split("/");
+    return owner && repo ? { owner, repo } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function latestGitHubPackage() {
+  const repo = parseGitHubRepo(UPDATE_REPO_URL);
+  if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
+  const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${encodeURIComponent(UPDATE_BRANCH)}/package.json`;
+  const response = await fetch(url, { headers: { "user-agent": "team-chat-updater" } });
+  if (!response.ok) throw new Error(`无法读取 GitHub 版本：HTTP ${response.status}`);
+  const pkg = (await response.json()) as { version?: string };
+  return {
+    owner: repo.owner,
+    repo: repo.repo,
+    branch: UPDATE_BRANCH,
+    version: String(pkg.version || ""),
+    url: `https://github.com/${repo.owner}/${repo.repo}`
+  };
+}
+
+function readUpdateStatus() {
+  let status: { state: string; progress: number; detail: string; updatedAt?: string } = { state: "idle", progress: 0, detail: "尚未开始更新" };
+  if (fs.existsSync(UPDATE_STATUS_PATH)) {
+    try {
+      status = { ...status, ...JSON.parse(fs.readFileSync(UPDATE_STATUS_PATH, "utf8")) };
+    } catch {
+      status = { state: "unknown", progress: 0, detail: "更新状态文件无法读取" };
+    }
+  }
+  const log = fs.existsSync(UPDATE_LOG_PATH)
+    ? fs
+        .readFileSync(UPDATE_LOG_PATH, "utf8")
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .slice(-120)
+    : [];
+  return { ...status, log };
+}
+
+function writeUpdateStatus(state: string, progress: number, detail: string) {
+  fs.mkdirSync(STORAGE_ROOT, { recursive: true });
+  fs.writeFileSync(UPDATE_STATUS_PATH, `${JSON.stringify({ state, progress, detail, updatedAt: new Date().toISOString() }, null, 2)}\n`);
 }
 
 const app = Fastify({
@@ -865,6 +936,57 @@ async function createMessageFromActor(input: {
 
 app.get("/api/health", async () => ({ ok: true, name: "team-chat", time: new Date().toISOString() }));
 
+app.get("/api/version", async () => ({
+  version: APP_VERSION,
+  date: RELEASE_DATE,
+  developer: RELEASE_DISPLAY_DEVELOPER,
+  notes: RELEASE_NOTES,
+  update: {
+    repoUrl: UPDATE_REPO_URL,
+    branch: UPDATE_BRANCH
+  }
+}));
+
+app.get("/api/admin/update/check", { preHandler: requireAdmin }, async () => {
+  const latest = await latestGitHubPackage();
+  return {
+    current: APP_VERSION,
+    latest: latest.version,
+    updateAvailable: compareVersions(latest.version, APP_VERSION) > 0,
+    repo: `${latest.owner}/${latest.repo}`,
+    branch: latest.branch,
+    url: latest.url,
+    status: readUpdateStatus()
+  };
+});
+
+app.get("/api/admin/update/status", { preHandler: requireAdmin }, async () => readUpdateStatus());
+
+app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request, reply) => {
+  const status = readUpdateStatus();
+  if (status.state === "running") return reply.code(409).send({ success: false, message: "更新已经在进行中", status });
+  const scriptPath = path.join(ROOT, "scripts", "self-update.sh");
+  if (!fs.existsSync(scriptPath)) return reply.code(500).send({ success: false, message: "缺少更新脚本" });
+  fs.writeFileSync(UPDATE_LOG_PATH, "");
+  writeUpdateStatus("running", 1, "准备更新");
+  const child = spawn("bash", [scriptPath], {
+    cwd: ROOT,
+    detached: true,
+    stdio: "ignore",
+    env: {
+      ...process.env,
+      APP_DIR: ROOT,
+      UPDATE_REPO_URL,
+      UPDATE_BRANCH,
+      UPDATE_PM2_APP,
+      UPDATE_STATUS_PATH,
+      UPDATE_LOG_PATH
+    }
+  });
+  child.unref();
+  return { success: true, status: readUpdateStatus() };
+});
+
 app.get("/avatars/:file", async (request, reply) => {
   const file = path.basename((request.params as { file: string }).file);
   const filePath = path.join(AVATAR_DIR, file);
@@ -1447,6 +1569,38 @@ app.delete("/api/messages/:messageId/prayer", { preHandler: requireAuth }, async
   if (message.sender.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以撤回此代祷" });
   const deleted = await deleteMessages([{ id: message.id, channelId: message.channelId, filePath: message.filePath }]);
   return { success: true, deleted };
+});
+
+app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || message.type === "system") return reply.code(404).send({ success: false, message: "消息不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此消息" });
+  if (message.sender.accountId !== auth.accountId) return reply.code(403).send({ success: false, message: "只能撤回自己发送的消息" });
+  if (Date.now() - message.createdAt.getTime() > 2 * 60 * 1000) return reply.code(409).send({ success: false, message: "只能撤回 2 分钟内的消息" });
+  await prisma.$transaction([
+    prisma.pinnedItem.updateMany({ where: { messageId }, data: { active: false, messageId: null } }),
+    prisma.message.updateMany({ where: { replyToId: messageId }, data: { replyToId: null } }),
+    prisma.voiceListen.deleteMany({ where: { messageId } }),
+    prisma.prayerAction.deleteMany({ where: { messageId } }),
+    prisma.message.update({
+      where: { id: messageId },
+      data: {
+        type: "system",
+        content: `${message.sender.displayName} 撤回了一条消息`,
+        payload: { recalled: true },
+        fileName: null,
+        filePath: null,
+        fileSize: null,
+        chainRootId: null,
+        chainVersion: null
+      }
+    })
+  ]);
+  if (message.filePath) safeUnlink("upload", message.filePath);
+  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
+  return { success: true };
 });
 
 app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, reply) => {

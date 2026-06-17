@@ -138,6 +138,31 @@ export interface DeviceSessionDTO {
   current: boolean;
 }
 
+export interface VersionDTO {
+  version: string;
+  date: string;
+  developer: string;
+  notes: readonly string[];
+}
+
+export interface UpdateStatusDTO {
+  state: "idle" | "running" | "complete" | "failed" | "unknown" | string;
+  progress: number;
+  detail: string;
+  updatedAt?: string;
+  log: string[];
+}
+
+export interface UpdateCheckDTO {
+  current: string;
+  latest: string;
+  updateAvailable: boolean;
+  repo: string;
+  branch: string;
+  url: string;
+  status: UpdateStatusDTO;
+}
+
 export interface ThemePaletteDTO {
   accent: string;
   accentDark: string;

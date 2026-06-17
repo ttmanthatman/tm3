@@ -2,7 +2,7 @@
 
 Language: **English** | [中文](#中文说明)
 
-Team Chat is a lightweight web chat app for small groups. It works well on phones and desktops, and includes voice messages, file sharing, image previews, channels, direct chats, mentions, pinned notices, push notifications, themes, and admin tools.
+Team Chat is a lightweight web chat app for small groups. It works well on phones and desktops, and includes voice messages, file sharing, image previews, channels, direct chats, mentions, prayer cards, pinned notices, push notifications, themes, version-aware refresh, and admin tools.
 
 ## One-Click VPS Install
 
@@ -35,7 +35,8 @@ The installer will:
 - build Team Chat;
 - start it with PM2;
 - configure Nginx as a reverse proxy;
-- request a Let's Encrypt certificate when `DOMAIN` and `EMAIL` are provided.
+- request a Let's Encrypt certificate when `DOMAIN` and `EMAIL` are provided;
+- write updater settings so admins can later check GitHub for a newer version from the app.
 
 Useful server commands:
 
@@ -52,8 +53,12 @@ pm2 restart team-chat --update-env
 - See voice upload progress immediately after sending.
 - Mention people with `@` suggestions.
 - Use message effects from slash commands.
+- Send `/代祷` prayer cards, record who has prayed, and keep channel prayer items together.
+- Recall your own messages within 2 minutes.
+- Refresh stale mobile clients automatically when the server version is newer.
 - Pin notices or messages for a channel.
 - Manage users, channels, avatars, themes, files, and notification settings from the app.
+- Check GitHub for newer releases and run an in-app server update with progress details.
 - Import or export chat data from the admin tools.
 
 ## Manual Setup
@@ -108,6 +113,8 @@ Important environment variables:
 - `CORS_ORIGINS`: comma-separated list of public origins allowed to call the app.
 - `VAPID_SUBJECT`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`: optional web push settings.
 - `ENGINE_API_TOKEN`: optional token for the virtual character engine API.
+- `APP_RELEASE_DEVELOPER`: optional display name shown on the in-app version page.
+- `UPDATE_REPO_URL`, `UPDATE_BRANCH`, `UPDATE_PM2_APP`: optional settings for the admin GitHub update tool.
 
 ## Data And Privacy
 
@@ -123,7 +130,7 @@ Team Chat is released under the GNU General Public License v3.0. See [LICENSE](L
 
 语言：[English](#team-chat) | **中文**
 
-Team Chat 是一个适合小团队使用的轻量聊天室。它支持手机和电脑访问，包含语音消息、文件分享、图片预览、频道、私聊、@ 提醒、置顶公告、浏览器通知、主题和管理工具。
+Team Chat 是一个适合小团队使用的轻量聊天室。它支持手机和电脑访问，包含语音消息、文件分享、图片预览、频道、私聊、@ 提醒、代祷卡片、置顶公告、浏览器通知、主题、版本刷新和管理工具。
 
 ## VPS 一键部署
 
@@ -156,7 +163,8 @@ sudo bash deploy-vps.sh
 - 构建 Team Chat；
 - 用 PM2 启动服务；
 - 配置 Nginx 反向代理；
-- 在提供 `DOMAIN` 和 `EMAIL` 时申请 Let's Encrypt HTTPS 证书。
+- 在提供 `DOMAIN` 和 `EMAIL` 时申请 Let's Encrypt HTTPS 证书；
+- 写入更新器配置，之后管理员可以在应用内检查 GitHub 新版本。
 
 常用服务器命令：
 
@@ -173,8 +181,12 @@ pm2 restart team-chat --update-env
 - 语音发送后立即显示上传进度。
 - 输入 `@` 时补全成员。
 - 使用斜杠命令发送消息特效。
+- 发送 `/代祷` 代祷卡片，记录已祷告成员，并集中查看频道代祷事项。
+- 自己发送的消息 2 分钟内可以撤回。
+- 手机或旧浏览器版本落后于服务器时会自动刷新或提示刷新。
 - 为频道置顶公告或消息。
 - 在应用内管理用户、频道、头像、主题、文件和通知设置。
+- 管理员可以检测 GitHub 新版本，并在应用内带进度执行服务器更新。
 - 在管理工具中导入或导出聊天数据。
 
 ## 手动安装
@@ -229,6 +241,8 @@ npm start
 - `CORS_ORIGINS`：允许访问应用 API 的公开域名，多个值用英文逗号分隔。
 - `VAPID_SUBJECT`、`VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY`：可选的浏览器推送配置。
 - `ENGINE_API_TOKEN`：可选的虚拟角色引擎 API token。
+- `APP_RELEASE_DEVELOPER`：可选，显示在应用版本页的开发者名称。
+- `UPDATE_REPO_URL`、`UPDATE_BRANCH`、`UPDATE_PM2_APP`：可选，管理员 GitHub 更新工具使用的仓库、分支和 PM2 应用名。
 
 ## 数据与隐私
 

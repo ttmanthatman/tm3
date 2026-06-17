@@ -60,6 +60,9 @@ import type {
   MessageEffectPayload,
   PrayerPayload,
   PrayerStatus,
+  UpdateCheckDTO,
+  UpdateStatusDTO,
+  VersionDTO,
   ThemeDTO,
   ThemePaletteDTO
 } from "@shared/types";
@@ -148,11 +151,13 @@ const showChainModal = ref(false);
 const chainTopic = ref("");
 const pendingChain = ref<MessageDTO | null>(null);
 const pendingDownload = ref<MessageDTO | null>(null);
+const pendingRecall = ref<MessageDTO | null>(null);
 const previewMessage = ref<MessageDTO | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptPosition = ref({ x: 0, y: 0 });
 const downloadPromptPosition = ref({ x: 0, y: 0 });
+const recallPromptPosition = ref({ x: 0, y: 0 });
 const memberPromptPosition = ref({ x: 0, y: 0 });
 type MemberActionTarget = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
 const selectedMember = ref<MemberActionTarget | null>(null);
@@ -188,7 +193,15 @@ const voiceProgress = ref<Record<number, number>>({});
 const voiceDurations = ref<Record<number, number>>({});
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
+const serverVersion = ref<VersionDTO | null>(null);
+const staleVersionVisible = ref(false);
+const staleVersionMessage = ref("");
+const updateCheck = ref<UpdateCheckDTO | null>(null);
+const updateStatus = ref<UpdateStatusDTO | null>(null);
+const updateBusy = ref(false);
 let recordingTimer: number | undefined;
+let versionCheckTimer: number | undefined;
+let updateStatusTimer: number | undefined;
 const voicePlayers = new Map<number, HTMLAudioElement>();
 const longPressMs = 520;
 let longPressTimer: number | undefined;
@@ -306,6 +319,8 @@ type VoicePayload = {
 onMounted(async () => {
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   await store.bootstrap();
+  await checkServerVersion();
+  versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
   scrollBottom(false);
 });
@@ -317,6 +332,8 @@ watch(
     selectedMember.value = null;
     pendingCloseChannel.value = null;
     pendingChain.value = null;
+    pendingDownload.value = null;
+    pendingRecall.value = null;
     composerPanel.value = null;
     nextTick(() => {
       scrollBottom(false);
@@ -382,11 +399,14 @@ watch(
 
 watch(adminTab, (tab) => {
   if (tab === "data" && showAdmin.value) loadAdminData();
+  if (tab === "release" && showAdmin.value) void checkForUpdates();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
+  if (versionCheckTimer) window.clearInterval(versionCheckTimer);
+  if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   stopAllVoicePlayback();
   resetRecording();
 });
@@ -448,6 +468,7 @@ const pinnedText = computed(() => {
   return message.content || "置顶消息";
 });
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
+const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
 const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
 const notificationSupported = computed(() => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
@@ -514,6 +535,18 @@ const downloadPromptStyle = computed(() => ({
   left: `${downloadPromptPosition.value.x}px`,
   top: `${downloadPromptPosition.value.y}px`
 }));
+const recallPromptStyle = computed(() => ({
+  left: `${recallPromptPosition.value.x}px`,
+  top: `${recallPromptPosition.value.y}px`
+}));
+const updateProgress = computed(() => Math.min(100, Math.max(0, Number(updateStatus.value?.progress || 0))));
+const updateStateText = computed(() => {
+  const state = updateStatus.value?.state || "idle";
+  if (state === "running") return "更新中";
+  if (state === "complete") return "已完成";
+  if (state === "failed") return "更新失败";
+  return "未开始";
+});
 let nextPendingMessageId = -1;
 
 function pendingUploadFor(message: MessageDTO) {
@@ -721,6 +754,7 @@ async function openSettings(tab: "appearance" | "devices" | "notifications" | "r
   showSettings.value = true;
   if (tab === "devices") await loadDevices();
   if (tab === "notifications") await loadNotificationSettings();
+  if (tab === "release") await checkServerVersion();
 }
 
 async function loadDevices() {
@@ -849,6 +883,89 @@ function deviceIcon(kind: string) {
   if (kind === "mobile") return Smartphone;
   if (kind === "tablet") return Tablet;
   return Monitor;
+}
+
+function compareVersions(a: string, b: string) {
+  const left = a.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+  const right = b.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (left[index] || 0) - (right[index] || 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+async function clearAppCaches() {
+  if ("serviceWorker" in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((registration) => registration.update().catch(() => undefined)));
+  }
+  if ("caches" in window) {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((key) => caches.delete(key)));
+  }
+}
+
+async function reloadToLatestVersion() {
+  staleVersionMessage.value = "正在刷新到最新版本...";
+  await clearAppCaches().catch(() => undefined);
+  window.location.reload();
+}
+
+async function checkServerVersion() {
+  const version = await api<VersionDTO>("/api/version").catch(() => null);
+  if (!version) return;
+  serverVersion.value = version;
+  if (compareVersions(version.version, APP_VERSION) <= 0) return;
+  staleVersionMessage.value = `服务器已更新到 v${version.version}，当前是 v${APP_VERSION}`;
+  staleVersionVisible.value = true;
+  const hasDraft = !!input.value.trim() || !!replyTo.value || Object.keys(pendingUploads.value).length > 0;
+  if (!hasDraft) window.setTimeout(() => void reloadToLatestVersion(), 1200);
+}
+
+async function loadUpdateStatus() {
+  const status = await api<UpdateStatusDTO>("/api/admin/update/status").catch(() => null);
+  if (!status) return;
+  updateStatus.value = status;
+  if (status.state !== "running" && updateStatusTimer) {
+    window.clearInterval(updateStatusTimer);
+    updateStatusTimer = undefined;
+  }
+}
+
+function startUpdatePolling() {
+  if (updateStatusTimer) window.clearInterval(updateStatusTimer);
+  updateStatusTimer = window.setInterval(() => void loadUpdateStatus(), 2000);
+}
+
+async function checkForUpdates() {
+  if (!isAdmin.value) return;
+  updateBusy.value = true;
+  try {
+    const result = await api<UpdateCheckDTO>("/api/admin/update/check");
+    updateCheck.value = result;
+    updateStatus.value = result.status;
+    if (result.status.state === "running") startUpdatePolling();
+  } catch (error) {
+    adminMsg.value = error instanceof Error ? error.message : "检查更新失败";
+  } finally {
+    updateBusy.value = false;
+  }
+}
+
+async function startServerUpdate() {
+  if (!isAdmin.value || updateBusy.value) return;
+  updateBusy.value = true;
+  adminMsg.value = "已开始更新，服务器会在完成后自动重启。";
+  try {
+    await api("/api/admin/update/start", { method: "POST", body: JSON.stringify({}) });
+  } catch {
+    // Restart may interrupt the request; the status poll will pick up progress when the server returns.
+  } finally {
+    await loadUpdateStatus();
+    startUpdatePolling();
+    updateBusy.value = false;
+  }
 }
 
 function parseComposerText(value: string): { content: string; effect?: MessageEffect; type?: "text" | "prayer" } {
@@ -1163,6 +1280,12 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     return;
   }
   acknowledgeMentionAlert(message);
+  if (canRecallMessage(message)) {
+    openRecallPrompt(message, event);
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (toggleMessageEffect(message)) {
     event.preventDefault();
     event.stopPropagation();
@@ -1180,6 +1303,10 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
 function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) return;
   if (event) event.stopPropagation();
+  if (canRecallMessage(message)) {
+    openRecallPrompt(message, event);
+    return;
+  }
   if (isMobileChatInteraction()) {
     if (message.type !== "chain") pickReply(message);
     if (message.type === "image") openPreviewMessage(message);
@@ -1289,6 +1416,7 @@ function requestDownload(message: MessageDTO, event?: MouseEvent) {
   downloadPromptPosition.value = positionPromptNearEvent(event, { width: 184, height: 82 });
   pendingDownload.value = message;
   pendingChain.value = null;
+  pendingRecall.value = null;
   selectedMember.value = null;
 }
 
@@ -1380,6 +1508,7 @@ function openChainModal() {
 function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
   chainPromptPosition.value = positionPromptNearEvent(event, { width: 164, height: 82 });
   pendingChain.value = message;
+  pendingRecall.value = null;
   selectedMember.value = null;
 }
 
@@ -1404,6 +1533,9 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
   }
   if (pendingDownload.value && !target.closest("[data-download-popover]") && !target.closest("[data-file-card]")) {
     pendingDownload.value = null;
+  }
+  if (pendingRecall.value && !target.closest("[data-recall-popover]") && !target.closest(".bubble")) {
+    pendingRecall.value = null;
   }
   if (selectedMember.value && !target.closest("[data-member-popover]") && !target.closest(".member-row")) {
     selectedMember.value = null;
@@ -1916,6 +2048,39 @@ function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
 
+function recallRemainingMs(message: MessageDTO) {
+  return 120_000 - (Date.now() - new Date(message.createdAt).getTime());
+}
+
+function canRecallMessage(message: MessageDTO) {
+  return message.id > 0 && message.type !== "system" && isMine(message) && recallRemainingMs(message) > 0;
+}
+
+function recallRemainingText(message: MessageDTO) {
+  const seconds = Math.max(0, Math.ceil(recallRemainingMs(message) / 1000));
+  return `${seconds} 秒内可撤回`;
+}
+
+function openRecallPrompt(message: MessageDTO, event?: MouseEvent) {
+  recallPromptPosition.value = positionPromptNearEvent(event, { width: 210, height: 104 });
+  pendingRecall.value = message;
+  pendingChain.value = null;
+  pendingDownload.value = null;
+  selectedMember.value = null;
+}
+
+async function recallPendingMessage() {
+  const message = pendingRecall.value;
+  if (!message) return;
+  try {
+    await api(`/api/messages/${message.id}/recall`, { method: "POST", body: JSON.stringify({}) });
+    pendingRecall.value = null;
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "撤回失败");
+  }
+}
+
 function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
   return channel?.icon ? wallpaperUrl(channel.icon) : "/images/icon-192.svg";
 }
@@ -1940,6 +2105,7 @@ async function loadAdmin() {
   virtuals.value = v.characters;
   noticeText.value = store.pinned?.kind === "notice" ? store.pinned.content || "" : "";
   if (adminTab.value === "data") await loadAdminData();
+  if (adminTab.value === "release") await checkForUpdates();
 }
 
 async function loadAdminData() {
@@ -2405,6 +2571,11 @@ async function toggleVirtual(character: any) {
   </main>
 
   <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed }" :style="appearanceStyle">
+    <section v-if="staleVersionVisible" class="version-refresh-banner">
+      <span>{{ staleVersionMessage }}</span>
+      <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
+    </section>
+
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
@@ -2822,6 +2993,19 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
+    <section v-if="pendingRecall" class="tap-popover recall-popover" :style="recallPromptStyle" data-recall-popover>
+      <div class="tap-popover-card">
+        <div class="compact-confirm">
+          <span>撤回这条消息？</span>
+          <small>{{ recallRemainingText(pendingRecall) }}</small>
+          <div class="compact-actions">
+            <button class="mini-btn secondary" @click="pendingRecall = null">取消</button>
+            <button class="mini-btn danger-soft" @click="recallPendingMessage">撤回</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section v-if="selectedMember" class="tap-popover" :style="memberPromptStyle" data-member-popover>
       <div class="tap-popover-card member-action-popover">
         <div class="member-action-body">
@@ -2956,7 +3140,14 @@ async function toggleVirtual(character: any) {
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>
-              <small>{{ RELEASE_DATE }} · 开发者：{{ RELEASE_DEVELOPER }}</small>
+              <small>{{ RELEASE_DATE }} · 开发者：{{ releaseDeveloper }}</small>
+            </div>
+            <div v-if="serverVersion && compareVersions(serverVersion.version, APP_VERSION) > 0" class="release-update-card">
+              <div>
+                <b>发现服务器新版本 v{{ serverVersion.version }}</b>
+                <small>当前手机里的版本是 v{{ APP_VERSION }}</small>
+              </div>
+              <button class="mini-btn" @click="reloadToLatestVersion">刷新到最新版</button>
             </div>
             <div class="release-current">
               <b>本次更新</b>
@@ -3239,7 +3430,27 @@ async function toggleVirtual(character: any) {
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>
-              <small>{{ RELEASE_DATE }} · 开发者：{{ RELEASE_DEVELOPER }}</small>
+              <small>{{ RELEASE_DATE }} · 开发者：{{ releaseDeveloper }}</small>
+            </div>
+            <div class="release-update-card">
+              <div>
+                <b>GitHub 更新</b>
+                <small>
+                  当前 v{{ updateCheck?.current || APP_VERSION }}
+                  <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}</template>
+                </small>
+              </div>
+              <div class="release-update-actions">
+                <button class="mini-btn secondary" :disabled="updateBusy" @click="checkForUpdates"><RotateCcw :size="15" />检查</button>
+                <button class="mini-btn" :disabled="updateBusy || !updateCheck?.updateAvailable" @click="startServerUpdate">更新</button>
+              </div>
+              <div class="update-progress">
+                <span :style="{ width: `${updateProgress}%` }"></span>
+              </div>
+              <small>{{ updateStateText }} · {{ updateStatus?.detail || "等待检查" }}</small>
+              <ol v-if="updateStatus?.log.length" class="update-log">
+                <li v-for="line in updateStatus.log.slice(-8)" :key="line">{{ line }}</li>
+              </ol>
             </div>
             <div class="release-current">
               <b>本次更新</b>
