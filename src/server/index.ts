@@ -1,0 +1,2514 @@
+import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import bcrypt from "bcryptjs";
+import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
+import rateLimit from "@fastify/rate-limit";
+import fastifyStatic from "@fastify/static";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import jwt from "jsonwebtoken";
+import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type DeviceKind, type Message, type MessageType } from "@prisma/client";
+import sanitizeHtml from "sanitize-html";
+import { Server as SocketIOServer, type Socket } from "socket.io";
+import webPush from "web-push";
+import { z } from "zod";
+import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, MessageDTO, MessageEffect, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = process.cwd();
+const DIST_CLIENT = path.join(ROOT, "dist/client");
+const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
+const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
+const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
+const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
+const PORT = Number(process.env.PORT || 3003);
+const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
+const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
+const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const THEMES = new Set(["wechat", "jade", "paper", "night"]);
+const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly"]);
+const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
+const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
+const DEFAULT_LOGIN_TITLE = "Team Chat";
+const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
+const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
+  accent: "#1aad19",
+  accentDark: "#129611",
+  buttonText: "#ffffff",
+  bg: "#ededed",
+  chatBg: "#ededed",
+  panel: "#f7f7f7",
+  line: "#d9d9d9",
+  text: "#111111",
+  muted: "#7b7b7b",
+  bubbleOther: "#ffffff",
+  bubbleOtherText: "#111111",
+  bubbleMine: "#95ec69",
+  bubbleMineText: "#111111"
+};
+
+for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+const allowedOrigins = new Set(CONFIGURED_CORS_ORIGINS.map((origin) => normalizeOrigin(origin)).filter(Boolean));
+
+function normalizeOrigin(origin: string) {
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return "";
+  }
+}
+
+function isAllowedOrigin(origin?: string) {
+  if (!origin) return true;
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return false;
+  const { hostname } = new URL(normalized);
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]") return true;
+  return allowedOrigins.has(normalized);
+}
+
+function fastifyCorsOrigin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
+  callback(null, isAllowedOrigin(origin));
+}
+
+function socketCorsOrigin(origin: string | undefined, callback: (error: Error | null, allow?: boolean) => void) {
+  callback(null, isAllowedOrigin(origin));
+}
+
+const prisma = new PrismaClient();
+const app = Fastify({
+  logger: true,
+  bodyLimit: 8 * 1024 * 1024,
+  trustProxy: true
+});
+
+app.setErrorHandler((error, request, reply) => {
+  if (error instanceof z.ZodError) {
+    return reply.code(400).send({ success: false, message: "invalid request", issues: error.issues });
+  }
+  const fastifyError = error as Error & { statusCode?: number };
+  request.log.error(fastifyError);
+  const statusCode = fastifyError.statusCode && fastifyError.statusCode >= 400 ? fastifyError.statusCode : 500;
+  return reply.code(statusCode).send({ success: false, message: statusCode === 500 ? "internal server error" : fastifyError.message });
+});
+
+app.addHook("onRequest", async (_request, reply) => {
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Referrer-Policy", "same-origin");
+  reply.header("X-Frame-Options", "SAMEORIGIN");
+});
+
+await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
+await app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
+await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
+
+if (fs.existsSync(DIST_CLIENT)) {
+  await app.register(fastifyStatic, {
+    root: DIST_CLIENT,
+    wildcard: false
+  });
+}
+
+const io = new SocketIOServer(app.server, {
+  cors: { origin: socketCorsOrigin, credentials: true },
+  maxHttpBufferSize: 1e6
+});
+
+type AuthContext = {
+  accountId: number;
+  actorId: number;
+  username: string;
+  isAdmin: boolean;
+  sessionId: string;
+};
+
+type AuthedRequest = FastifyRequest & { auth: AuthContext };
+type AccountWithActor = Account & { actor: Actor | null };
+type VoicePayload = {
+  kind: "voice";
+  durationMs?: number;
+  waveform?: number[];
+  mimeType?: string;
+};
+
+const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null }>();
+const accountSocketIds = new Map<number, Set<string>>();
+let vapidPublicKey = "";
+let pushReady = false;
+
+const pushSubscriptionSchema = z.object({
+  endpoint: z.string().url().max(512),
+  keys: z.object({
+    p256dh: z.string().min(1).max(255),
+    auth: z.string().min(1).max(255)
+  })
+});
+
+function detectDeviceKind(userAgent: string): DeviceKind {
+  const ua = userAgent.toLowerCase();
+  if (/ipad|tablet|playbook|silk/.test(ua)) return "tablet";
+  if (/android/.test(ua) && !/mobile/.test(ua)) return "tablet";
+  if (/iphone|ipod|mobile|android/.test(ua)) return "mobile";
+  return "desktop";
+}
+
+function deviceNameFromRequest(request: FastifyRequest, override?: string) {
+  const name = String(override || "").trim().slice(0, 120);
+  if (name) return name;
+  const ua = String(request.headers["user-agent"] || "");
+  if (/iphone/i.test(ua)) return "iPhone";
+  if (/ipad/i.test(ua)) return "iPad";
+  if (/android/i.test(ua) && /mobile/i.test(ua)) return "Android 手机";
+  if (/android/i.test(ua)) return "Android 平板";
+  if (/macintosh|mac os/i.test(ua)) return "Mac";
+  if (/windows/i.test(ua)) return "Windows";
+  return "未知设备";
+}
+
+function clientIp(request: FastifyRequest) {
+  const forwarded = request.headers["x-forwarded-for"];
+  const first = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return String(first || request.ip || "").split(",")[0].trim().slice(0, 64) || null;
+}
+
+function signToken(account: AccountWithActor, session: Pick<AccountSession, "id">) {
+  if (!account.actor) throw new Error("account actor missing");
+  return jwt.sign(
+    {
+      accountId: account.id,
+      actorId: account.actor.id,
+      username: account.username,
+      isAdmin: account.role === "admin",
+      sessionId: session.id
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+async function verifyJwtToken(token?: string): Promise<AuthContext> {
+  if (!token) throw new Error("missing token");
+  const decoded = jwt.verify(token, JWT_SECRET) as AuthContext & { loginAt?: string };
+  if (!decoded.sessionId) throw new Error("missing session");
+  const [account, session] = await Promise.all([
+    prisma.account.findUnique({ where: { id: decoded.accountId }, include: { actor: true } }),
+    prisma.accountSession.findUnique({ where: { id: decoded.sessionId } })
+  ]);
+  if (!account || !account.actor) throw new Error("account not found");
+  if (!session || session.accountId !== account.id || session.revokedAt || session.expiresAt <= new Date()) throw new Error("session expired");
+  await prisma.accountSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+  return {
+    accountId: account.id,
+    actorId: account.actor.id,
+    username: account.username,
+    isAdmin: account.role === "admin",
+    sessionId: session.id
+  };
+}
+
+async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
+  const header = request.headers.authorization;
+  const queryToken = (request.query as { token?: string } | undefined)?.token;
+  const token = header?.startsWith("Bearer ") ? header.slice(7) : queryToken;
+  try {
+    (request as AuthedRequest).auth = await verifyJwtToken(token);
+  } catch {
+    reply.code(401).send({ success: false, message: "认证失败" });
+  }
+}
+
+async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
+  await requireAuth(request, reply);
+  if (reply.sent) return;
+  if (!(request as AuthedRequest).auth.isAdmin) {
+    reply.code(403).send({ success: false, message: "需要管理员权限" });
+  }
+}
+
+function cleanText(input: unknown) {
+  const raw = String(input || "").trim().slice(0, 10000);
+  return sanitizeHtml(raw, {
+    allowedTags: ["br", "b", "strong", "i", "em", "u", "a"],
+    allowedAttributes: { a: ["href", "target", "rel"] },
+    allowedSchemes: ["http", "https", "mailto"],
+    transformTags: {
+      a: sanitizeHtml.simpleTransform("a", { rel: "noopener noreferrer", target: "_blank" })
+    }
+  });
+}
+
+function cleanMessageEffect(input: unknown): { effect: MessageEffect } | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const effect = (input as { effect?: unknown }).effect;
+  return typeof effect === "string" && MESSAGE_EFFECTS.has(effect as MessageEffect) ? { effect: effect as MessageEffect } : undefined;
+}
+
+function contentTypeForFile(name: string) {
+  const ext = path.extname(name).toLowerCase();
+  const contentTypes: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".mp3": "audio/mpeg",
+    ".mp4": "video/mp4",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".webm": "audio/webm",
+    ".ogg": "audio/ogg",
+    ".aac": "audio/aac",
+    ".mov": "video/quicktime",
+    ".m4v": "video/mp4",
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".zip": "application/zip"
+  };
+  return contentTypes[ext] || "application/octet-stream";
+}
+
+function isAudioFileName(name?: string | null) {
+  return /\.(webm|mp3|m4a|wav|ogg|aac|mp4)$/i.test(name || "");
+}
+
+function cleanChannelIcon(input: unknown) {
+  const icon = path.basename(String(input || "").trim()).slice(0, 16);
+  return /\.(jpe?g|png|gif|webp)$/i.test(icon) ? icon : "";
+}
+
+function cleanHexColor(input: unknown, fallback: string) {
+  const value = String(input || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : fallback;
+}
+
+function cleanThemeId(input: unknown) {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 32)
+    .replace(/^-|-$/g, "");
+}
+
+function cleanThemePalette(input: unknown): ThemePaletteDTO {
+  const palette = (input && typeof input === "object" ? input : {}) as Partial<Record<keyof ThemePaletteDTO, unknown>>;
+  return {
+    accent: cleanHexColor(palette.accent, DEFAULT_THEME_PALETTE.accent),
+    accentDark: cleanHexColor(palette.accentDark, DEFAULT_THEME_PALETTE.accentDark),
+    buttonText: cleanHexColor(palette.buttonText, DEFAULT_THEME_PALETTE.buttonText),
+    bg: cleanHexColor(palette.bg, DEFAULT_THEME_PALETTE.bg),
+    chatBg: cleanHexColor(palette.chatBg, DEFAULT_THEME_PALETTE.chatBg),
+    panel: cleanHexColor(palette.panel, DEFAULT_THEME_PALETTE.panel),
+    line: cleanHexColor(palette.line, DEFAULT_THEME_PALETTE.line),
+    text: cleanHexColor(palette.text, DEFAULT_THEME_PALETTE.text),
+    muted: cleanHexColor(palette.muted, DEFAULT_THEME_PALETTE.muted),
+    bubbleOther: cleanHexColor(palette.bubbleOther, DEFAULT_THEME_PALETTE.bubbleOther),
+    bubbleOtherText: cleanHexColor(palette.bubbleOtherText, DEFAULT_THEME_PALETTE.bubbleOtherText),
+    bubbleMine: cleanHexColor(palette.bubbleMine, DEFAULT_THEME_PALETTE.bubbleMine),
+    bubbleMineText: cleanHexColor(palette.bubbleMineText, DEFAULT_THEME_PALETTE.bubbleMineText)
+  };
+}
+
+function cleanCustomThemes(input: unknown): ThemeDTO[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  return input
+    .map((theme, index) => {
+      const row = (theme && typeof theme === "object" ? theme : {}) as Partial<ThemeDTO>;
+      const id = cleanThemeId(row.id) || `custom-${index + 1}`;
+      const name = String(row.name || "").trim().slice(0, 24) || "自定义主题";
+      return { id, name, palette: cleanThemePalette(row.palette) };
+    })
+    .filter((theme) => {
+      if (THEMES.has(theme.id) || seen.has(theme.id)) return false;
+      seen.add(theme.id);
+      return true;
+    })
+    .slice(0, 24);
+}
+
+function directChannelKey(accountA: number, accountB: number) {
+  return [accountA, accountB].sort((a, b) => a - b).join(":");
+}
+
+function isVoiceMessage(message: Pick<Message, "type" | "fileName" | "payload">) {
+  const payload = message.payload as Partial<VoicePayload> | null;
+  return message.type === "file" && payload?.kind === "voice" && isAudioFileName(message.fileName);
+}
+
+function normalizedWaveform(input: unknown) {
+  if (!Array.isArray(input)) return undefined;
+  const bars = input
+    .slice(0, 64)
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+    .map((value) => Math.min(1, Math.max(0.08, value)));
+  return bars.length ? bars : undefined;
+}
+
+function parseVoiceUploadPayload(fields: Record<string, { value?: string }>, mimeType: string): VoicePayload | undefined {
+  if (fields.voice?.value !== "1") return undefined;
+  const durationMs = Math.max(0, Math.min(Number(fields.durationMs?.value || 0), 30 * 60 * 1000)) || undefined;
+  const waveform = parseJsonField<number[]>(fields.waveform?.value, []);
+  return {
+    kind: "voice",
+    durationMs,
+    waveform: normalizedWaveform(waveform),
+    mimeType
+  };
+}
+
+async function transcodeVoiceToM4a(inputPath: string, outputPath: string) {
+  await new Promise<void>((resolve, reject) => {
+    const ffmpeg = spawn("ffmpeg", ["-y", "-i", inputPath, "-vn", "-c:a", "aac", "-profile:a", "aac_low", "-ac", "1", "-ar", "16000", "-b:a", "18k", "-cutoff", "7000", "-movflags", "+faststart", outputPath], {
+      stdio: ["ignore", "ignore", "pipe"]
+    });
+    let errorText = "";
+    ffmpeg.stderr.on("data", (chunk) => {
+      errorText += String(chunk).slice(0, 2000);
+    });
+    ffmpeg.on("error", reject);
+    ffmpeg.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(errorText || `ffmpeg exited ${code}`));
+    });
+  });
+}
+
+function authDto(account: AccountWithActor) {
+  if (!account.actor) throw new Error("account actor missing");
+  return {
+    id: account.id,
+    username: account.username,
+    displayName: account.displayName,
+    avatarPath: account.avatarPath,
+    isAdmin: account.role === "admin",
+    actorId: account.actor.id,
+    theme: account.theme || "wechat"
+  };
+}
+
+async function canAccessChannel(accountId: number, channelId: number) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+  if (!channel) return false;
+  if (channel.directKey) {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member;
+  }
+  if (!channel.isPrivate) return true;
+  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
+  if (account?.role === "admin") return true;
+  const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+  return !!member;
+}
+
+async function canWriteChannel(accountId: number, channelId: number) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+  if (!channel) return false;
+  if (channel.directKey) {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member && member.role !== "viewer";
+  }
+  if (!channel.isPrivate) return true;
+  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
+  if (account?.role === "admin") return true;
+  const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+  return !!member && member.role !== "viewer";
+}
+
+async function canManageChannel(accountId: number, channelId: number) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true } });
+  if (channel?.directKey) {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return member?.role === "owner" || member?.role === "admin";
+  }
+  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
+  if (account?.role === "admin") return true;
+  const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+  return member?.role === "owner" || member?.role === "admin";
+}
+
+async function serializeMessage(message: Message & { sender: Actor; replyTo?: (Message & { sender: Actor }) | null }, viewerAccountId?: number): Promise<MessageDTO> {
+  let voiceListened: boolean | undefined;
+  if (isVoiceMessage(message)) {
+    voiceListened = message.sender.accountId === viewerAccountId;
+    if (!voiceListened && viewerAccountId) {
+      const listened = await prisma.voiceListen.findUnique({ where: { messageId_accountId: { messageId: message.id, accountId: viewerAccountId } } });
+      voiceListened = !!listened;
+    }
+  }
+  return {
+    id: message.id,
+    channelId: message.channelId,
+    sender: {
+      id: message.sender.id,
+      kind: message.sender.kind,
+      username: message.sender.username,
+      displayName: message.sender.displayName,
+      avatarPath: message.sender.avatarPath
+    },
+    content: message.content || "",
+    type: message.type,
+    payload: message.payload || undefined,
+    fileName: message.fileName,
+    fileSize: message.fileSize,
+    voiceListened,
+    replyTo: message.replyTo
+      ? {
+          id: message.replyTo.id,
+          content: message.replyTo.content || message.replyTo.fileName || "",
+          type: message.replyTo.type,
+          senderName: message.replyTo.sender.displayName
+        }
+      : null,
+    chainRootId: message.chainRootId,
+    chainVersion: message.chainVersion,
+    createdAt: message.createdAt.toISOString()
+  };
+}
+
+async function hydrateMessage(id: number, viewerAccountId?: number) {
+  const message = await prisma.message.findUnique({
+    where: { id },
+    include: { sender: true, replyTo: { include: { sender: true } } }
+  });
+  return message ? serializeMessage(message, viewerAccountId) : null;
+}
+
+async function emitMessage(messageId: number) {
+  const dto = await hydrateMessage(messageId);
+  if (dto) io.to(`ch:${dto.channelId}`).emit("message:new", dto);
+  return dto;
+}
+
+function stripPushText(input?: string | null) {
+  return String(input || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 180);
+}
+
+function messagePushBody(message: Message & { sender: Actor }) {
+  if (message.type === "chain") return `${message.sender.displayName} 发起了接龙：${stripPushText(message.content) || "接龙"}`;
+  if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
+  if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
+  if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
+  return `${message.sender.displayName}：${stripPushText(message.content) || "新消息"}`;
+}
+
+async function ensureWebPush() {
+  const envPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.WEB_PUSH_PUBLIC_KEY || "";
+  const envPrivateKey = process.env.VAPID_PRIVATE_KEY || process.env.WEB_PUSH_PRIVATE_KEY || "";
+  let publicKey = envPublicKey;
+  let privateKey = envPrivateKey;
+  if (!publicKey || !privateKey) {
+    const rows = await prisma.setting.findMany({ where: { key: { in: ["webPushVapidPublicKey", "webPushVapidPrivateKey"] } } });
+    const settings = new Map(rows.map((row) => [row.key, row.value]));
+    publicKey = settings.get("webPushVapidPublicKey") || "";
+    privateKey = settings.get("webPushVapidPrivateKey") || "";
+    if (!publicKey || !privateKey) {
+      const generated = webPush.generateVAPIDKeys();
+      publicKey = generated.publicKey;
+      privateKey = generated.privateKey;
+      await Promise.all([setSetting("webPushVapidPublicKey", publicKey), setSetting("webPushVapidPrivateKey", privateKey)]);
+    }
+  }
+  if (!publicKey || !privateKey) {
+    app.log.warn("web push disabled: missing VAPID keys");
+    return;
+  }
+  webPush.setVapidDetails(VAPID_SUBJECT, publicKey, privateKey);
+  vapidPublicKey = publicKey;
+  pushReady = true;
+}
+
+async function notificationRecipientIds(channelId: number, senderAccountId?: number | null, force = false) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isPrivate: true, directKey: true } });
+  if (!channel) return [];
+  const where = channel.directKey
+    ? { memberships: { some: { channelId } } }
+    : channel.isPrivate
+      ? { OR: [{ role: "admin" as const }, { memberships: { some: { channelId } } }] }
+      : {};
+  const accounts = await prisma.account.findMany({ where, select: { id: true } });
+  let ids = accounts.map((account) => account.id).filter((id) => id !== senderAccountId);
+  if (!force && ids.length) {
+    const muted = await prisma.channelNotificationPreference.findMany({
+      where: { channelId, accountId: { in: ids }, muted: true },
+      select: { accountId: true }
+    });
+    const mutedIds = new Set(muted.map((row) => row.accountId));
+    ids = ids.filter((id) => !mutedIds.has(id));
+  }
+  return ids;
+}
+
+async function sendPushToAccounts(accountIds: number[], payload: { title: string; body: string; url: string; tag: string; channelId: number }) {
+  if (!pushReady || !accountIds.length) return;
+  const subscriptions = await prisma.pushSubscription.findMany({ where: { accountId: { in: accountIds } } });
+  await Promise.all(
+    subscriptions.map(async (subscription) => {
+      try {
+        await webPush.sendNotification(
+          {
+            endpoint: subscription.endpoint,
+            keys: { p256dh: subscription.keysP256dh, auth: subscription.keysAuth }
+          },
+          JSON.stringify(payload)
+        );
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode === 404 || statusCode === 410) {
+          await prisma.pushSubscription.deleteMany({ where: { endpoint: subscription.endpoint } });
+        } else {
+          app.log.warn({ error }, "web push notification failed");
+        }
+      }
+    })
+  );
+}
+
+async function sendMessagePush(messageId: number) {
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
+  if (!message) return;
+  const accountIds = await notificationRecipientIds(message.channelId, message.sender.accountId, false);
+  await sendPushToAccounts(accountIds, {
+    title: message.channel.name,
+    body: messagePushBody(message),
+    url: `/?channelId=${message.channelId}`,
+    tag: `channel-${message.channelId}`,
+    channelId: message.channelId
+  });
+}
+
+async function sendAdminBroadcastPush(channelId: number, content: string) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
+  if (!channel) return;
+  const accountIds = await notificationRecipientIds(channelId, null, true);
+  await sendPushToAccounts(accountIds, {
+    title: `管理员广播 · ${channel.name}`,
+    body: stripPushText(content) || "新的管理员广播",
+    url: `/?channelId=${channelId}`,
+    tag: `admin-broadcast-${channelId}`,
+    channelId
+  });
+}
+
+async function createEngineEvent(kind: "message_created" | "idle_tick" | "manual_test" | "active_topic_due", payload: unknown, channelId?: number, messageId?: number, characterId?: number) {
+  const event = await prisma.engineEvent.create({
+    data: {
+      kind,
+      channelId,
+      messageId,
+      characterId,
+      payload: payload as object
+    }
+  });
+  io.emit("engine:event", { id: event.id, kind: event.kind, channelId, messageId, characterId });
+}
+
+async function broadcastPresence() {
+  const unique = [...new Map([...online.values()].map((u) => [u.accountId, u])).values()];
+  io.emit("presence:updated", unique);
+}
+
+function disconnectSessions(sessionIds: string[]) {
+  const targets = new Set(sessionIds);
+  if (!targets.size) return;
+  for (const socket of io.sockets.sockets.values()) {
+    const auth = socket.data.auth as AuthContext | undefined;
+    if (auth?.sessionId && targets.has(auth.sessionId)) socket.disconnect(true);
+  }
+}
+
+async function createAuthSession(accountId: number, request: FastifyRequest, deviceNameOverride?: string) {
+  const now = new Date();
+  const deviceKind = detectDeviceKind(String(request.headers["user-agent"] || ""));
+  const deviceName = deviceNameFromRequest(request, deviceNameOverride);
+  const replacedSessions = await prisma.accountSession.findMany({
+    where: { accountId, deviceKind, revokedAt: null },
+    select: { id: true }
+  });
+  const session = await prisma.$transaction(async (tx) => {
+    await tx.accountSession.updateMany({
+      where: { id: { in: replacedSessions.map((row) => row.id) } },
+      data: { revokedAt: now }
+    });
+    await tx.account.update({ where: { id: accountId }, data: { lastLoginAt: now } });
+    return tx.accountSession.create({
+      data: {
+        id: crypto.randomUUID(),
+        accountId,
+        deviceKind,
+        deviceName,
+        userAgent: String(request.headers["user-agent"] || "").slice(0, 1000),
+        ipAddress: clientIp(request),
+        lastSeenAt: now,
+        expiresAt: new Date(now.getTime() + SESSION_TTL_MS)
+      }
+    });
+  });
+  disconnectSessions(replacedSessions.map((row) => row.id));
+  return session;
+}
+
+function joinAccountChannel(accountId: number, channelId: number) {
+  for (const socketId of accountSocketIds.get(accountId) || []) {
+    io.sockets.sockets.get(socketId)?.join(`ch:${channelId}`);
+  }
+}
+
+function leaveAccountChannel(accountId: number, channelId: number) {
+  for (const socketId of accountSocketIds.get(accountId) || []) {
+    io.sockets.sockets.get(socketId)?.leave(`ch:${channelId}`);
+  }
+}
+
+async function ensureBootstrap() {
+  const defaultChannel = await prisma.channel.findFirst({ where: { isDefault: true } });
+  if (!defaultChannel) {
+    await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
+  }
+  const accountCount = await prisma.account.count();
+  if (accountCount === 0) {
+    const password = process.env.DEFAULT_ADMIN_PASSWORD || "ChangeMe123!";
+    const passwordHash = await bcrypt.hash(password, 12);
+    await prisma.account.create({
+      data: {
+        username: "admin",
+        passwordHash,
+        displayName: "管理员",
+        role: "admin",
+        actor: { create: { kind: "human", username: "admin", displayName: "管理员" } }
+      }
+    });
+    app.log.warn("Created default admin account. Change DEFAULT_ADMIN_PASSWORD before public use.");
+  }
+}
+
+async function channelDto(channelId: number, viewer?: Pick<AuthContext, "accountId" | "isAdmin">) {
+  const channel = await prisma.channel.findUnique({
+    where: { id: channelId },
+    include: {
+      _count: { select: { members: true } },
+      pinned: { where: { active: true }, orderBy: { updatedAt: "desc" }, take: 1 }
+    }
+  });
+  if (!channel) return null;
+  const pin = channel.pinned[0];
+  const membership = viewer ? await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: viewer.accountId } }, select: { role: true } }) : null;
+  const pinned =
+    pin?.messageId
+      ? {
+          id: pin.id,
+          kind: pin.kind,
+          content: pin.content,
+          messageId: pin.messageId,
+          message: await hydrateMessage(pin.messageId)
+        }
+      : pin
+        ? { id: pin.id, kind: pin.kind, content: pin.content, messageId: pin.messageId, message: null }
+        : null;
+  return {
+    id: channel.id,
+    name: channel.name,
+    description: channel.description,
+    icon: cleanChannelIcon(channel.icon),
+    isPrivate: channel.isPrivate,
+    isDefault: channel.isDefault,
+    directKey: channel.directKey,
+    canManage: viewer ? !!viewer.isAdmin || membership?.role === "owner" || membership?.role === "admin" : undefined,
+    memberCount: channel._count.members,
+    pinned
+  };
+}
+
+function parseJsonField<T>(value: unknown, fallback: T): T {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+async function createMessageFromActor(input: {
+  channelId: number;
+  actorId: number;
+  content?: string;
+  type?: MessageType;
+  payload?: unknown;
+  replyToId?: number | null;
+  chainRootId?: number | null;
+  chainVersion?: number | null;
+  fileName?: string | null;
+  filePath?: string | null;
+  fileSize?: number | null;
+}) {
+  const message = await prisma.message.create({
+    data: {
+      channelId: input.channelId,
+      senderActorId: input.actorId,
+      content: input.content || "",
+      type: input.type || "text",
+      payload: input.payload as object | undefined,
+      replyToId: input.replyToId || null,
+      chainRootId: input.chainRootId || null,
+      chainVersion: input.chainVersion || null,
+      fileName: input.fileName || null,
+      filePath: input.filePath || null,
+      fileSize: input.fileSize || null
+    }
+  });
+  await emitMessage(message.id);
+  void sendMessagePush(message.id).catch((error) => app.log.warn({ error }, "message push failed"));
+  if (input.type === "text" || input.type === "chain") {
+    await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
+  }
+  return message;
+}
+
+app.get("/api/health", async () => ({ ok: true, name: "team-chat", time: new Date().toISOString() }));
+
+app.get("/avatars/:file", async (request, reply) => {
+  const file = path.basename((request.params as { file: string }).file);
+  const filePath = path.join(AVATAR_DIR, file);
+  if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
+  reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  return reply.send(fs.createReadStream(filePath));
+});
+
+app.get("/backgrounds/:file", async (request, reply) => {
+  const file = path.basename((request.params as { file: string }).file);
+  const filePath = path.join(BG_DIR, file);
+  if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
+  reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  return reply.send(fs.createReadStream(filePath));
+});
+
+app.post("/api/auth/login", async (request, reply) => {
+  const body = z.object({ username: z.string().min(1), password: z.string().min(1), deviceName: z.string().max(120).optional() }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
+  const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
+  if (!account || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
+    return reply.code(401).send({ success: false, message: "用户名或密码错误" });
+  }
+  const session = await createAuthSession(account.id, request, body.data.deviceName);
+  const updated = await prisma.account.findUniqueOrThrow({ where: { id: account.id }, include: { actor: true } });
+  return { success: true, token: signToken(updated, session), account: authDto(updated) };
+});
+
+app.post("/api/auth/register", async (request, reply) => {
+  const enabled = await settingBool("registrationEnabled", false);
+  if (!enabled) return reply.code(403).send({ success: false, message: "暂未开放注册" });
+  const body = z
+    .object({
+      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
+      displayName: z.string().min(1).max(80),
+      password: z.string().min(6),
+      deviceName: z.string().max(120).optional()
+    })
+    .safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "用户名需 2-40 位，密码至少 6 位" });
+  const existing = await prisma.account.findUnique({ where: { username: body.data.username }, select: { id: true } });
+  if (existing) return reply.code(409).send({ success: false, message: "用户名已存在" });
+  const account = await prisma.account.create({
+    data: {
+      username: body.data.username,
+      passwordHash: await bcrypt.hash(body.data.password, 12),
+      displayName: body.data.displayName,
+      role: "user",
+      actor: { create: { kind: "human", username: body.data.username, displayName: body.data.displayName } }
+    },
+    include: { actor: true }
+  });
+  const publicChannels = await prisma.channel.findMany({ where: { isPrivate: false }, select: { id: true } });
+  if (publicChannels.length) {
+    await prisma.channelMember.createMany({
+      data: publicChannels.map((channel) => ({ accountId: account.id, channelId: channel.id, role: "member" })),
+      skipDuplicates: true
+    });
+  }
+  const session = await createAuthSession(account.id, request, body.data.deviceName);
+  return { success: true, token: signToken(account, session), account: authDto(account) };
+});
+
+app.get("/api/auth/me", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
+  return { account: authDto(account) };
+});
+
+app.post("/api/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ oldPassword: z.string(), newPassword: z.string().min(6) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "新密码不能小于 6 位" });
+  const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId } });
+  if (!(await bcrypt.compare(body.data.oldPassword, account.passwordHash))) return reply.code(400).send({ success: false, message: "原密码错误" });
+  await prisma.account.update({ where: { id: auth.accountId }, data: { passwordHash: await bcrypt.hash(body.data.newPassword, 12) } });
+  return { success: true };
+});
+
+app.post("/api/auth/logout", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  await prisma.accountSession.updateMany({ where: { id: auth.sessionId, accountId: auth.accountId }, data: { revokedAt: new Date() } });
+  disconnectSessions([auth.sessionId]);
+  return { success: true };
+});
+
+app.get("/api/me/sessions", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const sessions = await prisma.accountSession.findMany({
+    where: { accountId: auth.accountId, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: [{ deviceKind: "asc" }, { lastSeenAt: "desc" }]
+  });
+  return {
+    sessions: sessions.map((session) => ({
+      id: session.id,
+      deviceKind: session.deviceKind,
+      deviceName: session.deviceName,
+      ipAddress: session.ipAddress,
+      createdAt: session.createdAt.toISOString(),
+      lastSeenAt: session.lastSeenAt.toISOString(),
+      expiresAt: session.expiresAt.toISOString(),
+      current: session.id === auth.sessionId
+    }))
+  };
+});
+
+app.delete("/api/me/sessions/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const sessionId = (request.params as { id: string }).id;
+  const result = await prisma.accountSession.updateMany({
+    where: { id: sessionId, accountId: auth.accountId, revokedAt: null },
+    data: { revokedAt: new Date() }
+  });
+  if (!result.count) return reply.code(404).send({ success: false, message: "设备不存在" });
+  disconnectSessions([sessionId]);
+  return { success: true, current: sessionId === auth.sessionId };
+});
+
+app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const preferences = await prisma.channelNotificationPreference.findMany({
+    where: { accountId: auth.accountId, muted: true },
+    select: { channelId: true }
+  });
+  const subscriptions = await prisma.pushSubscription.count({ where: { accountId: auth.accountId } });
+  return {
+    publicKey: vapidPublicKey,
+    pushReady,
+    subscriptions,
+    mutedChannelIds: preferences.map((item) => item.channelId)
+  };
+});
+
+app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = pushSubscriptionSchema.parse(request.body);
+  await prisma.pushSubscription.upsert({
+    where: { endpoint: body.endpoint },
+    update: {
+      accountId: auth.accountId,
+      keysP256dh: body.keys.p256dh,
+      keysAuth: body.keys.auth
+    },
+    create: {
+      accountId: auth.accountId,
+      endpoint: body.endpoint,
+      keysP256dh: body.keys.p256dh,
+      keysAuth: body.keys.auth
+    }
+  });
+  return { success: true };
+});
+
+app.delete("/api/push-subscriptions", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
+  const where = body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint } : { accountId: auth.accountId };
+  await prisma.pushSubscription.deleteMany({ where });
+  return { success: true };
+});
+
+app.patch("/api/notifications/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  if (!channelId || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+  const body = z.object({ muted: z.boolean() }).parse(request.body);
+  if (body.muted) {
+    await prisma.channelNotificationPreference.upsert({
+      where: { channelId_accountId: { channelId, accountId: auth.accountId } },
+      update: { muted: true },
+      create: { channelId, accountId: auth.accountId, muted: true }
+    });
+  } else {
+    await prisma.channelNotificationPreference.deleteMany({ where: { channelId, accountId: auth.accountId } });
+  }
+  return { success: true, channelId, muted: body.muted };
+});
+
+app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ theme: z.string().optional() }).parse(request.body);
+  const requestedTheme = cleanThemeId(body.theme);
+  const theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
+  const account = await prisma.account.update({ where: { id: auth.accountId }, data: { theme }, include: { actor: true } });
+  return { success: true, account: authDto(account) };
+});
+
+app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const where = auth.isAdmin
+    ? { OR: [{ directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
+    : {
+        OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }]
+      };
+  const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
+  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
+});
+
+app.post("/api/channels", { preHandler: requireAdmin }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ name: z.string().min(1).max(80), description: z.string().max(255).optional(), icon: z.string().max(16).optional(), isPrivate: z.boolean().optional() }).parse(request.body);
+  const channel = await prisma.channel.create({
+    data: {
+      name: body.name,
+      description: body.description || "",
+      icon: cleanChannelIcon(body.icon),
+      isPrivate: !!body.isPrivate,
+      members: { create: { accountId: auth.accountId, role: "owner" } }
+    }
+  });
+  if (!body.isPrivate) {
+    const accounts = await prisma.account.findMany({ select: { id: true } });
+    await prisma.channelMember.createMany({
+      data: accounts.map((a) => ({ accountId: a.id, channelId: channel.id, role: a.id === auth.accountId ? "owner" : "member" })),
+      skipDuplicates: true
+    });
+  }
+  const dto = await channelDto(channel.id);
+  io.emit("channel:updated", { action: "created", channel: dto });
+  return { success: true, channel: dto };
+});
+
+app.patch("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const body = z
+    .object({
+      name: z.string().min(1).max(80).optional(),
+      description: z.string().max(255).optional(),
+      icon: z.string().max(16).optional()
+    })
+    .parse(request.body);
+  await prisma.channel.update({
+    where: { id: channelId },
+    data: {
+      name: body.name,
+      description: body.description,
+      icon: body.icon === undefined ? undefined : cleanChannelIcon(body.icon)
+    }
+  });
+  const dto = await channelDto(channelId);
+  io.emit("channel:updated", { action: "updated", channel: dto });
+  return { success: true, channel: dto };
+});
+
+app.post("/api/channels/:id/icon", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const safeName = await saveImageUpload(request, reply, "缺少频道图标", true);
+  if (!safeName) return reply;
+  await prisma.channel.update({ where: { id: channelId }, data: { icon: safeName } });
+  const dto = await channelDto(channelId, auth);
+  io.emit("channel:updated", { action: "updated", channel: dto });
+  return { success: true, channel: dto };
+});
+
+app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isDefault: true, directKey: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (channel.isDefault) return reply.code(400).send({ success: false, message: "默认频道不能删除" });
+  if (channel.directKey) return reply.code(400).send({ success: false, message: "私聊请使用关闭私聊" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权删除此频道" });
+
+  const messages = await prisma.message.findMany({ where: { channelId }, select: { id: true, filePath: true } });
+  const messageIds = messages.map((message) => message.id);
+  if (messageIds.length) {
+    await prisma.message.updateMany({ where: { replyToId: { in: messageIds } }, data: { replyToId: null } });
+  }
+  await prisma.channel.delete({ where: { id: channelId } });
+
+  for (const attachment of messages) {
+    if (!attachment.filePath) continue;
+    const filePath = path.join(UPLOAD_DIR, path.basename(attachment.filePath));
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+  io.emit("channel:updated", { action: "deleted", channelId });
+  return { success: true };
+});
+
+app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ accountId: z.number().int().positive() }).parse(request.body);
+  if (body.accountId === auth.accountId) return reply.code(400).send({ success: false, message: "不能和自己发起私聊" });
+  const [me, peer] = await Promise.all([
+    prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } }),
+    prisma.account.findUnique({ where: { id: body.accountId }, include: { actor: true } })
+  ]);
+  if (!me?.actor || !peer?.actor) return reply.code(404).send({ success: false, message: "用户不存在" });
+  const key = directChannelKey(auth.accountId, body.accountId);
+  const channel = await prisma.channel.upsert({
+    where: { directKey: key },
+    update: {},
+    create: {
+      name: `私聊：${me.displayName}、${peer.displayName}`,
+      description: "一对一私聊",
+      icon: "",
+      isPrivate: true,
+      directKey: key,
+      members: {
+        create: [
+          { accountId: auth.accountId, role: "owner" },
+          { accountId: body.accountId, role: "member" }
+        ]
+      }
+    }
+  });
+  await prisma.channelMember.createMany({
+    data: [
+      { accountId: auth.accountId, channelId: channel.id, role: "owner" },
+      { accountId: body.accountId, channelId: channel.id, role: "member" }
+    ],
+    skipDuplicates: true
+  });
+  joinAccountChannel(auth.accountId, channel.id);
+  joinAccountChannel(body.accountId, channel.id);
+  const dto = await channelDto(channel.id);
+  io.to(`acct:${auth.accountId}`).to(`acct:${body.accountId}`).emit("channel:updated", { action: "direct", channel: dto });
+  return { success: true, channel: dto };
+});
+
+app.delete("/api/channels/:id/membership", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, isDefault: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (!channel.directKey) return reply.code(400).send({ success: false, message: "只有私聊频道可以关闭" });
+  await prisma.channelMember.deleteMany({ where: { channelId, accountId: auth.accountId } });
+  leaveAccountChannel(auth.accountId, channelId);
+  io.to(`acct:${auth.accountId}`).emit("channel:updated", { action: "closed", channelId });
+  return { success: true };
+});
+
+app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  if (!(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true } });
+  const accounts = await prisma.account.findMany({
+    where: channel?.directKey ? { memberships: { some: { channelId } } } : { OR: [{ role: "admin" }, { memberships: { some: { channelId } } }] },
+    include: { actor: true, memberships: { where: { channelId } } },
+    orderBy: { displayName: "asc" }
+  });
+  const virtuals = await prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } });
+  return {
+    members: [
+      ...accounts.map((a) => ({
+        id: a.actor?.id,
+        accountId: a.id,
+        kind: "human",
+        username: a.username,
+        displayName: a.displayName,
+        avatarPath: a.avatarPath,
+        role: a.role === "admin" ? "admin" : a.memberships[0]?.role || "member"
+      })),
+      ...virtuals.map((v) => ({
+        id: v.actor.id,
+        kind: "virtual",
+        username: v.actor.username,
+        displayName: v.actor.displayName,
+        avatarPath: v.actor.avatarPath,
+        role: "virtual"
+      }))
+    ]
+  };
+});
+
+app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string };
+  const channelId = Number(query.channelId || 0);
+  if (!channelId || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+  const limit = Math.min(Math.max(Number(query.limit || 50), 1), 200);
+  const before = Number(query.before || 0);
+  const after = Number(query.after || 0);
+  const where = {
+    channelId,
+    ...(after > 0 ? { id: { gt: after } } : before > 0 ? { id: { lt: before } } : {})
+  };
+  const rows = await prisma.message.findMany({
+    where,
+    include: { sender: true, replyTo: { include: { sender: true } } },
+    orderBy: { id: after > 0 ? "asc" : "desc" },
+    take: limit
+  });
+  const messages = await Promise.all((after > 0 ? rows : rows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
+  return { messages };
+});
+
+app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z
+    .object({
+      channelId: z.number(),
+      content: z.string().optional(),
+      replyToId: z.number().nullable().optional(),
+      type: z.enum(["text", "chain"]).default("text"),
+      payload: z.unknown().optional(),
+      chainTopic: z.string().optional(),
+      chainText: z.string().optional(),
+      chainRootId: z.number().optional()
+    })
+    .parse(request.body);
+  if (!(await canWriteChannel(auth.accountId, body.channelId))) return reply.code(403).send({ success: false, message: "无权在此频道发言" });
+  const actor = await prisma.actor.findUniqueOrThrow({ where: { id: auth.actorId } });
+  if (body.type === "chain") {
+    let payload: ChainPayload;
+    let rootId = body.chainRootId || null;
+    let version = 1;
+    if (body.chainRootId) {
+      const root = await prisma.message.findFirst({ where: { id: body.chainRootId, channelId: body.channelId, type: "chain" }, orderBy: { id: "desc" } });
+      if (!root) return reply.code(404).send({ success: false, message: "接龙不存在" });
+      rootId = root.chainRootId || root.id;
+      const latest = await prisma.message.findFirst({
+        where: { channelId: body.channelId, type: "chain", OR: [{ id: rootId }, { chainRootId: rootId }] },
+        orderBy: { id: "desc" }
+      });
+      payload = (latest?.payload as unknown as ChainPayload) || { topic: "接龙", participants: [] };
+      version = (latest?.chainVersion || 1) + 1;
+    } else {
+      payload = { topic: body.chainTopic || "接龙", participants: [] };
+    }
+    payload.participants = Array.isArray(payload.participants) ? payload.participants : [];
+    if (payload.participants.some((p) => p.actorId === actor.id)) {
+      return reply.code(409).send({ success: false, message: "你已经参与过这个接龙" });
+    }
+    payload.participants.push({ actorId: actor.id, name: actor.displayName, text: body.chainText || "", at: new Date().toISOString() });
+    const created = await createMessageFromActor({
+      channelId: body.channelId,
+      actorId: actor.id,
+      content: payload.topic,
+      type: "chain",
+      payload,
+      replyToId: body.replyToId || null,
+      chainRootId: rootId,
+      chainVersion: version
+    });
+    if (!rootId) await prisma.message.update({ where: { id: created.id }, data: { chainRootId: created.id } });
+    return { success: true, message: await hydrateMessage(created.id) };
+  }
+  const content = cleanText(body.content);
+  if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "消息不能为空" });
+  const message = await createMessageFromActor({
+    channelId: body.channelId,
+    actorId: auth.actorId,
+    content,
+    type: "text",
+    payload: cleanMessageEffect(body.payload),
+    replyToId: body.replyToId || null
+  });
+  return { success: true, message: await hydrateMessage(message.id) };
+});
+
+app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const file = await request.file();
+  if (!file) return reply.code(400).send({ success: false, message: "缺少文件" });
+  const fields = file.fields as Record<string, { value?: string }>;
+  const channelId = Number(fields.channelId?.value || 0);
+  if (!channelId || !(await canWriteChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权上传" });
+  const ext = path.extname(file.filename).toLowerCase();
+  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".zip", ".mp3", ".mp4", ".mov", ".webm", ".m4a", ".wav", ".ogg", ".aac"]);
+  if (!allowed.has(ext)) return reply.code(400).send({ success: false, message: "不支持的文件类型" });
+  const voicePayload = parseVoiceUploadPayload(fields, file.mimetype);
+  const safeName = `${crypto.randomUUID()}${ext}`;
+  const outPath = path.join(UPLOAD_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  let storedFileName = safeName;
+  let displayFileName = file.filename;
+  let stat = fs.statSync(outPath);
+  if (voicePayload && isAudioFileName(file.filename)) {
+    const transcodedName = `${crypto.randomUUID()}.m4a`;
+    const transcodedPath = path.join(UPLOAD_DIR, transcodedName);
+    try {
+      await transcodeVoiceToM4a(outPath, transcodedPath);
+      fs.unlinkSync(outPath);
+      storedFileName = transcodedName;
+      displayFileName = `${path.basename(file.filename, ext)}.m4a`;
+      stat = fs.statSync(transcodedPath);
+      voicePayload.mimeType = "audio/mp4";
+    } catch (error) {
+      if (fs.existsSync(transcodedPath)) fs.unlinkSync(transcodedPath);
+      request.log.warn({ error }, "voice transcode failed; storing original audio");
+    }
+  }
+  const type: MessageType = file.mimetype.startsWith("image/") ? "image" : "file";
+  const message = await createMessageFromActor({
+    channelId,
+    actorId: auth.actorId,
+    content: "",
+    type,
+    payload: voicePayload,
+    fileName: displayFileName,
+    filePath: storedFileName,
+    fileSize: stat.size
+  });
+  return { success: true, message: await hydrateMessage(message.id) };
+});
+
+app.post("/api/messages/:messageId/voice-listened", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || !isVoiceMessage(message)) return reply.code(404).send({ success: false, message: "语音不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问语音" });
+  if (message.sender.accountId !== auth.accountId) {
+    await prisma.voiceListen.upsert({
+      where: { messageId_accountId: { messageId, accountId: auth.accountId } },
+      update: { listenedAt: new Date() },
+      create: { messageId, accountId: auth.accountId }
+    });
+  }
+  io.to(`acct:${auth.accountId}`).emit("voice:listened", { messageId });
+  return { success: true };
+});
+
+app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const query = request.query as { download?: string };
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message?.filePath) return reply.code(404).send({ success: false, message: "文件不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
+  const filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
+  if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
+  const stat = fs.statSync(filePath);
+  const range = request.headers.range;
+  const contentType = contentTypeForFile(message.fileName || message.filePath);
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Accept-Ranges", "bytes");
+  reply.header("Content-Type", contentType);
+  reply.header("Content-Disposition", `${query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(message.fileName || message.filePath)}`);
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < stat.size) {
+        reply.code(206);
+        reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+        reply.header("Content-Length", String(end - start + 1));
+        return reply.send(fs.createReadStream(filePath, { start, end }));
+      }
+    }
+  }
+  reply.header("Content-Length", String(stat.size));
+  return reply.send(fs.createReadStream(filePath));
+});
+
+async function appearanceDto() {
+  const rows = await prisma.setting.findMany({
+    where: {
+      key: {
+        in: [
+          "wallpaperPath",
+          "wallpaperFit",
+          "loginIconPath",
+          "loginShowIcon",
+          "loginTitle",
+          "loginSubtitle",
+          "loginShowSubtitle",
+          "loginBackgroundPath",
+          "loginBackgroundFit",
+          "loginFormPosition",
+          "registrationEnabled",
+          "customThemes"
+        ]
+      }
+    }
+  });
+  const settings = new Map(rows.map((row) => [row.key, row.value]));
+  const wallpaperFit = settings.get("wallpaperFit") || "cover";
+  const loginBackgroundFit = settings.get("loginBackgroundFit") || "cover";
+  const loginFormPosition = settings.get("loginFormPosition") || "middle";
+  return {
+    wallpaperPath: settings.get("wallpaperPath") || null,
+    wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
+    loginIconPath: settings.get("loginIconPath") || null,
+    loginShowIcon: settings.get("loginShowIcon") !== "false",
+    loginTitle: settings.get("loginTitle") || DEFAULT_LOGIN_TITLE,
+    loginSubtitle: settings.has("loginSubtitle") ? settings.get("loginSubtitle") || "" : DEFAULT_LOGIN_SUBTITLE,
+    loginShowSubtitle: settings.get("loginShowSubtitle") !== "false",
+    loginBackgroundPath: settings.get("loginBackgroundPath") || null,
+    loginBackgroundFit: WALLPAPER_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
+    loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
+    registrationEnabled: settings.get("registrationEnabled") === "true",
+    customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), []))
+  };
+}
+
+async function setSetting(key: string, value: string) {
+  await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+}
+
+async function settingBool(key: string, fallback = false) {
+  const row = await prisma.setting.findUnique({ where: { key } });
+  if (!row) return fallback;
+  return row.value === "true";
+}
+
+async function customThemesSetting() {
+  const row = await prisma.setting.findUnique({ where: { key: "customThemes" } });
+  return cleanCustomThemes(parseJsonField(row?.value, []));
+}
+
+async function themeExists(theme: string) {
+  if (THEMES.has(theme)) return true;
+  const customThemes = await customThemesSetting();
+  return customThemes.some((item) => item.id === theme);
+}
+
+async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, missingMessage: string, shortName = false) {
+  const file = await request.file();
+  if (!file) {
+    reply.code(400).send({ success: false, message: missingMessage });
+    return "";
+  }
+  const ext = path.extname(file.filename).toLowerCase();
+  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+  if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) {
+    reply.code(400).send({ success: false, message: "只支持图片文件" });
+    return "";
+  }
+  const safeExt = ext === ".jpeg" ? ".jpg" : ext;
+  const safeName = shortName ? `${crypto.randomBytes(6).toString("hex")}${safeExt}` : `${crypto.randomUUID()}${safeExt}`;
+  const outPath = path.join(BG_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  return safeName;
+}
+
+app.get("/api/settings/appearance", async () => {
+  return appearanceDto();
+});
+
+app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) => {
+  const body = z
+    .object({
+      wallpaperPath: z.string().nullable().optional(),
+      wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
+      loginIconPath: z.string().nullable().optional(),
+      loginShowIcon: z.boolean().optional(),
+      loginTitle: z.string().max(80).nullable().optional(),
+      loginSubtitle: z.string().max(160).nullable().optional(),
+      loginShowSubtitle: z.boolean().optional(),
+      loginBackgroundPath: z.string().nullable().optional(),
+      loginBackgroundFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
+      loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
+      registrationEnabled: z.boolean().optional(),
+      customThemes: z.array(z.unknown()).optional()
+    })
+    .parse(request.body);
+  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPath")) await setSetting("wallpaperPath", body.wallpaperPath || "");
+  if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
+  if (Object.prototype.hasOwnProperty.call(body, "loginIconPath")) await setSetting("loginIconPath", body.loginIconPath || "");
+  if (Object.prototype.hasOwnProperty.call(body, "loginShowIcon")) await setSetting("loginShowIcon", body.loginShowIcon ? "true" : "false");
+  if (Object.prototype.hasOwnProperty.call(body, "loginTitle")) await setSetting("loginTitle", (body.loginTitle || "").trim() || DEFAULT_LOGIN_TITLE);
+  if (Object.prototype.hasOwnProperty.call(body, "loginSubtitle")) await setSetting("loginSubtitle", (body.loginSubtitle || "").trim());
+  if (Object.prototype.hasOwnProperty.call(body, "loginShowSubtitle")) await setSetting("loginShowSubtitle", body.loginShowSubtitle ? "true" : "false");
+  if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundPath")) await setSetting("loginBackgroundPath", body.loginBackgroundPath || "");
+  if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundFit")) await setSetting("loginBackgroundFit", body.loginBackgroundFit || "cover");
+  if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
+  if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
+  if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+app.post("/api/admin/appearance/wallpaper", { preHandler: requireAdmin }, async (request, reply) => {
+  const safeName = await saveImageUpload(request, reply, "缺少图片");
+  if (!safeName) return reply;
+  await setSetting("wallpaperPath", safeName);
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+app.post("/api/admin/appearance/login-background", { preHandler: requireAdmin }, async (request, reply) => {
+  const safeName = await saveImageUpload(request, reply, "缺少登录页背景");
+  if (!safeName) return reply;
+  await setSetting("loginBackgroundPath", safeName);
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+app.post("/api/admin/appearance/login-icon", { preHandler: requireAdmin }, async (request, reply) => {
+  const safeName = await saveImageUpload(request, reply, "缺少登录页图标");
+  if (!safeName) return reply;
+  await setSetting("loginIconPath", safeName);
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+function jsonDownload(reply: FastifyReply, fileName: string, data: unknown) {
+  reply.header("Content-Type", "application/json; charset=utf-8");
+  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  return reply.send(JSON.stringify(data, null, 2));
+}
+
+async function readJsonUpload(request: FastifyRequest) {
+  const file = await request.file();
+  if (!file) {
+    const error = new Error("缺少导入文件") as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of file.file) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
+  } catch {
+    const error = new Error("导入文件不是有效 JSON") as Error & { statusCode?: number };
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+function parseDate(value: unknown, fallback = new Date()) {
+  const date = value ? new Date(String(value)) : fallback;
+  return Number.isNaN(date.getTime()) ? fallback : date;
+}
+
+function crc32(buffer: Buffer) {
+  let crc = -1;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function dosTime(date = new Date()) {
+  const year = Math.max(1980, date.getFullYear());
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, day };
+}
+
+function zipArchive(entries: Array<{ name: string; data: Buffer; date?: Date }>) {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name.replace(/^\/+/, ""), "utf8");
+    const data = entry.data;
+    const crc = crc32(data);
+    const { time, day } = dosTime(entry.date);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(day, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, data);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(time, 12);
+    central.writeUInt16LE(day, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + data.length;
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, ...centralParts, end]);
+}
+
+function zipSafeName(name: string) {
+  return name.replace(/[\\/:*?"<>|]+/g, "_").replace(/\.+/g, ".").slice(0, 180) || "file";
+}
+
+function storageFilePath(kind: AdminAttachmentDTO["kind"], fileName: string) {
+  const dir = kind === "upload" ? UPLOAD_DIR : kind === "avatar" ? AVATAR_DIR : BG_DIR;
+  return path.join(dir, path.basename(fileName));
+}
+
+function attachmentId(kind: AdminAttachmentDTO["kind"], fileName: string) {
+  return `${kind}:${path.basename(fileName)}`;
+}
+
+function parseAttachmentId(id: string) {
+  const [kind, ...rest] = String(id || "").split(":");
+  const fileName = path.basename(rest.join(":"));
+  if ((kind === "upload" || kind === "avatar" || kind === "background") && fileName) {
+    return { kind: kind as AdminAttachmentDTO["kind"], fileName };
+  }
+  return null;
+}
+
+function safeUnlink(kind: AdminAttachmentDTO["kind"], fileName: string) {
+  const target = storageFilePath(kind, fileName);
+  if (fs.existsSync(target)) fs.unlinkSync(target);
+}
+
+function listStorageFiles(dir: string) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const filePath = path.join(dir, entry.name);
+      const stat = fs.statSync(filePath);
+      return { name: entry.name, size: stat.size, createdAt: stat.birthtime };
+    });
+}
+
+function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
+  const raw = message.content || message.fileName || (message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
+  return raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>) {
+  const ids = messages.map((message) => message.id);
+  const channelIds = [...new Set(messages.map((message) => message.channelId))];
+  for (const message of messages) {
+    if (message.filePath) safeUnlink("upload", message.filePath);
+  }
+  if (ids.length) {
+    await prisma.$transaction([
+      prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
+      prisma.message.updateMany({
+        where: { id: { in: ids } },
+        data: { type: "text", content: "[附件已由管理员删除]", payload: Prisma.JsonNull, fileName: null, filePath: null, fileSize: null }
+      })
+    ]);
+  }
+  for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
+  return ids.length;
+}
+
+async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>) {
+  const ids = messages.map((message) => message.id);
+  const channelIds = [...new Set(messages.map((message) => message.channelId))];
+  if (!ids.length) return 0;
+  await prisma.$transaction([
+    prisma.pinnedItem.updateMany({ where: { messageId: { in: ids } }, data: { active: false, messageId: null } }),
+    prisma.message.updateMany({ where: { replyToId: { in: ids } }, data: { replyToId: null } }),
+    prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
+    prisma.message.deleteMany({ where: { id: { in: ids } } })
+  ]);
+  for (const message of messages) {
+    if (message.filePath) safeUnlink("upload", message.filePath);
+  }
+  for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
+  return ids.length;
+}
+
+async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
+  const [messages, accounts, channels, appearance] = await Promise.all([
+    prisma.message.findMany({
+      where: { filePath: { not: null } },
+      include: { channel: true, sender: true },
+      orderBy: { id: "desc" }
+    }),
+    prisma.account.findMany({ select: { displayName: true, avatarPath: true } }),
+    prisma.channel.findMany({ select: { name: true, icon: true } }),
+    appearanceDto()
+  ]);
+
+  const rows = new Map<string, AdminAttachmentDTO>();
+  for (const file of listStorageFiles(UPLOAD_DIR)) {
+    rows.set(attachmentId("upload", file.name), {
+      id: attachmentId("upload", file.name),
+      kind: "upload",
+      fileName: file.name,
+      label: file.name,
+      size: file.size,
+      createdAt: file.createdAt.toISOString(),
+      url: undefined,
+      usage: []
+    });
+  }
+  for (const message of messages) {
+    if (!message.filePath) continue;
+    const fileName = path.basename(message.filePath);
+    const id = attachmentId("upload", fileName);
+    const current = rows.get(id);
+    rows.set(id, {
+      id,
+      kind: "upload",
+      fileName,
+      label: message.fileName || fileName,
+      size: current?.size || message.fileSize || 0,
+      createdAt: message.createdAt.toISOString(),
+      url: `/api/files/${message.id}`,
+      messageId: message.id,
+      channelName: message.channel.name,
+      ownerName: message.sender.displayName,
+      usage: [`消息 #${message.id}`, message.channel.name, message.sender.displayName]
+    });
+  }
+
+  for (const file of listStorageFiles(AVATAR_DIR)) {
+    const usage = accounts.filter((account) => account.avatarPath === file.name).map((account) => `${account.displayName} 头像`);
+    rows.set(attachmentId("avatar", file.name), {
+      id: attachmentId("avatar", file.name),
+      kind: "avatar",
+      fileName: file.name,
+      label: usage[0] || file.name,
+      size: file.size,
+      createdAt: file.createdAt.toISOString(),
+      url: `/avatars/${encodeURIComponent(file.name)}`,
+      usage
+    });
+  }
+
+  const backgroundUsage = new Map<string, string[]>();
+  if (appearance.wallpaperPath) backgroundUsage.set(path.basename(appearance.wallpaperPath), ["聊天室壁纸"]);
+  if (appearance.loginBackgroundPath) backgroundUsage.set(path.basename(appearance.loginBackgroundPath), [...(backgroundUsage.get(path.basename(appearance.loginBackgroundPath)) || []), "登录页背景"]);
+  if (appearance.loginIconPath) backgroundUsage.set(path.basename(appearance.loginIconPath), [...(backgroundUsage.get(path.basename(appearance.loginIconPath)) || []), "登录页图标"]);
+  for (const channel of channels) {
+    if (channel.icon && /\.(jpe?g|png|gif|webp)$/i.test(channel.icon)) {
+      const fileName = path.basename(channel.icon);
+      backgroundUsage.set(fileName, [...(backgroundUsage.get(fileName) || []), `${channel.name} 频道图标`]);
+    }
+  }
+  for (const file of listStorageFiles(BG_DIR)) {
+    const usage = backgroundUsage.get(file.name) || [];
+    rows.set(attachmentId("background", file.name), {
+      id: attachmentId("background", file.name),
+      kind: "background",
+      fileName: file.name,
+      label: usage[0] || file.name,
+      size: file.size,
+      createdAt: file.createdAt.toISOString(),
+      url: `/backgrounds/${encodeURIComponent(file.name)}`,
+      usage
+    });
+  }
+
+  return [...rows.values()].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+}
+
+async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>) {
+  let deleted = 0;
+  const refreshChannels = new Set<number>();
+  let appearanceChanged = false;
+  let channelsChanged = false;
+  for (const target of targets) {
+    const fileName = path.basename(target.fileName);
+    const filePath = storageFilePath(target.kind, fileName);
+    const existed = fs.existsSync(filePath);
+    if (target.kind === "upload") {
+      const messages = await prisma.message.findMany({ where: { filePath: fileName }, select: { id: true, channelId: true, filePath: true } });
+      for (const message of messages) refreshChannels.add(message.channelId);
+      if (messages.length) await detachMessageAttachments(messages);
+    } else if (target.kind === "avatar") {
+      await prisma.account.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
+      await prisma.actor.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
+    } else {
+      const appearance = await appearanceDto();
+      if (appearance.wallpaperPath === fileName) {
+        await setSetting("wallpaperPath", "");
+        appearanceChanged = true;
+      }
+      if (appearance.loginBackgroundPath === fileName) {
+        await setSetting("loginBackgroundPath", "");
+        appearanceChanged = true;
+      }
+      if (appearance.loginIconPath === fileName) {
+        await setSetting("loginIconPath", "");
+        appearanceChanged = true;
+      }
+      const updated = await prisma.channel.updateMany({ where: { icon: fileName }, data: { icon: "" } });
+      channelsChanged = channelsChanged || updated.count > 0;
+    }
+    if (existed) {
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      deleted += 1;
+    }
+  }
+  for (const channelId of refreshChannels) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
+  if (appearanceChanged) io.emit("appearance:updated", await appearanceDto());
+  if (channelsChanged) io.emit("channel:updated", { action: "updated" });
+  return deleted;
+}
+
+async function chatExportPayload() {
+  const [channels, channelMembers, messages, pinnedItems, voiceListens] = await Promise.all([
+    prisma.channel.findMany({ orderBy: { id: "asc" } }),
+    prisma.channelMember.findMany({ orderBy: { id: "asc" } }),
+    prisma.message.findMany({ orderBy: { id: "asc" } }),
+    prisma.pinnedItem.findMany({ orderBy: { id: "asc" } }),
+    prisma.voiceListen.findMany({ orderBy: { id: "asc" } })
+  ]);
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    channels,
+    channelMembers,
+    messages,
+    pinnedItems,
+    voiceListens
+  };
+}
+
+async function usersExportPayload() {
+  const accounts = await prisma.account.findMany({ include: { actor: true }, orderBy: { id: "asc" } });
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    accounts: accounts.map((account) => ({
+      id: account.id,
+      username: account.username,
+      passwordHash: account.passwordHash,
+      displayName: account.displayName,
+      avatarPath: account.avatarPath,
+      role: account.role,
+      theme: account.theme,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+      actor: account.actor
+    }))
+  };
+}
+
+app.post("/api/channels/:id/pinned", { preHandler: requireAdmin }, async (request, reply) => {
+  const channelId = Number((request.params as { id: string }).id);
+  const body = z.object({ kind: z.literal("notice"), content: z.string().optional(), active: z.boolean().default(true) }).parse(request.body);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
+  if (body.active) {
+    await prisma.pinnedItem.create({ data: { channelId, kind: body.kind, content: body.content || "", messageId: null, active: true } });
+  }
+  const dto = await channelDto(channelId);
+  io.to(`ch:${channelId}`).emit("pinned:updated", dto?.pinned || null);
+  if (body.active && body.content?.trim()) {
+    void sendAdminBroadcastPush(channelId, body.content).catch((error) => app.log.warn({ error }, "admin broadcast push failed"));
+  }
+  return { success: true, pinned: dto?.pinned || null };
+});
+
+app.get("/api/admin/accounts", { preHandler: requireAdmin }, async () => {
+  const accounts = await prisma.account.findMany({ include: { actor: true }, orderBy: { id: "asc" } });
+  return { accounts: accounts.map((a) => authDto(a)) };
+});
+
+app.post("/api/admin/accounts", { preHandler: requireAdmin }, async (request, reply) => {
+  const body = z.object({ username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/), password: z.string().min(6), displayName: z.string().min(1).max(80), isAdmin: z.boolean().optional() }).parse(request.body);
+  try {
+    const account = await prisma.account.create({
+      data: {
+        username: body.username,
+        passwordHash: await bcrypt.hash(body.password, 12),
+        displayName: body.displayName,
+        role: body.isAdmin ? "admin" : "user",
+        actor: { create: { kind: "human", username: body.username, displayName: body.displayName } }
+      },
+      include: { actor: true }
+    });
+    const publicChannels = await prisma.channel.findMany({ where: { isPrivate: false }, select: { id: true } });
+    await prisma.channelMember.createMany({ data: publicChannels.map((c) => ({ channelId: c.id, accountId: account.id, role: "member" })), skipDuplicates: true });
+    return { success: true, account: authDto(account) };
+  } catch {
+    return reply.code(409).send({ success: false, message: "用户名已存在" });
+  }
+});
+
+app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const id = Number((request.params as { id: string }).id);
+  const body = z
+    .object({
+      displayName: z.string().min(1).max(80).optional(),
+      isAdmin: z.boolean().optional(),
+      password: z.string().min(6).optional(),
+      avatarPath: z.string().max(255).nullable().optional()
+    })
+    .parse(request.body);
+  const current = await prisma.account.findUnique({ where: { id }, include: { actor: true } });
+  if (!current) return reply.code(404).send({ success: false, message: "用户不存在" });
+  if (body.isAdmin === false) {
+    if (id === auth.accountId) return reply.code(400).send({ success: false, message: "不能取消自己的管理员权限" });
+    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: id } } });
+    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
+  }
+  const updated = await prisma.account.update({
+    where: { id },
+    data: {
+      displayName: body.displayName,
+      avatarPath: body.avatarPath === undefined ? undefined : body.avatarPath || null,
+      role: body.isAdmin === undefined ? undefined : body.isAdmin ? "admin" : "user",
+      passwordHash: body.password ? await bcrypt.hash(body.password, 12) : undefined,
+      actor:
+        body.displayName || body.avatarPath !== undefined
+          ? {
+              update: {
+                displayName: body.displayName,
+                avatarPath: body.avatarPath === undefined ? undefined : body.avatarPath || null
+              }
+            }
+          : undefined
+    },
+    include: { actor: true }
+  });
+  if (body.password) {
+    const sessionsToRevoke = await prisma.accountSession.findMany({
+      where: { accountId: id, revokedAt: null, ...(id === auth.accountId ? { id: { not: auth.sessionId } } : {}) },
+      select: { id: true }
+    });
+    await prisma.accountSession.updateMany({
+      where: { id: { in: sessionsToRevoke.map((session) => session.id) } },
+      data: { revokedAt: new Date() }
+    });
+    disconnectSessions(sessionsToRevoke.map((session) => session.id));
+  }
+  return { success: true, account: authDto(updated) };
+});
+
+app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
+  const id = Number((request.params as { id: string }).id);
+  const account = await prisma.account.findUnique({ where: { id } });
+  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+  const file = await request.file();
+  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
+  const ext = path.extname(file.filename).toLowerCase();
+  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+  if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
+  const safeName = `${crypto.randomUUID()}${ext}`;
+  const outPath = path.join(AVATAR_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  const updated = await prisma.account.update({
+    where: { id },
+    data: { avatarPath: safeName, actor: { update: { avatarPath: safeName } } },
+    include: { actor: true }
+  });
+  return { success: true, account: authDto(updated) };
+});
+
+app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {
+  return jsonDownload(reply, `team-chat-data-${new Date().toISOString().slice(0, 10)}.json`, await chatExportPayload());
+});
+
+app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request, reply) => {
+  const payload = await readJsonUpload(request);
+  const channels = Array.isArray(payload.channels) ? payload.channels : [];
+  const channelMembers = Array.isArray(payload.channelMembers) ? payload.channelMembers : [];
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const pinnedItems = Array.isArray(payload.pinnedItems) ? payload.pinnedItems : [];
+  const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
+  await prisma.$transaction(async (tx) => {
+    for (const channel of channels) {
+      await tx.channel.upsert({
+        where: { id: Number(channel.id) },
+        update: {
+          name: String(channel.name || "未命名频道").slice(0, 80),
+          description: String(channel.description || "").slice(0, 255),
+          icon: cleanChannelIcon(channel.icon),
+          isPrivate: !!channel.isPrivate,
+          isDefault: !!channel.isDefault,
+          directKey: channel.directKey ? String(channel.directKey).slice(0, 120) : null,
+          createdAt: parseDate(channel.createdAt),
+          updatedAt: parseDate(channel.updatedAt)
+        },
+        create: {
+          id: Number(channel.id) || undefined,
+          name: String(channel.name || "未命名频道").slice(0, 80),
+          description: String(channel.description || "").slice(0, 255),
+          icon: cleanChannelIcon(channel.icon),
+          isPrivate: !!channel.isPrivate,
+          isDefault: !!channel.isDefault,
+          directKey: channel.directKey ? String(channel.directKey).slice(0, 120) : null,
+          createdAt: parseDate(channel.createdAt),
+          updatedAt: parseDate(channel.updatedAt)
+        }
+      });
+    }
+    for (const member of channelMembers) {
+      await tx.channelMember.upsert({
+        where: { channelId_accountId: { channelId: Number(member.channelId), accountId: Number(member.accountId) } },
+        update: { role: member.role || "member" },
+        create: { channelId: Number(member.channelId), accountId: Number(member.accountId), role: member.role || "member", createdAt: parseDate(member.createdAt) }
+      });
+    }
+    for (const message of messages) {
+      await tx.message.upsert({
+        where: { id: Number(message.id) },
+        update: {
+          channelId: Number(message.channelId),
+          senderActorId: Number(message.senderActorId),
+          content: message.content || "",
+          type: message.type || "text",
+          payload: message.payload === null || message.payload === undefined ? Prisma.JsonNull : message.payload,
+          fileName: message.fileName || null,
+          filePath: message.filePath || null,
+          fileSize: message.fileSize === null || message.fileSize === undefined ? null : Number(message.fileSize),
+          replyToId: message.replyToId || null,
+          chainRootId: message.chainRootId || null,
+          chainVersion: message.chainVersion || null,
+          createdAt: parseDate(message.createdAt)
+        },
+        create: {
+          id: Number(message.id) || undefined,
+          channelId: Number(message.channelId),
+          senderActorId: Number(message.senderActorId),
+          content: message.content || "",
+          type: message.type || "text",
+          payload: message.payload === null || message.payload === undefined ? Prisma.JsonNull : message.payload,
+          fileName: message.fileName || null,
+          filePath: message.filePath || null,
+          fileSize: message.fileSize === null || message.fileSize === undefined ? null : Number(message.fileSize),
+          replyToId: message.replyToId || null,
+          chainRootId: message.chainRootId || null,
+          chainVersion: message.chainVersion || null,
+          createdAt: parseDate(message.createdAt)
+        }
+      });
+    }
+    for (const pin of pinnedItems) {
+      await tx.pinnedItem.upsert({
+        where: { id: Number(pin.id) },
+        update: { channelId: Number(pin.channelId), kind: pin.kind || "notice", content: pin.content || null, messageId: pin.messageId || null, active: !!pin.active },
+        create: {
+          id: Number(pin.id) || undefined,
+          channelId: Number(pin.channelId),
+          kind: pin.kind || "notice",
+          content: pin.content || null,
+          messageId: pin.messageId || null,
+          active: !!pin.active,
+          createdAt: parseDate(pin.createdAt),
+          updatedAt: parseDate(pin.updatedAt)
+        }
+      });
+    }
+    for (const listen of voiceListens) {
+      await tx.voiceListen.upsert({
+        where: { messageId_accountId: { messageId: Number(listen.messageId), accountId: Number(listen.accountId) } },
+        update: { listenedAt: parseDate(listen.listenedAt) },
+        create: { messageId: Number(listen.messageId), accountId: Number(listen.accountId), listenedAt: parseDate(listen.listenedAt) }
+      });
+    }
+  });
+  return { success: true, imported: { channels: channels.length, messages: messages.length } };
+});
+
+app.get("/api/admin/export/users", { preHandler: requireAdmin }, async (_request, reply) => {
+  return jsonDownload(reply, `liao-users-${new Date().toISOString().slice(0, 10)}.json`, await usersExportPayload());
+});
+
+app.get("/api/admin/messages", { preHandler: requireAdmin }, async (request) => {
+  const query = request.query as { channelId?: string; q?: string; limit?: string };
+  const channelId = Number(query.channelId || 0);
+  const q = String(query.q || "").trim();
+  const limit = Math.min(Math.max(Number(query.limit || 80), 1), 200);
+  const where: Prisma.MessageWhereInput = {
+    ...(channelId ? { channelId } : {}),
+    ...(q
+      ? {
+          OR: [
+            { content: { contains: q } },
+            { fileName: { contains: q } },
+            { sender: { displayName: { contains: q } } },
+            { channel: { name: { contains: q } } }
+          ]
+        }
+      : {})
+  };
+  const messages = await prisma.message.findMany({
+    where,
+    include: { channel: true, sender: true },
+    orderBy: { id: "desc" },
+    take: limit
+  });
+  return {
+    messages: messages.map(
+      (message): AdminMessageDTO => ({
+        id: message.id,
+        channelId: message.channelId,
+        channelName: message.channel.name,
+        senderName: message.sender.displayName,
+        type: message.type,
+        content: messagePreview(message),
+        fileName: message.fileName,
+        fileSize: message.fileSize,
+        createdAt: message.createdAt.toISOString()
+      })
+    )
+  };
+});
+
+app.delete("/api/admin/messages/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  const id = Number((request.params as { id: string }).id);
+  const message = await prisma.message.findUnique({ where: { id }, select: { id: true, channelId: true, filePath: true } });
+  if (!message) return reply.code(404).send({ success: false, message: "消息不存在" });
+  const deleted = await deleteMessages([message]);
+  return { success: true, deleted };
+});
+
+app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request) => {
+  const query = request.query as { channelId?: string };
+  const channelId = Number(query.channelId || 0);
+  const messages = await prisma.message.findMany({
+    where: channelId ? { channelId } : {},
+    select: { id: true, channelId: true, filePath: true }
+  });
+  const deleted = await deleteMessages(messages);
+  return { success: true, deleted };
+});
+
+app.get("/api/admin/attachments", { preHandler: requireAdmin }, async () => {
+  return { attachments: await adminAttachmentList() };
+});
+
+app.delete("/api/admin/attachments", { preHandler: requireAdmin }, async (request, reply) => {
+  const body = z.object({ ids: z.array(z.string()).optional(), all: z.boolean().optional() }).parse(request.body || {});
+  const targets = body.all ? (await adminAttachmentList()).map((item) => parseAttachmentId(item.id)).filter(Boolean) : (body.ids || []).map(parseAttachmentId).filter(Boolean);
+  if (!targets.length) return reply.code(400).send({ success: false, message: "请选择要删除的附件" });
+  const deleted = await deleteAttachmentTargets(targets as Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>);
+  return { success: true, deleted, requested: targets.length };
+});
+
+app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const payload = await readJsonUpload(request);
+  const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  for (const item of accounts) {
+    const role = item.role === "admin" ? "admin" : "user";
+    const theme = THEMES.has(item.theme) ? item.theme : "wechat";
+    const passwordHash = String(item.passwordHash || (await bcrypt.hash(crypto.randomUUID(), 12)));
+    const account = await prisma.account.upsert({
+      where: { username: String(item.username) },
+      update: {
+        passwordHash,
+        displayName: String(item.displayName || item.username).slice(0, 80),
+        avatarPath: item.avatarPath || null,
+        role,
+        theme
+      },
+      create: {
+        id: Number(item.id) || undefined,
+        username: String(item.username).slice(0, 64),
+        passwordHash,
+        displayName: String(item.displayName || item.username).slice(0, 80),
+        avatarPath: item.avatarPath || null,
+        role,
+        theme,
+        createdAt: parseDate(item.createdAt),
+        actor: {
+          create: {
+            id: Number(item.actor?.id) || undefined,
+            kind: "human",
+            username: String(item.actor?.username || item.username).slice(0, 80),
+            displayName: String(item.actor?.displayName || item.displayName || item.username).slice(0, 80),
+            avatarPath: item.actor?.avatarPath || item.avatarPath || null,
+            status: item.actor?.status || "active",
+            createdAt: parseDate(item.actor?.createdAt)
+          }
+        }
+      },
+      include: { actor: true }
+    });
+    if (account.actor) {
+      await prisma.actor.update({
+        where: { id: account.actor.id },
+        data: {
+          displayName: String(item.actor?.displayName || item.displayName || item.username).slice(0, 80),
+          avatarPath: item.actor?.avatarPath || item.avatarPath || null,
+          status: item.actor?.status || "active"
+        }
+      });
+    }
+  }
+  const adminCount = await prisma.account.count({ where: { role: "admin" } });
+  if (!adminCount) await prisma.account.update({ where: { id: auth.accountId }, data: { role: "admin" } });
+  return { success: true, imported: { accounts: accounts.length } };
+});
+
+app.get("/api/admin/accounts/:id/attachments/export", { preHandler: requireAdmin }, async (request, reply) => {
+  const accountId = Number((request.params as { id: string }).id);
+  const account = await prisma.account.findUnique({ where: { id: accountId }, include: { actor: true } });
+  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+  const messages = await prisma.message.findMany({ where: { sender: { accountId }, filePath: { not: null } }, orderBy: { id: "asc" } });
+  const manifest = {
+    account: authDto(account),
+    exportedAt: new Date().toISOString(),
+    files: messages.map((message) => ({ messageId: message.id, fileName: message.fileName, filePath: message.filePath, fileSize: message.fileSize, createdAt: message.createdAt }))
+  };
+  const entries: Array<{ name: string; data: Buffer; date?: Date }> = [{ name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8") }];
+  for (const message of messages) {
+    if (!message.filePath) continue;
+    const filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
+    if (fs.existsSync(filePath)) {
+      entries.push({ name: `attachments/${message.id}-${zipSafeName(message.fileName || message.filePath)}`, data: fs.readFileSync(filePath), date: message.createdAt });
+    }
+  }
+  const zip = zipArchive(entries);
+  reply.header("Content-Type", "application/zip");
+  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`liao-${account.username}-attachments.zip`)}`);
+  return reply.send(zip);
+});
+
+app.delete("/api/admin/accounts/:id/attachments", { preHandler: requireAdmin }, async (request, reply) => {
+  const accountId = Number((request.params as { id: string }).id);
+  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+  const messages = await prisma.message.findMany({ where: { sender: { accountId }, filePath: { not: null } }, select: { id: true, channelId: true, filePath: true } });
+  const deleted = await detachMessageAttachments(messages);
+  return { success: true, deleted };
+});
+
+app.get("/api/virtual-characters", { preHandler: requireAdmin }, async () => {
+  const rows = await prisma.virtualCharacter.findMany({ include: { actor: true, memories: { take: 20, orderBy: { updatedAt: "desc" } } }, orderBy: { id: "asc" } });
+  return { characters: rows };
+});
+
+app.post("/api/virtual-characters", { preHandler: requireAdmin }, async (request, reply) => {
+  const body = z
+    .object({
+      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
+      displayName: z.string().min(1).max(80),
+      enabled: z.boolean().default(true),
+      config: z.unknown().optional(),
+      engineBinding: z.unknown().optional()
+    })
+    .parse(request.body);
+  try {
+    const character = await prisma.virtualCharacter.create({
+      data: {
+        enabled: body.enabled,
+        config: (body.config as object) || defaultVirtualCharacterConfig(body.displayName),
+        engineBinding: (body.engineBinding as object) || {},
+        actor: { create: { kind: "virtual", username: body.username, displayName: body.displayName } }
+      },
+      include: { actor: true }
+    });
+    return { success: true, character };
+  } catch {
+    return reply.code(409).send({ success: false, message: "角色用户名已存在" });
+  }
+});
+
+app.put("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  const id = Number((request.params as { id: string }).id);
+  const body = z.object({ displayName: z.string().min(1).max(80).optional(), enabled: z.boolean().optional(), config: z.unknown().optional(), engineBinding: z.unknown().optional() }).parse(request.body);
+  const current = await prisma.virtualCharacter.findUnique({ where: { id }, include: { actor: true } });
+  if (!current) return reply.code(404).send({ success: false, message: "角色不存在" });
+  const updated = await prisma.virtualCharacter.update({
+    where: { id },
+    data: {
+      enabled: body.enabled,
+      config: body.config as object | undefined,
+      engineBinding: body.engineBinding as object | undefined,
+      actor: body.displayName ? { update: { displayName: body.displayName } } : undefined
+    },
+    include: { actor: true }
+  });
+  return { success: true, character: updated };
+});
+
+app.delete("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (request) => {
+  const id = Number((request.params as { id: string }).id);
+  await prisma.virtualCharacter.delete({ where: { id } });
+  return { success: true };
+});
+
+app.post("/api/virtual-characters/:id/test-event", { preHandler: requireAdmin }, async (request) => {
+  const id = Number((request.params as { id: string }).id);
+  const body = z.object({ channelId: z.number(), prompt: z.string().default("手动测试") }).parse(request.body);
+  await createEngineEvent("manual_test", { prompt: body.prompt }, body.channelId, undefined, id);
+  return { success: true };
+});
+
+app.get("/api/engine/v1/events", async (request, reply) => {
+  if (!checkEngineAuth(request)) return reply.code(401).send({ success: false, message: "engine token invalid" });
+  const after = Number((request.query as { after?: string }).after || 0);
+  const events = await prisma.engineEvent.findMany({ where: { id: { gt: after } }, orderBy: { id: "asc" }, take: 100 });
+  return { events };
+});
+
+app.post("/api/engine/v1/actions", async (request, reply) => {
+  if (!checkEngineAuth(request)) return reply.code(401).send({ success: false, message: "engine token invalid" });
+  const body = z
+    .object({
+      eventId: z.number().optional(),
+      event_id: z.number().optional(),
+      idempotencyKey: z.string().min(8).max(120).optional(),
+      idempotency_key: z.string().min(8).max(120).optional(),
+      actionType: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
+      action_type: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
+      action: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
+      characterId: z.number().optional(),
+      character_id: z.number().optional(),
+      channelId: z.number().optional(),
+      channel_id: z.number().optional(),
+      payload: z.unknown().optional()
+    })
+    .parse(request.body);
+
+  const idempotencyKey = body.idempotencyKey || body.idempotency_key;
+  const actionType = body.actionType || body.action_type || body.action;
+  if (!idempotencyKey || !actionType) return reply.code(400).send({ success: false, message: "idempotency_key and action are required" });
+
+  const rawPayload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? (body.payload as Record<string, unknown>) : {};
+  const payload = {
+    ...rawPayload,
+    characterId: rawPayload.characterId || rawPayload.character_id || body.characterId || body.character_id,
+    channelId: rawPayload.channelId || rawPayload.channel_id || body.channelId || body.channel_id
+  };
+  const eventId = body.eventId || body.event_id;
+
+  const existing = await prisma.engineAction.findUnique({ where: { idempotencyKey } });
+  if (existing) return { success: true, duplicate: true, result: existing.result };
+  const result = await handleEngineAction(actionType, payload, eventId);
+  await prisma.engineAction.create({
+    data: {
+      eventId: eventId || null,
+      idempotencyKey,
+      actionType,
+      payload,
+      result: result as object
+    }
+  });
+  return { success: true, result };
+});
+
+function defaultVirtualCharacterConfig(displayName: string) {
+  return {
+    profile: { name: displayName, persona: "", speakingStyle: "像微信群里的真人，简短自然" },
+    channels: [],
+    replyPolicy: { mode: "external_engine_decides", allowSkip: true, allowMultipleMessages: true },
+    proactivePolicy: { enabled: false, idleMinutes: 30 },
+    typing: { show: true, minMs: 800, maxMs: 8000 },
+    memory: { rememberUsers: true, maxItemsPerUser: 50 },
+    modelHints: { provider: "deepseek", compatibleEndpoint: "/chat/completions", preferredModels: ["deepseek-v4-flash", "deepseek-v4-pro"] }
+  };
+}
+
+function checkEngineAuth(request: FastifyRequest) {
+  if (!ENGINE_API_TOKEN) return false;
+  const token = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : request.headers["x-engine-token"];
+  return token === ENGINE_API_TOKEN;
+}
+
+async function handleEngineAction(actionType: string, payload: unknown, eventId?: number) {
+  const data = payload as any;
+  if (actionType === "skip") return { skipped: true };
+  if (actionType === "typing_start" || actionType === "typing_stop") {
+    const channelId = Number(data.channelId);
+    const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
+    if (!channelId || !character) throw new Error("invalid typing action");
+    io.to(`ch:${channelId}`).emit("message:typing", {
+      channelId,
+      actor: { id: character.actor.id, username: character.actor.username, displayName: character.actor.displayName, kind: "virtual" },
+      state: actionType === "typing_start" ? "start" : "stop"
+    });
+    return { typing: actionType };
+  }
+  if (actionType === "send_message") {
+    const channelId = Number(data.channelId);
+    const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
+    if (!channelId || !character?.enabled) throw new Error("invalid send action");
+    const messages = Array.isArray(data.messages) ? data.messages : [{ content: data.content }];
+    const created: MessageDTO[] = [];
+    for (const msg of messages.slice(0, 6)) {
+      const content = cleanText(msg.content);
+      if (!content) continue;
+      const row = await createMessageFromActor({ channelId, actorId: character.actorId, content, type: "text", replyToId: Number(msg.replyToId) || null });
+      const dto = await hydrateMessage(row.id);
+      if (dto) created.push(dto);
+    }
+    return { sent: created.map((m) => m.id) };
+  }
+  if (actionType === "remember_user") {
+    const characterId = Number(data.characterId);
+    const subjectType = String(data.subjectType || "account").slice(0, 32);
+    const subjectId = String(data.subjectId || "").slice(0, 80);
+    const content = String(data.content || "").slice(0, 2000);
+    if (!characterId || !subjectId || !content) throw new Error("invalid memory action");
+    const memory = await prisma.characterMemory.create({ data: { characterId, subjectType, subjectId, content, confidence: Number(data.confidence || 1) } });
+    return { memoryId: memory.id };
+  }
+  if (actionType === "schedule_topic") {
+    const channelId = Number(data.channelId);
+    await createEngineEvent("active_topic_due", { topic: data.topic || "", scheduledBy: data.characterId || null }, channelId, undefined, Number(data.characterId) || undefined);
+    return { scheduled: true };
+  }
+  return { ok: true, eventId };
+}
+
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, "");
+    socket.data.auth = await verifyJwtToken(token);
+    next();
+  } catch {
+    next(new Error("认证失败"));
+  }
+});
+
+io.on("connection", async (socket: Socket) => {
+  const auth = socket.data.auth as AuthContext;
+  const account = await prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } });
+  if (!account?.actor) return socket.disconnect(true);
+  const ids = accountSocketIds.get(account.id) || new Set<string>();
+  ids.add(socket.id);
+  accountSocketIds.set(account.id, ids);
+  socket.join(`acct:${account.id}`);
+  online.set(socket.id, { actorId: account.actor.id, accountId: account.id, username: account.username, displayName: account.displayName, avatarPath: account.avatarPath });
+  const channels = await prisma.channel.findMany({
+    where: auth.isAdmin
+      ? { OR: [{ directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
+      : { OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] },
+    select: { id: true }
+  });
+  channels.forEach((ch) => socket.join(`ch:${ch.id}`));
+  await broadcastPresence();
+
+  socket.on("channel:join", async (data: { channelId: number }) => {
+    if (await canAccessChannel(auth.accountId, Number(data.channelId))) socket.join(`ch:${Number(data.channelId)}`);
+  });
+
+  socket.on("message:send", async (data: unknown, ack?: (payload: unknown) => void) => {
+    try {
+      const body = z.object({ channelId: z.number(), content: z.string(), payload: z.unknown().optional(), replyToId: z.number().nullable().optional() }).parse(data);
+      if (!(await canWriteChannel(auth.accountId, body.channelId))) return ack?.({ success: false, message: "无权在此频道发言" });
+      const content = cleanText(body.content);
+      if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
+      const message = await createMessageFromActor({
+        channelId: body.channelId,
+        actorId: auth.actorId,
+        content,
+        type: "text",
+        payload: cleanMessageEffect(body.payload),
+        replyToId: body.replyToId || null
+      });
+      ack?.({ success: true, messageId: message.id });
+    } catch (error) {
+      ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
+    }
+  });
+
+  socket.on("message:typing", async (data: { channelId: number; state: "start" | "stop" }) => {
+    if (!(await canAccessChannel(auth.accountId, Number(data.channelId)))) return;
+    socket.to(`ch:${Number(data.channelId)}`).emit("message:typing", {
+      channelId: Number(data.channelId),
+      actor: { id: account.actor!.id, username: account.actor!.username, displayName: account.actor!.displayName, kind: "human" },
+      state: data.state
+    });
+  });
+
+  socket.on("disconnect", async () => {
+    online.delete(socket.id);
+    const set = accountSocketIds.get(account.id);
+    if (set) {
+      set.delete(socket.id);
+      if (!set.size) accountSocketIds.delete(account.id);
+    }
+    await broadcastPresence();
+  });
+});
+
+app.setNotFoundHandler((request, reply) => {
+  if (request.url.startsWith("/api/")) return reply.code(404).send({ success: false, message: "Not found" });
+  const indexPath = path.join(DIST_CLIENT, "index.html");
+  if (fs.existsSync(indexPath)) return reply.type("text/html").send(fs.createReadStream(indexPath));
+  return reply.code(404).send("Client build not found");
+});
+
+process.on("SIGTERM", async () => {
+  io.close();
+  await app.close();
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+await ensureBootstrap();
+await ensureWebPush();
+await app.listen({ port: PORT, host: "0.0.0.0" });

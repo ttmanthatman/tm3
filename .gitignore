@@ -1,0 +1,10 @@
+node_modules/
+dist/
+storage/
+output/
+.playwright-cli/
+.env
+.env.*
+!.env.example
+AGENTS.md
+*.local.md

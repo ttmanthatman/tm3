@@ -1,0 +1,301 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ActorKind {
+  human
+  virtual
+  system
+}
+
+enum AccountRole {
+  user
+  admin
+}
+
+enum ChannelRole {
+  owner
+  admin
+  member
+  viewer
+}
+
+enum DeviceKind {
+  desktop
+  mobile
+  tablet
+}
+
+enum MessageType {
+  text
+  image
+  file
+  chain
+  system
+}
+
+enum PinnedKind {
+  notice
+  message
+}
+
+enum EngineEventKind {
+  message_created
+  idle_tick
+  manual_test
+  active_topic_due
+}
+
+model Account {
+  id                      Int                             @id @default(autoincrement())
+  username                String                          @unique @db.VarChar(64)
+  passwordHash            String                          @map("password_hash") @db.VarChar(255)
+  displayName             String                          @map("display_name") @db.VarChar(80)
+  avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
+  role                    AccountRole                     @default(user)
+  theme                   String                          @default("wechat") @db.VarChar(32)
+  lastLoginAt             DateTime?                       @map("last_login_at")
+  createdAt               DateTime                        @default(now()) @map("created_at")
+  updatedAt               DateTime                        @updatedAt @map("updated_at")
+  actor                   Actor?
+  memberships             ChannelMember[]
+  notificationPreferences ChannelNotificationPreference[]
+  pushSubs                PushSubscription[]
+  voiceListens            VoiceListen[]
+  audits                  AuditLog[]
+  sessions                AccountSession[]
+
+  @@map("accounts")
+}
+
+model AccountSession {
+  id         String     @id @db.VarChar(64)
+  accountId  Int        @map("account_id")
+  deviceKind DeviceKind @map("device_kind")
+  deviceName String     @map("device_name") @db.VarChar(120)
+  userAgent  String?    @map("user_agent") @db.Text
+  ipAddress  String?    @map("ip_address") @db.VarChar(64)
+  createdAt  DateTime   @default(now()) @map("created_at")
+  lastSeenAt DateTime   @default(now()) @map("last_seen_at")
+  expiresAt  DateTime   @map("expires_at")
+  revokedAt  DateTime?  @map("revoked_at")
+  account    Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, deviceKind, revokedAt])
+  @@index([expiresAt])
+  @@map("account_sessions")
+}
+
+model Actor {
+  id          Int               @id @default(autoincrement())
+  kind        ActorKind
+  accountId   Int?              @unique @map("account_id")
+  username    String            @unique @db.VarChar(80)
+  displayName String            @map("display_name") @db.VarChar(80)
+  avatarPath  String?           @map("avatar_path") @db.VarChar(255)
+  status      String            @default("active") @db.VarChar(32)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  account     Account?          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  messages    Message[]
+  character   VirtualCharacter?
+
+  @@index([kind])
+  @@map("actors")
+}
+
+model Channel {
+  id                      Int                             @id @default(autoincrement())
+  name                    String                          @db.VarChar(80)
+  description             String                          @default("") @db.VarChar(255)
+  icon                    String                          @default("#") @db.VarChar(16)
+  isPrivate               Boolean                         @default(false) @map("is_private")
+  isDefault               Boolean                         @default(false) @map("is_default")
+  directKey               String?                         @unique @map("direct_key") @db.VarChar(120)
+  createdAt               DateTime                        @default(now()) @map("created_at")
+  updatedAt               DateTime                        @updatedAt @map("updated_at")
+  members                 ChannelMember[]
+  notificationPreferences ChannelNotificationPreference[]
+  messages                Message[]
+  pinned                  PinnedItem[]
+
+  @@map("channels")
+}
+
+model ChannelMember {
+  id        Int         @id @default(autoincrement())
+  channelId Int         @map("channel_id")
+  accountId Int         @map("account_id")
+  role      ChannelRole @default(member)
+  createdAt DateTime    @default(now()) @map("created_at")
+  channel   Channel     @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  account   Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, accountId])
+  @@map("channel_members")
+}
+
+model ChannelNotificationPreference {
+  id        Int      @id @default(autoincrement())
+  channelId Int      @map("channel_id")
+  accountId Int      @map("account_id")
+  muted     Boolean  @default(false)
+  updatedAt DateTime @updatedAt @map("updated_at")
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, accountId])
+  @@index([accountId, muted])
+  @@map("channel_notification_preferences")
+}
+
+model Message {
+  id            Int           @id @default(autoincrement())
+  channelId     Int           @map("channel_id")
+  senderActorId Int           @map("sender_actor_id")
+  content       String?       @db.Text
+  type          MessageType   @default(text)
+  payload       Json?
+  fileName      String?       @map("file_name") @db.VarChar(255)
+  filePath      String?       @map("file_path") @db.VarChar(255)
+  fileSize      Int?          @map("file_size")
+  replyToId     Int?          @map("reply_to_id")
+  chainRootId   Int?          @map("chain_root_id")
+  chainVersion  Int?          @map("chain_version")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  channel       Channel       @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender        Actor         @relation(fields: [senderActorId], references: [id])
+  replyTo       Message?      @relation("message_replies", fields: [replyToId], references: [id])
+  replies       Message[]     @relation("message_replies")
+  voiceListens  VoiceListen[]
+
+  @@index([channelId, id])
+  @@index([replyToId])
+  @@index([chainRootId])
+  @@map("messages")
+}
+
+model VoiceListen {
+  id         Int      @id @default(autoincrement())
+  messageId  Int      @map("message_id")
+  accountId  Int      @map("account_id")
+  listenedAt DateTime @default(now()) @map("listened_at")
+  message    Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, accountId])
+  @@index([accountId, listenedAt])
+  @@map("voice_listens")
+}
+
+model Setting {
+  key       String   @id @db.VarChar(80)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+model PinnedItem {
+  id        Int        @id @default(autoincrement())
+  channelId Int        @map("channel_id")
+  kind      PinnedKind
+  content   String?    @db.Text
+  messageId Int?       @map("message_id")
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  channel   Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@index([channelId, active])
+  @@map("pinned_items")
+}
+
+model PushSubscription {
+  id         Int      @id @default(autoincrement())
+  accountId  Int      @map("account_id")
+  endpoint   String   @unique @db.VarChar(512)
+  keysP256dh String   @map("keys_p256dh") @db.VarChar(255)
+  keysAuth   String   @map("keys_auth") @db.VarChar(255)
+  createdAt  DateTime @default(now()) @map("created_at")
+  account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
+}
+
+model VirtualCharacter {
+  id            Int               @id @default(autoincrement())
+  actorId       Int               @unique @map("actor_id")
+  enabled       Boolean           @default(true)
+  config        Json
+  state         Json?
+  engineBinding Json?             @map("engine_binding")
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  actor         Actor             @relation(fields: [actorId], references: [id], onDelete: Cascade)
+  memories      CharacterMemory[]
+
+  @@map("virtual_characters")
+}
+
+model CharacterMemory {
+  id          Int              @id @default(autoincrement())
+  characterId Int              @map("character_id")
+  subjectType String           @map("subject_type") @db.VarChar(32)
+  subjectId   String           @map("subject_id") @db.VarChar(80)
+  content     String           @db.Text
+  confidence  Float            @default(1)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  character   VirtualCharacter @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([characterId, subjectType, subjectId])
+  @@map("character_memories")
+}
+
+model EngineEvent {
+  id          Int             @id @default(autoincrement())
+  kind        EngineEventKind
+  channelId   Int?            @map("channel_id")
+  messageId   Int?            @map("message_id")
+  characterId Int?            @map("character_id")
+  payload     Json
+  claimedAt   DateTime?       @map("claimed_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  actions     EngineAction[]
+
+  @@index([id, kind])
+  @@map("engine_events")
+}
+
+model EngineAction {
+  id             Int          @id @default(autoincrement())
+  eventId        Int?         @map("event_id")
+  idempotencyKey String       @unique @map("idempotency_key") @db.VarChar(120)
+  actionType     String       @map("action_type") @db.VarChar(64)
+  payload        Json
+  result         Json?
+  createdAt      DateTime     @default(now()) @map("created_at")
+  event          EngineEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
+
+  @@map("engine_actions")
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  accountId Int?     @map("account_id")
+  action    String   @db.VarChar(120)
+  target    String?  @db.VarChar(120)
+  payload   Json?
+  ip        String?  @db.VarChar(80)
+  createdAt DateTime @default(now()) @map("created_at")
+  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, createdAt])
+  @@map("audit_logs")
+}
