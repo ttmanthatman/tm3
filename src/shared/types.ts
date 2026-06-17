@@ -1,6 +1,7 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "chain" | "system";
+export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly";
+export type PrayerStatus = "active" | "closed" | "answered";
 
 export interface ActorDTO {
   id: number;
@@ -29,6 +30,23 @@ export interface ChainPayload {
 
 export interface MessageEffectPayload {
   effect?: MessageEffect;
+}
+
+export interface PrayerPayload extends MessageEffectPayload {
+  kind: "prayer";
+  status: PrayerStatus;
+  statusAt?: string;
+  statusBy?: string;
+  prayerCount: number;
+  prayerActionCount: number;
+  currentUserPrayed: boolean;
+  prayedBy: Array<{
+    accountId: number;
+    displayName: string;
+    avatarPath?: string | null;
+    latestPrayedAt: string;
+    times: number;
+  }>;
 }
 
 export interface MessageDTO {

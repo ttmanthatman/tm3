@@ -11,6 +11,9 @@ import {
   Download,
   FilePlus,
   FileUp,
+  CheckCircle2,
+  CircleOff,
+  HeartHandshake,
   Image as ImageIcon,
   Info,
   LogOut,
@@ -55,6 +58,8 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
+  PrayerPayload,
+  PrayerStatus,
   ThemeDTO,
   ThemePaletteDTO
 } from "@shared/types";
@@ -286,6 +291,10 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
   { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane }
 ];
+const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
+type SlashCommandSuggestion =
+  | { kind: "prayer"; command: string; label: string; hint: string; icon: typeof HeartHandshake }
+  | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
 type VoicePayload = {
   kind?: string;
@@ -448,17 +457,17 @@ const notificationPermissionLabel = computed(() => {
   if (notificationPermission.value === "denied") return "已拒绝";
   return "未开启";
 });
-const effectCommandQuery = computed(() => {
-  const value = input.value;
-  if (!value.startsWith("/")) return "";
-  const firstLine = value.split(/\r?\n/, 1)[0] || "";
-  if (/\s/.test(firstLine)) return "";
-  return firstLine;
-});
-const matchingEffectCommands = computed(() => {
-  const query = effectCommandQuery.value;
-  if (!query) return [];
-  return effectCommands.filter((item) => item.command.startsWith(query));
+const slashCommandToken = computed(() => slashCommandTokenAtCursor(input.value, composerCaret.value));
+const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
+  const token = slashCommandToken.value;
+  if (!token) return [];
+  if (token.kind === "prayer-effect") {
+    return effectCommands.filter((item) => item.command.startsWith(token.query)).map((item) => ({ ...item, kind: "effect" as const }));
+  }
+  return [
+    { ...prayerCommand, kind: "prayer" as const },
+    ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
+  ].filter((item) => item.command.startsWith(token.query));
 });
 const mentionToken = computed(() => mentionTokenAtCursor(input.value, composerCaret.value));
 const matchingMentionMembers = computed(() => {
@@ -475,11 +484,11 @@ const matchingMentionMembers = computed(() => {
 });
 const activeComposerSuggestionKind = computed<"mention" | "effect" | null>(() => {
   if (matchingMentionMembers.value.length > 0) return "mention";
-  if (matchingEffectCommands.value.length > 0) return "effect";
+  if (matchingSlashCommands.value.length > 0) return "effect";
   return null;
 });
 const composerSuggestionCount = computed(() =>
-  activeComposerSuggestionKind.value === "mention" ? matchingMentionMembers.value.length : matchingEffectCommands.value.length
+  activeComposerSuggestionKind.value === "mention" ? matchingMentionMembers.value.length : matchingSlashCommands.value.length
 );
 const showComposerSuggestionMenu = computed(() => !composerSuggestionSuppressed.value && !!activeComposerSuggestionKind.value && composerSuggestionCount.value > 0);
 watch(composerSuggestionCount, (count) => {
@@ -842,11 +851,21 @@ function deviceIcon(kind: string) {
   return Monitor;
 }
 
-function parseComposerText(value: string): { content: string; effect?: MessageEffect } {
+function parseComposerText(value: string): { content: string; effect?: MessageEffect; type?: "text" | "prayer" } {
   const trimmed = value.trim();
+  if (trimmed === "/代祷" || trimmed.startsWith("/代祷 ") || trimmed.startsWith("/代祷\n")) {
+    let content = trimmed.slice("/代祷".length).trim();
+    let effect: MessageEffect | undefined;
+    const effectCommand = effectCommands.find((item) => content === item.command || content.startsWith(`${item.command} `) || content.startsWith(`${item.command}\n`));
+    if (effectCommand) {
+      effect = effectCommand.effect;
+      content = content.slice(effectCommand.command.length).trim();
+    }
+    return { content, effect, type: "prayer" };
+  }
   const command = effectCommands.find((item) => trimmed === item.command || trimmed.startsWith(`${item.command} `) || trimmed.startsWith(`${item.command}\n`));
   if (!command) return { content: trimmed };
-  return { content: trimmed.slice(command.command.length).trim(), effect: command.effect };
+  return { content: trimmed.slice(command.command.length).trim(), effect: command.effect, type: "text" };
 }
 
 function mentionTokenAtCursor(value: string, caret: number) {
@@ -860,15 +879,48 @@ function mentionTokenAtCursor(value: string, caret: number) {
   };
 }
 
+function slashCommandTokenAtCursor(value: string, caret: number) {
+  const beforeCursor = value.slice(0, caret);
+  const firstLine = beforeCursor.split(/\r?\n/, 1)[0] || "";
+  if (firstLine === "/" || /^\/[^\s/]*$/.test(firstLine)) {
+    return { kind: "root" as const, start: 0, end: caret, query: firstLine };
+  }
+  const prayerEffectMatch = beforeCursor.match(/^\/代祷\s+(\/[^\s/]*)$/);
+  if (prayerEffectMatch) {
+    return {
+      kind: "prayer-effect" as const,
+      start: beforeCursor.length - prayerEffectMatch[1].length,
+      end: caret,
+      query: prayerEffectMatch[1]
+    };
+  }
+  return null;
+}
+
 function syncComposerCaret() {
   const el = composerInput.value;
   composerCaret.value = el?.selectionStart ?? input.value.length;
 }
 
-function chooseEffectCommand(command: string) {
-  input.value = `${command} `;
+function chooseSlashCommand(item: SlashCommandSuggestion) {
+  const token = slashCommandToken.value;
+  const command = item.command;
+  const start = token?.start ?? 0;
+  const end = token?.end ?? input.value.length;
+  input.value = `${input.value.slice(0, start)}${command} ${input.value.slice(end)}`;
   composerPanel.value = null;
   composerSuggestionSuppressed.value = true;
+  nextTick(() => {
+    composerInput.value?.focus();
+    const cursor = start + command.length + 1;
+    composerInput.value?.setSelectionRange(cursor, cursor);
+    syncComposerCaret();
+  });
+}
+
+function startPrayerComposer() {
+  input.value = "/代祷 ";
+  composerPanel.value = null;
   nextTick(() => {
     composerInput.value?.focus();
     composerInput.value?.setSelectionRange(input.value.length, input.value.length);
@@ -899,8 +951,8 @@ function chooseActiveComposerSuggestion() {
     if (member) chooseMentionSuggestion(member);
     return;
   }
-  const command = matchingEffectCommands.value[index];
-  if (command) chooseEffectCommand(command.command);
+  const command = matchingSlashCommands.value[index];
+  if (command) chooseSlashCommand(command);
 }
 
 async function sendText() {
@@ -908,10 +960,12 @@ async function sendText() {
   const content = parsed.content;
   if (!content || !store.currentChannelId) return;
   const originalInput = input.value;
+  const messageType = store.prayerOnly ? "prayer" : parsed.type || "text";
   const payload = {
     channelId: store.currentChannelId,
     content,
-    payload: parsed.effect ? { effect: parsed.effect } : undefined,
+    type: messageType,
+    payload: messageType === "prayer" ? { kind: "prayer", status: "active", ...(parsed.effect ? { effect: parsed.effect } : {}) } : parsed.effect ? { effect: parsed.effect } : undefined,
     replyToId: replyTo.value?.id || null
   };
   input.value = "";
@@ -1805,6 +1859,59 @@ function chainPayload(message: MessageDTO): ChainPayload {
   return (message.payload as ChainPayload) || { topic: message.content || "接龙", participants: [] };
 }
 
+function prayerPayload(message: MessageDTO): PrayerPayload {
+  const raw = (message.payload || {}) as Partial<PrayerPayload>;
+  const status = raw.status === "closed" || raw.status === "answered" ? raw.status : "active";
+  return {
+    kind: "prayer",
+    status,
+    statusAt: raw.statusAt,
+    statusBy: raw.statusBy,
+    effect: raw.effect,
+    prayerCount: Number(raw.prayerCount || 0),
+    prayerActionCount: Number(raw.prayerActionCount || 0),
+    currentUserPrayed: !!raw.currentUserPrayed,
+    prayedBy: Array.isArray(raw.prayedBy) ? raw.prayedBy : []
+  };
+}
+
+function prayerStatusText(status: PrayerStatus) {
+  if (status === "answered") return "已蒙应允";
+  if (status === "closed") return "无需再代祷";
+  return "正在代祷";
+}
+
+function prayerActionText(message: MessageDTO) {
+  const payload = prayerPayload(message);
+  if (!payload.prayerCount) return "还没有人记录祷告";
+  const names = payload.prayedBy
+    .slice(0, 3)
+    .map((item) => item.displayName)
+    .join("、");
+  return `${names}${payload.prayerCount > 3 ? ` 等 ${payload.prayerCount} 人` : ""} 已为此祷告`;
+}
+
+function prayerLatestTime(message: MessageDTO) {
+  const latest = prayerPayload(message).prayedBy[0]?.latestPrayedAt;
+  return latest ? adminDate(latest) : "";
+}
+
+async function markPrayerPrayed(message: MessageDTO) {
+  await api(`/api/messages/${message.id}/prayed`, { method: "POST", body: JSON.stringify({}) });
+  await store.loadMessages();
+}
+
+async function updatePrayerStatus(message: MessageDTO, status: "closed" | "answered") {
+  await api(`/api/messages/${message.id}/prayer-status`, { method: "PATCH", body: JSON.stringify({ status }) });
+  await store.loadMessages();
+}
+
+async function withdrawPrayer(message: MessageDTO) {
+  if (!confirm("撤回这条代祷事项？")) return;
+  await api(`/api/messages/${message.id}/prayer`, { method: "DELETE" });
+  await store.loadMessages();
+}
+
 function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
@@ -1864,6 +1971,7 @@ function adminMessageKind(message: AdminMessageDTO) {
   if (message.fileName && /\.(webm|mp3|m4a|wav|ogg|aac|mp4)$/i.test(message.fileName)) return "语音";
   if (message.type === "file") return "文件";
   if (message.type === "chain") return "接龙";
+  if (message.type === "prayer") return "代祷";
   if (message.type === "system") return "系统";
   return "文本";
 }
@@ -2303,19 +2411,30 @@ async function toggleVirtual(character: any) {
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
-      <button
-        v-for="channel in store.channels"
-        :key="channel.id"
-        class="channel-row"
-        :class="{ active: channel.id === store.currentChannelId }"
-        @click="store.switchChannel(channel.id); showChannels = false"
-      >
-        <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
-        <span>
-          <b>{{ channel.name }}</b>
-          <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }}</small>
-        </span>
-      </button>
+      <template v-for="channel in store.channels" :key="channel.id">
+        <button
+          class="channel-row"
+          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
+          @click="store.switchChannel(channel.id); showChannels = false"
+        >
+          <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
+          <span>
+            <b>{{ channel.name }}</b>
+            <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }}</small>
+          </span>
+        </button>
+        <button
+          class="channel-row channel-subrow"
+          :class="{ active: channel.id === store.currentChannelId && store.prayerOnly }"
+          @click="store.switchPrayerView(channel.id); showChannels = false"
+        >
+          <span class="channel-icon prayer-icon"><HeartHandshake :size="20" /></span>
+          <span>
+            <b>代祷事项</b>
+            <small>{{ channel.name }}</small>
+          </span>
+        </button>
+      </template>
       <footer class="profile-row">
         <div class="avatar">
           <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />
@@ -2335,8 +2454,8 @@ async function toggleVirtual(character: any) {
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
-          <strong>{{ currentChannel?.name || "聊天室" }}</strong>
-          <small>{{ store.members.length }} 人/角色</small>
+          <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+          <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
         </div>
         <button class="icon-btn" @click="membersCollapsed = false; showMembers = !showMembers" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
@@ -2395,7 +2514,7 @@ async function toggleVirtual(character: any) {
               </div>
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file' }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer' }, messageEffectClass(row.message)]"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
                 @pointerdown="beginMessageLongPress(row.message, $event)"
                 @pointermove="moveMessageLongPress"
@@ -2419,6 +2538,36 @@ async function toggleVirtual(character: any) {
                       </li>
                     </ol>
                     <button class="mini-btn" @click.stop="confirmJoinChain(row.message, $event)">参与接龙</button>
+                  </div>
+                </template>
+                <template v-else-if="row.message.type === 'prayer'">
+                  <div class="prayer-card" :class="`status-${prayerPayload(row.message).status}`" @click.stop="prayerPayload(row.message).status === 'active' && markPrayerPrayed(row.message)">
+                    <div class="prayer-card-head">
+                      <span><HeartHandshake :size="17" /></span>
+                      <strong>代祷事项</strong>
+                      <em>{{ prayerStatusText(prayerPayload(row.message).status) }}</em>
+                    </div>
+                    <p class="prayer-text" v-html="row.message.content"></p>
+                    <div class="prayer-stats">
+                      <strong>已有 {{ prayerPayload(row.message).prayerCount }} 人为此祷告</strong>
+                      <small>{{ prayerActionText(row.message) }}<template v-if="prayerLatestTime(row.message)"> · 最近 {{ prayerLatestTime(row.message) }}</template></small>
+                    </div>
+                    <div v-if="prayerPayload(row.message).prayedBy.length" class="prayer-people" aria-label="已祷告成员">
+                      <span v-for="person in prayerPayload(row.message).prayedBy.slice(0, 6)" :key="person.accountId" class="mini-avatar" :title="`${person.displayName} · ${person.times} 次`">
+                        <img v-if="avatarUrl(person.avatarPath)" :src="avatarUrl(person.avatarPath)" alt="" />
+                        <span v-else>{{ avatarText(person.displayName) }}</span>
+                      </span>
+                    </div>
+                    <div class="prayer-actions">
+                      <button v-if="prayerPayload(row.message).status === 'active'" class="mini-btn" @click.stop="markPrayerPrayed(row.message)">
+                        <CheckCircle2 :size="15" />{{ prayerPayload(row.message).currentUserPrayed ? "再次记录祷告" : "我已祷告" }}
+                      </button>
+                      <template v-if="isMine(row.message) && prayerPayload(row.message).status === 'active'">
+                        <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'closed')"><CircleOff :size="15" />无需再代祷</button>
+                        <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'answered')"><CheckCircle2 :size="15" />已蒙应允</button>
+                      </template>
+                      <button v-if="isMine(row.message)" class="mini-btn danger-soft" @click.stop="withdrawPrayer(row.message)"><Trash2 :size="15" />撤回</button>
+                    </div>
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'image'">
@@ -2507,7 +2656,7 @@ async function toggleVirtual(character: any) {
               ref="composerInput"
               v-model="input"
               rows="1"
-              placeholder="输入消息"
+              :placeholder="store.prayerOnly ? '输入代祷事项' : '输入消息'"
               @focus="focusComposer(); syncComposerCaret()"
               @input="onInput"
               @click="syncComposerCaret"
@@ -2540,12 +2689,12 @@ async function toggleVirtual(character: any) {
             </template>
             <template v-else>
               <button
-                v-for="(item, index) in matchingEffectCommands"
+                v-for="(item, index) in matchingSlashCommands"
                 :key="item.command"
                 type="button"
                 class="composer-suggestion"
                 :class="{ active: index === composerSuggestionIndex }"
-                @click="chooseEffectCommand(item.command)"
+                @click="chooseSlashCommand(item)"
               >
                 <component :is="item.icon" :size="18" />
                 <span>{{ item.command }}</span>
@@ -2605,6 +2754,10 @@ async function toggleVirtual(character: any) {
           <button class="tool-tile" @click="openChainModal">
             <span><Plus :size="25" /></span>
             <small>接龙</small>
+          </button>
+          <button class="tool-tile" @click="startPrayerComposer">
+            <span><HeartHandshake :size="25" /></span>
+            <small>代祷</small>
           </button>
         </div>
       </footer>

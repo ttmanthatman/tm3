@@ -394,6 +394,17 @@ button {
   background: #dcdcdc;
 }
 
+.channel-subrow {
+  min-height: 44px;
+  padding: 6px 14px 6px 34px;
+  gap: 10px;
+  color: #4d5a50;
+}
+
+.channel-subrow b {
+  font-size: 13px;
+}
+
 .channel-icon {
   width: 38px;
   height: 38px;
@@ -402,6 +413,14 @@ button {
   place-items: center;
   overflow: hidden;
   background: #e9ecef;
+}
+
+.channel-icon.prayer-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  color: #8a4a1f;
+  background: #fff0d6;
 }
 
 .channel-icon img {
@@ -719,6 +738,22 @@ button {
 .message-row.mine .bubble {
   background: var(--bubble-mine);
   color: var(--bubble-mine-text);
+}
+
+.prayer-bubble {
+  width: min(430px, 72vw);
+  padding: 0;
+  overflow: hidden;
+  color: #332518;
+  background: #fffaf0;
+  border: 1px solid #ead7b8;
+  box-shadow: 0 4px 14px rgba(92, 58, 23, 0.08);
+}
+
+.message-row.mine .prayer-bubble {
+  background: #f0fbf1;
+  border-color: #cce7d1;
+  color: #203a24;
 }
 
 .message-effect-flash {
@@ -1053,6 +1088,135 @@ button {
   font-size: 16px;
 }
 
+.prayer-card {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  cursor: pointer;
+}
+
+.prayer-card.status-closed,
+.prayer-card.status-answered {
+  cursor: default;
+}
+
+.prayer-card-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.prayer-card-head > span {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #8a4a1f;
+  background: #ffedcc;
+}
+
+.message-row.mine .prayer-card-head > span {
+  color: #0f6b3d;
+  background: rgba(26, 173, 25, 0.14);
+}
+
+.prayer-card-head strong {
+  min-width: 0;
+  font-size: 14px;
+}
+
+.prayer-card-head em {
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #80521f;
+  background: rgba(245, 158, 11, 0.14);
+  font-size: 12px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.prayer-card.status-answered .prayer-card-head em {
+  color: #0d6b3e;
+  background: rgba(34, 197, 94, 0.14);
+}
+
+.prayer-card.status-closed .prayer-card-head em {
+  color: #5f6670;
+  background: rgba(100, 116, 139, 0.14);
+}
+
+.prayer-text {
+  margin: 0;
+  color: inherit;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.prayer-stats {
+  border-top: 1px solid rgba(138, 74, 31, 0.14);
+  padding-top: 8px;
+  display: grid;
+  gap: 2px;
+}
+
+.prayer-stats strong {
+  font-size: 13px;
+}
+
+.prayer-stats small {
+  color: rgba(51, 37, 24, 0.68);
+  font-size: 12px;
+}
+
+.prayer-people {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding-left: 2px;
+}
+
+.mini-avatar {
+  width: 24px;
+  height: 24px;
+  margin-left: -4px;
+  border: 2px solid #fffaf0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #d7e2df;
+  color: #31413d;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.message-row.mine .mini-avatar {
+  border-color: #f0fbf1;
+}
+
+.mini-avatar:first-child {
+  margin-left: 0;
+}
+
+.mini-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.prayer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mini-btn.danger-soft {
+  background: #f3e5e3;
+  color: #9f2f24;
+}
+
 .chain-card ol {
   margin: 0 0 10px;
   padding: 0;
@@ -1294,7 +1458,7 @@ button {
 
 .more-drawer {
   display: grid;
-  grid-template-columns: repeat(3, minmax(72px, 1fr));
+  grid-template-columns: repeat(4, minmax(64px, 1fr));
   gap: 12px;
 }
 
@@ -2330,6 +2494,11 @@ button {
 
   .bubble {
     padding: 8px 10px;
+  }
+
+  .prayer-bubble {
+    width: min(360px, calc(100vw - 94px));
+    padding: 0;
   }
 
   .composer {

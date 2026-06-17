@@ -26,6 +26,7 @@ export const useChatStore = defineStore("chat", {
     appearance: { ...defaultAppearance } as AppearanceDTO,
     channels: [] as ChannelDTO[],
     currentChannelId: Number(localStorage.getItem("team-chat-current-channel") || 0),
+    prayerOnly: localStorage.getItem("team-chat-message-view") === "prayers",
     previousChannelId: 0,
     messages: [] as MessageDTO[],
     members: [] as MemberRow[],
@@ -88,9 +89,11 @@ export const useChatStore = defineStore("chat", {
       }
     },
     async switchChannel(id: number) {
-      if (this.currentChannelId === id) return;
+      if (this.currentChannelId === id && !this.prayerOnly) return;
       this.previousChannelId = this.currentChannelId;
       this.currentChannelId = id;
+      this.prayerOnly = false;
+      localStorage.setItem("team-chat-message-view", "chat");
       localStorage.setItem("team-chat-current-channel", String(id));
       this.messages = [];
       this.pinned = this.channels.find((ch) => ch.id === id)?.pinned || null;
@@ -98,11 +101,32 @@ export const useChatStore = defineStore("chat", {
       await this.loadMessages();
       await this.loadMembers();
     },
+    async switchPrayerView(id: number) {
+      if (this.currentChannelId !== id) {
+        this.previousChannelId = this.currentChannelId;
+        this.currentChannelId = id;
+        localStorage.setItem("team-chat-current-channel", String(id));
+        this.socket?.emit("channel:join", { channelId: id });
+      }
+      this.prayerOnly = true;
+      localStorage.setItem("team-chat-message-view", "prayers");
+      this.messages = [];
+      this.pinned = this.channels.find((ch) => ch.id === id)?.pinned || null;
+      await this.loadMessages();
+      await this.loadMembers();
+    },
+    async switchChatView() {
+      if (!this.prayerOnly) return;
+      this.prayerOnly = false;
+      localStorage.setItem("team-chat-message-view", "chat");
+      this.messages = [];
+      await this.loadMessages();
+    },
     async loadMessages() {
       if (!this.currentChannelId) return;
       this.loading = true;
       try {
-        const result = await api<{ messages: MessageDTO[] }>(`/api/messages?channelId=${this.currentChannelId}&limit=80`);
+        const result = await api<{ messages: MessageDTO[] }>(`/api/messages?channelId=${this.currentChannelId}&limit=80${this.prayerOnly ? "&prayers=1" : ""}`);
         this.messages = result.messages;
         this.pinned = this.channels.find((ch) => ch.id === this.currentChannelId)?.pinned || null;
       } finally {
@@ -123,7 +147,7 @@ export const useChatStore = defineStore("chat", {
       this.socket.on("connect_error", () => this.logout(false));
       this.socket.on("message:new", (message: MessageDTO) => {
         this.lastIncomingMessage = message;
-        if (message.channelId === this.currentChannelId && !this.messages.some((m) => m.id === message.id)) {
+        if (message.channelId === this.currentChannelId && (!this.prayerOnly || message.type === "prayer") && !this.messages.some((m) => m.id === message.id)) {
           this.messages.push(message);
         }
       });

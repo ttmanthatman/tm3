@@ -36,6 +36,7 @@ enum MessageType {
   image
   file
   chain
+  prayer
   system
 }
 
@@ -69,6 +70,7 @@ model Account {
   voiceListens            VoiceListen[]
   audits                  AuditLog[]
   sessions                AccountSession[]
+  prayerActions           PrayerAction[]
 
   @@map("accounts")
 }
@@ -155,24 +157,25 @@ model ChannelNotificationPreference {
 }
 
 model Message {
-  id            Int           @id @default(autoincrement())
-  channelId     Int           @map("channel_id")
-  senderActorId Int           @map("sender_actor_id")
-  content       String?       @db.Text
-  type          MessageType   @default(text)
+  id            Int            @id @default(autoincrement())
+  channelId     Int            @map("channel_id")
+  senderActorId Int            @map("sender_actor_id")
+  content       String?        @db.Text
+  type          MessageType    @default(text)
   payload       Json?
-  fileName      String?       @map("file_name") @db.VarChar(255)
-  filePath      String?       @map("file_path") @db.VarChar(255)
-  fileSize      Int?          @map("file_size")
-  replyToId     Int?          @map("reply_to_id")
-  chainRootId   Int?          @map("chain_root_id")
-  chainVersion  Int?          @map("chain_version")
-  createdAt     DateTime      @default(now()) @map("created_at")
-  channel       Channel       @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  sender        Actor         @relation(fields: [senderActorId], references: [id])
-  replyTo       Message?      @relation("message_replies", fields: [replyToId], references: [id])
-  replies       Message[]     @relation("message_replies")
+  fileName      String?        @map("file_name") @db.VarChar(255)
+  filePath      String?        @map("file_path") @db.VarChar(255)
+  fileSize      Int?           @map("file_size")
+  replyToId     Int?           @map("reply_to_id")
+  chainRootId   Int?           @map("chain_root_id")
+  chainVersion  Int?           @map("chain_version")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender        Actor          @relation(fields: [senderActorId], references: [id])
+  replyTo       Message?       @relation("message_replies", fields: [replyToId], references: [id])
+  replies       Message[]      @relation("message_replies")
   voiceListens  VoiceListen[]
+  prayerActions PrayerAction[]
 
   @@index([channelId, id])
   @@index([replyToId])
@@ -191,6 +194,19 @@ model VoiceListen {
   @@unique([messageId, accountId])
   @@index([accountId, listenedAt])
   @@map("voice_listens")
+}
+
+model PrayerAction {
+  id        Int      @id @default(autoincrement())
+  messageId Int      @map("message_id")
+  accountId Int      @map("account_id")
+  prayedAt  DateTime @default(now()) @map("prayed_at")
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([messageId, prayedAt])
+  @@index([accountId, prayedAt])
+  @@map("prayer_actions")
 }
 
 model Setting {

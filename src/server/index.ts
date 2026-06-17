@@ -16,7 +16,7 @@ import sanitizeHtml from "sanitize-html";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, MessageDTO, MessageEffect, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -279,6 +279,21 @@ function cleanMessageEffect(input: unknown): { effect: MessageEffect } | undefin
   return typeof effect === "string" && MESSAGE_EFFECTS.has(effect as MessageEffect) ? { effect: effect as MessageEffect } : undefined;
 }
 
+function cleanPrayerStatus(input: unknown): PrayerStatus {
+  return input === "closed" || input === "answered" ? input : "active";
+}
+
+function cleanPrayerPayload(input: unknown) {
+  const effect = cleanMessageEffect(input);
+  const status = input && typeof input === "object" && !Array.isArray(input) ? cleanPrayerStatus((input as { status?: unknown }).status) : "active";
+  return {
+    kind: "prayer",
+    status,
+    ...(status === "active" ? {} : { statusAt: new Date().toISOString() }),
+    ...(effect ? { effect: effect.effect } : {})
+  };
+}
+
 function contentTypeForFile(name: string) {
   const ext = path.extname(name).toLowerCase();
   const contentTypes: Record<string, string> = {
@@ -481,6 +496,39 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       voiceListened = !!listened;
     }
   }
+  let payload: unknown = message.payload || undefined;
+  if (message.type === "prayer") {
+    const actions = await prisma.prayerAction.findMany({
+      where: { messageId: message.id },
+      include: { account: true },
+      orderBy: { prayedAt: "desc" }
+    });
+    const byAccount = new Map<number, { accountId: number; displayName: string; avatarPath?: string | null; latestPrayedAt: string; times: number }>();
+    for (const action of actions) {
+      const current = byAccount.get(action.accountId);
+      if (current) {
+        current.times += 1;
+      } else {
+        byAccount.set(action.accountId, {
+          accountId: action.accountId,
+          displayName: action.account.displayName,
+          avatarPath: action.account.avatarPath,
+          latestPrayedAt: action.prayedAt.toISOString(),
+          times: 1
+        });
+      }
+    }
+    const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+    payload = {
+      ...raw,
+      kind: "prayer",
+      status: cleanPrayerStatus(raw.status),
+      prayerCount: byAccount.size,
+      prayerActionCount: actions.length,
+      currentUserPrayed: viewerAccountId ? byAccount.has(viewerAccountId) : false,
+      prayedBy: [...byAccount.values()]
+    };
+  }
   return {
     id: message.id,
     channelId: message.channelId,
@@ -493,7 +541,7 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
     },
     content: message.content || "",
     type: message.type,
-    payload: message.payload || undefined,
+    payload,
     fileName: message.fileName,
     fileSize: message.fileSize,
     voiceListened,
@@ -536,6 +584,7 @@ function stripPushText(input?: string | null) {
 
 function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "chain") return `${message.sender.displayName} 发起了接龙：${stripPushText(message.content) || "接龙"}`;
+  if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
   if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
   if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
   if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
@@ -808,7 +857,7 @@ async function createMessageFromActor(input: {
   });
   await emitMessage(message.id);
   void sendMessagePush(message.id).catch((error) => app.log.warn({ error }, "message push failed"));
-  if (input.type === "text" || input.type === "chain") {
+  if (input.type === "text" || input.type === "chain" || input.type === "prayer") {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
   return message;
@@ -1156,9 +1205,13 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
   if (!(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, isPrivate: true } });
   const accounts = await prisma.account.findMany({
-    where: channel?.directKey ? { memberships: { some: { channelId } } } : { OR: [{ role: "admin" }, { memberships: { some: { channelId } } }] },
+    where: channel?.directKey
+      ? { memberships: { some: { channelId } } }
+      : channel?.isPrivate
+        ? { OR: [{ role: "admin" }, { memberships: { some: { channelId } } }] }
+        : {},
     include: { actor: true, memberships: { where: { channelId } } },
     orderBy: { displayName: "asc" }
   });
@@ -1188,7 +1241,7 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
 
 app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string };
+  const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string; prayers?: string };
   const channelId = Number(query.channelId || 0);
   if (!channelId || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
   const limit = Math.min(Math.max(Number(query.limit || 50), 1), 200);
@@ -1196,6 +1249,7 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
   const after = Number(query.after || 0);
   const where = {
     channelId,
+    ...(query.prayers === "1" ? { type: "prayer" as const } : {}),
     ...(after > 0 ? { id: { gt: after } } : before > 0 ? { id: { lt: before } } : {})
   };
   const rows = await prisma.message.findMany({
@@ -1215,7 +1269,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       channelId: z.number(),
       content: z.string().optional(),
       replyToId: z.number().nullable().optional(),
-      type: z.enum(["text", "chain"]).default("text"),
+      type: z.enum(["text", "chain", "prayer"]).default("text"),
       payload: z.unknown().optional(),
       chainTopic: z.string().optional(),
       chainText: z.string().optional(),
@@ -1261,6 +1315,17 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
   }
   const content = cleanText(body.content);
   if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "消息不能为空" });
+  if (body.type === "prayer") {
+    const message = await createMessageFromActor({
+      channelId: body.channelId,
+      actorId: auth.actorId,
+      content,
+      type: "prayer",
+      payload: cleanPrayerPayload(body.payload),
+      replyToId: body.replyToId || null
+    });
+    return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
+  }
   const message = await createMessageFromActor({
     channelId: body.channelId,
     actorId: auth.actorId,
@@ -1339,6 +1404,49 @@ app.post("/api/messages/:messageId/voice-listened", { preHandler: requireAuth },
   }
   io.to(`acct:${auth.accountId}`).emit("voice:listened", { messageId });
   return { success: true };
+});
+
+app.post("/api/messages/:messageId/prayed", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
+  const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+  if (cleanPrayerStatus(raw.status) !== "active") return reply.code(409).send({ success: false, message: "此代祷已结束" });
+  await prisma.prayerAction.create({ data: { messageId, accountId: auth.accountId } });
+  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
+  return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+});
+
+app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ status: z.enum(["closed", "answered"]) }).parse(request.body);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
+  if (message.sender.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以更新此代祷" });
+  const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+  const payload = {
+    ...raw,
+    kind: "prayer",
+    status: body.status,
+    statusAt: new Date().toISOString(),
+    statusBy: auth.username
+  };
+  await prisma.message.update({ where: { id: messageId }, data: { payload: payload as Prisma.InputJsonObject } });
+  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
+  return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+});
+
+app.delete("/api/messages/:messageId/prayer", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
+  if (message.sender.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以撤回此代祷" });
+  const deleted = await deleteMessages([{ id: message.id, channelId: message.channelId, filePath: message.filePath }]);
+  return { success: true, deleted };
 });
 
 app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, reply) => {
@@ -1668,7 +1776,7 @@ function listStorageFiles(dir: string) {
 }
 
 function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
-  const raw = message.content || message.fileName || (message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
+  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
   return raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
@@ -1681,6 +1789,7 @@ async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "ch
   if (ids.length) {
     await prisma.$transaction([
       prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
+      prisma.prayerAction.deleteMany({ where: { messageId: { in: ids } } }),
       prisma.message.updateMany({
         where: { id: { in: ids } },
         data: { type: "text", content: "[附件已由管理员删除]", payload: Prisma.JsonNull, fileName: null, filePath: null, fileSize: null }
@@ -1699,6 +1808,7 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
     prisma.pinnedItem.updateMany({ where: { messageId: { in: ids } }, data: { active: false, messageId: null } }),
     prisma.message.updateMany({ where: { replyToId: { in: ids } }, data: { replyToId: null } }),
     prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
+    prisma.prayerAction.deleteMany({ where: { messageId: { in: ids } } }),
     prisma.message.deleteMany({ where: { id: { in: ids } } })
   ]);
   for (const message of messages) {
@@ -1839,12 +1949,13 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
 }
 
 async function chatExportPayload() {
-  const [channels, channelMembers, messages, pinnedItems, voiceListens] = await Promise.all([
+  const [channels, channelMembers, messages, pinnedItems, voiceListens, prayerActions] = await Promise.all([
     prisma.channel.findMany({ orderBy: { id: "asc" } }),
     prisma.channelMember.findMany({ orderBy: { id: "asc" } }),
     prisma.message.findMany({ orderBy: { id: "asc" } }),
     prisma.pinnedItem.findMany({ orderBy: { id: "asc" } }),
-    prisma.voiceListen.findMany({ orderBy: { id: "asc" } })
+    prisma.voiceListen.findMany({ orderBy: { id: "asc" } }),
+    prisma.prayerAction.findMany({ orderBy: { id: "asc" } })
   ]);
   return {
     version: 1,
@@ -1853,7 +1964,8 @@ async function chatExportPayload() {
     channelMembers,
     messages,
     pinnedItems,
-    voiceListens
+    voiceListens,
+    prayerActions
   };
 }
 
@@ -2008,6 +2120,7 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
   const pinnedItems = Array.isArray(payload.pinnedItems) ? payload.pinnedItems : [];
   const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
+  const prayerActions = Array.isArray(payload.prayerActions) ? payload.prayerActions : [];
   await prisma.$transaction(async (tx) => {
     for (const channel of channels) {
       await tx.channel.upsert({
@@ -2098,6 +2211,15 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
         update: { listenedAt: parseDate(listen.listenedAt) },
         create: { messageId: Number(listen.messageId), accountId: Number(listen.accountId), listenedAt: parseDate(listen.listenedAt) }
       });
+    }
+    for (const action of prayerActions) {
+      const id = Number(action.id) || undefined;
+      const data = { messageId: Number(action.messageId), accountId: Number(action.accountId), prayedAt: parseDate(action.prayedAt) };
+      if (id) {
+        await tx.prayerAction.upsert({ where: { id }, update: data, create: { id, ...data } });
+      } else {
+        await tx.prayerAction.create({ data });
+      }
     }
   });
   return { success: true, imported: { channels: channels.length, messages: messages.length } };
@@ -2481,7 +2603,15 @@ io.on("connection", async (socket: Socket) => {
 
   socket.on("message:send", async (data: unknown, ack?: (payload: unknown) => void) => {
     try {
-      const body = z.object({ channelId: z.number(), content: z.string(), payload: z.unknown().optional(), replyToId: z.number().nullable().optional() }).parse(data);
+      const body = z
+        .object({
+          channelId: z.number(),
+          content: z.string(),
+          type: z.enum(["text", "prayer"]).default("text"),
+          payload: z.unknown().optional(),
+          replyToId: z.number().nullable().optional()
+        })
+        .parse(data);
       if (!(await canWriteChannel(auth.accountId, body.channelId))) return ack?.({ success: false, message: "无权在此频道发言" });
       const content = cleanText(body.content);
       if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
@@ -2489,11 +2619,11 @@ io.on("connection", async (socket: Socket) => {
         channelId: body.channelId,
         actorId: auth.actorId,
         content,
-        type: "text",
-        payload: cleanMessageEffect(body.payload),
+        type: body.type,
+        payload: body.type === "prayer" ? cleanPrayerPayload(body.payload) : cleanMessageEffect(body.payload),
         replyToId: body.replyToId || null
       });
-      ack?.({ success: true, messageId: message.id });
+      ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, auth.accountId) });
     } catch (error) {
       ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
     }
