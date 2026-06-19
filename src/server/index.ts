@@ -16,7 +16,7 @@ import sanitizeHtml from "sanitize-html";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, FlashEffectSettingsDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, ChainPayload, FlashEffectSettingsDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,6 +36,7 @@ const UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
 const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
 const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
 const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
+const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
 const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -66,6 +67,28 @@ const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   bubbleOtherText: "#111111",
   bubbleMine: "#95ec69",
   bubbleMineText: "#111111"
+};
+const AI_RELATED_VERSES_KIND = "prayer_related_verses";
+const DEFAULT_AI_PROMPT_COMMAND = [
+  "你只根据用户代祷信息，推荐 3 个可能相关的圣经经文出处。",
+  "只输出经文出处，每行一个。",
+  "不要输出完整经文。",
+  "不要解释。",
+  "不要祷告文。",
+  "不要评价代祷发起人。",
+  "不要替代牧养辅导。",
+  "如果不确定出处是否存在，不要输出。",
+  "尽量避开已推荐过的出处。"
+].join("\n");
+const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
+  enabled: true,
+  apiKeyConfigured: false,
+  baseUrl: "https://api.deepseek.com",
+  model: "deepseek-v4-flash",
+  promptCommand: DEFAULT_AI_PROMPT_COMMAND,
+  cardCooldownSeconds: 30,
+  userLimitPerMinute: 3,
+  maxSuccessPerMessage: 7
 };
 
 for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR]) {
@@ -370,6 +393,131 @@ function cleanPrayerPayload(input: unknown) {
   };
 }
 
+let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; loadedAt: number } | null = null;
+
+function clampInteger(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = Math.round(Number(value));
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
+
+function aiEncryptionKey() {
+  return crypto.createHash("sha256").update(AI_SETTINGS_SECRET).digest();
+}
+
+function encryptAiApiKey(value: string) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", aiEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return ["v1", iv.toString("base64url"), tag.toString("base64url"), encrypted.toString("base64url")].join(":");
+}
+
+function decryptAiApiKey(value: string) {
+  if (!value) return "";
+  try {
+    const [version, iv, tag, encrypted] = value.split(":");
+    if (version !== "v1" || !iv || !tag || !encrypted) return "";
+    const decipher = crypto.createDecipheriv("aes-256-gcm", aiEncryptionKey(), Buffer.from(iv, "base64url"));
+    decipher.setAuthTag(Buffer.from(tag, "base64url"));
+    return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
+  } catch {
+    return "";
+  }
+}
+
+async function loadAiSettings(force = false) {
+  if (!force && aiSettingsCache && Date.now() - aiSettingsCache.loadedAt < 5000) return aiSettingsCache;
+  const rows = await prisma.setting.findMany({
+    where: {
+      key: {
+        in: [
+          "aiDeepSeekApiKeyEncrypted",
+          "aiRelatedVersesEnabled",
+          "aiRelatedVersesPromptCommand",
+          "aiRelatedVersesCardCooldownSeconds",
+          "aiRelatedVersesUserLimitPerMinute",
+          "aiRelatedVersesMaxSuccessPerMessage"
+        ]
+      }
+    }
+  });
+  const settings = new Map(rows.map((row) => [row.key, row.value]));
+  const encryptedApiKey = settings.get("aiDeepSeekApiKeyEncrypted") || "";
+  const value: AiSettingsDTO = {
+    ...DEFAULT_AI_SETTINGS,
+    enabled: settings.get("aiRelatedVersesEnabled") !== "false",
+    apiKeyConfigured: !!decryptAiApiKey(encryptedApiKey),
+    promptCommand: (settings.get("aiRelatedVersesPromptCommand") || DEFAULT_AI_PROMPT_COMMAND).trim() || DEFAULT_AI_PROMPT_COMMAND,
+    cardCooldownSeconds: clampInteger(settings.get("aiRelatedVersesCardCooldownSeconds"), DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600),
+    userLimitPerMinute: clampInteger(settings.get("aiRelatedVersesUserLimitPerMinute"), DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60),
+    maxSuccessPerMessage: clampInteger(settings.get("aiRelatedVersesMaxSuccessPerMessage"), DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20)
+  };
+  aiSettingsCache = { value, encryptedApiKey, loadedAt: Date.now() };
+  return aiSettingsCache;
+}
+
+function resetAiSettingsCache() {
+  aiSettingsCache = null;
+}
+
+function plainTextFromHtml(input?: string | null, maxLength = 2000) {
+  return String(input || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function cleanAiError(error: unknown) {
+  if (error instanceof Error) return error.message.slice(0, 1000);
+  return String(error || "AI request failed").slice(0, 1000);
+}
+
+function parseAiVerseReferences(input: string) {
+  const seen = new Set<string>();
+  const references: string[] = [];
+  for (const rawLine of input.split(/\n|;|；/g)) {
+    const cleaned = rawLine
+      .replace(/^\s*(?:[-*•]\s*|\d+[.、]\s*)/, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .replace(/[。.!！]+$/g, "");
+    if (!cleaned || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    references.push(cleaned);
+    if (references.length >= 3) break;
+  }
+  return references;
+}
+
+function serializeAiSuggestion(row: {
+  id: number;
+  kind: string;
+  status: string;
+  references: unknown;
+  responseText?: string | null;
+  createdAt: Date;
+  model?: string | null;
+  createdBy?: { displayName: string } | null;
+}): AiSuggestionDTO {
+  const references = Array.isArray(row.references) ? row.references.map(String).filter(Boolean).slice(0, 3) : parseAiVerseReferences(row.responseText || "");
+  return {
+    id: row.id,
+    kind: "prayer_related_verses",
+    status: row.status === "failed" ? "failed" : "success",
+    references,
+    responseText: row.responseText || references.join("\n"),
+    createdByName: row.createdBy?.displayName || null,
+    createdAt: row.createdAt.toISOString(),
+    model: row.model
+  };
+}
+
+function aiConfigurationMessage(auth: Pick<AuthContext, "isAdmin">) {
+  return auth.isAdmin ? "AI 经文建议尚未配置，请前往 /ai-settings 填写 API Key。" : "暂时还不能生成经文建议，请稍后再试。";
+}
+
 function contentTypeForFile(name: string) {
   const ext = path.extname(name).toLowerCase();
   const contentTypes: Record<string, string> = {
@@ -590,11 +738,21 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
   }
   let payload: unknown = message.payload || undefined;
   if (message.type === "prayer") {
-    const actions = await prisma.prayerAction.findMany({
-      where: { messageId: message.id },
-      include: { account: true },
-      orderBy: { prayedAt: "desc" }
-    });
+    const aiSettings = await loadAiSettings();
+    const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = await Promise.all([
+      prisma.prayerAction.findMany({
+        where: { messageId: message.id },
+        include: { account: true },
+        orderBy: { prayedAt: "desc" }
+      }),
+      prisma.messageAiSuggestion.findMany({
+        where: { messageId: message.id, kind: AI_RELATED_VERSES_KIND, status: "success" },
+        include: { createdBy: { select: { displayName: true } } },
+        orderBy: { createdAt: "desc" },
+        take: 3
+      }),
+      prisma.messageAiSuggestion.count({ where: { messageId: message.id, kind: AI_RELATED_VERSES_KIND, status: "success" } })
+    ]);
     const byAccount = new Map<number, { accountId: number; displayName: string; avatarPath?: string | null; latestPrayedAt: string; times: number }>();
     for (const action of actions) {
       const current = byAccount.get(action.accountId);
@@ -618,7 +776,10 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       prayerCount: byAccount.size,
       prayerActionCount: actions.length,
       currentUserPrayed: viewerAccountId ? byAccount.has(viewerAccountId) : false,
-      prayedBy: [...byAccount.values()]
+      prayedBy: [...byAccount.values()],
+      aiSuggestions: aiSuggestionRows.map(serializeAiSuggestion),
+      aiSuggestionSuccessCount,
+      aiSuggestionMaxSuccess: aiSettings.value.maxSuccessPerMessage
     };
   }
   return {
@@ -1605,6 +1766,7 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
     prisma.message.updateMany({ where: { replyToId: messageId }, data: { replyToId: null } }),
     prisma.voiceListen.deleteMany({ where: { messageId } }),
     prisma.prayerAction.deleteMany({ where: { messageId } }),
+    prisma.messageAiSuggestion.deleteMany({ where: { messageId } }),
     prisma.message.update({
       where: { id: messageId },
       data: {
@@ -1716,6 +1878,166 @@ async function customThemesSetting() {
   const row = await prisma.setting.findUnique({ where: { key: "customThemes" } });
   return cleanCustomThemes(parseJsonField(row?.value, []));
 }
+
+async function aiSettingsDto() {
+  return (await loadAiSettings(true)).value;
+}
+
+function buildRelatedVersesContext(message: Message & { sender: Actor }, previousReferences: string[]) {
+  const lines = [
+    "上下文内容：",
+    `代祷发起人：${message.sender.displayName}`,
+    `代祷信息：${plainTextFromHtml(message.content, 2000) || "代祷事项"}`,
+    "",
+    previousReferences.length ? `已推荐过的出处：${previousReferences.join("；")}` : "已推荐过的出处：无",
+    "",
+    "请输出 3 行，每行只有一个经文出处。"
+  ];
+  return lines.join("\n").slice(0, 5000);
+}
+
+async function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string, contextText: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          { role: "system", content: settings.promptCommand },
+          { role: "user", content: contextText }
+        ],
+        thinking: { type: "disabled" },
+        stream: false
+      }),
+      signal: controller.signal
+    });
+    const payload = (await response.json().catch(() => ({}))) as any;
+    if (!response.ok) {
+      const message = payload?.error?.message || payload?.message || `DeepSeek HTTP ${response.status}`;
+      throw new Error(String(message));
+    }
+    const responseText = String(payload?.choices?.[0]?.message?.content || "").trim();
+    if (!responseText) throw new Error("DeepSeek returned empty content");
+    const references = parseAiVerseReferences(responseText);
+    if (!references.length) throw new Error("DeepSeek did not return verse references");
+    return { responseText, references };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+app.get("/api/admin/ai-settings", { preHandler: requireAdmin }, async () => {
+  return aiSettingsDto();
+});
+
+app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request) => {
+  const body = z
+    .object({
+      enabled: z.boolean().optional(),
+      apiKey: z.string().max(400).optional(),
+      clearApiKey: z.boolean().optional(),
+      promptCommand: z.string().max(4000).optional(),
+      cardCooldownSeconds: z.number().min(0).max(3600).optional(),
+      userLimitPerMinute: z.number().min(1).max(60).optional(),
+      maxSuccessPerMessage: z.number().min(1).max(20).optional()
+    })
+    .parse(request.body);
+  if (Object.prototype.hasOwnProperty.call(body, "enabled")) await setSetting("aiRelatedVersesEnabled", body.enabled ? "true" : "false");
+  if (body.clearApiKey) await setSetting("aiDeepSeekApiKeyEncrypted", "");
+  if (body.apiKey?.trim()) await setSetting("aiDeepSeekApiKeyEncrypted", encryptAiApiKey(body.apiKey.trim()));
+  if (Object.prototype.hasOwnProperty.call(body, "promptCommand")) await setSetting("aiRelatedVersesPromptCommand", (body.promptCommand || "").trim() || DEFAULT_AI_PROMPT_COMMAND);
+  if (Object.prototype.hasOwnProperty.call(body, "cardCooldownSeconds")) await setSetting("aiRelatedVersesCardCooldownSeconds", String(clampInteger(body.cardCooldownSeconds, DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600)));
+  if (Object.prototype.hasOwnProperty.call(body, "userLimitPerMinute")) await setSetting("aiRelatedVersesUserLimitPerMinute", String(clampInteger(body.userLimitPerMinute, DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60)));
+  if (Object.prototype.hasOwnProperty.call(body, "maxSuccessPerMessage")) await setSetting("aiRelatedVersesMaxSuccessPerMessage", String(clampInteger(body.maxSuccessPerMessage, DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20)));
+  resetAiSettingsCache();
+  return aiSettingsDto();
+});
+
+app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
+
+  const aiSettings = await loadAiSettings();
+  const settings = aiSettings.value;
+  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
+  if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
+
+  const successCount = await prisma.messageAiSuggestion.count({ where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" } });
+  if (successCount >= settings.maxSuccessPerMessage) {
+    return reply.code(409).send({ success: false, message: "这张代祷卡片的经文建议已达到上限" });
+  }
+
+  const now = new Date();
+  const latestForMessage = await prisma.messageAiSuggestion.findFirst({
+    where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+    orderBy: { createdAt: "desc" }
+  });
+  const nextAllowedAt = latestForMessage ? latestForMessage.createdAt.getTime() + settings.cardCooldownSeconds * 1000 : 0;
+  if (settings.cardCooldownSeconds > 0 && nextAllowedAt > now.getTime()) {
+    const seconds = Math.max(1, Math.ceil((nextAllowedAt - now.getTime()) / 1000));
+    return reply.code(429).send({ success: false, message: `请 ${seconds} 秒后再换一组经文建议` });
+  }
+
+  const userWindowStart = new Date(now.getTime() - 60_000);
+  const userRequests = await prisma.messageAiSuggestion.count({
+    where: { createdByAccountId: auth.accountId, kind: AI_RELATED_VERSES_KIND, createdAt: { gte: userWindowStart } }
+  });
+  if (userRequests >= settings.userLimitPerMinute) {
+    return reply.code(429).send({ success: false, message: "生成太频繁了，请稍后再试" });
+  }
+
+  const previousRows = await prisma.messageAiSuggestion.findMany({
+    where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+    select: { references: true },
+    orderBy: { createdAt: "desc" }
+  });
+  const previousReferences = previousRows.flatMap((row) => (Array.isArray(row.references) ? row.references.map(String).filter(Boolean) : []));
+  const contextText = buildRelatedVersesContext(message, previousReferences);
+  try {
+    const result = await callDeepSeekRelatedVerses(settings, apiKey, contextText);
+    await prisma.messageAiSuggestion.create({
+      data: {
+        messageId,
+        kind: AI_RELATED_VERSES_KIND,
+        status: "success",
+        promptCommand: settings.promptCommand,
+        contextText,
+        responseText: result.responseText,
+        references: result.references as Prisma.InputJsonArray,
+        model: settings.model,
+        baseUrl: settings.baseUrl,
+        createdByAccountId: auth.accountId
+      }
+    });
+    io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
+    return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+  } catch (error) {
+    await prisma.messageAiSuggestion.create({
+      data: {
+        messageId,
+        kind: AI_RELATED_VERSES_KIND,
+        status: "failed",
+        promptCommand: settings.promptCommand,
+        contextText,
+        errorText: cleanAiError(error),
+        model: settings.model,
+        baseUrl: settings.baseUrl,
+        createdByAccountId: auth.accountId
+      }
+    });
+    request.log.warn({ error }, "AI related verses generation failed");
+    return reply.code(502).send({ success: false, message: auth.isAdmin ? `AI 生成失败：${cleanAiError(error)}` : "生成失败，可以稍后重试。" });
+  }
+});
 
 async function themeExists(theme: string) {
   if (THEMES.has(theme)) return true;
@@ -1990,6 +2312,7 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
     prisma.message.updateMany({ where: { replyToId: { in: ids } }, data: { replyToId: null } }),
     prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
     prisma.prayerAction.deleteMany({ where: { messageId: { in: ids } } }),
+    prisma.messageAiSuggestion.deleteMany({ where: { messageId: { in: ids } } }),
     prisma.message.deleteMany({ where: { id: { in: ids } } })
   ]);
   for (const message of messages) {
@@ -2130,13 +2453,14 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
 }
 
 async function chatExportPayload() {
-  const [channels, channelMembers, messages, pinnedItems, voiceListens, prayerActions] = await Promise.all([
+  const [channels, channelMembers, messages, pinnedItems, voiceListens, prayerActions, messageAiSuggestions] = await Promise.all([
     prisma.channel.findMany({ orderBy: { id: "asc" } }),
     prisma.channelMember.findMany({ orderBy: { id: "asc" } }),
     prisma.message.findMany({ orderBy: { id: "asc" } }),
     prisma.pinnedItem.findMany({ orderBy: { id: "asc" } }),
     prisma.voiceListen.findMany({ orderBy: { id: "asc" } }),
-    prisma.prayerAction.findMany({ orderBy: { id: "asc" } })
+    prisma.prayerAction.findMany({ orderBy: { id: "asc" } }),
+    prisma.messageAiSuggestion.findMany({ orderBy: { id: "asc" } })
   ]);
   return {
     version: 1,
@@ -2146,7 +2470,8 @@ async function chatExportPayload() {
     messages,
     pinnedItems,
     voiceListens,
-    prayerActions
+    prayerActions,
+    messageAiSuggestions
   };
 }
 
@@ -2302,6 +2627,7 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
   const pinnedItems = Array.isArray(payload.pinnedItems) ? payload.pinnedItems : [];
   const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
   const prayerActions = Array.isArray(payload.prayerActions) ? payload.prayerActions : [];
+  const messageAiSuggestions = Array.isArray(payload.messageAiSuggestions) ? payload.messageAiSuggestions : [];
   await prisma.$transaction(async (tx) => {
     for (const channel of channels) {
       await tx.channel.upsert({
@@ -2400,6 +2726,28 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
         await tx.prayerAction.upsert({ where: { id }, update: data, create: { id, ...data } });
       } else {
         await tx.prayerAction.create({ data });
+      }
+    }
+    for (const suggestion of messageAiSuggestions) {
+      const id = Number(suggestion.id) || undefined;
+      const data = {
+        messageId: Number(suggestion.messageId),
+        kind: String(suggestion.kind || AI_RELATED_VERSES_KIND).slice(0, 64),
+        status: String(suggestion.status || "success").slice(0, 24),
+        promptCommand: String(suggestion.promptCommand || "").slice(0, 4000),
+        contextText: String(suggestion.contextText || "").slice(0, 5000),
+        responseText: suggestion.responseText ? String(suggestion.responseText).slice(0, 4000) : null,
+        references: suggestion.references === null || suggestion.references === undefined ? Prisma.JsonNull : suggestion.references,
+        errorText: suggestion.errorText ? String(suggestion.errorText).slice(0, 1000) : null,
+        model: suggestion.model ? String(suggestion.model).slice(0, 120) : null,
+        baseUrl: suggestion.baseUrl ? String(suggestion.baseUrl).slice(0, 255) : null,
+        createdByAccountId: suggestion.createdByAccountId ? Number(suggestion.createdByAccountId) : null,
+        createdAt: parseDate(suggestion.createdAt)
+      };
+      if (id) {
+        await tx.messageAiSuggestion.upsert({ where: { id }, update: data, create: { id, ...data } });
+      } else {
+        await tx.messageAiSuggestion.create({ data });
       }
     }
   });

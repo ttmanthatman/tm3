@@ -47,6 +47,9 @@ export interface PrayerPayload extends MessageEffectPayload {
     latestPrayedAt: string;
     times: number;
   }>;
+  aiSuggestions?: AiSuggestionDTO[];
+  aiSuggestionSuccessCount?: number;
+  aiSuggestionMaxSuccess?: number;
 }
 
 export interface MessageDTO {
@@ -183,6 +186,31 @@ export interface ThemeDTO {
   id: string;
   name: string;
   palette: ThemePaletteDTO;
+}
+
+export type AiSuggestionKind = "prayer_related_verses";
+export type AiSuggestionStatus = "success" | "failed";
+
+export interface AiSuggestionDTO {
+  id: number;
+  kind: AiSuggestionKind;
+  status: AiSuggestionStatus;
+  references: string[];
+  responseText: string;
+  createdByName?: string | null;
+  createdAt: string;
+  model?: string | null;
+}
+
+export interface AiSettingsDTO {
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  baseUrl: string;
+  model: string;
+  promptCommand: string;
+  cardCooldownSeconds: number;
+  userLimitPerMinute: number;
+  maxSuccessPerMessage: number;
 }
 
 export interface FlashEffectSettingsDTO {

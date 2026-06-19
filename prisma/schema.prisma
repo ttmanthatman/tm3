@@ -71,6 +71,7 @@ model Account {
   audits                  AuditLog[]
   sessions                AccountSession[]
   prayerActions           PrayerAction[]
+  aiSuggestions           MessageAiSuggestion[]
 
   @@map("accounts")
 }
@@ -176,6 +177,7 @@ model Message {
   replies       Message[]      @relation("message_replies")
   voiceListens  VoiceListen[]
   prayerActions PrayerAction[]
+  aiSuggestions MessageAiSuggestion[]
 
   @@index([channelId, id])
   @@index([replyToId])
@@ -207,6 +209,28 @@ model PrayerAction {
   @@index([messageId, prayedAt])
   @@index([accountId, prayedAt])
   @@map("prayer_actions")
+}
+
+model MessageAiSuggestion {
+  id                 Int       @id @default(autoincrement())
+  messageId          Int       @map("message_id")
+  kind               String    @default("prayer_related_verses") @db.VarChar(64)
+  status             String    @default("success") @db.VarChar(24)
+  promptCommand      String    @map("prompt_command") @db.Text
+  contextText        String    @map("context_text") @db.Text
+  responseText       String?   @map("response_text") @db.Text
+  references         Json?
+  errorText          String?   @map("error_text") @db.Text
+  model              String?   @db.VarChar(120)
+  baseUrl            String?   @map("base_url") @db.VarChar(255)
+  createdByAccountId Int?      @map("created_by_account_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  message            Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdBy          Account?  @relation(fields: [createdByAccountId], references: [id], onDelete: SetNull)
+
+  @@index([messageId, kind, status, createdAt])
+  @@index([createdByAccountId, createdAt])
+  @@map("message_ai_suggestions")
 }
 
 model Setting {

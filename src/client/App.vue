@@ -4,6 +4,7 @@ import {
   AtSign,
   Bell,
   BellOff,
+  BookOpen,
   Bot,
   ChevronDown,
   ChevronLeft,
@@ -56,6 +57,7 @@ import type {
   AccountDTO,
   AdminAttachmentDTO,
   AppearanceDTO,
+  AiSettingsDTO,
   ChainPayload,
   ChannelDTO,
   DeviceSessionDTO,
@@ -101,6 +103,7 @@ const channelsCollapsed = ref(false);
 const membersCollapsed = ref(false);
 const showAdmin = ref(false);
 const showSettings = ref(false);
+const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
@@ -157,6 +160,19 @@ const notificationPermission = ref(typeof Notification === "undefined" ? "defaul
 const notificationEnabled = ref(false);
 const notificationBusy = ref(false);
 const mutedChannelIds = ref<Set<number>>(new Set());
+const aiSettings = ref<AiSettingsDTO | null>(null);
+const aiSettingsEdit = ref({
+  enabled: true,
+  apiKey: "",
+  clearApiKey: false,
+  promptCommand: "",
+  cardCooldownSeconds: 30,
+  userLimitPerMinute: 3,
+  maxSuccessPerMessage: 7
+});
+const aiSettingsBusy = ref(false);
+const aiSettingsMsg = ref("");
+const aiSettingsShowAdvanced = ref(false);
 const noticeText = ref("");
 const pinnedExpanded = ref(false);
 const showChainModal = ref(false);
@@ -165,6 +181,9 @@ const pendingChain = ref<MessageDTO | null>(null);
 const pendingDownload = ref<MessageDTO | null>(null);
 const pendingRecall = ref<MessageDTO | null>(null);
 const pendingPrayer = ref<MessageDTO | null>(null);
+const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
+const aiSuggestionBusyIds = ref<Set<number>>(new Set());
+const aiSuggestionErrors = ref<Record<number, string>>({});
 const previewMessage = ref<MessageDTO | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
@@ -368,6 +387,7 @@ onMounted(async () => {
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   await store.bootstrap();
+  if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
@@ -451,6 +471,13 @@ watch(
     topNoticeIndex.value = 0;
   },
   { immediate: true }
+);
+
+watch(
+  () => store.account?.isAdmin,
+  (isAdminAccount) => {
+    if (isAiSettingsRoute.value && isAdminAccount) void loadAiSettings();
+  }
 );
 
 watch(
@@ -828,6 +855,10 @@ async function doLogin() {
         ? await register(username.value.trim(), displayName.value.trim(), password.value)
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
+    if (isAiSettingsRoute.value) {
+      if (account.isAdmin) await loadAiSettings();
+      return;
+    }
     await switchToLinkedChannel();
     await nextTick();
     scrollBottom(false);
@@ -852,6 +883,60 @@ async function openSettings(tab: "appearance" | "devices" | "notifications" | "r
   if (tab === "devices") await loadDevices();
   if (tab === "notifications") await loadNotificationSettings();
   if (tab === "release") await checkServerVersion();
+}
+
+function returnToChat() {
+  isAiSettingsRoute.value = false;
+  window.history.pushState({}, "", "/");
+}
+
+function syncAiSettingsEdit(settings: AiSettingsDTO) {
+  aiSettings.value = settings;
+  aiSettingsEdit.value = {
+    enabled: settings.enabled,
+    apiKey: "",
+    clearApiKey: false,
+    promptCommand: settings.promptCommand,
+    cardCooldownSeconds: settings.cardCooldownSeconds,
+    userLimitPerMinute: settings.userLimitPerMinute,
+    maxSuccessPerMessage: settings.maxSuccessPerMessage
+  };
+}
+
+async function loadAiSettings() {
+  if (!store.account?.isAdmin) return;
+  aiSettingsBusy.value = true;
+  aiSettingsMsg.value = "";
+  try {
+    syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
+  } catch (error) {
+    aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置加载失败";
+  } finally {
+    aiSettingsBusy.value = false;
+  }
+}
+
+async function saveAiSettings() {
+  if (!store.account?.isAdmin) return;
+  aiSettingsBusy.value = true;
+  aiSettingsMsg.value = "";
+  try {
+    const payload = {
+      enabled: aiSettingsEdit.value.enabled,
+      apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
+      clearApiKey: aiSettingsEdit.value.clearApiKey,
+      promptCommand: aiSettingsEdit.value.promptCommand,
+      cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
+      userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
+      maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
+    };
+    syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
+    aiSettingsMsg.value = "AI 设置已保存";
+  } catch (error) {
+    aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置保存失败";
+  } finally {
+    aiSettingsBusy.value = false;
+  }
 }
 
 async function loadDevices() {
@@ -2600,7 +2685,10 @@ function prayerPayload(message: MessageDTO): PrayerPayload {
     prayerCount: Number(raw.prayerCount || 0),
     prayerActionCount: Number(raw.prayerActionCount || 0),
     currentUserPrayed: !!raw.currentUserPrayed,
-    prayedBy: Array.isArray(raw.prayedBy) ? raw.prayedBy : []
+    prayedBy: Array.isArray(raw.prayedBy) ? raw.prayedBy : [],
+    aiSuggestions: Array.isArray(raw.aiSuggestions) ? raw.aiSuggestions : [],
+    aiSuggestionSuccessCount: Number(raw.aiSuggestionSuccessCount || 0),
+    aiSuggestionMaxSuccess: Number(raw.aiSuggestionMaxSuccess || 7)
   };
 }
 
@@ -2623,6 +2711,76 @@ function prayerActionText(message: MessageDTO) {
 function prayerLatestTime(message: MessageDTO) {
   const latest = prayerPayload(message).prayedBy[0]?.latestPrayedAt;
   return latest ? adminDate(latest) : "";
+}
+
+function prayerAiSuggestions(message: MessageDTO) {
+  return prayerPayload(message).aiSuggestions || [];
+}
+
+function prayerAiSuggestionCount(message: MessageDTO) {
+  return prayerPayload(message).aiSuggestionSuccessCount || 0;
+}
+
+function prayerAiSuggestionMax(message: MessageDTO) {
+  return prayerPayload(message).aiSuggestionMaxSuccess || 7;
+}
+
+function prayerAiLimitReached(message: MessageDTO) {
+  return prayerAiSuggestionCount(message) >= prayerAiSuggestionMax(message);
+}
+
+function isPrayerAiExpanded(message: MessageDTO) {
+  return expandedAiSuggestionMessageIds.value.has(message.id);
+}
+
+function isPrayerAiBusy(message: MessageDTO) {
+  return aiSuggestionBusyIds.value.has(message.id);
+}
+
+function setPrayerAiExpanded(message: MessageDTO, expanded: boolean) {
+  const next = new Set(expandedAiSuggestionMessageIds.value);
+  if (expanded) next.add(message.id);
+  else next.delete(message.id);
+  expandedAiSuggestionMessageIds.value = next;
+}
+
+function setPrayerAiBusy(message: MessageDTO, busy: boolean) {
+  const next = new Set(aiSuggestionBusyIds.value);
+  if (busy) next.add(message.id);
+  else next.delete(message.id);
+  aiSuggestionBusyIds.value = next;
+}
+
+function setPrayerAiError(message: MessageDTO, text = "") {
+  aiSuggestionErrors.value = { ...aiSuggestionErrors.value, [message.id]: text };
+}
+
+async function togglePrayerAiSuggestions(message: MessageDTO) {
+  const hasSuggestions = prayerAiSuggestions(message).length > 0;
+  if (!hasSuggestions && !isPrayerAiBusy(message)) {
+    setPrayerAiExpanded(message, true);
+    await generatePrayerAiSuggestions(message);
+    return;
+  }
+  setPrayerAiExpanded(message, !isPrayerAiExpanded(message));
+}
+
+async function generatePrayerAiSuggestions(message: MessageDTO) {
+  if (isPrayerAiBusy(message) || prayerAiLimitReached(message)) return;
+  setPrayerAiExpanded(message, true);
+  setPrayerAiBusy(message, true);
+  setPrayerAiError(message);
+  try {
+    const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/ai-suggestions/related-verses`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    store.replaceMessage(result.message);
+  } catch (error) {
+    setPrayerAiError(message, error instanceof Error ? error.message : "生成失败，可以稍后重试。");
+  } finally {
+    setPrayerAiBusy(message, false);
+  }
 }
 
 async function markPrayerPrayed(message: MessageDTO) {
@@ -3146,7 +3304,44 @@ async function toggleVirtual(character: any) {
 </script>
 
 <template>
-  <main v-if="!store.account" class="login-shell" :class="loginShellClass" :style="appearanceStyle">
+  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page" :style="appearanceStyle">
+    <section class="ai-settings-panel">
+      <header class="ai-settings-head">
+        <div>
+          <strong>AI 经文建议</strong>
+          <small>DeepSeek v4 flash · 思考关闭</small>
+        </div>
+        <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
+      </header>
+      <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
+        <label class="check-row"><input v-model="aiSettingsEdit.enabled" type="checkbox" /> 启用代祷经文建议</label>
+        <label>DeepSeek API Key</label>
+        <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
+        <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
+        <div class="ai-defaults">
+          <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
+          <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
+        </div>
+        <button class="text-btn ai-advanced-toggle" type="button" @click="aiSettingsShowAdvanced = !aiSettingsShowAdvanced">
+          {{ aiSettingsShowAdvanced ? "收起高级设置" : "高级设置" }}
+        </button>
+        <div v-if="aiSettingsShowAdvanced" class="ai-advanced-fields">
+          <label>提示词命令</label>
+          <textarea v-model="aiSettingsEdit.promptCommand" rows="9"></textarea>
+          <label>同一代祷卡片冷却秒数</label>
+          <input v-model.number="aiSettingsEdit.cardCooldownSeconds" type="number" min="0" max="3600" step="1" />
+          <label>同一用户每分钟最多生成</label>
+          <input v-model.number="aiSettingsEdit.userLimitPerMinute" type="number" min="1" max="60" step="1" />
+          <label>每张代祷卡片最多成功生成</label>
+          <input v-model.number="aiSettingsEdit.maxSuccessPerMessage" type="number" min="1" max="20" step="1" />
+        </div>
+        <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
+        <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
+      </form>
+    </section>
+  </main>
+
+  <main v-else-if="!store.account" class="login-shell" :class="loginShellClass" :style="appearanceStyle">
     <section class="login-panel">
       <div v-if="loginBrand.showIcon" class="login-mark">
         <img :src="wallpaperUrl(loginBrand.iconPath)" alt="" />
@@ -3163,6 +3358,15 @@ async function toggleVirtual(character: any) {
         {{ authMode === "register" ? "已有账号，返回登录" : "没有账号？注册" }}
       </button>
       <div v-if="loginError" class="form-error">{{ loginError }}</div>
+    </section>
+  </main>
+
+  <main v-else-if="isAiSettingsRoute" class="ai-settings-page" :style="appearanceStyle">
+    <section class="ai-settings-panel ai-denied-panel">
+      <BookOpen :size="30" />
+      <strong>无权访问 AI 设置</strong>
+      <p>只有管理员可以配置 DeepSeek API Key 和代祷经文建议。</p>
+      <button class="primary-btn" @click="returnToChat">回到聊天</button>
     </section>
   </main>
 
@@ -3369,6 +3573,35 @@ async function toggleVirtual(character: any) {
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'answered')"><CheckCircle2 :size="15" />已蒙应允</button>
                       </template>
                       <button v-if="isMine(row.message)" class="mini-btn danger-soft" @click.stop="withdrawPrayer(row.message)"><Trash2 :size="15" />撤回</button>
+                    </div>
+                    <div class="prayer-ai" @click.stop>
+                      <button class="prayer-ai-toggle" type="button" @click="togglePrayerAiSuggestions(row.message)">
+                        <BookOpen :size="15" />
+                        <span>也许相关的经文<template v-if="prayerAiSuggestionCount(row.message)"> · {{ prayerAiSuggestionCount(row.message) }}</template></span>
+                        <ChevronUp v-if="isPrayerAiExpanded(row.message)" :size="15" />
+                        <ChevronDown v-else :size="15" />
+                      </button>
+                      <div v-if="isPrayerAiExpanded(row.message)" class="prayer-ai-body">
+                        <article v-for="suggestion in prayerAiSuggestions(row.message)" :key="suggestion.id" class="prayer-ai-suggestion">
+                          <div class="prayer-ai-meta">
+                            <span>{{ adminDate(suggestion.createdAt) }}</span>
+                            <small v-if="suggestion.createdByName">由 {{ suggestion.createdByName }} 生成</small>
+                          </div>
+                          <p v-for="reference in suggestion.references" :key="`${suggestion.id}-${reference}`">{{ reference }}</p>
+                        </article>
+                        <p v-if="!prayerAiSuggestions(row.message).length && !isPrayerAiBusy(row.message)" class="prayer-ai-empty">还没有经文建议</p>
+                        <p v-if="aiSuggestionErrors[row.message.id]" class="prayer-ai-error">{{ aiSuggestionErrors[row.message.id] }}</p>
+                        <div class="prayer-ai-actions">
+                          <button
+                            class="mini-btn secondary"
+                            :disabled="isPrayerAiBusy(row.message) || prayerAiLimitReached(row.message)"
+                            @click="generatePrayerAiSuggestions(row.message)"
+                          >
+                            {{ isPrayerAiBusy(row.message) ? "正在寻找相关经文..." : prayerAiSuggestions(row.message).length ? "换一组" : "生成建议" }}
+                          </button>
+                          <small v-if="prayerAiLimitReached(row.message)">这张代祷卡片的经文建议已达到上限</small>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </template>
