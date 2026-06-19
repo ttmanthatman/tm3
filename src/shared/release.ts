@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.1";
+export const APP_VERSION = "0.6.2";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室壁纸不再叠加半透明遮罩，桌面端滚动消息区时不会露出变淡的背景层。",
+  "外观设置支持直接复用已上传图片，登录页背景和聊天室壁纸不用重复上传。",
+  "管理面板外观页按钮和背景控件改为更紧凑的布局，避免按钮横向拉成大片。"
+] as const;
+
+const RELEASE_0_6_1_NOTES = [
   "AI 经文建议的出处现在可以点按展开，直接显示内置和合本简体原文。",
   "新增本地经文解析与查询能力，支持常见中文/英文书卷别名、单节、范围、跨章和同书卷连续片段。",
   "内置经文数据库来自 eBible.org 的 Chinese Union Version (Simplified) / 新标点和合本（简体）cmn-cu89s VPL SQL 数据。",
@@ -46,9 +52,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.1",
+    version: "0.6.2",
     date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.1",
+    date: "2026-06-19",
+    notes: RELEASE_0_6_1_NOTES
   },
   {
     version: "0.6.0",

@@ -500,6 +500,7 @@ watch(
 );
 
 watch(adminTab, (tab) => {
+  if (tab === "appearance" && showAdmin.value) void loadAdminAttachments();
   if (tab === "data" && showAdmin.value) loadAdminData();
   if (tab === "release" && showAdmin.value) void checkForUpdates();
 });
@@ -567,9 +568,7 @@ const appearanceStyle = computed(() => ({
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
   "--login-background-image": hasLoginBackground.value ? `url("${wallpaperUrl(store.appearance.loginBackgroundPath)}")` : "none",
   "--login-background-size": loginBackground.value.size,
-  "--login-background-repeat": loginBackground.value.repeat,
-  "--chat-wallpaper-overlay": hasWallpaper.value ? "color-mix(in srgb, var(--chat-bg) 38%, transparent)" : "var(--chat-bg)",
-  "--message-wallpaper-overlay": hasWallpaper.value ? "color-mix(in srgb, var(--chat-bg) 16%, transparent)" : "var(--chat-bg)"
+  "--login-background-repeat": loginBackground.value.repeat
 }));
 
 watch(
@@ -603,6 +602,7 @@ const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => releas
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
 const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
+const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.url));
 const selectableMessages = computed(() => store.messages.filter((message) => message.id > 0));
 const selectedMessageCount = computed(() => selectedMessageIds.value.size);
 const visibleMessagesSelected = computed(() => selectableMessages.value.length > 0 && selectableMessages.value.every((message) => selectedMessageIds.value.has(message.id)));
@@ -2932,6 +2932,7 @@ async function loadAdmin() {
   syncChannelEdits();
   virtuals.value = v.characters;
   noticeText.value = store.pinned?.kind === "notice" ? store.pinned.content || "" : "";
+  if (adminTab.value === "appearance") await loadAdminAttachments();
   if (adminTab.value === "data") await loadAdminData();
   if (adminTab.value === "release") await checkForUpdates();
 }
@@ -2960,6 +2961,12 @@ function attachmentKindLabel(kind: AdminAttachmentDTO["kind"]) {
 
 function attachmentUsage(item: AdminAttachmentDTO) {
   return item.usage.length ? item.usage.join(" · ") : "未关联";
+}
+
+function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
+  const usage = item.usage.length ? item.usage.join("、") : "未使用";
+  const date = adminDate(item.createdAt);
+  return `${date ? `${date} · ` : ""}${usage} · ${item.label}`;
 }
 
 function toggleAllAttachments() {
@@ -3134,6 +3141,7 @@ async function uploadWallpaper(event: Event) {
   }
   const result = (await response.json()) as { appearance: AppearanceDTO };
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "壁纸已更新";
 }
 
@@ -3151,6 +3159,7 @@ async function uploadLoginBackground(event: Event) {
   }
   const result = (await response.json()) as { appearance: AppearanceDTO };
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "登录页背景已更新";
 }
 
@@ -3168,6 +3177,7 @@ async function uploadLoginIcon(event: Event) {
   }
   const result = (await response.json()) as { appearance: AppearanceDTO };
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "登录页图标已更新";
 }
 
@@ -3185,30 +3195,59 @@ async function uploadAppIcon(event: Event) {
   }
   const result = (await response.json()) as { appearance: AppearanceDTO };
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "标签页图标已更新";
+}
+
+async function reuseAppearanceBackground(field: "wallpaperPath" | "loginBackgroundPath", fileName: string, message: string) {
+  const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
+  if (!image) return;
+  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
+    method: "POST",
+    body: JSON.stringify({ [field]: image.fileName })
+  });
+  store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
+  adminMsg.value = message;
+}
+
+async function reuseWallpaper(event: Event) {
+  const fileName = (event.target as HTMLSelectElement).value;
+  if (!fileName) return;
+  await reuseAppearanceBackground("wallpaperPath", fileName, "已使用已上传图片作为壁纸");
+}
+
+async function reuseLoginBackground(event: Event) {
+  const fileName = (event.target as HTMLSelectElement).value;
+  if (!fileName) return;
+  await reuseAppearanceBackground("loginBackgroundPath", fileName, "已使用已上传图片作为登录背景");
 }
 
 async function clearWallpaper() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ wallpaperPath: null }) });
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "壁纸已移除";
 }
 
 async function clearLoginBackground() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ loginBackgroundPath: null }) });
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "登录页背景已移除";
 }
 
 async function clearLoginIcon() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ loginIconPath: null }) });
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "登录页图标图片已移除";
 }
 
 async function clearAppIcon() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ appIconPath: null }) });
   store.appearance = result.appearance;
+  await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "标签页图标已恢复默认";
 }
 
@@ -4364,6 +4403,14 @@ async function toggleVirtual(character: any) {
             <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
               <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">登录背景：{{ option.label }}</option>
             </select>
+            <div v-if="backgroundAttachmentOptions.length" class="image-reuse-row">
+              <select :value="store.appearance.loginBackgroundPath || ''" aria-label="复用已上传登录背景" @change="reuseLoginBackground">
+                <option value="">使用已上传图片...</option>
+                <option v-for="image in backgroundAttachmentOptions" :key="`login-bg-${image.id}`" :value="image.fileName">
+                  {{ backgroundAttachmentLabel(image) }}
+                </option>
+              </select>
+            </div>
             <div class="action-grid">
               <label class="primary-btn">
                 <Upload :size="16" />上传登录背景
@@ -4384,6 +4431,14 @@ async function toggleVirtual(character: any) {
             <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
               <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">聊天室壁纸：{{ option.label }}</option>
             </select>
+            <div v-if="backgroundAttachmentOptions.length" class="image-reuse-row">
+              <select :value="store.appearance.wallpaperPath || ''" aria-label="复用已上传聊天室壁纸" @change="reuseWallpaper">
+                <option value="">使用已上传图片...</option>
+                <option v-for="image in backgroundAttachmentOptions" :key="`wallpaper-${image.id}`" :value="image.fileName">
+                  {{ backgroundAttachmentLabel(image) }}
+                </option>
+              </select>
+            </div>
             <div class="action-grid">
               <label class="primary-btn">
                 <Upload :size="16" />上传壁纸
