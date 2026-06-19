@@ -75,6 +75,7 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
+import WebglEffectLayer from "./WebglEffectLayer.vue";
 
 const store = useChatStore();
 type UploadStatus = "uploading" | "processing" | "failed";
@@ -1453,14 +1454,10 @@ async function startRainForMessage(messageId: number) {
   if (rainActive.value) return;
   rainActive.value = true;
   rainUntil = performance.now() + rainDurationMs;
-  await nextTick();
-  const canvas = rainCanvas.value;
-  if (!canvas) {
-    rainActive.value = false;
-    return;
-  }
   rainDrops = [];
-  rainAnimationFrame = requestAnimationFrame(drawRainFrame);
+  window.setTimeout(() => {
+    if (performance.now() >= rainUntil) stopRainEffect();
+  }, rainDurationMs + 80);
 }
 
 function stopRainEffect() {
@@ -3217,8 +3214,7 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <section class="chat-pane">
-      <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
-      <div ref="dripLayer" class="drip-layer" aria-hidden="true"></div>
+      <WebglEffectLayer :messages="store.messages" :paused-effect-ids="[...pausedEffectIds]" :rain-active="rainActive" :water-tilt="waterTilt" />
       <header class="chat-head">
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
