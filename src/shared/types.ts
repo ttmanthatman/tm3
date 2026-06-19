@@ -237,6 +237,8 @@ export interface FlashEffectSettingsDTO {
 }
 
 export interface AppearanceDTO {
+  appTitle: string;
+  appIconPath?: string | null;
   wallpaperPath?: string | null;
   wallpaperFit: "cover" | "contain" | "stretch" | "repeat";
   loginIconPath?: string | null;

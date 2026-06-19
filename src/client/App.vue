@@ -135,6 +135,7 @@ const loginPositionOptions: Array<{ value: LoginFormPosition; label: string }> =
   { value: "bottom", label: "下" }
 ];
 const loginAppearanceEdit = ref({
+  appTitle: "Team Chat",
   loginTitle: "Team Chat",
   loginSubtitle: "轻快、稳定的团队聊天。",
   loginShowIcon: true,
@@ -491,8 +492,11 @@ watch(
 
 watch(
   () => store.appearance,
-  () => syncLoginAppearanceEdit(),
-  { deep: true }
+  () => {
+    syncLoginAppearanceEdit();
+    applyAppChrome();
+  },
+  { deep: true, immediate: true }
 );
 
 watch(adminTab, (tab) => {
@@ -2608,6 +2612,23 @@ function wallpaperUrl(path?: string | null) {
   return path.startsWith("/") ? path : `/backgrounds/${path}`;
 }
 
+function ensureIconLink(rel: string) {
+  let link = document.querySelector<HTMLLinkElement>(`link[rel="${rel}"]`);
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = rel;
+    document.head.appendChild(link);
+  }
+  return link;
+}
+
+function applyAppChrome() {
+  const iconPath = store.appearance.appIconPath ? wallpaperUrl(store.appearance.appIconPath) : "/images/icon-192.svg";
+  document.title = store.appearance.appTitle || "Team Chat";
+  ensureIconLink("icon").href = iconPath;
+  ensureIconLink("apple-touch-icon").href = iconPath;
+}
+
 function paletteStyle(palette: ThemePaletteDTO) {
   return {
     "--accent": palette.accent,
@@ -3150,6 +3171,23 @@ async function uploadLoginIcon(event: Event) {
   adminMsg.value = "登录页图标已更新";
 }
 
+async function uploadAppIcon(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  (event.target as HTMLInputElement).value = "";
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch("/api/admin/appearance/app-icon", { method: "POST", headers: authHeaders(), body: form });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ message: "标签页图标上传失败" }));
+    alert(result.message || "标签页图标上传失败");
+    return;
+  }
+  const result = (await response.json()) as { appearance: AppearanceDTO };
+  store.appearance = result.appearance;
+  adminMsg.value = "标签页图标已更新";
+}
+
 async function clearWallpaper() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ wallpaperPath: null }) });
   store.appearance = result.appearance;
@@ -3168,8 +3206,15 @@ async function clearLoginIcon() {
   adminMsg.value = "登录页图标图片已移除";
 }
 
+async function clearAppIcon() {
+  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ appIconPath: null }) });
+  store.appearance = result.appearance;
+  adminMsg.value = "标签页图标已恢复默认";
+}
+
 function syncLoginAppearanceEdit() {
   loginAppearanceEdit.value = {
+    appTitle: store.appearance.appTitle || "Team Chat",
     loginTitle: store.appearance.loginTitle || "Team Chat",
     loginSubtitle: store.appearance.loginSubtitle || "",
     loginShowIcon: store.appearance.loginShowIcon !== false,
@@ -3210,6 +3255,7 @@ async function saveLoginAppearance() {
   const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
     method: "POST",
     body: JSON.stringify({
+      appTitle: loginAppearanceEdit.value.appTitle,
       loginTitle: loginAppearanceEdit.value.loginTitle,
       loginSubtitle: loginAppearanceEdit.value.loginSubtitle,
       loginShowIcon: loginAppearanceEdit.value.loginShowIcon,
@@ -4211,6 +4257,20 @@ async function toggleVirtual(character: any) {
           </section>
 
           <section v-if="adminTab === 'appearance'" class="form-grid">
+            <label>聊天室标签页</label>
+            <div class="login-brand-grid">
+              <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
+            </div>
+            <div v-if="store.appearance.appIconPath" class="login-icon-preview">
+              <img :src="wallpaperUrl(store.appearance.appIconPath)" alt="" />
+            </div>
+            <div class="action-grid">
+              <label class="primary-btn">
+                <Upload :size="16" />上传标签页图标
+                <input class="hidden" type="file" accept="image/*" @change="uploadAppIcon" />
+              </label>
+              <button class="mini-btn secondary" @click="clearAppIcon">恢复默认图标</button>
+            </div>
             <label>登录页内容</label>
             <div class="login-brand-grid">
               <input v-model="loginAppearanceEdit.loginTitle" maxlength="80" placeholder="登录页标题" aria-label="登录页标题" />
@@ -4233,7 +4293,7 @@ async function toggleVirtual(character: any) {
               </button>
             </div>
             <label class="check-row"><input v-model="loginAppearanceEdit.registrationEnabled" type="checkbox" /> 开放注册</label>
-            <button class="primary-btn" @click="saveLoginAppearance"><Save :size="15" />保存登录页</button>
+            <button class="primary-btn" @click="saveLoginAppearance"><Save :size="15" />保存标题和登录页</button>
             <label>主题颜色</label>
             <div class="theme-editor-head">
               <input v-model="customThemeEdit.name" maxlength="24" placeholder="主题名称" />

@@ -15,6 +15,8 @@ const MESSAGE_PAGE_SIZE = 80;
 const MESSAGE_WINDOW_LIMIT = 480;
 const MESSAGE_CACHE_KEY_LIMIT = 8;
 const defaultAppearance: AppearanceDTO = {
+  appTitle: "Team Chat",
+  appIconPath: null,
   wallpaperPath: null,
   wallpaperFit: "cover",
   loginIconPath: null,

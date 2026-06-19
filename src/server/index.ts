@@ -47,6 +47,7 @@ const THEMES = new Set(["wechat", "jade", "paper", "night"]);
 const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "sunburst", "marquee", "water", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
+const DEFAULT_APP_TITLE = "Team Chat";
 const DEFAULT_LOGIN_TITLE = "Team Chat";
 const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
 const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
@@ -1827,6 +1828,8 @@ async function appearanceDto() {
     where: {
       key: {
         in: [
+          "appTitle",
+          "appIconPath",
           "wallpaperPath",
           "wallpaperFit",
           "loginIconPath",
@@ -1849,6 +1852,8 @@ async function appearanceDto() {
   const loginBackgroundFit = settings.get("loginBackgroundFit") || "cover";
   const loginFormPosition = settings.get("loginFormPosition") || "middle";
   return {
+    appTitle: settings.get("appTitle") || DEFAULT_APP_TITLE,
+    appIconPath: settings.get("appIconPath") || null,
     wallpaperPath: settings.get("wallpaperPath") || null,
     wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
     loginIconPath: settings.get("loginIconPath") || null,
@@ -2089,6 +2094,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   const body = z
     .object({
       wallpaperPath: z.string().nullable().optional(),
+      appTitle: z.string().max(80).nullable().optional(),
+      appIconPath: z.string().nullable().optional(),
       wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
       loginIconPath: z.string().nullable().optional(),
       loginShowIcon: z.boolean().optional(),
@@ -2103,6 +2110,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       customThemes: z.array(z.unknown()).optional()
     })
     .parse(request.body);
+  if (Object.prototype.hasOwnProperty.call(body, "appTitle")) await setSetting("appTitle", (body.appTitle || "").trim() || DEFAULT_APP_TITLE);
+  if (Object.prototype.hasOwnProperty.call(body, "appIconPath")) await setSetting("appIconPath", body.appIconPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperPath")) await setSetting("wallpaperPath", body.wallpaperPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
   if (Object.prototype.hasOwnProperty.call(body, "loginIconPath")) await setSetting("loginIconPath", body.loginIconPath || "");
@@ -2143,6 +2152,15 @@ app.post("/api/admin/appearance/login-icon", { preHandler: requireAdmin }, async
   const safeName = await saveImageUpload(request, reply, "缺少登录页图标");
   if (!safeName) return reply;
   await setSetting("loginIconPath", safeName);
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+app.post("/api/admin/appearance/app-icon", { preHandler: requireAdmin }, async (request, reply) => {
+  const safeName = await saveImageUpload(request, reply, "缺少标签页图标", true);
+  if (!safeName) return reply;
+  await setSetting("appIconPath", safeName);
   const appearance = await appearanceDto();
   io.emit("appearance:updated", appearance);
   return { success: true, appearance };
@@ -2393,6 +2411,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
   }
 
   const backgroundUsage = new Map<string, string[]>();
+  if (appearance.appIconPath) backgroundUsage.set(path.basename(appearance.appIconPath), ["聊天室标签页图标"]);
   if (appearance.wallpaperPath) backgroundUsage.set(path.basename(appearance.wallpaperPath), ["聊天室壁纸"]);
   if (appearance.loginBackgroundPath) backgroundUsage.set(path.basename(appearance.loginBackgroundPath), [...(backgroundUsage.get(path.basename(appearance.loginBackgroundPath)) || []), "登录页背景"]);
   if (appearance.loginIconPath) backgroundUsage.set(path.basename(appearance.loginIconPath), [...(backgroundUsage.get(path.basename(appearance.loginIconPath)) || []), "登录页图标"]);
@@ -2439,6 +2458,10 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
       const appearance = await appearanceDto();
       if (appearance.wallpaperPath === fileName) {
         await setSetting("wallpaperPath", "");
+        appearanceChanged = true;
+      }
+      if (appearance.appIconPath === fileName) {
+        await setSetting("appIconPath", "");
         appearanceChanged = true;
       }
       if (appearance.loginBackgroundPath === fileName) {
