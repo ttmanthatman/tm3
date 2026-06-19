@@ -1336,6 +1336,17 @@ function messageEffectClass(message: MessageDTO) {
   };
 }
 
+function messageEffectStyle(message: MessageDTO) {
+  const effect = messageEffect(message);
+  if (effect !== "flash" || isMessageEffectPaused(message)) return {};
+  const interval = `${flashEffect.value.intervalSeconds}s`;
+  return {
+    background: activeFlashColor.value,
+    color: readableTextColor(activeFlashColor.value),
+    transition: `background ${interval} steps(1, end), color ${interval} steps(1, end)`
+  };
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -3205,6 +3216,7 @@ async function toggleVirtual(character: any) {
               <div
                 class="bubble"
                 :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer' }, messageEffectClass(row.message)]"
+                :style="messageEffectStyle(row.message)"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
                 @pointerdown="beginMessageLongPress(row.message, $event)"
                 @pointermove="handleBubblePointerMove(row.message, $event)"
