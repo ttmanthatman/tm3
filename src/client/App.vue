@@ -1166,7 +1166,7 @@ async function sendText() {
   const content = parsed.content;
   if (!content || !store.currentChannelId) return;
   const originalInput = input.value;
-  const messageType = store.prayerOnly ? "prayer" : parsed.type || "text";
+  const messageType = parsed.type || (store.prayerOnly ? "prayer" : "text");
   const payload = {
     channelId: store.currentChannelId,
     content,
@@ -3196,7 +3196,7 @@ async function toggleVirtual(character: any) {
           <article
             v-else
             class="message-row"
-            :class="{ mine: isMine(row.message), virtual: row.message.sender.kind === 'virtual', 'mention-alert': isMentionAlertActive(row.message), selecting: messageSelectionMode, selected: selectedMessageIds.has(row.message.id) }"
+            :class="{ mine: isMine(row.message), virtual: row.message.sender.kind === 'virtual', system: row.message.type === 'system', 'mention-alert': isMentionAlertActive(row.message), selecting: messageSelectionMode, selected: selectedMessageIds.has(row.message.id) }"
             :data-message-id="row.message.id"
           >
             <button

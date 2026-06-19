@@ -172,6 +172,13 @@ export const useChatStore = defineStore("chat", {
           this.cacheCurrentMessages();
         }
       });
+      this.socket.on("message:updated", (message: MessageDTO) => {
+        if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
+        const index = this.messages.findIndex((m) => m.id === message.id);
+        if (index >= 0) this.messages.splice(index, 1, message);
+        else this.messages.push(message);
+        this.cacheCurrentMessages();
+      });
       this.socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
         if (event.channelId !== this.currentChannelId || event.actor.id === this.account?.actorId) return;
         const key = String(event.actor.id);

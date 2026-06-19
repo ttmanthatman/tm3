@@ -1620,6 +1620,8 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
     })
   ]);
   if (message.filePath) safeUnlink("upload", message.filePath);
+  const recalled = await hydrateMessage(messageId, auth.accountId);
+  if (recalled) io.to(`ch:${message.channelId}`).emit("message:updated", recalled);
   io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
   return { success: true };
 });

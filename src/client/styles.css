@@ -789,6 +789,33 @@ button {
   justify-content: flex-end;
 }
 
+.message-row.system {
+  justify-content: center;
+}
+
+.message-row.system .avatar,
+.message-row.system .sender-line {
+  display: none;
+}
+
+.message-row.system .bubble-wrap {
+  max-width: min(620px, 86%);
+}
+
+.message-row.system .bubble,
+.message-row.mine.system .bubble {
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  box-shadow: none;
+}
+
+.message-row.system .message-text {
+  margin: 0;
+}
+
 .sender-line em {
   padding: 1px 4px;
   border-radius: 3px;
