@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.0";
+export const APP_VERSION = "0.6.1";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "AI 经文建议的出处现在可以点按展开，直接显示内置和合本简体原文。",
+  "新增本地经文解析与查询能力，支持常见中文/英文书卷别名、单节、范围、跨章和同书卷连续片段。",
+  "经文原文来自应用内置数据库，展开时不再请求 LLM，普通成员只会看到温和的查找失败提示。"
+] as const;
+
+const RELEASE_0_6_0_NOTES = [
   "新增代祷卡片下方的“也许相关的经文”AI 子消息，可展开查看最近 3 组经文出处建议。",
   "新增独立管理员页面 `/ai-settings`，默认接入 DeepSeek v4 flash，管理员只需填写 API Key，高级设置可调整提示词和频率限制。",
   "AI 建议会缓存并保存为消息附属记录，换一组会尽量避开已推荐出处，每张代祷卡片默认最多成功生成 7 次。",
@@ -37,9 +43,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.0",
+    version: "0.6.1",
     date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.0",
+    date: "2026-06-19",
+    notes: RELEASE_0_6_0_NOTES
   },
   {
     version: "0.5.4",
