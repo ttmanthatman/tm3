@@ -16,8 +16,9 @@ import sanitizeHtml from "sanitize-html";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, ChainPayload, FlashEffectSettingsDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, BibleLookupDTO, ChainPayload, FlashEffectSettingsDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
+import { lookupBibleReference } from "./bible/lookup.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -2036,6 +2037,16 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
     });
     request.log.warn({ error }, "AI related verses generation failed");
     return reply.code(502).send({ success: false, message: auth.isAdmin ? `AI 生成失败：${cleanAiError(error)}` : "生成失败，可以稍后重试。" });
+  }
+});
+
+app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request) => {
+  const query = z.object({ reference: z.string().min(1).max(120) }).parse(request.query);
+  try {
+    const result: BibleLookupDTO = lookupBibleReference(query.reference);
+    return { success: true, result };
+  } catch {
+    return { success: false, message: "暂时找不到这处经文" };
   }
 });
 

@@ -202,6 +202,23 @@ export interface AiSuggestionDTO {
   model?: string | null;
 }
 
+export interface BibleVerseLineDTO {
+  book: string;
+  chapter: number;
+  verse: number;
+  endVerse: number;
+  reference: string;
+  text: string;
+}
+
+export interface BibleLookupDTO {
+  reference: string;
+  normalizedReference: string;
+  translation: string;
+  sourceId: string;
+  verses: BibleVerseLineDTO[];
+}
+
 export interface AiSettingsDTO {
   enabled: boolean;
   apiKeyConfigured: boolean;

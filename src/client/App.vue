@@ -58,6 +58,7 @@ import type {
   AdminAttachmentDTO,
   AppearanceDTO,
   AiSettingsDTO,
+  BibleLookupDTO,
   ChainPayload,
   ChannelDTO,
   DeviceSessionDTO,
@@ -184,6 +185,9 @@ const pendingPrayer = ref<MessageDTO | null>(null);
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
 const aiSuggestionBusyIds = ref<Set<number>>(new Set());
 const aiSuggestionErrors = ref<Record<number, string>>({});
+const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
+const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
+const bibleLookupBusyKeys = ref<Set<string>>(new Set());
 const previewMessage = ref<MessageDTO | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
@@ -2755,6 +2759,52 @@ function setPrayerAiError(message: MessageDTO, text = "") {
   aiSuggestionErrors.value = { ...aiSuggestionErrors.value, [message.id]: text };
 }
 
+function bibleReferenceKey(suggestionId: number, reference: string) {
+  return `${suggestionId}:${reference}`;
+}
+
+function isBibleReferenceExpanded(suggestionId: number, reference: string) {
+  return expandedBibleReferenceKeys.value.has(bibleReferenceKey(suggestionId, reference));
+}
+
+function isBibleReferenceBusy(suggestionId: number, reference: string) {
+  return bibleLookupBusyKeys.value.has(bibleReferenceKey(suggestionId, reference));
+}
+
+function bibleReferenceLookup(suggestionId: number, reference: string) {
+  const key = bibleReferenceKey(suggestionId, reference);
+  return Object.prototype.hasOwnProperty.call(bibleLookupCache.value, key) ? bibleLookupCache.value[key] : undefined;
+}
+
+function setBibleReferenceBusy(key: string, busy: boolean) {
+  const next = new Set(bibleLookupBusyKeys.value);
+  if (busy) next.add(key);
+  else next.delete(key);
+  bibleLookupBusyKeys.value = next;
+}
+
+async function toggleBibleReference(suggestionId: number, reference: string) {
+  const key = bibleReferenceKey(suggestionId, reference);
+  const next = new Set(expandedBibleReferenceKeys.value);
+  if (next.has(key)) {
+    next.delete(key);
+    expandedBibleReferenceKeys.value = next;
+    return;
+  }
+  next.add(key);
+  expandedBibleReferenceKeys.value = next;
+  if (Object.prototype.hasOwnProperty.call(bibleLookupCache.value, key) || bibleLookupBusyKeys.value.has(key)) return;
+  setBibleReferenceBusy(key, true);
+  try {
+    const result = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(`/api/bible/lookup?reference=${encodeURIComponent(reference)}`);
+    bibleLookupCache.value = { ...bibleLookupCache.value, [key]: result.success && result.result ? result.result : null };
+  } catch {
+    bibleLookupCache.value = { ...bibleLookupCache.value, [key]: null };
+  } finally {
+    setBibleReferenceBusy(key, false);
+  }
+}
+
 async function togglePrayerAiSuggestions(message: MessageDTO) {
   const hasSuggestions = prayerAiSuggestions(message).length > 0;
   if (!hasSuggestions && !isPrayerAiBusy(message)) {
@@ -3587,7 +3637,24 @@ async function toggleVirtual(character: any) {
                             <span>{{ adminDate(suggestion.createdAt) }}</span>
                             <small v-if="suggestion.createdByName">由 {{ suggestion.createdByName }} 生成</small>
                           </div>
-                          <p v-for="reference in suggestion.references" :key="`${suggestion.id}-${reference}`">{{ reference }}</p>
+                          <div v-for="reference in suggestion.references" :key="`${suggestion.id}-${reference}`" class="prayer-ai-reference">
+                            <button class="prayer-ai-reference-btn" type="button" @click="toggleBibleReference(suggestion.id, reference)">
+                              <span>{{ reference }}</span>
+                              <ChevronUp v-if="isBibleReferenceExpanded(suggestion.id, reference)" :size="14" />
+                              <ChevronDown v-else :size="14" />
+                            </button>
+                            <div v-if="isBibleReferenceExpanded(suggestion.id, reference)" class="prayer-ai-verses">
+                              <p v-if="isBibleReferenceBusy(suggestion.id, reference)" class="prayer-ai-empty">正在查找经文...</p>
+                              <template v-else-if="bibleReferenceLookup(suggestion.id, reference)?.verses.length">
+                                <small>{{ bibleReferenceLookup(suggestion.id, reference)?.normalizedReference }} · {{ bibleReferenceLookup(suggestion.id, reference)?.translation }}</small>
+                                <p v-for="verse in bibleReferenceLookup(suggestion.id, reference)?.verses" :key="`${suggestion.id}-${reference}-${verse.reference}`">
+                                  <strong>{{ verse.reference }}</strong>
+                                  <span>{{ verse.text }}</span>
+                                </p>
+                              </template>
+                              <p v-else class="prayer-ai-empty">暂时找不到这处经文</p>
+                            </div>
+                          </div>
                         </article>
                         <p v-if="!prayerAiSuggestions(row.message).length && !isPrayerAiBusy(row.message)" class="prayer-ai-empty">还没有经文建议</p>
                         <p v-if="aiSuggestionErrors[row.message.id]" class="prayer-ai-error">{{ aiSuggestionErrors[row.message.id] }}</p>

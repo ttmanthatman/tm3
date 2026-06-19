@@ -1763,12 +1763,69 @@ button {
   font-size: 11px;
 }
 
+.prayer-ai-reference,
 .prayer-ai-suggestion p,
 .prayer-ai-empty,
 .prayer-ai-error {
   margin: 0;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.prayer-ai-reference {
+  display: grid;
+  gap: 5px;
+}
+
+.prayer-ai-reference-btn {
+  width: 100%;
+  min-height: 28px;
+  border: 0;
+  border-radius: 7px;
+  padding: 0 7px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: #6f4518;
+  background: rgba(245, 158, 11, 0.08);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prayer-ai-reference-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prayer-ai-verses {
+  border-left: 2px solid rgba(128, 82, 31, 0.22);
+  padding: 2px 0 2px 8px;
+  display: grid;
+  gap: 5px;
+}
+
+.prayer-ai-verses small {
+  color: rgba(51, 37, 24, 0.58);
+  font-size: 11px;
+}
+
+.prayer-ai-verses p {
+  display: grid;
+  gap: 2px;
+}
+
+.prayer-ai-verses strong {
+  color: rgba(51, 37, 24, 0.82);
+  font-size: 12px;
+}
+
+.prayer-ai-verses span {
+  color: rgba(51, 37, 24, 0.9);
 }
 
 .prayer-ai-error {
