@@ -1,17 +1,10 @@
-export const APP_VERSION = "0.6.0";
+export const APP_VERSION = "0.5.4";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "消息特效完成渲染架构升级，新增 Three.js/WebGL 透明特效层，粒子、光影和水体动画只渲染当前可见气泡。",
-  "`/水波` 改为侧视液面效果，呈现气泡里的水槽、波峰和高光，不再是俯视圆形水纹。",
-  "`/下雨`、`/水滴` 和 `/光芒万丈` 接入 WebGL 粒子与光效，视觉层次更丰富，同时保留低动态环境的轻量回退。",
-  "`/跑马灯` 重做为独立彩灯沿气泡边框追逐，接近节日灯牌效果，不再只是旋转彩虹边框。"
-] as const;
-
-const RELEASE_0_5_4_NOTES = [
   "聊天室消息改为分页窗口加载，进入频道先显示最近消息，向上滚动再加载历史记录。",
   "加载更早消息时会保持当前阅读位置，并在消息区顶部显示加载中、失败重试和已到最早消息提示。",
   "多频道消息缓存加入窗口上限和后台预取，减少大量历史消息带来的内存压力。",
@@ -37,14 +30,9 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.0",
-    date: "2026-06-19",
-    notes: RELEASE_NOTES
-  },
-  {
     version: "0.5.4",
     date: "2026-06-19",
-    notes: RELEASE_0_5_4_NOTES
+    notes: RELEASE_NOTES
   },
   {
     version: "0.5.3",
