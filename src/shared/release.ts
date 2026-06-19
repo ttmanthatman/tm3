@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.5.4";
+export const APP_VERSION = "0.6.0";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "新增代祷卡片下方的“也许相关的经文”AI 子消息，可展开查看最近 3 组经文出处建议。",
+  "新增独立管理员页面 `/ai-settings`，默认接入 DeepSeek v4 flash，管理员只需填写 API Key，高级设置可调整提示词和频率限制。",
+  "AI 建议会缓存并保存为消息附属记录，换一组会尽量避开已推荐出处，每张代祷卡片默认最多成功生成 7 次。",
+  "DeepSeek API Key 使用服务端密钥加密保存，聊天导出导入会包含 AI 建议记录。"
+] as const;
+
+const RELEASE_0_5_4_NOTES = [
   "聊天室消息改为分页窗口加载，进入频道先显示最近消息，向上滚动再加载历史记录。",
   "加载更早消息时会保持当前阅读位置，并在消息区顶部显示加载中、失败重试和已到最早消息提示。",
   "多频道消息缓存加入窗口上限和后台预取，减少大量历史消息带来的内存压力。",
@@ -30,9 +37,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.5.4",
+    version: "0.6.0",
     date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.5.4",
+    date: "2026-06-19",
+    notes: RELEASE_0_5_4_NOTES
   },
   {
     version: "0.5.3",
