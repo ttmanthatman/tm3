@@ -142,7 +142,8 @@ const loginAppearanceEdit = ref({
 });
 const flashEffectEdit = ref<FlashEffectSettingsDTO>({
   colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-  intervalSeconds: 0.4
+  intervalSeconds: 0.4,
+  transitionMode: "smooth"
 });
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
@@ -530,7 +531,7 @@ const appearanceStyle = computed(() => ({
 }));
 
 watch(
-  () => `${flashEffect.value.colors.join(",")}:${flashEffect.value.intervalSeconds}`,
+  () => `${flashEffect.value.colors.join(",")}:${flashEffect.value.intervalSeconds}:${flashEffect.value.transitionMode}`,
   () => restartFlashEffectTimer(),
   { immediate: true }
 );
@@ -1340,10 +1341,11 @@ function messageEffectStyle(message: MessageDTO) {
   const effect = messageEffect(message);
   if (effect !== "flash" || isMessageEffectPaused(message)) return {};
   const interval = `${flashEffect.value.intervalSeconds}s`;
+  const transition = flashEffect.value.transitionMode === "smooth" ? `background ${interval} linear, color ${interval} linear` : "none";
   return {
     background: activeFlashColor.value,
     color: readableTextColor(activeFlashColor.value),
-    transition: `background ${interval} steps(1, end), color ${interval} steps(1, end)`
+    transition
   };
 }
 
@@ -2461,9 +2463,11 @@ function cleanFlashEffectSettings(input?: FlashEffectSettingsDTO | null): FlashE
     .map((color) => color.toLowerCase())
     .slice(0, 10);
   const seconds = Number(input?.intervalSeconds);
+  const transitionMode = input?.transitionMode === "step" ? "step" : "smooth";
   return {
     colors: colors.length ? colors : ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-    intervalSeconds: Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : 0.4)) * 100) / 100
+    intervalSeconds: Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : 0.4)) * 100) / 100,
+    transitionMode
   };
 }
 
@@ -2889,7 +2893,8 @@ function syncLoginAppearanceEdit() {
   };
   flashEffectEdit.value = {
     colors: [...flashEffect.value.colors],
-    intervalSeconds: flashEffect.value.intervalSeconds
+    intervalSeconds: flashEffect.value.intervalSeconds,
+    transitionMode: flashEffect.value.transitionMode
   };
   if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
 }
@@ -3858,6 +3863,13 @@ async function toggleVirtual(character: any) {
               <label class="flash-interval-row">
                 <span>闪动间隔（秒）</span>
                 <input v-model.number="flashEffectEdit.intervalSeconds" type="number" min="0.01" max="10" step="0.01" />
+              </label>
+              <label class="flash-interval-row">
+                <span>色彩过渡</span>
+                <select v-model="flashEffectEdit.transitionMode">
+                  <option value="smooth">渐变过渡</option>
+                  <option value="step">硬切换</option>
+                </select>
               </label>
               <div class="color-grid">
                 <label v-for="(color, index) in flashEffectEdit.colors" :key="index" class="color-row flash-color-row">

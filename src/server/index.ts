@@ -49,7 +49,8 @@ const DEFAULT_LOGIN_TITLE = "Team Chat";
 const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
 const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
   colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-  intervalSeconds: 0.4
+  intervalSeconds: 0.4,
+  transitionMode: "smooth"
 };
 const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   accent: "#1aad19",
@@ -451,9 +452,11 @@ function cleanFlashEffect(input: unknown): FlashEffectSettingsDTO {
     .slice(0, 10);
   const seconds = Number(raw.intervalSeconds);
   const intervalSeconds = Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : DEFAULT_FLASH_EFFECT.intervalSeconds)) * 100) / 100;
+  const transitionMode = raw.transitionMode === "step" ? "step" : "smooth";
   return {
     colors: colors.length ? colors : [...DEFAULT_FLASH_EFFECT.colors],
-    intervalSeconds
+    intervalSeconds,
+    transitionMode
   };
 }
 

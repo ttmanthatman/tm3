@@ -188,6 +188,7 @@ export interface ThemeDTO {
 export interface FlashEffectSettingsDTO {
   colors: string[];
   intervalSeconds: number;
+  transitionMode: "smooth" | "step";
 }
 
 export interface AppearanceDTO {

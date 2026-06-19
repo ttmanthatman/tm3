@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.0";
+export const APP_VERSION = "0.5.3";
 
-export const RELEASE_DATE = "2026-06-18";
+export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "闪动特效新增“渐变过渡 / 硬切换”选项，默认让颜色之间平滑渐变。",
+  "修正上次误写成 0.6.0 的版本号，上一组更新记录改回 0.5.2，本次发布为 0.5.3。"
+] as const;
+
+const RELEASE_0_5_2_NOTES = [
   "修复 `/闪动` 消息和带闪动的代祷卡片不再变色的问题，历史消息和新消息都会恢复闪动。",
   "管理员可在后台设置 `/闪动` 特效的颜色顺序，最多 10 个颜色，并可把闪动间隔精确到 0.01 秒。",
   "新增 `/光芒万丈` 消息特效，气泡会向外放射太阳般的光芒。",
@@ -16,9 +21,14 @@ export const RELEASE_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.0",
-    date: "2026-06-18",
+    version: "0.5.3",
+    date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.5.2",
+    date: "2026-06-18",
+    notes: RELEASE_0_5_2_NOTES
   },
   {
     version: "0.5.1",

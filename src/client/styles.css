@@ -840,8 +840,8 @@ button {
   background: var(--message-flash-bg, #fff176);
   color: var(--message-flash-text, #111111);
   transition:
-    background var(--message-flash-interval, 0.4s) steps(1, end),
-    color var(--message-flash-interval, 0.4s) steps(1, end);
+    background var(--message-flash-interval, 0.4s) linear,
+    color var(--message-flash-interval, 0.4s) linear;
 }
 
 .message-effect-flash .reply-preview {
