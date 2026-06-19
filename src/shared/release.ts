@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.2";
+export const APP_VERSION = "0.6.3";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理员外观设置新增真正的草稿预览，桌面端和移动端会同时预览登录页、聊天室壁纸、标签页标题/图标、登录图标和闪动效果。",
+  "上传、复用或移除外观图片现在只会进入草稿预览，点击保存后才会广播并应用到所有客户端。",
+  "已上传壁纸改为缩略图网格，可直接看图并选择设为登录页背景或聊天室壁纸。"
+] as const;
+
+const RELEASE_0_6_2_NOTES = [
   "聊天室壁纸不再叠加半透明遮罩，桌面端滚动消息区时不会露出变淡的背景层。",
   "外观设置支持直接复用已上传图片，登录页背景和聊天室壁纸不用重复上传。",
   "管理面板外观页按钮和背景控件改为更紧凑的布局，避免按钮横向拉成大片。"
@@ -52,9 +58,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.2",
+    version: "0.6.3",
     date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.2",
+    date: "2026-06-19",
+    notes: RELEASE_0_6_2_NOTES
   },
   {
     version: "0.6.1",

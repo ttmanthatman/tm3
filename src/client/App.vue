@@ -136,12 +136,16 @@ const loginPositionOptions: Array<{ value: LoginFormPosition; label: string }> =
 ];
 const loginAppearanceEdit = ref({
   appTitle: "Team Chat",
+  appIconPath: null as string | null,
   loginTitle: "Team Chat",
   loginSubtitle: "轻快、稳定的团队聊天。",
+  loginIconPath: null as string | null,
   loginShowIcon: true,
   loginShowSubtitle: true,
+  loginBackgroundPath: null as string | null,
   loginFormPosition: "middle" as LoginFormPosition,
   loginBackgroundFit: "cover" as WallpaperFit,
+  wallpaperPath: null as string | null,
   wallpaperFit: "cover" as WallpaperFit,
   registrationEnabled: false
 });
@@ -603,6 +607,39 @@ const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEAS
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
 const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
 const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.url));
+const appearanceDraftIcon = computed(() => loginAppearanceEdit.value.appIconPath ? wallpaperUrl(loginAppearanceEdit.value.appIconPath) : "/images/icon-192.svg");
+const appearanceDraftLoginIcon = computed(() => loginAppearanceEdit.value.loginIconPath ? wallpaperUrl(loginAppearanceEdit.value.loginIconPath) : "/images/icon-192.svg");
+const appearanceDraftLoginBackground = computed(() => loginAppearanceEdit.value.loginBackgroundPath);
+const appearanceDraftWallpaper = computed(() => loginAppearanceEdit.value.wallpaperPath);
+const appearancePreviewLoginStyle = computed(() => {
+  const fit = wallpaperFitStyle(loginAppearanceEdit.value.loginBackgroundFit);
+  return {
+    backgroundImage: appearanceDraftLoginBackground.value ? `url(${wallpaperUrl(appearanceDraftLoginBackground.value)})` : "none",
+    backgroundSize: fit.size,
+    backgroundRepeat: fit.repeat
+  };
+});
+const appearancePreviewChatStyle = computed(() => {
+  const fit = wallpaperFitStyle(loginAppearanceEdit.value.wallpaperFit);
+  return {
+    backgroundImage: appearanceDraftWallpaper.value ? `url(${wallpaperUrl(appearanceDraftWallpaper.value)})` : "none",
+    backgroundSize: fit.size,
+    backgroundRepeat: fit.repeat
+  };
+});
+const appearancePreviewFlash = computed(() => cleanFlashEffectSettings(flashEffectEdit.value));
+const appearancePreviewFlashColor = computed(() => {
+  const colors = appearancePreviewFlash.value.colors;
+  return colors[flashEffectStep.value % colors.length] || colors[0] || "#fff176";
+});
+const appearancePreviewFlashStyle = computed(() => {
+  const interval = `${appearancePreviewFlash.value.intervalSeconds}s`;
+  return {
+    background: appearancePreviewFlashColor.value,
+    color: readableTextColor(appearancePreviewFlashColor.value),
+    transition: appearancePreviewFlash.value.transitionMode === "smooth" ? `background ${interval} linear, color ${interval} linear` : "none"
+  };
+});
 const selectableMessages = computed(() => store.messages.filter((message) => message.id > 0));
 const selectedMessageCount = computed(() => selectedMessageIds.value.size);
 const visibleMessagesSelected = computed(() => selectableMessages.value.length > 0 && selectableMessages.value.every((message) => selectedMessageIds.value.has(message.id)));
@@ -3127,139 +3164,93 @@ async function deleteAccountAttachments(account: any) {
   await store.loadMessages();
 }
 
-async function uploadWallpaper(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch("/api/admin/appearance/wallpaper", { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "壁纸上传失败" }));
-    alert(result.message || "壁纸上传失败");
-    return;
-  }
-  const result = (await response.json()) as { appearance: AppearanceDTO };
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "壁纸已更新";
-}
+type AppearanceImageField = "appIconPath" | "loginIconPath" | "loginBackgroundPath" | "wallpaperPath";
 
-async function uploadLoginBackground(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch("/api/admin/appearance/login-background", { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "登录页背景上传失败" }));
-    alert(result.message || "登录页背景上传失败");
-    return;
-  }
-  const result = (await response.json()) as { appearance: AppearanceDTO };
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "登录页背景已更新";
-}
-
-async function uploadLoginIcon(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch("/api/admin/appearance/login-icon", { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "登录页图标上传失败" }));
-    alert(result.message || "登录页图标上传失败");
-    return;
-  }
-  const result = (await response.json()) as { appearance: AppearanceDTO };
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "登录页图标已更新";
-}
-
-async function uploadAppIcon(event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch("/api/admin/appearance/app-icon", { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "标签页图标上传失败" }));
-    alert(result.message || "标签页图标上传失败");
-    return;
-  }
-  const result = (await response.json()) as { appearance: AppearanceDTO };
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "标签页图标已更新";
-}
-
-async function reuseAppearanceBackground(field: "wallpaperPath" | "loginBackgroundPath", fileName: string, message: string) {
-  const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
-  if (!image) return;
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
-    method: "POST",
-    body: JSON.stringify({ [field]: image.fileName })
-  });
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
+function setAppearanceDraftImage(field: AppearanceImageField, fileName: string | null, message: string) {
+  loginAppearanceEdit.value[field] = fileName;
   adminMsg.value = message;
 }
 
-async function reuseWallpaper(event: Event) {
+async function uploadAppearanceImage(event: Event, url: string, field: AppearanceImageField, failureMessage: string, successMessage: string) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  (event.target as HTMLInputElement).value = "";
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(url, { method: "POST", headers: authHeaders(), body: form });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ message: failureMessage }));
+    alert(result.message || failureMessage);
+    return;
+  }
+  const result = (await response.json()) as { fileName: string; url?: string };
+  setAppearanceDraftImage(field, result.fileName, successMessage);
+  await loadAdminAttachments().catch(() => undefined);
+}
+
+async function uploadWallpaper(event: Event) {
+  await uploadAppearanceImage(event, "/api/admin/appearance/wallpaper", "wallpaperPath", "壁纸上传失败", "壁纸已上传到草稿，保存后生效");
+}
+
+async function uploadLoginBackground(event: Event) {
+  await uploadAppearanceImage(event, "/api/admin/appearance/login-background", "loginBackgroundPath", "登录页背景上传失败", "登录页背景已上传到草稿，保存后生效");
+}
+
+async function uploadLoginIcon(event: Event) {
+  await uploadAppearanceImage(event, "/api/admin/appearance/login-icon", "loginIconPath", "登录页图标上传失败", "登录页图标已上传到草稿，保存后生效");
+}
+
+async function uploadAppIcon(event: Event) {
+  await uploadAppearanceImage(event, "/api/admin/appearance/app-icon", "appIconPath", "标签页图标上传失败", "标签页图标已上传到草稿，保存后生效");
+}
+
+function reuseAppearanceBackground(field: "wallpaperPath" | "loginBackgroundPath", fileName: string, message: string) {
+  const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
+  if (!image) return;
+  setAppearanceDraftImage(field, image.fileName, message);
+}
+
+function reuseWallpaper(event: Event) {
   const fileName = (event.target as HTMLSelectElement).value;
   if (!fileName) return;
-  await reuseAppearanceBackground("wallpaperPath", fileName, "已使用已上传图片作为壁纸");
+  reuseAppearanceBackground("wallpaperPath", fileName, "已选择已上传图片作为壁纸草稿，保存后生效");
 }
 
-async function reuseLoginBackground(event: Event) {
+function reuseLoginBackground(event: Event) {
   const fileName = (event.target as HTMLSelectElement).value;
   if (!fileName) return;
-  await reuseAppearanceBackground("loginBackgroundPath", fileName, "已使用已上传图片作为登录背景");
+  reuseAppearanceBackground("loginBackgroundPath", fileName, "已选择已上传图片作为登录背景草稿，保存后生效");
 }
 
-async function clearWallpaper() {
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ wallpaperPath: null }) });
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "壁纸已移除";
+function clearWallpaper() {
+  setAppearanceDraftImage("wallpaperPath", null, "壁纸已从草稿移除，保存后生效");
 }
 
-async function clearLoginBackground() {
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ loginBackgroundPath: null }) });
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "登录页背景已移除";
+function clearLoginBackground() {
+  setAppearanceDraftImage("loginBackgroundPath", null, "登录页背景已从草稿移除，保存后生效");
 }
 
-async function clearLoginIcon() {
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ loginIconPath: null }) });
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "登录页图标图片已移除";
+function clearLoginIcon() {
+  setAppearanceDraftImage("loginIconPath", null, "登录页图标已从草稿移除，保存后生效");
 }
 
-async function clearAppIcon() {
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", { method: "POST", body: JSON.stringify({ appIconPath: null }) });
-  store.appearance = result.appearance;
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "标签页图标已恢复默认";
+function clearAppIcon() {
+  setAppearanceDraftImage("appIconPath", null, "标签页图标已在草稿中恢复默认，保存后生效");
 }
 
 function syncLoginAppearanceEdit() {
   loginAppearanceEdit.value = {
     appTitle: store.appearance.appTitle || "Team Chat",
+    appIconPath: store.appearance.appIconPath || null,
     loginTitle: store.appearance.loginTitle || "Team Chat",
     loginSubtitle: store.appearance.loginSubtitle || "",
+    loginIconPath: store.appearance.loginIconPath || null,
     loginShowIcon: store.appearance.loginShowIcon !== false,
     loginShowSubtitle: store.appearance.loginShowSubtitle !== false,
+    loginBackgroundPath: store.appearance.loginBackgroundPath || null,
     loginFormPosition: store.appearance.loginFormPosition || "middle",
     loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
+    wallpaperPath: store.appearance.wallpaperPath || null,
     wallpaperFit: store.appearance.wallpaperFit || "cover",
     registrationEnabled: !!store.appearance.registrationEnabled
   };
@@ -3295,18 +3286,23 @@ async function saveLoginAppearance() {
     method: "POST",
     body: JSON.stringify({
       appTitle: loginAppearanceEdit.value.appTitle,
+      appIconPath: loginAppearanceEdit.value.appIconPath,
       loginTitle: loginAppearanceEdit.value.loginTitle,
       loginSubtitle: loginAppearanceEdit.value.loginSubtitle,
+      loginIconPath: loginAppearanceEdit.value.loginIconPath,
       loginShowIcon: loginAppearanceEdit.value.loginShowIcon,
       loginShowSubtitle: loginAppearanceEdit.value.loginShowSubtitle,
+      loginBackgroundPath: loginAppearanceEdit.value.loginBackgroundPath,
       loginFormPosition: loginAppearanceEdit.value.loginFormPosition,
       loginBackgroundFit: loginAppearanceEdit.value.loginBackgroundFit,
+      wallpaperPath: loginAppearanceEdit.value.wallpaperPath,
       wallpaperFit: loginAppearanceEdit.value.wallpaperFit,
       registrationEnabled: loginAppearanceEdit.value.registrationEnabled
     })
   });
   store.appearance = result.appearance;
-  adminMsg.value = "登录页和注册设置已保存";
+  await loadAdminAttachments().catch(() => undefined);
+  adminMsg.value = "外观设置已保存并生效";
 }
 
 function themeSlug(name: string) {
@@ -4295,157 +4291,233 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
 
-          <section v-if="adminTab === 'appearance'" class="form-grid">
-            <label>聊天室标签页</label>
-            <div class="login-brand-grid">
-              <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
-            </div>
-            <div v-if="store.appearance.appIconPath" class="login-icon-preview">
-              <img :src="wallpaperUrl(store.appearance.appIconPath)" alt="" />
-            </div>
-            <div class="action-grid">
-              <label class="primary-btn">
-                <Upload :size="16" />上传标签页图标
-                <input class="hidden" type="file" accept="image/*" @change="uploadAppIcon" />
-              </label>
-              <button class="mini-btn secondary" @click="clearAppIcon">恢复默认图标</button>
-            </div>
-            <label>登录页内容</label>
-            <div class="login-brand-grid">
-              <input v-model="loginAppearanceEdit.loginTitle" maxlength="80" placeholder="登录页标题" aria-label="登录页标题" />
-              <input v-model="loginAppearanceEdit.loginSubtitle" maxlength="160" placeholder="登录页副标题" aria-label="登录页副标题" />
-            </div>
-            <div class="check-grid">
-              <label class="check-row"><input v-model="loginAppearanceEdit.loginShowIcon" type="checkbox" /> 显示登录页图标</label>
-              <label class="check-row"><input v-model="loginAppearanceEdit.loginShowSubtitle" type="checkbox" /> 显示登录页副标题</label>
-            </div>
-            <label>登录区域位置</label>
-            <div class="segmented-row">
-              <button
-                v-for="option in loginPositionOptions"
-                :key="option.value"
-                class="mini-btn"
-                :class="{ secondary: loginAppearanceEdit.loginFormPosition !== option.value }"
-                @click="loginAppearanceEdit.loginFormPosition = option.value"
-              >
-                {{ option.label }}
-              </button>
-            </div>
-            <label class="check-row"><input v-model="loginAppearanceEdit.registrationEnabled" type="checkbox" /> 开放注册</label>
-            <button class="primary-btn" @click="saveLoginAppearance"><Save :size="15" />保存标题和登录页</button>
-            <label>主题颜色</label>
-            <div class="theme-editor-head">
-              <input v-model="customThemeEdit.name" maxlength="24" placeholder="主题名称" />
-              <button class="mini-btn secondary" @click="resetThemeEditor">用当前主题填充</button>
-            </div>
-            <div class="color-grid">
-              <label v-for="field in colorFields" :key="field.key" class="color-row">
-                <span>{{ field.label }}</span>
-                <input v-model="customThemeEdit.palette[field.key]" type="color" />
-                <code>{{ customThemeEdit.palette[field.key] }}</code>
-              </label>
-            </div>
-            <button class="primary-btn" @click="saveCustomTheme"><Save :size="15" />保存为主题</button>
-            <div v-if="store.appearance.customThemes.length" class="theme-admin-list">
-              <article v-for="theme in store.appearance.customThemes" :key="theme.id" class="theme-admin-row">
-                <span class="theme-admin-swatch" :style="themeSwatchStyle(theme)"></span>
-                <b>{{ theme.name }}</b>
-                <button class="mini-btn secondary" @click="editTheme(theme)">编辑</button>
-                <button class="mini-btn danger-action" @click="deleteCustomTheme(theme)"><Trash2 :size="14" />删除</button>
-              </article>
-            </div>
-            <label>闪动特效</label>
-            <div class="flash-effect-editor">
-              <label class="flash-interval-row">
-                <span>闪动间隔（秒）</span>
-                <input v-model.number="flashEffectEdit.intervalSeconds" type="number" min="0.01" max="10" step="0.01" />
-              </label>
-              <label class="flash-interval-row">
-                <span>色彩过渡</span>
-                <select v-model="flashEffectEdit.transitionMode">
-                  <option value="smooth">渐变过渡</option>
-                  <option value="step">硬切换</option>
-                </select>
-              </label>
+          <section v-if="adminTab === 'appearance'" class="appearance-admin-layout">
+            <div class="appearance-editor-panel form-grid">
+              <div class="appearance-save-bar">
+                <div>
+                  <b>外观草稿</b>
+                  <small>预览只影响当前面板，保存后才对聊天室生效。</small>
+                </div>
+                <button class="primary-btn" @click="saveLoginAppearance"><Save :size="15" />保存外观</button>
+              </div>
+
+              <label>聊天室标签页</label>
+              <div class="login-brand-grid">
+                <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
+              </div>
+              <div class="appearance-image-control">
+                <div class="login-icon-preview">
+                  <img :src="appearanceDraftIcon" alt="" />
+                </div>
+                <div class="action-grid">
+                  <label class="primary-btn">
+                    <Upload :size="16" />上传标签页图标
+                    <input class="hidden" type="file" accept="image/*" @change="uploadAppIcon" />
+                  </label>
+                  <button class="mini-btn secondary" @click="clearAppIcon">恢复默认图标</button>
+                </div>
+              </div>
+
+              <label>登录页内容</label>
+              <div class="login-brand-grid">
+                <input v-model="loginAppearanceEdit.loginTitle" maxlength="80" placeholder="登录页标题" aria-label="登录页标题" />
+                <input v-model="loginAppearanceEdit.loginSubtitle" maxlength="160" placeholder="登录页副标题" aria-label="登录页副标题" />
+              </div>
+              <div class="check-grid">
+                <label class="check-row"><input v-model="loginAppearanceEdit.loginShowIcon" type="checkbox" /> 显示登录页图标</label>
+                <label class="check-row"><input v-model="loginAppearanceEdit.loginShowSubtitle" type="checkbox" /> 显示登录页副标题</label>
+                <label class="check-row"><input v-model="loginAppearanceEdit.registrationEnabled" type="checkbox" /> 开放注册</label>
+              </div>
+              <label>登录区域位置</label>
+              <div class="segmented-row">
+                <button
+                  v-for="option in loginPositionOptions"
+                  :key="option.value"
+                  class="mini-btn"
+                  :class="{ secondary: loginAppearanceEdit.loginFormPosition !== option.value }"
+                  @click="loginAppearanceEdit.loginFormPosition = option.value"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+
+              <label>登录页图标图片</label>
+              <div class="appearance-image-control">
+                <div class="login-icon-preview">
+                  <img :src="appearanceDraftLoginIcon" alt="" />
+                </div>
+                <div class="action-grid">
+                  <label class="primary-btn">
+                    <Upload :size="16" />上传图标
+                    <input class="hidden" type="file" accept="image/*" @change="uploadLoginIcon" />
+                  </label>
+                  <button class="mini-btn secondary" @click="clearLoginIcon">移除图标图片</button>
+                </div>
+              </div>
+
+              <label>登录页背景</label>
+              <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
+                <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">登录背景：{{ option.label }}</option>
+              </select>
+              <div class="action-grid">
+                <label class="primary-btn">
+                  <Upload :size="16" />上传登录背景
+                  <input class="hidden" type="file" accept="image/*" @change="uploadLoginBackground" />
+                </label>
+                <button class="mini-btn secondary" @click="clearLoginBackground">移除登录背景</button>
+              </div>
+
+              <label>聊天室壁纸</label>
+              <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
+                <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">聊天室壁纸：{{ option.label }}</option>
+              </select>
+              <div class="action-grid">
+                <label class="primary-btn">
+                  <Upload :size="16" />上传壁纸
+                  <input class="hidden" type="file" accept="image/*" @change="uploadWallpaper" />
+                </label>
+                <button class="mini-btn secondary" @click="clearWallpaper">移除壁纸</button>
+              </div>
+
+              <label>已上传图片</label>
+              <div v-if="backgroundAttachmentOptions.length" class="appearance-image-grid">
+                <article
+                  v-for="image in backgroundAttachmentOptions"
+                  :key="image.id"
+                  class="appearance-image-card"
+                  :class="{ active: image.fileName === loginAppearanceEdit.loginBackgroundPath || image.fileName === loginAppearanceEdit.wallpaperPath }"
+                >
+                  <img :src="image.url" alt="" />
+                  <div>
+                    <b>{{ image.label }}</b>
+                    <small>{{ backgroundAttachmentLabel(image) }}</small>
+                  </div>
+                  <div class="appearance-image-actions">
+                    <button class="mini-btn secondary" @click="reuseAppearanceBackground('loginBackgroundPath', image.fileName, '已选择登录背景草稿，保存后生效')">登录背景</button>
+                    <button class="mini-btn secondary" @click="reuseAppearanceBackground('wallpaperPath', image.fileName, '已选择聊天室壁纸草稿，保存后生效')">聊天室壁纸</button>
+                  </div>
+                </article>
+              </div>
+              <p v-else class="muted-note">还没有已上传图片。上传登录背景或壁纸后，会在这里显示缩略图。</p>
+
+              <label>主题颜色</label>
+              <div class="theme-editor-head">
+                <input v-model="customThemeEdit.name" maxlength="24" placeholder="主题名称" />
+                <button class="mini-btn secondary" @click="resetThemeEditor">用当前主题填充</button>
+              </div>
               <div class="color-grid">
-                <label v-for="(color, index) in flashEffectEdit.colors" :key="index" class="color-row flash-color-row">
-                  <span>第 {{ index + 1 }} 色</span>
-                  <input v-model="flashEffectEdit.colors[index]" type="color" />
-                  <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length <= 1" @click.prevent="removeFlashColor(index)">删除</button>
+                <label v-for="field in colorFields" :key="field.key" class="color-row">
+                  <span>{{ field.label }}</span>
+                  <input v-model="customThemeEdit.palette[field.key]" type="color" />
+                  <code>{{ customThemeEdit.palette[field.key] }}</code>
                 </label>
               </div>
-              <div class="action-grid">
-                <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length >= 10" @click="addFlashColor">增加颜色</button>
-                <button class="primary-btn" @click="saveFlashEffect"><Save :size="15" />保存闪动</button>
+              <button class="primary-btn" @click="saveCustomTheme"><Save :size="15" />保存为主题</button>
+              <div v-if="store.appearance.customThemes.length" class="theme-admin-list">
+                <article v-for="theme in store.appearance.customThemes" :key="theme.id" class="theme-admin-row">
+                  <span class="theme-admin-swatch" :style="themeSwatchStyle(theme)"></span>
+                  <b>{{ theme.name }}</b>
+                  <button class="mini-btn secondary" @click="editTheme(theme)">编辑</button>
+                  <button class="mini-btn danger-action" @click="deleteCustomTheme(theme)"><Trash2 :size="14" />删除</button>
+                </article>
+              </div>
+
+              <label>闪动特效</label>
+              <div class="flash-effect-editor">
+                <label class="flash-interval-row">
+                  <span>闪动间隔（秒）</span>
+                  <input v-model.number="flashEffectEdit.intervalSeconds" type="number" min="0.01" max="10" step="0.01" />
+                </label>
+                <label class="flash-interval-row">
+                  <span>色彩过渡</span>
+                  <select v-model="flashEffectEdit.transitionMode">
+                    <option value="smooth">渐变过渡</option>
+                    <option value="step">硬切换</option>
+                  </select>
+                </label>
+                <div class="color-grid">
+                  <label v-for="(color, index) in flashEffectEdit.colors" :key="index" class="color-row flash-color-row">
+                    <span>第 {{ index + 1 }} 色</span>
+                    <input v-model="flashEffectEdit.colors[index]" type="color" />
+                    <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length <= 1" @click.prevent="removeFlashColor(index)">删除</button>
+                  </label>
+                </div>
+                <div class="action-grid">
+                  <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length >= 10" @click="addFlashColor">增加颜色</button>
+                  <button class="primary-btn" @click="saveFlashEffect"><Save :size="15" />保存闪动</button>
+                </div>
               </div>
             </div>
-            <label>登录页图标图片</label>
-            <div v-if="store.appearance.loginIconPath" class="login-icon-preview">
-              <img :src="wallpaperUrl(store.appearance.loginIconPath)" alt="" />
-            </div>
-            <div class="action-grid">
-              <label class="primary-btn">
-                <Upload :size="16" />上传图标
-                <input class="hidden" type="file" accept="image/*" @change="uploadLoginIcon" />
-              </label>
-              <button class="mini-btn secondary" @click="clearLoginIcon">移除图标图片</button>
-            </div>
-            <label>登录页背景</label>
-            <div
-              v-if="store.appearance.loginBackgroundPath"
-              class="wallpaper-preview"
-              :style="{
-                backgroundImage: `url(${wallpaperUrl(store.appearance.loginBackgroundPath)})`,
-                backgroundSize: wallpaperFitStyle(loginAppearanceEdit.loginBackgroundFit).size,
-                backgroundRepeat: wallpaperFitStyle(loginAppearanceEdit.loginBackgroundFit).repeat
-              }"
-            ></div>
-            <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
-              <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">登录背景：{{ option.label }}</option>
-            </select>
-            <div v-if="backgroundAttachmentOptions.length" class="image-reuse-row">
-              <select :value="store.appearance.loginBackgroundPath || ''" aria-label="复用已上传登录背景" @change="reuseLoginBackground">
-                <option value="">使用已上传图片...</option>
-                <option v-for="image in backgroundAttachmentOptions" :key="`login-bg-${image.id}`" :value="image.fileName">
-                  {{ backgroundAttachmentLabel(image) }}
-                </option>
-              </select>
-            </div>
-            <div class="action-grid">
-              <label class="primary-btn">
-                <Upload :size="16" />上传登录背景
-                <input class="hidden" type="file" accept="image/*" @change="uploadLoginBackground" />
-              </label>
-              <button class="mini-btn secondary" @click="clearLoginBackground">移除登录背景</button>
-            </div>
-            <label>聊天室壁纸</label>
-            <div
-              v-if="store.appearance.wallpaperPath"
-              class="wallpaper-preview"
-              :style="{
-                backgroundImage: `url(${wallpaperUrl(store.appearance.wallpaperPath)})`,
-                backgroundSize: wallpaperFitStyle(loginAppearanceEdit.wallpaperFit).size,
-                backgroundRepeat: wallpaperFitStyle(loginAppearanceEdit.wallpaperFit).repeat
-              }"
-            ></div>
-            <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
-              <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">聊天室壁纸：{{ option.label }}</option>
-            </select>
-            <div v-if="backgroundAttachmentOptions.length" class="image-reuse-row">
-              <select :value="store.appearance.wallpaperPath || ''" aria-label="复用已上传聊天室壁纸" @change="reuseWallpaper">
-                <option value="">使用已上传图片...</option>
-                <option v-for="image in backgroundAttachmentOptions" :key="`wallpaper-${image.id}`" :value="image.fileName">
-                  {{ backgroundAttachmentLabel(image) }}
-                </option>
-              </select>
-            </div>
-            <div class="action-grid">
-              <label class="primary-btn">
-                <Upload :size="16" />上传壁纸
-                <input class="hidden" type="file" accept="image/*" @change="uploadWallpaper" />
-              </label>
-              <button class="mini-btn secondary" @click="clearWallpaper">移除壁纸</button>
-            </div>
+
+            <aside class="appearance-preview-panel">
+              <header>
+                <div>
+                  <b>实时预览</b>
+                  <small>桌面端和移动端都会跟随草稿变化。</small>
+                </div>
+                <span>未保存</span>
+              </header>
+              <div class="appearance-preview-grid">
+                <div class="appearance-preview-block">
+                  <strong>桌面登录页</strong>
+                  <div class="appearance-device desktop">
+                    <div class="preview-browser-bar"><img :src="appearanceDraftIcon" alt="" /><span>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</span></div>
+                    <div class="appearance-login-preview" :class="`login-position-${loginAppearanceEdit.loginFormPosition}`" :style="appearancePreviewLoginStyle">
+                      <div class="appearance-login-card">
+                        <img v-if="loginAppearanceEdit.loginShowIcon" :src="appearanceDraftLoginIcon" alt="" />
+                        <b>{{ loginAppearanceEdit.loginTitle || "Team Chat" }}</b>
+                        <small v-if="loginAppearanceEdit.loginShowSubtitle">{{ loginAppearanceEdit.loginSubtitle || "轻快、稳定的团队聊天。" }}</small>
+                        <span>{{ loginAppearanceEdit.registrationEnabled ? "登录 / 注册" : "登录" }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="appearance-preview-block">
+                  <strong>移动登录页</strong>
+                  <div class="appearance-device mobile">
+                    <div class="preview-browser-bar"><img :src="appearanceDraftIcon" alt="" /><span>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</span></div>
+                    <div class="appearance-login-preview" :class="`login-position-${loginAppearanceEdit.loginFormPosition}`" :style="appearancePreviewLoginStyle">
+                      <div class="appearance-login-card">
+                        <img v-if="loginAppearanceEdit.loginShowIcon" :src="appearanceDraftLoginIcon" alt="" />
+                        <b>{{ loginAppearanceEdit.loginTitle || "Team Chat" }}</b>
+                        <small v-if="loginAppearanceEdit.loginShowSubtitle">{{ loginAppearanceEdit.loginSubtitle || "轻快、稳定的团队聊天。" }}</small>
+                        <span>{{ loginAppearanceEdit.registrationEnabled ? "登录 / 注册" : "登录" }}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="appearance-preview-block">
+                  <strong>桌面聊天室</strong>
+                  <div class="appearance-device desktop">
+                    <div class="appearance-chat-preview" :style="appearancePreviewChatStyle">
+                      <div class="appearance-chat-sidebar"><b>频道</b><span>主聊天室</span><span>代祷事项</span></div>
+                      <div class="appearance-chat-main">
+                        <div class="appearance-chat-top">主聊天室</div>
+                        <p class="preview-message other">这是别人发来的消息。</p>
+                        <p class="preview-message mine">这是自己的消息。</p>
+                        <p class="preview-message mine flash" :style="appearancePreviewFlashStyle">/闪动 预览消息</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="appearance-preview-block">
+                  <strong>移动聊天室</strong>
+                  <div class="appearance-device mobile">
+                    <div class="appearance-chat-preview mobile-chat" :style="appearancePreviewChatStyle">
+                      <div class="appearance-chat-main">
+                        <div class="appearance-chat-top">主聊天室</div>
+                        <p class="preview-message other">移动端消息</p>
+                        <p class="preview-message mine">自己的回复</p>
+                        <p class="preview-message mine flash" :style="appearancePreviewFlashStyle">闪动预览</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </aside>
           </section>
 
           <section v-if="adminTab === 'data'" class="form-grid">

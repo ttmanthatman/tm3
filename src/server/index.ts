@@ -2133,37 +2133,25 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
 app.post("/api/admin/appearance/wallpaper", { preHandler: requireAdmin }, async (request, reply) => {
   const safeName = await saveImageUpload(request, reply, "缺少图片");
   if (!safeName) return reply;
-  await setSetting("wallpaperPath", safeName);
-  const appearance = await appearanceDto();
-  io.emit("appearance:updated", appearance);
-  return { success: true, appearance };
+  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
 });
 
 app.post("/api/admin/appearance/login-background", { preHandler: requireAdmin }, async (request, reply) => {
   const safeName = await saveImageUpload(request, reply, "缺少登录页背景");
   if (!safeName) return reply;
-  await setSetting("loginBackgroundPath", safeName);
-  const appearance = await appearanceDto();
-  io.emit("appearance:updated", appearance);
-  return { success: true, appearance };
+  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
 });
 
 app.post("/api/admin/appearance/login-icon", { preHandler: requireAdmin }, async (request, reply) => {
   const safeName = await saveImageUpload(request, reply, "缺少登录页图标");
   if (!safeName) return reply;
-  await setSetting("loginIconPath", safeName);
-  const appearance = await appearanceDto();
-  io.emit("appearance:updated", appearance);
-  return { success: true, appearance };
+  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
 });
 
 app.post("/api/admin/appearance/app-icon", { preHandler: requireAdmin }, async (request, reply) => {
   const safeName = await saveImageUpload(request, reply, "缺少标签页图标", true);
   if (!safeName) return reply;
-  await setSetting("appIconPath", safeName);
-  const appearance = await appearanceDto();
-  io.emit("appearance:updated", appearance);
-  return { success: true, appearance };
+  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
 });
 
 function jsonDownload(reply: FastifyReply, fileName: string, data: unknown) {
