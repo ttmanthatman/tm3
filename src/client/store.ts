@@ -17,6 +17,10 @@ const defaultAppearance: AppearanceDTO = {
   loginBackgroundFit: "cover",
   loginFormPosition: "middle",
   registrationEnabled: false,
+  flashEffect: {
+    colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
+    intervalSeconds: 0.4
+  },
   customThemes: []
 };
 

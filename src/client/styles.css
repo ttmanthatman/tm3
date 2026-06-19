@@ -837,7 +837,11 @@ button {
 }
 
 .message-effect-flash {
-  animation: messageFlash 2.4s steps(1, end) infinite;
+  background: var(--message-flash-bg, #fff176);
+  color: var(--message-flash-text, #111111);
+  transition:
+    background var(--message-flash-interval, 0.4s) steps(1, end),
+    color var(--message-flash-interval, 0.4s) steps(1, end);
 }
 
 .message-effect-flash .reply-preview {
@@ -2353,6 +2357,22 @@ button {
   font-size: 12px;
 }
 
+.flash-effect-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.flash-interval-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: center;
+  gap: 10px;
+}
+
+.flash-color-row {
+  grid-template-columns: minmax(0, 1fr) 36px auto;
+}
+
 .theme-admin-list {
   display: grid;
   gap: 8px;
@@ -2662,34 +2682,6 @@ button {
 
 .flash .bubble {
   animation: flash 0.9s ease;
-}
-
-@keyframes messageFlash {
-  0%,
-  100% {
-    background: #fff176;
-    color: #111111;
-  }
-  16% {
-    background: #ef4444;
-    color: #ffffff;
-  }
-  32% {
-    background: #60a5fa;
-    color: #111111;
-  }
-  48% {
-    background: #6d28d9;
-    color: #ffffff;
-  }
-  64% {
-    background: #34d399;
-    color: #111111;
-  }
-  80% {
-    background: #111827;
-    color: #ffffff;
-  }
 }
 
 @keyframes messageShine {

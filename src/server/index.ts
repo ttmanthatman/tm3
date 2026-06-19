@@ -16,7 +16,7 @@ import sanitizeHtml from "sanitize-html";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, ChainPayload, FlashEffectSettingsDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +47,10 @@ const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
 const DEFAULT_LOGIN_TITLE = "Team Chat";
 const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
+const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
+  colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
+  intervalSeconds: 0.4
+};
 const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   accent: "#1aad19",
   accentDark: "#129611",
@@ -436,6 +440,20 @@ function cleanThemePalette(input: unknown): ThemePaletteDTO {
     bubbleOtherText: cleanHexColor(palette.bubbleOtherText, DEFAULT_THEME_PALETTE.bubbleOtherText),
     bubbleMine: cleanHexColor(palette.bubbleMine, DEFAULT_THEME_PALETTE.bubbleMine),
     bubbleMineText: cleanHexColor(palette.bubbleMineText, DEFAULT_THEME_PALETTE.bubbleMineText)
+  };
+}
+
+function cleanFlashEffect(input: unknown): FlashEffectSettingsDTO {
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<FlashEffectSettingsDTO>;
+  const colors = (Array.isArray(raw.colors) ? raw.colors : DEFAULT_FLASH_EFFECT.colors)
+    .map((color) => cleanHexColor(color, ""))
+    .filter(Boolean)
+    .slice(0, 10);
+  const seconds = Number(raw.intervalSeconds);
+  const intervalSeconds = Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : DEFAULT_FLASH_EFFECT.intervalSeconds)) * 100) / 100;
+  return {
+    colors: colors.length ? colors : [...DEFAULT_FLASH_EFFECT.colors],
+    intervalSeconds
   };
 }
 
@@ -1652,6 +1670,7 @@ async function appearanceDto() {
           "loginBackgroundFit",
           "loginFormPosition",
           "registrationEnabled",
+          "flashEffect",
           "customThemes"
         ]
       }
@@ -1673,6 +1692,7 @@ async function appearanceDto() {
     loginBackgroundFit: WALLPAPER_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
     loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
     registrationEnabled: settings.get("registrationEnabled") === "true",
+    flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
     customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), []))
   };
 }
@@ -1741,6 +1761,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       loginBackgroundFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
       loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
       registrationEnabled: z.boolean().optional(),
+      flashEffect: z.unknown().optional(),
       customThemes: z.array(z.unknown()).optional()
     })
     .parse(request.body);
@@ -1755,6 +1776,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundFit")) await setSetting("loginBackgroundFit", body.loginBackgroundFit || "cover");
   if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
   if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
+  if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
   const appearance = await appearanceDto();
   io.emit("appearance:updated", appearance);

@@ -59,6 +59,7 @@ import type {
   ChainPayload,
   ChannelDTO,
   DeviceSessionDTO,
+  FlashEffectSettingsDTO,
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
@@ -139,6 +140,12 @@ const loginAppearanceEdit = ref({
   wallpaperFit: "cover" as WallpaperFit,
   registrationEnabled: false
 });
+const flashEffectEdit = ref<FlashEffectSettingsDTO>({
+  colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
+  intervalSeconds: 0.4
+});
+const flashEffectStep = ref(0);
+let flashEffectTimer = 0;
 const adminAttachments = ref<AdminAttachmentDTO[]>([]);
 const selectedAttachmentIds = ref<string[]>([]);
 const dataChannelFilter = ref(0);
@@ -460,6 +467,7 @@ onBeforeUnmount(() => {
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
+  if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   stopRainEffect();
   stopDripPhysics(true);
   stopAllVoicePlayback();
@@ -494,12 +502,20 @@ const activeTheme = computed(() => (themeOptions.value.some((theme) => theme.id 
 const activeThemeConfig = computed(() => themeOptions.value.find((theme) => theme.id === activeTheme.value) || builtInThemes[0]);
 const activePalette = computed(() => activeThemeConfig.value.palette);
 const themeStyle = computed(() => paletteStyle(activePalette.value));
+const flashEffect = computed(() => cleanFlashEffectSettings(store.appearance.flashEffect));
+const activeFlashColor = computed(() => {
+  const colors = flashEffect.value.colors;
+  return colors[flashEffectStep.value % colors.length] || colors[0];
+});
 const hasWallpaper = computed(() => !!store.appearance.wallpaperPath);
 const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath);
 const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
+  "--message-flash-bg": activeFlashColor.value,
+  "--message-flash-text": readableTextColor(activeFlashColor.value),
+  "--message-flash-interval": `${flashEffect.value.intervalSeconds}s`,
   "--water-tilt-x": `${waterTilt.value.x.toFixed(2)}px`,
   "--water-tilt-y": `${waterTilt.value.y.toFixed(2)}px`,
   "--water-tilt-rotate": `${(waterTilt.value.x * 0.26).toFixed(2)}deg`,
@@ -512,6 +528,13 @@ const appearanceStyle = computed(() => ({
   "--chat-wallpaper-overlay": hasWallpaper.value ? "color-mix(in srgb, var(--chat-bg) 38%, transparent)" : "var(--chat-bg)",
   "--message-wallpaper-overlay": hasWallpaper.value ? "color-mix(in srgb, var(--chat-bg) 16%, transparent)" : "var(--chat-bg)"
 }));
+
+watch(
+  () => `${flashEffect.value.colors.join(",")}:${flashEffect.value.intervalSeconds}`,
+  () => restartFlashEffectTimer(),
+  { immediate: true }
+);
+
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
 const pinnedText = computed(() => {
@@ -2421,6 +2444,34 @@ function paletteStyle(palette: ThemePaletteDTO) {
   };
 }
 
+function cleanFlashEffectSettings(input?: FlashEffectSettingsDTO | null): FlashEffectSettingsDTO {
+  const colors = (Array.isArray(input?.colors) ? input.colors : [])
+    .filter((color) => /^#[0-9a-fA-F]{6}$/.test(color))
+    .map((color) => color.toLowerCase())
+    .slice(0, 10);
+  const seconds = Number(input?.intervalSeconds);
+  return {
+    colors: colors.length ? colors : ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
+    intervalSeconds: Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : 0.4)) * 100) / 100
+  };
+}
+
+function readableTextColor(hex: string) {
+  const value = hex.replace("#", "");
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#111111" : "#ffffff";
+}
+
+function restartFlashEffectTimer() {
+  if (flashEffectTimer) window.clearInterval(flashEffectTimer);
+  flashEffectStep.value = 0;
+  flashEffectTimer = window.setInterval(() => {
+    flashEffectStep.value = (flashEffectStep.value + 1) % flashEffect.value.colors.length;
+  }, Math.max(10, Math.round(flashEffect.value.intervalSeconds * 1000)));
+}
+
 function wallpaperFitStyle(fit?: WallpaperFit | null) {
   if (fit === "contain") return { size: "contain", repeat: "no-repeat" };
   if (fit === "stretch") return { size: "100% 100%", repeat: "no-repeat" };
@@ -2825,7 +2876,30 @@ function syncLoginAppearanceEdit() {
     wallpaperFit: store.appearance.wallpaperFit || "cover",
     registrationEnabled: !!store.appearance.registrationEnabled
   };
+  flashEffectEdit.value = {
+    colors: [...flashEffect.value.colors],
+    intervalSeconds: flashEffect.value.intervalSeconds
+  };
   if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
+}
+
+function addFlashColor() {
+  if (flashEffectEdit.value.colors.length >= 10) return;
+  flashEffectEdit.value.colors.push(flashEffectEdit.value.colors[flashEffectEdit.value.colors.length - 1] || "#fff176");
+}
+
+function removeFlashColor(index: number) {
+  if (flashEffectEdit.value.colors.length <= 1) return;
+  flashEffectEdit.value.colors.splice(index, 1);
+}
+
+async function saveFlashEffect() {
+  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
+    method: "POST",
+    body: JSON.stringify({ flashEffect: cleanFlashEffectSettings(flashEffectEdit.value) })
+  });
+  store.appearance = result.appearance;
+  adminMsg.value = "闪动特效已保存";
 }
 
 async function saveLoginAppearance() {
@@ -3766,6 +3840,24 @@ async function toggleVirtual(character: any) {
                 <button class="mini-btn secondary" @click="editTheme(theme)">编辑</button>
                 <button class="mini-btn danger-action" @click="deleteCustomTheme(theme)"><Trash2 :size="14" />删除</button>
               </article>
+            </div>
+            <label>闪动特效</label>
+            <div class="flash-effect-editor">
+              <label class="flash-interval-row">
+                <span>闪动间隔（秒）</span>
+                <input v-model.number="flashEffectEdit.intervalSeconds" type="number" min="0.01" max="10" step="0.01" />
+              </label>
+              <div class="color-grid">
+                <label v-for="(color, index) in flashEffectEdit.colors" :key="index" class="color-row flash-color-row">
+                  <span>第 {{ index + 1 }} 色</span>
+                  <input v-model="flashEffectEdit.colors[index]" type="color" />
+                  <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length <= 1" @click.prevent="removeFlashColor(index)">删除</button>
+                </label>
+              </div>
+              <div class="action-grid">
+                <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length >= 10" @click="addFlashColor">增加颜色</button>
+                <button class="primary-btn" @click="saveFlashEffect"><Save :size="15" />保存闪动</button>
+              </div>
             </div>
             <label>登录页图标图片</label>
             <div v-if="store.appearance.loginIconPath" class="login-icon-preview">

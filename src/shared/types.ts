@@ -185,6 +185,11 @@ export interface ThemeDTO {
   palette: ThemePaletteDTO;
 }
 
+export interface FlashEffectSettingsDTO {
+  colors: string[];
+  intervalSeconds: number;
+}
+
 export interface AppearanceDTO {
   wallpaperPath?: string | null;
   wallpaperFit: "cover" | "contain" | "stretch" | "repeat";
@@ -197,6 +202,7 @@ export interface AppearanceDTO {
   loginBackgroundFit: "cover" | "contain" | "stretch" | "repeat";
   loginFormPosition: "top" | "middle" | "bottom";
   registrationEnabled: boolean;
+  flashEffect: FlashEffectSettingsDTO;
   customThemes: ThemeDTO[];
 }
 
