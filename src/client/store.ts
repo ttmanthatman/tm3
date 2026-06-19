@@ -5,6 +5,15 @@ import { api, clearToken, getToken } from "./api";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
+type MessageWindowCache = {
+  messages: MessageDTO[];
+  hasOlder: boolean;
+  hasNewer: boolean;
+  prefetchedOlder: MessageDTO[];
+};
+const MESSAGE_PAGE_SIZE = 80;
+const MESSAGE_WINDOW_LIMIT = 480;
+const MESSAGE_CACHE_KEY_LIMIT = 8;
 const defaultAppearance: AppearanceDTO = {
   wallpaperPath: null,
   wallpaperFit: "cover",
@@ -34,7 +43,17 @@ export const useChatStore = defineStore("chat", {
     prayerOnly: localStorage.getItem("team-chat-message-view") === "prayers",
     previousChannelId: 0,
     messages: [] as MessageDTO[],
-    messageCache: {} as Record<string, MessageDTO[]>,
+    messageCache: {} as Record<string, MessageWindowCache>,
+    messageCacheOrder: [] as string[],
+    hasOlderMessages: false,
+    hasNewerMessages: false,
+    prefetchedOlderMessages: [] as MessageDTO[],
+    loadingInitialMessages: false,
+    loadingOlderMessages: false,
+    loadingNewerMessages: false,
+    prefetchingOlderMessages: false,
+    messageLoadError: "",
+    oldestMessageReached: false,
     members: [] as MemberRow[],
     pinned: null as PinnedDTO | null,
     online: [] as Array<{ accountId: number; actorId: number; displayName: string; avatarPath?: string | null }>,
@@ -56,11 +75,86 @@ export const useChatStore = defineStore("chat", {
     },
     restoreCachedMessages(channelId?: number, prayerOnly?: boolean) {
       const cached = this.messageCache[this.messageCacheKey(channelId, prayerOnly)];
-      this.messages = cached ? [...cached] : [];
+      this.messages = cached ? [...cached.messages] : [];
+      this.hasOlderMessages = cached?.hasOlder || false;
+      this.hasNewerMessages = cached?.hasNewer || false;
+      this.prefetchedOlderMessages = cached ? [...cached.prefetchedOlder] : [];
+      this.loadingInitialMessages = false;
+      this.loadingOlderMessages = false;
+      this.loadingNewerMessages = false;
+      this.prefetchingOlderMessages = false;
+      this.messageLoadError = "";
+      this.oldestMessageReached = false;
     },
     cacheCurrentMessages() {
       if (!this.currentChannelId) return;
-      this.messageCache[this.messageCacheKey()] = [...this.messages];
+      const key = this.messageCacheKey();
+      this.messageCache[key] = {
+        messages: [...this.messages],
+        hasOlder: this.hasOlderMessages,
+        hasNewer: this.hasNewerMessages,
+        prefetchedOlder: [...this.prefetchedOlderMessages]
+      };
+      this.messageCacheOrder = [key, ...this.messageCacheOrder.filter((item) => item !== key)].slice(0, MESSAGE_CACHE_KEY_LIMIT);
+      for (const staleKey of Object.keys(this.messageCache)) {
+        if (!this.messageCacheOrder.includes(staleKey)) delete this.messageCache[staleKey];
+      }
+    },
+    resetMessageWindow() {
+      this.messages = [];
+      this.hasOlderMessages = false;
+      this.hasNewerMessages = false;
+      this.prefetchedOlderMessages = [];
+      this.loadingInitialMessages = false;
+      this.loadingOlderMessages = false;
+      this.loadingNewerMessages = false;
+      this.prefetchingOlderMessages = false;
+      this.messageLoadError = "";
+      this.oldestMessageReached = false;
+    },
+    dedupeMessages(messages: MessageDTO[]) {
+      const seen = new Set<number>();
+      const rows: MessageDTO[] = [];
+      for (const message of messages) {
+        if (seen.has(message.id)) {
+          const index = rows.findIndex((row) => row.id === message.id);
+          if (index >= 0) rows.splice(index, 1, message);
+          continue;
+        }
+        seen.add(message.id);
+        rows.push(message);
+      }
+      return rows;
+    },
+    trimMessageWindow(preferKeep: "older" | "newer" = "newer") {
+      if (this.messages.length <= MESSAGE_WINDOW_LIMIT) return;
+      const extra = this.messages.length - MESSAGE_WINDOW_LIMIT;
+      if (preferKeep === "older") {
+        this.messages.splice(MESSAGE_WINDOW_LIMIT, extra);
+        this.hasNewerMessages = true;
+      } else {
+        this.messages.splice(0, extra);
+        this.hasOlderMessages = true;
+        this.prefetchedOlderMessages = [];
+      }
+    },
+    updateMessageWindowFlagsFromRows(rows: MessageDTO[], direction: "older" | "newer" | "initial") {
+      if (direction === "older") {
+        this.hasOlderMessages = rows.length >= MESSAGE_PAGE_SIZE;
+        if (!this.hasOlderMessages) this.oldestMessageReached = true;
+      }
+      if (direction === "newer") this.hasNewerMessages = rows.length >= MESSAGE_PAGE_SIZE;
+      if (direction === "initial") {
+        this.hasOlderMessages = rows.length >= MESSAGE_PAGE_SIZE;
+        this.hasNewerMessages = false;
+        this.oldestMessageReached = rows.length < MESSAGE_PAGE_SIZE;
+      }
+    },
+    messageQuery(channelId: number, prayerOnly: boolean, params: Record<string, number | string> = {}) {
+      const query = new URLSearchParams({ channelId: String(channelId), limit: String(MESSAGE_PAGE_SIZE) });
+      if (prayerOnly) query.set("prayers", "1");
+      for (const [key, value] of Object.entries(params)) query.set(key, String(value));
+      return `/api/messages?${query.toString()}`;
     },
     async bootstrap() {
       await this.loadAppearance();
@@ -84,7 +178,9 @@ export const useChatStore = defineStore("chat", {
       this.socket?.disconnect();
       this.socket = null;
       this.account = null;
-      this.messages = [];
+      this.resetMessageWindow();
+      this.messageCache = {};
+      this.messageCacheOrder = [];
       clearToken();
     },
     async loadAppearance() {
@@ -102,7 +198,7 @@ export const useChatStore = defineStore("chat", {
         await this.loadMembers();
       } else {
         localStorage.removeItem("team-chat-current-channel");
-        this.messages = [];
+        this.resetMessageWindow();
         this.members = [];
         this.pinned = null;
       }
@@ -143,15 +239,125 @@ export const useChatStore = defineStore("chat", {
     },
     async loadMessages() {
       if (!this.currentChannelId) return;
+      const channelId = this.currentChannelId;
+      const prayerOnly = this.prayerOnly;
       this.loading = true;
+      this.loadingInitialMessages = true;
+      this.messageLoadError = "";
       try {
-        const result = await api<{ messages: MessageDTO[] }>(`/api/messages?channelId=${this.currentChannelId}&limit=80${this.prayerOnly ? "&prayers=1" : ""}`);
-        this.messages = result.messages;
+        const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly));
+        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return;
+        this.messages = this.dedupeMessages(result.messages);
+        this.prefetchedOlderMessages = [];
+        this.updateMessageWindowFlagsFromRows(result.messages, "initial");
         this.cacheCurrentMessages();
         this.pinned = this.channels.find((ch) => ch.id === this.currentChannelId)?.pinned || null;
+        void this.prefetchOlderMessages();
+      } catch (error) {
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "消息加载失败";
+        throw error;
       } finally {
-        this.loading = false;
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) {
+          this.loading = false;
+          this.loadingInitialMessages = false;
+        }
       }
+    },
+    async prefetchOlderMessages() {
+      if (!this.currentChannelId || !this.hasOlderMessages || this.prefetchedOlderMessages.length || this.prefetchingOlderMessages || this.loadingOlderMessages) return;
+      const channelId = this.currentChannelId;
+      const prayerOnly = this.prayerOnly;
+      const before = this.messages.find((message) => message.id > 0)?.id || 0;
+      if (!before) return;
+      this.prefetchingOlderMessages = true;
+      try {
+        const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { before }));
+        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return;
+        this.prefetchedOlderMessages = result.messages;
+        if (result.messages.length < MESSAGE_PAGE_SIZE) this.hasOlderMessages = false;
+        this.cacheCurrentMessages();
+      } catch {
+        // Prefetch is an optimization; visible loading will report errors.
+      } finally {
+        this.prefetchingOlderMessages = false;
+      }
+    },
+    async loadOlderMessages() {
+      if (!this.currentChannelId || this.loadingOlderMessages || (!this.hasOlderMessages && !this.prefetchedOlderMessages.length)) return false;
+      this.loadingOlderMessages = true;
+      this.messageLoadError = "";
+      const channelId = this.currentChannelId;
+      const prayerOnly = this.prayerOnly;
+      try {
+        const before = this.messages.find((message) => message.id > 0)?.id || 0;
+        const rows = this.prefetchedOlderMessages.length
+          ? this.prefetchedOlderMessages
+          : before
+            ? (await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { before }))).messages
+            : [];
+        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return false;
+        this.prefetchedOlderMessages = [];
+        this.messages = this.dedupeMessages([...rows, ...this.messages]);
+        this.updateMessageWindowFlagsFromRows(rows, "older");
+        this.trimMessageWindow("older");
+        this.cacheCurrentMessages();
+        void this.prefetchOlderMessages();
+        return rows.length > 0;
+      } catch (error) {
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "更早消息加载失败";
+        return false;
+      } finally {
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.loadingOlderMessages = false;
+      }
+    },
+    async loadNewerMessages() {
+      if (!this.currentChannelId || this.loadingNewerMessages || !this.hasNewerMessages) return false;
+      this.loadingNewerMessages = true;
+      this.messageLoadError = "";
+      const channelId = this.currentChannelId;
+      const prayerOnly = this.prayerOnly;
+      try {
+        const positiveMessages = this.messages.filter((message) => message.id > 0);
+        const after = positiveMessages[positiveMessages.length - 1]?.id || 0;
+        const result = after ? await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { after })) : { messages: [] };
+        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return false;
+        this.messages = this.dedupeMessages([...this.messages, ...result.messages]);
+        this.updateMessageWindowFlagsFromRows(result.messages, "newer");
+        this.trimMessageWindow("newer");
+        this.cacheCurrentMessages();
+        return result.messages.length > 0;
+      } catch (error) {
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "较新消息加载失败";
+        return false;
+      } finally {
+        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.loadingNewerMessages = false;
+      }
+    },
+    appendLocalMessage(message: MessageDTO) {
+      if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
+      if (this.messages.some((row) => row.id === message.id)) return;
+      this.messages.push(message);
+      this.trimMessageWindow("newer");
+      this.cacheCurrentMessages();
+    },
+    replaceMessage(message: MessageDTO, pendingId?: number) {
+      const duplicateIndex = this.messages.findIndex((row) => row.id === message.id);
+      const pendingIndex = pendingId ? this.messages.findIndex((row) => row.id === pendingId) : -1;
+      if (duplicateIndex >= 0) {
+        this.messages.splice(duplicateIndex, 1, message);
+        if (pendingIndex >= 0 && pendingIndex !== duplicateIndex) this.messages.splice(pendingIndex, 1);
+      } else if (pendingIndex >= 0) {
+        this.messages.splice(pendingIndex, 1, message);
+      } else {
+        this.appendLocalMessage(message);
+        return;
+      }
+      this.cacheCurrentMessages();
+    },
+    removeMessage(id: number) {
+      const index = this.messages.findIndex((message) => message.id === id);
+      if (index >= 0) this.messages.splice(index, 1);
+      this.cacheCurrentMessages();
     },
     async loadMembers() {
       if (!this.currentChannelId) return;
@@ -167,17 +373,11 @@ export const useChatStore = defineStore("chat", {
       this.socket.on("connect_error", () => this.logout(false));
       this.socket.on("message:new", (message: MessageDTO) => {
         this.lastIncomingMessage = message;
-        if (message.channelId === this.currentChannelId && (!this.prayerOnly || message.type === "prayer") && !this.messages.some((m) => m.id === message.id)) {
-          this.messages.push(message);
-          this.cacheCurrentMessages();
-        }
+        this.appendLocalMessage(message);
       });
       this.socket.on("message:updated", (message: MessageDTO) => {
         if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
-        const index = this.messages.findIndex((m) => m.id === message.id);
-        if (index >= 0) this.messages.splice(index, 1, message);
-        else this.messages.push(message);
-        this.cacheCurrentMessages();
+        this.replaceMessage(message);
       });
       this.socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
         if (event.channelId !== this.currentChannelId || event.actor.id === this.account?.actorId) return;

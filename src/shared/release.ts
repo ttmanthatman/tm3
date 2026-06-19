@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.5.3";
+export const APP_VERSION = "0.5.4";
 
 export const RELEASE_DATE = "2026-06-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室消息改为分页窗口加载，进入频道先显示最近消息，向上滚动再加载历史记录。",
+  "加载更早消息时会保持当前阅读位置，并在消息区顶部显示加载中、失败重试和已到最早消息提示。",
+  "多频道消息缓存加入窗口上限和后台预取，减少大量历史消息带来的内存压力。",
+  "阅读旧消息时收到新消息不再强制拉到底部，会显示“有新消息”按钮方便回到最新。"
+] as const;
+
+const RELEASE_0_5_3_NOTES = [
   "闪动特效新增“渐变过渡 / 硬切换”选项，默认让颜色之间平滑渐变。",
   "修正上次误写成 0.6.0 的版本号，上一组更新记录改回 0.5.2，本次发布为 0.5.3。",
   "修复代祷事项视图中发送 `/闪动` 会误变成闪动代祷卡片的问题。",
@@ -23,9 +30,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.5.3",
+    version: "0.5.4",
     date: "2026-06-19",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.5.3",
+    date: "2026-06-19",
+    notes: RELEASE_0_5_3_NOTES
   },
   {
     version: "0.5.2",

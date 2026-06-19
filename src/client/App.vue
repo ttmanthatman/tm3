@@ -217,6 +217,7 @@ const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
 const rainActive = ref(false);
 const waterTilt = ref({ x: 0, y: 0 });
+const hasUnreadMessages = ref(false);
 let recordingTimer: number | undefined;
 let versionCheckTimer: number | undefined;
 let updateStatusTimer: number | undefined;
@@ -227,6 +228,8 @@ let dripAnimationFrame: number | undefined;
 let dripLastFrame = 0;
 let dripLastSpawn = 0;
 let dripParticles: DripParticle[] = [];
+let loadingHistoryFromScroll = false;
+let loadingNewerFromScroll = false;
 const voicePlayers = new Map<number, HTMLAudioElement>();
 const longPressMs = 520;
 const rainDurationMs = 15_000;
@@ -384,6 +387,7 @@ watch(
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
+    hasUnreadMessages.value = false;
     nextTick(() => {
       scrollBottom(false);
     });
@@ -394,7 +398,7 @@ watch(
   () => store.messages.length,
   (length, previousLength) => {
     const latest = store.messages[store.messages.length - 1];
-    const shouldFollow = !previousLength || length < previousLength || isNearMessageBottom() || (latest ? isMine(latest) : false);
+    const shouldFollow = !store.loadingOlderMessages && (!previousLength || length < previousLength || isNearMessageBottom(220) || (latest ? isMine(latest) : false));
     nextTick(() => {
       if (shouldFollow) scrollBottom(false);
     });
@@ -407,6 +411,9 @@ watch(
     if (store.lastIncomingMessage) {
       queueMentionToast(store.lastIncomingMessage);
       triggerOneShotMessageEffects(store.lastIncomingMessage);
+      if (store.lastIncomingMessage.channelId === store.currentChannelId && !isMine(store.lastIncomingMessage) && !isNearMessageBottom(220)) {
+        hasUnreadMessages.value = true;
+      }
     }
   }
 );
@@ -538,6 +545,14 @@ watch(
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
+const messageLoadBanner = computed(() => {
+  if (store.messageLoadError) return { kind: "error", text: `${store.messageLoadError}，点按重试` };
+  if (store.loadingInitialMessages && !store.messages.length) return { kind: "loading", text: "正在加载最近消息..." };
+  if (store.loadingOlderMessages) return { kind: "loading", text: "正在加载更早消息..." };
+  if (store.loadingNewerMessages) return { kind: "loading", text: "正在加载较新消息..." };
+  if (store.oldestMessageReached && store.messages.length && !store.hasOlderMessages && !store.prefetchedOlderMessages.length) return { kind: "done", text: "已到最早消息" };
+  return null;
+});
 const pinnedText = computed(() => {
   const pinned = store.pinned;
   if (!pinned) return "";
@@ -673,7 +688,7 @@ function pushPendingVoiceMessage(file: File, options: { durationMs?: number; wav
       status: "uploading"
     }
   };
-  store.messages.push({
+  store.appendLocalMessage({
     id,
     channelId: store.currentChannelId,
     sender: {
@@ -696,14 +711,7 @@ function pushPendingVoiceMessage(file: File, options: { durationMs?: number; wav
 }
 
 function replacePendingMessage(pendingId: number, message: MessageDTO) {
-  const duplicateIndex = store.messages.findIndex((row) => row.id === message.id);
-  const pendingIndex = store.messages.findIndex((row) => row.id === pendingId);
-  if (duplicateIndex >= 0) {
-    if (pendingIndex >= 0) store.messages.splice(pendingIndex, 1);
-    return;
-  }
-  if (pendingIndex >= 0) store.messages.splice(pendingIndex, 1, message);
-  else if (message.channelId === store.currentChannelId) store.messages.push(message);
+  store.replaceMessage(message, pendingId);
 }
 
 const timeline = computed(() => {
@@ -1917,11 +1925,39 @@ function documentKindLabel(message: MessageDTO) {
   return "文件";
 }
 
-function jumpToReply(id: number) {
-  const el = document.querySelector(`[data-message-id="${id}"]`);
+async function jumpToReply(id: number) {
+  let el = document.querySelector(`[data-message-id="${id}"]`);
+  if (!el && id > 0) {
+    await loadUntilMessageVisible(id);
+    await nextTick();
+    el = document.querySelector(`[data-message-id="${id}"]`);
+  }
   el?.scrollIntoView({ block: "center", behavior: "smooth" });
   el?.classList.add("flash");
   setTimeout(() => el?.classList.remove("flash"), 900);
+}
+
+async function loadUntilMessageVisible(id: number) {
+  for (let attempts = 0; attempts < 30; attempts += 1) {
+    if (document.querySelector(`[data-message-id="${id}"]`)) return true;
+    const positiveMessages = store.messages.filter((message) => message.id > 0);
+    const oldest = positiveMessages[0]?.id || 0;
+    const newest = positiveMessages[positiveMessages.length - 1]?.id || 0;
+    if (oldest && id < oldest && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
+      const loaded = await store.loadOlderMessages();
+      await nextTick();
+      if (!loaded) return false;
+      continue;
+    }
+    if (newest && id > newest && store.hasNewerMessages) {
+      const loaded = await store.loadNewerMessages();
+      await nextTick();
+      if (!loaded) return false;
+      continue;
+    }
+    return false;
+  }
+  return false;
 }
 
 async function createChain() {
@@ -2222,8 +2258,7 @@ async function sendVoice() {
 }
 
 function removePendingMessage(id: number) {
-  const index = store.messages.findIndex((message) => message.id === id);
-  if (index >= 0) store.messages.splice(index, 1);
+  store.removeMessage(id);
   removePendingUpload(id);
 }
 
@@ -2411,10 +2446,55 @@ function scrollBottom(smooth = true) {
   const el = scroller.value;
   if (!el) return;
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
+  hasUnreadMessages.value = false;
 }
 
 function focusComposer() {
   requestAnimationFrame(() => scrollBottom(false));
+}
+
+async function handleMessagesScroll() {
+  const el = scroller.value;
+  if (!el) return;
+  if (isNearMessageBottom(120)) hasUnreadMessages.value = false;
+  if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
+    loadingHistoryFromScroll = true;
+    const beforeHeight = el.scrollHeight;
+    const beforeTop = el.scrollTop;
+    const loaded = await store.loadOlderMessages();
+    await nextTick();
+    if (loaded && scroller.value === el) {
+      el.scrollTop = el.scrollHeight - beforeHeight + beforeTop;
+    }
+    loadingHistoryFromScroll = false;
+  }
+  if (isNearMessageBottom(180) && store.hasNewerMessages && !loadingNewerFromScroll) {
+    loadingNewerFromScroll = true;
+    const loaded = await store.loadNewerMessages();
+    await nextTick();
+    if (loaded) scrollBottom(false);
+    loadingNewerFromScroll = false;
+  }
+}
+
+async function retryMessageLoad() {
+  if (store.loadingInitialMessages || store.loadingOlderMessages || store.loadingNewerMessages) return;
+  if (!store.messages.length) {
+    await store.loadMessages().catch(() => undefined);
+    await nextTick();
+    scrollBottom(false);
+    return;
+  }
+  await handleMessagesScroll();
+}
+
+async function scrollToNewest() {
+  while (store.hasNewerMessages) {
+    const loaded = await store.loadNewerMessages();
+    if (!loaded) break;
+  }
+  await nextTick();
+  scrollBottom(true);
 }
 
 function avatarText(name: string) {
@@ -3190,7 +3270,22 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <div ref="scroller" class="messages-scroll">
+      <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll">
+        <button
+          v-if="messageLoadBanner"
+          type="button"
+          class="message-load-banner"
+          :class="`message-load-${messageLoadBanner.kind}`"
+          :disabled="messageLoadBanner.kind !== 'error'"
+          @click="messageLoadBanner.kind === 'error' && retryMessageLoad()"
+        >
+          {{ messageLoadBanner.text }}
+        </button>
+        <div v-if="store.loadingInitialMessages && !store.messages.length" class="message-skeleton-list" aria-hidden="true">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
         <template v-for="row in timeline" :key="row.kind === 'time' ? row.id : row.message.id">
           <div v-if="row.kind === 'time'" class="time-separator">{{ row.label }}</div>
           <article
@@ -3350,6 +3445,8 @@ async function toggleVirtual(character: any) {
           </article>
         </template>
       </div>
+
+      <button v-if="hasUnreadMessages" type="button" class="new-message-jump" @click="scrollToNewest">有新消息</button>
 
       <footer class="composer">
         <div v-if="replyTo" class="reply-bar">
