@@ -68,6 +68,14 @@ export interface MessageDTO {
   createdAt: string;
 }
 
+export interface LinkPreviewDTO {
+  url: string;
+  title: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+}
+
 export interface AdminMessageDTO {
   id: number;
   channelId: number;

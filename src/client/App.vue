@@ -63,6 +63,7 @@ import type {
   ChannelDTO,
   DeviceSessionDTO,
   FlashEffectSettingsDTO,
+  LinkPreviewDTO,
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
@@ -231,6 +232,8 @@ const previewAudioEl = ref<HTMLAudioElement | null>(null);
 const previewPlaying = ref(false);
 const previewProgress = ref(0);
 const pendingUploads = ref<Record<number, PendingUpload>>({});
+type LinkPreviewState = { status: "loading" | "ready" | "error"; preview?: LinkPreviewDTO; error?: string };
+const linkPreviewCache = ref<Record<string, LinkPreviewState>>({});
 const voiceSending = ref(false);
 const playingVoiceId = ref<number | null>(null);
 const voiceProgress = ref<Record<number, number>>({});
@@ -432,6 +435,14 @@ watch(
       if (shouldFollow) scrollBottom(false);
     });
   }
+);
+
+watch(
+  () => store.messages.map((message) => `${message.id}:${message.type}:${message.content}`).join("|"),
+  () => {
+    void ensureVisibleLinkPreviews();
+  },
+  { immediate: true }
 );
 
 watch(
@@ -801,6 +812,132 @@ function plainTextFromHtml(value: string) {
   const el = document.createElement("div");
   el.innerHTML = value;
   return (el.textContent || el.innerText || "").replace(/\s+/g, " ").trim();
+}
+
+function trimUrlPunctuation(value: string) {
+  let url = value;
+  let suffix = "";
+  while (/[，。！？、,.!?:;；：）)\]}》】”’"'`]+$/.test(url)) {
+    suffix = `${url.slice(-1)}${suffix}`;
+    url = url.slice(0, -1);
+  }
+  return { url, suffix };
+}
+
+function normalizeMessageUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return "";
+  }
+}
+
+function extractMessageUrls(html: string) {
+  const root = document.createElement("div");
+  root.innerHTML = html || "";
+  const urls: string[] = [];
+  for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    const url = normalizeMessageUrl(anchor.href);
+    if (url) urls.push(url);
+  }
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  while (walker.nextNode()) {
+    const text = walker.currentNode.textContent || "";
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+      const { url } = trimUrlPunctuation(match[0]);
+      const normalized = normalizeMessageUrl(url);
+      if (normalized) urls.push(normalized);
+    }
+  }
+  return [...new Set(urls)];
+}
+
+function linkifyMessageHtml(html: string) {
+  const root = document.createElement("div");
+  root.innerHTML = html || "";
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      return node.parentElement?.closest("a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) textNodes.push(walker.currentNode as Text);
+  for (const node of textNodes) {
+    const text = node.textContent || "";
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+      const raw = match[0];
+      const start = match.index ?? 0;
+      const { url, suffix } = trimUrlPunctuation(raw);
+      const normalized = normalizeMessageUrl(url);
+      if (!normalized) continue;
+      if (start > cursor) fragment.append(document.createTextNode(text.slice(cursor, start)));
+      const anchor = document.createElement("a");
+      anchor.href = normalized;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.textContent = url;
+      fragment.append(anchor);
+      if (suffix) fragment.append(document.createTextNode(suffix));
+      cursor = start + raw.length;
+    }
+    if (!fragment.childNodes.length) continue;
+    if (cursor < text.length) fragment.append(document.createTextNode(text.slice(cursor)));
+    node.replaceWith(fragment);
+  }
+  for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+  }
+  return root.innerHTML;
+}
+
+function messageContentHtml(message: MessageDTO) {
+  return linkifyMessageHtml(message.content);
+}
+
+function messagePreviewUrl(message: MessageDTO) {
+  if (message.type !== "text" && message.type !== "prayer") return "";
+  return extractMessageUrls(message.content)[0] || "";
+}
+
+function linkPreviewFor(message: MessageDTO) {
+  const url = messagePreviewUrl(message);
+  const state = url ? linkPreviewCache.value[url] : undefined;
+  return state?.status === "ready" ? state.preview || null : null;
+}
+
+function hostFromUrl(value: string) {
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+function previewSiteName(preview?: LinkPreviewDTO | null) {
+  return preview ? preview.siteName || hostFromUrl(preview.url) : "";
+}
+
+async function ensureVisibleLinkPreviews() {
+  const urls = [...new Set(store.messages.map(messagePreviewUrl).filter(Boolean))].slice(-40);
+  for (const url of urls) void ensureLinkPreview(url);
+}
+
+async function ensureLinkPreview(url: string) {
+  if (!store.account || linkPreviewCache.value[url]) return;
+  linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "loading" } };
+  try {
+    const preview = await api<LinkPreviewDTO>(`/api/link-preview?url=${encodeURIComponent(url)}`);
+    if (!preview.title && !preview.image && !preview.description) throw new Error("empty preview");
+    linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "ready", preview } };
+  } catch (error) {
+    linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "error", error: error instanceof Error ? error.message : "preview failed" } };
+  }
 }
 
 function escapeRegExp(value: string) {
@@ -3684,7 +3821,15 @@ async function toggleVirtual(character: any) {
                       <strong>代祷事项</strong>
                       <em>{{ prayerStatusText(prayerPayload(row.message).status) }}</em>
                     </div>
-                    <p class="prayer-text" v-html="row.message.content"></p>
+                    <p class="prayer-text" v-html="messageContentHtml(row.message)"></p>
+                    <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
+                      <span class="link-preview-copy">
+                        <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
+                        <strong>{{ linkPreviewFor(row.message)?.title }}</strong>
+                        <em v-if="linkPreviewFor(row.message)?.description">{{ linkPreviewFor(row.message)?.description }}</em>
+                      </span>
+                      <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
+                    </a>
                     <div class="prayer-stats">
                       <strong>已有 {{ prayerPayload(row.message).prayerCount }} 人为此祷告</strong>
                       <small>{{ prayerActionText(row.message) }}<template v-if="prayerLatestTime(row.message)"> · 最近 {{ prayerLatestTime(row.message) }}</template></small>
@@ -3820,7 +3965,17 @@ async function toggleVirtual(character: any) {
                     <small>{{ documentKindLabel(row.message) }} · {{ compactBytes(row.message.fileSize) }}</small>
                   </button>
                 </template>
-                <p v-else class="message-text" v-html="row.message.content"></p>
+                <template v-else>
+                  <p class="message-text" v-html="messageContentHtml(row.message)"></p>
+                  <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
+                    <span class="link-preview-copy">
+                      <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
+                      <strong>{{ linkPreviewFor(row.message)?.title }}</strong>
+                      <em v-if="linkPreviewFor(row.message)?.description">{{ linkPreviewFor(row.message)?.description }}</em>
+                    </span>
+                    <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
+                  </a>
+                </template>
               </div>
             </div>
           </article>

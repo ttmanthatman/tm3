@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.3";
+export const APP_VERSION = "0.6.4";
 
-export const RELEASE_DATE = "2026-06-19";
+export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天消息会自动识别 http/https 链接，把纯文本 URL 变成可点击链接。",
+  "包含网页链接的消息会显示 Telegram 风格预览卡片，包含站点名、标题、摘要和主图。",
+  "网页预览通过登录后的服务端接口受限抓取，限制跳转、大小、超时和私网地址，旧消息也会按需生成预览。"
+] as const;
+
+const RELEASE_0_6_3_NOTES = [
   "管理员外观设置新增真正的草稿预览，桌面端和移动端会同时预览登录页、聊天室壁纸、标签页标题/图标、登录图标和闪动效果。",
   "上传、复用或移除外观图片现在只会进入草稿预览，点击保存后才会广播并应用到所有客户端。",
   "已上传壁纸改为缩略图网格，可直接看图并选择设为登录页背景或聊天室壁纸。"
@@ -58,9 +64,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.6.4",
+    date: "2026-06-20",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.6.3",
     date: "2026-06-19",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_6_3_NOTES
   },
   {
     version: "0.6.2",
