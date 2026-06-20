@@ -86,7 +86,7 @@ const store = useChatStore();
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
-  options: { voice?: boolean; durationMs?: number; waveform?: number[] };
+  options: { voice?: boolean; durationMs?: number; waveform?: number[]; originalImage?: boolean };
   progress: number;
   status: UploadStatus;
   message?: string;
@@ -121,6 +121,7 @@ const showSettings = ref(false);
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
+const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
@@ -669,6 +670,8 @@ const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEAS
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
 const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
 const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.url));
+const selectedCompressibleAttachmentIds = computed(() => selectedAttachmentIds.value.filter((id) => isImageAttachmentId(id)));
+const selectedCompressibleAttachmentCount = computed(() => selectedCompressibleAttachmentIds.value.length);
 const appearanceDraftIcon = computed(() => loginAppearanceEdit.value.appIconPath ? wallpaperUrl(loginAppearanceEdit.value.appIconPath) : "/images/icon-192.svg");
 const appearanceDraftLoginIcon = computed(() => loginAppearanceEdit.value.loginIconPath ? wallpaperUrl(loginAppearanceEdit.value.loginIconPath) : "/images/icon-192.svg");
 const appearanceDraftLoginBackground = computed(() => loginAppearanceEdit.value.loginBackgroundPath);
@@ -2557,10 +2560,26 @@ async function joinPendingChain() {
   }
 }
 
-async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number } = {}) {
+function isImageFile(file: File) {
+  return file.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name);
+}
+
+function shouldKeepOriginalImage(file: File) {
+  return keepOriginalImages.value && isImageFile(file);
+}
+
+function handlePickedFile(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (file) void uploadFile(file, { originalImage: shouldKeepOriginalImage(file) });
+  input.value = "";
+}
+
+async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean } = {}) {
   if (!store.currentChannelId) return false;
   const form = new FormData();
   form.append("channelId", String(store.currentChannelId));
+  if (options.originalImage && isImageFile(file)) form.append("originalImage", "1");
   if (options.voice) {
     form.append("voice", "1");
     form.append("durationMs", String(options.durationMs || 0));
@@ -3362,6 +3381,15 @@ function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
   return `${date ? `${date} · ` : ""}${usage} · ${item.label}`;
 }
 
+function isImageAttachmentId(id: string) {
+  const fileName = id.split(":").slice(1).join(":");
+  return /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(fileName);
+}
+
+function isImageAttachment(item: AdminAttachmentDTO) {
+  return isImageAttachmentId(item.id) || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(item.fileName);
+}
+
 function toggleAllAttachments() {
   selectedAttachmentIds.value = allAttachmentsSelected.value ? [] : adminAttachments.value.map((item) => item.id);
 }
@@ -3400,6 +3428,20 @@ async function deleteAllAdminAttachments() {
   adminMsg.value = `已删除 ${result.deleted} 个文件，处理 ${result.requested} 条附件记录`;
   selectedAttachmentIds.value = [];
   await loadAdminData();
+  await store.loadChannels(store.currentChannelId);
+}
+
+async function compressAdminAttachments(ids: string[]) {
+  const targets = ids.filter(isImageAttachmentId);
+  if (!targets.length) return;
+  const result = await api<{ compressed: number; skipped: number; savedBytes: number; attachments: AdminAttachmentDTO[] }>("/api/admin/attachments/compress", {
+    method: "POST",
+    body: JSON.stringify({ ids: targets })
+  });
+  adminMsg.value = `已压缩 ${result.compressed} 张图片，跳过 ${result.skipped} 张，节省 ${compactBytes(result.savedBytes)}`;
+  adminAttachments.value = result.attachments;
+  const available = new Set(result.attachments.map((item) => item.id));
+  selectedAttachmentIds.value = selectedAttachmentIds.value.filter((id) => available.has(id));
   await store.loadChannels(store.currentChannelId);
 }
 
@@ -4275,8 +4317,8 @@ async function toggleVirtual(character: any) {
             ></textarea>
             <button class="send-btn" :disabled="!canSendText" @click="sendText" aria-label="发送"><Send :size="19" /></button>
             <button class="icon-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
-            <input ref="fileInput" class="hidden" type="file" @change="(e: Event) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) uploadFile(f); (e.target as HTMLInputElement).value = '' }" />
-            <input ref="photoInput" class="hidden" type="file" accept="image/*" @change="(e: Event) => { const f = (e.target as HTMLInputElement).files?.[0]; if (f) uploadFile(f); (e.target as HTMLInputElement).value = '' }" />
+            <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
+            <input ref="photoInput" class="hidden" type="file" accept="image/*" @change="handlePickedFile" />
           </div>
           <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
             <template v-if="activeComposerSuggestionKind === 'mention'">
@@ -4353,6 +4395,13 @@ async function toggleVirtual(character: any) {
           </div>
         </div>
         <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
+          <label class="original-image-toggle">
+            <input v-model="keepOriginalImages" type="checkbox" />
+            <span>
+              <strong>原图</strong>
+              <small>默认压缩图片，勾选后保留原文件。</small>
+            </span>
+          </label>
           <button class="tool-tile" @click="fileInput?.click()">
             <span><FileUp :size="25" /></span>
             <small>文件</small>
@@ -5022,6 +5071,9 @@ async function toggleVirtual(character: any) {
             <div class="data-toolbar">
               <button class="mini-btn secondary" @click="toggleAllAttachments">{{ allAttachmentsSelected ? "取消全选" : "全选" }}</button>
               <button class="mini-btn secondary" @click="loadAdminAttachments"><RotateCcw :size="15" />刷新</button>
+              <button class="mini-btn secondary" :disabled="!selectedCompressibleAttachmentCount" @click="compressAdminAttachments(selectedCompressibleAttachmentIds)">
+                <WandSparkles :size="15" />压缩选中 {{ selectedCompressibleAttachmentCount }}
+              </button>
               <button class="mini-btn danger-action" :disabled="!selectedAttachmentCount" @click="deleteAdminAttachments(selectedAttachmentIds)"><Trash2 :size="15" />删除选中 {{ selectedAttachmentCount }}</button>
               <button class="mini-btn danger-action" :disabled="!adminAttachments.length" @click="deleteAllAdminAttachments"><Trash2 :size="15" />删除全部附件</button>
             </div>
@@ -5035,7 +5087,10 @@ async function toggleVirtual(character: any) {
                   <span>{{ attachmentUsage(attachment) }}</span>
                   <small>{{ compactBytes(attachment.size) }} · {{ adminDate(attachment.createdAt) }} · {{ attachment.fileName }}</small>
                 </div>
-                <button class="mini-btn danger-action" @click="deleteAdminAttachments([attachment.id])"><Trash2 :size="15" />删除</button>
+                <div class="attachment-actions">
+                  <button class="mini-btn secondary" :disabled="!isImageAttachment(attachment)" @click="compressAdminAttachments([attachment.id])"><WandSparkles :size="15" />压缩</button>
+                  <button class="mini-btn danger-action" @click="deleteAdminAttachments([attachment.id])"><Trash2 :size="15" />删除</button>
+                </div>
               </article>
               <p v-if="!adminAttachments.length" class="empty-note">没有可管理的附件</p>
             </div>

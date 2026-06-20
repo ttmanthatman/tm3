@@ -15,6 +15,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type DeviceKind, type Message, type MessageType, type PinnedItem } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
+import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
@@ -99,6 +100,9 @@ const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
 const LINK_PREVIEW_MAX_BYTES = 350 * 1024;
 const LINK_PREVIEW_TIMEOUT_MS = 7000;
 const LINK_PREVIEW_MAX_REDIRECTS = 3;
+const IMAGE_WEBP_QUALITY = 82;
+const IMAGE_WEBP_EFFORT = 5;
+const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
 
 for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
@@ -695,6 +699,10 @@ function contentTypeForFile(name: string) {
     ".png": "image/png",
     ".gif": "image/gif",
     ".webp": "image/webp",
+    ".heic": "image/heic",
+    ".heif": "image/heif",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
     ".mp3": "audio/mpeg",
     ".mp4": "video/mp4",
     ".m4a": "audio/mp4",
@@ -716,6 +724,57 @@ function contentTypeForFile(name: string) {
     ".zip": "application/zip"
   };
   return contentTypes[ext] || "application/octet-stream";
+}
+
+function isImageFileName(name?: string | null) {
+  return IMAGE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
+}
+
+function wantsOriginalImage(fields: Record<string, { value?: string }>) {
+  const value = String(fields.originalImage?.value || fields.original?.value || "").toLowerCase();
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function compressedImageFileName(shortName = false) {
+  return `${shortName ? crypto.randomBytes(5).toString("hex") : crypto.randomUUID()}.webp`;
+}
+
+function shortStorageFileName(ext: string) {
+  const tokenLength = Math.max(4, 16 - ext.length);
+  return `${crypto.randomBytes(Math.ceil(tokenLength / 2)).toString("hex").slice(0, tokenLength)}${ext}`;
+}
+
+function displayWebpFileName(name: string) {
+  const base = path.basename(name, path.extname(name)).trim() || "image";
+  return `${base}.webp`;
+}
+
+async function compressImageFile(inputPath: string, outputDir: string, options: { shortName?: boolean } = {}) {
+  const originalStat = fs.statSync(inputPath);
+  const outputName = compressedImageFileName(options.shortName);
+  const outputPath = path.join(outputDir, outputName);
+  try {
+    await sharp(inputPath, { animated: true, failOn: "none", limitInputPixels: false })
+      .rotate()
+      .webp({ quality: IMAGE_WEBP_QUALITY, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
+      .toFile(outputPath);
+    const outputStat = fs.statSync(outputPath);
+    if (outputStat.size >= originalStat.size) {
+      fs.unlinkSync(outputPath);
+      return null;
+    }
+    return {
+      fileName: outputName,
+      filePath: outputPath,
+      size: outputStat.size,
+      originalSize: originalStat.size,
+      savedBytes: originalStat.size - outputStat.size
+    };
+  } catch (error) {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    app.log.warn({ error, inputPath }, "image compression failed");
+    return null;
+  }
 }
 
 function isAudioFileName(name?: string | null) {
@@ -2019,7 +2078,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   const channelId = Number(fields.channelId?.value || 0);
   if (!channelId || !(await canWriteChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权上传" });
   const ext = path.extname(file.filename).toLowerCase();
-  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".zip", ".mp3", ".mp4", ".mov", ".webm", ".m4a", ".wav", ".ogg", ".aac"]);
+  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".zip", ".mp3", ".mp4", ".mov", ".webm", ".m4a", ".wav", ".ogg", ".aac"]);
   if (!allowed.has(ext)) return reply.code(400).send({ success: false, message: "不支持的文件类型" });
   const voicePayload = parseVoiceUploadPayload(fields, file.mimetype);
   const safeName = `${crypto.randomUUID()}${ext}`;
@@ -2034,6 +2093,16 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   let storedFileName = safeName;
   let displayFileName = file.filename;
   let stat = fs.statSync(outPath);
+  const isImageUpload = file.mimetype.startsWith("image/") && isImageFileName(file.filename);
+  if (isImageUpload && !wantsOriginalImage(fields)) {
+    const compressed = await compressImageFile(outPath, UPLOAD_DIR);
+    if (compressed) {
+      fs.unlinkSync(outPath);
+      storedFileName = compressed.fileName;
+      displayFileName = displayWebpFileName(file.filename);
+      stat = fs.statSync(compressed.filePath);
+    }
+  }
   if (voicePayload && isAudioFileName(file.filename)) {
     const transcodedName = `${crypto.randomUUID()}.m4a`;
     const transcodedPath = path.join(UPLOAD_DIR, transcodedName);
@@ -2049,7 +2118,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
       request.log.warn({ error }, "voice transcode failed; storing original audio");
     }
   }
-  const type: MessageType = file.mimetype.startsWith("image/") ? "image" : "file";
+  const type: MessageType = isImageUpload ? "image" : "file";
   const message = await createMessageFromActor({
     channelId,
     actorId: auth.actorId,
@@ -2169,7 +2238,7 @@ app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, re
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
-  const contentType = contentTypeForFile(message.fileName || message.filePath);
+  const contentType = contentTypeForFile(message.filePath || message.fileName || "");
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Accept-Ranges", "bytes");
   reply.header("Content-Type", contentType);
@@ -2436,13 +2505,13 @@ async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, mis
     return "";
   }
   const ext = path.extname(file.filename).toLowerCase();
-  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+  const allowed = IMAGE_EXTENSIONS;
   if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) {
     reply.code(400).send({ success: false, message: "只支持图片文件" });
     return "";
   }
   const safeExt = ext === ".jpeg" ? ".jpg" : ext;
-  const safeName = shortName ? `${crypto.randomBytes(6).toString("hex")}${safeExt}` : `${crypto.randomUUID()}${safeExt}`;
+  const safeName = shortName ? shortStorageFileName(safeExt) : `${crypto.randomUUID()}${safeExt}`;
   const outPath = path.join(BG_DIR, safeName);
   await new Promise<void>((resolve, reject) => {
     const stream = fs.createWriteStream(outPath);
@@ -2451,6 +2520,11 @@ async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, mis
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  const compressed = await compressImageFile(outPath, BG_DIR, { shortName });
+  if (compressed) {
+    fs.unlinkSync(outPath);
+    return compressed.fileName;
+  }
   return safeName;
 }
 
@@ -2873,6 +2947,110 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
   return deleted;
 }
 
+async function emitPinnedRefresh(channelIds: Set<number>) {
+  for (const channelId of channelIds) {
+    const pin = await prisma.pinnedItem.findFirst({ where: { channelId, active: true }, orderBy: { updatedAt: "desc" } });
+    io.to(`ch:${channelId}`).emit("pinned:updated", pin ? await serializePinnedItem(pin) : null);
+  }
+}
+
+async function replaceUploadAttachmentReferences(oldFileName: string, newFileName: string, newSize: number) {
+  const refreshChannels = new Set<number>();
+  const pinChannels = new Set<number>();
+  const messages = await prisma.message.findMany({ where: { filePath: oldFileName }, select: { id: true, channelId: true, fileName: true, type: true } });
+  for (const message of messages) {
+    refreshChannels.add(message.channelId);
+    await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        filePath: newFileName,
+        fileName: message.type === "image" ? displayWebpFileName(message.fileName || oldFileName) : message.fileName,
+        fileSize: newSize
+      }
+    });
+  }
+
+  const pins = await prisma.pinnedItem.findMany({ orderBy: { id: "asc" } });
+  for (const pin of pins) {
+    const body = serializePinnedBody(pin.body, pin.content);
+    let changed = false;
+    for (const block of body.blocks) {
+      if ((block.type === "image" || block.type === "file") && path.basename(block.filePath) === oldFileName) {
+        block.filePath = newFileName;
+        block.fileName = block.type === "image" ? displayWebpFileName(block.fileName || oldFileName) : block.fileName;
+        block.fileSize = newSize;
+        changed = true;
+      }
+    }
+    if (changed) {
+      await prisma.pinnedItem.update({ where: { id: pin.id }, data: { body: body as unknown as Prisma.InputJsonValue } });
+      pinChannels.add(pin.channelId);
+    }
+  }
+
+  for (const channelId of refreshChannels) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
+  await emitPinnedRefresh(pinChannels);
+}
+
+async function replaceAvatarAttachmentReferences(oldFileName: string, newFileName: string) {
+  await prisma.account.updateMany({ where: { avatarPath: oldFileName }, data: { avatarPath: newFileName } });
+  await prisma.actor.updateMany({ where: { avatarPath: oldFileName }, data: { avatarPath: newFileName } });
+  const accounts = await prisma.account.findMany({ where: { avatarPath: newFileName }, include: { actor: true } });
+  for (const account of accounts) refreshAccountConnections(account);
+  io.emit("channel:updated", { action: "updated" });
+}
+
+async function replaceBackgroundAttachmentReferences(oldFileName: string, newFileName: string) {
+  const appearance = await appearanceDto();
+  let appearanceChanged = false;
+  if (appearance.wallpaperPath === oldFileName) {
+    await setSetting("wallpaperPath", newFileName);
+    appearanceChanged = true;
+  }
+  if (appearance.appIconPath === oldFileName) {
+    await setSetting("appIconPath", newFileName);
+    appearanceChanged = true;
+  }
+  if (appearance.loginBackgroundPath === oldFileName) {
+    await setSetting("loginBackgroundPath", newFileName);
+    appearanceChanged = true;
+  }
+  if (appearance.loginIconPath === oldFileName) {
+    await setSetting("loginIconPath", newFileName);
+    appearanceChanged = true;
+  }
+  const updated = await prisma.channel.updateMany({ where: { icon: oldFileName }, data: { icon: newFileName } });
+  if (appearanceChanged) io.emit("appearance:updated", await appearanceDto());
+  if (updated.count > 0) io.emit("channel:updated", { action: "updated" });
+}
+
+async function compressAttachmentTarget(target: { kind: AdminAttachmentDTO["kind"]; fileName: string }) {
+  const fileName = path.basename(target.fileName);
+  if (!isImageFileName(fileName)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "不是图片文件" };
+  const filePath = storageFilePath(target.kind, fileName);
+  if (!fs.existsSync(filePath)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "文件不存在" };
+  const shortName = target.kind === "background" && (await prisma.channel.count({ where: { icon: fileName } })) > 0;
+  const compressed = await compressImageFile(filePath, path.dirname(filePath), { shortName });
+  if (!compressed) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "压缩后没有更小" };
+
+  fs.unlinkSync(filePath);
+  if (target.kind === "upload") {
+    await replaceUploadAttachmentReferences(fileName, compressed.fileName, compressed.size);
+  } else if (target.kind === "avatar") {
+    await replaceAvatarAttachmentReferences(fileName, compressed.fileName);
+  } else {
+    await replaceBackgroundAttachmentReferences(fileName, compressed.fileName);
+  }
+  return {
+    id: attachmentId(target.kind, fileName),
+    status: "compressed" as const,
+    fileName: compressed.fileName,
+    size: compressed.size,
+    originalSize: compressed.originalSize,
+    savedBytes: compressed.savedBytes
+  };
+}
+
 async function chatExportPayload() {
   const [channels, channelMembers, messages, pinnedItems, voiceListens, prayerActions, messageAiSuggestions] = await Promise.all([
     prisma.channel.findMany({ orderBy: { id: "asc" } }),
@@ -2987,6 +3165,7 @@ app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireAuth }, asy
   const filePath = path.join(UPLOAD_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
   reply.header("Cache-Control", "private, max-age=86400");
+  reply.header("Content-Type", contentTypeForFile(file));
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -3086,7 +3265,7 @@ app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (
   const file = await request.file();
   if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
   const ext = path.extname(file.filename).toLowerCase();
-  const allowed = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+  const allowed = IMAGE_EXTENSIONS;
   if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
   const safeName = `${crypto.randomUUID()}${ext}`;
   const outPath = path.join(AVATAR_DIR, safeName);
@@ -3097,9 +3276,15 @@ app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  let avatarPath = safeName;
+  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  if (compressed) {
+    fs.unlinkSync(outPath);
+    avatarPath = compressed.fileName;
+  }
   const updated = await prisma.account.update({
     where: { id },
-    data: { avatarPath: safeName, actor: { update: { avatarPath: safeName } } },
+    data: { avatarPath, actor: { update: { avatarPath } } },
     include: { actor: true }
   });
   refreshAccountConnections(updated);
@@ -3346,6 +3531,24 @@ app.delete("/api/admin/attachments", { preHandler: requireAdmin }, async (reques
   if (!targets.length) return reply.code(400).send({ success: false, message: "请选择要删除的附件" });
   const deleted = await deleteAttachmentTargets(targets as Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>);
   return { success: true, deleted, requested: targets.length };
+});
+
+app.post("/api/admin/attachments/compress", { preHandler: requireAdmin }, async (request, reply) => {
+  const body = z.object({ ids: z.array(z.string()).min(1).max(50) }).parse(request.body || {});
+  const targets = body.ids.map(parseAttachmentId).filter(Boolean) as Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>;
+  if (!targets.length) return reply.code(400).send({ success: false, message: "请选择要压缩的图片" });
+  const results = [];
+  for (const target of targets) results.push(await compressAttachmentTarget(target));
+  const compressed = results.filter((item) => item.status === "compressed");
+  const savedBytes = compressed.reduce((sum, item) => sum + ("savedBytes" in item ? item.savedBytes : 0), 0);
+  return {
+    success: true,
+    compressed: compressed.length,
+    skipped: results.length - compressed.length,
+    savedBytes,
+    results,
+    attachments: await adminAttachmentList()
+  };
 });
 
 app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request) => {

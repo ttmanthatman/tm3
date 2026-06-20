@@ -2391,6 +2391,36 @@ button {
   gap: 12px;
 }
 
+.original-image-toggle {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  background: #fff;
+  color: #333;
+}
+
+.original-image-toggle span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.original-image-toggle strong {
+  font-size: 13px;
+}
+
+.original-image-toggle small {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .tool-tile {
   min-width: 0;
   display: grid;
@@ -3077,7 +3107,7 @@ button {
 
 .data-toolbar {
   display: grid;
-  grid-template-columns: minmax(130px, auto) minmax(180px, 1fr) auto auto;
+  grid-template-columns: repeat(auto-fit, minmax(136px, max-content));
   gap: 10px;
   align-items: center;
 }
@@ -3128,6 +3158,13 @@ button {
 
 .admin-data-row.attachment-row {
   grid-template-columns: 28px minmax(0, 1fr) auto;
+}
+
+.attachment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: end;
+  gap: 8px;
 }
 
 .admin-data-main {
@@ -4118,6 +4155,7 @@ button {
   .device-row .mini-btn,
   .user-admin-actions,
   .channel-icon-admin,
+  .attachment-actions,
   .channel-admin-row .mini-btn,
   .admin-data-row .mini-btn,
   .admin-inline-card .primary-btn,
@@ -4134,10 +4172,15 @@ button {
   }
 
   .channel-icon-admin .mini-btn,
+  .attachment-actions,
   .data-toolbar .mini-btn,
   .admin-data-row .mini-btn,
   .admin-inline-card .primary-btn {
     width: 100%;
+  }
+
+  .attachment-actions {
+    justify-content: stretch;
   }
 
   .admin-body {

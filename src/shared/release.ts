@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.13";
+export const APP_VERSION = "0.6.14";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "发送图片默认会在后台压缩为更小的 WebP 文件，保留原分辨率；勾选“原图”时才上传原始文件。",
+  "管理员附件管理新增图片“压缩”操作，可指定旧图片压缩替换，并同步更新聊天消息和置顶消息引用。",
+  "置顶图片文件会带正确的图片响应类型，减少大图加载不完整的问题。"
+] as const;
+
+const RELEASE_0_6_13_NOTES = [
   "消息字体大小按钮改为原地“小 / 大”两键调整，不再弹出滑杆浮层。",
   "点开字体调整后，点页面其他位置会自动收回并恢复“字”按钮。"
 ] as const;
@@ -114,9 +120,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.13",
+    version: "0.6.14",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.13",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_13_NOTES
   },
   {
     version: "0.6.12",
