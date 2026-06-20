@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.6.19";
+export const APP_VERSION = "0.6.20";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "经文出处识别支持书卷名外侧的书名号写法，例如“《创世纪》3:17”会识别并展开为“创世记 3:17”。"
+] as const;
+
+const RELEASE_0_6_19_NOTES = [
   "经文出处改为在消息正文原位置识别，点击后在消息气泡内展开原文，不再追加到消息末尾。",
   "经文弹出框正文使用与消息正文一致的字号，长经文会在框内滚动，靠近聊天区左右边缘时不再跑出界面。",
   "经文识别支持同章续节写法，例如“创4:17, 22”会合并识别为同一组经文出处。",
@@ -150,9 +154,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.19",
+    version: "0.6.20",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.19",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_19_NOTES
   },
   {
     version: "0.6.18",

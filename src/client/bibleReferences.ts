@@ -337,9 +337,12 @@ const sortedAliases = bibleBookAliases
 const colonStyle = String.raw`\d+\s*[:：]\s*\d+(?:${rangeToken}(?:\d+\s*[:：]\s*)?\d+)?`;
 const chapterStyle = String.raw`第?\s*\d+\s*章(?:\s*第?\s*\d+(?:${rangeToken}\d+)?\s*节?)?`;
 const wholeChapterStyle = String.raw`\d+`;
+const bookOpen = String.raw`(?:[《〈<「『【\[]\s*)?`;
+const bookClose = String.raw`(?:\s*[》〉>」』】\]])?`;
+const bookPattern = String.raw`${bookOpen}(?:${aliasPattern})${bookClose}`;
 const inheritedSegment = String.raw`(?:\d+\s*[:：]\s*)?\d+(?:${rangeToken}(?:\d+\s*[:：]\s*)?\d+)?`;
 const inheritedContinuation = String.raw`(?:\s*(?:,|，|、|;|；|｜|\||\\)\s*${inheritedSegment})*`;
-const referencePattern = new RegExp(String.raw`(^|[^A-Za-z0-9])((?:${aliasPattern})\s*(?:${colonStyle}|${chapterStyle}|${wholeChapterStyle})${inheritedContinuation})(?=$|[^A-Za-z0-9])`, "giu");
+const referencePattern = new RegExp(String.raw`(^|[^A-Za-z0-9])(${bookPattern}\s*(?:${colonStyle}|${chapterStyle}|${wholeChapterStyle})${inheritedContinuation})(?=$|[^A-Za-z0-9])`, "giu");
 
 export type BibleReferenceMatch = {
   reference: string;
@@ -381,6 +384,8 @@ export function extractBibleReferenceMatches(text: string, max = 8): BibleRefere
 
 function cleanReferenceCandidate(reference: string) {
   return reference
+    .replace(/[《〈<「『【\[]\s*/g, "")
+    .replace(/\s*[》〉>」』】\]]/g, "")
     .replace(/\s*([:：])\s*/g, "$1")
     .replace(/\s+/g, " ")
     .trim();

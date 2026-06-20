@@ -164,6 +164,7 @@ function normalizeReference(raw: string) {
   text = text.replace(/\n|\t|\u3000/g, " ");
   text = text.replace(/[：﹕]/g, ":");
   text = text.replace(/[“”"']/g, "");
+  text = text.replace(/[《》〈〉<>「」『』【】\[\]]/g, "");
   text = convertFullWidthDigits(text);
   text = normalizeRanges(text);
   text = text.replace(/[，、；;｜|\\]/g, ",");
