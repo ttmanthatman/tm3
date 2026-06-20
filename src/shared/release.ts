@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.6.6";
+export const APP_VERSION = "0.6.7";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "登录会话有效期延长到 30 天，关闭浏览器后再打开仍保持登录。",
+  "部署或服务器短暂重启时，客户端不会因为实时连接临时失败而清除登录状态。",
+  "实时消息连接会在发消息、输入状态和加入频道前重新验证当前账号身份，防止更新或权限变更期间沿用旧身份。",
+  "管理员修改账号权限、昵称或头像后，对应用户会自动刷新账号状态并重建实时连接。"
+] as const;
+
+const RELEASE_0_6_6_NOTES = [
   "置顶消息改为浮层立即展开，新用户进入频道会第一时间看到未读置顶。",
   "长置顶正文支持在浮层内独立上下滚动，图片可以稍后加载，不影响浮层先显示。",
   "置顶浮层底部新增固定的“朕知道了”确认按钮，确认操作不会跟随正文滚动。"
@@ -77,9 +84,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.6",
+    version: "0.6.7",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.6",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_6_NOTES
   },
   {
     version: "0.6.5",

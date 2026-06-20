@@ -161,13 +161,19 @@ export const useChatStore = defineStore("chat", {
     async bootstrap() {
       await this.loadAppearance();
       if (!getToken()) return;
+      if (await this.refreshCurrentAccount()) this.connectSocket();
+    },
+    async refreshCurrentAccount(preferredChannelId?: number) {
+      if (!getToken()) return false;
       try {
+        const channelId = preferredChannelId ?? this.currentChannelId;
         const me = await api<{ account: AccountDTO }>("/api/auth/me");
         this.account = me.account;
-        await this.loadChannels();
-        this.connectSocket();
+        await this.loadChannels(channelId);
+        return true;
       } catch {
-        clearToken();
+        await this.logout(false);
+        return false;
       }
     },
     async afterLogin(account: AccountDTO) {
@@ -368,20 +374,33 @@ export const useChatStore = defineStore("chat", {
     },
     connectSocket() {
       if (!getToken() || this.socket?.connected) return;
-      this.socket = io("/", { auth: { token: getToken() }, transports: ["websocket", "polling"] });
-      this.socket.on("connect", () => {
-        if (this.currentChannelId) this.socket?.emit("channel:join", { channelId: this.currentChannelId });
+      this.socket?.disconnect();
+      const socket = io("/", { auth: { token: getToken() }, transports: ["websocket", "polling"] });
+      this.socket = socket;
+      socket.on("connect", () => {
+        if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
       });
-      this.socket.on("connect_error", () => this.logout(false));
-      this.socket.on("message:new", (message: MessageDTO) => {
+      socket.on("connect_error", (error: Error) => {
+        if (error.message === "认证失败") void this.logout(false);
+      });
+      socket.on("disconnect", (reason) => {
+        if (this.socket !== socket) return;
+        if (reason !== "io server disconnect") return;
+        this.socket = null;
+        if (!getToken()) return;
+        window.setTimeout(async () => {
+          if (await this.refreshCurrentAccount()) this.connectSocket();
+        }, 500);
+      });
+      socket.on("message:new", (message: MessageDTO) => {
         this.lastIncomingMessage = message;
         this.appendLocalMessage(message);
       });
-      this.socket.on("message:updated", (message: MessageDTO) => {
+      socket.on("message:updated", (message: MessageDTO) => {
         if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
         this.replaceMessage(message);
       });
-      this.socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
+      socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
         if (event.channelId !== this.currentChannelId || event.actor.id === this.account?.actorId) return;
         const key = String(event.actor.id);
         if (this.typing[key]?.timer) window.clearTimeout(this.typing[key].timer);
@@ -392,22 +411,25 @@ export const useChatStore = defineStore("chat", {
         const timer = window.setTimeout(() => delete this.typing[key], 12000);
         this.typing[key] = { displayName: event.actor.displayName, timer };
       });
-      this.socket.on("presence:updated", (users) => (this.online = users));
-      this.socket.on("pinned:updated", (pinned: PinnedDTO | null) => {
+      socket.on("presence:updated", (users) => (this.online = users));
+      socket.on("pinned:updated", (pinned: PinnedDTO | null) => {
         this.pinned = pinned;
         const ch = this.channels.find((c) => c.id === this.currentChannelId);
         if (ch) ch.pinned = pinned;
       });
-      this.socket.on("voice:listened", (event: { messageId: number }) => {
+      socket.on("voice:listened", (event: { messageId: number }) => {
         const message = this.messages.find((m) => m.id === event.messageId);
         if (message) message.voiceListened = true;
         if (this.pinned?.message?.id === event.messageId) this.pinned.message.voiceListened = true;
       });
-      this.socket.on("messages:refresh", (event: { channelId: number }) => {
+      socket.on("messages:refresh", (event: { channelId: number }) => {
         if (event.channelId === this.currentChannelId) this.loadMessages();
       });
-      this.socket.on("channel:updated", () => this.loadChannels());
-      this.socket.on("appearance:updated", (appearance: AppearanceDTO) => (this.appearance = appearance));
+      socket.on("channel:updated", () => this.loadChannels());
+      socket.on("account:updated", (account: AccountDTO) => {
+        if (account.id === this.account?.id) this.account = account;
+      });
+      socket.on("appearance:updated", (appearance: AppearanceDTO) => (this.appearance = appearance));
     }
   }
 });

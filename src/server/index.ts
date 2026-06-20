@@ -44,7 +44,9 @@ const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
-const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const SESSION_TTL_DAYS = 30;
+const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+const JWT_EXPIRES_IN = `${SESSION_TTL_DAYS}d`;
 const THEMES = new Set(["wechat", "jade", "paper", "night"]);
 const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "sunburst", "marquee", "water", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
@@ -326,7 +328,7 @@ function signToken(account: AccountWithActor, session: Pick<AccountSession, "id"
       sessionId: session.id
     },
     JWT_SECRET,
-    { expiresIn: "7d" }
+    { expiresIn: JWT_EXPIRES_IN }
   );
 }
 
@@ -1308,6 +1310,25 @@ function disconnectSessions(sessionIds: string[]) {
   for (const socket of io.sockets.sockets.values()) {
     const auth = socket.data.auth as AuthContext | undefined;
     if (auth?.sessionId && targets.has(auth.sessionId)) socket.disconnect(true);
+  }
+}
+
+async function refreshSocketAuth(socket: Socket) {
+  const token = typeof socket.data.token === "string" ? socket.data.token : "";
+  try {
+    const auth = await verifyJwtToken(token);
+    socket.data.auth = auth;
+    return auth;
+  } catch {
+    socket.disconnect(true);
+    return null;
+  }
+}
+
+function refreshAccountConnections(account: AccountWithActor) {
+  io.to(`acct:${account.id}`).emit("account:updated", authDto(account));
+  for (const socketId of accountSocketIds.get(account.id) || []) {
+    io.sockets.sockets.get(socketId)?.disconnect(true);
   }
 }
 
@@ -3047,6 +3068,7 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
     });
     disconnectSessions(sessionsToRevoke.map((session) => session.id));
   }
+  refreshAccountConnections(updated);
   return { success: true, account: authDto(updated) };
 });
 
@@ -3073,6 +3095,7 @@ app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (
     data: { avatarPath: safeName, actor: { update: { avatarPath: safeName } } },
     include: { actor: true }
   });
+  refreshAccountConnections(updated);
   return { success: true, account: authDto(updated) };
 });
 
@@ -3322,6 +3345,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
   const auth = (request as AuthedRequest).auth;
   const payload = await readJsonUpload(request);
   const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
+  const changedAccountIds = new Set<number>();
   for (const item of accounts) {
     const role = item.role === "admin" ? "admin" : "user";
     const theme = THEMES.has(item.theme) ? item.theme : "wechat";
@@ -3360,6 +3384,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
       },
       include: { actor: true }
     });
+    changedAccountIds.add(account.id);
     if (account.actor) {
       await prisma.actor.update({
         where: { id: account.actor.id },
@@ -3372,7 +3397,14 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
     }
   }
   const adminCount = await prisma.account.count({ where: { role: "admin" } });
-  if (!adminCount) await prisma.account.update({ where: { id: auth.accountId }, data: { role: "admin" } });
+  if (!adminCount) {
+    await prisma.account.update({ where: { id: auth.accountId }, data: { role: "admin" } });
+    changedAccountIds.add(auth.accountId);
+  }
+  const changedAccounts = changedAccountIds.size
+    ? await prisma.account.findMany({ where: { id: { in: [...changedAccountIds] } }, include: { actor: true } })
+    : [];
+  changedAccounts.forEach(refreshAccountConnections);
   return { success: true, imported: { accounts: accounts.length } };
 });
 
@@ -3591,6 +3623,7 @@ async function handleEngineAction(actionType: string, payload: unknown, eventId?
 io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token || socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, "");
+    socket.data.token = token;
     socket.data.auth = await verifyJwtToken(token);
     next();
   } catch {
@@ -3617,11 +3650,15 @@ io.on("connection", async (socket: Socket) => {
   await broadcastPresence();
 
   socket.on("channel:join", async (data: { channelId: number }) => {
-    if (await canAccessChannel(auth.accountId, Number(data.channelId))) socket.join(`ch:${Number(data.channelId)}`);
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    if (await canAccessChannel(currentAuth.accountId, Number(data.channelId))) socket.join(`ch:${Number(data.channelId)}`);
   });
 
   socket.on("message:send", async (data: unknown, ack?: (payload: unknown) => void) => {
     try {
+      const currentAuth = await refreshSocketAuth(socket);
+      if (!currentAuth) return ack?.({ success: false, message: "认证失败" });
       const body = z
         .object({
           channelId: z.number(),
@@ -3631,28 +3668,31 @@ io.on("connection", async (socket: Socket) => {
           replyToId: z.number().nullable().optional()
         })
         .parse(data);
-      if (!(await canWriteChannel(auth.accountId, body.channelId))) return ack?.({ success: false, message: "无权在此频道发言" });
+      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, message: "无权在此频道发言" });
       const content = cleanText(body.content);
       if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
       const message = await createMessageFromActor({
         channelId: body.channelId,
-        actorId: auth.actorId,
+        actorId: currentAuth.actorId,
         content,
         type: body.type,
         payload: body.type === "prayer" ? cleanPrayerPayload(body.payload) : cleanMessageEffect(body.payload),
         replyToId: body.replyToId || null
       });
-      ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, auth.accountId) });
+      ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });
     } catch (error) {
       ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
     }
   });
 
   socket.on("message:typing", async (data: { channelId: number; state: "start" | "stop" }) => {
-    if (!(await canAccessChannel(auth.accountId, Number(data.channelId)))) return;
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth || !(await canAccessChannel(currentAuth.accountId, Number(data.channelId)))) return;
+    const actor = await prisma.actor.findUnique({ where: { id: currentAuth.actorId } });
+    if (!actor) return;
     socket.to(`ch:${Number(data.channelId)}`).emit("message:typing", {
       channelId: Number(data.channelId),
-      actor: { id: account.actor!.id, username: account.actor!.username, displayName: account.actor!.displayName, kind: "human" },
+      actor: { id: actor.id, username: actor.username, displayName: actor.displayName, kind: "human" },
       state: data.state
     });
   });
