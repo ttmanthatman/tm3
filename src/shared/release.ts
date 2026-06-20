@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.6.4";
+export const APP_VERSION = "0.6.5";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "置顶公告升级为可编辑的置顶消息快照，管理员可从聊天区多选文字、图片和文件合并成一条置顶正文。",
+  "新增“户部尚书”账号权限，普通用户可被授权在默认全员频道创建、编辑和撤下置顶消息。",
+  "置顶消息默认展开，用户展开后收起会按账号记录已看过；同一版本再次进入不再自动展开，更新置顶后会重新展开。",
+  "置顶图片和文件独立于原消息保留，原聊天记录删除后仍可在置顶中查看；新置顶和编辑保存会推送给频道所有人。"
+] as const;
+
+const RELEASE_0_6_4_NOTES = [
   "聊天消息会自动识别 http/https 链接，把纯文本 URL 变成可点击链接。",
   "包含网页链接的消息会显示 Telegram 风格预览卡片，包含站点名、标题、摘要和主图。",
   "网页预览通过登录后的服务端接口受限抓取，限制跳转、大小、超时和私网地址，旧消息也会按需生成预览。"
@@ -64,9 +71,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.4",
+    version: "0.6.5",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.4",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_4_NOTES
   },
   {
     version: "0.6.3",
