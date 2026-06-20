@@ -2338,9 +2338,6 @@ function positionPromptNearEvent(event: MouseEvent | undefined, size: { width: n
 function closeTapPromptsFromOutside(event: PointerEvent) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if (pinnedExpanded.value && visiblePinned.value && !target.closest(".pin-card")) {
-    void collapsePinned();
-  }
   if (pendingChain.value && !target.closest("[data-chain-popover]") && !target.closest("[data-chain-bubble]")) {
     pendingChain.value = null;
   }
@@ -3909,20 +3906,35 @@ async function toggleVirtual(character: any) {
           <ChevronUp v-if="pinnedExpanded" :size="17" />
           <ChevronDown v-else :size="17" />
         </div>
-        <div v-if="pinnedExpanded" class="pin-card-body">
-          <template v-for="block in pinnedBlocks" :key="block.id">
-            <p v-if="block.type === 'text'" v-html="textContentHtml(block.text)"></p>
-            <button v-else-if="block.type === 'image'" class="image-preview-button pinned-image-button" @click.stop="openPinnedImage(block)">
-              <img class="chat-image pinned-image" :src="pinnedFileUrl(block)" alt="置顶图片" />
-            </button>
-            <a v-else class="file-card pinned-file-card" :href="pinnedFileUrl(block)" target="_blank" rel="noopener noreferrer" @click.stop>
-              <FileUp :size="24" />
-              <span>
-                <strong>{{ block.fileName }}</strong>
-                <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
-              </span>
-            </a>
-          </template>
+      </section>
+
+      <section v-if="visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息">
+        <div class="pinned-view-modal">
+          <header class="pinned-view-head">
+            <span class="pinned-view-icon"><Pin :size="17" /></span>
+            <span>
+              <strong>{{ pinnedText }}</strong>
+              <small>{{ pinnedSummary }}</small>
+            </span>
+          </header>
+          <div class="pin-card-body pinned-view-body">
+            <template v-for="block in pinnedBlocks" :key="block.id">
+              <p v-if="block.type === 'text'" v-html="textContentHtml(block.text)"></p>
+              <button v-else-if="block.type === 'image'" class="image-preview-button pinned-image-button" @click.stop="openPinnedImage(block)">
+                <img class="chat-image pinned-image" :src="pinnedFileUrl(block)" loading="lazy" decoding="async" alt="置顶图片" />
+              </button>
+              <a v-else class="file-card pinned-file-card" :href="pinnedFileUrl(block)" target="_blank" rel="noopener noreferrer" @click.stop>
+                <FileUp :size="24" />
+                <span>
+                  <strong>{{ block.fileName }}</strong>
+                  <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
+                </span>
+              </a>
+            </template>
+          </div>
+          <footer class="pinned-view-actions">
+            <button class="primary-btn pinned-ack-btn" @click="collapsePinned"><CheckCircle2 :size="17" />朕知道了</button>
+          </footer>
         </div>
       </section>
 

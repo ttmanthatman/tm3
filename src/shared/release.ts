@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.5";
+export const APP_VERSION = "0.6.6";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "置顶消息改为浮层立即展开，新用户进入频道会第一时间看到未读置顶。",
+  "长置顶正文支持在浮层内独立上下滚动，图片可以稍后加载，不影响浮层先显示。",
+  "置顶浮层底部新增固定的“朕知道了”确认按钮，确认操作不会跟随正文滚动。"
+] as const;
+
+const RELEASE_0_6_5_NOTES = [
   "置顶公告升级为可编辑的置顶消息快照，管理员可从聊天区多选文字、图片和文件合并成一条置顶正文。",
   "新增“户部尚书”账号权限，普通用户可被授权在默认全员频道创建、编辑和撤下置顶消息。",
   "置顶消息默认展开，用户展开后收起会按账号记录已看过；同一版本再次进入不再自动展开，更新置顶后会重新展开。",
@@ -71,9 +77,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.5",
+    version: "0.6.6",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.5",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_5_NOTES
   },
   {
     version: "0.6.4",
