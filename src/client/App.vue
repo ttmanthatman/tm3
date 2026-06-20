@@ -724,12 +724,22 @@ const notificationAttentionVisible = computed(() => {
   if (!("Notification" in window || "serviceWorker" in navigator)) return false;
   return !notificationEnabled.value;
 });
-const notificationNudgeLevel = computed(() => (notificationPermission.value === "denied" || notificationPermissionAttempts.value > 0 ? "large" : "normal"));
+const notificationNudgeLevel = computed<"bell" | "muted" | "sleep">(() => {
+  if (notificationPermissionAttempts.value >= 2) return "sleep";
+  if (notificationPermission.value === "denied" || notificationPermissionAttempts.value === 1) return "muted";
+  return "bell";
+});
+const notificationNudgeIcon = computed(() => {
+  if (notificationNudgeLevel.value === "sleep") return "😴";
+  if (notificationNudgeLevel.value === "muted") return "🔕";
+  return "🔔";
+});
 const notificationPromptHint = computed(() => {
   if (!notificationSupported.value) return "当前浏览器不支持网页推送；iPhone/iPad 通常需要先把聊天室添加到主屏幕。";
   if (notificationPermission.value === "denied") return "你之前拒绝了通知，需要在浏览器或系统设置里把本网站通知改为允许。";
   if (notificationEnabled.value) return "本设备已经准备好接收 @ 和重要公告。";
-  if (notificationPermissionAttempts.value > 0) return "小铃铛有点委屈，但还在等你点“开启通知”。";
+  if (notificationPermissionAttempts.value >= 2) return "它已经困了，但你还是可以点“开启通知”把它叫醒。";
+  if (notificationPermissionAttempts.value > 0) return "它先变成静音铃铛，但还在等你点“开启通知”。";
   return "开启后，即使没有停留在聊天室页面，也能收到 @ 和重要公告提醒。";
 });
 const slashCommandToken = computed(() => slashCommandTokenAtCursor(input.value, composerCaret.value));
@@ -4031,7 +4041,7 @@ async function toggleVirtual(character: any) {
               aria-label="通知体检"
               @click="openNotificationPrompt"
             >
-              <Bell :size="notificationNudgeLevel === 'large' ? 22 : 18" />
+              <span aria-hidden="true">{{ notificationNudgeIcon }}</span>
             </button>
             <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
@@ -4689,7 +4699,7 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" @click="notificationPromptOpen = false" aria-label="关闭通知体检"><X :size="18" /></button>
         </header>
         <div class="notification-check-body">
-          <span class="notification-check-bell" :class="`level-${notificationNudgeLevel}`"><Bell :size="30" /></span>
+          <span class="notification-check-bell" :class="`level-${notificationNudgeLevel}`" aria-hidden="true">{{ notificationNudgeIcon }}</span>
           <div>
             <strong>{{ notificationEnabled ? "通知已经开启" : "还没有开启通知" }}</strong>
             <small>权限：{{ notificationPermissionLabel }}</small>

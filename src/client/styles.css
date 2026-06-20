@@ -469,8 +469,8 @@ button {
 }
 
 .notification-nudge {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   flex: 0 0 auto;
   border-radius: 999px;
   display: grid;
@@ -478,16 +478,27 @@ button {
   color: #8a5a00;
   background: #fff3bf;
   box-shadow: 0 0 0 1px rgba(138, 90, 0, 0.14);
-  animation: bellWiggle 1.8s ease-in-out infinite;
+  font-size: 20px;
+  line-height: 1;
+  animation: bellWiggle 0.82s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
 }
 
-.notification-nudge.level-large {
-  width: 34px;
-  height: 34px;
+.notification-nudge.level-muted,
+.notification-nudge.level-sleep {
+  width: 38px;
+  height: 38px;
+  font-size: 24px;
   color: #7c2d12;
   background: #ffedd5;
   box-shadow: 0 0 0 1px rgba(124, 45, 18, 0.18), 0 4px 12px rgba(124, 45, 18, 0.14);
-  animation-duration: 1.25s;
+  animation-duration: 0.68s;
+}
+
+.notification-nudge.level-sleep {
+  background: #e0f2fe;
+  color: #075985;
+  box-shadow: 0 0 0 1px rgba(7, 89, 133, 0.18), 0 4px 12px rgba(7, 89, 133, 0.14);
+  animation-name: sleepyWiggle;
 }
 
 .notification-nudge:active {
@@ -3317,14 +3328,25 @@ button {
   color: #8a5a00;
   background: #fff3bf;
   box-shadow: inset 0 0 0 1px rgba(138, 90, 0, 0.12);
-  animation: bellWiggle 1.8s ease-in-out infinite;
+  font-size: 30px;
+  line-height: 1;
+  animation: bellWiggle 0.82s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
 }
 
-.notification-check-bell.level-large {
+.notification-check-bell.level-muted,
+.notification-check-bell.level-sleep {
   color: #7c2d12;
   background: #ffedd5;
   box-shadow: inset 0 0 0 1px rgba(124, 45, 18, 0.16), 0 8px 20px rgba(124, 45, 18, 0.12);
-  animation-duration: 1.25s;
+  font-size: 34px;
+  animation-duration: 0.68s;
+}
+
+.notification-check-bell.level-sleep {
+  color: #075985;
+  background: #e0f2fe;
+  box-shadow: inset 0 0 0 1px rgba(7, 89, 133, 0.16), 0 8px 20px rgba(7, 89, 133, 0.12);
+  animation-name: sleepyWiggle;
 }
 
 .notification-check-body strong,
@@ -4018,21 +4040,51 @@ button {
 
 @keyframes bellWiggle {
   0%,
-  78%,
   100% {
-    transform: rotate(0);
+    transform: translateX(0) rotate(0) scale(1);
   }
-  82% {
-    transform: rotate(-12deg);
+  10% {
+    transform: translateX(-3px) rotate(-28deg) scale(1.06);
   }
-  86% {
-    transform: rotate(10deg);
+  20% {
+    transform: translateX(3px) rotate(24deg) scale(1.04);
   }
-  90% {
-    transform: rotate(-7deg);
+  30% {
+    transform: translateX(-3px) rotate(-22deg) scale(1.08);
   }
-  94% {
-    transform: rotate(4deg);
+  40% {
+    transform: translateX(2px) rotate(18deg) scale(1.03);
+  }
+  52% {
+    transform: translateX(-1px) rotate(-12deg) scale(1.05);
+  }
+  64% {
+    transform: translateX(1px) rotate(8deg) scale(1.01);
+  }
+  76% {
+    transform: translateX(0) rotate(0) scale(1);
+  }
+}
+
+@keyframes sleepyWiggle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0) scale(1);
+  }
+  12% {
+    transform: translate(-2px, -1px) rotate(-18deg) scale(1.05);
+  }
+  24% {
+    transform: translate(3px, 1px) rotate(16deg) scale(1.03);
+  }
+  36% {
+    transform: translate(-3px, 1px) rotate(-14deg) scale(1.06);
+  }
+  50% {
+    transform: translate(2px, -1px) rotate(10deg) scale(1.02);
+  }
+  68% {
+    transform: translateY(0) rotate(0) scale(1);
   }
 }
 

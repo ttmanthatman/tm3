@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.15";
+export const APP_VERSION = "0.6.16";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "通知体检标志改为明确的三段变化：🔔 未开启、🔕 拒绝一次、😴 再次拒绝。",
+  "通知标志的晃动幅度和频率加大，更容易被不常用聊天室的成员注意到。"
+] as const;
+
+const RELEASE_0_6_15_NOTES = [
   "聊天顶部新增通知体检小铃铛，未开启本设备通知时会轻轻晃动提醒，拒绝后会变成更大的委屈铃铛。",
   "点击小铃铛可查看当前通知权限和设备订阅状态，并从体检面板直接开启通知。",
   "通知设置和体检面板新增测试通知，可通过服务器向当前设备发送一条真实 Web Push 测试。"
@@ -126,9 +131,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.15",
+    version: "0.6.16",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.15",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_15_NOTES
   },
   {
     version: "0.6.14",
