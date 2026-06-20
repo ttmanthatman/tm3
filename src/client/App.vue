@@ -78,6 +78,7 @@ import type {
   ThemePaletteDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
+import { extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
@@ -985,6 +986,22 @@ function textContentHtml(text: string) {
   const root = document.createElement("div");
   root.textContent = text || "";
   return linkifyMessageHtml(root.innerHTML.replace(/\n/g, "<br />"));
+}
+
+function bibleReferencesFromHtml(html: string) {
+  return extractBibleReferencesFromText(plainTextFromHtml(html));
+}
+
+function messageBibleReferences(message: MessageDTO) {
+  return message.type === "text" ? bibleReferencesFromHtml(message.content) : [];
+}
+
+function chainBibleReferences(message: MessageDTO) {
+  return message.type === "chain" ? extractBibleReferencesFromText(chainPayload(message).topic || "") : [];
+}
+
+function messageBibleReferenceScope(message: MessageDTO, area: "content" | "chain") {
+  return `${area}:${message.id}`;
 }
 
 function messagePreviewUrl(message: MessageDTO) {
@@ -2080,7 +2097,7 @@ function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
   if (isMobileChatInteraction()) return;
   if (message.type === "system" || event.button !== 0) return;
   const target = event.target;
-  if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-select-btn, a, audio, video, iframe")) return;
+  if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
   longPressStartedAt = { x: event.clientX, y: event.clientY };
   clearMessageLongPress();
   longPressTimer = window.setTimeout(() => {
@@ -3262,20 +3279,20 @@ function setPrayerAiError(message: MessageDTO, text = "") {
   aiSuggestionErrors.value = { ...aiSuggestionErrors.value, [message.id]: text };
 }
 
-function bibleReferenceKey(suggestionId: number, reference: string) {
-  return `${suggestionId}:${reference}`;
+function bibleReferenceKey(scope: string | number, reference: string) {
+  return `${scope}:${reference}`;
 }
 
-function isBibleReferenceExpanded(suggestionId: number, reference: string) {
-  return expandedBibleReferenceKeys.value.has(bibleReferenceKey(suggestionId, reference));
+function isBibleReferenceExpanded(scope: string | number, reference: string) {
+  return expandedBibleReferenceKeys.value.has(bibleReferenceKey(scope, reference));
 }
 
-function isBibleReferenceBusy(suggestionId: number, reference: string) {
-  return bibleLookupBusyKeys.value.has(bibleReferenceKey(suggestionId, reference));
+function isBibleReferenceBusy(scope: string | number, reference: string) {
+  return bibleLookupBusyKeys.value.has(bibleReferenceKey(scope, reference));
 }
 
-function bibleReferenceLookup(suggestionId: number, reference: string) {
-  const key = bibleReferenceKey(suggestionId, reference);
+function bibleReferenceLookup(scope: string | number, reference: string) {
+  const key = bibleReferenceKey(scope, reference);
   return Object.prototype.hasOwnProperty.call(bibleLookupCache.value, key) ? bibleLookupCache.value[key] : undefined;
 }
 
@@ -3286,8 +3303,8 @@ function setBibleReferenceBusy(key: string, busy: boolean) {
   bibleLookupBusyKeys.value = next;
 }
 
-async function toggleBibleReference(suggestionId: number, reference: string) {
-  const key = bibleReferenceKey(suggestionId, reference);
+async function toggleBibleReference(scope: string | number, reference: string) {
+  const key = bibleReferenceKey(scope, reference);
   const next = new Set(expandedBibleReferenceKeys.value);
   if (next.has(key)) {
     next.delete(key);
@@ -4203,6 +4220,27 @@ async function toggleVirtual(character: any) {
                 <template v-if="row.message.type === 'chain'">
                   <div class="chain-card">
                     <h3>{{ chainPayload(row.message).topic }}</h3>
+                    <div v-if="chainBibleReferences(row.message).length" class="message-bible" @click.stop>
+                      <div v-for="reference in chainBibleReferences(row.message)" :key="`${row.message.id}-chain-${reference}`" class="message-bible-reference">
+                        <button class="message-bible-reference-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'chain'), reference)">
+                          <BookOpen :size="14" />
+                          <span>{{ reference }}</span>
+                          <ChevronUp v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'chain'), reference)" :size="14" />
+                          <ChevronDown v-else :size="14" />
+                        </button>
+                        <div v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'chain'), reference)" class="message-bible-verses">
+                          <p v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'chain'), reference)" class="message-bible-empty">正在查找经文...</p>
+                          <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.verses.length">
+                            <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.normalizedReference }} · {{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.translation }}</small>
+                            <p v-for="verse in bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.verses" :key="`${row.message.id}-chain-${reference}-${verse.reference}`">
+                              <strong>{{ verse.reference }}</strong>
+                              <span>{{ verse.text }}</span>
+                            </p>
+                          </template>
+                          <p v-else class="message-bible-empty">暂时找不到这处经文</p>
+                        </div>
+                      </div>
+                    </div>
                     <ol>
                       <li v-for="(p, idx) in chainPayload(row.message).participants" :key="idx">
                         <span>{{ idx + 1 }}. {{ p.name }}</span>
@@ -4365,6 +4403,27 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else>
                   <p class="message-text" v-html="messageContentHtml(row.message)"></p>
+                  <div v-if="messageBibleReferences(row.message).length" class="message-bible" @click.stop>
+                    <div v-for="reference in messageBibleReferences(row.message)" :key="`${row.message.id}-content-${reference}`" class="message-bible-reference">
+                      <button class="message-bible-reference-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), reference)">
+                        <BookOpen :size="14" />
+                        <span>{{ reference }}</span>
+                        <ChevronUp v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), reference)" :size="14" />
+                        <ChevronDown v-else :size="14" />
+                      </button>
+                      <div v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), reference)" class="message-bible-verses">
+                        <p v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), reference)" class="message-bible-empty">正在查找经文...</p>
+                        <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.verses.length">
+                          <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.normalizedReference }} · {{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.translation }}</small>
+                          <p v-for="verse in bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.verses" :key="`${row.message.id}-content-${reference}-${verse.reference}`">
+                            <strong>{{ verse.reference }}</strong>
+                            <span>{{ verse.text }}</span>
+                          </p>
+                        </template>
+                        <p v-else class="message-bible-empty">暂时找不到这处经文</p>
+                      </div>
+                    </div>
+                  </div>
                   <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
                     <span class="link-preview-copy">
                       <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>

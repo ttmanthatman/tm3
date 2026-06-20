@@ -1580,6 +1580,76 @@ button {
   text-decoration: underline;
 }
 
+.message-bible {
+  margin-top: 8px;
+  display: grid;
+  gap: 6px;
+}
+
+.message-bible-reference {
+  display: grid;
+  gap: 5px;
+}
+
+.message-bible-reference-btn {
+  width: fit-content;
+  max-width: 100%;
+  min-height: 28px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 7px;
+  padding: 0 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: color-mix(in srgb, var(--accent) 82%, #0f3f5f 18%);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-bible-reference-btn span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-bible-verses {
+  border-left: 2px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  padding: 2px 0 2px 8px;
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.message-bible-verses small {
+  color: color-mix(in srgb, currentColor 58%, transparent);
+  font-size: 11px;
+}
+
+.message-bible-verses p {
+  display: grid;
+  gap: 2px;
+}
+
+.message-bible-verses strong {
+  font-size: 12px;
+}
+
+.message-bible-verses span {
+  color: color-mix(in srgb, currentColor 90%, transparent);
+}
+
+.message-bible-empty {
+  margin: 0;
+  color: color-mix(in srgb, currentColor 64%, transparent);
+}
+
 .link-preview-card {
   width: min(420px, 100%);
   margin-top: 9px;
