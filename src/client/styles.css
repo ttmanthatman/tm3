@@ -20,6 +20,7 @@
   --bubble-other-text: #111;
   --bubble-mine: #95ec69;
   --bubble-mine-text: #111;
+  --message-content-font-size: 15px;
   --wallpaper-image: none;
   --wallpaper-size: cover;
   --wallpaper-repeat: no-repeat;
@@ -473,6 +474,60 @@ button {
   color: #333;
 }
 
+.message-font-control {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.message-font-glyph {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.message-font-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 28;
+  width: 168px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  background: var(--panel);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
+}
+
+.message-font-menu button {
+  min-height: 38px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text);
+  text-align: left;
+}
+
+.message-font-menu button:hover,
+.message-font-menu button.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.message-font-menu button.active {
+  color: var(--accent-dark);
+  font-weight: 800;
+}
+
+.message-font-menu small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .icon-btn:active,
 .channel-row:active,
 .member-row:active {
@@ -786,6 +841,7 @@ button {
 .pin-card-body p {
   margin: 0;
   color: #4d3a15;
+  font-size: var(--message-content-font-size);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1462,6 +1518,8 @@ button {
 }
 
 .message-text {
+  font-size: var(--message-content-font-size);
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -1814,7 +1872,7 @@ button {
 
 .chain-card h3 {
   margin: 0 0 8px;
-  font-size: 16px;
+  font-size: calc(var(--message-content-font-size) + 1px);
 }
 
 .prayer-card {
@@ -1879,6 +1937,7 @@ button {
 .prayer-text {
   margin: 0;
   color: inherit;
+  font-size: var(--message-content-font-size);
   line-height: 1.55;
   white-space: pre-wrap;
 }
@@ -2101,6 +2160,7 @@ button {
 .chain-card li {
   display: grid;
   gap: 1px;
+  font-size: var(--message-content-font-size);
 }
 
 .chain-card small {
