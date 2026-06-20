@@ -339,18 +339,42 @@ const chapterStyle = String.raw`第?\s*\d+\s*章(?:\s*第?\s*\d+(?:${rangeToken}
 const wholeChapterStyle = String.raw`\d+`;
 const referencePattern = new RegExp(String.raw`(^|[^A-Za-z0-9])((?:${aliasPattern})\s*(?:${colonStyle}|${chapterStyle}|${wholeChapterStyle}))(?=$|[^A-Za-z0-9])`, "giu");
 
+export type BibleReferenceMatch = {
+  reference: string;
+  start: number;
+  end: number;
+};
+
 export function extractBibleReferencesFromText(text: string, max = 8) {
   const references: string[] = [];
   const seen = new Set<string>();
-  for (const match of text.matchAll(referencePattern)) {
-    const reference = cleanReferenceCandidate(match[2] || "");
+  for (const match of extractBibleReferenceMatches(text, max)) {
+    const reference = match.reference;
     const key = reference.toLowerCase().replace(/\s+/g, "");
-    if (!reference || isRiskySingleCharacterChapter(reference) || seen.has(key)) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     references.push(reference);
     if (references.length >= max) break;
   }
   return references;
+}
+
+export function extractBibleReferenceMatches(text: string, max = 8): BibleReferenceMatch[] {
+  const matches: BibleReferenceMatch[] = [];
+  const seen = new Set<string>();
+  for (const match of text.matchAll(referencePattern)) {
+    const raw = match[2] || "";
+    const reference = cleanReferenceCandidate(raw);
+    const key = reference.toLowerCase().replace(/\s+/g, "");
+    if (!reference || isRiskySingleCharacterChapter(reference) || seen.has(key)) continue;
+    const fullStart = match.index ?? 0;
+    const prefix = match[1] || "";
+    const start = fullStart + prefix.length;
+    matches.push({ reference, start, end: start + raw.length });
+    seen.add(key);
+    if (matches.length >= max) break;
+  }
+  return matches;
 }
 
 function cleanReferenceCandidate(reference: string) {

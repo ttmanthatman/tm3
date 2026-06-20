@@ -19,7 +19,7 @@ import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, BibleLookupDTO, ChainPayload, FlashEffectSettingsDTO, LinkPreviewDTO, MessageDTO, MessageEffect, PinnedBodyDTO, PinnedContentBlockDTO, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, BibleLookupDTO, BiblePreferencesDTO, ChainPayload, FlashEffectSettingsDTO, LinkPreviewDTO, MessageDTO, MessageEffect, PinnedBodyDTO, PinnedContentBlockDTO, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 
@@ -52,6 +52,16 @@ const THEMES = new Set(["wechat", "jade", "paper", "night"]);
 const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "sunburst", "marquee", "water", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
+const BIBLE_OUTPUT_FORMATS = new Set(["referenceVerseLines", "continuousText", "referenceHeader", "numberedVerses"]);
+const BIBLE_REFERENCE_LABEL_MODES = new Set(["normalizedFull", "preserveInput", "omit"]);
+const BIBLE_COMBINED_PASSAGE_MODES = new Set(["compactEllipsis", "groupedLines"]);
+const BIBLE_QUOTATION_STYLES = new Set(["fullWidth", "halfWidth", "square"]);
+const DEFAULT_BIBLE_PREFERENCES: BiblePreferencesDTO = {
+  outputFormat: "continuousText",
+  referenceLabelMode: "normalizedFull",
+  combinedPassageMode: "compactEllipsis",
+  quotationStyle: "fullWidth"
+};
 const DEFAULT_APP_TITLE = "Team Chat";
 const DEFAULT_LOGIN_TITLE = "Team Chat";
 const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
@@ -912,7 +922,28 @@ function authDto(account: AccountWithActor) {
     isAdmin: account.role === "admin",
     canPinMessages: account.canPinMessages,
     actorId: account.actor.id,
-    theme: account.theme || "wechat"
+    theme: account.theme || "wechat",
+    biblePreferences: cleanBiblePreferences(account.biblePreferences)
+  };
+}
+
+function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
+  const row = value && typeof value === "object" ? (value as Partial<BiblePreferencesDTO>) : {};
+  return {
+    outputFormat: BIBLE_OUTPUT_FORMATS.has(String(row.outputFormat)) ? (row.outputFormat as BiblePreferencesDTO["outputFormat"]) : DEFAULT_BIBLE_PREFERENCES.outputFormat,
+    referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
+    combinedPassageMode: BIBLE_COMBINED_PASSAGE_MODES.has(String(row.combinedPassageMode)) ? (row.combinedPassageMode as BiblePreferencesDTO["combinedPassageMode"]) : DEFAULT_BIBLE_PREFERENCES.combinedPassageMode,
+    quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle
+  };
+}
+
+function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
+  const preferences = cleanBiblePreferences(value);
+  return {
+    outputFormat: preferences.outputFormat,
+    referenceLabelMode: preferences.referenceLabelMode,
+    combinedPassageMode: preferences.combinedPassageMode,
+    quotationStyle: preferences.quotationStyle
   };
 }
 
@@ -1806,10 +1837,31 @@ app.patch("/api/notifications/channels/:id", { preHandler: requireAuth }, async 
 
 app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const body = z.object({ theme: z.string().optional() }).parse(request.body);
-  const requestedTheme = cleanThemeId(body.theme);
-  const theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
-  const account = await prisma.account.update({ where: { id: auth.accountId }, data: { theme }, include: { actor: true } });
+  const body = z
+    .object({
+      theme: z.string().optional(),
+      biblePreferences: z
+        .object({
+          outputFormat: z.string().optional(),
+          referenceLabelMode: z.string().optional(),
+          combinedPassageMode: z.string().optional(),
+          quotationStyle: z.string().optional()
+        })
+        .optional()
+    })
+    .parse(request.body);
+  const data: Prisma.AccountUpdateInput = {};
+  if (body.theme !== undefined) {
+    const requestedTheme = cleanThemeId(body.theme);
+    data.theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
+  }
+  if (body.biblePreferences !== undefined) {
+    const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { biblePreferences: true } });
+    data.biblePreferences = biblePreferencesJson({ ...(current?.biblePreferences as Record<string, unknown> | null | undefined), ...body.biblePreferences });
+  }
+  const account = Object.keys(data).length
+    ? await prisma.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })
+    : await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
   return { success: true, account: authDto(account) };
 });
 
@@ -3126,6 +3178,7 @@ async function usersExportPayload() {
       role: account.role,
       canPinMessages: account.canPinMessages,
       theme: account.theme,
+      biblePreferences: cleanBiblePreferences(account.biblePreferences),
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
       actor: account.actor
@@ -3597,6 +3650,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
   for (const item of accounts) {
     const role = item.role === "admin" ? "admin" : "user";
     const theme = THEMES.has(item.theme) ? item.theme : "wechat";
+    const biblePreferences = biblePreferencesJson(item.biblePreferences);
     const passwordHash = String(item.passwordHash || (await bcrypt.hash(crypto.randomUUID(), 12)));
     const account = await prisma.account.upsert({
       where: { username: String(item.username) },
@@ -3606,7 +3660,8 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
         avatarPath: item.avatarPath || null,
         role,
         canPinMessages: !!item.canPinMessages,
-        theme
+        theme,
+        biblePreferences
       },
       create: {
         id: Number(item.id) || undefined,
@@ -3617,6 +3672,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
         role,
         canPinMessages: !!item.canPinMessages,
         theme,
+        biblePreferences,
         createdAt: parseDate(item.createdAt),
         actor: {
           create: {

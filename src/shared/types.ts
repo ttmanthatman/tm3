@@ -155,6 +155,7 @@ export interface AccountDTO {
   canPinMessages: boolean;
   actorId: number;
   theme: string;
+  biblePreferences: BiblePreferencesDTO;
 }
 
 export interface AuthResponse {
@@ -249,6 +250,18 @@ export interface BibleLookupDTO {
   translation: string;
   sourceId: string;
   verses: BibleVerseLineDTO[];
+}
+
+export type BibleOutputFormat = "referenceVerseLines" | "continuousText" | "referenceHeader" | "numberedVerses";
+export type BibleReferenceLabelMode = "normalizedFull" | "preserveInput" | "omit";
+export type BibleCombinedPassageMode = "compactEllipsis" | "groupedLines";
+export type BibleQuotationStyle = "fullWidth" | "halfWidth" | "square";
+
+export interface BiblePreferencesDTO {
+  outputFormat: BibleOutputFormat;
+  referenceLabelMode: BibleReferenceLabelMode;
+  combinedPassageMode: BibleCombinedPassageMode;
+  quotationStyle: BibleQuotationStyle;
 }
 
 export interface AiSettingsDTO {

@@ -59,6 +59,11 @@ import type {
   AppearanceDTO,
   AiSettingsDTO,
   BibleLookupDTO,
+  BiblePreferencesDTO,
+  BibleOutputFormat,
+  BibleReferenceLabelMode,
+  BibleCombinedPassageMode,
+  BibleQuotationStyle,
   ChainPayload,
   ChannelDTO,
   DeviceSessionDTO,
@@ -78,7 +83,7 @@ import type {
   ThemePaletteDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
-import { extractBibleReferencesFromText } from "./bibleReferences";
+import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
@@ -128,7 +133,7 @@ const scroller = ref<HTMLElement | null>(null);
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLElement | null>(null);
 const adminTab = ref<"users" | "channels" | "virtuals" | "pin" | "appearance" | "data" | "release">("pin");
-const settingsTab = ref<"appearance" | "devices" | "notifications" | "release">("appearance");
+const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
 const newChannel = ref({ name: "", description: "", isPrivate: false });
@@ -230,6 +235,27 @@ const aiSuggestionErrors = ref<Record<number, string>>({});
 const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
 const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
+const bibleSettingsMsg = ref("");
+const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
+  { value: "continuousText", label: "连续正文", description: "创世记 1:1 起初，神创造天地。" },
+  { value: "referenceVerseLines", label: "每节完整标签", description: "每行显示“书卷 章:节 经文”。" },
+  { value: "referenceHeader", label: "首行引用", description: "第一行显示出处，后面逐节分行。" },
+  { value: "numberedVerses", label: "每节带节号", description: "出处后逐行显示节号和经文。" }
+];
+const bibleReferenceLabelOptions: Array<{ value: BibleReferenceLabelMode; label: string }> = [
+  { value: "normalizedFull", label: "改写为完整标签" },
+  { value: "preserveInput", label: "保留原输入标签" },
+  { value: "omit", label: "不显示引用标签" }
+];
+const bibleCombinedPassageOptions: Array<{ value: BibleCombinedPassageMode; label: string }> = [
+  { value: "compactEllipsis", label: "合并为一段" },
+  { value: "groupedLines", label: "按片段分行" }
+];
+const bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: string }> = [
+  { value: "fullWidth", label: "全角引号 “ ”" },
+  { value: "halfWidth", label: "半角引号 \" \"" },
+  { value: "square", label: "保留方引号 「 」" }
+];
 const previewMessage = ref<MessageDTO | null>(null);
 const previewPinnedImage = ref<{ url: string; fileName: string } | null>(null);
 const imagePreviewScale = ref(1);
@@ -1046,10 +1072,74 @@ function messageContentHtml(message: MessageDTO) {
   return linkifyMessageHtml(message.content);
 }
 
+type BibleRichTextSegment =
+  | { kind: "html"; key: string; html: string }
+  | { kind: "reference"; key: string; reference: string };
+
 function textContentHtml(text: string) {
   const root = document.createElement("div");
   root.textContent = text || "";
   return linkifyMessageHtml(root.innerHTML.replace(/\n/g, "<br />"));
+}
+
+function escapeHtmlText(text: string) {
+  const element = document.createElement("span");
+  element.textContent = text;
+  return element.innerHTML.replace(/\n/g, "<br />");
+}
+
+function splitBibleTextNode(text: string, keyPrefix: string) {
+  const segments: BibleRichTextSegment[] = [];
+  let cursor = 0;
+  for (const match of extractBibleReferenceMatches(text)) {
+    if (match.start > cursor) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: escapeHtmlText(text.slice(cursor, match.start)) });
+    segments.push({ kind: "reference", key: `${keyPrefix}-r-${match.start}`, reference: match.reference });
+    cursor = match.end;
+  }
+  if (cursor < text.length) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: escapeHtmlText(text.slice(cursor)) });
+  return segments;
+}
+
+function bibleRichTextSegmentsFromHtml(html: string, keyPrefix: string): BibleRichTextSegment[] {
+  const root = document.createElement("div");
+  root.innerHTML = linkifyMessageHtml(html || "");
+  const segments: BibleRichTextSegment[] = [];
+  let index = 0;
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      segments.push(...splitBibleTextNode(node.textContent || "", `${keyPrefix}-${index++}`));
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const element = node as HTMLElement;
+    if (element.tagName === "A") {
+      segments.push({ kind: "html", key: `${keyPrefix}-a-${index++}`, html: element.outerHTML });
+      return;
+    }
+    if (element.tagName === "BR") {
+      segments.push({ kind: "html", key: `${keyPrefix}-br-${index++}`, html: "<br />" });
+      return;
+    }
+    for (const child of Array.from(element.childNodes)) walk(child);
+  };
+  for (const child of Array.from(root.childNodes)) walk(child);
+  return segments;
+}
+
+function bibleRichTextSegmentsFromText(text: string, keyPrefix: string) {
+  return splitBibleTextNode(text || "", keyPrefix);
+}
+
+function messageRichTextSegments(message: MessageDTO) {
+  return bibleRichTextSegmentsFromHtml(message.content, `message-${message.id}`);
+}
+
+function prayerRichTextSegments(message: MessageDTO) {
+  return bibleRichTextSegmentsFromHtml(message.content, `prayer-${message.id}`);
+}
+
+function chainTopicRichTextSegments(message: MessageDTO) {
+  return bibleRichTextSegmentsFromText(chainPayload(message).topic || "", `chain-${message.id}`);
 }
 
 function bibleReferencesFromHtml(html: string) {
@@ -1450,6 +1540,19 @@ async function revokeDevice(device: DeviceSessionDTO) {
 async function chooseTheme(theme: string) {
   const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ theme }) });
   if (result.account) store.account = result.account;
+}
+
+async function saveBiblePreference<K extends keyof BiblePreferencesDTO>(key: K, value: BiblePreferencesDTO[K]) {
+  bibleSettingsMsg.value = "";
+  const current = biblePreferences();
+  const next = { ...current, [key]: value };
+  try {
+    const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ biblePreferences: next }) });
+    if (result.account) store.account = result.account;
+    bibleSettingsMsg.value = "经文显示设置已保存";
+  } catch {
+    bibleSettingsMsg.value = "保存失败，请稍后再试";
+  }
 }
 
 function deviceLabel(kind: string) {
@@ -3347,6 +3450,92 @@ function bibleReferenceKey(scope: string | number, reference: string) {
   return `${scope}:${reference}`;
 }
 
+function biblePreferences(): BiblePreferencesDTO {
+  return (
+    store.account?.biblePreferences || {
+      outputFormat: "continuousText",
+      referenceLabelMode: "normalizedFull",
+      combinedPassageMode: "compactEllipsis",
+      quotationStyle: "fullWidth"
+    }
+  );
+}
+
+function cleanOriginalBibleReference(reference: string) {
+  return reference
+    .replace(/\n|\t/g, " ")
+    .replace(/^["'“”]+|["'“”]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function applyBibleQuotationStyle(text: string) {
+  const style = biblePreferences().quotationStyle;
+  if (style === "halfWidth") return text.replace(/「|“/g, '"').replace(/」|”/g, '"');
+  if (style === "square") return text.replace(/“/g, "「").replace(/”/g, "」");
+  return text.replace(/「/g, "“").replace(/」/g, "”");
+}
+
+function bibleVerseText(verse: BibleLookupDTO["verses"][number]) {
+  return applyBibleQuotationStyle(verse.text);
+}
+
+function bibleReferenceLabel(lookup: BibleLookupDTO, originalReference: string, normalizedLabel = lookup.normalizedReference) {
+  const mode = biblePreferences().referenceLabelMode;
+  if (mode === "omit") return "";
+  if (mode === "preserveInput") return cleanOriginalBibleReference(originalReference);
+  return normalizedLabel;
+}
+
+function compactVerseLabel(verse: BibleLookupDTO["verses"][number]) {
+  return verse.verse === verse.endVerse ? String(verse.verse) : `${verse.verse}-${verse.endVerse}`;
+}
+
+function bibleVerseGroups(lookup: BibleLookupDTO) {
+  const groups: Array<{ label: string; verses: BibleLookupDTO["verses"] }> = [];
+  for (const verse of lookup.verses) {
+    const last = groups[groups.length - 1];
+    const contiguous = last?.verses.length ? last.verses[last.verses.length - 1].book === verse.book && last.verses[last.verses.length - 1].chapter === verse.chapter && last.verses[last.verses.length - 1].endVerse + 1 === verse.verse : false;
+    if (last && contiguous) {
+      last.verses.push(verse);
+      const first = last.verses[0];
+      last.label = `${first.book} ${first.chapter}:${first.verse}-${verse.endVerse}`;
+    } else {
+      groups.push({ label: verse.reference, verses: [verse] });
+    }
+  }
+  return groups;
+}
+
+function formatBibleLookup(lookup: BibleLookupDTO | null | undefined, originalReference: string) {
+  if (!lookup?.verses.length) return "";
+  const preferences = biblePreferences();
+  if (preferences.outputFormat === "referenceVerseLines") {
+    return lookup.verses.map((verse) => `${verse.reference} ${bibleVerseText(verse)}`).join("\n");
+  }
+  if (preferences.outputFormat === "referenceHeader") {
+    return `${lookup.normalizedReference}\n${lookup.verses.map((verse) => bibleVerseText(verse)).join("\n")}`;
+  }
+  if (preferences.outputFormat === "numberedVerses") {
+    const label = bibleReferenceLabel(lookup, originalReference);
+    const body = lookup.verses.map((verse) => `${compactVerseLabel(verse)} ${bibleVerseText(verse)}`).join("\n");
+    return label ? `${label}\n${body}` : body;
+  }
+  const groups = bibleVerseGroups(lookup);
+  if (preferences.combinedPassageMode === "groupedLines" && groups.length > 1) {
+    return groups
+      .map((group) => {
+        const label = bibleReferenceLabel(lookup, originalReference, group.label);
+        const body = group.verses.map((verse) => bibleVerseText(verse)).join("");
+        return label ? `${label} ${body}` : body;
+      })
+      .join("\n");
+  }
+  const label = bibleReferenceLabel(lookup, originalReference);
+  const body = groups.map((group) => group.verses.map((verse) => bibleVerseText(verse)).join("")).join("……");
+  return label ? `${label} ${body}` : body;
+}
+
 function isBibleReferenceExpanded(scope: string | number, reference: string) {
   return expandedBibleReferenceKeys.value.has(bibleReferenceKey(scope, reference));
 }
@@ -4349,28 +4538,24 @@ async function toggleVirtual(character: any) {
                 </button>
                 <template v-if="row.message.type === 'chain'">
                   <div class="chain-card">
-                    <h3>{{ chainPayload(row.message).topic }}</h3>
-                    <div v-if="chainBibleReferences(row.message).length" class="message-bible" @click.stop>
-                      <div v-for="reference in chainBibleReferences(row.message)" :key="`${row.message.id}-chain-${reference}`" class="message-bible-reference">
-                        <button class="message-bible-reference-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'chain'), reference)">
-                          <BookOpen :size="14" />
-                          <span>{{ reference }}</span>
-                          <ChevronUp v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'chain'), reference)" :size="14" />
-                          <ChevronDown v-else :size="14" />
-                        </button>
-                        <div v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'chain'), reference)" class="message-bible-verses">
-                          <p v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'chain'), reference)" class="message-bible-empty">正在查找经文...</p>
-                          <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.verses.length">
-                            <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.normalizedReference }} · {{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.translation }}</small>
-                            <p v-for="verse in bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), reference)?.verses" :key="`${row.message.id}-chain-${reference}-${verse.reference}`">
-                              <strong>{{ verse.reference }}</strong>
-                              <span>{{ verse.text }}</span>
-                            </p>
-                          </template>
-                          <p v-else class="message-bible-empty">暂时找不到这处经文</p>
-                        </div>
-                      </div>
-                    </div>
+                    <h3 class="bible-rich-text">
+                      <template v-for="segment in chainTopicRichTextSegments(row.message)" :key="segment.key">
+                        <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
+                        <span v-else class="inline-bible-reference" @click.stop>
+                          <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'chain'), segment.reference)">
+                            <BookOpen :size="13" />{{ segment.reference }}
+                          </button>
+                          <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'chain'), segment.reference)" class="inline-bible-popover">
+                            <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'chain'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
+                            <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference)?.verses.length">
+                              <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference)?.translation }}</small>
+                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference), segment.reference) }}</span>
+                            </template>
+                            <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
+                          </span>
+                        </span>
+                      </template>
+                    </h3>
                     <ol>
                       <li v-for="(p, idx) in chainPayload(row.message).participants" :key="idx">
                         <span>{{ idx + 1 }}. {{ p.name }}</span>
@@ -4387,7 +4572,24 @@ async function toggleVirtual(character: any) {
                       <strong>代祷事项</strong>
                       <em>{{ prayerStatusText(prayerPayload(row.message).status) }}</em>
                     </div>
-                    <p class="prayer-text" v-html="messageContentHtml(row.message)"></p>
+                    <div class="prayer-text bible-rich-text">
+                      <template v-for="segment in prayerRichTextSegments(row.message)" :key="segment.key">
+                        <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
+                        <span v-else class="inline-bible-reference" @click.stop>
+                          <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
+                            <BookOpen :size="13" />{{ segment.reference }}
+                          </button>
+                          <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-popover">
+                            <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
+                            <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
+                              <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
+                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
+                            </template>
+                            <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
+                          </span>
+                        </span>
+                      </template>
+                    </div>
                     <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
                       <span class="link-preview-copy">
                         <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
@@ -4438,11 +4640,8 @@ async function toggleVirtual(character: any) {
                             <div v-if="isBibleReferenceExpanded(suggestion.id, reference)" class="prayer-ai-verses">
                               <p v-if="isBibleReferenceBusy(suggestion.id, reference)" class="prayer-ai-empty">正在查找经文...</p>
                               <template v-else-if="bibleReferenceLookup(suggestion.id, reference)?.verses.length">
-                                <small>{{ bibleReferenceLookup(suggestion.id, reference)?.normalizedReference }} · {{ bibleReferenceLookup(suggestion.id, reference)?.translation }}</small>
-                                <p v-for="verse in bibleReferenceLookup(suggestion.id, reference)?.verses" :key="`${suggestion.id}-${reference}-${verse.reference}`">
-                                  <strong>{{ verse.reference }}</strong>
-                                  <span>{{ verse.text }}</span>
-                                </p>
+                                <small>{{ bibleReferenceLookup(suggestion.id, reference)?.translation }}</small>
+                                <p class="formatted-bible-text">{{ formatBibleLookup(bibleReferenceLookup(suggestion.id, reference), reference) }}</p>
                               </template>
                               <p v-else class="prayer-ai-empty">暂时找不到这处经文</p>
                             </div>
@@ -4532,27 +4731,23 @@ async function toggleVirtual(character: any) {
                   </button>
                 </template>
                 <template v-else>
-                  <p class="message-text" v-html="messageContentHtml(row.message)"></p>
-                  <div v-if="messageBibleReferences(row.message).length" class="message-bible" @click.stop>
-                    <div v-for="reference in messageBibleReferences(row.message)" :key="`${row.message.id}-content-${reference}`" class="message-bible-reference">
-                      <button class="message-bible-reference-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), reference)">
-                        <BookOpen :size="14" />
-                        <span>{{ reference }}</span>
-                        <ChevronUp v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), reference)" :size="14" />
-                        <ChevronDown v-else :size="14" />
-                      </button>
-                      <div v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), reference)" class="message-bible-verses">
-                        <p v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), reference)" class="message-bible-empty">正在查找经文...</p>
-                        <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.verses.length">
-                          <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.normalizedReference }} · {{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.translation }}</small>
-                          <p v-for="verse in bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), reference)?.verses" :key="`${row.message.id}-content-${reference}-${verse.reference}`">
-                            <strong>{{ verse.reference }}</strong>
-                            <span>{{ verse.text }}</span>
-                          </p>
-                        </template>
-                        <p v-else class="message-bible-empty">暂时找不到这处经文</p>
-                      </div>
-                    </div>
+                  <div class="message-text bible-rich-text">
+                    <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
+                      <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
+                      <span v-else class="inline-bible-reference" @click.stop>
+                        <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
+                          <BookOpen :size="13" />{{ segment.reference }}
+                        </button>
+                        <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-popover">
+                          <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
+                          <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
+                            <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
+                            <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
+                          </template>
+                          <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
+                        </span>
+                      </span>
+                    </template>
                   </div>
                   <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
                     <span class="link-preview-copy">
@@ -4912,6 +5107,7 @@ async function toggleVirtual(character: any) {
         </header>
         <nav class="tabs">
           <button :class="{ active: settingsTab === 'appearance' }" @click="settingsTab = 'appearance'"><Palette :size="16" />外观</button>
+          <button :class="{ active: settingsTab === 'bible' }" @click="settingsTab = 'bible'"><BookOpen :size="16" />经文</button>
           <button :class="{ active: settingsTab === 'devices' }" @click="settingsTab = 'devices'; loadDevices()"><Monitor :size="16" />设备</button>
           <button :class="{ active: settingsTab === 'notifications' }" @click="settingsTab = 'notifications'; loadNotificationSettings()"><Bell :size="16" />通知</button>
           <button :class="{ active: settingsTab === 'release' }" @click="settingsTab = 'release'"><Info :size="16" />版本</button>
@@ -4931,6 +5127,36 @@ async function toggleVirtual(character: any) {
                 <b>{{ theme.name }}</b>
               </button>
             </div>
+          </section>
+
+          <section v-if="settingsTab === 'bible'" class="form-grid">
+            <label>经文弹出格式</label>
+            <div class="bible-settings-grid">
+              <button
+                v-for="option in bibleOutputFormatOptions"
+                :key="option.value"
+                class="bible-setting-tile"
+                :class="{ active: biblePreferences().outputFormat === option.value }"
+                @click="saveBiblePreference('outputFormat', option.value)"
+              >
+                <b>{{ option.label }}</b>
+                <small>{{ option.description }}</small>
+              </button>
+            </div>
+            <label>引用标签</label>
+            <select :value="biblePreferences().referenceLabelMode" @change="saveBiblePreference('referenceLabelMode', ($event.target as HTMLSelectElement).value as BibleReferenceLabelMode)">
+              <option v-for="option in bibleReferenceLabelOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <label>组合经文</label>
+            <select :value="biblePreferences().combinedPassageMode" @change="saveBiblePreference('combinedPassageMode', ($event.target as HTMLSelectElement).value as BibleCombinedPassageMode)">
+              <option v-for="option in bibleCombinedPassageOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <label>引号样式</label>
+            <select :value="biblePreferences().quotationStyle" @change="saveBiblePreference('quotationStyle', ($event.target as HTMLSelectElement).value as BibleQuotationStyle)">
+              <option v-for="option in bibleQuotationStyleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+            </select>
+            <p class="settings-note">这些设置只影响你自己看到的经文弹出内容，不会改动聊天消息原文。</p>
+            <p v-if="bibleSettingsMsg" class="settings-note">{{ bibleSettingsMsg }}</p>
           </section>
 
           <section v-if="settingsTab === 'devices'" class="form-grid">

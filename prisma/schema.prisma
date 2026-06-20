@@ -60,6 +60,7 @@ model Account {
   avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
   role                    AccountRole                     @default(user)
   theme                   String                          @default("wechat") @db.VarChar(32)
+  biblePreferences        Json?                           @map("bible_preferences")
   canPinMessages          Boolean                         @default(false) @map("can_pin_messages")
   lastLoginAt             DateTime?                       @map("last_login_at")
   createdAt               DateTime                        @default(now()) @map("created_at")

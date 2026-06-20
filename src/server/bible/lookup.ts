@@ -361,7 +361,7 @@ function displayPassage(passage: PassageReference) {
 }
 
 function cleanVerseText(raw: string) {
-  return raw.replace(/\u3000/g, "").replace(/「/g, "“").replace(/」/g, "”").trim();
+  return raw.replace(/\u3000/g, "").trim();
 }
 
 function numberGroup(match: RegExpMatchArray, index: number) {
