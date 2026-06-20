@@ -89,6 +89,8 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 - 管理员可以创建自定义主题，调整按钮、背景、面板、文字和气泡颜色。
 - 支持聊天室壁纸，壁纸可选择填满、适合、拉伸或平铺。
 - 登录页支持自定义图标、标题、副标题、背景图和表单位置。
+- 管理员外观页按品牌与标签页、登录页、聊天室、主题颜色和闪动特效分组，桌面端实时预览当前场景，手机端可按需打开预览。
+- 外观图片在更换时弹出选择器，可上传新图片或复用已有外观素材；所有图片、主题和闪动特效改动都会先进入草稿，点击“保存外观”后才生效。
 - 手机端使用安全区变量和动态高度，适配 Safari 底栏、键盘和添加到主屏幕后运行的场景。
 
 ### 管理后台
@@ -118,6 +120,27 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 - 支持按用户导出其附件 ZIP。
 - 支持删除指定用户历史附件，并保留对应消息记录。
 - 运行时数据应放在源码目录外或被 `.gitignore` 排除，不应提交 `.env`、数据库、上传文件和部署私密说明。
+
+## English Overview
+
+Team Chat is a lightweight web chat app for small teams, families, groups, and private communities. It is built for both mobile and desktop use, and includes channels, direct messages, files, voice messages, browser push notifications, themes, prayer cards, AI-assisted Bible reference suggestions, message effects, admin tools, data import/export, and server self-update support.
+
+### Appearance And Personalization
+
+- Built-in themes include WeChat Green, Jade, Paper, and Night.
+- Admins can create custom themes for buttons, backgrounds, panels, text, and chat bubbles.
+- Chat wallpapers support cover, contain, stretch, and repeat display modes.
+- The login page supports custom icons, title, subtitle, background image, form position, and registration entry.
+- The admin appearance panel is organized by scenario: brand and browser tab, login page, chat room, theme colors, and flashing message effect.
+- Appearance images are chosen through a shared picker when they are needed. Admins can upload a new image or reuse existing appearance assets.
+- Image, theme, and flashing-effect changes stay in a draft preview until the admin clicks “Save appearance”.
+
+### Admin Tools
+
+- Admins can create users, reset passwords, update display names, assign admin rights, and grant default-channel pinning permission.
+- Admins can create, edit, and delete channels, maintain channel icons, and manage virtual characters for external engines or automation.
+- The admin panel supports pinned-message snapshots, chat data import/export, user export, attachment cleanup, image compression, and release/update checks.
+- The in-app version page shows the current version, release date, developer label, current release notes, and full release history.
 
 ## 一键 VPS 部署
 

@@ -1,12 +1,18 @@
-export const APP_VERSION = "0.6.17";
+export const APP_VERSION = "0.6.18";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理员外观页按品牌与标签页、登录页、聊天室、主题颜色和闪动特效重新分组，桌面端编辑与预览分区更清楚，手机端可按需打开预览。",
+  "外观图片改为在需要更换图片时弹出选择器，可上传新图片或复用已有外观素材，上传后会自动选入草稿。",
+  "主题颜色和闪动特效纳入统一外观草稿，所有改动都需要点击“保存外观”后才会对聊天室生效。"
+] as const;
+
+const RELEASE_0_6_17_NOTES = [
   "普通消息正文和接龙题目会自动识别经文出处，点击后可展开查看内置和合本简体经文。",
-  "聊天顶部通知体检图标去掉圆形底色，只保留小铃铛本身。",
+  "聊天顶部通知体检图标去掉圆形底色，只保留小铃铛本身。"
 ] as const;
 
 const RELEASE_0_6_16_NOTES = [
@@ -136,9 +142,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.17",
+    version: "0.6.18",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.17",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_17_NOTES
   },
   {
     version: "0.6.16",
