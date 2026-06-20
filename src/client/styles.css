@@ -476,8 +476,8 @@ button {
   display: grid;
   place-items: center;
   color: #8a5a00;
-  background: #fff3bf;
-  box-shadow: 0 0 0 1px rgba(138, 90, 0, 0.14);
+  background: transparent;
+  box-shadow: none;
   font-size: 20px;
   line-height: 1;
   animation: bellWiggle 0.82s cubic-bezier(0.36, 0.07, 0.19, 0.97) infinite;
@@ -489,15 +489,15 @@ button {
   height: 38px;
   font-size: 24px;
   color: #7c2d12;
-  background: #ffedd5;
-  box-shadow: 0 0 0 1px rgba(124, 45, 18, 0.18), 0 4px 12px rgba(124, 45, 18, 0.14);
+  background: transparent;
+  box-shadow: none;
   animation-duration: 0.68s;
 }
 
 .notification-nudge.level-sleep {
-  background: #e0f2fe;
+  background: transparent;
   color: #075985;
-  box-shadow: 0 0 0 1px rgba(7, 89, 133, 0.18), 0 4px 12px rgba(7, 89, 133, 0.14);
+  box-shadow: none;
   animation-name: sleepyWiggle;
 }
 

@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.16";
+export const APP_VERSION = "0.6.17";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "普通消息正文和接龙题目会自动识别经文出处，点击后可展开查看内置和合本简体经文。",
+  "聊天顶部通知体检图标去掉圆形底色，只保留小铃铛本身。",
+] as const;
+
+const RELEASE_0_6_16_NOTES = [
   "通知体检标志改为明确的三段变化：🔔 未开启、🔕 拒绝一次、😴 再次拒绝。",
   "通知标志的晃动幅度和频率加大，更容易被不常用聊天室的成员注意到。"
 ] as const;
@@ -131,9 +136,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.16",
+    version: "0.6.17",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.16",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_16_NOTES
   },
   {
     version: "0.6.15",
