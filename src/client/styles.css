@@ -486,46 +486,46 @@ button {
 }
 
 .message-font-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 28;
-  width: 168px;
-  padding: 6px;
+  position: fixed;
+  z-index: 80;
+  width: 248px;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   display: grid;
-  gap: 4px;
+  gap: 10px;
   background: var(--panel);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
 }
 
-.message-font-menu button {
-  min-height: 38px;
-  padding: 7px 9px;
-  border-radius: 6px;
+.message-font-slider-head,
+.message-font-slider-scale {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+}
+
+.message-font-slider-head span {
   color: var(--text);
-  text-align: left;
+  font-size: 13px;
+  font-weight: 700;
 }
 
-.message-font-menu button:hover,
-.message-font-menu button.active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.message-font-menu button.active {
+.message-font-slider-head strong {
   color: var(--accent-dark);
+  font-size: 14px;
   font-weight: 800;
 }
 
-.message-font-menu small {
+.message-font-slider {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.message-font-slider-scale {
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
 .icon-btn:active,

@@ -105,16 +105,19 @@ const showChannels = ref(false);
 const showMembers = ref(false);
 const channelsCollapsed = ref(false);
 const membersCollapsed = ref(false);
-type MessageFontSizeValue = "small" | "standard" | "large" | "extra";
-const messageFontSizeOptions: Array<{ value: MessageFontSizeValue; label: string; detail: string; px: number }> = [
-  { value: "small", label: "小", detail: "14px", px: 14 },
-  { value: "standard", label: "标准", detail: "15px", px: 15 },
-  { value: "large", label: "大", detail: "17px", px: 17 },
-  { value: "extra", label: "特大", detail: "19px", px: 19 }
-];
-const defaultMessageFontSize: MessageFontSizeValue = "standard";
-const messageFontSize = ref<MessageFontSizeValue>(defaultMessageFontSize);
+const minMessageFontSize = 14;
+const maxMessageFontSize = 40;
+const defaultMessageFontSize = 15;
+const legacyMessageFontSizes: Record<string, number> = {
+  small: 14,
+  standard: 15,
+  large: 17,
+  extra: 19
+};
+const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
+const messageFontTrigger = ref<HTMLElement | null>(null);
+const messageFontMenuPosition = ref({ x: 0, y: 0 });
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
@@ -414,6 +417,8 @@ type VoicePayload = {
 onMounted(async () => {
   hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
+  window.addEventListener("resize", positionMessageFontMenu);
+  window.visualViewport?.addEventListener("resize", positionMessageFontMenu);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   await store.bootstrap();
   if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
@@ -444,9 +449,13 @@ watch(
 );
 
 watch(
-  () => `${visiblePinned.value?.id || 0}:${visiblePinned.value?.version || 0}:${visiblePinned.value?.dismissed ? "dismissed" : "open"}:${store.prayerOnly ? "prayers" : "chat"}`,
   () => {
-    pinnedExpanded.value = !!visiblePinned.value && !visiblePinned.value.dismissed;
+    const pinned = !store.prayerOnly && store.pinned ? store.pinned : null;
+    return `${pinned?.id || 0}:${pinned?.version || 0}:${pinned?.dismissed ? "dismissed" : "open"}:${store.prayerOnly ? "prayers" : "chat"}`;
+  },
+  () => {
+    const pinned = !store.prayerOnly && store.pinned ? store.pinned : null;
+    pinnedExpanded.value = !!pinned && !pinned.dismissed;
   },
   { immediate: true }
 );
@@ -492,7 +501,7 @@ watch(
 );
 
 watch(
-  () => topNoticeItems.value.length,
+  () => mentionToasts.value.length + Object.keys(store.typing).length,
   (length) => {
     if (topNoticeIndex.value >= length) topNoticeIndex.value = 0;
     if (topNoticeTimer) {
@@ -520,9 +529,14 @@ watch(
 );
 
 watch(messageFontSize, (value) => {
+  const clamped = clampMessageFontSize(value);
+  if (value !== clamped) {
+    messageFontSize.value = clamped;
+    return;
+  }
   const accountId = store.account?.id;
   if (!accountId) return;
-  localStorage.setItem(messageFontSizeStorageKey(accountId), value);
+  localStorage.setItem(messageFontSizeStorageKey(accountId), String(clamped));
 });
 
 watch(
@@ -537,15 +551,6 @@ watch(
   () => syncChannelEdits()
 );
 
-watch(
-  () => store.appearance,
-  () => {
-    syncLoginAppearanceEdit();
-    applyAppChrome();
-  },
-  { deep: true, immediate: true }
-);
-
 watch(adminTab, (tab) => {
   if (tab === "appearance" && showAdmin.value) void loadAdminAttachments();
   if (tab === "data" && showAdmin.value) loadAdminData();
@@ -554,6 +559,8 @@ watch(adminTab, (tab) => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
+  window.removeEventListener("resize", positionMessageFontMenu);
+  window.visualViewport?.removeEventListener("resize", positionMessageFontMenu);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
@@ -606,7 +613,7 @@ const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wa
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
-  "--message-content-font-size": `${activeMessageFontSize.value.px}px`,
+  "--message-content-font-size": `${messageFontSize.value}px`,
   "--message-flash-bg": activeFlashColor.value,
   "--message-flash-text": readableTextColor(activeFlashColor.value),
   "--message-flash-interval": `${flashEffect.value.intervalSeconds}s`,
@@ -620,6 +627,15 @@ const appearanceStyle = computed(() => ({
   "--login-background-size": loginBackground.value.size,
   "--login-background-repeat": loginBackground.value.repeat
 }));
+
+watch(
+  () => store.appearance,
+  () => {
+    syncLoginAppearanceEdit();
+    applyAppChrome();
+  },
+  { deep: true, immediate: true }
+);
 
 watch(
   () => `${flashEffect.value.colors.join(",")}:${flashEffect.value.intervalSeconds}:${flashEffect.value.transitionMode}`,
@@ -654,7 +670,10 @@ const pinnedSummary = computed(() => {
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join(" ").replace(/\s+/g, " ").trim();
   return labels.length ? labels.join(" · ") : text.slice(0, 42) || "点击查看";
 });
-const activeMessageFontSize = computed(() => messageFontSizeOptions.find((item) => item.value === messageFontSize.value) || messageFontSizeOptions[1]);
+const messageFontMenuStyle = computed(() => ({
+  left: `${messageFontMenuPosition.value.x}px`,
+  top: `${messageFontMenuPosition.value.y}px`
+}));
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
@@ -2377,23 +2396,52 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
   }
 }
 
-function isMessageFontSizeValue(value: string | null): value is MessageFontSizeValue {
-  return !!value && messageFontSizeOptions.some((item) => item.value === value);
+function clampMessageFontSize(value: number) {
+  if (!Number.isFinite(value)) return defaultMessageFontSize;
+  return Math.min(maxMessageFontSize, Math.max(minMessageFontSize, Math.round(value)));
+}
+
+function positionMessageFontMenu() {
+  if (!showMessageFontMenu.value) return;
+  const trigger = messageFontTrigger.value;
+  if (!trigger) return;
+  const rect = trigger.getBoundingClientRect();
+  const width = 248;
+  const height = 116;
+  const gap = 8;
+  const margin = 10;
+  const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
+  const viewportWidth = window.visualViewport?.width || window.innerWidth;
+  const viewportHeight = window.visualViewport?.height || window.innerHeight;
+  const maxX = Math.max(margin, viewportWidth - width - margin);
+  const maxY = Math.max(safeTop + margin, viewportHeight - height - margin);
+  const preferredTop = rect.bottom + gap;
+  const fallbackTop = rect.top - height - gap;
+  const y = preferredTop + height <= viewportHeight - margin ? preferredTop : fallbackTop;
+  messageFontMenuPosition.value = {
+    x: Math.min(Math.max(rect.right - width, margin), maxX),
+    y: Math.min(Math.max(y, safeTop + margin), maxY)
+  };
+}
+
+async function toggleMessageFontMenu() {
+  showMessageFontMenu.value = !showMessageFontMenu.value;
+  if (showMessageFontMenu.value) {
+    await nextTick();
+    positionMessageFontMenu();
+  }
 }
 
 function messageFontSizeStorageKey(accountId: number) {
   return `team-chat-message-font-size:${accountId}`;
 }
 
-function loadMessageFontSizePreference(accountId?: number | null): MessageFontSizeValue {
+function loadMessageFontSizePreference(accountId?: number | null) {
   if (!accountId) return defaultMessageFontSize;
   const saved = localStorage.getItem(messageFontSizeStorageKey(accountId));
-  return isMessageFontSizeValue(saved) ? saved : defaultMessageFontSize;
-}
-
-function selectMessageFontSize(value: MessageFontSizeValue) {
-  messageFontSize.value = value;
-  showMessageFontMenu.value = false;
+  if (!saved) return defaultMessageFontSize;
+  if (saved in legacyMessageFontSizes) return legacyMessageFontSizes[saved];
+  return clampMessageFontSize(Number(saved));
 }
 
 function toggleMessageSelectionMode() {
@@ -3906,29 +3954,42 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
+            ref="messageFontTrigger"
             class="icon-btn message-font-trigger"
             :class="{ active: showMessageFontMenu }"
             type="button"
-            aria-label="消息字体大小"
-            aria-haspopup="menu"
+            :aria-label="`消息字体大小，当前 ${messageFontSize} 号`"
+            aria-haspopup="dialog"
             :aria-expanded="showMessageFontMenu"
-            @click.stop="showMessageFontMenu = !showMessageFontMenu"
+            @click.stop="toggleMessageFontMenu"
           >
             <span class="message-font-glyph" aria-hidden="true">字</span>
           </button>
-          <section v-if="showMessageFontMenu" class="message-font-menu" role="menu" aria-label="消息字体大小" @click.stop>
-            <button
-              v-for="option in messageFontSizeOptions"
-              :key="option.value"
-              type="button"
-              :class="{ active: option.value === messageFontSize }"
-              role="menuitemradio"
-              :aria-checked="option.value === messageFontSize"
-              @click="selectMessageFontSize(option.value)"
-            >
-              <span>{{ option.label }}</span>
-              <small>{{ option.detail }}</small>
-            </button>
+          <section
+            v-if="showMessageFontMenu"
+            class="message-font-menu"
+            :style="messageFontMenuStyle"
+            role="dialog"
+            aria-label="消息字体大小"
+            @click.stop
+          >
+            <div class="message-font-slider-head">
+              <span>字体大小</span>
+              <strong>{{ messageFontSize }}号</strong>
+            </div>
+            <input
+              v-model.number="messageFontSize"
+              class="message-font-slider"
+              type="range"
+              :min="minMessageFontSize"
+              :max="maxMessageFontSize"
+              step="1"
+              aria-label="消息字体大小"
+            />
+            <div class="message-font-slider-scale" aria-hidden="true">
+              <span>{{ minMessageFontSize }}</span>
+              <span>{{ maxMessageFontSize }}</span>
+            </div>
           </section>
         </div>
         <button class="icon-btn" @click="membersCollapsed = false; showMembers = !showMembers" aria-label="成员">
