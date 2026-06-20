@@ -853,7 +853,9 @@ button {
 
 .pin-card-body .pinned-image {
   max-width: min(320px, 72vw);
-  max-height: 320px;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
 }
 
 .pinned-view-shell {
@@ -1626,7 +1628,9 @@ button {
 
 .chat-image {
   max-width: min(260px, 62vw);
-  max-height: 360px;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
   display: block;
   border-radius: 6px;
   -webkit-touch-callout: none;
@@ -1637,7 +1641,7 @@ button {
   padding: 0;
   color: inherit;
   border-radius: 6px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .file-card {
@@ -3438,7 +3442,9 @@ button {
 
 .pinned-editor-block > img {
   max-width: min(320px, 100%);
-  max-height: 260px;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
   border-radius: 8px;
   display: block;
 }
