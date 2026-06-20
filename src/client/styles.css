@@ -728,39 +728,51 @@ button {
   text-align: left;
 }
 
+.pin-card-open-button {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  text-align: left;
+  border-radius: 8px;
+}
+
+.pin-card-open-button:hover .pin-toggle {
+  background: rgba(122, 75, 0, 0.08);
+}
+
 .pin-toggle {
   width: 28px;
   height: 28px;
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
   color: #7a4b00;
   border-radius: 999px;
 }
 
-.pin-toggle:hover {
-  background: rgba(122, 75, 0, 0.08);
-}
-
-.pin-card-head > span {
+.pin-card-copy {
   min-width: 0;
   flex: 1;
   display: grid;
   gap: 2px;
 }
 
-.pin-card-head strong,
-.pin-card-head small {
+.pin-card-copy strong,
+.pin-card-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pin-card-head strong {
+.pin-card-copy strong {
   color: #5f3b05;
   font-size: 14px;
 }
 
-.pin-card-head small {
+.pin-card-copy small {
   color: #8a6a2d;
   font-size: 12px;
 }

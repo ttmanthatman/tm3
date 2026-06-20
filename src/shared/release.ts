@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.8";
+export const APP_VERSION = "0.6.9";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "已看过的置顶消息现在可以重新点开，标题、摘要和箭头整条区域都会展开浮层。",
+  "保留未看过置顶默认展开的逻辑，点“朕知道了”后仍会按账号记住当前版本已读。"
+] as const;
+
+const RELEASE_0_6_8_NOTES = [
   "已登录设备会在启动时自动换取新的 30 天 token，并同步顺延服务端会话。",
   "旧版 7 天 token 只要尚未过期，就会平滑升级到 30 天有效期，无需重新登录。"
 ] as const;
@@ -89,9 +94,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.8",
+    version: "0.6.9",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.8",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_8_NOTES
   },
   {
     version: "0.6.7",

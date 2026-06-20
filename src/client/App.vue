@@ -3897,14 +3897,16 @@ async function toggleVirtual(character: any) {
 
       <section v-if="visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
         <div class="pin-card-head">
-          <button class="pin-toggle" @click.stop="togglePinned" :aria-label="pinnedExpanded ? '收起置顶' : '展开置顶'" :aria-expanded="pinnedExpanded"><Pin :size="16" /></button>
-          <span>
-            <strong>{{ pinnedText }}</strong>
-            <small>{{ pinnedSummary }}</small>
-          </span>
+          <button type="button" class="pin-card-open-button" @click="togglePinned" :aria-label="pinnedExpanded ? '收起置顶' : '展开置顶'" :aria-expanded="pinnedExpanded">
+            <span class="pin-toggle" aria-hidden="true"><Pin :size="16" /></span>
+            <span class="pin-card-copy">
+              <strong>{{ pinnedText }}</strong>
+              <small>{{ pinnedSummary }}</small>
+            </span>
+            <ChevronUp v-if="pinnedExpanded" :size="17" />
+            <ChevronDown v-else :size="17" />
+          </button>
           <button v-if="canPinCurrentChannel" class="mini-btn secondary" @click.stop="openPinnedEditor">编辑</button>
-          <ChevronUp v-if="pinnedExpanded" :size="17" />
-          <ChevronDown v-else :size="17" />
         </div>
       </section>
 
