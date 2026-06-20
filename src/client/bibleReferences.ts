@@ -337,7 +337,9 @@ const sortedAliases = bibleBookAliases
 const colonStyle = String.raw`\d+\s*[:：]\s*\d+(?:${rangeToken}(?:\d+\s*[:：]\s*)?\d+)?`;
 const chapterStyle = String.raw`第?\s*\d+\s*章(?:\s*第?\s*\d+(?:${rangeToken}\d+)?\s*节?)?`;
 const wholeChapterStyle = String.raw`\d+`;
-const referencePattern = new RegExp(String.raw`(^|[^A-Za-z0-9])((?:${aliasPattern})\s*(?:${colonStyle}|${chapterStyle}|${wholeChapterStyle}))(?=$|[^A-Za-z0-9])`, "giu");
+const inheritedSegment = String.raw`(?:\d+\s*[:：]\s*)?\d+(?:${rangeToken}(?:\d+\s*[:：]\s*)?\d+)?`;
+const inheritedContinuation = String.raw`(?:\s*(?:,|，|、|;|；|｜|\||\\)\s*${inheritedSegment})*`;
+const referencePattern = new RegExp(String.raw`(^|[^A-Za-z0-9])((?:${aliasPattern})\s*(?:${colonStyle}|${chapterStyle}|${wholeChapterStyle})${inheritedContinuation})(?=$|[^A-Za-z0-9])`, "giu");
 
 export type BibleReferenceMatch = {
   reference: string;

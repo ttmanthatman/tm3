@@ -1573,8 +1573,7 @@ button {
 }
 
 .inline-bible-reference {
-  position: relative;
-  display: inline-block;
+  display: inline;
   vertical-align: baseline;
   white-space: normal;
 }
@@ -1596,38 +1595,36 @@ button {
 }
 
 .inline-bible-popover {
-  position: absolute;
-  left: 0;
-  top: calc(100% + 6px);
-  z-index: 12;
-  width: min(360px, calc(100vw - 36px));
+  width: min(420px, 100%);
+  max-width: 100%;
+  max-height: min(340px, 48vh);
+  margin: 7px 0;
   border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line));
   border-radius: 8px;
-  padding: 9px 10px;
+  padding: 10px 11px;
   display: grid;
   gap: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   color: var(--text);
   background: color-mix(in srgb, var(--panel) 94%, #ffffff 6%);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
-  font-size: 13px;
+  box-sizing: border-box;
+  font-size: var(--message-content-font-size);
   font-weight: 400;
-  line-height: 1.5;
+  line-height: 1.55;
   white-space: normal;
-}
-
-.mine .inline-bible-popover,
-.message-row.mine .inline-bible-popover {
-  left: auto;
-  right: 0;
 }
 
 .inline-bible-popover small {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .inline-bible-body,
 .formatted-bible-text {
+  font-size: var(--message-content-font-size);
+  line-height: 1.55;
   white-space: pre-wrap;
 }
 

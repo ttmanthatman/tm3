@@ -1,10 +1,18 @@
-export const APP_VERSION = "0.6.18";
+export const APP_VERSION = "0.6.19";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "经文出处改为在消息正文原位置识别，点击后在消息气泡内展开原文，不再追加到消息末尾。",
+  "经文弹出框正文使用与消息正文一致的字号，长经文会在框内滚动，靠近聊天区左右边缘时不再跑出界面。",
+  "经文识别支持同章续节写法，例如“创4:17, 22”会合并识别为同一组经文出处。",
+  "用户设置新增“经文”页，每个账号可单独选择输出格式、引用标签、组合经文显示和引号样式；默认按连续正文显示。",
+  "经文识别与格式选项参考完整仓库地址：https://github.com/maxiaovo/Bible-Verse-Replacer"
+] as const;
+
+const RELEASE_0_6_18_NOTES = [
   "管理员外观页按品牌与标签页、登录页、聊天室、主题颜色和闪动特效重新分组，桌面端编辑与预览分区更清楚，手机端可按需打开预览。",
   "外观图片改为在需要更换图片时弹出选择器，可上传新图片或复用已有外观素材，上传后会自动选入草稿。",
   "主题颜色和闪动特效纳入统一外观草稿，所有改动都需要点击“保存外观”后才会对聊天室生效。"
@@ -142,9 +150,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.18",
+    version: "0.6.19",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.18",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_18_NOTES
   },
   {
     version: "0.6.17",
