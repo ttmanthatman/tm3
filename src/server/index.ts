@@ -1332,6 +1332,10 @@ function refreshAccountConnections(account: AccountWithActor) {
   }
 }
 
+function sessionExpiresAt(now = new Date()) {
+  return new Date(now.getTime() + SESSION_TTL_MS);
+}
+
 async function createAuthSession(accountId: number, request: FastifyRequest, deviceNameOverride?: string) {
   const now = new Date();
   const deviceKind = detectDeviceKind(String(request.headers["user-agent"] || ""));
@@ -1355,7 +1359,7 @@ async function createAuthSession(accountId: number, request: FastifyRequest, dev
         userAgent: String(request.headers["user-agent"] || "").slice(0, 1000),
         ipAddress: clientIp(request),
         lastSeenAt: now,
-        expiresAt: new Date(now.getTime() + SESSION_TTL_MS)
+        expiresAt: sessionExpiresAt(now)
       }
     });
   });
@@ -1587,8 +1591,11 @@ app.post("/api/auth/register", async (request, reply) => {
 
 app.get("/api/auth/me", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
-  return { account: authDto(account) };
+  const [account, session] = await Promise.all([
+    prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } }),
+    prisma.accountSession.update({ where: { id: auth.sessionId }, data: { expiresAt: sessionExpiresAt(), lastSeenAt: new Date() }, select: { id: true } })
+  ]);
+  return { account: authDto(account), token: signToken(account, session) };
 });
 
 app.post("/api/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {

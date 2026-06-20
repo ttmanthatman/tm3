@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, MessageDTO, PinnedDTO } from "@shared/types";
-import { api, clearToken, getToken } from "./api";
+import { api, clearToken, getToken, setToken } from "./api";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
@@ -167,7 +167,8 @@ export const useChatStore = defineStore("chat", {
       if (!getToken()) return false;
       try {
         const channelId = preferredChannelId ?? this.currentChannelId;
-        const me = await api<{ account: AccountDTO }>("/api/auth/me");
+        const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
+        if (me.token) setToken(me.token);
         this.account = me.account;
         await this.loadChannels(channelId);
         return true;

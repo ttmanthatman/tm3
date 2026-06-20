@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.7";
+export const APP_VERSION = "0.6.8";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "已登录设备会在启动时自动换取新的 30 天 token，并同步顺延服务端会话。",
+  "旧版 7 天 token 只要尚未过期，就会平滑升级到 30 天有效期，无需重新登录。"
+] as const;
+
+const RELEASE_0_6_7_NOTES = [
   "登录会话有效期延长到 30 天，关闭浏览器后再打开仍保持登录。",
   "部署或服务器短暂重启时，客户端不会因为实时连接临时失败而清除登录状态。",
   "实时消息连接会在发消息、输入状态和加入频道前重新验证当前账号身份，防止更新或权限变更期间沿用旧身份。",
@@ -84,9 +89,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.7",
+    version: "0.6.8",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.7",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_7_NOTES
   },
   {
     version: "0.6.6",
