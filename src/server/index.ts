@@ -1749,6 +1749,44 @@ app.delete("/api/push-subscriptions", { preHandler: requireAuth }, async (reques
   return { success: true };
 });
 
+app.post("/api/notifications/test", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  if (!pushReady) return reply.code(400).send({ success: false, message: "服务器推送未就绪" });
+  const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
+  const subscriptions = await prisma.pushSubscription.findMany({
+    where: body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint } : { accountId: auth.accountId }
+  });
+  if (!subscriptions.length) return reply.code(404).send({ success: false, message: "当前设备还没有通知订阅" });
+  await Promise.all(
+    subscriptions.map(async (subscription) => {
+      try {
+        await webPush.sendNotification(
+          {
+            endpoint: subscription.endpoint,
+            keys: { p256dh: subscription.keysP256dh, auth: subscription.keysAuth }
+          },
+          JSON.stringify({
+            title: "Team Chat 测试通知",
+            body: "通知已经可以用啦。以后 @ 和重要公告会从这里提醒你。",
+            url: "/",
+            tag: `notification-test-${auth.accountId}`,
+            channelId: 0
+          })
+        );
+      } catch (error) {
+        const statusCode = (error as { statusCode?: number }).statusCode;
+        if (statusCode === 404 || statusCode === 410) {
+          await prisma.pushSubscription.deleteMany({ where: { endpoint: subscription.endpoint } });
+        } else {
+          app.log.warn({ error }, "test push notification failed");
+          throw error;
+        }
+      }
+    })
+  );
+  return { success: true, sent: subscriptions.length };
+});
+
 app.patch("/api/notifications/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);

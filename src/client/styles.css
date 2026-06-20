@@ -449,11 +449,49 @@ button {
   text-align: center;
 }
 
+.chat-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
 .chat-title strong,
 .channel-row b {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chat-title-line strong {
+  min-width: 0;
+}
+
+.notification-nudge {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #8a5a00;
+  background: #fff3bf;
+  box-shadow: 0 0 0 1px rgba(138, 90, 0, 0.14);
+  animation: bellWiggle 1.8s ease-in-out infinite;
+}
+
+.notification-nudge.level-large {
+  width: 34px;
+  height: 34px;
+  color: #7c2d12;
+  background: #ffedd5;
+  box-shadow: 0 0 0 1px rgba(124, 45, 18, 0.18), 0 4px 12px rgba(124, 45, 18, 0.14);
+  animation-duration: 1.25s;
+}
+
+.notification-nudge:active {
+  transform: translateY(1px);
 }
 
 .chat-title small,
@@ -3204,11 +3242,27 @@ button {
   grid-template-columns: minmax(0, 1fr) auto;
 }
 
+.notification-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .notification-card > div,
 .notification-channel-row > div {
   min-width: 0;
   display: grid;
   gap: 3px;
+}
+
+.notification-card > .notification-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .notification-card strong,
@@ -3239,6 +3293,64 @@ button {
 .settings-note {
   margin: 0;
   line-height: 1.45;
+}
+
+.notification-check-modal {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.notification-check-body {
+  padding: 18px;
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: center;
+}
+
+.notification-check-bell {
+  width: 52px;
+  height: 52px;
+  grid-row: span 2;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #8a5a00;
+  background: #fff3bf;
+  box-shadow: inset 0 0 0 1px rgba(138, 90, 0, 0.12);
+  animation: bellWiggle 1.8s ease-in-out infinite;
+}
+
+.notification-check-bell.level-large {
+  color: #7c2d12;
+  background: #ffedd5;
+  box-shadow: inset 0 0 0 1px rgba(124, 45, 18, 0.16), 0 8px 20px rgba(124, 45, 18, 0.12);
+  animation-duration: 1.25s;
+}
+
+.notification-check-body strong,
+.notification-check-body small {
+  display: block;
+}
+
+.notification-check-body strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.notification-check-body small,
+.notification-check-body p {
+  color: var(--muted);
+}
+
+.notification-check-body p {
+  grid-column: 1 / -1;
+  margin: 0;
+  line-height: 1.55;
+}
+
+.notification-check-actions,
+.notification-check-body .settings-note {
+  grid-column: 1 / -1;
 }
 
 .check-cell {
@@ -3901,6 +4013,26 @@ button {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes bellWiggle {
+  0%,
+  78%,
+  100% {
+    transform: rotate(0);
+  }
+  82% {
+    transform: rotate(-12deg);
+  }
+  86% {
+    transform: rotate(10deg);
+  }
+  90% {
+    transform: rotate(-7deg);
+  }
+  94% {
+    transform: rotate(4deg);
   }
 }
 

@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.14";
+export const APP_VERSION = "0.6.15";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天顶部新增通知体检小铃铛，未开启本设备通知时会轻轻晃动提醒，拒绝后会变成更大的委屈铃铛。",
+  "点击小铃铛可查看当前通知权限和设备订阅状态，并从体检面板直接开启通知。",
+  "通知设置和体检面板新增测试通知，可通过服务器向当前设备发送一条真实 Web Push 测试。"
+] as const;
+
+const RELEASE_0_6_14_NOTES = [
   "发送图片默认会在后台压缩为更小的 WebP 文件，保留原分辨率；勾选“原图”时才上传原始文件。",
   "管理员附件管理新增图片“压缩”操作，可指定旧图片压缩替换，并同步更新聊天消息和置顶消息引用。",
   "置顶图片文件会带正确的图片响应类型，减少大图加载不完整的问题。"
@@ -120,9 +126,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.14",
+    version: "0.6.15",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.14",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_14_NOTES
   },
   {
     version: "0.6.13",

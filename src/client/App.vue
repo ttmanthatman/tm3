@@ -180,6 +180,8 @@ const notificationPublicKey = ref("");
 const notificationPermission = ref(typeof Notification === "undefined" ? "default" : Notification.permission);
 const notificationEnabled = ref(false);
 const notificationBusy = ref(false);
+const notificationPromptOpen = ref(false);
+const notificationPermissionAttempts = ref(0);
 const mutedChannelIds = ref<Set<number>>(new Set());
 const aiSettings = ref<AiSettingsDTO | null>(null);
 const aiSettingsEdit = ref({
@@ -521,6 +523,8 @@ watch(
     acknowledgedMentionIds.value = loadAcknowledgedMentionIds();
     topNoticeIndex.value = 0;
     messageFontSize.value = loadMessageFontSizePreference(accountId);
+    notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
+    if (accountId) void loadNotificationSettings();
   },
   { immediate: true }
 );
@@ -714,6 +718,19 @@ const notificationPermissionLabel = computed(() => {
   if (notificationPermission.value === "granted") return "已允许";
   if (notificationPermission.value === "denied") return "已拒绝";
   return "未开启";
+});
+const notificationAttentionVisible = computed(() => {
+  if (!store.account) return false;
+  if (!("Notification" in window || "serviceWorker" in navigator)) return false;
+  return !notificationEnabled.value;
+});
+const notificationNudgeLevel = computed(() => (notificationPermission.value === "denied" || notificationPermissionAttempts.value > 0 ? "large" : "normal"));
+const notificationPromptHint = computed(() => {
+  if (!notificationSupported.value) return "当前浏览器不支持网页推送；iPhone/iPad 通常需要先把聊天室添加到主屏幕。";
+  if (notificationPermission.value === "denied") return "你之前拒绝了通知，需要在浏览器或系统设置里把本网站通知改为允许。";
+  if (notificationEnabled.value) return "本设备已经准备好接收 @ 和重要公告。";
+  if (notificationPermissionAttempts.value > 0) return "小铃铛有点委屈，但还在等你点“开启通知”。";
+  return "开启后，即使没有停留在聊天室页面，也能收到 @ 和重要公告提醒。";
 });
 const slashCommandToken = computed(() => slashCommandTokenAtCursor(input.value, composerCaret.value));
 const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
@@ -1202,6 +1219,21 @@ async function currentPushSubscription() {
   return registration.pushManager.getSubscription();
 }
 
+function notificationPermissionAttemptKey(accountId?: number) {
+  return `team-chat-notification-attempts-${accountId || "guest"}`;
+}
+
+function loadNotificationPermissionAttempts(accountId?: number) {
+  return Number(localStorage.getItem(notificationPermissionAttemptKey(accountId)) || 0);
+}
+
+function recordNotificationPermissionAttempt() {
+  const accountId = store.account?.id;
+  const next = Math.min(2, notificationPermissionAttempts.value + 1);
+  notificationPermissionAttempts.value = next;
+  localStorage.setItem(notificationPermissionAttemptKey(accountId), String(next));
+}
+
 async function loadNotificationSettings() {
   if (!store.account) return;
   notificationMsg.value = "";
@@ -1218,10 +1250,20 @@ async function loadNotificationSettings() {
   notificationEnabled.value = !!subscription && notificationPermission.value === "granted";
 }
 
+async function openNotificationPrompt() {
+  notificationPromptOpen.value = true;
+  await loadNotificationSettings();
+}
+
 async function enableNotifications() {
   notificationMsg.value = "";
   if (!notificationSupported.value) {
     notificationMsg.value = "当前浏览器不支持通知";
+    return;
+  }
+  if (Notification.permission === "denied") {
+    notificationPermission.value = "denied";
+    notificationMsg.value = "浏览器已经拒绝通知，请在地址栏或系统设置里重新允许。";
     return;
   }
   notificationBusy.value = true;
@@ -1231,7 +1273,8 @@ async function enableNotifications() {
     const permission = await Notification.requestPermission();
     notificationPermission.value = permission;
     if (permission !== "granted") {
-      notificationMsg.value = "浏览器未允许通知";
+      recordNotificationPermissionAttempt();
+      notificationMsg.value = permission === "denied" ? "浏览器未允许通知，小铃铛有点委屈。" : "这次先不打扰你，小铃铛还会在这里。";
       return;
     }
     const registration = await navigator.serviceWorker.ready;
@@ -1244,9 +1287,30 @@ async function enableNotifications() {
       }));
     await api("/api/push-subscriptions", { method: "POST", body: JSON.stringify(subscription.toJSON()) });
     notificationEnabled.value = true;
+    notificationPermissionAttempts.value = 0;
+    localStorage.setItem(notificationPermissionAttemptKey(store.account?.id), "0");
     notificationMsg.value = "已开启本设备通知";
   } catch (error) {
     notificationMsg.value = error instanceof Error ? error.message : "开启通知失败";
+  } finally {
+    notificationBusy.value = false;
+  }
+}
+
+async function sendTestNotification() {
+  notificationMsg.value = "";
+  if (!notificationEnabled.value) {
+    notificationMsg.value = "请先开启本设备通知，再发送测试。";
+    return;
+  }
+  notificationBusy.value = true;
+  try {
+    const subscription = await currentPushSubscription();
+    if (!subscription) throw new Error("当前设备还没有通知订阅");
+    await api("/api/notifications/test", { method: "POST", body: JSON.stringify({ endpoint: subscription.endpoint }) });
+    notificationMsg.value = "测试通知已发送，请看系统通知。";
+  } catch (error) {
+    notificationMsg.value = error instanceof Error ? error.message : "测试通知发送失败";
   } finally {
     notificationBusy.value = false;
   }
@@ -3958,7 +4022,19 @@ async function toggleVirtual(character: any) {
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
-          <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+          <div class="chat-title-line">
+            <button
+              v-if="notificationAttentionVisible"
+              class="notification-nudge"
+              :class="`level-${notificationNudgeLevel}`"
+              type="button"
+              aria-label="通知体检"
+              @click="openNotificationPrompt"
+            >
+              <Bell :size="notificationNudgeLevel === 'large' ? 22 : 18" />
+            </button>
+            <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+          </div>
           <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
         </div>
         <div class="message-font-control" data-message-font-menu>
@@ -4606,6 +4682,29 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
+    <section v-if="notificationPromptOpen" class="modal-shell" @click.self="notificationPromptOpen = false">
+      <div class="small-modal notification-check-modal">
+        <header class="modal-head">
+          <strong>通知体检</strong>
+          <button class="icon-btn" @click="notificationPromptOpen = false" aria-label="关闭通知体检"><X :size="18" /></button>
+        </header>
+        <div class="notification-check-body">
+          <span class="notification-check-bell" :class="`level-${notificationNudgeLevel}`"><Bell :size="30" /></span>
+          <div>
+            <strong>{{ notificationEnabled ? "通知已经开启" : "还没有开启通知" }}</strong>
+            <small>权限：{{ notificationPermissionLabel }}</small>
+          </div>
+          <p>{{ notificationPromptHint }}</p>
+          <div class="notification-check-actions">
+            <button v-if="notificationEnabled" class="primary-btn" :disabled="notificationBusy" @click="sendTestNotification"><Bell :size="16" />发送测试通知</button>
+            <button v-else class="primary-btn" :disabled="notificationBusy || !notificationSupported || notificationPermission === 'denied'" @click="enableNotifications"><Bell :size="16" />开启通知</button>
+            <button class="mini-btn secondary" :disabled="notificationBusy" @click="openSettings('notifications'); notificationPromptOpen = false">更多设置</button>
+          </div>
+          <p v-if="notificationMsg" class="settings-note">{{ notificationMsg }}</p>
+        </div>
+      </div>
+    </section>
+
     <section v-if="showSettings" class="modal-shell">
       <div class="settings-modal">
         <header class="modal-head">
@@ -4656,7 +4755,10 @@ async function toggleVirtual(character: any) {
                 <strong>{{ notificationEnabled ? "已开启" : "未开启" }}</strong>
                 <small>权限：{{ notificationPermissionLabel }}</small>
               </div>
-              <button v-if="notificationEnabled" class="mini-btn secondary" :disabled="notificationBusy" @click="disableNotifications"><BellOff :size="15" />关闭</button>
+              <div v-if="notificationEnabled" class="notification-card-actions">
+                <button class="mini-btn" :disabled="notificationBusy" @click="sendTestNotification"><Bell :size="15" />测试</button>
+                <button class="mini-btn secondary" :disabled="notificationBusy" @click="disableNotifications"><BellOff :size="15" />关闭</button>
+              </div>
               <button v-else class="primary-btn" :disabled="notificationBusy || !notificationSupported" @click="enableNotifications"><Bell :size="16" />开启</button>
             </div>
             <label>频道通知</label>
