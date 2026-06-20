@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.10";
+export const APP_VERSION = "0.6.11";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "置顶消息里的图片改为按正文宽度完整显示，不再按固定高度裁剪。",
+  "修正移动端置顶浮层正文左右边距，让正文和消息框对齐。"
+] as const;
+
+const RELEASE_0_6_10_NOTES = [
   "聊天顶部新增“字”按钮，每个账号可单独选择消息字体大小。",
   "字体大小只作用于普通消息正文、代祷/接龙正文和置顶正文，不影响其它界面控件。"
 ] as const;
@@ -99,9 +104,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.10",
+    version: "0.6.11",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.10",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_10_NOTES
   },
   {
     version: "0.6.9",

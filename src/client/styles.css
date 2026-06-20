@@ -930,8 +930,15 @@ button {
 }
 
 .pinned-view-body .pinned-image {
+  width: 100%;
   max-width: 100%;
-  max-height: min(420px, 52vh);
+  height: auto;
+  max-height: none;
+  object-fit: contain;
+}
+
+.pinned-view-body .pinned-image-button {
+  width: 100%;
 }
 
 .pinned-view-actions {
@@ -4036,6 +4043,18 @@ button {
 
   .pin-card-body {
     padding: 0 10px 9px 34px;
+  }
+
+  .pinned-view-head,
+  .pinned-view-body,
+  .pinned-view-actions {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .pinned-view-body {
+    padding-top: 10px;
+    padding-bottom: 10px;
   }
 
   .composer-drawer {
