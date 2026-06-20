@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.12";
+export const APP_VERSION = "0.6.13";
 
 export const RELEASE_DATE = "2026-06-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "消息字体大小按钮改为原地“小 / 大”两键调整，不再弹出滑杆浮层。",
+  "点开字体调整后，点页面其他位置会自动收回并恢复“字”按钮。"
+] as const;
+
+const RELEASE_0_6_12_NOTES = [
   "消息字体大小按钮改为滑杆调节，支持从 14 号到 40 号实时调整。",
   "字体滑杆以独立浮层显示，不再被聊天消息区或输入框遮住。"
 ] as const;
@@ -109,9 +114,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.12",
+    version: "0.6.13",
     date: "2026-06-20",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.12",
+    date: "2026-06-20",
+    notes: RELEASE_0_6_12_NOTES
   },
   {
     version: "0.6.11",

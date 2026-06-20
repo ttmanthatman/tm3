@@ -485,47 +485,32 @@ button {
   line-height: 1;
 }
 
-.message-font-menu {
-  position: fixed;
-  z-index: 80;
-  width: 248px;
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  display: grid;
-  gap: 10px;
-  background: var(--panel);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.16);
-}
-
-.message-font-slider-head,
-.message-font-slider-scale {
+.message-font-stepper {
+  min-height: 36px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 4px;
 }
 
-.message-font-slider-head span {
+.message-font-step-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
   color: var(--text);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.message-font-slider-head strong {
-  color: var(--accent-dark);
   font-size: 14px;
   font-weight: 800;
 }
 
-.message-font-slider {
-  width: 100%;
-  accent-color: var(--accent);
+.message-font-step-btn:disabled {
+  opacity: 0.45;
 }
 
-.message-font-slider-scale {
-  color: var(--muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+.message-font-step-btn:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .icon-btn:active,

@@ -116,8 +116,6 @@ const legacyMessageFontSizes: Record<string, number> = {
 };
 const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
-const messageFontTrigger = ref<HTMLElement | null>(null);
-const messageFontMenuPosition = ref({ x: 0, y: 0 });
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
@@ -417,8 +415,6 @@ type VoicePayload = {
 onMounted(async () => {
   hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
-  window.addEventListener("resize", positionMessageFontMenu);
-  window.visualViewport?.addEventListener("resize", positionMessageFontMenu);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   await store.bootstrap();
   if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
@@ -559,8 +555,6 @@ watch(adminTab, (tab) => {
 
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
-  window.removeEventListener("resize", positionMessageFontMenu);
-  window.visualViewport?.removeEventListener("resize", positionMessageFontMenu);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
@@ -670,10 +664,6 @@ const pinnedSummary = computed(() => {
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join(" ").replace(/\s+/g, " ").trim();
   return labels.length ? labels.join(" · ") : text.slice(0, 42) || "点击查看";
 });
-const messageFontMenuStyle = computed(() => ({
-  left: `${messageFontMenuPosition.value.x}px`,
-  top: `${messageFontMenuPosition.value.y}px`
-}));
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
@@ -2401,35 +2391,12 @@ function clampMessageFontSize(value: number) {
   return Math.min(maxMessageFontSize, Math.max(minMessageFontSize, Math.round(value)));
 }
 
-function positionMessageFontMenu() {
-  if (!showMessageFontMenu.value) return;
-  const trigger = messageFontTrigger.value;
-  if (!trigger) return;
-  const rect = trigger.getBoundingClientRect();
-  const width = 248;
-  const height = 116;
-  const gap = 8;
-  const margin = 10;
-  const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
-  const viewportWidth = window.visualViewport?.width || window.innerWidth;
-  const viewportHeight = window.visualViewport?.height || window.innerHeight;
-  const maxX = Math.max(margin, viewportWidth - width - margin);
-  const maxY = Math.max(safeTop + margin, viewportHeight - height - margin);
-  const preferredTop = rect.bottom + gap;
-  const fallbackTop = rect.top - height - gap;
-  const y = preferredTop + height <= viewportHeight - margin ? preferredTop : fallbackTop;
-  messageFontMenuPosition.value = {
-    x: Math.min(Math.max(rect.right - width, margin), maxX),
-    y: Math.min(Math.max(y, safeTop + margin), maxY)
-  };
+function toggleMessageFontMenu() {
+  showMessageFontMenu.value = !showMessageFontMenu.value;
 }
 
-async function toggleMessageFontMenu() {
-  showMessageFontMenu.value = !showMessageFontMenu.value;
-  if (showMessageFontMenu.value) {
-    await nextTick();
-    positionMessageFontMenu();
-  }
+function adjustMessageFontSize(delta: number) {
+  messageFontSize.value = clampMessageFontSize(messageFontSize.value + delta);
 }
 
 function messageFontSizeStorageKey(accountId: number) {
@@ -3954,43 +3921,19 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
-            ref="messageFontTrigger"
+            v-if="!showMessageFontMenu"
             class="icon-btn message-font-trigger"
-            :class="{ active: showMessageFontMenu }"
             type="button"
             :aria-label="`消息字体大小，当前 ${messageFontSize} 号`"
-            aria-haspopup="dialog"
-            :aria-expanded="showMessageFontMenu"
+            aria-expanded="false"
             @click.stop="toggleMessageFontMenu"
           >
             <span class="message-font-glyph" aria-hidden="true">字</span>
           </button>
-          <section
-            v-if="showMessageFontMenu"
-            class="message-font-menu"
-            :style="messageFontMenuStyle"
-            role="dialog"
-            aria-label="消息字体大小"
-            @click.stop
-          >
-            <div class="message-font-slider-head">
-              <span>字体大小</span>
-              <strong>{{ messageFontSize }}号</strong>
-            </div>
-            <input
-              v-model.number="messageFontSize"
-              class="message-font-slider"
-              type="range"
-              :min="minMessageFontSize"
-              :max="maxMessageFontSize"
-              step="1"
-              aria-label="消息字体大小"
-            />
-            <div class="message-font-slider-scale" aria-hidden="true">
-              <span>{{ minMessageFontSize }}</span>
-              <span>{{ maxMessageFontSize }}</span>
-            </div>
-          </section>
+          <div v-else class="message-font-stepper" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`" @click.stop>
+            <button class="message-font-step-btn" type="button" :disabled="messageFontSize <= minMessageFontSize" @click="adjustMessageFontSize(-1)">小</button>
+            <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
+          </div>
         </div>
         <button class="icon-btn" @click="membersCollapsed = false; showMembers = !showMembers" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
