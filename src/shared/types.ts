@@ -105,9 +105,31 @@ export interface AdminAttachmentDTO {
 export interface PinnedDTO {
   id: number;
   kind: "notice" | "message";
+  title?: string | null;
   content?: string | null;
+  body?: PinnedBodyDTO | null;
   messageId?: number | null;
   message?: MessageDTO | null;
+  version: number;
+  dismissed?: boolean;
+}
+
+export type PinnedContentBlockDTO =
+  | {
+      id: string;
+      type: "text";
+      text: string;
+    }
+  | {
+      id: string;
+      type: "image" | "file";
+      fileName: string;
+      filePath: string;
+      fileSize?: number | null;
+    };
+
+export interface PinnedBodyDTO {
+  blocks: PinnedContentBlockDTO[];
 }
 
 export interface ChannelDTO {
@@ -119,6 +141,7 @@ export interface ChannelDTO {
   isDefault: boolean;
   directKey?: string | null;
   canManage?: boolean;
+  canPin?: boolean;
   memberCount: number;
   pinned?: PinnedDTO | null;
 }
@@ -129,6 +152,7 @@ export interface AccountDTO {
   displayName: string;
   avatarPath?: string | null;
   isAdmin: boolean;
+  canPinMessages: boolean;
   actorId: number;
   theme: string;
 }

@@ -67,6 +67,8 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
+  PinnedBodyDTO,
+  PinnedContentBlockDTO,
   PrayerPayload,
   PrayerStatus,
   UpdateCheckDTO,
@@ -120,7 +122,7 @@ const newChannel = ref({ name: "", description: "", isPrivate: false });
 const newVirtual = ref({ username: "", displayName: "" });
 const virtuals = ref<any[]>([]);
 const accounts = ref<any[]>([]);
-const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; password: string }>>({});
+const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
 type LoginFormPosition = AppearanceDTO["loginFormPosition"];
@@ -182,6 +184,10 @@ const aiSettingsMsg = ref("");
 const aiSettingsShowAdvanced = ref(false);
 const noticeText = ref("");
 const pinnedExpanded = ref(false);
+const showPinnedEditor = ref(false);
+const pinnedEditTitle = ref("");
+const pinnedEditBlocks = ref<PinnedContentBlockDTO[]>([]);
+const pinnedEditMsg = ref("");
 const showChainModal = ref(false);
 const chainTopic = ref("");
 const pendingChain = ref<MessageDTO | null>(null);
@@ -195,6 +201,7 @@ const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
 const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
 const previewMessage = ref<MessageDTO | null>(null);
+const previewPinnedImage = ref<{ url: string; fileName: string } | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptPosition = ref({ x: 0, y: 0 });
@@ -427,6 +434,14 @@ watch(
 );
 
 watch(
+  () => `${visiblePinned.value?.id || 0}:${visiblePinned.value?.version || 0}:${visiblePinned.value?.dismissed ? "dismissed" : "open"}:${store.prayerOnly ? "prayers" : "chat"}`,
+  () => {
+    pinnedExpanded.value = !!visiblePinned.value && !visiblePinned.value.dismissed;
+  },
+  { immediate: true }
+);
+
+watch(
   () => store.messages.length,
   (length, previousLength) => {
     const latest = store.messages[store.messages.length - 1];
@@ -556,6 +571,8 @@ const mentionNoticeItems = computed<TopNotice[]>(() =>
 const topNoticeItems = computed<TopNotice[]>(() => [...mentionNoticeItems.value, ...typingNoticeItems.value]);
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
 const isAdmin = computed(() => !!store.account?.isAdmin);
+const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
+const visiblePinned = computed(() => (!store.prayerOnly && store.pinned ? store.pinned : null));
 const themeOptions = computed<ThemeDTO[]>(() => [...builtInThemes, ...(store.appearance.customThemes || [])]);
 const activeTheme = computed(() => (themeOptions.value.some((theme) => theme.id === store.account?.theme) ? store.account?.theme || "wechat" : "wechat"));
 const activeThemeConfig = computed(() => themeOptions.value.find((theme) => theme.id === activeTheme.value) || builtInThemes[0]);
@@ -602,16 +619,22 @@ const messageLoadBanner = computed(() => {
   if (store.oldestMessageReached && store.messages.length && !store.hasOlderMessages && !store.prefetchedOlderMessages.length) return { kind: "done", text: "已到最早消息" };
   return null;
 });
+const pinnedBlocks = computed(() => visiblePinned.value?.body?.blocks || (visiblePinned.value?.content ? [{ id: "legacy", type: "text" as const, text: visiblePinned.value.content }] : []));
 const pinnedText = computed(() => {
-  const pinned = store.pinned;
+  const pinned = visiblePinned.value;
   if (!pinned) return "";
-  if (pinned.kind === "notice") return pinned.content || "置顶公告";
-  const message = pinned.message;
-  if (!message) return "置顶消息";
-  if (message.type === "chain") return `接龙：${chainPayload(message).topic}`;
-  if (message.type === "image") return "[图片]";
-  if (message.type === "file") return message.fileName || "[文件]";
-  return message.content || "置顶消息";
+  return pinned.title || pinnedBlocks.value.find((block) => block.type === "text")?.text || "置顶消息";
+});
+const pinnedSummary = computed(() => {
+  const blocks = pinnedBlocks.value;
+  const media = blocks.filter((block) => block.type === "image" || block.type === "file");
+  const labels = [];
+  const imageCount = media.filter((block) => block.type === "image").length;
+  const fileCount = media.filter((block) => block.type === "file").length;
+  if (imageCount) labels.push(`${imageCount} 张图片`);
+  if (fileCount) labels.push(`${fileCount} 个文件`);
+  const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join(" ").replace(/\s+/g, " ").trim();
+  return labels.length ? labels.join(" · ") : text.slice(0, 42) || "点击查看";
 });
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
@@ -898,6 +921,12 @@ function linkifyMessageHtml(html: string) {
 
 function messageContentHtml(message: MessageDTO) {
   return linkifyMessageHtml(message.content);
+}
+
+function textContentHtml(text: string) {
+  const root = document.createElement("div");
+  root.textContent = text || "";
+  return linkifyMessageHtml(root.innerHTML.replace(/\n/g, "<br />"));
 }
 
 function messagePreviewUrl(message: MessageDTO) {
@@ -1975,7 +2004,7 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     event.stopPropagation();
     return;
   }
-  if (messageSelectionMode.value && isAdmin.value && message.id > 0) {
+  if (messageSelectionMode.value && (isAdmin.value || canPinCurrentChannel.value) && message.id > 0) {
     toggleMessageSelected(message);
     event.preventDefault();
     event.stopPropagation();
@@ -2027,6 +2056,25 @@ function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
 
 function openPreviewMessage(message: MessageDTO) {
   previewMessage.value = message;
+  previewPinnedImage.value = null;
+  pendingDownload.value = null;
+  resetImagePreviewTransform();
+}
+
+type PinnedMediaBlock = { type: "image" | "file"; fileName: string; filePath: string; fileSize?: number | null };
+
+function openPinnedImage(block: PinnedMediaBlock) {
+  previewPinnedImage.value = { url: pinnedFileUrl(block), fileName: block.fileName };
+  previewMessage.value = {
+    id: -1,
+    channelId: store.currentChannelId,
+    sender: { id: 0, kind: "system", username: "pinned", displayName: "置顶" },
+    content: "",
+    type: "image",
+    fileName: block.fileName,
+    fileSize: block.fileSize,
+    createdAt: new Date().toISOString()
+  };
   pendingDownload.value = null;
   resetImagePreviewTransform();
 }
@@ -2039,7 +2087,23 @@ function resetImagePreviewTransform() {
 
 function closePreviewMessage() {
   previewMessage.value = null;
+  previewPinnedImage.value = null;
   resetImagePreviewTransform();
+}
+
+function previewImageSrc() {
+  return previewPinnedImage.value?.url || (previewMessage.value ? fileUrl(previewMessage.value) : "");
+}
+
+function downloadPreviewImage() {
+  if (!previewPinnedImage.value) {
+    if (previewMessage.value) downloadFile(previewMessage.value);
+    return;
+  }
+  const anchor = document.createElement("a");
+  anchor.href = previewPinnedImage.value.url;
+  anchor.download = previewPinnedImage.value.fileName || "image";
+  anchor.click();
 }
 
 function clampImageScale(value: number) {
@@ -2274,6 +2338,9 @@ function positionPromptNearEvent(event: MouseEvent | undefined, size: { width: n
 function closeTapPromptsFromOutside(event: PointerEvent) {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if (pinnedExpanded.value && visiblePinned.value && !target.closest(".pin-card")) {
+    void collapsePinned();
+  }
   if (pendingChain.value && !target.closest("[data-chain-popover]") && !target.closest("[data-chain-bubble]")) {
     pendingChain.value = null;
   }
@@ -2330,6 +2397,97 @@ async function deleteSelectedMessages() {
   adminMsg.value = `已删除 ${result.deleted} 条聊天记录`;
   selectedMessageIds.value = new Set();
   await store.loadMessages();
+}
+
+async function pinSelectedMessages() {
+  const ids = [...selectedMessageIds.value];
+  if (!ids.length || !store.currentChannelId || !canPinCurrentChannel.value) return;
+  const result = await api<{ pinned: NonNullable<typeof store.pinned> }>(`/api/channels/${store.currentChannelId}/pinned`, {
+    method: "POST",
+    body: JSON.stringify({ messageIds: ids, active: true })
+  });
+  store.pinned = result.pinned;
+  const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
+  if (ch) ch.pinned = result.pinned;
+  pinnedExpanded.value = true;
+  selectedMessageIds.value = new Set();
+  messageSelectionMode.value = false;
+}
+
+async function collapsePinned() {
+  const pinned = visiblePinned.value;
+  if (!pinned || !pinnedExpanded.value || !store.currentChannelId) return;
+  pinnedExpanded.value = false;
+  pinned.dismissed = true;
+  await api(`/api/channels/${store.currentChannelId}/pinned/dismiss`, {
+    method: "POST",
+    body: JSON.stringify({ pinnedId: pinned.id, version: pinned.version })
+  }).catch(() => undefined);
+}
+
+function togglePinned() {
+  if (pinnedExpanded.value) void collapsePinned();
+  else pinnedExpanded.value = true;
+}
+
+function clonePinnedBlock(block: PinnedContentBlockDTO): PinnedContentBlockDTO {
+  return block.type === "text" ? { id: block.id, type: "text", text: block.text } : { id: block.id, type: block.type, fileName: block.fileName, filePath: block.filePath, fileSize: block.fileSize };
+}
+
+function openPinnedEditor() {
+  const pinned = visiblePinned.value;
+  if (!pinned || !canPinCurrentChannel.value) return;
+  pinnedEditTitle.value = pinned.title || "";
+  pinnedEditBlocks.value = pinnedBlocks.value.map(clonePinnedBlock);
+  pinnedEditMsg.value = "";
+  showPinnedEditor.value = true;
+}
+
+function addPinnedTextBlock() {
+  pinnedEditBlocks.value = [...pinnedEditBlocks.value, { id: `new-${Date.now()}`, type: "text", text: "" }];
+}
+
+function removePinnedBlock(index: number) {
+  pinnedEditBlocks.value = pinnedEditBlocks.value.filter((_block, idx) => idx !== index);
+}
+
+function cleanPinnedEditBody(): PinnedBodyDTO {
+  return {
+    blocks: pinnedEditBlocks.value
+      .map((block) => (block.type === "text" ? { ...block, text: block.text.trim() } : block))
+      .filter((block) => (block.type === "text" ? !!block.text : !!block.filePath))
+  };
+}
+
+async function savePinnedEditor() {
+  if (!store.currentChannelId || !canPinCurrentChannel.value) return;
+  const body = cleanPinnedEditBody();
+  if (!body.blocks.length) {
+    pinnedEditMsg.value = "置顶内容不能为空";
+    return;
+  }
+  const result = await api<{ pinned: NonNullable<typeof store.pinned> }>(`/api/channels/${store.currentChannelId}/pinned`, {
+    method: "POST",
+    body: JSON.stringify({ title: pinnedEditTitle.value, body, active: true })
+  });
+  store.pinned = result.pinned;
+  const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
+  if (ch) ch.pinned = result.pinned;
+  pinnedExpanded.value = true;
+  showPinnedEditor.value = false;
+}
+
+async function clearPinned() {
+  if (!store.currentChannelId || !canPinCurrentChannel.value) return;
+  if (!confirm("撤下当前置顶消息？")) return;
+  const result = await api<{ pinned: null }>(`/api/channels/${store.currentChannelId}/pinned`, {
+    method: "POST",
+    body: JSON.stringify({ active: false })
+  });
+  store.pinned = result.pinned;
+  const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
+  if (ch) ch.pinned = null;
+  showPinnedEditor.value = false;
 }
 
 async function joinPendingChain() {
@@ -2868,6 +3026,10 @@ function fileUrl(message: MessageDTO) {
   return `/api/files/${message.id}?token=${encodeURIComponent(getToken())}`;
 }
 
+function pinnedFileUrl(block: PinnedMediaBlock) {
+  return `/api/channels/${store.currentChannelId}/pinned/files/${encodeURIComponent(block.filePath)}?token=${encodeURIComponent(getToken())}`;
+}
+
 function chainPayload(message: MessageDTO): ChainPayload {
   return (message.payload as ChainPayload) || { topic: message.content || "接龙", participants: [] };
 }
@@ -3089,10 +3251,14 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
 
 async function saveNotice() {
   if (!store.currentChannelId) return;
-  await api(`/api/channels/${store.currentChannelId}/pinned`, {
+  const result = await api<{ pinned: NonNullable<typeof store.pinned> | null }>(`/api/channels/${store.currentChannelId}/pinned`, {
     method: "POST",
-    body: JSON.stringify({ kind: "notice", content: noticeText.value, active: !!noticeText.value.trim() })
+    body: JSON.stringify({
+      body: { blocks: noticeText.value.trim() ? [{ id: "notice", type: "text", text: noticeText.value }] : [] },
+      active: !!noticeText.value.trim()
+    })
   });
+  store.pinned = result.pinned;
   adminMsg.value = "已更新置顶";
 }
 
@@ -3105,7 +3271,7 @@ async function loadAdmin() {
   syncAccountEdits();
   syncChannelEdits();
   virtuals.value = v.characters;
-  noticeText.value = store.pinned?.kind === "notice" ? store.pinned.content || "" : "";
+  noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
   if (adminTab.value === "appearance") await loadAdminAttachments();
   if (adminTab.value === "data") await loadAdminData();
   if (adminTab.value === "release") await checkForUpdates();
@@ -3191,6 +3357,7 @@ function syncAccountEdits() {
       {
         displayName: account.displayName,
         isAdmin: !!account.isAdmin,
+        canPinMessages: !!account.canPinMessages,
         password: ""
       }
     ])
@@ -3227,6 +3394,7 @@ async function updateAccount(account: any) {
     body: JSON.stringify({
       displayName: edit.displayName,
       isAdmin: edit.isAdmin,
+      canPinMessages: edit.canPinMessages,
       password: edit.password || undefined
     })
   });
@@ -3704,14 +3872,15 @@ async function toggleVirtual(character: any) {
         </button>
         <button v-if="currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
         <button v-if="canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
-        <button v-if="isAdmin" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
+        <button v-if="isAdmin || canPinCurrentChannel" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
       </header>
 
       <section v-if="messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
         <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
-        <button class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
+        <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
+        <button v-if="isAdmin" class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
@@ -3729,16 +3898,31 @@ async function toggleVirtual(character: any) {
         </button>
       </section>
 
-      <section v-if="store.pinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
-        <button class="pin-card-head" @click="pinnedExpanded = !pinnedExpanded" :aria-expanded="pinnedExpanded">
-          <Pin :size="16" />
-          <span>{{ pinnedText }}</span>
+      <section v-if="visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
+        <div class="pin-card-head">
+          <button class="pin-toggle" @click.stop="togglePinned" :aria-label="pinnedExpanded ? '收起置顶' : '展开置顶'" :aria-expanded="pinnedExpanded"><Pin :size="16" /></button>
+          <span>
+            <strong>{{ pinnedText }}</strong>
+            <small>{{ pinnedSummary }}</small>
+          </span>
+          <button v-if="canPinCurrentChannel" class="mini-btn secondary" @click.stop="openPinnedEditor">编辑</button>
           <ChevronUp v-if="pinnedExpanded" :size="17" />
           <ChevronDown v-else :size="17" />
-        </button>
+        </div>
         <div v-if="pinnedExpanded" class="pin-card-body">
-          <p>{{ pinnedText }}</p>
-          <button v-if="store.pinned.messageId" class="text-btn" @click="jumpToReply(store.pinned.messageId)">定位到原消息</button>
+          <template v-for="block in pinnedBlocks" :key="block.id">
+            <p v-if="block.type === 'text'" v-html="textContentHtml(block.text)"></p>
+            <button v-else-if="block.type === 'image'" class="image-preview-button pinned-image-button" @click.stop="openPinnedImage(block)">
+              <img class="chat-image pinned-image" :src="pinnedFileUrl(block)" alt="置顶图片" />
+            </button>
+            <a v-else class="file-card pinned-file-card" :href="pinnedFileUrl(block)" target="_blank" rel="noopener noreferrer" @click.stop>
+              <FileUp :size="24" />
+              <span>
+                <strong>{{ block.fileName }}</strong>
+                <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
+              </span>
+            </a>
+          </template>
         </div>
       </section>
 
@@ -4210,7 +4394,7 @@ async function toggleVirtual(character: any) {
             <button class="icon-btn" @click="closePreviewMessage" aria-label="关闭预览"><X :size="20" /></button>
           </div>
         </header>
-        <button v-if="previewMessage.type === 'image'" class="image-preview-download" @click.stop="downloadFile(previewMessage)" aria-label="下载图片"><Download :size="20" /></button>
+        <button v-if="previewMessage.type === 'image'" class="image-preview-download" @click.stop="downloadPreviewImage" aria-label="下载图片"><Download :size="20" /></button>
         <div
           class="media-preview-body"
           :class="{ 'image-preview-body': previewMessage.type === 'image' }"
@@ -4223,10 +4407,49 @@ async function toggleVirtual(character: any) {
           @wheel="previewMessage.type === 'image' && onImagePreviewWheel($event)"
           @click.self="previewMessage.type === 'image' && closePreviewMessage()"
         >
-          <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="fileUrl(previewMessage)" alt="图片预览" draggable="false" />
+          <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="previewImageSrc()" alt="图片预览" draggable="false" />
           <audio v-else-if="isAudioMessage(previewMessage)" class="media-preview-audio" :src="fileUrl(previewMessage)" controls autoplay preload="metadata"></audio>
           <video v-else-if="isVideoMessage(previewMessage)" class="media-preview-video" :src="fileUrl(previewMessage)" controls autoplay playsinline preload="metadata"></video>
           <iframe v-else-if="isPdfMessage(previewMessage)" class="media-preview-frame" :src="fileUrl(previewMessage)" title="文档预览"></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="showPinnedEditor" class="modal-shell">
+      <div class="settings-modal pinned-editor-modal">
+        <header class="modal-head">
+          <strong>编辑置顶消息</strong>
+          <button class="icon-btn" @click="showPinnedEditor = false" aria-label="关闭置顶编辑"><X :size="20" /></button>
+        </header>
+        <div class="form-grid">
+          <label>标题（可选）</label>
+          <input v-model="pinnedEditTitle" placeholder="置顶消息" />
+          <label>正文</label>
+          <div class="pinned-editor-blocks">
+            <article v-for="(block, index) in pinnedEditBlocks" :key="block.id" class="pinned-editor-block">
+              <template v-if="block.type === 'text'">
+                <textarea v-model="block.text" rows="5" placeholder="置顶正文"></textarea>
+              </template>
+              <template v-else>
+                <img v-if="block.type === 'image'" :src="pinnedFileUrl(block)" alt="" />
+                <div v-else class="file-card pinned-file-card">
+                  <FileUp :size="24" />
+                  <span>
+                    <strong>{{ block.fileName }}</strong>
+                    <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
+                  </span>
+                </div>
+              </template>
+              <button class="mini-btn danger-action" @click="removePinnedBlock(index)"><Trash2 :size="15" />删除此块</button>
+            </article>
+          </div>
+          <button class="mini-btn secondary" @click="addPinnedTextBlock">添加文字</button>
+          <p v-if="pinnedEditMsg" class="admin-msg">{{ pinnedEditMsg }}</p>
+          <div class="confirm-actions">
+            <button class="mini-btn danger-action" @click="clearPinned">撤下置顶</button>
+            <button class="mini-btn secondary" @click="showPinnedEditor = false">取消</button>
+            <button class="primary-btn" @click="savePinnedEditor"><Save :size="16" />保存</button>
+          </div>
         </div>
       </div>
     </section>
@@ -4390,6 +4613,7 @@ async function toggleVirtual(character: any) {
                   <input v-model="accountEdits[account.id].displayName" placeholder="昵称" />
                   <input v-model="accountEdits[account.id].password" placeholder="重置密码，留空不改" type="password" />
                   <label class="check-row"><input v-model="accountEdits[account.id].isAdmin" type="checkbox" /> 管理员</label>
+                  <label class="check-row"><input v-model="accountEdits[account.id].canPinMessages" type="checkbox" /> 户部尚书（默认频道置顶）</label>
                 </div>
                 <div class="user-admin-actions">
                   <label class="mini-btn secondary">

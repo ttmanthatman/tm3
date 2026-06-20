@@ -728,16 +728,45 @@ button {
   text-align: left;
 }
 
-.pin-card-head span {
+.pin-toggle {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #7a4b00;
+  border-radius: 999px;
+}
+
+.pin-toggle:hover {
+  background: rgba(122, 75, 0, 0.08);
+}
+
+.pin-card-head > span {
   min-width: 0;
   flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.pin-card-head strong,
+.pin-card-head small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.pin-card-head strong {
+  color: #5f3b05;
+  font-size: 14px;
+}
+
+.pin-card-head small {
+  color: #8a6a2d;
+  font-size: 12px;
+}
+
 .pin-card-body {
-  padding: 0 14px 10px 38px;
+  padding: 0 14px 12px 50px;
   display: grid;
   gap: 8px;
 }
@@ -748,6 +777,36 @@ button {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.pin-card-body .pinned-image-button {
+  justify-self: start;
+}
+
+.pin-card-body .pinned-image {
+  max-width: min(320px, 72vw);
+  max-height: 320px;
+}
+
+.pinned-file-card {
+  width: min(360px, 100%);
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.pinned-file-card span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pinned-file-card strong,
+.pinned-file-card small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .messages-scroll {
@@ -3181,6 +3240,37 @@ button {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.pinned-editor-modal {
+  max-width: min(680px, calc(100vw - 24px));
+}
+
+.pinned-editor-blocks {
+  display: grid;
+  gap: 10px;
+}
+
+.pinned-editor-block {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 82%, #ffffff);
+}
+
+.pinned-editor-block textarea {
+  width: 100%;
+  min-height: 118px;
+  resize: vertical;
+}
+
+.pinned-editor-block > img {
+  max-width: min(320px, 100%);
+  max-height: 260px;
+  border-radius: 8px;
+  display: block;
 }
 
 .danger-action {

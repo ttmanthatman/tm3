@@ -13,12 +13,12 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type DeviceKind, type Message, type MessageType } from "@prisma/client";
+import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type DeviceKind, type Message, type MessageType, type PinnedItem } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
-import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, BibleLookupDTO, ChainPayload, FlashEffectSettingsDTO, LinkPreviewDTO, MessageDTO, MessageEffect, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
+import type { AdminAttachmentDTO, AdminMessageDTO, AiSettingsDTO, AiSuggestionDTO, BibleLookupDTO, ChainPayload, FlashEffectSettingsDTO, LinkPreviewDTO, MessageDTO, MessageEffect, PinnedBodyDTO, PinnedContentBlockDTO, PrayerStatus, ThemeDTO, ThemePaletteDTO } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 
@@ -261,6 +261,7 @@ type AuthContext = {
   actorId: number;
   username: string;
   isAdmin: boolean;
+  canPinMessages: boolean;
   sessionId: string;
 };
 
@@ -321,6 +322,7 @@ function signToken(account: AccountWithActor, session: Pick<AccountSession, "id"
       actorId: account.actor.id,
       username: account.username,
       isAdmin: account.role === "admin",
+      canPinMessages: account.canPinMessages,
       sessionId: session.id
     },
     JWT_SECRET,
@@ -344,6 +346,7 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
     actorId: account.actor.id,
     username: account.username,
     isAdmin: account.role === "admin",
+    canPinMessages: account.canPinMessages,
     sessionId: session.id
   };
 }
@@ -846,6 +849,7 @@ function authDto(account: AccountWithActor) {
     displayName: account.displayName,
     avatarPath: account.avatarPath,
     isAdmin: account.role === "admin",
+    canPinMessages: account.canPinMessages,
     actorId: account.actor.id,
     theme: account.theme || "wechat"
   };
@@ -889,6 +893,13 @@ async function canManageChannel(accountId: number, channelId: number) {
   if (account?.role === "admin") return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return member?.role === "owner" || member?.role === "admin";
+}
+
+async function canPinChannel(auth: Pick<AuthContext, "accountId" | "isAdmin" | "canPinMessages">, channelId: number) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { isDefault: true, directKey: true } });
+  if (!channel || channel.directKey) return false;
+  if (auth.isAdmin) return true;
+  return !!auth.canPinMessages && channel.isDefault && (await canAccessChannel(auth.accountId, channelId));
 }
 
 async function serializeMessage(message: Message & { sender: Actor; replyTo?: (Message & { sender: Actor }) | null }, viewerAccountId?: number): Promise<MessageDTO> {
@@ -982,6 +993,160 @@ async function hydrateMessage(id: number, viewerAccountId?: number) {
     include: { sender: true, replyTo: { include: { sender: true } } }
   });
   return message ? serializeMessage(message, viewerAccountId) : null;
+}
+
+function decodeBasicHtmlEntities(input: string) {
+  return input
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function pinnedPlainTextFromHtml(input?: string | null) {
+  return decodeBasicHtmlEntities(
+    String(input || "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p\s*>/gi, "\n")
+      .replace(/<[^>]*>/g, "")
+  )
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function cleanPinnedText(input: unknown) {
+  return String(input || "").replace(/\r\n/g, "\n").trim().slice(0, 20000);
+}
+
+function cleanPinnedTitle(input: unknown) {
+  return String(input || "").trim().slice(0, 160);
+}
+
+function pinnedBlockId() {
+  return crypto.randomBytes(6).toString("hex");
+}
+
+function appendPinnedTextBlock(blocks: PinnedContentBlockDTO[], text: string) {
+  const cleaned = cleanPinnedText(text);
+  if (!cleaned) return;
+  const previous = blocks[blocks.length - 1];
+  if (previous?.type === "text") {
+    previous.text = [previous.text, cleaned].filter(Boolean).join("\n");
+  } else {
+    blocks.push({ id: pinnedBlockId(), type: "text", text: cleaned });
+  }
+}
+
+function serializePinnedBody(input: unknown, fallbackContent?: string | null): PinnedBodyDTO {
+  const raw = input && typeof input === "object" && !Array.isArray(input) ? (input as { blocks?: unknown }) : null;
+  const blocks: PinnedContentBlockDTO[] = [];
+  if (Array.isArray(raw?.blocks)) {
+    for (const block of raw.blocks) {
+      const row = block && typeof block === "object" ? (block as Record<string, unknown>) : {};
+      const id = String(row.id || pinnedBlockId()).slice(0, 40);
+      if (row.type === "text") {
+        const text = cleanPinnedText(row.text);
+        if (text) blocks.push({ id, type: "text", text });
+      } else if (row.type === "image" || row.type === "file") {
+        const filePath = path.basename(String(row.filePath || ""));
+        if (!filePath) continue;
+        blocks.push({
+          id,
+          type: row.type,
+          fileName: String(row.fileName || filePath).slice(0, 255),
+          filePath,
+          fileSize: Number.isFinite(Number(row.fileSize)) ? Number(row.fileSize) : null
+        });
+      }
+    }
+  }
+  if (!blocks.length) appendPinnedTextBlock(blocks, pinnedPlainTextFromHtml(fallbackContent));
+  return { blocks };
+}
+
+function pinnedBodyPreview(body: PinnedBodyDTO, title?: string | null) {
+  const text = body.blocks
+    .map((block) => (block.type === "text" ? block.text : block.type === "image" ? "[图片]" : block.fileName || "[文件]"))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return stripPushText(title || text || "新的置顶消息");
+}
+
+function pinnedBodyUploadFilePaths(body: PinnedBodyDTO) {
+  return new Set(body.blocks.flatMap((block) => (block.type === "image" || block.type === "file" ? [path.basename(block.filePath)] : [])));
+}
+
+function pinnedBlocksFromMessage(message: Message): PinnedContentBlockDTO[] {
+  const blocks: PinnedContentBlockDTO[] = [];
+  if (message.type === "system") return blocks;
+  if (message.type === "chain") {
+    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Partial<ChainPayload>) : {};
+    const participants = Array.isArray(payload.participants) ? payload.participants : [];
+    appendPinnedTextBlock(
+      blocks,
+      [`接龙：${payload.topic || pinnedPlainTextFromHtml(message.content) || "接龙"}`, ...participants.map((item, index) => `${index + 1}. ${item.name}${item.text ? `：${item.text}` : ""}`)].join("\n")
+    );
+    return blocks;
+  }
+  if (message.type === "prayer") {
+    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as { status?: unknown }) : {};
+    const status = payload.status === "closed" ? "无需再代祷" : payload.status === "answered" ? "已蒙应允" : "代祷中";
+    appendPinnedTextBlock(blocks, `代祷事项（${status}）：${pinnedPlainTextFromHtml(message.content) || "代祷事项"}`);
+    return blocks;
+  }
+  const text = pinnedPlainTextFromHtml(message.content);
+  if (text) appendPinnedTextBlock(blocks, text);
+  if ((message.type === "image" || message.type === "file") && message.filePath) {
+    blocks.push({
+      id: pinnedBlockId(),
+      type: message.type === "image" ? "image" : "file",
+      fileName: message.fileName || path.basename(message.filePath),
+      filePath: path.basename(message.filePath),
+      fileSize: message.fileSize || null
+    });
+  }
+  return blocks;
+}
+
+async function pinnedBodyFromMessages(channelId: number, messageIds: number[]) {
+  const messages = await prisma.message.findMany({
+    where: { id: { in: messageIds }, channelId, type: { not: "system" } },
+    orderBy: { id: "asc" }
+  });
+  const blocks: PinnedContentBlockDTO[] = [];
+  for (const message of messages) {
+    for (const block of pinnedBlocksFromMessage(message)) {
+      if (block.type === "text") appendPinnedTextBlock(blocks, block.text);
+      else blocks.push(block);
+    }
+  }
+  return serializePinnedBody({ blocks });
+}
+
+async function serializePinnedItem(pin: PinnedItem, viewer?: Pick<AuthContext, "accountId">) {
+  const body = serializePinnedBody(pin.body, pin.content);
+  const dismissed = viewer
+    ? !!(await prisma.pinnedSeen.findUnique({
+        where: { accountId_pinnedItemId_pinnedVersion: { accountId: viewer.accountId, pinnedItemId: pin.id, pinnedVersion: pin.version } },
+        select: { id: true }
+      }))
+    : false;
+  return {
+    id: pin.id,
+    kind: pin.kind,
+    title: pin.title,
+    content: pin.content,
+    body,
+    messageId: pin.messageId,
+    message: pin.messageId ? await hydrateMessage(pin.messageId, viewer?.accountId) : null,
+    version: pin.version,
+    dismissed
+  };
 }
 
 async function emitMessage(messageId: number) {
@@ -1106,6 +1271,19 @@ async function sendAdminBroadcastPush(channelId: number, content: string) {
   });
 }
 
+async function sendPinnedPush(channelId: number, pinned: { title?: string | null; body: PinnedBodyDTO }) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
+  if (!channel) return;
+  const accountIds = await notificationRecipientIds(channelId, null, true);
+  await sendPushToAccounts(accountIds, {
+    title: `新置顶 · ${channel.name}`,
+    body: pinnedBodyPreview(pinned.body, pinned.title),
+    url: `/?channelId=${channelId}`,
+    tag: `pinned-${channelId}`,
+    channelId
+  });
+}
+
 async function createEngineEvent(kind: "message_created" | "idle_tick" | "manual_test" | "active_topic_due", payload: unknown, channelId?: number, messageId?: number, characterId?: number) {
   const event = await prisma.engineEvent.create({
     data: {
@@ -1198,7 +1376,7 @@ async function ensureBootstrap() {
   }
 }
 
-async function channelDto(channelId: number, viewer?: Pick<AuthContext, "accountId" | "isAdmin">) {
+async function channelDto(channelId: number, viewer?: Pick<AuthContext, "accountId" | "isAdmin" | "canPinMessages">) {
   const channel = await prisma.channel.findUnique({
     where: { id: channelId },
     include: {
@@ -1209,18 +1387,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   if (!channel) return null;
   const pin = channel.pinned[0];
   const membership = viewer ? await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: viewer.accountId } }, select: { role: true } }) : null;
-  const pinned =
-    pin?.messageId
-      ? {
-          id: pin.id,
-          kind: pin.kind,
-          content: pin.content,
-          messageId: pin.messageId,
-          message: await hydrateMessage(pin.messageId)
-        }
-      : pin
-        ? { id: pin.id, kind: pin.kind, content: pin.content, messageId: pin.messageId, message: null }
-        : null;
+  const pinned = pin ? await serializePinnedItem(pin, viewer) : null;
   return {
     id: channel.id,
     name: channel.name,
@@ -1230,6 +1397,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     isDefault: channel.isDefault,
     directKey: channel.directKey,
     canManage: viewer ? !!viewer.isAdmin || membership?.role === "owner" || membership?.role === "admin" : undefined,
+    canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     memberCount: channel._count.members,
     pinned
   };
@@ -2455,6 +2623,12 @@ function safeUnlink(kind: AdminAttachmentDTO["kind"], fileName: string) {
   if (fs.existsSync(target)) fs.unlinkSync(target);
 }
 
+async function activePinnedUsesUpload(fileName: string) {
+  const target = path.basename(fileName);
+  const pins = await prisma.pinnedItem.findMany({ where: { active: true }, select: { body: true, content: true } });
+  return pins.some((pin) => pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content)).has(target));
+}
+
 function listStorageFiles(dir: string) {
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -2476,7 +2650,7 @@ async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "ch
   const ids = messages.map((message) => message.id);
   const channelIds = [...new Set(messages.map((message) => message.channelId))];
   for (const message of messages) {
-    if (message.filePath) safeUnlink("upload", message.filePath);
+    if (message.filePath && !(await activePinnedUsesUpload(message.filePath))) safeUnlink("upload", message.filePath);
   }
   if (ids.length) {
     await prisma.$transaction([
@@ -2505,14 +2679,14 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
     prisma.message.deleteMany({ where: { id: { in: ids } } })
   ]);
   for (const message of messages) {
-    if (message.filePath) safeUnlink("upload", message.filePath);
+    if (message.filePath && !(await activePinnedUsesUpload(message.filePath))) safeUnlink("upload", message.filePath);
   }
   for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
   return ids.length;
 }
 
 async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
-  const [messages, accounts, channels, appearance] = await Promise.all([
+  const [messages, accounts, channels, pinnedItems, appearance] = await Promise.all([
     prisma.message.findMany({
       where: { filePath: { not: null } },
       include: { channel: true, sender: true },
@@ -2520,6 +2694,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
     }),
     prisma.account.findMany({ select: { displayName: true, avatarPath: true } }),
     prisma.channel.findMany({ select: { name: true, icon: true } }),
+    prisma.pinnedItem.findMany({ where: { active: true }, include: { channel: true }, orderBy: { id: "desc" } }),
     appearanceDto()
   ]);
 
@@ -2554,6 +2729,29 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       ownerName: message.sender.displayName,
       usage: [`消息 #${message.id}`, message.channel.name, message.sender.displayName]
     });
+  }
+  for (const pin of pinnedItems) {
+    const body = serializePinnedBody(pin.body, pin.content);
+    for (const block of body.blocks) {
+      if (block.type !== "image" && block.type !== "file") continue;
+      const fileName = path.basename(block.filePath);
+      const id = attachmentId("upload", fileName);
+      const current = rows.get(id);
+      const usage = [...(current?.usage || []), `置顶 · ${pin.channel.name}`];
+      rows.set(id, {
+        id,
+        kind: "upload",
+        fileName,
+        label: current?.label || block.fileName || fileName,
+        size: current?.size || block.fileSize || 0,
+        createdAt: current?.createdAt || pin.createdAt.toISOString(),
+        url: current?.url || `/api/channels/${pin.channelId}/pinned/files/${encodeURIComponent(fileName)}`,
+        messageId: current?.messageId,
+        channelName: current?.channelName || pin.channel.name,
+        ownerName: current?.ownerName,
+        usage
+      });
+    }
   }
 
   for (const file of listStorageFiles(AVATAR_DIR)) {
@@ -2607,6 +2805,7 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
     const fileName = path.basename(target.fileName);
     const filePath = storageFilePath(target.kind, fileName);
     const existed = fs.existsSync(filePath);
+    const keepForPinned = target.kind === "upload" && (await activePinnedUsesUpload(fileName));
     if (target.kind === "upload") {
       const messages = await prisma.message.findMany({ where: { filePath: fileName }, select: { id: true, channelId: true, filePath: true } });
       for (const message of messages) refreshChannels.add(message.channelId);
@@ -2635,7 +2834,7 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
       const updated = await prisma.channel.updateMany({ where: { icon: fileName }, data: { icon: "" } });
       channelsChanged = channelsChanged || updated.count > 0;
     }
-    if (existed) {
+    if (existed && !keepForPinned) {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       deleted += 1;
     }
@@ -2681,6 +2880,7 @@ async function usersExportPayload() {
       displayName: account.displayName,
       avatarPath: account.avatarPath,
       role: account.role,
+      canPinMessages: account.canPinMessages,
       theme: account.theme,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
@@ -2689,21 +2889,77 @@ async function usersExportPayload() {
   };
 }
 
-app.post("/api/channels/:id/pinned", { preHandler: requireAdmin }, async (request, reply) => {
+app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  const body = z.object({ kind: z.literal("notice"), content: z.string().optional(), active: z.boolean().default(true) }).parse(request.body);
+  const body = z
+    .object({
+      kind: z.literal("notice").optional(),
+      title: z.string().max(160).optional(),
+      content: z.string().optional(),
+      body: z.unknown().optional(),
+      messageIds: z.array(z.number().int().positive()).max(80).optional(),
+      active: z.boolean().default(true)
+    })
+    .parse(request.body);
   const channel = await prisma.channel.findUnique({ where: { id: channelId } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
-  await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
+  if (!(await canPinChannel(auth, channelId))) return reply.code(403).send({ success: false, message: "无权置顶此频道" });
   if (body.active) {
-    await prisma.pinnedItem.create({ data: { channelId, kind: body.kind, content: body.content || "", messageId: null, active: true } });
+    const pinnedBody = body.messageIds?.length ? await pinnedBodyFromMessages(channelId, body.messageIds) : serializePinnedBody(body.body, body.content);
+    if (!pinnedBody.blocks.length) return reply.code(400).send({ success: false, message: "置顶内容不能为空" });
+    const textContent = pinnedBody.blocks
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .slice(0, 10000);
+    await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
+    const created = await prisma.pinnedItem.create({
+      data: {
+        channelId,
+        kind: "notice",
+        title: cleanPinnedTitle(body.title),
+        content: textContent,
+        body: pinnedBody as unknown as Prisma.InputJsonValue,
+        messageId: null,
+        active: true
+      }
+    });
+    void sendPinnedPush(channelId, { title: created.title, body: pinnedBody }).catch((error) => app.log.warn({ error }, "pinned push failed"));
+  } else {
+    await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
   }
-  const dto = await channelDto(channelId);
+  const dto = await channelDto(channelId, auth);
   io.to(`ch:${channelId}`).emit("pinned:updated", dto?.pinned || null);
-  if (body.active && body.content?.trim()) {
-    void sendAdminBroadcastPush(channelId, body.content).catch((error) => app.log.warn({ error }, "admin broadcast push failed"));
-  }
   return { success: true, pinned: dto?.pinned || null };
+});
+
+app.post("/api/channels/:id/pinned/dismiss", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const body = z.object({ pinnedId: z.number().int().positive(), version: z.number().int().positive() }).parse(request.body);
+  if (!(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+  const pin = await prisma.pinnedItem.findFirst({ where: { id: body.pinnedId, channelId, version: body.version, active: true }, select: { id: true } });
+  if (!pin) return reply.code(404).send({ success: false, message: "置顶不存在" });
+  await prisma.pinnedSeen.upsert({
+    where: { accountId_pinnedItemId_pinnedVersion: { accountId: auth.accountId, pinnedItemId: body.pinnedId, pinnedVersion: body.version } },
+    update: { seenAt: new Date() },
+    create: { accountId: auth.accountId, channelId, pinnedItemId: body.pinnedId, pinnedVersion: body.version }
+  });
+  return { success: true };
+});
+
+app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const file = path.basename((request.params as { file: string }).file);
+  if (!file || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
+  const pin = await prisma.pinnedItem.findFirst({ where: { channelId, active: true }, orderBy: { updatedAt: "desc" } });
+  if (!pin || !pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content)).has(file)) return reply.code(404).send("Not found");
+  const filePath = path.join(UPLOAD_DIR, file);
+  if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
+  reply.header("Cache-Control", "private, max-age=86400");
+  return reply.send(fs.createReadStream(filePath));
 });
 
 app.get("/api/admin/accounts", { preHandler: requireAdmin }, async () => {
@@ -2712,7 +2968,15 @@ app.get("/api/admin/accounts", { preHandler: requireAdmin }, async () => {
 });
 
 app.post("/api/admin/accounts", { preHandler: requireAdmin }, async (request, reply) => {
-  const body = z.object({ username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/), password: z.string().min(6), displayName: z.string().min(1).max(80), isAdmin: z.boolean().optional() }).parse(request.body);
+  const body = z
+    .object({
+      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
+      password: z.string().min(6),
+      displayName: z.string().min(1).max(80),
+      isAdmin: z.boolean().optional(),
+      canPinMessages: z.boolean().optional()
+    })
+    .parse(request.body);
   try {
     const account = await prisma.account.create({
       data: {
@@ -2720,6 +2984,7 @@ app.post("/api/admin/accounts", { preHandler: requireAdmin }, async (request, re
         passwordHash: await bcrypt.hash(body.password, 12),
         displayName: body.displayName,
         role: body.isAdmin ? "admin" : "user",
+        canPinMessages: !!body.canPinMessages,
         actor: { create: { kind: "human", username: body.username, displayName: body.displayName } }
       },
       include: { actor: true }
@@ -2739,6 +3004,7 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
     .object({
       displayName: z.string().min(1).max(80).optional(),
       isAdmin: z.boolean().optional(),
+      canPinMessages: z.boolean().optional(),
       password: z.string().min(6).optional(),
       avatarPath: z.string().max(255).nullable().optional()
     })
@@ -2756,6 +3022,7 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
       displayName: body.displayName,
       avatarPath: body.avatarPath === undefined ? undefined : body.avatarPath || null,
       role: body.isAdmin === undefined ? undefined : body.isAdmin ? "admin" : "user",
+      canPinMessages: body.canPinMessages,
       passwordHash: body.password ? await bcrypt.hash(body.password, 12) : undefined,
       actor:
         body.displayName || body.avatarPath !== undefined
@@ -2893,13 +3160,25 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
     for (const pin of pinnedItems) {
       await tx.pinnedItem.upsert({
         where: { id: Number(pin.id) },
-        update: { channelId: Number(pin.channelId), kind: pin.kind || "notice", content: pin.content || null, messageId: pin.messageId || null, active: !!pin.active },
+        update: {
+          channelId: Number(pin.channelId),
+          kind: pin.kind || "notice",
+          title: pin.title || null,
+          content: pin.content || null,
+          body: pin.body === null || pin.body === undefined ? Prisma.JsonNull : pin.body,
+          messageId: pin.messageId || null,
+          version: Number(pin.version) || 1,
+          active: !!pin.active
+        },
         create: {
           id: Number(pin.id) || undefined,
           channelId: Number(pin.channelId),
           kind: pin.kind || "notice",
+          title: pin.title || null,
           content: pin.content || null,
+          body: pin.body === null || pin.body === undefined ? Prisma.JsonNull : pin.body,
           messageId: pin.messageId || null,
+          version: Number(pin.version) || 1,
           active: !!pin.active,
           createdAt: parseDate(pin.createdAt),
           updatedAt: parseDate(pin.updatedAt)
@@ -3054,6 +3333,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
         displayName: String(item.displayName || item.username).slice(0, 80),
         avatarPath: item.avatarPath || null,
         role,
+        canPinMessages: !!item.canPinMessages,
         theme
       },
       create: {
@@ -3063,6 +3343,7 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
         displayName: String(item.displayName || item.username).slice(0, 80),
         avatarPath: item.avatarPath || null,
         role,
+        canPinMessages: !!item.canPinMessages,
         theme,
         createdAt: parseDate(item.createdAt),
         actor: {

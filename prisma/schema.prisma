@@ -60,6 +60,7 @@ model Account {
   avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
   role                    AccountRole                     @default(user)
   theme                   String                          @default("wechat") @db.VarChar(32)
+  canPinMessages          Boolean                         @default(false) @map("can_pin_messages")
   lastLoginAt             DateTime?                       @map("last_login_at")
   createdAt               DateTime                        @default(now()) @map("created_at")
   updatedAt               DateTime                        @updatedAt @map("updated_at")
@@ -72,6 +73,7 @@ model Account {
   sessions                AccountSession[]
   prayerActions           PrayerAction[]
   aiSuggestions           MessageAiSuggestion[]
+  pinnedSeens             PinnedSeen[]
 
   @@map("accounts")
 }
@@ -245,15 +247,34 @@ model PinnedItem {
   id        Int        @id @default(autoincrement())
   channelId Int        @map("channel_id")
   kind      PinnedKind
+  title     String?    @db.VarChar(160)
   content   String?    @db.Text
+  body      Json?
   messageId Int?       @map("message_id")
+  version   Int        @default(1)
   active    Boolean    @default(true)
   createdAt DateTime   @default(now()) @map("created_at")
   updatedAt DateTime   @updatedAt @map("updated_at")
   channel   Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  seens     PinnedSeen[]
 
   @@index([channelId, active])
   @@map("pinned_items")
+}
+
+model PinnedSeen {
+  id            Int        @id @default(autoincrement())
+  accountId     Int        @map("account_id")
+  channelId     Int        @map("channel_id")
+  pinnedItemId  Int        @map("pinned_item_id")
+  pinnedVersion Int        @map("pinned_version")
+  seenAt        DateTime   @default(now()) @map("seen_at")
+  account       Account    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  pinnedItem    PinnedItem @relation(fields: [pinnedItemId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, pinnedItemId, pinnedVersion])
+  @@index([accountId, channelId])
+  @@map("pinned_seens")
 }
 
 model PushSubscription {
