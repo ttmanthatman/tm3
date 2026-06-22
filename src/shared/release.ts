@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.20";
+export const APP_VERSION = "0.6.21";
 
-export const RELEASE_DATE = "2026-06-20";
+export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理面板移动端布局重新整理，置顶编辑弹窗支持独立滚动，标题和正文输入不再贴住左边。",
+  "用户、频道和外观管理在窄屏下更紧凑，外观图片改为点击预览选择，减少不必要的大按钮。",
+  "附件管理改为三列缩略图网格，压缩和删除集中到多选后的批量操作区。"
+] as const;
+
+const RELEASE_0_6_20_NOTES = [
   "经文出处识别支持书卷名外侧的书名号写法，例如“《创世纪》3:17”会识别并展开为“创世记 3:17”。"
 ] as const;
 
@@ -154,9 +160,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.6.21",
+    date: "2026-06-23",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.6.20",
     date: "2026-06-20",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_6_20_NOTES
   },
   {
     version: "0.6.19",
