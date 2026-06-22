@@ -40,6 +40,7 @@ const UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
 const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
 const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
 const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
+const UPDATE_RUNNING_TIMEOUT_MS = Number(process.env.UPDATE_RUNNING_TIMEOUT_MS || 30 * 60 * 1000);
 const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
 const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -198,6 +199,20 @@ async function latestGitHubPackage() {
   };
 }
 
+function expireStaleUpdateStatus(status: { state: string; progress: number; detail: string; updatedAt?: string }) {
+  if (status.state !== "running" || !status.updatedAt || !Number.isFinite(UPDATE_RUNNING_TIMEOUT_MS) || UPDATE_RUNNING_TIMEOUT_MS <= 0) {
+    return status;
+  }
+  const updatedAt = Date.parse(status.updatedAt);
+  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt <= UPDATE_RUNNING_TIMEOUT_MS) return status;
+  return {
+    ...status,
+    state: "failed",
+    progress: 100,
+    detail: "更新进程长时间没有进展，请检查日志后重试"
+  };
+}
+
 function readUpdateStatus() {
   let status: { state: string; progress: number; detail: string; updatedAt?: string } = { state: "idle", progress: 0, detail: "尚未开始更新" };
   if (fs.existsSync(UPDATE_STATUS_PATH)) {
@@ -214,7 +229,7 @@ function readUpdateStatus() {
         .filter(Boolean)
         .slice(-120)
     : [];
-  return { ...status, log };
+  return { ...expireStaleUpdateStatus(status), log };
 }
 
 function writeUpdateStatus(state: string, progress: number, detail: string) {

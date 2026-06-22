@@ -72,8 +72,55 @@ log_step 82 "构建前端和服务端"
 npm run build >>"$LOG_PATH" 2>&1
 
 log_step 94 "重启服务"
-pm2 restart "$PM2_APP" --update-env >>"$LOG_PATH" 2>&1
-pm2 save >>"$LOG_PATH" 2>&1
 
-printf '[%s] 更新完成\n' "$(date -Iseconds)" >>"$LOG_PATH"
-write_status "complete" 100 "更新完成"
+restart_cmd=(bash)
+if command -v setsid >/dev/null 2>&1; then
+  restart_cmd=(setsid bash)
+fi
+
+UPDATE_PM2_APP="$PM2_APP" UPDATE_STATUS_PATH="$STATUS_PATH" UPDATE_LOG_PATH="$LOG_PATH" nohup "${restart_cmd[@]}" -c '
+set +e
+sleep 1
+printf "[%s] 执行 PM2 重启\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
+pm2 restart "$UPDATE_PM2_APP" --update-env >>"$UPDATE_LOG_PATH" 2>&1
+restart_code=$?
+if [ "$restart_code" -eq 0 ]; then
+  pm2 save >>"$UPDATE_LOG_PATH" 2>&1
+  save_code=$?
+else
+  save_code=0
+fi
+
+if [ "$restart_code" -eq 0 ] && [ "$save_code" -eq 0 ]; then
+  detail="更新完成"
+  state="complete"
+  progress="100"
+  printf "[%s] 更新完成\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
+else
+  if [ "$restart_code" -ne 0 ]; then
+    detail="重启服务失败，退出码 ${restart_code}"
+    code="$restart_code"
+  else
+    detail="保存 PM2 配置失败，退出码 ${save_code}"
+    code="$save_code"
+  fi
+  state="failed"
+  progress="100"
+  printf "[%s] %s\n" "$(date -Iseconds)" "$detail" >>"$UPDATE_LOG_PATH"
+fi
+
+UPDATE_STATE="$state" UPDATE_PROGRESS="$progress" UPDATE_DETAIL="$detail" node --input-type=module <<'"'"'NODE'"'"'
+import fs from "node:fs";
+const payload = {
+  state: process.env.UPDATE_STATE,
+  progress: Number(process.env.UPDATE_PROGRESS || 0),
+  detail: process.env.UPDATE_DETAIL || "",
+  updatedAt: new Date().toISOString()
+};
+fs.writeFileSync(process.env.UPDATE_STATUS_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+NODE
+
+exit "${code:-0}"
+' >/dev/null 2>&1 &
+
+printf '[%s] 已交给独立进程重启服务\n' "$(date -Iseconds)" >>"$LOG_PATH"
