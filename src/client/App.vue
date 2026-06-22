@@ -5182,10 +5182,11 @@ async function toggleVirtual(character: any) {
             <button class="primary-btn" @click="addUser"><FilePlus :size="16" />添加用户</button>
             <div class="user-admin-list">
               <article v-for="account in accounts" :key="account.id" class="user-admin-row">
-                <div class="avatar">
+                <label class="avatar upload-avatar-trigger" :aria-label="`上传 ${account.displayName} 的头像`" title="点击上传头像">
                   <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
                   <span v-else>{{ avatarText(account.displayName) }}</span>
-                </div>
+                  <input class="hidden" type="file" accept="image/*" @change="uploadAccountAvatar(account, $event)" />
+                </label>
                 <div class="user-admin-main">
                   <strong>@{{ account.username }}</strong>
                   <div class="user-admin-edit-grid">
@@ -5200,13 +5201,7 @@ async function toggleVirtual(character: any) {
                   </div>
                 </div>
                 <div class="user-admin-actions">
-                  <label class="mini-btn secondary">
-                    <Upload :size="15" />头像
-                    <input class="hidden" type="file" accept="image/*" @change="uploadAccountAvatar(account, $event)" />
-                  </label>
                   <button class="mini-btn" @click="updateAccount(account)">保存</button>
-                  <button class="mini-btn secondary" @click="downloadAdminFile(`/api/admin/accounts/${account.id}/attachments/export`, `liao-${account.username}-attachments.zip`)">导出附件</button>
-                  <button class="mini-btn danger-action" @click="deleteAccountAttachments(account)">删附件</button>
                 </div>
               </article>
             </div>
@@ -5216,19 +5211,16 @@ async function toggleVirtual(character: any) {
             <label>新增频道</label>
             <input v-model="newChannel.name" placeholder="频道名" />
             <input v-model="newChannel.description" placeholder="描述" />
-            <label class="check-row"><input v-model="newChannel.isPrivate" type="checkbox" /> 私密频道</label>
+            <label class="check-row check-row-inline"><input v-model="newChannel.isPrivate" type="checkbox" /> <span>私密频道</span></label>
             <button class="primary-btn" @click="addChannel">创建频道</button>
             <label>现有频道</label>
             <div class="channel-admin-list">
               <template v-for="channel in store.channels" :key="channel.id">
                 <article v-if="channelEdits[channel.id]" class="channel-admin-row">
-                  <div class="channel-icon-admin">
+                  <label class="channel-icon-admin upload-icon-trigger" :aria-label="`上传 ${channel.name} 的频道图标`" title="点击上传图标">
                     <img :src="channelIconUrl(channel)" alt="" />
-                    <label class="mini-btn secondary">
-                      <Upload :size="14" />图标
-                      <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(channel, $event)" />
-                    </label>
-                  </div>
+                    <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(channel, $event)" />
+                  </label>
                   <div class="channel-admin-main">
                     <input v-model="channelEdits[channel.id].name" placeholder="频道名" />
                     <input v-model="channelEdits[channel.id].description" placeholder="描述" />
@@ -5280,8 +5272,10 @@ async function toggleVirtual(character: any) {
 
             <div class="appearance-editor-panel form-grid">
               <template v-if="appearanceSection === 'brand'">
-                <label>浏览器标签页</label>
-                <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
+                <label class="inline-field-row">
+                  <span>浏览器标签页</span>
+                  <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
+                </label>
                 <div class="appearance-image-control">
                   <button class="appearance-image-preview-button login-icon-preview" @click="openAppearanceImagePicker('appIconPath', '选择标签页图标', '适合方形或接近方形的小图。')" aria-label="选择标签页图标">
                     <img :src="appearanceDraftIcon" alt="" />

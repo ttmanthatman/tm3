@@ -3638,6 +3638,13 @@ button {
   color: var(--muted);
 }
 
+.attachment-row .admin-data-main strong,
+.attachment-row .admin-data-main span,
+.attachment-row .admin-data-main small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .notification-card,
 .notification-channel-row {
   min-width: 0;
@@ -3990,6 +3997,15 @@ button {
   align-items: start;
 }
 
+.upload-avatar-trigger {
+  cursor: pointer;
+}
+
+.upload-avatar-trigger:hover,
+.upload-avatar-trigger:focus-within {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .user-admin-edit-grid {
   display: grid;
   grid-template-columns: minmax(160px, 280px) minmax(150px, 1fr);
@@ -4023,6 +4039,11 @@ button {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 7px;
+}
+
+.user-admin-actions .mini-btn {
+  min-height: 34px;
+  padding: 0 12px;
 }
 
 .pinned-editor-modal {
@@ -4244,6 +4265,10 @@ button {
   gap: 6px;
 }
 
+.upload-icon-trigger {
+  cursor: pointer;
+}
+
 .channel-icon-admin img {
   width: 46px;
   height: 46px;
@@ -4253,10 +4278,10 @@ button {
   background: #e9ecef;
 }
 
-.channel-icon-admin .mini-btn {
-  min-height: 30px;
-  padding: 0 8px;
-  font-size: 12px;
+.upload-icon-trigger:hover img,
+.upload-icon-trigger:focus-within img {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .channel-admin-main {
@@ -4279,6 +4304,24 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.check-row input[type="checkbox"] {
+  width: auto;
+  padding: 0;
+}
+
+.check-row-inline {
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.inline-field-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
 }
 
 .flash .bubble {
@@ -4825,7 +4868,6 @@ button {
     align-items: center;
   }
 
-  .channel-icon-admin .mini-btn,
   .data-toolbar .mini-btn,
   .admin-data-row .mini-btn,
   .admin-inline-card .primary-btn {
@@ -4964,8 +5006,7 @@ button {
   }
 
   .user-admin-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: flex;
   }
 
   .channel-admin-row {
@@ -4997,7 +5038,7 @@ button {
   }
 
   .attachment-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-data-row.attachment-row {
@@ -5017,13 +5058,12 @@ button {
 
 @media (max-width: 420px) {
   .user-admin-edit-grid,
-  .user-admin-actions,
   .attachment-toolbar,
   .attachment-bulk-actions {
     grid-template-columns: minmax(0, 1fr);
   }
 
   .attachment-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 }

@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.6.21";
+export const APP_VERSION = "0.6.22";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理员用户和频道图标上传改为直接点击头像或图标，不再显示单独的上传按钮。",
+  "用户管理行移除导出附件和删除附件按钮，保存按钮改为更紧凑的小按钮。",
+  "频道新增表单、浏览器标签页标题和附件管理卡片优化窄屏排版，长文件名不再只露出一两个字。"
+] as const;
+
+const RELEASE_0_6_21_NOTES = [
   "管理面板移动端布局重新整理，置顶编辑弹窗支持独立滚动，标题和正文输入不再贴住左边。",
   "用户、频道和外观管理在窄屏下更紧凑，外观图片改为点击预览选择，减少不必要的大按钮。",
   "附件管理改为三列缩略图网格，压缩和删除集中到多选后的批量操作区。"
@@ -160,9 +166,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.21",
+    version: "0.6.22",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.21",
+    date: "2026-06-23",
+    notes: RELEASE_0_6_21_NOTES
   },
   {
     version: "0.6.20",
