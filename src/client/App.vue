@@ -3952,62 +3952,12 @@ async function uploadAppearanceImageForPicker(event: Event) {
   await uploadAppearanceImage(event, config.url, picker.field, config.failure, config.success);
 }
 
-async function uploadWallpaper(event: Event) {
-  await uploadAppearanceImage(event, "/api/admin/appearance/wallpaper", "wallpaperPath", "壁纸上传失败", "壁纸已上传到草稿，保存后生效");
-}
-
-async function uploadLoginBackground(event: Event) {
-  await uploadAppearanceImage(event, "/api/admin/appearance/login-background", "loginBackgroundPath", "登录页背景上传失败", "登录页背景已上传到草稿，保存后生效");
-}
-
-async function uploadLoginIcon(event: Event) {
-  await uploadAppearanceImage(event, "/api/admin/appearance/login-icon", "loginIconPath", "登录页图标上传失败", "登录页图标已上传到草稿，保存后生效");
-}
-
-async function uploadAppIcon(event: Event) {
-  await uploadAppearanceImage(event, "/api/admin/appearance/app-icon", "appIconPath", "标签页图标上传失败", "标签页图标已上传到草稿，保存后生效");
-}
-
-function reuseAppearanceBackground(field: "wallpaperPath" | "loginBackgroundPath", fileName: string, message: string) {
-  const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
-  if (!image) return;
-  setAppearanceDraftImage(field, image.fileName, message);
-}
-
 function selectAppearanceImage(fileName: string) {
   const picker = appearanceImagePicker.value;
   if (!picker) return;
   const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
   if (!image) return;
   setAppearanceDraftImage(picker.field, image.fileName, "已选择图片草稿，保存后生效");
-}
-
-function reuseWallpaper(event: Event) {
-  const fileName = (event.target as HTMLSelectElement).value;
-  if (!fileName) return;
-  reuseAppearanceBackground("wallpaperPath", fileName, "已选择已上传图片作为壁纸草稿，保存后生效");
-}
-
-function reuseLoginBackground(event: Event) {
-  const fileName = (event.target as HTMLSelectElement).value;
-  if (!fileName) return;
-  reuseAppearanceBackground("loginBackgroundPath", fileName, "已选择已上传图片作为登录背景草稿，保存后生效");
-}
-
-function clearWallpaper() {
-  setAppearanceDraftImage("wallpaperPath", null, "壁纸已从草稿移除，保存后生效");
-}
-
-function clearLoginBackground() {
-  setAppearanceDraftImage("loginBackgroundPath", null, "登录页背景已从草稿移除，保存后生效");
-}
-
-function clearLoginIcon() {
-  setAppearanceDraftImage("loginIconPath", null, "登录页图标已从草稿移除，保存后生效");
-}
-
-function clearAppIcon() {
-  setAppearanceDraftImage("appIconPath", null, "标签页图标已在草稿中恢复默认，保存后生效");
 }
 
 function clearAppearancePickerImage() {
@@ -4022,57 +3972,23 @@ function clearAppearancePickerImage() {
   setAppearanceDraftImage(picker.field, null, labels[picker.field]);
 }
 
-function discardAppearanceDraft() {
+function abandonAppearanceDraft() {
   syncLoginAppearanceEdit();
   resetThemeEditor();
   appearanceImagePicker.value = null;
-  adminMsg.value = "已放弃外观草稿";
-}
-
-function resetCurrentAppearanceSection() {
-  if (!confirm(`恢复“${activeAppearanceSection.value.label}”的默认草稿？保存外观后才会生效。`)) return;
-  if (appearanceSection.value === "brand") {
-    loginAppearanceEdit.value.appTitle = "Team Chat";
-    loginAppearanceEdit.value.appIconPath = null;
-  } else if (appearanceSection.value === "login") {
-    loginAppearanceEdit.value.loginTitle = "Team Chat";
-    loginAppearanceEdit.value.loginSubtitle = "轻快、稳定的团队聊天。";
-    loginAppearanceEdit.value.loginIconPath = null;
-    loginAppearanceEdit.value.loginShowIcon = true;
-    loginAppearanceEdit.value.loginShowSubtitle = true;
-    loginAppearanceEdit.value.loginBackgroundPath = null;
-    loginAppearanceEdit.value.loginFormPosition = "middle";
-    loginAppearanceEdit.value.loginBackgroundFit = "cover";
-    loginAppearanceEdit.value.registrationEnabled = false;
-  } else if (appearanceSection.value === "chat") {
-    loginAppearanceEdit.value.wallpaperPath = null;
-    loginAppearanceEdit.value.wallpaperFit = "cover";
-  } else if (appearanceSection.value === "themes") {
-    customThemesDraft.value = [];
-    resetThemeEditor();
-  } else {
-    flashEffectEdit.value = {
-      colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-      intervalSeconds: 0.4,
-      transitionMode: "smooth"
-    };
-  }
-  adminMsg.value = "当前分组已恢复默认草稿，保存外观后生效";
-}
-
-function confirmDiscardAppearanceDraft() {
-  return !appearanceHasDraftChanges.value || confirm("放弃未保存的外观草稿并离开？");
 }
 
 function switchAdminTab(tab: typeof adminTab.value) {
-  if (tab !== "appearance" && adminTab.value === "appearance" && !confirmDiscardAppearanceDraft()) return;
-  if (tab !== "appearance") appearancePreviewOpen.value = false;
+  if (tab !== "appearance" && adminTab.value === "appearance") {
+    abandonAppearanceDraft();
+    appearancePreviewOpen.value = false;
+  }
   adminTab.value = tab;
   if (tab === "appearance") void loadAdminAttachments();
 }
 
 function closeAdminPanel() {
-  if (adminTab.value === "appearance" && !confirmDiscardAppearanceDraft()) return;
+  if (adminTab.value === "appearance") abandonAppearanceDraft();
   showAdmin.value = false;
   appearancePreviewOpen.value = false;
 }
@@ -5272,10 +5188,16 @@ async function toggleVirtual(character: any) {
                 </div>
                 <div class="user-admin-main">
                   <strong>@{{ account.username }}</strong>
-                  <input v-model="accountEdits[account.id].displayName" placeholder="昵称" />
-                  <input v-model="accountEdits[account.id].password" placeholder="重置密码，留空不改" type="password" />
-                  <label class="check-row"><input v-model="accountEdits[account.id].isAdmin" type="checkbox" /> 管理员</label>
-                  <label class="check-row"><input v-model="accountEdits[account.id].canPinMessages" type="checkbox" /> 户部尚书（默认频道置顶）</label>
+                  <div class="user-admin-edit-grid">
+                    <div class="user-admin-fields">
+                      <input v-model="accountEdits[account.id].displayName" placeholder="昵称" />
+                      <input v-model="accountEdits[account.id].password" placeholder="重置密码，留空不改" type="password" />
+                    </div>
+                    <div class="user-admin-flags">
+                      <label class="check-row"><input v-model="accountEdits[account.id].isAdmin" type="checkbox" /> 管理员</label>
+                      <label class="check-row"><input v-model="accountEdits[account.id].canPinMessages" type="checkbox" /> 户部尚书（默认频道置顶）</label>
+                    </div>
+                  </div>
                 </div>
                 <div class="user-admin-actions">
                   <label class="mini-btn secondary">
@@ -5339,8 +5261,6 @@ async function toggleVirtual(character: any) {
                 <small>{{ appearanceHasDraftChanges ? "有未保存更改，保存后才会对聊天室生效。" : "所有外观设置都已保存。" }}</small>
               </div>
               <div class="appearance-save-actions">
-                <button class="mini-btn secondary" :disabled="!appearanceHasDraftChanges" @click="discardAppearanceDraft">放弃草稿</button>
-                <button class="mini-btn secondary" @click="resetCurrentAppearanceSection">恢复本组默认</button>
                 <button class="mini-btn secondary appearance-mobile-preview-btn" @click="appearancePreviewOpen = true">预览</button>
                 <button class="primary-btn" :class="{ attention: appearanceHasDraftChanges }" @click="saveLoginAppearance"><Save :size="15" />保存外观</button>
               </div>
@@ -5363,15 +5283,13 @@ async function toggleVirtual(character: any) {
                 <label>浏览器标签页</label>
                 <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
                 <div class="appearance-image-control">
-                  <div class="login-icon-preview">
+                  <button class="appearance-image-preview-button login-icon-preview" @click="openAppearanceImagePicker('appIconPath', '选择标签页图标', '适合方形或接近方形的小图。')" aria-label="选择标签页图标">
                     <img :src="appearanceDraftIcon" alt="" />
-                  </div>
+                  </button>
                   <div>
                     <strong>标签页图标</strong>
-                    <small>用于浏览器标签、收藏夹和应用图标预览。</small>
+                    <small>点击图标选择图片；用于浏览器标签、收藏夹和应用入口。</small>
                   </div>
-                  <button class="mini-btn secondary" @click="openAppearanceImagePicker('appIconPath', '选择标签页图标', '适合方形或接近方形的小图。')">选择图片</button>
-                  <button class="mini-btn secondary" @click="clearAppIcon">恢复默认</button>
                 </div>
               </template>
 
@@ -5381,13 +5299,13 @@ async function toggleVirtual(character: any) {
                   <input v-model="loginAppearanceEdit.loginTitle" maxlength="80" placeholder="登录页标题" aria-label="登录页标题" />
                   <input v-model="loginAppearanceEdit.loginSubtitle" maxlength="160" placeholder="登录页副标题" aria-label="登录页副标题" />
                 </div>
-                <div class="check-grid">
+                <div class="check-grid login-visibility-options">
                   <label class="check-row"><input v-model="loginAppearanceEdit.loginShowIcon" type="checkbox" /> 显示登录页图标</label>
                   <label class="check-row"><input v-model="loginAppearanceEdit.loginShowSubtitle" type="checkbox" /> 显示登录页副标题</label>
                 </div>
 
                 <label>登录区域位置</label>
-                <div class="segmented-row">
+                <div class="segmented-row login-position-options">
                   <button
                     v-for="option in loginPositionOptions"
                     :key="option.value"
@@ -5399,30 +5317,26 @@ async function toggleVirtual(character: any) {
                   </button>
                 </div>
 
-                <label>登录页图片</label>
+                <label>登录页图标与背景</label>
                 <div class="appearance-image-stack">
                   <div class="appearance-image-control">
-                    <div class="login-icon-preview">
+                    <button class="appearance-image-preview-button login-icon-preview" @click="openAppearanceImagePicker('loginIconPath', '选择登录页图标', '登录卡片中的品牌图标，建议方形图片。')" aria-label="选择登录页图标">
                       <img :src="appearanceDraftLoginIcon" alt="" />
-                    </div>
+                    </button>
                     <div>
                       <strong>登录页图标</strong>
-                      <small>{{ loginAppearanceEdit.loginIconPath || "使用默认图标" }}</small>
+                      <small>{{ loginAppearanceEdit.loginIconPath || "使用默认图标，点击图标更换" }}</small>
                     </div>
-                    <button class="mini-btn secondary" @click="openAppearanceImagePicker('loginIconPath', '选择登录页图标', '登录卡片中的品牌图标，建议方形图片。')">选择图片</button>
-                    <button class="mini-btn secondary" @click="clearLoginIcon">移除</button>
                   </div>
                   <div class="appearance-image-control">
-                    <div class="login-background-preview" :style="appearancePreviewLoginStyle"></div>
+                    <button class="appearance-image-preview-button login-background-preview" :style="appearancePreviewLoginStyle" @click="openAppearanceImagePicker('loginBackgroundPath', '选择登录页背景', '适合横向或竖向大图，可在这里设置显示方式。', 'loginBackgroundFit')" aria-label="选择登录页背景"></button>
                     <div>
                       <strong>登录页背景</strong>
-                      <small>{{ loginAppearanceEdit.loginBackgroundPath || "未设置背景图" }}</small>
+                      <small>{{ loginAppearanceEdit.loginBackgroundPath || "未设置背景图，点击预览更换" }}</small>
                     </div>
                     <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
                       <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                     </select>
-                    <button class="mini-btn secondary" @click="openAppearanceImagePicker('loginBackgroundPath', '选择登录页背景', '适合横向或竖向大图，可在这里设置显示方式。', 'loginBackgroundFit')">选择图片</button>
-                    <button class="mini-btn secondary" @click="clearLoginBackground">移除</button>
                   </div>
                 </div>
 
@@ -5433,16 +5347,14 @@ async function toggleVirtual(character: any) {
               <template v-else-if="appearanceSection === 'chat'">
                 <label>聊天室壁纸</label>
                 <div class="appearance-image-control">
-                  <div class="login-background-preview chat" :style="appearancePreviewChatStyle"></div>
+                  <button class="appearance-image-preview-button login-background-preview chat" :style="appearancePreviewChatStyle" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸或平铺。', 'wallpaperFit')" aria-label="选择聊天室壁纸"></button>
                   <div>
                     <strong>聊天区背景图</strong>
-                    <small>{{ loginAppearanceEdit.wallpaperPath || "未设置壁纸" }}</small>
+                    <small>{{ loginAppearanceEdit.wallpaperPath || "未设置壁纸，点击预览更换" }}</small>
                   </div>
                   <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
                     <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
-                  <button class="mini-btn secondary" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸或平铺。', 'wallpaperFit')">选择图片</button>
-                  <button class="mini-btn secondary" @click="clearWallpaper">移除</button>
                 </div>
               </template>
 
@@ -5661,31 +5573,34 @@ async function toggleVirtual(character: any) {
               <button class="mini-btn danger-action" @click="clearAdminMessages(0)"><Trash2 :size="15" />清空全部记录</button>
             </div>
             <label>附件管理</label>
-            <div class="data-toolbar">
+            <div class="data-toolbar attachment-toolbar">
               <button class="mini-btn secondary" @click="toggleAllAttachments">{{ allAttachmentsSelected ? "取消全选" : "全选" }}</button>
               <button class="mini-btn secondary" @click="loadAdminAttachments"><RotateCcw :size="15" />刷新</button>
-              <button class="mini-btn secondary" :disabled="!selectedCompressibleAttachmentCount" @click="compressAdminAttachments(selectedCompressibleAttachmentIds)">
-                <WandSparkles :size="15" />压缩选中 {{ selectedCompressibleAttachmentCount }}
-              </button>
-              <button class="mini-btn danger-action" :disabled="!selectedAttachmentCount" @click="deleteAdminAttachments(selectedAttachmentIds)"><Trash2 :size="15" />删除选中 {{ selectedAttachmentCount }}</button>
               <button class="mini-btn danger-action" :disabled="!adminAttachments.length" @click="deleteAllAdminAttachments"><Trash2 :size="15" />删除全部附件</button>
             </div>
-            <div class="admin-data-list">
+            <div class="admin-data-list attachment-grid">
               <article v-for="attachment in adminAttachments" :key="attachment.id" class="admin-data-row attachment-row">
                 <label class="check-cell">
                   <input v-model="selectedAttachmentIds" type="checkbox" :value="attachment.id" />
                 </label>
+                <div class="attachment-preview" :class="{ empty: !attachment.url || !isImageAttachment(attachment) }">
+                  <img v-if="attachment.url && isImageAttachment(attachment)" :src="attachment.url" alt="" />
+                  <FileUp v-else :size="24" />
+                </div>
                 <div class="admin-data-main">
                   <strong>{{ attachmentKindLabel(attachment.kind) }} · {{ attachment.label }}</strong>
                   <span>{{ attachmentUsage(attachment) }}</span>
                   <small>{{ compactBytes(attachment.size) }} · {{ adminDate(attachment.createdAt) }} · {{ attachment.fileName }}</small>
                 </div>
-                <div class="attachment-actions">
-                  <button class="mini-btn secondary" :disabled="!isImageAttachment(attachment)" @click="compressAdminAttachments([attachment.id])"><WandSparkles :size="15" />压缩</button>
-                  <button class="mini-btn danger-action" @click="deleteAdminAttachments([attachment.id])"><Trash2 :size="15" />删除</button>
-                </div>
               </article>
               <p v-if="!adminAttachments.length" class="empty-note">没有可管理的附件</p>
+            </div>
+            <div class="attachment-bulk-actions">
+              <span>已选 {{ selectedAttachmentCount }} 个附件</span>
+              <button class="mini-btn secondary" :disabled="!selectedCompressibleAttachmentCount" @click="compressAdminAttachments(selectedCompressibleAttachmentIds)">
+                <WandSparkles :size="15" />压缩 {{ selectedCompressibleAttachmentCount }}
+              </button>
+              <button class="mini-btn danger-action" :disabled="!selectedAttachmentCount" @click="deleteAdminAttachments(selectedAttachmentIds)"><Trash2 :size="15" />删除 {{ selectedAttachmentCount }}</button>
             </div>
           </section>
 

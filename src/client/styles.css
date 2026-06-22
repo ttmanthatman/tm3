@@ -3010,6 +3010,10 @@ button {
   gap: 8px;
 }
 
+.appearance-save-actions .primary-btn {
+  min-width: 132px;
+}
+
 .primary-btn.attention {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
@@ -3328,13 +3332,24 @@ button {
   border-radius: 8px;
   padding: 10px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   background: var(--panel);
 }
 
-.appearance-image-control > div:not(.login-icon-preview):not(.login-background-preview) {
+.appearance-image-preview-button {
+  padding: 0;
+  cursor: pointer;
+}
+
+.appearance-image-preview-button:hover,
+.appearance-image-preview-button:focus-visible {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.appearance-image-control > div {
   min-width: 0;
   display: grid;
   gap: 3px;
@@ -3427,6 +3442,11 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 10px;
+}
+
+.login-visibility-options,
+.login-position-options {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .segmented-row .mini-btn {
@@ -3522,6 +3542,15 @@ button {
   gap: 8px;
 }
 
+.attachment-toolbar {
+  grid-template-columns: repeat(auto-fit, minmax(120px, auto));
+  justify-content: start;
+}
+
+.attachment-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .admin-data-row {
   min-width: 0;
   border: 1px solid var(--line);
@@ -3535,14 +3564,57 @@ button {
 }
 
 .admin-data-row.attachment-row {
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  position: relative;
+  padding: 8px;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
 }
 
-.attachment-actions {
+.attachment-preview {
+  grid-column: 1 / -1;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: #f1f3f5;
+  color: var(--muted);
+}
+
+.attachment-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-preview.empty {
+  background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+}
+
+.attachment-bulk-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
   display: flex;
   flex-wrap: wrap;
-  justify-content: end;
+  align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  background: color-mix(in srgb, var(--panel) 94%, #ffffff);
+  box-shadow: 0 -8px 22px rgba(0, 0, 0, 0.08);
+}
+
+.attachment-bulk-actions span {
+  min-width: 0;
+  margin-right: auto;
+  color: var(--muted);
+  font-weight: 700;
 }
 
 .admin-data-main {
@@ -3918,6 +3990,25 @@ button {
   align-items: start;
 }
 
+.user-admin-edit-grid {
+  display: grid;
+  grid-template-columns: minmax(160px, 280px) minmax(150px, 1fr);
+  align-items: start;
+  gap: 8px 10px;
+}
+
+.user-admin-fields,
+.user-admin-flags {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.user-admin-flags {
+  align-content: start;
+  padding-top: 2px;
+}
+
 .user-admin-main input {
   min-width: 0;
   width: 100%;
@@ -3936,6 +4027,16 @@ button {
 
 .pinned-editor-modal {
   max-width: min(680px, calc(100vw - 24px));
+  max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 24px);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.pinned-editor-modal > .form-grid {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px;
+  -webkit-overflow-scrolling: touch;
 }
 
 .pinned-editor-blocks {
@@ -4131,13 +4232,13 @@ button {
 
 .channel-admin-row {
   display: grid;
-  grid-template-columns: 86px minmax(0, 1fr) auto auto;
+  grid-template-columns: 56px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
 }
 
 .channel-icon-admin {
-  width: 86px;
+  width: 56px;
   display: grid;
   justify-items: center;
   gap: 6px;
@@ -4709,7 +4810,6 @@ button {
   .device-row .mini-btn,
   .user-admin-actions,
   .channel-icon-admin,
-  .attachment-actions,
   .channel-admin-row .mini-btn,
   .admin-data-row .mini-btn,
   .admin-inline-card .primary-btn,
@@ -4726,15 +4826,10 @@ button {
   }
 
   .channel-icon-admin .mini-btn,
-  .attachment-actions,
   .data-toolbar .mini-btn,
   .admin-data-row .mini-btn,
   .admin-inline-card .primary-btn {
     width: 100%;
-  }
-
-  .attachment-actions {
-    justify-content: stretch;
   }
 
   .admin-body {
@@ -4815,13 +4910,17 @@ button {
     grid-template-columns: 1fr 1fr;
   }
 
-  .appearance-save-actions .primary-btn {
-    grid-column: 1 / -1;
-  }
-
   .appearance-mobile-preview-btn,
   .appearance-preview-close {
     display: grid;
+  }
+
+  .appearance-image-control {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .appearance-image-control select {
+    grid-column: 1 / -1;
   }
 
   .appearance-image-control .mini-btn,
@@ -4849,5 +4948,82 @@ button {
 
   .user-admin-actions {
     justify-content: flex-start;
+  }
+
+  .user-admin-row {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .user-admin-main,
+  .user-admin-actions {
+    grid-column: 2;
+  }
+
+  .user-admin-edit-grid {
+    grid-template-columns: minmax(132px, 0.72fr) minmax(118px, 0.28fr);
+  }
+
+  .user-admin-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .channel-admin-row {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .channel-icon-admin {
+    grid-column: 1;
+    width: 56px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .channel-admin-main {
+    grid-column: 2;
+  }
+
+  .channel-admin-row > .mini-btn {
+    grid-column: 2;
+    width: 100%;
+  }
+
+  .attachment-toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .attachment-toolbar .mini-btn {
+    width: 100%;
+  }
+
+  .attachment-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-data-row.attachment-row {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+
+  .attachment-bulk-actions {
+    bottom: -12px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(96px, auto) minmax(92px, auto);
+  }
+
+  .attachment-bulk-actions span {
+    margin-right: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .user-admin-edit-grid,
+  .user-admin-actions,
+  .attachment-toolbar,
+  .attachment-bulk-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .attachment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
