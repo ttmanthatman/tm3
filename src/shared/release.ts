@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.6.22";
+export const APP_VERSION = "0.6.23";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复管理员一键 GitHub 更新在重启服务步骤可能长期卡住的问题，重启改由独立后台进程完成。",
+  "更新状态如果长时间停在进行中，会自动标记为失败并允许管理员重新发起更新。"
+] as const;
+
+const RELEASE_0_6_22_NOTES = [
   "管理员用户和频道图标上传改为直接点击头像或图标，不再显示单独的上传按钮。",
   "用户管理行移除导出附件和删除附件按钮，保存按钮改为更紧凑的小按钮。",
   "频道新增表单、浏览器标签页标题和附件管理卡片优化窄屏排版，长文件名不再只露出一两个字。"
@@ -166,9 +171,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.22",
+    version: "0.6.23",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.22",
+    date: "2026-06-23",
+    notes: RELEASE_0_6_22_NOTES
   },
   {
     version: "0.6.21",
