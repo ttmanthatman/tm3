@@ -2948,25 +2948,41 @@ app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth },
 app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ content: z.string().max(10000).optional() }).parse(request.body || {});
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
   if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
   const source = await canonicalPrayerMessage(message);
   const sourceSender = source.id === message.id ? message.sender : await prisma.actor.findUnique({ where: { id: source.senderActorId } });
   if (sourceSender?.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以更新此代祷" });
+  const content = cleanText(body.content ?? source.content ?? "");
+  if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "代祷内容不能为空" });
   const raw = prayerPayloadRaw(source.payload);
+  const sourcePayload = {
+    ...raw,
+    kind: "prayer",
+    latestUpdateAt: new Date().toISOString(),
+    latestUpdateBy: auth.username
+  };
+  await prisma.message.update({
+    where: { id: source.id },
+    data: {
+      content,
+      payload: sourcePayload as Prisma.InputJsonObject
+    }
+  });
+  const sourceDto = await hydrateMessage(source.id);
+  if (sourceDto) io.to(`ch:${source.channelId}`).emit("message:updated", sourceDto);
   const actor = await prisma.actor.findUniqueOrThrow({ where: { id: auth.actorId } });
   const updateMessage = await createMessageFromActor({
     channelId: source.channelId,
     actorId: actor.id,
-    content: source.content || "",
+    content,
     type: "prayer",
     payload: {
-      ...raw,
+      ...sourcePayload,
       kind: "prayer",
       sourcePrayerMessageId: source.id,
-      latestUpdateAt: new Date().toISOString(),
-      latestUpdateBy: auth.username
     },
     skipPush: true,
     skipEngineEvent: true

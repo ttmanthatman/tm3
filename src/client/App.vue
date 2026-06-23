@@ -245,6 +245,10 @@ const pendingChain = ref<MessageDTO | null>(null);
 const pendingDownload = ref<MessageDTO | null>(null);
 const pendingRecall = ref<MessageDTO | null>(null);
 const pendingPrayer = ref<MessageDTO | null>(null);
+const pendingPrayerUpdate = ref<MessageDTO | null>(null);
+const prayerUpdateContent = ref("");
+const prayerUpdateBusy = ref(false);
+const prayerUpdateError = ref("");
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
 const aiSuggestionBusyIds = ref<Set<number>>(new Set());
 const aiSuggestionErrors = ref<Record<number, string>>({});
@@ -516,6 +520,7 @@ watch(
     pendingDownload.value = null;
     pendingRecall.value = null;
     pendingPrayer.value = null;
+    pendingPrayerUpdate.value = null;
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
@@ -3975,12 +3980,41 @@ function canPublishPrayerUpdate(message: MessageDTO) {
   return message.type === "prayer" && (isMine(message) || !!store.account?.isAdmin);
 }
 
-async function publishPrayerUpdate(message: MessageDTO) {
-  if (!confirm("更新这张代祷卡片的最新动态，并向全员推送通知？")) return;
-  const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, { method: "POST", body: JSON.stringify({}) });
-  if (result.message) store.appendLocalMessage(result.message);
-  await nextTick();
-  scrollBottom(true);
+function openPrayerUpdateEditor(message: MessageDTO) {
+  pendingPrayerUpdate.value = message;
+  prayerUpdateContent.value = plainTextFromHtml(message.content);
+  prayerUpdateError.value = "";
+  prayerUpdateBusy.value = false;
+}
+
+function closePrayerUpdateEditor() {
+  if (prayerUpdateBusy.value) return;
+  pendingPrayerUpdate.value = null;
+  prayerUpdateContent.value = "";
+  prayerUpdateError.value = "";
+}
+
+async function publishPrayerUpdate() {
+  const message = pendingPrayerUpdate.value;
+  const content = prayerUpdateContent.value.trim();
+  if (!message || !content || prayerUpdateBusy.value) return;
+  prayerUpdateBusy.value = true;
+  prayerUpdateError.value = "";
+  try {
+    const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, {
+      method: "POST",
+      body: JSON.stringify({ content: escapeHtmlText(content) })
+    });
+    if (result.message) store.appendLocalMessage(result.message);
+    pendingPrayerUpdate.value = null;
+    prayerUpdateContent.value = "";
+    await nextTick();
+    scrollBottom(true);
+  } catch (error) {
+    prayerUpdateError.value = error instanceof Error ? error.message : "更新最新动态失败";
+  } finally {
+    prayerUpdateBusy.value = false;
+  }
 }
 
 async function withdrawPrayer(message: MessageDTO) {
@@ -4931,7 +4965,7 @@ async function toggleVirtual(character: any) {
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'closed')"><CircleOff :size="15" />无需再代祷</button>
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'answered')"><CheckCircle2 :size="15" />已蒙应允</button>
                       </template>
-                      <button v-if="canPublishPrayerUpdate(row.message)" class="mini-btn secondary" @click.stop="publishPrayerUpdate(row.message)"><Bell :size="15" />更新最新动态</button>
+                      <button v-if="canPublishPrayerUpdate(row.message)" class="mini-btn secondary" @click.stop="openPrayerUpdateEditor(row.message)"><Bell :size="15" />更新最新动态</button>
                       <button v-if="isMine(row.message)" class="mini-btn danger-soft" @click.stop="withdrawPrayer(row.message)"><Trash2 :size="15" />撤回</button>
                     </div>
                     <div class="prayer-ai" @click.stop>
@@ -5337,6 +5371,27 @@ async function toggleVirtual(character: any) {
           <label>接龙信息</label>
           <input v-model="chainTopic" autocomplete="off" placeholder="例如：周六聚餐报名" />
           <button class="primary-btn" type="submit" :disabled="!chainTopic.trim()">发布接龙</button>
+        </div>
+      </form>
+    </section>
+
+    <section v-if="pendingPrayerUpdate" class="modal-shell" @click.self="closePrayerUpdateEditor">
+      <form class="small-modal prayer-update-modal" @submit.prevent="publishPrayerUpdate">
+        <header class="modal-head">
+          <strong>更新代祷最新动态</strong>
+          <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
+        </header>
+        <div class="form-grid modal-form">
+          <p class="modal-help">可直接修改原代祷内容，也可以在末尾追加新的祷告事项。发布后会更新原卡片，并作为最新消息推送给全员。</p>
+          <label>代祷内容</label>
+          <textarea v-model="prayerUpdateContent" rows="9" placeholder="写下最新动态或补充代祷内容"></textarea>
+          <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
+          <div class="confirm-actions">
+            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>
+            <button class="primary-btn" type="submit" :disabled="prayerUpdateBusy || !prayerUpdateContent.trim()">
+              {{ prayerUpdateBusy ? "正在更新..." : "更新并推送" }}
+            </button>
+          </div>
         </div>
       </form>
     </section>

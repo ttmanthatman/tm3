@@ -2880,6 +2880,18 @@ button {
   padding: 16px;
 }
 
+.modal-help {
+  margin: 0;
+  color: #586069;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.prayer-update-modal textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
 .confirm-body {
   display: grid;
   gap: 12px;
