@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.7.1";
+export const APP_VERSION = "0.7.2";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "为什么页左上角返回按钮会直接回到之前的聊天频道，不再先拉开频道列表。",
+  "聊天室会按账号、频道和视图记住阅读位置，切走再回来会尽量回到原来的消息位置。",
+  "代祷卡片新增“更新最新动态”，会把同一张代祷卡作为最新消息再发一次并向全员推送，代祷事项子视图不会重复收录这条动态。"
+] as const;
+
+const RELEASE_0_7_1_NOTES = [
   "暂时移除普通文本消息下方的“开始为什么研究”按钮，避免每条消息都出现研究入口。",
   "修复为什么相关 MySQL schema 中 Text 字段默认值不兼容的问题，数据库同步更稳定。",
   "加固管理员自更新流程，让更新脚本在仓库、依赖安装、构建和重启阶段有更清晰的失败处理。"
@@ -186,9 +192,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.1",
+    version: "0.7.2",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.1",
+    date: "2026-06-23",
+    notes: RELEASE_0_7_1_NOTES
   },
   {
     version: "0.7.0",

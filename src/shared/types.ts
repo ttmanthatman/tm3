@@ -40,6 +40,9 @@ export interface PrayerPayload extends MessageEffectPayload {
   status: PrayerStatus;
   statusAt?: string;
   statusBy?: string;
+  sourcePrayerMessageId?: number | null;
+  latestUpdateAt?: string;
+  latestUpdateBy?: string;
   prayerCount: number;
   prayerActionCount: number;
   currentUserPrayed: boolean;

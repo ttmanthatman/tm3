@@ -624,6 +624,26 @@ function cleanPrayerPayload(input: unknown) {
   };
 }
 
+function prayerPayloadRaw(input: unknown) {
+  return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+}
+
+function sourcePrayerMessageId(input: unknown, fallback: number) {
+  const sourceId = Number(prayerPayloadRaw(input).sourcePrayerMessageId || 0);
+  return Number.isFinite(sourceId) && sourceId > 0 ? sourceId : fallback;
+}
+
+async function canonicalPrayerMessage(message: Message) {
+  const sourceId = sourcePrayerMessageId(message.payload, message.id);
+  if (sourceId === message.id) return message;
+  const source = await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "prayer" } });
+  return source || message;
+}
+
+function isPrayerUpdateMessage(message: Pick<Message, "id" | "payload">) {
+  return sourcePrayerMessageId(message.payload, message.id) !== message.id;
+}
+
 let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; loadedAt: number } | null = null;
 
 function clampInteger(value: unknown, fallback: number, min: number, max: number) {
@@ -1066,19 +1086,26 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
   let payload: unknown = message.payload || undefined;
   if (message.type === "prayer") {
     const aiSettings = await loadAiSettings();
+    const raw = prayerPayloadRaw(message.payload);
+    const sourceId = sourcePrayerMessageId(message.payload, message.id);
+    const sourceMessage =
+      sourceId !== message.id ? await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "prayer" } }) : null;
+    const actionMessageId = sourceMessage?.id || message.id;
+    const sourceRaw = prayerPayloadRaw(sourceMessage?.payload);
+    const displayRaw = sourceMessage ? { ...raw, ...sourceRaw, sourcePrayerMessageId: sourceMessage.id, latestUpdateAt: raw.latestUpdateAt, latestUpdateBy: raw.latestUpdateBy } : raw;
     const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = await Promise.all([
       prisma.prayerAction.findMany({
-        where: { messageId: message.id },
+        where: { messageId: actionMessageId },
         include: { account: true },
         orderBy: { prayedAt: "desc" }
       }),
       prisma.messageAiSuggestion.findMany({
-        where: { messageId: message.id, kind: AI_RELATED_VERSES_KIND, status: "success" },
+        where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
         include: { createdBy: { select: { displayName: true } } },
         orderBy: { createdAt: "desc" },
         take: 3
       }),
-      prisma.messageAiSuggestion.count({ where: { messageId: message.id, kind: AI_RELATED_VERSES_KIND, status: "success" } })
+      prisma.messageAiSuggestion.count({ where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } })
     ]);
     const byAccount = new Map<number, { accountId: number; displayName: string; avatarPath?: string | null; latestPrayedAt: string; times: number }>();
     for (const action of actions) {
@@ -1095,11 +1122,10 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
         });
       }
     }
-    const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
     payload = {
-      ...raw,
+      ...displayRaw,
       kind: "prayer",
-      status: cleanPrayerStatus(raw.status),
+      status: cleanPrayerStatus(displayRaw.status),
       prayerCount: byAccount.size,
       prayerActionCount: actions.length,
       currentUserPrayed: viewerAccountId ? byAccount.has(viewerAccountId) : false,
@@ -1709,6 +1735,19 @@ async function sendPinnedPush(channelId: number, pinned: { title?: string | null
     url: `/?channelId=${channelId}`,
     tag: `pinned-${channelId}`,
     channelId
+  });
+}
+
+async function sendPrayerUpdatePush(messageId: number) {
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
+  if (!message || message.type !== "prayer") return;
+  const accountIds = await notificationRecipientIds(message.channelId, null, true);
+  await sendPushToAccounts(accountIds, {
+    title: `代祷最新动态 · ${message.channel.name}`,
+    body: `${message.sender.displayName} 更新代祷：${stripPushText(message.content) || "代祷事项"}`,
+    url: `/?channelId=${message.channelId}`,
+    tag: `prayer-update-${message.channelId}-${sourcePrayerMessageId(message.payload, message.id)}`,
+    channelId: message.channelId
   });
 }
 
@@ -2701,7 +2740,8 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
     orderBy: { id: after > 0 ? "asc" : "desc" },
     take: limit
   });
-  const messages = await Promise.all((after > 0 ? rows : rows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
+  const filteredRows = query.prayers === "1" ? rows.filter((message) => !isPrayerUpdateMessage(message)) : rows;
+  const messages = await Promise.all((after > 0 ? filteredRows : filteredRows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
   return { messages };
 });
 
@@ -2875,9 +2915,10 @@ app.post("/api/messages/:messageId/prayed", { preHandler: requireAuth }, async (
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
-  const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+  const target = await canonicalPrayerMessage(message);
+  const raw = prayerPayloadRaw(target.payload);
   if (cleanPrayerStatus(raw.status) !== "active") return reply.code(409).send({ success: false, message: "此代祷已结束" });
-  await prisma.prayerAction.create({ data: { messageId, accountId: auth.accountId } });
+  await prisma.prayerAction.create({ data: { messageId: target.id, accountId: auth.accountId } });
   io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
   return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
 });
@@ -2888,8 +2929,10 @@ app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth },
   const body = z.object({ status: z.enum(["closed", "answered"]) }).parse(request.body);
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
   if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
-  if (message.sender.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以更新此代祷" });
-  const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+  const target = await canonicalPrayerMessage(message);
+  const sender = target.id === message.id ? message.sender : await prisma.actor.findUnique({ where: { id: target.senderActorId } });
+  if (sender?.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以更新此代祷" });
+  const raw = prayerPayloadRaw(target.payload);
   const payload = {
     ...raw,
     kind: "prayer",
@@ -2897,9 +2940,39 @@ app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth },
     statusAt: new Date().toISOString(),
     statusBy: auth.username
   };
-  await prisma.message.update({ where: { id: messageId }, data: { payload: payload as Prisma.InputJsonObject } });
+  await prisma.message.update({ where: { id: target.id }, data: { payload: payload as Prisma.InputJsonObject } });
   io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
   return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+});
+
+app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
+  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
+  const source = await canonicalPrayerMessage(message);
+  const sourceSender = source.id === message.id ? message.sender : await prisma.actor.findUnique({ where: { id: source.senderActorId } });
+  if (sourceSender?.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有发起者可以更新此代祷" });
+  const raw = prayerPayloadRaw(source.payload);
+  const actor = await prisma.actor.findUniqueOrThrow({ where: { id: auth.actorId } });
+  const updateMessage = await createMessageFromActor({
+    channelId: source.channelId,
+    actorId: actor.id,
+    content: source.content || "",
+    type: "prayer",
+    payload: {
+      ...raw,
+      kind: "prayer",
+      sourcePrayerMessageId: source.id,
+      latestUpdateAt: new Date().toISOString(),
+      latestUpdateBy: auth.username
+    },
+    skipPush: true,
+    skipEngineEvent: true
+  });
+  void sendPrayerUpdatePush(updateMessage.id).catch((error) => app.log.warn({ error }, "prayer update push failed"));
+  return { success: true, message: await hydrateMessage(updateMessage.id, auth.accountId) };
 });
 
 app.delete("/api/messages/:messageId/prayer", { preHandler: requireAuth }, async (request, reply) => {
@@ -3142,20 +3215,24 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
   if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
+  const target = await canonicalPrayerMessage(message);
+  const targetMessageId = target.id;
+  const targetWithSender =
+    targetMessageId === message.id ? message : await prisma.message.findUniqueOrThrow({ where: { id: targetMessageId }, include: { sender: true } });
 
   const aiSettings = await loadAiSettings();
   const settings = aiSettings.value;
   const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
   if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
 
-  const successCount = await prisma.messageAiSuggestion.count({ where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" } });
+  const successCount = await prisma.messageAiSuggestion.count({ where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } });
   if (successCount >= settings.maxSuccessPerMessage) {
     return reply.code(409).send({ success: false, message: "这张代祷卡片的经文建议已达到上限" });
   }
 
   const now = new Date();
   const latestForMessage = await prisma.messageAiSuggestion.findFirst({
-    where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+    where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
     orderBy: { createdAt: "desc" }
   });
   const nextAllowedAt = latestForMessage ? latestForMessage.createdAt.getTime() + settings.cardCooldownSeconds * 1000 : 0;
@@ -3173,17 +3250,17 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
   }
 
   const previousRows = await prisma.messageAiSuggestion.findMany({
-    where: { messageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+    where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
     select: { references: true },
     orderBy: { createdAt: "desc" }
   });
   const previousReferences = previousRows.flatMap((row) => (Array.isArray(row.references) ? row.references.map(String).filter(Boolean) : []));
-  const contextText = buildRelatedVersesContext(message, previousReferences);
+  const contextText = buildRelatedVersesContext(targetWithSender, previousReferences);
   try {
     const result = await callDeepSeekRelatedVerses(settings, apiKey, contextText);
     await prisma.messageAiSuggestion.create({
       data: {
-        messageId,
+        messageId: targetMessageId,
         kind: AI_RELATED_VERSES_KIND,
         status: "success",
         promptCommand: settings.promptCommand,
@@ -3200,7 +3277,7 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
   } catch (error) {
     await prisma.messageAiSuggestion.create({
       data: {
-        messageId,
+        messageId: targetMessageId,
         kind: AI_RELATED_VERSES_KIND,
         status: "failed",
         promptCommand: settings.promptCommand,

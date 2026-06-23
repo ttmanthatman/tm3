@@ -13,7 +13,7 @@ type MessageWindowCache = {
 };
 const MESSAGE_PAGE_SIZE = 80;
 const MESSAGE_WINDOW_LIMIT = 480;
-const MESSAGE_CACHE_KEY_LIMIT = 8;
+const MESSAGE_CACHE_KEY_LIMIT = 24;
 const defaultAppearance: AppearanceDTO = {
   appTitle: "Team Chat",
   appIconPath: null,
@@ -214,6 +214,7 @@ export const useChatStore = defineStore("chat", {
     },
     async switchChannel(id: number) {
       if (this.currentChannelId === id && !this.prayerOnly) return;
+      this.cacheCurrentMessages();
       this.previousChannelId = this.currentChannelId;
       this.currentChannelId = id;
       this.prayerOnly = false;
@@ -226,6 +227,7 @@ export const useChatStore = defineStore("chat", {
       await this.loadMembers();
     },
     async switchPrayerView(id: number) {
+      this.cacheCurrentMessages();
       if (this.currentChannelId !== id) {
         this.previousChannelId = this.currentChannelId;
         this.currentChannelId = id;
@@ -241,6 +243,7 @@ export const useChatStore = defineStore("chat", {
     },
     async switchChatView() {
       if (!this.prayerOnly) return;
+      this.cacheCurrentMessages();
       this.prayerOnly = false;
       localStorage.setItem("team-chat-message-view", "chat");
       this.restoreCachedMessages(this.currentChannelId, false);

@@ -101,6 +101,13 @@ type PendingUpload = {
   status: UploadStatus;
   message?: string;
 };
+type SavedReadPosition = {
+  messageId: number;
+  offset: number;
+  atBottom: boolean;
+  scrollTop: number;
+  savedAt: number;
+};
 const username = ref("");
 const password = ref("");
 const displayName = ref("");
@@ -134,6 +141,8 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const pendingReadPositionRestore = ref(false);
+let readPositionRestoreToken = 0;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLElement | null>(null);
 const adminTab = ref<"users" | "channels" | "virtuals" | "pin" | "appearance" | "data" | "release">("pin");
@@ -493,12 +502,13 @@ onMounted(async () => {
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
-  scrollBottom(false);
+  pendingReadPositionRestore.value = true;
+  await restoreSavedReadPosition();
 });
 
 watch(
   () => [store.currentChannelId, store.prayerOnly] as const,
-  () => {
+  async () => {
     stopAllVoicePlayback();
     selectedMember.value = null;
     pendingCloseChannel.value = null;
@@ -510,9 +520,17 @@ watch(
     messageSelectionMode.value = false;
     composerPanel.value = null;
     hasUnreadMessages.value = false;
-    nextTick(() => {
-      scrollBottom(false);
-    });
+    pendingReadPositionRestore.value = true;
+    await nextTick();
+    void restoreSavedReadPosition();
+  }
+);
+
+watch(
+  () => [store.currentChannelId, store.prayerOnly, store.loadingInitialMessages, store.messages.map((message) => message.id).join(",")] as const,
+  () => {
+    if (!pendingReadPositionRestore.value || store.loadingInitialMessages) return;
+    void restoreSavedReadPosition();
   }
 );
 
@@ -531,6 +549,7 @@ watch(
 watch(
   () => store.messages.length,
   (length, previousLength) => {
+    if (pendingReadPositionRestore.value) return;
     const latest = store.messages[store.messages.length - 1];
     const shouldFollow = !store.loadingOlderMessages && (!previousLength || length < previousLength || isNearMessageBottom(220) || (latest ? isMine(latest) : false));
     nextTick(() => {
@@ -1308,8 +1327,95 @@ function isNearMessageBottom(distance = 96) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < distance;
 }
 
+function readPositionStorageKey(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
+  if (!store.account || !channelId) return "";
+  return `team-chat-read-position-${store.account.id}-${channelId}-${prayerOnly ? "prayers" : "chat"}`;
+}
+
+function visibleMessageElements() {
+  const root = scroller.value;
+  if (!root) return [];
+  const rootRect = root.getBoundingClientRect();
+  return Array.from(root.querySelectorAll<HTMLElement>("[data-message-id]")).filter((el) => {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom >= rootRect.top && rect.top <= rootRect.bottom;
+  });
+}
+
+function saveReadPosition() {
+  if (pendingReadPositionRestore.value) return;
+  const root = scroller.value;
+  const key = readPositionStorageKey();
+  if (!root || !key || !store.messages.length) return;
+  const firstVisible = visibleMessageElements()[0];
+  const messageId = Number(firstVisible?.dataset.messageId || 0);
+  const rootTop = root.getBoundingClientRect().top;
+  const position: SavedReadPosition = {
+    messageId,
+    offset: firstVisible ? firstVisible.getBoundingClientRect().top - rootTop : 0,
+    atBottom: isNearMessageBottom(80),
+    scrollTop: root.scrollTop,
+    savedAt: Date.now()
+  };
+  localStorage.setItem(key, JSON.stringify(position));
+}
+
+function loadSavedReadPosition(): SavedReadPosition | null {
+  const key = readPositionStorageKey();
+  if (!key) return null;
+  try {
+    const raw = JSON.parse(localStorage.getItem(key) || "null") as Partial<SavedReadPosition> | null;
+    if (!raw || typeof raw !== "object") return null;
+    return {
+      messageId: Number(raw.messageId || 0),
+      offset: Number(raw.offset || 0),
+      atBottom: !!raw.atBottom,
+      scrollTop: Number(raw.scrollTop || 0),
+      savedAt: Number(raw.savedAt || 0)
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function restoreSavedReadPosition() {
+  const token = ++readPositionRestoreToken;
+  await nextTick();
+  if (token !== readPositionRestoreToken || store.loadingInitialMessages) return;
+  const root = scroller.value;
+  if (!root) return;
+  const position = loadSavedReadPosition();
+  if (!position) {
+    scrollBottom(false);
+    pendingReadPositionRestore.value = false;
+    return;
+  }
+  if (position.atBottom && !store.hasNewerMessages) {
+    scrollBottom(false);
+    pendingReadPositionRestore.value = false;
+    return;
+  }
+  if (position.messageId) {
+    await loadUntilMessageVisible(position.messageId);
+    await nextTick();
+    const currentRoot = scroller.value;
+    const target = currentRoot?.querySelector<HTMLElement>(`[data-message-id="${position.messageId}"]`);
+    if (target && currentRoot) {
+      const rootTop = currentRoot.getBoundingClientRect().top;
+      currentRoot.scrollTop += target.getBoundingClientRect().top - rootTop - position.offset;
+      hasUnreadMessages.value = false;
+      pendingReadPositionRestore.value = false;
+      return;
+    }
+  }
+  root.scrollTop = position.scrollTop;
+  hasUnreadMessages.value = false;
+  pendingReadPositionRestore.value = false;
+}
+
 async function jumpToMessageInChannel(channelId: number, messageId: number) {
   if (store.currentChannelId !== channelId) {
+    saveReadPosition();
     await store.switchChannel(channelId);
     await nextTick();
   }
@@ -1354,6 +1460,7 @@ async function switchToLinkedChannel() {
   const channelId = Number(params.get("channelId") || 0);
   if (!channelId || !store.channels.some((channel) => channel.id === channelId)) return;
   workspace.value = "chat";
+  saveReadPosition();
   await store.switchChannel(channelId);
   params.delete("channelId");
   const nextQuery = params.toString();
@@ -1896,6 +2003,7 @@ async function openWhyHome() {
 }
 
 function returnToChatWorkspace() {
+  showChannels.value = false;
   workspace.value = "chat";
 }
 
@@ -2055,9 +2163,10 @@ async function startPrivateChat(member: MemberActionTarget) {
   if (result.channel && !store.channels.some((channel) => channel.id === result.channel.id)) {
     store.channels = [result.channel, ...store.channels];
   }
+  saveReadPosition();
   await store.switchChannel(result.channel.id);
   await nextTick();
-  scrollBottom(false);
+  await restoreSavedReadPosition();
 }
 
 function requestCloseChannel() {
@@ -3451,6 +3560,7 @@ function focusComposer() {
 async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
+  saveReadPosition();
   if (isNearMessageBottom(120)) hasUnreadMessages.value = false;
   if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
     loadingHistoryFromScroll = true;
@@ -3460,6 +3570,7 @@ async function handleMessagesScroll() {
     await nextTick();
     if (loaded && scroller.value === el) {
       el.scrollTop = el.scrollHeight - beforeHeight + beforeTop;
+      saveReadPosition();
     }
     loadingHistoryFromScroll = false;
   }
@@ -3467,7 +3578,10 @@ async function handleMessagesScroll() {
     loadingNewerFromScroll = true;
     const loaded = await store.loadNewerMessages();
     await nextTick();
-    if (loaded) scrollBottom(false);
+    if (loaded) {
+      scrollBottom(false);
+      saveReadPosition();
+    }
     loadingNewerFromScroll = false;
   }
 }
@@ -3855,6 +3969,18 @@ async function markPrayerPrayed(message: MessageDTO) {
 async function updatePrayerStatus(message: MessageDTO, status: "closed" | "answered") {
   await api(`/api/messages/${message.id}/prayer-status`, { method: "PATCH", body: JSON.stringify({ status }) });
   await store.loadMessages();
+}
+
+function canPublishPrayerUpdate(message: MessageDTO) {
+  return message.type === "prayer" && (isMine(message) || !!store.account?.isAdmin);
+}
+
+async function publishPrayerUpdate(message: MessageDTO) {
+  if (!confirm("更新这张代祷卡片的最新动态，并向全员推送通知？")) return;
+  const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, { method: "POST", body: JSON.stringify({}) });
+  if (result.message) store.appendLocalMessage(result.message);
+  await nextTick();
+  scrollBottom(true);
 }
 
 async function withdrawPrayer(message: MessageDTO) {
@@ -4490,7 +4616,7 @@ async function toggleVirtual(character: any) {
         <button
           class="channel-row"
           :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && !store.prayerOnly }"
-          @click="workspace = 'chat'; store.switchChannel(channel.id); showChannels = false"
+          @click="saveReadPosition(); workspace = 'chat'; store.switchChannel(channel.id); showChannels = false"
         >
           <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
           <span>
@@ -4501,7 +4627,7 @@ async function toggleVirtual(character: any) {
         <button
           class="channel-row channel-subrow"
           :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && store.prayerOnly }"
-          @click="workspace = 'chat'; store.switchPrayerView(channel.id); showChannels = false"
+          @click="saveReadPosition(); workspace = 'chat'; store.switchPrayerView(channel.id); showChannels = false"
         >
           <span class="channel-icon prayer-icon"><HeartHandshake :size="20" /></span>
           <span>
@@ -4805,6 +4931,7 @@ async function toggleVirtual(character: any) {
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'closed')"><CircleOff :size="15" />无需再代祷</button>
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'answered')"><CheckCircle2 :size="15" />已蒙应允</button>
                       </template>
+                      <button v-if="canPublishPrayerUpdate(row.message)" class="mini-btn secondary" @click.stop="publishPrayerUpdate(row.message)"><Bell :size="15" />更新最新动态</button>
                       <button v-if="isMine(row.message)" class="mini-btn danger-soft" @click.stop="withdrawPrayer(row.message)"><Trash2 :size="15" />撤回</button>
                     </div>
                     <div class="prayer-ai" @click.stop>
@@ -5087,7 +5214,7 @@ async function toggleVirtual(character: any) {
 
     <section v-else class="chat-pane why-pane">
       <header class="chat-head">
-        <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
+        <button class="icon-btn mobile-only" @click="returnToChatWorkspace" aria-label="回到之前频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
           <strong>{{ whyCurrentTopic ? whyCurrentTopic.title : "为什么" }}</strong>
