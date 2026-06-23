@@ -1950,6 +1950,11 @@ app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request
       UPDATE_LOG_PATH
     }
   });
+  child.on("error", (error) => {
+    const detail = `启动更新脚本失败：${error.message}`;
+    fs.appendFileSync(UPDATE_LOG_PATH, `[${new Date().toISOString()}] ${detail}\n`);
+    writeUpdateStatus("failed", 100, detail);
+  });
   child.unref();
   return { success: true, status: readUpdateStatus() };
 });
