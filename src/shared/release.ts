@@ -1,10 +1,19 @@
-export const APP_VERSION = "0.6.23";
+export const APP_VERSION = "0.7.0";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "新增“为什么”研究空间：每个用户都有自己的问题目录，一个问题对应一个独立研究话题。",
+  "主频道输入 `?问题`、`？问题` 或 `/为什么 问题` 会生成问题卡片并跳转到研究；`/?` 和 `/？` 可快速打开“为什么”。",
+  "问题卡片支持请求加入、提问者审批和删除后的置灰状态；从已有文本消息也可以另起一个为什么研究，不改动原消息。",
+  "为什么话题区分提问者与 AI 的研究主线、弟兄姐妹回应和待审批参与者；受邀者能看完整话题，但其发言默认不进入 AI 上下文。",
+  "新增“为什么助手”配置，复用现有 AI API Key，默认启用联网查询和深度引导模式；助手异步回复，失败时可重试。",
+  "新增为什么话题完成状态、整理草稿、未读/待审批计数和独立隐藏频道权限，管理员不会因为私密频道规则自动进入用户研究内容。"
+] as const;
+
+const RELEASE_0_6_23_NOTES = [
   "修复管理员一键 GitHub 更新在重启服务步骤可能长期卡住的问题，重启改由独立后台进程完成。",
   "更新状态如果长时间停在进行中，会自动标记为失败并允许管理员重新发起更新。"
 ] as const;
@@ -171,9 +180,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.6.23",
+    version: "0.7.0",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.6.23",
+    date: "2026-06-23",
+    notes: RELEASE_0_6_23_NOTES
   },
   {
     version: "0.6.22",
