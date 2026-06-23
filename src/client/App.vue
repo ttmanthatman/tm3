@@ -248,9 +248,6 @@ const pendingPrayer = ref<MessageDTO | null>(null);
 const pendingPrayerUpdate = ref<MessageDTO | null>(null);
 const prayerUpdateTextarea = ref<HTMLTextAreaElement | null>(null);
 const prayerUpdateContent = ref("");
-const prayerUpdateAnswered = ref("");
-const prayerUpdateContinue = ref("");
-const prayerUpdateThanksgiving = ref("");
 const prayerUpdateBusy = ref(false);
 const prayerUpdateError = ref("");
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
@@ -4019,34 +4016,17 @@ function prayerUpdateMarkupToHtml(text: string) {
   return html;
 }
 
-function prayerUpdateSectionHtml(label: string, text: string) {
-  const clean = text.trim();
-  if (!clean) return "";
-  return `<strong>${escapeHtmlText(label)}</strong><br />${prayerUpdateMarkupToHtml(clean)}`;
-}
-
 function buildPrayerUpdateHtml() {
-  const blocks = [
-    prayerUpdateMarkupToHtml(prayerUpdateContent.value.trim()),
-    prayerUpdateSectionHtml("已蒙应允 / 可划去", prayerUpdateAnswered.value),
-    prayerUpdateSectionHtml("继续代祷", prayerUpdateContinue.value),
-    prayerUpdateSectionHtml("感恩记录", prayerUpdateThanksgiving.value)
-  ].filter(Boolean);
-  return blocks.join("<br /><br />");
+  return prayerUpdateMarkupToHtml(prayerUpdateContent.value.trim());
 }
-
-const prayerUpdatePreviewHtml = computed(() => buildPrayerUpdateHtml());
 
 const prayerUpdateCanPublish = computed(() => {
-  return [prayerUpdateContent.value, prayerUpdateAnswered.value, prayerUpdateContinue.value, prayerUpdateThanksgiving.value].some((text) => text.replace(/~~/g, "").trim());
+  return !!prayerUpdateContent.value.replace(/~~/g, "").trim();
 });
 
 function openPrayerUpdateEditor(message: MessageDTO) {
   pendingPrayerUpdate.value = message;
   prayerUpdateContent.value = prayerUpdateMarkdownFromHtml(message.content);
-  prayerUpdateAnswered.value = "";
-  prayerUpdateContinue.value = "";
-  prayerUpdateThanksgiving.value = "";
   prayerUpdateError.value = "";
   prayerUpdateBusy.value = false;
 }
@@ -4055,9 +4035,6 @@ function closePrayerUpdateEditor() {
   if (prayerUpdateBusy.value) return;
   pendingPrayerUpdate.value = null;
   prayerUpdateContent.value = "";
-  prayerUpdateAnswered.value = "";
-  prayerUpdateContinue.value = "";
-  prayerUpdateThanksgiving.value = "";
   prayerUpdateError.value = "";
 }
 
@@ -4096,9 +4073,6 @@ async function publishPrayerUpdate() {
     if (result.message) store.appendLocalMessage(result.message);
     pendingPrayerUpdate.value = null;
     prayerUpdateContent.value = "";
-    prayerUpdateAnswered.value = "";
-    prayerUpdateContinue.value = "";
-    prayerUpdateThanksgiving.value = "";
     await nextTick();
     scrollBottom(true);
   } catch (error) {
@@ -5473,23 +5447,13 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form">
-          <p class="modal-help">可划去已经无需代祷或已蒙应允的部分，再补充仍需代祷和感恩的地方。发布后会更新原卡片，并作为最新消息推送给全员。</p>
+          <p class="modal-help">可直接修改代祷内容；若某部分已经无需代祷或已蒙应允，选中文字后点“划去选中文字”。发布后会更新原卡片，并作为最新消息推送给全员。</p>
           <label>代祷内容</label>
           <div class="prayer-update-toolbar">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="strikeSelectedPrayerUpdateText">划去选中文字</button>
             <small>也可手动输入 ~~文字~~</small>
           </div>
-          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="7" placeholder="修改原代祷内容，或选中一段后点“划去选中文字”"></textarea>
-          <label>已蒙应允 / 可划去</label>
-          <textarea v-model="prayerUpdateAnswered" rows="3" placeholder="哪些部分已经结束、无需继续代祷，或已蒙应允"></textarea>
-          <label>继续代祷</label>
-          <textarea v-model="prayerUpdateContinue" rows="3" placeholder="接下来还需要大家继续为哪些事情祷告"></textarea>
-          <label>感恩记录</label>
-          <textarea v-model="prayerUpdateThanksgiving" rows="3" placeholder="这次更新里有什么可以一起感恩的地方"></textarea>
-          <div v-if="prayerUpdatePreviewHtml" class="prayer-update-preview">
-            <strong>推送预览</strong>
-            <p class="prayer-text bible-rich-text" v-html="prayerUpdatePreviewHtml"></p>
-          </div>
+          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="9" placeholder="修改最新动态或补充代祷内容"></textarea>
           <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
           <div class="confirm-actions">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>

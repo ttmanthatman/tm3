@@ -2923,24 +2923,6 @@ button {
   font-size: 12px;
 }
 
-.prayer-update-preview {
-  border: 1px solid rgba(138, 74, 31, 0.14);
-  border-radius: 8px;
-  padding: 10px;
-  display: grid;
-  gap: 7px;
-  background: #fffaf0;
-}
-
-.prayer-update-preview > strong {
-  color: #80521f;
-  font-size: 13px;
-}
-
-.prayer-update-preview .prayer-text {
-  margin: 0;
-}
-
 .prayer-text s,
 .message-text s,
 .prayer-text del,
