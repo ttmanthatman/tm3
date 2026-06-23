@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.7.0";
+export const APP_VERSION = "0.7.1";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "暂时移除普通文本消息下方的“开始为什么研究”按钮，避免每条消息都出现研究入口。",
+  "修复为什么相关 MySQL schema 中 Text 字段默认值不兼容的问题，数据库同步更稳定。",
+  "加固管理员自更新流程，让更新脚本在仓库、依赖安装、构建和重启阶段有更清晰的失败处理。"
+] as const;
+
+const RELEASE_0_7_0_NOTES = [
   "新增“为什么”研究空间：每个用户都有自己的问题目录，一个问题对应一个独立研究话题。",
   "主频道输入 `?问题`、`？问题` 或 `/为什么 问题` 会生成问题卡片并跳转到研究；`/?` 和 `/？` 可快速打开“为什么”。",
   "问题卡片支持请求加入、提问者审批和删除后的置灰状态；从已有文本消息也可以另起一个为什么研究，不改动原消息。",
@@ -180,9 +186,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.0",
+    version: "0.7.1",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.0",
+    date: "2026-06-23",
+    notes: RELEASE_0_7_0_NOTES
   },
   {
     version: "0.6.23",

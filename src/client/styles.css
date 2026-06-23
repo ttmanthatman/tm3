@@ -5114,10 +5114,6 @@ button {
   color: var(--muted);
 }
 
-.why-from-message-btn {
-  margin-top: 8px;
-}
-
 .why-pane {
   background: var(--chat-bg);
 }

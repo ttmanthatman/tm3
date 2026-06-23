@@ -2017,11 +2017,6 @@ async function deleteWhyTopic() {
   await store.loadMessages().catch(() => undefined);
 }
 
-async function startWhyFromMessage(message: MessageDTO) {
-  if (message.type !== "text" || !message.content.trim()) return;
-  await createWhyTopic(message.content, message.channelId, message.id);
-}
-
 function mentionMember(member: { displayName: string }) {
   const mention = `@${member.displayName} `;
   const el = composerInput.value;
@@ -4951,9 +4946,6 @@ async function toggleVirtual(character: any) {
                     </span>
                     <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
                   </a>
-                  <button v-if="row.message.type === 'text' && isMine(row.message)" class="mini-btn why-from-message-btn" @click.stop="startWhyFromMessage(row.message)">
-                    <BookOpen :size="14" />开始为什么研究
-                  </button>
                 </template>
               </div>
             </div>
