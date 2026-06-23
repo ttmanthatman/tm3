@@ -225,7 +225,7 @@ model WhyTopic {
   sourceMessageId Int?           @map("source_message_id")
   cardMessageId   Int?           @unique @map("card_message_id")
   title           String         @db.VarChar(160)
-  summary         String         @default("") @db.Text
+  summary         String         @db.Text
   originalQuestion String        @map("original_question") @db.Text
   completionNote  String?        @map("completion_note") @db.Text
   status          WhyTopicStatus @default(active)
@@ -260,8 +260,8 @@ model WhyAssistantRun {
   topicId          Int                   @map("topic_id")
   triggerMessageId Int?                  @map("trigger_message_id")
   status           WhyAssistantRunStatus @default(pending)
-  promptText       String                @default("") @map("prompt_text") @db.Text
-  contextText      String                @default("") @map("context_text") @db.Text
+  promptText       String                @map("prompt_text") @db.Text
+  contextText      String                @map("context_text") @db.Text
   responseText     String?               @map("response_text") @db.Text
   sources          Json?
   errorText        String?               @map("error_text") @db.Text
