@@ -5067,3 +5067,254 @@ button {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.why-entry {
+  border-top: 1px solid var(--line);
+  margin-top: 6px;
+}
+
+.ai-settings-subsection {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.why-icon,
+.prayer-icon {
+  display: grid;
+  place-items: center;
+  background: #eef6ff;
+  color: #2563eb;
+}
+
+.why-card {
+  display: grid;
+  gap: 8px;
+  min-width: min(280px, 68vw);
+}
+
+.why-card.deleted {
+  opacity: 0.66;
+}
+
+.why-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.why-card p {
+  margin: 0;
+  font-weight: 650;
+}
+
+.why-card small {
+  color: var(--muted);
+}
+
+.why-from-message-btn {
+  margin-top: 8px;
+}
+
+.why-pane {
+  background: var(--chat-bg);
+}
+
+.why-home,
+.why-topic-detail {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.why-question-box {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+}
+
+.why-question-box textarea,
+.why-topic-composer textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font: inherit;
+  background: #fff;
+  color: var(--text);
+}
+
+.why-topic-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.why-topic-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.why-topic-row.deleted {
+  opacity: 0.58;
+}
+
+.why-topic-main,
+.why-topic-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.why-topic-main small,
+.why-topic-main em,
+.why-topic-meta small {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.why-topic-meta {
+  justify-items: end;
+  align-content: start;
+}
+
+.why-topic-meta strong {
+  color: var(--accent-dark);
+}
+
+.why-topic-detail {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+}
+
+.why-topic-meta-bar,
+.why-run-state {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.why-run-state.failed {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.why-original-question,
+.why-completion-note {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+}
+
+.why-original-question p,
+.why-completion-note pre {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+
+.why-message-list {
+  display: grid;
+  gap: 10px;
+}
+
+.why-message {
+  max-width: min(760px, 94%);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 12px;
+}
+
+.why-message.mine {
+  justify-self: end;
+  background: var(--bubble-mine);
+}
+
+.why-message.assistant {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.why-message.discussion {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+}
+
+.why-message-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.why-message-head small {
+  color: var(--muted);
+}
+
+.why-message-body {
+  overflow-wrap: anywhere;
+}
+
+.why-topic-composer {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+  padding: 10px;
+}
+
+.why-member-row {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.why-member-row.requested {
+  grid-template-columns: 38px minmax(0, 1fr);
+  background: #fff7ed;
+}
+
+.why-request-actions {
+  grid-column: 2;
+  display: flex;
+  gap: 6px;
+}
+
+@media (max-width: 640px) {
+  .why-question-box {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .why-topic-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .why-topic-meta {
+    justify-items: start;
+  }
+}

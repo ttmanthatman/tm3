@@ -1,7 +1,10 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "system";
+export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "why_topic_card" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "sunburst" | "marquee" | "water" | "drip" | "rain";
 export type PrayerStatus = "active" | "closed" | "answered";
+export type WhyTopicStatus = "active" | "completed" | "deleted";
+export type WhyTopicMemberRole = "owner" | "member" | "requested";
+export type WhyMessageTrack = "study" | "discussion";
 
 export interface ActorDTO {
   id: number;
@@ -66,6 +69,56 @@ export interface MessageDTO {
   chainRootId?: number | null;
   chainVersion?: number | null;
   createdAt: string;
+}
+
+export interface WhyTopicCardPayload {
+  kind: "why_topic_card";
+  topicId: number;
+  title: string;
+  status: WhyTopicStatus;
+  ownerName: string;
+  requestStatus?: "none" | "requested" | "member" | "owner";
+  sourceMessageId?: number | null;
+}
+
+export interface WhyTopicDTO {
+  id: number;
+  ownerAccountId: number;
+  ownerName: string;
+  channelId: number;
+  sourceChannelId?: number | null;
+  sourceChannelName?: string | null;
+  sourceMessageId?: number | null;
+  cardMessageId?: number | null;
+  title: string;
+  summary: string;
+  originalQuestion?: string;
+  completionNote?: string | null;
+  status: WhyTopicStatus;
+  memberRole: WhyTopicMemberRole;
+  participantCount: number;
+  pendingRequestCount: number;
+  unreadCount: number;
+  lastMessagePreview?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WhyTopicMemberDTO {
+  accountId: number;
+  displayName: string;
+  avatarPath?: string | null;
+  role: WhyTopicMemberRole;
+  createdAt: string;
+}
+
+export interface WhyAssistantRunDTO {
+  id: number;
+  topicId: number;
+  status: "pending" | "running" | "success" | "failed";
+  errorText?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface LinkPreviewDTO {
@@ -273,6 +326,9 @@ export interface AiSettingsDTO {
   cardCooldownSeconds: number;
   userLimitPerMinute: number;
   maxSuccessPerMessage: number;
+  whyAssistantEnabled?: boolean;
+  whyAssistantWebSearchEnabled?: boolean;
+  whyAssistantPromptCommand?: string;
 }
 
 export interface FlashEffectSettingsDTO {

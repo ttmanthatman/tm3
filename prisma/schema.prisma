@@ -25,6 +25,12 @@ enum ChannelRole {
   viewer
 }
 
+enum ChannelKind {
+  standard
+  direct
+  why
+}
+
 enum DeviceKind {
   desktop
   mobile
@@ -37,6 +43,7 @@ enum MessageType {
   file
   chain
   prayer
+  why_topic_card
   system
 }
 
@@ -50,6 +57,25 @@ enum EngineEventKind {
   idle_tick
   manual_test
   active_topic_due
+}
+
+enum WhyTopicStatus {
+  active
+  completed
+  deleted
+}
+
+enum WhyTopicMemberRole {
+  owner
+  member
+  requested
+}
+
+enum WhyAssistantRunStatus {
+  pending
+  running
+  success
+  failed
 }
 
 model Account {
@@ -75,6 +101,7 @@ model Account {
   prayerActions           PrayerAction[]
   aiSuggestions           MessageAiSuggestion[]
   pinnedSeens             PinnedSeen[]
+  whyReads                WhyTopicRead[]
 
   @@map("accounts")
 }
@@ -117,6 +144,7 @@ model Actor {
 
 model Channel {
   id                      Int                             @id @default(autoincrement())
+  kind                    ChannelKind                     @default(standard)
   name                    String                          @db.VarChar(80)
   description             String                          @default("") @db.VarChar(255)
   icon                    String                          @default("#") @db.VarChar(16)
@@ -181,11 +209,85 @@ model Message {
   voiceListens  VoiceListen[]
   prayerActions PrayerAction[]
   aiSuggestions MessageAiSuggestion[]
+  whyReads      WhyTopicRead[]
 
   @@index([channelId, id])
   @@index([replyToId])
   @@index([chainRootId])
   @@map("messages")
+}
+
+model WhyTopic {
+  id              Int            @id @default(autoincrement())
+  ownerAccountId  Int            @map("owner_account_id")
+  channelId       Int            @unique @map("channel_id")
+  sourceChannelId Int?           @map("source_channel_id")
+  sourceMessageId Int?           @map("source_message_id")
+  cardMessageId   Int?           @unique @map("card_message_id")
+  title           String         @db.VarChar(160)
+  summary         String         @default("") @db.Text
+  originalQuestion String        @map("original_question") @db.Text
+  completionNote  String?        @map("completion_note") @db.Text
+  status          WhyTopicStatus @default(active)
+  deletedAt       DateTime?      @map("deleted_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  members         WhyTopicMember[]
+  assistantRuns   WhyAssistantRun[]
+  reads           WhyTopicRead[]
+
+  @@index([ownerAccountId, status, updatedAt])
+  @@index([sourceChannelId, createdAt])
+  @@map("why_topics")
+}
+
+model WhyTopicMember {
+  id        Int                @id @default(autoincrement())
+  topicId   Int                @map("topic_id")
+  accountId Int                @map("account_id")
+  role      WhyTopicMemberRole @default(member)
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+  topic     WhyTopic           @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, accountId])
+  @@index([accountId, role])
+  @@map("why_topic_members")
+}
+
+model WhyAssistantRun {
+  id               Int                   @id @default(autoincrement())
+  topicId          Int                   @map("topic_id")
+  triggerMessageId Int?                  @map("trigger_message_id")
+  status           WhyAssistantRunStatus @default(pending)
+  promptText       String                @default("") @map("prompt_text") @db.Text
+  contextText      String                @default("") @map("context_text") @db.Text
+  responseText     String?               @map("response_text") @db.Text
+  sources          Json?
+  errorText        String?               @map("error_text") @db.Text
+  model            String?               @db.VarChar(120)
+  baseUrl          String?               @map("base_url") @db.VarChar(255)
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  topic            WhyTopic              @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([topicId, status, createdAt])
+  @@map("why_assistant_runs")
+}
+
+model WhyTopicRead {
+  id                Int       @id @default(autoincrement())
+  topicId           Int       @map("topic_id")
+  accountId         Int       @map("account_id")
+  lastReadMessageId Int?      @map("last_read_message_id")
+  readAt            DateTime  @default(now()) @map("read_at")
+  topic             WhyTopic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  account           Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  message           Message?  @relation(fields: [lastReadMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([topicId, accountId])
+  @@index([accountId, readAt])
+  @@map("why_topic_reads")
 }
 
 model VoiceListen {

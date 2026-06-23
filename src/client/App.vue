@@ -80,7 +80,11 @@ import type {
   UpdateStatusDTO,
   VersionDTO,
   ThemeDTO,
-  ThemePaletteDTO
+  ThemePaletteDTO,
+  WhyAssistantRunDTO,
+  WhyTopicCardPayload,
+  WhyTopicDTO,
+  WhyTopicMemberDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
@@ -210,6 +214,9 @@ const aiSettingsEdit = ref({
   apiKey: "",
   clearApiKey: false,
   promptCommand: "",
+  whyAssistantEnabled: true,
+  whyAssistantWebSearchEnabled: true,
+  whyAssistantPromptCommand: "",
   cardCooldownSeconds: 30,
   userLimitPerMinute: 3,
   maxSuccessPerMessage: 7
@@ -284,6 +291,18 @@ const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const composerPanel = ref<"voice" | "more" | null>(null);
+const workspace = ref<"chat" | "why">("chat");
+const whyTopics = ref<WhyTopicDTO[]>([]);
+const whyCurrentTopic = ref<WhyTopicDTO | null>(null);
+const whyMessages = ref<MessageDTO[]>([]);
+const whyMembers = ref<WhyTopicMemberDTO[]>([]);
+const whyRuns = ref<WhyAssistantRunDTO[]>([]);
+const whyHomeQuestion = ref("");
+const whyTopicInput = ref("");
+const whyLoading = ref(false);
+const whyBusy = ref(false);
+const whyError = ref("");
+const whySummary = ref({ unreadCount: 0, pendingRequestCount: 0 });
 const mediaRecorder = ref<MediaRecorder | null>(null);
 const audioChunks = ref<Blob[]>([]);
 const isRecording = ref(false);
@@ -448,8 +467,11 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
+const whyCommand = { command: "/为什么", label: "为什么", hint: "把问题放进我的为什么研究", icon: BookOpen };
+const whyShortcutCommand = { command: "/?", label: "为什么", hint: "打开我的为什么", icon: BookOpen };
 type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
+  | { kind: "why"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
 type VoicePayload = {
@@ -463,8 +485,11 @@ onMounted(async () => {
   hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
+  window.addEventListener("why:updated", handleWhyUpdated as EventListener);
+  window.addEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   await store.bootstrap();
   if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
+  await loadWhySummary();
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
@@ -605,6 +630,8 @@ watch(adminTab, (tab) => {
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
+  window.removeEventListener("why:updated", handleWhyUpdated as EventListener);
+  window.removeEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
@@ -841,6 +868,8 @@ const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
     return effectCommands.filter((item) => item.command.startsWith(token.query)).map((item) => ({ ...item, kind: "effect" as const }));
   }
   return [
+    { ...whyCommand, kind: "why" as const },
+    { ...whyShortcutCommand, kind: "why" as const },
     { ...prayerCommand, kind: "prayer" as const },
     ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
   ].filter((item) => item.command.startsWith(token.query));
@@ -870,7 +899,12 @@ const showComposerSuggestionMenu = computed(() => !composerSuggestionSuppressed.
 watch(composerSuggestionCount, (count) => {
   if (composerSuggestionIndex.value >= count) composerSuggestionIndex.value = 0;
 });
-const canSendText = computed(() => !!parseComposerText(input.value).content);
+const canSendText = computed(() => {
+  const whyTrigger = parseWhyComposerTrigger(input.value);
+  if (whyTrigger.kind === "shortcut") return true;
+  if (whyTrigger.kind === "create") return !!whyTrigger.question;
+  return !!parseComposerText(input.value).content;
+});
 const loginBrand = computed(() => ({
   iconPath: store.appearance.loginIconPath || "/images/icon-192.svg",
   showIcon: store.appearance.loginShowIcon !== false,
@@ -1309,8 +1343,17 @@ async function doLogin() {
 
 async function switchToLinkedChannel() {
   const params = new URLSearchParams(window.location.search);
+  const whyTopicId = Number(params.get("whyTopicId") || 0);
+  if (whyTopicId) {
+    await openWhyTopic(whyTopicId);
+    params.delete("whyTopicId");
+    const nextQuery = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`);
+    return;
+  }
   const channelId = Number(params.get("channelId") || 0);
   if (!channelId || !store.channels.some((channel) => channel.id === channelId)) return;
+  workspace.value = "chat";
   await store.switchChannel(channelId);
   params.delete("channelId");
   const nextQuery = params.toString();
@@ -1337,6 +1380,9 @@ function syncAiSettingsEdit(settings: AiSettingsDTO) {
     apiKey: "",
     clearApiKey: false,
     promptCommand: settings.promptCommand,
+    whyAssistantEnabled: settings.whyAssistantEnabled !== false,
+    whyAssistantWebSearchEnabled: settings.whyAssistantWebSearchEnabled !== false,
+    whyAssistantPromptCommand: settings.whyAssistantPromptCommand || "",
     cardCooldownSeconds: settings.cardCooldownSeconds,
     userLimitPerMinute: settings.userLimitPerMinute,
     maxSuccessPerMessage: settings.maxSuccessPerMessage
@@ -1366,6 +1412,9 @@ async function saveAiSettings() {
       apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
       clearApiKey: aiSettingsEdit.value.clearApiKey,
       promptCommand: aiSettingsEdit.value.promptCommand,
+      whyAssistantEnabled: aiSettingsEdit.value.whyAssistantEnabled,
+      whyAssistantWebSearchEnabled: aiSettingsEdit.value.whyAssistantWebSearchEnabled,
+      whyAssistantPromptCommand: aiSettingsEdit.value.whyAssistantPromptCommand,
       cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
       userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
       maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
@@ -1650,6 +1699,15 @@ async function startServerUpdate() {
   }
 }
 
+function parseWhyComposerTrigger(value: string): { kind: "none" } | { kind: "shortcut" } | { kind: "create"; question: string } {
+  const trimmed = value.trim();
+  if (trimmed === "/?" || trimmed === "/？") return { kind: "shortcut" };
+  if (trimmed === "/为什么") return { kind: "create", question: "" };
+  if (trimmed.startsWith("/为什么 ") || trimmed.startsWith("/为什么\n")) return { kind: "create", question: trimmed.slice("/为什么".length).trim() };
+  if (trimmed.startsWith("?") || trimmed.startsWith("？")) return { kind: "create", question: trimmed.slice(1).trim() };
+  return { kind: "none" };
+}
+
 function parseComposerText(value: string): { content: string; effect?: MessageEffect; type?: "text" | "prayer" } {
   const trimmed = value.trim();
   if (trimmed === "/代祷" || trimmed.startsWith("/代祷 ") || trimmed.startsWith("/代祷\n")) {
@@ -1755,6 +1813,24 @@ function chooseActiveComposerSuggestion() {
 }
 
 async function sendText() {
+  const whyTrigger = parseWhyComposerTrigger(input.value);
+  if (whyTrigger.kind === "shortcut") {
+    input.value = "";
+    await openWhyHome();
+    return;
+  }
+  if (whyTrigger.kind === "create") {
+    if (!whyTrigger.question || !store.currentChannelId) return;
+    const originalInput = input.value;
+    input.value = "";
+    try {
+      await createWhyTopic(whyTrigger.question, store.currentChannelId);
+    } catch (error) {
+      input.value = originalInput;
+      alert(error instanceof Error ? error.message : "创建为什么研究失败");
+    }
+    return;
+  }
   const parsed = parseComposerText(input.value);
   const content = parsed.content;
   if (!content || !store.currentChannelId) return;
@@ -1775,6 +1851,175 @@ async function sendText() {
       alert(ack?.message || "发送失败");
     }
   });
+}
+
+async function loadWhySummary() {
+  if (!store.account) return;
+  whySummary.value = await api<{ unreadCount: number; pendingRequestCount: number }>("/api/why/summary").catch(() => ({ unreadCount: 0, pendingRequestCount: 0 }));
+}
+
+async function handleWhyUpdated(event: Event) {
+  const topicId = Number((event as CustomEvent<{ topicId?: number }>).detail?.topicId || 0);
+  await loadWhySummary();
+  if (workspace.value === "why") await loadWhyTopics().catch(() => undefined);
+  if (whyCurrentTopic.value && topicId === whyCurrentTopic.value.id) await openWhyTopic(topicId);
+}
+
+async function handleWhyMessagesRefresh(event: Event) {
+  const channelId = Number((event as CustomEvent<{ channelId?: number }>).detail?.channelId || 0);
+  if (whyCurrentTopic.value?.channelId && whyCurrentTopic.value.channelId === channelId) await openWhyTopic(whyCurrentTopic.value.id);
+}
+
+async function loadWhyTopics() {
+  if (!store.account) return;
+  const result = await api<{ topics: WhyTopicDTO[] }>("/api/why/topics");
+  whyTopics.value = result.topics;
+  await loadWhySummary();
+}
+
+async function openWhyHome() {
+  workspace.value = "why";
+  composerPanel.value = null;
+  whyCurrentTopic.value = null;
+  whyMessages.value = [];
+  whyMembers.value = [];
+  whyRuns.value = [];
+  whyError.value = "";
+  whyLoading.value = true;
+  try {
+    await loadWhyTopics();
+  } catch (error) {
+    whyError.value = error instanceof Error ? error.message : "为什么列表加载失败";
+  } finally {
+    whyLoading.value = false;
+  }
+}
+
+function returnToChatWorkspace() {
+  workspace.value = "chat";
+}
+
+async function openWhyTopic(topicId: number) {
+  workspace.value = "why";
+  whyLoading.value = true;
+  whyError.value = "";
+  try {
+    const result = await api<{ topic: WhyTopicDTO; members: WhyTopicMemberDTO[]; messages: MessageDTO[]; runs: WhyAssistantRunDTO[] }>(`/api/why/topics/${topicId}`);
+    whyCurrentTopic.value = result.topic;
+    whyMembers.value = result.members;
+    whyMessages.value = result.messages;
+    whyRuns.value = result.runs;
+    store.socket?.emit("channel:join", { channelId: result.topic.channelId });
+    await loadWhyTopics();
+  } catch (error) {
+    whyError.value = error instanceof Error ? error.message : "为什么研究加载失败";
+  } finally {
+    whyLoading.value = false;
+  }
+}
+
+async function createWhyTopic(question: string, sourceChannelId?: number, sourceMessageId?: number) {
+  whyBusy.value = true;
+  try {
+    const result = await api<{ topic: WhyTopicDTO }>("/api/why/topics", {
+      method: "POST",
+      body: JSON.stringify({ question, sourceChannelId: sourceChannelId || null, sourceMessageId: sourceMessageId || null })
+    });
+    await loadWhyTopics();
+    if (result.topic) await openWhyTopic(result.topic.id);
+  } finally {
+    whyBusy.value = false;
+  }
+}
+
+async function submitWhyHomeQuestion() {
+  const question = whyHomeQuestion.value.trim();
+  if (!question) return;
+  whyHomeQuestion.value = "";
+  try {
+    await createWhyTopic(question);
+  } catch (error) {
+    whyHomeQuestion.value = question;
+    whyError.value = error instanceof Error ? error.message : "创建为什么研究失败";
+  }
+}
+
+async function sendWhyTopicMessage() {
+  if (!whyCurrentTopic.value) return;
+  const content = whyTopicInput.value.trim();
+  if (!content) return;
+  whyTopicInput.value = "";
+  whyBusy.value = true;
+  try {
+    const result = await api<{ message: MessageDTO }>(`/api/why/topics/${whyCurrentTopic.value.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content })
+    });
+    if (result.message && !whyMessages.value.some((message) => message.id === result.message.id)) whyMessages.value.push(result.message);
+    await openWhyTopic(whyCurrentTopic.value.id);
+  } catch (error) {
+    whyTopicInput.value = content;
+    whyError.value = error instanceof Error ? error.message : "发送失败";
+  } finally {
+    whyBusy.value = false;
+  }
+}
+
+function whyCardPayload(message: MessageDTO): WhyTopicCardPayload {
+  const raw = message.payload && typeof message.payload === "object" ? (message.payload as Partial<WhyTopicCardPayload>) : {};
+  return {
+    kind: "why_topic_card",
+    topicId: Number(raw.topicId || 0),
+    title: String(raw.title || message.content || "一个新问题"),
+    status: raw.status === "completed" || raw.status === "deleted" ? raw.status : "active",
+    ownerName: String(raw.ownerName || message.sender.displayName),
+    requestStatus: raw.requestStatus || "none",
+    sourceMessageId: raw.sourceMessageId || null
+  };
+}
+
+async function requestWhyTopicFromCard(message: MessageDTO) {
+  const payload = whyCardPayload(message);
+  if (!payload.topicId || payload.status === "deleted") return;
+  if (payload.requestStatus === "owner" || payload.requestStatus === "member") {
+    await openWhyTopic(payload.topicId);
+    return;
+  }
+  await api(`/api/why/topics/${payload.topicId}/request`, { method: "POST", body: JSON.stringify({}) });
+  await store.loadMessages();
+}
+
+async function approveWhyRequest(accountId: number, approve: boolean) {
+  if (!whyCurrentTopic.value) return;
+  await api(`/api/why/topics/${whyCurrentTopic.value.id}/requests/${accountId}`, {
+    method: "POST",
+    body: JSON.stringify({ action: approve ? "approve" : "reject" })
+  });
+  await openWhyTopic(whyCurrentTopic.value.id);
+}
+
+async function retryWhyAssistant() {
+  if (!whyCurrentTopic.value) return;
+  await api(`/api/why/topics/${whyCurrentTopic.value.id}/retry-assistant`, { method: "POST", body: JSON.stringify({}) });
+  await openWhyTopic(whyCurrentTopic.value.id);
+}
+
+async function completeWhyTopic() {
+  if (!whyCurrentTopic.value) return;
+  await api(`/api/why/topics/${whyCurrentTopic.value.id}/complete`, { method: "POST", body: JSON.stringify({}) });
+  await openWhyTopic(whyCurrentTopic.value.id);
+}
+
+async function deleteWhyTopic() {
+  if (!whyCurrentTopic.value || !confirm(`删除为什么研究“${whyCurrentTopic.value.title}”？`)) return;
+  await api(`/api/why/topics/${whyCurrentTopic.value.id}`, { method: "DELETE" });
+  await openWhyHome();
+  await store.loadMessages().catch(() => undefined);
+}
+
+async function startWhyFromMessage(message: MessageDTO) {
+  if (message.type !== "text" || !message.content.trim()) return;
+  await createWhyTopic(message.content, message.channelId, message.id);
 }
 
 function mentionMember(member: { displayName: string }) {
@@ -4179,6 +4424,13 @@ async function toggleVirtual(character: any) {
           <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
           <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
         </div>
+        <section class="ai-settings-subsection">
+          <strong>为什么助手</strong>
+          <label class="check-row"><input v-model="aiSettingsEdit.whyAssistantEnabled" type="checkbox" /> 启用为什么助手</label>
+          <label class="check-row"><input v-model="aiSettingsEdit.whyAssistantWebSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
+          <label>为什么助手提示词</label>
+          <textarea v-model="aiSettingsEdit.whyAssistantPromptCommand" rows="8"></textarea>
+        </section>
         <button class="text-btn ai-advanced-toggle" type="button" @click="aiSettingsShowAdvanced = !aiSettingsShowAdvanced">
           {{ aiSettingsShowAdvanced ? "收起高级设置" : "高级设置" }}
         </button>
@@ -4242,8 +4494,8 @@ async function toggleVirtual(character: any) {
       <template v-for="channel in store.channels" :key="channel.id">
         <button
           class="channel-row"
-          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
-          @click="store.switchChannel(channel.id); showChannels = false"
+          :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && !store.prayerOnly }"
+          @click="workspace = 'chat'; store.switchChannel(channel.id); showChannels = false"
         >
           <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
           <span>
@@ -4253,8 +4505,8 @@ async function toggleVirtual(character: any) {
         </button>
         <button
           class="channel-row channel-subrow"
-          :class="{ active: channel.id === store.currentChannelId && store.prayerOnly }"
-          @click="store.switchPrayerView(channel.id); showChannels = false"
+          :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && store.prayerOnly }"
+          @click="workspace = 'chat'; store.switchPrayerView(channel.id); showChannels = false"
         >
           <span class="channel-icon prayer-icon"><HeartHandshake :size="20" /></span>
           <span>
@@ -4263,6 +4515,17 @@ async function toggleVirtual(character: any) {
           </span>
         </button>
       </template>
+      <button class="channel-row why-entry" :class="{ active: workspace === 'why' }" @click="openWhyHome(); showChannels = false">
+        <span class="channel-icon why-icon"><BookOpen :size="20" /></span>
+        <span>
+          <b>为什么</b>
+          <small>
+            <template v-if="whySummary.pendingRequestCount">{{ whySummary.pendingRequestCount }} 个请求待处理</template>
+            <template v-else-if="whySummary.unreadCount">{{ whySummary.unreadCount }} 条未读</template>
+            <template v-else>我的研究问题</template>
+          </small>
+        </span>
+      </button>
       <footer class="profile-row">
         <div class="avatar">
           <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />
@@ -4277,7 +4540,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section class="chat-pane">
+    <section v-if="workspace === 'chat'" class="chat-pane">
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <div ref="dripLayer" class="drip-layer" aria-hidden="true"></div>
       <header class="chat-head">
@@ -4481,6 +4744,21 @@ async function toggleVirtual(character: any) {
                     <button class="mini-btn" @click.stop="confirmJoinChain(row.message, $event)">参与接龙</button>
                   </div>
                 </template>
+                <template v-else-if="row.message.type === 'why_topic_card'">
+                  <div class="why-card" :class="{ deleted: whyCardPayload(row.message).status === 'deleted' }" @click.stop>
+                    <div class="why-card-head">
+                      <span><BookOpen :size="17" /></span>
+                      <strong>{{ whyCardPayload(row.message).ownerName }} 开始了一个为什么研究</strong>
+                    </div>
+                    <p>{{ whyCardPayload(row.message).status === "deleted" ? "这个为什么研究已删除" : whyCardPayload(row.message).title }}</p>
+                    <small>已进入深度引导模式</small>
+                    <button v-if="whyCardPayload(row.message).status !== 'deleted'" class="mini-btn" @click="requestWhyTopicFromCard(row.message)">
+                      <template v-if="whyCardPayload(row.message).requestStatus === 'owner' || whyCardPayload(row.message).requestStatus === 'member'">查看研究</template>
+                      <template v-else-if="whyCardPayload(row.message).requestStatus === 'requested'">已请求加入</template>
+                      <template v-else>请求加入</template>
+                    </button>
+                  </div>
+                </template>
                 <template v-else-if="row.message.type === 'prayer'">
                   <div class="prayer-card" :class="`status-${prayerPayload(row.message).status}`">
                     <div class="prayer-card-head">
@@ -4673,6 +4951,9 @@ async function toggleVirtual(character: any) {
                     </span>
                     <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
                   </a>
+                  <button v-if="row.message.type === 'text' && isMine(row.message)" class="mini-btn why-from-message-btn" @click.stop="startWhyFromMessage(row.message)">
+                    <BookOpen :size="14" />开始为什么研究
+                  </button>
                 </template>
               </div>
             </div>
@@ -4804,17 +5085,96 @@ async function toggleVirtual(character: any) {
             <span><HeartHandshake :size="25" /></span>
             <small>代祷</small>
           </button>
+          <button class="tool-tile" @click="openWhyHome">
+            <span><BookOpen :size="25" /></span>
+            <small>研究</small>
+          </button>
         </div>
       </footer>
     </section>
 
+    <section v-else class="chat-pane why-pane">
+      <header class="chat-head">
+        <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
+        <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
+        <div class="chat-title">
+          <strong>{{ whyCurrentTopic ? whyCurrentTopic.title : "为什么" }}</strong>
+          <small>{{ whyCurrentTopic ? `${whyMembers.filter((member) => member.role !== 'requested').length} 人参与` : "我的研究问题" }}</small>
+        </div>
+        <button v-if="whyCurrentTopic" class="icon-btn" @click="openWhyHome" aria-label="返回为什么首页"><ChevronLeft :size="20" /></button>
+        <button class="icon-btn" @click="returnToChatWorkspace" aria-label="回到聊天"><MessageCircle :size="20" /></button>
+      </header>
+
+      <div v-if="!whyCurrentTopic" class="why-home">
+        <form class="why-question-box" @submit.prevent="submitWhyHomeQuestion">
+          <BookOpen :size="24" />
+          <textarea v-model="whyHomeQuestion" rows="3" placeholder="把你的为什么写下来"></textarea>
+          <button class="primary-btn" type="submit" :disabled="whyBusy || !whyHomeQuestion.trim()">开始研究</button>
+        </form>
+        <p v-if="whyError" class="form-error">{{ whyError }}</p>
+        <div v-if="whyLoading" class="empty-state">正在加载为什么...</div>
+        <div v-else-if="!whyTopics.length" class="empty-state">还没有研究话题。先写下一个真实的问题。</div>
+        <div v-else class="why-topic-list">
+          <button v-for="topic in whyTopics" :key="topic.id" class="why-topic-row" :class="{ deleted: topic.status === 'deleted' }" @click="topic.status !== 'deleted' && topic.memberRole !== 'requested' ? openWhyTopic(topic.id) : undefined">
+            <span class="why-topic-main">
+              <b>{{ topic.title }}</b>
+              <small>{{ topic.summary || topic.lastMessagePreview || "还没有摘要" }}</small>
+              <em>{{ topic.sourceChannelName ? `来自 ${topic.sourceChannelName}` : "我的为什么" }} · {{ topic.status === "completed" ? "已完成" : topic.status === "deleted" ? "已删除" : "进行中" }}</em>
+            </span>
+            <span class="why-topic-meta">
+              <strong v-if="topic.pendingRequestCount">{{ topic.pendingRequestCount }} 请求</strong>
+              <strong v-if="topic.unreadCount">{{ topic.unreadCount }} 未读</strong>
+              <small>{{ topic.participantCount }} 人</small>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div v-else class="why-topic-detail">
+        <div class="why-topic-meta-bar">
+          <span>{{ whyCurrentTopic.status === "completed" ? "已完成" : "深度引导模式" }}</span>
+          <span v-if="whyCurrentTopic.sourceChannelName">来自 {{ whyCurrentTopic.sourceChannelName }}</span>
+          <button v-if="whyCurrentTopic.memberRole === 'owner' && whyCurrentTopic.status !== 'completed'" class="mini-btn secondary" @click="completeWhyTopic">标记完成</button>
+          <button v-if="whyCurrentTopic.memberRole === 'owner' || store.account?.isAdmin" class="mini-btn danger-action" @click="deleteWhyTopic">删除</button>
+        </div>
+        <section v-if="whyCurrentTopic.originalQuestion" class="why-original-question">
+          <strong>原问题</strong>
+          <p>{{ whyCurrentTopic.originalQuestion.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]*>/g, '') }}</p>
+        </section>
+        <section v-if="whyCurrentTopic.completionNote" class="why-completion-note">
+          <strong>整理草稿</strong>
+          <pre>{{ whyCurrentTopic.completionNote }}</pre>
+        </section>
+        <div v-if="whyRuns.some((run) => run.status === 'pending' || run.status === 'running')" class="why-run-state">
+          为什么助手正在查资料并整理问题...
+        </div>
+        <div v-if="whyRuns.some((run) => run.status === 'failed')" class="why-run-state failed">
+          为什么助手暂时没有回应。
+          <button class="mini-btn" @click="retryWhyAssistant">重试助手</button>
+        </div>
+        <div class="why-message-list">
+          <article v-for="message in whyMessages" :key="message.id" class="why-message" :class="{ mine: isMine(message), assistant: message.sender.username === 'why_assistant', discussion: !isMine(message) && message.sender.username !== 'why_assistant' }">
+            <div class="why-message-head">
+              <strong>{{ message.sender.displayName }}</strong>
+              <small>{{ message.sender.username === 'why_assistant' ? '严格引导' : isMine(message) ? '研究主线' : '弟兄姐妹回应' }}</small>
+            </div>
+            <div class="why-message-body" v-html="message.content"></div>
+          </article>
+        </div>
+        <form class="why-topic-composer" @submit.prevent="sendWhyTopicMessage">
+          <textarea v-model="whyTopicInput" rows="2" :placeholder="whyCurrentTopic.memberRole === 'owner' ? '回应为什么助手，继续研究' : '你的回应会给提问者参考，不会直接发给 AI'"></textarea>
+          <button class="send-btn" type="submit" :disabled="whyBusy || !whyTopicInput.trim()"><Send :size="18" /></button>
+        </form>
+      </div>
+    </section>
+
     <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
       <header class="pane-head">
-        <strong>成员</strong>
+        <strong>{{ workspace === "why" ? "参与者" : "成员" }}</strong>
         <button class="icon-btn desktop-only" @click="membersCollapsed = true; showMembers = false" aria-label="收起成员"><PanelRightClose :size="20" /></button>
         <button class="icon-btn tablet-down" @click="showMembers = false" aria-label="关闭成员"><X :size="20" /></button>
       </header>
-      <div class="member-list">
+      <div v-if="workspace === 'chat'" class="member-list">
         <button v-for="member in store.members" :key="member.id" class="member-row" @click="openMemberActions(member, $event)">
           <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
             <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" />
@@ -4824,6 +5184,25 @@ async function toggleVirtual(character: any) {
           <span>{{ member.displayName }}</span>
           <Bot v-if="member.kind === 'virtual'" :size="15" />
         </button>
+      </div>
+      <div v-else class="member-list why-member-list">
+        <p v-if="!whyCurrentTopic" class="settings-note">打开一个为什么话题后，可以在这里查看参与者和请求。</p>
+        <template v-else>
+          <article v-for="member in whyMembers" :key="member.accountId" class="why-member-row" :class="{ requested: member.role === 'requested' }">
+            <div class="avatar">
+              <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" />
+              <span v-else>{{ avatarText(member.displayName) }}</span>
+            </div>
+            <div>
+              <b>{{ member.displayName }}</b>
+              <small>{{ member.role === "owner" ? "提问者" : member.role === "requested" ? "请求加入" : "参与者" }}</small>
+            </div>
+            <div v-if="whyCurrentTopic.memberRole === 'owner' && member.role === 'requested'" class="why-request-actions">
+              <button class="mini-btn" @click="approveWhyRequest(member.accountId, true)">同意</button>
+              <button class="mini-btn secondary" @click="approveWhyRequest(member.accountId, false)">拒绝</button>
+            </div>
+          </article>
+        </template>
       </div>
     </aside>
 
