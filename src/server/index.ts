@@ -2355,6 +2355,8 @@ app.post("/api/why/topics", { preHandler: requireAuth }, async (request, reply) 
 app.get("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const topicId = Number((request.params as { id: string }).id);
+  const topicRow = await prisma.whyTopic.findUnique({ where: { id: topicId }, select: { status: true } });
+  if (!topicRow || topicRow.status === "deleted") return reply.code(410).send({ success: false, message: "问题已删除" });
   if (!(await canAccessWhyTopic(auth.accountId, topicId))) return reply.code(403).send({ success: false, message: "无权访问此为什么研究" });
   const topic = await whyTopicDto(topicId, auth, true);
   if (!topic) return reply.code(404).send({ success: false, message: "为什么研究不存在" });
@@ -2407,7 +2409,7 @@ app.post("/api/why/topics/:id/request", { preHandler: requireAuth }, async (requ
   const auth = (request as AuthedRequest).auth;
   const topicId = Number((request.params as { id: string }).id);
   const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return reply.code(404).send({ success: false, message: "为什么研究不存在" });
+  if (!topic || topic.status === "deleted") return reply.code(410).send({ success: false, message: "问题已删除" });
   if (topic.ownerAccountId === auth.accountId) return { success: true, role: "owner" };
   const existing = await whyTopicMembership(topicId, auth.accountId);
   if (existing && existing.role !== "requested") return { success: true, role: existing.role };
@@ -2517,18 +2519,30 @@ app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, r
   const auth = (request as AuthedRequest).auth;
   const topicId = Number((request.params as { id: string }).id);
   if (!(await canManageWhyTopic(auth, topicId))) return reply.code(403).send({ success: false, message: "无权删除此为什么研究" });
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
+  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId }, include: { members: { select: { accountId: true } } } });
   if (!topic) return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  await prisma.whyTopic.update({ where: { id: topicId }, data: { status: "deleted", deletedAt: new Date() } });
-  await prisma.channel.delete({ where: { id: topic.channelId } }).catch(() => undefined);
+  const channelMessageIds = (await prisma.message.findMany({ where: { channelId: topic.channelId }, select: { id: true } })).map((message) => message.id);
+  await prisma.$transaction(async (tx) => {
+    if (topic.cardMessageId) {
+      const card = await tx.message.findUnique({ where: { id: topic.cardMessageId } });
+      const payload = card?.payload && typeof card.payload === "object" && !Array.isArray(card.payload)
+        ? { ...(card.payload as Record<string, unknown>), status: "deleted" }
+        : { kind: "why_topic_card", topicId: topic.id, title: topic.title, status: "deleted" };
+      await tx.message.update({ where: { id: topic.cardMessageId }, data: { payload } }).catch(() => undefined);
+    }
+    if (channelMessageIds.length) {
+      await tx.message.updateMany({ where: { replyToId: { in: channelMessageIds } }, data: { replyToId: null } });
+    }
+    await tx.channel.deleteMany({ where: { id: topic.channelId } });
+    await tx.whyTopic.deleteMany({ where: { id: topicId } });
+  });
   if (topic.cardMessageId) {
-    const card = await prisma.message.findUnique({ where: { id: topic.cardMessageId } });
-    const payload = card?.payload && typeof card.payload === "object" && !Array.isArray(card.payload) ? { ...(card.payload as Record<string, unknown>), status: "deleted" } : { kind: "why_topic_card", topicId: topic.id, title: topic.title, status: "deleted" };
-    await prisma.message.update({ where: { id: topic.cardMessageId }, data: { payload } }).catch(() => undefined);
     const dto = await hydrateMessage(topic.cardMessageId);
     if (dto) io.to(`ch:${dto.channelId}`).emit("message:updated", dto);
   }
-  io.to(`ch:${topic.channelId}`).emit("why:updated", { topicId });
+  for (const member of topic.members) {
+    io.to(`acct:${member.accountId}`).emit("why:updated", { topicId });
+  }
   return { success: true };
 });
 

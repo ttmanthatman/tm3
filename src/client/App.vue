@@ -2054,6 +2054,25 @@ async function openWhyTopic(topicId: number) {
   }
 }
 
+async function openWhyTopicFromCard(message: MessageDTO) {
+  const payload = whyCardPayload(message);
+  if (!payload.topicId || payload.status === "deleted") {
+    alert("问题已删除");
+    return;
+  }
+  if (payload.requestStatus === "owner" || payload.requestStatus === "member") {
+    await openWhyTopic(payload.topicId);
+    return;
+  }
+  if (payload.requestStatus === "requested") return;
+  try {
+    await api(`/api/why/topics/${payload.topicId}/request`, { method: "POST", body: JSON.stringify({}) });
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "操作失败");
+  }
+}
+
 async function createWhyTopic(question: string, sourceChannelId?: number, sourceMessageId?: number) {
   whyBusy.value = true;
   try {
@@ -2115,14 +2134,7 @@ function whyCardPayload(message: MessageDTO): WhyTopicCardPayload {
 }
 
 async function requestWhyTopicFromCard(message: MessageDTO) {
-  const payload = whyCardPayload(message);
-  if (!payload.topicId || payload.status === "deleted") return;
-  if (payload.requestStatus === "owner" || payload.requestStatus === "member") {
-    await openWhyTopic(payload.topicId);
-    return;
-  }
-  await api(`/api/why/topics/${payload.topicId}/request`, { method: "POST", body: JSON.stringify({}) });
-  await store.loadMessages();
+  await openWhyTopicFromCard(message);
 }
 
 async function approveWhyRequest(accountId: number, approve: boolean) {
@@ -4965,14 +4977,14 @@ async function toggleVirtual(character: any) {
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'why_topic_card'">
-                  <div class="why-card" :class="{ deleted: whyCardPayload(row.message).status === 'deleted' }" @click.stop>
+                  <div class="why-card" :class="{ deleted: whyCardPayload(row.message).status === 'deleted' }" @click.stop="openWhyTopicFromCard(row.message)">
                     <div class="why-card-head">
                       <span><BookOpen :size="17" /></span>
                       <strong>{{ whyCardPayload(row.message).ownerName }} 开始了一个为什么研究</strong>
                     </div>
                     <p>{{ whyCardPayload(row.message).status === "deleted" ? "这个为什么研究已删除" : whyCardPayload(row.message).title }}</p>
                     <small>已进入深度引导模式</small>
-                    <button v-if="whyCardPayload(row.message).status !== 'deleted'" class="mini-btn" @click="requestWhyTopicFromCard(row.message)">
+                    <button v-if="whyCardPayload(row.message).status !== 'deleted'" class="mini-btn" @click.stop="requestWhyTopicFromCard(row.message)">
                       <template v-if="whyCardPayload(row.message).requestStatus === 'owner' || whyCardPayload(row.message).requestStatus === 'member'">查看研究</template>
                       <template v-else-if="whyCardPayload(row.message).requestStatus === 'requested'">已请求加入</template>
                       <template v-else>请求加入</template>

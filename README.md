@@ -35,7 +35,7 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 - 为什么助手使用严格的问题式引导，不直接替用户下结论；事实型问题可以直接回答并给查证路径。
 - 经文和知识型问题会鼓励用户观察文本、查证背景资料和标明出处；情绪、关系或痛苦类问题会引导用户找真实可信的人同行祷告。
 - 管理员可在 `/ai-settings` 配置为什么助手，默认复用现有 AI API Key，并默认开启联网查询和深度引导模式。
-- 话题支持未读和待审批计数、完成状态、整理草稿、失败重试和删除后的问题卡片置灰。
+- 话题支持未读和待审批计数、完成状态、整理草稿、失败重试；提问者删除话题后会真正移除研究内容，原问题卡片点开会提示问题已删除。
 
 典型流程：
 
@@ -48,7 +48,7 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 
 - 私密频道和为什么话题是分开的权限模型，管理员不会因为私密频道规则自动进入用户研究内容。
 - 主频道的问题卡片只承担入口和状态提示，不泄漏为什么话题里的完整讨论。
-- 删除话题后，原问题卡片会置灰，避免有人继续误点进入不存在的研究。
+- 删除话题后，原问题卡片会保留为已删除入口，点开只提示问题已删除，避免有人继续误入不存在的研究。
 
 ### 聊天与频道
 
@@ -187,7 +187,7 @@ Team Chat is a lightweight web chat app for small teams, families, groups, and p
 - Approved participants can read the whole topic and respond to the asker, but participant replies are not included in the assistant context by default.
 - The Why assistant is designed as a strict question-based guide, not an answer machine. It pushes users to observe the text, verify sources, pray, and bring personal or pastoral issues to real trusted people.
 - Admins can configure the Why assistant in `/ai-settings`. It reuses the configured AI API key, has its own prompt, and defaults to web-enabled deep guidance mode.
-- Topics support unread and pending-request counts, completion notes, assistant retry state, and deleted-card placeholders.
+- Topics support unread and pending-request counts, completion notes, assistant retry state, and deleted-card placeholders that say the question was deleted.
 
 The intended flow is: ask from a channel, keep a lightweight card in that channel, continue the long-form work inside the topic, approve collaborators only when needed, and mark the topic complete when the research has landed somewhere useful.
 
