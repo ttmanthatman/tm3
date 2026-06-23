@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.7.3";
+export const APP_VERSION = "0.7.4";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "代祷卡片更新弹窗新增“划去选中文字”，可用删除线标出已无需继续代祷或已蒙应允的内容。",
+  "更新最新动态时可分别填写“已蒙应允 / 可划去”“继续代祷”和“感恩记录”，并在推送前看到预览。",
+  "代祷卡片正文会保留删除线显示，服务端清洗规则同步允许安全的删除线标签。"
+] as const;
+
+const RELEASE_0_7_3_NOTES = [
   "代祷卡片“更新最新动态”改为先打开编辑框，可修改原内容或追加新的祷告事项，确认后才更新原卡片、复发为最新消息并全员推送。",
   "README 扩展“代祷卡片”和“为什么”特色功能说明，补充使用入口、权限边界、通知行为、AI 助手和子视图收录规则。"
 ] as const;
@@ -197,9 +203,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.3",
+    version: "0.7.4",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.3",
+    date: "2026-06-23",
+    notes: RELEASE_0_7_3_NOTES
   },
   {
     version: "0.7.2",

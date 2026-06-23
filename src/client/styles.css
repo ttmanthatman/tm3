@@ -1578,6 +1578,13 @@ button {
   white-space: normal;
 }
 
+.inline-bible-reference.text-struck,
+.inline-bible-reference.text-struck .inline-bible-btn {
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  opacity: 0.72;
+}
+
 .inline-bible-btn {
   min-height: 24px;
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
@@ -2888,8 +2895,58 @@ button {
 }
 
 .prayer-update-modal textarea {
-  min-height: 180px;
+  min-height: 88px;
   resize: vertical;
+}
+
+.prayer-update-modal .modal-form {
+  max-height: min(640px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 86px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.prayer-update-toolbar {
+  margin-top: -3px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.prayer-update-toolbar .mini-btn {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.prayer-update-toolbar small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prayer-update-preview {
+  border: 1px solid rgba(138, 74, 31, 0.14);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  gap: 7px;
+  background: #fffaf0;
+}
+
+.prayer-update-preview > strong {
+  color: #80521f;
+  font-size: 13px;
+}
+
+.prayer-update-preview .prayer-text {
+  margin: 0;
+}
+
+.prayer-text s,
+.message-text s,
+.prayer-text del,
+.message-text del {
+  color: rgba(51, 37, 24, 0.62);
+  text-decoration-thickness: 1.5px;
 }
 
 .confirm-body {

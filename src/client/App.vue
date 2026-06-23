@@ -246,7 +246,11 @@ const pendingDownload = ref<MessageDTO | null>(null);
 const pendingRecall = ref<MessageDTO | null>(null);
 const pendingPrayer = ref<MessageDTO | null>(null);
 const pendingPrayerUpdate = ref<MessageDTO | null>(null);
+const prayerUpdateTextarea = ref<HTMLTextAreaElement | null>(null);
 const prayerUpdateContent = ref("");
+const prayerUpdateAnswered = ref("");
+const prayerUpdateContinue = ref("");
+const prayerUpdateThanksgiving = ref("");
 const prayerUpdateBusy = ref(false);
 const prayerUpdateError = ref("");
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
@@ -1044,6 +1048,21 @@ function plainTextFromHtml(value: string) {
   return (el.textContent || el.innerText || "").replace(/\s+/g, " ").trim();
 }
 
+function prayerUpdateMarkdownFromHtml(value: string) {
+  const root = document.createElement("div");
+  root.innerHTML = value || "";
+  const walk = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
+    if (node.nodeType !== Node.ELEMENT_NODE) return "";
+    const element = node as HTMLElement;
+    if (element.tagName === "BR") return "\n";
+    const body = Array.from(element.childNodes).map(walk).join("");
+    if (element.tagName === "S" || element.tagName === "DEL") return body ? `~~${body}~~` : "";
+    return body;
+  };
+  return Array.from(root.childNodes).map(walk).join("").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 function trimUrlPunctuation(value: string) {
   let url = value;
   let suffix = "";
@@ -1132,7 +1151,7 @@ function messageContentHtml(message: MessageDTO) {
 
 type BibleRichTextSegment =
   | { kind: "html"; key: string; html: string }
-  | { kind: "reference"; key: string; reference: string };
+  | { kind: "reference"; key: string; reference: string; className?: string };
 
 function textContentHtml(text: string) {
   const root = document.createElement("div");
@@ -1146,15 +1165,20 @@ function escapeHtmlText(text: string) {
   return element.innerHTML.replace(/\n/g, "<br />");
 }
 
-function splitBibleTextNode(text: string, keyPrefix: string) {
+function wrapInlineHtml(html: string, tags: string[]) {
+  return tags.reduceRight((value, tag) => `<${tag}>${value}</${tag}>`, html);
+}
+
+function splitBibleTextNode(text: string, keyPrefix: string, inlineTags: string[] = []) {
   const segments: BibleRichTextSegment[] = [];
+  const referenceClass = inlineTags.some((tag) => tag === "s" || tag === "del") ? "text-struck" : undefined;
   let cursor = 0;
   for (const match of extractBibleReferenceMatches(text)) {
-    if (match.start > cursor) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: escapeHtmlText(text.slice(cursor, match.start)) });
-    segments.push({ kind: "reference", key: `${keyPrefix}-r-${match.start}`, reference: match.reference });
+    if (match.start > cursor) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: wrapInlineHtml(escapeHtmlText(text.slice(cursor, match.start)), inlineTags) });
+    segments.push({ kind: "reference", key: `${keyPrefix}-r-${match.start}`, reference: match.reference, className: referenceClass });
     cursor = match.end;
   }
-  if (cursor < text.length) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: escapeHtmlText(text.slice(cursor)) });
+  if (cursor < text.length) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: wrapInlineHtml(escapeHtmlText(text.slice(cursor)), inlineTags) });
   return segments;
 }
 
@@ -1163,9 +1187,9 @@ function bibleRichTextSegmentsFromHtml(html: string, keyPrefix: string): BibleRi
   root.innerHTML = linkifyMessageHtml(html || "");
   const segments: BibleRichTextSegment[] = [];
   let index = 0;
-  const walk = (node: Node) => {
+  const walk = (node: Node, inlineTags: string[] = []) => {
     if (node.nodeType === Node.TEXT_NODE) {
-      segments.push(...splitBibleTextNode(node.textContent || "", `${keyPrefix}-${index++}`));
+      segments.push(...splitBibleTextNode(node.textContent || "", `${keyPrefix}-${index++}`, inlineTags));
       return;
     }
     if (node.nodeType !== Node.ELEMENT_NODE) return;
@@ -1178,7 +1202,9 @@ function bibleRichTextSegmentsFromHtml(html: string, keyPrefix: string): BibleRi
       segments.push({ kind: "html", key: `${keyPrefix}-br-${index++}`, html: "<br />" });
       return;
     }
-    for (const child of Array.from(element.childNodes)) walk(child);
+    const tag = element.tagName.toLowerCase();
+    const nextTags = ["b", "strong", "i", "em", "u", "s", "del"].includes(tag) ? [...inlineTags, tag] : inlineTags;
+    for (const child of Array.from(element.childNodes)) walk(child, nextTags);
   };
   for (const child of Array.from(root.childNodes)) walk(child);
   return segments;
@@ -3980,9 +4006,47 @@ function canPublishPrayerUpdate(message: MessageDTO) {
   return message.type === "prayer" && (isMine(message) || !!store.account?.isAdmin);
 }
 
+function prayerUpdateMarkupToHtml(text: string) {
+  let html = "";
+  let cursor = 0;
+  for (const match of text.matchAll(/~~([\s\S]+?)~~/g)) {
+    const start = match.index ?? 0;
+    if (start > cursor) html += escapeHtmlText(text.slice(cursor, start));
+    html += `<s>${escapeHtmlText(match[1])}</s>`;
+    cursor = start + match[0].length;
+  }
+  if (cursor < text.length) html += escapeHtmlText(text.slice(cursor));
+  return html;
+}
+
+function prayerUpdateSectionHtml(label: string, text: string) {
+  const clean = text.trim();
+  if (!clean) return "";
+  return `<strong>${escapeHtmlText(label)}</strong><br />${prayerUpdateMarkupToHtml(clean)}`;
+}
+
+function buildPrayerUpdateHtml() {
+  const blocks = [
+    prayerUpdateMarkupToHtml(prayerUpdateContent.value.trim()),
+    prayerUpdateSectionHtml("已蒙应允 / 可划去", prayerUpdateAnswered.value),
+    prayerUpdateSectionHtml("继续代祷", prayerUpdateContinue.value),
+    prayerUpdateSectionHtml("感恩记录", prayerUpdateThanksgiving.value)
+  ].filter(Boolean);
+  return blocks.join("<br /><br />");
+}
+
+const prayerUpdatePreviewHtml = computed(() => buildPrayerUpdateHtml());
+
+const prayerUpdateCanPublish = computed(() => {
+  return [prayerUpdateContent.value, prayerUpdateAnswered.value, prayerUpdateContinue.value, prayerUpdateThanksgiving.value].some((text) => text.replace(/~~/g, "").trim());
+});
+
 function openPrayerUpdateEditor(message: MessageDTO) {
   pendingPrayerUpdate.value = message;
-  prayerUpdateContent.value = plainTextFromHtml(message.content);
+  prayerUpdateContent.value = prayerUpdateMarkdownFromHtml(message.content);
+  prayerUpdateAnswered.value = "";
+  prayerUpdateContinue.value = "";
+  prayerUpdateThanksgiving.value = "";
   prayerUpdateError.value = "";
   prayerUpdateBusy.value = false;
 }
@@ -3991,23 +4055,50 @@ function closePrayerUpdateEditor() {
   if (prayerUpdateBusy.value) return;
   pendingPrayerUpdate.value = null;
   prayerUpdateContent.value = "";
+  prayerUpdateAnswered.value = "";
+  prayerUpdateContinue.value = "";
+  prayerUpdateThanksgiving.value = "";
   prayerUpdateError.value = "";
+}
+
+async function strikeSelectedPrayerUpdateText() {
+  const textarea = prayerUpdateTextarea.value;
+  if (!textarea || prayerUpdateBusy.value) return;
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  const value = prayerUpdateContent.value;
+  const selected = value.slice(start, end);
+  if (!selected) {
+    prayerUpdateError.value = "请先在代祷内容里选中要划去的文字";
+    await nextTick();
+    textarea.focus();
+    return;
+  }
+  prayerUpdateError.value = "";
+  const replacement = selected.startsWith("~~") && selected.endsWith("~~") ? selected.slice(2, -2) : `~~${selected}~~`;
+  prayerUpdateContent.value = `${value.slice(0, start)}${replacement}${value.slice(end)}`;
+  await nextTick();
+  textarea.focus();
+  textarea.setSelectionRange(start, start + replacement.length);
 }
 
 async function publishPrayerUpdate() {
   const message = pendingPrayerUpdate.value;
-  const content = prayerUpdateContent.value.trim();
-  if (!message || !content || prayerUpdateBusy.value) return;
+  const content = buildPrayerUpdateHtml();
+  if (!message || !prayerUpdateCanPublish.value || prayerUpdateBusy.value) return;
   prayerUpdateBusy.value = true;
   prayerUpdateError.value = "";
   try {
     const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, {
       method: "POST",
-      body: JSON.stringify({ content: escapeHtmlText(content) })
+      body: JSON.stringify({ content })
     });
     if (result.message) store.appendLocalMessage(result.message);
     pendingPrayerUpdate.value = null;
     prayerUpdateContent.value = "";
+    prayerUpdateAnswered.value = "";
+    prayerUpdateContinue.value = "";
+    prayerUpdateThanksgiving.value = "";
     await nextTick();
     scrollBottom(true);
   } catch (error) {
@@ -4875,7 +4966,7 @@ async function toggleVirtual(character: any) {
                     <h3 class="bible-rich-text">
                       <template v-for="segment in chainTopicRichTextSegments(row.message)" :key="segment.key">
                         <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
-                        <span v-else class="inline-bible-reference" @click.stop>
+                        <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
                           <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'chain'), segment.reference)">
                             <BookOpen :size="13" />{{ segment.reference }}
                           </button>
@@ -4924,7 +5015,7 @@ async function toggleVirtual(character: any) {
                     <div class="prayer-text bible-rich-text">
                       <template v-for="segment in prayerRichTextSegments(row.message)" :key="segment.key">
                         <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
-                        <span v-else class="inline-bible-reference" @click.stop>
+                        <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
                           <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
                             <BookOpen :size="13" />{{ segment.reference }}
                           </button>
@@ -5084,7 +5175,7 @@ async function toggleVirtual(character: any) {
                   <div class="message-text bible-rich-text">
                     <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
                       <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
-                      <span v-else class="inline-bible-reference" @click.stop>
+                      <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
                         <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
                           <BookOpen :size="13" />{{ segment.reference }}
                         </button>
@@ -5382,13 +5473,27 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form">
-          <p class="modal-help">可直接修改原代祷内容，也可以在末尾追加新的祷告事项。发布后会更新原卡片，并作为最新消息推送给全员。</p>
+          <p class="modal-help">可划去已经无需代祷或已蒙应允的部分，再补充仍需代祷和感恩的地方。发布后会更新原卡片，并作为最新消息推送给全员。</p>
           <label>代祷内容</label>
-          <textarea v-model="prayerUpdateContent" rows="9" placeholder="写下最新动态或补充代祷内容"></textarea>
+          <div class="prayer-update-toolbar">
+            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="strikeSelectedPrayerUpdateText">划去选中文字</button>
+            <small>也可手动输入 ~~文字~~</small>
+          </div>
+          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="7" placeholder="修改原代祷内容，或选中一段后点“划去选中文字”"></textarea>
+          <label>已蒙应允 / 可划去</label>
+          <textarea v-model="prayerUpdateAnswered" rows="3" placeholder="哪些部分已经结束、无需继续代祷，或已蒙应允"></textarea>
+          <label>继续代祷</label>
+          <textarea v-model="prayerUpdateContinue" rows="3" placeholder="接下来还需要大家继续为哪些事情祷告"></textarea>
+          <label>感恩记录</label>
+          <textarea v-model="prayerUpdateThanksgiving" rows="3" placeholder="这次更新里有什么可以一起感恩的地方"></textarea>
+          <div v-if="prayerUpdatePreviewHtml" class="prayer-update-preview">
+            <strong>推送预览</strong>
+            <p class="prayer-text bible-rich-text" v-html="prayerUpdatePreviewHtml"></p>
+          </div>
           <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
           <div class="confirm-actions">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>
-            <button class="primary-btn" type="submit" :disabled="prayerUpdateBusy || !prayerUpdateContent.trim()">
+            <button class="primary-btn" type="submit" :disabled="prayerUpdateBusy || !prayerUpdateCanPublish">
               {{ prayerUpdateBusy ? "正在更新..." : "更新并推送" }}
             </button>
           </div>

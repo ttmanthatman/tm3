@@ -437,7 +437,7 @@ async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
 function cleanText(input: unknown) {
   const raw = String(input || "").trim().slice(0, 10000);
   return sanitizeHtml(raw, {
-    allowedTags: ["br", "b", "strong", "i", "em", "u", "a"],
+    allowedTags: ["br", "b", "strong", "i", "em", "u", "s", "del", "a"],
     allowedAttributes: { a: ["href", "target", "rel"] },
     allowedSchemes: ["http", "https", "mailto"],
     transformTags: {

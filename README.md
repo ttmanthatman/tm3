@@ -100,7 +100,7 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 
 - 成员可以点“我已祷告”记录一次祷告；已经记录过的人可以点“再次记录祷告”继续累加次数。
 - 发起者可以把代祷事项标记为“无需再代祷”或“已蒙应允”，也可以撤回事项。
-- 发起者或管理员可以点“更新最新动态”，先在编辑框里修改原内容或追加新的祷告事项，确认后才会更新原卡片。
+- 发起者或管理员可以点“更新最新动态”，先在编辑框里划去已无需代祷或已蒙应允的文字，再分别补充继续代祷和感恩记录，确认后才会更新原卡片。
 - 最新动态发布后，同一张代祷卡会作为聊天区最新消息再发一次，并向可访问该频道的成员推送通知；它仍指向原卡片的祷告记录和经文建议。
 
 AI 经文建议：
@@ -199,7 +199,7 @@ Why topics deliberately separate visibility from normal channel membership. A qu
 - Prayer cards track status, unique people who prayed, total prayer actions, latest prayer time, and participant avatars.
 - Members can record “I prayed” more than once, so long-running requests can show continued prayer rather than a single checkbox.
 - The requester can close a request, mark it answered, withdraw it, or publish a latest update.
-- Publishing a latest update opens an editor first. The requester can revise the original request or append new prayer details; only after confirmation does the app update the original card, repost it as the newest channel message, and send push notifications.
+- Publishing a latest update opens an editor first. The requester can strike through answered or no-longer-needed text, add what still needs prayer, add thanksgiving notes, preview the push content, and then update the original card, repost it as the newest channel message, and send push notifications.
 - Each channel has a Prayer Items sub-view that collects the original cards. Reposted latest updates stay in the chat flow but are not collected as duplicate cards.
 - AI Bible reference suggestions stay attached to the canonical prayer card, so reposted updates keep the same prayer counts and suggestion history.
 
