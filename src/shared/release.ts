@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.7.2";
+export const APP_VERSION = "0.7.3";
 
 export const RELEASE_DATE = "2026-06-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "代祷卡片“更新最新动态”改为先打开编辑框，可修改原内容或追加新的祷告事项，确认后才更新原卡片、复发为最新消息并全员推送。",
+  "README 扩展“代祷卡片”和“为什么”特色功能说明，补充使用入口、权限边界、通知行为、AI 助手和子视图收录规则。"
+] as const;
+
+const RELEASE_0_7_2_NOTES = [
   "为什么页左上角返回按钮会直接回到之前的聊天频道，不再先拉开频道列表。",
   "聊天室会按账号、频道和视图记住阅读位置，切走再回来会尽量回到原来的消息位置。",
   "代祷卡片新增“更新最新动态”，会把同一张代祷卡作为最新消息再发一次并向全员推送，代祷事项子视图不会重复收录这条动态。"
@@ -192,9 +197,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.2",
+    version: "0.7.3",
     date: "2026-06-23",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.2",
+    date: "2026-06-23",
+    notes: RELEASE_0_7_2_NOTES
   },
   {
     version: "0.7.1",
