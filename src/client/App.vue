@@ -904,13 +904,11 @@ const matchingMentionMembers = computed(() => {
   const token = mentionToken.value;
   if (!token) return [];
   const query = token.query.trim().toLowerCase();
-  return store.members
-    .filter((member) => {
-      if (!member.displayName.trim()) return false;
-      if (!query) return true;
-      return member.displayName.toLowerCase().includes(query) || (member.username || "").toLowerCase().includes(query);
-    })
-    .slice(0, 8);
+  return store.members.filter((member) => {
+    if (!member.displayName.trim()) return false;
+    if (!query) return true;
+    return member.displayName.toLowerCase().includes(query) || (member.username || "").toLowerCase().includes(query);
+  });
 });
 const activeComposerSuggestionKind = computed<"mention" | "effect" | null>(() => {
   if (matchingMentionMembers.value.length > 0) return "mention";
