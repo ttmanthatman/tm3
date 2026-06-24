@@ -351,6 +351,8 @@ export interface AiRoleDTO {
   promptCommand: string;
   webSearchEnabled?: boolean;
   questionTriggerEnabled?: boolean;
+  contextTurnLimit?: number;
+  contextWindowMinutes?: number;
 }
 
 export interface AiSettingsDTO {

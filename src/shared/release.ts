@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.0";
+export const APP_VERSION = "0.8.1";
 
 export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "ai_slmm 会把同一用户、同一频道、同一虚拟角色的最近连续对话带入上下文，不同对象之间互不混用。",
+  "AI 设置页新增 ai_slmm 上下文轮数和有效分钟数，默认最近 10 轮、10 分钟内有效。",
+  "超过有效时间段的旧激活和回复不会进入虚拟角色上下文，避免久远对话影响当前回复。"
+] as const;
+
+const RELEASE_0_8_0_NOTES = [
   "消息框新增 AI 问句检测，包含半角/全角问号，以及以“吗、嘛、为啥、为什么”收尾的分句，会自动把原消息交给 ai_slmm 回复。",
   "ai_slmm 也支持通过 @ai_slmm、@昵称或昵称文本手动激活；手动点名不受自动问句触发开关影响。",
   "AI 设置页集中管理 AI 角色，why_assistant 和 ai_slmm 都可设置显示名、头像、启用状态、联网开关和提示词。"
@@ -230,9 +236,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.0",
+    version: "0.8.1",
     date: "2026-06-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.0",
+    date: "2026-06-24",
+    notes: RELEASE_0_8_0_NOTES
   },
   {
     version: "0.7.8",

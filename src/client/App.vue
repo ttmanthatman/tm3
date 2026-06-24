@@ -1593,7 +1593,11 @@ function syncAiSettingsEdit(settings: AiSettingsDTO) {
     apiKey: "",
     clearApiKey: false,
     promptCommand: settings.promptCommand,
-    aiRoles: (settings.aiRoles || []).map((role) => ({ ...role })),
+    aiRoles: (settings.aiRoles || []).map((role) => ({
+      ...role,
+      contextTurnLimit: role.contextTurnLimit || (role.username === "ai_slmm" ? 10 : undefined),
+      contextWindowMinutes: role.contextWindowMinutes || (role.username === "ai_slmm" ? 10 : undefined)
+    })),
     cardCooldownSeconds: settings.cardCooldownSeconds,
     userLimitPerMinute: settings.userLimitPerMinute,
     maxSuccessPerMessage: settings.maxSuccessPerMessage
@@ -1667,7 +1671,9 @@ async function saveAiSettings() {
         enabled: role.enabled,
         promptCommand: role.promptCommand,
         webSearchEnabled: role.webSearchEnabled,
-        questionTriggerEnabled: role.questionTriggerEnabled
+        questionTriggerEnabled: role.questionTriggerEnabled,
+        contextTurnLimit: Number(role.contextTurnLimit || 10),
+        contextWindowMinutes: Number(role.contextWindowMinutes || 10)
       })),
       cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
       userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
@@ -4893,6 +4899,16 @@ async function toggleVirtual(character: any) {
               <small>{{ aiRoleHint(role) }}</small>
               <label class="check-row"><input v-model="role.enabled" type="checkbox" /> 启用这个 AI 角色</label>
               <label v-if="role.username === 'ai_slmm'" class="check-row"><input v-model="role.questionTriggerEnabled" type="checkbox" /> 检测到问句时自动触发</label>
+              <div v-if="role.username === 'ai_slmm'" class="ai-role-context-grid">
+                <label>
+                  上下文轮数
+                  <input v-model.number="role.contextTurnLimit" type="number" min="1" max="50" step="1" />
+                </label>
+                <label>
+                  有效分钟数
+                  <input v-model.number="role.contextWindowMinutes" type="number" min="1" max="1440" step="1" />
+                </label>
+              </div>
               <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
               <label>提示词</label>
               <textarea v-model="role.promptCommand" rows="8"></textarea>

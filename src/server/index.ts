@@ -138,6 +138,8 @@ const WHY_ASSISTANT_USERNAME = "why_assistant";
 const WHY_ASSISTANT_NAME = "为什么助手";
 const QUESTION_ASSISTANT_USERNAME = "ai_slmm";
 const QUESTION_ASSISTANT_NAME = "ai_slmm";
+const DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS = 10;
+const DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES = 10;
 const DEFAULT_WHY_ASSISTANT_PROMPT = [
   "你是“为什么助手”，是严格的查经和思考引导师，不是答案机。",
   "默认用中文短答。你要用问题引导用户观察、查证、祷告和找真实弟兄姐妹交通。",
@@ -1447,7 +1449,19 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
 async function loadQuestionAssistantSettings() {
   const aiSettings = await loadAiSettings();
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ["questionAssistantEnabled", "questionAssistantTriggerEnabled", "questionAssistantPromptCommand", "questionAssistantWebSearchEnabled", "questionAssistantDisplayName"] } }
+    where: {
+      key: {
+        in: [
+          "questionAssistantEnabled",
+          "questionAssistantTriggerEnabled",
+          "questionAssistantPromptCommand",
+          "questionAssistantWebSearchEnabled",
+          "questionAssistantDisplayName",
+          "questionAssistantContextTurnLimit",
+          "questionAssistantContextWindowMinutes"
+        ]
+      }
+    }
   });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
   return {
@@ -1457,7 +1471,9 @@ async function loadQuestionAssistantSettings() {
       questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
       displayName: settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME,
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
-      webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false"
+      webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
+      contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
+      contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
     },
     encryptedApiKey: aiSettings.encryptedApiKey
   };
@@ -1480,16 +1496,71 @@ function questionAssistantTriggerReason(content?: string | null, displayName?: s
   return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence)) ? "question" : null;
 }
 
-function buildQuestionAssistantContext(message: Message & { sender: Actor; channel: { name: string } }, triggerReason: "question" | "mention") {
+function messagePayloadRecord(message: Pick<Message, "payload">) {
+  return message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+}
+
+async function buildQuestionAssistantContext(
+  message: Message & { sender: Actor; channel: { name: string } },
+  assistant: Actor,
+  settings: AiSettingsDTO & { displayName?: string; contextTurnLimit?: number; contextWindowMinutes?: number },
+  triggerReason: "question" | "mention"
+) {
+  const contextTurnLimit = clampInteger(settings.contextTurnLimit, DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50);
+  const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
+  const cutoff = new Date(message.createdAt.getTime() - contextWindowMinutes * 60 * 1000);
+  const rows = (
+    await prisma.message.findMany({
+      where: {
+        channelId: message.channelId,
+        createdAt: { gte: cutoff, lte: message.createdAt },
+        OR: [{ senderActorId: message.senderActorId }, { senderActorId: assistant.id }]
+      },
+      include: { sender: true },
+      orderBy: { id: "desc" },
+      take: 500
+    })
+  ).reverse();
+  type Round = { user: Message & { sender: Actor }; assistant?: Message & { sender: Actor } };
+  const rounds: Round[] = [];
+  const roundByTriggerId = new Map<number, Round>();
+  for (const row of rows) {
+    if (row.senderActorId === message.senderActorId) {
+      const reason = row.id === message.id ? triggerReason : questionAssistantTriggerReason(row.content, settings.displayName);
+      if (!reason) continue;
+      const round = { user: row };
+      rounds.push(round);
+      roundByTriggerId.set(row.id, round);
+      continue;
+    }
+    if (row.senderActorId !== assistant.id) continue;
+    const payload = messagePayloadRecord(row);
+    if (payload.aiRole !== QUESTION_ASSISTANT_USERNAME) continue;
+    const triggerMessageId = Number(payload.triggerMessageId || 0);
+    const round = roundByTriggerId.get(triggerMessageId);
+    if (round) round.assistant = row;
+  }
+  const scopedRounds = rounds.slice(-contextTurnLimit);
+  const historyLines = scopedRounds.flatMap((round, index) => {
+    const prefix = `第 ${index + 1} 轮`;
+    return [
+      `${prefix} 用户：${plainTextFromHtml(round.user.content, 1200)}`,
+      round.assistant ? `${prefix} ${assistant.displayName}：${plainTextFromHtml(round.assistant.content, 1200)}` : ""
+    ].filter(Boolean);
+  });
   const lines = [
     `频道：${message.channel.name}`,
     `发言人：${message.sender.displayName}`,
     `触发方式：${triggerReason === "mention" ? "用户点名 ai_slmm" : "检测到问句"}`,
+    `上下文范围：同一频道、同一发言人、同一虚拟角色；最近 ${contextTurnLimit} 轮，且只包含 ${contextWindowMinutes} 分钟内的对话。`,
     `消息：${plainTextFromHtml(message.content, 4000)}`,
+    "",
+    "最近对话上下文：",
+    ...(historyLines.length ? historyLines : ["无"]),
     "",
     "请作为 ai_slmm 在同一频道回复这条消息。"
   ];
-  return lines.join("\n").slice(0, 8000);
+  return lines.join("\n").slice(0, 12000);
 }
 
 async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean }, apiKey: string, contextText: string) {
@@ -1542,7 +1613,7 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   if (!settings.value.enabled || !apiKey) return;
   if (triggerReason === "question" && !settings.value.questionTriggerEnabled) return;
   const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
-  const contextText = buildQuestionAssistantContext(message, triggerReason);
+  const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, triggerReason);
   const responseText = await callQuestionAssistant(settings.value, apiKey, contextText);
   await createMessageFromActor({
     channelId: message.channelId,
@@ -3424,7 +3495,9 @@ async function aiSettingsDto() {
           "questionAssistantTriggerEnabled",
           "questionAssistantPromptCommand",
           "questionAssistantWebSearchEnabled",
-          "questionAssistantDisplayName"
+          "questionAssistantDisplayName",
+          "questionAssistantContextTurnLimit",
+          "questionAssistantContextWindowMinutes"
         ]
       }
     }
@@ -3448,7 +3521,9 @@ async function aiSettingsDto() {
       enabled: settings.get("questionAssistantEnabled") !== "false",
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
-      questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false"
+      questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
+      contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
+      contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
     }
   ];
   return {
@@ -3534,7 +3609,9 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
             enabled: z.boolean().optional(),
             promptCommand: z.string().max(6000).optional(),
             webSearchEnabled: z.boolean().optional(),
-            questionTriggerEnabled: z.boolean().optional()
+            questionTriggerEnabled: z.boolean().optional(),
+            contextTurnLimit: z.number().min(1).max(50).optional(),
+            contextWindowMinutes: z.number().min(1).max(1440).optional()
           })
         )
         .optional()
@@ -3567,6 +3644,12 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
       if (Object.prototype.hasOwnProperty.call(role, "questionTriggerEnabled")) await setSetting("questionAssistantTriggerEnabled", role.questionTriggerEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("questionAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
+      if (Object.prototype.hasOwnProperty.call(role, "contextTurnLimit")) {
+        await setSetting("questionAssistantContextTurnLimit", String(clampInteger(role.contextTurnLimit, DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50)));
+      }
+      if (Object.prototype.hasOwnProperty.call(role, "contextWindowMinutes")) {
+        await setSetting("questionAssistantContextWindowMinutes", String(clampInteger(role.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)));
+      }
     }
   }
   resetAiSettingsCache();
