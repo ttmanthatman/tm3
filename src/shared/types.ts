@@ -230,6 +230,22 @@ export interface DeviceSessionDTO {
   current: boolean;
 }
 
+export type AdminLoginLogKind = "auth_login" | "auth_logout" | "session_replaced" | "session_revoked" | "presence_join" | "presence_leave";
+
+export interface AdminLoginLogDTO {
+  id: number;
+  kind: AdminLoginLogKind;
+  accountId: number;
+  username: string;
+  displayName: string;
+  deviceKind?: DeviceSessionDTO["deviceKind"] | null;
+  deviceName?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  sessionId?: string | null;
+  createdAt: string;
+}
+
 export interface VersionDTO {
   version: string;
   date: string;

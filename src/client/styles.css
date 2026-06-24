@@ -171,6 +171,93 @@ body {
   padding: 16px;
 }
 
+.login-log-panel {
+  width: min(980px, 100%);
+}
+
+.login-log-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-log-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.login-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.login-log-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  background: #fff;
+}
+
+.login-log-badge {
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #374151;
+  background: #f3f4f6;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.login-log-badge.enter {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.login-log-badge.leave {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.login-log-main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.login-log-title,
+.login-log-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.login-log-title strong {
+  font-size: 14px;
+}
+
+.login-log-title small,
+.login-log-title time,
+.login-log-meta,
+.login-log-agent {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.login-log-agent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ai-defaults,
 .ai-advanced-fields {
   display: grid;
@@ -2710,6 +2797,12 @@ button {
   align-items: center;
   justify-content: space-between;
   border-bottom: 1px solid var(--line);
+}
+
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .tap-popover {
@@ -5353,6 +5446,14 @@ button {
 }
 
 @media (max-width: 640px) {
+  .login-log-row {
+    grid-template-columns: 1fr;
+  }
+
+  .login-log-badge {
+    width: max-content;
+  }
+
   .why-question-box {
     grid-template-columns: minmax(0, 1fr);
   }

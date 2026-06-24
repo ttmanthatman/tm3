@@ -56,6 +56,8 @@ import {
 import type {
   AccountDTO,
   AdminAttachmentDTO,
+  AdminLoginLogDTO,
+  AdminLoginLogKind,
   AppearanceDTO,
   AiSettingsDTO,
   BibleLookupDTO,
@@ -136,6 +138,7 @@ const showMessageFontMenu = ref(false);
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
+const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
@@ -206,6 +209,9 @@ const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
 const adminAttachments = ref<AdminAttachmentDTO[]>([]);
+const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
+const adminLoginLogsBusy = ref(false);
+const adminLoginLogsMsg = ref("");
 const selectedAttachmentIds = ref<string[]>([]);
 const dataChannelFilter = ref(0);
 const devices = ref<DeviceSessionDTO[]>([]);
@@ -503,6 +509,7 @@ onMounted(async () => {
   window.addEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   await store.bootstrap();
   if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
+  if (isLogRoute.value && store.account?.isAdmin) await loadAdminLoginLogs();
   await loadWhySummary();
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
@@ -638,6 +645,7 @@ watch(
   () => store.account?.isAdmin,
   (isAdminAccount) => {
     if (isAiSettingsRoute.value && isAdminAccount) void loadAiSettings();
+    if (isLogRoute.value && isAdminAccount) void loadAdminLoginLogs();
   }
 );
 
@@ -1465,6 +1473,10 @@ async function doLogin() {
       if (account.isAdmin) await loadAiSettings();
       return;
     }
+    if (isLogRoute.value) {
+      if (account.isAdmin) await loadAdminLoginLogs();
+      return;
+    }
     await switchToLinkedChannel();
     await nextTick();
     scrollBottom(false);
@@ -1503,7 +1515,17 @@ async function openSettings(tab: "appearance" | "devices" | "notifications" | "r
 
 function returnToChat() {
   isAiSettingsRoute.value = false;
+  isLogRoute.value = false;
   window.history.pushState({}, "", "/");
+}
+
+async function openLoginLogPage() {
+  if (!store.account?.isAdmin) return;
+  showAdmin.value = false;
+  isAiSettingsRoute.value = false;
+  isLogRoute.value = true;
+  window.history.pushState({}, "", "/log");
+  await loadAdminLoginLogs();
 }
 
 function syncAiSettingsEdit(settings: AiSettingsDTO) {
@@ -1532,6 +1554,20 @@ async function loadAiSettings() {
     aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置加载失败";
   } finally {
     aiSettingsBusy.value = false;
+  }
+}
+
+async function loadAdminLoginLogs() {
+  if (!store.account?.isAdmin) return;
+  adminLoginLogsBusy.value = true;
+  adminLoginLogsMsg.value = "";
+  try {
+    const result = await api<{ logs: AdminLoginLogDTO[] }>("/api/admin/login-logs?limit=200");
+    adminLoginLogs.value = result.logs;
+  } catch (error) {
+    adminLoginLogsMsg.value = error instanceof Error ? error.message : "登录记录加载失败";
+  } finally {
+    adminLoginLogsBusy.value = false;
   }
 }
 
@@ -4184,6 +4220,29 @@ function adminDate(value?: string | null) {
   return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function adminDateTime(value?: string | null) {
+  if (!value) return "";
+  return new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function loginLogKindLabel(kind: AdminLoginLogKind) {
+  const labels: Record<AdminLoginLogKind, string> = {
+    auth_login: "登录",
+    auth_logout: "退出登录",
+    session_replaced: "旧设备被新登录替换",
+    session_revoked: "设备被撤销",
+    presence_join: "进入聊天",
+    presence_leave: "离开聊天"
+  };
+  return labels[kind] || kind;
+}
+
+function loginLogTone(kind: AdminLoginLogKind) {
+  if (kind === "auth_login" || kind === "presence_join") return "enter";
+  if (kind === "auth_logout" || kind === "presence_leave") return "leave";
+  return "system";
+}
+
 function attachmentKindLabel(kind: AdminAttachmentDTO["kind"]) {
   if (kind === "avatar") return "头像";
   if (kind === "background") return "图片";
@@ -4680,6 +4739,45 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
+  <main v-else-if="isLogRoute && store.account?.isAdmin" class="ai-settings-page login-log-page" :style="appearanceStyle">
+    <section class="ai-settings-panel login-log-panel">
+      <header class="ai-settings-head">
+        <div>
+          <strong>登录记录</strong>
+          <small>成员登录、退出、进入和离开聊天</small>
+        </div>
+        <div class="login-log-actions">
+          <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
+          <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
+        </div>
+      </header>
+      <section class="login-log-body">
+        <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
+        <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载登录记录...</p>
+        <p v-else-if="!adminLoginLogs.length" class="settings-note">还没有登录记录。</p>
+        <div v-else class="login-log-list">
+          <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
+            <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
+            <div class="login-log-main">
+              <div class="login-log-title">
+                <strong>{{ log.displayName }}</strong>
+                <small>@{{ log.username }}</small>
+                <time>{{ adminDateTime(log.createdAt) }}</time>
+              </div>
+              <div class="login-log-meta">
+                <span v-if="log.deviceName">{{ log.deviceName }}</span>
+                <span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span>
+                <span v-if="log.ipAddress">IP {{ log.ipAddress }}</span>
+                <span v-if="log.sessionId">会话 {{ log.sessionId.slice(0, 8) }}</span>
+              </div>
+              <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
+            </div>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+
   <main v-else-if="!store.account" class="login-shell" :class="loginShellClass" :style="appearanceStyle">
     <section class="login-panel">
       <div v-if="loginBrand.showIcon" class="login-mark">
@@ -4705,6 +4803,15 @@ async function toggleVirtual(character: any) {
       <BookOpen :size="30" />
       <strong>无权访问 AI 设置</strong>
       <p>只有管理员可以配置 DeepSeek API Key 和代祷经文建议。</p>
+      <button class="primary-btn" @click="returnToChat">回到聊天</button>
+    </section>
+  </main>
+
+  <main v-else-if="isLogRoute" class="ai-settings-page" :style="appearanceStyle">
+    <section class="ai-settings-panel ai-denied-panel">
+      <Monitor :size="30" />
+      <strong>无权查看登录记录</strong>
+      <p>只有管理员可以查看成员登录、退出和离开聊天的记录。</p>
       <button class="primary-btn" @click="returnToChat">回到聊天</button>
     </section>
   </main>
@@ -5787,7 +5894,10 @@ async function toggleVirtual(character: any) {
       <div class="admin-modal">
         <header class="modal-head">
           <strong>管理面板</strong>
-          <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
+          <div class="modal-head-actions">
+            <button class="mini-btn secondary" @click="openLoginLogPage"><Monitor :size="15" />登录记录</button>
+            <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
+          </div>
         </header>
         <nav class="tabs">
           <button :class="{ active: adminTab === 'pin' }" @click="switchAdminTab('pin')"><Pin :size="16" />置顶</button>

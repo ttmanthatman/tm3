@@ -21,6 +21,7 @@ import webPush from "web-push";
 import { z } from "zod";
 import type {
   AdminAttachmentDTO,
+  AdminLoginLogKind,
   AdminMessageDTO,
   AiSettingsDTO,
   AiSuggestionDTO,
@@ -337,6 +338,7 @@ type VoicePayload = {
   waveform?: number[];
   mimeType?: string;
 };
+type LoginLogSession = Pick<AccountSession, "id" | "deviceKind" | "deviceName" | "ipAddress" | "userAgent">;
 
 const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null }>();
 const accountSocketIds = new Map<number, Set<string>>();
@@ -1801,13 +1803,41 @@ function sessionExpiresAt(now = new Date()) {
   return new Date(now.getTime() + SESSION_TTL_MS);
 }
 
+async function ensureLoginLogTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS account_login_logs (
+      id INT NOT NULL AUTO_INCREMENT,
+      kind VARCHAR(32) NOT NULL,
+      account_id INT NOT NULL,
+      session_id VARCHAR(64) NULL,
+      device_kind VARCHAR(16) NULL,
+      device_name VARCHAR(120) NULL,
+      ip_address VARCHAR(64) NULL,
+      user_agent TEXT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      PRIMARY KEY (id),
+      INDEX account_login_logs_created_at_idx (created_at),
+      INDEX account_login_logs_account_id_idx (account_id)
+    )
+  `;
+}
+
+async function writeLoginLog(kind: AdminLoginLogKind, accountId: number, session?: LoginLogSession | null, createdAt = new Date()) {
+  await prisma
+    .$executeRaw`
+      INSERT INTO account_login_logs (kind, account_id, session_id, device_kind, device_name, ip_address, user_agent, created_at)
+      VALUES (${kind}, ${accountId}, ${session?.id || null}, ${session?.deviceKind || null}, ${session?.deviceName || null}, ${session?.ipAddress || null}, ${session?.userAgent || null}, ${createdAt})
+    `
+    .catch((error) => app.log.warn({ error, kind, accountId }, "Failed to write login log"));
+}
+
 async function createAuthSession(accountId: number, request: FastifyRequest, deviceNameOverride?: string) {
   const now = new Date();
   const deviceKind = detectDeviceKind(String(request.headers["user-agent"] || ""));
   const deviceName = deviceNameFromRequest(request, deviceNameOverride);
   const replacedSessions = await prisma.accountSession.findMany({
     where: { accountId, deviceKind, revokedAt: null },
-    select: { id: true }
+    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
   });
   const session = await prisma.$transaction(async (tx) => {
     await tx.accountSession.updateMany({
@@ -1829,6 +1859,10 @@ async function createAuthSession(accountId: number, request: FastifyRequest, dev
     });
   });
   disconnectSessions(replacedSessions.map((row) => row.id));
+  await Promise.all([
+    writeLoginLog("auth_login", accountId, session, now),
+    ...replacedSessions.map((row) => writeLoginLog("session_replaced", accountId, row, now))
+  ]);
   return session;
 }
 
@@ -1845,6 +1879,7 @@ function leaveAccountChannel(accountId: number, channelId: number) {
 }
 
 async function ensureBootstrap() {
+  await ensureLoginLogTable();
   const defaultChannel = await prisma.channel.findFirst({ where: { isDefault: true } });
   if (!defaultChannel) {
     await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
@@ -2082,7 +2117,13 @@ app.post("/api/auth/change-password", { preHandler: requireAuth }, async (reques
 
 app.post("/api/auth/logout", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  await prisma.accountSession.updateMany({ where: { id: auth.sessionId, accountId: auth.accountId }, data: { revokedAt: new Date() } });
+  const session = await prisma.accountSession.findFirst({
+    where: { id: auth.sessionId, accountId: auth.accountId },
+    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
+  });
+  const now = new Date();
+  await prisma.accountSession.updateMany({ where: { id: auth.sessionId, accountId: auth.accountId }, data: { revokedAt: now } });
+  await writeLoginLog("auth_logout", auth.accountId, session, now);
   disconnectSessions([auth.sessionId]);
   return { success: true };
 });
@@ -2110,13 +2151,71 @@ app.get("/api/me/sessions", { preHandler: requireAuth }, async (request) => {
 app.delete("/api/me/sessions/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const sessionId = (request.params as { id: string }).id;
+  const session = await prisma.accountSession.findFirst({
+    where: { id: sessionId, accountId: auth.accountId, revokedAt: null },
+    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
+  });
+  const now = new Date();
   const result = await prisma.accountSession.updateMany({
     where: { id: sessionId, accountId: auth.accountId, revokedAt: null },
-    data: { revokedAt: new Date() }
+    data: { revokedAt: now }
   });
   if (!result.count) return reply.code(404).send({ success: false, message: "设备不存在" });
+  await writeLoginLog("session_revoked", auth.accountId, session, now);
   disconnectSessions([sessionId]);
   return { success: true, current: sessionId === auth.sessionId };
+});
+
+app.get("/api/admin/login-logs", { preHandler: requireAdmin }, async (request, reply) => {
+  const parsed = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }).safeParse(request.query);
+  if (!parsed.success) return reply.code(400).send({ success: false, message: "日志参数无效" });
+  const rows = await prisma.$queryRaw<
+    Array<{
+      id: number;
+      kind: AdminLoginLogKind;
+      accountId: number;
+      username: string | null;
+      displayName: string | null;
+      deviceKind: DeviceKind | null;
+      deviceName: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
+      sessionId: string | null;
+      createdAt: Date;
+    }>
+  >`
+    SELECT
+      log.id,
+      log.kind,
+      log.account_id AS accountId,
+      account.username AS username,
+      account.display_name AS displayName,
+      log.device_kind AS deviceKind,
+      log.device_name AS deviceName,
+      log.ip_address AS ipAddress,
+      log.user_agent AS userAgent,
+      log.session_id AS sessionId,
+      log.created_at AS createdAt
+    FROM account_login_logs log
+    LEFT JOIN accounts account ON account.id = log.account_id
+    ORDER BY log.created_at DESC, log.id DESC
+    LIMIT ${parsed.data.limit}
+  `;
+  return {
+    logs: rows.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      accountId: row.accountId,
+      username: row.username || `user-${row.accountId}`,
+      displayName: row.displayName || row.username || `用户 ${row.accountId}`,
+      deviceKind: row.deviceKind,
+      deviceName: row.deviceName,
+      ipAddress: row.ipAddress,
+      userAgent: row.userAgent,
+      sessionId: row.sessionId,
+      createdAt: row.createdAt.toISOString()
+    }))
+  };
 });
 
 app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
@@ -4088,12 +4187,14 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
   if (body.password) {
     const sessionsToRevoke = await prisma.accountSession.findMany({
       where: { accountId: id, revokedAt: null, ...(id === auth.accountId ? { id: { not: auth.sessionId } } : {}) },
-      select: { id: true }
+      select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
     });
+    const revokedAt = new Date();
     await prisma.accountSession.updateMany({
       where: { id: { in: sessionsToRevoke.map((session) => session.id) } },
-      data: { revokedAt: new Date() }
+      data: { revokedAt }
     });
+    await Promise.all(sessionsToRevoke.map((session) => writeLoginLog("session_revoked", id, session, revokedAt)));
     disconnectSessions(sessionsToRevoke.map((session) => session.id));
   }
   refreshAccountConnections(updated);
@@ -4690,11 +4791,17 @@ io.on("connection", async (socket: Socket) => {
   const auth = socket.data.auth as AuthContext;
   const account = await prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } });
   if (!account?.actor) return socket.disconnect(true);
+  const session = await prisma.accountSession.findUnique({
+    where: { id: auth.sessionId },
+    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
+  });
   const ids = accountSocketIds.get(account.id) || new Set<string>();
+  const wasOffline = ids.size === 0;
   ids.add(socket.id);
   accountSocketIds.set(account.id, ids);
   socket.join(`acct:${account.id}`);
   online.set(socket.id, { actorId: account.actor.id, accountId: account.id, username: account.username, displayName: account.displayName, avatarPath: account.avatarPath });
+  if (wasOffline) await writeLoginLog("presence_join", account.id, session);
   const channels = await prisma.channel.findMany({
     where: auth.isAdmin
       ? { OR: [{ kind: { not: "why" as const }, directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
@@ -4755,10 +4862,15 @@ io.on("connection", async (socket: Socket) => {
   socket.on("disconnect", async () => {
     online.delete(socket.id);
     const set = accountSocketIds.get(account.id);
+    let isOffline = false;
     if (set) {
       set.delete(socket.id);
-      if (!set.size) accountSocketIds.delete(account.id);
+      if (!set.size) {
+        accountSocketIds.delete(account.id);
+        isOffline = true;
+      }
     }
+    if (isOffline) await writeLoginLog("presence_leave", account.id, session);
     await broadcastPresence();
   });
 });
