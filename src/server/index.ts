@@ -23,6 +23,7 @@ import type {
   AdminAttachmentDTO,
   AdminLoginLogKind,
   AdminMessageDTO,
+  AiRoleDTO,
   AiSettingsDTO,
   AiSuggestionDTO,
   BibleLookupDTO,
@@ -135,6 +136,8 @@ const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
 };
 const WHY_ASSISTANT_USERNAME = "why_assistant";
 const WHY_ASSISTANT_NAME = "为什么助手";
+const QUESTION_ASSISTANT_USERNAME = "ai_slmm";
+const QUESTION_ASSISTANT_NAME = "ai_slmm";
 const DEFAULT_WHY_ASSISTANT_PROMPT = [
   "你是“为什么助手”，是严格的查经和思考引导师，不是答案机。",
   "默认用中文短答。你要用问题引导用户观察、查证、祷告和找真实弟兄姐妹交通。",
@@ -145,6 +148,15 @@ const DEFAULT_WHY_ASSISTANT_PROMPT = [
   "如果提供背景资料，优先英文资料，并标明出处；无法核验的资料要标为待查证。",
   "每次最多输出：一句对当前进度的判断、2-3 个下一步问题、必要时 1-2 条带出处的背景资料。"
 ].join("\n");
+const DEFAULT_QUESTION_ASSISTANT_PROMPT = [
+  "你是聊天室里的 AI 助手 ai_slmm。",
+  "当有人在普通聊天里发出问题时，你会收到这条消息。",
+  "默认用中文回复，语气自然、简短、像群聊里认真帮忙的人。",
+  "优先直接回应用户问的内容；如果信息不足，先问一个必要的澄清问题。",
+  "不要编造事实；不确定时要说明不确定，并给出可查证路径。",
+  "不要重复用户原话，不要自称大型语言模型。"
+].join("\n");
+const AI_ROLE_USERNAMES = new Set([WHY_ASSISTANT_USERNAME, QUESTION_ASSISTANT_USERNAME]);
 const LINK_PREVIEW_MAX_BYTES = 350 * 1024;
 const LINK_PREVIEW_TIMEOUT_MS = 7000;
 const LINK_PREVIEW_MAX_REDIRECTS = 3;
@@ -1237,11 +1249,13 @@ function messageWhyTrack(message: Pick<Message, "payload">) {
   return payload.whyTrack === "discussion" ? "discussion" : "study";
 }
 
-async function ensureWhyAssistantCharacter() {
+async function ensureAiRoleCharacter(username: string, fallbackName: string, displayName?: string) {
+  if (!AI_ROLE_USERNAMES.has(username)) throw new Error("unknown AI role");
+  const name = (displayName || fallbackName).trim() || fallbackName;
   const actor = await prisma.actor.upsert({
-    where: { username: WHY_ASSISTANT_USERNAME },
-    update: { displayName: WHY_ASSISTANT_NAME, kind: "virtual", status: "active" },
-    create: { kind: "virtual", username: WHY_ASSISTANT_USERNAME, displayName: WHY_ASSISTANT_NAME }
+    where: { username },
+    update: { displayName: name, kind: "virtual", status: "active" },
+    create: { kind: "virtual", username, displayName: name }
   });
   await prisma.virtualCharacter.upsert({
     where: { actorId: actor.id },
@@ -1249,11 +1263,15 @@ async function ensureWhyAssistantCharacter() {
     create: {
       actorId: actor.id,
       enabled: true,
-      config: defaultVirtualCharacterConfig(WHY_ASSISTANT_NAME),
+      config: defaultVirtualCharacterConfig(name),
       engineBinding: {}
     }
   });
   return actor;
+}
+
+async function ensureWhyAssistantCharacter(displayName?: string) {
+  return ensureAiRoleCharacter(WHY_ASSISTANT_USERNAME, WHY_ASSISTANT_NAME, displayName);
 }
 
 async function whyTopicMembership(topicId: number, accountId: number) {
@@ -1374,13 +1392,14 @@ async function buildWhyAssistantContext(topicId: number) {
 async function loadWhyAssistantSettings() {
   const aiSettings = await loadAiSettings();
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled"] } }
+    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName"] } }
   });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
   return {
     value: {
       ...aiSettings.value,
       enabled: settings.get("whyAssistantEnabled") !== "false",
+      displayName: settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME,
       promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
       webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
     },
@@ -1425,6 +1444,109 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
   }
 }
 
+async function loadQuestionAssistantSettings() {
+  const aiSettings = await loadAiSettings();
+  const rows = await prisma.setting.findMany({
+    where: { key: { in: ["questionAssistantEnabled", "questionAssistantTriggerEnabled", "questionAssistantPromptCommand", "questionAssistantWebSearchEnabled", "questionAssistantDisplayName"] } }
+  });
+  const settings = new Map(rows.map((row) => [row.key, row.value]));
+  return {
+    value: {
+      ...aiSettings.value,
+      enabled: settings.get("questionAssistantEnabled") !== "false",
+      questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
+      displayName: settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME,
+      promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+      webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false"
+    },
+    encryptedApiKey: aiSettings.encryptedApiKey
+  };
+}
+
+function shouldTriggerQuestionAssistant(content?: string | null) {
+  const text = plainTextFromHtml(content, 4000);
+  if (!text) return false;
+  if (/[?？]/.test(text)) return true;
+  const sentences = text
+    .split(/[。.!！?？；;\n\r]+/)
+    .map((sentence) => sentence.replace(/[，,、：:\s"'“”‘’（）()[\]{}]+$/g, "").trim())
+    .filter(Boolean);
+  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence));
+}
+
+function buildQuestionAssistantContext(message: Message & { sender: Actor; channel: { name: string } }) {
+  const lines = [
+    `频道：${message.channel.name}`,
+    `发言人：${message.sender.displayName}`,
+    `消息：${plainTextFromHtml(message.content, 4000)}`,
+    "",
+    "请作为 ai_slmm 在同一频道回复这条消息。"
+  ];
+  return lines.join("\n").slice(0, 8000);
+}
+
+async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean }, apiKey: string, contextText: string) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 45_000);
+  try {
+    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          { role: "system", content: settings.promptCommand },
+          {
+            role: "user",
+            content: [
+              settings.webSearchEnabled ? "联网查询默认开启；如当前模型或接口没有联网工具，请明确标注资料来自模型知识、需要查证。" : "联网查询已关闭。",
+              contextText
+            ].join("\n\n")
+          }
+        ],
+        thinking: { type: "disabled" },
+        stream: false
+      }),
+      signal: controller.signal
+    });
+    const payload = (await response.json().catch(() => ({}))) as any;
+    if (!response.ok) throw new Error(String(payload?.error?.message || payload?.message || `AI HTTP ${response.status}`));
+    const responseText = String(payload?.choices?.[0]?.message?.content || "").trim();
+    if (!responseText) throw new Error("AI returned empty content");
+    return responseText.slice(0, 5000);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function maybeTriggerQuestionAssistant(messageId: number) {
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    include: { sender: true, channel: { select: { name: true } } }
+  });
+  if (!message || message.type !== "text" || message.sender.kind !== "human") return;
+  if (!shouldTriggerQuestionAssistant(message.content)) return;
+  const settings = await loadQuestionAssistantSettings();
+  const apiKey = decryptAiApiKey(settings.encryptedApiKey);
+  if (!settings.value.enabled || !settings.value.questionTriggerEnabled || !apiKey) return;
+  const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
+  const contextText = buildQuestionAssistantContext(message);
+  const responseText = await callQuestionAssistant(settings.value, apiKey, contextText);
+  await createMessageFromActor({
+    channelId: message.channelId,
+    actorId: assistant.id,
+    content: responseText,
+    type: "text",
+    replyToId: message.id,
+    payload: { aiRole: QUESTION_ASSISTANT_USERNAME, triggerMessageId: message.id },
+    skipEngineEvent: true,
+    skipQuestionAssistant: true
+  });
+}
+
 async function processWhyAssistantRun(runId: number) {
   const run = await prisma.whyAssistantRun.findUnique({ where: { id: runId }, include: { topic: true } });
   if (!run || run.status === "success") return;
@@ -1432,7 +1554,7 @@ async function processWhyAssistantRun(runId: number) {
   io.to(`ch:${run.topic.channelId}`).emit("why:updated", { topicId: run.topicId });
   const settings = await loadWhyAssistantSettings();
   const apiKey = decryptAiApiKey(settings.encryptedApiKey);
-  const assistant = await ensureWhyAssistantCharacter();
+  const assistant = await ensureWhyAssistantCharacter(settings.value.displayName);
   const contextText = await buildWhyAssistantContext(run.topicId);
   try {
     if (!settings.value.enabled || !apiKey) throw new Error("为什么助手尚未配置 API Key");
@@ -1974,6 +2096,7 @@ async function createMessageFromActor(input: {
   fileSize?: number | null;
   skipPush?: boolean;
   skipEngineEvent?: boolean;
+  skipQuestionAssistant?: boolean;
 }) {
   const message = await prisma.message.create({
     data: {
@@ -1994,6 +2117,9 @@ async function createMessageFromActor(input: {
   if (!input.skipPush) void sendMessagePush(message.id).catch((error) => app.log.warn({ error }, "message push failed"));
   if (!input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
+  }
+  if (!input.skipQuestionAssistant && (input.type || "text") === "text") {
+    void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
   return message;
 }
@@ -3277,13 +3403,51 @@ async function customThemesSetting() {
 
 async function aiSettingsDto() {
   const base = (await loadAiSettings(true)).value;
-  const rows = await prisma.setting.findMany({ where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled"] } } });
+  const rows = await prisma.setting.findMany({
+    where: {
+      key: {
+        in: [
+          "whyAssistantEnabled",
+          "whyAssistantPromptCommand",
+          "whyAssistantWebSearchEnabled",
+          "whyAssistantDisplayName",
+          "questionAssistantEnabled",
+          "questionAssistantTriggerEnabled",
+          "questionAssistantPromptCommand",
+          "questionAssistantWebSearchEnabled",
+          "questionAssistantDisplayName"
+        ]
+      }
+    }
+  });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
+  const whyActor = await ensureWhyAssistantCharacter(settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME);
+  const questionActor = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME);
+  const aiRoles: AiRoleDTO[] = [
+    {
+      username: WHY_ASSISTANT_USERNAME,
+      displayName: whyActor.displayName,
+      avatarPath: whyActor.avatarPath,
+      enabled: settings.get("whyAssistantEnabled") !== "false",
+      promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
+      webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
+    },
+    {
+      username: QUESTION_ASSISTANT_USERNAME,
+      displayName: questionActor.displayName,
+      avatarPath: questionActor.avatarPath,
+      enabled: settings.get("questionAssistantEnabled") !== "false",
+      promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+      webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
+      questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false"
+    }
+  ];
   return {
     ...base,
     whyAssistantEnabled: settings.get("whyAssistantEnabled") !== "false",
     whyAssistantWebSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false",
-    whyAssistantPromptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT
+    whyAssistantPromptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
+    aiRoles
   };
 }
 
@@ -3352,7 +3516,19 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
       maxSuccessPerMessage: z.number().min(1).max(20).optional(),
       whyAssistantEnabled: z.boolean().optional(),
       whyAssistantWebSearchEnabled: z.boolean().optional(),
-      whyAssistantPromptCommand: z.string().max(6000).optional()
+      whyAssistantPromptCommand: z.string().max(6000).optional(),
+      aiRoles: z
+        .array(
+          z.object({
+            username: z.string().max(80),
+            displayName: z.string().min(1).max(80).optional(),
+            enabled: z.boolean().optional(),
+            promptCommand: z.string().max(6000).optional(),
+            webSearchEnabled: z.boolean().optional(),
+            questionTriggerEnabled: z.boolean().optional()
+          })
+        )
+        .optional()
     })
     .parse(request.body);
   if (Object.prototype.hasOwnProperty.call(body, "enabled")) await setSetting("aiRelatedVersesEnabled", body.enabled ? "true" : "false");
@@ -3365,8 +3541,59 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
   if (Object.prototype.hasOwnProperty.call(body, "whyAssistantEnabled")) await setSetting("whyAssistantEnabled", body.whyAssistantEnabled ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "whyAssistantWebSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", body.whyAssistantWebSearchEnabled ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "whyAssistantPromptCommand")) await setSetting("whyAssistantPromptCommand", (body.whyAssistantPromptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
+  for (const role of body.aiRoles || []) {
+    if (role.username === WHY_ASSISTANT_USERNAME) {
+      const displayName = (role.displayName || "").trim() || WHY_ASSISTANT_NAME;
+      await ensureWhyAssistantCharacter(displayName);
+      await setSetting("whyAssistantDisplayName", displayName);
+      if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("whyAssistantEnabled", role.enabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("whyAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
+    }
+    if (role.username === QUESTION_ASSISTANT_USERNAME) {
+      const displayName = (role.displayName || "").trim() || QUESTION_ASSISTANT_NAME;
+      await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, displayName);
+      await setSetting("questionAssistantDisplayName", displayName);
+      if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("questionAssistantEnabled", role.enabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "questionTriggerEnabled")) await setSetting("questionAssistantTriggerEnabled", role.questionTriggerEnabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("questionAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
+    }
+  }
   resetAiSettingsCache();
   return aiSettingsDto();
+});
+
+app.post("/api/admin/ai-roles/:username/avatar", { preHandler: requireAdmin }, async (request, reply) => {
+  const username = (request.params as { username: string }).username;
+  if (!AI_ROLE_USERNAMES.has(username)) return reply.code(404).send({ success: false, message: "AI 角色不存在" });
+  const fallbackName = username === WHY_ASSISTANT_USERNAME ? WHY_ASSISTANT_NAME : QUESTION_ASSISTANT_NAME;
+  const displayNameKey = username === WHY_ASSISTANT_USERNAME ? "whyAssistantDisplayName" : "questionAssistantDisplayName";
+  const displayName = (await prisma.setting.findUnique({ where: { key: displayNameKey } }))?.value || fallbackName;
+  const actor = await ensureAiRoleCharacter(username, fallbackName, displayName);
+  const file = await request.file();
+  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
+  const ext = path.extname(file.filename).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
+  const safeName = `${crypto.randomUUID()}${ext}`;
+  const outPath = path.join(AVATAR_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  let avatarPath = safeName;
+  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  if (compressed) {
+    fs.unlinkSync(outPath);
+    avatarPath = compressed.fileName;
+  }
+  const updated = await prisma.actor.update({ where: { id: actor.id }, data: { avatarPath } });
+  const settings = await aiSettingsDto();
+  const role = settings.aiRoles?.find((item) => item.username === username);
+  return { success: true, role: role || { username, displayName: updated.displayName, avatarPath: updated.avatarPath, enabled: true, promptCommand: "" } };
 });
 
 app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler: requireAuth }, async (request, reply) => {

@@ -5320,6 +5320,57 @@ button {
   padding: 12px;
 }
 
+.ai-role-settings {
+  gap: 12px;
+}
+
+.ai-role-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.ai-role-card:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.ai-role-avatar {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+}
+
+.ai-role-body {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.ai-role-title {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.ai-role-title small,
+.ai-role-body > small {
+  color: var(--muted);
+}
+
+@media (max-width: 560px) {
+  .ai-role-card,
+  .ai-role-title {
+    grid-template-columns: 1fr;
+  }
+}
+
 .why-icon,
 .prayer-icon {
   display: grid;

@@ -343,6 +343,16 @@ export interface BiblePreferencesDTO {
   quotationStyle: BibleQuotationStyle;
 }
 
+export interface AiRoleDTO {
+  username: string;
+  displayName: string;
+  avatarPath?: string | null;
+  enabled: boolean;
+  promptCommand: string;
+  webSearchEnabled?: boolean;
+  questionTriggerEnabled?: boolean;
+}
+
 export interface AiSettingsDTO {
   enabled: boolean;
   apiKeyConfigured: boolean;
@@ -355,6 +365,7 @@ export interface AiSettingsDTO {
   whyAssistantEnabled?: boolean;
   whyAssistantWebSearchEnabled?: boolean;
   whyAssistantPromptCommand?: string;
+  aiRoles?: AiRoleDTO[];
 }
 
 export interface FlashEffectSettingsDTO {

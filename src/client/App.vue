@@ -59,6 +59,7 @@ import type {
   AdminLoginLogDTO,
   AdminLoginLogKind,
   AppearanceDTO,
+  AiRoleDTO,
   AiSettingsDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
@@ -229,9 +230,7 @@ const aiSettingsEdit = ref({
   apiKey: "",
   clearApiKey: false,
   promptCommand: "",
-  whyAssistantEnabled: true,
-  whyAssistantWebSearchEnabled: true,
-  whyAssistantPromptCommand: "",
+  aiRoles: [] as AiRoleDTO[],
   cardCooldownSeconds: 30,
   userLimitPerMinute: 3,
   maxSuccessPerMessage: 7
@@ -1594,13 +1593,35 @@ function syncAiSettingsEdit(settings: AiSettingsDTO) {
     apiKey: "",
     clearApiKey: false,
     promptCommand: settings.promptCommand,
-    whyAssistantEnabled: settings.whyAssistantEnabled !== false,
-    whyAssistantWebSearchEnabled: settings.whyAssistantWebSearchEnabled !== false,
-    whyAssistantPromptCommand: settings.whyAssistantPromptCommand || "",
+    aiRoles: (settings.aiRoles || []).map((role) => ({ ...role })),
     cardCooldownSeconds: settings.cardCooldownSeconds,
     userLimitPerMinute: settings.userLimitPerMinute,
     maxSuccessPerMessage: settings.maxSuccessPerMessage
   };
+}
+
+function aiRoleHint(role: AiRoleDTO) {
+  if (role.username === "ai_slmm") return "普通聊天里检测到问句后自动触发，并把原消息交给这个角色回复。";
+  if (role.username === "why_assistant") return "为什么话题里的严格引导助手。";
+  return "AI 角色";
+}
+
+async function uploadAiRoleAvatar(role: AiRoleDTO, event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  (event.target as HTMLInputElement).value = "";
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/admin/ai-roles/${encodeURIComponent(role.username)}/avatar`, { method: "POST", headers: authHeaders(), body: form });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ message: "头像上传失败" }));
+    alert(result.message || "头像上传失败");
+    return;
+  }
+  const result = (await response.json()) as { role: AiRoleDTO };
+  const index = aiSettingsEdit.value.aiRoles.findIndex((item) => item.username === role.username);
+  if (index >= 0) aiSettingsEdit.value.aiRoles[index] = { ...aiSettingsEdit.value.aiRoles[index], avatarPath: result.role.avatarPath };
+  aiSettingsMsg.value = "AI 角色头像已更新";
 }
 
 async function loadAiSettings() {
@@ -1640,9 +1661,14 @@ async function saveAiSettings() {
       apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
       clearApiKey: aiSettingsEdit.value.clearApiKey,
       promptCommand: aiSettingsEdit.value.promptCommand,
-      whyAssistantEnabled: aiSettingsEdit.value.whyAssistantEnabled,
-      whyAssistantWebSearchEnabled: aiSettingsEdit.value.whyAssistantWebSearchEnabled,
-      whyAssistantPromptCommand: aiSettingsEdit.value.whyAssistantPromptCommand,
+      aiRoles: aiSettingsEdit.value.aiRoles.map((role) => ({
+        username: role.username,
+        displayName: role.displayName,
+        enabled: role.enabled,
+        promptCommand: role.promptCommand,
+        webSearchEnabled: role.webSearchEnabled,
+        questionTriggerEnabled: role.questionTriggerEnabled
+      })),
       cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
       userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
       maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
@@ -4848,12 +4874,30 @@ async function toggleVirtual(character: any) {
           <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
           <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
         </div>
-        <section class="ai-settings-subsection">
-          <strong>为什么助手</strong>
-          <label class="check-row"><input v-model="aiSettingsEdit.whyAssistantEnabled" type="checkbox" /> 启用为什么助手</label>
-          <label class="check-row"><input v-model="aiSettingsEdit.whyAssistantWebSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
-          <label>为什么助手提示词</label>
-          <textarea v-model="aiSettingsEdit.whyAssistantPromptCommand" rows="8"></textarea>
+        <section class="ai-settings-subsection ai-role-settings">
+          <strong>AI 角色</strong>
+          <article v-for="role in aiSettingsEdit.aiRoles" :key="role.username" class="ai-role-card">
+            <label class="avatar ai-role-avatar upload-avatar-trigger" :aria-label="`上传 ${role.displayName} 的头像`" title="点击上传头像">
+              <img v-if="avatarUrl(role.avatarPath)" :src="avatarUrl(role.avatarPath)" alt="" />
+              <span v-else>{{ avatarText(role.displayName || role.username) }}</span>
+              <input class="hidden" type="file" accept="image/*" @change="uploadAiRoleAvatar(role, $event)" />
+            </label>
+            <div class="ai-role-body">
+              <div class="ai-role-title">
+                <label>
+                  显示名
+                  <input v-model="role.displayName" />
+                </label>
+                <small>@{{ role.username }}</small>
+              </div>
+              <small>{{ aiRoleHint(role) }}</small>
+              <label class="check-row"><input v-model="role.enabled" type="checkbox" /> 启用这个 AI 角色</label>
+              <label v-if="role.username === 'ai_slmm'" class="check-row"><input v-model="role.questionTriggerEnabled" type="checkbox" /> 检测到问句时自动触发</label>
+              <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
+              <label>提示词</label>
+              <textarea v-model="role.promptCommand" rows="8"></textarea>
+            </div>
+          </article>
         </section>
         <button class="text-btn ai-advanced-toggle" type="button" @click="aiSettingsShowAdvanced = !aiSettingsShowAdvanced">
           {{ aiSettingsShowAdvanced ? "收起高级设置" : "高级设置" }}
