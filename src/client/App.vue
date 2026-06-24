@@ -290,6 +290,7 @@ const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptPosition = ref({ x: 0, y: 0 });
 const downloadPromptPosition = ref({ x: 0, y: 0 });
 const recallPromptPosition = ref({ x: 0, y: 0 });
+const messageActionPromptPosition = ref({ x: 0, y: 0 });
 const prayerPromptPosition = ref({ x: 0, y: 0 });
 const memberPromptPosition = ref({ x: 0, y: 0 });
 type MemberActionTarget = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
@@ -309,6 +310,8 @@ const topNoticeIndex = ref(0);
 const pausedEffectIds = ref<Set<number>>(new Set());
 const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
+const pendingMessageActions = ref<MessageDTO | null>(null);
+const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const composerPanel = ref<"voice" | "more" | null>(null);
 const workspace = ref<"chat" | "why">("chat");
@@ -529,6 +532,8 @@ watch(
     pendingRecall.value = null;
     pendingPrayer.value = null;
     pendingPrayerUpdate.value = null;
+    pendingMessageActions.value = null;
+    textSelectableMessageId.value = null;
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
@@ -958,6 +963,10 @@ const downloadPromptStyle = computed(() => ({
 const recallPromptStyle = computed(() => ({
   left: `${recallPromptPosition.value.x}px`,
   top: `${recallPromptPosition.value.y}px`
+}));
+const messageActionPromptStyle = computed(() => ({
+  left: `${messageActionPromptPosition.value.x}px`,
+  top: `${messageActionPromptPosition.value.y}px`
 }));
 const prayerPromptStyle = computed(() => ({
   left: `${prayerPromptPosition.value.x}px`,
@@ -2720,22 +2729,15 @@ function createWaterSplash(layer: HTMLElement, x: number, y: number) {
   window.setTimeout(() => splash.remove(), 620);
 }
 
-function isMobileChatInteraction() {
-  return window.matchMedia("(hover: none), (pointer: coarse)").matches;
-}
-
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
   if (messageEffect(message) === "water") requestDeviceOrientationPermissionOnce();
-  if (isMobileChatInteraction()) return;
   if (message.type === "system" || event.button !== 0) return;
   const target = event.target;
   if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
   longPressStartedAt = { x: event.clientX, y: event.clientY };
   clearMessageLongPress();
   longPressTimer = window.setTimeout(() => {
-    pickReply(message);
-    pendingChain.value = null;
-    pendingDownload.value = null;
+    openMessageActionMenu(message, event);
     suppressNextTapUntil = Date.now() + 650;
     navigator.vibrate?.(12);
   }, longPressMs);
@@ -2752,6 +2754,53 @@ function clearMessageLongPress() {
   longPressTimer = undefined;
 }
 
+function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
+  clearMessageLongPress();
+  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 172, height: 146 });
+  pendingMessageActions.value = message;
+  pendingChain.value = null;
+  pendingDownload.value = null;
+  pendingRecall.value = null;
+  pendingPrayer.value = null;
+  selectedMember.value = null;
+}
+
+function closeMessageActionMenu() {
+  pendingMessageActions.value = null;
+}
+
+function quoteActionMessage() {
+  const message = pendingMessageActions.value;
+  if (!message) return;
+  pickReply(message);
+  closeMessageActionMenu();
+}
+
+function recallActionMessage(event?: MouseEvent) {
+  const message = pendingMessageActions.value;
+  if (!message || !canRecallMessage(message)) return;
+  closeMessageActionMenu();
+  openRecallPrompt(message, event);
+}
+
+async function selectActionMessageText() {
+  const message = pendingMessageActions.value;
+  if (!message) return;
+  textSelectableMessageId.value = message.id;
+  closeMessageActionMenu();
+  await nextTick();
+  const row = scroller.value?.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
+  const selectionTarget =
+    row?.querySelector<HTMLElement>(".message-text, .prayer-text, .chain-card h3, .why-card p, .media-file-card span, .file-card span") ||
+    row?.querySelector<HTMLElement>(".bubble");
+  if (!selectionTarget) return;
+  const range = document.createRange();
+  range.selectNodeContents(selectionTarget);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+}
+
 function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) {
     event.preventDefault();
@@ -2765,19 +2814,9 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     return;
   }
   acknowledgeMentionAlert(message);
-  if (canRecallMessage(message)) {
-    openRecallPrompt(message, event);
-    event.preventDefault();
-    event.stopPropagation();
-    return;
-  }
   if (toggleMessageEffect(message)) {
     event.preventDefault();
     event.stopPropagation();
-    return;
-  }
-  if (isMobileChatInteraction()) {
-    if (message.type !== "chain") pickReply(message);
     return;
   }
   if (message.type !== "chain") return;
@@ -2790,15 +2829,6 @@ function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
   if (event) event.stopPropagation();
   if (messageSelectionMode.value && isAdmin.value && message.id > 0) {
     toggleMessageSelected(message);
-    return;
-  }
-  if (canRecallMessage(message)) {
-    openRecallPrompt(message, event);
-    return;
-  }
-  if (isMobileChatInteraction()) {
-    if (message.type !== "chain") pickReply(message);
-    if (message.type === "image") openPreviewMessage(message);
     return;
   }
   if (canPreviewMessage(message)) {
@@ -2941,6 +2971,7 @@ function requestDownload(message: MessageDTO, event?: MouseEvent) {
   pendingDownload.value = message;
   pendingChain.value = null;
   pendingRecall.value = null;
+  pendingMessageActions.value = null;
   pendingPrayer.value = null;
   selectedMember.value = null;
 }
@@ -2952,6 +2983,7 @@ function requestPrayerPrayed(message: MessageDTO, event?: MouseEvent) {
   pendingChain.value = null;
   pendingDownload.value = null;
   pendingRecall.value = null;
+  pendingMessageActions.value = null;
   selectedMember.value = null;
 }
 
@@ -3073,10 +3105,11 @@ function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
   pendingChain.value = message;
   pendingRecall.value = null;
   pendingPrayer.value = null;
+  pendingMessageActions.value = null;
   selectedMember.value = null;
 }
 
-function positionPromptNearEvent(event: MouseEvent | undefined, size: { width: number; height: number }) {
+function positionPromptNearEvent(event: MouseEvent | PointerEvent | undefined, size: { width: number; height: number }) {
   const margin = 12;
   const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
   const pointerX = event?.clientX ?? window.innerWidth / 2;
@@ -3103,6 +3136,9 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
   }
   if (pendingRecall.value && !target.closest("[data-recall-popover]") && !target.closest(".bubble")) {
     pendingRecall.value = null;
+  }
+  if (pendingMessageActions.value && !target.closest("[data-message-actions-popover]") && !target.closest(".bubble")) {
+    pendingMessageActions.value = null;
   }
   if (pendingPrayer.value && !target.closest("[data-prayer-popover]") && !target.closest(".prayer-actions")) {
     pendingPrayer.value = null;
@@ -3143,6 +3179,7 @@ function toggleMessageSelectionMode() {
   pendingChain.value = null;
   pendingDownload.value = null;
   pendingRecall.value = null;
+  pendingMessageActions.value = null;
   pendingPrayer.value = null;
 }
 
@@ -4245,6 +4282,7 @@ function openRecallPrompt(message: MessageDTO, event?: MouseEvent) {
   pendingRecall.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
+  pendingMessageActions.value = null;
   pendingPrayer.value = null;
   selectedMember.value = null;
 }
@@ -5126,7 +5164,7 @@ async function toggleVirtual(character: any) {
               </div>
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer' }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
                 @pointerdown="beginMessageLongPress(row.message, $event)"
@@ -5708,6 +5746,16 @@ async function toggleVirtual(character: any) {
             <button class="mini-btn secondary" @click="pendingRecall = null">取消</button>
             <button class="mini-btn danger-soft" @click="recallPendingMessage">撤回</button>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
+      <div class="tap-popover-card">
+        <div class="message-actions-list">
+          <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
+          <button v-if="canRecallMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
+          <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
         </div>
       </div>
     </section>

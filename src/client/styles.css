@@ -1327,6 +1327,18 @@ button {
   color: var(--bubble-other-text);
   line-height: 1.45;
   word-break: break-word;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.bubble.text-selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+.bubble.text-selectable * {
   user-select: text;
   -webkit-user-select: text;
 }
@@ -2904,6 +2916,39 @@ button {
 
 .member-action-popover .member-action-body {
   padding: 8px;
+}
+
+.message-actions-list {
+  min-width: 148px;
+  padding: 6px;
+  display: grid;
+  gap: 4px;
+}
+
+.message-actions-list button {
+  min-height: 36px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-actions-list button:hover,
+.message-actions-list button:focus-visible {
+  background: #f1f5f9;
+  outline: none;
+}
+
+.message-actions-list button.danger {
+  color: #b42318;
 }
 
 .member-popover-actions .mini-btn,

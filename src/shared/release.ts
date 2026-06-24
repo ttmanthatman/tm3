@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.7.6";
+export const APP_VERSION = "0.7.7";
 
 export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天附件在手机和桌面端都改为点按预览，视频、音频、图片和 PDF 不再被点按引用拦住。",
+  "消息长按会弹出操作菜单，可选择引用、撤回或选择文字，避免手机端长按直接进入系统文字选择。"
+] as const;
+
+const RELEASE_0_7_6_NOTES = [
   "消息输入框支持直接粘贴剪贴板图片发送，截图或复制图片后按粘贴即可上传。",
   "粘贴图片和手动选择文件都会先显示上传进度，失败时可直接重试或移除。"
 ] as const;
@@ -213,9 +218,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.6",
+    version: "0.7.7",
     date: "2026-06-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.6",
+    date: "2026-06-24",
+    notes: RELEASE_0_7_6_NOTES
   },
   {
     version: "0.7.5",
