@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.7.8";
+export const APP_VERSION = "0.8.0";
 
 export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "消息框新增 AI 问句检测，包含半角/全角问号，以及以“吗、嘛、为啥、为什么”收尾的分句，会自动把原消息交给 ai_slmm 回复。",
+  "ai_slmm 也支持通过 @ai_slmm、@昵称或昵称文本手动激活；手动点名不受自动问句触发开关影响。",
+  "AI 设置页集中管理 AI 角色，why_assistant 和 ai_slmm 都可设置显示名、头像、启用状态、联网开关和提示词。"
+] as const;
+
+const RELEASE_0_7_8_NOTES = [
   "管理员一键更新支持 PM2、自定义重启命令和手动重启三种模式，未来换部署方式也能继续使用。",
   "更新流程改为先构建再同步数据库和应用文件，失败状态、日志和重复点击处理更清楚。",
   "文件预览对异常 Range 请求返回标准错误，避免异常客户端拖慢或误触整文件响应。"
@@ -224,9 +230,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.8",
+    version: "0.8.0",
     date: "2026-06-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.8",
+    date: "2026-06-24",
+    notes: RELEASE_0_7_8_NOTES
   },
   {
     version: "0.7.7",

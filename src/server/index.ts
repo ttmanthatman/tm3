@@ -1463,21 +1463,28 @@ async function loadQuestionAssistantSettings() {
   };
 }
 
-function shouldTriggerQuestionAssistant(content?: string | null) {
+function questionAssistantTriggerReason(content?: string | null, displayName?: string | null): "question" | "mention" | null {
   const text = plainTextFromHtml(content, 4000);
-  if (!text) return false;
-  if (/[?？]/.test(text)) return true;
+  if (!text) return null;
+  if (/@\s*ai_slmm\b/i.test(text)) return "mention";
+  const name = String(displayName || "").trim();
+  if (name && name !== QUESTION_ASSISTANT_USERNAME) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`@\\s*${escapedName}`).test(text) || text.includes(name)) return "mention";
+  }
+  if (/[?？]/.test(text)) return "question";
   const sentences = text
     .split(/[。.!！?？；;\n\r]+/)
     .map((sentence) => sentence.replace(/[，,、：:\s"'“”‘’（）()[\]{}]+$/g, "").trim())
     .filter(Boolean);
-  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence));
+  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence)) ? "question" : null;
 }
 
-function buildQuestionAssistantContext(message: Message & { sender: Actor; channel: { name: string } }) {
+function buildQuestionAssistantContext(message: Message & { sender: Actor; channel: { name: string } }, triggerReason: "question" | "mention") {
   const lines = [
     `频道：${message.channel.name}`,
     `发言人：${message.sender.displayName}`,
+    `触发方式：${triggerReason === "mention" ? "用户点名 ai_slmm" : "检测到问句"}`,
     `消息：${plainTextFromHtml(message.content, 4000)}`,
     "",
     "请作为 ai_slmm 在同一频道回复这条消息。"
@@ -1528,12 +1535,14 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     include: { sender: true, channel: { select: { name: true } } }
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
-  if (!shouldTriggerQuestionAssistant(message.content)) return;
   const settings = await loadQuestionAssistantSettings();
+  const triggerReason = questionAssistantTriggerReason(message.content, settings.value.displayName);
+  if (!triggerReason) return;
   const apiKey = decryptAiApiKey(settings.encryptedApiKey);
-  if (!settings.value.enabled || !settings.value.questionTriggerEnabled || !apiKey) return;
+  if (!settings.value.enabled || !apiKey) return;
+  if (triggerReason === "question" && !settings.value.questionTriggerEnabled) return;
   const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
-  const contextText = buildQuestionAssistantContext(message);
+  const contextText = buildQuestionAssistantContext(message, triggerReason);
   const responseText = await callQuestionAssistant(settings.value, apiKey, contextText);
   await createMessageFromActor({
     channelId: message.channelId,
