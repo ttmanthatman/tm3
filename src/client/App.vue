@@ -980,6 +980,14 @@ const updateStateText = computed(() => {
   if (state === "failed") return "更新失败";
   return "未开始";
 });
+const updateRestartModeLabel = computed(() => {
+  const mode = updateCheck.value?.restartMode || serverVersion.value?.update?.restartMode || "";
+  if (mode === "pm2") return "PM2 自动重启";
+  if (mode === "command") return "自定义命令重启";
+  if (mode === "none") return "更新后需手动重启";
+  return mode ? `重启方式：${mode}` : "自动重启";
+});
+const updateStartDisabled = computed(() => updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value?.updateAvailable);
 let nextPendingMessageId = -1;
 
 function pendingUploadFor(message: MessageDTO) {
@@ -6494,10 +6502,13 @@ async function toggleVirtual(character: any) {
                   当前 v{{ updateCheck?.current || APP_VERSION }}
                   <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}</template>
                 </small>
+                <small v-if="updateCheck || serverVersion?.update">
+                  {{ updateCheck?.repo || serverVersion?.update?.repoUrl || "GitHub 仓库" }} · {{ updateCheck?.branch || serverVersion?.update?.branch || "main" }} · {{ updateRestartModeLabel }}
+                </small>
               </div>
               <div class="release-update-actions">
                 <button class="mini-btn secondary" :disabled="updateBusy" @click="checkForUpdates"><RotateCcw :size="15" />检查</button>
-                <button class="mini-btn" :disabled="updateBusy || !updateCheck?.updateAvailable" @click="startServerUpdate">更新</button>
+                <button class="mini-btn" :disabled="updateStartDisabled" @click="startServerUpdate">更新</button>
               </div>
               <div class="update-progress">
                 <span :style="{ width: `${updateProgress}%` }"></span>

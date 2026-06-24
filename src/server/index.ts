@@ -60,9 +60,12 @@ const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.e
 const UPDATE_REPO_URL = process.env.UPDATE_REPO_URL || process.env.REPO_URL || "https://github.com/ttmanthatman/tm3.git";
 const UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
 const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
+const UPDATE_RESTART_MODE = process.env.UPDATE_RESTART_MODE || (process.env.UPDATE_RESTART_COMMAND ? "command" : "pm2");
+const UPDATE_RESTART_COMMAND = process.env.UPDATE_RESTART_COMMAND || "";
 const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
 const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
 const UPDATE_RUNNING_TIMEOUT_MS = Number(process.env.UPDATE_RUNNING_TIMEOUT_MS || 30 * 60 * 1000);
+const UPDATE_LOG_TAIL_BYTES = Math.max(64 * 1024, Number(process.env.UPDATE_LOG_TAIL_BYTES || 256 * 1024) || 256 * 1024);
 const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
 const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
   .split(",")
@@ -220,10 +223,12 @@ function parseGitHubRepo(url: string) {
 async function latestGitHubPackage() {
   const repo = parseGitHubRepo(UPDATE_REPO_URL);
   if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
-  const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${encodeURIComponent(UPDATE_BRANCH)}/package.json`;
+  const encodedBranch = UPDATE_BRANCH.split("/").map((part) => encodeURIComponent(part)).join("/");
+  const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${encodedBranch}/package.json`;
   const response = await fetch(url, { headers: { "user-agent": "team-chat-updater" } });
   if (!response.ok) throw new Error(`无法读取 GitHub 版本：HTTP ${response.status}`);
   const pkg = (await response.json()) as { version?: string };
+  if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) throw new Error("GitHub package.json 缺少有效版本号");
   return {
     owner: repo.owner,
     repo: repo.repo,
@@ -256,19 +261,37 @@ function readUpdateStatus() {
       status = { state: "unknown", progress: 0, detail: "更新状态文件无法读取" };
     }
   }
-  const log = fs.existsSync(UPDATE_LOG_PATH)
-    ? fs
-        .readFileSync(UPDATE_LOG_PATH, "utf8")
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .slice(-120)
-    : [];
+  const log = readLogTail(UPDATE_LOG_PATH, UPDATE_LOG_TAIL_BYTES);
   return { ...expireStaleUpdateStatus(status), log };
 }
 
 function writeUpdateStatus(state: string, progress: number, detail: string) {
   fs.mkdirSync(STORAGE_ROOT, { recursive: true });
-  fs.writeFileSync(UPDATE_STATUS_PATH, `${JSON.stringify({ state, progress, detail, updatedAt: new Date().toISOString() }, null, 2)}\n`);
+  const payload = {
+    state,
+    progress: Math.min(100, Math.max(0, Number(progress) || 0)),
+    detail: detail.slice(0, 500),
+    updatedAt: new Date().toISOString()
+  };
+  const tempPath = `${UPDATE_STATUS_PATH}.${process.pid}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
+  fs.renameSync(tempPath, UPDATE_STATUS_PATH);
+}
+
+function readLogTail(filePath: string, maxBytes: number) {
+  if (!fs.existsSync(filePath)) return [];
+  const stat = fs.statSync(filePath);
+  const start = Math.max(0, stat.size - maxBytes);
+  const length = stat.size - start;
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    fs.readSync(fd, buffer, 0, length, start);
+    const text = `${start > 0 ? "...日志过长，仅显示最后部分\n" : ""}${buffer.toString("utf8")}`;
+    return text.split(/\r?\n/).filter(Boolean).slice(-120);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 const app = Fastify({
@@ -1984,7 +2007,9 @@ app.get("/api/version", async () => ({
   notes: RELEASE_NOTES,
   update: {
     repoUrl: UPDATE_REPO_URL,
-    branch: UPDATE_BRANCH
+    branch: UPDATE_BRANCH,
+    restartMode: UPDATE_RESTART_MODE,
+    pm2App: UPDATE_PM2_APP
   }
 }));
 
@@ -1997,6 +2022,7 @@ app.get("/api/admin/update/check", { preHandler: requireAdmin }, async () => {
     repo: `${latest.owner}/${latest.repo}`,
     branch: latest.branch,
     url: latest.url,
+    restartMode: UPDATE_RESTART_MODE,
     status: readUpdateStatus()
   };
 });
@@ -2020,6 +2046,8 @@ app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request
       UPDATE_REPO_URL,
       UPDATE_BRANCH,
       UPDATE_PM2_APP,
+      UPDATE_RESTART_MODE,
+      UPDATE_RESTART_COMMAND,
       UPDATE_STATUS_PATH,
       UPDATE_LOG_PATH
     }
@@ -3177,6 +3205,9 @@ app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, re
         return reply.send(fs.createReadStream(filePath, { start, end }));
       }
     }
+    reply.code(416);
+    reply.header("Content-Range", `bytes */${stat.size}`);
+    return reply.send();
   }
   reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));

@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.7.7";
+export const APP_VERSION = "0.7.8";
 
 export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理员一键更新支持 PM2、自定义重启命令和手动重启三种模式，未来换部署方式也能继续使用。",
+  "更新流程改为先构建再同步数据库和应用文件，失败状态、日志和重复点击处理更清楚。",
+  "文件预览对异常 Range 请求返回标准错误，避免异常客户端拖慢或误触整文件响应。"
+] as const;
+
+const RELEASE_0_7_7_NOTES = [
   "聊天附件在手机和桌面端都改为点按预览，视频、音频、图片和 PDF 不再被点按引用拦住。",
   "消息长按会弹出操作菜单，可选择引用、撤回或选择文字，避免手机端长按直接进入系统文字选择。"
 ] as const;
@@ -218,9 +224,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.7.7",
+    version: "0.7.8",
     date: "2026-06-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.7.7",
+    date: "2026-06-24",
+    notes: RELEASE_0_7_7_NOTES
   },
   {
     version: "0.7.6",

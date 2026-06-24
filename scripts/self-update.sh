@@ -5,6 +5,8 @@ APP_DIR="${APP_DIR:-$(pwd)}"
 REPO_URL="${UPDATE_REPO_URL:-${REPO_URL:-https://github.com/ttmanthatman/tm3.git}}"
 BRANCH="${UPDATE_BRANCH:-${BRANCH:-main}}"
 PM2_APP="${UPDATE_PM2_APP:-${APP_NAME:-team-chat}}"
+RESTART_MODE="${UPDATE_RESTART_MODE:-pm2}"
+RESTART_COMMAND="${UPDATE_RESTART_COMMAND:-}"
 STATUS_PATH="${UPDATE_STATUS_PATH:-${APP_DIR}/storage/update-status.json}"
 LOG_PATH="${UPDATE_LOG_PATH:-${APP_DIR}/storage/update.log}"
 CLONE_ATTEMPTS="${UPDATE_CLONE_ATTEMPTS:-3}"
@@ -26,13 +28,18 @@ write_status() {
   local detail="$3"
   UPDATE_STATE="$state" UPDATE_PROGRESS="$progress" UPDATE_DETAIL="$detail" UPDATE_STATUS_PATH="$STATUS_PATH" node --input-type=module <<'NODE'
 import fs from "node:fs";
+import path from "node:path";
 const payload = {
   state: process.env.UPDATE_STATE,
   progress: Number(process.env.UPDATE_PROGRESS || 0),
   detail: process.env.UPDATE_DETAIL || "",
   updatedAt: new Date().toISOString()
 };
-fs.writeFileSync(process.env.UPDATE_STATUS_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+const statusPath = process.env.UPDATE_STATUS_PATH;
+const tempPath = `${statusPath}.${process.pid}.tmp`;
+fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
+fs.renameSync(tempPath, statusPath);
 NODE
 }
 
@@ -113,7 +120,22 @@ require_command git
 require_command rsync
 require_command npm
 require_command node
-require_command pm2
+
+case "$RESTART_MODE" in
+  pm2)
+    require_command pm2
+    ;;
+  command)
+    if [ -z "$RESTART_COMMAND" ]; then
+      fail_step "更新失败：重启方式为 command，但未配置 UPDATE_RESTART_COMMAND"
+    fi
+    ;;
+  none)
+    ;;
+  *)
+    fail_step "更新失败：不支持的重启方式 ${RESTART_MODE}，可选 pm2、command、none"
+    ;;
+esac
 
 if [ -z "$REPO_URL" ]; then
   fail_step "更新失败：未配置 GitHub 仓库地址"
@@ -142,8 +164,8 @@ cd "$RELEASE_DIR"
 
 run_logged 32 "安装依赖" npm ci --no-audit --no-fund
 run_logged 52 "生成 Prisma Client" npm run prisma:generate
-run_logged 64 "同步数据库结构" npm run prisma:push
-run_logged 78 "构建前端和服务端" npm run build
+run_logged 66 "构建前端和服务端" npm run build
+run_logged 78 "同步数据库结构" npm run prisma:push
 
 log_step 88 "同步应用文件"
 rsync -a --delete \
@@ -155,6 +177,12 @@ rsync -a --delete \
 
 cd "$APP_DIR"
 
+if [ "$RESTART_MODE" = "none" ]; then
+  log_step 100 "更新已同步，等待手动重启"
+  write_status "complete" 100 "更新已同步，服务器需要手动重启后生效"
+  exit 0
+fi
+
 log_step 94 "重启服务"
 
 restart_cmd=(bash)
@@ -162,32 +190,37 @@ if command -v setsid >/dev/null 2>&1; then
   restart_cmd=(setsid bash)
 fi
 
-UPDATE_PM2_APP="$PM2_APP" UPDATE_STATUS_PATH="$STATUS_PATH" UPDATE_LOG_PATH="$LOG_PATH" nohup "${restart_cmd[@]}" -c '
+UPDATE_RESTART_MODE="$RESTART_MODE" UPDATE_RESTART_COMMAND="$RESTART_COMMAND" UPDATE_PM2_APP="$PM2_APP" UPDATE_STATUS_PATH="$STATUS_PATH" UPDATE_LOG_PATH="$LOG_PATH" nohup "${restart_cmd[@]}" -c '
 set +e
 sleep 1
-printf "[%s] 执行 PM2 重启\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
-pm2 restart "$UPDATE_PM2_APP" --update-env >>"$UPDATE_LOG_PATH" 2>&1
-restart_code=$?
-if [ "$restart_code" -eq 0 ]; then
-  pm2 save >>"$UPDATE_LOG_PATH" 2>&1
-  save_code=$?
-else
+if [ "$UPDATE_RESTART_MODE" = "command" ]; then
+  printf "[%s] 执行自定义重启命令\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
+  bash -lc "$UPDATE_RESTART_COMMAND" >>"$UPDATE_LOG_PATH" 2>&1
+  restart_code=$?
   save_code=0
+else
+  printf "[%s] 执行 PM2 重启\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
+  pm2 restart "$UPDATE_PM2_APP" --update-env >>"$UPDATE_LOG_PATH" 2>&1
+  restart_code=$?
+  save_code=0
+  if [ "$restart_code" -eq 0 ]; then
+    pm2 save >>"$UPDATE_LOG_PATH" 2>&1
+    save_code=$?
+    if [ "$save_code" -ne 0 ]; then
+      printf "[%s] PM2 配置保存失败，服务已重启；下次服务器重启后请手动检查 PM2 配置，退出码 %s\n" "$(date -Iseconds)" "$save_code" >>"$UPDATE_LOG_PATH"
+      save_code=0
+    fi
+  fi
 fi
 
-if [ "$restart_code" -eq 0 ] && [ "$save_code" -eq 0 ]; then
+if [ "$restart_code" -eq 0 ]; then
   detail="更新完成"
   state="complete"
   progress="100"
   printf "[%s] 更新完成\n" "$(date -Iseconds)" >>"$UPDATE_LOG_PATH"
 else
-  if [ "$restart_code" -ne 0 ]; then
-    detail="重启服务失败，退出码 ${restart_code}"
-    code="$restart_code"
-  else
-    detail="保存 PM2 配置失败，退出码 ${save_code}"
-    code="$save_code"
-  fi
+  detail="重启服务失败，退出码 ${restart_code}"
+  code="$restart_code"
   state="failed"
   progress="100"
   printf "[%s] %s\n" "$(date -Iseconds)" "$detail" >>"$UPDATE_LOG_PATH"
@@ -195,13 +228,18 @@ fi
 
 UPDATE_STATE="$state" UPDATE_PROGRESS="$progress" UPDATE_DETAIL="$detail" node --input-type=module <<'"'"'NODE'"'"'
 import fs from "node:fs";
+import path from "node:path";
 const payload = {
   state: process.env.UPDATE_STATE,
   progress: Number(process.env.UPDATE_PROGRESS || 0),
   detail: process.env.UPDATE_DETAIL || "",
   updatedAt: new Date().toISOString()
 };
-fs.writeFileSync(process.env.UPDATE_STATUS_PATH, `${JSON.stringify(payload, null, 2)}\n`);
+const statusPath = process.env.UPDATE_STATUS_PATH;
+const tempPath = `${statusPath}.${process.pid}.tmp`;
+fs.mkdirSync(path.dirname(statusPath), { recursive: true });
+fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
+fs.renameSync(tempPath, statusPath);
 NODE
 
 exit "${code:-0}"

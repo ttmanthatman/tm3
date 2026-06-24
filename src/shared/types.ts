@@ -251,6 +251,12 @@ export interface VersionDTO {
   date: string;
   developer: string;
   notes: readonly string[];
+  update?: {
+    repoUrl: string;
+    branch: string;
+    restartMode?: string;
+    pm2App?: string;
+  };
 }
 
 export interface UpdateStatusDTO {
@@ -268,6 +274,7 @@ export interface UpdateCheckDTO {
   repo: string;
   branch: string;
   url: string;
+  restartMode?: string;
   status: UpdateStatusDTO;
 }
 

@@ -162,6 +162,7 @@ AI 经文建议：
 - 客户端会定期检查服务器版本；手机或旧浏览器发现服务器已更新后，会自动刷新或提示手动刷新。
 - 管理员版本页可以检测 GitHub 最新版本，并触发服务器自更新。
 - 自更新过程显示状态、进度和最近日志。
+- 自更新支持 `UPDATE_RESTART_MODE=pm2|command|none`：默认使用 PM2，也可通过 `UPDATE_RESTART_COMMAND` 指定 systemd 或其它重启命令。
 - 部署环境可通过 `APP_RELEASE_DEVELOPER` 覆盖版本页显示的开发者名。
 
 ### 数据导入导出
@@ -329,7 +330,8 @@ npm start
 - `ENGINE_API_TOKEN`：虚拟角色引擎接口令牌。
 - `AI_SETTINGS_SECRET`：AI 设置中 API Key 的服务端加密密钥，建议单独设置并长期保存。
 - `APP_RELEASE_DEVELOPER`：应用内版本页显示的开发者名。
-- `UPDATE_REPO_URL`、`UPDATE_BRANCH`、`UPDATE_PM2_APP`：管理员自更新功能使用的 GitHub 仓库、分支和 PM2 应用名。
+- `UPDATE_REPO_URL`、`UPDATE_BRANCH`：管理员自更新功能使用的 GitHub 仓库和分支。
+- `UPDATE_RESTART_MODE`、`UPDATE_PM2_APP`、`UPDATE_RESTART_COMMAND`：自更新完成后的重启方式；`pm2` 使用 PM2 应用名，`command` 执行自定义命令，`none` 只同步文件并提示手动重启。
 
 ## 安全与发布注意事项
 
