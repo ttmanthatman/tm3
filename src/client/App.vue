@@ -2679,7 +2679,7 @@ function createWaterSplash(layer: HTMLElement, x: number, y: number) {
 }
 
 function isMobileChatInteraction() {
-  return window.matchMedia("(hover: none), (pointer: coarse), (max-width: 760px)").matches;
+  return window.matchMedia("(hover: none), (pointer: coarse)").matches;
 }
 
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
