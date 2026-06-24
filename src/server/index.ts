@@ -158,6 +158,12 @@ const DEFAULT_QUESTION_ASSISTANT_PROMPT = [
   "不要编造事实；不确定时要说明不确定，并给出可查证路径。",
   "不要重复用户原话，不要自称大型语言模型。"
 ].join("\n");
+const DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT = [
+  "你是 ai_slmm 的弱激活判断体，只判断当前用户发言是否应该交给 ai_slmm 回复。",
+  "如果当前发言延续上一次强激活问题、继续追问、补充信息、纠正 ai_slmm、或明显是在和 ai_slmm 对话，输出 yes。",
+  "如果当前发言已经换话题、明显是在和其他人说话、只是群聊闲谈、通知、寒暄、表态或不需要 ai_slmm 参与，输出 no。",
+  "只输出 yes 或 no，不要解释。"
+].join("\n");
 const AI_ROLE_USERNAMES = new Set([WHY_ASSISTANT_USERNAME, QUESTION_ASSISTANT_USERNAME]);
 const LINK_PREVIEW_MAX_BYTES = 350 * 1024;
 const LINK_PREVIEW_TIMEOUT_MS = 7000;
@@ -1455,6 +1461,7 @@ async function loadQuestionAssistantSettings() {
           "questionAssistantEnabled",
           "questionAssistantTriggerEnabled",
           "questionAssistantPromptCommand",
+          "questionAssistantActivationJudgePrompt",
           "questionAssistantWebSearchEnabled",
           "questionAssistantDisplayName",
           "questionAssistantContextTurnLimit",
@@ -1471,6 +1478,7 @@ async function loadQuestionAssistantSettings() {
       questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
       displayName: settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME,
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+      activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
       contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
       contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
@@ -1479,21 +1487,23 @@ async function loadQuestionAssistantSettings() {
   };
 }
 
-function questionAssistantTriggerReason(content?: string | null, displayName?: string | null): "question" | "mention" | null {
+type QuestionAssistantActivationMode = "strong" | "direct" | "weak";
+
+function questionAssistantDirectActivation(content?: string | null, displayName?: string | null): "strong" | "direct" | null {
   const text = plainTextFromHtml(content, 4000);
   if (!text) return null;
-  if (/@\s*ai_slmm\b/i.test(text)) return "mention";
+  if (/@\s*ai_slmm\b/i.test(text)) return "direct";
   const name = String(displayName || "").trim();
   if (name && name !== QUESTION_ASSISTANT_USERNAME) {
     const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`@\\s*${escapedName}`).test(text) || text.includes(name)) return "mention";
+    if (new RegExp(`@\\s*${escapedName}`).test(text) || text.includes(name)) return "direct";
   }
-  if (/[?？]/.test(text)) return "question";
+  if (/[?？]/.test(text)) return "strong";
   const sentences = text
     .split(/[。.!！?？；;\n\r]+/)
     .map((sentence) => sentence.replace(/[，,、：:\s"'“”‘’（）()[\]{}]+$/g, "").trim())
     .filter(Boolean);
-  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence)) ? "question" : null;
+  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence)) ? "strong" : null;
 }
 
 function messagePayloadRecord(message: Pick<Message, "payload">) {
@@ -1504,7 +1514,8 @@ async function buildQuestionAssistantContext(
   message: Message & { sender: Actor; channel: { name: string } },
   assistant: Actor,
   settings: AiSettingsDTO & { displayName?: string; contextTurnLimit?: number; contextWindowMinutes?: number },
-  triggerReason: "question" | "mention"
+  activationMode: QuestionAssistantActivationMode,
+  activationAnchor?: Message | null
 ) {
   const contextTurnLimit = clampInteger(settings.contextTurnLimit, DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50);
   const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
@@ -1524,22 +1535,32 @@ async function buildQuestionAssistantContext(
   type Round = { user: Message & { sender: Actor }; assistant?: Message & { sender: Actor } };
   const rounds: Round[] = [];
   const roundByTriggerId = new Map<number, Round>();
+  const userRowsById = new Map<number, Message & { sender: Actor }>();
   for (const row of rows) {
     if (row.senderActorId === message.senderActorId) {
-      const reason = row.id === message.id ? triggerReason : questionAssistantTriggerReason(row.content, settings.displayName);
-      if (!reason) continue;
-      const round = { user: row };
-      rounds.push(round);
-      roundByTriggerId.set(row.id, round);
-      continue;
+      userRowsById.set(row.id, row);
+      if (row.id === message.id) {
+        const round = { user: row };
+        rounds.push(round);
+        roundByTriggerId.set(row.id, round);
+      }
     }
+  }
+  for (const row of rows) {
     if (row.senderActorId !== assistant.id) continue;
     const payload = messagePayloadRecord(row);
     if (payload.aiRole !== QUESTION_ASSISTANT_USERNAME) continue;
     const triggerMessageId = Number(payload.triggerMessageId || 0);
-    const round = roundByTriggerId.get(triggerMessageId);
+    let round = roundByTriggerId.get(triggerMessageId);
+    const user = userRowsById.get(triggerMessageId);
+    if (!round && user) {
+      round = { user };
+      rounds.push(round);
+      roundByTriggerId.set(triggerMessageId, round);
+    }
     if (round) round.assistant = row;
   }
+  rounds.sort((left, right) => left.user.id - right.user.id);
   const scopedRounds = rounds.slice(-contextTurnLimit);
   const historyLines = scopedRounds.flatMap((round, index) => {
     const prefix = `第 ${index + 1} 轮`;
@@ -1551,7 +1572,8 @@ async function buildQuestionAssistantContext(
   const lines = [
     `频道：${message.channel.name}`,
     `发言人：${message.sender.displayName}`,
-    `触发方式：${triggerReason === "mention" ? "用户点名 ai_slmm" : "检测到问句"}`,
+    `激活方式：${activationMode === "strong" ? "强激活" : activationMode === "direct" ? "用户点名" : "弱激活"}`,
+    activationAnchor ? `最近强激活问题：${plainTextFromHtml(activationAnchor.content, 1600)}` : "",
     `上下文范围：同一频道、同一发言人、同一虚拟角色；最近 ${contextTurnLimit} 轮，且只包含 ${contextWindowMinutes} 分钟内的对话。`,
     `消息：${plainTextFromHtml(message.content, 4000)}`,
     "",
@@ -1560,7 +1582,7 @@ async function buildQuestionAssistantContext(
     "",
     "请作为 ai_slmm 在同一频道回复这条消息。"
   ];
-  return lines.join("\n").slice(0, 12000);
+  return lines.filter(Boolean).join("\n").slice(0, 12000);
 }
 
 async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean }, apiKey: string, contextText: string) {
@@ -1600,6 +1622,84 @@ async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnable
   }
 }
 
+async function findQuestionAssistantActivationAnchor(
+  message: Message & { sender: Actor; channel: { name: string } },
+  settings: AiSettingsDTO & { displayName?: string; questionTriggerEnabled?: boolean; contextWindowMinutes?: number }
+) {
+  const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
+  const cutoff = new Date(message.createdAt.getTime() - contextWindowMinutes * 60 * 1000);
+  const rows = await prisma.message.findMany({
+    where: {
+      channelId: message.channelId,
+      senderActorId: message.senderActorId,
+      type: "text",
+      id: { lt: message.id },
+      createdAt: { gte: cutoff }
+    },
+    orderBy: { id: "desc" },
+    take: 100
+  });
+  return rows.find((row) => {
+    const activation = questionAssistantDirectActivation(row.content, settings.displayName);
+    if (activation === "strong" && !settings.questionTriggerEnabled) return false;
+    return activation === "strong" || activation === "direct";
+  });
+}
+
+function buildQuestionAssistantJudgeContext(
+  message: Message & { sender: Actor; channel: { name: string } },
+  anchor: Message,
+  assistant: Actor,
+  settings: AiSettingsDTO & { displayName?: string; contextTurnLimit?: number; contextWindowMinutes?: number }
+) {
+  const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
+  const lines = [
+    `频道：${message.channel.name}`,
+    `发言人：${message.sender.displayName}`,
+    `虚拟助手：${assistant.displayName} (@${assistant.username})`,
+    `弱激活有效分钟数：${contextWindowMinutes}`,
+    `最近强激活问题：${plainTextFromHtml(anchor.content, 2000)}`,
+    `当前用户发言：${plainTextFromHtml(message.content, 2000)}`,
+    "",
+    "请判断当前用户发言是否仍在延续最近强激活问题，是否应该交给虚拟助手回复。"
+  ];
+  return lines.join("\n").slice(0, 8000);
+}
+
+async function callQuestionAssistantActivationJudge(
+  settings: AiSettingsDTO & { activationJudgePrompt?: string },
+  apiKey: string,
+  contextText: string
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.model,
+        messages: [
+          { role: "system", content: settings.activationJudgePrompt || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT },
+          { role: "user", content: contextText }
+        ],
+        thinking: { type: "disabled" },
+        stream: false
+      }),
+      signal: controller.signal
+    });
+    const payload = (await response.json().catch(() => ({}))) as any;
+    if (!response.ok) throw new Error(String(payload?.error?.message || payload?.message || `AI HTTP ${response.status}`));
+    const responseText = String(payload?.choices?.[0]?.message?.content || "").trim().toLowerCase();
+    return /^(yes|y|true|需要|是|回复|交给)\b/.test(responseText);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function maybeTriggerQuestionAssistant(messageId: number) {
   const message = await prisma.message.findUnique({
     where: { id: messageId },
@@ -1607,13 +1707,22 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
   const settings = await loadQuestionAssistantSettings();
-  const triggerReason = questionAssistantTriggerReason(message.content, settings.value.displayName);
-  if (!triggerReason) return;
+  const directActivation = questionAssistantDirectActivation(message.content, settings.value.displayName);
   const apiKey = decryptAiApiKey(settings.encryptedApiKey);
   if (!settings.value.enabled || !apiKey) return;
-  if (triggerReason === "question" && !settings.value.questionTriggerEnabled) return;
+  let activationMode: QuestionAssistantActivationMode | null = directActivation;
+  let activationAnchor: Message | null | undefined = directActivation ? message : null;
+  if (activationMode === "strong" && !settings.value.questionTriggerEnabled) return;
   const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
-  const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, triggerReason);
+  if (!activationMode) {
+    activationAnchor = await findQuestionAssistantActivationAnchor(message, settings.value);
+    if (!activationAnchor) return;
+    const judgeContext = buildQuestionAssistantJudgeContext(message, activationAnchor, assistant, settings.value);
+    const shouldReply = await callQuestionAssistantActivationJudge(settings.value, apiKey, judgeContext);
+    if (!shouldReply) return;
+    activationMode = "weak";
+  }
+  const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, activationMode, activationAnchor);
   const responseText = await callQuestionAssistant(settings.value, apiKey, contextText);
   await createMessageFromActor({
     channelId: message.channelId,
@@ -1621,7 +1730,12 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     content: responseText,
     type: "text",
     replyToId: message.id,
-    payload: { aiRole: QUESTION_ASSISTANT_USERNAME, triggerMessageId: message.id },
+    payload: {
+      aiRole: QUESTION_ASSISTANT_USERNAME,
+      aiActivationMode: activationMode,
+      triggerMessageId: message.id,
+      activationAnchorMessageId: activationAnchor?.id || message.id
+    },
     skipEngineEvent: true,
     skipQuestionAssistant: true
   });
@@ -3494,6 +3608,7 @@ async function aiSettingsDto() {
           "questionAssistantEnabled",
           "questionAssistantTriggerEnabled",
           "questionAssistantPromptCommand",
+          "questionAssistantActivationJudgePrompt",
           "questionAssistantWebSearchEnabled",
           "questionAssistantDisplayName",
           "questionAssistantContextTurnLimit",
@@ -3520,6 +3635,7 @@ async function aiSettingsDto() {
       avatarPath: questionActor.avatarPath,
       enabled: settings.get("questionAssistantEnabled") !== "false",
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+      activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
       questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
       contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
@@ -3608,6 +3724,7 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
             displayName: z.string().min(1).max(80).optional(),
             enabled: z.boolean().optional(),
             promptCommand: z.string().max(6000).optional(),
+            activationJudgePrompt: z.string().max(6000).optional(),
             webSearchEnabled: z.boolean().optional(),
             questionTriggerEnabled: z.boolean().optional(),
             contextTurnLimit: z.number().min(1).max(50).optional(),
@@ -3644,6 +3761,9 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
       if (Object.prototype.hasOwnProperty.call(role, "questionTriggerEnabled")) await setSetting("questionAssistantTriggerEnabled", role.questionTriggerEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("questionAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
+      if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) {
+        await setSetting("questionAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT);
+      }
       if (Object.prototype.hasOwnProperty.call(role, "contextTurnLimit")) {
         await setSetting("questionAssistantContextTurnLimit", String(clampInteger(role.contextTurnLimit, DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50)));
       }

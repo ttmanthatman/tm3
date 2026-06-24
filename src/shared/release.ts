@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.1";
+export const APP_VERSION = "0.8.2";
 
 export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "ai_slmm 激活逻辑区分强激活和弱激活：问句强激活直接回复，强激活后的有效时间内普通发言先进入判断体。",
+  "AI 设置页新增 ai_slmm 弱激活判断体提示词，可控制哪些后续发言需要交给虚拟助手。",
+  "弱激活判断为无关或用户在和别人说话时，ai_slmm 不作答且不刷新强激活计时；再次强激活会重新计时。"
+] as const;
+
+const RELEASE_0_8_1_NOTES = [
   "ai_slmm 会把同一用户、同一频道、同一虚拟角色的最近连续对话带入上下文，不同对象之间互不混用。",
   "AI 设置页新增 ai_slmm 上下文轮数和有效分钟数，默认最近 10 轮、10 分钟内有效。",
   "超过有效时间段的旧激活和回复不会进入虚拟角色上下文，避免久远对话影响当前回复。"
@@ -236,9 +242,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.1",
+    version: "0.8.2",
     date: "2026-06-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.1",
+    date: "2026-06-24",
+    notes: RELEASE_0_8_1_NOTES
   },
   {
     version: "0.8.0",

@@ -351,6 +351,7 @@ export interface AiRoleDTO {
   promptCommand: string;
   webSearchEnabled?: boolean;
   questionTriggerEnabled?: boolean;
+  activationJudgePrompt?: string;
   contextTurnLimit?: number;
   contextWindowMinutes?: number;
 }

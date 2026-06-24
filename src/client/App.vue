@@ -1670,6 +1670,7 @@ async function saveAiSettings() {
         displayName: role.displayName,
         enabled: role.enabled,
         promptCommand: role.promptCommand,
+        activationJudgePrompt: role.activationJudgePrompt,
         webSearchEnabled: role.webSearchEnabled,
         questionTriggerEnabled: role.questionTriggerEnabled,
         contextTurnLimit: Number(role.contextTurnLimit || 10),
@@ -4912,6 +4913,10 @@ async function toggleVirtual(character: any) {
               <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
               <label>提示词</label>
               <textarea v-model="role.promptCommand" rows="8"></textarea>
+              <template v-if="role.username === 'ai_slmm'">
+                <label>弱激活判断体</label>
+                <textarea v-model="role.activationJudgePrompt" rows="7"></textarea>
+              </template>
             </div>
           </article>
         </section>
