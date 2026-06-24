@@ -124,6 +124,22 @@ model AccountSession {
   @@map("account_sessions")
 }
 
+model AccountLoginLog {
+  id         Int      @id @default(autoincrement())
+  kind       String   @db.VarChar(32)
+  accountId  Int      @map("account_id")
+  sessionId  String?  @map("session_id") @db.VarChar(64)
+  deviceKind String?  @map("device_kind") @db.VarChar(16)
+  deviceName String?  @map("device_name") @db.VarChar(120)
+  ipAddress  String?  @map("ip_address") @db.VarChar(64)
+  userAgent  String?  @map("user_agent") @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt], map: "account_login_logs_created_at_idx")
+  @@index([accountId], map: "account_login_logs_account_id_idx")
+  @@map("account_login_logs")
+}
+
 model Actor {
   id          Int               @id @default(autoincrement())
   kind        ActorKind
