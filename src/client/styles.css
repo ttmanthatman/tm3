@@ -2119,6 +2119,54 @@ button {
   gap: 3px;
 }
 
+.upload-card {
+  width: min(330px, 64vw);
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.upload-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(26, 173, 25, 0.14);
+  color: #087d19;
+}
+
+.upload-card.failed .upload-card-icon {
+  background: rgba(201, 42, 42, 0.14);
+  color: #c92a2a;
+}
+
+.upload-card:not(.failed) .upload-card-icon svg {
+  animation: uploadSpin 1s linear infinite;
+}
+
+.upload-card-body {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.upload-card-body strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.upload-card-body small {
+  color: rgba(0, 0, 0, 0.58);
+  font-size: 11px;
+  line-height: 1.1;
+}
+
 .mini-icon-btn {
   width: 25px;
   height: 25px;

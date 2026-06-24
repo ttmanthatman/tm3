@@ -983,6 +983,13 @@ function pendingUploadLabel(upload: PendingUpload) {
   return `上传中 ${upload.progress}%`;
 }
 
+function pendingUploadKindLabel(file: File) {
+  if (isImageFile(file)) return "图片";
+  if (file.type.startsWith("audio/")) return "音频";
+  if (file.type.startsWith("video/")) return "视频";
+  return "文件";
+}
+
 function setPendingUpload(id: number, patch: Partial<PendingUpload>) {
   const current = pendingUploads.value[id];
   if (!current) return;
@@ -1021,6 +1028,41 @@ function pushPendingVoiceMessage(file: File, options: { durationMs?: number; wav
     content: "",
     type: "file",
     payload: { kind: "voice", durationMs: options.durationMs, waveform: options.waveform },
+    fileName: file.name,
+    fileSize: file.size,
+    voiceListened: true,
+    createdAt: new Date().toISOString()
+  });
+  void nextTick(() => scrollBottom(true));
+  return id;
+}
+
+function pushPendingFileMessage(file: File, options: { originalImage?: boolean } = {}) {
+  if (!store.currentChannelId || !store.account) return 0;
+  const id = nextPendingMessageId;
+  nextPendingMessageId -= 1;
+  const type = isImageFile(file) ? "image" : "file";
+  pendingUploads.value = {
+    ...pendingUploads.value,
+    [id]: {
+      file,
+      options,
+      progress: 0,
+      status: "uploading"
+    }
+  };
+  store.appendLocalMessage({
+    id,
+    channelId: store.currentChannelId,
+    sender: {
+      id: store.account.actorId,
+      kind: "human",
+      username: store.account.username,
+      displayName: store.account.displayName,
+      avatarPath: store.account.avatarPath
+    },
+    content: "",
+    type,
     fileName: file.name,
     fileSize: file.size,
     voiceListened: true,
@@ -3249,11 +3291,58 @@ function shouldKeepOriginalImage(file: File) {
   return keepOriginalImages.value && isImageFile(file);
 }
 
+function uploadPickedFile(file: File) {
+  const options = { originalImage: shouldKeepOriginalImage(file) };
+  const pendingMessageId = pushPendingFileMessage(file, options);
+  void uploadFile(file, { ...options, pendingMessageId });
+}
+
 function handlePickedFile(event: Event) {
   const input = event.target as HTMLInputElement;
   const file = input.files?.[0];
-  if (file) void uploadFile(file, { originalImage: shouldKeepOriginalImage(file) });
+  if (file) uploadPickedFile(file);
   input.value = "";
+}
+
+function extensionFromImageMime(type: string) {
+  if (type === "image/jpeg") return "jpg";
+  if (type === "image/png") return "png";
+  if (type === "image/gif") return "gif";
+  if (type === "image/webp") return "webp";
+  if (type === "image/heic") return "heic";
+  if (type === "image/heif") return "heif";
+  if (type === "image/tiff") return "tiff";
+  return "png";
+}
+
+function namedClipboardImage(file: File, index: number) {
+  if (/\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name)) return file;
+  const extension = extensionFromImageMime(file.type);
+  return new File([file], `粘贴图片-${Date.now()}-${index + 1}.${extension}`, { type: file.type || "image/png", lastModified: file.lastModified || Date.now() });
+}
+
+function clipboardImageFiles(event: ClipboardEvent) {
+  const data = event.clipboardData;
+  if (!data) return [];
+  const files: File[] = [];
+  for (const item of Array.from(data.items || [])) {
+    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+    const file = item.getAsFile();
+    if (file) files.push(file);
+  }
+  if (!files.length) {
+    for (const file of Array.from(data.files || [])) {
+      if (isImageFile(file)) files.push(file);
+    }
+  }
+  return files;
+}
+
+function handleComposerPaste(event: ClipboardEvent) {
+  const files = clipboardImageFiles(event);
+  if (!files.length) return;
+  event.preventDefault();
+  files.forEach((file, index) => uploadPickedFile(namedClipboardImage(file, index)));
 }
 
 async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean } = {}) {
@@ -5195,31 +5284,34 @@ async function toggleVirtual(character: any) {
                     </div>
                   </div>
                 </template>
+                <template v-else-if="pendingUploadFor(row.message)">
+                  <div class="upload-card" :class="{ failed: pendingUploadFor(row.message)?.status === 'failed' }" @click.stop>
+                    <span class="upload-card-icon">
+                      <Upload v-if="pendingUploadFor(row.message)?.status !== 'failed'" :size="19" />
+                      <X v-else :size="19" />
+                    </span>
+                    <div class="upload-card-body">
+                      <strong>{{ row.message.fileName || pendingUploadKindLabel(pendingUploadFor(row.message)!.file) }}</strong>
+                      <div class="voice-upload-bar">
+                        <span :style="{ width: `${pendingUploadFor(row.message)?.progress || 0}%` }"></span>
+                      </div>
+                      <small>{{ pendingUploadKindLabel(pendingUploadFor(row.message)!.file) }} · {{ pendingUploadLabel(pendingUploadFor(row.message)!) }}</small>
+                    </div>
+                    <div class="voice-upload-actions">
+                      <button v-if="pendingUploadFor(row.message)?.status === 'failed'" class="mini-icon-btn" @click="retryPendingUpload(row.message.id)" aria-label="重试上传">
+                        <RotateCcw :size="15" />
+                      </button>
+                      <button class="mini-icon-btn" @click="removePendingMessage(row.message.id)" aria-label="移除上传状态"><Trash2 :size="15" /></button>
+                    </div>
+                  </div>
+                </template>
                 <template v-else-if="row.message.type === 'image'">
                   <button class="image-preview-button" @click.stop="openAttachmentFromTap(row.message, $event)">
                     <img class="chat-image" :src="fileUrl(row.message)" alt="图片" />
                   </button>
                 </template>
                 <template v-else-if="isVoiceMessage(row.message)">
-                  <div v-if="pendingUploadFor(row.message)" class="voice-card voice-upload-card" :class="{ failed: pendingUploadFor(row.message)?.status === 'failed' }" @click.stop>
-                    <span class="voice-play upload-spinner">
-                      <Upload v-if="pendingUploadFor(row.message)?.status !== 'failed'" :size="18" />
-                      <X v-else :size="18" />
-                    </span>
-                    <div class="voice-upload-body">
-                      <div class="voice-upload-bar">
-                        <span :style="{ width: `${pendingUploadFor(row.message)?.progress || 0}%` }"></span>
-                      </div>
-                      <small>{{ pendingUploadLabel(pendingUploadFor(row.message)!) }}</small>
-                    </div>
-                    <div class="voice-upload-actions">
-                      <button v-if="pendingUploadFor(row.message)?.status === 'failed'" class="mini-icon-btn" @click="retryPendingUpload(row.message.id)" aria-label="重试语音发送">
-                        <RotateCcw :size="15" />
-                      </button>
-                      <button class="mini-icon-btn" @click="removePendingMessage(row.message.id)" aria-label="移除语音发送状态"><Trash2 :size="15" /></button>
-                    </div>
-                  </div>
-                  <div v-else class="voice-card" :class="{ playing: playingVoiceId === row.message.id, unread: hasUnlistenedVoice(row.message) }" @click.stop>
+                  <div class="voice-card" :class="{ playing: playingVoiceId === row.message.id, unread: hasUnlistenedVoice(row.message) }" @click.stop>
                     <button class="voice-play" @click="toggleVoicePlayback(row.message)" :aria-label="playingVoiceId === row.message.id ? '暂停语音' : '播放语音'">
                       <Pause v-if="playingVoiceId === row.message.id" :size="20" />
                       <Play v-else :size="20" />
@@ -5316,6 +5408,7 @@ async function toggleVirtual(character: any) {
               @click="syncComposerCaret"
               @keyup="syncComposerCaret"
               @keydown="onKeydown"
+              @paste="handleComposerPaste"
             ></textarea>
             <button class="send-btn" :disabled="!canSendText" @click="sendText" aria-label="发送"><Send :size="19" /></button>
             <button class="icon-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>

@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.7.5";
+export const APP_VERSION = "0.7.6";
 
-export const RELEASE_DATE = "2026-06-23";
+export const RELEASE_DATE = "2026-06-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "消息输入框支持直接粘贴剪贴板图片发送，截图或复制图片后按粘贴即可上传。",
+  "粘贴图片和手动选择文件都会先显示上传进度，失败时可直接重试或移除。"
+] as const;
+
+const RELEASE_0_7_5_NOTES = [
   "为什么研究支持提问者真正删除话题，会同步移除隐藏研究频道和话题本体。",
   "主频道里已经生成的问题卡片会保留为已删除入口，点开会直接提示“问题已删除”。"
 ] as const;
@@ -208,9 +213,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.7.6",
+    date: "2026-06-24",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.7.5",
     date: "2026-06-23",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_7_5_NOTES
   },
   {
     version: "0.7.4",
