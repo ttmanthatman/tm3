@@ -522,6 +522,8 @@ button {
 
 .chat-head {
   grid-row: 1;
+  position: relative;
+  z-index: 21;
   padding-top: var(--safe-top);
   min-height: calc(56px + var(--safe-top));
   background: color-mix(in srgb, var(--panel) 88%, transparent);
@@ -1098,8 +1100,28 @@ button {
   white-space: nowrap;
 }
 
-.messages-scroll {
+.messages-viewport {
   grid-row: 4;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.messages-viewport.panel-dragging { will-change: transform; }
+@keyframes panel-in-right {
+  from { transform: translateX(48px); opacity: 0.35; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes panel-in-left {
+  from { transform: translateX(-48px); opacity: 0.35; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.messages-viewport.panel-switch-in-right { animation: panel-in-right 0.28s ease; }
+.messages-viewport.panel-switch-in-left { animation: panel-in-left 0.28s ease; }
+
+.messages-scroll {
   min-height: 0;
   height: 100%;
   padding: 12px 16px 18px;

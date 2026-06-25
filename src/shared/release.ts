@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.2.2";
+export const APP_VERSION = "0.8.2.3";
 
-export const RELEASE_DATE = "2026-06-25";
+export const RELEASE_DATE = "2026-06-26";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "三面板滑动切换改为只平移消息区，顶部标题栏、底部输入框、聊天室壁纸和雨滴等装饰在切换时不再跟着移动。",
+  "桌面端新增鼠标拖动切换面板：在消息区按住左键左右拖动即可切换未来、主聊天室和 AI 助手面板。",
+  "移除桌面端顶栏的“未来 / 主聊天室 / AI 助手”切换按钮，统一用滑动或拖动切换。"
+] as const;
+
+const RELEASE_0_8_2_2_NOTES = [
   "聊天窗口新增左右滑动切换三面板：中间是主聊天室，向左滑进入 AI 助手群聊界面，向右滑进入未来功能区（暂为占位）。",
   "移动端在聊天区左右滑动切换面板，桌面端在顶栏用按钮切换，活跃面板会记忆到本地。",
   "新增 aiLounge 频道类型，AI 助手面板是一个独立的虚拟角色群聊频道，启动时自动创建。"
@@ -254,9 +260,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.8.2.3",
+    date: "2026-06-26",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.8.2.2",
     date: "2026-06-25",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_2_2_NOTES
   },
   {
     version: "0.8.2.1",

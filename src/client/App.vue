@@ -328,52 +328,77 @@ const chatPaneStyle = computed<Record<string, string>>(() => ({
   transform: `translateX(${panelDragX.value}px)`,
   transition: panelDragging.value ? "none" : "transform 0.28s ease",
 }));
+// 切换滑入方向：1=新面板从右滑入(向左切), -1=从左滑入(向右切)
+const panelSwitchIn = ref(0);
+const viewportClass = computed(() => ({
+  "panel-dragging": panelDragging.value,
+  "panel-switch-in-right": panelSwitchIn.value === 1,
+  "panel-switch-in-left": panelSwitchIn.value === -1,
+}));
 
-let panelTouchStartX = 0;
-let panelTouchStartY = 0;
-let panelTouchStartT = 0;
-let panelTouchAxis: "x" | "y" | null = null;
+let panelPointerId = -1;
+let panelStartX = 0;
+let panelStartY = 0;
+let panelStartT = 0;
+let panelAxis: "x" | "y" | null = null;
+let panelActive = false;
 
-function onPanelTouchStart(e: TouchEvent) {
+function onPanelPointerDown(e: PointerEvent) {
   if (previewMessage.value) return;
-  const t = e.touches[0];
-  panelTouchStartX = t.clientX;
-  panelTouchStartY = t.clientY;
-  panelTouchStartT = Date.now();
-  panelTouchAxis = null;
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  panelStartX = e.clientX;
+  panelStartY = e.clientY;
+  panelStartT = Date.now();
+  panelAxis = null;
+  panelActive = false;
+  panelPointerId = e.pointerId;
 }
 
-function onPanelTouchMove(e: TouchEvent) {
-  if (previewMessage.value) return;
-  const t = e.touches[0];
-  const dx = t.clientX - panelTouchStartX;
-  const dy = t.clientY - panelTouchStartY;
-  if (!panelTouchAxis) {
+function onPanelPointerMove(e: PointerEvent) {
+  if (previewMessage.value || panelPointerId !== e.pointerId) return;
+  const dx = e.clientX - panelStartX;
+  const dy = e.clientY - panelStartY;
+  if (!panelAxis) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    panelTouchAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    panelAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    if (panelAxis === "x") {
+      panelActive = true;
+      panelDragging.value = true;
+      try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch {}
+    }
   }
-  if (panelTouchAxis !== "x") return;
-  panelDragging.value = true;
+  if (panelAxis !== "x") return;
+  e.preventDefault();
   const idx = PANEL_ORDER.indexOf(chatPanel.value);
   let nx = dx;
   if ((idx === 0 && dx > 0) || (idx === 2 && dx < 0)) nx = dx * 0.35;
   panelDragX.value = nx;
 }
 
-function onPanelTouchEnd(e: TouchEvent) {
-  if (previewMessage.value) { panelDragging.value = false; panelDragX.value = 0; return; }
-  if (panelTouchAxis !== "x") { panelDragging.value = false; return; }
-  const dx = e.changedTouches[0].clientX - panelTouchStartX;
-  const dt = Date.now() - panelTouchStartT;
+function onPanelPointerUp(e: PointerEvent) {
+  if (panelPointerId !== e.pointerId) return;
+  const wasX = panelAxis === "x";
+  const dx = e.clientX - panelStartX;
+  const dt = Date.now() - panelStartT;
+  panelPointerId = -1;
+  if (panelActive) {
+    try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId); } catch {}
+  }
+  panelActive = false;
   panelDragging.value = false;
   panelDragX.value = 0;
+  if (previewMessage.value || !wasX) return;
   const threshold = window.innerWidth * 0.2;
   const speed = dt > 0 ? Math.abs(dx) / dt : 0;
   if (Math.abs(dx) > threshold || speed > 0.5) {
     const idx = PANEL_ORDER.indexOf(chatPanel.value);
     const dir = dx < 0 ? 1 : -1;
     const ni = Math.min(2, Math.max(0, idx + dir));
-    if (ni !== idx) switchPanel(PANEL_ORDER[ni]);
+    if (ni !== idx) {
+      panelSwitchIn.value = dir;
+      switchPanel(PANEL_ORDER[ni]);
+      window.setTimeout(() => { panelSwitchIn.value = 0; }, 300);
+    }
   }
 }
 
@@ -5216,14 +5241,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section v-if="workspace === 'chat'" class="chat-pane" :class="{ 'panel-dragging': panelDragging }" :style="chatPaneStyle" @touchstart.passive="onPanelTouchStart" @touchmove.passive="onPanelTouchMove" @touchend.passive="onPanelTouchEnd">
-      <div v-if="chatPanel === 'future'" class="future-panel">
-        <div class="panel-placeholder">
-          <div class="panel-placeholder-icon" aria-hidden="true">✨</div>
-          <p class="panel-placeholder-title">敬请期待</p>
-          <p class="panel-placeholder-sub">未来的功能区</p>
-        </div>
-      </div>
+    <section v-if="workspace === 'chat'" class="chat-pane">
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <div ref="dripLayer" class="drip-layer" aria-hidden="true"></div>
       <header class="chat-head">
@@ -5244,11 +5262,6 @@ async function toggleVirtual(character: any) {
             <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
           <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
-        </div>
-        <div class="panel-tabs desktop-only">
-          <button class="panel-tab" :class="{ active: chatPanel === 'future' }" type="button" @click="switchPanel('future')">未来</button>
-          <button class="panel-tab" :class="{ active: chatPanel === 'main' }" type="button" @click="switchPanel('main')">主聊天室</button>
-          <button class="panel-tab" :class="{ active: chatPanel === 'ai' }" type="button" @click="switchPanel('ai')">AI 助手</button>
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
@@ -5343,7 +5356,21 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll">
+      <div class="messages-viewport"
+           :style="chatPaneStyle"
+           :class="viewportClass"
+           @pointerdown="onPanelPointerDown"
+           @pointermove="onPanelPointerMove"
+           @pointerup="onPanelPointerUp"
+           @pointercancel="onPanelPointerUp">
+        <div v-if="chatPanel === 'future'" class="future-panel">
+          <div class="panel-placeholder">
+            <div class="panel-placeholder-icon" aria-hidden="true">✨</div>
+            <p class="panel-placeholder-title">敬请期待</p>
+            <p class="panel-placeholder-sub">未来的功能区</p>
+          </div>
+        </div>
+        <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll">
         <button
           v-if="messageLoadBanner"
           type="button"
@@ -5649,6 +5676,7 @@ async function toggleVirtual(character: any) {
             </div>
           </article>
         </template>
+        </div>
       </div>
 
       <button v-if="hasUnreadMessages" type="button" class="new-message-jump" @click="scrollToNewest">有新消息</button>
