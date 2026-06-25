@@ -1751,6 +1751,141 @@ button {
   text-decoration: underline;
 }
 
+/* AI 助手消息按 Markdown 渲染时的排版 */
+.message-text.markdown-render,
+.why-message-body.markdown-render {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.markdown-render > *:first-child {
+  margin-top: 0;
+}
+
+.markdown-render > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-render p {
+  margin: 0 0 0.5em;
+  line-height: 1.6;
+}
+
+.markdown-render p + p {
+  margin-top: 0.5em;
+}
+
+.markdown-render h1,
+.markdown-render h2,
+.markdown-render h3,
+.markdown-render h4,
+.markdown-render h5,
+.markdown-render h6 {
+  margin: 0.7em 0 0.35em;
+  line-height: 1.35;
+  font-weight: 700;
+}
+
+.markdown-render h1 { font-size: 1.25em; }
+.markdown-render h2 { font-size: 1.18em; }
+.markdown-render h3 { font-size: 1.1em; }
+.markdown-render h4,
+.markdown-render h5,
+.markdown-render h6 { font-size: 1em; }
+
+.markdown-render ul,
+.markdown-render ol {
+  margin: 0.3em 0;
+  padding-left: 1.4em;
+}
+
+.markdown-render li {
+  margin: 0.15em 0;
+  line-height: 1.6;
+}
+
+.markdown-render li > ul,
+.markdown-render li > ol {
+  margin: 0.15em 0;
+}
+
+.markdown-render blockquote {
+  margin: 0.4em 0;
+  padding: 0.1em 0.8em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--muted);
+}
+
+.markdown-render blockquote > *:first-child { margin-top: 0; }
+.markdown-render blockquote > *:last-child { margin-bottom: 0; }
+
+.markdown-render code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  word-break: break-word;
+}
+
+.markdown-render pre {
+  margin: 0.4em 0;
+  padding: 0.55em 0.7em;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.markdown-render pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 0.9em;
+  word-break: normal;
+}
+
+.markdown-render hr {
+  margin: 0.6em 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.markdown-render a {
+  color: color-mix(in srgb, var(--accent) 82%, #0f6fbf 18%);
+  text-decoration: none;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.markdown-render a:hover {
+  text-decoration: underline;
+}
+
+.markdown-render strong,
+.markdown-render b {
+  font-weight: 700;
+}
+
+.markdown-render table {
+  margin: 0.4em 0;
+  border-collapse: collapse;
+  width: max-content;
+  max-width: 100%;
+}
+
+.markdown-render th,
+.markdown-render td {
+  border: 1px solid var(--line);
+  padding: 0.3em 0.55em;
+  text-align: left;
+}
+
+.markdown-render th {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  font-weight: 700;
+}
+
 .message-bible {
   margin-top: 8px;
   display: grid;
@@ -5618,4 +5753,65 @@ button {
   .why-topic-meta {
     justify-items: start;
   }
+}
+
+/* === 左右滑动切换三面板 === */
+.panel-tabs {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 8px;
+  padding: 2px;
+}
+.panel-tab {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.panel-tab.active {
+  background: var(--accent);
+  color: var(--button-text);
+}
+.panel-tab:not(.active):hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* future 占位覆盖层（chat-pane 已是 position:relative + overflow:hidden） */
+.future-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg, #f5f5f5);
+  display: grid;
+  place-items: center;
+}
+.panel-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+  padding: 24px;
+}
+.panel-placeholder-icon {
+  font-size: 40px;
+  line-height: 1;
+}
+.panel-placeholder-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text, #333);
+  margin: 0;
+}
+.panel-placeholder-sub {
+  font-size: 13px;
+  margin: 0;
 }

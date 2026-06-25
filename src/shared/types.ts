@@ -193,6 +193,7 @@ export interface ChannelDTO {
   name: string;
   description: string;
   icon: string;
+  kind: "standard" | "direct" | "why" | "aiLounge";
   isPrivate: boolean;
   isDefault: boolean;
   directKey?: string | null;

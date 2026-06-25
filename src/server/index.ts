@@ -765,6 +765,28 @@ function plainTextFromHtml(input?: string | null, maxLength = 2000) {
     .slice(0, maxLength);
 }
 
+// 剥离常见 Markdown 语法标记，用于频道预览、推送通知等纯文本场景，
+// 让 AI 助手回复里的 **、#、`、列表符号等不再原样显示。
+function stripMarkdownSyntax(input?: string | null) {
+  return String(input || "")
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/^```[^\n]*\n?/gm, "").replace(/```$/g, ""))
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "• ")
+    .replace(/^\s*(\d+)[.、)]\s+/gm, "$1. ")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "—")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1$2")
+    .replace(/(^|[^_])_([^_]+)_/g, "$1$2")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function cleanAiError(error: unknown) {
   if (error instanceof Error) return error.message.slice(0, 1000);
   return String(error || "AI request failed").slice(0, 1000);
@@ -1220,7 +1242,7 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
     replyTo: message.replyTo
       ? {
           id: message.replyTo.id,
-          content: message.replyTo.content || message.replyTo.fileName || "",
+          content: plainTextPreview(message.replyTo.content || message.replyTo.fileName || "", 140),
           type: message.replyTo.type,
           senderName: message.replyTo.sender.displayName
         }
@@ -1240,7 +1262,8 @@ async function hydrateMessage(id: number, viewerAccountId?: number) {
 }
 
 function plainTextPreview(input?: string | null, maxLength = 80) {
-  return plainTextFromHtml(input, maxLength * 3).replace(/\s+/g, " ").trim().slice(0, maxLength);
+  const text = stripMarkdownSyntax(plainTextFromHtml(input, 4000));
+  return text.slice(0, maxLength);
 }
 
 function makeWhyTitle(question: string) {
@@ -2223,6 +2246,10 @@ async function ensureBootstrap() {
   if (!defaultChannel) {
     await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
   }
+  const aiLoungeChannel = await prisma.channel.findFirst({ where: { kind: "aiLounge" } });
+  if (!aiLoungeChannel) {
+    await prisma.channel.create({ data: { name: "AI 助手", description: "与虚拟角色对话的群聊空间", kind: "aiLounge", isPrivate: false } });
+  }
   const accountCount = await prisma.account.count();
   if (accountCount === 0) {
     const password = process.env.DEFAULT_ADMIN_PASSWORD || "ChangeMe123!";
@@ -2257,6 +2284,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     name: channel.name,
     description: channel.description,
     icon: cleanChannelIcon(channel.icon),
+    kind: channel.kind,
     isPrivate: channel.isPrivate,
     isDefault: channel.isDefault,
     directKey: channel.directKey,
@@ -4155,7 +4183,7 @@ function listStorageFiles(dir: string) {
 
 function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
   const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
-  return raw.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 120);
+  return stripMarkdownSyntax(raw.replace(/<[^>]*>/g, " ")).slice(0, 120);
 }
 
 async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>) {

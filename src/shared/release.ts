@@ -1,10 +1,22 @@
-export const APP_VERSION = "0.8.2";
+export const APP_VERSION = "0.8.2.2";
 
-export const RELEASE_DATE = "2026-06-24";
+export const RELEASE_DATE = "2026-06-25";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天窗口新增左右滑动切换三面板：中间是主聊天室，向左滑进入 AI 助手群聊界面，向右滑进入未来功能区（暂为占位）。",
+  "移动端在聊天区左右滑动切换面板，桌面端在顶栏用按钮切换，活跃面板会记忆到本地。",
+  "新增 aiLounge 频道类型，AI 助手面板是一个独立的虚拟角色群聊频道，启动时自动创建。"
+] as const;
+
+const RELEASE_0_8_2_1_NOTES = [
+  "修复“为什么”频道里为什么助手回复没有按 Markdown 渲染的问题，标题、列表、粗体、引用、代码和链接现在都能正常显示。",
+  "普通聊天里 ai_slmm 的回复也改为按 Markdown 渲染，不再把 **、#、` 等标记原样显示。",
+  "频道预览、推送通知和引用回复预览会剥离 AI 回复里的 Markdown 标记，只保留可读文字。"
+] as const;
+
+const RELEASE_0_8_2_NOTES = [
   "ai_slmm 激活逻辑区分强激活和弱激活：问句强激活直接回复，强激活后的有效时间内普通发言先进入判断体。",
   "AI 设置页新增 ai_slmm 弱激活判断体提示词，可控制哪些后续发言需要交给虚拟助手。",
   "弱激活判断为无关或用户在和别人说话时，ai_slmm 不作答且不刷新强激活计时；再次强激活会重新计时。"
@@ -242,9 +254,19 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.8.2.2",
+    date: "2026-06-25",
+    notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.2.1",
+    date: "2026-06-24",
+    notes: RELEASE_0_8_2_1_NOTES
+  },
+  {
     version: "0.8.2",
     date: "2026-06-24",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_2_NOTES
   },
   {
     version: "0.8.1",

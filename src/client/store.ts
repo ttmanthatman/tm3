@@ -67,6 +67,12 @@ export const useChatStore = defineStore("chat", {
   getters: {
     currentChannel(state) {
       return state.channels.find((ch) => ch.id === state.currentChannelId) || state.channels[0] || null;
+    },
+    aiChannel(state) {
+      return state.channels.find((ch) => ch.kind === "aiLounge") || null;
+    },
+    defaultChannel(state) {
+      return state.channels.find((ch) => ch.isDefault) || null;
     }
   },
   actions: {

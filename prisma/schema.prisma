@@ -29,6 +29,7 @@ enum ChannelKind {
   standard
   direct
   why
+  aiLounge
 }
 
 enum DeviceKind {

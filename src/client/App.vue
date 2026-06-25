@@ -93,6 +93,8 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 
 const store = useChatStore();
@@ -314,6 +316,78 @@ const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const composerPanel = ref<"voice" | "more" | null>(null);
 const workspace = ref<"chat" | "why">("chat");
+
+// === 左右滑动切换三面板（future | main | ai） ===
+const chatPanel = ref<"future" | "main" | "ai">(
+  (localStorage.getItem("tm3-chat-panel") as "future" | "main" | "ai") || "main"
+);
+const panelDragX = ref(0);
+const panelDragging = ref(false);
+const PANEL_ORDER = ["future", "main", "ai"] as const;
+const chatPaneStyle = computed<Record<string, string>>(() => ({
+  transform: `translateX(${panelDragX.value}px)`,
+  transition: panelDragging.value ? "none" : "transform 0.28s ease",
+}));
+
+let panelTouchStartX = 0;
+let panelTouchStartY = 0;
+let panelTouchStartT = 0;
+let panelTouchAxis: "x" | "y" | null = null;
+
+function onPanelTouchStart(e: TouchEvent) {
+  if (previewMessage.value) return;
+  const t = e.touches[0];
+  panelTouchStartX = t.clientX;
+  panelTouchStartY = t.clientY;
+  panelTouchStartT = Date.now();
+  panelTouchAxis = null;
+}
+
+function onPanelTouchMove(e: TouchEvent) {
+  if (previewMessage.value) return;
+  const t = e.touches[0];
+  const dx = t.clientX - panelTouchStartX;
+  const dy = t.clientY - panelTouchStartY;
+  if (!panelTouchAxis) {
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    panelTouchAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+  }
+  if (panelTouchAxis !== "x") return;
+  panelDragging.value = true;
+  const idx = PANEL_ORDER.indexOf(chatPanel.value);
+  let nx = dx;
+  if ((idx === 0 && dx > 0) || (idx === 2 && dx < 0)) nx = dx * 0.35;
+  panelDragX.value = nx;
+}
+
+function onPanelTouchEnd(e: TouchEvent) {
+  if (previewMessage.value) { panelDragging.value = false; panelDragX.value = 0; return; }
+  if (panelTouchAxis !== "x") { panelDragging.value = false; return; }
+  const dx = e.changedTouches[0].clientX - panelTouchStartX;
+  const dt = Date.now() - panelTouchStartT;
+  panelDragging.value = false;
+  panelDragX.value = 0;
+  const threshold = window.innerWidth * 0.2;
+  const speed = dt > 0 ? Math.abs(dx) / dt : 0;
+  if (Math.abs(dx) > threshold || speed > 0.5) {
+    const idx = PANEL_ORDER.indexOf(chatPanel.value);
+    const dir = dx < 0 ? 1 : -1;
+    const ni = Math.min(2, Math.max(0, idx + dir));
+    if (ni !== idx) switchPanel(PANEL_ORDER[ni]);
+  }
+}
+
+async function switchPanel(p: "future" | "main" | "ai") {
+  chatPanel.value = p;
+  localStorage.setItem("tm3-chat-panel", p);
+  if (p === "main") {
+    const ch = store.defaultChannel;
+    if (ch) await store.switchChannel(ch.id);
+  } else if (p === "ai") {
+    const ch = store.aiChannel;
+    if (ch) await store.switchChannel(ch.id);
+  }
+}
 const whyTopics = ref<WhyTopicDTO[]>([]);
 const whyCurrentTopic = ref<WhyTopicDTO | null>(null);
 const whyMessages = ref<MessageDTO[]>([]);
@@ -1109,6 +1183,32 @@ function plainTextFromHtml(value: string) {
   return (el.textContent || el.innerText || "").replace(/\s+/g, " ").trim();
 }
 
+// 剥离 Markdown 语法标记，用于引用预览等纯文本场景，和服务端 stripMarkdownSyntax 保持一致。
+function stripMarkdownSyntax(value: string) {
+  return String(value || "")
+    .replace(/```[\s\S]*?```/g, (block) => block.replace(/^```[^\n]*\n?/gm, "").replace(/```$/g, ""))
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*[-*+]\s+/gm, "• ")
+    .replace(/^\s*(\d+)[.、)]\s+/gm, "$1. ")
+    .replace(/^>\s?/gm, "")
+    .replace(/^\s*[-*_]{3,}\s*$/gm, "—")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[^*])\*([^*]+)\*/g, "$1$2")
+    .replace(/(^|[^_])_([^_]+)_/g, "$1$2")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function replyPreviewText(message: MessageDTO) {
+  const text = stripMarkdownSyntax(plainTextFromHtml(message.content || ""));
+  return text.slice(0, 140);
+}
+
 function prayerUpdateMarkdownFromHtml(value: string) {
   const root = document.createElement("div");
   root.innerHTML = value || "";
@@ -1208,6 +1308,45 @@ function linkifyMessageHtml(html: string) {
 
 function messageContentHtml(message: MessageDTO) {
   return linkifyMessageHtml(message.content);
+}
+
+const AI_ASSISTANT_USERNAMES = new Set(["why_assistant", "ai_slmm"]);
+
+function isAiAssistantMessage(message: MessageDTO) {
+  return message.sender?.kind === "virtual" && AI_ASSISTANT_USERNAMES.has(message.sender?.username || "");
+}
+
+const MARKDOWN_ALLOWED_TAGS = [
+  "p", "br", "strong", "b", "em", "i", "u", "s", "del", "a", "code", "pre",
+  "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
+  "span", "table", "thead", "tbody", "tr", "th", "td"
+];
+
+function renderMarkdownToHtml(md: string): string {
+  if (!md) return "";
+  let raw = "";
+  try {
+    raw = marked.parse(md, { breaks: true, gfm: true, async: false }) as string;
+  } catch {
+    raw = "";
+  }
+  if (!raw) return "";
+  return DOMPurify.sanitize(raw, {
+    ALLOWED_TAGS: MARKDOWN_ALLOWED_TAGS,
+    ALLOWED_ATTR: ["href", "target", "rel", "title"],
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: ["script", "style", "img", "iframe", "object", "embed", "form", "input", "button"],
+    FORBID_ATTR: ["src", "style", "onerror", "onload", "onclick", "onmouseover"]
+  });
+}
+
+function aiMessageHtml(message: MessageDTO) {
+  return linkifyMessageHtml(renderMarkdownToHtml(message.content || ""));
+}
+
+function whyMessageBodyHtml(message: MessageDTO) {
+  if (isAiAssistantMessage(message)) return aiMessageHtml(message);
+  return linkifyMessageHtml(message.content || "");
 }
 
 type BibleRichTextSegment =
@@ -5077,7 +5216,14 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section v-if="workspace === 'chat'" class="chat-pane">
+    <section v-if="workspace === 'chat'" class="chat-pane" :class="{ 'panel-dragging': panelDragging }" :style="chatPaneStyle" @touchstart.passive="onPanelTouchStart" @touchmove.passive="onPanelTouchMove" @touchend.passive="onPanelTouchEnd">
+      <div v-if="chatPanel === 'future'" class="future-panel">
+        <div class="panel-placeholder">
+          <div class="panel-placeholder-icon" aria-hidden="true">✨</div>
+          <p class="panel-placeholder-title">敬请期待</p>
+          <p class="panel-placeholder-sub">未来的功能区</p>
+        </div>
+      </div>
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <div ref="dripLayer" class="drip-layer" aria-hidden="true"></div>
       <header class="chat-head">
@@ -5098,6 +5244,11 @@ async function toggleVirtual(character: any) {
             <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
           <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
+        </div>
+        <div class="panel-tabs desktop-only">
+          <button class="panel-tab" :class="{ active: chatPanel === 'future' }" type="button" @click="switchPanel('future')">未来</button>
+          <button class="panel-tab" :class="{ active: chatPanel === 'main' }" type="button" @click="switchPanel('main')">主聊天室</button>
+          <button class="panel-tab" :class="{ active: chatPanel === 'ai' }" type="button" @click="switchPanel('ai')">AI 助手</button>
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
@@ -5466,7 +5617,8 @@ async function toggleVirtual(character: any) {
                   </button>
                 </template>
                 <template v-else>
-                  <div class="message-text bible-rich-text">
+                  <div v-if="isAiAssistantMessage(row.message)" class="message-text markdown-render" v-html="aiMessageHtml(row.message)"></div>
+                  <div v-else class="message-text bible-rich-text">
                     <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
                       <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
                       <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
@@ -5504,7 +5656,7 @@ async function toggleVirtual(character: any) {
       <footer class="composer">
         <div v-if="replyTo" class="reply-bar">
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
-          <span>引用 {{ replyTo.sender.displayName }}：{{ replyTo.content || replyTo.type }}</span>
+          <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
         </div>
         <div class="composer-input-shell">
           <div class="composer-main" :class="{ raised: composerPanel }">
@@ -5697,7 +5849,7 @@ async function toggleVirtual(character: any) {
               <strong>{{ message.sender.displayName }}</strong>
               <small>{{ message.sender.username === 'why_assistant' ? '严格引导' : isMine(message) ? '研究主线' : '弟兄姐妹回应' }}</small>
             </div>
-            <div class="why-message-body" v-html="message.content"></div>
+            <div class="why-message-body" :class="{ 'markdown-render': isAiAssistantMessage(message) }" v-html="whyMessageBodyHtml(message)"></div>
           </article>
         </div>
         <form class="why-topic-composer" @submit.prevent="sendWhyTopicMessage">
