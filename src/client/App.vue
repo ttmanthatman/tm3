@@ -5184,8 +5184,10 @@ async function toggleVirtual(character: any) {
         <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
       </form>
     </section>
+  </main>
 
-    <section class="ai-settings-panel" style="margin-top: 20px;">
+  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page" style="padding-top: 0; min-height: auto;">
+    <section class="ai-settings-panel" style="max-height: none; overflow: visible;">
       <header class="ai-settings-head">
         <div>
           <strong>多角色自主对话</strong>
@@ -5193,7 +5195,7 @@ async function toggleVirtual(character: any) {
         </div>
         <button class="mini-btn secondary" @click="loadMcStatus">刷新状态</button>
       </header>
-      <div class="form-grid ai-settings-form">
+      <div class="form-grid ai-settings-form" style="overflow-y: auto; max-height: none;">
         <label>选择频道</label>
         <select v-model="mcSelectedChannelId">
           <option :value="null" disabled>请选择频道</option>
