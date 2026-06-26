@@ -19,6 +19,9 @@ import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
+import { createMulticharManager } from "./multichar/index.js";
+import { registerMulticharRoutes } from "./multichar/routes.js";
+import type { MulticharDeps } from "./multichar/types.js";
 import type {
   AdminAttachmentDTO,
   AdminLoginLogKind,
@@ -5273,6 +5276,24 @@ async function handleEngineAction(actionType: string, payload: unknown, eventId?
   }
   return { ok: true, eventId };
 }
+
+const multicharDeps: MulticharDeps = {
+  prisma,
+  io,
+  log: (level: "info" | "warn" | "error", msg: string, data?: unknown) => {
+    const logger = app.log as any;
+    if (typeof logger[level] === "function") logger[level]({ data }, `[multichar] ${msg}`);
+  },
+  loadAiSettings: () => loadAiSettings(),
+  decryptAiApiKey: (value: string) => decryptAiApiKey(value),
+  createMessageFromActor: (input: any) => createMessageFromActor(input),
+};
+const multicharManager = createMulticharManager(multicharDeps);
+registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin);
+
+app.addHook("onClose", async () => {
+  multicharManager.stopAll();
+});
 
 io.use(async (socket, next) => {
   try {

@@ -158,6 +158,11 @@ const newUser = ref({ username: "", displayName: "", password: "" });
 const newChannel = ref({ name: "", description: "", isPrivate: false });
 const newVirtual = ref({ username: "", displayName: "" });
 const virtuals = ref<any[]>([]);
+const mcStatus = ref<any | null>(null);
+const mcSelectedChannelId = ref<number | null>(null);
+const mcSelectedCharacterIds = ref<number[]>([]);
+const mcBusy = ref(false);
+const mcMsg = ref("");
 const accounts = ref<any[]>([]);
 const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
@@ -4534,6 +4539,66 @@ async function loadAdmin() {
   if (adminTab.value === "appearance") await loadAdminAttachments();
   if (adminTab.value === "data") await loadAdminData();
   if (adminTab.value === "release") await checkForUpdates();
+  void loadMcStatus();
+}
+
+async function loadMcStatus() {
+  try {
+    const result = await api<{ sessions: any[] }>("/api/admin/multichar/status");
+    if (result.sessions && result.sessions.length > 0) {
+      mcStatus.value = result.sessions[0];
+      mcSelectedChannelId.value = result.sessions[0].channelId ?? null;
+    } else {
+      mcStatus.value = null;
+    }
+  } catch { mcStatus.value = null; }
+}
+
+async function startMultichar() {
+  if (!mcSelectedChannelId.value || mcSelectedCharacterIds.value.length === 0) {
+    mcMsg.value = "请选择频道和至少一个角色";
+    return;
+  }
+  mcBusy.value = true;
+  mcMsg.value = "";
+  try {
+    const result = await api<{ session: any }>("/api/admin/multichar/start", {
+      method: "POST",
+      body: JSON.stringify({
+        channelId: mcSelectedChannelId.value,
+        characterIds: mcSelectedCharacterIds.value,
+      }),
+    });
+    mcStatus.value = result.session;
+    mcMsg.value = "已启动";
+  } catch (e: any) {
+    mcMsg.value = e?.message || "启动失败";
+  } finally {
+    mcBusy.value = false;
+  }
+}
+
+async function stopMultichar() {
+  if (!mcSelectedChannelId.value) return;
+  mcBusy.value = true;
+  try {
+    await api("/api/admin/multichar/stop", {
+      method: "POST",
+      body: JSON.stringify({ channelId: mcSelectedChannelId.value }),
+    });
+    mcStatus.value = null;
+    mcMsg.value = "已停止";
+  } catch (e: any) {
+    mcMsg.value = e?.message || "停止失败";
+  } finally {
+    mcBusy.value = false;
+  }
+}
+
+function toggleMcCharacter(id: number) {
+  const idx = mcSelectedCharacterIds.value.indexOf(id);
+  if (idx >= 0) mcSelectedCharacterIds.value.splice(idx, 1);
+  else mcSelectedCharacterIds.value.push(id);
 }
 
 async function loadAdminData() {
@@ -5100,6 +5165,55 @@ async function toggleVirtual(character: any) {
         <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
         <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
       </form>
+    </section>
+
+    <section class="ai-settings-panel" style="margin-top: 20px;">
+      <header class="ai-settings-head">
+        <div>
+          <strong>多角色自主对话</strong>
+          <small>5 个角色在同一频道自主聊天 · 快照隔离 · 自然语言印象</small>
+        </div>
+        <button class="mini-btn secondary" @click="loadMcStatus">刷新状态</button>
+      </header>
+      <div class="form-grid ai-settings-form">
+        <label>选择频道</label>
+        <select v-model="mcSelectedChannelId">
+          <option :value="null" disabled>请选择频道</option>
+          <option v-for="ch in store.channels" :key="ch.id" :value="ch.id">{{ ch.name }}{{ ch.kind === 'aiLounge' ? ' (AI)' : '' }}</option>
+        </select>
+
+        <label>参与角色（勾选）</label>
+        <div v-if="virtuals.length === 0" class="settings-note">还没有虚拟角色，请先在管理面板创建</div>
+        <div v-for="vc in virtuals" :key="vc.id" class="check-row">
+          <input type="checkbox" :checked="mcSelectedCharacterIds.includes(vc.id)" @change="toggleMcCharacter(vc.id)" :disabled="!vc.enabled" />
+          <span>{{ vc.actor?.displayName || '?' }} <small style="color: var(--color-text-tertiary);">@{{ vc.actor?.username }}</small></span>
+        </div>
+
+        <div style="display: flex; gap: 12px; margin-top: 12px;">
+          <button v-if="!mcStatus?.running" class="primary-btn" @click="startMultichar" :disabled="mcBusy">
+            {{ mcBusy ? '启动中...' : '启动对话' }}
+          </button>
+          <button v-else class="primary-btn" style="background: var(--color-danger);" @click="stopMultichar" :disabled="mcBusy">
+            {{ mcBusy ? '停止中...' : '停止对话' }}
+          </button>
+        </div>
+
+        <p v-if="mcMsg" class="settings-note">{{ mcMsg }}</p>
+
+        <div v-if="mcStatus" style="margin-top: 16px; border-top: 0.5px solid var(--color-border-tertiary); padding-top: 12px;">
+          <strong style="font-size: 13px;">运行状态</strong>
+          <div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 8px;">
+            <p>频道: {{ mcStatus.channelId }} · 状态: {{ mcStatus.running ? '运行中' : '已停止' }}</p>
+            <p>总消息数: {{ mcStatus.totalMessages ?? 0 }}</p>
+          </div>
+          <div v-if="mcStatus.characters?.length" style="margin-top: 8px;">
+            <div v-for="c in mcStatus.characters" :key="c.characterId" style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 0.5px solid var(--color-border-tertiary);">
+              <span>{{ c.characterName }}</span>
+              <span style="color: var(--color-text-tertiary);">评估 {{ c.urgeEvaluations }} 次 · 发言 {{ c.messagesSpoken }} 条</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
