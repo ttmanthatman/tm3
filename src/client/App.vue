@@ -614,7 +614,14 @@ onMounted(async () => {
   window.addEventListener("why:updated", handleWhyUpdated as EventListener);
   window.addEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   await store.bootstrap();
-  if (isAiSettingsRoute.value && store.account?.isAdmin) await loadAiSettings();
+  if (isAiSettingsRoute.value && store.account?.isAdmin) {
+    await loadAiSettings();
+    try {
+      const v = await api<{ characters: any[] }>("/api/virtual-characters");
+      virtuals.value = v.characters;
+    } catch { virtuals.value = []; }
+    void loadMcStatus();
+  }
   if (isLogRoute.value && store.account?.isAdmin) await loadAdminLoginLogs();
   await loadWhySummary();
   await checkServerVersion();
@@ -752,7 +759,11 @@ watch(messageFontSize, (value) => {
 watch(
   () => store.account?.isAdmin,
   (isAdminAccount) => {
-    if (isAiSettingsRoute.value && isAdminAccount) void loadAiSettings();
+    if (isAiSettingsRoute.value && isAdminAccount) {
+      void loadAiSettings();
+      api<{ characters: any[] }>("/api/virtual-characters").then((v) => { virtuals.value = v.characters; }).catch(() => {});
+      void loadMcStatus();
+    }
     if (isLogRoute.value && isAdminAccount) void loadAdminLoginLogs();
   }
 );
@@ -1697,7 +1708,14 @@ async function doLogin() {
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
     if (isAiSettingsRoute.value) {
-      if (account.isAdmin) await loadAiSettings();
+      if (account.isAdmin) {
+        await loadAiSettings();
+        try {
+          const v = await api<{ characters: any[] }>("/api/virtual-characters");
+          virtuals.value = v.characters;
+        } catch { virtuals.value = []; }
+        void loadMcStatus();
+      }
       return;
     }
     if (isLogRoute.value) {
