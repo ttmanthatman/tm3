@@ -5184,10 +5184,8 @@ async function toggleVirtual(character: any) {
         <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
       </form>
     </section>
-  </main>
 
-  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page" style="padding-top: 0; min-height: auto;">
-    <section class="ai-settings-panel" style="max-height: none; overflow: visible;">
+    <section class="ai-settings-panel" style="margin-top: 20px; max-height: none; overflow: visible;">
       <header class="ai-settings-head">
         <div>
           <strong>多角色自主对话</strong>

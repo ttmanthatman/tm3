@@ -122,11 +122,16 @@ body {
 
 .ai-settings-page {
   width: 100%;
+  height: var(--app-height);
   min-height: var(--app-height);
   padding: calc(var(--safe-top) + 18px) 16px calc(var(--safe-bottom) + 18px);
-  display: grid;
-  place-items: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   background: var(--bg);
+  gap: 20px;
 }
 
 .ai-settings-panel {
