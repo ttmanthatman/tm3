@@ -1,4 +1,4 @@
-const CACHE_NAME = "team-chat-v2";
+const CACHE_NAME = "team-chat-v3";
 const CORE = ["/", "/manifest.json", "/images/icon-192.svg", "/images/icon-512.svg"];
 
 self.addEventListener("install", (event) => {
