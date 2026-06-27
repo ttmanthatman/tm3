@@ -5697,8 +5697,8 @@ async function toggleVirtual(character: any) {
 </script>
 
 <template>
-  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page" :style="appearanceStyle">
-    <section class="ai-settings-panel">
+  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page" :style="appearanceStyle">
+    <section class="ai-settings-panel ai-settings-workspace">
       <header class="ai-settings-head">
         <div>
           <strong>AI 设置</strong>
@@ -5706,129 +5706,179 @@ async function toggleVirtual(character: any) {
         </div>
         <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
       </header>
-      <nav class="ai-settings-tabs" aria-label="AI 设置分类">
-        <button type="button" :class="{ active: aiSettingsTab === 'llm' }" @click="aiSettingsTab = 'llm'">LLM接入</button>
-        <button type="button" :class="{ active: aiSettingsTab === 'virtuals' }" @click="aiSettingsTab = 'virtuals'; loadVirtualCharacters().catch(() => undefined)">虚拟角色</button>
-        <button type="button" :class="{ active: aiSettingsTab === 'verses' }" @click="aiSettingsTab = 'verses'">相关经文</button>
-      </nav>
-      <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
-        <template v-if="aiSettingsTab === 'llm'">
-          <label>DeepSeek API Key</label>
-          <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
-          <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
-          <div class="ai-defaults">
-            <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
-            <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
-          </div>
-        </template>
 
-        <template v-else-if="aiSettingsTab === 'virtuals'">
-          <section class="ai-settings-subsection virtual-create-section">
-            <strong>新增虚拟角色</strong>
-            <div class="virtual-create-grid">
-              <label>ID<input v-model="newVirtual.username" placeholder="ai_luna" autocomplete="off" /></label>
-              <label>昵称<input v-model="newVirtual.displayName" placeholder="小月" autocomplete="off" /></label>
-              <label>模型<input v-model="newVirtual.model" :placeholder="aiSettings?.model || '跟随系统默认模型'" autocomplete="off" /></label>
-              <label class="check-row"><input v-model="newVirtual.thinkingEnabled" type="checkbox" /> 开启思考</label>
-              <label>人设<textarea v-model="newVirtual.persona" rows="3" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea></label>
-              <label>短期记忆<textarea v-model="newVirtual.shortTermMemory" rows="3" placeholder="当前状态、最近要记住的事"></textarea></label>
-              <label>中期记忆<textarea v-model="newVirtual.midTermMemory" rows="3" placeholder="一段时间内稳定的背景"></textarea></label>
-              <label>长期记忆<textarea v-model="newVirtual.longTermMemory" rows="3" placeholder="长期身份、关系和重要判断"></textarea></label>
-              <div class="virtual-create-channels">
-                <span>所在频道</span>
-                <div class="channel-chip-grid">
-                  <button
-                    v-for="channel in store.channels"
-                    :key="channel.id"
-                    class="channel-chip"
-                    :class="{ active: newVirtual.channelIds.includes(channel.id) }"
-                    type="button"
-                    @click="toggleNewVirtualChannel(channel.id)"
-                  >
-                    {{ channel.name }}
-                  </button>
+      <div class="ai-settings-overview" aria-label="AI 设置摘要">
+        <div>
+          <span>API Key</span>
+          <strong>{{ aiSettings?.apiKeyConfigured ? "已配置" : "未配置" }}</strong>
+        </div>
+        <div>
+          <span>虚拟角色</span>
+          <strong>{{ virtuals.length }} 个</strong>
+        </div>
+        <div>
+          <span>经文建议</span>
+          <strong>{{ aiSettingsEdit.enabled ? "已启用" : "已关闭" }}</strong>
+        </div>
+      </div>
+
+      <div class="ai-settings-shell">
+        <nav class="ai-settings-tabs" aria-label="AI 设置分类">
+          <button type="button" :class="{ active: aiSettingsTab === 'llm' }" @click="aiSettingsTab = 'llm'">
+            <Settings :size="17" />
+            <span>LLM 接入<small>密钥与模型默认值</small></span>
+          </button>
+          <button type="button" :class="{ active: aiSettingsTab === 'virtuals' }" @click="aiSettingsTab = 'virtuals'; loadVirtualCharacters().catch(() => undefined)">
+            <Bot :size="17" />
+            <span>虚拟角色<small>人设、记忆和频道</small></span>
+          </button>
+          <button type="button" :class="{ active: aiSettingsTab === 'verses' }" @click="aiSettingsTab = 'verses'">
+            <BookOpen :size="17" />
+            <span>相关经文<small>提示词与频率限制</small></span>
+          </button>
+        </nav>
+
+        <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
+          <template v-if="aiSettingsTab === 'llm'">
+            <section class="ai-settings-subsection ai-settings-card">
+              <div class="ai-section-title">
+                <strong>DeepSeek 接入</strong>
+                <small>密钥状态与默认接入参数</small>
+              </div>
+              <label>DeepSeek API Key</label>
+              <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
+              <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
+              <div class="ai-defaults">
+                <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
+                <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
+              </div>
+            </section>
+          </template>
+
+          <template v-else-if="aiSettingsTab === 'virtuals'">
+            <section class="ai-settings-subsection ai-settings-card virtual-create-section">
+              <div class="ai-section-title">
+                <strong>新增虚拟角色</strong>
+                <small>角色身份、模型和初始记忆</small>
+              </div>
+              <div class="virtual-create-grid">
+                <label>ID<input v-model="newVirtual.username" placeholder="ai_luna" autocomplete="off" /></label>
+                <label>昵称<input v-model="newVirtual.displayName" placeholder="小月" autocomplete="off" /></label>
+                <label>模型<input v-model="newVirtual.model" :placeholder="aiSettings?.model || '跟随系统默认模型'" autocomplete="off" /></label>
+                <label class="check-row"><input v-model="newVirtual.thinkingEnabled" type="checkbox" /> 开启思考</label>
+                <label>人设<textarea v-model="newVirtual.persona" rows="3" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea></label>
+                <label>短期记忆<textarea v-model="newVirtual.shortTermMemory" rows="3" placeholder="当前状态、最近要记住的事"></textarea></label>
+                <label>中期记忆<textarea v-model="newVirtual.midTermMemory" rows="3" placeholder="一段时间内稳定的背景"></textarea></label>
+                <label>长期记忆<textarea v-model="newVirtual.longTermMemory" rows="3" placeholder="长期身份、关系和重要判断"></textarea></label>
+                <div class="virtual-create-channels">
+                  <span>所在频道</span>
+                  <div class="channel-chip-grid">
+                    <button
+                      v-for="channel in store.channels"
+                      :key="channel.id"
+                      class="channel-chip"
+                      :class="{ active: newVirtual.channelIds.includes(channel.id) }"
+                      type="button"
+                      @click="toggleNewVirtualChannel(channel.id)"
+                    >
+                      {{ channel.name }}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-            <label class="check-row"><input v-model="newVirtual.enabled" type="checkbox" /> 创建后启用</label>
-            <button class="primary-btn" type="button" :disabled="!newVirtual.username.trim() || !newVirtual.displayName.trim()" @click="addVirtual"><Bot :size="16" />创建角色</button>
-          </section>
+              <div class="ai-settings-inline-actions">
+                <label class="check-row"><input v-model="newVirtual.enabled" type="checkbox" /> 创建后启用</label>
+                <button class="primary-btn" type="button" :disabled="!newVirtual.username.trim() || !newVirtual.displayName.trim()" @click="addVirtual"><Bot :size="16" />创建角色</button>
+              </div>
+            </section>
 
-          <section class="ai-settings-subsection ai-role-settings">
-            <strong>虚拟角色</strong>
-            <div class="virtual-role-table-wrap">
-              <table class="virtual-role-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>头像</th>
-                    <th>昵称</th>
-                    <th>所接入模型</th>
-                    <th>思考</th>
-                    <th>人设</th>
-                    <th>短期记忆</th>
-                    <th>中期记忆</th>
-                    <th>长期记忆</th>
-                    <th>所在频道</th>
-                    <th>启用</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="character in virtuals" :key="character.id">
-                    <td class="virtual-id-cell">@{{ character.actor.username }}</td>
-                    <td>
-                      <label class="avatar virtual-table-avatar" :class="{ online: virtualEnabled(character) }">
-                        <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
-                        <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
-                        <input type="file" accept="image/*" @change="uploadVirtualAvatar(character, $event)" />
-                      </label>
-                    </td>
-                    <td><input class="virtual-nickname-input" :value="character.actor.displayName" @input="setVirtualDisplayName(character, ($event.target as HTMLInputElement).value)" /></td>
-                    <td><input class="virtual-model-input" :value="virtualModel(character)" :placeholder="aiSettings?.model || '跟随默认'" @input="setVirtualModel(character, ($event.target as HTMLInputElement).value)" /></td>
-                    <td><input :checked="virtualThinkingEnabled(character)" type="checkbox" @change="setVirtualThinkingEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
-                    <td><textarea class="virtual-text-cell" :value="virtualPersona(character)" rows="4" @input="setVirtualPersona(character, ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).shortTerm" rows="4" @input="setVirtualManualMemory(character, 'shortTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).midTerm" rows="4" @input="setVirtualManualMemory(character, 'midTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).longTerm" rows="4" @input="setVirtualManualMemory(character, 'longTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                    <td>
-                      <div class="channel-chip-grid virtual-channel-grid">
-                        <button
-                          v-for="channel in store.channels"
-                          :key="channel.id"
-                          class="channel-chip"
-                          :class="{ active: virtualChannelIds(character).includes(channel.id) }"
-                          type="button"
-                          @click="toggleVirtualChannel(character, channel.id)"
-                        >
-                          {{ channel.name }}
-                        </button>
-                      </div>
-                    </td>
-                    <td><input :checked="virtualEnabled(character)" type="checkbox" @change="setVirtualEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
-                    <td><button class="mini-btn icon-btn" type="button" @click="saveVirtualCharacter(character)"><Save :size="15" /></button></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </template>
+            <section class="ai-settings-subsection ai-role-settings ai-settings-card">
+              <div class="ai-section-title">
+                <strong>虚拟角色矩阵</strong>
+                <small>角色档案、频道范围和启用状态</small>
+              </div>
+              <div class="virtual-role-table-wrap">
+                <table class="virtual-role-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>头像</th>
+                      <th>昵称</th>
+                      <th>所接入模型</th>
+                      <th>思考</th>
+                      <th>人设</th>
+                      <th>短期记忆</th>
+                      <th>中期记忆</th>
+                      <th>长期记忆</th>
+                      <th>所在频道</th>
+                      <th>启用</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="character in virtuals" :key="character.id">
+                      <td class="virtual-id-cell">@{{ character.actor.username }}</td>
+                      <td>
+                        <label class="avatar virtual-table-avatar" :class="{ online: virtualEnabled(character) }">
+                          <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
+                          <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
+                          <input type="file" accept="image/*" @change="uploadVirtualAvatar(character, $event)" />
+                        </label>
+                      </td>
+                      <td><input class="virtual-nickname-input" :value="character.actor.displayName" @input="setVirtualDisplayName(character, ($event.target as HTMLInputElement).value)" /></td>
+                      <td><input class="virtual-model-input" :value="virtualModel(character)" :placeholder="aiSettings?.model || '跟随默认'" @input="setVirtualModel(character, ($event.target as HTMLInputElement).value)" /></td>
+                      <td><input :checked="virtualThinkingEnabled(character)" type="checkbox" @change="setVirtualThinkingEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
+                      <td><textarea class="virtual-text-cell" :value="virtualPersona(character)" rows="4" @input="setVirtualPersona(character, ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).shortTerm" rows="4" @input="setVirtualManualMemory(character, 'shortTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).midTerm" rows="4" @input="setVirtualManualMemory(character, 'midTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).longTerm" rows="4" @input="setVirtualManualMemory(character, 'longTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                      <td>
+                        <div class="channel-chip-grid virtual-channel-grid">
+                          <button
+                            v-for="channel in store.channels"
+                            :key="channel.id"
+                            class="channel-chip"
+                            :class="{ active: virtualChannelIds(character).includes(channel.id) }"
+                            type="button"
+                            @click="toggleVirtualChannel(character, channel.id)"
+                          >
+                            {{ channel.name }}
+                          </button>
+                        </div>
+                      </td>
+                      <td><input :checked="virtualEnabled(character)" type="checkbox" @change="setVirtualEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
+                      <td><button class="mini-btn icon-btn" type="button" @click="saveVirtualCharacter(character)"><Save :size="15" /></button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </template>
 
-        <template v-else>
-          <label class="check-row"><input v-model="aiSettingsEdit.enabled" type="checkbox" /> 启用代祷经文建议</label>
-          <label>提示词命令</label>
-          <textarea v-model="aiSettingsEdit.promptCommand" rows="9"></textarea>
-          <label>同一代祷卡片冷却秒数</label>
-          <input v-model.number="aiSettingsEdit.cardCooldownSeconds" type="number" min="0" max="3600" step="1" />
-          <label>同一用户每分钟最多生成</label>
-          <input v-model.number="aiSettingsEdit.userLimitPerMinute" type="number" min="1" max="60" step="1" />
-          <label>每张代祷卡片最多成功生成</label>
-          <input v-model.number="aiSettingsEdit.maxSuccessPerMessage" type="number" min="1" max="20" step="1" />
-        </template>
+          <template v-else>
+            <section class="ai-settings-subsection ai-settings-card">
+              <div class="ai-section-title">
+                <strong>相关经文生成</strong>
+                <small>代祷卡片提示词与生成限制</small>
+              </div>
+              <label class="check-row"><input v-model="aiSettingsEdit.enabled" type="checkbox" /> 启用代祷经文建议</label>
+              <label>提示词命令</label>
+              <textarea v-model="aiSettingsEdit.promptCommand" rows="9"></textarea>
+              <label>同一代祷卡片冷却秒数</label>
+              <input v-model.number="aiSettingsEdit.cardCooldownSeconds" type="number" min="0" max="3600" step="1" />
+              <label>同一用户每分钟最多生成</label>
+              <input v-model.number="aiSettingsEdit.userLimitPerMinute" type="number" min="1" max="60" step="1" />
+              <label>每张代祷卡片最多成功生成</label>
+              <input v-model.number="aiSettingsEdit.maxSuccessPerMessage" type="number" min="1" max="20" step="1" />
+            </section>
+          </template>
 
-        <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
-        <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
-      </form>
+          <div class="ai-settings-savebar">
+            <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
+            <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
+          </div>
+        </form>
+      </div>
     </section>
   </main>
 

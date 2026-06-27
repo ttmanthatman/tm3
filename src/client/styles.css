@@ -200,6 +200,224 @@ body {
   background: var(--accent);
 }
 
+.ai-settings-full-page {
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.12), transparent 34%),
+    linear-gradient(315deg, rgba(56, 189, 248, 0.14), transparent 38%),
+    #f6f8fb;
+}
+
+.ai-settings-workspace {
+  width: 100%;
+  height: var(--app-height);
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-settings-workspace .ai-settings-head {
+  min-height: calc(var(--safe-top) + 76px);
+  padding: calc(var(--safe-top) + 14px) clamp(18px, 3vw, 34px) 16px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.ai-settings-workspace .ai-settings-head strong {
+  color: #0f172a;
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: 1.1;
+}
+
+.ai-settings-workspace .ai-settings-head small {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ai-settings-workspace .ai-settings-head .mini-btn {
+  min-width: 104px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+.ai-settings-overview {
+  padding: 14px clamp(18px, 3vw, 34px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-settings-overview > div {
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
+}
+
+.ai-settings-overview span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-settings-overview strong {
+  color: #0f172a;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.ai-settings-shell {
+  min-height: 0;
+  padding: 0 clamp(18px, 3vw, 34px) calc(var(--safe-bottom) + 20px);
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+}
+
+.ai-settings-workspace .ai-settings-tabs {
+  align-self: start;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.ai-settings-workspace .ai-settings-tabs button {
+  min-height: 58px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  color: #475569;
+  font-size: 14px;
+  text-align: left;
+  background: transparent;
+}
+
+.ai-settings-workspace .ai-settings-tabs button span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-settings-workspace .ai-settings-tabs button small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ai-settings-workspace .ai-settings-tabs button.active {
+  border-color: rgba(20, 184, 166, 0.32);
+  color: #0f766e;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.16), rgba(56, 189, 248, 0.12));
+  box-shadow: inset 3px 0 0 #14b8a6;
+}
+
+.ai-settings-workspace .ai-settings-form {
+  min-height: 0;
+  padding: 0 2px 2px;
+  overflow: auto;
+  align-content: start;
+  gap: 14px;
+}
+
+.ai-settings-card {
+  border-color: rgba(15, 23, 42, 0.08);
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.ai-section-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ai-section-title strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.ai-section-title small {
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.ai-settings-workspace .form-grid input,
+.ai-settings-workspace .form-grid select,
+.ai-settings-workspace .form-grid textarea {
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 7px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
+.ai-settings-workspace .form-grid input:focus,
+.ai-settings-workspace .form-grid textarea:focus {
+  outline: 2px solid rgba(20, 184, 166, 0.25);
+  border-color: rgba(20, 184, 166, 0.7);
+}
+
+.ai-settings-workspace .ai-defaults {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-color: rgba(20, 184, 166, 0.18);
+  color: #475569;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.08), rgba(245, 158, 11, 0.08));
+}
+
+.ai-settings-inline-actions,
+.ai-settings-savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ai-settings-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 -12px 34px rgba(15, 23, 42, 0.08);
+}
+
+.ai-settings-savebar .settings-note {
+  margin: 0;
+}
+
+.ai-settings-savebar .primary-btn,
+.ai-settings-inline-actions .primary-btn {
+  background: #0f766e;
+  box-shadow: 0 12px 26px rgba(15, 118, 110, 0.22);
+}
+
 .login-log-panel {
   width: min(980px, 100%);
 }
@@ -5633,6 +5851,12 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+.ai-settings-workspace .virtual-create-section {
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.08), rgba(56, 189, 248, 0.08)),
+    rgba(255, 255, 255, 0.86);
+}
+
 .virtual-create-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -5669,6 +5893,13 @@ button {
   background: var(--panel);
 }
 
+.ai-settings-workspace .virtual-role-table-wrap {
+  max-height: min(62vh, 680px);
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
 .virtual-role-table {
   width: max-content;
   min-width: 100%;
@@ -5692,6 +5923,19 @@ button {
   font-size: 12px;
   font-weight: 800;
   background: color-mix(in srgb, var(--panel) 94%, var(--accent));
+}
+
+.ai-settings-workspace .virtual-role-table th {
+  color: #475569;
+  background: #eef6f6;
+}
+
+.ai-settings-workspace .virtual-role-table td {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.ai-settings-workspace .virtual-role-table tbody tr:hover td {
+  background: rgba(240, 253, 250, 0.82);
 }
 
 .virtual-role-table tbody tr:last-child td {
@@ -5751,6 +5995,10 @@ button {
   white-space: nowrap;
 }
 
+.ai-settings-workspace .virtual-id-cell {
+  color: #334155;
+}
+
 .virtual-table-avatar {
   position: relative;
   width: 42px;
@@ -5778,6 +6026,10 @@ button {
   width: 100%;
   min-height: 96px;
   resize: vertical;
+}
+
+.ai-settings-workspace .virtual-text-cell {
+  min-height: 118px;
 }
 
 .virtual-channel-grid {
@@ -5879,7 +6131,60 @@ button {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.ai-settings-workspace .channel-chip {
+  border-color: rgba(15, 23, 42, 0.1);
+  color: #334155;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.ai-settings-workspace .channel-chip.active {
+  border-color: rgba(20, 184, 166, 0.48);
+  color: #0f766e;
+  background: rgba(20, 184, 166, 0.12);
+}
+
 @media (max-width: 560px) {
+  .ai-settings-full-page {
+    overflow-y: auto;
+  }
+
+  .ai-settings-workspace {
+    min-height: var(--app-height);
+    height: auto;
+    overflow: visible;
+  }
+
+  .ai-settings-workspace .ai-settings-head {
+    min-height: calc(var(--safe-top) + 92px);
+    align-items: end;
+    flex-wrap: wrap;
+  }
+
+  .ai-settings-overview {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-settings-shell {
+    grid-template-columns: 1fr;
+    overflow: visible;
+  }
+
+  .ai-settings-workspace .ai-settings-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-settings-workspace .ai-settings-form {
+    overflow: visible;
+  }
+
+  .ai-settings-workspace .ai-defaults {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-settings-savebar {
+    position: static;
+  }
+
   .virtual-create-grid {
     grid-template-columns: 1fr;
   }

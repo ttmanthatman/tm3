@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.8.4.4";
+export const APP_VERSION = "0.8.4.5";
 
-export const RELEASE_DATE = "2026-06-27";
+export const RELEASE_DATE = "2026-06-28";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "AI 设置页改为铺满全页面的管理工作台，顶部显示配置摘要，左侧使用带图标的分类导航。",
+  "LLM 接入、虚拟角色和相关经文设置重新排版，表单、保存栏和虚拟角色矩阵改为更现代的浅色控制台视觉。"
+] as const;
+
+const RELEASE_0_8_4_4_NOTES = [
   "AI 设置页的虚拟角色改为表格矩阵，可逐个设置 ID、昵称、头像、模型、思考开关、人设、三类记忆、所在频道和启用状态。",
   "每个虚拟角色可单独覆盖模型；留空时跟随系统默认模型，思考模式默认关闭，只有单个角色开启后才传给模型。",
   "为什么助手和 ai_slmm 保存时会同步写入 AI 设置与虚拟角色配置，避免人设编辑后一会儿又恢复默认。"
@@ -308,9 +313,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.8.4.5",
+    date: "2026-06-28",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.8.4.4",
     date: "2026-06-27",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_4_4_NOTES
   },
   {
     version: "0.8.4.3",
