@@ -1302,16 +1302,17 @@ async function ensureAiRoleCharacter(username: string, fallbackName: string, dis
     update: { displayName: name, kind: "virtual", status: "active" },
     create: { kind: "virtual", username, displayName: name }
   });
-  await prisma.virtualCharacter.upsert({
-    where: { actorId: actor.id },
-    update: { enabled: true },
-    create: {
-      actorId: actor.id,
-      enabled: true,
-      config: defaultVirtualCharacterConfig(name),
-      engineBinding: {}
-    }
-  });
+  const existingCharacter = await prisma.virtualCharacter.findUnique({ where: { actorId: actor.id }, select: { id: true } });
+  if (!existingCharacter) {
+    await prisma.virtualCharacter.create({
+      data: {
+        actorId: actor.id,
+        enabled: true,
+        config: defaultVirtualCharacterConfig(name),
+        engineBinding: {}
+      }
+    });
+  }
   return actor;
 }
 
@@ -3646,6 +3647,7 @@ async function aiSettingsDto() {
         in: [
           "whyAssistantEnabled",
           "whyAssistantPromptCommand",
+          "whyAssistantActivationJudgePrompt",
           "whyAssistantWebSearchEnabled",
           "whyAssistantDisplayName",
           "questionAssistantEnabled",
@@ -3670,6 +3672,7 @@ async function aiSettingsDto() {
       avatarPath: whyActor.avatarPath,
       enabled: settings.get("whyAssistantEnabled") !== "false",
       promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
+      activationJudgePrompt: settings.get("whyAssistantActivationJudgePrompt") || "",
       webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
     },
     {
@@ -3795,6 +3798,7 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
       if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("whyAssistantEnabled", role.enabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("whyAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
+      if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) await setSetting("whyAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim());
     }
     if (role.username === QUESTION_ASSISTANT_USERNAME) {
       const displayName = (role.displayName || "").trim() || QUESTION_ASSISTANT_NAME;

@@ -1838,6 +1838,11 @@ function aiRoleHint(role: AiRoleDTO) {
   return "AI 角色";
 }
 
+function aiRoleForCharacter(character: any) {
+  const username = character?.actor?.username || "";
+  return aiSettingsEdit.value.aiRoles.find((role) => role.username === username) || null;
+}
+
 function virtualConfig(character: any) {
   const raw = character?.config && typeof character.config === "object" && !Array.isArray(character.config) ? character.config : {};
   const profile = raw.profile && typeof raw.profile === "object" && !Array.isArray(raw.profile) ? raw.profile : {};
@@ -1849,11 +1854,12 @@ function virtualConfig(character: any) {
       persona: String(profile.persona || ""),
       speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
     },
+    activationJudgePrompt: String(raw.activationJudgePrompt || ""),
     channels: Array.isArray(raw.channels) ? raw.channels.map(Number).filter(Number.isFinite) : []
   };
 }
 
-function buildVirtualConfig(displayName: string, persona: string, channelIds: number[], existing?: any) {
+function buildVirtualConfig(displayName: string, persona: string, channelIds: number[], existing?: any, activationJudgePrompt?: string) {
   const base = existing ? virtualConfig(existing) : {};
   const profile = base.profile && typeof base.profile === "object" && !Array.isArray(base.profile) ? base.profile : {};
   const multichar = (base as any).multichar && typeof (base as any).multichar === "object" && !Array.isArray((base as any).multichar) ? (base as any).multichar : {};
@@ -1867,6 +1873,7 @@ function buildVirtualConfig(displayName: string, persona: string, channelIds: nu
       persona,
       speakingStyle: String((profile as any).speakingStyle || "像微信群里的真人，简短自然")
     },
+    activationJudgePrompt: activationJudgePrompt ?? String((base as any).activationJudgePrompt || ""),
     multichar: {
       ...multichar,
       bio: {
@@ -1884,7 +1891,20 @@ function buildVirtualConfig(displayName: string, persona: string, channelIds: nu
 }
 
 function virtualPersona(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) return role.promptCommand || "";
   return virtualConfig(character).profile.persona;
+}
+
+function virtualActivationJudgePrompt(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) return role.activationJudgePrompt || "";
+  return virtualConfig(character).activationJudgePrompt;
+}
+
+function virtualEnabled(character: any) {
+  const role = aiRoleForCharacter(character);
+  return role ? role.enabled : !!character.enabled;
 }
 
 function virtualChannelIds(character: any) {
@@ -1915,17 +1935,28 @@ async function loadVirtualCharacters() {
   virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
 }
 
-async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean }) {
+async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean; activationJudgePrompt?: string }) {
+  const role = aiRoleForCharacter(character);
   const displayName = (patch.displayName ?? character.actor?.displayName ?? "").trim();
   if (!displayName) return;
+  const enabled = patch.enabled ?? virtualEnabled(character);
+  const persona = patch.persona ?? virtualPersona(character);
+  const activationJudgePrompt = patch.activationJudgePrompt ?? virtualActivationJudgePrompt(character);
+  if (role) {
+    role.displayName = displayName;
+    role.enabled = enabled;
+    role.promptCommand = persona;
+    role.activationJudgePrompt = activationJudgePrompt;
+  }
   await api(`/api/virtual-characters/${character.id}`, {
     method: "PUT",
     body: JSON.stringify({
       displayName,
-      enabled: patch.enabled ?? character.enabled,
-      config: buildVirtualConfig(displayName, patch.persona ?? virtualPersona(character), patch.channelIds ?? virtualChannelIds(character), character)
+      enabled,
+      config: buildVirtualConfig(displayName, persona, patch.channelIds ?? virtualChannelIds(character), character, activationJudgePrompt)
     })
   });
+  if (role) await saveAiSettings();
   await loadVirtualCharacters();
   aiSettingsMsg.value = "虚拟角色已保存";
 }
@@ -5339,45 +5370,8 @@ async function toggleVirtual(character: any) {
 
           <section class="ai-settings-subsection ai-role-settings">
             <strong>虚拟角色</strong>
-            <article v-for="role in aiSettingsEdit.aiRoles" :key="role.username" class="ai-role-card">
-              <label class="avatar ai-role-avatar upload-avatar-trigger" :aria-label="`上传 ${role.displayName} 的头像`" title="点击上传头像">
-                <img v-if="avatarUrl(role.avatarPath)" :src="avatarUrl(role.avatarPath)" alt="" />
-                <span v-else>{{ avatarText(role.displayName || role.username) }}</span>
-                <input class="hidden" type="file" accept="image/*" @change="uploadAiRoleAvatar(role, $event)" />
-              </label>
-              <div class="ai-role-body">
-                <div class="ai-role-title">
-                  <label>
-                    显示名
-                    <input v-model="role.displayName" />
-                  </label>
-                  <small>@{{ role.username }}</small>
-                </div>
-                <small>{{ aiRoleHint(role) }}</small>
-                <label class="check-row"><input v-model="role.enabled" type="checkbox" /> 启用这个 AI 角色</label>
-                <label v-if="role.username === 'ai_slmm'" class="check-row"><input v-model="role.questionTriggerEnabled" type="checkbox" /> 检测到问句时自动触发</label>
-                <div v-if="role.username === 'ai_slmm'" class="ai-role-context-grid">
-                  <label>
-                    上下文轮数
-                    <input v-model.number="role.contextTurnLimit" type="number" min="1" max="50" step="1" />
-                  </label>
-                  <label>
-                    有效分钟数
-                    <input v-model.number="role.contextWindowMinutes" type="number" min="1" max="1440" step="1" />
-                  </label>
-                </div>
-                <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
-                <label>人设 / 提示词</label>
-                <textarea v-model="role.promptCommand" rows="8"></textarea>
-                <template v-if="role.username === 'ai_slmm'">
-                  <label>弱激活判断体</label>
-                  <textarea v-model="role.activationJudgePrompt" rows="7"></textarea>
-                </template>
-              </div>
-            </article>
-
             <article v-for="character in virtuals" :key="character.id" class="ai-role-card virtual-character-card">
-              <span class="avatar ai-role-avatar virtual-avatar" :class="{ online: character.enabled }">
+              <span class="avatar ai-role-avatar virtual-avatar" :class="{ online: virtualEnabled(character) }">
                 <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
                 <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
               </span>
@@ -5390,9 +5384,11 @@ async function toggleVirtual(character: any) {
                   <small>@{{ character.actor.username }}</small>
                 </div>
                 <small>{{ virtualChannelNames(character) }}</small>
-                <label class="check-row"><input :checked="character.enabled" type="checkbox" @change="updateVirtual(character, { enabled: !character.enabled })" /> 启用这个虚拟角色</label>
+                <label class="check-row"><input :checked="virtualEnabled(character)" type="checkbox" @change="updateVirtual(character, { enabled: !virtualEnabled(character) })" /> 启用这个虚拟角色</label>
                 <label>人设</label>
                 <textarea :value="virtualPersona(character)" rows="5" @change="updateVirtual(character, { persona: ($event.target as HTMLTextAreaElement).value })"></textarea>
+                <label>弱激活判断体</label>
+                <textarea :value="virtualActivationJudgePrompt(character)" rows="5" @change="updateVirtual(character, { activationJudgePrompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
                 <label>出现频道</label>
                 <div class="channel-chip-grid">
                   <button
@@ -6703,7 +6699,7 @@ async function toggleVirtual(character: any) {
             <button class="primary-btn" @click="openAiSettingsPage('virtuals')"><Bot :size="16" />前往 AI 设置管理</button>
             <div class="admin-list">
               <div v-for="character in virtuals" :key="character.id" class="virtual-row readonly">
-                <span class="avatar virtual-admin-avatar" :class="{ online: character.enabled }">
+                <span class="avatar virtual-admin-avatar" :class="{ online: virtualEnabled(character) }">
                   <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
                   <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
                 </span>
