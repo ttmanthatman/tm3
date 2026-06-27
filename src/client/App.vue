@@ -108,7 +108,7 @@ type PendingUpload = {
   message?: string;
 };
 type SavedReadPosition = {
-  messageId: number;
+  messageId: number | string;
   offset: number;
   atBottom: boolean;
   scrollTop: number;
@@ -131,6 +131,7 @@ const membersCollapsed = ref(false);
 const minMessageFontSize = 14;
 const maxMessageFontSize = 40;
 const defaultMessageFontSize = 15;
+const newestReadPositionKey = "__newest__";
 const legacyMessageFontSizes: Record<string, number> = {
   small: 14,
   standard: 15,
@@ -157,7 +158,7 @@ const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
 const newChannel = ref({ name: "", description: "", isPrivate: false });
-const newVirtual = ref({ username: "", displayName: "" });
+const newVirtual = ref({ username: "", displayName: "", persona: "", channelIds: [] as number[], enabled: true });
 const virtuals = ref<any[]>([]);
 const mcStatus = ref<any | null>(null);
 const mcSelectedChannelId = ref<number | null>(null);
@@ -246,6 +247,7 @@ const aiSettingsEdit = ref({
 const aiSettingsBusy = ref(false);
 const aiSettingsMsg = ref("");
 const aiSettingsShowAdvanced = ref(false);
+const aiSettingsTab = ref<"llm" | "virtuals" | "verses">("llm");
 const noticeText = ref("");
 const pinnedExpanded = ref(false);
 const showPinnedEditor = ref(false);
@@ -426,7 +428,6 @@ const whyMembers = ref<WhyTopicMemberDTO[]>([]);
 const whyRuns = ref<WhyAssistantRunDTO[]>([]);
 const whyHomeQuestion = ref("");
 const whyTopicInput = ref("");
-const whyTopicMarkdown = ref(false);
 const whyLoading = ref(false);
 const whyBusy = ref(false);
 const whyError = ref("");
@@ -620,10 +621,7 @@ onMounted(async () => {
   await store.bootstrap();
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
-    try {
-      const v = await api<{ characters: any[] }>("/api/virtual-characters");
-      virtuals.value = v.characters;
-    } catch { virtuals.value = []; }
+    await loadVirtualCharacters().catch(() => { virtuals.value = []; });
     void loadMcStatus();
   }
   if (isLogRoute.value && store.account?.isAdmin) await loadAdminLoginLogs();
@@ -765,7 +763,7 @@ watch(
   (isAdminAccount) => {
     if (isAiSettingsRoute.value && isAdminAccount) {
       void loadAiSettings();
-      api<{ characters: any[] }>("/api/virtual-characters").then((v) => { virtuals.value = v.characters; }).catch(() => {});
+      loadVirtualCharacters().catch(() => undefined);
       void loadMcStatus();
     }
     if (isLogRoute.value && isAdminAccount) void loadAdminLoginLogs();
@@ -1660,7 +1658,7 @@ function loadSavedReadPosition(): SavedReadPosition | null {
     const raw = JSON.parse(localStorage.getItem(key) || "null") as Partial<SavedReadPosition> | null;
     if (!raw || typeof raw !== "object") return null;
     return {
-      messageId: Number(raw.messageId || 0),
+      messageId: raw.messageId === newestReadPositionKey ? newestReadPositionKey : Number(raw.messageId || 0),
       offset: Number(raw.offset || 0),
       atBottom: !!raw.atBottom,
       scrollTop: Number(raw.scrollTop || 0),
@@ -1669,6 +1667,15 @@ function loadSavedReadPosition(): SavedReadPosition | null {
   } catch {
     return null;
   }
+}
+
+function saveNewestReadPosition(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
+  const key = readPositionStorageKey(channelId, prayerOnly);
+  if (!key) return;
+  localStorage.setItem(
+    key,
+    JSON.stringify({ messageId: newestReadPositionKey, offset: 0, atBottom: true, scrollTop: 0, savedAt: Date.now() })
+  );
 }
 
 async function restoreSavedReadPosition() {
@@ -1683,12 +1690,17 @@ async function restoreSavedReadPosition() {
     pendingReadPositionRestore.value = false;
     return;
   }
+  if (String(position.messageId) === newestReadPositionKey) {
+    await scrollToNewest(false);
+    pendingReadPositionRestore.value = false;
+    return;
+  }
   if (position.atBottom && !store.hasNewerMessages) {
     scrollBottom(false);
     pendingReadPositionRestore.value = false;
     return;
   }
-  if (position.messageId) {
+  if (typeof position.messageId === "number" && position.messageId) {
     await loadUntilMessageVisible(position.messageId);
     await nextTick();
     const currentRoot = scroller.value;
@@ -1731,10 +1743,7 @@ async function doLogin() {
     if (isAiSettingsRoute.value) {
       if (account.isAdmin) {
         await loadAiSettings();
-        try {
-          const v = await api<{ characters: any[] }>("/api/virtual-characters");
-          virtuals.value = v.characters;
-        } catch { virtuals.value = []; }
+        await loadVirtualCharacters().catch(() => { virtuals.value = []; });
         void loadMcStatus();
       }
       return;
@@ -1785,6 +1794,17 @@ function returnToChat() {
   window.history.pushState({}, "", "/");
 }
 
+async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
+  if (!store.account?.isAdmin) return;
+  showAdmin.value = false;
+  isLogRoute.value = false;
+  isAiSettingsRoute.value = true;
+  aiSettingsTab.value = tab;
+  window.history.pushState({}, "", "/ai-settings");
+  await loadAiSettings();
+  if (tab === "virtuals") await loadVirtualCharacters().catch(() => undefined);
+}
+
 async function openLoginLogPage() {
   if (!store.account?.isAdmin) return;
   showAdmin.value = false;
@@ -1816,6 +1836,98 @@ function aiRoleHint(role: AiRoleDTO) {
   if (role.username === "ai_slmm") return "普通聊天里检测到问句后自动触发，并把原消息交给这个角色回复。";
   if (role.username === "why_assistant") return "为什么话题里的严格引导助手。";
   return "AI 角色";
+}
+
+function virtualConfig(character: any) {
+  const raw = character?.config && typeof character.config === "object" && !Array.isArray(character.config) ? character.config : {};
+  const profile = raw.profile && typeof raw.profile === "object" && !Array.isArray(raw.profile) ? raw.profile : {};
+  return {
+    ...raw,
+    profile: {
+      ...profile,
+      name: String(profile.name || character?.actor?.displayName || ""),
+      persona: String(profile.persona || ""),
+      speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
+    },
+    channels: Array.isArray(raw.channels) ? raw.channels.map(Number).filter(Number.isFinite) : []
+  };
+}
+
+function buildVirtualConfig(displayName: string, persona: string, channelIds: number[], existing?: any) {
+  const base = existing ? virtualConfig(existing) : {};
+  const profile = base.profile && typeof base.profile === "object" && !Array.isArray(base.profile) ? base.profile : {};
+  const multichar = (base as any).multichar && typeof (base as any).multichar === "object" && !Array.isArray((base as any).multichar) ? (base as any).multichar : {};
+  const bio = multichar.bio && typeof multichar.bio === "object" && !Array.isArray(multichar.bio) ? multichar.bio : {};
+  const basics = bio.basics && typeof bio.basics === "object" && !Array.isArray(bio.basics) ? bio.basics : {};
+  return {
+    ...base,
+    profile: {
+      ...profile,
+      name: displayName,
+      persona,
+      speakingStyle: String((profile as any).speakingStyle || "像微信群里的真人，简短自然")
+    },
+    multichar: {
+      ...multichar,
+      bio: {
+        ...bio,
+        basics: {
+          ...basics,
+          name: displayName,
+          identity: persona || String((basics as any).identity || "")
+        }
+      },
+      emotionBaseline: String(multichar.emotionBaseline || "平静中性")
+    },
+    channels: [...new Set(channelIds.map(Number).filter(Number.isFinite))]
+  };
+}
+
+function virtualPersona(character: any) {
+  return virtualConfig(character).profile.persona;
+}
+
+function virtualChannelIds(character: any) {
+  return virtualConfig(character).channels;
+}
+
+function virtualChannelNames(character: any) {
+  const ids = new Set(virtualChannelIds(character));
+  const names = store.channels.filter((channel) => ids.has(channel.id)).map((channel) => channel.name);
+  return names.length ? names.join("、") : "未指定频道";
+}
+
+function toggleNewVirtualChannel(channelId: number) {
+  const ids = new Set(newVirtual.value.channelIds);
+  if (ids.has(channelId)) ids.delete(channelId);
+  else ids.add(channelId);
+  newVirtual.value.channelIds = [...ids];
+}
+
+async function toggleVirtualChannel(character: any, channelId: number) {
+  const ids = new Set<number>(virtualChannelIds(character));
+  if (ids.has(channelId)) ids.delete(channelId);
+  else ids.add(channelId);
+  await updateVirtual(character, { channelIds: [...ids] });
+}
+
+async function loadVirtualCharacters() {
+  virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
+}
+
+async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean }) {
+  const displayName = (patch.displayName ?? character.actor?.displayName ?? "").trim();
+  if (!displayName) return;
+  await api(`/api/virtual-characters/${character.id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      displayName,
+      enabled: patch.enabled ?? character.enabled,
+      config: buildVirtualConfig(displayName, patch.persona ?? virtualPersona(character), patch.channelIds ?? virtualChannelIds(character), character)
+    })
+  });
+  await loadVirtualCharacters();
+  aiSettingsMsg.value = "虚拟角色已保存";
 }
 
 async function uploadAiRoleAvatar(role: AiRoleDTO, event: Event) {
@@ -2397,9 +2509,17 @@ async function openWhyHome() {
   }
 }
 
-function returnToChatWorkspace() {
+async function returnToChatWorkspace() {
   showChannels.value = false;
+  if (whyCurrentTopic.value?.channelId) {
+    saveNewestReadPosition(whyCurrentTopic.value.channelId, false);
+    if (store.currentChannelId !== whyCurrentTopic.value.channelId || store.prayerOnly) {
+      await store.switchChannel(whyCurrentTopic.value.channelId);
+    }
+  }
   workspace.value = "chat";
+  await nextTick();
+  await scrollToNewest(false);
 }
 
 async function openWhyTopic(topicId: number) {
@@ -2475,7 +2595,7 @@ async function sendWhyTopicMessage() {
   try {
     const result = await api<{ message: MessageDTO }>(`/api/why/topics/${whyCurrentTopic.value.id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content, ...(whyTopicMarkdown.value ? { contentFormat: "markdown" } : {}) })
+      body: JSON.stringify({ content })
     });
     if (result.message && !whyMessages.value.some((message) => message.id === result.message.id)) whyMessages.value.push(result.message);
     await openWhyTopic(whyCurrentTopic.value.id);
@@ -4079,13 +4199,13 @@ async function retryMessageLoad() {
   await handleMessagesScroll();
 }
 
-async function scrollToNewest() {
+async function scrollToNewest(smooth = true) {
   while (store.hasNewerMessages) {
     const loaded = await store.loadNewerMessages();
     if (!loaded) break;
   }
   await nextTick();
-  scrollBottom(true);
+  scrollBottom(smooth);
 }
 
 function avatarText(name: string) {
@@ -5144,14 +5264,16 @@ async function addVirtual() {
   await api("/api/virtual-characters", {
     method: "POST",
     body: JSON.stringify({
-      username: newVirtual.value.username,
-      displayName: newVirtual.value.displayName,
-      enabled: true
+      username: newVirtual.value.username.trim(),
+      displayName: newVirtual.value.displayName.trim(),
+      enabled: newVirtual.value.enabled,
+      config: buildVirtualConfig(newVirtual.value.displayName.trim(), newVirtual.value.persona.trim(), newVirtual.value.channelIds)
     })
   });
-  newVirtual.value = { username: "", displayName: "" };
-  virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
+  newVirtual.value = { username: "", displayName: "", persona: "", channelIds: [], enabled: true };
+  await loadVirtualCharacters();
   adminMsg.value = "虚拟角色已创建";
+  aiSettingsMsg.value = "虚拟角色已创建";
 }
 
 async function toggleVirtual(character: any) {
@@ -5159,7 +5281,7 @@ async function toggleVirtual(character: any) {
     method: "PUT",
     body: JSON.stringify({ enabled: !character.enabled })
   });
-  virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
+  await loadVirtualCharacters();
 }
 </script>
 
@@ -5168,63 +5290,130 @@ async function toggleVirtual(character: any) {
     <section class="ai-settings-panel">
       <header class="ai-settings-head">
         <div>
-          <strong>AI 经文建议</strong>
-          <small>DeepSeek v4 flash · 思考关闭</small>
+          <strong>AI 设置</strong>
+          <small>LLM 接入 · 虚拟角色 · 相关经文</small>
         </div>
         <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
       </header>
+      <nav class="ai-settings-tabs" aria-label="AI 设置分类">
+        <button type="button" :class="{ active: aiSettingsTab === 'llm' }" @click="aiSettingsTab = 'llm'">LLM接入</button>
+        <button type="button" :class="{ active: aiSettingsTab === 'virtuals' }" @click="aiSettingsTab = 'virtuals'; loadVirtualCharacters().catch(() => undefined)">虚拟角色</button>
+        <button type="button" :class="{ active: aiSettingsTab === 'verses' }" @click="aiSettingsTab = 'verses'">相关经文</button>
+      </nav>
       <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
-        <label class="check-row"><input v-model="aiSettingsEdit.enabled" type="checkbox" /> 启用代祷经文建议</label>
-        <label>DeepSeek API Key</label>
-        <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
-        <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
-        <div class="ai-defaults">
-          <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
-          <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
-        </div>
-        <section class="ai-settings-subsection ai-role-settings">
-          <strong>AI 角色</strong>
-          <article v-for="role in aiSettingsEdit.aiRoles" :key="role.username" class="ai-role-card">
-            <label class="avatar ai-role-avatar upload-avatar-trigger" :aria-label="`上传 ${role.displayName} 的头像`" title="点击上传头像">
-              <img v-if="avatarUrl(role.avatarPath)" :src="avatarUrl(role.avatarPath)" alt="" />
-              <span v-else>{{ avatarText(role.displayName || role.username) }}</span>
-              <input class="hidden" type="file" accept="image/*" @change="uploadAiRoleAvatar(role, $event)" />
-            </label>
-            <div class="ai-role-body">
-              <div class="ai-role-title">
-                <label>
-                  显示名
-                  <input v-model="role.displayName" />
-                </label>
-                <small>@{{ role.username }}</small>
-              </div>
-              <small>{{ aiRoleHint(role) }}</small>
-              <label class="check-row"><input v-model="role.enabled" type="checkbox" /> 启用这个 AI 角色</label>
-              <label v-if="role.username === 'ai_slmm'" class="check-row"><input v-model="role.questionTriggerEnabled" type="checkbox" /> 检测到问句时自动触发</label>
-              <div v-if="role.username === 'ai_slmm'" class="ai-role-context-grid">
-                <label>
-                  上下文轮数
-                  <input v-model.number="role.contextTurnLimit" type="number" min="1" max="50" step="1" />
-                </label>
-                <label>
-                  有效分钟数
-                  <input v-model.number="role.contextWindowMinutes" type="number" min="1" max="1440" step="1" />
-                </label>
-              </div>
-              <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
-              <label>提示词</label>
-              <textarea v-model="role.promptCommand" rows="8"></textarea>
-              <template v-if="role.username === 'ai_slmm'">
-                <label>弱激活判断体</label>
-                <textarea v-model="role.activationJudgePrompt" rows="7"></textarea>
-              </template>
+        <template v-if="aiSettingsTab === 'llm'">
+          <label>DeepSeek API Key</label>
+          <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
+          <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
+          <div class="ai-defaults">
+            <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
+            <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
+          </div>
+        </template>
+
+        <template v-else-if="aiSettingsTab === 'virtuals'">
+          <section class="ai-settings-subsection virtual-create-section">
+            <strong>新增虚拟角色</strong>
+            <label>唯一标识</label>
+            <input v-model="newVirtual.username" placeholder="例如 ai_luna" autocomplete="off" />
+            <label>显示名</label>
+            <input v-model="newVirtual.displayName" placeholder="例如 小月" autocomplete="off" />
+            <label>人设</label>
+            <textarea v-model="newVirtual.persona" rows="4" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea>
+            <label>出现频道</label>
+            <div class="channel-chip-grid">
+              <button
+                v-for="channel in store.channels"
+                :key="channel.id"
+                class="channel-chip"
+                :class="{ active: newVirtual.channelIds.includes(channel.id) }"
+                type="button"
+                @click="toggleNewVirtualChannel(channel.id)"
+              >
+                {{ channel.name }}
+              </button>
             </div>
-          </article>
-        </section>
-        <button class="text-btn ai-advanced-toggle" type="button" @click="aiSettingsShowAdvanced = !aiSettingsShowAdvanced">
-          {{ aiSettingsShowAdvanced ? "收起高级设置" : "高级设置" }}
-        </button>
-        <div v-if="aiSettingsShowAdvanced" class="ai-advanced-fields">
+            <label class="check-row"><input v-model="newVirtual.enabled" type="checkbox" /> 创建后启用</label>
+            <button class="primary-btn" type="button" :disabled="!newVirtual.username.trim() || !newVirtual.displayName.trim()" @click="addVirtual"><Bot :size="16" />创建角色</button>
+          </section>
+
+          <section class="ai-settings-subsection ai-role-settings">
+            <strong>虚拟角色</strong>
+            <article v-for="role in aiSettingsEdit.aiRoles" :key="role.username" class="ai-role-card">
+              <label class="avatar ai-role-avatar upload-avatar-trigger" :aria-label="`上传 ${role.displayName} 的头像`" title="点击上传头像">
+                <img v-if="avatarUrl(role.avatarPath)" :src="avatarUrl(role.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(role.displayName || role.username) }}</span>
+                <input class="hidden" type="file" accept="image/*" @change="uploadAiRoleAvatar(role, $event)" />
+              </label>
+              <div class="ai-role-body">
+                <div class="ai-role-title">
+                  <label>
+                    显示名
+                    <input v-model="role.displayName" />
+                  </label>
+                  <small>@{{ role.username }}</small>
+                </div>
+                <small>{{ aiRoleHint(role) }}</small>
+                <label class="check-row"><input v-model="role.enabled" type="checkbox" /> 启用这个 AI 角色</label>
+                <label v-if="role.username === 'ai_slmm'" class="check-row"><input v-model="role.questionTriggerEnabled" type="checkbox" /> 检测到问句时自动触发</label>
+                <div v-if="role.username === 'ai_slmm'" class="ai-role-context-grid">
+                  <label>
+                    上下文轮数
+                    <input v-model.number="role.contextTurnLimit" type="number" min="1" max="50" step="1" />
+                  </label>
+                  <label>
+                    有效分钟数
+                    <input v-model.number="role.contextWindowMinutes" type="number" min="1" max="1440" step="1" />
+                  </label>
+                </div>
+                <label class="check-row"><input v-model="role.webSearchEnabled" type="checkbox" /> 默认允许联网查询</label>
+                <label>人设 / 提示词</label>
+                <textarea v-model="role.promptCommand" rows="8"></textarea>
+                <template v-if="role.username === 'ai_slmm'">
+                  <label>弱激活判断体</label>
+                  <textarea v-model="role.activationJudgePrompt" rows="7"></textarea>
+                </template>
+              </div>
+            </article>
+
+            <article v-for="character in virtuals" :key="character.id" class="ai-role-card virtual-character-card">
+              <span class="avatar ai-role-avatar virtual-avatar" :class="{ online: character.enabled }">
+                <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
+              </span>
+              <div class="ai-role-body">
+                <div class="ai-role-title">
+                  <label>
+                    显示名
+                    <input v-model="character.actor.displayName" />
+                  </label>
+                  <small>@{{ character.actor.username }}</small>
+                </div>
+                <small>{{ virtualChannelNames(character) }}</small>
+                <label class="check-row"><input :checked="character.enabled" type="checkbox" @change="updateVirtual(character, { enabled: !character.enabled })" /> 启用这个虚拟角色</label>
+                <label>人设</label>
+                <textarea :value="virtualPersona(character)" rows="5" @change="updateVirtual(character, { persona: ($event.target as HTMLTextAreaElement).value })"></textarea>
+                <label>出现频道</label>
+                <div class="channel-chip-grid">
+                  <button
+                    v-for="channel in store.channels"
+                    :key="channel.id"
+                    class="channel-chip"
+                    :class="{ active: virtualChannelIds(character).includes(channel.id) }"
+                    type="button"
+                    @click="toggleVirtualChannel(character, channel.id)"
+                  >
+                    {{ channel.name }}
+                  </button>
+                </div>
+                <button class="mini-btn" type="button" @click="updateVirtual(character, { displayName: character.actor.displayName })"><Save :size="15" />保存角色</button>
+              </div>
+            </article>
+          </section>
+        </template>
+
+        <template v-else>
+          <label class="check-row"><input v-model="aiSettingsEdit.enabled" type="checkbox" /> 启用代祷经文建议</label>
           <label>提示词命令</label>
           <textarea v-model="aiSettingsEdit.promptCommand" rows="9"></textarea>
           <label>同一代祷卡片冷却秒数</label>
@@ -5233,59 +5422,11 @@ async function toggleVirtual(character: any) {
           <input v-model.number="aiSettingsEdit.userLimitPerMinute" type="number" min="1" max="60" step="1" />
           <label>每张代祷卡片最多成功生成</label>
           <input v-model.number="aiSettingsEdit.maxSuccessPerMessage" type="number" min="1" max="20" step="1" />
-        </div>
+        </template>
+
         <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
         <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
       </form>
-    </section>
-
-    <section class="ai-settings-panel" style="margin-top: 20px; max-height: none; overflow: visible;">
-      <header class="ai-settings-head">
-        <div>
-          <strong>多角色自主对话</strong>
-          <small>5 个角色在同一频道自主聊天 · 快照隔离 · 自然语言印象</small>
-        </div>
-        <button class="mini-btn secondary" @click="loadMcStatus">刷新状态</button>
-      </header>
-      <div class="form-grid ai-settings-form" style="overflow-y: auto; max-height: none;">
-        <label>选择频道</label>
-        <select v-model="mcSelectedChannelId">
-          <option :value="null" disabled>请选择频道</option>
-          <option v-for="ch in store.channels" :key="ch.id" :value="ch.id">{{ ch.name }}{{ ch.kind === 'aiLounge' ? ' (AI)' : '' }}</option>
-        </select>
-
-        <label>参与角色（勾选）</label>
-        <div v-if="virtuals.length === 0" class="settings-note">还没有虚拟角色，请先在管理面板创建</div>
-        <div v-for="vc in virtuals" :key="vc.id" class="check-row">
-          <input type="checkbox" :checked="mcSelectedCharacterIds.includes(vc.id)" @change="toggleMcCharacter(vc.id)" :disabled="!vc.enabled" />
-          <span>{{ vc.actor?.displayName || '?' }} <small style="color: var(--color-text-tertiary);">@{{ vc.actor?.username }}</small></span>
-        </div>
-
-        <div style="display: flex; gap: 12px; margin-top: 12px;">
-          <button v-if="!mcStatus?.running" class="primary-btn" @click="startMultichar" :disabled="mcBusy">
-            {{ mcBusy ? '启动中...' : '启动对话' }}
-          </button>
-          <button v-else class="primary-btn" style="background: var(--color-danger);" @click="stopMultichar" :disabled="mcBusy">
-            {{ mcBusy ? '停止中...' : '停止对话' }}
-          </button>
-        </div>
-
-        <p v-if="mcMsg" class="settings-note">{{ mcMsg }}</p>
-
-        <div v-if="mcStatus" style="margin-top: 16px; border-top: 0.5px solid var(--color-border-tertiary); padding-top: 12px;">
-          <strong style="font-size: 13px;">运行状态</strong>
-          <div style="font-size: 12px; color: var(--color-text-secondary); margin-top: 8px;">
-            <p>频道: {{ mcStatus.channelId }} · 状态: {{ mcStatus.running ? '运行中' : '已停止' }}</p>
-            <p>总消息数: {{ mcStatus.totalMessages ?? 0 }}</p>
-          </div>
-          <div v-if="mcStatus.characters?.length" style="margin-top: 8px;">
-            <div v-for="c in mcStatus.characters" :key="c.characterId" style="display: flex; justify-content: space-between; font-size: 12px; padding: 4px 0; border-bottom: 0.5px solid var(--color-border-tertiary);">
-              <span>{{ c.characterName }}</span>
-              <span style="color: var(--color-text-tertiary);">评估 {{ c.urgeEvaluations }} 次 · 发言 {{ c.messagesSpoken }} 条</span>
-            </div>
-          </div>
-        </div>
-      </div>
     </section>
   </main>
 
@@ -5462,6 +5603,7 @@ async function toggleVirtual(character: any) {
           </button>
           <div v-else class="message-font-stepper" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`" @click.stop>
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize <= minMessageFontSize" @click="adjustMessageFontSize(-1)">小</button>
+            <span class="message-font-current" aria-live="polite">{{ messageFontSize }}</span>
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
           </div>
         </div>
@@ -5866,7 +6008,7 @@ async function toggleVirtual(character: any) {
         </div>
       </div>
 
-      <button v-if="hasUnreadMessages" type="button" class="new-message-jump" @click="scrollToNewest">有新消息</button>
+      <button v-if="hasUnreadMessages" type="button" class="new-message-jump" @click="scrollToNewest()">有新消息</button>
 
       <footer class="composer">
         <div v-if="replyTo" class="reply-bar">
@@ -6069,10 +6211,6 @@ async function toggleVirtual(character: any) {
         </div>
         <form class="why-topic-composer" @submit.prevent="sendWhyTopicMessage">
           <textarea v-model="whyTopicInput" rows="2" :placeholder="whyCurrentTopic.memberRole === 'owner' ? '回应为什么助手，继续研究' : '你的回应会给提问者参考，不会直接发给 AI'"></textarea>
-          <label class="composer-markdown-toggle" :class="{ active: whyTopicMarkdown }">
-            <input v-model="whyTopicMarkdown" type="checkbox" />
-            <span>Markdown</span>
-          </label>
           <button class="send-btn" type="submit" :disabled="whyBusy || !whyTopicInput.trim()"><Send :size="18" /></button>
         </form>
       </div>
@@ -6561,15 +6699,16 @@ async function toggleVirtual(character: any) {
           </section>
 
           <section v-if="adminTab === 'virtuals'" class="form-grid">
-            <label>新增虚拟角色</label>
-            <input v-model="newVirtual.username" placeholder="唯一标识，例如 ai_luna" />
-            <input v-model="newVirtual.displayName" placeholder="显示名" />
-            <button class="primary-btn" @click="addVirtual"><Bot :size="16" />创建角色</button>
+            <label>虚拟角色</label>
+            <button class="primary-btn" @click="openAiSettingsPage('virtuals')"><Bot :size="16" />前往 AI 设置管理</button>
             <div class="admin-list">
-              <button v-for="character in virtuals" :key="character.id" class="virtual-row" @click="toggleVirtual(character)">
+              <div v-for="character in virtuals" :key="character.id" class="virtual-row readonly">
+                <span class="avatar virtual-admin-avatar" :class="{ online: character.enabled }">
+                  <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
+                  <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
+                </span>
                 <span>{{ character.actor.displayName }}</span>
-                <small>{{ character.enabled ? "已启用" : "已停用" }}</small>
-              </button>
+              </div>
             </div>
           </section>
 

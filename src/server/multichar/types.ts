@@ -33,6 +33,7 @@ export interface CharacterBio {
 export interface CharacterConfig {
   bio: CharacterBio | null;
   emotionBaseline: string;
+  channels?: number[];
   modelHints?: {
     urgeModel?: string;
     mainModel?: string;

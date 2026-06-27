@@ -18,16 +18,24 @@ export function createMulticharManager(deps: MulticharDeps) {
   const engines = new Map<number, CharacterEngine>();
   const sessionChannels = new Map<number, number>();
 
-  async function loadCharacterRuntime(characterId: number) {
+  function characterAllowsChannel(rawConfig: unknown, channelId: number) {
+    const config = (rawConfig ?? {}) as Record<string, unknown>;
+    const channels = Array.isArray(config.channels) ? config.channels.map(Number).filter(Number.isFinite) : [];
+    return channels.length === 0 || channels.includes(channelId);
+  }
+
+  async function loadCharacterRuntime(characterId: number, channelId: number) {
     const vc = await deps.prisma.virtualCharacter.findUnique({
       where: { id: characterId },
       include: { actor: true },
     });
     if (!vc || !vc.enabled || vc.actor.status !== "active") return null;
+    if (!characterAllowsChannel(vc.config, channelId)) return null;
 
     const config = {
       bio: ((vc.config as any)?.multichar?.bio) ?? null,
       emotionBaseline: ((vc.config as any)?.multichar?.emotionBaseline) ?? "平静中性",
+      channels: Array.isArray((vc.config as any)?.channels) ? (vc.config as any).channels.map(Number).filter(Number.isFinite) : [],
       modelHints: ((vc.config as any)?.multichar?.modelHints) ?? undefined,
     };
 
@@ -47,7 +55,7 @@ export function createMulticharManager(deps: MulticharDeps) {
     deps.log("info", `多角色对话启动: channel ${channelId}, characters ${characterIds.join(",")}`);
 
     for (const characterId of characterIds) {
-      const runtime = await loadCharacterRuntime(characterId);
+      const runtime = await loadCharacterRuntime(characterId, channelId);
       if (!runtime) {
         deps.log("warn", `角色 ${characterId} 不可用，跳过`);
         continue;

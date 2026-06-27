@@ -38,9 +38,11 @@ export function createCharacterEngine(
   function parseConfig(rawConfig: unknown): CharacterConfig {
     const c = (rawConfig ?? {}) as Record<string, unknown>;
     const mc = (c.multichar ?? {}) as Record<string, unknown>;
+    const channels = Array.isArray(c.channels) ? c.channels.map(Number).filter(Number.isFinite) : [];
     return {
       bio: (mc.bio as CharacterConfig["bio"]) ?? null,
       emotionBaseline: String(mc.emotionBaseline ?? "平静中性"),
+      channels,
       modelHints: mc.modelHints as CharacterConfig["modelHints"] | undefined,
     };
   }
@@ -49,12 +51,17 @@ export function createCharacterEngine(
     return parseConfig(runtime.config);
   }
 
+  function characterAllowsChannel(rawConfig: unknown, chId: number) {
+    const channels = parseConfig(rawConfig).channels || [];
+    return channels.length === 0 || channels.includes(chId);
+  }
+
   async function getInStageCharacters(chId: number): Promise<{ actorId: number; characterId: number; name: string; actorIds: number[] }> {
     const characters = await deps.prisma.virtualCharacter.findMany({
       where: { enabled: true },
       include: { actor: true },
     });
-    const active = characters.filter((c: any) => c.actor.status === "active");
+    const active = characters.filter((c: any) => c.actor.status === "active" && characterAllowsChannel(c.config, chId));
     return {
       actorId: runtime.actorId,
       characterId: runtime.characterId,
@@ -170,13 +177,14 @@ ${recentText}
       return;
     }
 
+    const chId = channelId;
     const config = loadConfig();
     lastUrgeAt = new Date();
     urgeEvaluations++;
 
     try {
-      const readFromVersion = await stage.latestVersion(channelId);
-      const snapshot = await stage.getSnapshot(channelId, readFromVersion, 8);
+      const readFromVersion = await stage.latestVersion(chId);
+      const snapshot = await stage.getSnapshot(chId, readFromVersion, 8);
 
       const now = new Date();
       const lastMsg = snapshot.messages[snapshot.messages.length - 1];
@@ -204,7 +212,7 @@ ${recentText}
 
       generating = true;
 
-      const fullSnapshot = await stage.getSnapshot(channelId, readFromVersion, 30);
+      const fullSnapshot = await stage.getSnapshot(chId, readFromVersion, 30);
       const utterance = await generateUtterance(fullSnapshot, config);
 
       if (utterance.trim() === "[PASS]" || !utterance.trim()) {
@@ -213,10 +221,10 @@ ${recentText}
         return;
       }
 
-      const turnIndex = (await stage.getRecentTurnIndex(channelId)) + 1;
+      const turnIndex = (await stage.getRecentTurnIndex(chId)) + 1;
       const { version } = await stage.append(
         deps,
-        channelId,
+        chId,
         runtime.actorId,
         utterance.trim(),
         readFromVersion,
@@ -243,7 +251,7 @@ ${recentText}
         where: { enabled: true },
         include: { actor: true },
       });
-      const listenerIds = allChars.filter((c: any) => c.id !== runtime.characterId && c.actor.status === "active").map((c: any) => c.id);
+      const listenerIds = allChars.filter((c: any) => c.id !== runtime.characterId && c.actor.status === "active" && characterAllowsChannel(c.config, chId)).map((c: any) => c.id);
       const listenerNames = new Map<number, string>();
       for (const c of allChars as any[]) listenerNames.set(c.id, c.actor.displayName);
 

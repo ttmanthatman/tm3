@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.8.3.2";
+export const APP_VERSION = "0.8.4";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "从“为什么”研究返回聊天时会回到来源频道最新消息处，不再落到旧历史位置。",
+  "AI 设置页改为 LLM接入、虚拟角色、相关经文三类标签，相关经文的提示词和频率限制独立归类。",
+  "虚拟角色新增、启用、人设和出现频道统一放到 AI 设置页管理，头像绿点直接表示启用状态。",
+  "为什么研究回复框移除 Markdown 勾选；聊天字号调节在“小”和“大”之间显示当前字号。"
+] as const;
+
+const RELEASE_0_8_3_2_NOTES = [
   "主聊天室输入栏的 Markdown 勾选并入斜杠菜单，选择 `/Markdown` 后只让本条消息按 Markdown 渲染。",
   "`/Markdown` 可与 `/代祷` 和消息特效命令叠加，本条消息发送时自动写入 Markdown 格式标记。"
 ] as const;
@@ -277,9 +284,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.3.2",
+    version: "0.8.4",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.3.2",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_3_2_NOTES
   },
   {
     version: "0.8.3.1",
