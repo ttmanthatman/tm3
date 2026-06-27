@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   AtSign,
+  ArrowDown,
+  ArrowUp,
   Bell,
   BellOff,
   BookOpen,
@@ -153,7 +155,7 @@ const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLElement | null>(null);
-const adminTab = ref<"users" | "channels" | "virtuals" | "pin" | "appearance" | "data" | "release">("pin");
+const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "release">("pin");
 const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
@@ -223,6 +225,7 @@ const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
 const adminLoginLogsBusy = ref(false);
 const adminLoginLogsMsg = ref("");
 const selectedAttachmentIds = ref<string[]>([]);
+const previewAdminAttachment = ref<AdminAttachmentDTO | null>(null);
 const dataChannelFilter = ref(0);
 const devices = ref<DeviceSessionDTO[]>([]);
 const notificationMsg = ref("");
@@ -3696,6 +3699,14 @@ function addPinnedTextBlock() {
   pinnedEditBlocks.value = [...pinnedEditBlocks.value, { id: `new-${Date.now()}`, type: "text", text: "" }];
 }
 
+function movePinnedBlock(index: number, direction: -1 | 1) {
+  const targetIndex = index + direction;
+  if (targetIndex < 0 || targetIndex >= pinnedEditBlocks.value.length) return;
+  const blocks = [...pinnedEditBlocks.value];
+  [blocks[index], blocks[targetIndex]] = [blocks[targetIndex], blocks[index]];
+  pinnedEditBlocks.value = blocks;
+}
+
 function removePinnedBlock(index: number) {
   pinnedEditBlocks.value = pinnedEditBlocks.value.filter((_block, idx) => idx !== index);
 }
@@ -4753,11 +4764,10 @@ async function loadAdmin() {
   syncChannelEdits();
   showAdmin.value = true;
   if (!isAdmin.value) return;
-  const [a, v] = await Promise.all([api<{ accounts: any[] }>("/api/admin/accounts"), api<{ characters: any[] }>("/api/virtual-characters")]);
+  const a = await api<{ accounts: any[] }>("/api/admin/accounts");
   accounts.value = a.accounts;
   syncAccountEdits();
   syncChannelEdits();
-  virtuals.value = v.characters;
   noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
   if (adminTab.value === "appearance") await loadAdminAttachments();
   if (adminTab.value === "data") await loadAdminData();
@@ -4884,8 +4894,36 @@ function isImageAttachmentId(id: string) {
   return /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(fileName);
 }
 
+function adminAttachmentUrl(item: AdminAttachmentDTO | null) {
+  if (!item?.url) return "";
+  if (!item.url.startsWith("/api/")) return item.url;
+  const separator = item.url.includes("?") ? "&" : "?";
+  return `${item.url}${separator}token=${encodeURIComponent(getToken())}`;
+}
+
 function isImageAttachment(item: AdminAttachmentDTO) {
   return isImageAttachmentId(item.id) || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(item.fileName);
+}
+
+function isAudioAttachment(item: AdminAttachmentDTO) {
+  return /\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(item.fileName);
+}
+
+function isVideoAttachment(item: AdminAttachmentDTO) {
+  return /\.(mp4|m4v|mov|webm)$/i.test(item.fileName);
+}
+
+function isPdfAttachment(item: AdminAttachmentDTO) {
+  return /\.pdf$/i.test(item.fileName);
+}
+
+function openAdminAttachmentPreview(item: AdminAttachmentDTO) {
+  if (!adminAttachmentUrl(item)) return;
+  previewAdminAttachment.value = item;
+}
+
+function closeAdminAttachmentPreview() {
+  previewAdminAttachment.value = null;
 }
 
 function toggleAllAttachments() {
@@ -6394,6 +6432,24 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
+    <section v-if="previewAdminAttachment" class="modal-shell media-preview-shell" @click.self="closeAdminAttachmentPreview">
+      <div class="media-preview-modal">
+        <header class="modal-head">
+          <strong>{{ previewAdminAttachment.label || previewAdminAttachment.fileName }}</strong>
+          <div class="preview-actions">
+            <a class="icon-btn" :href="adminAttachmentUrl(previewAdminAttachment)" target="_blank" rel="noopener noreferrer" aria-label="打开文件"><Download :size="18" /></a>
+            <button class="icon-btn" @click="closeAdminAttachmentPreview" aria-label="关闭预览"><X :size="20" /></button>
+          </div>
+        </header>
+        <div class="media-preview-body admin-attachment-preview-body">
+          <img v-if="isImageAttachment(previewAdminAttachment)" class="media-preview-image admin-attachment-preview-image" :src="adminAttachmentUrl(previewAdminAttachment)" alt="附件预览" />
+          <audio v-else-if="isAudioAttachment(previewAdminAttachment)" class="media-preview-audio" :src="adminAttachmentUrl(previewAdminAttachment)" controls autoplay preload="metadata"></audio>
+          <video v-else-if="isVideoAttachment(previewAdminAttachment)" class="media-preview-video" :src="adminAttachmentUrl(previewAdminAttachment)" controls autoplay playsinline preload="metadata"></video>
+          <iframe v-else class="media-preview-frame" :src="adminAttachmentUrl(previewAdminAttachment)" :title="isPdfAttachment(previewAdminAttachment) ? '文档预览' : '文件预览'"></iframe>
+        </div>
+      </div>
+    </section>
+
     <section v-if="showPinnedEditor" class="modal-shell">
       <div class="settings-modal pinned-editor-modal">
         <header class="modal-head">
@@ -6419,7 +6475,11 @@ async function toggleVirtual(character: any) {
                   </span>
                 </div>
               </template>
-              <button class="mini-btn danger-action" @click="removePinnedBlock(index)"><Trash2 :size="15" />删除此块</button>
+              <div class="pinned-editor-block-actions">
+                <button class="mini-btn secondary" :disabled="index === 0" @click="movePinnedBlock(index, -1)"><ArrowUp :size="15" />上移</button>
+                <button class="mini-btn secondary" :disabled="index === pinnedEditBlocks.length - 1" @click="movePinnedBlock(index, 1)"><ArrowDown :size="15" />下移</button>
+                <button class="mini-btn danger-action" @click="removePinnedBlock(index)"><Trash2 :size="15" />删除此块</button>
+              </div>
             </article>
           </div>
           <button class="mini-btn secondary" @click="addPinnedTextBlock">添加文字</button>
@@ -6622,7 +6682,6 @@ async function toggleVirtual(character: any) {
           <button :class="{ active: adminTab === 'pin' }" @click="switchAdminTab('pin')"><Pin :size="16" />置顶</button>
           <button :class="{ active: adminTab === 'users' }" @click="switchAdminTab('users')"><Users :size="16" />用户</button>
           <button :class="{ active: adminTab === 'channels' }" @click="switchAdminTab('channels')"><Menu :size="16" />频道</button>
-          <button :class="{ active: adminTab === 'virtuals' }" @click="switchAdminTab('virtuals')"><Bot :size="16" />虚拟角色</button>
           <button :class="{ active: adminTab === 'appearance' }" @click="switchAdminTab('appearance')"><Palette :size="16" />外观</button>
           <button :class="{ active: adminTab === 'data' }" @click="switchAdminTab('data')"><Download :size="16" />数据</button>
           <button :class="{ active: adminTab === 'release' }" @click="switchAdminTab('release')"><Info :size="16" />版本</button>
@@ -6691,20 +6750,6 @@ async function toggleVirtual(character: any) {
                   <button v-if="channel.canManage && !channel.isDefault && !channel.directKey" class="mini-btn danger-action" @click="deleteChannel(channel)"><Trash2 :size="15" />删除</button>
                 </article>
               </template>
-            </div>
-          </section>
-
-          <section v-if="adminTab === 'virtuals'" class="form-grid">
-            <label>虚拟角色</label>
-            <button class="primary-btn" @click="openAiSettingsPage('virtuals')"><Bot :size="16" />前往 AI 设置管理</button>
-            <div class="admin-list">
-              <div v-for="character in virtuals" :key="character.id" class="virtual-row readonly">
-                <span class="avatar virtual-admin-avatar" :class="{ online: virtualEnabled(character) }">
-                  <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
-                  <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
-                </span>
-                <span>{{ character.actor.displayName }}</span>
-              </div>
             </div>
           </section>
 
@@ -7039,10 +7084,17 @@ async function toggleVirtual(character: any) {
                 <label class="check-cell">
                   <input v-model="selectedAttachmentIds" type="checkbox" :value="attachment.id" />
                 </label>
-                <div class="attachment-preview" :class="{ empty: !attachment.url || !isImageAttachment(attachment) }">
-                  <img v-if="attachment.url && isImageAttachment(attachment)" :src="attachment.url" alt="" />
+                <button
+                  type="button"
+                  class="attachment-preview"
+                  :class="{ empty: !adminAttachmentUrl(attachment) || !isImageAttachment(attachment) }"
+                  :disabled="!adminAttachmentUrl(attachment)"
+                  @click="openAdminAttachmentPreview(attachment)"
+                  :aria-label="`预览 ${attachment.label}`"
+                >
+                  <img v-if="adminAttachmentUrl(attachment) && isImageAttachment(attachment)" :src="adminAttachmentUrl(attachment)" alt="" />
                   <FileUp v-else :size="24" />
-                </div>
+                </button>
                 <div class="admin-data-main">
                   <strong>{{ attachmentKindLabel(attachment.kind) }} · {{ attachment.label }}</strong>
                   <span>{{ attachmentUsage(attachment) }}</span>

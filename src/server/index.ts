@@ -4168,6 +4168,10 @@ function attachmentId(kind: AdminAttachmentDTO["kind"], fileName: string) {
   return `${kind}:${path.basename(fileName)}`;
 }
 
+function adminAttachmentFileUrl(kind: AdminAttachmentDTO["kind"], fileName: string) {
+  return `/api/admin/attachments/file/${kind}/${encodeURIComponent(path.basename(fileName))}`;
+}
+
 function parseAttachmentId(id: string) {
   const [kind, ...rest] = String(id || "").split(":");
   const fileName = path.basename(rest.join(":"));
@@ -4266,7 +4270,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       label: file.name,
       size: file.size,
       createdAt: file.createdAt.toISOString(),
-      url: undefined,
+      url: adminAttachmentFileUrl("upload", file.name),
       usage: []
     });
   }
@@ -4282,7 +4286,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       label: message.fileName || fileName,
       size: current?.size || message.fileSize || 0,
       createdAt: message.createdAt.toISOString(),
-      url: `/api/files/${message.id}`,
+      url: adminAttachmentFileUrl("upload", fileName),
       messageId: message.id,
       channelName: message.channel.name,
       ownerName: message.sender.displayName,
@@ -4304,7 +4308,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
         label: current?.label || block.fileName || fileName,
         size: current?.size || block.fileSize || 0,
         createdAt: current?.createdAt || pin.createdAt.toISOString(),
-        url: current?.url || `/api/channels/${pin.channelId}/pinned/files/${encodeURIComponent(fileName)}`,
+        url: current?.url || adminAttachmentFileUrl("upload", fileName),
         messageId: current?.messageId,
         channelName: current?.channelName || pin.channel.name,
         ownerName: current?.ownerName,
@@ -4322,7 +4326,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       label: usage[0] || file.name,
       size: file.size,
       createdAt: file.createdAt.toISOString(),
-      url: `/avatars/${encodeURIComponent(file.name)}`,
+      url: adminAttachmentFileUrl("avatar", file.name),
       usage
     });
   }
@@ -4347,7 +4351,7 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       label: usage[0] || file.name,
       size: file.size,
       createdAt: file.createdAt.toISOString(),
-      url: `/backgrounds/${encodeURIComponent(file.name)}`,
+      url: adminAttachmentFileUrl("background", file.name),
       usage
     });
   }
@@ -4983,6 +4987,39 @@ app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request, 
 
 app.get("/api/admin/attachments", { preHandler: requireAdmin }, async () => {
   return { attachments: await adminAttachmentList() };
+});
+
+app.get("/api/admin/attachments/file/:kind/:file", { preHandler: requireAdmin }, async (request, reply) => {
+  const { kind, file } = request.params as { kind: AdminAttachmentDTO["kind"]; file: string };
+  const query = request.query as { download?: string };
+  if (kind !== "upload" && kind !== "avatar" && kind !== "background") return reply.code(404).send("Not found");
+  const fileName = path.basename(file);
+  const filePath = storageFilePath(kind, fileName);
+  if (!fileName || !fs.existsSync(filePath)) return reply.code(404).send("Not found");
+  const stat = fs.statSync(filePath);
+  const range = request.headers.range;
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Accept-Ranges", "bytes");
+  reply.header("Content-Type", contentTypeForFile(fileName));
+  reply.header("Content-Disposition", `${query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (match) {
+      const start = match[1] ? Number(match[1]) : 0;
+      const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < stat.size) {
+        reply.code(206);
+        reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
+        reply.header("Content-Length", String(end - start + 1));
+        return reply.send(fs.createReadStream(filePath, { start, end }));
+      }
+    }
+    reply.code(416);
+    reply.header("Content-Range", `bytes */${stat.size}`);
+    return reply.send();
+  }
+  reply.header("Content-Length", String(stat.size));
+  return reply.send(fs.createReadStream(filePath));
 });
 
 app.delete("/api/admin/attachments", { preHandler: requireAdmin }, async (request, reply) => {

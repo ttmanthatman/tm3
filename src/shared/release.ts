@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.1";
+export const APP_VERSION = "0.8.4.2";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理面板移除虚拟角色标签，虚拟角色统一从 AI 设置页管理。",
+  "管理员附件管理改为横向文件信息排版，并使用管理员专用预览接口修复图片破图。",
+  "附件管理支持图片、音频、视频、PDF 和其它文件预览；置顶消息编辑里的块可以上移和下移调整顺序。"
+] as const;
+
+const RELEASE_0_8_4_1_NOTES = [
   "AI 设置页的虚拟角色标签只保留一套角色列表，为什么助手和所罗没门不再重复出现。",
   "为什么助手、所罗没门和其他虚拟角色统一使用同一张角色设置卡片。",
   "每个虚拟角色都显示弱激活判断体，并且内置角色停用后不会被读取设置时自动重新启用。"
@@ -290,9 +296,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4.1",
+    version: "0.8.4.2",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4.1",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_4_1_NOTES
   },
   {
     version: "0.8.4",
