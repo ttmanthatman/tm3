@@ -269,6 +269,8 @@ pm2 restart team-chat --update-env
 
 ## 手动开发与部署
 
+开发前先看 [Development Index](docs/development-index.md)。它记录了模块地图、常见回归区、移动端弹窗/手势检查清单和发布前检查命令。
+
 环境要求：
 
 - Node.js 22 或更新版本。

@@ -1161,8 +1161,15 @@ button {
   from { transform: translateX(-48px); opacity: 0.35; }
   to { transform: translateX(0); opacity: 1; }
 }
-.messages-viewport.panel-switch-in-right { animation: panel-in-right 0.28s ease; }
-.messages-viewport.panel-switch-in-left { animation: panel-in-left 0.28s ease; }
+.messages-viewport.panel-switch-in-right .messages-scroll,
+.messages-viewport.panel-switch-in-right .future-panel {
+  animation: panel-in-right 0.28s ease;
+}
+
+.messages-viewport.panel-switch-in-left .messages-scroll,
+.messages-viewport.panel-switch-in-left .future-panel {
+  animation: panel-in-left 0.28s ease;
+}
 
 .messages-scroll {
   min-height: 0;
@@ -3052,18 +3059,20 @@ button {
 .modal-shell {
   position: fixed;
   inset: 0;
-  z-index: 20;
-  padding: calc(var(--safe-top) + 16px) 16px calc(var(--safe-bottom) + 16px);
+  z-index: 40;
+  padding: max(12px, calc(var(--safe-top) + 12px)) 12px max(12px, calc(var(--safe-bottom) + 12px));
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, 0.28);
+  overflow: hidden;
 }
 
 .admin-modal,
 .settings-modal,
 .small-modal {
   width: min(760px, 100%);
-  max-height: min(760px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 32px));
+  min-height: 0;
+  max-height: min(760px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 24px));
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   background: #fff;
@@ -3085,6 +3094,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  background: #fff;
   border-bottom: 1px solid var(--line);
 }
 
@@ -3397,6 +3407,8 @@ button {
   min-height: 0;
   padding: 16px;
   overflow: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .admin-list {
@@ -5203,6 +5215,28 @@ button {
 
   .composer {
     padding: 6px 7px var(--composer-bottom-gap);
+  }
+
+  .modal-shell {
+    padding: max(8px, calc(var(--safe-top) + 8px)) 8px max(8px, calc(var(--safe-bottom) + 8px));
+    place-items: center;
+  }
+
+  .admin-modal,
+  .settings-modal,
+  .small-modal {
+    width: 100%;
+    max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 16px);
+  }
+
+  .modal-head {
+    min-height: 48px;
+    padding: 0 10px;
+  }
+
+  .tabs button {
+    min-height: 44px;
+    padding: 0 12px;
   }
 
   .composer-main {

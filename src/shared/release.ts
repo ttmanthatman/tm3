@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.2";
+export const APP_VERSION = "0.8.4.3";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "三面板滑动切换改为更稳的距离和方向判断，短距离快滑、斜向滚动和取消手势不会突然切到 AI 助手或主频道。",
+  "设置、管理、置顶、接龙和确认类弹窗都支持点击窗口外关闭，手机端长内容会在弹窗内滚动，关闭区不再被顶出屏幕。",
+  "新增开发索引和三面板手势测试，把移动端弹窗、频道切换和版本发布的高风险检查集中记录，后续改动更容易验证。"
+] as const;
+
+const RELEASE_0_8_4_2_NOTES = [
   "管理面板移除虚拟角色标签，虚拟角色统一从 AI 设置页管理。",
   "管理员附件管理改为横向文件信息排版，并使用管理员专用预览接口修复图片破图。",
   "附件管理支持图片、音频、视频、PDF 和其它文件预览；置顶消息编辑里的块可以上移和下移调整顺序。"
@@ -296,9 +302,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4.2",
+    version: "0.8.4.3",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4.2",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_4_2_NOTES
   },
   {
     version: "0.8.4.1",

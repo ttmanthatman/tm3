@@ -95,6 +95,16 @@ import type {
 import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
+import {
+  PANEL_ORDER,
+  nextPanelAfterSwipe,
+  normalizeChatPanel,
+  panelDragOffset,
+  panelSwitchDirection,
+  resolveSwipeAxis,
+  type ChatPanel,
+  type SwipeAxis
+} from "./panelSwipe";
 import { useChatStore } from "./store";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -329,12 +339,10 @@ const composerPanel = ref<"voice" | "more" | null>(null);
 const workspace = ref<"chat" | "why">("chat");
 
 // === 左右滑动切换三面板（future | main | ai） ===
-const chatPanel = ref<"future" | "main" | "ai">(
-  (localStorage.getItem("tm3-chat-panel") as "future" | "main" | "ai") || "main"
-);
+const chatPanel = ref<ChatPanel>(normalizeChatPanel(localStorage.getItem("tm3-chat-panel")));
+const lastMainChannelId = ref(Number(localStorage.getItem("tm3-last-main-channel") || 0));
 const panelDragX = ref(0);
 const panelDragging = ref(false);
-const PANEL_ORDER = ["future", "main", "ai"] as const;
 const chatPaneStyle = computed<Record<string, string>>(() => ({
   transform: `translateX(${panelDragX.value}px)`,
   transition: panelDragging.value ? "none" : "transform 0.28s ease",
@@ -351,8 +359,67 @@ let panelPointerId = -1;
 let panelStartX = 0;
 let panelStartY = 0;
 let panelStartT = 0;
-let panelAxis: "x" | "y" | null = null;
+let panelAxis: SwipeAxis | null = null;
 let panelActive = false;
+let panelSwitchTimer = 0;
+
+function setChatPanel(panel: ChatPanel) {
+  chatPanel.value = panel;
+  localStorage.setItem("tm3-chat-panel", panel);
+}
+
+function mainPanelChannel() {
+  const remembered = store.channels.find((channel) => channel.id === lastMainChannelId.value && channel.kind !== "aiLounge");
+  return remembered || store.channels.find((channel) => channel.id === store.currentChannelId && channel.kind !== "aiLounge") || store.defaultChannel;
+}
+
+function rememberMainChannel(channelId: number) {
+  const channel = store.channels.find((item) => item.id === channelId);
+  if (!channel || channel.kind === "aiLounge") return;
+  lastMainChannelId.value = channel.id;
+  localStorage.setItem("tm3-last-main-channel", String(channel.id));
+}
+
+function channelPanel(channel?: ChannelDTO | null): ChatPanel {
+  return channel?.kind === "aiLounge" ? "ai" : "main";
+}
+
+async function switchVisibleChannel(channelId: number, prayerOnly = false) {
+  const channel = store.channels.find((item) => item.id === channelId);
+  setChatPanel(channelPanel(channel));
+  if (channel?.kind !== "aiLounge") rememberMainChannel(channelId);
+  if (prayerOnly) await store.switchPrayerView(channelId);
+  else await store.switchChannel(channelId);
+}
+
+async function openChannelFromList(channelId: number, prayerOnly = false) {
+  saveReadPosition();
+  workspace.value = "chat";
+  await switchVisibleChannel(channelId, prayerOnly);
+  showChannels.value = false;
+}
+
+async function syncChatPanelChannel() {
+  if (chatPanel.value === "future") return;
+  if (chatPanel.value === "ai") {
+    const ch = store.aiChannel;
+    if (ch && store.currentChannelId !== ch.id) await store.switchChannel(ch.id);
+    return;
+  }
+  const ch = mainPanelChannel();
+  if (!ch) return;
+  rememberMainChannel(ch.id);
+  if (store.currentChannelId !== ch.id) await store.switchChannel(ch.id);
+}
+
+function markPanelSwitch(direction: 1 | -1) {
+  panelSwitchIn.value = direction;
+  if (panelSwitchTimer) window.clearTimeout(panelSwitchTimer);
+  panelSwitchTimer = window.setTimeout(() => {
+    panelSwitchIn.value = 0;
+    panelSwitchTimer = 0;
+  }, 300);
+}
 
 function onPanelPointerDown(e: PointerEvent) {
   if (previewMessage.value) return;
@@ -370,8 +437,8 @@ function onPanelPointerMove(e: PointerEvent) {
   const dx = e.clientX - panelStartX;
   const dy = e.clientY - panelStartY;
   if (!panelAxis) {
-    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
-    panelAxis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+    panelAxis = resolveSwipeAxis(dx, dy);
+    if (!panelAxis) return;
     if (panelAxis === "x") {
       panelActive = true;
       panelDragging.value = true;
@@ -380,17 +447,11 @@ function onPanelPointerMove(e: PointerEvent) {
   }
   if (panelAxis !== "x") return;
   e.preventDefault();
-  const idx = PANEL_ORDER.indexOf(chatPanel.value);
-  let nx = dx;
-  if ((idx === 0 && dx > 0) || (idx === 2 && dx < 0)) nx = dx * 0.35;
-  panelDragX.value = nx;
+  panelDragX.value = panelDragOffset(chatPanel.value, dx);
 }
 
-function onPanelPointerUp(e: PointerEvent) {
+function resetPanelPointer(e: PointerEvent) {
   if (panelPointerId !== e.pointerId) return;
-  const wasX = panelAxis === "x";
-  const dx = e.clientX - panelStartX;
-  const dt = Date.now() - panelStartT;
   panelPointerId = -1;
   if (panelActive) {
     try { (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId); } catch {}
@@ -398,27 +459,34 @@ function onPanelPointerUp(e: PointerEvent) {
   panelActive = false;
   panelDragging.value = false;
   panelDragX.value = 0;
-  if (previewMessage.value || !wasX) return;
-  const threshold = window.innerWidth * 0.2;
-  const speed = dt > 0 ? Math.abs(dx) / dt : 0;
-  if (Math.abs(dx) > threshold || speed > 0.5) {
-    const idx = PANEL_ORDER.indexOf(chatPanel.value);
-    const dir = dx < 0 ? 1 : -1;
-    const ni = Math.min(2, Math.max(0, idx + dir));
-    if (ni !== idx) {
-      panelSwitchIn.value = dir;
-      switchPanel(PANEL_ORDER[ni]);
-      window.setTimeout(() => { panelSwitchIn.value = 0; }, 300);
-    }
-  }
 }
 
-async function switchPanel(p: "future" | "main" | "ai") {
-  chatPanel.value = p;
-  localStorage.setItem("tm3-chat-panel", p);
+function onPanelPointerUp(e: PointerEvent) {
+  if (panelPointerId !== e.pointerId) return;
+  const wasX = panelAxis === "x";
+  const dx = e.clientX - panelStartX;
+  const dy = e.clientY - panelStartY;
+  const dt = Date.now() - panelStartT;
+  const fromPanel = chatPanel.value;
+  const nextPanel = wasX && !previewMessage.value
+    ? nextPanelAfterSwipe({ currentPanel: fromPanel, dx, dy, elapsedMs: dt, viewportWidth: window.innerWidth })
+    : null;
+  resetPanelPointer(e);
+  if (!nextPanel) return;
+  markPanelSwitch(panelSwitchDirection(fromPanel, nextPanel));
+  void switchPanel(nextPanel);
+}
+
+function onPanelPointerCancel(e: PointerEvent) {
+  resetPanelPointer(e);
+}
+
+async function switchPanel(p: ChatPanel) {
+  setChatPanel(p);
   if (p === "main") {
-    const ch = store.defaultChannel;
+    const ch = mainPanelChannel();
     if (ch) await store.switchChannel(ch.id);
+    if (ch) rememberMainChannel(ch.id);
   } else if (p === "ai") {
     const ch = store.aiChannel;
     if (ch) await store.switchChannel(ch.id);
@@ -622,6 +690,7 @@ onMounted(async () => {
   window.addEventListener("why:updated", handleWhyUpdated as EventListener);
   window.addEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   await store.bootstrap();
+  await syncChatPanelChannel();
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
     await loadVirtualCharacters().catch(() => { virtuals.value = []; });
@@ -656,6 +725,16 @@ watch(
     pendingReadPositionRestore.value = true;
     await nextTick();
     void restoreSavedReadPosition();
+  }
+);
+
+watch(
+  () => [store.currentChannelId, store.channels.map((channel) => `${channel.id}:${channel.kind}`).join("|")] as const,
+  () => {
+    const channel = store.channels.find((item) => item.id === store.currentChannelId);
+    if (!channel || chatPanel.value === "future") return;
+    setChatPanel(channelPanel(channel));
+    if (channel.kind !== "aiLounge") rememberMainChannel(channel.id);
   }
 );
 
@@ -790,6 +869,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("why:updated", handleWhyUpdated as EventListener);
   window.removeEventListener("why:messages-refresh", handleWhyMessagesRefresh as EventListener);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
+  if (panelSwitchTimer) window.clearTimeout(panelSwitchTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
@@ -1724,7 +1804,7 @@ async function restoreSavedReadPosition() {
 async function jumpToMessageInChannel(channelId: number, messageId: number) {
   if (store.currentChannelId !== channelId) {
     saveReadPosition();
-    await store.switchChannel(channelId);
+    await switchVisibleChannel(channelId);
     await nextTick();
   }
   jumpToReply(messageId);
@@ -1777,7 +1857,7 @@ async function switchToLinkedChannel() {
   if (!channelId || !store.channels.some((channel) => channel.id === channelId)) return;
   workspace.value = "chat";
   saveReadPosition();
-  await store.switchChannel(channelId);
+  await switchVisibleChannel(channelId);
   params.delete("channelId");
   const nextQuery = params.toString();
   window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`);
@@ -2548,7 +2628,7 @@ async function returnToChatWorkspace() {
   if (whyCurrentTopic.value?.channelId) {
     saveNewestReadPosition(whyCurrentTopic.value.channelId, false);
     if (store.currentChannelId !== whyCurrentTopic.value.channelId || store.prayerOnly) {
-      await store.switchChannel(whyCurrentTopic.value.channelId);
+      await switchVisibleChannel(whyCurrentTopic.value.channelId);
     }
   }
   workspace.value = "chat";
@@ -2725,7 +2805,7 @@ async function startPrivateChat(member: MemberActionTarget) {
     store.channels = [result.channel, ...store.channels];
   }
   saveReadPosition();
-  await store.switchChannel(result.channel.id);
+  await switchVisibleChannel(result.channel.id);
   await nextTick();
   await restoreSavedReadPosition();
 }
@@ -5557,7 +5637,7 @@ async function toggleVirtual(character: any) {
         <button
           class="channel-row"
           :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && !store.prayerOnly }"
-          @click="saveReadPosition(); workspace = 'chat'; store.switchChannel(channel.id); showChannels = false"
+          @click="openChannelFromList(channel.id)"
         >
           <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
           <span>
@@ -5568,7 +5648,7 @@ async function toggleVirtual(character: any) {
         <button
           class="channel-row channel-subrow"
           :class="{ active: workspace === 'chat' && channel.id === store.currentChannelId && store.prayerOnly }"
-          @click="saveReadPosition(); workspace = 'chat'; store.switchPrayerView(channel.id); showChannels = false"
+          @click="openChannelFromList(channel.id, true)"
         >
           <span class="channel-icon prayer-icon"><HeartHandshake :size="20" /></span>
           <span>
@@ -5688,7 +5768,7 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <section v-if="visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息">
+      <section v-if="visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
         <div class="pinned-view-modal">
           <header class="pinned-view-head">
             <span class="pinned-view-icon"><Pin :size="17" /></span>
@@ -5724,7 +5804,7 @@ async function toggleVirtual(character: any) {
            @pointerdown="onPanelPointerDown"
            @pointermove="onPanelPointerMove"
            @pointerup="onPanelPointerUp"
-           @pointercancel="onPanelPointerUp">
+           @pointercancel="onPanelPointerCancel">
         <div v-if="chatPanel === 'future'" class="future-panel">
           <div class="panel-placeholder">
             <div class="panel-placeholder-icon" aria-hidden="true">✨</div>
@@ -6290,7 +6370,7 @@ async function toggleVirtual(character: any) {
 
     <div v-if="showChannels || showMembers" class="scrim" @click="showChannels = false; showMembers = false"></div>
 
-    <section v-if="showChainModal" class="modal-shell">
+    <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">
       <form class="small-modal" @submit.prevent="createChain">
         <header class="modal-head">
           <strong>发起接龙</strong>
@@ -6450,7 +6530,7 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showPinnedEditor" class="modal-shell">
+    <section v-if="showPinnedEditor" class="modal-shell" @click.self="showPinnedEditor = false">
       <div class="settings-modal pinned-editor-modal">
         <header class="modal-head">
           <strong>编辑置顶消息</strong>
@@ -6493,7 +6573,7 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="pendingCloseChannel" class="modal-shell">
+    <section v-if="pendingCloseChannel" class="modal-shell" @click.self="pendingCloseChannel = null">
       <div class="small-modal">
         <header class="modal-head">
           <strong>关闭私聊</strong>
@@ -6533,7 +6613,7 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showSettings" class="modal-shell">
+    <section v-if="showSettings" class="modal-shell" @click.self="showSettings = false">
       <div class="settings-modal">
         <header class="modal-head">
           <strong>设置</strong>
@@ -6669,7 +6749,7 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showAdmin" class="modal-shell">
+    <section v-if="showAdmin" class="modal-shell" @click.self="closeAdminPanel">
       <div class="admin-modal">
         <header class="modal-head">
           <strong>管理面板</strong>
