@@ -12,6 +12,7 @@ import {
   CloudRain,
   Droplet,
   Download,
+  FileText,
   FilePlus,
   FileUp,
   CheckCircle2,
@@ -119,7 +120,6 @@ const displayName = ref("");
 const authMode = ref<"login" | "register">("login");
 const loginError = ref("");
 const input = ref("");
-const composerMarkdown = ref(false);
 const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
@@ -597,9 +597,11 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
 const whyCommand = { command: "/为什么", label: "为什么", hint: "把问题放进我的为什么研究", icon: BookOpen };
 const whyShortcutCommand = { command: "/?", label: "为什么", hint: "打开我的为什么", icon: BookOpen };
+const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
 type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "why"; command: string; label: string; hint: string; icon: IconComponent }
+  | { kind: "format"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
 type VoicePayload = {
@@ -1019,14 +1021,18 @@ const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
   const token = slashCommandToken.value;
   if (!token) return [];
   if (token.kind === "prayer-effect") {
-    return effectCommands.filter((item) => item.command.startsWith(token.query)).map((item) => ({ ...item, kind: "effect" as const }));
+    return [
+      { ...markdownCommand, kind: "format" as const },
+      ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
+    ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
   }
   return [
+    { ...markdownCommand, kind: "format" as const },
     { ...whyCommand, kind: "why" as const },
     { ...whyShortcutCommand, kind: "why" as const },
     { ...prayerCommand, kind: "prayer" as const },
     ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
-  ].filter((item) => item.command.startsWith(token.query));
+  ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
 });
 const mentionToken = computed(() => mentionTokenAtCursor(input.value, composerCaret.value));
 const matchingMentionMembers = computed(() => {
@@ -2171,21 +2177,49 @@ function parseWhyComposerTrigger(value: string): { kind: "none" } | { kind: "sho
   return { kind: "none" };
 }
 
-function parseComposerText(value: string): { content: string; effect?: MessageEffect; type?: "text" | "prayer" } {
-  const trimmed = value.trim();
-  if (trimmed === "/代祷" || trimmed.startsWith("/代祷 ") || trimmed.startsWith("/代祷\n")) {
-    let content = trimmed.slice("/代祷".length).trim();
-    let effect: MessageEffect | undefined;
-    const effectCommand = effectCommands.find((item) => content === item.command || content.startsWith(`${item.command} `) || content.startsWith(`${item.command}\n`));
-    if (effectCommand) {
-      effect = effectCommand.effect;
-      content = content.slice(effectCommand.command.length).trim();
+type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer"; contentFormat?: "markdown" };
+
+function consumeLeadingCommand(value: string, command: string) {
+  if (value === command) return "";
+  if (value.startsWith(`${command} `) || value.startsWith(`${command}\n`)) return value.slice(command.length).trim();
+  return null;
+}
+
+function parseComposerText(value: string): ComposerParseResult {
+  let content = value.trim();
+  let effect: MessageEffect | undefined;
+  let type: "text" | "prayer" | undefined;
+  let contentFormat: "markdown" | undefined;
+  let consumed = true;
+
+  while (consumed) {
+    consumed = false;
+    const markdownContent = consumeLeadingCommand(content, markdownCommand.command);
+    if (markdownContent !== null) {
+      contentFormat = "markdown";
+      content = markdownContent;
+      consumed = true;
+      continue;
     }
-    return { content, effect, type: "prayer" };
+    const prayerContent = consumeLeadingCommand(content, prayerCommand.command);
+    if (prayerContent !== null) {
+      type = "prayer";
+      content = prayerContent;
+      consumed = true;
+      continue;
+    }
+    for (const command of effectCommands) {
+      const effectContent = consumeLeadingCommand(content, command.command);
+      if (effectContent === null) continue;
+      effect = command.effect;
+      if (!type) type = "text";
+      content = effectContent;
+      consumed = true;
+      break;
+    }
   }
-  const command = effectCommands.find((item) => trimmed === item.command || trimmed.startsWith(`${item.command} `) || trimmed.startsWith(`${item.command}\n`));
-  if (!command) return { content: trimmed };
-  return { content: trimmed.slice(command.command.length).trim(), effect: command.effect, type: "text" };
+
+  return { content, effect, type, contentFormat };
 }
 
 function mentionTokenAtCursor(value: string, caret: number) {
@@ -2302,7 +2336,7 @@ async function sendText() {
   const messagePayload = {
     ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
     ...(parsed.effect ? { effect: parsed.effect } : {}),
-    ...(composerMarkdown.value ? { contentFormat: "markdown" } : {})
+    ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {})
   };
   const payload = {
     channelId: store.currentChannelId,
@@ -5854,10 +5888,6 @@ async function toggleVirtual(character: any) {
               @keydown="onKeydown"
               @paste="handleComposerPaste"
             ></textarea>
-            <label class="composer-markdown-toggle" :class="{ active: composerMarkdown }">
-              <input v-model="composerMarkdown" type="checkbox" />
-              <span>Markdown</span>
-            </label>
             <button class="send-btn" :disabled="!canSendText" @click="sendText" aria-label="发送"><Send :size="19" /></button>
             <button class="icon-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
             <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />

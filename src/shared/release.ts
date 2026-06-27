@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.8.3.1";
+export const APP_VERSION = "0.8.3.2";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "主聊天室输入栏的 Markdown 勾选并入斜杠菜单，选择 `/Markdown` 后只让本条消息按 Markdown 渲染。",
+  "`/Markdown` 可与 `/代祷` 和消息特效命令叠加，本条消息发送时自动写入 Markdown 格式标记。"
+] as const;
+
+const RELEASE_0_8_3_1_NOTES = [
   "一键更新把前端和服务端构建拆成独立步骤，失败时能准确显示卡在客户端还是服务端构建。",
   "更新脚本会记录服务器内存、磁盘和构建 Node 内存上限，方便排查退出码 137 这类 OOM 问题。",
   "构建阶段默认使用较低的 Node 内存上限，可通过 `UPDATE_NODE_MAX_OLD_SPACE_SIZE` 调整，降低小内存 VPS 被系统直接杀掉的概率。"
@@ -272,9 +277,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.3.1",
+    version: "0.8.3.2",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.3.1",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_3_1_NOTES
   },
   {
     version: "0.8.3",
