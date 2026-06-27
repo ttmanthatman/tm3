@@ -3,7 +3,7 @@ import type { MulticharDeps } from "./types.js";
 export function createAiClient(deps: MulticharDeps) {
   async function callLlm(
     messages: { role: "system" | "user" | "assistant"; content: string }[],
-    options?: { model?: string; temperature?: number; maxTokens?: number; timeoutMs?: number }
+    options?: { model?: string; temperature?: number; maxTokens?: number; timeoutMs?: number; thinkingEnabled?: boolean }
   ): Promise<string> {
     const aiSettings = await deps.loadAiSettings();
     const apiKey = deps.decryptAiApiKey(aiSettings.encryptedApiKey);
@@ -24,7 +24,7 @@ export function createAiClient(deps: MulticharDeps) {
         body: JSON.stringify({
           model,
           messages,
-          thinking: { type: "disabled" },
+          thinking: { type: options?.thinkingEnabled ? "enabled" : "disabled" },
           stream: false,
           temperature: options?.temperature ?? 0.8,
           max_tokens: options?.maxTokens ?? 1024,
@@ -75,14 +75,15 @@ export function createAiClient(deps: MulticharDeps) {
   async function callMainModel(
     systemPrompt: string,
     userPrompt: string,
-    model?: string
+    model?: string,
+    thinkingEnabled?: boolean
   ): Promise<string> {
     return callLlm(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
       ],
-      { model, temperature: 0.85, maxTokens: 1024, timeoutMs: 60_000 }
+      { model, temperature: 0.85, maxTokens: 1024, timeoutMs: 60_000, thinkingEnabled }
     );
   }
 

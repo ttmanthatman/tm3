@@ -135,6 +135,9 @@ export function createCharacterEngine(
     const lastMessage = snapshot.messages[snapshot.messages.length - 1];
     const silenceSeconds = lastMessage ? Math.round((now.getTime() - lastMessage.wallClock.getTime()) / 1000) : 999;
 
+    const longTermMemory = [config.manualMemory?.longTerm, ...recalled.longTerm].filter((item): item is string => !!item);
+    const recentMemory = [config.manualMemory?.shortTerm, ...recalled.midTerm].filter((item): item is string => !!item);
+
     const systemPrompt = `你是以下这个人。完全融入这个人格发言。
 
 ${buildBioText(config)}
@@ -144,10 +147,13 @@ ${buildBioText(config)}
 
 你的记忆：
 长期判断：
-${recalled.longTerm.map((l: string) => `- ${l}`).join("\n") || "-（暂无）"}
+${longTermMemory.map((l: string) => `- ${l}`).join("\n") || "-（暂无）"}
+
+中期背景：
+${config.manualMemory?.midTerm ? `- ${config.manualMemory.midTerm}` : "-（暂无）"}
 
 近期情景：
-${recalled.midTerm.map((m: string) => `- ${m}`).join("\n") || "-（暂无）"}
+${recentMemory.map((m: string) => `- ${m}`).join("\n") || "-（暂无）"}
 
 你对在场者的印象：
 ${impressionLines || "-（暂无）"}
@@ -168,7 +174,7 @@ ${recentText}
 
 以 ${runtime.name} 的身份发言：`;
 
-    return ai.callMainModel(systemPrompt, userPrompt, config.modelHints?.mainModel);
+    return ai.callMainModel(systemPrompt, userPrompt, config.modelHints?.mainModel, config.thinkingEnabled);
   }
 
   async function tick() {

@@ -36,6 +36,8 @@ export function createMulticharManager(deps: MulticharDeps) {
       bio: ((vc.config as any)?.multichar?.bio) ?? null,
       emotionBaseline: ((vc.config as any)?.multichar?.emotionBaseline) ?? "平静中性",
       channels: Array.isArray((vc.config as any)?.channels) ? (vc.config as any).channels.map(Number).filter(Number.isFinite) : [],
+      manualMemory: ((vc.config as any)?.manualMemory) ?? {},
+      thinkingEnabled: Boolean((vc.config as any)?.generation?.thinkingEnabled),
       modelHints: ((vc.config as any)?.multichar?.modelHints) ?? undefined,
     };
 

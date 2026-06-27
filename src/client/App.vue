@@ -170,7 +170,18 @@ const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
 const newChannel = ref({ name: "", description: "", isPrivate: false });
-const newVirtual = ref({ username: "", displayName: "", persona: "", channelIds: [] as number[], enabled: true });
+const newVirtual = ref({
+  username: "",
+  displayName: "",
+  model: "",
+  thinkingEnabled: false,
+  persona: "",
+  shortTermMemory: "",
+  midTermMemory: "",
+  longTermMemory: "",
+  channelIds: [] as number[],
+  enabled: true
+});
 const virtuals = ref<any[]>([]);
 const mcStatus = ref<any | null>(null);
 const mcSelectedChannelId = ref<number | null>(null);
@@ -1906,6 +1917,12 @@ function syncAiSettingsEdit(settings: AiSettingsDTO) {
     promptCommand: settings.promptCommand,
     aiRoles: (settings.aiRoles || []).map((role) => ({
       ...role,
+      model: role.model || "",
+      thinkingEnabled: !!role.thinkingEnabled,
+      shortTermMemory: role.shortTermMemory || "",
+      midTermMemory: role.midTermMemory || "",
+      longTermMemory: role.longTermMemory || "",
+      channelIds: role.channelIds || [],
       contextTurnLimit: role.contextTurnLimit || (role.username === "ai_slmm" ? 10 : undefined),
       contextWindowMinutes: role.contextWindowMinutes || (role.username === "ai_slmm" ? 10 : undefined)
     })),
@@ -1929,6 +1946,10 @@ function aiRoleForCharacter(character: any) {
 function virtualConfig(character: any) {
   const raw = character?.config && typeof character.config === "object" && !Array.isArray(character.config) ? character.config : {};
   const profile = raw.profile && typeof raw.profile === "object" && !Array.isArray(raw.profile) ? raw.profile : {};
+  const manualMemory = raw.manualMemory && typeof raw.manualMemory === "object" && !Array.isArray(raw.manualMemory) ? raw.manualMemory : {};
+  const generation = raw.generation && typeof raw.generation === "object" && !Array.isArray(raw.generation) ? raw.generation : {};
+  const multichar = raw.multichar && typeof raw.multichar === "object" && !Array.isArray(raw.multichar) ? raw.multichar : {};
+  const modelHints = multichar.modelHints && typeof multichar.modelHints === "object" && !Array.isArray(multichar.modelHints) ? multichar.modelHints : {};
   return {
     ...raw,
     profile: {
@@ -1937,17 +1958,43 @@ function virtualConfig(character: any) {
       persona: String(profile.persona || ""),
       speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
     },
+    manualMemory: {
+      ...manualMemory,
+      shortTerm: String(manualMemory.shortTerm || ""),
+      midTerm: String(manualMemory.midTerm || ""),
+      longTerm: String(manualMemory.longTerm || "")
+    },
+    generation: {
+      ...generation,
+      model: String(generation.model || modelHints.mainModel || ""),
+      thinkingEnabled: !!generation.thinkingEnabled
+    },
     activationJudgePrompt: String(raw.activationJudgePrompt || ""),
     channels: Array.isArray(raw.channels) ? raw.channels.map(Number).filter(Number.isFinite) : []
   };
 }
 
-function buildVirtualConfig(displayName: string, persona: string, channelIds: number[], existing?: any, activationJudgePrompt?: string) {
+function buildVirtualConfig(
+  displayName: string,
+  persona: string,
+  channelIds: number[],
+  existing?: any,
+  activationJudgePrompt?: string,
+  model?: string,
+  thinkingEnabled?: boolean,
+  manualMemory?: { shortTerm?: string; midTerm?: string; longTerm?: string }
+) {
   const base = existing ? virtualConfig(existing) : {};
   const profile = base.profile && typeof base.profile === "object" && !Array.isArray(base.profile) ? base.profile : {};
   const multichar = (base as any).multichar && typeof (base as any).multichar === "object" && !Array.isArray((base as any).multichar) ? (base as any).multichar : {};
   const bio = multichar.bio && typeof multichar.bio === "object" && !Array.isArray(multichar.bio) ? multichar.bio : {};
   const basics = bio.basics && typeof bio.basics === "object" && !Array.isArray(bio.basics) ? bio.basics : {};
+  const generation = (base as any).generation && typeof (base as any).generation === "object" && !Array.isArray((base as any).generation) ? (base as any).generation : {};
+  const existingManualMemory = (base as any).manualMemory && typeof (base as any).manualMemory === "object" && !Array.isArray((base as any).manualMemory) ? (base as any).manualMemory : {};
+  const modelHints = multichar.modelHints && typeof multichar.modelHints === "object" && !Array.isArray(multichar.modelHints) ? { ...multichar.modelHints } : {};
+  const modelValue = String(model ?? generation.model ?? modelHints.mainModel ?? "").trim();
+  if (modelValue) modelHints.mainModel = modelValue;
+  else delete modelHints.mainModel;
   return {
     ...base,
     profile: {
@@ -1957,6 +2004,17 @@ function buildVirtualConfig(displayName: string, persona: string, channelIds: nu
       speakingStyle: String((profile as any).speakingStyle || "像微信群里的真人，简短自然")
     },
     activationJudgePrompt: activationJudgePrompt ?? String((base as any).activationJudgePrompt || ""),
+    manualMemory: {
+      ...existingManualMemory,
+      shortTerm: String(manualMemory?.shortTerm ?? existingManualMemory.shortTerm ?? ""),
+      midTerm: String(manualMemory?.midTerm ?? existingManualMemory.midTerm ?? ""),
+      longTerm: String(manualMemory?.longTerm ?? existingManualMemory.longTerm ?? "")
+    },
+    generation: {
+      ...generation,
+      model: modelValue,
+      thinkingEnabled: !!(thinkingEnabled ?? generation.thinkingEnabled)
+    },
     multichar: {
       ...multichar,
       bio: {
@@ -1967,7 +2025,8 @@ function buildVirtualConfig(displayName: string, persona: string, channelIds: nu
           identity: persona || String((basics as any).identity || "")
         }
       },
-      emotionBaseline: String(multichar.emotionBaseline || "平静中性")
+      emotionBaseline: String(multichar.emotionBaseline || "平静中性"),
+      modelHints
     },
     channels: [...new Set(channelIds.map(Number).filter(Number.isFinite))]
   };
@@ -1977,6 +2036,35 @@ function virtualPersona(character: any) {
   const role = aiRoleForCharacter(character);
   if (role) return role.promptCommand || "";
   return virtualConfig(character).profile.persona;
+}
+
+function virtualManualMemory(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) {
+    return {
+      shortTerm: role.shortTermMemory || "",
+      midTerm: role.midTermMemory || "",
+      longTerm: role.longTermMemory || ""
+    };
+  }
+  const memory = virtualConfig(character).manualMemory;
+  return {
+    shortTerm: String(memory.shortTerm || ""),
+    midTerm: String(memory.midTerm || ""),
+    longTerm: String(memory.longTerm || "")
+  };
+}
+
+function virtualModel(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) return role.model || "";
+  return virtualConfig(character).generation.model || "";
+}
+
+function virtualThinkingEnabled(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) return !!role.thinkingEnabled;
+  return !!virtualConfig(character).generation.thinkingEnabled;
 }
 
 function virtualActivationJudgePrompt(character: any) {
@@ -1991,6 +2079,8 @@ function virtualEnabled(character: any) {
 }
 
 function virtualChannelIds(character: any) {
+  const role = aiRoleForCharacter(character);
+  if (role) return role.channelIds || [];
   return virtualConfig(character).channels;
 }
 
@@ -2011,37 +2101,177 @@ async function toggleVirtualChannel(character: any, channelId: number) {
   const ids = new Set<number>(virtualChannelIds(character));
   if (ids.has(channelId)) ids.delete(channelId);
   else ids.add(channelId);
-  await updateVirtual(character, { channelIds: [...ids] });
+  setVirtualChannelIds(character, [...ids]);
 }
 
 async function loadVirtualCharacters() {
   virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
 }
 
-async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean; activationJudgePrompt?: string }) {
+function setVirtualChannelIds(character: any, channelIds: number[]) {
+  const role = aiRoleForCharacter(character);
+  if (role) role.channelIds = channelIds;
+  character.config = buildVirtualConfig(
+    character.actor?.displayName || "",
+    virtualPersona(character),
+    channelIds,
+    character,
+    virtualActivationJudgePrompt(character),
+    virtualModel(character),
+    virtualThinkingEnabled(character),
+    virtualManualMemory(character)
+  );
+}
+
+function setVirtualDisplayName(character: any, value: string) {
+  character.actor.displayName = value;
+  const role = aiRoleForCharacter(character);
+  if (role) role.displayName = value;
+  character.config = buildVirtualConfig(value, virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
+}
+
+function setVirtualEnabled(character: any, value: boolean) {
+  character.enabled = value;
+  const role = aiRoleForCharacter(character);
+  if (role) role.enabled = value;
+}
+
+function setVirtualPersona(character: any, value: string) {
+  const role = aiRoleForCharacter(character);
+  if (role) role.promptCommand = value;
+  character.config = buildVirtualConfig(character.actor?.displayName || "", value, virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
+}
+
+function setVirtualModel(character: any, value: string) {
+  const role = aiRoleForCharacter(character);
+  if (role) role.model = value;
+  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), value, virtualThinkingEnabled(character), virtualManualMemory(character));
+}
+
+function setVirtualThinkingEnabled(character: any, value: boolean) {
+  const role = aiRoleForCharacter(character);
+  if (role) role.thinkingEnabled = value;
+  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), value, virtualManualMemory(character));
+}
+
+function setVirtualActivationJudgePrompt(character: any, value: string) {
+  const role = aiRoleForCharacter(character);
+  if (role) role.activationJudgePrompt = value;
+  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, value, virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
+}
+
+function setVirtualManualMemory(character: any, key: "shortTerm" | "midTerm" | "longTerm", value: string) {
+  const role = aiRoleForCharacter(character);
+  if (role) {
+    if (key === "shortTerm") role.shortTermMemory = value;
+    if (key === "midTerm") role.midTermMemory = value;
+    if (key === "longTerm") role.longTermMemory = value;
+  }
+  const memory = virtualManualMemory(character);
+  memory[key] = value;
+  character.config = buildVirtualConfig(
+    character.actor?.displayName || "",
+    virtualPersona(character),
+    virtualChannelIds(character),
+    character,
+    virtualActivationJudgePrompt(character),
+    virtualModel(character),
+    virtualThinkingEnabled(character),
+    memory
+  );
+}
+
+async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean; activationJudgePrompt?: string; model?: string; thinkingEnabled?: boolean; manualMemory?: { shortTerm?: string; midTerm?: string; longTerm?: string } }) {
   const role = aiRoleForCharacter(character);
   const displayName = (patch.displayName ?? character.actor?.displayName ?? "").trim();
   if (!displayName) return;
   const enabled = patch.enabled ?? virtualEnabled(character);
   const persona = patch.persona ?? virtualPersona(character);
   const activationJudgePrompt = patch.activationJudgePrompt ?? virtualActivationJudgePrompt(character);
+  const model = patch.model ?? virtualModel(character);
+  const thinkingEnabled = patch.thinkingEnabled ?? virtualThinkingEnabled(character);
+  const manualMemory = patch.manualMemory ?? virtualManualMemory(character);
   if (role) {
     role.displayName = displayName;
     role.enabled = enabled;
     role.promptCommand = persona;
     role.activationJudgePrompt = activationJudgePrompt;
+    role.model = model;
+    role.thinkingEnabled = thinkingEnabled;
+    role.shortTermMemory = manualMemory.shortTerm || "";
+    role.midTermMemory = manualMemory.midTerm || "";
+    role.longTermMemory = manualMemory.longTerm || "";
+    role.channelIds = patch.channelIds ?? virtualChannelIds(character);
   }
   await api(`/api/virtual-characters/${character.id}`, {
     method: "PUT",
     body: JSON.stringify({
       displayName,
       enabled,
-      config: buildVirtualConfig(displayName, persona, patch.channelIds ?? virtualChannelIds(character), character, activationJudgePrompt)
+      config: buildVirtualConfig(displayName, persona, patch.channelIds ?? virtualChannelIds(character), character, activationJudgePrompt, model, thinkingEnabled, manualMemory)
     })
   });
-  if (role) await saveAiSettings();
   await loadVirtualCharacters();
   aiSettingsMsg.value = "虚拟角色已保存";
+}
+
+async function saveVirtualCharacter(character: any, reload = true) {
+  const role = aiRoleForCharacter(character);
+  const displayName = String(character.actor?.displayName || "").trim();
+  if (!displayName) return;
+  await updateVirtual(character, {
+    displayName,
+    enabled: virtualEnabled(character),
+    persona: virtualPersona(character),
+    channelIds: virtualChannelIds(character),
+    activationJudgePrompt: virtualActivationJudgePrompt(character),
+    model: virtualModel(character),
+    thinkingEnabled: virtualThinkingEnabled(character),
+    manualMemory: virtualManualMemory(character)
+  });
+  if (role) await saveAiSettings();
+  if (reload) await loadVirtualCharacters();
+}
+
+async function saveAllVirtualCharacters() {
+  for (const character of virtuals.value) {
+    const role = aiRoleForCharacter(character);
+    if (role) continue;
+    await api(`/api/virtual-characters/${character.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        displayName: String(character.actor?.displayName || "").trim(),
+        enabled: virtualEnabled(character),
+        config: buildVirtualConfig(
+          String(character.actor?.displayName || "").trim(),
+          virtualPersona(character),
+          virtualChannelIds(character),
+          character,
+          virtualActivationJudgePrompt(character),
+          virtualModel(character),
+          virtualThinkingEnabled(character),
+          virtualManualMemory(character)
+        )
+      })
+    });
+  }
+}
+
+async function uploadVirtualAvatar(character: any, event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  (event.target as HTMLInputElement).value = "";
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  const response = await fetch(`/api/virtual-characters/${character.id}/avatar`, { method: "POST", headers: authHeaders(), body: form });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ message: "头像上传失败" }));
+    alert(result.message || "头像上传失败");
+    return;
+  }
+  await loadVirtualCharacters();
+  syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
+  aiSettingsMsg.value = "头像已更新";
 }
 
 async function uploadAiRoleAvatar(role: AiRoleDTO, event: Event) {
@@ -2094,6 +2324,7 @@ async function saveAiSettings() {
   aiSettingsBusy.value = true;
   aiSettingsMsg.value = "";
   try {
+    if (virtuals.value.length) await saveAllVirtualCharacters();
     const payload = {
       enabled: aiSettingsEdit.value.enabled,
       apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
@@ -2103,7 +2334,13 @@ async function saveAiSettings() {
         username: role.username,
         displayName: role.displayName,
         enabled: role.enabled,
+        model: role.model || "",
+        thinkingEnabled: !!role.thinkingEnabled,
         promptCommand: role.promptCommand,
+        shortTermMemory: role.shortTermMemory || "",
+        midTermMemory: role.midTermMemory || "",
+        longTermMemory: role.longTermMemory || "",
+        channelIds: role.channelIds || [],
         activationJudgePrompt: role.activationJudgePrompt,
         webSearchEnabled: role.webSearchEnabled,
         questionTriggerEnabled: role.questionTriggerEnabled,
@@ -2115,6 +2352,7 @@ async function saveAiSettings() {
       maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
     };
     syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
+    if (virtuals.value.length) await loadVirtualCharacters();
     aiSettingsMsg.value = "AI 设置已保存";
   } catch (error) {
     aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置保存失败";
@@ -5416,10 +5654,34 @@ async function addVirtual() {
       username: newVirtual.value.username.trim(),
       displayName: newVirtual.value.displayName.trim(),
       enabled: newVirtual.value.enabled,
-      config: buildVirtualConfig(newVirtual.value.displayName.trim(), newVirtual.value.persona.trim(), newVirtual.value.channelIds)
+      config: buildVirtualConfig(
+        newVirtual.value.displayName.trim(),
+        newVirtual.value.persona.trim(),
+        newVirtual.value.channelIds,
+        undefined,
+        "",
+        newVirtual.value.model.trim(),
+        newVirtual.value.thinkingEnabled,
+        {
+          shortTerm: newVirtual.value.shortTermMemory,
+          midTerm: newVirtual.value.midTermMemory,
+          longTerm: newVirtual.value.longTermMemory
+        }
+      )
     })
   });
-  newVirtual.value = { username: "", displayName: "", persona: "", channelIds: [], enabled: true };
+  newVirtual.value = {
+    username: "",
+    displayName: "",
+    model: "",
+    thinkingEnabled: false,
+    persona: "",
+    shortTermMemory: "",
+    midTermMemory: "",
+    longTermMemory: "",
+    channelIds: [],
+    enabled: true
+  };
   await loadVirtualCharacters();
   adminMsg.value = "虚拟角色已创建";
   aiSettingsMsg.value = "虚拟角色已创建";
@@ -5463,24 +5725,30 @@ async function toggleVirtual(character: any) {
         <template v-else-if="aiSettingsTab === 'virtuals'">
           <section class="ai-settings-subsection virtual-create-section">
             <strong>新增虚拟角色</strong>
-            <label>唯一标识</label>
-            <input v-model="newVirtual.username" placeholder="例如 ai_luna" autocomplete="off" />
-            <label>显示名</label>
-            <input v-model="newVirtual.displayName" placeholder="例如 小月" autocomplete="off" />
-            <label>人设</label>
-            <textarea v-model="newVirtual.persona" rows="4" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea>
-            <label>出现频道</label>
-            <div class="channel-chip-grid">
-              <button
-                v-for="channel in store.channels"
-                :key="channel.id"
-                class="channel-chip"
-                :class="{ active: newVirtual.channelIds.includes(channel.id) }"
-                type="button"
-                @click="toggleNewVirtualChannel(channel.id)"
-              >
-                {{ channel.name }}
-              </button>
+            <div class="virtual-create-grid">
+              <label>ID<input v-model="newVirtual.username" placeholder="ai_luna" autocomplete="off" /></label>
+              <label>昵称<input v-model="newVirtual.displayName" placeholder="小月" autocomplete="off" /></label>
+              <label>模型<input v-model="newVirtual.model" :placeholder="aiSettings?.model || '跟随系统默认模型'" autocomplete="off" /></label>
+              <label class="check-row"><input v-model="newVirtual.thinkingEnabled" type="checkbox" /> 开启思考</label>
+              <label>人设<textarea v-model="newVirtual.persona" rows="3" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea></label>
+              <label>短期记忆<textarea v-model="newVirtual.shortTermMemory" rows="3" placeholder="当前状态、最近要记住的事"></textarea></label>
+              <label>中期记忆<textarea v-model="newVirtual.midTermMemory" rows="3" placeholder="一段时间内稳定的背景"></textarea></label>
+              <label>长期记忆<textarea v-model="newVirtual.longTermMemory" rows="3" placeholder="长期身份、关系和重要判断"></textarea></label>
+              <div class="virtual-create-channels">
+                <span>所在频道</span>
+                <div class="channel-chip-grid">
+                  <button
+                    v-for="channel in store.channels"
+                    :key="channel.id"
+                    class="channel-chip"
+                    :class="{ active: newVirtual.channelIds.includes(channel.id) }"
+                    type="button"
+                    @click="toggleNewVirtualChannel(channel.id)"
+                  >
+                    {{ channel.name }}
+                  </button>
+                </div>
+              </div>
             </div>
             <label class="check-row"><input v-model="newVirtual.enabled" type="checkbox" /> 创建后启用</label>
             <button class="primary-btn" type="button" :disabled="!newVirtual.username.trim() || !newVirtual.displayName.trim()" @click="addVirtual"><Bot :size="16" />创建角色</button>
@@ -5488,41 +5756,61 @@ async function toggleVirtual(character: any) {
 
           <section class="ai-settings-subsection ai-role-settings">
             <strong>虚拟角色</strong>
-            <article v-for="character in virtuals" :key="character.id" class="ai-role-card virtual-character-card">
-              <span class="avatar ai-role-avatar virtual-avatar" :class="{ online: virtualEnabled(character) }">
-                <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
-                <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
-              </span>
-              <div class="ai-role-body">
-                <div class="ai-role-title">
-                  <label>
-                    显示名
-                    <input v-model="character.actor.displayName" />
-                  </label>
-                  <small>@{{ character.actor.username }}</small>
-                </div>
-                <small>{{ virtualChannelNames(character) }}</small>
-                <label class="check-row"><input :checked="virtualEnabled(character)" type="checkbox" @change="updateVirtual(character, { enabled: !virtualEnabled(character) })" /> 启用这个虚拟角色</label>
-                <label>人设</label>
-                <textarea :value="virtualPersona(character)" rows="5" @change="updateVirtual(character, { persona: ($event.target as HTMLTextAreaElement).value })"></textarea>
-                <label>弱激活判断体</label>
-                <textarea :value="virtualActivationJudgePrompt(character)" rows="5" @change="updateVirtual(character, { activationJudgePrompt: ($event.target as HTMLTextAreaElement).value })"></textarea>
-                <label>出现频道</label>
-                <div class="channel-chip-grid">
-                  <button
-                    v-for="channel in store.channels"
-                    :key="channel.id"
-                    class="channel-chip"
-                    :class="{ active: virtualChannelIds(character).includes(channel.id) }"
-                    type="button"
-                    @click="toggleVirtualChannel(character, channel.id)"
-                  >
-                    {{ channel.name }}
-                  </button>
-                </div>
-                <button class="mini-btn" type="button" @click="updateVirtual(character, { displayName: character.actor.displayName })"><Save :size="15" />保存角色</button>
-              </div>
-            </article>
+            <div class="virtual-role-table-wrap">
+              <table class="virtual-role-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>头像</th>
+                    <th>昵称</th>
+                    <th>所接入模型</th>
+                    <th>思考</th>
+                    <th>人设</th>
+                    <th>短期记忆</th>
+                    <th>中期记忆</th>
+                    <th>长期记忆</th>
+                    <th>所在频道</th>
+                    <th>启用</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="character in virtuals" :key="character.id">
+                    <td class="virtual-id-cell">@{{ character.actor.username }}</td>
+                    <td>
+                      <label class="avatar virtual-table-avatar" :class="{ online: virtualEnabled(character) }">
+                        <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
+                        <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
+                        <input type="file" accept="image/*" @change="uploadVirtualAvatar(character, $event)" />
+                      </label>
+                    </td>
+                    <td><input class="virtual-nickname-input" :value="character.actor.displayName" @input="setVirtualDisplayName(character, ($event.target as HTMLInputElement).value)" /></td>
+                    <td><input class="virtual-model-input" :value="virtualModel(character)" :placeholder="aiSettings?.model || '跟随默认'" @input="setVirtualModel(character, ($event.target as HTMLInputElement).value)" /></td>
+                    <td><input :checked="virtualThinkingEnabled(character)" type="checkbox" @change="setVirtualThinkingEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
+                    <td><textarea class="virtual-text-cell" :value="virtualPersona(character)" rows="4" @input="setVirtualPersona(character, ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).shortTerm" rows="4" @input="setVirtualManualMemory(character, 'shortTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).midTerm" rows="4" @input="setVirtualManualMemory(character, 'midTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                    <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).longTerm" rows="4" @input="setVirtualManualMemory(character, 'longTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
+                    <td>
+                      <div class="channel-chip-grid virtual-channel-grid">
+                        <button
+                          v-for="channel in store.channels"
+                          :key="channel.id"
+                          class="channel-chip"
+                          :class="{ active: virtualChannelIds(character).includes(channel.id) }"
+                          type="button"
+                          @click="toggleVirtualChannel(character, channel.id)"
+                        >
+                          {{ channel.name }}
+                        </button>
+                      </div>
+                    </td>
+                    <td><input :checked="virtualEnabled(character)" type="checkbox" @change="setVirtualEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
+                    <td><button class="mini-btn icon-btn" type="button" @click="saveVirtualCharacter(character)"><Save :size="15" /></button></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
           </section>
         </template>
 

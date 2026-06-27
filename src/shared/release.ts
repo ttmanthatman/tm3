@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.3";
+export const APP_VERSION = "0.8.4.4";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "AI 设置页的虚拟角色改为表格矩阵，可逐个设置 ID、昵称、头像、模型、思考开关、人设、三类记忆、所在频道和启用状态。",
+  "每个虚拟角色可单独覆盖模型；留空时跟随系统默认模型，思考模式默认关闭，只有单个角色开启后才传给模型。",
+  "为什么助手和 ai_slmm 保存时会同步写入 AI 设置与虚拟角色配置，避免人设编辑后一会儿又恢复默认。"
+] as const;
+
+const RELEASE_0_8_4_3_NOTES = [
   "三面板滑动切换改为更稳的距离和方向判断，短距离快滑、斜向滚动和取消手势不会突然切到 AI 助手或主频道。",
   "设置、管理、置顶、接龙和确认类弹窗都支持点击窗口外关闭，手机端长内容会在弹窗内滚动，关闭区不再被顶出屏幕。",
   "新增开发索引和三面板手势测试，把移动端弹窗、频道切换和版本发布的高风险检查集中记录，后续改动更容易验证。"
@@ -302,9 +308,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4.3",
+    version: "0.8.4.4",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4.3",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_4_3_NOTES
   },
   {
     version: "0.8.4.2",

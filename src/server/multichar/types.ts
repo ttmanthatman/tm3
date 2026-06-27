@@ -34,6 +34,12 @@ export interface CharacterConfig {
   bio: CharacterBio | null;
   emotionBaseline: string;
   channels?: number[];
+  manualMemory?: {
+    shortTerm?: string;
+    midTerm?: string;
+    longTerm?: string;
+  };
+  thinkingEnabled?: boolean;
   modelHints?: {
     urgeModel?: string;
     mainModel?: string;

@@ -5633,6 +5633,158 @@ button {
   background: color-mix(in srgb, var(--accent) 5%, transparent);
 }
 
+.virtual-create-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+  align-items: start;
+}
+
+.virtual-create-grid label,
+.virtual-create-channels {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.virtual-create-grid label > input,
+.virtual-create-grid label > textarea {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.virtual-create-channels {
+  grid-column: 1 / -1;
+}
+
+.virtual-role-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.virtual-role-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.virtual-role-table th,
+.virtual-role-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+  vertical-align: top;
+  text-align: left;
+}
+
+.virtual-role-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  background: color-mix(in srgb, var(--panel) 94%, var(--accent));
+}
+
+.virtual-role-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.virtual-role-table th:nth-child(1),
+.virtual-role-table td:nth-child(1) {
+  width: 130px;
+}
+
+.virtual-role-table th:nth-child(2),
+.virtual-role-table td:nth-child(2) {
+  width: 64px;
+}
+
+.virtual-role-table th:nth-child(3),
+.virtual-role-table td:nth-child(3) {
+  width: 150px;
+}
+
+.virtual-role-table th:nth-child(4),
+.virtual-role-table td:nth-child(4) {
+  width: 180px;
+}
+
+.virtual-role-table th:nth-child(5),
+.virtual-role-table td:nth-child(5),
+.virtual-role-table th:nth-child(11),
+.virtual-role-table td:nth-child(11),
+.virtual-role-table th:nth-child(12),
+.virtual-role-table td:nth-child(12) {
+  width: 58px;
+  text-align: center;
+}
+
+.virtual-role-table th:nth-child(6),
+.virtual-role-table td:nth-child(6),
+.virtual-role-table th:nth-child(7),
+.virtual-role-table td:nth-child(7),
+.virtual-role-table th:nth-child(8),
+.virtual-role-table td:nth-child(8),
+.virtual-role-table th:nth-child(9),
+.virtual-role-table td:nth-child(9) {
+  width: 250px;
+}
+
+.virtual-role-table th:nth-child(10),
+.virtual-role-table td:nth-child(10) {
+  width: 260px;
+}
+
+.virtual-id-cell {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.virtual-table-avatar {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  cursor: pointer;
+}
+
+.virtual-table-avatar input {
+  display: none;
+}
+
+.virtual-table-avatar:hover {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
+.virtual-nickname-input,
+.virtual-model-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.virtual-text-cell {
+  min-width: 0;
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+}
+
+.virtual-channel-grid {
+  max-height: 118px;
+  overflow: auto;
+}
+
 .ai-role-card {
   min-width: 0;
   display: grid;
@@ -5665,7 +5817,8 @@ button {
 }
 
 .virtual-avatar.online::after,
-.virtual-admin-avatar.online::after {
+.virtual-admin-avatar.online::after,
+.virtual-table-avatar.online::after {
   content: "";
   position: absolute;
   right: -1px;
@@ -5727,6 +5880,10 @@ button {
 }
 
 @media (max-width: 560px) {
+  .virtual-create-grid {
+    grid-template-columns: 1fr;
+  }
+
   .ai-role-card,
   .ai-role-title,
   .ai-role-context-grid {

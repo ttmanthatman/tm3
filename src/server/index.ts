@@ -1320,6 +1320,132 @@ async function ensureWhyAssistantCharacter(displayName?: string) {
   return ensureAiRoleCharacter(WHY_ASSISTANT_USERNAME, WHY_ASSISTANT_NAME, displayName);
 }
 
+function normalizeRoleModel(value?: unknown) {
+  return String(value || "").trim().slice(0, 120);
+}
+
+function normalizeRoleMemory(value?: unknown) {
+  return String(value || "").trim().slice(0, 8000);
+}
+
+function roleConfigObject(rawConfig: unknown) {
+  return rawConfig && typeof rawConfig === "object" && !Array.isArray(rawConfig) ? (rawConfig as Record<string, any>) : {};
+}
+
+function roleConfigDetails(rawConfig: unknown) {
+  const config = roleConfigObject(rawConfig);
+  const profile = roleConfigObject(config.profile);
+  const manualMemory = roleConfigObject(config.manualMemory);
+  const generation = roleConfigObject(config.generation);
+  const multichar = roleConfigObject(config.multichar);
+  const modelHints = roleConfigObject(multichar.modelHints);
+  return {
+    persona: String(profile.persona || ""),
+    activationJudgePrompt: String(config.activationJudgePrompt || ""),
+    channelIds: Array.isArray(config.channels) ? config.channels.map(Number).filter(Number.isFinite) : [],
+    model: normalizeRoleModel(generation.model || modelHints.mainModel),
+    thinkingEnabled: Boolean(generation.thinkingEnabled),
+    shortTermMemory: String(manualMemory.shortTerm || ""),
+    midTermMemory: String(manualMemory.midTerm || ""),
+    longTermMemory: String(manualMemory.longTerm || "")
+  };
+}
+
+function buildAiRoleCharacterConfig(input: {
+  displayName: string;
+  persona: string;
+  channelIds?: number[];
+  existingConfig?: unknown;
+  activationJudgePrompt?: string;
+  model?: string;
+  thinkingEnabled?: boolean;
+  shortTermMemory?: string;
+  midTermMemory?: string;
+  longTermMemory?: string;
+}) {
+  const base = roleConfigObject(input.existingConfig);
+  const profile = roleConfigObject(base.profile);
+  const multichar = roleConfigObject(base.multichar);
+  const bio = roleConfigObject(multichar.bio);
+  const basics = roleConfigObject(bio.basics);
+  const modelHints = roleConfigObject(multichar.modelHints);
+  const model = normalizeRoleModel(input.model);
+  const nextModelHints = { ...modelHints };
+  if (model) nextModelHints.mainModel = model;
+  else delete nextModelHints.mainModel;
+  return {
+    ...base,
+    profile: {
+      ...profile,
+      name: input.displayName,
+      persona: input.persona,
+      speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
+    },
+    activationJudgePrompt: input.activationJudgePrompt ?? String(base.activationJudgePrompt || ""),
+    channels: [...new Set((input.channelIds || []).map(Number).filter(Number.isFinite))],
+    manualMemory: {
+      ...roleConfigObject(base.manualMemory),
+      shortTerm: normalizeRoleMemory(input.shortTermMemory),
+      midTerm: normalizeRoleMemory(input.midTermMemory),
+      longTerm: normalizeRoleMemory(input.longTermMemory)
+    },
+    generation: {
+      ...roleConfigObject(base.generation),
+      model,
+      thinkingEnabled: Boolean(input.thinkingEnabled)
+    },
+    multichar: {
+      ...multichar,
+      bio: {
+        ...bio,
+        basics: {
+          ...basics,
+          name: input.displayName,
+          identity: input.persona || String(basics.identity || "")
+        }
+      },
+      emotionBaseline: String(multichar.emotionBaseline || "平静中性"),
+      modelHints: nextModelHints
+    }
+  };
+}
+
+async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: string, input: {
+  displayName: string;
+  persona: string;
+  enabled?: boolean;
+  activationJudgePrompt?: string;
+  channelIds?: number[];
+  model?: string;
+  thinkingEnabled?: boolean;
+  shortTermMemory?: string;
+  midTermMemory?: string;
+  longTermMemory?: string;
+}) {
+  const actor = await ensureAiRoleCharacter(username, fallbackName, input.displayName);
+  const character = await prisma.virtualCharacter.findUnique({ where: { actorId: actor.id } });
+  if (!character) return actor;
+  await prisma.virtualCharacter.update({
+    where: { id: character.id },
+    data: {
+      enabled: input.enabled,
+      config: buildAiRoleCharacterConfig({
+        displayName: input.displayName,
+        persona: input.persona,
+        channelIds: input.channelIds,
+        existingConfig: character.config,
+        activationJudgePrompt: input.activationJudgePrompt,
+        model: input.model,
+        thinkingEnabled: input.thinkingEnabled,
+        shortTermMemory: input.shortTermMemory,
+        midTermMemory: input.midTermMemory,
+        longTermMemory: input.longTermMemory
+      }) as object
+    }
+  });
+  return (await prisma.actor.findUnique({ where: { id: actor.id } })) || actor;
+}
+
 async function whyTopicMembership(topicId: number, accountId: number) {
   return prisma.whyTopicMember.findUnique({ where: { topicId_accountId: { topicId, accountId } } });
 }
@@ -1438,7 +1564,7 @@ async function buildWhyAssistantContext(topicId: number) {
 async function loadWhyAssistantSettings() {
   const aiSettings = await loadAiSettings();
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName"] } }
+    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName", "whyAssistantModel", "whyAssistantThinkingEnabled"] } }
   });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
   return {
@@ -1447,13 +1573,15 @@ async function loadWhyAssistantSettings() {
       enabled: settings.get("whyAssistantEnabled") !== "false",
       displayName: settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME,
       promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
-      webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
+      webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false",
+      model: normalizeRoleModel(settings.get("whyAssistantModel")) || aiSettings.value.model,
+      thinkingEnabled: settings.get("whyAssistantThinkingEnabled") === "true"
     },
     encryptedApiKey: aiSettings.encryptedApiKey
   };
 }
 
-async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean }, apiKey: string, contextText: string) {
+async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean; thinkingEnabled?: boolean }, apiKey: string, contextText: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
   try {
@@ -1475,7 +1603,7 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
             ].join("\n\n")
           }
         ],
-        thinking: { type: "enabled" },
+        thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" },
         stream: false
       }),
       signal: controller.signal
@@ -1502,6 +1630,8 @@ async function loadQuestionAssistantSettings() {
           "questionAssistantActivationJudgePrompt",
           "questionAssistantWebSearchEnabled",
           "questionAssistantDisplayName",
+          "questionAssistantModel",
+          "questionAssistantThinkingEnabled",
           "questionAssistantContextTurnLimit",
           "questionAssistantContextWindowMinutes"
         ]
@@ -1518,6 +1648,8 @@ async function loadQuestionAssistantSettings() {
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
       activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
+      model: normalizeRoleModel(settings.get("questionAssistantModel")) || aiSettings.value.model,
+      thinkingEnabled: settings.get("questionAssistantThinkingEnabled") === "true",
       contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
       contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
     },
@@ -1623,7 +1755,7 @@ async function buildQuestionAssistantContext(
   return lines.filter(Boolean).join("\n").slice(0, 12000);
 }
 
-async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean }, apiKey: string, contextText: string) {
+async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean; thinkingEnabled?: boolean }, apiKey: string, contextText: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
   try {
@@ -1645,7 +1777,7 @@ async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnable
             ].join("\n\n")
           }
         ],
-        thinking: { type: "disabled" },
+        thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" },
         stream: false
       }),
       signal: controller.signal
@@ -3650,12 +3782,16 @@ async function aiSettingsDto() {
           "whyAssistantActivationJudgePrompt",
           "whyAssistantWebSearchEnabled",
           "whyAssistantDisplayName",
+          "whyAssistantModel",
+          "whyAssistantThinkingEnabled",
           "questionAssistantEnabled",
           "questionAssistantTriggerEnabled",
           "questionAssistantPromptCommand",
           "questionAssistantActivationJudgePrompt",
           "questionAssistantWebSearchEnabled",
           "questionAssistantDisplayName",
+          "questionAssistantModel",
+          "questionAssistantThinkingEnabled",
           "questionAssistantContextTurnLimit",
           "questionAssistantContextWindowMinutes"
         ]
@@ -3665,14 +3801,26 @@ async function aiSettingsDto() {
   const settings = new Map(rows.map((row) => [row.key, row.value]));
   const whyActor = await ensureWhyAssistantCharacter(settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME);
   const questionActor = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME);
+  const [whyCharacter, questionCharacter] = await Promise.all([
+    prisma.virtualCharacter.findUnique({ where: { actorId: whyActor.id } }),
+    prisma.virtualCharacter.findUnique({ where: { actorId: questionActor.id } })
+  ]);
+  const whyConfig = roleConfigDetails(whyCharacter?.config);
+  const questionConfig = roleConfigDetails(questionCharacter?.config);
   const aiRoles: AiRoleDTO[] = [
     {
       username: WHY_ASSISTANT_USERNAME,
       displayName: whyActor.displayName,
       avatarPath: whyActor.avatarPath,
       enabled: settings.get("whyAssistantEnabled") !== "false",
+      model: normalizeRoleModel(settings.get("whyAssistantModel")) || whyConfig.model,
+      thinkingEnabled: settings.get("whyAssistantThinkingEnabled") === "true",
       promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
-      activationJudgePrompt: settings.get("whyAssistantActivationJudgePrompt") || "",
+      shortTermMemory: whyConfig.shortTermMemory,
+      midTermMemory: whyConfig.midTermMemory,
+      longTermMemory: whyConfig.longTermMemory,
+      channelIds: whyConfig.channelIds,
+      activationJudgePrompt: settings.get("whyAssistantActivationJudgePrompt") || whyConfig.activationJudgePrompt,
       webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
     },
     {
@@ -3680,8 +3828,14 @@ async function aiSettingsDto() {
       displayName: questionActor.displayName,
       avatarPath: questionActor.avatarPath,
       enabled: settings.get("questionAssistantEnabled") !== "false",
+      model: normalizeRoleModel(settings.get("questionAssistantModel")) || questionConfig.model,
+      thinkingEnabled: settings.get("questionAssistantThinkingEnabled") === "true",
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
-      activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
+      shortTermMemory: questionConfig.shortTermMemory,
+      midTermMemory: questionConfig.midTermMemory,
+      longTermMemory: questionConfig.longTermMemory,
+      channelIds: questionConfig.channelIds,
+      activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || questionConfig.activationJudgePrompt || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
       questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
       contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
@@ -3769,7 +3923,13 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
             username: z.string().max(80),
             displayName: z.string().min(1).max(80).optional(),
             enabled: z.boolean().optional(),
+            model: z.string().max(120).optional(),
+            thinkingEnabled: z.boolean().optional(),
             promptCommand: z.string().max(6000).optional(),
+            shortTermMemory: z.string().max(8000).optional(),
+            midTermMemory: z.string().max(8000).optional(),
+            longTermMemory: z.string().max(8000).optional(),
+            channelIds: z.array(z.number()).optional(),
             activationJudgePrompt: z.string().max(6000).optional(),
             webSearchEnabled: z.boolean().optional(),
             questionTriggerEnabled: z.boolean().optional(),
@@ -3793,20 +3953,34 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
   for (const role of body.aiRoles || []) {
     if (role.username === WHY_ASSISTANT_USERNAME) {
       const displayName = (role.displayName || "").trim() || WHY_ASSISTANT_NAME;
-      await ensureWhyAssistantCharacter(displayName);
       await setSetting("whyAssistantDisplayName", displayName);
       if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("whyAssistantEnabled", role.enabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("whyAssistantModel", normalizeRoleModel(role.model));
+      if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("whyAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("whyAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
       if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) await setSetting("whyAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim());
+      await syncAiRoleVirtualCharacterConfig(WHY_ASSISTANT_USERNAME, WHY_ASSISTANT_NAME, {
+        displayName,
+        persona: (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT,
+        enabled: role.enabled,
+        activationJudgePrompt: (role.activationJudgePrompt || "").trim(),
+        channelIds: role.channelIds,
+        model: role.model,
+        thinkingEnabled: role.thinkingEnabled,
+        shortTermMemory: role.shortTermMemory,
+        midTermMemory: role.midTermMemory,
+        longTermMemory: role.longTermMemory
+      });
     }
     if (role.username === QUESTION_ASSISTANT_USERNAME) {
       const displayName = (role.displayName || "").trim() || QUESTION_ASSISTANT_NAME;
-      await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, displayName);
       await setSetting("questionAssistantDisplayName", displayName);
       if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("questionAssistantEnabled", role.enabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "questionTriggerEnabled")) await setSetting("questionAssistantTriggerEnabled", role.questionTriggerEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("questionAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
+      if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("questionAssistantModel", normalizeRoleModel(role.model));
+      if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("questionAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
       if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
       if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) {
         await setSetting("questionAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT);
@@ -3817,6 +3991,18 @@ app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request)
       if (Object.prototype.hasOwnProperty.call(role, "contextWindowMinutes")) {
         await setSetting("questionAssistantContextWindowMinutes", String(clampInteger(role.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)));
       }
+      await syncAiRoleVirtualCharacterConfig(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, {
+        displayName,
+        persona: (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+        enabled: role.enabled,
+        activationJudgePrompt: (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
+        channelIds: role.channelIds,
+        model: role.model,
+        thinkingEnabled: role.thinkingEnabled,
+        shortTermMemory: role.shortTermMemory,
+        midTermMemory: role.midTermMemory,
+        longTermMemory: role.longTermMemory
+      });
     }
   }
   resetAiSettingsCache();
@@ -5200,6 +5386,33 @@ app.put("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (requ
   return { success: true, character: updated };
 });
 
+app.post("/api/virtual-characters/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
+  const id = Number((request.params as { id: string }).id);
+  const character = await prisma.virtualCharacter.findUnique({ where: { id }, include: { actor: true } });
+  if (!character) return reply.code(404).send({ success: false, message: "角色不存在" });
+  const file = await request.file();
+  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
+  const ext = path.extname(file.filename).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
+  const safeName = `${crypto.randomUUID()}${ext}`;
+  const outPath = path.join(AVATAR_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  let avatarPath = safeName;
+  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  if (compressed) {
+    fs.unlinkSync(outPath);
+    avatarPath = compressed.fileName;
+  }
+  const actor = await prisma.actor.update({ where: { id: character.actorId }, data: { avatarPath } });
+  return { success: true, character: { ...character, actor } };
+});
+
 app.delete("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (request) => {
   const id = Number((request.params as { id: string }).id);
   await prisma.virtualCharacter.delete({ where: { id } });
@@ -5270,11 +5483,18 @@ function defaultVirtualCharacterConfig(displayName: string) {
   return {
     profile: { name: displayName, persona: "", speakingStyle: "像微信群里的真人，简短自然" },
     channels: [],
+    manualMemory: { shortTerm: "", midTerm: "", longTerm: "" },
+    generation: { model: "", thinkingEnabled: false },
     replyPolicy: { mode: "external_engine_decides", allowSkip: true, allowMultipleMessages: true },
     proactivePolicy: { enabled: false, idleMinutes: 30 },
     typing: { show: true, minMs: 800, maxMs: 8000 },
     memory: { rememberUsers: true, maxItemsPerUser: 50 },
-    modelHints: { provider: "deepseek", compatibleEndpoint: "/chat/completions", preferredModels: ["deepseek-v4-flash", "deepseek-v4-pro"] }
+    modelHints: { provider: "deepseek", compatibleEndpoint: "/chat/completions", preferredModels: ["deepseek-v4-flash", "deepseek-v4-pro"] },
+    multichar: {
+      bio: { basics: { name: displayName, identity: "" } },
+      emotionBaseline: "平静中性",
+      modelHints: {}
+    }
   };
 }
 

@@ -349,7 +349,13 @@ export interface AiRoleDTO {
   displayName: string;
   avatarPath?: string | null;
   enabled: boolean;
+  model?: string;
+  thinkingEnabled?: boolean;
   promptCommand: string;
+  shortTermMemory?: string;
+  midTermMemory?: string;
+  longTermMemory?: string;
+  channelIds?: number[];
   webSearchEnabled?: boolean;
   questionTriggerEnabled?: boolean;
   activationJudgePrompt?: string;
