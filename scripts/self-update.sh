@@ -10,6 +10,7 @@ RESTART_COMMAND="${UPDATE_RESTART_COMMAND:-}"
 STATUS_PATH="${UPDATE_STATUS_PATH:-${APP_DIR}/storage/update-status.json}"
 LOG_PATH="${UPDATE_LOG_PATH:-${APP_DIR}/storage/update.log}"
 CLONE_ATTEMPTS="${UPDATE_CLONE_ATTEMPTS:-3}"
+BUILD_NODE_MAX_OLD_SPACE_SIZE="${UPDATE_NODE_MAX_OLD_SPACE_SIZE:-512}"
 
 if [ "${SELF_UPDATE_RUNNER_COPY:-}" != "1" ]; then
   runner_copy="$(mktemp "${TMPDIR:-/tmp}/team-chat-self-update.XXXXXX.sh")"
@@ -73,6 +74,29 @@ run_logged() {
   shift 2
   log_step "$progress" "$detail"
   "$@" >>"$LOG_PATH" 2>&1
+}
+
+run_node_logged() {
+  local progress="$1"
+  local detail="$2"
+  shift 2
+  log_step "$progress" "$detail"
+  if [ -n "$BUILD_NODE_MAX_OLD_SPACE_SIZE" ] && [ -z "${NODE_OPTIONS:-}" ]; then
+    NODE_OPTIONS="--max-old-space-size=${BUILD_NODE_MAX_OLD_SPACE_SIZE}" "$@" >>"$LOG_PATH" 2>&1
+  else
+    "$@" >>"$LOG_PATH" 2>&1
+  fi
+}
+
+log_resources() {
+  printf '[%s] 资源概况\n' "$(date -Iseconds)" >>"$LOG_PATH"
+  if command -v free >/dev/null 2>&1; then
+    free -h >>"$LOG_PATH" 2>&1 || true
+  fi
+  df -h "$APP_DIR" "${TMPDIR:-/tmp}" >>"$LOG_PATH" 2>&1 || true
+  if [ -n "$BUILD_NODE_MAX_OLD_SPACE_SIZE" ]; then
+    printf '[%s] 构建 Node 内存上限：%s MB（可用 UPDATE_NODE_MAX_OLD_SPACE_SIZE 调整，留空则不设置）\n' "$(date -Iseconds)" "$BUILD_NODE_MAX_OLD_SPACE_SIZE" >>"$LOG_PATH"
+  fi
 }
 
 clone_repo() {
@@ -164,7 +188,10 @@ cd "$RELEASE_DIR"
 
 run_logged 32 "安装依赖" npm ci --no-audit --no-fund
 run_logged 52 "生成 Prisma Client" npm run prisma:generate
-run_logged 66 "构建前端和服务端" npm run build
+log_resources
+run_node_logged 62 "构建前端" npm run build:client
+log_resources
+run_node_logged 70 "构建服务端" npm run build:server
 run_logged 78 "同步数据库结构" npm run prisma:push
 
 log_step 88 "同步应用文件"
