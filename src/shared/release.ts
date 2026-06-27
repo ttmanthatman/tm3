@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4";
+export const APP_VERSION = "0.8.4.1";
 
 export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "AI 设置页的虚拟角色标签只保留一套角色列表，为什么助手和所罗没门不再重复出现。",
+  "为什么助手、所罗没门和其他虚拟角色统一使用同一张角色设置卡片。",
+  "每个虚拟角色都显示弱激活判断体，并且内置角色停用后不会被读取设置时自动重新启用。"
+] as const;
+
+const RELEASE_0_8_4_NOTES = [
   "从“为什么”研究返回聊天时会回到来源频道最新消息处，不再落到旧历史位置。",
   "AI 设置页改为 LLM接入、虚拟角色、相关经文三类标签，相关经文的提示词和频率限制独立归类。",
   "虚拟角色新增、启用、人设和出现频道统一放到 AI 设置页管理，头像绿点直接表示启用状态。",
@@ -284,9 +290,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4",
+    version: "0.8.4.1",
     date: "2026-06-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4",
+    date: "2026-06-27",
+    notes: RELEASE_0_8_4_NOTES
   },
   {
     version: "0.8.3.2",
