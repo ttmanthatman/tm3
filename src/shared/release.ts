@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.2.3";
+export const APP_VERSION = "0.8.3";
 
-export const RELEASE_DATE = "2026-06-26";
+export const RELEASE_DATE = "2026-06-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "普通聊天输入栏和为什么话题输入栏新增 Markdown 选项，勾选后只影响本次发送的消息格式。",
+  "勾选 Markdown 的普通消息、代祷正文和为什么回应会按 Markdown 安全渲染，并沿用链接自动识别。",
+  "为什么助手、ai_slmm 和手动 Markdown 消息共用同一套 Markdown 清洗渲染链路。"
+] as const;
+
+const RELEASE_0_8_2_3_NOTES = [
   "三面板滑动切换改为只平移消息区，顶部标题栏、底部输入框、聊天室壁纸和雨滴等装饰在切换时不再跟着移动。",
   "桌面端新增鼠标拖动切换面板：在消息区按住左键左右拖动即可切换未来、主聊天室和 AI 助手面板。",
   "移除桌面端顶栏的“未来 / 主聊天室 / AI 助手”切换按钮，统一用滑动或拖动切换。"
@@ -260,9 +266,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.8.3",
+    date: "2026-06-27",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.8.2.3",
     date: "2026-06-26",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_2_3_NOTES
   },
   {
     version: "0.8.2.2",

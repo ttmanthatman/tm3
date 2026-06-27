@@ -651,10 +651,20 @@ async function fetchLinkPreviewHtml(rawUrl: string, redirectCount = 0): Promise<
   }
 }
 
-function cleanMessageEffect(input: unknown): { effect: MessageEffect } | undefined {
+function cleanMessagePayload(input: unknown): { effect?: MessageEffect; contentFormat?: "markdown" } | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
   const effect = (input as { effect?: unknown }).effect;
-  return typeof effect === "string" && MESSAGE_EFFECTS.has(effect as MessageEffect) ? { effect: effect as MessageEffect } : undefined;
+  const contentFormat = (input as { contentFormat?: unknown; markdown?: unknown }).contentFormat;
+  const payload = {
+    ...(typeof effect === "string" && MESSAGE_EFFECTS.has(effect as MessageEffect) ? { effect: effect as MessageEffect } : {}),
+    ...(contentFormat === "markdown" || (input as { markdown?: unknown }).markdown === true ? { contentFormat: "markdown" as const } : {})
+  };
+  return Object.keys(payload).length ? payload : undefined;
+}
+
+function cleanMessageEffect(input: unknown): { effect: MessageEffect } | undefined {
+  const payload = cleanMessagePayload(input);
+  return payload?.effect ? { effect: payload.effect } : undefined;
 }
 
 function cleanPrayerStatus(input: unknown): PrayerStatus {
@@ -662,13 +672,14 @@ function cleanPrayerStatus(input: unknown): PrayerStatus {
 }
 
 function cleanPrayerPayload(input: unknown) {
-  const effect = cleanMessageEffect(input);
+  const messagePayload = cleanMessagePayload(input);
   const status = input && typeof input === "object" && !Array.isArray(input) ? cleanPrayerStatus((input as { status?: unknown }).status) : "active";
   return {
     kind: "prayer",
     status,
     ...(status === "active" ? {} : { statusAt: new Date().toISOString() }),
-    ...(effect ? { effect: effect.effect } : {})
+    ...(messagePayload?.effect ? { effect: messagePayload.effect } : {}),
+    ...(messagePayload?.contentFormat ? { contentFormat: messagePayload.contentFormat } : {})
   };
 }
 
@@ -1757,6 +1768,7 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     type: "text",
     replyToId: message.id,
     payload: {
+      contentFormat: "markdown",
       aiRole: QUESTION_ASSISTANT_USERNAME,
       aiActivationMode: activationMode,
       triggerMessageId: message.id,
@@ -1784,7 +1796,7 @@ async function processWhyAssistantRun(runId: number) {
       actorId: assistant.id,
       content: responseText,
       type: "text",
-      payload: { whyTrack: "study", whyAssistantRunId: run.id },
+      payload: { whyTrack: "study", whyAssistantRunId: run.id, contentFormat: "markdown" },
       skipPush: true,
       skipEngineEvent: true
     });
@@ -2860,7 +2872,7 @@ app.get("/api/why/topics/:id", { preHandler: requireAuth }, async (request, repl
 app.post("/api/why/topics/:id/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const topicId = Number((request.params as { id: string }).id);
-  const body = z.object({ content: z.string().min(1).max(8000) }).parse(request.body);
+  const body = z.object({ content: z.string().min(1).max(8000), contentFormat: z.enum(["markdown"]).optional() }).parse(request.body);
   if (!(await canAccessWhyTopic(auth.accountId, topicId))) return reply.code(403).send({ success: false, message: "无权访问此为什么研究" });
   const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
   if (!topic || topic.status === "deleted") return reply.code(404).send({ success: false, message: "为什么研究不存在" });
@@ -2872,7 +2884,7 @@ app.post("/api/why/topics/:id/messages", { preHandler: requireAuth }, async (req
     actorId: auth.actorId,
     content,
     type: "text",
-    payload: { whyTrack: isOwner ? "study" : "discussion" },
+    payload: { whyTrack: isOwner ? "study" : "discussion", ...(body.contentFormat === "markdown" ? { contentFormat: "markdown" } : {}) },
     skipPush: true,
     skipEngineEvent: true
   });
@@ -3316,7 +3328,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     actorId: auth.actorId,
     content,
     type: "text",
-    payload: cleanMessageEffect(body.payload),
+    payload: cleanMessagePayload(body.payload),
     replyToId: body.replyToId || null
   });
   return { success: true, message: await hydrateMessage(message.id) };
@@ -5357,7 +5369,7 @@ io.on("connection", async (socket: Socket) => {
         actorId: currentAuth.actorId,
         content,
         type: body.type,
-        payload: body.type === "prayer" ? cleanPrayerPayload(body.payload) : cleanMessageEffect(body.payload),
+        payload: body.type === "prayer" ? cleanPrayerPayload(body.payload) : cleanMessagePayload(body.payload),
         replyToId: body.replyToId || null
       });
       ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });

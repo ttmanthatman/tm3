@@ -2740,6 +2740,35 @@ button {
   line-height: 22px;
 }
 
+.composer-markdown-toggle {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  background: #fff;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.composer-markdown-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.composer-markdown-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  background: #f0f7ee;
+}
+
 .composer-suggestion-menu {
   position: absolute;
   left: 40px;
@@ -5733,7 +5762,7 @@ button {
   position: sticky;
   bottom: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: end;
   background: var(--panel);

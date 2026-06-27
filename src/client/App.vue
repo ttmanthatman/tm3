@@ -119,6 +119,7 @@ const displayName = ref("");
 const authMode = ref<"login" | "register">("login");
 const loginError = ref("");
 const input = ref("");
+const composerMarkdown = ref(false);
 const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
@@ -425,6 +426,7 @@ const whyMembers = ref<WhyTopicMemberDTO[]>([]);
 const whyRuns = ref<WhyAssistantRunDTO[]>([]);
 const whyHomeQuestion = ref("");
 const whyTopicInput = ref("");
+const whyTopicMarkdown = ref(false);
 const whyLoading = ref(false);
 const whyBusy = ref(false);
 const whyError = ref("");
@@ -1311,7 +1313,7 @@ function linkifyMessageHtml(html: string) {
   root.innerHTML = html || "";
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
-      return node.parentElement?.closest("a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      return node.parentElement?.closest("a, code, pre") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     }
   });
   const textNodes: Text[] = [];
@@ -1357,6 +1359,15 @@ function isAiAssistantMessage(message: MessageDTO) {
   return message.sender?.kind === "virtual" && AI_ASSISTANT_USERNAMES.has(message.sender?.username || "");
 }
 
+function messagePayloadRecord(message: MessageDTO) {
+  return message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+}
+
+function isMarkdownMessage(message: MessageDTO) {
+  const payload = messagePayloadRecord(message);
+  return payload.contentFormat === "markdown" || payload.markdown === true || isAiAssistantMessage(message);
+}
+
 const MARKDOWN_ALLOWED_TAGS = [
   "p", "br", "strong", "b", "em", "i", "u", "s", "del", "a", "code", "pre",
   "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
@@ -1381,12 +1392,16 @@ function renderMarkdownToHtml(md: string): string {
   });
 }
 
-function aiMessageHtml(message: MessageDTO) {
+function markdownMessageHtml(message: MessageDTO) {
   return linkifyMessageHtml(renderMarkdownToHtml(message.content || ""));
 }
 
+function aiMessageHtml(message: MessageDTO) {
+  return markdownMessageHtml(message);
+}
+
 function whyMessageBodyHtml(message: MessageDTO) {
-  if (isAiAssistantMessage(message)) return aiMessageHtml(message);
+  if (isMarkdownMessage(message)) return markdownMessageHtml(message);
   return linkifyMessageHtml(message.content || "");
 }
 
@@ -2284,11 +2299,16 @@ async function sendText() {
   if (!content || !store.currentChannelId) return;
   const originalInput = input.value;
   const messageType = parsed.type || (store.prayerOnly ? "prayer" : "text");
+  const messagePayload = {
+    ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
+    ...(parsed.effect ? { effect: parsed.effect } : {}),
+    ...(composerMarkdown.value ? { contentFormat: "markdown" } : {})
+  };
   const payload = {
     channelId: store.currentChannelId,
     content,
     type: messageType,
-    payload: messageType === "prayer" ? { kind: "prayer", status: "active", ...(parsed.effect ? { effect: parsed.effect } : {}) } : parsed.effect ? { effect: parsed.effect } : undefined,
+    payload: Object.keys(messagePayload).length ? messagePayload : undefined,
     replyToId: replyTo.value?.id || null
   };
   input.value = "";
@@ -2421,7 +2441,7 @@ async function sendWhyTopicMessage() {
   try {
     const result = await api<{ message: MessageDTO }>(`/api/why/topics/${whyCurrentTopic.value.id}/messages`, {
       method: "POST",
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, ...(whyTopicMarkdown.value ? { contentFormat: "markdown" } : {}) })
     });
     if (result.message && !whyMessages.value.some((message) => message.id === result.message.id)) whyMessages.value.push(result.message);
     await openWhyTopic(whyCurrentTopic.value.id);
@@ -5613,7 +5633,8 @@ async function toggleVirtual(character: any) {
                       <strong>代祷事项</strong>
                       <em>{{ prayerStatusText(prayerPayload(row.message).status) }}</em>
                     </div>
-                    <div class="prayer-text bible-rich-text">
+                    <div v-if="isMarkdownMessage(row.message)" class="prayer-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
+                    <div v-else class="prayer-text bible-rich-text">
                       <template v-for="segment in prayerRichTextSegments(row.message)" :key="segment.key">
                         <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
                         <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
@@ -5776,7 +5797,7 @@ async function toggleVirtual(character: any) {
                   </button>
                 </template>
                 <template v-else>
-                  <div v-if="isAiAssistantMessage(row.message)" class="message-text markdown-render" v-html="aiMessageHtml(row.message)"></div>
+                  <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
                   <div v-else class="message-text bible-rich-text">
                     <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
                       <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
@@ -5833,6 +5854,10 @@ async function toggleVirtual(character: any) {
               @keydown="onKeydown"
               @paste="handleComposerPaste"
             ></textarea>
+            <label class="composer-markdown-toggle" :class="{ active: composerMarkdown }">
+              <input v-model="composerMarkdown" type="checkbox" />
+              <span>Markdown</span>
+            </label>
             <button class="send-btn" :disabled="!canSendText" @click="sendText" aria-label="发送"><Send :size="19" /></button>
             <button class="icon-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
             <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
@@ -6009,11 +6034,15 @@ async function toggleVirtual(character: any) {
               <strong>{{ message.sender.displayName }}</strong>
               <small>{{ message.sender.username === 'why_assistant' ? '严格引导' : isMine(message) ? '研究主线' : '弟兄姐妹回应' }}</small>
             </div>
-            <div class="why-message-body" :class="{ 'markdown-render': isAiAssistantMessage(message) }" v-html="whyMessageBodyHtml(message)"></div>
+            <div class="why-message-body" :class="{ 'markdown-render': isMarkdownMessage(message) }" v-html="whyMessageBodyHtml(message)"></div>
           </article>
         </div>
         <form class="why-topic-composer" @submit.prevent="sendWhyTopicMessage">
           <textarea v-model="whyTopicInput" rows="2" :placeholder="whyCurrentTopic.memberRole === 'owner' ? '回应为什么助手，继续研究' : '你的回应会给提问者参考，不会直接发给 AI'"></textarea>
+          <label class="composer-markdown-toggle" :class="{ active: whyTopicMarkdown }">
+            <input v-model="whyTopicMarkdown" type="checkbox" />
+            <span>Markdown</span>
+          </label>
           <button class="send-btn" type="submit" :disabled="whyBusy || !whyTopicInput.trim()"><Send :size="18" /></button>
         </form>
       </div>
