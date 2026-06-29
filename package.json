@@ -1,6 +1,6 @@
 {
   "name": "tm3",
-  "version": "0.8.4.5",
+  "version": "0.8.4.6",
   "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -14,8 +14,7 @@
     "prisma:push": "prisma db push",
     "migrate:sqlite": "node dist/server/scripts/migrate-sqlite.js",
     "migrate:sqlite:src": "tsx src/scripts/migrate-sqlite.ts",
-    "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test:ui-logic": "tsx src/client/panelSwipe.test.ts"
+    "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

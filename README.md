@@ -1,6 +1,6 @@
 # Team Chat
 
-Team Chat 是一个面向小团队、家庭、小组和私密社区的轻量网页聊天室。它同时照顾手机和桌面端使用，提供频道、私聊、文件、语音、提醒、主题、代祷卡片、“为什么”研究空间、AI 辅助经文建议、消息特效、管理后台、数据导入导出和服务器自更新能力。
+Team Chat 是一个面向小团队、家庭、小组和私密社区的轻量网页聊天室。它同时照顾手机和桌面端使用，提供频道、私聊、文件、语音、提醒、主题、代祷卡片、AI 辅助经文建议、消息特效、管理后台、数据导入导出和服务器自更新能力。
 
 项目以 **GPL-3.0-only** 发布。
 
@@ -18,37 +18,6 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 - DeepSeek API Key 只保存在服务端，并使用 `AI_SETTINGS_SECRET` 加密；普通成员不会看到接口或密钥细节。
 - 点击 AI 建议里的经文出处，会用应用内置的和合本简体经文数据库展开原文，不再请求 LLM。
 - 内置经文查询支持常见中文/英文书卷别名、全角标点、单节、范围、跨章和同书卷连续片段；找不到时只显示温和提示。
-
-### 为什么研究
-
-“为什么”是面向查经、预备经文、问题思考和个人研究的独立空间。它不会把所有 AI 问答混进主频道，而是把每个问题收进一个边界清楚的研究话题。
-
-它的设计目标是把“随口一问”变成可继续追踪的研究过程：主频道保留一张轻量问题卡片，真正的思考、补充、AI 引导和参与者回应都留在独立话题里。这样聊天不会被长讨论冲散，提问者也不会丢掉问题的上下文。
-
-- 左侧频道列表底部有固定“为什么”入口，进入后显示自己的研究话题目录。
-- 在主频道输入 `?问题`、`？问题` 或 `/为什么 问题` 会创建一个为什么话题，并在主频道生成一张问题卡片；提问者会立刻跳入研究。
-- 输入 `/?` 或 `/？` 会快速打开“为什么”首页。
-- 从自己已发送的文本消息也可以“开始为什么研究”，系统会生成一张新的问题卡片，不改动原消息。
-- 从“为什么”首页直接提问不会在主频道显示任何提示。
-- 每个问题都是独立话题，有自己的参与者权限；别人点击问题卡片后需要请求加入，提问者批准后才能看到内容。
-- 受邀者能看完整话题并回应提问者，但他们的发言默认不会进入 AI 上下文；提问者需要自己综合别人的回应再继续和 AI 互动。
-- 为什么助手使用严格的问题式引导，不直接替用户下结论；事实型问题可以直接回答并给查证路径。
-- 经文和知识型问题会鼓励用户观察文本、查证背景资料和标明出处；情绪、关系或痛苦类问题会引导用户找真实可信的人同行祷告。
-- 管理员可在 `/ai-settings` 配置为什么助手，默认复用现有 AI API Key，并默认开启联网查询和深度引导模式。
-- 话题支持未读和待审批计数、完成状态、整理草稿、失败重试；提问者删除话题后会真正移除研究内容，原问题卡片点开会提示问题已删除。
-
-典型流程：
-
-1. 用户在频道里输入 `?这段经文为什么这样说`，频道里出现问题卡片，用户进入对应话题。
-2. 为什么助手先追问上下文、观察文本和查证方向；用户可以继续补充材料。
-3. 其他成员从问题卡片申请加入，提问者批准后可以阅读并回应。
-4. 提问者把成员回应、AI 引导和自己的整理放在同一个话题里，最后标记完成或留下草稿。
-
-权限和边界：
-
-- 私密频道和为什么话题是分开的权限模型，管理员不会因为私密频道规则自动进入用户研究内容。
-- 主频道的问题卡片只承担入口和状态提示，不泄漏为什么话题里的完整讨论。
-- 删除话题后，原问题卡片会保留为已删除入口，点开只提示问题已删除，避免有人继续误入不存在的研究。
 
 ### 聊天与频道
 
@@ -94,7 +63,7 @@ Team Chat 的 AI 辅助专注于代祷卡片下方的“也许相关的经文”
 - 输入 `/代祷 内容` 可以生成频道代祷卡片。
 - `/代祷` 后可以叠加消息特效，例如 `/代祷 /流光 请为今晚休息祷告`。
 - 代祷卡片显示当前状态、祷告人数、祷告记录次数、最近祷告时间和参与者头像。
-- 每个频道都有“代祷事项”子入口，用来集中查看该频道原始代祷卡片；普通聊天里复发的最新动态不会在子入口里重复收录成新卡片。
+- 只有已经有代祷卡片的频道才会显示“代祷事项”子入口，用来集中查看该频道原始代祷卡片；普通聊天里复发的最新动态不会在子入口里重复收录成新卡片。
 
 参与和跟进：
 
@@ -175,24 +144,7 @@ AI 经文建议：
 
 ## English Overview
 
-Team Chat is a lightweight web chat app for small teams, families, groups, and private communities. It is built for both mobile and desktop use, and includes channels, direct messages, files, voice messages, browser push notifications, themes, prayer cards, Why research topics, AI-assisted Bible reference suggestions, message effects, admin tools, data import/export, and server self-update support.
-
-### Why Research
-
-- Each user has a private “Why” space with a topic directory. One question becomes one clearly bounded research topic.
-- In a regular channel, `?question`, `？question`, or `/为什么 question` creates a Why topic, leaves a question card in the source channel, and moves the asker into the topic.
-- `/?` and `/？` open the Why home view without creating a topic.
-- A user can start a Why topic from one of their existing text messages; the original message stays unchanged and a separate question card is created.
-- Questions created directly inside the Why home view stay private and do not announce anything in the source channels.
-- Each topic has its own permissions. Other users can request access from the question card, and the asker must approve the request before they can read the topic.
-- Approved participants can read the whole topic and respond to the asker, but participant replies are not included in the assistant context by default.
-- The Why assistant is designed as a strict question-based guide, not an answer machine. It pushes users to observe the text, verify sources, pray, and bring personal or pastoral issues to real trusted people.
-- Admins can configure the Why assistant in `/ai-settings`. It reuses the configured AI API key, has its own prompt, and defaults to web-enabled deep guidance mode.
-- Topics support unread and pending-request counts, completion notes, assistant retry state, and deleted-card placeholders that say the question was deleted.
-
-The intended flow is: ask from a channel, keep a lightweight card in that channel, continue the long-form work inside the topic, approve collaborators only when needed, and mark the topic complete when the research has landed somewhere useful.
-
-Why topics deliberately separate visibility from normal channel membership. A question card is an entry point and status marker; it does not expose the full research thread to everyone who can see the source channel.
+Team Chat is a lightweight web chat app for small teams, families, groups, and private communities. It is built for both mobile and desktop use, and includes channels, direct messages, files, voice messages, browser push notifications, themes, prayer cards, AI-assisted Bible reference suggestions, message effects, admin tools, data import/export, and server self-update support.
 
 ### Prayer Cards
 
@@ -201,7 +153,7 @@ Why topics deliberately separate visibility from normal channel membership. A qu
 - Members can record “I prayed” more than once, so long-running requests can show continued prayer rather than a single checkbox.
 - The requester can close a request, mark it answered, withdraw it, or publish a latest update.
 - Publishing a latest update opens an editor first. The requester can revise the text, strike through answered or no-longer-needed portions, and then update the original card, repost it as the newest channel message, and send push notifications.
-- Each channel has a Prayer Items sub-view that collects the original cards. Reposted latest updates stay in the chat flow but are not collected as duplicate cards.
+- Channels show a Prayer Items sub-view only after they have at least one prayer card. Reposted latest updates stay in the chat flow but are not collected as duplicate cards.
 - AI Bible reference suggestions stay attached to the canonical prayer card, so reposted updates keep the same prayer counts and suggestion history.
 
 ### AI Bible Reference Suggestions

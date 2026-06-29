@@ -434,9 +434,7 @@ export const useChatStore = defineStore("chat", {
       });
       socket.on("messages:refresh", (event: { channelId: number }) => {
         if (event.channelId === this.currentChannelId) this.loadMessages();
-        window.dispatchEvent(new CustomEvent("why:messages-refresh", { detail: event }));
       });
-      socket.on("why:updated", (event: { topicId: number }) => window.dispatchEvent(new CustomEvent("why:updated", { detail: event })));
       socket.on("channel:updated", () => this.loadChannels());
       socket.on("account:updated", (account: AccountDTO) => {
         if (account.id === this.account?.id) this.account = account;

@@ -13,7 +13,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type DeviceKind, type Message, type MessageType, type PinnedItem } from "@prisma/client";
+import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageType, type PinnedItem } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
 import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
@@ -40,11 +40,7 @@ import type {
   PinnedContentBlockDTO,
   PrayerStatus,
   ThemeDTO,
-  ThemePaletteDTO,
-  WhyAssistantRunDTO,
-  WhyTopicCardPayload,
-  WhyTopicDTO,
-  WhyTopicMemberDTO
+  ThemePaletteDTO
 } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { lookupBibleReference } from "./bible/lookup.js";
@@ -116,6 +112,7 @@ const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   bubbleMineText: "#111111"
 };
 const AI_RELATED_VERSES_KIND = "prayer_related_verses";
+const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
 const DEFAULT_AI_PROMPT_COMMAND = [
   "你只根据用户代祷信息，推荐 3 个可能相关的圣经经文出处。",
   "只输出经文出处，每行一个。",
@@ -1017,6 +1014,10 @@ function directChannelKey(accountA: number, accountB: number) {
   return [accountA, accountB].sort((a, b) => a - b).join(":");
 }
 
+function virtualDirectChannelKey(accountId: number, username: string) {
+  return `virtual:${accountId}:${username}`;
+}
+
 function isVoiceMessage(message: Pick<Message, "type" | "fileName" | "payload">) {
   const payload = message.payload as Partial<VoicePayload> | null;
   return message.type === "file" && payload?.kind === "voice" && isAudioFileName(message.fileName);
@@ -1099,6 +1100,7 @@ function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
 async function canAccessChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId } });
   if (!channel) return false;
+  if (channel.kind === "aiLounge") return false;
   if (channel.kind === "why") {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
     return !!member;
@@ -1117,6 +1119,7 @@ async function canAccessChannel(accountId: number, channelId: number) {
 async function canWriteChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId } });
   if (!channel) return false;
+  if (channel.kind === "aiLounge") return false;
   if (channel.kind === "why") {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
     return !!member && member.role !== "viewer";
@@ -1134,6 +1137,7 @@ async function canWriteChannel(accountId: number, channelId: number) {
 
 async function canManageChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, kind: true } });
+  if (channel?.kind === "aiLounge") return false;
   if (channel?.kind === "why") {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
     return member?.role === "owner" || member?.role === "admin";
@@ -1149,8 +1153,8 @@ async function canManageChannel(accountId: number, channelId: number) {
 }
 
 async function canPinChannel(auth: Pick<AuthContext, "accountId" | "isAdmin" | "canPinMessages">, channelId: number) {
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { isDefault: true, directKey: true } });
-  if (!channel || channel.directKey) return false;
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { isDefault: true, directKey: true, kind: true } });
+  if (!channel || channel.directKey || channel.kind !== "standard") return false;
   if (auth.isAdmin) return true;
   return !!auth.canPinMessages && channel.isDefault && (await canAccessChannel(auth.accountId, channelId));
 }
@@ -1216,27 +1220,6 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       aiSuggestionMaxSuccess: aiSettings.value.maxSuccessPerMessage
     };
   }
-  if (message.type === "why_topic_card") {
-    const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
-    const topicId = Number(raw.topicId || 0);
-    const topic = topicId
-      ? await prisma.whyTopic.findUnique({ where: { id: topicId } })
-      : null;
-    const owner = topic ? await prisma.account.findUnique({ where: { id: topic.ownerAccountId }, select: { displayName: true } }) : null;
-    const membership = topic && viewerAccountId
-      ? await prisma.whyTopicMember.findUnique({ where: { topicId_accountId: { topicId: topic.id, accountId: viewerAccountId } }, select: { role: true } })
-      : null;
-    const requestStatus = topic && viewerAccountId === topic.ownerAccountId ? "owner" : membership?.role === "requested" ? "requested" : membership ? "member" : "none";
-    payload = {
-      kind: "why_topic_card",
-      topicId,
-      title: topic?.title || String(raw.title || "一个新问题"),
-      status: topic?.status || "deleted",
-      ownerName: owner?.displayName || String(raw.ownerName || message.sender.displayName),
-      requestStatus,
-      sourceMessageId: topic?.sourceMessageId || Number(raw.sourceMessageId || 0) || null
-    } satisfies WhyTopicCardPayload;
-  }
   return {
     id: message.id,
     channelId: message.channelId,
@@ -1278,20 +1261,6 @@ async function hydrateMessage(id: number, viewerAccountId?: number) {
 function plainTextPreview(input?: string | null, maxLength = 80) {
   const text = stripMarkdownSyntax(plainTextFromHtml(input, 4000));
   return text.slice(0, maxLength);
-}
-
-function makeWhyTitle(question: string) {
-  const text = plainTextPreview(question, 34).replace(/^[/？?为什么\s]+/g, "").trim() || "一个新问题";
-  return `关于“${text}${text.length >= 34 ? "..." : ""}”的问题`.slice(0, 160);
-}
-
-function cleanWhyQuestion(input: unknown) {
-  return cleanText(String(input || "")).slice(0, 8000);
-}
-
-function messageWhyTrack(message: Pick<Message, "payload">) {
-  const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
-  return payload.whyTrack === "discussion" ? "discussion" : "study";
 }
 
 async function ensureAiRoleCharacter(username: string, fallbackName: string, displayName?: string) {
@@ -1446,121 +1415,6 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
   return (await prisma.actor.findUnique({ where: { id: actor.id } })) || actor;
 }
 
-async function whyTopicMembership(topicId: number, accountId: number) {
-  return prisma.whyTopicMember.findUnique({ where: { topicId_accountId: { topicId, accountId } } });
-}
-
-async function canAccessWhyTopic(accountId: number, topicId: number) {
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return false;
-  const member = await whyTopicMembership(topicId, accountId);
-  return !!member && member.role !== "requested";
-}
-
-async function canManageWhyTopic(auth: AuthContext, topicId: number) {
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic) return false;
-  if (auth.isAdmin) return true;
-  return topic.ownerAccountId === auth.accountId;
-}
-
-async function whyTopicDto(topicId: number, auth: AuthContext, includeQuestion = false): Promise<WhyTopicDTO | null> {
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic) return null;
-  const [owner, member, sourceChannel, participantCount, pendingRequestCount, lastMessage, read] = await Promise.all([
-    prisma.account.findUnique({ where: { id: topic.ownerAccountId }, select: { displayName: true } }),
-    whyTopicMembership(topic.id, auth.accountId),
-    topic.sourceChannelId ? prisma.channel.findUnique({ where: { id: topic.sourceChannelId }, select: { name: true } }) : null,
-    prisma.whyTopicMember.count({ where: { topicId: topic.id, role: { not: "requested" } } }),
-    prisma.whyTopicMember.count({ where: { topicId: topic.id, role: "requested" } }),
-    prisma.message.findFirst({ where: { channelId: topic.channelId }, orderBy: { id: "desc" } }),
-    prisma.whyTopicRead.findUnique({ where: { topicId_accountId: { topicId: topic.id, accountId: auth.accountId } } })
-  ]);
-  const unreadCount = await prisma.message.count({
-    where: {
-      channelId: topic.channelId,
-      id: read?.lastReadMessageId ? { gt: read.lastReadMessageId } : undefined,
-      sender: { accountId: { not: auth.accountId } }
-    }
-  });
-  return {
-    id: topic.id,
-    ownerAccountId: topic.ownerAccountId,
-    ownerName: owner?.displayName || "成员",
-    channelId: topic.channelId,
-    sourceChannelId: topic.sourceChannelId,
-    sourceChannelName: sourceChannel?.name || null,
-    sourceMessageId: topic.sourceMessageId,
-    cardMessageId: topic.cardMessageId,
-    title: topic.title,
-    summary: topic.summary,
-    originalQuestion: includeQuestion && member && member.role !== "requested" ? topic.originalQuestion : undefined,
-    completionNote: topic.completionNote,
-    status: topic.status,
-    memberRole: member?.role || "requested",
-    participantCount,
-    pendingRequestCount,
-    unreadCount,
-    lastMessagePreview: plainTextPreview(lastMessage?.content || topic.originalQuestion, 80),
-    createdAt: topic.createdAt.toISOString(),
-    updatedAt: topic.updatedAt.toISOString()
-  };
-}
-
-async function whyTopicMembersDto(topicId: number): Promise<WhyTopicMemberDTO[]> {
-  const members = await prisma.whyTopicMember.findMany({ where: { topicId }, orderBy: [{ role: "asc" }, { createdAt: "asc" }] });
-  const accounts = await prisma.account.findMany({ where: { id: { in: members.map((member) => member.accountId) } }, select: { id: true, displayName: true, avatarPath: true } });
-  const accountMap = new Map(accounts.map((account) => [account.id, account]));
-  return members.map((member) => {
-    const account = accountMap.get(member.accountId);
-    return {
-      accountId: member.accountId,
-      displayName: account?.displayName || "成员",
-      avatarPath: account?.avatarPath || null,
-      role: member.role,
-      createdAt: member.createdAt.toISOString()
-    };
-  });
-}
-
-function whyRunDto(run: { id: number; topicId: number; status: string; errorText?: string | null; createdAt: Date; updatedAt: Date }): WhyAssistantRunDTO {
-  return {
-    id: run.id,
-    topicId: run.topicId,
-    status: run.status === "success" || run.status === "failed" || run.status === "running" ? run.status : "pending",
-    errorText: run.errorText || null,
-    createdAt: run.createdAt.toISOString(),
-    updatedAt: run.updatedAt.toISOString()
-  };
-}
-
-async function buildWhyAssistantContext(topicId: number) {
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic) throw new Error("topic not found");
-  const rows = await prisma.message.findMany({
-    where: { channelId: topic.channelId, type: "text" },
-    include: { sender: true },
-    orderBy: { id: "desc" },
-    take: 80
-  });
-  const studyRows = rows
-    .reverse()
-    .filter((message) => message.sender.accountId === topic.ownerAccountId || message.sender.username === WHY_ASSISTANT_USERNAME)
-    .filter((message) => messageWhyTrack(message) === "study")
-    .slice(-30);
-  const lines = [
-    `标题：${topic.title}`,
-    `原始问题：${plainTextFromHtml(topic.originalQuestion, 2000)}`,
-    topic.summary ? `话题摘要：${plainTextFromHtml(topic.summary, 1000)}` : "",
-    "",
-    "研究主线（只包含提问者与为什么助手，不包含弟兄姐妹讨论）：",
-    ...studyRows.map((message) => `${message.sender.username === WHY_ASSISTANT_USERNAME ? "为什么助手" : "提问者"}：${plainTextFromHtml(message.content, 1200)}`),
-    "",
-    "请按为什么助手规则回应。"
-  ].filter(Boolean);
-  return lines.join("\n").slice(0, 12000);
-}
-
 async function loadWhyAssistantSettings() {
   const aiSettings = await loadAiSettings();
   const rows = await prisma.setting.findMany({
@@ -1616,6 +1470,57 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function buildWhyDirectAssistantContext(message: Message & { sender: Actor; channel: { name: string } }, assistant: Actor) {
+  const rows = await prisma.message.findMany({
+    where: {
+      channelId: message.channelId,
+      id: { lte: message.id },
+      OR: [{ senderActorId: message.senderActorId }, { senderActorId: assistant.id }]
+    },
+    include: { sender: true },
+    orderBy: { id: "desc" },
+    take: 24
+  });
+  const historyLines = rows
+    .reverse()
+    .map((row) => `${row.senderActorId === assistant.id ? "为什么助手" : "用户"}：${plainTextFromHtml(row.content, 1200)}`)
+    .filter(Boolean);
+  return [
+    `私聊频道：${message.channel.name}`,
+    `发言人：${message.sender.displayName}`,
+    "",
+    "最近对话：",
+    ...(historyLines.length ? historyLines : ["无"]),
+    "",
+    "请按为什么助手规则回应。"
+  ].join("\n").slice(0, 12000);
+}
+
+async function maybeTriggerWhyDirectAssistant(messageId: number) {
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    include: { sender: true, channel: { select: { name: true, directKey: true } } }
+  });
+  if (!message || message.type !== "text" || message.sender.kind !== "human") return;
+  if (message.channel.directKey !== virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
+  const settings = await loadWhyAssistantSettings();
+  const apiKey = decryptAiApiKey(settings.encryptedApiKey);
+  if (!settings.value.enabled || !apiKey) return;
+  const assistant = await ensureWhyAssistantCharacter(settings.value.displayName);
+  const contextText = await buildWhyDirectAssistantContext(message, assistant);
+  const responseText = await callWhyAssistant(settings.value, apiKey, contextText);
+  await createMessageFromActor({
+    channelId: message.channelId,
+    actorId: assistant.id,
+    content: responseText,
+    type: "text",
+    replyToId: message.id,
+    payload: { contentFormat: "markdown", aiRole: WHY_ASSISTANT_USERNAME, triggerMessageId: message.id },
+    skipEngineEvent: true,
+    skipQuestionAssistant: true
+  });
 }
 
 async function loadQuestionAssistantSettings() {
@@ -1873,9 +1778,10 @@ async function callQuestionAssistantActivationJudge(
 async function maybeTriggerQuestionAssistant(messageId: number) {
   const message = await prisma.message.findUnique({
     where: { id: messageId },
-    include: { sender: true, channel: { select: { name: true } } }
+    include: { sender: true, channel: { select: { name: true, directKey: true } } }
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
+  if (message.channel.directKey === virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
   const settings = await loadQuestionAssistantSettings();
   const directActivation = questionAssistantDirectActivation(message.content, settings.value.displayName);
   const apiKey = decryptAiApiKey(settings.encryptedApiKey);
@@ -1910,52 +1816,6 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     skipEngineEvent: true,
     skipQuestionAssistant: true
   });
-}
-
-async function processWhyAssistantRun(runId: number) {
-  const run = await prisma.whyAssistantRun.findUnique({ where: { id: runId }, include: { topic: true } });
-  if (!run || run.status === "success") return;
-  await prisma.whyAssistantRun.update({ where: { id: runId }, data: { status: "running" } });
-  io.to(`ch:${run.topic.channelId}`).emit("why:updated", { topicId: run.topicId });
-  const settings = await loadWhyAssistantSettings();
-  const apiKey = decryptAiApiKey(settings.encryptedApiKey);
-  const assistant = await ensureWhyAssistantCharacter(settings.value.displayName);
-  const contextText = await buildWhyAssistantContext(run.topicId);
-  try {
-    if (!settings.value.enabled || !apiKey) throw new Error("为什么助手尚未配置 API Key");
-    const responseText = await callWhyAssistant(settings.value, apiKey, contextText);
-    const message = await createMessageFromActor({
-      channelId: run.topic.channelId,
-      actorId: assistant.id,
-      content: responseText,
-      type: "text",
-      payload: { whyTrack: "study", whyAssistantRunId: run.id, contentFormat: "markdown" },
-      skipPush: true,
-      skipEngineEvent: true
-    });
-    await prisma.whyAssistantRun.update({
-      where: { id: runId },
-      data: { status: "success", contextText, responseText, model: settings.value.model, baseUrl: settings.value.baseUrl }
-    });
-    await prisma.whyTopic.update({ where: { id: run.topicId }, data: { updatedAt: new Date() } });
-    io.to(`ch:${run.topic.channelId}`).emit("messages:refresh", { channelId: run.topic.channelId });
-    io.to(`ch:${run.topic.channelId}`).emit("why:updated", { topicId: run.topicId, messageId: message.id });
-  } catch (error) {
-    await prisma.whyAssistantRun.update({
-      where: { id: runId },
-      data: { status: "failed", contextText, errorText: cleanAiError(error), model: settings.value.model, baseUrl: settings.value.baseUrl }
-    });
-    io.to(`ch:${run.topic.channelId}`).emit("why:updated", { topicId: run.topicId });
-  }
-}
-
-async function queueWhyAssistantRun(topicId: number, triggerMessageId?: number | null) {
-  const contextText = await buildWhyAssistantContext(topicId).catch(() => "");
-  const run = await prisma.whyAssistantRun.create({
-    data: { topicId, triggerMessageId: triggerMessageId || null, status: "pending", promptText: DEFAULT_WHY_ASSISTANT_PROMPT, contextText }
-  });
-  void processWhyAssistantRun(run.id).catch((error) => app.log.warn({ error, runId: run.id }, "why assistant run failed"));
-  return run;
 }
 
 function decodeBasicHtmlEntities(input: string) {
@@ -2395,8 +2255,8 @@ async function ensureBootstrap() {
     await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
   }
   const aiLoungeChannel = await prisma.channel.findFirst({ where: { kind: "aiLounge" } });
-  if (!aiLoungeChannel) {
-    await prisma.channel.create({ data: { name: "AI 助手", description: "与虚拟角色对话的群聊空间", kind: "aiLounge", isPrivate: false } });
+  if (aiLoungeChannel && !aiLoungeChannel.isPrivate) {
+    await prisma.channel.update({ where: { id: aiLoungeChannel.id }, data: { isPrivate: true } });
   }
   const accountCount = await prisma.account.count();
   if (accountCount === 0) {
@@ -2426,7 +2286,10 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   if (!channel) return null;
   const pin = channel.pinned[0];
   const membership = viewer ? await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: viewer.accountId } }, select: { role: true } }) : null;
-  const pinned = pin ? await serializePinnedItem(pin, viewer) : null;
+  const [pinned, prayerCount] = await Promise.all([
+    pin ? serializePinnedItem(pin, viewer) : Promise.resolve(null),
+    prisma.message.count({ where: { channelId, type: "prayer" } })
+  ]);
   return {
     id: channel.id,
     name: channel.name,
@@ -2438,6 +2301,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     directKey: channel.directKey,
     canManage: viewer ? !!viewer.isAdmin || membership?.role === "owner" || membership?.role === "admin" : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
+    hasPrayerItems: prayerCount > 0,
     memberCount: channel._count.members,
     pinned
   };
@@ -2489,6 +2353,7 @@ async function createMessageFromActor(input: {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
   if (!input.skipQuestionAssistant && (input.type || "text") === "text") {
+    void maybeTriggerWhyDirectAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "why direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
   return message;
@@ -2871,310 +2736,69 @@ app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) =>
 });
 
 app.get("/api/why/topics", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const memberships = await prisma.whyTopicMember.findMany({
-    where: { accountId: auth.accountId },
-    orderBy: { updatedAt: "desc" },
-    take: 200
-  });
-  const topicIds = memberships.map((membership) => membership.topicId);
-  const topics = await Promise.all(topicIds.map((id) => whyTopicDto(id, auth)));
-  return { topics: topics.filter(Boolean) };
+  void request;
+  return { topics: [] };
 });
 
 app.get("/api/why/summary", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const memberships = await prisma.whyTopicMember.findMany({ where: { accountId: auth.accountId, role: { not: "requested" } } });
-  const topicIds = memberships.map((membership) => membership.topicId);
-  const pendingRequestCount = await prisma.whyTopicMember.count({
-    where: { role: "requested", topic: { ownerAccountId: auth.accountId, status: { not: "deleted" } } }
-  });
-  let unreadCount = 0;
-  for (const topicId of topicIds) {
-    const topic = await whyTopicDto(topicId, auth);
-    unreadCount += topic?.unreadCount || 0;
-  }
+  void request;
+  const unreadCount = 0;
+  const pendingRequestCount = 0;
   return { unreadCount, pendingRequestCount };
 });
 
 app.post("/api/why/topics", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z
-    .object({
-      question: z.string().min(1).max(8000),
-      sourceChannelId: z.number().int().positive().nullable().optional(),
-      sourceMessageId: z.number().int().positive().nullable().optional()
-    })
-    .parse(request.body);
-  const question = cleanWhyQuestion(body.question);
-  if (!plainTextFromHtml(question, 8000)) return reply.code(400).send({ success: false, message: "问题不能为空" });
-  const sourceChannelId = body.sourceChannelId || null;
-  if (sourceChannelId) {
-    const sourceChannel = await prisma.channel.findUnique({ where: { id: sourceChannelId }, select: { kind: true } });
-    if (!sourceChannel || sourceChannel.kind === "why" || !(await canWriteChannel(auth.accountId, sourceChannelId))) {
-      return reply.code(403).send({ success: false, message: "无权在此频道创建为什么研究" });
-    }
-  }
-  let sourceMessageId = body.sourceMessageId || null;
-  if (sourceMessageId) {
-    const sourceMessage = await prisma.message.findUnique({ where: { id: sourceMessageId } });
-    if (!sourceMessage || sourceMessage.type !== "text" || !sourceChannelId || sourceMessage.channelId !== sourceChannelId || !(await canAccessChannel(auth.accountId, sourceMessage.channelId))) {
-      return reply.code(400).send({ success: false, message: "只能从当前频道的文本消息开始研究" });
-    }
-  }
-  const actor = await prisma.actor.findUniqueOrThrow({ where: { id: auth.actorId } });
-  const title = makeWhyTitle(question);
-  const channel = await prisma.channel.create({
-    data: {
-      kind: "why",
-      name: title,
-      description: "为什么研究话题",
-      icon: "",
-      isPrivate: true,
-      members: { create: { accountId: auth.accountId, role: "owner" } }
-    }
-  });
-  const topic = await prisma.whyTopic.create({
-    data: {
-      ownerAccountId: auth.accountId,
-      channelId: channel.id,
-      sourceChannelId,
-      sourceMessageId,
-      title,
-      summary: "",
-      originalQuestion: question,
-      members: { create: { accountId: auth.accountId, role: "owner" } }
-    }
-  });
-  const firstMessage = await createMessageFromActor({
-    channelId: channel.id,
-    actorId: actor.id,
-    content: question,
-    type: "text",
-    payload: { whyTrack: "study", originalQuestion: true },
-    skipPush: true,
-    skipEngineEvent: true
-  });
-  let card: MessageDTO | null = null;
-  if (sourceChannelId) {
-    const cardMessage = await createMessageFromActor({
-      channelId: sourceChannelId,
-      actorId: actor.id,
-      content: title,
-      type: "why_topic_card",
-      payload: { kind: "why_topic_card", topicId: topic.id, title, status: "active", ownerName: actor.displayName, sourceMessageId },
-      skipPush: true,
-      skipEngineEvent: true
-    });
-    await prisma.whyTopic.update({ where: { id: topic.id }, data: { cardMessageId: cardMessage.id } });
-    card = await hydrateMessage(cardMessage.id, auth.accountId);
-  }
-  joinAccountChannel(auth.accountId, channel.id);
-  const run = await queueWhyAssistantRun(topic.id, firstMessage.id);
-  const dto = await whyTopicDto(topic.id, auth, true);
-  return { success: true, topic: dto, run: whyRunDto(run), card };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.get("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  const topicRow = await prisma.whyTopic.findUnique({ where: { id: topicId }, select: { status: true } });
-  if (!topicRow || topicRow.status === "deleted") return reply.code(410).send({ success: false, message: "问题已删除" });
-  if (!(await canAccessWhyTopic(auth.accountId, topicId))) return reply.code(403).send({ success: false, message: "无权访问此为什么研究" });
-  const topic = await whyTopicDto(topicId, auth, true);
-  if (!topic) return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  const messages = await prisma.message.findMany({
-    where: { channelId: topic.channelId },
-    include: { sender: true, replyTo: { include: { sender: true } } },
-    orderBy: { id: "asc" },
-    take: 300
-  });
-  const lastMessageId = messages[messages.length - 1]?.id || null;
-  await prisma.whyTopicRead.upsert({
-    where: { topicId_accountId: { topicId, accountId: auth.accountId } },
-    update: { lastReadMessageId: lastMessageId, readAt: new Date() },
-    create: { topicId, accountId: auth.accountId, lastReadMessageId: lastMessageId }
-  });
-  const [members, runs] = await Promise.all([
-    whyTopicMembersDto(topicId),
-    prisma.whyAssistantRun.findMany({ where: { topicId, status: { in: ["pending", "running", "failed"] } }, orderBy: { createdAt: "desc" }, take: 5 })
-  ]);
-  return { topic, members, messages: await Promise.all(messages.map((message) => serializeMessage(message, auth.accountId))), runs: runs.map(whyRunDto) };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.post("/api/why/topics/:id/messages", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  const body = z.object({ content: z.string().min(1).max(8000), contentFormat: z.enum(["markdown"]).optional() }).parse(request.body);
-  if (!(await canAccessWhyTopic(auth.accountId, topicId))) return reply.code(403).send({ success: false, message: "无权访问此为什么研究" });
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  const content = cleanWhyQuestion(body.content);
-  if (!plainTextFromHtml(content, 8000)) return reply.code(400).send({ success: false, message: "消息不能为空" });
-  const isOwner = topic.ownerAccountId === auth.accountId;
-  const message = await createMessageFromActor({
-    channelId: topic.channelId,
-    actorId: auth.actorId,
-    content,
-    type: "text",
-    payload: { whyTrack: isOwner ? "study" : "discussion", ...(body.contentFormat === "markdown" ? { contentFormat: "markdown" } : {}) },
-    skipPush: true,
-    skipEngineEvent: true
-  });
-  if (topic.status === "completed") await prisma.whyTopic.update({ where: { id: topicId }, data: { status: "active" } });
-  else await prisma.whyTopic.update({ where: { id: topicId }, data: { updatedAt: new Date() } });
-  const run = isOwner ? await queueWhyAssistantRun(topicId, message.id) : null;
-  io.to(`ch:${topic.channelId}`).emit("why:updated", { topicId });
-  return { success: true, message: await hydrateMessage(message.id, auth.accountId), run: run ? whyRunDto(run) : null };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.post("/api/why/topics/:id/request", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return reply.code(410).send({ success: false, message: "问题已删除" });
-  if (topic.ownerAccountId === auth.accountId) return { success: true, role: "owner" };
-  const existing = await whyTopicMembership(topicId, auth.accountId);
-  if (existing && existing.role !== "requested") return { success: true, role: existing.role };
-  await prisma.whyTopicMember.upsert({
-    where: { topicId_accountId: { topicId, accountId: auth.accountId } },
-    update: { role: "requested" },
-    create: { topicId, accountId: auth.accountId, role: "requested" }
-  });
-  const requester = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { displayName: true } });
-  await sendPushToAccounts([topic.ownerAccountId], {
-    title: "新的为什么研究加入请求",
-    body: `${requester?.displayName || "有人"} 请求加入：${topic.title}`,
-    url: `/?whyTopicId=${topic.id}`,
-    tag: `why-request-${topic.id}`,
-    channelId: topic.channelId
-  });
-  io.to(`acct:${topic.ownerAccountId}`).emit("why:updated", { topicId });
-  return { success: true, role: "requested" };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.post("/api/why/topics/:id/requests/:accountId", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  const accountId = Number((request.params as { accountId: string }).accountId);
-  const body = z.object({ action: z.enum(["approve", "reject"]) }).parse(request.body);
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  if (topic.ownerAccountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有提问者可以处理请求" });
-  const requestRow = await whyTopicMembership(topicId, accountId);
-  if (!requestRow || requestRow.role !== "requested") return reply.code(404).send({ success: false, message: "请求不存在" });
-  if (body.action === "approve") {
-    await prisma.whyTopicMember.update({ where: { id: requestRow.id }, data: { role: "member" } });
-    await prisma.channelMember.createMany({ data: [{ channelId: topic.channelId, accountId, role: "member" }], skipDuplicates: true });
-    joinAccountChannel(accountId, topic.channelId);
-  } else {
-    await prisma.whyTopicMember.delete({ where: { id: requestRow.id } });
-  }
-  await sendPushToAccounts([accountId], {
-    title: body.action === "approve" ? "为什么研究请求已通过" : "为什么研究请求未通过",
-    body: topic.title,
-    url: `/?whyTopicId=${topic.id}`,
-    tag: `why-request-result-${topic.id}`,
-    channelId: topic.channelId
-  });
-  io.to(`acct:${accountId}`).to(`acct:${topic.ownerAccountId}`).emit("why:updated", { topicId });
-  return { success: true };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.patch("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  if (!(await canManageWhyTopic(auth, topicId))) return reply.code(403).send({ success: false, message: "无权管理此为什么研究" });
-  const body = z.object({ title: z.string().min(1).max(160).optional(), status: z.enum(["active", "completed"]).optional(), completionNote: z.string().max(8000).optional() }).parse(request.body);
-  const topic = await prisma.whyTopic.update({
-    where: { id: topicId },
-    data: {
-      title: body.title ? body.title.trim() : undefined,
-      status: body.status,
-      completionNote: body.completionNote
-    }
-  });
-  if (topic.cardMessageId && body.title) {
-    const card = await prisma.message.findUnique({ where: { id: topic.cardMessageId } });
-    const payload = card?.payload && typeof card.payload === "object" && !Array.isArray(card.payload) ? { ...(card.payload as Record<string, unknown>), title: topic.title } : { kind: "why_topic_card", topicId: topic.id, title: topic.title, status: topic.status };
-    await prisma.message.update({ where: { id: topic.cardMessageId }, data: { content: topic.title, payload } });
-    const dto = await hydrateMessage(topic.cardMessageId);
-    if (dto) io.to(`ch:${dto.channelId}`).emit("message:updated", dto);
-  }
-  io.to(`ch:${topic.channelId}`).emit("why:updated", { topicId });
-  return { success: true, topic: await whyTopicDto(topicId, auth, true) };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.post("/api/why/topics/:id/complete", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  if (!(await canManageWhyTopic(auth, topicId))) return reply.code(403).send({ success: false, message: "无权完成此为什么研究" });
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.status === "deleted") return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  const contextText = await buildWhyAssistantContext(topicId);
-  const note = [
-    "整理草稿",
-    "",
-    `原问题：${plainTextFromHtml(topic.originalQuestion, 600)}`,
-    "",
-    "请你在这里补上：我观察到什么、还需要查证什么、要带去祷告或和弟兄姐妹讨论什么。",
-    "",
-    "研究主线摘录：",
-    plainTextFromHtml(contextText, 1800)
-  ].join("\n").slice(0, 8000);
-  const updated = await prisma.whyTopic.update({ where: { id: topicId }, data: { status: "completed", completionNote: note } });
-  io.to(`ch:${updated.channelId}`).emit("why:updated", { topicId });
-  return { success: true, topic: await whyTopicDto(topicId, auth, true) };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.post("/api/why/topics/:id/retry-assistant", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  if (!(await canAccessWhyTopic(auth.accountId, topicId))) return reply.code(403).send({ success: false, message: "无权访问此为什么研究" });
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId } });
-  if (!topic || topic.ownerAccountId !== auth.accountId) return reply.code(403).send({ success: false, message: "只有提问者可以重试助手" });
-  const latestOwnerMessage = await prisma.message.findFirst({ where: { channelId: topic.channelId, senderActorId: auth.actorId }, orderBy: { id: "desc" } });
-  const run = await queueWhyAssistantRun(topicId, latestOwnerMessage?.id || null);
-  return { success: true, run: whyRunDto(run) };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
 
 app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const topicId = Number((request.params as { id: string }).id);
-  if (!(await canManageWhyTopic(auth, topicId))) return reply.code(403).send({ success: false, message: "无权删除此为什么研究" });
-  const topic = await prisma.whyTopic.findUnique({ where: { id: topicId }, include: { members: { select: { accountId: true } } } });
-  if (!topic) return reply.code(404).send({ success: false, message: "为什么研究不存在" });
-  const channelMessageIds = (await prisma.message.findMany({ where: { channelId: topic.channelId }, select: { id: true } })).map((message) => message.id);
-  await prisma.$transaction(async (tx) => {
-    if (topic.cardMessageId) {
-      const card = await tx.message.findUnique({ where: { id: topic.cardMessageId } });
-      const payload = card?.payload && typeof card.payload === "object" && !Array.isArray(card.payload)
-        ? { ...(card.payload as Record<string, unknown>), status: "deleted" }
-        : { kind: "why_topic_card", topicId: topic.id, title: topic.title, status: "deleted" };
-      await tx.message.update({ where: { id: topic.cardMessageId }, data: { payload } }).catch(() => undefined);
-    }
-    if (channelMessageIds.length) {
-      await tx.message.updateMany({ where: { replyToId: { in: channelMessageIds } }, data: { replyToId: null } });
-    }
-    await tx.channel.deleteMany({ where: { id: topic.channelId } });
-    await tx.whyTopic.deleteMany({ where: { id: topicId } });
-  });
-  if (topic.cardMessageId) {
-    const dto = await hydrateMessage(topic.cardMessageId);
-    if (dto) io.to(`ch:${dto.channelId}`).emit("message:updated", dto);
-  }
-  for (const member of topic.members) {
-    io.to(`acct:${member.accountId}`).emit("why:updated", { topicId });
-  }
-  return { success: true };
+  void request;
+  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
 });
+
 
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
   const where = auth.isAdmin
-    ? { kind: { not: "why" as const }, OR: [{ directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
+    ? { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
     : {
-        kind: { not: "why" as const },
+        kind: { in: PUBLIC_CHANNEL_KINDS },
         OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }]
       };
   const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
@@ -3305,6 +2929,39 @@ app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, re
   joinAccountChannel(body.accountId, channel.id);
   const dto = await channelDto(channel.id);
   io.to(`acct:${auth.accountId}`).to(`acct:${body.accountId}`).emit("channel:updated", { action: "direct", channel: dto });
+  return { success: true, channel: dto };
+});
+
+app.post("/api/direct-virtual-channels", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ username: z.string().min(1).max(80) }).parse(request.body);
+  if (body.username !== WHY_ASSISTANT_USERNAME) return reply.code(400).send({ success: false, message: "暂时只能和为什么助手私聊" });
+  const [me, assistant] = await Promise.all([
+    prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } }),
+    ensureWhyAssistantCharacter()
+  ]);
+  if (!me?.actor || !assistant) return reply.code(404).send({ success: false, message: "助手不存在" });
+  const key = virtualDirectChannelKey(auth.accountId, body.username);
+  const channel = await prisma.channel.upsert({
+    where: { directKey: key },
+    update: { name: `私聊：${me.displayName}、${assistant.displayName}`, isPrivate: true },
+    create: {
+      kind: "direct",
+      name: `私聊：${me.displayName}、${assistant.displayName}`,
+      description: "一对一私聊",
+      icon: "",
+      isPrivate: true,
+      directKey: key,
+      members: { create: [{ accountId: auth.accountId, role: "owner" }] }
+    }
+  });
+  await prisma.channelMember.createMany({
+    data: [{ accountId: auth.accountId, channelId: channel.id, role: "owner" }],
+    skipDuplicates: true
+  });
+  joinAccountChannel(auth.accountId, channel.id);
+  const dto = await channelDto(channel.id, auth);
+  io.to(`acct:${auth.accountId}`).emit("channel:updated", { action: "direct", channel: dto });
   return { success: true, channel: dto };
 });
 
@@ -5596,8 +5253,8 @@ io.on("connection", async (socket: Socket) => {
   if (wasOffline) await writeLoginLog("presence_join", account.id, session);
   const channels = await prisma.channel.findMany({
     where: auth.isAdmin
-      ? { OR: [{ kind: { not: "why" as const }, directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
-      : { OR: [{ kind: { not: "why" as const }, isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] },
+      ? { OR: [{ kind: { in: PUBLIC_CHANNEL_KINDS }, directKey: null }, { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }] }
+      : { OR: [{ kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false }, { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }] },
     select: { id: true }
   });
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));

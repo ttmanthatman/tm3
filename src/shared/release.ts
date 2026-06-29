@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.5";
+export const APP_VERSION = "0.8.4.6";
 
-export const RELEASE_DATE = "2026-06-28";
+export const RELEASE_DATE = "2026-06-29";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "频道没有代祷卡片时不再显示“代祷事项”子入口。",
+  "移除为什么频道、为什么话题入口和 AI 助手公开频道，用户可通过和“为什么助手”私聊继续研究话题。",
+  "移除左右滑动切换屏幕/频道功能，并收紧置顶编辑权限到管理员和默认频道户部尚书。"
+] as const;
+
+const RELEASE_0_8_4_5_NOTES = [
   "AI 设置页改为铺满全页面的管理工作台，顶部显示配置摘要，左侧使用带图标的分类导航。",
   "LLM 接入、虚拟角色和相关经文设置重新排版，表单、保存栏和虚拟角色矩阵改为更现代的浅色控制台视觉。"
 ] as const;
@@ -313,9 +319,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.8.4.6",
+    date: "2026-06-29",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.8.4.5",
     date: "2026-06-28",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_4_5_NOTES
   },
   {
     version: "0.8.4.4",
