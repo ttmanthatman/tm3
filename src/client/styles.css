@@ -1070,11 +1070,16 @@ button {
 
 .gooey-drip-blob {
   fill: url("#gooey-drip-fill");
-  filter: drop-shadow(0 4px 9px rgba(3, 105, 161, 0.2));
+  stroke: rgba(8, 47, 73, 0.22);
+  stroke-width: 0.75;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 2px 3px rgba(8, 47, 73, 0.14));
+  paint-order: stroke fill;
 }
 
 .gooey-drip-highlight {
-  fill: rgba(255, 255, 255, 0.82);
+  fill: rgba(255, 255, 255, 0.74);
+  filter: blur(0.15px);
   mix-blend-mode: screen;
 }
 
@@ -1851,39 +1856,27 @@ button {
 
 .message-effect-drip-gooey {
   overflow: visible;
-  color: #062a3a;
-  background:
-    radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.92), transparent 32%),
-    radial-gradient(ellipse at 76% 122%, rgba(3, 105, 161, 0.24), transparent 58%),
-    linear-gradient(180deg, rgba(240, 249, 255, 0.98), rgba(125, 211, 252, 0.56) 56%, rgba(14, 165, 233, 0.42)),
-    var(--bubble-other);
+  color: var(--bubble-other-text);
+  background: var(--bubble-other);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    inset 0 -11px 20px rgba(2, 132, 199, 0.2),
-    inset 0 0 0 1px rgba(14, 116, 144, 0.14),
-    0 9px 20px rgba(14, 116, 144, 0.16);
+    inset 0 0 0 1px color-mix(in srgb, var(--line) 72%, transparent),
+    0 4px 10px rgba(15, 23, 42, 0.08);
 }
 
 .message-row.mine .message-effect-drip-gooey {
-  background:
-    radial-gradient(ellipse at 18% 0%, rgba(255, 255, 255, 0.82), transparent 32%),
-    radial-gradient(ellipse at 76% 122%, rgba(3, 105, 161, 0.2), transparent 58%),
-    linear-gradient(180deg, rgba(232, 252, 246, 0.98), rgba(125, 211, 252, 0.48) 58%, rgba(14, 165, 233, 0.34)),
-    var(--bubble-mine);
+  color: var(--bubble-mine-text);
+  background: var(--bubble-mine);
 }
 
 .message-effect-drip::before,
-.message-effect-drip::after,
-.message-effect-drip-gooey::before,
-.message-effect-drip-gooey::after {
+.message-effect-drip::after {
   content: "";
   position: absolute;
   pointer-events: none;
   border-radius: inherit;
 }
 
-.message-effect-drip::before,
-.message-effect-drip-gooey::before {
+.message-effect-drip::before {
   inset: 0;
   z-index: 0;
   background:
@@ -1892,8 +1885,7 @@ button {
   mix-blend-mode: screen;
 }
 
-.message-effect-drip::after,
-.message-effect-drip-gooey::after {
+.message-effect-drip::after {
   left: 8px;
   right: 8px;
   bottom: -1px;
@@ -1904,17 +1896,10 @@ button {
   opacity: 0.74;
 }
 
-.message-effect-drip-gooey::after {
-  bottom: -2px;
-  height: 7px;
-  background: linear-gradient(90deg, transparent, rgba(186, 230, 253, 0.84) 22%, rgba(255, 255, 255, 0.78) 48%, rgba(14, 165, 233, 0.5) 78%, transparent);
-  opacity: 0.82;
-}
-
 .message-effect-drip-gooey .reply-preview {
   color: inherit;
-  background: rgba(255, 255, 255, 0.3);
-  border-left-color: rgba(6, 42, 58, 0.34);
+  background: color-mix(in srgb, var(--panel) 34%, transparent);
+  border-left-color: color-mix(in srgb, currentColor 34%, transparent);
 }
 
 .message-effect-rain {

@@ -516,6 +516,7 @@ type DripParticle = {
   seed: number;
 };
 type GravityVector = { x: number; y: number; strength: number };
+type GooeyEdgeAnchor = { x: number; y: number; normalX: number; normalY: number; tangentX: number; tangentY: number; tangentLimit: number };
 type GooeyDripParticle = {
   id: number;
   state: "attached" | "falling" | "splash";
@@ -2814,18 +2815,22 @@ function handleDeviceOrientation(event: DeviceOrientationEvent) {
 
 function screenGravityFromOrientation(beta: number, gamma: number): GravityVector {
   const radians = Math.PI / 180;
-  const rawX = Math.sin(clamp(gamma, -90, 90) * radians);
+  const rawX = Math.sin(clamp(gamma, -90, 90) * radians) * 0.62;
   const rawY = Math.sin(clamp(beta, -90, 90) * radians);
   const angle = typeof screen !== "undefined" && screen.orientation ? screen.orientation.angle : Number((window as unknown as { orientation?: number }).orientation || 0);
   const rotation = -angle * radians;
-  const x = rawX * Math.cos(rotation) - rawY * Math.sin(rotation);
-  const y = rawX * Math.sin(rotation) + rawY * Math.cos(rotation);
+  const projectedX = rawX * Math.cos(rotation) - rawY * Math.sin(rotation);
+  const projectedY = rawX * Math.sin(rotation) + rawY * Math.cos(rotation);
+  const projectedLength = Math.hypot(projectedX, projectedY);
+  const visualDownBias = 0.58 * (1 - clamp(projectedLength * 1.35, 0, 1));
+  const x = projectedX;
+  const y = projectedY + visualDownBias;
   const length = Math.hypot(x, y);
-  if (length < 0.08) return { x: 0, y: 1, strength: 0.28 };
+  if (length < 0.08) return { x: 0, y: 1, strength: 0.42 };
   return {
     x: x / length,
     y: y / length,
-    strength: clamp(length, 0.28, 1)
+    strength: clamp(length, 0.42, 1)
   };
 }
 
@@ -3405,19 +3410,21 @@ function spawnGooeyDripParticles(layer: SVGSVGElement) {
     if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
     const sourceId = message.id;
     const existing = gooeyParticles.filter((particle) => particle.sourceId === sourceId && particle.state === "attached").length;
-    if (existing >= 5) continue;
+    if (existing >= 6) continue;
     const layerBubbleRect = toLayerRect(rect, layerRect);
-    const count = Math.random() > 0.72 ? 2 : 1;
+    const count = Math.random() > 0.62 ? 2 : 1;
     for (let i = 0; i < count; i += 1) {
-      const radius = 3.2 + Math.random() * 2.3;
-      const edgeLimit = Math.max(8, Math.min(layerBubbleRect.width, layerBubbleRect.height) * 0.36);
-      const edgeOffset = (Math.random() - 0.5) * edgeLimit;
+      const radius = 2.4 + Math.random() * 3.2;
+      const edgeProbe = gooeyEdgePoint(layerBubbleRect, gravity, 0);
+      const edgeLimit = Math.max(10, edgeProbe.tangentLimit * 0.92);
+      const edgeOffset = (Math.random() * 2 - 1) * edgeLimit;
       const anchor = gooeyEdgePoint(layerBubbleRect, gravity, edgeOffset);
+      const center = gooeyDropCenter(anchor, radius, 0.18);
       gooeyParticles.push({
         id: gooeyNextId,
         state: "attached",
-        x: anchor.x,
-        y: anchor.y,
+        x: center.x,
+        y: center.y,
         vx: 0,
         vy: 0,
         radius,
@@ -3426,10 +3433,10 @@ function spawnGooeyDripParticles(layer: SVGSVGElement) {
         anchorY: anchor.y,
         edgeOffset,
         edgeVelocity: 0,
-        mass: 0.2 + Math.random() * 0.18,
+        mass: 0.16 + Math.random() * 0.18,
         age: 0,
-        life: 2.6 + Math.random() * 1.8,
-        alpha: 0.86
+        life: 2.9 + Math.random() * 2.2,
+        alpha: 0.78
       });
       gooeyNextId += 1;
     }
@@ -3480,18 +3487,21 @@ function toLayerRect(rect: DOMRect, layerRect: DOMRect): BubbleLayerRect {
 }
 
 function updateAttachedGooeyDrip(particle: GooeyDripParticle, rect: BubbleLayerRect, gravity: GravityVector, dt: number) {
-  particle.edgeVelocity += -particle.edgeOffset * (5.5 + gravity.strength * 3.5) * dt;
-  particle.edgeVelocity *= Math.pow(0.34, dt);
+  const edgeProbe = gooeyEdgePoint(rect, gravity, particle.edgeOffset);
+  const clampedOffset = clamp(particle.edgeOffset, -edgeProbe.tangentLimit, edgeProbe.tangentLimit);
+  particle.edgeVelocity += (clampedOffset - particle.edgeOffset) * 14 * dt;
+  particle.edgeVelocity *= Math.pow(0.18, dt);
   particle.edgeOffset += particle.edgeVelocity * dt;
-  particle.mass += (0.28 + gravity.strength * 0.18) * dt;
-  particle.radius = Math.min(8.8, particle.radius + particle.mass * 0.15 * dt);
+  particle.mass += (0.22 + gravity.strength * 0.16) * dt;
+  particle.radius = Math.min(8.4, particle.radius + particle.mass * 0.13 * dt);
   const anchor = gooeyEdgePoint(rect, gravity, particle.edgeOffset);
+  const center = gooeyDropCenter(anchor, particle.radius, particle.mass);
   particle.anchorX = anchor.x;
   particle.anchorY = anchor.y;
-  const follow = 1 - Math.exp(-12 * dt);
-  particle.x += (anchor.x - particle.x) * follow;
-  particle.y += (anchor.y - particle.y) * follow;
-  const shouldDetach = particle.mass > 1.08 || particle.age > particle.life;
+  const follow = 1 - Math.exp(-10 * dt);
+  particle.x += (center.x - particle.x) * follow;
+  particle.y += (center.y - particle.y) * follow;
+  const shouldDetach = particle.mass > 1.16 || particle.age > particle.life;
   if (shouldDetach) detachGooeyDrip(particle, gravity);
 }
 
@@ -3504,7 +3514,7 @@ function detachGooeyDrip(particle: GooeyDripParticle, gravity: GravityVector) {
   particle.life = 3.2;
 }
 
-function gooeyEdgePoint(rect: BubbleLayerRect, gravity: GravityVector, edgeOffset: number) {
+function gooeyEdgePoint(rect: BubbleLayerRect, gravity: GravityVector, edgeOffset: number): GooeyEdgeAnchor {
   const gx = Math.abs(gravity.x) < 0.001 ? 0 : gravity.x;
   const gy = Math.abs(gravity.y) < 0.001 ? 0 : gravity.y;
   const hw = Math.max(1, rect.width / 2);
@@ -3513,11 +3523,32 @@ function gooeyEdgePoint(rect: BubbleLayerRect, gravity: GravityVector, edgeOffse
   const scaleY = gy ? hh / Math.abs(gy) : Number.POSITIVE_INFINITY;
   const scale = Math.min(scaleX, scaleY);
   const tangent = { x: -gy, y: gx };
-  const tangentLimit = Math.max(6, (Math.abs(gx) > Math.abs(gy) ? hh : hw) * 0.88);
+  const baseX = rect.layerCenterX + gx * scale;
+  const baseY = rect.layerCenterY + gy * scale;
+  const maxOffsetX = tangent.x
+    ? (tangent.x > 0 ? rect.layerRight - baseX : baseX - rect.layerLeft) / Math.abs(tangent.x)
+    : Number.POSITIVE_INFINITY;
+  const maxOffsetY = tangent.y
+    ? (tangent.y > 0 ? rect.layerBottom - baseY : baseY - rect.layerTop) / Math.abs(tangent.y)
+    : Number.POSITIVE_INFINITY;
+  const tangentLimit = Math.max(6, Math.min(maxOffsetX, maxOffsetY) - 5);
   const offset = clamp(edgeOffset, -tangentLimit, tangentLimit);
   return {
-    x: clamp(rect.layerCenterX + gx * scale + tangent.x * offset, rect.layerLeft + 5, rect.layerRight - 5),
-    y: clamp(rect.layerCenterY + gy * scale + tangent.y * offset, rect.layerTop + 5, rect.layerBottom - 5)
+    x: clamp(baseX + tangent.x * offset, rect.layerLeft, rect.layerRight),
+    y: clamp(baseY + tangent.y * offset, rect.layerTop, rect.layerBottom),
+    normalX: gx,
+    normalY: gy,
+    tangentX: tangent.x,
+    tangentY: tangent.y,
+    tangentLimit
+  };
+}
+
+function gooeyDropCenter(anchor: GooeyEdgeAnchor, radius: number, mass: number) {
+  const outsideDistance = radius * (1.08 + clamp(mass, 0, 1.3) * 0.42);
+  return {
+    x: anchor.x + anchor.normalX * outsideDistance,
+    y: anchor.y + anchor.normalY * outsideDistance
   };
 }
 
@@ -3568,20 +3599,20 @@ function renderGooeyDrips(particles: GooeyDripParticle[], gravity: GravityVector
     if (particle.state === "attached") {
       const bridgeX = (particle.anchorX + particle.x) / 2;
       const bridgeY = (particle.anchorY + particle.y) / 2;
-      blobs.push({ id: `${particle.id}-anchor`, x: particle.anchorX, y: particle.anchorY, rx: particle.radius * 0.58, ry: particle.radius * 0.5, alpha: 0.78, rotate: angle });
-      blobs.push({ id: `${particle.id}-bridge`, x: bridgeX, y: bridgeY, rx: particle.radius * 0.48, ry: Math.max(2.2, Math.hypot(particle.x - particle.anchorX, particle.y - particle.anchorY) * 0.42), alpha: 0.62, rotate: angle });
-      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * 0.92, ry: particle.radius * (1.08 + particle.mass * 0.12), alpha: particle.alpha, rotate: angle });
+      blobs.push({ id: `${particle.id}-anchor`, x: particle.anchorX, y: particle.anchorY, rx: particle.radius * 0.34, ry: particle.radius * 0.28, alpha: 0.42, rotate: angle });
+      blobs.push({ id: `${particle.id}-bridge`, x: bridgeX, y: bridgeY, rx: particle.radius * 0.3, ry: Math.max(1.4, Math.hypot(particle.x - particle.anchorX, particle.y - particle.anchorY) * 0.34), alpha: 0.34, rotate: angle });
+      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * 0.98, ry: particle.radius * (1.04 + particle.mass * 0.16), alpha: particle.alpha, rotate: angle });
     } else {
       const speedStretch = particle.state === "falling" ? clamp(Math.hypot(particle.vx, particle.vy) / 980, 0, 0.62) : 0;
-      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * (1 - speedStretch * 0.18), ry: particle.radius * (1.05 + speedStretch), alpha: particle.alpha * fade, rotate: angle });
+      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * (1 - speedStretch * 0.16), ry: particle.radius * (1.03 + speedStretch), alpha: particle.alpha * fade, rotate: angle });
     }
     highlights.push({
       id: `${particle.id}-shine`,
-      x: particle.x - particle.radius * 0.28,
-      y: particle.y - particle.radius * 0.34,
-      rx: Math.max(0.9, particle.radius * 0.2),
-      ry: Math.max(1.2, particle.radius * 0.34),
-      alpha: 0.68 * fade,
+      x: particle.x - particle.radius * 0.36,
+      y: particle.y - particle.radius * 0.42,
+      rx: Math.max(0.7, particle.radius * 0.16),
+      ry: Math.max(1, particle.radius * 0.28),
+      alpha: 0.52 * fade,
       rotate: angle - 28
     });
   }
@@ -6130,20 +6161,20 @@ async function toggleVirtual(character: any) {
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
         <defs>
           <filter id="gooey-drip-filter" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
             <feColorMatrix
               in="blur"
               mode="matrix"
-              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 17 -7"
               result="goo"
             />
             <feBlend in="SourceGraphic" in2="goo" />
           </filter>
           <radialGradient id="gooey-drip-fill" cx="35%" cy="28%" r="76%">
-            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96" />
-            <stop offset="28%" stop-color="#bae6fd" stop-opacity="0.84" />
-            <stop offset="74%" stop-color="#0ea5e9" stop-opacity="0.66" />
-            <stop offset="100%" stop-color="#0369a1" stop-opacity="0.48" />
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.62" />
+            <stop offset="36%" stop-color="#f8fbff" stop-opacity="0.2" />
+            <stop offset="72%" stop-color="#dbeafe" stop-opacity="0.18" />
+            <stop offset="100%" stop-color="#082f49" stop-opacity="0.2" />
           </radialGradient>
         </defs>
         <g class="gooey-drip-goo" filter="url(#gooey-drip-filter)">
