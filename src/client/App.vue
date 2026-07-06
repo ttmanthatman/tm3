@@ -151,6 +151,7 @@ const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
+const gooeyDripLayer = ref<SVGSVGElement | null>(null);
 const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "release">("pin");
 const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
 const adminMsg = ref("");
@@ -372,6 +373,9 @@ const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
 const rainActive = ref(false);
 const waterTilt = ref({ x: 0, y: 0 });
+const deviceGravity = ref<GravityVector>({ x: 0, y: 1, strength: 1 });
+const gooeyBlobs = ref<GooeyBlob[]>([]);
+const gooeyHighlights = ref<GooeyHighlight[]>([]);
 const hasUnreadMessages = ref(false);
 let recordingTimer: number | undefined;
 let versionCheckTimer: number | undefined;
@@ -383,6 +387,11 @@ let dripAnimationFrame: number | undefined;
 let dripLastFrame = 0;
 let dripLastSpawn = 0;
 let dripParticles: DripParticle[] = [];
+let gooeyAnimationFrame: number | undefined;
+let gooeyLastFrame = 0;
+let gooeyLastSpawn = 0;
+let gooeyNextId = 1;
+let gooeyParticles: GooeyDripParticle[] = [];
 let loadingHistoryFromScroll = false;
 let loadingNewerFromScroll = false;
 const voicePlayers = new Map<number, HTMLAudioElement>();
@@ -506,6 +515,28 @@ type DripParticle = {
   phase: number;
   seed: number;
 };
+type GravityVector = { x: number; y: number; strength: number };
+type GooeyDripParticle = {
+  id: number;
+  state: "attached" | "falling" | "splash";
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  sourceId: number;
+  anchorX: number;
+  anchorY: number;
+  edgeOffset: number;
+  edgeVelocity: number;
+  mass: number;
+  age: number;
+  life: number;
+  alpha: number;
+};
+type GooeyBlob = { id: string; x: number; y: number; rx: number; ry: number; alpha: number; rotate: number };
+type GooeyHighlight = { id: string; x: number; y: number; rx: number; ry: number; alpha: number; rotate: number };
+type BubbleLayerRect = DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number; layerCenterX: number; layerCenterY: number };
 const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: IconComponent }> = [
   { command: "/闪动", effect: "flash", label: "闪动", hint: "气泡持续换色", icon: Sparkles },
   { command: "/流光", effect: "shine", label: "流光", hint: "文字金属反光", icon: WandSparkles },
@@ -515,6 +546,7 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/跑马灯", effect: "marquee", label: "跑马灯", hint: "节日彩灯绕气泡追逐", icon: PartyPopper },
   { command: "/水波", effect: "water", label: "水波", hint: "气泡像水面一样荡漾", icon: Waves },
   { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
+  { command: "/水滴滴", effect: "dripGooey", label: "水滴滴", hint: "手机倾斜时液滴沿气泡滑动并黏连滴落", icon: Droplet },
   { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
@@ -629,6 +661,7 @@ watch(
   () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(",")] as const,
   () => {
     nextTick(() => ensureDripPhysics());
+    nextTick(() => ensureGooeyDripPhysics());
   },
   { flush: "post" }
 );
@@ -706,6 +739,7 @@ onBeforeUnmount(() => {
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   stopRainEffect();
   stopDripPhysics(true);
+  stopGooeyDripPhysics(true);
   stopAllVoicePlayback();
   resetRecording();
 });
@@ -2569,6 +2603,7 @@ async function sendText() {
   const parsed = parseComposerText(input.value);
   const content = parsed.content;
   if (!content || !store.currentChannelId) return;
+  if (parsed.effect === "water" || parsed.effect === "dripGooey") requestDeviceOrientationPermissionOnce();
   const originalInput = input.value;
   const messageType = parsed.type || (store.prayerOnly ? "prayer" : "text");
   const messagePayload = {
@@ -2746,6 +2781,7 @@ function messageEffectClass(message: MessageDTO) {
     "message-effect-marquee": effect === "marquee",
     "message-effect-water": effect === "water",
     "message-effect-drip": effect === "drip",
+    "message-effect-drip-gooey": effect === "dripGooey",
     "message-effect-rain": effect === "rain"
   };
 }
@@ -2772,6 +2808,24 @@ function handleDeviceOrientation(event: DeviceOrientationEvent) {
   waterTilt.value = {
     x: clamp(gamma, -36, 36) * 0.42,
     y: clamp(beta - 35, -42, 42) * 0.28
+  };
+  deviceGravity.value = screenGravityFromOrientation(beta, gamma);
+}
+
+function screenGravityFromOrientation(beta: number, gamma: number): GravityVector {
+  const radians = Math.PI / 180;
+  const rawX = Math.sin(clamp(gamma, -90, 90) * radians);
+  const rawY = Math.sin(clamp(beta, -90, 90) * radians);
+  const angle = typeof screen !== "undefined" && screen.orientation ? screen.orientation.angle : Number((window as unknown as { orientation?: number }).orientation || 0);
+  const rotation = -angle * radians;
+  const x = rawX * Math.cos(rotation) - rawY * Math.sin(rotation);
+  const y = rawX * Math.sin(rotation) + rawY * Math.cos(rotation);
+  const length = Math.hypot(x, y);
+  if (length < 0.08) return { x: 0, y: 1, strength: 0.28 };
+  return {
+    x: x / length,
+    y: y / length,
+    strength: clamp(length, 0.28, 1)
   };
 }
 
@@ -2982,7 +3036,7 @@ function updateDripPhysics(now: number) {
   for (const particle of dripParticles) {
     particle.age += dt;
     if (particle.state === "attached") {
-      updateAttachedDrip(particle, bubbleRects, now, dt);
+      updateAttachedDrip(particle, bubbleRects, dt);
     } else if (particle.state === "falling") {
       particle.vy += 1420 * dt;
       particle.vx *= 0.992;
@@ -3100,29 +3154,27 @@ function dripCollisionRects(layer: HTMLCanvasElement) {
 function updateAttachedDrip(
   particle: DripParticle,
   bubbleRects: Map<number, DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number }>,
-  now: number,
   dt: number
 ) {
   const rect = bubbleRects.get(particle.sourceId);
   if (!rect) {
-    detachDrip(particle, 0.72);
+    detachDrip(particle);
     return;
   }
   particle.anchorX = rect.layerLeft + rect.width * particle.anchorRatio;
   particle.anchorY = rect.layerBottom - 1;
   particle.mass += (0.34 + particle.seed * 0.28) * dt;
   particle.radius = Math.min(7.8, particle.radius + particle.mass * 0.12 * dt);
-  const wobble = Math.sin(now * (0.006 + particle.seed * 0.002) + particle.phase) * (1.5 + particle.mass * 2.2);
   particle.stretch = clamp(particle.stretch + (0.32 + particle.mass * 0.42) * dt, 0, 1.45);
-  particle.x = particle.anchorX + wobble;
+  particle.x = particle.anchorX;
   particle.y = particle.anchorY + particle.radius * (0.74 + particle.stretch * 1.05);
   const release = particle.mass > 1.15 + particle.seed * 0.45 || particle.age > particle.life || particle.stretch > 1.36;
-  if (release) detachDrip(particle, wobble);
+  if (release) detachDrip(particle);
 }
 
-function detachDrip(particle: DripParticle, wobble: number) {
+function detachDrip(particle: DripParticle) {
   particle.state = "falling";
-  particle.vx = wobble * 7 + (Math.random() - 0.5) * 42;
+  particle.vx = 0;
   particle.vy = 110 + particle.mass * 72;
   particle.age = 0;
   particle.life = 2.8;
@@ -3261,8 +3313,292 @@ function drawDripHighlights(context: CanvasRenderingContext2D, x: number, y: num
   context.restore();
 }
 
+function ensureGooeyDripPhysics() {
+  const active = hasActiveGooeyDripMessages();
+  if ((active || gooeyParticles.length) && !gooeyAnimationFrame) {
+    gooeyLastFrame = 0;
+    gooeyLastSpawn = 0;
+    gooeyAnimationFrame = requestAnimationFrame(updateGooeyDripPhysics);
+  }
+}
+
+function stopGooeyDripPhysics(clear = false) {
+  if (gooeyAnimationFrame) window.cancelAnimationFrame(gooeyAnimationFrame);
+  gooeyAnimationFrame = undefined;
+  gooeyLastFrame = 0;
+  gooeyLastSpawn = 0;
+  if (clear) {
+    gooeyParticles = [];
+    gooeyBlobs.value = [];
+    gooeyHighlights.value = [];
+  }
+}
+
+function hasActiveGooeyDripMessages() {
+  return store.messages.some((message) => messageEffect(message) === "dripGooey" && !isMessageEffectPaused(message));
+}
+
+function updateGooeyDripPhysics(now: number) {
+  const layer = gooeyDripLayer.value;
+  if (!layer) {
+    stopGooeyDripPhysics(true);
+    return;
+  }
+  const active = hasActiveGooeyDripMessages();
+  const dt = Math.min(0.042, Math.max(0.008, (gooeyLastFrame ? now - gooeyLastFrame : 16) / 1000));
+  gooeyLastFrame = now;
+  const layerRect = layer.getBoundingClientRect();
+  const layerSize = { width: Math.max(1, layerRect.width), height: Math.max(1, layerRect.height) };
+  if (active && now - gooeyLastSpawn > 380 && gooeyParticles.length < 90) {
+    spawnGooeyDripParticles(layer);
+    gooeyLastSpawn = now;
+  }
+  const gravity = deviceGravity.value;
+  const bubbleRects = gooeyCollisionRects(layer);
+  const nextParticles: GooeyDripParticle[] = [];
+  for (const particle of gooeyParticles) {
+    particle.age += dt;
+    if (particle.state === "attached") {
+      const rect = bubbleRects.get(particle.sourceId);
+      if (!rect || isOutsideLayer(rect, layerSize.width, layerSize.height, 18)) continue;
+      updateAttachedGooeyDrip(particle, rect, gravity, dt);
+    } else if (particle.state === "falling") {
+      const acceleration = 1480 * gravity.strength;
+      particle.vx += gravity.x * acceleration * dt;
+      particle.vy += gravity.y * acceleration * dt;
+      particle.vx *= 0.992;
+      particle.vy *= 0.992;
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
+      const hit = findGooeyDripHit(particle, bubbleRects);
+      if (hit) {
+        spawnGooeyDripSplash(nextParticles, particle, hit.x, hit.y, gravity);
+        continue;
+      }
+    } else {
+      const acceleration = 960 * gravity.strength;
+      particle.vx += gravity.x * acceleration * dt;
+      particle.vy += gravity.y * acceleration * dt;
+      particle.vx *= 0.94;
+      particle.vy *= 0.94;
+      particle.x += particle.vx * dt;
+      particle.y += particle.vy * dt;
+    }
+    if (isPointOutsideLayer(particle.x, particle.y, layerSize.width, layerSize.height, 44)) continue;
+    if (particle.state === "splash" && particle.age > particle.life) continue;
+    nextParticles.push(particle);
+  }
+  gooeyParticles = nextParticles;
+  renderGooeyDrips(gooeyParticles, gravity);
+  if (active || gooeyParticles.length) {
+    gooeyAnimationFrame = requestAnimationFrame(updateGooeyDripPhysics);
+  } else {
+    stopGooeyDripPhysics(true);
+  }
+}
+
+function spawnGooeyDripParticles(layer: SVGSVGElement) {
+  const layerRect = layer.getBoundingClientRect();
+  const gravity = deviceGravity.value;
+  for (const { message, bubble } of activeGooeyDripBubbles().slice(-5)) {
+    const rect = bubble.getBoundingClientRect();
+    if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
+    const sourceId = message.id;
+    const existing = gooeyParticles.filter((particle) => particle.sourceId === sourceId && particle.state === "attached").length;
+    if (existing >= 5) continue;
+    const layerBubbleRect = toLayerRect(rect, layerRect);
+    const count = Math.random() > 0.72 ? 2 : 1;
+    for (let i = 0; i < count; i += 1) {
+      const radius = 3.2 + Math.random() * 2.3;
+      const edgeLimit = Math.max(8, Math.min(layerBubbleRect.width, layerBubbleRect.height) * 0.36);
+      const edgeOffset = (Math.random() - 0.5) * edgeLimit;
+      const anchor = gooeyEdgePoint(layerBubbleRect, gravity, edgeOffset);
+      gooeyParticles.push({
+        id: gooeyNextId,
+        state: "attached",
+        x: anchor.x,
+        y: anchor.y,
+        vx: 0,
+        vy: 0,
+        radius,
+        sourceId,
+        anchorX: anchor.x,
+        anchorY: anchor.y,
+        edgeOffset,
+        edgeVelocity: 0,
+        mass: 0.2 + Math.random() * 0.18,
+        age: 0,
+        life: 2.6 + Math.random() * 1.8,
+        alpha: 0.86
+      });
+      gooeyNextId += 1;
+    }
+  }
+}
+
+function activeGooeyDripBubbles() {
+  const root = scroller.value;
+  if (!root) return [];
+  return store.messages
+    .filter((message) => messageEffect(message) === "dripGooey" && !isMessageEffectPaused(message))
+    .map((message) => {
+      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
+      const bubble = row?.querySelector<HTMLElement>(".message-effect-drip-gooey");
+      return bubble ? { message, bubble } : null;
+    })
+    .filter((item): item is { message: MessageDTO; bubble: HTMLElement } => !!item);
+}
+
+function gooeyCollisionRects(layer: SVGSVGElement) {
+  const root = scroller.value;
+  if (!root) return new Map<number, BubbleLayerRect>();
+  const layerRect = layer.getBoundingClientRect();
+  const rects = new Map<number, BubbleLayerRect>();
+  for (const row of root.querySelectorAll<HTMLElement>(".message-row[data-message-id]")) {
+    const id = Number(row.dataset.messageId || 0);
+    if (!id) continue;
+    const bubble = row.querySelector<HTMLElement>(".bubble");
+    if (!bubble) continue;
+    rects.set(id, toLayerRect(bubble.getBoundingClientRect(), layerRect));
+  }
+  return rects;
+}
+
+function toLayerRect(rect: DOMRect, layerRect: DOMRect): BubbleLayerRect {
+  const layerLeft = rect.left - layerRect.left;
+  const layerTop = rect.top - layerRect.top;
+  const layerRight = rect.right - layerRect.left;
+  const layerBottom = rect.bottom - layerRect.top;
+  return Object.assign(rect, {
+    layerLeft,
+    layerRight,
+    layerTop,
+    layerBottom,
+    layerCenterX: (layerLeft + layerRight) / 2,
+    layerCenterY: (layerTop + layerBottom) / 2
+  });
+}
+
+function updateAttachedGooeyDrip(particle: GooeyDripParticle, rect: BubbleLayerRect, gravity: GravityVector, dt: number) {
+  particle.edgeVelocity += -particle.edgeOffset * (5.5 + gravity.strength * 3.5) * dt;
+  particle.edgeVelocity *= Math.pow(0.34, dt);
+  particle.edgeOffset += particle.edgeVelocity * dt;
+  particle.mass += (0.28 + gravity.strength * 0.18) * dt;
+  particle.radius = Math.min(8.8, particle.radius + particle.mass * 0.15 * dt);
+  const anchor = gooeyEdgePoint(rect, gravity, particle.edgeOffset);
+  particle.anchorX = anchor.x;
+  particle.anchorY = anchor.y;
+  const follow = 1 - Math.exp(-12 * dt);
+  particle.x += (anchor.x - particle.x) * follow;
+  particle.y += (anchor.y - particle.y) * follow;
+  const shouldDetach = particle.mass > 1.08 || particle.age > particle.life;
+  if (shouldDetach) detachGooeyDrip(particle, gravity);
+}
+
+function detachGooeyDrip(particle: GooeyDripParticle, gravity: GravityVector) {
+  particle.state = "falling";
+  const speed = 135 + particle.mass * 95;
+  particle.vx += gravity.x * speed;
+  particle.vy += gravity.y * speed;
+  particle.age = 0;
+  particle.life = 3.2;
+}
+
+function gooeyEdgePoint(rect: BubbleLayerRect, gravity: GravityVector, edgeOffset: number) {
+  const gx = Math.abs(gravity.x) < 0.001 ? 0 : gravity.x;
+  const gy = Math.abs(gravity.y) < 0.001 ? 0 : gravity.y;
+  const hw = Math.max(1, rect.width / 2);
+  const hh = Math.max(1, rect.height / 2);
+  const scaleX = gx ? hw / Math.abs(gx) : Number.POSITIVE_INFINITY;
+  const scaleY = gy ? hh / Math.abs(gy) : Number.POSITIVE_INFINITY;
+  const scale = Math.min(scaleX, scaleY);
+  const tangent = { x: -gy, y: gx };
+  const tangentLimit = Math.max(6, (Math.abs(gx) > Math.abs(gy) ? hh : hw) * 0.88);
+  const offset = clamp(edgeOffset, -tangentLimit, tangentLimit);
+  return {
+    x: clamp(rect.layerCenterX + gx * scale + tangent.x * offset, rect.layerLeft + 5, rect.layerRight - 5),
+    y: clamp(rect.layerCenterY + gy * scale + tangent.y * offset, rect.layerTop + 5, rect.layerBottom - 5)
+  };
+}
+
+function findGooeyDripHit(particle: GooeyDripParticle, bubbleRects: Map<number, BubbleLayerRect>) {
+  for (const [id, rect] of bubbleRects) {
+    if (id === particle.sourceId) continue;
+    const x = clamp(particle.x, rect.layerLeft, rect.layerRight);
+    const y = clamp(particle.y, rect.layerTop, rect.layerBottom);
+    if (Math.hypot(particle.x - x, particle.y - y) <= particle.radius + 1.5) return { x, y };
+  }
+  return null;
+}
+
+function spawnGooeyDripSplash(nextParticles: GooeyDripParticle[], source: GooeyDripParticle, x: number, y: number, gravity: GravityVector) {
+  const tangent = { x: -gravity.y, y: gravity.x };
+  const count = 3 + Math.floor(Math.random() * 4);
+  for (let i = 0; i < count; i += 1) {
+    const spread = (i / Math.max(1, count - 1) - 0.5) * 2;
+    const speed = 90 + Math.random() * 140;
+    nextParticles.push({
+      id: gooeyNextId,
+      state: "splash",
+      x,
+      y,
+      vx: tangent.x * spread * speed - gravity.x * speed * 0.35,
+      vy: tangent.y * spread * speed - gravity.y * speed * 0.35,
+      radius: Math.max(1.5, source.radius * (0.22 + Math.random() * 0.24)),
+      sourceId: source.sourceId,
+      anchorX: x,
+      anchorY: y,
+      edgeOffset: 0,
+      edgeVelocity: 0,
+      mass: source.mass,
+      age: 0,
+      life: 0.32 + Math.random() * 0.22,
+      alpha: 0.78
+    });
+    gooeyNextId += 1;
+  }
+}
+
+function renderGooeyDrips(particles: GooeyDripParticle[], gravity: GravityVector) {
+  const blobs: GooeyBlob[] = [];
+  const highlights: GooeyHighlight[] = [];
+  const angle = (Math.atan2(gravity.y, gravity.x) * 180) / Math.PI - 90;
+  for (const particle of particles) {
+    const fade = particle.state === "splash" ? clamp(1 - particle.age / particle.life, 0, 1) : 1;
+    if (particle.state === "attached") {
+      const bridgeX = (particle.anchorX + particle.x) / 2;
+      const bridgeY = (particle.anchorY + particle.y) / 2;
+      blobs.push({ id: `${particle.id}-anchor`, x: particle.anchorX, y: particle.anchorY, rx: particle.radius * 0.58, ry: particle.radius * 0.5, alpha: 0.78, rotate: angle });
+      blobs.push({ id: `${particle.id}-bridge`, x: bridgeX, y: bridgeY, rx: particle.radius * 0.48, ry: Math.max(2.2, Math.hypot(particle.x - particle.anchorX, particle.y - particle.anchorY) * 0.42), alpha: 0.62, rotate: angle });
+      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * 0.92, ry: particle.radius * (1.08 + particle.mass * 0.12), alpha: particle.alpha, rotate: angle });
+    } else {
+      const speedStretch = particle.state === "falling" ? clamp(Math.hypot(particle.vx, particle.vy) / 980, 0, 0.62) : 0;
+      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * (1 - speedStretch * 0.18), ry: particle.radius * (1.05 + speedStretch), alpha: particle.alpha * fade, rotate: angle });
+    }
+    highlights.push({
+      id: `${particle.id}-shine`,
+      x: particle.x - particle.radius * 0.28,
+      y: particle.y - particle.radius * 0.34,
+      rx: Math.max(0.9, particle.radius * 0.2),
+      ry: Math.max(1.2, particle.radius * 0.34),
+      alpha: 0.68 * fade,
+      rotate: angle - 28
+    });
+  }
+  gooeyBlobs.value = blobs;
+  gooeyHighlights.value = highlights;
+}
+
+function isPointOutsideLayer(x: number, y: number, width: number, height: number, margin: number) {
+  return x < -margin || y < -margin || x > width + margin || y > height + margin;
+}
+
+function isOutsideLayer(rect: BubbleLayerRect, width: number, height: number, margin: number) {
+  return rect.layerRight < -margin || rect.layerBottom < -margin || rect.layerLeft > width + margin || rect.layerTop > height + margin;
+}
+
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
-  if (messageEffect(message) === "water") requestDeviceOrientationPermissionOnce();
+  if (messageEffect(message) === "water" || messageEffect(message) === "dripGooey") requestDeviceOrientationPermissionOnce();
   if (message.type === "system" || event.button !== 0) return;
   const target = event.target;
   if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
@@ -5791,6 +6127,52 @@ async function toggleVirtual(character: any) {
     <section class="chat-pane">
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
+      <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
+        <defs>
+          <filter id="gooey-drip-filter" x="-20%" y="-20%" width="140%" height="140%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur" />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -8"
+              result="goo"
+            />
+            <feBlend in="SourceGraphic" in2="goo" />
+          </filter>
+          <radialGradient id="gooey-drip-fill" cx="35%" cy="28%" r="76%">
+            <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96" />
+            <stop offset="28%" stop-color="#bae6fd" stop-opacity="0.84" />
+            <stop offset="74%" stop-color="#0ea5e9" stop-opacity="0.66" />
+            <stop offset="100%" stop-color="#0369a1" stop-opacity="0.48" />
+          </radialGradient>
+        </defs>
+        <g class="gooey-drip-goo" filter="url(#gooey-drip-filter)">
+          <ellipse
+            v-for="blob in gooeyBlobs"
+            :key="blob.id"
+            class="gooey-drip-blob"
+            :cx="blob.x"
+            :cy="blob.y"
+            :rx="blob.rx"
+            :ry="blob.ry"
+            :opacity="blob.alpha"
+            :transform="`rotate(${blob.rotate} ${blob.x} ${blob.y})`"
+          />
+        </g>
+        <g class="gooey-drip-shine">
+          <ellipse
+            v-for="highlight in gooeyHighlights"
+            :key="highlight.id"
+            class="gooey-drip-highlight"
+            :cx="highlight.x"
+            :cy="highlight.y"
+            :rx="highlight.rx"
+            :ry="highlight.ry"
+            :opacity="highlight.alpha"
+            :transform="`rotate(${highlight.rotate} ${highlight.x} ${highlight.y})`"
+          />
+        </g>
+      </svg>
       <header class="chat-head">
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>

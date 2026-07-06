@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.7";
+export const APP_VERSION = "0.8.4.8";
 
 export const RELEASE_DATE = "2026-07-06";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "`/水滴` 取消凝结阶段的横向晃动，水珠只增长、拉伸并自然脱落。",
+  "新增 `/水滴滴` 消息特效，使用 SVG gooey/metaball 渲染水滴黏连、聚合和断开。",
+  "`/水滴滴` 会按手机倾斜方向滑动和掉落，倒置或横放时重力方向也会跟着改变，离开显示区域后自动清理。"
+] as const;
+
+const RELEASE_0_8_4_7_NOTES = [
   "`/水滴` 消息特效改为 Canvas 物理粒子，水滴会凝结、拉伸、脱落、下坠和撞击飞溅。",
   "移除一直循环晃动的假水珠，水滴超过质量或拉伸阈值后会自然滴落。",
   "水滴和气泡光影改为多层透明高光、边缘暗线和湿润底边，视觉不再只是简单蓝色渐变。"
@@ -325,9 +331,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4.7",
+    version: "0.8.4.8",
     date: "2026-07-06",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4.7",
+    date: "2026-07-06",
+    notes: RELEASE_0_8_4_7_NOTES
   },
   {
     version: "0.8.4.6",
