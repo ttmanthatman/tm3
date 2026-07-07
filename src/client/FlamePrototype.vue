@@ -55,6 +55,13 @@ const actionOpen = ref(false);
 const boostUntil = ref(0);
 const lastAction = ref("默认温和燃烧");
 const segmentStrengths = ref(Array.from({ length: segmentCount }, () => baseFire + Math.random() * 0.06));
+const flameBrightness = ref(0.72);
+const coreBrightness = ref(0.38);
+const flameDensity = ref(0.68);
+const flameHeight = ref(0.74);
+const flameSpread = ref(0.52);
+const baseInset = ref(0.1);
+const stokeGain = ref(0.08);
 
 let animationFrame = 0;
 let lastFrame = 0;
@@ -81,13 +88,13 @@ const boostRemainingSeconds = computed(() => Math.max(0, Math.ceil((boostUntil.v
 const statusText = computed(() => {
   const heatPercent = Math.round(heat.value * 100);
   const firePercent = Math.round(averageFire.value * 100);
-  return `热量 ${heatPercent}% · 平均火势 ${firePercent}% · ${flameStyle.value === "ribbon" ? "拟真火焰" : "原样式"}`;
+  return `热量 ${heatPercent}% · 平均火势 ${firePercent}% · ${flameStyle.value === "ribbon" ? "改良原火" : "原样式"}`;
 });
 
 function setFlameStyle(style: FlameStyle) {
   flameStyle.value = style;
   flameParticles = [];
-  lastAction.value = style === "ribbon" ? "切到拟真火焰" : "切到原样式";
+  lastAction.value = style === "ribbon" ? "切到改良原火" : "切到原样式";
 }
 
 function resetDemo() {
@@ -104,9 +111,21 @@ function resetDemo() {
 
 function stokeFire() {
   boostUntil.value = performance.now() + 15_000;
-  segmentStrengths.value = segmentStrengths.value.map((value) => clamp(value + 0.24, baseFire, 0.88));
+  segmentStrengths.value = segmentStrengths.value.map((value) => clamp(value + stokeGain.value, baseFire, 0.88));
   actionOpen.value = false;
-  lastAction.value = "添柴：旺盛 15 秒后回落";
+  lastAction.value = "添柴：小幅增强 15 秒后回落";
+}
+
+function resetTuning() {
+  flameBrightness.value = 0.72;
+  coreBrightness.value = 0.38;
+  flameDensity.value = 0.68;
+  flameHeight.value = 0.74;
+  flameSpread.value = 0.52;
+  baseInset.value = 0.1;
+  stokeGain.value = 0.08;
+  flameParticles = [];
+  lastAction.value = "参数已复位";
 }
 
 function rectFor(element: HTMLElement | null, origin: DOMRect): Rect | null {
@@ -156,8 +175,8 @@ function updateSegmentStrengths(dt: number, now: number) {
   const boost = boostFactor(now);
   segmentStrengths.value = segmentStrengths.value.map((value, index) => {
     const wave = Math.sin(now * 0.0022 + index * 0.74) * 0.045 + Math.sin(now * 0.0011 + index * 1.47) * 0.024;
-    const target = clamp(baseFire + wave + boost * 0.42, 0.3, 0.94);
-    const follow = 1 - Math.exp(-(boost ? 3.1 : 1.65) * dt);
+    const target = clamp(baseFire + wave + boost * stokeGain.value * 1.85, 0.3, 0.94);
+    const follow = 1 - Math.exp(-(boost ? 2.2 : 1.65) * dt);
     return clamp(value + (target - value) * follow, 0.16, 0.96);
   });
 }
@@ -173,21 +192,25 @@ function segmentCenter(fire: Rect, index: number) {
 
 function spawnFlame(now: number, source: Rect) {
   if (now < nextFlameAt) return;
-  nextFlameAt = now + (flameStyle.value === "legacy" ? 28 : 56);
-  const segmentWidth = source.width / segmentCount;
+  nextFlameAt = now + (flameStyle.value === "legacy" ? 28 : 34 - flameDensity.value * 18);
+  const inset = flameStyle.value === "legacy" ? 0 : source.width * baseInset.value;
+  const fireSource = flameStyle.value === "legacy" ? source : { ...source, left: source.left + inset, right: source.right - inset, width: Math.max(24, source.width - inset * 2) };
+  const segmentWidth = fireSource.width / segmentCount;
   segmentStrengths.value.forEach((power, index) => {
-    const count = flameStyle.value === "legacy" ? Math.max(1, Math.round(power * 3)) : Math.max(0, Math.round(power * 1.1));
+    const count = flameStyle.value === "legacy" ? Math.max(1, Math.round(power * 3)) : Math.max(1, Math.round(power * (1.25 + flameDensity.value * 2.15)));
     for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
-      const center = segmentCenter(source, index);
+      const center = segmentCenter(fireSource, index);
       const kind: FlameParticle["kind"] = Math.random() > 0.7 ? "tongue" : "core";
+      const heightScale = flameStyle.value === "legacy" ? 1 : 0.72 + flameHeight.value * 0.56;
+      const spreadScale = flameStyle.value === "legacy" ? 1 : 0.54 + flameSpread.value * 0.88;
       flameParticles.push({
-        x: center + randomBetween(-segmentWidth * 0.58, segmentWidth * 0.58),
-        y: source.top + randomBetween(-8, 8),
-        vx: randomBetween(-20, 20),
-        vy: randomBetween(-132, -72) * (0.82 + power * 0.62),
+        x: center + randomBetween(-segmentWidth * 0.5, segmentWidth * 0.5),
+        y: source.top + randomBetween(-4, 5),
+        vx: randomBetween(-18, 18) * spreadScale,
+        vy: randomBetween(-122, -70) * (0.82 + power * 0.56) * heightScale,
         age: 0,
-        life: randomBetween(0.5, 1.08),
-        size: randomBetween(7, 16) * (0.76 + power * 0.62),
+        life: randomBetween(0.5, 1.02) * (flameStyle.value === "legacy" ? 1 : 0.9 + flameHeight.value * 0.25),
+        size: randomBetween(7, 15) * (0.72 + power * 0.54) * (flameStyle.value === "legacy" ? 1 : 0.82 + flameDensity.value * 0.28),
         spin: randomBetween(-1.2, 1.2),
         segment: index,
         kind
@@ -198,7 +221,7 @@ function spawnFlame(now: number, source: Rect) {
     nextEmberAt = now + randomBetween(260, 520);
     const index = Math.floor(Math.random() * segmentCount);
     flameParticles.push({
-      x: segmentCenter(source, index) + randomBetween(-segmentWidth * 0.35, segmentWidth * 0.35),
+      x: segmentCenter(fireSource, index) + randomBetween(-segmentWidth * 0.35, segmentWidth * 0.35),
       y: source.top + randomBetween(-4, 6),
       vx: randomBetween(-36, 36),
       vy: randomBetween(-165, -88),
@@ -355,6 +378,68 @@ function drawLegacyFlames(context: CanvasRenderingContext2D, fire: Rect) {
   });
   context.fillStyle = glow;
   context.fillRect(fire.left - 8, fire.top - 34, fire.width + 16, 52);
+}
+
+function drawRefinedLegacyFlames(context: CanvasRenderingContext2D, fire: Rect) {
+  const inset = fire.width * baseInset.value;
+  const left = fire.left + inset;
+  const right = fire.right - inset;
+  const width = Math.max(24, right - left);
+  const brightness = flameBrightness.value;
+  const core = coreBrightness.value;
+
+  context.save();
+  context.beginPath();
+  context.rect(left - 4, fire.top - 118, width + 8, 132);
+  context.clip();
+
+  for (const particle of flameParticles) {
+    const t = clamp(particle.age / particle.life, 0, 1);
+    const power = segmentStrengths.value[particle.segment] || baseFire;
+    const edgeUnit = clamp((particle.x - left) / Math.max(1, width), 0, 1);
+    const edgeFade = smoothstep(0, 0.1, edgeUnit) * smoothstep(1, 0.9, edgeUnit);
+    const alpha = (1 - t) * (particle.kind === "ember" ? 0.58 : 0.46) * clamp(power + 0.16, 0, 1) * brightness * edgeFade;
+    if (alpha <= 0.01) continue;
+
+    context.save();
+    context.translate(particle.x, particle.y);
+    context.rotate(Math.sin(particle.age * 4 + particle.spin) * 0.18);
+    if (particle.kind === "ember") {
+      context.globalAlpha = alpha * 0.8;
+      context.fillStyle = "#f59e0b";
+      context.shadowColor = "rgba(245, 102, 24, 0.45)";
+      context.shadowBlur = 6;
+      context.beginPath();
+      context.arc(0, 0, particle.size * (0.72 - t * 0.24), 0, Math.PI * 2);
+      context.fill();
+    } else {
+      const radiusX = particle.size * (0.44 + t * 0.12);
+      const radiusY = particle.size * (1.08 - t * 0.38);
+      const tipSway = Math.sin(particle.age * 6 + particle.spin) * radiusX * 0.42;
+      const gradient = context.createRadialGradient(-radiusX * 0.12, -radiusY * 0.36, 1, 0, 0, radiusY);
+      gradient.addColorStop(0, `rgba(255, 226, 132, ${alpha * core * 0.72})`);
+      gradient.addColorStop(0.3, `rgba(249, 154, 47, ${alpha * 0.86})`);
+      gradient.addColorStop(0.6, `rgba(220, 55, 20, ${alpha * 0.64})`);
+      gradient.addColorStop(1, "rgba(72, 8, 6, 0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.moveTo(tipSway, -radiusY);
+      context.bezierCurveTo(radiusX * 0.88, -radiusY * 0.42, radiusX * 0.72, radiusY * 0.24, radiusX * 0.18, radiusY * 0.66);
+      context.bezierCurveTo(radiusX * 0.02, radiusY * 0.88, -radiusX * 0.76, radiusY * 0.48, -radiusX * 0.6, -radiusY * 0.18);
+      context.bezierCurveTo(-radiusX * 0.46, -radiusY * 0.62, -radiusX * 0.12, -radiusY * 0.88, tipSway, -radiusY);
+      context.closePath();
+      context.fill();
+    }
+    context.restore();
+  }
+
+  const glow = context.createLinearGradient(left, fire.top - 8, right, fire.top - 8);
+  segmentStrengths.value.forEach((power, index) => {
+    glow.addColorStop(index / Math.max(1, segmentCount - 1), `rgba(236, 73, 22, ${(0.03 + power * 0.1) * brightness})`);
+  });
+  context.fillStyle = glow;
+  context.fillRect(left, fire.top - 26, width, 38);
+  context.restore();
 }
 
 function drawRibbonFlames(context: CanvasRenderingContext2D, fire: Rect, now: number) {
@@ -665,7 +750,7 @@ function drawFlames(context: CanvasRenderingContext2D, width: number, height: nu
   if (!fire) return;
   context.save();
   context.globalCompositeOperation = "lighter";
-  if (flameStyle.value === "ribbon") drawRibbonFlames(context, fire, now);
+  if (flameStyle.value === "ribbon") drawRefinedLegacyFlames(context, fire);
   else drawLegacyFlames(context, fire);
   context.restore();
 }
@@ -756,10 +841,42 @@ onBeforeUnmount(() => {
         </div>
         <div class="flame-demo-actions">
           <button type="button" :class="{ active: flameStyle === 'legacy' }" @click.stop="setFlameStyle('legacy')">原样式</button>
-          <button type="button" :class="{ active: flameStyle === 'ribbon' }" @click.stop="setFlameStyle('ribbon')">拟真火焰</button>
+          <button type="button" :class="{ active: flameStyle === 'ribbon' }" @click.stop="setFlameStyle('ribbon')">改良原火</button>
           <button type="button" @click.stop="resetDemo">重置</button>
         </div>
       </header>
+
+      <section class="flame-tuning-panel" @click.stop>
+        <label>
+          <span>亮度 <b>{{ flameBrightness.toFixed(2) }}</b></span>
+          <input v-model.number="flameBrightness" type="range" min="0.35" max="1" step="0.01" />
+        </label>
+        <label>
+          <span>亮芯 <b>{{ coreBrightness.toFixed(2) }}</b></span>
+          <input v-model.number="coreBrightness" type="range" min="0" max="0.8" step="0.01" />
+        </label>
+        <label>
+          <span>密度 <b>{{ flameDensity.toFixed(2) }}</b></span>
+          <input v-model.number="flameDensity" type="range" min="0.2" max="1" step="0.01" />
+        </label>
+        <label>
+          <span>高度 <b>{{ flameHeight.toFixed(2) }}</b></span>
+          <input v-model.number="flameHeight" type="range" min="0.25" max="1" step="0.01" />
+        </label>
+        <label>
+          <span>扩散 <b>{{ flameSpread.toFixed(2) }}</b></span>
+          <input v-model.number="flameSpread" type="range" min="0.1" max="1" step="0.01" />
+        </label>
+        <label>
+          <span>底部内收 <b>{{ baseInset.toFixed(2) }}</b></span>
+          <input v-model.number="baseInset" type="range" min="0" max="0.22" step="0.01" />
+        </label>
+        <label>
+          <span>添柴幅度 <b>{{ stokeGain.toFixed(2) }}</b></span>
+          <input v-model.number="stokeGain" type="range" min="0.02" max="0.18" step="0.01" />
+        </label>
+        <button type="button" @click="resetTuning">参数复位</button>
+      </section>
 
       <div class="prototype-message-stack">
         <article class="prototype-message-row">
@@ -829,6 +946,7 @@ onBeforeUnmount(() => {
 }
 
 .flame-demo-stage {
+  --tuning-height: 118px;
   position: relative;
   width: min(980px, 100%);
   height: 100%;
@@ -915,10 +1033,62 @@ onBeforeUnmount(() => {
   background: #b7411e;
 }
 
+.flame-tuning-panel {
+  position: relative;
+  z-index: 20;
+  min-height: var(--tuning-height);
+  padding: 10px 14px 12px;
+  border-bottom: 1px solid rgba(20, 20, 20, 0.08);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 8px 12px;
+  background: rgba(248, 250, 248, 0.86);
+  backdrop-filter: blur(16px);
+}
+
+.flame-tuning-panel label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  color: #3f4b43;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flame-tuning-panel label span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.flame-tuning-panel b {
+  color: #a23b18;
+  font: inherit;
+}
+
+.flame-tuning-panel input[type="range"] {
+  width: 100%;
+  height: 18px;
+  accent-color: #b7411e;
+}
+
+.flame-tuning-panel button {
+  min-height: 34px;
+  border: 1px solid rgba(154, 52, 18, 0.24);
+  border-radius: 6px;
+  padding: 0 12px;
+  color: #8f2d12;
+  font-size: 12px;
+  font-weight: 900;
+  background: rgba(255, 247, 237, 0.9);
+}
+
 .prototype-message-stack {
   position: relative;
   z-index: 9;
-  height: calc(100% - 64px);
+  height: calc(100% - 64px - var(--tuning-height));
   padding: 38px clamp(16px, 5vw, 64px) 78px;
   display: grid;
   grid-template-rows: minmax(110px, 0.88fr) minmax(108px, 0.72fr) minmax(148px, 1fr);
@@ -1179,6 +1349,7 @@ onBeforeUnmount(() => {
   }
 
   .flame-demo-stage {
+    --tuning-height: 164px;
     width: 100%;
     border: 0;
     border-radius: 0;
@@ -1206,10 +1377,29 @@ onBeforeUnmount(() => {
     font-size: 11px;
   }
 
+  .flame-tuning-panel {
+    padding: 8px 10px 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 10px;
+  }
+
+  .flame-tuning-panel label {
+    font-size: 10px;
+  }
+
+  .flame-tuning-panel input[type="range"] {
+    height: 16px;
+  }
+
+  .flame-tuning-panel button {
+    min-height: 30px;
+    grid-column: 1 / -1;
+  }
+
   .prototype-message-stack {
-    height: calc(100% - var(--safe-top) - 92px);
-    padding: 26px 14px 96px;
-    grid-template-rows: minmax(114px, 0.92fr) minmax(108px, 0.7fr) minmax(156px, 1fr);
+    height: calc(100% - var(--safe-top) - 92px - var(--tuning-height));
+    padding: 18px 14px 96px;
+    grid-template-rows: minmax(100px, 0.78fr) minmax(88px, 0.58fr) minmax(140px, 1fr);
   }
 
   .prototype-message-row.water-row {
@@ -1226,10 +1416,7 @@ onBeforeUnmount(() => {
   }
 
   .flame-state-panel {
-    right: 10px;
-    left: 10px;
-    bottom: max(10px, var(--safe-bottom));
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    display: none;
   }
 }
 </style>
