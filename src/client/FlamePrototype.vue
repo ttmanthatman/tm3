@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
+type FlameStyle = "legacy" | "ribbon";
+
 type FlameParticle = {
   x: number;
   y: number;
@@ -10,6 +12,7 @@ type FlameParticle = {
   life: number;
   size: number;
   spin: number;
+  segment: number;
   kind: "core" | "tongue" | "ember";
 };
 
@@ -20,7 +23,6 @@ type DropParticle = {
   radius: number;
   age: number;
   life: number;
-  hit: boolean;
 };
 
 type SmokeParticle = {
@@ -37,18 +39,21 @@ type SmokeParticle = {
 
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number; centerX: number; centerY: number };
 
+const segmentCount = 13;
+const baseFire = 0.42;
 const stage = ref<HTMLElement | null>(null);
 const fireCanvas = ref<HTMLCanvasElement | null>(null);
 const smokeCanvas = ref<HTMLCanvasElement | null>(null);
 const heatBubble = ref<HTMLElement | null>(null);
 const waterBubble = ref<HTMLElement | null>(null);
 const fireBubble = ref<HTMLElement | null>(null);
-const burnEnabled = ref(true);
-const waterEnabled = ref(true);
-const intensity = ref(0.86);
+const flameStyle = ref<FlameStyle>("ribbon");
 const heat = ref(0.18);
 const smokeLevel = ref(0);
-const lastDropHit = ref("等待水滴");
+const actionOpen = ref(false);
+const boostUntil = ref(0);
+const lastAction = ref("默认温和燃烧");
+const segmentStrengths = ref(Array.from({ length: segmentCount }, () => baseFire + Math.random() * 0.06));
 
 let animationFrame = 0;
 let lastFrame = 0;
@@ -59,36 +64,48 @@ let nextDropAt = 0;
 let nextFlameAt = 0;
 let nextEmberAt = 0;
 
+const averageFire = computed(() => segmentStrengths.value.reduce((sum, value) => sum + value, 0) / segmentStrengths.value.length);
+const strongestFire = computed(() => Math.max(...segmentStrengths.value));
+
 const heatStyle = computed(() => ({
   "--flame-heat": heat.value.toFixed(3)
 }));
 
 const fireStyle = computed(() => ({
-  "--fire-strength": intensity.value.toFixed(2)
+  "--fire-strength": strongestFire.value.toFixed(3)
 }));
+
+const boostRemainingSeconds = computed(() => Math.max(0, Math.ceil((boostUntil.value - performance.now()) / 1000)));
 
 const statusText = computed(() => {
   const heatPercent = Math.round(heat.value * 100);
-  const smokePercent = Math.round(smokeLevel.value * 100);
-  return `热量 ${heatPercent}% · 烟雾 ${smokePercent}% · 火势 ${Math.round(intensity.value * 100)}%`;
+  const firePercent = Math.round(averageFire.value * 100);
+  return `热量 ${heatPercent}% · 平均火势 ${firePercent}% · ${flameStyle.value === "ribbon" ? "新火焰" : "原样式"}`;
 });
 
-function toggleWater() {
-  waterEnabled.value = !waterEnabled.value;
-  if (!waterEnabled.value) {
-    dropParticles = [];
-    lastDropHit.value = "水滴关闭";
-  }
+function setFlameStyle(style: FlameStyle) {
+  flameStyle.value = style;
+  flameParticles = [];
+  lastAction.value = style === "ribbon" ? "切到新火焰" : "切到原样式";
 }
 
 function resetDemo() {
   heat.value = 0.18;
-  intensity.value = 0.86;
   smokeLevel.value = 0;
+  boostUntil.value = 0;
+  actionOpen.value = false;
+  segmentStrengths.value = Array.from({ length: segmentCount }, () => baseFire + Math.random() * 0.06);
   flameParticles = [];
   dropParticles = [];
   smokeParticles = [];
-  lastDropHit.value = "等待水滴";
+  lastAction.value = "默认温和燃烧";
+}
+
+function stokeFire() {
+  boostUntil.value = performance.now() + 15_000;
+  segmentStrengths.value = segmentStrengths.value.map((value) => clamp(value + 0.24, baseFire, 0.88));
+  actionOpen.value = false;
+  lastAction.value = "添柴：旺盛 15 秒后回落";
 }
 
 function rectFor(element: HTMLElement | null, origin: DOMRect): Rect | null {
@@ -129,100 +146,141 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
+function boostFactor(now: number) {
+  if (now >= boostUntil.value) return 0;
+  return clamp((boostUntil.value - now) / 15_000, 0, 1);
+}
+
+function updateSegmentStrengths(dt: number, now: number) {
+  const boost = boostFactor(now);
+  segmentStrengths.value = segmentStrengths.value.map((value, index) => {
+    const wave = Math.sin(now * 0.0019 + index * 0.82) * 0.035;
+    const target = clamp(baseFire + wave + boost * 0.42, 0.34, 0.9);
+    const follow = 1 - Math.exp(-(boost ? 2.8 : 1.25) * dt);
+    return clamp(value + (target - value) * follow, 0.18, 0.92);
+  });
+}
+
+function segmentIndexAtX(x: number, fire: Rect) {
+  return clamp(Math.floor(((x - fire.left) / Math.max(1, fire.width)) * segmentCount), 0, segmentCount - 1);
+}
+
+function segmentCenter(fire: Rect, index: number) {
+  const width = fire.width / segmentCount;
+  return fire.left + width * (index + 0.5);
+}
+
 function spawnFlame(now: number, source: Rect) {
-  const active = burnEnabled.value ? intensity.value : 0.24;
-  const count = Math.max(2, Math.round(4 + active * 8));
   if (now < nextFlameAt) return;
-  nextFlameAt = now + randomBetween(18, 34);
-  for (let index = 0; index < count; index += 1) {
-    const spread = source.width * randomBetween(-0.34, 0.34);
-    const kind: FlameParticle["kind"] = Math.random() > 0.72 ? "tongue" : "core";
-    flameParticles.push({
-      x: source.centerX + spread,
-      y: source.top + randomBetween(-4, 10),
-      vx: randomBetween(-34, 34) + spread * -0.08,
-      vy: randomBetween(-245, -122) * (0.72 + active * 0.44),
-      age: 0,
-      life: randomBetween(0.48, 0.98),
-      size: randomBetween(16, 34) * (0.72 + active * 0.46),
-      spin: randomBetween(-1.2, 1.2),
-      kind
-    });
-  }
+  nextFlameAt = now + (flameStyle.value === "legacy" ? 28 : 42);
+  const segmentWidth = source.width / segmentCount;
+  segmentStrengths.value.forEach((power, index) => {
+    const count = flameStyle.value === "legacy" ? Math.max(1, Math.round(power * 3)) : Math.max(0, Math.round(power * 1.5));
+    for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
+      const center = segmentCenter(source, index);
+      const kind: FlameParticle["kind"] = Math.random() > 0.78 ? "tongue" : "core";
+      flameParticles.push({
+        x: center + randomBetween(-segmentWidth * 0.42, segmentWidth * 0.42),
+        y: source.top + randomBetween(-3, 8),
+        vx: randomBetween(-16, 16),
+        vy: randomBetween(-150, -74) * (0.8 + power * 0.72),
+        age: 0,
+        life: randomBetween(0.48, 0.92),
+        size: randomBetween(9, 19) * (0.78 + power * 0.7),
+        spin: randomBetween(-1.2, 1.2),
+        segment: index,
+        kind
+      });
+    }
+  });
   if (now > nextEmberAt) {
-    nextEmberAt = now + randomBetween(120, 240);
+    nextEmberAt = now + randomBetween(260, 520);
+    const index = Math.floor(Math.random() * segmentCount);
     flameParticles.push({
-      x: source.centerX + randomBetween(-source.width * 0.36, source.width * 0.36),
-      y: source.top + randomBetween(-4, 8),
-      vx: randomBetween(-46, 46),
-      vy: randomBetween(-220, -120),
+      x: segmentCenter(source, index) + randomBetween(-segmentWidth * 0.35, segmentWidth * 0.35),
+      y: source.top + randomBetween(-4, 6),
+      vx: randomBetween(-36, 36),
+      vy: randomBetween(-165, -88),
       age: 0,
-      life: randomBetween(0.85, 1.8),
-      size: randomBetween(2.2, 5.5),
+      life: randomBetween(0.9, 1.7),
+      size: randomBetween(1.8, 4.4),
       spin: randomBetween(-1, 1),
+      segment: index,
       kind: "ember"
     });
   }
 }
 
 function spawnDrop(now: number, water: Rect) {
-  if (!waterEnabled.value || now < nextDropAt) return;
-  nextDropAt = now + randomBetween(680, 980);
-  const count = Math.random() > 0.64 ? 2 : 1;
+  if (now < nextDropAt) return;
+  nextDropAt = now + randomBetween(780, 1180);
+  const count = Math.random() > 0.7 ? 2 : 1;
   for (let index = 0; index < count; index += 1) {
     dropParticles.push({
       x: water.centerX + randomBetween(-water.width * 0.28, water.width * 0.28),
       y: water.bottom - randomBetween(2, 8),
-      vy: randomBetween(80, 122),
+      vy: randomBetween(82, 128),
       radius: randomBetween(3.2, 5.8),
       age: 0,
-      life: 3.2,
-      hit: false
+      life: 3.2
     });
   }
 }
 
-function spawnSmoke(x: number, y: number, amount = 9) {
+function spawnSmoke(x: number, y: number, amount = 7) {
   for (let index = 0; index < amount; index += 1) {
     smokeParticles.push({
-      x: x + randomBetween(-22, 22),
-      y: y + randomBetween(-10, 14),
-      vx: randomBetween(-26, 26),
-      vy: randomBetween(-76, -36),
+      x: x + randomBetween(-18, 18),
+      y: y + randomBetween(-8, 12),
+      vx: randomBetween(-24, 24),
+      vy: randomBetween(-66, -32),
       age: 0,
-      life: randomBetween(1.6, 3.2),
-      radius: randomBetween(14, 34),
-      alpha: randomBetween(0.16, 0.34),
+      life: randomBetween(1.35, 2.8),
+      radius: randomBetween(12, 30),
+      alpha: randomBetween(0.14, 0.28),
       spin: randomBetween(-0.8, 0.8)
     });
   }
-  smokeLevel.value = clamp(smokeLevel.value + 0.18, 0, 1);
+  smokeLevel.value = clamp(smokeLevel.value + 0.14, 0, 1);
+}
+
+function applyWaterHit(x: number, fire: Rect) {
+  const index = segmentIndexAtX(x, fire);
+  segmentStrengths.value = segmentStrengths.value.map((value, segment) => {
+    const distance = Math.abs(segment - index);
+    if (distance === 0) return clamp(value - 0.26, 0.16, 0.92);
+    if (distance === 1) return clamp(value - 0.08, 0.18, 0.92);
+    return value;
+  });
+  lastAction.value = `水滴压低第 ${index + 1} 段火势`;
+  spawnSmoke(x, fire.top - 14, 8);
 }
 
 function updateHeat(dt: number, heatTarget: Rect | null, fire: Rect | null) {
-  if (!heatTarget || !fire || !burnEnabled.value) {
-    heat.value = clamp(heat.value - dt * 0.04, 0.1, 1);
+  if (!heatTarget || !fire) {
+    heat.value = clamp(heat.value - dt * 0.035, 0.1, 1);
     return;
   }
   const verticalGap = fire.top - heatTarget.bottom;
   const horizontalGap = Math.abs(fire.centerX - heatTarget.centerX);
   const aligned = verticalGap > -24 && verticalGap < 460 && horizontalGap < Math.max(fire.width, heatTarget.width) * 1.35;
-  const heatGain = aligned ? (0.07 + intensity.value * 0.1) * dt : -0.035 * dt;
-  const smokeCooling = smokeLevel.value * 0.036 * dt;
+  const heatGain = aligned ? (0.045 + averageFire.value * 0.075) * dt : -0.035 * dt;
+  const smokeCooling = smokeLevel.value * 0.026 * dt;
   heat.value = clamp(heat.value + heatGain - smokeCooling, 0.12, 1);
 }
 
 function updateParticles(dt: number, fire: Rect | null) {
   const nextFlames: FlameParticle[] = [];
   for (const particle of flameParticles) {
+    const power = segmentStrengths.value[particle.segment] || baseFire;
     particle.age += dt;
-    particle.x += particle.vx * dt + Math.sin((particle.age + particle.spin) * 12) * 0.8;
+    particle.x += particle.vx * dt + Math.sin((particle.age + particle.spin) * 11) * 0.55;
     particle.y += particle.vy * dt;
     particle.vx *= Math.pow(0.5, dt);
-    particle.vy += 42 * dt;
-    if (particle.age < particle.life) nextFlames.push(particle);
+    particle.vy += 34 * dt;
+    if (particle.age < particle.life && power > 0.14) nextFlames.push(particle);
   }
-  flameParticles = nextFlames.slice(-380);
+  flameParticles = nextFlames.slice(-520);
 
   const nextDrops: DropParticle[] = [];
   for (const drop of dropParticles) {
@@ -231,15 +289,12 @@ function updateParticles(dt: number, fire: Rect | null) {
     drop.y += drop.vy * dt;
     const insideFlame =
       fire &&
-      drop.y + drop.radius >= fire.top - 92 * intensity.value &&
-      drop.y - drop.radius <= fire.top + 22 &&
-      drop.x >= fire.left - 32 &&
-      drop.x <= fire.right + 32;
-    if (insideFlame && !drop.hit) {
-      drop.hit = true;
-      intensity.value = clamp(intensity.value - 0.13, 0.32, 1);
-      lastDropHit.value = "水滴触火，冒烟";
-      spawnSmoke(drop.x, fire.top - 16, 10);
+      drop.y + drop.radius >= fire.top - 84 &&
+      drop.y - drop.radius <= fire.top + 24 &&
+      drop.x >= fire.left - 12 &&
+      drop.x <= fire.right + 12;
+    if (insideFlame) {
+      applyWaterHit(drop.x, fire);
       continue;
     }
     if (drop.age < drop.life && drop.y < window.innerHeight + 60) nextDrops.push(drop);
@@ -249,33 +304,22 @@ function updateParticles(dt: number, fire: Rect | null) {
   const nextSmoke: SmokeParticle[] = [];
   for (const smoke of smokeParticles) {
     smoke.age += dt;
-    smoke.x += smoke.vx * dt + Math.sin((smoke.age + smoke.spin) * 2.2) * 0.45;
+    smoke.x += smoke.vx * dt + Math.sin((smoke.age + smoke.spin) * 2.2) * 0.4;
     smoke.y += smoke.vy * dt;
     smoke.vx *= Math.pow(0.74, dt);
-    smoke.vy -= 6 * dt;
-    smoke.radius += 19 * dt;
+    smoke.vy -= 5 * dt;
+    smoke.radius += 17 * dt;
     if (smoke.age < smoke.life) nextSmoke.push(smoke);
   }
   smokeParticles = nextSmoke.slice(-140);
-  smokeLevel.value = clamp(smokeLevel.value - dt * 0.095, 0, 1);
-  if (burnEnabled.value) intensity.value = clamp(intensity.value + dt * 0.045, 0.32, 1);
+  smokeLevel.value = clamp(smokeLevel.value - dt * 0.1, 0, 1);
 }
 
-function drawFlames(context: CanvasRenderingContext2D, width: number, height: number, fire: Rect | null) {
-  context.clearRect(0, 0, width, height);
-  if (!fire) return;
-  context.save();
-  context.globalCompositeOperation = "lighter";
-  const glow = context.createRadialGradient(fire.centerX, fire.top - 24, 6, fire.centerX, fire.top - 44, 138 * intensity.value);
-  glow.addColorStop(0, `rgba(255, 250, 196, ${0.3 * intensity.value})`);
-  glow.addColorStop(0.32, `rgba(255, 132, 28, ${0.22 * intensity.value})`);
-  glow.addColorStop(1, "rgba(127, 29, 29, 0)");
-  context.fillStyle = glow;
-  context.fillRect(fire.centerX - 170, fire.top - 190, 340, 230);
-
+function drawLegacyFlames(context: CanvasRenderingContext2D, fire: Rect) {
   for (const particle of flameParticles) {
     const t = clamp(particle.age / particle.life, 0, 1);
-    const alpha = (1 - t) * (particle.kind === "ember" ? 0.82 : 0.72) * intensity.value;
+    const power = segmentStrengths.value[particle.segment] || baseFire;
+    const alpha = (1 - t) * (particle.kind === "ember" ? 0.78 : 0.64) * clamp(power + 0.18, 0, 1);
     if (alpha <= 0.01) continue;
     context.save();
     context.translate(particle.x, particle.y);
@@ -283,19 +327,18 @@ function drawFlames(context: CanvasRenderingContext2D, width: number, height: nu
     if (particle.kind === "ember") {
       context.globalAlpha = alpha;
       context.fillStyle = "#ffd166";
-      context.shadowColor = "rgba(255, 143, 31, 0.85)";
-      context.shadowBlur = 10;
+      context.shadowColor = "rgba(255, 143, 31, 0.75)";
+      context.shadowBlur = 9;
       context.beginPath();
       context.arc(0, 0, particle.size * (1 - t * 0.4), 0, Math.PI * 2);
       context.fill();
     } else {
-      const radiusX = particle.size * (0.48 + t * 0.2);
-      const radiusY = particle.size * (1.2 - t * 0.46);
+      const radiusX = particle.size * (0.52 + t * 0.16);
+      const radiusY = particle.size * (1.18 - t * 0.42);
       const gradient = context.createRadialGradient(-radiusX * 0.18, -radiusY * 0.42, 1, 0, 0, radiusY);
       gradient.addColorStop(0, `rgba(255, 255, 222, ${alpha})`);
-      gradient.addColorStop(0.2, `rgba(255, 211, 83, ${alpha * 0.94})`);
-      gradient.addColorStop(0.48, `rgba(255, 103, 28, ${alpha * 0.78})`);
-      gradient.addColorStop(0.82, `rgba(153, 27, 27, ${alpha * 0.42})`);
+      gradient.addColorStop(0.22, `rgba(255, 211, 83, ${alpha * 0.9})`);
+      gradient.addColorStop(0.52, `rgba(255, 103, 28, ${alpha * 0.72})`);
       gradient.addColorStop(1, "rgba(80, 12, 12, 0)");
       context.fillStyle = gradient;
       context.beginPath();
@@ -304,6 +347,94 @@ function drawFlames(context: CanvasRenderingContext2D, width: number, height: nu
     }
     context.restore();
   }
+
+  const glow = context.createLinearGradient(fire.left, fire.top - 8, fire.right, fire.top - 8);
+  segmentStrengths.value.forEach((power, index) => {
+    glow.addColorStop(index / Math.max(1, segmentCount - 1), `rgba(255, 115, 28, ${0.05 + power * 0.15})`);
+  });
+  context.fillStyle = glow;
+  context.fillRect(fire.left - 8, fire.top - 34, fire.width + 16, 52);
+}
+
+function drawRibbonFlames(context: CanvasRenderingContext2D, fire: Rect, now: number) {
+  const segmentWidth = fire.width / segmentCount;
+  context.save();
+  context.filter = "blur(7px)";
+  for (let index = 0; index < segmentCount; index += 1) {
+    const power = segmentStrengths.value[index];
+    const x = segmentCenter(fire, index);
+    const glow = context.createRadialGradient(x, fire.top - 10, 2, x, fire.top - 28, 42 + power * 54);
+    glow.addColorStop(0, `rgba(255, 218, 95, ${0.14 + power * 0.16})`);
+    glow.addColorStop(0.45, `rgba(249, 115, 22, ${0.08 + power * 0.11})`);
+    glow.addColorStop(1, "rgba(127, 29, 29, 0)");
+    context.fillStyle = glow;
+    context.fillRect(x - segmentWidth * 1.7, fire.top - 106, segmentWidth * 3.4, 126);
+  }
+  context.restore();
+
+  for (let index = 0; index < segmentCount; index += 1) {
+    const power = segmentStrengths.value[index];
+    if (power < 0.16) continue;
+    const center = segmentCenter(fire, index);
+    const phase = now * 0.004 + index * 0.88;
+    const width = segmentWidth * randomLike(index, now, 0.68, 1.08);
+    const height = 28 + power * 62 + Math.sin(phase) * 7;
+    const lean = Math.sin(phase * 0.76) * segmentWidth * 0.46;
+    drawFlameTongue(context, center, fire.top + 3, width, height, lean, power, "outer");
+    drawFlameTongue(context, center + lean * 0.24, fire.top + 1, width * 0.48, height * 0.62, lean * 0.5, power, "inner");
+    if (power > 0.6 && index % 2 === 0) drawFlameTongue(context, center - lean * 0.18, fire.top, width * 0.24, height * 0.36, -lean * 0.25, power, "core");
+  }
+
+  drawLegacyFlames(context, fire);
+}
+
+function randomLike(index: number, now: number, min: number, max: number) {
+  const raw = Math.sin(index * 97.31 + Math.floor(now / 110) * 0.73) * 43758.5453;
+  const unit = raw - Math.floor(raw);
+  return min + unit * (max - min);
+}
+
+function drawFlameTongue(context: CanvasRenderingContext2D, x: number, baseY: number, width: number, height: number, lean: number, power: number, layer: "outer" | "inner" | "core") {
+  const tipX = x + lean;
+  const tipY = baseY - height;
+  const leftBase = x - width * 0.52;
+  const rightBase = x + width * 0.52;
+  context.save();
+  context.globalAlpha = layer === "outer" ? 0.4 + power * 0.22 : layer === "inner" ? 0.38 + power * 0.2 : 0.34 + power * 0.16;
+  context.beginPath();
+  context.moveTo(leftBase, baseY);
+  context.bezierCurveTo(x - width * 0.88, baseY - height * 0.26, tipX - width * 0.38, baseY - height * 0.72, tipX, tipY);
+  context.bezierCurveTo(tipX + width * 0.42, baseY - height * 0.7, x + width * 0.86, baseY - height * 0.28, rightBase, baseY);
+  context.bezierCurveTo(x + width * 0.22, baseY - height * 0.08, x - width * 0.22, baseY - height * 0.08, leftBase, baseY);
+  context.closePath();
+  const gradient = context.createLinearGradient(x, baseY, tipX, tipY);
+  if (layer === "outer") {
+    gradient.addColorStop(0, "rgba(158, 30, 12, 0.08)");
+    gradient.addColorStop(0.28, "rgba(239, 68, 21, 0.72)");
+    gradient.addColorStop(0.62, "rgba(255, 180, 61, 0.58)");
+    gradient.addColorStop(1, "rgba(255, 245, 173, 0)");
+  } else if (layer === "inner") {
+    gradient.addColorStop(0, "rgba(255, 136, 31, 0.12)");
+    gradient.addColorStop(0.3, "rgba(255, 205, 73, 0.66)");
+    gradient.addColorStop(0.72, "rgba(255, 255, 216, 0.54)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+  } else {
+    gradient.addColorStop(0, "rgba(255, 230, 118, 0.18)");
+    gradient.addColorStop(0.55, "rgba(255, 255, 235, 0.62)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
+  }
+  context.fillStyle = gradient;
+  context.fill();
+  context.restore();
+}
+
+function drawFlames(context: CanvasRenderingContext2D, width: number, height: number, fire: Rect | null, now: number) {
+  context.clearRect(0, 0, width, height);
+  if (!fire) return;
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  if (flameStyle.value === "ribbon") drawRibbonFlames(context, fire, now);
+  else drawLegacyFlames(context, fire);
   context.restore();
 }
 
@@ -361,11 +492,12 @@ function tick(now: number) {
   const dt = Math.min(0.04, Math.max(0.008, (lastFrame ? now - lastFrame : 16) / 1000));
   lastFrame = now;
 
+  updateSegmentStrengths(dt, now);
   if (fire) spawnFlame(now, fire);
   if (water) spawnDrop(now, water);
   updateParticles(dt, fire);
   updateHeat(dt, target, fire);
-  drawFlames(flameContext, width, height, fire);
+  drawFlames(flameContext, width, height, fire, now);
   drawDropsAndSmoke(smokeContext, width, height);
   animationFrame = requestAnimationFrame(tick);
 }
@@ -381,7 +513,7 @@ onBeforeUnmount(() => {
 
 <template>
   <main class="flame-prototype-page">
-    <section ref="stage" class="flame-demo-stage">
+    <section ref="stage" class="flame-demo-stage" @click="actionOpen = false">
       <canvas ref="fireCanvas" class="flame-canvas" aria-hidden="true"></canvas>
       <canvas ref="smokeCanvas" class="smoke-canvas" aria-hidden="true"></canvas>
 
@@ -391,9 +523,9 @@ onBeforeUnmount(() => {
           <span>{{ statusText }}</span>
         </div>
         <div class="flame-demo-actions">
-          <button type="button" :class="{ active: burnEnabled }" @click="burnEnabled = !burnEnabled">{{ burnEnabled ? "燃烧中" : "留余火" }}</button>
-          <button type="button" :class="{ active: waterEnabled }" @click="toggleWater">{{ waterEnabled ? "水滴开" : "水滴关" }}</button>
-          <button type="button" @click="resetDemo">重置</button>
+          <button type="button" :class="{ active: flameStyle === 'legacy' }" @click.stop="setFlameStyle('legacy')">原样式</button>
+          <button type="button" :class="{ active: flameStyle === 'ribbon' }" @click.stop="setFlameStyle('ribbon')">新火焰</button>
+          <button type="button" @click.stop="resetDemo">重置</button>
         </div>
       </header>
 
@@ -412,18 +544,27 @@ onBeforeUnmount(() => {
           <div class="prototype-avatar water">水</div>
           <div class="prototype-bubble-wrap">
             <span>水滴气泡</span>
-            <p ref="waterBubble" class="prototype-bubble water-source-bubble" :class="{ disabled: !waterEnabled }">
+            <p ref="waterBubble" class="prototype-bubble water-source-bubble">
               /水滴滴
             </p>
           </div>
         </article>
 
         <article class="prototype-message-row mine">
-          <div class="prototype-bubble-wrap">
+          <div class="prototype-bubble-wrap fire-wrap">
             <span>我的消息</span>
-            <p ref="fireBubble" class="prototype-bubble fire-source-bubble" :style="fireStyle">
+            <p
+              ref="fireBubble"
+              class="prototype-bubble fire-source-bubble"
+              :class="{ stoked: boostRemainingSeconds > 0 }"
+              :style="fireStyle"
+              @click.stop="actionOpen = !actionOpen"
+            >
               /火焰 这个气泡已经着起来了。
             </p>
+            <div v-if="actionOpen" class="fire-action-popover" @click.stop>
+              <button type="button" @click="stokeFire">添柴</button>
+            </div>
           </div>
           <div class="prototype-avatar mine">我</div>
         </article>
@@ -431,10 +572,12 @@ onBeforeUnmount(() => {
 
       <aside class="flame-state-panel">
         <b>prototype state</b>
+        <span>style={{ flameStyle }}</span>
         <span>heat={{ heat.toFixed(3) }}</span>
-        <span>intensity={{ intensity.toFixed(3) }}</span>
-        <span>smoke={{ smokeLevel.toFixed(3) }}</span>
-        <span>{{ lastDropHit }}</span>
+        <span>avg={{ averageFire.toFixed(3) }}</span>
+        <span>max={{ strongestFire.toFixed(3) }}</span>
+        <span>boost={{ boostRemainingSeconds }}s</span>
+        <span>{{ lastAction }}</span>
       </aside>
     </section>
   </main>
@@ -462,7 +605,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   overflow: hidden;
   background:
-    linear-gradient(180deg, rgba(246, 248, 246, 0.8), rgba(230, 236, 229, 0.9)),
+    linear-gradient(180deg, rgba(246, 248, 246, 0.82), rgba(230, 236, 229, 0.92)),
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.24) 0 1px, transparent 1px 44px),
     #e8eee8;
   box-shadow: 0 18px 42px rgba(25, 31, 27, 0.13);
@@ -485,7 +628,7 @@ onBeforeUnmount(() => {
 
 .flame-demo-head {
   position: relative;
-  z-index: 10;
+  z-index: 20;
   min-height: 64px;
   padding: 12px 14px;
   border-bottom: 1px solid rgba(20, 20, 20, 0.08);
@@ -493,7 +636,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: rgba(247, 249, 247, 0.82);
+  background: rgba(247, 249, 247, 0.84);
   backdrop-filter: blur(16px);
 }
 
@@ -518,17 +661,19 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-.flame-demo-actions button {
+.flame-demo-actions button,
+.fire-action-popover button {
   min-height: 34px;
   border: 1px solid rgba(20, 20, 20, 0.12);
   border-radius: 6px;
   padding: 0 11px;
   color: #222;
   font-weight: 800;
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.9);
 }
 
-.flame-demo-actions button.active {
+.flame-demo-actions button.active,
+.fire-action-popover button {
   color: #fff;
   border-color: rgba(154, 52, 18, 0.42);
   background: #b7411e;
@@ -536,7 +681,7 @@ onBeforeUnmount(() => {
 
 .prototype-message-stack {
   position: relative;
-  z-index: 4;
+  z-index: 9;
   height: calc(100% - 64px);
   padding: 38px clamp(16px, 5vw, 64px) 78px;
   display: grid;
@@ -550,10 +695,6 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   justify-content: flex-end;
   gap: 10px;
-}
-
-.prototype-message-row.mine {
-  justify-content: flex-end;
 }
 
 .prototype-message-row.water-row {
@@ -612,16 +753,16 @@ onBeforeUnmount(() => {
 
 .heat-target-bubble {
   --flame-heat: 0;
-  color: color-mix(in srgb, #111 72%, #fff calc(var(--flame-heat) * 28%));
+  color: color-mix(in srgb, #111 74%, #fff calc(var(--flame-heat) * 26%));
   border: 1px solid rgba(185, 28, 28, calc(var(--flame-heat) * 0.42));
   background:
     radial-gradient(ellipse at 52% 120%, rgba(255, 237, 213, calc(var(--flame-heat) * 0.86)), transparent 64%),
-    radial-gradient(ellipse at 44% 96%, rgba(248, 113, 22, calc(var(--flame-heat) * 0.38)), transparent 48%),
+    radial-gradient(ellipse at 44% 96%, rgba(248, 113, 22, calc(var(--flame-heat) * 0.36)), transparent 48%),
     linear-gradient(180deg, color-mix(in srgb, #fff 100%, #fff7ed calc(var(--flame-heat) * 100%)), color-mix(in srgb, #fff 78%, #f97316 calc(var(--flame-heat) * 22%)));
   box-shadow:
-    inset 0 -18px 24px rgba(248, 113, 22, calc(var(--flame-heat) * 0.22)),
+    inset 0 -18px 24px rgba(248, 113, 22, calc(var(--flame-heat) * 0.2)),
     inset 0 1px 0 rgba(255, 255, 255, 0.86),
-    0 0 calc(8px + var(--flame-heat) * 34px) rgba(251, 146, 60, calc(var(--flame-heat) * 0.62)),
+    0 0 calc(8px + var(--flame-heat) * 30px) rgba(251, 146, 60, calc(var(--flame-heat) * 0.58)),
     0 7px 18px rgba(15, 23, 42, 0.12);
   transition:
     background 0.32s linear,
@@ -636,9 +777,9 @@ onBeforeUnmount(() => {
   inset: -18px -12px -28px;
   z-index: -1;
   border-radius: 50%;
-  background: radial-gradient(ellipse at 50% 100%, rgba(255, 193, 7, calc(var(--flame-heat) * 0.3)), transparent 68%);
+  background: radial-gradient(ellipse at 50% 100%, rgba(255, 193, 7, calc(var(--flame-heat) * 0.26)), transparent 68%);
   filter: blur(10px);
-  opacity: calc(var(--flame-heat) * 0.94);
+  opacity: calc(var(--flame-heat) * 0.9);
   pointer-events: none;
 }
 
@@ -654,11 +795,6 @@ onBeforeUnmount(() => {
     0 7px 17px rgba(14, 116, 144, 0.16);
 }
 
-.water-source-bubble.disabled {
-  filter: grayscale(0.7);
-  opacity: 0.66;
-}
-
 .water-source-bubble::after {
   content: "";
   position: absolute;
@@ -671,52 +807,78 @@ onBeforeUnmount(() => {
   filter: blur(1px);
 }
 
+.fire-wrap {
+  position: relative;
+}
+
 .fire-source-bubble {
-  --fire-strength: 0.86;
+  --fire-strength: 0.42;
   overflow: visible;
-  color: #fff8db;
+  cursor: pointer;
+  color: #fff3d1;
   background:
-    radial-gradient(ellipse at 24% 10%, rgba(255, 237, 177, 0.48), transparent 36%),
-    linear-gradient(180deg, color-mix(in srgb, #7c2d12 58%, #f97316 calc(var(--fire-strength) * 42%)), #431407);
+    linear-gradient(90deg, rgba(255, 198, 91, 0.08), transparent 20% 80%, rgba(255, 198, 91, 0.1)),
+    linear-gradient(180deg, color-mix(in srgb, #7c2d12 68%, #f97316 calc(var(--fire-strength) * 32%)), #431407);
   box-shadow:
-    inset 0 1px 0 rgba(255, 237, 213, 0.26),
-    inset 0 -14px 22px rgba(69, 10, 10, 0.44),
-    0 0 calc(18px + var(--fire-strength) * 26px) rgba(249, 115, 22, calc(var(--fire-strength) * 0.7)),
-    0 10px 22px rgba(69, 10, 10, 0.22);
+    inset 0 1px 0 rgba(255, 237, 213, 0.24),
+    inset 0 -12px 20px rgba(69, 10, 10, 0.42),
+    0 0 calc(14px + var(--fire-strength) * 20px) rgba(249, 115, 22, calc(var(--fire-strength) * 0.46)),
+    0 9px 20px rgba(69, 10, 10, 0.2);
+}
+
+.fire-source-bubble.stoked {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 237, 213, 0.32),
+    inset 0 -14px 22px rgba(69, 10, 10, 0.42),
+    0 0 calc(18px + var(--fire-strength) * 28px) rgba(249, 115, 22, calc(var(--fire-strength) * 0.58)),
+    0 10px 24px rgba(69, 10, 10, 0.22);
 }
 
 .fire-source-bubble::before {
   content: "";
   position: absolute;
-  left: 16%;
-  right: 16%;
+  left: 7%;
+  right: 7%;
   top: -7px;
   height: 10px;
   border-radius: 50%;
-  background: linear-gradient(90deg, transparent, rgba(255, 218, 112, 0.86), rgba(255, 102, 28, 0.78), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 218, 112, 0.62), rgba(255, 102, 28, 0.52), rgba(255, 218, 112, 0.58), transparent);
   filter: blur(2px);
 }
 
 .fire-source-bubble::after {
   content: "";
   position: absolute;
-  inset: -120px -62px 16px;
+  inset: -90px -34px 16px;
   z-index: -1;
-  border-radius: 48%;
+  border-radius: 44%;
   background:
-    radial-gradient(ellipse at 50% 100%, rgba(255, 243, 180, calc(var(--fire-strength) * 0.2)), transparent 28%),
-    radial-gradient(ellipse at 50% 100%, rgba(255, 115, 28, calc(var(--fire-strength) * 0.26)), transparent 62%);
-  filter: blur(12px);
+    radial-gradient(ellipse at 50% 100%, rgba(255, 243, 180, calc(var(--fire-strength) * 0.15)), transparent 28%),
+    radial-gradient(ellipse at 50% 100%, rgba(255, 115, 28, calc(var(--fire-strength) * 0.2)), transparent 62%);
+  filter: blur(10px);
   pointer-events: none;
-  animation: fireHeatWaver 1.4s ease-in-out infinite;
+  animation: fireHeatWaver 1.6s ease-in-out infinite;
+}
+
+.fire-action-popover {
+  position: absolute;
+  right: 10px;
+  bottom: calc(100% + 9px);
+  z-index: 40;
+  border: 1px solid rgba(92, 41, 10, 0.18);
+  border-radius: 8px;
+  padding: 6px;
+  background: rgba(255, 252, 245, 0.94);
+  box-shadow: 0 12px 28px rgba(69, 10, 10, 0.18);
+  backdrop-filter: blur(12px);
 }
 
 .flame-state-panel {
   position: absolute;
-  z-index: 10;
+  z-index: 20;
   left: 14px;
   bottom: 14px;
-  min-width: 184px;
+  min-width: 206px;
   border: 1px solid rgba(15, 23, 42, 0.12);
   border-radius: 8px;
   padding: 10px;
@@ -773,7 +935,7 @@ onBeforeUnmount(() => {
 
   .prototype-message-stack {
     height: calc(100% - var(--safe-top) - 92px);
-    padding: 26px 14px 84px;
+    padding: 26px 14px 96px;
     grid-template-rows: minmax(114px, 0.92fr) minmax(108px, 0.7fr) minmax(156px, 1fr);
   }
 
