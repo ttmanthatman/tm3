@@ -92,6 +92,7 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import FlamePrototype from "./FlamePrototype.vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
@@ -140,6 +141,7 @@ const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
 const showAdmin = ref(false);
 const showSettings = ref(false);
+const isFlamePrototypeRoute = ref(window.location.pathname === "/prototype/flame");
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -565,6 +567,7 @@ type VoicePayload = {
 };
 
 onMounted(async () => {
+  if (isFlamePrototypeRoute.value) return;
   hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
@@ -5842,7 +5845,8 @@ async function toggleVirtual(character: any) {
 </script>
 
 <template>
-  <main v-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page" :style="appearanceStyle">
+  <FlamePrototype v-if="isFlamePrototypeRoute" />
+  <main v-else-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page" :style="appearanceStyle">
     <section class="ai-settings-panel ai-settings-workspace">
       <header class="ai-settings-head">
         <div>
