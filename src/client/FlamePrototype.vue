@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 
 type FlameStyle = "legacy" | "ribbon";
+type FlameLayer = "outer" | "middle" | "inner" | "core";
 
 type FlameParticle = {
   x: number;
@@ -39,8 +40,8 @@ type SmokeParticle = {
 
 type Rect = { left: number; top: number; right: number; bottom: number; width: number; height: number; centerX: number; centerY: number };
 
-const segmentCount = 13;
-const baseFire = 0.42;
+const segmentCount = 17;
+const baseFire = 0.46;
 const stage = ref<HTMLElement | null>(null);
 const fireCanvas = ref<HTMLCanvasElement | null>(null);
 const smokeCanvas = ref<HTMLCanvasElement | null>(null);
@@ -80,13 +81,13 @@ const boostRemainingSeconds = computed(() => Math.max(0, Math.ceil((boostUntil.v
 const statusText = computed(() => {
   const heatPercent = Math.round(heat.value * 100);
   const firePercent = Math.round(averageFire.value * 100);
-  return `热量 ${heatPercent}% · 平均火势 ${firePercent}% · ${flameStyle.value === "ribbon" ? "新火焰" : "原样式"}`;
+  return `热量 ${heatPercent}% · 平均火势 ${firePercent}% · ${flameStyle.value === "ribbon" ? "拟真火焰" : "原样式"}`;
 });
 
 function setFlameStyle(style: FlameStyle) {
   flameStyle.value = style;
   flameParticles = [];
-  lastAction.value = style === "ribbon" ? "切到新火焰" : "切到原样式";
+  lastAction.value = style === "ribbon" ? "切到拟真火焰" : "切到原样式";
 }
 
 function resetDemo() {
@@ -154,10 +155,10 @@ function boostFactor(now: number) {
 function updateSegmentStrengths(dt: number, now: number) {
   const boost = boostFactor(now);
   segmentStrengths.value = segmentStrengths.value.map((value, index) => {
-    const wave = Math.sin(now * 0.0019 + index * 0.82) * 0.035;
-    const target = clamp(baseFire + wave + boost * 0.42, 0.34, 0.9);
-    const follow = 1 - Math.exp(-(boost ? 2.8 : 1.25) * dt);
-    return clamp(value + (target - value) * follow, 0.18, 0.92);
+    const wave = Math.sin(now * 0.0022 + index * 0.74) * 0.045 + Math.sin(now * 0.0011 + index * 1.47) * 0.024;
+    const target = clamp(baseFire + wave + boost * 0.42, 0.3, 0.94);
+    const follow = 1 - Math.exp(-(boost ? 3.1 : 1.65) * dt);
+    return clamp(value + (target - value) * follow, 0.16, 0.96);
   });
 }
 
@@ -172,21 +173,21 @@ function segmentCenter(fire: Rect, index: number) {
 
 function spawnFlame(now: number, source: Rect) {
   if (now < nextFlameAt) return;
-  nextFlameAt = now + (flameStyle.value === "legacy" ? 28 : 42);
+  nextFlameAt = now + (flameStyle.value === "legacy" ? 28 : 56);
   const segmentWidth = source.width / segmentCount;
   segmentStrengths.value.forEach((power, index) => {
-    const count = flameStyle.value === "legacy" ? Math.max(1, Math.round(power * 3)) : Math.max(0, Math.round(power * 1.5));
+    const count = flameStyle.value === "legacy" ? Math.max(1, Math.round(power * 3)) : Math.max(0, Math.round(power * 1.1));
     for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
       const center = segmentCenter(source, index);
-      const kind: FlameParticle["kind"] = Math.random() > 0.78 ? "tongue" : "core";
+      const kind: FlameParticle["kind"] = Math.random() > 0.7 ? "tongue" : "core";
       flameParticles.push({
-        x: center + randomBetween(-segmentWidth * 0.42, segmentWidth * 0.42),
-        y: source.top + randomBetween(-3, 8),
-        vx: randomBetween(-16, 16),
-        vy: randomBetween(-150, -74) * (0.8 + power * 0.72),
+        x: center + randomBetween(-segmentWidth * 0.58, segmentWidth * 0.58),
+        y: source.top + randomBetween(-8, 8),
+        vx: randomBetween(-20, 20),
+        vy: randomBetween(-132, -72) * (0.82 + power * 0.62),
         age: 0,
-        life: randomBetween(0.48, 0.92),
-        size: randomBetween(9, 19) * (0.78 + power * 0.7),
+        life: randomBetween(0.5, 1.08),
+        size: randomBetween(7, 16) * (0.76 + power * 0.62),
         spin: randomBetween(-1.2, 1.2),
         segment: index,
         kind
@@ -236,8 +237,8 @@ function spawnSmoke(x: number, y: number, amount = 7) {
       vy: randomBetween(-66, -32),
       age: 0,
       life: randomBetween(1.35, 2.8),
-      radius: randomBetween(12, 30),
-      alpha: randomBetween(0.14, 0.28),
+      radius: randomBetween(10, 23),
+      alpha: randomBetween(0.08, 0.17),
       spin: randomBetween(-0.8, 0.8)
     });
   }
@@ -358,74 +359,247 @@ function drawLegacyFlames(context: CanvasRenderingContext2D, fire: Rect) {
 
 function drawRibbonFlames(context: CanvasRenderingContext2D, fire: Rect, now: number) {
   const segmentWidth = fire.width / segmentCount;
+  const boost = boostFactor(now);
+  const plumeCount = Math.max(6, Math.round(fire.width / 42));
+  const tallFlame = clamp(fire.width * 0.56, 118, 210);
+
   context.save();
-  context.filter = "blur(7px)";
+  context.filter = "blur(11px)";
+  context.globalAlpha = 0.78;
   for (let index = 0; index < segmentCount; index += 1) {
     const power = segmentStrengths.value[index];
     const x = segmentCenter(fire, index);
-    const glow = context.createRadialGradient(x, fire.top - 10, 2, x, fire.top - 28, 42 + power * 54);
-    glow.addColorStop(0, `rgba(255, 218, 95, ${0.14 + power * 0.16})`);
-    glow.addColorStop(0.45, `rgba(249, 115, 22, ${0.08 + power * 0.11})`);
-    glow.addColorStop(1, "rgba(127, 29, 29, 0)");
+    const glow = context.createRadialGradient(x, fire.top + 2, 3, x, fire.top - 38, 58 + power * 78);
+    glow.addColorStop(0, `rgba(255, 231, 144, ${0.14 + power * 0.2})`);
+    glow.addColorStop(0.38, `rgba(255, 102, 24, ${0.1 + power * 0.18})`);
+    glow.addColorStop(0.72, `rgba(151, 20, 12, ${0.05 + power * 0.1})`);
+    glow.addColorStop(1, "rgba(76, 5, 5, 0)");
     context.fillStyle = glow;
-    context.fillRect(x - segmentWidth * 1.7, fire.top - 106, segmentWidth * 3.4, 126);
+    context.fillRect(x - segmentWidth * 2.2, fire.top - 132, segmentWidth * 4.4, 158);
   }
   context.restore();
 
-  for (let index = 0; index < segmentCount; index += 1) {
-    const power = segmentStrengths.value[index];
-    if (power < 0.16) continue;
-    const center = segmentCenter(fire, index);
-    const phase = now * 0.004 + index * 0.88;
-    const width = segmentWidth * randomLike(index, now, 0.68, 1.08);
-    const height = 28 + power * 62 + Math.sin(phase) * 7;
-    const lean = Math.sin(phase * 0.76) * segmentWidth * 0.46;
-    drawFlameTongue(context, center, fire.top + 3, width, height, lean, power, "outer");
-    drawFlameTongue(context, center + lean * 0.24, fire.top + 1, width * 0.48, height * 0.62, lean * 0.5, power, "inner");
-    if (power > 0.6 && index % 2 === 0) drawFlameTongue(context, center - lean * 0.18, fire.top, width * 0.24, height * 0.36, -lean * 0.25, power, "core");
+  drawFlameBase(context, fire, now);
+
+  context.save();
+  context.filter = "blur(1.6px)";
+  for (let index = -1; index <= plumeCount; index += 1) {
+    const unit = (index + 0.5) / plumeCount;
+    const x = fire.left + fire.width * unit + layeredNoise(now, index + 2.1, 0.8) * segmentWidth * 0.58;
+    const power = sampleFirePower(fire, x);
+    const height = tallFlame * (0.62 + power * 0.92 + boost * 0.22) * stableRandom(index + 11, 0.78, 1.2);
+    const width = clamp(segmentWidth * stableRandom(index + 20, 2.2, 4.8), 34, 86);
+    const lean = layeredNoise(now, index + 5.8, 1) * segmentWidth * (0.56 + power * 0.36);
+    const baseY = fire.top + 13 + power * 12;
+    drawFlameTongue(context, x, baseY, width, height, lean, power, "outer");
+  }
+  context.restore();
+
+  context.save();
+  context.filter = "blur(0.8px)";
+  for (let index = 0; index < plumeCount; index += 1) {
+    const unit = (index + 0.5) / plumeCount;
+    const x = fire.left + fire.width * unit + layeredNoise(now, index + 9.3, 1.35) * segmentWidth * 0.34;
+    const power = sampleFirePower(fire, x);
+    const height = tallFlame * (0.38 + power * 0.62 + boost * 0.14) * stableRandom(index + 41, 0.72, 1.16);
+    const width = clamp(segmentWidth * stableRandom(index + 32, 1.1, 2.35), 18, 52);
+    const lean = layeredNoise(now, index + 12.2, 1.24) * segmentWidth * 0.42;
+    drawFlameTongue(context, x + lean * 0.16, fire.top + 9, width, height * 0.86, lean * 0.72, power, "middle");
+  }
+  context.restore();
+
+  for (let index = 0; index < plumeCount; index += 1) {
+    if (index % 2 !== 0 && stableRandom(index + 87, 0, 1) < 0.68) continue;
+    const unit = (index + 0.5) / plumeCount;
+    const x = fire.left + fire.width * unit + layeredNoise(now, index + 18.7, 1.55) * segmentWidth * 0.22;
+    const power = sampleFirePower(fire, x);
+    if (power < 0.22) continue;
+    const lean = layeredNoise(now, index + 22.4, 1.12) * segmentWidth * 0.24;
+    const height = tallFlame * (0.22 + power * 0.42 + boost * 0.08) * stableRandom(index + 64, 0.74, 1.18);
+    drawFlameTongue(context, x, fire.top + 8, clamp(segmentWidth * 0.72, 10, 28), height, lean, power, power > 0.68 ? "core" : "inner");
   }
 
-  drawLegacyFlames(context, fire);
+  drawFlameWisps(context, fire, now, plumeCount, tallFlame);
+  drawFloatingFlameParticles(context);
 }
 
-function randomLike(index: number, now: number, min: number, max: number) {
-  const raw = Math.sin(index * 97.31 + Math.floor(now / 110) * 0.73) * 43758.5453;
+function sampleFirePower(fire: Rect, x: number) {
+  const unit = clamp((x - fire.left) / Math.max(1, fire.width), 0, 1) * (segmentCount - 1);
+  const low = Math.floor(unit);
+  const high = Math.min(segmentCount - 1, low + 1);
+  const mix = unit - low;
+  return (segmentStrengths.value[low] || baseFire) * (1 - mix) + (segmentStrengths.value[high] || baseFire) * mix;
+}
+
+function layeredNoise(now: number, seed: number, speed: number) {
+  return (
+    Math.sin(now * 0.0024 * speed + seed * 1.73) * 0.5 +
+    Math.sin(now * 0.0042 * speed + seed * 0.71) * 0.32 +
+    Math.sin(now * 0.0013 * speed + seed * 2.91) * 0.18
+  );
+}
+
+function drawFlameBase(context: CanvasRenderingContext2D, fire: Rect, now: number) {
+  const topY = fire.top + 8;
+  const bottomY = fire.top + 31;
+  const steps = 12;
+
+  context.save();
+  context.filter = "blur(4px)";
+  const baseGlow = context.createRadialGradient(fire.centerX, fire.top + 2, 8, fire.centerX, fire.top - 10, fire.width * 0.62);
+  baseGlow.addColorStop(0, "rgba(255, 241, 174, 0.36)");
+  baseGlow.addColorStop(0.42, "rgba(255, 106, 26, 0.34)");
+  baseGlow.addColorStop(1, "rgba(101, 12, 8, 0)");
+  context.fillStyle = baseGlow;
+  context.fillRect(fire.left - 42, fire.top - 56, fire.width + 84, 90);
+  context.restore();
+
+  context.save();
+  context.beginPath();
+  context.moveTo(fire.left - 12, bottomY);
+  context.lineTo(fire.left - 12, topY);
+  for (let index = 0; index <= steps; index += 1) {
+    const unit = index / steps;
+    const x = fire.left + fire.width * unit;
+    const wave = Math.sin(now * 0.004 + unit * 10.8) * 4 + Math.sin(now * 0.002 + unit * 23) * 2;
+    context.lineTo(x, topY - wave);
+  }
+  context.lineTo(fire.right + 12, bottomY);
+  context.closePath();
+  const ribbon = context.createLinearGradient(fire.centerX, topY - 20, fire.centerX, bottomY);
+  ribbon.addColorStop(0, "rgba(255, 247, 188, 0)");
+  ribbon.addColorStop(0.28, "rgba(255, 219, 98, 0.54)");
+  ribbon.addColorStop(0.58, "rgba(255, 100, 25, 0.58)");
+  ribbon.addColorStop(1, "rgba(92, 9, 7, 0.02)");
+  context.fillStyle = ribbon;
+  context.fill();
+  context.restore();
+}
+
+function stableRandom(seed: number, min: number, max: number) {
+  const raw = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
   const unit = raw - Math.floor(raw);
   return min + unit * (max - min);
 }
 
-function drawFlameTongue(context: CanvasRenderingContext2D, x: number, baseY: number, width: number, height: number, lean: number, power: number, layer: "outer" | "inner" | "core") {
+function drawFlameWisps(context: CanvasRenderingContext2D, fire: Rect, now: number, plumeCount: number, tallFlame: number) {
+  const segmentWidth = fire.width / segmentCount;
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  context.filter = "blur(0.9px)";
+  context.lineCap = "round";
+  for (let index = 0; index < plumeCount; index += 1) {
+    if (stableRandom(index + 151, 0, 1) < 0.34) continue;
+    const unit = (index + 0.5) / plumeCount;
+    const baseX = fire.left + fire.width * unit + layeredNoise(now, index + 30.4, 1.08) * segmentWidth * 0.34;
+    const power = sampleFirePower(fire, baseX);
+    const height = tallFlame * stableRandom(index + 164, 0.48, 0.86) * (0.7 + power * 0.5);
+    const tipX = baseX + layeredNoise(now, index + 44.8, 0.84) * segmentWidth * 1.12;
+    const tipY = fire.top + 8 - height;
+    const gradient = context.createLinearGradient(baseX, fire.top + 12, tipX, tipY);
+    gradient.addColorStop(0, "rgba(255, 95, 20, 0)");
+    gradient.addColorStop(0.32, `rgba(255, 126, 29, ${0.22 + power * 0.18})`);
+    gradient.addColorStop(0.66, `rgba(255, 221, 101, ${0.18 + power * 0.16})`);
+    gradient.addColorStop(1, "rgba(255, 246, 197, 0)");
+    context.strokeStyle = gradient;
+    context.lineWidth = clamp(segmentWidth * stableRandom(index + 175, 0.5, 0.98), 7, 14);
+    context.beginPath();
+    context.moveTo(baseX, fire.top + 11);
+    context.bezierCurveTo(
+      baseX - segmentWidth * stableRandom(index + 181, 0.25, 0.9),
+      fire.top - height * 0.22,
+      tipX + segmentWidth * stableRandom(index + 188, -0.48, 0.42),
+      fire.top - height * 0.62,
+      tipX,
+      tipY
+    );
+    context.stroke();
+  }
+  context.restore();
+}
+
+function drawFlameTongue(context: CanvasRenderingContext2D, x: number, baseY: number, width: number, height: number, lean: number, power: number, layer: FlameLayer) {
   const tipX = x + lean;
   const tipY = baseY - height;
   const leftBase = x - width * 0.52;
   const rightBase = x + width * 0.52;
+  const waist = height * (layer === "outer" ? 0.42 : layer === "middle" ? 0.48 : 0.54);
+  const shoulder = width * (layer === "outer" ? 0.86 : layer === "middle" ? 0.66 : 0.48);
+  const curl = (lean >= 0 ? 1 : -1) * width * 0.2 + Math.sin((x + height) * 0.037) * width * 0.16;
+  const leftWaistX = x - width * (layer === "outer" ? 0.2 : 0.14) + curl * 0.24;
+  const rightWaistX = x + width * (layer === "outer" ? 0.22 : 0.16) + curl * 0.18;
   context.save();
-  context.globalAlpha = layer === "outer" ? 0.4 + power * 0.22 : layer === "inner" ? 0.38 + power * 0.2 : 0.34 + power * 0.16;
+  context.globalAlpha =
+    layer === "outer" ? 0.5 + power * 0.26 : layer === "middle" ? 0.5 + power * 0.22 : layer === "inner" ? 0.44 + power * 0.2 : 0.38 + power * 0.18;
+  context.shadowColor = layer === "outer" ? "rgba(239, 52, 18, 0.28)" : "rgba(255, 188, 52, 0.24)";
+  context.shadowBlur = layer === "outer" ? 10 : 5;
   context.beginPath();
   context.moveTo(leftBase, baseY);
-  context.bezierCurveTo(x - width * 0.88, baseY - height * 0.26, tipX - width * 0.38, baseY - height * 0.72, tipX, tipY);
-  context.bezierCurveTo(tipX + width * 0.42, baseY - height * 0.7, x + width * 0.86, baseY - height * 0.28, rightBase, baseY);
-  context.bezierCurveTo(x + width * 0.22, baseY - height * 0.08, x - width * 0.22, baseY - height * 0.08, leftBase, baseY);
+  context.bezierCurveTo(x - shoulder, baseY - height * 0.18, leftWaistX, baseY - waist, tipX - width * 0.13, tipY + height * 0.17);
+  context.bezierCurveTo(tipX - width * 0.03, tipY + height * 0.06, tipX - width * 0.02, tipY + height * 0.02, tipX, tipY);
+  context.bezierCurveTo(tipX + width * 0.28, tipY + height * 0.16, rightWaistX, baseY - waist * 0.92, x + shoulder * 0.86, baseY - height * 0.2);
+  context.bezierCurveTo(x + width * 0.26, baseY - height * 0.08, x - width * 0.22, baseY - height * 0.1, leftBase, baseY);
   context.closePath();
   const gradient = context.createLinearGradient(x, baseY, tipX, tipY);
   if (layer === "outer") {
-    gradient.addColorStop(0, "rgba(158, 30, 12, 0.08)");
-    gradient.addColorStop(0.28, "rgba(239, 68, 21, 0.72)");
-    gradient.addColorStop(0.62, "rgba(255, 180, 61, 0.58)");
-    gradient.addColorStop(1, "rgba(255, 245, 173, 0)");
+    gradient.addColorStop(0, "rgba(76, 7, 5, 0)");
+    gradient.addColorStop(0.18, "rgba(160, 22, 10, 0.5)");
+    gradient.addColorStop(0.46, "rgba(250, 82, 20, 0.82)");
+    gradient.addColorStop(0.76, "rgba(255, 178, 55, 0.42)");
+    gradient.addColorStop(1, "rgba(255, 237, 167, 0)");
+  } else if (layer === "middle") {
+    gradient.addColorStop(0, "rgba(255, 89, 21, 0)");
+    gradient.addColorStop(0.26, "rgba(255, 118, 27, 0.76)");
+    gradient.addColorStop(0.64, "rgba(255, 213, 84, 0.74)");
+    gradient.addColorStop(0.9, "rgba(255, 250, 206, 0.22)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
   } else if (layer === "inner") {
-    gradient.addColorStop(0, "rgba(255, 136, 31, 0.12)");
-    gradient.addColorStop(0.3, "rgba(255, 205, 73, 0.66)");
-    gradient.addColorStop(0.72, "rgba(255, 255, 216, 0.54)");
+    gradient.addColorStop(0, "rgba(255, 175, 42, 0)");
+    gradient.addColorStop(0.36, "rgba(255, 218, 83, 0.68)");
+    gradient.addColorStop(0.74, "rgba(255, 255, 214, 0.62)");
     gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
   } else {
-    gradient.addColorStop(0, "rgba(255, 230, 118, 0.18)");
-    gradient.addColorStop(0.55, "rgba(255, 255, 235, 0.62)");
+    gradient.addColorStop(0, "rgba(255, 214, 93, 0)");
+    gradient.addColorStop(0.5, "rgba(255, 252, 219, 0.66)");
+    gradient.addColorStop(0.86, "rgba(255, 255, 255, 0.46)");
     gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
   }
   context.fillStyle = gradient;
   context.fill();
   context.restore();
+}
+
+function drawFloatingFlameParticles(context: CanvasRenderingContext2D) {
+  for (const particle of flameParticles) {
+    const t = clamp(particle.age / particle.life, 0, 1);
+    const power = segmentStrengths.value[particle.segment] || baseFire;
+    const alpha = (1 - t) * clamp(power + 0.08, 0, 1) * (particle.kind === "ember" ? 0.8 : 0.22);
+    if (alpha <= 0.01) continue;
+    context.save();
+    context.translate(particle.x, particle.y);
+    context.rotate(Math.sin(particle.age * 3.6 + particle.spin) * 0.32);
+    context.globalAlpha = alpha;
+    if (particle.kind === "ember") {
+      context.fillStyle = "#ffd66b";
+      context.shadowColor = "rgba(255, 111, 28, 0.78)";
+      context.shadowBlur = 10;
+      context.beginPath();
+      context.arc(0, 0, particle.size * (1 - t * 0.5), 0, Math.PI * 2);
+      context.fill();
+    } else {
+      const radiusX = particle.size * (0.42 + t * 0.1);
+      const radiusY = particle.size * (0.9 - t * 0.3);
+      const gradient = context.createRadialGradient(0, -radiusY * 0.34, 1, 0, 0, radiusY);
+      gradient.addColorStop(0, `rgba(255, 247, 195, ${alpha})`);
+      gradient.addColorStop(0.42, `rgba(255, 145, 35, ${alpha * 0.76})`);
+      gradient.addColorStop(1, "rgba(134, 18, 8, 0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
+  }
 }
 
 function drawFlames(context: CanvasRenderingContext2D, width: number, height: number, fire: Rect | null, now: number) {
@@ -524,7 +698,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="flame-demo-actions">
           <button type="button" :class="{ active: flameStyle === 'legacy' }" @click.stop="setFlameStyle('legacy')">原样式</button>
-          <button type="button" :class="{ active: flameStyle === 'ribbon' }" @click.stop="setFlameStyle('ribbon')">新火焰</button>
+          <button type="button" :class="{ active: flameStyle === 'ribbon' }" @click.stop="setFlameStyle('ribbon')">拟真火焰</button>
           <button type="button" @click.stop="resetDemo">重置</button>
         </div>
       </header>
@@ -609,6 +783,7 @@ onBeforeUnmount(() => {
     repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.24) 0 1px, transparent 1px 44px),
     #e8eee8;
   box-shadow: 0 18px 42px rgba(25, 31, 27, 0.13);
+  isolation: isolate;
 }
 
 .flame-canvas,
@@ -815,47 +990,60 @@ onBeforeUnmount(() => {
   --fire-strength: 0.42;
   overflow: visible;
   cursor: pointer;
-  color: #fff3d1;
+  color: #fff7dc;
+  border: 1px solid rgba(255, 180, 70, calc(0.18 + var(--fire-strength) * 0.26));
   background:
-    linear-gradient(90deg, rgba(255, 198, 91, 0.08), transparent 20% 80%, rgba(255, 198, 91, 0.1)),
-    linear-gradient(180deg, color-mix(in srgb, #7c2d12 68%, #f97316 calc(var(--fire-strength) * 32%)), #431407);
+    radial-gradient(ellipse at 44% -18%, rgba(255, 219, 93, calc(0.16 + var(--fire-strength) * 0.22)), transparent 42%),
+    radial-gradient(ellipse at 8% 18%, rgba(255, 105, 31, 0.28), transparent 40%),
+    linear-gradient(90deg, rgba(255, 198, 91, 0.1), transparent 18% 78%, rgba(255, 198, 91, 0.12)),
+    linear-gradient(180deg, color-mix(in srgb, #7c200d 58%, #ff7a1a calc(var(--fire-strength) * 42%)), #351006 78%);
   box-shadow:
-    inset 0 1px 0 rgba(255, 237, 213, 0.24),
-    inset 0 -12px 20px rgba(69, 10, 10, 0.42),
-    0 0 calc(14px + var(--fire-strength) * 20px) rgba(249, 115, 22, calc(var(--fire-strength) * 0.46)),
+    inset 0 1px 0 rgba(255, 237, 213, 0.36),
+    inset 0 10px 18px rgba(255, 139, 31, calc(var(--fire-strength) * 0.16)),
+    inset 0 -14px 22px rgba(58, 9, 5, 0.52),
+    0 -6px calc(18px + var(--fire-strength) * 24px) rgba(255, 120, 27, calc(var(--fire-strength) * 0.36)),
     0 9px 20px rgba(69, 10, 10, 0.2);
+  text-shadow: 0 1px 2px rgba(32, 7, 3, 0.58);
 }
 
 .fire-source-bubble.stoked {
   box-shadow:
-    inset 0 1px 0 rgba(255, 237, 213, 0.32),
-    inset 0 -14px 22px rgba(69, 10, 10, 0.42),
-    0 0 calc(18px + var(--fire-strength) * 28px) rgba(249, 115, 22, calc(var(--fire-strength) * 0.58)),
+    inset 0 1px 0 rgba(255, 246, 214, 0.48),
+    inset 0 12px 22px rgba(255, 173, 51, calc(var(--fire-strength) * 0.22)),
+    inset 0 -14px 22px rgba(58, 9, 5, 0.48),
+    0 -8px calc(24px + var(--fire-strength) * 34px) rgba(255, 115, 27, calc(var(--fire-strength) * 0.5)),
     0 10px 24px rgba(69, 10, 10, 0.22);
 }
 
 .fire-source-bubble::before {
   content: "";
   position: absolute;
-  left: 7%;
-  right: 7%;
-  top: -7px;
-  height: 10px;
-  border-radius: 50%;
-  background: linear-gradient(90deg, transparent, rgba(255, 218, 112, 0.62), rgba(255, 102, 28, 0.52), rgba(255, 218, 112, 0.58), transparent);
-  filter: blur(2px);
+  left: 5%;
+  right: 5%;
+  top: -13px;
+  height: 25px;
+  border-radius: 999px 999px 52% 52%;
+  background:
+    radial-gradient(ellipse at 50% 12%, rgba(255, 255, 219, 0.76), transparent 28%),
+    linear-gradient(90deg, transparent, rgba(255, 205, 75, 0.58) 18%, rgba(255, 94, 24, 0.72) 48%, rgba(255, 223, 99, 0.56) 74%, transparent),
+    linear-gradient(180deg, rgba(255, 239, 152, 0.42), rgba(156, 31, 13, 0.08));
+  filter: blur(2.4px);
+  opacity: calc(0.74 + var(--fire-strength) * 0.22);
+  pointer-events: none;
+  animation: fireRimFlicker 1.1s ease-in-out infinite;
 }
 
 .fire-source-bubble::after {
   content: "";
   position: absolute;
-  inset: -90px -34px 16px;
+  inset: -112px -44px 12px;
   z-index: -1;
-  border-radius: 44%;
+  border-radius: 46%;
   background:
-    radial-gradient(ellipse at 50% 100%, rgba(255, 243, 180, calc(var(--fire-strength) * 0.15)), transparent 28%),
-    radial-gradient(ellipse at 50% 100%, rgba(255, 115, 28, calc(var(--fire-strength) * 0.2)), transparent 62%);
-  filter: blur(10px);
+    radial-gradient(ellipse at 50% 86%, rgba(255, 238, 167, calc(var(--fire-strength) * 0.16)), transparent 24%),
+    radial-gradient(ellipse at 50% 92%, rgba(255, 111, 28, calc(var(--fire-strength) * 0.25)), transparent 54%),
+    radial-gradient(ellipse at 50% 98%, rgba(101, 13, 9, calc(var(--fire-strength) * 0.18)), transparent 72%);
+  filter: blur(13px);
   pointer-events: none;
   animation: fireHeatWaver 1.6s ease-in-out infinite;
 }
@@ -904,6 +1092,19 @@ onBeforeUnmount(() => {
   }
 }
 
+@keyframes fireRimFlicker {
+  0%,
+  100% {
+    transform: translate3d(-1px, 0, 0) scaleX(0.98);
+  }
+  45% {
+    transform: translate3d(2px, -1px, 0) scaleX(1.03);
+  }
+  72% {
+    transform: translate3d(0, 1px, 0) scaleX(0.96);
+  }
+}
+
 @media (max-width: 680px) {
   .flame-prototype-page {
     padding: 0;
@@ -931,6 +1132,10 @@ onBeforeUnmount(() => {
   .flame-demo-actions button {
     padding: 0 6px;
     font-size: 12px;
+  }
+
+  .flame-demo-actions button:nth-child(2) {
+    font-size: 11px;
   }
 
   .prototype-message-stack {
