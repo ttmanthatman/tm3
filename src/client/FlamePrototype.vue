@@ -360,67 +360,50 @@ function drawLegacyFlames(context: CanvasRenderingContext2D, fire: Rect) {
 function drawRibbonFlames(context: CanvasRenderingContext2D, fire: Rect, now: number) {
   const segmentWidth = fire.width / segmentCount;
   const boost = boostFactor(now);
-  const plumeCount = Math.max(6, Math.round(fire.width / 42));
-  const tallFlame = clamp(fire.width * 0.56, 118, 210);
+  const plumeCount = Math.max(46, Math.round(fire.width / 3.8));
+  const tallFlame = clamp(fire.width * 0.62, 118, 188);
 
   context.save();
-  context.filter = "blur(11px)";
-  context.globalAlpha = 0.78;
+  context.beginPath();
+  context.rect(fire.left + 1, fire.top - tallFlame - 24, Math.max(1, fire.width - 2), tallFlame + 38);
+  context.clip();
+
+  drawHeatMapFlame(context, fire, now, tallFlame, boost);
+  drawCombustionEdge(context, fire, now);
+
+  context.save();
+  context.filter = "blur(4px)";
+  context.globalAlpha = 0.56;
   for (let index = 0; index < segmentCount; index += 1) {
     const power = segmentStrengths.value[index];
     const x = segmentCenter(fire, index);
-    const glow = context.createRadialGradient(x, fire.top + 2, 3, x, fire.top - 38, 58 + power * 78);
-    glow.addColorStop(0, `rgba(255, 231, 144, ${0.14 + power * 0.2})`);
-    glow.addColorStop(0.38, `rgba(255, 102, 24, ${0.1 + power * 0.18})`);
-    glow.addColorStop(0.72, `rgba(151, 20, 12, ${0.05 + power * 0.1})`);
+    const glow = context.createRadialGradient(x, fire.top + 8, 2, x, fire.top - 28, 34 + power * 58);
+    glow.addColorStop(0, `rgba(255, 235, 139, ${0.18 + power * 0.18})`);
+    glow.addColorStop(0.38, `rgba(255, 86, 17, ${0.16 + power * 0.2})`);
+    glow.addColorStop(0.76, `rgba(126, 12, 7, ${0.08 + power * 0.11})`);
     glow.addColorStop(1, "rgba(76, 5, 5, 0)");
     context.fillStyle = glow;
-    context.fillRect(x - segmentWidth * 2.2, fire.top - 132, segmentWidth * 4.4, 158);
+    context.fillRect(x - segmentWidth * 1.35, fire.top - 98, segmentWidth * 2.7, 116);
   }
   context.restore();
 
-  drawFlameBase(context, fire, now);
+  drawDenseFlameWisps(context, fire, now, plumeCount, tallFlame);
 
   context.save();
-  context.filter = "blur(1.6px)";
-  for (let index = -1; index <= plumeCount; index += 1) {
-    const unit = (index + 0.5) / plumeCount;
-    const x = fire.left + fire.width * unit + layeredNoise(now, index + 2.1, 0.8) * segmentWidth * 0.58;
+  context.filter = "blur(0.65px)";
+  for (let index = 0; index < Math.max(8, Math.round(fire.width / 22)); index += 1) {
+    const unit = (index + 0.44) / Math.max(8, Math.round(fire.width / 22));
+    const x = fire.left + fire.width * unit + layeredNoise(now, index + 2.1, 0.8) * segmentWidth * 0.28;
     const power = sampleFirePower(fire, x);
-    const height = tallFlame * (0.62 + power * 0.92 + boost * 0.22) * stableRandom(index + 11, 0.78, 1.2);
-    const width = clamp(segmentWidth * stableRandom(index + 20, 2.2, 4.8), 34, 86);
-    const lean = layeredNoise(now, index + 5.8, 1) * segmentWidth * (0.56 + power * 0.36);
-    const baseY = fire.top + 13 + power * 12;
-    drawFlameTongue(context, x, baseY, width, height, lean, power, "outer");
-  }
-  context.restore();
-
-  context.save();
-  context.filter = "blur(0.8px)";
-  for (let index = 0; index < plumeCount; index += 1) {
-    const unit = (index + 0.5) / plumeCount;
-    const x = fire.left + fire.width * unit + layeredNoise(now, index + 9.3, 1.35) * segmentWidth * 0.34;
-    const power = sampleFirePower(fire, x);
-    const height = tallFlame * (0.38 + power * 0.62 + boost * 0.14) * stableRandom(index + 41, 0.72, 1.16);
-    const width = clamp(segmentWidth * stableRandom(index + 32, 1.1, 2.35), 18, 52);
-    const lean = layeredNoise(now, index + 12.2, 1.24) * segmentWidth * 0.42;
-    drawFlameTongue(context, x + lean * 0.16, fire.top + 9, width, height * 0.86, lean * 0.72, power, "middle");
-  }
-  context.restore();
-
-  for (let index = 0; index < plumeCount; index += 1) {
-    if (index % 2 !== 0 && stableRandom(index + 87, 0, 1) < 0.68) continue;
-    const unit = (index + 0.5) / plumeCount;
-    const x = fire.left + fire.width * unit + layeredNoise(now, index + 18.7, 1.55) * segmentWidth * 0.22;
-    const power = sampleFirePower(fire, x);
-    if (power < 0.22) continue;
-    const lean = layeredNoise(now, index + 22.4, 1.12) * segmentWidth * 0.24;
-    const height = tallFlame * (0.22 + power * 0.42 + boost * 0.08) * stableRandom(index + 64, 0.74, 1.18);
-    drawFlameTongue(context, x, fire.top + 8, clamp(segmentWidth * 0.72, 10, 28), height, lean, power, power > 0.68 ? "core" : "inner");
+    const height = tallFlame * (0.34 + power * 0.48 + boost * 0.14) * stableRandom(index + 64, 0.72, 1.2);
+    const width = clamp(segmentWidth * stableRandom(index + 91, 1.1, 2.1), 12, 30);
+    const lean = layeredNoise(now, index + 22.4, 1.12) * segmentWidth * 0.34;
+    drawFlameTongue(context, x, fire.top + 9, width, height, lean, power, power > 0.62 ? "core" : "inner");
   }
 
-  drawFlameWisps(context, fire, now, plumeCount, tallFlame);
   drawFloatingFlameParticles(context);
+  context.restore();
+  context.restore();
 }
 
 function sampleFirePower(fire: Rect, x: number) {
@@ -439,38 +422,102 @@ function layeredNoise(now: number, seed: number, speed: number) {
   );
 }
 
-function drawFlameBase(context: CanvasRenderingContext2D, fire: Rect, now: number) {
-  const topY = fire.top + 8;
-  const bottomY = fire.top + 31;
-  const steps = 12;
+function drawHeatMapFlame(context: CanvasRenderingContext2D, fire: Rect, now: number, tallFlame: number, boost: number) {
+  const textureWidth = Math.max(80, Math.round(fire.width * 0.92));
+  const textureHeight = Math.max(82, Math.round(tallFlame * 0.92));
+  const image = context.createImageData(textureWidth, textureHeight);
+  const time = now * 0.001;
+  const smokeFade = 1 - smokeLevel.value * 0.28;
+
+  for (let y = 0; y < textureHeight; y += 1) {
+    const rise = 1 - y / Math.max(1, textureHeight - 1);
+    for (let x = 0; x < textureWidth; x += 1) {
+      const unit = x / Math.max(1, textureWidth - 1);
+      const power = sampleFirePower(fire, fire.left + unit * fire.width);
+      const edge = smoothstep(0.005, 0.08, unit) * smoothstep(0.995, 0.92, unit);
+      const heightAtX = flameHeightAt(unit, now, power, boost);
+      const columnMask = smoothstep(heightAtX, heightAtX - 0.14, rise);
+      const bottomHeat = smoothstep(1, 0.72, rise);
+      const threadA = Math.sin(unit * 76 + time * 7.2 + Math.sin(rise * 12 + time * 2.4) * 1.8);
+      const threadB = Math.sin(unit * 143 - time * 5.8 + rise * 18);
+      const churn = layeredNoise(now, unit * 19 + rise * 4.6, 1.35);
+      const licks = Math.max(0, threadA) * 0.24 + Math.max(0, threadB) * 0.12;
+      const turbulence = 0.55 + churn * 0.28 + licks;
+      const intensity = clamp((heightAtX - rise + 0.22) * 2.6, 0, 1) * columnMask * edge * smokeFade;
+      const heat = clamp((intensity * (0.62 + bottomHeat * 0.72 + power * 0.36 + boost * 0.32) + licks * 0.32) * turbulence, 0, 1);
+      const alpha = Math.round(255 * clamp(heat * (0.28 + bottomHeat * 0.72), 0, 0.96));
+      if (alpha <= 2) continue;
+      const color = flameColor(heat, bottomHeat);
+      const offset = (y * textureWidth + x) * 4;
+      image.data[offset] = color.r;
+      image.data[offset + 1] = color.g;
+      image.data[offset + 2] = color.b;
+      image.data[offset + 3] = alpha;
+    }
+  }
+
+  const buffer = document.createElement("canvas");
+  buffer.width = textureWidth;
+  buffer.height = textureHeight;
+  const bufferContext = buffer.getContext("2d");
+  if (!bufferContext) return;
+  bufferContext.putImageData(image, 0, 0);
 
   context.save();
-  context.filter = "blur(4px)";
-  const baseGlow = context.createRadialGradient(fire.centerX, fire.top + 2, 8, fire.centerX, fire.top - 10, fire.width * 0.62);
-  baseGlow.addColorStop(0, "rgba(255, 241, 174, 0.36)");
-  baseGlow.addColorStop(0.42, "rgba(255, 106, 26, 0.34)");
-  baseGlow.addColorStop(1, "rgba(101, 12, 8, 0)");
-  context.fillStyle = baseGlow;
-  context.fillRect(fire.left - 42, fire.top - 56, fire.width + 84, 90);
+  context.imageSmoothingEnabled = true;
+  context.globalCompositeOperation = "lighter";
+  context.filter = "blur(0.7px)";
+  context.drawImage(buffer, fire.left, fire.top - textureHeight + 14, fire.width, textureHeight);
   context.restore();
+}
+
+function flameColor(heat: number, bottomHeat: number) {
+  if (heat > 0.8) return { r: 255, g: 250, b: Math.round(174 + bottomHeat * 58) };
+  if (heat > 0.52) return { r: 255, g: Math.round(132 + heat * 116), b: Math.round(18 + heat * 58) };
+  if (heat > 0.24) return { r: 255, g: Math.round(40 + heat * 154), b: 8 };
+  return { r: Math.round(128 + heat * 410), g: Math.round(8 + heat * 96), b: 3 };
+}
+
+function flameHeightAt(unit: number, now: number, power: number, boost: number) {
+  const time = now * 0.001;
+  const n =
+    Math.sin(unit * 26 + time * 2.7) * 0.16 +
+    Math.sin(unit * 53 - time * 3.8) * 0.11 +
+    Math.sin(unit * 117 + time * 5.1) * 0.065;
+  const peaks =
+    Math.max(0, Math.sin(unit * 18 + time * 1.4)) * 0.16 +
+    Math.max(0, Math.sin(unit * 39 - time * 2.2)) * 0.12;
+  return clamp(0.36 + power * 0.28 + boost * 0.14 + n + peaks, 0.22, 0.96);
+}
+
+function smoothstep(edge0: number, edge1: number, value: number) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+function drawCombustionEdge(context: CanvasRenderingContext2D, fire: Rect, now: number) {
+  const topY = fire.top + 8;
+  const bottomY = fire.top + 14;
+  const steps = Math.max(28, Math.round(fire.width / 7));
 
   context.save();
+  context.globalCompositeOperation = "lighter";
   context.beginPath();
-  context.moveTo(fire.left - 12, bottomY);
-  context.lineTo(fire.left - 12, topY);
+  context.moveTo(fire.left, bottomY);
+  context.lineTo(fire.left, topY);
   for (let index = 0; index <= steps; index += 1) {
     const unit = index / steps;
     const x = fire.left + fire.width * unit;
-    const wave = Math.sin(now * 0.004 + unit * 10.8) * 4 + Math.sin(now * 0.002 + unit * 23) * 2;
+    const wave = Math.sin(now * 0.008 + unit * 38) * 2.2 + Math.sin(now * 0.004 + unit * 83) * 1.4;
     context.lineTo(x, topY - wave);
   }
-  context.lineTo(fire.right + 12, bottomY);
+  context.lineTo(fire.right, bottomY);
   context.closePath();
-  const ribbon = context.createLinearGradient(fire.centerX, topY - 20, fire.centerX, bottomY);
-  ribbon.addColorStop(0, "rgba(255, 247, 188, 0)");
-  ribbon.addColorStop(0.28, "rgba(255, 219, 98, 0.54)");
-  ribbon.addColorStop(0.58, "rgba(255, 100, 25, 0.58)");
-  ribbon.addColorStop(1, "rgba(92, 9, 7, 0.02)");
+  const ribbon = context.createLinearGradient(fire.centerX, topY - 8, fire.centerX, bottomY);
+  ribbon.addColorStop(0, "rgba(255, 248, 196, 0)");
+  ribbon.addColorStop(0.32, "rgba(255, 228, 105, 0.72)");
+  ribbon.addColorStop(0.68, "rgba(255, 74, 18, 0.74)");
+  ribbon.addColorStop(1, "rgba(92, 9, 7, 0.08)");
   context.fillStyle = ribbon;
   context.fill();
   context.restore();
@@ -482,38 +529,49 @@ function stableRandom(seed: number, min: number, max: number) {
   return min + unit * (max - min);
 }
 
-function drawFlameWisps(context: CanvasRenderingContext2D, fire: Rect, now: number, plumeCount: number, tallFlame: number) {
+function drawDenseFlameWisps(context: CanvasRenderingContext2D, fire: Rect, now: number, plumeCount: number, tallFlame: number) {
   const segmentWidth = fire.width / segmentCount;
   context.save();
   context.globalCompositeOperation = "lighter";
-  context.filter = "blur(0.9px)";
+  context.filter = "blur(0.35px)";
   context.lineCap = "round";
   for (let index = 0; index < plumeCount; index += 1) {
-    if (stableRandom(index + 151, 0, 1) < 0.34) continue;
-    const unit = (index + 0.5) / plumeCount;
-    const baseX = fire.left + fire.width * unit + layeredNoise(now, index + 30.4, 1.08) * segmentWidth * 0.34;
+    const unit = (index + 0.35 + stableRandom(index + 113, -0.18, 0.18)) / plumeCount;
+    if (unit < 0 || unit > 1) continue;
+    const baseX = fire.left + fire.width * unit + layeredNoise(now, index + 30.4, 1.08) * segmentWidth * 0.12;
     const power = sampleFirePower(fire, baseX);
-    const height = tallFlame * stableRandom(index + 164, 0.48, 0.86) * (0.7 + power * 0.5);
-    const tipX = baseX + layeredNoise(now, index + 44.8, 0.84) * segmentWidth * 1.12;
+    const height = tallFlame * stableRandom(index + 164, 0.18, 0.92) * (0.48 + power * 0.64);
+    const tipX = baseX + layeredNoise(now, index + 44.8, 0.84) * segmentWidth * 0.62;
     const tipY = fire.top + 8 - height;
     const gradient = context.createLinearGradient(baseX, fire.top + 12, tipX, tipY);
     gradient.addColorStop(0, "rgba(255, 95, 20, 0)");
-    gradient.addColorStop(0.32, `rgba(255, 126, 29, ${0.22 + power * 0.18})`);
-    gradient.addColorStop(0.66, `rgba(255, 221, 101, ${0.18 + power * 0.16})`);
+    gradient.addColorStop(0.2, `rgba(230, 38, 12, ${0.16 + power * 0.2})`);
+    gradient.addColorStop(0.44, `rgba(255, 100, 20, ${0.2 + power * 0.28})`);
+    gradient.addColorStop(0.66, `rgba(255, 211, 70, ${0.18 + power * 0.22})`);
+    gradient.addColorStop(0.82, `rgba(255, 250, 184, ${0.06 + power * 0.1})`);
     gradient.addColorStop(1, "rgba(255, 246, 197, 0)");
     context.strokeStyle = gradient;
-    context.lineWidth = clamp(segmentWidth * stableRandom(index + 175, 0.5, 0.98), 7, 14);
+    context.lineWidth = clamp(segmentWidth * stableRandom(index + 175, 0.12, 0.58), 1.4, 6.8);
     context.beginPath();
-    context.moveTo(baseX, fire.top + 11);
+    context.moveTo(baseX, fire.top + 9);
     context.bezierCurveTo(
-      baseX - segmentWidth * stableRandom(index + 181, 0.25, 0.9),
-      fire.top - height * 0.22,
-      tipX + segmentWidth * stableRandom(index + 188, -0.48, 0.42),
+      baseX - segmentWidth * stableRandom(index + 181, -0.2, 0.56),
+      fire.top - height * 0.18,
+      tipX + segmentWidth * stableRandom(index + 188, -0.36, 0.34),
       fire.top - height * 0.62,
       tipX,
       tipY
     );
     context.stroke();
+
+    if (stableRandom(index + 241, 0, 1) > 0.58) {
+      const sparkY = fire.top - height * stableRandom(index + 245, 0.24, 0.82);
+      const sparkRadius = stableRandom(index + 249, 0.9, 2.4);
+      context.fillStyle = `rgba(255, ${Math.round(stableRandom(index + 253, 146, 238))}, 42, ${stableRandom(index + 257, 0.18, 0.48)})`;
+      context.beginPath();
+      context.arc(baseX + stableRandom(index + 261, -segmentWidth * 0.24, segmentWidth * 0.24), sparkY, sparkRadius, 0, Math.PI * 2);
+      context.fill();
+    }
   }
   context.restore();
 }
@@ -790,14 +848,17 @@ onBeforeUnmount(() => {
 .smoke-canvas {
   position: absolute;
   inset: 0;
-  z-index: 5;
   width: 100%;
   height: 100%;
   pointer-events: none;
 }
 
+.flame-canvas {
+  z-index: 15;
+}
+
 .smoke-canvas {
-  z-index: 6;
+  z-index: 12;
   mix-blend-mode: multiply;
 }
 
@@ -909,6 +970,8 @@ onBeforeUnmount(() => {
 }
 
 .prototype-bubble-wrap > span {
+  position: relative;
+  z-index: 16;
   color: #6b7280;
   font-size: 12px;
 }
@@ -984,16 +1047,21 @@ onBeforeUnmount(() => {
 
 .fire-wrap {
   position: relative;
+  isolation: isolate;
 }
 
 .fire-source-bubble {
   --fire-strength: 0.42;
+  position: relative;
+  z-index: 14;
   overflow: visible;
   cursor: pointer;
   color: #fff7dc;
   border: 1px solid rgba(255, 180, 70, calc(0.18 + var(--fire-strength) * 0.26));
+  padding-top: 12px;
+  padding-bottom: 8px;
   background:
-    radial-gradient(ellipse at 44% -18%, rgba(255, 219, 93, calc(0.16 + var(--fire-strength) * 0.22)), transparent 42%),
+    radial-gradient(ellipse at 44% 0%, rgba(255, 219, 93, calc(0.14 + var(--fire-strength) * 0.18)), transparent 34%),
     radial-gradient(ellipse at 8% 18%, rgba(255, 105, 31, 0.28), transparent 40%),
     linear-gradient(90deg, rgba(255, 198, 91, 0.1), transparent 18% 78%, rgba(255, 198, 91, 0.12)),
     linear-gradient(180deg, color-mix(in srgb, #7c200d 58%, #ff7a1a calc(var(--fire-strength) * 42%)), #351006 78%);
@@ -1018,10 +1086,10 @@ onBeforeUnmount(() => {
 .fire-source-bubble::before {
   content: "";
   position: absolute;
-  left: 5%;
-  right: 5%;
-  top: -13px;
-  height: 25px;
+  left: 0;
+  right: 0;
+  top: -7px;
+  height: 17px;
   border-radius: 999px 999px 52% 52%;
   background:
     radial-gradient(ellipse at 50% 12%, rgba(255, 255, 219, 0.76), transparent 28%),
@@ -1036,7 +1104,7 @@ onBeforeUnmount(() => {
 .fire-source-bubble::after {
   content: "";
   position: absolute;
-  inset: -112px -44px 12px;
+  inset: -90px 0 18px;
   z-index: -1;
   border-radius: 46%;
   background:
