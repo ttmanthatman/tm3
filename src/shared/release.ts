@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.4.10";
+export const APP_VERSION = "0.8.5";
 
 export const RELEASE_DATE = "2026-07-08";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室文件上传不再限制扩展名，普通附件可以选择任意类型文件。",
+  "新增 `/火焰` 聊天气泡效果，使用原始火焰样式在气泡顶部燃烧。",
+  "移除 `/水滴滴`、`/跑马灯`、`/光芒万丈`、`/水波` 四个聊天效果入口。"
+] as const;
+
+const RELEASE_0_8_4_10_NOTES = [
   "聊天室应用图标改为独立的综合频道样式，不再使用类似微信的绿色双气泡图标。",
   "PWA manifest 新增 PNG、maskable 图标和稳定应用 ID，提升 Chrome/MIUI 添加到桌面的兼容性。",
   "网页标签、Apple 桌面图标、PWA 桌面图标、通知图标和聊天室默认频道图标统一使用同一套图标资源。"
@@ -343,9 +349,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.4.10",
+    version: "0.8.5",
     date: "2026-07-08",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.4.10",
+    date: "2026-07-08",
+    notes: RELEASE_0_8_4_10_NOTES
   },
   {
     version: "0.8.4.9",

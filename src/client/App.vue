@@ -17,6 +17,7 @@ import {
   FileText,
   FilePlus,
   FileUp,
+  Flame,
   CheckCircle2,
   CircleOff,
   HeartHandshake,
@@ -34,7 +35,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
-  PartyPopper,
   Pin,
   Plane,
   Play,
@@ -46,13 +46,11 @@ import {
   Smartphone,
   Settings,
   Square,
-  Sun,
   Tablet,
   Trash2,
   Upload,
   Users,
   Vibrate,
-  Waves,
   WandSparkles,
   X
 } from "lucide-vue-next";
@@ -545,11 +543,8 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/流光", effect: "shine", label: "流光", hint: "文字金属反光", icon: WandSparkles },
   { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
   { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane },
-  { command: "/光芒万丈", effect: "sunburst", label: "光芒万丈", hint: "气泡向外放射太阳光", icon: Sun },
-  { command: "/跑马灯", effect: "marquee", label: "跑马灯", hint: "节日彩灯绕气泡追逐", icon: PartyPopper },
-  { command: "/水波", effect: "water", label: "水波", hint: "气泡像水面一样荡漾", icon: Waves },
+  { command: "/火焰", effect: "flame", label: "火焰", hint: "气泡顶部燃起火焰", icon: Flame },
   { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
-  { command: "/水滴滴", effect: "dripGooey", label: "水滴滴", hint: "手机倾斜时液滴沿气泡滑动并黏连滴落", icon: Droplet },
   { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
@@ -2607,7 +2602,6 @@ async function sendText() {
   const parsed = parseComposerText(input.value);
   const content = parsed.content;
   if (!content || !store.currentChannelId) return;
-  if (parsed.effect === "water" || parsed.effect === "dripGooey") requestDeviceOrientationPermissionOnce();
   const originalInput = input.value;
   const messageType = parsed.type || (store.prayerOnly ? "prayer" : "text");
   const messagePayload = {
@@ -2781,11 +2775,8 @@ function messageEffectClass(message: MessageDTO) {
     "message-effect-shine": effect === "shine",
     "message-effect-shake": effect === "shake",
     "message-effect-fly": effect === "fly",
-    "message-effect-sunburst": effect === "sunburst",
-    "message-effect-marquee": effect === "marquee",
-    "message-effect-water": effect === "water",
+    "message-effect-flame": effect === "flame",
     "message-effect-drip": effect === "drip",
-    "message-effect-drip-gooey": effect === "dripGooey",
     "message-effect-rain": effect === "rain"
   };
 }
