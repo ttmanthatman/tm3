@@ -150,6 +150,7 @@ const scroller = ref<HTMLElement | null>(null);
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
+const flameLayer = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
 const gooeyDripLayer = ref<SVGSVGElement | null>(null);
 const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "release">("pin");
@@ -383,6 +384,11 @@ let updateStatusTimer: number | undefined;
 let rainAnimationFrame: number | undefined;
 let rainUntil = 0;
 let rainDrops: RainDrop[] = [];
+let flameAnimationFrame: number | undefined;
+let flameLastFrame = 0;
+let flameNextSpawnAt = 0;
+let flameNextEmberAt = 0;
+let flameParticles: ChatFlameParticle[] = [];
 let dripAnimationFrame: number | undefined;
 let dripLastFrame = 0;
 let dripLastSpawn = 0;
@@ -497,6 +503,20 @@ const primaryColorFields = colorFields.filter((field) => primaryColorFieldKeys.h
 const customThemeEdit = ref<ThemeDTO>({ id: "", name: "我的主题", palette: { ...defaultPalette } });
 type IconComponent = typeof Sparkles;
 type RainDrop = { x: number; y: number; length: number; speed: number; width: number; sway: number; alpha: number };
+type ChatFlameRect = { id: number; left: number; top: number; right: number; bottom: number; width: number; height: number };
+type ChatFlameParticle = {
+  sourceId: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  size: number;
+  spin: number;
+  segment: number;
+  kind: "core" | "tongue" | "ember";
+};
 type DripParticle = {
   state: "attached" | "falling" | "splash";
   x: number;
@@ -659,6 +679,7 @@ watch(
 watch(
   () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(",")] as const,
   () => {
+    nextTick(() => ensureFlamePhysics());
     nextTick(() => ensureDripPhysics());
     nextTick(() => ensureGooeyDripPhysics());
   },
@@ -737,6 +758,7 @@ onBeforeUnmount(() => {
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   stopRainEffect();
+  stopFlamePhysics(true);
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
   stopAllVoicePlayback();
@@ -2987,6 +3009,221 @@ function makeRainDrops(width: number, height: number): RainDrop[] {
     sway: -1.9 - Math.random() * 1.4,
     alpha: 0.28 + Math.random() * 0.52
   }));
+}
+
+function randomBetween(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function ensureFlamePhysics() {
+  const active = hasActiveFlameMessages();
+  if ((active || flameParticles.length) && !flameAnimationFrame) {
+    flameLastFrame = 0;
+    flameNextSpawnAt = 0;
+    flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
+  }
+}
+
+function stopFlamePhysics(clear = false) {
+  if (flameAnimationFrame) window.cancelAnimationFrame(flameAnimationFrame);
+  flameAnimationFrame = undefined;
+  flameLastFrame = 0;
+  flameNextSpawnAt = 0;
+  if (clear) {
+    flameParticles = [];
+    const canvas = flameLayer.value;
+    const context = canvas?.getContext("2d");
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+function hasActiveFlameMessages() {
+  return store.messages.some((message) => messageEffect(message) === "flame" && !isMessageEffectPaused(message));
+}
+
+function updateFlamePhysics(now: number) {
+  const canvas = flameLayer.value;
+  const context = canvas?.getContext("2d");
+  if (!canvas || !context) {
+    stopFlamePhysics(true);
+    return;
+  }
+  const activeRects = activeFlameRects(canvas);
+  const activeIds = new Set(activeRects.map((rect) => rect.id));
+  const dt = Math.min(0.04, Math.max(0.008, (flameLastFrame ? now - flameLastFrame : 16) / 1000));
+  flameLastFrame = now;
+  const layerSize = prepareFlameCanvas(canvas, context);
+  if (activeRects.length && now >= flameNextSpawnAt) {
+    spawnChatFlames(now, activeRects);
+    flameNextSpawnAt = now + 28;
+  }
+
+  const nextParticles: ChatFlameParticle[] = [];
+  for (const particle of flameParticles) {
+    if (!activeIds.has(particle.sourceId)) continue;
+    particle.age += dt;
+    particle.x += particle.vx * dt + Math.sin((particle.age + particle.spin) * 11) * 0.55;
+    particle.y += particle.vy * dt;
+    particle.vx *= Math.pow(0.5, dt);
+    particle.vy += 34 * dt;
+    if (particle.age < particle.life) nextParticles.push(particle);
+  }
+  flameParticles = nextParticles.slice(-620);
+  drawChatLegacyFlames(context, layerSize.width, layerSize.height, activeRects, now);
+  if (activeRects.length || flameParticles.length) {
+    flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
+  } else {
+    stopFlamePhysics(true);
+  }
+}
+
+function prepareFlameCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const width = Math.max(1, Math.floor(rect.width));
+  const height = Math.max(1, Math.floor(rect.height));
+  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
+    canvas.width = Math.floor(width * dpr);
+    canvas.height = Math.floor(height * dpr);
+    context.setTransform(dpr, 0, 0, dpr, 0, 0);
+    flameParticles = [];
+  }
+  return { width, height };
+}
+
+function activeFlameRects(layer: HTMLCanvasElement): ChatFlameRect[] {
+  const root = scroller.value;
+  if (!root) return [];
+  const layerRect = layer.getBoundingClientRect();
+  return store.messages
+    .filter((message) => messageEffect(message) === "flame" && !isMessageEffectPaused(message))
+    .map((message) => {
+      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
+      const bubble = row?.querySelector<HTMLElement>(".message-effect-flame");
+      if (!bubble) return null;
+      const rect = bubble.getBoundingClientRect();
+      if (rect.bottom < layerRect.top - 96 || rect.top > layerRect.bottom + 32) return null;
+      return {
+        id: message.id,
+        left: rect.left - layerRect.left,
+        top: rect.top - layerRect.top,
+        right: rect.right - layerRect.left,
+        bottom: rect.bottom - layerRect.top,
+        width: rect.width,
+        height: rect.height
+      };
+    })
+    .filter((rect): rect is ChatFlameRect => !!rect);
+}
+
+function chatFlamePower(now: number, sourceId: number, segment: number) {
+  const wave = Math.sin(now * 0.0022 + sourceId * 0.37 + segment * 0.74) * 0.045 + Math.sin(now * 0.0011 + sourceId * 0.19 + segment * 1.47) * 0.024;
+  return clamp(0.46 + wave, 0.3, 0.84);
+}
+
+function chatFlameSegmentCenter(fire: ChatFlameRect, index: number) {
+  const segmentWidth = fire.width / 17;
+  return fire.left + segmentWidth * (index + 0.5);
+}
+
+function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
+  for (const source of sources.slice(-5)) {
+    const segmentWidth = source.width / 17;
+    for (let segment = 0; segment < 17; segment += 1) {
+      const power = chatFlamePower(now, source.id, segment);
+      const count = Math.max(1, Math.round(power * 3));
+      for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
+        const center = chatFlameSegmentCenter(source, segment);
+        const kind: ChatFlameParticle["kind"] = Math.random() > 0.7 ? "tongue" : "core";
+        flameParticles.push({
+          sourceId: source.id,
+          x: center + randomBetween(-segmentWidth * 0.58, segmentWidth * 0.58),
+          y: source.top + randomBetween(-8, 8),
+          vx: randomBetween(-20, 20),
+          vy: randomBetween(-132, -72) * (0.82 + power * 0.62),
+          age: 0,
+          life: randomBetween(0.5, 1.08),
+          size: randomBetween(7, 16) * (0.76 + power * 0.62),
+          spin: randomBetween(-1.2, 1.2),
+          segment,
+          kind
+        });
+      }
+    }
+  }
+  if (now > flameNextEmberAt && sources.length) {
+    flameNextEmberAt = now + randomBetween(260, 520);
+    const source = sources[Math.floor(Math.random() * sources.length)];
+    const segmentWidth = source.width / 17;
+    const segment = Math.floor(Math.random() * 17);
+    flameParticles.push({
+      sourceId: source.id,
+      x: chatFlameSegmentCenter(source, segment) + randomBetween(-segmentWidth * 0.35, segmentWidth * 0.35),
+      y: source.top + randomBetween(-4, 6),
+      vx: randomBetween(-36, 36),
+      vy: randomBetween(-165, -88),
+      age: 0,
+      life: randomBetween(0.9, 1.7),
+      size: randomBetween(1.8, 4.4),
+      spin: randomBetween(-1, 1),
+      segment,
+      kind: "ember"
+    });
+  }
+}
+
+function drawChatLegacyFlames(context: CanvasRenderingContext2D, width: number, height: number, sources: ChatFlameRect[], now: number) {
+  context.clearRect(0, 0, width, height);
+  const sourceById = new Map(sources.map((source) => [source.id, source]));
+  context.save();
+  context.globalCompositeOperation = "lighter";
+  for (const particle of flameParticles) {
+    const source = sourceById.get(particle.sourceId);
+    if (!source) continue;
+    const t = clamp(particle.age / particle.life, 0, 1);
+    const power = chatFlamePower(now, particle.sourceId, particle.segment);
+    const alpha = (1 - t) * (particle.kind === "ember" ? 0.78 : 0.64) * clamp(power + 0.18, 0, 1);
+    if (alpha <= 0.01) continue;
+    context.save();
+    context.beginPath();
+    context.rect(source.left - 16, source.top - 132, source.width + 32, 142);
+    context.clip();
+    context.translate(particle.x, particle.y);
+    context.rotate(Math.sin(particle.age * 4 + particle.spin) * 0.22);
+    if (particle.kind === "ember") {
+      context.globalAlpha = alpha;
+      context.fillStyle = "#ffd166";
+      context.shadowColor = "rgba(255, 143, 31, 0.75)";
+      context.shadowBlur = 9;
+      context.beginPath();
+      context.arc(0, 0, particle.size * (1 - t * 0.4), 0, Math.PI * 2);
+      context.fill();
+    } else {
+      const radiusX = particle.size * (0.52 + t * 0.16);
+      const radiusY = particle.size * (1.18 - t * 0.42);
+      const gradient = context.createRadialGradient(-radiusX * 0.18, -radiusY * 0.42, 1, 0, 0, radiusY);
+      gradient.addColorStop(0, `rgba(255, 255, 222, ${alpha})`);
+      gradient.addColorStop(0.22, `rgba(255, 211, 83, ${alpha * 0.9})`);
+      gradient.addColorStop(0.52, `rgba(255, 103, 28, ${alpha * 0.72})`);
+      gradient.addColorStop(1, "rgba(80, 12, 12, 0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
+      context.fill();
+    }
+    context.restore();
+  }
+
+  for (const source of sources) {
+    const glow = context.createLinearGradient(source.left, source.top - 8, source.right, source.top - 8);
+    for (let segment = 0; segment < 17; segment += 1) {
+      const power = chatFlamePower(now, source.id, segment);
+      glow.addColorStop(segment / 16, `rgba(255, 115, 28, ${0.05 + power * 0.15})`);
+    }
+    context.fillStyle = glow;
+    context.fillRect(source.left - 8, source.top - 34, source.width + 16, 42);
+  }
+  context.restore();
 }
 
 function ensureDripPhysics() {
@@ -6152,6 +6389,7 @@ async function toggleVirtual(character: any) {
 
     <section class="chat-pane">
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
+      <canvas ref="flameLayer" class="flame-layer" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
         <defs>
