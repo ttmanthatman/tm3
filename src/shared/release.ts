@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.8.5";
+export const APP_VERSION = "0.8.6";
 
 export const RELEASE_DATE = "2026-07-08";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "非预览类聊天附件改为应用内拉取后下载，避免 EPUB 等文件把手机端页面跳出聊天室且无法返回。"
+] as const;
+
+const RELEASE_0_8_5_NOTES = [
   "聊天室文件上传不再限制扩展名，普通附件可以选择任意类型文件。",
   "新增 `/火焰` 聊天气泡效果，使用原始火焰样式在气泡顶部燃烧。",
   "移除 `/水滴滴`、`/跑马灯`、`/光芒万丈`、`/水波` 四个聊天效果入口。"
@@ -349,9 +353,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.5",
+    version: "0.8.6",
     date: "2026-07-08",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.5",
+    date: "2026-07-08",
+    notes: RELEASE_0_8_5_NOTES
   },
   {
     version: "0.8.4.10",

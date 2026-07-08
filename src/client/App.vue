@@ -4121,13 +4121,23 @@ function fileDownloadUrl(message: MessageDTO) {
   return `${fileUrl(message)}&download=1`;
 }
 
-function downloadFile(message: MessageDTO) {
+async function downloadFile(message: MessageDTO) {
+  const response = await fetch(fileDownloadUrl(message), { headers: authHeaders() });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({ message: "下载失败" }));
+    alert(result.message || "下载失败");
+    pendingDownload.value = null;
+    return;
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = fileDownloadUrl(message);
+  link.href = objectUrl;
   link.download = message.fileName || "附件";
   document.body.appendChild(link);
   link.click();
   link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
   pendingDownload.value = null;
 }
 
