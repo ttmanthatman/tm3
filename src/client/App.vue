@@ -3037,7 +3037,12 @@ function randomBetween(min: number, max: number) {
 }
 
 function ensureFlamePhysics() {
-  stopFlamePhysics(true);
+  const active = hasActiveFlameMessages();
+  if ((active || flameParticles.length) && !flameAnimationFrame) {
+    flameLastFrame = 0;
+    flameNextSpawnAt = 0;
+    flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
+  }
 }
 
 function stopFlamePhysics(clear = false) {
