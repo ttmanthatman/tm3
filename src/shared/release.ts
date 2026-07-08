@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.6";
+export const APP_VERSION = "0.8.7";
 
 export const RELEASE_DATE = "2026-07-08";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "`/火焰` 聊天气泡改为使用原型页“原样式”的火焰效果，让火苗贴着气泡顶部燃烧。",
+  "`/水滴` 滴落到 `/火焰` 上方时会生成明显烟雾，并短暂压低命中的局部火势。",
+  "火焰原型页里的水滴示例同步改为 `/水滴`，不再显示已移除的 `/水滴滴`。"
+] as const;
+
+const RELEASE_0_8_6_NOTES = [
   "非预览类聊天附件改为应用内拉取后下载，避免 EPUB 等文件把手机端页面跳出聊天室且无法返回。"
 ] as const;
 
@@ -353,9 +359,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.8.6",
+    version: "0.8.7",
     date: "2026-07-08",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.8.6",
+    date: "2026-07-08",
+    notes: RELEASE_0_8_6_NOTES
   },
   {
     version: "0.8.5",
