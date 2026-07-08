@@ -1063,7 +1063,7 @@ button {
 }
 
 .drip-layer {
-  z-index: 4;
+  z-index: 6;
   display: block;
   overflow: hidden;
 }
@@ -1747,6 +1747,41 @@ button {
     radial-gradient(ellipse at 8% 18%, rgba(255, 105, 31, 0.28), transparent 40%),
     linear-gradient(90deg, rgba(255, 198, 91, 0.1), transparent 18% 78%, rgba(255, 198, 91, 0.12)),
     linear-gradient(180deg, #8a2b11 0%, #541406 74%, #351006 100%);
+}
+
+.message-effect-flame::before,
+.message-effect-flame::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.message-effect-flame::before {
+  left: 0;
+  right: 0;
+  top: -7px;
+  z-index: 0;
+  height: 17px;
+  border-radius: 999px 999px 52% 52%;
+  background:
+    radial-gradient(ellipse at 50% 12%, rgba(255, 255, 219, 0.76), transparent 28%),
+    linear-gradient(90deg, transparent, rgba(255, 205, 75, 0.58) 18%, rgba(255, 94, 24, 0.72) 48%, rgba(255, 223, 99, 0.56) 74%, transparent),
+    linear-gradient(180deg, rgba(255, 239, 152, 0.42), rgba(156, 31, 13, 0.08));
+  filter: blur(2.4px);
+  opacity: 0.84;
+  animation: messageFlameRimFlicker 1.1s ease-in-out infinite;
+}
+
+.message-effect-flame::after {
+  inset: -90px 0 18px;
+  z-index: -2;
+  border-radius: 46%;
+  background:
+    radial-gradient(ellipse at 50% 86%, rgba(255, 238, 167, 0.08), transparent 24%),
+    radial-gradient(ellipse at 50% 92%, rgba(255, 111, 28, 0.12), transparent 54%),
+    radial-gradient(ellipse at 50% 98%, rgba(101, 13, 9, 0.08), transparent 72%);
+  filter: blur(13px);
+  animation: messageFlameHeatWaver 1.6s ease-in-out infinite;
 }
 
 .message-effect-sunburst,
@@ -5193,6 +5228,29 @@ button {
   50% {
     opacity: 0.48;
     filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.5));
+  }
+}
+
+@keyframes messageFlameHeatWaver {
+  0%,
+  100% {
+    transform: translate3d(-2px, 0, 0) scaleX(0.98);
+  }
+  50% {
+    transform: translate3d(3px, -3px, 0) scaleX(1.04);
+  }
+}
+
+@keyframes messageFlameRimFlicker {
+  0%,
+  100% {
+    transform: translate3d(-1px, 0, 0) scaleX(0.98);
+  }
+  45% {
+    transform: translate3d(2px, -1px, 0) scaleX(1.03);
+  }
+  72% {
+    transform: translate3d(0, 1px, 0) scaleX(0.96);
   }
 }
 

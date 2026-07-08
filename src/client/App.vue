@@ -389,10 +389,12 @@ let flameLastFrame = 0;
 let flameNextSpawnAt = 0;
 let flameNextEmberAt = 0;
 let flameParticles: ChatFlameParticle[] = [];
+let flameSegmentDampening = new Map<number, number[]>();
 let dripAnimationFrame: number | undefined;
 let dripLastFrame = 0;
 let dripLastSpawn = 0;
 let dripParticles: DripParticle[] = [];
+let dripSmokeParticles: ChatSmokeParticle[] = [];
 let gooeyAnimationFrame: number | undefined;
 let gooeyLastFrame = 0;
 let gooeyLastSpawn = 0;
@@ -517,6 +519,17 @@ type ChatFlameParticle = {
   segment: number;
   kind: "core" | "tongue" | "ember";
 };
+type ChatSmokeParticle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  age: number;
+  life: number;
+  radius: number;
+  alpha: number;
+  spin: number;
+};
 type DripParticle = {
   state: "attached" | "falling" | "splash";
   x: number;
@@ -536,6 +549,14 @@ type DripParticle = {
   seed: number;
 };
 type GravityVector = { x: number; y: number; strength: number };
+type DripCollisionRect = DOMRect & {
+  id: number;
+  layerLeft: number;
+  layerRight: number;
+  layerTop: number;
+  layerBottom: number;
+  effect: MessageEffect | null;
+};
 type GooeyEdgeAnchor = { x: number; y: number; normalX: number; normalY: number; tangentX: number; tangentY: number; tangentLimit: number };
 type GooeyDripParticle = {
   id: number;
@@ -3031,6 +3052,7 @@ function stopFlamePhysics(clear = false) {
   flameNextSpawnAt = 0;
   if (clear) {
     flameParticles = [];
+    flameSegmentDampening.clear();
     const canvas = flameLayer.value;
     const context = canvas?.getContext("2d");
     if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
@@ -3053,6 +3075,7 @@ function updateFlamePhysics(now: number) {
   const dt = Math.min(0.04, Math.max(0.008, (flameLastFrame ? now - flameLastFrame : 16) / 1000));
   flameLastFrame = now;
   const layerSize = prepareFlameCanvas(canvas, context);
+  updateFlameDampening(dt, activeIds);
   if (activeRects.length && now >= flameNextSpawnAt) {
     spawnChatFlames(now, activeRects);
     flameNextSpawnAt = now + 28;
@@ -3087,6 +3110,7 @@ function prepareFlameCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingC
     canvas.height = Math.floor(height * dpr);
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     flameParticles = [];
+    flameSegmentDampening.clear();
   }
   return { width, height };
 }
@@ -3118,7 +3142,34 @@ function activeFlameRects(layer: HTMLCanvasElement): ChatFlameRect[] {
 
 function chatFlamePower(now: number, sourceId: number, segment: number) {
   const wave = Math.sin(now * 0.0022 + sourceId * 0.37 + segment * 0.74) * 0.045 + Math.sin(now * 0.0011 + sourceId * 0.19 + segment * 1.47) * 0.024;
-  return clamp(0.46 + wave, 0.3, 0.84);
+  const dampening = flameSegmentDampening.get(sourceId)?.[segment] || 0;
+  return clamp(0.46 + wave - dampening, 0.16, 0.84);
+}
+
+function updateFlameDampening(dt: number, activeIds: Set<number>) {
+  for (const [sourceId, segments] of flameSegmentDampening) {
+    if (!activeIds.has(sourceId)) {
+      flameSegmentDampening.delete(sourceId);
+      continue;
+    }
+    let hasDampening = false;
+    for (let index = 0; index < segments.length; index += 1) {
+      segments[index] = clamp((segments[index] || 0) - dt * 0.22, 0, 0.36);
+      if (segments[index] > 0.01) hasDampening = true;
+    }
+    if (!hasDampening) flameSegmentDampening.delete(sourceId);
+  }
+}
+
+function dampenChatFlame(sourceId: number, x: number, rect: DripCollisionRect) {
+  const segment = clamp(Math.floor(((x - rect.layerLeft) / Math.max(1, rect.width)) * 17), 0, 16);
+  const segments = flameSegmentDampening.get(sourceId) || Array.from({ length: 17 }, () => 0);
+  for (let index = 0; index < segments.length; index += 1) {
+    const distance = Math.abs(index - segment);
+    if (distance === 0) segments[index] = clamp(segments[index] + 0.26, 0, 0.42);
+    else if (distance === 1) segments[index] = clamp(segments[index] + 0.08, 0, 0.26);
+  }
+  flameSegmentDampening.set(sourceId, segments);
 }
 
 function chatFlameSegmentCenter(fire: ChatFlameRect, index: number) {
@@ -3242,6 +3293,7 @@ function stopDripPhysics(clear = false) {
   dripLastSpawn = 0;
   if (clear) {
     dripParticles = [];
+    dripSmokeParticles = [];
     const canvas = dripLayer.value;
     const context = canvas?.getContext("2d");
     if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
@@ -3280,7 +3332,11 @@ function updateDripPhysics(now: number) {
       particle.y += particle.vy * dt;
       const hit = findDripHit(particle, bubbleRects);
       if (hit) {
-        spawnDripSplash(nextParticles, particle, hit.y);
+        if (hit.effect === "flame") {
+          spawnDripSteam(particle.x, hit.layerTop - 14, 12);
+          dampenChatFlame(hit.id, particle.x, hit);
+        }
+        spawnDripSplash(nextParticles, particle, hit.layerTop);
         continue;
       }
     } else {
@@ -3294,8 +3350,9 @@ function updateDripPhysics(now: number) {
     nextParticles.push(particle);
   }
   dripParticles = nextParticles;
-  drawDripFrame(context, layerSize.width, layerSize.height, dripParticles);
-  if (active || dripParticles.length) {
+  updateDripSmokeParticles(dt);
+  drawDripFrame(context, layerSize.width, layerSize.height, dripParticles, dripSmokeParticles);
+  if (active || dripParticles.length || dripSmokeParticles.length) {
     dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
   } else {
     stopDripPhysics();
@@ -3312,6 +3369,7 @@ function prepareDripCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingCo
     canvas.height = Math.floor(height * dpr);
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     dripParticles = [];
+    dripSmokeParticles = [];
   }
   return { width, height };
 }
@@ -3368,20 +3426,23 @@ function activeDripBubbles() {
 
 function dripCollisionRects(layer: HTMLCanvasElement) {
   const root = scroller.value;
-  if (!root) return new Map<number, DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number }>();
+  if (!root) return new Map<number, DripCollisionRect>();
   const layerRect = layer.getBoundingClientRect();
-  const rects = new Map<number, DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number }>();
+  const rects = new Map<number, DripCollisionRect>();
   for (const row of root.querySelectorAll<HTMLElement>(".message-row[data-message-id]")) {
     const id = Number(row.dataset.messageId || 0);
     if (!id) continue;
     const bubble = row.querySelector<HTMLElement>(".bubble");
     if (!bubble) continue;
+    const message = store.messages.find((item) => item.id === id);
     const rect = bubble.getBoundingClientRect();
     rects.set(id, Object.assign(rect, {
+      id,
       layerLeft: rect.left - layerRect.left,
       layerRight: rect.right - layerRect.left,
       layerTop: rect.top - layerRect.top,
-      layerBottom: rect.bottom - layerRect.top
+      layerBottom: rect.bottom - layerRect.top,
+      effect: message ? messageEffect(message) : null
     }));
   }
   return rects;
@@ -3389,7 +3450,7 @@ function dripCollisionRects(layer: HTMLCanvasElement) {
 
 function updateAttachedDrip(
   particle: DripParticle,
-  bubbleRects: Map<number, DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number }>,
+  bubbleRects: Map<number, DripCollisionRect>,
   dt: number
 ) {
   const rect = bubbleRects.get(particle.sourceId);
@@ -3418,7 +3479,7 @@ function detachDrip(particle: DripParticle) {
 
 function findDripHit(
   particle: DripParticle,
-  bubbleRects: Map<number, DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number }>
+  bubbleRects: Map<number, DripCollisionRect>
 ) {
   const particleBottom = particle.y + particle.radius * (1.1 + Math.min(0.7, particle.vy / 1100));
   for (const [id, rect] of bubbleRects) {
@@ -3429,7 +3490,7 @@ function findDripHit(
       particleBottom >= rect.layerTop &&
       particle.y <= rect.layerBottom
     ) {
-      return { x: particle.x, y: rect.layerTop };
+      return rect;
     }
   }
   return null;
@@ -3461,13 +3522,64 @@ function spawnDripSplash(nextParticles: DripParticle[], source: DripParticle, y:
   }
 }
 
-function drawDripFrame(context: CanvasRenderingContext2D, width: number, height: number, particles: DripParticle[]) {
+function spawnDripSteam(x: number, y: number, amount = 7) {
+  for (let index = 0; index < amount; index += 1) {
+    dripSmokeParticles.push({
+      x: x + randomBetween(-18, 18),
+      y: y + randomBetween(-8, 12),
+      vx: randomBetween(-24, 24),
+      vy: randomBetween(-66, -32),
+      age: 0,
+      life: randomBetween(1.35, 2.8),
+      radius: randomBetween(12, 29),
+      alpha: randomBetween(0.13, 0.25),
+      spin: randomBetween(-0.8, 0.8)
+    });
+  }
+  dripSmokeParticles = dripSmokeParticles.slice(-160);
+}
+
+function updateDripSmokeParticles(dt: number) {
+  const nextSmoke: ChatSmokeParticle[] = [];
+  for (const smoke of dripSmokeParticles) {
+    smoke.age += dt;
+    smoke.x += smoke.vx * dt + Math.sin((smoke.age + smoke.spin) * 2.2) * 0.4;
+    smoke.y += smoke.vy * dt;
+    smoke.vx *= Math.pow(0.74, dt);
+    smoke.vy -= 5 * dt;
+    smoke.radius += 17 * dt;
+    if (smoke.age < smoke.life) nextSmoke.push(smoke);
+  }
+  dripSmokeParticles = nextSmoke.slice(-140);
+}
+
+function drawDripFrame(context: CanvasRenderingContext2D, width: number, height: number, particles: DripParticle[], smokeParticles: ChatSmokeParticle[]) {
   context.clearRect(0, 0, width, height);
+  drawDripSteam(context, smokeParticles);
   for (const particle of particles) {
     if (particle.state === "attached") drawAttachedDrip(context, particle);
     else if (particle.state === "falling") drawFallingDrip(context, particle);
     else drawSplashDrip(context, particle);
   }
+}
+
+function drawDripSteam(context: CanvasRenderingContext2D, particles: ChatSmokeParticle[]) {
+  context.save();
+  context.globalCompositeOperation = "source-over";
+  for (const smoke of particles) {
+    const t = clamp(smoke.age / smoke.life, 0, 1);
+    const alpha = smoke.alpha * Math.sin((1 - t) * Math.PI * 0.5);
+    if (alpha <= 0.005) continue;
+    const gradient = context.createRadialGradient(smoke.x, smoke.y, 2, smoke.x, smoke.y, smoke.radius);
+    gradient.addColorStop(0, `rgba(74, 85, 104, ${alpha})`);
+    gradient.addColorStop(0.52, `rgba(107, 114, 128, ${alpha * 0.48})`);
+    gradient.addColorStop(1, "rgba(148, 163, 184, 0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.ellipse(smoke.x, smoke.y, smoke.radius * (1.18 + t * 0.32), smoke.radius * (0.76 + t * 0.2), smoke.spin + t, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
 }
 
 function drawAttachedDrip(context: CanvasRenderingContext2D, particle: DripParticle) {

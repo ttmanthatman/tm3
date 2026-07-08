@@ -260,8 +260,8 @@ function spawnSmoke(x: number, y: number, amount = 7) {
       vy: randomBetween(-66, -32),
       age: 0,
       life: randomBetween(1.35, 2.8),
-      radius: randomBetween(10, 23),
-      alpha: randomBetween(0.08, 0.17),
+      radius: randomBetween(12, 29),
+      alpha: randomBetween(0.13, 0.25),
       spin: randomBetween(-0.8, 0.8)
     });
   }
@@ -277,7 +277,7 @@ function applyWaterHit(x: number, fire: Rect) {
     return value;
   });
   lastAction.value = `水滴压低第 ${index + 1} 段火势`;
-  spawnSmoke(x, fire.top - 14, 8);
+  spawnSmoke(x, fire.top - 14, 12);
 }
 
 function updateHeat(dt: number, heatTarget: Rect | null, fire: Rect | null) {
@@ -894,7 +894,7 @@ onBeforeUnmount(() => {
           <div class="prototype-bubble-wrap">
             <span>水滴气泡</span>
             <p ref="waterBubble" class="prototype-bubble water-source-bubble">
-              /水滴滴
+              /水滴
             </p>
           </div>
         </article>
