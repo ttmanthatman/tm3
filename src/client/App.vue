@@ -72,6 +72,7 @@ import type {
   ChannelDTO,
   DeviceSessionDTO,
   FlashEffectSettingsDTO,
+  FlameEffectSettingsDTO,
   LinkPreviewDTO,
   MessageDTO,
   MessageEffect,
@@ -140,6 +141,7 @@ const showMessageFontMenu = ref(false);
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const isFlamePrototypeRoute = ref(window.location.pathname === "/prototype/flame");
+const isFlameSettingsRoute = ref(window.location.pathname === "/flame-settings");
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -226,6 +228,15 @@ const flashEffectEdit = ref<FlashEffectSettingsDTO>({
   intervalSeconds: 0.4,
   transitionMode: "smooth"
 });
+const defaultFlameEffect: FlameEffectSettingsDTO = {
+  brightness: 0.58,
+  density: 0.52,
+  size: 0.78,
+  glow: 0.32
+};
+const flameEffectEdit = ref<FlameEffectSettingsDTO>({ ...defaultFlameEffect });
+const flameSettingsBusy = ref(false);
+const flameSettingsMsg = ref("");
 const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
@@ -608,6 +619,7 @@ onMounted(async () => {
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   await store.bootstrap();
+  if (isFlameSettingsRoute.value && store.account?.isAdmin) syncFlameEffectEdit();
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
     await loadVirtualCharacters().catch(() => { virtuals.value = []; });
@@ -751,6 +763,7 @@ watch(messageFontSize, (value) => {
 watch(
   () => store.account?.isAdmin,
   (isAdminAccount) => {
+    if (isFlameSettingsRoute.value && isAdminAccount) syncFlameEffectEdit();
     if (isAiSettingsRoute.value && isAdminAccount) {
       void loadAiSettings();
       loadVirtualCharacters().catch(() => undefined);
@@ -818,6 +831,7 @@ const activeThemeConfig = computed(() => themeOptions.value.find((theme) => them
 const activePalette = computed(() => activeThemeConfig.value.palette);
 const themeStyle = computed(() => paletteStyle(activePalette.value));
 const flashEffect = computed(() => cleanFlashEffectSettings(store.appearance.flashEffect));
+const chatFlameSettings = computed(() => cleanFlameEffectSettings(store.appearance.flameEffect));
 const activeFlashColor = computed(() => {
   const colors = flashEffect.value.colors;
   return colors[flashEffectStep.value % colors.length] || colors[0];
@@ -847,6 +861,7 @@ watch(
   () => store.appearance,
   () => {
     syncLoginAppearanceEdit();
+    syncFlameEffectEdit();
     applyAppChrome();
   },
   { deep: true, immediate: true }
@@ -1760,6 +1775,7 @@ async function openSettings(tab: "appearance" | "devices" | "notifications" | "r
 }
 
 function returnToChat() {
+  isFlameSettingsRoute.value = false;
   isAiSettingsRoute.value = false;
   isLogRoute.value = false;
   window.history.pushState({}, "", "/");
@@ -1768,6 +1784,7 @@ function returnToChat() {
 async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
   if (!store.account?.isAdmin) return;
   showAdmin.value = false;
+  isFlameSettingsRoute.value = false;
   isLogRoute.value = false;
   isAiSettingsRoute.value = true;
   aiSettingsTab.value = tab;
@@ -1779,6 +1796,7 @@ async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
 async function openLoginLogPage() {
   if (!store.account?.isAdmin) return;
   showAdmin.value = false;
+  isFlameSettingsRoute.value = false;
   isAiSettingsRoute.value = false;
   isLogRoute.value = true;
   window.history.pushState({}, "", "/log");
@@ -3078,7 +3096,7 @@ function updateFlamePhysics(now: number) {
   updateFlameDampening(dt, activeIds);
   if (activeRects.length && now >= flameNextSpawnAt) {
     spawnChatFlames(now, activeRects);
-    flameNextSpawnAt = now + 28;
+    flameNextSpawnAt = now + 28 / chatFlameSettings.value.density;
   }
 
   const nextParticles: ChatFlameParticle[] = [];
@@ -3091,7 +3109,7 @@ function updateFlamePhysics(now: number) {
     particle.vy += 34 * dt;
     if (particle.age < particle.life) nextParticles.push(particle);
   }
-  flameParticles = nextParticles.slice(-620);
+  flameParticles = nextParticles.slice(-Math.round(620 * chatFlameSettings.value.density));
   drawChatLegacyFlames(context, layerSize.width, layerSize.height, activeRects, now);
   if (activeRects.length || flameParticles.length) {
     flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
@@ -3178,11 +3196,13 @@ function chatFlameSegmentCenter(fire: ChatFlameRect, index: number) {
 }
 
 function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
+  const settings = chatFlameSettings.value;
   for (const source of sources.slice(-5)) {
     const segmentWidth = source.width / 17;
     for (let segment = 0; segment < 17; segment += 1) {
       const power = chatFlamePower(now, source.id, segment);
-      const count = Math.max(1, Math.round(power * 3));
+      const targetCount = power * 3 * settings.density;
+      const count = Math.floor(targetCount) + (Math.random() < targetCount % 1 ? 1 : 0);
       for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
         const center = chatFlameSegmentCenter(source, segment);
         const kind: ChatFlameParticle["kind"] = Math.random() > 0.7 ? "tongue" : "core";
@@ -3194,7 +3214,7 @@ function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
           vy: randomBetween(-132, -72) * (0.82 + power * 0.62),
           age: 0,
           life: randomBetween(0.5, 1.08),
-          size: randomBetween(7, 16) * (0.76 + power * 0.62),
+          size: randomBetween(7, 16) * (0.76 + power * 0.62) * settings.size,
           spin: randomBetween(-1.2, 1.2),
           segment,
           kind
@@ -3203,7 +3223,8 @@ function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
     }
   }
   if (now > flameNextEmberAt && sources.length) {
-    flameNextEmberAt = now + randomBetween(260, 520);
+    flameNextEmberAt = now + randomBetween(260, 520) / settings.density;
+    if (Math.random() >= settings.density) return;
     const source = sources[Math.floor(Math.random() * sources.length)];
     const segmentWidth = source.width / 17;
     const segment = Math.floor(Math.random() * 17);
@@ -3215,7 +3236,7 @@ function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
       vy: randomBetween(-165, -88),
       age: 0,
       life: randomBetween(0.9, 1.7),
-      size: randomBetween(1.8, 4.4),
+      size: randomBetween(1.8, 4.4) * settings.size,
       spin: randomBetween(-1, 1),
       segment,
       kind: "ember"
@@ -3225,6 +3246,7 @@ function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
 
 function drawChatLegacyFlames(context: CanvasRenderingContext2D, width: number, height: number, sources: ChatFlameRect[], now: number) {
   context.clearRect(0, 0, width, height);
+  const settings = chatFlameSettings.value;
   const sourceById = new Map(sources.map((source) => [source.id, source]));
   context.save();
   context.globalCompositeOperation = "lighter";
@@ -3233,7 +3255,7 @@ function drawChatLegacyFlames(context: CanvasRenderingContext2D, width: number, 
     if (!source) continue;
     const t = clamp(particle.age / particle.life, 0, 1);
     const power = chatFlamePower(now, particle.sourceId, particle.segment);
-    const alpha = (1 - t) * (particle.kind === "ember" ? 0.78 : 0.64) * clamp(power + 0.18, 0, 1);
+    const alpha = (1 - t) * (particle.kind === "ember" ? 0.78 : 0.64) * clamp(power + 0.18, 0, 1) * settings.brightness;
     if (alpha <= 0.01) continue;
     context.save();
     context.beginPath();
@@ -3269,7 +3291,7 @@ function drawChatLegacyFlames(context: CanvasRenderingContext2D, width: number, 
     const glow = context.createLinearGradient(source.left, source.top - 8, source.right, source.top - 8);
     for (let segment = 0; segment < 17; segment += 1) {
       const power = chatFlamePower(now, source.id, segment);
-      glow.addColorStop(segment / 16, `rgba(255, 115, 28, ${0.05 + power * 0.15})`);
+      glow.addColorStop(segment / 16, `rgba(255, 115, 28, ${(0.05 + power * 0.15) * settings.glow})`);
     }
     context.fillStyle = glow;
     context.fillRect(source.left - 8, source.top - 34, source.width + 16, 42);
@@ -5137,6 +5159,20 @@ function cleanFlashEffectSettings(input?: FlashEffectSettingsDTO | null): FlashE
   };
 }
 
+function cleanFlameEffectSettings(input?: FlameEffectSettingsDTO | null): FlameEffectSettingsDTO {
+  const cleanRatio = (value: unknown, fallback: number, min: number, max: number) => {
+    const numberValue = Number(value);
+    const next = Number.isFinite(numberValue) ? numberValue : fallback;
+    return Math.round(Math.min(max, Math.max(min, next)) * 100) / 100;
+  };
+  return {
+    brightness: cleanRatio(input?.brightness, defaultFlameEffect.brightness, 0.15, 1.2),
+    density: cleanRatio(input?.density, defaultFlameEffect.density, 0.15, 1.2),
+    size: cleanRatio(input?.size, defaultFlameEffect.size, 0.45, 1.2),
+    glow: cleanRatio(input?.glow, defaultFlameEffect.glow, 0, 1.2)
+  };
+}
+
 function readableTextColor(hex: string) {
   const value = hex.replace("#", "");
   const r = parseInt(value.slice(0, 2), 16);
@@ -6027,6 +6063,38 @@ function syncLoginAppearanceEdit() {
   if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
 }
 
+function syncFlameEffectEdit() {
+  flameEffectEdit.value = cleanFlameEffectSettings(store.appearance.flameEffect);
+}
+
+function flamePercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+async function saveFlameSettings() {
+  flameSettingsBusy.value = true;
+  flameSettingsMsg.value = "";
+  try {
+    const result = await api<{ appearance: AppearanceDTO }>("/api/admin/flame-effect", {
+      method: "POST",
+      body: JSON.stringify({ flameEffect: cleanFlameEffectSettings(flameEffectEdit.value) })
+    });
+    store.appearance = result.appearance;
+    flameSettingsMsg.value = "火焰设置已保存并生效";
+    await nextTick();
+    ensureFlamePhysics();
+  } catch (error) {
+    flameSettingsMsg.value = error instanceof Error ? error.message : "保存失败";
+  } finally {
+    flameSettingsBusy.value = false;
+  }
+}
+
+function resetFlameSettingsDraft() {
+  flameEffectEdit.value = { ...defaultFlameEffect };
+  flameSettingsMsg.value = "已恢复柔和默认值，保存后生效";
+}
+
 function addFlashColor() {
   if (flashEffectEdit.value.colors.length >= 10) return;
   flashEffectEdit.value.colors.push(flashEffectEdit.value.colors[flashEffectEdit.value.colors.length - 1] || "#fff176");
@@ -6196,6 +6264,68 @@ async function toggleVirtual(character: any) {
 
 <template>
   <FlamePrototype v-if="isFlamePrototypeRoute" />
+  <main v-else-if="isFlameSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page flame-settings-page" :style="appearanceStyle">
+    <section class="ai-settings-panel ai-settings-workspace flame-settings-workspace">
+      <header class="ai-settings-head">
+        <div>
+          <strong>火焰设置</strong>
+          <small>隐藏页面 · /火焰 消息效果</small>
+        </div>
+        <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
+      </header>
+
+      <div class="flame-settings-body">
+        <section class="flame-settings-preview-panel">
+          <div
+            class="flame-settings-preview"
+            :style="{
+              '--flame-preview-brightness': flameEffectEdit.brightness,
+              '--flame-preview-density': flameEffectEdit.density,
+              '--flame-preview-size': flameEffectEdit.size,
+              '--flame-preview-glow': flameEffectEdit.glow
+            }"
+            aria-hidden="true"
+          >
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="flame-settings-readout">
+            <div><span>亮度</span><strong>{{ flamePercent(flameEffectEdit.brightness) }}</strong></div>
+            <div><span>浓度</span><strong>{{ flamePercent(flameEffectEdit.density) }}</strong></div>
+            <div><span>大小</span><strong>{{ flamePercent(flameEffectEdit.size) }}</strong></div>
+            <div><span>底光</span><strong>{{ flamePercent(flameEffectEdit.glow) }}</strong></div>
+          </div>
+        </section>
+
+        <form class="form-grid flame-settings-form" @submit.prevent="saveFlameSettings">
+          <label class="flame-slider-row">
+            <span><Flame :size="16" />亮度 <b>{{ flamePercent(flameEffectEdit.brightness) }}</b></span>
+            <input v-model.number="flameEffectEdit.brightness" type="range" min="0.15" max="1.2" step="0.01" />
+          </label>
+          <label class="flame-slider-row">
+            <span><Sparkles :size="16" />浓度 <b>{{ flamePercent(flameEffectEdit.density) }}</b></span>
+            <input v-model.number="flameEffectEdit.density" type="range" min="0.15" max="1.2" step="0.01" />
+          </label>
+          <label class="flame-slider-row">
+            <span><ArrowUp :size="16" />火苗大小 <b>{{ flamePercent(flameEffectEdit.size) }}</b></span>
+            <input v-model.number="flameEffectEdit.size" type="range" min="0.45" max="1.2" step="0.01" />
+          </label>
+          <label class="flame-slider-row">
+            <span><CircleOff :size="16" />底部光晕 <b>{{ flamePercent(flameEffectEdit.glow) }}</b></span>
+            <input v-model.number="flameEffectEdit.glow" type="range" min="0" max="1.2" step="0.01" />
+          </label>
+
+          <div class="flame-settings-actions">
+            <p v-if="flameSettingsMsg" class="settings-note">{{ flameSettingsMsg }}</p>
+            <button class="mini-btn secondary" type="button" @click="syncFlameEffectEdit">恢复已保存</button>
+            <button class="mini-btn secondary" type="button" @click="resetFlameSettingsDraft">柔和默认</button>
+            <button class="primary-btn" type="submit" :disabled="flameSettingsBusy"><Save :size="16" />{{ flameSettingsBusy ? "保存中" : "保存火焰设置" }}</button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
   <main v-else-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page" :style="appearanceStyle">
     <section class="ai-settings-panel ai-settings-workspace">
       <header class="ai-settings-head">
@@ -6437,6 +6567,15 @@ async function toggleVirtual(character: any) {
         {{ authMode === "register" ? "已有账号，返回登录" : "没有账号？注册" }}
       </button>
       <div v-if="loginError" class="form-error">{{ loginError }}</div>
+    </section>
+  </main>
+
+  <main v-else-if="isFlameSettingsRoute" class="ai-settings-page" :style="appearanceStyle">
+    <section class="ai-settings-panel ai-denied-panel">
+      <Flame :size="30" />
+      <strong>无权访问火焰设置</strong>
+      <p>只有管理员可以调整 /火焰 消息效果。</p>
+      <button class="primary-btn" @click="returnToChat">回到聊天</button>
     </section>
   </main>
 

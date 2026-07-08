@@ -332,6 +332,13 @@ export interface FlashEffectSettingsDTO {
   transitionMode: "smooth" | "step";
 }
 
+export interface FlameEffectSettingsDTO {
+  brightness: number;
+  density: number;
+  size: number;
+  glow: number;
+}
+
 export interface AppearanceDTO {
   appTitle: string;
   appIconPath?: string | null;
@@ -347,6 +354,7 @@ export interface AppearanceDTO {
   loginFormPosition: "top" | "middle" | "bottom";
   registrationEnabled: boolean;
   flashEffect: FlashEffectSettingsDTO;
+  flameEffect: FlameEffectSettingsDTO;
   customThemes: ThemeDTO[];
 }
 

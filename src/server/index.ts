@@ -33,6 +33,7 @@ import type {
   BiblePreferencesDTO,
   ChainPayload,
   FlashEffectSettingsDTO,
+  FlameEffectSettingsDTO,
   LinkPreviewDTO,
   MessageDTO,
   MessageEffect,
@@ -95,6 +96,12 @@ const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
   colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
   intervalSeconds: 0.4,
   transitionMode: "smooth"
+};
+const DEFAULT_FLAME_EFFECT: FlameEffectSettingsDTO = {
+  brightness: 0.58,
+  density: 0.52,
+  size: 0.78,
+  glow: 0.32
 };
 const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   accent: "#1aad19",
@@ -989,6 +996,21 @@ function cleanFlashEffect(input: unknown): FlashEffectSettingsDTO {
     colors: colors.length ? colors : [...DEFAULT_FLASH_EFFECT.colors],
     intervalSeconds,
     transitionMode
+  };
+}
+
+function cleanFlameEffect(input: unknown): FlameEffectSettingsDTO {
+  const raw = (input && typeof input === "object" ? input : {}) as Partial<FlameEffectSettingsDTO>;
+  const cleanRatio = (value: unknown, fallback: number, min: number, max: number) => {
+    const numberValue = Number(value);
+    const next = Number.isFinite(numberValue) ? numberValue : fallback;
+    return Math.round(Math.min(max, Math.max(min, next)) * 100) / 100;
+  };
+  return {
+    brightness: cleanRatio(raw.brightness, DEFAULT_FLAME_EFFECT.brightness, 0.15, 1.2),
+    density: cleanRatio(raw.density, DEFAULT_FLAME_EFFECT.density, 0.15, 1.2),
+    size: cleanRatio(raw.size, DEFAULT_FLAME_EFFECT.size, 0.45, 1.2),
+    glow: cleanRatio(raw.glow, DEFAULT_FLAME_EFFECT.glow, 0, 1.2)
   };
 }
 
@@ -3384,6 +3406,7 @@ async function appearanceDto() {
           "loginFormPosition",
           "registrationEnabled",
           "flashEffect",
+          "flameEffect",
           "customThemes"
         ]
       }
@@ -3408,6 +3431,7 @@ async function appearanceDto() {
     loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
     registrationEnabled: settings.get("registrationEnabled") === "true",
     flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
+    flameEffect: cleanFlameEffect(parseJsonField(settings.get("flameEffect"), DEFAULT_FLAME_EFFECT)),
     customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), []))
   };
 }
@@ -3848,6 +3872,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
       registrationEnabled: z.boolean().optional(),
       flashEffect: z.unknown().optional(),
+      flameEffect: z.unknown().optional(),
       customThemes: z.array(z.unknown()).optional()
     })
     .parse(request.body);
@@ -3865,7 +3890,16 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
   if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
+  if (Object.prototype.hasOwnProperty.call(body, "flameEffect")) await setSetting("flameEffect", JSON.stringify(cleanFlameEffect(body.flameEffect)));
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
+  const appearance = await appearanceDto();
+  io.emit("appearance:updated", appearance);
+  return { success: true, appearance };
+});
+
+app.post("/api/admin/flame-effect", { preHandler: requireAdmin }, async (request) => {
+  const body = z.object({ flameEffect: z.unknown() }).parse(request.body);
+  await setSetting("flameEffect", JSON.stringify(cleanFlameEffect(body.flameEffect)));
   const appearance = await appearanceDto();
   io.emit("appearance:updated", appearance);
   return { success: true, appearance };
