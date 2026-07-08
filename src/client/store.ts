@@ -33,12 +33,6 @@ const defaultAppearance: AppearanceDTO = {
     intervalSeconds: 0.4,
     transitionMode: "smooth"
   },
-  flameEffect: {
-    brightness: 0.58,
-    density: 0.52,
-    size: 0.78,
-    glow: 0.32
-  },
   customThemes: []
 };
 
