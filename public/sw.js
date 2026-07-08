@@ -1,5 +1,15 @@
-const CACHE_NAME = "team-chat-v3";
-const CORE = ["/", "/manifest.json", "/images/icon-192.svg", "/images/icon-512.svg"];
+const CACHE_NAME = "team-chat-v4";
+const CORE = [
+  "/",
+  "/manifest.json",
+  "/images/icon-192.svg",
+  "/images/icon-512.svg",
+  "/images/icon-192.png",
+  "/images/icon-512.png",
+  "/images/icon-maskable-512.png",
+  "/images/apple-touch-icon.png",
+  "/images/favicon-32.png"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE)).then(() => self.skipWaiting()));
@@ -30,8 +40,8 @@ self.addEventListener("push", (event) => {
   const title = payload.title || "Team Chat";
   const options = {
     body: payload.body || "你有一条新通知",
-    icon: "/images/icon-192.svg",
-    badge: "/images/icon-192.svg",
+    icon: "/images/icon-192.png",
+    badge: "/images/icon-192.png",
     tag: payload.tag || "team-chat",
     renotify: true,
     data: {

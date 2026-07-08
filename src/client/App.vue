@@ -5210,7 +5210,7 @@ async function recallPendingMessage() {
 }
 
 function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
-  return channel?.icon ? wallpaperUrl(channel.icon) : "/images/icon-192.svg";
+  return channel?.icon ? wallpaperUrl(channel.icon) : "/images/icon-192.png";
 }
 
 async function saveNotice() {
