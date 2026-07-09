@@ -4,7 +4,17 @@ import type { AccountDTO, AppearanceDTO, ChannelDTO, MessageDTO, PinnedDTO } fro
 import { api, clearToken, getToken, setToken } from "./api";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
-type MemberRow = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
+type MemberRow = {
+  id: number;
+  accountId?: number;
+  kind: string;
+  username?: string;
+  displayName: string;
+  avatarPath?: string | null;
+  role?: string;
+  membershipRole?: string | null;
+  isSiteAdmin?: boolean;
+};
 type MessageWindowCache = {
   messages: MessageDTO[];
   hasOlder: boolean;
@@ -377,10 +387,12 @@ export const useChatStore = defineStore("chat", {
       if (index >= 0) this.messages.splice(index, 1);
       this.cacheCurrentMessages();
     },
-    async loadMembers() {
-      if (!this.currentChannelId) return;
-      const result = await api<{ members: MemberRow[] }>(`/api/channels/${this.currentChannelId}/members`);
-      this.members = result.members;
+    async loadMembers(channelId?: number) {
+      const targetChannelId = channelId ?? this.currentChannelId;
+      if (!targetChannelId) return [];
+      const result = await api<{ members: MemberRow[] }>(`/api/channels/${targetChannelId}/members`);
+      if (targetChannelId === this.currentChannelId) this.members = result.members;
+      return result.members;
     },
     connectSocket() {
       if (!getToken() || this.socket?.connected) return;

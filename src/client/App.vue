@@ -90,6 +90,7 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import FlamePrototype from "./FlamePrototype.vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -177,6 +178,7 @@ const mcSelectedCharacterIds = ref<number[]>([]);
 const mcBusy = ref(false);
 const mcMsg = ref("");
 const accounts = ref<any[]>([]);
+const adminChannels = ref<ChannelDTO[]>([]);
 const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
@@ -314,8 +316,27 @@ const recallPromptPosition = ref({ x: 0, y: 0 });
 const messageActionPromptPosition = ref({ x: 0, y: 0 });
 const prayerPromptPosition = ref({ x: 0, y: 0 });
 const memberPromptPosition = ref({ x: 0, y: 0 });
-type MemberActionTarget = { id: number; accountId?: number; kind: string; username?: string; displayName: string; avatarPath?: string | null; role?: string };
+type MemberActionTarget = {
+  id: number;
+  accountId?: number;
+  kind: string;
+  username?: string;
+  displayName: string;
+  avatarPath?: string | null;
+  role?: string;
+  membershipRole?: string | null;
+  isSiteAdmin?: boolean;
+};
 const selectedMember = ref<MemberActionTarget | null>(null);
+const memberPaneChannelOverride = ref<ChannelDTO | null>(null);
+const managedMembers = ref<MemberActionTarget[]>([]);
+const memberRemoveMode = ref(false);
+const memberPickerOpen = ref(false);
+const memberPickerChannel = ref<ChannelDTO | null>(null);
+const memberPickerCandidates = ref<AccountDTO[]>([]);
+const memberPickerSelectedIds = ref<number[]>([]);
+const memberPickerBusy = ref(false);
+const memberManageMsg = ref("");
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
@@ -626,6 +647,10 @@ watch(
   async () => {
     stopAllVoicePlayback();
     selectedMember.value = null;
+    memberPaneChannelOverride.value = null;
+    managedMembers.value = [];
+    memberRemoveMode.value = false;
+    memberManageMsg.value = "";
     pendingCloseChannel.value = null;
     pendingChain.value = null;
     pendingDownload.value = null;
@@ -748,6 +773,10 @@ watch(messageFontSize, (value) => {
   localStorage.setItem(messageFontSizeStorageKey(accountId), String(clamped));
 });
 
+watch(memberRemoveMode, () => {
+  selectedMember.value = null;
+});
+
 watch(
   () => store.account?.isAdmin,
   (isAdminAccount) => {
@@ -766,6 +795,7 @@ watch(
 );
 
 watch(adminTab, (tab) => {
+  if (tab === "channels" && showAdmin.value) void loadAdminChannels();
   if (tab === "appearance" && showAdmin.value) void loadAdminAttachments();
   if (tab === "data" && showAdmin.value) loadAdminData();
   if (tab === "release" && showAdmin.value) void checkForUpdates();
@@ -854,6 +884,13 @@ watch(
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
+const adminChannelRows = computed(() => (adminChannels.value.length ? adminChannels.value : store.channels));
+const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value || currentChannel.value);
+const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
+const canManageActiveMembers = computed(() => !!activeMemberPaneChannel.value?.canManage && activeMemberPaneChannel.value.kind !== "aiLounge");
+const memberPaneTitle = computed(() => (memberPaneChannelOverride.value ? "成员管理" : "成员"));
+const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name || "");
+const memberPickerTitle = computed(() => (memberPickerChannel.value ? `添加到 ${memberPickerChannel.value.name}` : "添加成员"));
 const messageLoadBanner = computed(() => {
   if (store.messageLoadError) return { kind: "error", text: `${store.messageLoadError}，点按重试` };
   if (store.loadingInitialMessages && !store.messages.length) return { kind: "loading", text: "正在加载最近消息..." };
@@ -2714,6 +2751,117 @@ async function startPrivateChat(member: MemberActionTarget) {
   await switchVisibleChannel(result.channel.id);
   await nextTick();
   await restoreSavedReadPosition();
+}
+
+function replaceChannelSnapshot(channel?: ChannelDTO | null) {
+  if (!channel) return;
+  const storeIndex = store.channels.findIndex((row) => row.id === channel.id);
+  if (storeIndex >= 0) store.channels[storeIndex] = channel;
+  const adminIndex = adminChannels.value.findIndex((row) => row.id === channel.id);
+  if (adminIndex >= 0) adminChannels.value[adminIndex] = channel;
+  if (memberPaneChannelOverride.value?.id === channel.id) memberPaneChannelOverride.value = channel;
+  syncChannelEdits();
+}
+
+function toggleCurrentMemberPane() {
+  selectedMember.value = null;
+  if (memberPaneChannelOverride.value) {
+    memberPaneChannelOverride.value = null;
+    managedMembers.value = [];
+  }
+  memberRemoveMode.value = false;
+  memberManageMsg.value = "";
+  membersCollapsed.value = false;
+  showMembers.value = !showMembers.value;
+}
+
+async function refreshMembersForChannel(channelId: number) {
+  const rows = await store.loadMembers(channelId);
+  if (memberPaneChannelOverride.value?.id === channelId) managedMembers.value = rows;
+  return rows;
+}
+
+async function openAdminChannelMembers(channel: ChannelDTO) {
+  memberPaneChannelOverride.value = channel;
+  managedMembers.value = [];
+  memberRemoveMode.value = false;
+  memberManageMsg.value = "";
+  showAdmin.value = false;
+  membersCollapsed.value = false;
+  showMembers.value = true;
+  managedMembers.value = await store.loadMembers(channel.id);
+}
+
+function canRemoveMemberFromActive(member: MemberActionTarget) {
+  return canRemoveChannelMember(member, { canManage: canManageActiveMembers.value, currentAccountId: store.account?.id });
+}
+
+async function openMemberPicker(channel = activeMemberPaneChannel.value) {
+  if (!channel?.canManage) return;
+  selectedMember.value = null;
+  memberPickerChannel.value = channel;
+  memberPickerOpen.value = true;
+  memberPickerSelectedIds.value = [];
+  memberPickerCandidates.value = [];
+  memberPickerBusy.value = true;
+  memberManageMsg.value = "";
+  try {
+    const result = await api<{ accounts: AccountDTO[] }>(`/api/channels/${channel.id}/member-candidates`);
+    memberPickerCandidates.value = result.accounts;
+  } catch (error) {
+    memberManageMsg.value = error instanceof Error ? error.message : "成员候选加载失败";
+  } finally {
+    memberPickerBusy.value = false;
+  }
+}
+
+function closeMemberPicker() {
+  memberPickerOpen.value = false;
+  memberPickerChannel.value = null;
+  memberPickerCandidates.value = [];
+  memberPickerSelectedIds.value = [];
+}
+
+function toggleMemberPickerAccount(accountId: number) {
+  memberPickerSelectedIds.value = memberPickerSelectedIds.value.includes(accountId)
+    ? memberPickerSelectedIds.value.filter((id) => id !== accountId)
+    : [...memberPickerSelectedIds.value, accountId];
+}
+
+async function addSelectedMembers() {
+  const channel = memberPickerChannel.value;
+  const accountIds = memberPickerSelectedIds.value;
+  if (!channel || !accountIds.length) return;
+  memberPickerBusy.value = true;
+  try {
+    const result = await api<{ channel: ChannelDTO; added: number }>(`/api/channels/${channel.id}/members`, {
+      method: "POST",
+      body: JSON.stringify({ accountIds })
+    });
+    replaceChannelSnapshot(result.channel);
+    await refreshMembersForChannel(channel.id);
+    memberManageMsg.value = `已添加 ${result.added} 人`;
+    closeMemberPicker();
+  } catch (error) {
+    memberManageMsg.value = error instanceof Error ? error.message : "添加成员失败";
+  } finally {
+    memberPickerBusy.value = false;
+  }
+}
+
+async function removeMemberFromActive(member: MemberActionTarget) {
+  const channel = activeMemberPaneChannel.value;
+  if (!channel || !member.accountId || !canRemoveMemberFromActive(member)) return;
+  if (!confirm(`从“${channel.name}”移除 ${member.displayName}？`)) return;
+  try {
+    const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}/members/${member.accountId}`, { method: "DELETE" });
+    replaceChannelSnapshot(result.channel);
+    await refreshMembersForChannel(channel.id);
+    memberManageMsg.value = `已移除 ${member.displayName}`;
+    if (!activeMemberPaneMembers.value.some(canRemoveMemberFromActive)) memberRemoveMode.value = false;
+  } catch (error) {
+    memberManageMsg.value = error instanceof Error ? error.message : "移除成员失败";
+  }
 }
 
 function requestCloseChannel() {
@@ -5580,7 +5728,7 @@ async function loadAdmin() {
   syncChannelEdits();
   showAdmin.value = true;
   if (!isAdmin.value) return;
-  const a = await api<{ accounts: any[] }>("/api/admin/accounts");
+  const [a] = await Promise.all([api<{ accounts: any[] }>("/api/admin/accounts"), loadAdminChannels()]);
   accounts.value = a.accounts;
   syncAccountEdits();
   syncChannelEdits();
@@ -5589,6 +5737,13 @@ async function loadAdmin() {
   if (adminTab.value === "data") await loadAdminData();
   if (adminTab.value === "release") await checkForUpdates();
   void loadMcStatus();
+}
+
+async function loadAdminChannels() {
+  if (!isAdmin.value) return;
+  const result = await api<{ channels: ChannelDTO[] }>("/api/admin/channels");
+  adminChannels.value = result.channels.filter(Boolean);
+  syncChannelEdits();
 }
 
 async function loadMcStatus() {
@@ -5812,8 +5967,9 @@ function syncAccountEdits() {
 }
 
 function syncChannelEdits() {
+  const rows = adminChannelRows.value;
   channelEdits.value = Object.fromEntries(
-    store.channels.map((channel) => [
+    rows.map((channel) => [
       channel.id,
       {
         name: channel.name,
@@ -5993,6 +6149,7 @@ function switchAdminTab(tab: typeof adminTab.value) {
   }
   adminTab.value = tab;
   if (tab === "appearance") void loadAdminAttachments();
+  if (tab === "channels") void loadAdminChannels();
 }
 
 function closeAdminPanel() {
@@ -6095,7 +6252,7 @@ function deleteCustomTheme(theme: ThemeDTO) {
 async function addChannel() {
   await api("/api/channels", { method: "POST", body: JSON.stringify(newChannel.value) });
   newChannel.value = { name: "", description: "", isPrivate: false };
-  await store.loadChannels();
+  await Promise.all([store.loadChannels(), loadAdminChannels()]);
   syncChannelEdits();
   adminMsg.value = "频道已创建";
 }
@@ -6110,8 +6267,7 @@ async function updateChannel(channel: ChannelDTO) {
       description: edit.description
     })
   });
-  const index = store.channels.findIndex((row) => row.id === channel.id);
-  if (index >= 0) store.channels[index] = result.channel;
+  replaceChannelSnapshot(result.channel);
   syncChannelEdits();
   adminMsg.value = "频道已更新";
 }
@@ -6129,8 +6285,7 @@ async function uploadChannelIcon(channel: ChannelDTO, event: Event) {
     return;
   }
   const result = (await response.json()) as { channel: ChannelDTO };
-  const index = store.channels.findIndex((row) => row.id === channel.id);
-  if (index >= 0) store.channels[index] = result.channel;
+  replaceChannelSnapshot(result.channel);
   syncChannelEdits();
   adminMsg.value = "频道图标已更新";
 }
@@ -6140,7 +6295,7 @@ async function deleteChannel(channel: ChannelDTO) {
   if (!confirm(`删除频道“${channel.name}”？频道内聊天记录会一并删除。`)) return;
   const fallbackChannelId = channel.id === store.currentChannelId ? store.previousChannelId : store.currentChannelId;
   await api(`/api/channels/${channel.id}`, { method: "DELETE" });
-  await store.loadChannels(fallbackChannelId);
+  await Promise.all([store.loadChannels(fallbackChannelId), loadAdminChannels()]);
   syncChannelEdits();
   adminMsg.value = `频道“${channel.name}”已删除`;
 }
@@ -6595,7 +6750,7 @@ async function toggleVirtual(character: any) {
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
           </div>
         </div>
-        <button class="icon-btn" @click="membersCollapsed = false; showMembers = !showMembers" aria-label="成员">
+        <button class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
           <Users v-else :size="20" />
         </button>
@@ -7098,19 +7253,49 @@ async function toggleVirtual(character: any) {
     </section>
 
     <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
-      <header class="pane-head">
-        <strong>成员</strong>
+      <header class="pane-head member-pane-head">
+        <div class="member-pane-title">
+          <strong>{{ memberPaneTitle }}</strong>
+          <small v-if="memberPaneSubtitle">{{ memberPaneSubtitle }} · {{ activeMemberPaneMembers.length }} 人/角色</small>
+        </div>
+        <button
+          v-if="canManageActiveMembers"
+          class="icon-btn"
+          :class="{ active: memberRemoveMode }"
+          @click="memberRemoveMode = !memberRemoveMode"
+          aria-label="移除成员"
+        >
+          <Trash2 :size="18" />
+        </button>
+        <button v-if="canManageActiveMembers" class="icon-btn" @click="openMemberPicker()" aria-label="添加成员"><Plus :size="20" /></button>
         <button class="icon-btn desktop-only" @click="membersCollapsed = true; showMembers = false" aria-label="收起成员"><PanelRightClose :size="20" /></button>
         <button class="icon-btn tablet-down" @click="showMembers = false" aria-label="关闭成员"><X :size="20" /></button>
       </header>
-      <div class="member-list">
-        <button v-for="member in store.members" :key="member.id" class="member-row" @click="openMemberActions(member, $event)">
+      <div v-if="memberManageMsg" class="member-manage-msg">{{ memberManageMsg }}</div>
+      <div class="member-list member-grid">
+        <button v-if="canManageActiveMembers" class="member-tile member-tool-tile" @click="openMemberPicker()">
+          <span class="member-tool-avatar"><Plus :size="22" /></span>
+          <small>添加</small>
+        </button>
+        <button v-if="canManageActiveMembers" class="member-tile member-tool-tile" :class="{ active: memberRemoveMode }" @click="memberRemoveMode = !memberRemoveMode">
+          <span class="member-tool-avatar danger"><Trash2 :size="20" /></span>
+          <small>{{ memberRemoveMode ? "完成" : "移除" }}</small>
+        </button>
+        <button
+          v-for="member in activeMemberPaneMembers"
+          :key="`${member.kind}-${member.accountId || member.id || member.username}`"
+          class="member-tile member-row"
+          :class="{ removable: memberRemoveMode && canRemoveMemberFromActive(member), locked: memberRemoveMode && !canRemoveMemberFromActive(member) }"
+          @click="memberRemoveMode ? removeMemberFromActive(member) : openMemberActions(member, $event)"
+        >
           <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
             <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" />
             <span v-else>{{ avatarText(member.displayName) }}</span>
             <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
+            <i v-if="memberRemoveMode && canRemoveMemberFromActive(member)" class="member-remove-badge" aria-hidden="true"><X :size="12" /></i>
           </div>
           <span>{{ member.displayName }}</span>
+          <small v-if="memberRoleLabel(member)">{{ memberRoleLabel(member) }}</small>
           <Bot v-if="member.kind === 'virtual'" :size="15" />
         </button>
       </div>
@@ -7232,6 +7417,46 @@ async function toggleVirtual(character: any) {
           </div>
         </div>
       </div>
+    </section>
+
+    <section v-if="memberPickerOpen" class="modal-shell" @click.self="closeMemberPicker">
+      <form class="small-modal member-picker-modal" @submit.prevent="addSelectedMembers">
+        <header class="modal-head">
+          <strong>{{ memberPickerTitle }}</strong>
+          <button class="icon-btn" type="button" @click="closeMemberPicker" aria-label="关闭添加成员"><X :size="20" /></button>
+        </header>
+        <div class="member-picker-body">
+          <div v-if="memberPickerBusy" class="member-picker-empty">加载中...</div>
+          <div v-else-if="memberPickerCandidates.length" class="member-picker-list">
+            <button
+              v-for="account in memberPickerCandidates"
+              :key="account.id"
+              type="button"
+              class="member-picker-row"
+              :class="{ selected: memberPickerSelectedIds.includes(account.id) }"
+              @click="toggleMemberPickerAccount(account.id)"
+            >
+              <div class="avatar presence-avatar">
+                <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(account.displayName) }}</span>
+                <i v-if="isAccountOnline(account.id)" class="online-dot" aria-label="在线"></i>
+              </div>
+              <span>
+                <strong>{{ account.displayName }}</strong>
+                <small>@{{ account.username }}</small>
+              </span>
+              <CheckCircle2 v-if="memberPickerSelectedIds.includes(account.id)" :size="18" />
+            </button>
+          </div>
+          <div v-else class="member-picker-empty">没有可添加的人</div>
+        </div>
+        <div class="confirm-actions member-picker-actions">
+          <button class="mini-btn secondary" type="button" :disabled="memberPickerBusy" @click="closeMemberPicker">取消</button>
+          <button class="primary-btn" type="submit" :disabled="memberPickerBusy || !memberPickerSelectedIds.length">
+            {{ memberPickerBusy ? "添加中..." : `添加 ${memberPickerSelectedIds.length || ""}` }}
+          </button>
+        </div>
+      </form>
     </section>
 
     <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image' }" @click.self="closePreviewMessage">
@@ -7567,7 +7792,7 @@ async function toggleVirtual(character: any) {
             <button class="primary-btn" @click="addChannel">创建频道</button>
             <label>现有频道</label>
             <div class="channel-admin-list">
-              <template v-for="channel in store.channels" :key="channel.id">
+              <template v-for="channel in adminChannelRows" :key="channel.id">
                 <article v-if="channelEdits[channel.id]" class="channel-admin-row">
                   <label class="channel-icon-admin upload-icon-trigger" :aria-label="`上传 ${channel.name} 的频道图标`" title="点击上传图标">
                     <img :src="channelIconUrl(channel)" alt="" />
@@ -7579,6 +7804,7 @@ async function toggleVirtual(character: any) {
                     <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }} · {{ channel.memberCount }} 人</small>
                   </div>
                   <button class="mini-btn" @click="updateChannel(channel)"><Save :size="15" />保存</button>
+                  <button v-if="channel.canManage" class="mini-btn secondary" @click="openAdminChannelMembers(channel)"><Users :size="15" />成员</button>
                   <button v-if="channel.canManage && !channel.isDefault && !channel.directKey" class="mini-btn danger-action" @click="deleteChannel(channel)"><Trash2 :size="15" />删除</button>
                 </article>
               </template>

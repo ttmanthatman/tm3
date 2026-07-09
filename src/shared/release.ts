@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.8.7";
+export const APP_VERSION = "0.9.0";
 
-export const RELEASE_DATE = "2026-07-08";
+export const RELEASE_DATE = "2026-07-10";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "右侧成员栏改为微信式成员宫格，频道管理员和私聊创建者可以直接添加、移除成员。",
+  "管理员频道管理新增独立频道列表和成员入口，可管理所有标准频道与私聊频道成员，不影响普通聊天侧栏。",
+  "服务端补齐成员候选、添加和移除接口，并统一管理员与频道管理者的权限校验。"
+] as const;
+
+const RELEASE_0_8_7_NOTES = [
   "`/火焰` 聊天气泡改为使用原型页“原样式”的火焰效果，让火苗贴着气泡顶部燃烧。",
   "`/水滴` 滴落到 `/火焰` 上方时会生成明显烟雾，并短暂压低命中的局部火势。",
   "火焰原型页里的水滴示例同步改为 `/水滴`，不再显示已移除的 `/水滴滴`。"
@@ -359,9 +365,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.9.0",
+    date: "2026-07-10",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.8.7",
     date: "2026-07-08",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_8_7_NOTES
   },
   {
     version: "0.8.6",

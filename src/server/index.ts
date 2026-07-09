@@ -975,7 +975,10 @@ async function canWriteChannel(accountId: number, channelId: number) {
 
 async function canManageChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, kind: true } });
+  if (!channel) return false;
   if (channel?.kind === "aiLounge") return false;
+  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
+  if (account?.role === "admin") return true;
   if (channel?.kind === "why") {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
     return member?.role === "owner" || member?.role === "admin";
@@ -984,8 +987,6 @@ async function canManageChannel(accountId: number, channelId: number) {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
     return member?.role === "owner" || member?.role === "admin";
   }
-  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
-  if (account?.role === "admin") return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return member?.role === "owner" || member?.role === "admin";
 }
@@ -2086,6 +2087,15 @@ function leaveAccountChannel(accountId: number, channelId: number) {
   }
 }
 
+async function emitChannelMembersChanged(channelId: number, action: string, affectedAccountIds: number[] = []) {
+  const dto = await channelDto(channelId);
+  const memberRows = await prisma.channelMember.findMany({ where: { channelId }, select: { accountId: true } });
+  const recipients = new Set([...memberRows.map((row) => row.accountId), ...affectedAccountIds]);
+  io.to(`ch:${channelId}`).emit("channel:updated", { action, channel: dto });
+  for (const accountId of recipients) io.to(`acct:${accountId}`).emit("channel:updated", { action, channel: dto });
+  return dto;
+}
+
 async function ensureBootstrap() {
   await ensureLoginLogTable();
   const defaultChannel = await prisma.channel.findFirst({ where: { isDefault: true } });
@@ -2123,7 +2133,6 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   });
   if (!channel) return null;
   const pin = channel.pinned[0];
-  const membership = viewer ? await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: viewer.accountId } }, select: { role: true } }) : null;
   const [pinned, prayerCount] = await Promise.all([
     pin ? serializePinnedItem(pin, viewer) : Promise.resolve(null),
     prisma.message.count({ where: { channelId, type: "prayer" } })
@@ -2137,7 +2146,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     isPrivate: channel.isPrivate,
     isDefault: channel.isDefault,
     directKey: channel.directKey,
-    canManage: viewer ? !!viewer.isAdmin || membership?.role === "owner" || membership?.role === "admin" : undefined,
+    canManage: viewer ? await canManageChannel(viewer.accountId, channelId) : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     hasPrayerItems: prayerCount > 0,
     memberCount: channel._count.members,
@@ -2643,6 +2652,12 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
 });
 
+app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const channels = await prisma.channel.findMany({ where: { kind: { in: PUBLIC_CHANNEL_KINDS } }, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
+  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
+});
+
 app.post("/api/channels", { preHandler: requireAdmin }, async (request) => {
   const auth = (request as AuthedRequest).auth;
   const body = z.object({ name: z.string().min(1).max(80), description: z.string().max(255).optional(), icon: z.string().max(16).optional(), isPrivate: z.boolean().optional() }).parse(request.body);
@@ -2818,7 +2833,7 @@ app.delete("/api/channels/:id/membership", { preHandler: requireAuth }, async (r
 app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  if (!(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+  if (!(await canAccessChannel(auth.accountId, channelId)) && !(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, isPrivate: true } });
   const accounts = await prisma.account.findMany({
     where: channel?.directKey
@@ -2839,7 +2854,9 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
         username: a.username,
         displayName: a.displayName,
         avatarPath: a.avatarPath,
-        role: a.role === "admin" ? "admin" : a.memberships[0]?.role || "member"
+        role: a.role === "admin" ? "admin" : a.memberships[0]?.role || "member",
+        membershipRole: a.memberships[0]?.role || null,
+        isSiteAdmin: a.role === "admin"
       })),
       ...virtuals.map((v) => ({
         id: v.actor.id,
@@ -2851,6 +2868,64 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
       }))
     ]
   };
+});
+
+app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (channel.kind === "aiLounge") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const accounts = await prisma.account.findMany({
+    where: { memberships: { none: { channelId } } },
+    include: { actor: true },
+    orderBy: { displayName: "asc" }
+  });
+  return { accounts: accounts.map((account) => authDto(account)) };
+});
+
+app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (channel.kind === "aiLounge") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const body = z
+    .object({
+      accountId: z.number().int().positive().optional(),
+      accountIds: z.array(z.number().int().positive()).max(100).optional()
+    })
+    .parse(request.body);
+  const requestedIds = [...new Set([...(body.accountIds || []), ...(body.accountId ? [body.accountId] : [])])];
+  if (!requestedIds.length) return reply.code(400).send({ success: false, message: "请选择要添加的人" });
+  const accounts = await prisma.account.findMany({ where: { id: { in: requestedIds } }, select: { id: true } });
+  if (accounts.length !== requestedIds.length) return reply.code(404).send({ success: false, message: "用户不存在" });
+  await prisma.channelMember.createMany({
+    data: accounts.map((account) => ({ channelId, accountId: account.id, role: "member" as const })),
+    skipDuplicates: true
+  });
+  for (const account of accounts) joinAccountChannel(account.id, channelId);
+  const dto = await emitChannelMembersChanged(channelId, "members-added", accounts.map((account) => account.id));
+  return { success: true, channel: dto, added: accounts.length };
+});
+
+app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const accountId = Number((request.params as { accountId: string }).accountId);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (channel.kind === "aiLounge") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+  if (!member) return reply.code(404).send({ success: false, message: "此用户不在频道中" });
+  if (member.role === "owner") return reply.code(400).send({ success: false, message: "不能移除频道创建者" });
+  await prisma.channelMember.delete({ where: { channelId_accountId: { channelId, accountId } } });
+  leaveAccountChannel(accountId, channelId);
+  const dto = await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
+  return { success: true, channel: dto, removed: accountId };
 });
 
 app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
