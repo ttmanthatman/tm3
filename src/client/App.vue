@@ -6464,36 +6464,9 @@ async function toggleVirtual(character: any) {
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
     </section>
 
-    <header class="app-topbar">
-      <div class="app-brand">
-        <span class="app-brand-mark">
-          <img v-if="store.appearance.appIconPath" :src="wallpaperUrl(store.appearance.appIconPath)" alt="" />
-          <MessageCircle v-else :size="19" />
-        </span>
-        <span>
-          <strong>{{ store.appearance.appTitle || "Team Chat" }}</strong>
-          <small>Chat Workspace</small>
-        </span>
-      </div>
-      <div class="app-context">
-        <i class="system-status-dot" aria-hidden="true"></i>
-        <span>{{ store.prayerOnly ? "代祷事项" : currentChannel?.name || "聊天室" }}</span>
-        <small>{{ store.members.length }} 人/角色 · 工作区</small>
-      </div>
-      <div class="app-topbar-actions">
-        <button v-if="isAdmin" class="app-tool-btn" @click="openLoginLogPage" aria-label="登录记录"><Monitor :size="17" /></button>
-        <button v-if="isAdmin" class="app-tool-btn" @click="loadAdmin" aria-label="管理"><Settings :size="17" /></button>
-        <button class="app-tool-btn" @click="openSettings()" aria-label="设置"><Palette :size="17" /></button>
-        <button class="app-tool-btn" @click="store.logout()" aria-label="退出"><LogOut :size="17" /></button>
-      </div>
-    </header>
-
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
-        <span class="pane-title">
-          <strong>频道</strong>
-          <small>{{ store.channels.length }} 个空间</small>
-        </span>
+        <strong>聊天室</strong>
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
@@ -7126,10 +7099,7 @@ async function toggleVirtual(character: any) {
 
     <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
       <header class="pane-head">
-        <span class="pane-title">
-          <strong>成员</strong>
-          <small>{{ store.members.length }} 人/角色</small>
-        </span>
+        <strong>成员</strong>
         <button class="icon-btn desktop-only" @click="membersCollapsed = true; showMembers = false" aria-label="收起成员"><PanelRightClose :size="20" /></button>
         <button class="icon-btn tablet-down" @click="showMembers = false" aria-label="关闭成员"><X :size="20" /></button>
       </header>
