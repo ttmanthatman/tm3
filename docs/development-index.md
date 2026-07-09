@@ -7,7 +7,7 @@ This index is the first file to read before changing Team Chat. It is intentiona
 1. Run `git status --short`, `git branch --show-current`, and `git log --oneline -n 20`.
 2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
 3. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
-4. Before release or push, run at least `npm run test:ui-logic`, `npm run check`, and `npm run build`.
+4. Before release or push, run at least `npm run check:quick`, `npm run test:ui-logic`, and `npm run build`.
 5. Review `git diff` locally before deployment or publishing.
 
 ## Frequent Regression Areas
@@ -24,15 +24,16 @@ This index is the first file to read before changing Team Chat. It is intentiona
 ## Module Map
 
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, admin, settings, modals, composer, effects, and release UI.
-- `src/client/panelSwipe.ts`: pure three-panel gesture module. Update this and `src/client/panelSwipe.test.ts` before touching swipe thresholds in `App.vue`.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
 - `src/client/api.ts`: auth token storage and fetch wrapper.
 - `src/shared/release.ts`: in-app version number, current notes, and release history.
 - `src/shared/types.ts`: DTO interfaces shared by client and server.
 - `src/server/index.ts`: main Fastify app, auth, channels, messages, admin endpoints, update endpoints, and attachment endpoints.
+- `src/server/linkPreview.ts`: safe link preview fetcher. Keep URL normalization, DNS/private-address blocking, redirect limits, response byte limits, and HTML metadata extraction behind this interface.
 - `src/server/multichar/`: autonomous virtual-role engine modules.
 - `src/server/bible/` and `src/client/bibleReferences.ts`: Bible lookup and reference parsing.
+- `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `prisma/schema.prisma`: database schema and channel/message/pinned/AI data model.
 - `public/sw.js`: service worker cache versioning.
 
@@ -61,6 +62,7 @@ Useful checks:
 
 ```bash
 git ls-files AGENTS.md .env storage node_modules
+npm run check:public-tree
 npm run test:ui-logic
 npm run check
 npm run build
