@@ -938,8 +938,57 @@ button {
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
+.channel-row-wrap {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.channel-row-wrap.has-action {
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+.channel-row-wrap > .channel-row {
+  border-bottom: 0;
+}
+
+.channel-row-wrap.active {
+  background: #dcdcdc;
+}
+
 .channel-row.active {
   background: #dcdcdc;
+}
+
+.channel-row-label {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.channel-row-action {
+  width: 34px;
+  height: 34px;
+  align-self: center;
+  justify-self: center;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0.66;
+}
+
+.channel-row-wrap:hover .channel-row-action,
+.channel-row-action:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.channel-row-action:active {
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .channel-subrow {
@@ -5135,6 +5184,66 @@ button {
 
 .member-action-body {
   display: grid;
+}
+
+.channel-editor-modal .modal-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.channel-editor-modal .modal-head small {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-editor-modal {
+  width: min(430px, 100%);
+}
+
+.channel-editor-form textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.channel-editor-icon-picker {
+  min-height: 68px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+}
+
+.channel-editor-icon-picker img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #e9ecef;
+}
+
+.channel-editor-icon-picker span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 700;
+}
+
+.channel-editor-icon-picker:hover,
+.channel-editor-icon-picker:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.channel-editor-actions {
+  justify-content: flex-end;
 }
 
 .member-picker-modal {

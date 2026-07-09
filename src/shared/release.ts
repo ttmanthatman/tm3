@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.9.0";
+export const APP_VERSION = "0.9.1";
 
 export const RELEASE_DATE = "2026-07-10";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "左侧频道栏新增创建频道入口，普通用户也可新建私密频道，创建后会直接打开右侧成员选择。",
+  "频道创建者和管理员可从左侧长按、右键或齿轮入口修改频道名称、描述和图标。",
+  "管理员设置里的频道页收敛为全局频道设置；私密/私聊成员增删统一放在右侧成员列表，公开频道只展示成员。"
+] as const;
+
+const RELEASE_0_9_0_NOTES = [
   "右侧成员栏改为微信式成员宫格，频道管理员和私聊创建者可以直接添加、移除成员。",
   "管理员频道管理新增独立频道列表和成员入口，可管理所有标准频道与私聊频道成员，不影响普通聊天侧栏。",
   "服务端补齐成员候选、添加和移除接口，并统一管理员与频道管理者的权限校验。"
@@ -365,9 +371,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.9.0",
+    version: "0.9.1",
     date: "2026-07-10",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.9.0",
+    date: "2026-07-10",
+    notes: RELEASE_0_9_0_NOTES
   },
   {
     version: "0.8.7",

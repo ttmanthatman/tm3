@@ -90,6 +90,7 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import FlamePrototype from "./FlamePrototype.vue";
 import { marked } from "marked";
@@ -158,7 +159,6 @@ const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "rel
 const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
-const newChannel = ref({ name: "", description: "", isPrivate: false });
 const newVirtual = ref({
   username: "",
   displayName: "",
@@ -337,6 +337,12 @@ const memberPickerCandidates = ref<AccountDTO[]>([]);
 const memberPickerSelectedIds = ref<number[]>([]);
 const memberPickerBusy = ref(false);
 const memberManageMsg = ref("");
+const showChannelEditor = ref(false);
+const channelEditorMode = ref<"create" | "edit">("create");
+const channelEditorChannel = ref<ChannelDTO | null>(null);
+const channelEditorDraft = ref(createChannelDraft());
+const channelEditorBusy = ref(false);
+const channelEditorMsg = ref("");
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
@@ -363,6 +369,7 @@ async function switchVisibleChannel(channelId: number, prayerOnly = false) {
 }
 
 async function openChannelFromList(channelId: number, prayerOnly = false) {
+  if (Date.now() < suppressNextTapUntil) return;
   saveReadPosition();
   await switchVisibleChannel(channelId, prayerOnly);
   showChannels.value = false;
@@ -429,6 +436,8 @@ const rainDurationMs = 15_000;
 const playedRainEffectIds = new Set<number>();
 let longPressTimer: number | undefined;
 let longPressStartedAt = { x: 0, y: 0 };
+let channelLongPressTimer: number | undefined;
+let channelLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
 let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let imagePinchStart: { distance: number; scale: number } | null = null;
@@ -808,6 +817,8 @@ onBeforeUnmount(() => {
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
+  clearMessageLongPress();
+  clearChannelLongPress();
   stopRainEffect();
   stopFlamePhysics(true);
   stopDripPhysics(true);
@@ -887,10 +898,15 @@ const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage
 const adminChannelRows = computed(() => (adminChannels.value.length ? adminChannels.value : store.channels));
 const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value || currentChannel.value);
 const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
-const canManageActiveMembers = computed(() => !!activeMemberPaneChannel.value?.canManage && activeMemberPaneChannel.value.kind !== "aiLounge");
+const canManageActiveMembers = computed(() => {
+  const channel = activeMemberPaneChannel.value;
+  return canManageChannelMembers(channel);
+});
 const memberPaneTitle = computed(() => (memberPaneChannelOverride.value ? "成员管理" : "成员"));
 const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name || "");
 const memberPickerTitle = computed(() => (memberPickerChannel.value ? `添加到 ${memberPickerChannel.value.name}` : "添加成员"));
+const channelEditorTitle = computed(() => (channelEditorMode.value === "create" ? "创建频道" : "频道设置"));
+const channelEditorSubtitle = computed(() => (channelEditorMode.value === "create" ? "创建后可立即添加成员" : channelEditorChannel.value?.name || ""));
 const messageLoadBanner = computed(() => {
   if (store.messageLoadError) return { kind: "error", text: `${store.messageLoadError}，点按重试` };
   if (store.loadingInitialMessages && !store.messages.length) return { kind: "loading", text: "正在加载最近消息..." };
@@ -2753,14 +2769,130 @@ async function startPrivateChat(member: MemberActionTarget) {
   await restoreSavedReadPosition();
 }
 
-function replaceChannelSnapshot(channel?: ChannelDTO | null) {
+function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToStore?: boolean; addToAdmin?: boolean } = {}) {
   if (!channel) return;
   const storeIndex = store.channels.findIndex((row) => row.id === channel.id);
   if (storeIndex >= 0) store.channels[storeIndex] = channel;
+  else if (options.addToStore) store.channels = [...store.channels, channel];
   const adminIndex = adminChannels.value.findIndex((row) => row.id === channel.id);
   if (adminIndex >= 0) adminChannels.value[adminIndex] = channel;
+  else if (options.addToAdmin && adminChannels.value.length) adminChannels.value = [...adminChannels.value, channel];
   if (memberPaneChannelOverride.value?.id === channel.id) memberPaneChannelOverride.value = channel;
   syncChannelEdits();
+}
+
+function resetChannelEditorDraft() {
+  channelEditorDraft.value = createChannelDraft();
+}
+
+function openCreateChannelEditor() {
+  channelEditorMode.value = "create";
+  channelEditorChannel.value = null;
+  resetChannelEditorDraft();
+  channelEditorMsg.value = "";
+  showChannelEditor.value = true;
+}
+
+function openEditChannelEditor(channel: ChannelDTO) {
+  if (!canEditChannel(channel)) return;
+  channelEditorMode.value = "edit";
+  channelEditorChannel.value = channel;
+  channelEditorDraft.value = {
+    name: channel.name,
+    description: channel.description || "",
+    isPrivate: channel.isPrivate
+  };
+  channelEditorMsg.value = "";
+  showChannelEditor.value = true;
+}
+
+function closeChannelEditor() {
+  if (channelEditorBusy.value) return;
+  showChannelEditor.value = false;
+  channelEditorMsg.value = "";
+}
+
+async function openChannelEditorMembers() {
+  const channel = channelEditorChannel.value;
+  if (!channel || !canEditChannel(channel)) return;
+  showChannelEditor.value = false;
+  showChannels.value = false;
+  await openAdminChannelMembers(channel);
+}
+
+async function saveChannelEditor() {
+  const draft = normalizeChannelDraft(channelEditorDraft.value);
+  if (!canSubmitChannelDraft(channelEditorDraft.value, channelEditorBusy.value)) {
+    channelEditorMsg.value = "请输入频道名";
+    return;
+  }
+  channelEditorBusy.value = true;
+  channelEditorMsg.value = "";
+  try {
+    if (channelEditorMode.value === "create") {
+      const result = await api<{ channel: ChannelDTO }>("/api/channels", {
+        method: "POST",
+        body: JSON.stringify({
+          name: draft.name,
+          description: draft.description,
+          isPrivate: draft.isPrivate
+        })
+      });
+      replaceChannelSnapshot(result.channel, { addToStore: true, addToAdmin: isAdmin.value });
+      showChannelEditor.value = false;
+      showChannels.value = false;
+      await switchVisibleChannel(result.channel.id);
+      membersCollapsed.value = false;
+      showMembers.value = true;
+      await nextTick();
+      if (result.channel.isPrivate) await openMemberPicker(result.channel);
+      return;
+    }
+    const channel = channelEditorChannel.value;
+    if (!channel) return;
+    const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: draft.name,
+        description: draft.description
+      })
+    });
+    replaceChannelSnapshot(result.channel);
+    channelEditorChannel.value = result.channel;
+    showChannelEditor.value = false;
+    adminMsg.value = "频道已更新";
+  } catch (error) {
+    channelEditorMsg.value = error instanceof Error ? error.message : "频道保存失败";
+  } finally {
+    channelEditorBusy.value = false;
+  }
+}
+
+async function uploadChannelEditorIcon(event: Event) {
+  const channel = channelEditorChannel.value;
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!channel || !file) return;
+  channelEditorBusy.value = true;
+  channelEditorMsg.value = "";
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`/api/channels/${channel.id}/icon`, { method: "POST", headers: authHeaders(), body: form });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({ message: "频道图标上传失败" }));
+      throw new Error(result.message || "频道图标上传失败");
+    }
+    const result = (await response.json()) as { channel: ChannelDTO };
+    replaceChannelSnapshot(result.channel);
+    channelEditorChannel.value = result.channel;
+    channelEditorMsg.value = "频道图标已更新";
+  } catch (error) {
+    channelEditorMsg.value = error instanceof Error ? error.message : "频道图标上传失败";
+  } finally {
+    channelEditorBusy.value = false;
+  }
 }
 
 function toggleCurrentMemberPane() {
@@ -2797,7 +2929,7 @@ function canRemoveMemberFromActive(member: MemberActionTarget) {
 }
 
 async function openMemberPicker(channel = activeMemberPaneChannel.value) {
-  if (!channel?.canManage) return;
+  if (!canManageChannelMembers(channel)) return;
   selectedMember.value = null;
   memberPickerChannel.value = channel;
   memberPickerOpen.value = true;
@@ -4142,6 +4274,37 @@ function moveMessageLongPress(event: PointerEvent) {
 function clearMessageLongPress() {
   if (longPressTimer) window.clearTimeout(longPressTimer);
   longPressTimer = undefined;
+}
+
+function beginChannelLongPress(channel: ChannelDTO, event: PointerEvent) {
+  if (!canEditChannel(channel) || event.button !== 0) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest("input, label, a")) return;
+  channelLongPressStartedAt = { x: event.clientX, y: event.clientY };
+  clearChannelLongPress();
+  channelLongPressTimer = window.setTimeout(() => {
+    openEditChannelEditor(channel);
+    suppressNextTapUntil = Date.now() + 650;
+    navigator.vibrate?.(12);
+  }, longPressMs);
+}
+
+function moveChannelLongPress(event: PointerEvent) {
+  if (!channelLongPressTimer) return;
+  const distance = Math.hypot(event.clientX - channelLongPressStartedAt.x, event.clientY - channelLongPressStartedAt.y);
+  if (distance > 10) clearChannelLongPress();
+}
+
+function clearChannelLongPress() {
+  if (channelLongPressTimer) window.clearTimeout(channelLongPressTimer);
+  channelLongPressTimer = undefined;
+}
+
+function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
+  if (!canEditChannel(channel)) return;
+  event.preventDefault();
+  suppressNextTapUntil = Date.now() + 650;
+  openEditChannelEditor(channel);
 }
 
 function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
@@ -6249,14 +6412,6 @@ function deleteCustomTheme(theme: ThemeDTO) {
   adminMsg.value = "主题已从草稿移除，保存外观后生效";
 }
 
-async function addChannel() {
-  await api("/api/channels", { method: "POST", body: JSON.stringify(newChannel.value) });
-  newChannel.value = { name: "", description: "", isPrivate: false };
-  await Promise.all([store.loadChannels(), loadAdminChannels()]);
-  syncChannelEdits();
-  adminMsg.value = "频道已创建";
-}
-
 async function updateChannel(channel: ChannelDTO) {
   const edit = channelEdits.value[channel.id];
   if (!edit) return;
@@ -6622,21 +6777,40 @@ async function toggleVirtual(character: any) {
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
+        <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
       <template v-for="channel in store.channels" :key="channel.id">
-        <button
-          class="channel-row"
-          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
-          @click="openChannelFromList(channel.id)"
-        >
-          <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
-          <span>
-            <b>{{ channel.name }}</b>
-            <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }}</small>
-          </span>
-        </button>
+        <div class="channel-row-wrap" :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel) }">
+          <button
+            class="channel-row"
+            :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
+            @click="openChannelFromList(channel.id)"
+            @contextmenu="openChannelContextMenu(channel, $event)"
+            @pointerdown="beginChannelLongPress(channel, $event)"
+            @pointermove="moveChannelLongPress"
+            @pointerup="clearChannelLongPress"
+            @pointerleave="clearChannelLongPress"
+            @pointercancel="clearChannelLongPress"
+          >
+            <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
+            <span class="channel-row-label">
+              <b>{{ channel.name }}</b>
+              <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }}</small>
+            </span>
+          </button>
+          <button
+            v-if="canEditChannel(channel)"
+            class="channel-row-action"
+            @click.stop="openEditChannelEditor(channel)"
+            @pointerdown.stop
+            aria-label="频道设置"
+            title="频道设置"
+          >
+            <Settings :size="17" />
+          </button>
+        </div>
         <button
           v-if="channel.hasPrayerItems"
           class="channel-row channel-subrow"
@@ -7419,6 +7593,52 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
+    <section v-if="showChannelEditor" class="modal-shell" @click.self="closeChannelEditor">
+      <form class="small-modal channel-editor-modal" @submit.prevent="saveChannelEditor">
+        <header class="modal-head">
+          <div>
+            <strong>{{ channelEditorTitle }}</strong>
+            <small>{{ channelEditorSubtitle }}</small>
+          </div>
+          <button class="icon-btn" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor" aria-label="关闭频道设置"><X :size="20" /></button>
+        </header>
+        <div class="form-grid modal-form channel-editor-form">
+          <template v-if="channelEditorMode === 'edit' && channelEditorChannel">
+            <label>频道图标</label>
+            <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
+              <img :src="channelIconUrl(channelEditorChannel)" alt="" />
+              <span><Upload :size="15" />更换图标</span>
+              <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
+            </label>
+          </template>
+          <label>频道名称</label>
+          <input v-model="channelEditorDraft.name" maxlength="80" autocomplete="off" placeholder="频道名" />
+          <label>频道描述</label>
+          <textarea v-model="channelEditorDraft.description" maxlength="255" rows="3" placeholder="描述"></textarea>
+          <label v-if="channelEditorMode === 'create'" class="check-row check-row-inline">
+            <input v-model="channelEditorDraft.isPrivate" type="checkbox" />
+            <span>私密频道</span>
+          </label>
+          <p v-if="channelEditorMsg" class="form-error">{{ channelEditorMsg }}</p>
+          <div class="confirm-actions channel-editor-actions">
+            <button
+              v-if="channelEditorMode === 'edit' && canEditChannel(channelEditorChannel)"
+              class="mini-btn secondary"
+              type="button"
+              :disabled="channelEditorBusy"
+              @click="openChannelEditorMembers"
+            >
+              <Users :size="15" />成员
+            </button>
+            <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">取消</button>
+            <button class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
+              {{ channelEditorBusy ? "保存中..." : channelEditorMode === "create" ? "创建" : "保存" }}
+            </button>
+          </div>
+        </div>
+      </form>
+    </section>
+
     <section v-if="memberPickerOpen" class="modal-shell" @click.self="closeMemberPicker">
       <form class="small-modal member-picker-modal" @submit.prevent="addSelectedMembers">
         <header class="modal-head">
@@ -7785,12 +8005,7 @@ async function toggleVirtual(character: any) {
           </section>
 
           <section v-if="adminTab === 'channels'" class="form-grid">
-            <label>新增频道</label>
-            <input v-model="newChannel.name" placeholder="频道名" />
-            <input v-model="newChannel.description" placeholder="描述" />
-            <label class="check-row check-row-inline"><input v-model="newChannel.isPrivate" type="checkbox" /> <span>私密频道</span></label>
-            <button class="primary-btn" @click="addChannel">创建频道</button>
-            <label>现有频道</label>
+            <label>全局频道设置</label>
             <div class="channel-admin-list">
               <template v-for="channel in adminChannelRows" :key="channel.id">
                 <article v-if="channelEdits[channel.id]" class="channel-admin-row">
