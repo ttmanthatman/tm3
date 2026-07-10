@@ -22,6 +22,7 @@ import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import type {
   AdminAttachmentDTO,
+  AdminBackupDTO,
   AdminLoginLogKind,
   AdminMessageDTO,
   AiRoleDTO,
@@ -50,6 +51,7 @@ const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
 const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
 const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
 const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
+const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
 const PORT = Number(process.env.PORT || 3003);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
@@ -167,7 +169,7 @@ const IMAGE_WEBP_QUALITY = 82;
 const IMAGE_WEBP_EFFORT = 5;
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
 
-for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR]) {
+for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR, BACKUP_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -3927,6 +3929,146 @@ function zipSafeName(name: string) {
   return name.replace(/[\\/:*?"<>|]+/g, "_").replace(/\.+/g, ".").slice(0, 180) || "file";
 }
 
+function backupFileUrl(fileName: string) {
+  return `/api/admin/backups/${encodeURIComponent(path.basename(fileName))}`;
+}
+
+function isManagedBackupFileName(fileName: string) {
+  return /^liao-full-backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.zip$/.test(path.basename(fileName));
+}
+
+function backupFilePath(fileName: string) {
+  const safeName = path.basename(fileName);
+  if (!isManagedBackupFileName(safeName)) return "";
+  return path.join(BACKUP_DIR, safeName);
+}
+
+function listAdminBackups(): AdminBackupDTO[] {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs
+    .readdirSync(BACKUP_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && isManagedBackupFileName(entry.name))
+    .map((entry) => {
+      const filePath = path.join(BACKUP_DIR, entry.name);
+      const stat = fs.statSync(filePath);
+      return {
+        fileName: entry.name,
+        size: stat.size,
+        createdAt: stat.birthtime.toISOString(),
+        url: backupFileUrl(entry.name)
+      };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function shouldSkipBackupEntry(relativePath: string, isDirectory: boolean) {
+  const parts = relativePath.split(path.sep).filter(Boolean);
+  if (!parts.length) return false;
+  const first = parts[0];
+  if ([".git", "node_modules", ".playwright-cli", ".codebase-memory", "coverage"].includes(first)) return true;
+  if (first === "storage" && parts[1] === "backups") return true;
+  if (isDirectory && first === ".vite") return true;
+  return relativePath.endsWith(".tmp") || relativePath.endsWith(".log");
+}
+
+function collectDirectoryBackupEntries(rootDir: string, zipPrefix: string, skipEntry: (relativePath: string, isDirectory: boolean) => boolean) {
+  const entries: Array<{ name: string; data: Buffer; date?: Date }> = [];
+  if (!fs.existsSync(rootDir)) return entries;
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      const relativePath = path.relative(rootDir, fullPath);
+      if (!relativePath || skipEntry(relativePath, entry.isDirectory())) continue;
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const stat = fs.statSync(fullPath);
+      entries.push({
+        name: `${zipPrefix}/${relativePath.split(path.sep).map(zipSafeName).join("/")}`,
+        data: fs.readFileSync(fullPath),
+        date: stat.mtime
+      });
+    }
+  };
+  walk(rootDir);
+  return entries;
+}
+
+function collectBackupProgramEntries(rootDir = ROOT) {
+  return collectDirectoryBackupEntries(rootDir, "program", shouldSkipBackupEntry);
+}
+
+function isPathInside(childPath: string, parentPath: string) {
+  const relative = path.relative(parentPath, childPath);
+  return !relative || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function collectExternalStorageEntries() {
+  if (STORAGE_ROOT === path.join(ROOT, "storage") || isPathInside(STORAGE_ROOT, ROOT)) return [];
+  return collectDirectoryBackupEntries(STORAGE_ROOT, "storage", (relativePath, isDirectory) => {
+    const parts = relativePath.split(path.sep).filter(Boolean);
+    if (parts[0] === "backups") return true;
+    return isDirectory ? false : relativePath.endsWith(".tmp") || relativePath.endsWith(".log");
+  });
+}
+
+function sqliteDatabasePath() {
+  const databaseUrl = process.env.DATABASE_URL || "";
+  if (!databaseUrl.startsWith("file:")) return "";
+  const rawPath = databaseUrl.slice("file:".length).split("?")[0];
+  if (!rawPath || rawPath === ":memory:") return "";
+  return path.resolve(ROOT, rawPath);
+}
+
+function collectExternalDatabaseEntry(existingEntries: Array<{ name: string }>) {
+  const dbPath = sqliteDatabasePath();
+  if (!dbPath || !fs.existsSync(dbPath) || isPathInside(dbPath, ROOT) || isPathInside(dbPath, STORAGE_ROOT)) return [];
+  const stat = fs.statSync(dbPath);
+  const name = `database/${zipSafeName(path.basename(dbPath))}`;
+  if (existingEntries.some((entry) => entry.name === name)) return [];
+  return [{ name, data: fs.readFileSync(dbPath), date: stat.mtime }];
+}
+
+async function createFullBackup(auth: AuthContext) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  const createdAt = new Date();
+  const stamp = createdAt.toISOString().replace(/[:.]/g, "-");
+  const fileName = `liao-full-backup-${stamp}.zip`;
+  const filePath = path.join(BACKUP_DIR, fileName);
+  const [chatData, userData, appearance, attachments] = await Promise.all([chatExportPayload(), usersExportPayload(), appearanceDto(), adminAttachmentList()]);
+  const entries = [...collectBackupProgramEntries(), ...collectExternalStorageEntries()];
+  entries.push(...collectExternalDatabaseEntry(entries));
+  const manifest = {
+    kind: "liao-full-backup",
+    version: 1,
+    appVersion: APP_VERSION,
+    createdAt: createdAt.toISOString(),
+    createdBy: auth.username,
+    root: ROOT,
+    storageRoot: STORAGE_ROOT,
+    included: {
+      programFiles: entries.length,
+      attachments: attachments.length,
+      chatMessages: Array.isArray((chatData as { messages?: unknown[] }).messages) ? (chatData as { messages: unknown[] }).messages.length : 0,
+      accounts: Array.isArray((userData as { accounts?: unknown[] }).accounts) ? (userData as { accounts: unknown[] }).accounts.length : 0
+    },
+    notes: [
+      "program/ contains the application files and storage data except generated backups, dependency folders, git metadata, and transient logs.",
+      "data/chat.json and data/users.json are portable exports from the admin data tools."
+    ]
+  };
+  entries.unshift(
+    { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), date: createdAt },
+    { name: "data/chat.json", data: Buffer.from(JSON.stringify(chatData, null, 2), "utf8"), date: createdAt },
+    { name: "data/users.json", data: Buffer.from(JSON.stringify(userData, null, 2), "utf8"), date: createdAt },
+    { name: "data/appearance.json", data: Buffer.from(JSON.stringify(appearance, null, 2), "utf8"), date: createdAt }
+  );
+  fs.writeFileSync(filePath, zipArchive(entries));
+  return { fileName, filePath };
+}
+
 function storageFilePath(kind: AdminAttachmentDTO["kind"], fileName: string) {
   const dir = kind === "upload" ? UPLOAD_DIR : kind === "avatar" ? AVATAR_DIR : BG_DIR;
   return path.join(dir, path.basename(fileName));
@@ -4676,6 +4818,35 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
 
 app.get("/api/admin/export/users", { preHandler: requireAdmin }, async (_request, reply) => {
   return jsonDownload(reply, `liao-users-${new Date().toISOString().slice(0, 10)}.json`, await usersExportPayload());
+});
+
+app.get("/api/admin/backups", { preHandler: requireAdmin }, async () => {
+  return { backups: listAdminBackups() };
+});
+
+app.post("/api/admin/backups", { preHandler: requireAdmin }, async (request) => {
+  const { fileName } = await createFullBackup((request as AuthedRequest).auth);
+  return { success: true, backup: listAdminBackups().find((backup) => backup.fileName === fileName) };
+});
+
+app.get("/api/admin/backups/:file", { preHandler: requireAdmin }, async (request, reply) => {
+  const fileName = path.basename((request.params as { file: string }).file);
+  const filePath = backupFilePath(fileName);
+  if (!filePath || !fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "备份不存在" });
+  const stat = fs.statSync(filePath);
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Content-Type", "application/zip");
+  reply.header("Content-Length", String(stat.size));
+  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  return reply.send(fs.createReadStream(filePath));
+});
+
+app.delete("/api/admin/backups/:file", { preHandler: requireAdmin }, async (request, reply) => {
+  const fileName = path.basename((request.params as { file: string }).file);
+  const filePath = backupFilePath(fileName);
+  if (!filePath || !fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "备份不存在" });
+  fs.unlinkSync(filePath);
+  return { success: true, deleted: fileName, backups: listAdminBackups() };
 });
 
 app.get("/api/admin/messages", { preHandler: requireAdmin }, async (request) => {

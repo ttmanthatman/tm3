@@ -105,6 +105,13 @@ export interface AdminAttachmentDTO {
   usage: string[];
 }
 
+export interface AdminBackupDTO {
+  fileName: string;
+  size: number;
+  createdAt: string;
+  url: string;
+}
+
 export interface PinnedDTO {
   id: number;
   kind: "notice" | "message";

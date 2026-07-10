@@ -4504,6 +4504,21 @@ button {
   gap: 8px;
 }
 
+.backup-card .primary-btn {
+  min-width: 180px;
+}
+
+.backup-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .attachment-preview {
   grid-column: 1 / -1;
   width: 100%;
@@ -5942,6 +5957,7 @@ button {
   .channel-icon-admin,
   .channel-admin-row .mini-btn,
   .admin-data-row .mini-btn,
+  .backup-actions,
   .admin-inline-card .primary-btn,
   .data-toolbar input,
   .data-toolbar select {
@@ -5957,8 +5973,14 @@ button {
 
   .data-toolbar .mini-btn,
   .admin-data-row .mini-btn,
+  .backup-actions,
   .admin-inline-card .primary-btn {
     width: 100%;
+  }
+
+  .backup-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .admin-body {

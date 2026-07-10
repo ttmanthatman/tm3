@@ -57,6 +57,7 @@ import {
 import type {
   AccountDTO,
   AdminAttachmentDTO,
+  AdminBackupDTO,
   AdminLoginLogDTO,
   AdminLoginLogKind,
   AppearanceDTO,
@@ -232,6 +233,8 @@ const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
 const adminAttachments = ref<AdminAttachmentDTO[]>([]);
+const adminBackups = ref<AdminBackupDTO[]>([]);
+const adminBackupBusy = ref(false);
 const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
 const adminLoginLogsBusy = ref(false);
 const adminLoginLogsMsg = ref("");
@@ -5969,7 +5972,7 @@ function toggleMcCharacter(id: number) {
 }
 
 async function loadAdminData() {
-  await loadAdminAttachments();
+  await Promise.all([loadAdminAttachments(), loadAdminBackups()]);
 }
 
 async function loadAdminAttachments() {
@@ -5977,6 +5980,11 @@ async function loadAdminAttachments() {
   adminAttachments.value = result.attachments;
   const available = new Set(result.attachments.map((item) => item.id));
   selectedAttachmentIds.value = selectedAttachmentIds.value.filter((id) => available.has(id));
+}
+
+async function loadAdminBackups() {
+  const result = await api<{ backups: AdminBackupDTO[] }>("/api/admin/backups");
+  adminBackups.value = result.backups;
 }
 
 function adminDate(value?: string | null) {
@@ -6099,6 +6107,33 @@ async function deleteAllAdminAttachments() {
   selectedAttachmentIds.value = [];
   await loadAdminData();
   await store.loadChannels(store.currentChannelId);
+}
+
+async function createAdminBackup() {
+  if (adminBackupBusy.value) return;
+  adminBackupBusy.value = true;
+  adminMsg.value = "正在创建完整备份...";
+  try {
+    const result = await api<{ backup?: AdminBackupDTO }>("/api/admin/backups", { method: "POST" });
+    await loadAdminBackups();
+    if (result.backup) {
+      await downloadAdminFile(result.backup.url, result.backup.fileName);
+      adminMsg.value = `备份已创建并开始下载：${result.backup.fileName}`;
+    } else {
+      adminMsg.value = "备份已创建";
+    }
+  } catch (e: any) {
+    adminMsg.value = e?.message || "备份失败";
+  } finally {
+    adminBackupBusy.value = false;
+  }
+}
+
+async function deleteAdminBackup(backup: AdminBackupDTO) {
+  if (!confirm(`删除备份“${backup.fileName}”？`)) return;
+  const result = await api<{ backups: AdminBackupDTO[] }>(backup.url, { method: "DELETE" });
+  adminBackups.value = result.backups;
+  adminMsg.value = "备份已删除";
 }
 
 async function compressAdminAttachments(ids: string[]) {
@@ -8314,6 +8349,32 @@ async function toggleVirtual(character: any) {
           </section>
 
           <section v-if="adminTab === 'data'" class="form-grid">
+            <label>完整备份</label>
+            <div class="admin-inline-card backup-card">
+              <div>
+                <strong>备份全部数据和程序</strong>
+                <small>生成 ZIP 后会自动下载。备份包含聊天/用户导出、storage 数据、源码、配置和静态资源，不包含依赖目录、Git 元数据和已有备份。</small>
+              </div>
+              <button class="primary-btn" :disabled="adminBackupBusy" @click="createAdminBackup">
+                <Download :size="16" />{{ adminBackupBusy ? "备份中" : "一键备份并下载" }}
+              </button>
+            </div>
+            <div class="data-toolbar data-toolbar-compact">
+              <button class="mini-btn secondary" :disabled="adminBackupBusy" @click="loadAdminBackups"><RotateCcw :size="15" />刷新备份</button>
+            </div>
+            <div class="admin-data-list backup-list">
+              <article v-for="backup in adminBackups" :key="backup.fileName" class="admin-data-row backup-row">
+                <div class="admin-data-main">
+                  <strong>{{ backup.fileName }}</strong>
+                  <small>{{ compactBytes(backup.size) }} · {{ adminDateTime(backup.createdAt) }}</small>
+                </div>
+                <div class="backup-actions">
+                  <button class="mini-btn secondary" @click="downloadAdminFile(backup.url, backup.fileName)"><Download :size="15" />下载</button>
+                  <button class="mini-btn danger-action" @click="deleteAdminBackup(backup)"><Trash2 :size="15" />删除</button>
+                </div>
+              </article>
+              <p v-if="!adminBackups.length" class="empty-note">还没有完整备份</p>
+            </div>
             <label>聊天数据</label>
             <div class="action-grid">
               <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.json')"><Download :size="16" />导出聊天</button>
