@@ -6222,7 +6222,7 @@ button {
 
 }
 
-@media (max-width: 760px) and (hover: none), (max-width: 760px) and (pointer: coarse) {
+@media (max-width: 760px) {
   .app-shell {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
