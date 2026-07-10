@@ -44,6 +44,7 @@ import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../
 import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
+import { envFlagEnabled } from "./featureFlags.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -60,6 +61,7 @@ if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SE
   throw new Error("JWT_SECRET must be set to at least 32 characters in production");
 }
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
+const PUSH_NOTIFICATIONS_ENABLED = envFlagEnabled(process.env.PUSH_NOTIFICATIONS_ENABLED);
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
 const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
 const UPDATE_REPO_URL = process.env.UPDATE_REPO_URL || process.env.REPO_URL || "https://github.com/ttmanthatman/tm3.git";
@@ -1841,6 +1843,12 @@ function messagePushBody(message: Message & { sender: Actor }) {
 }
 
 async function ensureWebPush() {
+  if (!PUSH_NOTIFICATIONS_ENABLED) {
+    app.log.warn("web push disabled by PUSH_NOTIFICATIONS_ENABLED");
+    vapidPublicKey = "";
+    pushReady = false;
+    return;
+  }
   const envPublicKey = process.env.VAPID_PUBLIC_KEY || process.env.WEB_PUSH_PUBLIC_KEY || "";
   const envPrivateKey = process.env.VAPID_PRIVATE_KEY || process.env.WEB_PUSH_PRIVATE_KEY || "";
   let publicKey = envPublicKey;
@@ -2478,8 +2486,9 @@ app.get("/api/notifications/settings", { preHandler: requireAuth }, async (reque
     where: { accountId: auth.accountId, muted: true },
     select: { channelId: true }
   });
-  const subscriptions = await prisma.pushSubscription.count({ where: { accountId: auth.accountId } });
+  const subscriptions = PUSH_NOTIFICATIONS_ENABLED ? await prisma.pushSubscription.count({ where: { accountId: auth.accountId } }) : 0;
   return {
+    enabled: PUSH_NOTIFICATIONS_ENABLED,
     publicKey: vapidPublicKey,
     pushReady,
     subscriptions,
@@ -2487,7 +2496,8 @@ app.get("/api/notifications/settings", { preHandler: requireAuth }, async (reque
   };
 });
 
-app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request) => {
+app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request, reply) => {
+  if (!PUSH_NOTIFICATIONS_ENABLED) return reply.code(503).send({ success: false, message: "当前环境已关闭消息推送" });
   const auth = (request as AuthedRequest).auth;
   const body = pushSubscriptionSchema.parse(request.body);
   await prisma.pushSubscription.upsert({

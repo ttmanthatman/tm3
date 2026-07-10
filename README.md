@@ -283,6 +283,7 @@ npm start
 - `CORS_ORIGINS`：允许调用应用的公开来源，多个来源用逗号分隔。
 - `TRUST_PROXY`：默认仅信任本机反向代理；只有整个代理网络均可信时才设为 `true`。
 - `VAPID_SUBJECT`、`VAPID_PUBLIC_KEY`、`VAPID_PRIVATE_KEY`：浏览器推送通知配置。
+- `PUSH_NOTIFICATIONS_ENABLED=false`：彻底关闭 Web Push；Demo/测试环境复制生产用户时必须关闭，防止误通知真实设备。
 - `ENGINE_API_TOKEN`：虚拟角色引擎接口令牌。
 - `AI_SETTINGS_SECRET`：AI 设置中 API Key 的服务端加密密钥，建议单独设置并长期保存。
 - `APP_RELEASE_DEVELOPER`：应用内版本页显示的开发者名。
