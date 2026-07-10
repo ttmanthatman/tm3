@@ -43,6 +43,7 @@ import type {
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
+import { fileResponsePolicy } from "./filePolicy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -54,6 +55,10 @@ const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
 const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
 const PORT = Number(process.env.PORT || 3003);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SECRET.length < 32)) {
+  throw new Error("JWT_SECRET must be set to at least 32 characters in production");
+}
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
 const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
@@ -75,7 +80,7 @@ const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const JWT_EXPIRES_IN = `${SESSION_TTL_DAYS}d`;
 const THEMES = new Set(["wechat", "jade", "paper", "night"]);
-const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "flame", "drip", "rain"]);
+const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
 const BIBLE_OUTPUT_FORMATS = new Set(["referenceVerseLines", "continuousText", "referenceHeader", "numberedVerses"]);
@@ -326,7 +331,7 @@ const app = Fastify({
     }
   },
   bodyLimit: 8 * 1024 * 1024,
-  trustProxy: true
+  trustProxy: process.env.TRUST_PROXY === "true" ? true : ["127.0.0.1", "::1"]
 });
 
 app.setErrorHandler((error, request, reply) => {
@@ -343,6 +348,11 @@ app.addHook("onRequest", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Referrer-Policy", "same-origin");
   reply.header("X-Frame-Options", "SAMEORIGIN");
+  reply.header("Permissions-Policy", "camera=(), geolocation=(), payment=(), usb=()");
+  reply.header(
+    "Content-Security-Policy",
+    "default-src 'self'; base-uri 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'self'; frame-src 'self' blob:; form-action 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+  );
 });
 
 await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
@@ -446,7 +456,8 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
   ]);
   if (!account || !account.actor) throw new Error("account not found");
   if (!session || session.accountId !== account.id || session.revokedAt || session.expiresAt <= new Date()) throw new Error("session expired");
-  await prisma.accountSession.update({ where: { id: session.id }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
+  const touchBefore = new Date(Date.now() - 5 * 60 * 1000);
+  await prisma.accountSession.updateMany({ where: { id: session.id, lastSeenAt: { lt: touchBefore } }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
   return {
     accountId: account.id,
     actorId: account.actor.id,
@@ -457,15 +468,23 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
   };
 }
 
-async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
+async function authenticateRequest(request: FastifyRequest, reply: FastifyReply, allowQueryToken = false) {
   const header = request.headers.authorization;
-  const queryToken = (request.query as { token?: string } | undefined)?.token;
+  const queryToken = allowQueryToken ? (request.query as { token?: string } | undefined)?.token : undefined;
   const token = header?.startsWith("Bearer ") ? header.slice(7) : queryToken;
   try {
     (request as AuthedRequest).auth = await verifyJwtToken(token);
   } catch {
     reply.code(401).send({ success: false, message: "认证失败" });
   }
+}
+
+async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
+  await authenticateRequest(request, reply, false);
+}
+
+async function requireMediaAuth(request: FastifyRequest, reply: FastifyReply) {
+  await authenticateRequest(request, reply, true);
 }
 
 async function requireAdmin(request: FastifyRequest, reply: FastifyReply) {
@@ -687,39 +706,14 @@ function aiConfigurationMessage(auth: Pick<AuthContext, "isAdmin">) {
   return auth.isAdmin ? "AI 经文建议尚未配置，请前往 /ai-settings 填写 API Key。" : "暂时还不能生成经文建议，请稍后再试。";
 }
 
-function contentTypeForFile(name: string) {
-  const ext = path.extname(name).toLowerCase();
-  const contentTypes: Record<string, string> = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".heic": "image/heic",
-    ".heif": "image/heif",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-    ".mp3": "audio/mpeg",
-    ".mp4": "video/mp4",
-    ".m4a": "audio/mp4",
-    ".wav": "audio/wav",
-    ".webm": "audio/webm",
-    ".ogg": "audio/ogg",
-    ".aac": "audio/aac",
-    ".mov": "video/quicktime",
-    ".m4v": "video/mp4",
-    ".pdf": "application/pdf",
-    ".doc": "application/msword",
-    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".xls": "application/vnd.ms-excel",
-    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    ".ppt": "application/vnd.ms-powerpoint",
-    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    ".txt": "text/plain; charset=utf-8",
-    ".csv": "text/csv; charset=utf-8",
-    ".zip": "application/zip"
-  };
-  return contentTypes[ext] || "application/octet-stream";
+function applyFileResponseHeaders(reply: FastifyReply, name: string, forceDownload: boolean) {
+  const policy = fileResponsePolicy(name, forceDownload);
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("Cross-Origin-Resource-Policy", "same-origin");
+  reply.header("Content-Type", policy.contentType);
+  reply.header("Content-Disposition", `${policy.disposition}; filename*=UTF-8''${encodeURIComponent(path.basename(name))}`);
+  if (policy.sandbox) reply.header("Content-Security-Policy", "sandbox; default-src 'none'");
+  return policy;
 }
 
 function isImageFileName(name?: string | null) {
@@ -750,7 +744,7 @@ async function compressImageFile(inputPath: string, outputDir: string, options: 
   const outputName = compressedImageFileName(options.shortName);
   const outputPath = path.join(outputDir, outputName);
   try {
-    await sharp(inputPath, { animated: true, failOn: "none", limitInputPixels: false })
+    await sharp(inputPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 })
       .rotate()
       .webp({ quality: IMAGE_WEBP_QUALITY, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
       .toFile(outputPath);
@@ -770,6 +764,15 @@ async function compressImageFile(inputPath: string, outputDir: string, options: 
     if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
     app.log.warn({ error, inputPath }, "image compression failed");
     return null;
+  }
+}
+
+async function validateStoredImage(filePath: string) {
+  try {
+    const metadata = await sharp(filePath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
+    return !!metadata.format && !!metadata.width && !!metadata.height && metadata.width <= 20_000 && metadata.height <= 20_000;
+  } catch {
+    return false;
   }
 }
 
@@ -2110,6 +2113,9 @@ async function ensureBootstrap() {
   }
   const accountCount = await prisma.account.count();
   if (accountCount === 0) {
+    if (IS_PRODUCTION && (!process.env.DEFAULT_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD.length < 12)) {
+      throw new Error("DEFAULT_ADMIN_PASSWORD must be set to at least 12 characters for first production startup");
+    }
     const password = process.env.DEFAULT_ADMIN_PASSWORD || "ChangeMe123!";
     const passwordHash = await bcrypt.hash(password, 12);
     await prisma.account.create({
@@ -2276,6 +2282,7 @@ app.get("/avatars/:file", async (request, reply) => {
   const filePath = path.join(AVATAR_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
   reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  applyFileResponseHeaders(reply, file, false);
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -2284,11 +2291,12 @@ app.get("/backgrounds/:file", async (request, reply) => {
   const filePath = path.join(BG_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
   reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  applyFileResponseHeaders(reply, file, false);
   return reply.send(fs.createReadStream(filePath));
 });
 
-app.post("/api/auth/login", async (request, reply) => {
-  const body = z.object({ username: z.string().min(1), password: z.string().min(1), deviceName: z.string().max(120).optional() }).safeParse(request.body);
+app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
+  const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
   const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
   if (!account || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
@@ -2299,18 +2307,18 @@ app.post("/api/auth/login", async (request, reply) => {
   return { success: true, token: signToken(updated, session), account: authDto(updated) };
 });
 
-app.post("/api/auth/register", async (request, reply) => {
+app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request, reply) => {
   const enabled = await settingBool("registrationEnabled", false);
   if (!enabled) return reply.code(403).send({ success: false, message: "暂未开放注册" });
   const body = z
     .object({
       username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
       displayName: z.string().min(1).max(80),
-      password: z.string().min(6),
+      password: z.string().min(10).max(128),
       deviceName: z.string().max(120).optional()
     })
     .safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "用户名需 2-40 位，密码至少 6 位" });
+  if (!body.success) return reply.code(400).send({ success: false, message: "用户名需 2-40 位，密码需 10-128 位" });
   const existing = await prisma.account.findUnique({ where: { username: body.data.username }, select: { id: true } });
   if (existing) return reply.code(409).send({ success: false, message: "用户名已存在" });
   const account = await prisma.account.create({
@@ -2345,11 +2353,19 @@ app.get("/api/auth/me", { preHandler: requireAuth }, async (request) => {
 
 app.post("/api/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  const body = z.object({ oldPassword: z.string(), newPassword: z.string().min(6) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "新密码不能小于 6 位" });
+  const body = z.object({ oldPassword: z.string().max(128), newPassword: z.string().min(10).max(128) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "新密码需 10-128 位" });
   const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId } });
   if (!(await bcrypt.compare(body.data.oldPassword, account.passwordHash))) return reply.code(400).send({ success: false, message: "原密码错误" });
   await prisma.account.update({ where: { id: auth.accountId }, data: { passwordHash: await bcrypt.hash(body.data.newPassword, 12) } });
+  const sessionsToRevoke = await prisma.accountSession.findMany({
+    where: { accountId: auth.accountId, id: { not: auth.sessionId }, revokedAt: null },
+    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
+  });
+  const revokedAt = new Date();
+  await prisma.accountSession.updateMany({ where: { id: { in: sessionsToRevoke.map((session) => session.id) } }, data: { revokedAt } });
+  await Promise.all(sessionsToRevoke.map((session) => writeLoginLog("session_revoked", auth.accountId, session, revokedAt)));
+  disconnectSessions(sessionsToRevoke.map((session) => session.id));
   return { success: true };
 });
 
@@ -3075,6 +3091,10 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   let displayFileName = file.filename;
   let stat = fs.statSync(outPath);
   const isImageUpload = file.mimetype.startsWith("image/") && isImageFileName(file.filename);
+  if (isImageUpload && !(await validateStoredImage(outPath))) {
+    safeUnlink("upload", safeName);
+    return reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
+  }
   if (isImageUpload && !wantsOriginalImage(fields)) {
     const compressed = await compressImageFile(outPath, UPLOAD_DIR);
     if (compressed) {
@@ -3257,7 +3277,7 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
   return { success: true };
 });
 
-app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, reply) => {
+app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
   const query = request.query as { download?: string };
@@ -3268,11 +3288,9 @@ app.get("/api/files/:messageId", { preHandler: requireAuth }, async (request, re
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
-  const contentType = contentTypeForFile(message.filePath || message.fileName || "");
-  reply.header("X-Content-Type-Options", "nosniff");
+  const fileName = message.fileName || message.filePath;
   reply.header("Accept-Ranges", "bytes");
-  reply.header("Content-Type", contentType);
-  reply.header("Content-Disposition", `${query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(message.fileName || message.filePath)}`);
+  applyFileResponseHeaders(reply, fileName, query.download === "1");
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (match) {
@@ -3613,6 +3631,10 @@ app.post("/api/admin/ai-roles/:username/avatar", { preHandler: requireAdmin }, a
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  if (!(await validateStoredImage(outPath))) {
+    safeUnlink("avatar", safeName);
+    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
+  }
   let avatarPath = safeName;
   const compressed = await compressImageFile(outPath, AVATAR_DIR);
   if (compressed) {
@@ -3747,6 +3769,11 @@ async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, mis
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  if (!(await validateStoredImage(outPath))) {
+    safeUnlink("background", safeName);
+    reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
+    return "";
+  }
   const compressed = await compressImageFile(outPath, BG_DIR, { shortName });
   if (compressed) {
     fs.unlinkSync(outPath);
@@ -4181,7 +4208,8 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       size: file.size,
       createdAt: file.createdAt.toISOString(),
       url: adminAttachmentFileUrl("upload", file.name),
-      usage: []
+      usage: [],
+      exists: true
     });
   }
   for (const message of messages) {
@@ -4196,11 +4224,12 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       label: message.fileName || fileName,
       size: current?.size || message.fileSize || 0,
       createdAt: message.createdAt.toISOString(),
-      url: adminAttachmentFileUrl("upload", fileName),
+      url: current?.exists ? current.url : undefined,
       messageId: message.id,
       channelName: message.channel.name,
       ownerName: message.sender.displayName,
-      usage: [`消息 #${message.id}`, message.channel.name, message.sender.displayName]
+      usage: [...new Set([...(current?.usage || []), `消息 #${message.id}`, message.channel.name, message.sender.displayName])],
+      exists: current?.exists || false
     });
   }
   for (const pin of pinnedItems) {
@@ -4218,11 +4247,12 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
         label: current?.label || block.fileName || fileName,
         size: current?.size || block.fileSize || 0,
         createdAt: current?.createdAt || pin.createdAt.toISOString(),
-        url: current?.url || adminAttachmentFileUrl("upload", fileName),
+        url: current?.exists ? current.url : undefined,
         messageId: current?.messageId,
         channelName: current?.channelName || pin.channel.name,
         ownerName: current?.ownerName,
-        usage
+        usage,
+        exists: current?.exists || false
       });
     }
   }
@@ -4237,7 +4267,8 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       size: file.size,
       createdAt: file.createdAt.toISOString(),
       url: adminAttachmentFileUrl("avatar", file.name),
-      usage
+      usage,
+      exists: true
     });
   }
 
@@ -4262,7 +4293,8 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
       size: file.size,
       createdAt: file.createdAt.toISOString(),
       url: adminAttachmentFileUrl("background", file.name),
-      usage
+      usage,
+      exists: true
     });
   }
 
@@ -4527,7 +4559,7 @@ app.post("/api/channels/:id/pinned/dismiss", { preHandler: requireAuth }, async 
   return { success: true };
 });
 
-app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireAuth }, async (request, reply) => {
+app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
   const file = path.basename((request.params as { file: string }).file);
@@ -4537,7 +4569,7 @@ app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireAuth }, asy
   const filePath = path.join(UPLOAD_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
   reply.header("Cache-Control", "private, max-age=86400");
-  reply.header("Content-Type", contentTypeForFile(file));
+  applyFileResponseHeaders(reply, file, false);
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -4550,7 +4582,7 @@ app.post("/api/admin/accounts", { preHandler: requireAdmin }, async (request, re
   const body = z
     .object({
       username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
-      password: z.string().min(6),
+      password: z.string().min(10).max(128),
       displayName: z.string().min(1).max(80),
       isAdmin: z.boolean().optional(),
       canPinMessages: z.boolean().optional()
@@ -4584,7 +4616,7 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
       displayName: z.string().min(1).max(80).optional(),
       isAdmin: z.boolean().optional(),
       canPinMessages: z.boolean().optional(),
-      password: z.string().min(6).optional(),
+      password: z.string().min(10).max(128).optional(),
       avatarPath: z.string().max(255).nullable().optional()
     })
     .parse(request.body);
@@ -4650,6 +4682,10 @@ app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  if (!(await validateStoredImage(outPath))) {
+    safeUnlink("avatar", safeName);
+    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
+  }
   let avatarPath = safeName;
   const compressed = await compressImageFile(outPath, AVATAR_DIR);
   if (compressed) {
@@ -4937,10 +4973,8 @@ app.get("/api/admin/attachments/file/:kind/:file", { preHandler: requireAdmin },
   if (!fileName || !fs.existsSync(filePath)) return reply.code(404).send("Not found");
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
-  reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Accept-Ranges", "bytes");
-  reply.header("Content-Type", contentTypeForFile(fileName));
-  reply.header("Content-Disposition", `${query.download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(fileName)}`);
+  applyFileResponseHeaders(reply, fileName, query.download === "1");
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (match) {
@@ -5156,6 +5190,10 @@ app.post("/api/virtual-characters/:id/avatar", { preHandler: requireAdmin }, asy
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  if (!(await validateStoredImage(outPath))) {
+    safeUnlink("avatar", safeName);
+    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
+  }
   let avatarPath = safeName;
   const compressed = await compressImageFile(outPath, AVATAR_DIR);
   if (compressed) {

@@ -72,6 +72,7 @@ export const useChatStore = defineStore("chat", {
     typing: {} as TypingState,
     lastIncomingMessage: null as MessageDTO | null,
     socket: null as Socket | null,
+    connectionState: "offline" as "offline" | "connecting" | "connected",
     loading: false
   }),
   getters: {
@@ -202,6 +203,7 @@ export const useChatStore = defineStore("chat", {
       if (revoke && getToken()) await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }).catch(() => undefined);
       this.socket?.disconnect();
       this.socket = null;
+      this.connectionState = "offline";
       this.account = null;
       this.resetMessageWindow();
       this.messageCache = {};
@@ -397,16 +399,20 @@ export const useChatStore = defineStore("chat", {
     connectSocket() {
       if (!getToken() || this.socket?.connected) return;
       this.socket?.disconnect();
+      this.connectionState = "connecting";
       const socket = io("/", { auth: { token: getToken() }, transports: ["websocket", "polling"] });
       this.socket = socket;
       socket.on("connect", () => {
+        this.connectionState = "connected";
         if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
       });
       socket.on("connect_error", (error: Error) => {
+        this.connectionState = "offline";
         if (error.message === "认证失败") void this.logout(false);
       });
       socket.on("disconnect", (reason) => {
         if (this.socket !== socket) return;
+        this.connectionState = "offline";
         if (reason !== "io server disconnect") return;
         this.socket = null;
         if (!getToken()) return;

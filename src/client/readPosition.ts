@@ -1,0 +1,40 @@
+export const NEWEST_READ_POSITION = "__newest__" as const;
+
+export type SavedReadPosition = {
+  messageId: number | typeof NEWEST_READ_POSITION;
+  offset: number;
+  atBottom: boolean;
+  scrollTop: number;
+  savedAt: number;
+};
+
+function finiteNumber(value: unknown, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+export function normalizeSavedReadPosition(value: unknown): SavedReadPosition | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Partial<SavedReadPosition>;
+  const messageId = raw.messageId === NEWEST_READ_POSITION ? NEWEST_READ_POSITION : finiteNumber(raw.messageId);
+  if (messageId !== NEWEST_READ_POSITION && (!Number.isInteger(messageId) || messageId <= 0)) return null;
+  return {
+    messageId,
+    offset: finiteNumber(raw.offset),
+    atBottom: !!raw.atBottom,
+    scrollTop: Math.max(0, finiteNumber(raw.scrollTop)),
+    savedAt: Math.max(0, finiteNumber(raw.savedAt))
+  };
+}
+
+export function shouldFollowMessageListChange(input: {
+  restoring: boolean;
+  loadingOlder: boolean;
+  previousLength: number;
+  length: number;
+  nearBottom: boolean;
+  latestIsMine: boolean;
+}) {
+  if (input.restoring || input.loadingOlder || input.length <= input.previousLength) return false;
+  return input.previousLength === 0 || input.nearBottom || input.latestIsMine;
+}
