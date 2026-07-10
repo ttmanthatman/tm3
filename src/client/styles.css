@@ -6436,6 +6436,26 @@ button.admin-object-row:focus-visible {
     align-items: stretch;
   }
 
+  .appearance-preview-panel header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .appearance-preview-panel header > div {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .appearance-preview-panel header > .appearance-preview-close {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .appearance-preview-panel header > span {
+    grid-column: 1 / -1;
+    width: max-content;
+  }
+
   .appearance-save-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
