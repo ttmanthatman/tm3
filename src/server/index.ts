@@ -2681,9 +2681,60 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
 });
 
 app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const channels = await prisma.channel.findMany({ where: { kind: { in: PUBLIC_CHANNEL_KINDS } }, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
-  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
+  const query = z
+    .object({
+      directPage: z.coerce.number().int().min(1).default(1),
+      directPageSize: z.coerce.number().int().min(10).max(100).default(30),
+      q: z.string().trim().max(80).default("")
+    })
+    .parse(request.query);
+  const directWhere = {
+    kind: "direct" as const,
+    ...(query.q ? { name: { contains: query.q } } : {})
+  };
+  const includeAdminCounts = {
+    _count: { select: { members: true, messages: true } },
+    messages: { orderBy: { createdAt: "desc" as const }, take: 1, select: { createdAt: true } }
+  };
+  const [channels, directConversations, directTotal] = await Promise.all([
+    prisma.channel.findMany({
+      where: { kind: { in: PUBLIC_CHANNEL_KINDS }, directKey: null },
+      orderBy: [{ isDefault: "desc" }, { id: "asc" }],
+      include: includeAdminCounts
+    }),
+    prisma.channel.findMany({
+      where: directWhere,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      skip: (query.directPage - 1) * query.directPageSize,
+      take: query.directPageSize,
+      include: includeAdminCounts
+    }),
+    prisma.channel.count({ where: directWhere })
+  ]);
+  const serialize = (channel: (typeof channels)[number]) => ({
+    id: channel.id,
+    name: channel.name,
+    description: channel.description,
+    icon: cleanChannelIcon(channel.icon),
+    kind: channel.kind,
+    isPrivate: channel.isPrivate,
+    isDefault: channel.isDefault,
+    directKey: channel.directKey,
+    canManage: true,
+    canPin: true,
+    memberCount: channel._count.members,
+    messageCount: channel._count.messages,
+    createdAt: channel.createdAt.toISOString(),
+    lastMessageAt: channel.messages[0]?.createdAt.toISOString() || null,
+    pinned: null
+  });
+  return {
+    channels: channels.map(serialize),
+    directConversations: directConversations.map(serialize),
+    directTotal,
+    directPage: query.directPage,
+    directPageSize: query.directPageSize
+  };
 });
 
 app.post("/api/channels", { preHandler: requireAuth }, async (request) => {
@@ -2757,15 +2808,7 @@ app.post("/api/channels/:id/icon", { preHandler: requireAuth }, async (request, 
   return { success: true, channel: dto };
 });
 
-app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const channelId = Number((request.params as { id: string }).id);
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isDefault: true, directKey: true } });
-  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
-  if (channel.isDefault) return reply.code(400).send({ success: false, message: "默认频道不能删除" });
-  if (channel.directKey) return reply.code(400).send({ success: false, message: "私聊请使用关闭私聊" });
-  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权删除此频道" });
-
+async function deleteChannelWithAttachments(channelId: number) {
   const messages = await prisma.message.findMany({ where: { channelId }, select: { id: true, filePath: true } });
   const messageIds = messages.map((message) => message.id);
   if (messageIds.length) {
@@ -2779,6 +2822,29 @@ app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, rep
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
   io.emit("channel:updated", { action: "deleted", channelId });
+}
+
+app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isDefault: true, directKey: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (channel.isDefault) return reply.code(400).send({ success: false, message: "默认频道不能删除" });
+  if (channel.directKey) return reply.code(400).send({ success: false, message: "私聊请使用关闭私聊" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权删除此频道" });
+
+  await deleteChannelWithAttachments(channelId);
+  return { success: true };
+});
+
+app.delete("/api/admin/direct-conversations/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  const channelId = Number((request.params as { id: string }).id);
+  if (!Number.isInteger(channelId) || channelId <= 0) return reply.code(400).send({ success: false, message: "无效的私聊记录" });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, kind: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "私聊记录不存在" });
+  if (!channel.directKey || channel.kind !== "direct") return reply.code(400).send({ success: false, message: "该记录不是私聊历史" });
+
+  await deleteChannelWithAttachments(channelId);
   return { success: true };
 });
 

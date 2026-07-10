@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  Archive,
   AtSign,
   ArrowDown,
   ArrowUp,
@@ -10,6 +11,7 @@ import {
   Bot,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ChevronUp,
   CloudRain,
   Droplet,
@@ -55,6 +57,7 @@ import {
 } from "lucide-vue-next";
 import type {
   AccountDTO,
+  AdminChannelDTO,
   AdminAttachmentDTO,
   AdminBackupDTO,
   AdminLoginLogDTO,
@@ -155,7 +158,27 @@ let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; to
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
 const gooeyDripLayer = ref<SVGSVGElement | null>(null);
-const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "release">("pin");
+type AdminPage =
+  | "home"
+  | "pin"
+  | "users"
+  | "channels"
+  | "channelDetail"
+  | "appearance"
+  | "appearanceBrand"
+  | "appearanceLogin"
+  | "appearanceChat"
+  | "appearanceThemes"
+  | "appearanceFlash"
+  | "data"
+  | "backups"
+  | "messages"
+  | "resources"
+  | "loginLogs"
+  | "release";
+const adminPage = ref<AdminPage>("home");
+const adminPageLoading = ref(false);
+const adminPageError = ref("");
 const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
 const settingsLoadError = ref("");
 const adminMsg = ref("");
@@ -179,7 +202,13 @@ const mcSelectedCharacterIds = ref<number[]>([]);
 const mcBusy = ref(false);
 const mcMsg = ref("");
 const accounts = ref<any[]>([]);
-const adminChannels = ref<ChannelDTO[]>([]);
+const adminChannels = ref<AdminChannelDTO[]>([]);
+const adminDirectConversations = ref<AdminChannelDTO[]>([]);
+const adminDirectTotal = ref(0);
+const adminDirectPage = ref(1);
+const adminDirectPageSize = 30;
+const adminDirectQuery = ref("");
+const adminSelectedChannelId = ref<number | null>(null);
 const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
@@ -801,13 +830,6 @@ watch(
   () => syncChannelEdits()
 );
 
-watch(adminTab, (tab) => {
-  if (tab === "channels" && showAdmin.value) void loadAdminChannels();
-  if (tab === "appearance" && showAdmin.value) void loadAdminAttachments();
-  if (tab === "data" && showAdmin.value) loadAdminData();
-  if (tab === "release" && showAdmin.value) void checkForUpdates();
-});
-
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
   document.removeEventListener("keydown", handleGlobalEscape);
@@ -893,7 +915,35 @@ watch(
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
-const adminChannelRows = computed(() => (adminChannels.value.length ? adminChannels.value : store.channels));
+const adminChannelRows = computed(() => adminChannels.value);
+const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
+const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
+const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceThemes", "appearanceFlash"]);
+const adminPageMeta: Record<AdminPage, { title: string; description: string }> = {
+  home: { title: "管理中心", description: "按功能进入独立管理页面" },
+  pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
+  users: { title: "用户与权限", description: "新增用户、修改资料与管理权限" },
+  channels: { title: "频道与私聊历史", description: "正式频道和历史会话分别管理" },
+  channelDetail: { title: "频道详情", description: "修改频道资料、成员和访问权限" },
+  appearance: { title: "外观与体验", description: "每项外观配置都在独立页面完成" },
+  appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
+  appearanceLogin: { title: "登录页", description: "登录内容、背景、位置与注册入口" },
+  appearanceChat: { title: "聊天室外观", description: "聊天区壁纸和显示方式" },
+  appearanceThemes: { title: "主题颜色", description: "创建和维护聊天室配色" },
+  appearanceFlash: { title: "消息闪动特效", description: "配置闪动消息的颜色和节奏" },
+  data: { title: "数据与系统", description: "备份、聊天记录、资源和审计记录" },
+  backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
+  messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
+  resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
+  loginLogs: { title: "登录记录", description: "查看成员登录、退出和在线活动" },
+  release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
+};
+const activeAdminPageMeta = computed(() => {
+  if (adminPage.value === "channelDetail" && adminSelectedChannel.value) {
+    return { title: adminSelectedChannel.value.name, description: "频道详情" };
+  }
+  return adminPageMeta[adminPage.value];
+});
 const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value || currentChannel.value);
 const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
 const canManageActiveMembers = computed(() => {
@@ -1858,12 +1908,7 @@ async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
 
 async function openLoginLogPage() {
   if (!store.account?.isAdmin) return;
-  saveReadPosition();
-  showAdmin.value = false;
-  isAiSettingsRoute.value = false;
-  isLogRoute.value = true;
-  window.history.pushState({}, "", "/log");
-  await loadAdminLoginLogs();
+  await openAdminPage("loginLogs");
 }
 
 function syncAiSettingsEdit(settings: AiSettingsDTO) {
@@ -2803,8 +2848,10 @@ function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToSto
   if (storeIndex >= 0) store.channels[storeIndex] = channel;
   else if (options.addToStore) store.channels = [...store.channels, channel];
   const adminIndex = adminChannels.value.findIndex((row) => row.id === channel.id);
-  if (adminIndex >= 0) adminChannels.value[adminIndex] = channel;
-  else if (options.addToAdmin && adminChannels.value.length) adminChannels.value = [...adminChannels.value, channel];
+  if (adminIndex >= 0) adminChannels.value[adminIndex] = { ...adminChannels.value[adminIndex], ...channel };
+  else if (options.addToAdmin && adminChannels.value.length) {
+    adminChannels.value = [...adminChannels.value, { ...channel, messageCount: 0, createdAt: new Date().toISOString(), lastMessageAt: null }];
+  }
   if (memberPaneChannelOverride.value?.id === channel.id) memberPaneChannelOverride.value = channel;
   syncChannelEdits();
 }
@@ -5617,30 +5664,104 @@ async function saveNotice() {
 
 async function loadAdmin() {
   saveReadPosition();
-  syncChannelEdits();
   showAdmin.value = true;
-  if (!isAdmin.value) return;
+  adminPage.value = "home";
+  adminPageError.value = "";
   adminMsg.value = "";
+  if (!isAdmin.value) return;
+  noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
+}
+
+async function loadAdminAccounts() {
+  const result = await api<{ accounts: any[] }>("/api/admin/accounts");
+  accounts.value = result.accounts;
+  syncAccountEdits();
+}
+
+async function loadAdminChannels(page = adminDirectPage.value) {
+  if (!isAdmin.value) return;
+  const params = new URLSearchParams({
+    directPage: String(page),
+    directPageSize: String(adminDirectPageSize)
+  });
+  if (adminDirectQuery.value.trim()) params.set("q", adminDirectQuery.value.trim());
+  const result = await api<{
+    channels: AdminChannelDTO[];
+    directConversations: AdminChannelDTO[];
+    directTotal: number;
+    directPage: number;
+  }>(`/api/admin/channels?${params.toString()}`);
+  adminChannels.value = result.channels.filter(Boolean);
+  adminDirectConversations.value = result.directConversations.filter(Boolean);
+  adminDirectTotal.value = result.directTotal;
+  adminDirectPage.value = result.directPage;
+  syncChannelEdits();
+}
+
+async function openAdminPage(page: AdminPage) {
+  const wasAppearancePage = adminAppearancePages.has(adminPage.value);
+  const nextIsAppearancePage = adminAppearancePages.has(page);
+  if (wasAppearancePage && !nextIsAppearancePage && page !== "appearance") {
+    abandonAppearanceDraft();
+    appearancePreviewOpen.value = false;
+  }
+  adminPage.value = page;
+  adminPageError.value = "";
+  adminMsg.value = "";
+  const sectionByPage: Partial<Record<AdminPage, AppearanceSection>> = {
+    appearanceBrand: "brand",
+    appearanceLogin: "login",
+    appearanceChat: "chat",
+    appearanceThemes: "themes",
+    appearanceFlash: "flash"
+  };
+  if (sectionByPage[page]) appearanceSection.value = sectionByPage[page]!;
+  adminPageLoading.value = true;
   try {
-    const [a] = await Promise.all([api<{ accounts: any[] }>("/api/admin/accounts"), loadAdminChannels()]);
-    accounts.value = a.accounts;
-    syncAccountEdits();
-    syncChannelEdits();
-    noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-    if (adminTab.value === "appearance") await loadAdminAttachments();
-    if (adminTab.value === "data") await loadAdminData();
-    if (adminTab.value === "release") await checkForUpdates();
-    void loadMcStatus();
+    if (page === "users") await loadAdminAccounts();
+    if (page === "channels") await loadAdminChannels();
+    if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
+    if (page === "backups") await loadAdminBackups();
+    if (page === "loginLogs") await loadAdminLoginLogs();
+    if (page === "release") await checkForUpdates();
   } catch (error) {
-    adminMsg.value = error instanceof Error ? `管理数据加载失败：${error.message}` : "管理数据加载失败，请稍后重试";
+    adminPageError.value = error instanceof Error ? error.message : "页面加载失败，请稍后重试";
+  } finally {
+    adminPageLoading.value = false;
   }
 }
 
-async function loadAdminChannels() {
-  if (!isAdmin.value) return;
-  const result = await api<{ channels: ChannelDTO[] }>("/api/admin/channels");
-  adminChannels.value = result.channels.filter(Boolean);
-  syncChannelEdits();
+function openAdminChannelDetail(channel: AdminChannelDTO) {
+  adminSelectedChannelId.value = channel.id;
+  void openAdminPage("channelDetail");
+}
+
+function returnFromAdminPage() {
+  if (adminPage.value === "channelDetail") {
+    void openAdminPage("channels");
+    return;
+  }
+  if (adminAppearancePages.has(adminPage.value)) {
+    void openAdminPage("appearance");
+    return;
+  }
+  if (["backups", "messages", "resources", "loginLogs"].includes(adminPage.value)) {
+    void openAdminPage("data");
+    return;
+  }
+  void openAdminPage("home");
+}
+
+function searchDirectConversations() {
+  adminDirectPage.value = 1;
+  void openAdminPage("channels");
+}
+
+function changeDirectConversationPage(delta: number) {
+  const nextPage = Math.min(adminDirectPageCount.value, Math.max(1, adminDirectPage.value + delta));
+  if (nextPage === adminDirectPage.value) return;
+  adminDirectPage.value = nextPage;
+  void openAdminPage("channels");
 }
 
 async function loadMcStatus() {
@@ -6027,18 +6148,8 @@ function abandonAppearanceDraft() {
   appearanceImagePicker.value = null;
 }
 
-function switchAdminTab(tab: typeof adminTab.value) {
-  if (tab !== "appearance" && adminTab.value === "appearance") {
-    abandonAppearanceDraft();
-    appearancePreviewOpen.value = false;
-  }
-  adminTab.value = tab;
-  if (tab === "appearance") void loadAdminAttachments();
-  if (tab === "channels") void loadAdminChannels();
-}
-
 async function closeAdminPanel() {
-  if (adminTab.value === "appearance") abandonAppearanceDraft();
+  if (adminAppearancePages.has(adminPage.value)) abandonAppearanceDraft();
   showAdmin.value = false;
   appearancePreviewOpen.value = false;
   await restoreChatSurface();
@@ -6176,6 +6287,26 @@ async function deleteChannel(channel: ChannelDTO) {
   await Promise.all([store.loadChannels(fallbackChannelId), loadAdminChannels()]);
   syncChannelEdits();
   adminMsg.value = `频道“${channel.name}”已删除`;
+}
+
+function directConversationLabel(channel: AdminChannelDTO) {
+  return channel.name.replace(/^私聊[：:]\s*/, "") || "未命名私聊";
+}
+
+function directConversationActivity(channel: AdminChannelDTO) {
+  const time = channel.lastMessageAt || channel.createdAt;
+  return time ? adminDateTime(time) : "无活动记录";
+}
+
+async function deleteDirectConversation(channel: AdminChannelDTO) {
+  const label = directConversationLabel(channel);
+  if (!confirm(`永久删除“${label}”的私聊历史？其中 ${channel.messageCount} 条消息和附件会一并删除，且无法恢复。`)) return;
+  const fallbackChannelId = channel.id === store.currentChannelId ? store.previousChannelId : store.currentChannelId;
+  await api(`/api/admin/direct-conversations/${channel.id}`, { method: "DELETE" });
+  if (channel.id === store.currentChannelId) await store.loadChannels(fallbackChannelId);
+  const targetPage = adminDirectConversations.value.length === 1 && adminDirectPage.value > 1 ? adminDirectPage.value - 1 : adminDirectPage.value;
+  await loadAdminChannels(targetPage);
+  adminMsg.value = `私聊历史“${label}”已删除`;
 }
 
 async function addVirtual() {
@@ -7689,30 +7820,68 @@ async function toggleVirtual(character: any) {
 
     <section v-if="showAdmin" class="modal-shell" role="dialog" aria-modal="true" aria-label="管理面板" @click.self="closeAdminPanel">
       <div class="admin-modal">
-        <header class="modal-head">
-          <strong>管理面板</strong>
-          <div class="modal-head-actions">
-            <button class="mini-btn secondary" @click="openLoginLogPage"><Monitor :size="15" />登录记录</button>
-            <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
+        <header class="modal-head admin-page-head">
+          <button v-if="adminPage !== 'home'" class="icon-btn" @click="returnFromAdminPage" aria-label="返回上一级"><ChevronLeft :size="21" /></button>
+          <div class="admin-page-heading">
+            <strong>{{ activeAdminPageMeta.title }}</strong>
+            <small>{{ activeAdminPageMeta.description }}</small>
           </div>
+          <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
         </header>
-        <nav class="tabs">
-          <button :class="{ active: adminTab === 'pin' }" @click="switchAdminTab('pin')"><Pin :size="16" />置顶</button>
-          <button :class="{ active: adminTab === 'users' }" @click="switchAdminTab('users')"><Users :size="16" />用户</button>
-          <button :class="{ active: adminTab === 'channels' }" @click="switchAdminTab('channels')"><Menu :size="16" />频道</button>
-          <button :class="{ active: adminTab === 'appearance' }" @click="switchAdminTab('appearance')"><Palette :size="16" />外观</button>
-          <button :class="{ active: adminTab === 'data' }" @click="switchAdminTab('data')"><Download :size="16" />数据</button>
-          <button :class="{ active: adminTab === 'release' }" @click="switchAdminTab('release')"><Info :size="16" />版本</button>
-        </nav>
 
         <div class="admin-body">
-          <section v-if="adminTab === 'pin'" class="form-grid">
+          <div v-if="adminPageLoading" class="admin-page-state" role="status"><span class="loading-dot"></span>正在加载...</div>
+          <div v-else-if="adminPageError" class="admin-page-state error" role="alert">
+            <CircleOff :size="20" />
+            <span>{{ adminPageError }}</span>
+            <button class="mini-btn secondary" @click="openAdminPage(adminPage)">重试</button>
+          </div>
+
+          <section v-else-if="adminPage === 'home'" class="admin-hub">
+            <div class="admin-hub-intro">
+              <strong>管理聊天室</strong>
+              <small>选择一个功能进入独立页面；返回时会回到这一层。</small>
+            </div>
+            <div class="admin-hub-group">
+              <label>内容与成员</label>
+              <button class="admin-entry-row" @click="openAdminPage('pin')"><span class="admin-entry-icon"><Pin :size="20" /></span><span><b>置顶公告</b><small>管理当前频道的顶部公告</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('users')"><span class="admin-entry-icon"><Users :size="20" /></span><span><b>用户与权限</b><small>账号、头像、密码和管理权限</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
+            </div>
+            <div class="admin-hub-group">
+              <label>外观与数据</label>
+              <button class="admin-entry-row" @click="openAdminPage('appearance')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>外观与体验</b><small>品牌、登录页、聊天室和主题</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息、资源和登录记录</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('release')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>版本与更新</b><small>版本状态和发布记录</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'appearance'" class="admin-hub compact">
+            <div class="admin-hub-group">
+              <button class="admin-entry-row" @click="openAdminPage('appearanceBrand')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>品牌与标签页</b><small>浏览器标题、图标和应用入口</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceLogin')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>登录页</b><small>内容、背景、位置和注册入口</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceChat')"><span class="admin-entry-icon"><MessageCircle :size="20" /></span><span><b>聊天室外观</b><small>聊天区壁纸和显示方式</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceThemes')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>主题颜色</b><small>创建和维护聊天室配色</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceFlash')"><span class="admin-entry-icon"><Sparkles :size="20" /></span><span><b>消息闪动特效</b><small>颜色、过渡方式和闪动节奏</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'data'" class="admin-hub compact">
+            <div class="admin-hub-group">
+              <button class="admin-entry-row" @click="openAdminPage('backups')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>备份与迁移</b><small>完整备份及数据导入导出</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('messages')"><span class="admin-entry-icon"><MessageSquareQuote :size="20" /></span><span><b>聊天记录</b><small>选择消息或按频道清理</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('resources')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>资源管理</b><small>查看、压缩和删除附件</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('loginLogs')"><span class="admin-entry-icon"><Archive :size="20" /></span><span><b>登录记录</b><small>成员登录、退出和在线活动</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'pin'" class="form-grid admin-page-section">
             <label>当前频道置顶公告</label>
             <textarea v-model="noticeText" rows="4" placeholder="留空并保存可撤下置顶公告"></textarea>
             <button class="primary-btn" @click="saveNotice">保存置顶</button>
           </section>
 
-          <section v-if="adminTab === 'users'" class="form-grid">
+          <section v-else-if="adminPage === 'users'" class="form-grid admin-page-section">
             <label>新增用户</label>
             <input v-model="newUser.username" placeholder="username" />
             <input v-model="newUser.displayName" placeholder="显示名" />
@@ -7745,29 +7914,71 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
 
-          <section v-if="adminTab === 'channels'" class="form-grid">
-            <label>全局频道设置</label>
-            <div class="channel-admin-list">
-              <template v-for="channel in adminChannelRows" :key="channel.id">
-                <article v-if="channelEdits[channel.id]" class="channel-admin-row">
-                  <label class="channel-icon-admin upload-icon-trigger" :aria-label="`上传 ${channel.name} 的频道图标`" title="点击上传图标">
-                    <img :src="channelIconUrl(channel)" alt="" />
-                    <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(channel, $event)" />
-                  </label>
-                  <div class="channel-admin-main">
-                    <input v-model="channelEdits[channel.id].name" placeholder="频道名" />
-                    <input v-model="channelEdits[channel.id].description" placeholder="描述" />
-                    <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }} · {{ channel.memberCount }} 人</small>
-                  </div>
-                  <button class="mini-btn" @click="updateChannel(channel)"><Save :size="15" />保存</button>
-                  <button v-if="channel.canManage" class="mini-btn secondary" @click="openAdminChannelMembers(channel)"><Users :size="15" />成员</button>
-                  <button v-if="channel.canManage && !channel.isDefault && !channel.directKey" class="mini-btn danger-action" @click="deleteChannel(channel)"><Trash2 :size="15" />删除</button>
-                </article>
-              </template>
+          <section v-else-if="adminPage === 'channels'" class="admin-page-section channel-history-page">
+            <div class="admin-section-heading">
+              <div><strong>正式频道</strong><small>公开和私密频道；点击进入详情页编辑。</small></div>
+              <span>{{ adminChannelRows.length }} 个</span>
+            </div>
+            <div class="admin-object-list">
+              <button v-for="channel in adminChannelRows" :key="channel.id" class="admin-object-row" @click="openAdminChannelDetail(channel)">
+                <span class="channel-icon-admin"><img :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="admin-object-main"><b>{{ channel.name }}</b><small>{{ channel.isPrivate ? '私密频道' : '公开频道' }} · {{ channel.memberCount }} 人 · {{ channel.messageCount }} 条消息</small></span>
+                <span v-if="channel.isDefault" class="admin-status-pill">默认</span>
+                <ChevronRight :size="19" />
+              </button>
+              <p v-if="!adminChannelRows.length" class="empty-note">还没有正式频道</p>
+            </div>
+
+            <div class="admin-section-heading direct-history-heading">
+              <div><strong>私聊历史</strong><small>保留的历史会话不再作为频道；可在这里查找和永久删除。</small></div>
+              <span>{{ adminDirectTotal }} 个</span>
+            </div>
+            <form class="admin-search-row" @submit.prevent="searchDirectConversations">
+              <input v-model="adminDirectQuery" maxlength="80" placeholder="搜索私聊参与者" aria-label="搜索私聊历史" />
+              <button class="mini-btn secondary" type="submit">搜索</button>
+            </form>
+            <div class="admin-object-list direct-history-list">
+              <article v-for="conversation in adminDirectConversations" :key="conversation.id" class="admin-object-row direct-history-row">
+                <span class="admin-entry-icon"><Archive :size="20" /></span>
+                <span class="admin-object-main">
+                  <b>{{ directConversationLabel(conversation) }}</b>
+                  <small>{{ conversation.messageCount }} 条消息 · {{ conversation.memberCount }} 位参与者 · 最后活动 {{ directConversationActivity(conversation) }}</small>
+                </span>
+                <button class="mini-btn danger-action" @click="deleteDirectConversation(conversation)"><Trash2 :size="15" />删除历史</button>
+              </article>
+              <p v-if="!adminDirectConversations.length" class="empty-note">{{ adminDirectQuery ? '没有匹配的私聊历史' : '还没有私聊历史' }}</p>
+            </div>
+            <div v-if="adminDirectTotal > adminDirectPageSize" class="admin-pagination">
+              <button class="mini-btn secondary" :disabled="adminDirectPage <= 1" @click="changeDirectConversationPage(-1)">上一页</button>
+              <span>第 {{ adminDirectPage }} / {{ adminDirectPageCount }} 页</span>
+              <button class="mini-btn secondary" :disabled="adminDirectPage >= adminDirectPageCount" @click="changeDirectConversationPage(1)">下一页</button>
             </div>
           </section>
 
-          <section v-if="adminTab === 'appearance'" class="appearance-admin-layout">
+          <section v-else-if="adminPage === 'channelDetail' && adminSelectedChannel && channelEdits[adminSelectedChannel.id]" class="form-grid admin-page-section channel-detail-page">
+            <label>频道图标</label>
+            <label class="channel-detail-icon upload-icon-trigger" :aria-label="`上传 ${adminSelectedChannel.name} 的频道图标`" title="点击上传图标">
+              <img :src="channelIconUrl(adminSelectedChannel)" alt="" />
+              <span>点击更换图标</span>
+              <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
+            </label>
+            <label for="admin-channel-name">频道名称</label>
+            <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" />
+            <label for="admin-channel-description">频道描述</label>
+            <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3"></textarea>
+            <div class="channel-detail-summary">
+              <span>{{ adminSelectedChannel.isPrivate ? '私密频道' : '公开频道' }}</span>
+              <span>{{ adminSelectedChannel.memberCount }} 位成员</span>
+              <span>{{ adminSelectedChannel.messageCount }} 条消息</span>
+            </div>
+            <div class="channel-detail-actions">
+              <button class="primary-btn" @click="updateChannel(adminSelectedChannel)"><Save :size="15" />保存修改</button>
+              <button class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
+              <button v-if="!adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
+            </div>
+          </section>
+
+          <section v-else-if="adminAppearancePages.has(adminPage)" class="appearance-admin-layout">
             <div class="appearance-save-bar">
               <div>
                 <b>外观草稿</b>
@@ -7778,18 +7989,6 @@ async function toggleVirtual(character: any) {
                 <button class="primary-btn" :class="{ attention: appearanceHasDraftChanges }" @click="saveLoginAppearance"><Save :size="15" />保存外观</button>
               </div>
             </div>
-
-            <nav class="appearance-section-nav">
-              <button
-                v-for="section in appearanceSections"
-                :key="section.id"
-                :class="{ active: appearanceSection === section.id }"
-                @click="appearanceSection = section.id"
-              >
-                <b>{{ section.label }}</b>
-                <small>{{ section.description }}</small>
-              </button>
-            </nav>
 
             <div class="appearance-editor-panel form-grid">
               <template v-if="appearanceSection === 'brand'">
@@ -8054,7 +8253,7 @@ async function toggleVirtual(character: any) {
             </aside>
           </section>
 
-          <section v-if="adminTab === 'data'" class="form-grid">
+          <section v-else-if="adminPage === 'backups'" class="form-grid admin-page-section">
             <label>完整备份</label>
             <div class="admin-inline-card backup-card">
               <div>
@@ -8097,6 +8296,9 @@ async function toggleVirtual(character: any) {
                 <input class="hidden" type="file" accept="application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
               </label>
             </div>
+          </section>
+
+          <section v-else-if="adminPage === 'messages'" class="form-grid admin-page-section">
             <label>聊天记录删除</label>
             <div class="admin-inline-card">
               <div>
@@ -8113,6 +8315,9 @@ async function toggleVirtual(character: any) {
               <button class="mini-btn danger-action" :disabled="!dataChannelFilter" @click="clearAdminMessages(dataChannelFilter)"><Trash2 :size="15" />清空当前频道</button>
               <button class="mini-btn danger-action" @click="clearAdminMessages(0)"><Trash2 :size="15" />清空全部记录</button>
             </div>
+          </section>
+
+          <section v-else-if="adminPage === 'resources'" class="admin-page-section">
             <AdminResourceManager
               :attachments="adminAttachments"
               :loading="adminAttachmentsLoading"
@@ -8124,7 +8329,26 @@ async function toggleVirtual(character: any) {
             />
           </section>
 
-          <section v-if="adminTab === 'release'" class="release-panel">
+          <section v-else-if="adminPage === 'loginLogs'" class="admin-page-section login-log-body embedded-login-logs">
+            <div class="data-toolbar data-toolbar-compact">
+              <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs"><RotateCcw :size="15" />{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
+            </div>
+            <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
+            <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载登录记录...</p>
+            <p v-else-if="!adminLoginLogs.length" class="settings-note">还没有登录记录。</p>
+            <div v-else class="login-log-list">
+              <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
+                <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
+                <div class="login-log-main">
+                  <div class="login-log-title"><strong>{{ log.displayName }}</strong><small>@{{ log.username }}</small><time>{{ adminDateTime(log.createdAt) }}</time></div>
+                  <div class="login-log-meta"><span v-if="log.deviceName">{{ log.deviceName }}</span><span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span><span v-if="log.ipAddress">IP {{ log.ipAddress }}</span></div>
+                  <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'release'" class="release-panel admin-page-section">
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>

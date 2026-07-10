@@ -159,6 +159,12 @@ export interface ChannelDTO {
   pinned?: PinnedDTO | null;
 }
 
+export interface AdminChannelDTO extends ChannelDTO {
+  messageCount: number;
+  createdAt: string;
+  lastMessageAt?: string | null;
+}
+
 export interface AccountDTO {
   id: number;
   username: string;
