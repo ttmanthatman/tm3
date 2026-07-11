@@ -7,6 +7,7 @@ import {
   ArrowUp,
   Bell,
   BellOff,
+  Bookmark,
   BookOpen,
   Bot,
   ChevronDown,
@@ -22,6 +23,7 @@ import {
   CheckCircle2,
   CircleOff,
   HeartHandshake,
+  Heart,
   Image as ImageIcon,
   Info,
   LogOut,
@@ -49,6 +51,7 @@ import {
   Square,
   Tablet,
   Trash2,
+  ThumbsUp,
   Upload,
   Users,
   Vibrate,
@@ -73,6 +76,8 @@ import type {
   BibleQuotationStyle,
   ChainPayload,
   ChannelDTO,
+  FavoriteMessageDTO,
+  MessageReactionsDTO,
   DeviceSessionDTO,
   FlashEffectSettingsDTO,
   LinkPreviewDTO,
@@ -95,6 +100,7 @@ import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
+import { likeNotificationToTopNotice } from "./likeNotification";
 import {
   NEWEST_READ_POSITION,
   normalizeSavedReadPosition,
@@ -126,6 +132,9 @@ const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
 const replyTo = ref<MessageDTO | null>(null);
 const showChannels = ref(false);
+const showFavorites = ref(false);
+const favoriteMessages = ref<FavoriteMessageDTO[]>([]);
+const favoritesLoading = ref(false);
 const showMembers = ref(false);
 const channelsCollapsed = ref(false);
 const membersCollapsed = ref(false);
@@ -378,11 +387,12 @@ const channelEditorMsg = ref("");
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
-  kind: "mention" | "typing";
+  kind: "mention" | "typing" | "like";
   title: string;
   body: string;
   channelId?: number;
   messageId?: number;
+  notificationId?: number;
 };
 const mentionToasts = ref<MentionToast[]>([]);
 const acknowledgedMentionIds = ref<Set<number>>(new Set());
@@ -405,6 +415,40 @@ async function openChannelFromList(channelId: number, prayerOnly = false) {
   saveReadPosition();
   await switchVisibleChannel(channelId, prayerOnly);
   showChannels.value = false;
+}
+
+async function openFavorites() {
+  showFavorites.value = true;
+  favoritesLoading.value = true;
+  try {
+    const result = await api<{ favorites: FavoriteMessageDTO[] }>("/api/favorites");
+    favoriteMessages.value = result.favorites;
+  } finally {
+    favoritesLoading.value = false;
+  }
+}
+
+function favoritePreview(favorite: FavoriteMessageDTO) {
+  const message = favorite.message;
+  if (isVoiceMessage(message)) return `语音消息 · ${formatDuration(voiceDurationMs(message))}`;
+  if (message.type === "image") return "图片";
+  if (message.type === "file") return message.fileName || "附件";
+  return plainTextFromHtml(message.content || message.fileName || "消息").slice(0, 90);
+}
+
+async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
+  saveReadPosition();
+  await store.switchChannel(favorite.channel.id);
+  showFavorites.value = false;
+  showChannels.value = false;
+  await nextTick();
+  await jumpToReply(favorite.message.id);
+}
+
+async function removeFavorite(favorite: FavoriteMessageDTO) {
+  await api(`/api/messages/${favorite.message.id}/favorite`, { method: "PUT", body: JSON.stringify({ favorited: false }) });
+  favoriteMessages.value = favoriteMessages.value.filter((item) => item.id !== favorite.id);
+  store.updateMessageReactions(favorite.message.id, { currentUserFavorited: false, favoriteCount: Math.max(0, (favorite.message.reactions?.favoriteCount || 1) - 1) });
 }
 
 const mediaRecorder = ref<MediaRecorder | null>(null);
@@ -438,6 +482,7 @@ const deviceGravity = ref<GravityVector>({ x: 0, y: 1, strength: 1 });
 const gooeyBlobs = ref<GooeyBlob[]>([]);
 const gooeyHighlights = ref<GooeyHighlight[]>([]);
 const hasUnreadMessages = ref(false);
+const awayFromNewest = ref(false);
 let recordingTimer: number | undefined;
 let versionCheckTimer: number | undefined;
 let updateStatusTimer: number | undefined;
@@ -769,14 +814,15 @@ watch(
 );
 
 watch(
-  () => mentionToasts.value.length + Object.keys(store.typing).length,
-  (length) => {
-    if (topNoticeIndex.value >= length) topNoticeIndex.value = 0;
+  () => `${store.likeNotifications.map((item) => item.id).join(",")}|${mentionToasts.value.map((item) => item.id).join(",")}|${Object.keys(store.typing).join(",")}`,
+  () => {
+    topNoticeIndex.value = 0;
     if (topNoticeTimer) {
       window.clearInterval(topNoticeTimer);
       topNoticeTimer = undefined;
     }
-    if (length > 1) {
+    const noticeCount = store.likeNotifications.length + mentionToasts.value.length + Object.keys(store.typing).length;
+    if (noticeCount > 1) {
       topNoticeTimer = window.setInterval(() => {
         topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, topNoticeItems.value.length);
       }, 3600);
@@ -867,7 +913,12 @@ const mentionNoticeItems = computed<TopNotice[]>(() =>
     messageId: toast.id
   }))
 );
-const topNoticeItems = computed<TopNotice[]>(() => [...mentionNoticeItems.value, ...typingNoticeItems.value]);
+const likeNoticeItems = computed<TopNotice[]>(() =>
+  store.likeNotifications.map((notification) =>
+    likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name)
+  )
+);
+const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value, ...typingNoticeItems.value]);
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
 const isAdmin = computed(() => !!store.account?.isAdmin);
 const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
@@ -1817,12 +1868,13 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
     await switchVisibleChannel(channelId);
     await nextTick();
   }
-  jumpToReply(messageId);
+  await jumpToReply(messageId);
 }
 
 async function openTopNotice(notice: TopNotice) {
-  if (notice.kind !== "mention" || !notice.channelId || !notice.messageId) return;
+  if (!notice.channelId || !notice.messageId || (notice.kind !== "mention" && notice.kind !== "like")) return;
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
+  if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
 }
 
 async function doLogin() {
@@ -2413,6 +2465,9 @@ async function loadNotificationSettings() {
   notificationPublicKey.value = result.publicKey;
   mutedChannelIds.value = new Set(result.mutedChannelIds || []);
   const subscription = await currentPushSubscription().catch(() => null);
+  if (subscription && notificationPermission.value === "granted" && result.pushReady) {
+    await api("/api/push-subscriptions", { method: "POST", body: JSON.stringify(subscription.toJSON()) }).catch(() => null);
+  }
   notificationEnabled.value = !!subscription && notificationPermission.value === "granted";
 }
 
@@ -4028,7 +4083,7 @@ function isOutsideLayer(rect: BubbleLayerRect, width: number, height: number, ma
 
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
   if (messageEffect(message) === "water" || messageEffect(message) === "dripGooey") requestDeviceOrientationPermissionOnce();
-  if (message.type === "system" || event.button !== 0) return;
+  if (message.id <= 0 || message.type === "system" || event.button !== 0) return;
   const target = event.target;
   if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
   longPressStartedAt = { x: event.clientX, y: event.clientY };
@@ -4084,13 +4139,81 @@ function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
 
 function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
   clearMessageLongPress();
-  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 172, height: 146 });
+  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: 198 });
   pendingMessageActions.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
   pendingRecall.value = null;
   pendingPrayer.value = null;
   selectedMember.value = null;
+}
+
+function defaultMessageReactions(): MessageReactionsDTO {
+  return { likeCount: 0, likedBy: [], favoriteCount: 0, currentUserLiked: false, currentUserFavorited: false };
+}
+
+async function toggleMessageLike(message: MessageDTO) {
+  if (message.id <= 0 || message.type === "system") return;
+  const previous = message.reactions || defaultMessageReactions();
+  const liked = !previous.currentUserLiked;
+  message.reactions = {
+    ...previous,
+    currentUserLiked: liked,
+    likeCount: Math.max(0, previous.likeCount + (liked ? 1 : -1))
+  };
+  try {
+    const result = await api<{ reactions: MessageReactionsDTO }>(`/api/messages/${message.id}/like`, {
+      method: "PUT",
+      body: JSON.stringify({ liked })
+    });
+    store.updateMessageReactions(message.id, result.reactions);
+  } catch {
+    message.reactions = previous;
+  }
+}
+
+async function toggleMessageFavorite(message: MessageDTO) {
+  if (message.id <= 0 || message.type === "system") return;
+  const previous = message.reactions || defaultMessageReactions();
+  const favorited = !previous.currentUserFavorited;
+  message.reactions = {
+    ...previous,
+    currentUserFavorited: favorited,
+    favoriteCount: Math.max(0, previous.favoriteCount + (favorited ? 1 : -1))
+  };
+  try {
+    const result = await api<{ reactions: MessageReactionsDTO }>(`/api/messages/${message.id}/favorite`, {
+      method: "PUT",
+      body: JSON.stringify({ favorited })
+    });
+    store.updateMessageReactions(message.id, result.reactions);
+    if (showFavorites.value) await openFavorites();
+  } catch {
+    message.reactions = previous;
+  }
+}
+
+async function likeActionMessage() {
+  const message = pendingMessageActions.value;
+  if (!message) return;
+  await toggleMessageLike(message);
+  closeMessageActionMenu();
+}
+
+async function favoriteActionMessage() {
+  const message = pendingMessageActions.value;
+  if (!message) return;
+  await toggleMessageFavorite(message);
+  closeMessageActionMenu();
+}
+
+function likedByTitle(message: MessageDTO) {
+  return message.reactions?.likedBy.map((person) => person.displayName).join("、") || "";
+}
+
+async function dismissLikeNotification(id: number) {
+  store.likeNotifications = store.likeNotifications.filter((item) => item.id !== id);
+  await api(`/api/like-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
 }
 
 function closeMessageActionMenu() {
@@ -5097,6 +5220,7 @@ function scrollBottom(smooth = true) {
   if (!el) return;
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
   hasUnreadMessages.value = false;
+  awayFromNewest.value = false;
 }
 
 function focusComposer() {
@@ -5107,7 +5231,8 @@ async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
   saveReadPosition();
-  if (isNearMessageBottom(120)) hasUnreadMessages.value = false;
+  awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
+  if (!awayFromNewest.value) hasUnreadMessages.value = false;
   if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
     loadingHistoryFromScroll = true;
     const beforeHeight = el.scrollHeight;
@@ -6644,11 +6769,27 @@ async function toggleVirtual(character: any) {
 
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
-        <strong>聊天室</strong>
-        <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
+        <button v-if="showFavorites" class="icon-btn" @click="showFavorites = false" aria-label="返回频道"><ChevronLeft :size="20" /></button>
+        <strong>{{ showFavorites ? "收藏夹" : "聊天室" }}</strong>
+        <button v-if="!showFavorites" class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
+      <div v-if="showFavorites" class="favorites-list">
+        <p v-if="favoritesLoading" class="favorites-empty">正在加载收藏…</p>
+        <p v-else-if="!favoriteMessages.length" class="favorites-empty">长按消息，点击爱心即可收藏。</p>
+        <template v-else>
+        <article v-for="favorite in favoriteMessages" :key="favorite.id" class="favorite-card">
+          <button class="favorite-card-main" type="button" @click="openFavoriteMessage(favorite)">
+            <span class="favorite-card-meta">{{ favorite.channel.name }} · {{ adminDate(favorite.savedAt) }}</span>
+            <strong>{{ favorite.message.sender.displayName }}</strong>
+            <span>{{ favoritePreview(favorite) }}</span>
+          </button>
+          <button class="favorite-remove" type="button" @click="removeFavorite(favorite)" aria-label="取消收藏"><X :size="15" /></button>
+        </article>
+        </template>
+      </div>
+      <div v-else class="channel-list">
       <template v-for="channel in store.channels" :key="channel.id">
         <div class="channel-row-wrap" :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel) }">
           <button
@@ -6662,10 +6803,12 @@ async function toggleVirtual(character: any) {
             @pointerleave="clearChannelLongPress"
             @pointercancel="clearChannelLongPress"
           >
-            <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
+            <span class="channel-icon">
+              <img :src="channelIconUrl(channel)" alt="" />
+              <i v-if="channel.isPrivate" class="private-channel-badge">私</i>
+            </span>
             <span class="channel-row-label">
               <b>{{ channel.name }}</b>
-              <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }}</small>
             </span>
           </button>
           <button
@@ -6692,6 +6835,11 @@ async function toggleVirtual(character: any) {
           </span>
         </button>
       </template>
+      </div>
+      <button v-if="!showFavorites" class="channel-row favorites-entry" type="button" @click="openFavorites">
+        <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
+        <span class="channel-row-label"><b>收藏夹</b></span>
+      </button>
       <footer class="profile-row">
         <div class="avatar">
           <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />
@@ -6775,7 +6923,7 @@ async function toggleVirtual(character: any) {
             </button>
             <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
+          <small v-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
@@ -6812,18 +6960,28 @@ async function toggleVirtual(character: any) {
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
-      <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`">
-        <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind === 'mention' }" @click="openTopNotice(activeTopNotice)">
-          <span class="top-notice-icon">
-            <AtSign v-if="activeTopNotice.kind === 'mention'" :size="16" />
-            <MessageCircle v-else :size="16" />
-          </span>
-          <span class="top-notice-copy">
-            <strong>{{ activeTopNotice.title }}</strong>
-            <small>{{ activeTopNotice.body }}</small>
-          </span>
-          <span v-if="topNoticeItems.length > 1" class="top-notice-count">{{ (topNoticeIndex % topNoticeItems.length) + 1 }}/{{ topNoticeItems.length }}</span>
-        </button>
+      <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`" aria-live="polite">
+        <div class="top-notice-bar">
+          <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind !== 'typing' }" @click="openTopNotice(activeTopNotice)">
+            <span class="top-notice-icon">
+              <AtSign v-if="activeTopNotice.kind === 'mention'" :size="16" />
+              <ThumbsUp v-else-if="activeTopNotice.kind === 'like'" :size="16" />
+              <MessageCircle v-else :size="16" />
+            </span>
+            <span class="top-notice-copy">
+              <strong>{{ activeTopNotice.title }}</strong>
+              <small>{{ activeTopNotice.body }}</small>
+            </span>
+            <span v-if="topNoticeItems.length > 1" class="top-notice-count">{{ (topNoticeIndex % topNoticeItems.length) + 1 }}/{{ topNoticeItems.length }}</span>
+          </button>
+          <button
+            v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
+            class="top-notice-close"
+            type="button"
+            aria-label="关闭点赞提醒"
+            @click="dismissLikeNotification(activeTopNotice.notificationId)"
+          ><X :size="15" /></button>
+        </div>
       </section>
 
       <section v-if="visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
@@ -7161,13 +7319,38 @@ async function toggleVirtual(character: any) {
                   </a>
                 </template>
               </div>
+              <div v-if="row.message.reactions && (row.message.reactions.likeCount || row.message.reactions.favoriteCount)" class="message-reaction-details">
+                <button
+                  v-if="row.message.reactions.likeCount"
+                  type="button"
+                  class="reaction-detail reaction-like"
+                  :class="{ active: row.message.reactions.currentUserLiked }"
+                  :title="likedByTitle(row.message)"
+                  @click="toggleMessageLike(row.message)"
+                >
+                  <ThumbsUp :size="13" />
+                  <span>{{ row.message.reactions.likedBy.map((person) => person.displayName).join('、') || row.message.reactions.likeCount }}</span>
+                </button>
+                <button
+                  v-if="row.message.reactions.favoriteCount"
+                  type="button"
+                  class="reaction-detail reaction-favorite"
+                  :class="{ active: row.message.reactions.currentUserFavorited }"
+                  @click="toggleMessageFavorite(row.message)"
+                >
+                  <Heart :size="13" :fill="row.message.reactions.currentUserFavorited ? 'currentColor' : 'none'" />
+                  {{ row.message.reactions.currentUserFavorited ? `已收藏 · ${row.message.reactions.favoriteCount}` : `${row.message.reactions.favoriteCount} 人收藏` }}
+                </button>
+              </div>
             </div>
           </article>
         </template>
         </div>
       </div>
 
-      <button v-if="hasUnreadMessages" type="button" class="new-message-jump" @click="scrollToNewest()">有新消息</button>
+      <button v-if="awayFromNewest || hasUnreadMessages || store.hasNewerMessages" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
+        <ArrowDown :size="18" />
+      </button>
 
       <footer class="composer">
         <div v-if="replyTo" class="reply-bar">
@@ -7300,7 +7483,7 @@ async function toggleVirtual(character: any) {
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
-          <small v-if="memberPaneSubtitle">{{ memberPaneSubtitle }} · {{ activeMemberPaneMembers.length }} 人/角色</small>
+          <small v-if="memberPaneSubtitle">{{ memberPaneSubtitle }}</small>
         </div>
         <button
           v-if="canManageActiveMembers"
@@ -7425,6 +7608,16 @@ async function toggleVirtual(character: any) {
 
     <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
       <div class="tap-popover-card">
+        <div class="message-quick-reactions">
+          <button type="button" :class="{ active: pendingMessageActions.reactions?.currentUserLiked }" @click="likeActionMessage" aria-label="点赞">
+            <ThumbsUp :size="22" :fill="pendingMessageActions.reactions?.currentUserLiked ? 'currentColor' : 'none'" />
+            <span>{{ pendingMessageActions.reactions?.currentUserLiked ? "已赞" : "点赞" }}</span>
+          </button>
+          <button type="button" class="favorite" :class="{ active: pendingMessageActions.reactions?.currentUserFavorited }" @click="favoriteActionMessage" aria-label="收藏">
+            <Heart :size="23" :fill="pendingMessageActions.reactions?.currentUserFavorited ? 'currentColor' : 'none'" />
+            <span>{{ pendingMessageActions.reactions?.currentUserFavorited ? "已收藏" : "收藏" }}</span>
+          </button>
+        </div>
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
           <button v-if="canRecallMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>

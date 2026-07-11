@@ -102,6 +102,8 @@ model Account {
   prayerActions           PrayerAction[]
   aiSuggestions           MessageAiSuggestion[]
   pinnedSeens             PinnedSeen[]
+  messageLikes            MessageLike[]
+  messageFavorites        MessageFavorite[]
   whyReads                WhyTopicRead[]
 
   @@map("accounts")
@@ -227,11 +229,41 @@ model Message {
   prayerActions PrayerAction[]
   aiSuggestions MessageAiSuggestion[]
   whyReads      WhyTopicRead[]
+  likes         MessageLike[]
+  favorites     MessageFavorite[]
 
   @@index([channelId, id])
   @@index([replyToId])
   @@index([chainRootId])
   @@map("messages")
+}
+
+model MessageLike {
+  id          Int       @id @default(autoincrement())
+  messageId   Int       @map("message_id")
+  accountId   Int       @map("account_id")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  dismissedAt DateTime? @map("dismissed_at")
+  message     Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  account     Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, accountId])
+  @@index([accountId, createdAt])
+  @@index([dismissedAt, createdAt])
+  @@map("message_likes")
+}
+
+model MessageFavorite {
+  id        Int      @id @default(autoincrement())
+  messageId Int      @map("message_id")
+  accountId Int      @map("account_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, accountId])
+  @@index([accountId, createdAt])
+  @@map("message_favorites")
 }
 
 model WhyTopic {
@@ -401,11 +433,13 @@ model PushSubscription {
   id         Int      @id @default(autoincrement())
   accountId  Int      @map("account_id")
   endpoint   String   @unique @db.VarChar(512)
+  origin     String   @default("") @db.VarChar(255)
   keysP256dh String   @map("keys_p256dh") @db.VarChar(255)
   keysAuth   String   @map("keys_auth") @db.VarChar(255)
   createdAt  DateTime @default(now()) @map("created_at")
   account    Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@index([accountId, origin])
   @@map("push_subscriptions")
 }
 

@@ -45,6 +45,7 @@ import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
 import { envFlagEnabled } from "./featureFlags.js";
+import { pushOriginFromHeaders } from "./pushOrigin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -1015,6 +1016,22 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
     }
   }
   let payload: unknown = message.payload || undefined;
+  const loadedReactions = message as typeof message & {
+    likes?: Array<{ accountId: number; account: Pick<Account, "displayName" | "avatarPath"> }>;
+    favorites?: Array<{ accountId: number }>;
+  };
+  const [likes, favorites] = await Promise.all([
+    loadedReactions.likes
+      ? Promise.resolve(loadedReactions.likes)
+      : prisma.messageLike.findMany({
+          where: { messageId: message.id },
+          include: { account: { select: { displayName: true, avatarPath: true } } },
+          orderBy: { createdAt: "asc" }
+        }),
+    loadedReactions.favorites
+      ? Promise.resolve(loadedReactions.favorites)
+      : prisma.messageFavorite.findMany({ where: { messageId: message.id }, select: { accountId: true } })
+  ]);
   if (message.type === "prayer") {
     const aiSettings = await loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
@@ -1092,7 +1109,18 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       : null,
     chainRootId: message.chainRootId,
     chainVersion: message.chainVersion,
-    createdAt: message.createdAt.toISOString()
+    createdAt: message.createdAt.toISOString(),
+    reactions: {
+      likeCount: likes.length,
+      likedBy: likes.map((like) => ({
+        accountId: like.accountId,
+        displayName: like.account.displayName,
+        avatarPath: like.account.avatarPath
+      })),
+      favoriteCount: favorites.length,
+      currentUserLiked: !!viewerAccountId && likes.some((like) => like.accountId === viewerAccountId),
+      currentUserFavorited: !!viewerAccountId && favorites.some((favorite) => favorite.accountId === viewerAccountId)
+    }
   };
 }
 
@@ -1897,9 +1925,9 @@ async function notificationRecipientIds(channelId: number, senderAccountId?: num
   return ids;
 }
 
-async function sendPushToAccounts(accountIds: number[], payload: { title: string; body: string; url: string; tag: string; channelId: number }) {
-  if (!pushReady || !accountIds.length) return;
-  const subscriptions = await prisma.pushSubscription.findMany({ where: { accountId: { in: accountIds } } });
+async function sendPushToAccounts(accountIds: number[], payload: { title: string; body: string; url: string; tag: string; channelId: number }, origin: string) {
+  if (!pushReady || !accountIds.length || !origin) return;
+  const subscriptions = await prisma.pushSubscription.findMany({ where: { accountId: { in: accountIds }, origin } });
   await Promise.all(
     subscriptions.map(async (subscription) => {
       try {
@@ -1922,7 +1950,7 @@ async function sendPushToAccounts(accountIds: number[], payload: { title: string
   );
 }
 
-async function sendMessagePush(messageId: number) {
+async function sendMessagePush(messageId: number, origin: string) {
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
   if (!message) return;
   if (message.type === "why_topic_card" || message.channel.kind === "why") return;
@@ -1933,10 +1961,22 @@ async function sendMessagePush(messageId: number) {
     url: `/?channelId=${message.channelId}`,
     tag: `channel-${message.channelId}`,
     channelId: message.channelId
-  });
+  }, origin);
 }
 
-async function sendAdminBroadcastPush(channelId: number, content: string) {
+async function sendLikePush(accountId: number, channelId: number, messageId: number, likerName: string, origin: string) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
+  if (!channel) return;
+  await sendPushToAccounts([accountId], {
+    title: "消息被点赞",
+    body: `${likerName}点赞了你在「${channel.name}」中的消息`,
+    url: `/?channelId=${channelId}`,
+    tag: `message-like-${messageId}`,
+    channelId
+  }, origin);
+}
+
+async function sendAdminBroadcastPush(channelId: number, content: string, origin: string) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
   if (!channel) return;
   const accountIds = await notificationRecipientIds(channelId, null, true);
@@ -1946,10 +1986,10 @@ async function sendAdminBroadcastPush(channelId: number, content: string) {
     url: `/?channelId=${channelId}`,
     tag: `admin-broadcast-${channelId}`,
     channelId
-  });
+  }, origin);
 }
 
-async function sendPinnedPush(channelId: number, pinned: { title?: string | null; body: PinnedBodyDTO }) {
+async function sendPinnedPush(channelId: number, pinned: { title?: string | null; body: PinnedBodyDTO }, origin: string) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
   if (!channel) return;
   const accountIds = await notificationRecipientIds(channelId, null, true);
@@ -1959,10 +1999,10 @@ async function sendPinnedPush(channelId: number, pinned: { title?: string | null
     url: `/?channelId=${channelId}`,
     tag: `pinned-${channelId}`,
     channelId
-  });
+  }, origin);
 }
 
-async function sendPrayerUpdatePush(messageId: number) {
+async function sendPrayerUpdatePush(messageId: number, origin: string) {
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
   if (!message || message.type !== "prayer") return;
   const accountIds = await notificationRecipientIds(message.channelId, null, true);
@@ -1972,7 +2012,7 @@ async function sendPrayerUpdatePush(messageId: number) {
     url: `/?channelId=${message.channelId}`,
     tag: `prayer-update-${message.channelId}-${sourcePrayerMessageId(message.payload, message.id)}`,
     channelId: message.channelId
-  });
+  }, origin);
 }
 
 async function createEngineEvent(kind: "message_created" | "idle_tick" | "manual_test" | "active_topic_due", payload: unknown, channelId?: number, messageId?: number, characterId?: number) {
@@ -2192,6 +2232,7 @@ async function createMessageFromActor(input: {
   filePath?: string | null;
   fileSize?: number | null;
   skipPush?: boolean;
+  pushOrigin?: string;
   skipEngineEvent?: boolean;
   skipQuestionAssistant?: boolean;
 }) {
@@ -2211,7 +2252,7 @@ async function createMessageFromActor(input: {
     }
   });
   await emitMessage(message.id);
-  if (!input.skipPush) void sendMessagePush(message.id).catch((error) => app.log.warn({ error }, "message push failed"));
+  if (!input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
   if (!input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
@@ -2482,11 +2523,12 @@ app.get("/api/admin/login-logs", { preHandler: requireAdmin }, async (request, r
 
 app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
+  const origin = pushOriginFromHeaders(request.headers);
   const preferences = await prisma.channelNotificationPreference.findMany({
     where: { accountId: auth.accountId, muted: true },
     select: { channelId: true }
   });
-  const subscriptions = PUSH_NOTIFICATIONS_ENABLED ? await prisma.pushSubscription.count({ where: { accountId: auth.accountId } }) : 0;
+  const subscriptions = PUSH_NOTIFICATIONS_ENABLED && origin ? await prisma.pushSubscription.count({ where: { accountId: auth.accountId, origin } }) : 0;
   return {
     enabled: PUSH_NOTIFICATIONS_ENABLED,
     publicKey: vapidPublicKey,
@@ -2499,17 +2541,21 @@ app.get("/api/notifications/settings", { preHandler: requireAuth }, async (reque
 app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request, reply) => {
   if (!PUSH_NOTIFICATIONS_ENABLED) return reply.code(503).send({ success: false, message: "当前环境已关闭消息推送" });
   const auth = (request as AuthedRequest).auth;
+  const origin = pushOriginFromHeaders(request.headers);
+  if (!origin) return reply.code(400).send({ success: false, message: "无法识别当前站点来源" });
   const body = pushSubscriptionSchema.parse(request.body);
   await prisma.pushSubscription.upsert({
     where: { endpoint: body.endpoint },
     update: {
       accountId: auth.accountId,
+      origin,
       keysP256dh: body.keys.p256dh,
       keysAuth: body.keys.auth
     },
     create: {
       accountId: auth.accountId,
       endpoint: body.endpoint,
+      origin,
       keysP256dh: body.keys.p256dh,
       keysAuth: body.keys.auth
     }
@@ -2519,8 +2565,9 @@ app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request,
 
 app.delete("/api/push-subscriptions", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
+  const origin = pushOriginFromHeaders(request.headers);
   const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
-  const where = body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint } : { accountId: auth.accountId };
+  const where = body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint, origin } : { accountId: auth.accountId, origin };
   await prisma.pushSubscription.deleteMany({ where });
   return { success: true };
 });
@@ -2528,9 +2575,11 @@ app.delete("/api/push-subscriptions", { preHandler: requireAuth }, async (reques
 app.post("/api/notifications/test", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   if (!pushReady) return reply.code(400).send({ success: false, message: "服务器推送未就绪" });
+  const origin = pushOriginFromHeaders(request.headers);
+  if (!origin) return reply.code(400).send({ success: false, message: "无法识别当前站点来源" });
   const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
   const subscriptions = await prisma.pushSubscription.findMany({
-    where: body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint } : { accountId: auth.accountId }
+    where: body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint, origin } : { accountId: auth.accountId, origin }
   });
   if (!subscriptions.length) return reply.code(404).send({ success: false, message: "当前设备还没有通知订阅" });
   await Promise.all(
@@ -3051,13 +3100,147 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
   };
   const rows = await prisma.message.findMany({
     where,
-    include: { sender: true, replyTo: { include: { sender: true } } },
+    include: {
+      sender: true,
+      replyTo: { include: { sender: true } },
+      likes: { include: { account: { select: { displayName: true, avatarPath: true } } }, orderBy: { createdAt: "asc" } },
+      favorites: { select: { accountId: true } }
+    },
     orderBy: { id: after > 0 ? "asc" : "desc" },
     take: limit
   });
   const filteredRows = query.prayers === "1" ? rows.filter((message) => !isPrayerUpdateMessage(message)) : rows;
   const messages = await Promise.all((after > 0 ? filteredRows : filteredRows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
   return { messages };
+});
+
+async function broadcastMessageReactions(messageId: number, accountId?: number) {
+  const dto = await hydrateMessage(messageId, accountId);
+  if (!dto?.reactions) return null;
+  const publicReaction = {
+    likeCount: dto.reactions.likeCount,
+    likedBy: dto.reactions.likedBy,
+    favoriteCount: dto.reactions.favoriteCount
+  };
+  io.to(`ch:${dto.channelId}`).emit("message:reaction", { messageId, channelId: dto.channelId, reactions: publicReaction });
+  if (accountId) io.to(`acct:${accountId}`).emit("message:reaction", { messageId, channelId: dto.channelId, reactions: dto.reactions });
+  return dto.reactions;
+}
+
+app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ liked: z.boolean() }).parse(request.body);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || !(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(404).send({ success: false, message: "消息不存在" });
+  const key = { messageId_accountId: { messageId, accountId: auth.accountId } };
+  const existing = await prisma.messageLike.findUnique({ where: key });
+  let notification = null;
+  if (body.liked) {
+    const like = await prisma.messageLike.upsert({
+      where: key,
+      create: { messageId, accountId: auth.accountId },
+      update: { dismissedAt: null }
+    });
+    if (!existing && message.sender.accountId && message.sender.accountId !== auth.accountId) {
+      const liker = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { displayName: true } });
+      notification = {
+        id: like.id,
+        channelId: message.channelId,
+        messageId,
+        senderName: message.sender.displayName,
+        likerName: liker?.displayName || auth.username,
+        createdAt: like.createdAt.toISOString()
+      };
+      io.to(`acct:${message.sender.accountId}`).emit("message:liked", notification);
+      await sendLikePush(message.sender.accountId, message.channelId, messageId, notification.likerName, pushOrigin);
+    }
+  } else if (existing) {
+    await prisma.messageLike.delete({ where: key });
+  }
+  const reactions = await broadcastMessageReactions(messageId, auth.accountId);
+  return { success: true, reactions, notification };
+});
+
+app.put("/api/messages/:messageId/favorite", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ favorited: z.boolean() }).parse(request.body);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, select: { channelId: true } });
+  if (!message || !(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(404).send({ success: false, message: "消息不存在" });
+  const key = { messageId_accountId: { messageId, accountId: auth.accountId } };
+  if (body.favorited) {
+    await prisma.messageFavorite.upsert({ where: key, create: { messageId, accountId: auth.accountId }, update: {} });
+  } else {
+    await prisma.messageFavorite.deleteMany({ where: { messageId, accountId: auth.accountId } });
+  }
+  const reactions = await broadcastMessageReactions(messageId, auth.accountId);
+  return { success: true, reactions };
+});
+
+app.get("/api/favorites", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const rows = await prisma.messageFavorite.findMany({
+    where: { accountId: auth.accountId },
+    include: {
+      message: {
+        include: {
+          sender: true,
+          channel: { select: { id: true, name: true } },
+          replyTo: { include: { sender: true } },
+          likes: { include: { account: { select: { displayName: true, avatarPath: true } } }, orderBy: { createdAt: "asc" } },
+          favorites: { select: { accountId: true } }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200
+  });
+  const visible = [];
+  for (const favorite of rows) {
+    if (!(await canAccessChannel(auth.accountId, favorite.message.channelId))) continue;
+    visible.push({
+      id: favorite.id,
+      savedAt: favorite.createdAt.toISOString(),
+      channel: favorite.message.channel,
+      message: await serializeMessage(favorite.message, auth.accountId)
+    });
+  }
+  return { favorites: visible };
+});
+
+app.get("/api/like-notifications", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const rows = await prisma.messageLike.findMany({
+    where: {
+      dismissedAt: null,
+      accountId: { not: auth.accountId },
+      message: { sender: { accountId: auth.accountId } }
+    },
+    include: { account: { select: { displayName: true } }, message: { include: { sender: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 20
+  });
+  return {
+    notifications: rows.map((like) => ({
+      id: like.id,
+      channelId: like.message.channelId,
+      messageId: like.messageId,
+      senderName: like.message.sender.displayName,
+      likerName: like.account.displayName,
+      createdAt: like.createdAt.toISOString()
+    }))
+  };
+});
+
+app.patch("/api/like-notifications/:id/dismiss", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const id = Number((request.params as { id: string }).id);
+  const like = await prisma.messageLike.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
+  if (!like || like.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
+  await prisma.messageLike.update({ where: { id }, data: { dismissedAt: new Date() } });
+  return { success: true };
 });
 
 app.get("/api/link-preview", { preHandler: requireAuth }, async (request, reply) => {
@@ -3071,6 +3254,7 @@ app.get("/api/link-preview", { preHandler: requireAuth }, async (request, reply)
 
 app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
   const body = z
     .object({
       channelId: z.number(),
@@ -3115,7 +3299,8 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       payload,
       replyToId: body.replyToId || null,
       chainRootId: rootId,
-      chainVersion: version
+      chainVersion: version,
+      pushOrigin
     });
     if (!rootId) await prisma.message.update({ where: { id: created.id }, data: { chainRootId: created.id } });
     return { success: true, message: await hydrateMessage(created.id) };
@@ -3129,7 +3314,8 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       content,
       type: "prayer",
       payload: cleanPrayerPayload(body.payload),
-      replyToId: body.replyToId || null
+      replyToId: body.replyToId || null,
+      pushOrigin
     });
     return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
   }
@@ -3139,13 +3325,15 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     content,
     type: "text",
     payload: cleanMessagePayload(body.payload),
-    replyToId: body.replyToId || null
+    replyToId: body.replyToId || null,
+    pushOrigin
   });
   return { success: true, message: await hydrateMessage(message.id) };
 });
 
 app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
   const file = await request.file();
   if (!file) return reply.code(400).send({ success: false, message: "缺少文件" });
   const fields = file.fields as Record<string, { value?: string }>;
@@ -3204,7 +3392,8 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     payload: voicePayload,
     fileName: displayFileName,
     filePath: storedFileName,
-    fileSize: stat.size
+    fileSize: stat.size,
+    pushOrigin
   });
   return { success: true, message: await hydrateMessage(message.id) };
 });
@@ -3264,6 +3453,7 @@ app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth },
 
 app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
   const messageId = Number((request.params as { messageId: string }).messageId);
   const body = z.object({ content: z.string().max(10000).optional() }).parse(request.body || {});
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
@@ -3304,7 +3494,7 @@ app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, 
     skipPush: true,
     skipEngineEvent: true
   });
-  void sendPrayerUpdatePush(updateMessage.id).catch((error) => app.log.warn({ error }, "prayer update push failed"));
+  void sendPrayerUpdatePush(updateMessage.id, pushOrigin).catch((error) => app.log.warn({ error }, "prayer update push failed"));
   return { success: true, message: await hydrateMessage(updateMessage.id, auth.accountId) };
 });
 
@@ -4577,6 +4767,7 @@ async function usersExportPayload() {
 
 app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
   const channelId = Number((request.params as { id: string }).id);
   const body = z
     .object({
@@ -4611,7 +4802,7 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
         active: true
       }
     });
-    void sendPinnedPush(channelId, { title: created.title, body: pinnedBody }).catch((error) => app.log.warn({ error }, "pinned push failed"));
+    void sendPinnedPush(channelId, { title: created.title, body: pinnedBody }, pushOrigin).catch((error) => app.log.warn({ error }, "pinned push failed"));
   } else {
     await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
   }
@@ -5448,6 +5639,7 @@ io.use(async (socket, next) => {
 
 io.on("connection", async (socket: Socket) => {
   const auth = socket.data.auth as AuthContext;
+  const pushOrigin = pushOriginFromHeaders(socket.handshake.headers);
   const account = await prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } });
   if (!account?.actor) return socket.disconnect(true);
   const session = await prisma.accountSession.findUnique({
@@ -5498,7 +5690,8 @@ io.on("connection", async (socket: Socket) => {
         content,
         type: body.type,
         payload: body.type === "prayer" ? cleanPrayerPayload(body.payload) : cleanMessagePayload(body.payload),
-        replyToId: body.replyToId || null
+        replyToId: body.replyToId || null,
+        pushOrigin
       });
       ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });
     } catch (error) {
