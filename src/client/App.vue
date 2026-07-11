@@ -2413,6 +2413,9 @@ async function loadNotificationSettings() {
   notificationPublicKey.value = result.publicKey;
   mutedChannelIds.value = new Set(result.mutedChannelIds || []);
   const subscription = await currentPushSubscription().catch(() => null);
+  if (subscription && notificationPermission.value === "granted" && result.pushReady) {
+    await api("/api/push-subscriptions", { method: "POST", body: JSON.stringify(subscription.toJSON()) }).catch(() => null);
+  }
   notificationEnabled.value = !!subscription && notificationPermission.value === "granted";
 }
 
