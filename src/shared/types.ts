@@ -1,6 +1,6 @@
 export type ActorKind = "human" | "virtual" | "system";
 export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "why_topic_card" | "system";
-export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "flame" | "drip" | "rain" | "sunburst" | "marquee" | "water" | "dripGooey";
+export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
 export interface ActorDTO {
@@ -103,6 +103,14 @@ export interface AdminAttachmentDTO {
   channelName?: string | null;
   ownerName?: string | null;
   usage: string[];
+  exists: boolean;
+}
+
+export interface AdminBackupDTO {
+  fileName: string;
+  size: number;
+  createdAt: string;
+  url: string;
 }
 
 export interface PinnedDTO {
@@ -149,6 +157,12 @@ export interface ChannelDTO {
   hasPrayerItems?: boolean;
   memberCount: number;
   pinned?: PinnedDTO | null;
+}
+
+export interface AdminChannelDTO extends ChannelDTO {
+  messageCount: number;
+  createdAt: string;
+  lastMessageAt?: string | null;
 }
 
 export interface AccountDTO {

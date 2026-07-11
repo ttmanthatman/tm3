@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
+  Archive,
   AtSign,
   ArrowDown,
   ArrowUp,
@@ -10,6 +11,7 @@ import {
   Bot,
   ChevronDown,
   ChevronLeft,
+  ChevronRight,
   ChevronUp,
   CloudRain,
   Droplet,
@@ -17,7 +19,6 @@ import {
   FileText,
   FilePlus,
   FileUp,
-  Flame,
   CheckCircle2,
   CircleOff,
   HeartHandshake,
@@ -56,7 +57,9 @@ import {
 } from "lucide-vue-next";
 import type {
   AccountDTO,
+  AdminChannelDTO,
   AdminAttachmentDTO,
+  AdminBackupDTO,
   AdminLoginLogDTO,
   AdminLoginLogKind,
   AppearanceDTO,
@@ -92,12 +95,18 @@ import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
-import FlamePrototype from "./FlamePrototype.vue";
+import {
+  NEWEST_READ_POSITION,
+  normalizeSavedReadPosition,
+  shouldFollowMessageListChange,
+  type SavedReadPosition
+} from "./readPosition";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 
 const store = useChatStore();
+const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
@@ -105,13 +114,6 @@ type PendingUpload = {
   progress: number;
   status: UploadStatus;
   message?: string;
-};
-type SavedReadPosition = {
-  messageId: number | string;
-  offset: number;
-  atBottom: boolean;
-  scrollTop: number;
-  savedAt: number;
 };
 const username = ref("");
 const password = ref("");
@@ -130,7 +132,7 @@ const membersCollapsed = ref(false);
 const minMessageFontSize = 14;
 const maxMessageFontSize = 40;
 const defaultMessageFontSize = 15;
-const newestReadPositionKey = "__newest__";
+const newestReadPositionKey = NEWEST_READ_POSITION;
 const legacyMessageFontSizes: Record<string, number> = {
   small: 14,
   standard: 15,
@@ -141,7 +143,8 @@ const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
 const showAdmin = ref(false);
 const showSettings = ref(false);
-const isFlamePrototypeRoute = ref(window.location.pathname === "/prototype/flame");
+const appStarting = ref(true);
+const appStartError = ref("");
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -151,12 +154,33 @@ const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
+let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; token: number } | null = null;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
-const flameLayer = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
 const gooeyDripLayer = ref<SVGSVGElement | null>(null);
-const adminTab = ref<"users" | "channels" | "pin" | "appearance" | "data" | "release">("pin");
+type AdminPage =
+  | "home"
+  | "pin"
+  | "users"
+  | "channels"
+  | "channelDetail"
+  | "appearance"
+  | "appearanceBrand"
+  | "appearanceLogin"
+  | "appearanceChat"
+  | "appearanceThemes"
+  | "appearanceFlash"
+  | "data"
+  | "backups"
+  | "messages"
+  | "resources"
+  | "loginLogs"
+  | "release";
+const adminPage = ref<AdminPage>("home");
+const adminPageLoading = ref(false);
+const adminPageError = ref("");
 const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
+const settingsLoadError = ref("");
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
 const newVirtual = ref({
@@ -178,7 +202,13 @@ const mcSelectedCharacterIds = ref<number[]>([]);
 const mcBusy = ref(false);
 const mcMsg = ref("");
 const accounts = ref<any[]>([]);
-const adminChannels = ref<ChannelDTO[]>([]);
+const adminChannels = ref<AdminChannelDTO[]>([]);
+const adminDirectConversations = ref<AdminChannelDTO[]>([]);
+const adminDirectTotal = ref(0);
+const adminDirectPage = ref(1);
+const adminDirectPageSize = 30;
+const adminDirectQuery = ref("");
+const adminSelectedChannelId = ref<number | null>(null);
 const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
@@ -232,11 +262,13 @@ const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
 const adminAttachments = ref<AdminAttachmentDTO[]>([]);
+const adminAttachmentsLoading = ref(false);
+const adminAttachmentsError = ref("");
+const adminBackups = ref<AdminBackupDTO[]>([]);
+const adminBackupBusy = ref(false);
 const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
 const adminLoginLogsBusy = ref(false);
 const adminLoginLogsMsg = ref("");
-const selectedAttachmentIds = ref<string[]>([]);
-const previewAdminAttachment = ref<AdminAttachmentDTO | null>(null);
 const dataChannelFilter = ref(0);
 const devices = ref<DeviceSessionDTO[]>([]);
 const notificationMsg = ref("");
@@ -412,17 +444,10 @@ let updateStatusTimer: number | undefined;
 let rainAnimationFrame: number | undefined;
 let rainUntil = 0;
 let rainDrops: RainDrop[] = [];
-let flameAnimationFrame: number | undefined;
-let flameLastFrame = 0;
-let flameNextSpawnAt = 0;
-let flameNextEmberAt = 0;
-let flameParticles: ChatFlameParticle[] = [];
-let flameSegmentDampening = new Map<number, number[]>();
 let dripAnimationFrame: number | undefined;
 let dripLastFrame = 0;
 let dripLastSpawn = 0;
 let dripParticles: DripParticle[] = [];
-let dripSmokeParticles: ChatSmokeParticle[] = [];
 let gooeyAnimationFrame: number | undefined;
 let gooeyLastFrame = 0;
 let gooeyLastSpawn = 0;
@@ -535,31 +560,6 @@ const primaryColorFields = colorFields.filter((field) => primaryColorFieldKeys.h
 const customThemeEdit = ref<ThemeDTO>({ id: "", name: "我的主题", palette: { ...defaultPalette } });
 type IconComponent = typeof Sparkles;
 type RainDrop = { x: number; y: number; length: number; speed: number; width: number; sway: number; alpha: number };
-type ChatFlameRect = { id: number; left: number; top: number; right: number; bottom: number; width: number; height: number };
-type ChatFlameParticle = {
-  sourceId: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  age: number;
-  life: number;
-  size: number;
-  spin: number;
-  segment: number;
-  kind: "core" | "tongue" | "ember";
-};
-type ChatSmokeParticle = {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  age: number;
-  life: number;
-  radius: number;
-  alpha: number;
-  spin: number;
-};
 type DripParticle = {
   state: "attached" | "falling" | "splash";
   x: number;
@@ -585,7 +585,6 @@ type DripCollisionRect = DOMRect & {
   layerRight: number;
   layerTop: number;
   layerBottom: number;
-  effect: MessageEffect | null;
 };
 type GooeyEdgeAnchor = { x: number; y: number; normalX: number; normalY: number; tangentX: number; tangentY: number; tangentLimit: number };
 type GooeyDripParticle = {
@@ -614,7 +613,6 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/流光", effect: "shine", label: "流光", hint: "文字金属反光", icon: WandSparkles },
   { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
   { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane },
-  { command: "/火焰", effect: "flame", label: "火焰", hint: "气泡顶部燃起火焰", icon: Flame },
   { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
   { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
 ];
@@ -633,11 +631,18 @@ type VoicePayload = {
 };
 
 onMounted(async () => {
-  if (isFlamePrototypeRoute.value) return;
   hydratePlayedRainEffectIds();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
+  document.addEventListener("keydown", handleGlobalEscape);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
-  await store.bootstrap();
+  try {
+    await store.bootstrap();
+  } catch (error) {
+    appStartError.value = error instanceof Error ? error.message : "聊天室加载失败";
+    return;
+  } finally {
+    appStarting.value = false;
+  }
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
     await loadVirtualCharacters().catch(() => { virtuals.value = []; });
@@ -650,6 +655,23 @@ onMounted(async () => {
   pendingReadPositionRestore.value = true;
   await restoreSavedReadPosition();
 });
+
+function reloadApplication() {
+  window.location.reload();
+}
+
+function handleGlobalEscape(event: KeyboardEvent) {
+  if (event.key !== "Escape") return;
+  if (appearanceImagePicker.value) {
+    closeAppearanceImagePicker();
+    return;
+  }
+  if (showSettings.value) {
+    void closeSettingsPanel();
+    return;
+  }
+  if (showAdmin.value) void closeAdminPanel();
+}
 
 watch(
   () => [store.currentChannelId, store.prayerOnly] as const,
@@ -701,9 +723,15 @@ watch(
 watch(
   () => store.messages.length,
   (length, previousLength) => {
-    if (pendingReadPositionRestore.value) return;
     const latest = store.messages[store.messages.length - 1];
-    const shouldFollow = !store.loadingOlderMessages && (!previousLength || length < previousLength || isNearMessageBottom(220) || (latest ? isMine(latest) : false));
+    const shouldFollow = shouldFollowMessageListChange({
+      restoring: pendingReadPositionRestore.value,
+      loadingOlder: store.loadingOlderMessages,
+      previousLength,
+      length,
+      nearBottom: isNearMessageBottom(220),
+      latestIsMine: latest ? isMine(latest) : false
+    });
     nextTick(() => {
       if (shouldFollow) scrollBottom(false);
     });
@@ -734,7 +762,6 @@ watch(
 watch(
   () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(",")] as const,
   () => {
-    nextTick(() => ensureFlamePhysics());
     nextTick(() => ensureDripPhysics());
     nextTick(() => ensureGooeyDripPhysics());
   },
@@ -803,15 +830,9 @@ watch(
   () => syncChannelEdits()
 );
 
-watch(adminTab, (tab) => {
-  if (tab === "channels" && showAdmin.value) void loadAdminChannels();
-  if (tab === "appearance" && showAdmin.value) void loadAdminAttachments();
-  if (tab === "data" && showAdmin.value) loadAdminData();
-  if (tab === "release" && showAdmin.value) void checkForUpdates();
-});
-
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
+  document.removeEventListener("keydown", handleGlobalEscape);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
@@ -820,7 +841,6 @@ onBeforeUnmount(() => {
   clearMessageLongPress();
   clearChannelLongPress();
   stopRainEffect();
-  stopFlamePhysics(true);
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
   stopAllVoicePlayback();
@@ -895,7 +915,35 @@ watch(
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
-const adminChannelRows = computed(() => (adminChannels.value.length ? adminChannels.value : store.channels));
+const adminChannelRows = computed(() => adminChannels.value);
+const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
+const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
+const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceThemes", "appearanceFlash"]);
+const adminPageMeta: Record<AdminPage, { title: string; description: string }> = {
+  home: { title: "管理中心", description: "按功能进入独立管理页面" },
+  pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
+  users: { title: "用户与权限", description: "新增用户、修改资料与管理权限" },
+  channels: { title: "频道与私聊历史", description: "正式频道和历史会话分别管理" },
+  channelDetail: { title: "频道详情", description: "修改频道资料、成员和访问权限" },
+  appearance: { title: "外观与体验", description: "每项外观配置都在独立页面完成" },
+  appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
+  appearanceLogin: { title: "登录页", description: "登录内容、背景、位置与注册入口" },
+  appearanceChat: { title: "聊天室外观", description: "聊天区壁纸和显示方式" },
+  appearanceThemes: { title: "主题颜色", description: "创建和维护聊天室配色" },
+  appearanceFlash: { title: "消息闪动特效", description: "配置闪动消息的颜色和节奏" },
+  data: { title: "数据与系统", description: "备份、聊天记录、资源和审计记录" },
+  backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
+  messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
+  resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
+  loginLogs: { title: "登录记录", description: "查看成员登录、退出和在线活动" },
+  release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
+};
+const activeAdminPageMeta = computed(() => {
+  if (adminPage.value === "channelDetail" && adminSelectedChannel.value) {
+    return { title: adminSelectedChannel.value.name, description: "频道详情" };
+  }
+  return adminPageMeta[adminPage.value];
+});
 const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value || currentChannel.value);
 const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
 const canManageActiveMembers = computed(() => {
@@ -934,11 +982,7 @@ const pinnedSummary = computed(() => {
 });
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
-const selectedAttachmentCount = computed(() => selectedAttachmentIds.value.length);
-const allAttachmentsSelected = computed(() => adminAttachments.value.length > 0 && selectedAttachmentIds.value.length === adminAttachments.value.length);
-const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.url));
-const selectedCompressibleAttachmentIds = computed(() => selectedAttachmentIds.value.filter((id) => isImageAttachmentId(id)));
-const selectedCompressibleAttachmentCount = computed(() => selectedCompressibleAttachmentIds.value.length);
+const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.exists && item.url));
 const activeAppearanceSection = computed(() => appearanceSections.find((section) => section.id === appearanceSection.value) || appearanceSections[0]);
 const appearanceDraftIcon = computed(() => loginAppearanceEdit.value.appIconPath ? wallpaperUrl(loginAppearanceEdit.value.appIconPath) : "/images/icon-192.svg");
 const appearanceDraftLoginIcon = computed(() => loginAppearanceEdit.value.loginIconPath ? wallpaperUrl(loginAppearanceEdit.value.loginIconPath) : "/images/icon-192.svg");
@@ -1667,10 +1711,10 @@ function visibleMessageElements() {
 }
 
 function saveReadPosition() {
-  if (pendingReadPositionRestore.value) return;
+  if (pendingReadPositionRestore.value) return null;
   const root = scroller.value;
   const key = readPositionStorageKey();
-  if (!root || !key || !store.messages.length) return;
+  if (!root || !key || !store.messages.length) return null;
   const firstVisible = visibleMessageElements()[0];
   const messageId = Number(firstVisible?.dataset.messageId || 0);
   const rootTop = root.getBoundingClientRect().top;
@@ -1682,21 +1726,14 @@ function saveReadPosition() {
     savedAt: Date.now()
   };
   localStorage.setItem(key, JSON.stringify(position));
+  return position;
 }
 
 function loadSavedReadPosition(): SavedReadPosition | null {
   const key = readPositionStorageKey();
   if (!key) return null;
   try {
-    const raw = JSON.parse(localStorage.getItem(key) || "null") as Partial<SavedReadPosition> | null;
-    if (!raw || typeof raw !== "object") return null;
-    return {
-      messageId: raw.messageId === newestReadPositionKey ? newestReadPositionKey : Number(raw.messageId || 0),
-      offset: Number(raw.offset || 0),
-      atBottom: !!raw.atBottom,
-      scrollTop: Number(raw.scrollTop || 0),
-      savedAt: Number(raw.savedAt || 0)
-    };
+    return normalizeSavedReadPosition(JSON.parse(localStorage.getItem(key) || "null"));
   } catch {
     return null;
   }
@@ -1741,6 +1778,7 @@ async function restoreSavedReadPosition() {
     if (target && currentRoot) {
       const rootTop = currentRoot.getBoundingClientRect().top;
       currentRoot.scrollTop += target.getBoundingClientRect().top - rootTop - position.offset;
+      activeReadAnchor = { messageId: position.messageId, offset: position.offset, expiresAt: Date.now() + 2500, token };
       hasUnreadMessages.value = false;
       pendingReadPositionRestore.value = false;
       return;
@@ -1749,6 +1787,28 @@ async function restoreSavedReadPosition() {
   root.scrollTop = position.scrollTop;
   hasUnreadMessages.value = false;
   pendingReadPositionRestore.value = false;
+}
+
+function reconcileReadPositionAfterLayout() {
+  const anchor = activeReadAnchor;
+  if (!anchor || anchor.token !== readPositionRestoreToken || anchor.expiresAt < Date.now()) {
+    activeReadAnchor = null;
+    return;
+  }
+  requestAnimationFrame(() => {
+    const root = scroller.value;
+    const target = root?.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`);
+    if (!root || !target || anchor.token !== readPositionRestoreToken) return;
+    const delta = target.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
+    if (Math.abs(delta) > 0.5) root.scrollTop += delta;
+  });
+}
+
+async function restoreChatSurface() {
+  await nextTick();
+  pendingReadPositionRestore.value = true;
+  await restoreSavedReadPosition();
+  reconcileReadPositionAfterLayout();
 }
 
 async function jumpToMessageInChannel(channelId: number, messageId: number) {
@@ -1805,21 +1865,38 @@ async function switchToLinkedChannel() {
 }
 
 async function openSettings(tab: "appearance" | "devices" | "notifications" | "release" = "appearance") {
-  settingsTab.value = tab;
+  saveReadPosition();
   showSettings.value = true;
-  if (tab === "devices") await loadDevices();
-  if (tab === "notifications") await loadNotificationSettings();
-  if (tab === "release") await checkServerVersion();
+  await selectSettingsTab(tab);
 }
 
-function returnToChat() {
+async function selectSettingsTab(tab: typeof settingsTab.value) {
+  settingsTab.value = tab;
+  settingsLoadError.value = "";
+  try {
+    if (tab === "devices") await loadDevices();
+    if (tab === "notifications") await loadNotificationSettings();
+    if (tab === "release") await checkServerVersion();
+  } catch (error) {
+    settingsLoadError.value = error instanceof Error ? error.message : "设置加载失败";
+  }
+}
+
+async function closeSettingsPanel() {
+  showSettings.value = false;
+  await restoreChatSurface();
+}
+
+async function returnToChat() {
   isAiSettingsRoute.value = false;
   isLogRoute.value = false;
   window.history.pushState({}, "", "/");
+  await restoreChatSurface();
 }
 
 async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
   if (!store.account?.isAdmin) return;
+  saveReadPosition();
   showAdmin.value = false;
   isLogRoute.value = false;
   isAiSettingsRoute.value = true;
@@ -1831,11 +1908,7 @@ async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
 
 async function openLoginLogPage() {
   if (!store.account?.isAdmin) return;
-  showAdmin.value = false;
-  isAiSettingsRoute.value = false;
-  isLogRoute.value = true;
-  window.history.pushState({}, "", "/log");
-  await loadAdminLoginLogs();
+  await openAdminPage("loginLogs");
 }
 
 function syncAiSettingsEdit(settings: AiSettingsDTO) {
@@ -2775,8 +2848,10 @@ function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToSto
   if (storeIndex >= 0) store.channels[storeIndex] = channel;
   else if (options.addToStore) store.channels = [...store.channels, channel];
   const adminIndex = adminChannels.value.findIndex((row) => row.id === channel.id);
-  if (adminIndex >= 0) adminChannels.value[adminIndex] = channel;
-  else if (options.addToAdmin && adminChannels.value.length) adminChannels.value = [...adminChannels.value, channel];
+  if (adminIndex >= 0) adminChannels.value[adminIndex] = { ...adminChannels.value[adminIndex], ...channel };
+  else if (options.addToAdmin && adminChannels.value.length) {
+    adminChannels.value = [...adminChannels.value, { ...channel, messageCount: 0, createdAt: new Date().toISOString(), lastMessageAt: null }];
+  }
   if (memberPaneChannelOverride.value?.id === channel.id) memberPaneChannelOverride.value = channel;
   syncChannelEdits();
 }
@@ -2922,6 +2997,7 @@ async function openAdminChannelMembers(channel: ChannelDTO) {
   membersCollapsed.value = false;
   showMembers.value = true;
   managedMembers.value = await store.loadMembers(channel.id);
+  await restoreChatSurface();
 }
 
 function canRemoveMemberFromActive(member: MemberActionTarget) {
@@ -3098,7 +3174,6 @@ function messageEffectClass(message: MessageDTO) {
     "message-effect-shine": effect === "shine",
     "message-effect-shake": effect === "shake",
     "message-effect-fly": effect === "fly",
-    "message-effect-flame": effect === "flame",
     "message-effect-drip": effect === "drip",
     "message-effect-rain": effect === "rain"
   };
@@ -3316,247 +3391,6 @@ function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
 }
 
-function ensureFlamePhysics() {
-  const active = hasActiveFlameMessages();
-  if ((active || flameParticles.length) && !flameAnimationFrame) {
-    flameLastFrame = 0;
-    flameNextSpawnAt = 0;
-    flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
-  }
-}
-
-function stopFlamePhysics(clear = false) {
-  if (flameAnimationFrame) window.cancelAnimationFrame(flameAnimationFrame);
-  flameAnimationFrame = undefined;
-  flameLastFrame = 0;
-  flameNextSpawnAt = 0;
-  if (clear) {
-    flameParticles = [];
-    flameSegmentDampening.clear();
-    const canvas = flameLayer.value;
-    const context = canvas?.getContext("2d");
-    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
-  }
-}
-
-function hasActiveFlameMessages() {
-  return store.messages.some((message) => messageEffect(message) === "flame" && !isMessageEffectPaused(message));
-}
-
-function updateFlamePhysics(now: number) {
-  const canvas = flameLayer.value;
-  const context = canvas?.getContext("2d");
-  if (!canvas || !context) {
-    stopFlamePhysics(true);
-    return;
-  }
-  const activeRects = activeFlameRects(canvas);
-  const activeIds = new Set(activeRects.map((rect) => rect.id));
-  const dt = Math.min(0.04, Math.max(0.008, (flameLastFrame ? now - flameLastFrame : 16) / 1000));
-  flameLastFrame = now;
-  const layerSize = prepareFlameCanvas(canvas, context);
-  updateFlameDampening(dt, activeIds);
-  if (activeRects.length && now >= flameNextSpawnAt) {
-    spawnChatFlames(now, activeRects);
-    flameNextSpawnAt = now + 28;
-  }
-
-  const nextParticles: ChatFlameParticle[] = [];
-  for (const particle of flameParticles) {
-    if (!activeIds.has(particle.sourceId)) continue;
-    particle.age += dt;
-    particle.x += particle.vx * dt + Math.sin((particle.age + particle.spin) * 11) * 0.55;
-    particle.y += particle.vy * dt;
-    particle.vx *= Math.pow(0.5, dt);
-    particle.vy += 34 * dt;
-    if (particle.age < particle.life) nextParticles.push(particle);
-  }
-  flameParticles = nextParticles.slice(-620);
-  drawChatLegacyFlames(context, layerSize.width, layerSize.height, activeRects, now);
-  if (activeRects.length || flameParticles.length) {
-    flameAnimationFrame = requestAnimationFrame(updateFlamePhysics);
-  } else {
-    stopFlamePhysics(true);
-  }
-}
-
-function prepareFlameCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height));
-  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-    canvas.width = Math.floor(width * dpr);
-    canvas.height = Math.floor(height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    flameParticles = [];
-    flameSegmentDampening.clear();
-  }
-  return { width, height };
-}
-
-function activeFlameRects(layer: HTMLCanvasElement): ChatFlameRect[] {
-  const root = scroller.value;
-  if (!root) return [];
-  const layerRect = layer.getBoundingClientRect();
-  return store.messages
-    .filter((message) => messageEffect(message) === "flame" && !isMessageEffectPaused(message))
-    .map((message) => {
-      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
-      const bubble = row?.querySelector<HTMLElement>(".message-effect-flame");
-      if (!bubble) return null;
-      const rect = bubble.getBoundingClientRect();
-      if (rect.bottom < layerRect.top - 96 || rect.top > layerRect.bottom + 32) return null;
-      return {
-        id: message.id,
-        left: rect.left - layerRect.left,
-        top: rect.top - layerRect.top,
-        right: rect.right - layerRect.left,
-        bottom: rect.bottom - layerRect.top,
-        width: rect.width,
-        height: rect.height
-      };
-    })
-    .filter((rect): rect is ChatFlameRect => !!rect);
-}
-
-function chatFlamePower(now: number, sourceId: number, segment: number) {
-  const wave = Math.sin(now * 0.0022 + sourceId * 0.37 + segment * 0.74) * 0.045 + Math.sin(now * 0.0011 + sourceId * 0.19 + segment * 1.47) * 0.024;
-  const dampening = flameSegmentDampening.get(sourceId)?.[segment] || 0;
-  return clamp(0.46 + wave - dampening, 0.16, 0.84);
-}
-
-function updateFlameDampening(dt: number, activeIds: Set<number>) {
-  for (const [sourceId, segments] of flameSegmentDampening) {
-    if (!activeIds.has(sourceId)) {
-      flameSegmentDampening.delete(sourceId);
-      continue;
-    }
-    let hasDampening = false;
-    for (let index = 0; index < segments.length; index += 1) {
-      segments[index] = clamp((segments[index] || 0) - dt * 0.22, 0, 0.36);
-      if (segments[index] > 0.01) hasDampening = true;
-    }
-    if (!hasDampening) flameSegmentDampening.delete(sourceId);
-  }
-}
-
-function dampenChatFlame(sourceId: number, x: number, rect: DripCollisionRect) {
-  const segment = clamp(Math.floor(((x - rect.layerLeft) / Math.max(1, rect.width)) * 17), 0, 16);
-  const segments = flameSegmentDampening.get(sourceId) || Array.from({ length: 17 }, () => 0);
-  for (let index = 0; index < segments.length; index += 1) {
-    const distance = Math.abs(index - segment);
-    if (distance === 0) segments[index] = clamp(segments[index] + 0.26, 0, 0.42);
-    else if (distance === 1) segments[index] = clamp(segments[index] + 0.08, 0, 0.26);
-  }
-  flameSegmentDampening.set(sourceId, segments);
-}
-
-function chatFlameSegmentCenter(fire: ChatFlameRect, index: number) {
-  const segmentWidth = fire.width / 17;
-  return fire.left + segmentWidth * (index + 0.5);
-}
-
-function spawnChatFlames(now: number, sources: ChatFlameRect[]) {
-  for (const source of sources.slice(-5)) {
-    const segmentWidth = source.width / 17;
-    for (let segment = 0; segment < 17; segment += 1) {
-      const power = chatFlamePower(now, source.id, segment);
-      const count = Math.max(1, Math.round(power * 3));
-      for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
-        const center = chatFlameSegmentCenter(source, segment);
-        const kind: ChatFlameParticle["kind"] = Math.random() > 0.7 ? "tongue" : "core";
-        flameParticles.push({
-          sourceId: source.id,
-          x: center + randomBetween(-segmentWidth * 0.58, segmentWidth * 0.58),
-          y: source.top + randomBetween(-8, 8),
-          vx: randomBetween(-20, 20),
-          vy: randomBetween(-132, -72) * (0.82 + power * 0.62),
-          age: 0,
-          life: randomBetween(0.5, 1.08),
-          size: randomBetween(7, 16) * (0.76 + power * 0.62),
-          spin: randomBetween(-1.2, 1.2),
-          segment,
-          kind
-        });
-      }
-    }
-  }
-  if (now > flameNextEmberAt && sources.length) {
-    flameNextEmberAt = now + randomBetween(260, 520);
-    const source = sources[Math.floor(Math.random() * sources.length)];
-    const segmentWidth = source.width / 17;
-    const segment = Math.floor(Math.random() * 17);
-    flameParticles.push({
-      sourceId: source.id,
-      x: chatFlameSegmentCenter(source, segment) + randomBetween(-segmentWidth * 0.35, segmentWidth * 0.35),
-      y: source.top + randomBetween(-4, 6),
-      vx: randomBetween(-36, 36),
-      vy: randomBetween(-165, -88),
-      age: 0,
-      life: randomBetween(0.9, 1.7),
-      size: randomBetween(1.8, 4.4),
-      spin: randomBetween(-1, 1),
-      segment,
-      kind: "ember"
-    });
-  }
-}
-
-function drawChatLegacyFlames(context: CanvasRenderingContext2D, width: number, height: number, sources: ChatFlameRect[], now: number) {
-  context.clearRect(0, 0, width, height);
-  const sourceById = new Map(sources.map((source) => [source.id, source]));
-  context.save();
-  context.globalCompositeOperation = "lighter";
-  for (const particle of flameParticles) {
-    const source = sourceById.get(particle.sourceId);
-    if (!source) continue;
-    const t = clamp(particle.age / particle.life, 0, 1);
-    const power = chatFlamePower(now, particle.sourceId, particle.segment);
-    const alpha = (1 - t) * (particle.kind === "ember" ? 0.78 : 0.64) * clamp(power + 0.18, 0, 1);
-    if (alpha <= 0.01) continue;
-    context.save();
-    context.beginPath();
-    context.rect(source.left - 16, source.top - 132, source.width + 32, 142);
-    context.clip();
-    context.translate(particle.x, particle.y);
-    context.rotate(Math.sin(particle.age * 4 + particle.spin) * 0.22);
-    if (particle.kind === "ember") {
-      context.globalAlpha = alpha;
-      context.fillStyle = "#ffd166";
-      context.shadowColor = "rgba(255, 143, 31, 0.75)";
-      context.shadowBlur = 9;
-      context.beginPath();
-      context.arc(0, 0, particle.size * (1 - t * 0.4), 0, Math.PI * 2);
-      context.fill();
-    } else {
-      const radiusX = particle.size * (0.52 + t * 0.16);
-      const radiusY = particle.size * (1.18 - t * 0.42);
-      const gradient = context.createRadialGradient(-radiusX * 0.18, -radiusY * 0.42, 1, 0, 0, radiusY);
-      gradient.addColorStop(0, `rgba(255, 255, 222, ${alpha})`);
-      gradient.addColorStop(0.22, `rgba(255, 211, 83, ${alpha * 0.9})`);
-      gradient.addColorStop(0.52, `rgba(255, 103, 28, ${alpha * 0.72})`);
-      gradient.addColorStop(1, "rgba(80, 12, 12, 0)");
-      context.fillStyle = gradient;
-      context.beginPath();
-      context.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
-      context.fill();
-    }
-    context.restore();
-  }
-
-  for (const source of sources) {
-    const glow = context.createLinearGradient(source.left, source.top - 8, source.right, source.top - 8);
-    for (let segment = 0; segment < 17; segment += 1) {
-      const power = chatFlamePower(now, source.id, segment);
-      glow.addColorStop(segment / 16, `rgba(255, 115, 28, ${0.05 + power * 0.15})`);
-    }
-    context.fillStyle = glow;
-    context.fillRect(source.left - 8, source.top - 34, source.width + 16, 42);
-  }
-  context.restore();
-}
-
 function ensureDripPhysics() {
   const active = hasActiveDripMessages();
   if ((active || dripParticles.length) && !dripAnimationFrame) {
@@ -3573,7 +3407,6 @@ function stopDripPhysics(clear = false) {
   dripLastSpawn = 0;
   if (clear) {
     dripParticles = [];
-    dripSmokeParticles = [];
     const canvas = dripLayer.value;
     const context = canvas?.getContext("2d");
     if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
@@ -3612,10 +3445,6 @@ function updateDripPhysics(now: number) {
       particle.y += particle.vy * dt;
       const hit = findDripHit(particle, bubbleRects);
       if (hit) {
-        if (hit.effect === "flame") {
-          spawnDripSteam(particle.x, hit.layerTop - 14, 12);
-          dampenChatFlame(hit.id, particle.x, hit);
-        }
         spawnDripSplash(nextParticles, particle, hit.layerTop);
         continue;
       }
@@ -3630,9 +3459,8 @@ function updateDripPhysics(now: number) {
     nextParticles.push(particle);
   }
   dripParticles = nextParticles;
-  updateDripSmokeParticles(dt);
-  drawDripFrame(context, layerSize.width, layerSize.height, dripParticles, dripSmokeParticles);
-  if (active || dripParticles.length || dripSmokeParticles.length) {
+  drawDripFrame(context, layerSize.width, layerSize.height, dripParticles);
+  if (active || dripParticles.length) {
     dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
   } else {
     stopDripPhysics();
@@ -3649,7 +3477,6 @@ function prepareDripCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingCo
     canvas.height = Math.floor(height * dpr);
     context.setTransform(dpr, 0, 0, dpr, 0, 0);
     dripParticles = [];
-    dripSmokeParticles = [];
   }
   return { width, height };
 }
@@ -3721,8 +3548,7 @@ function dripCollisionRects(layer: HTMLCanvasElement) {
       layerLeft: rect.left - layerRect.left,
       layerRight: rect.right - layerRect.left,
       layerTop: rect.top - layerRect.top,
-      layerBottom: rect.bottom - layerRect.top,
-      effect: message ? messageEffect(message) : null
+      layerBottom: rect.bottom - layerRect.top
     }));
   }
   return rects;
@@ -3802,64 +3628,13 @@ function spawnDripSplash(nextParticles: DripParticle[], source: DripParticle, y:
   }
 }
 
-function spawnDripSteam(x: number, y: number, amount = 7) {
-  for (let index = 0; index < amount; index += 1) {
-    dripSmokeParticles.push({
-      x: x + randomBetween(-18, 18),
-      y: y + randomBetween(-8, 12),
-      vx: randomBetween(-24, 24),
-      vy: randomBetween(-66, -32),
-      age: 0,
-      life: randomBetween(1.35, 2.8),
-      radius: randomBetween(12, 29),
-      alpha: randomBetween(0.13, 0.25),
-      spin: randomBetween(-0.8, 0.8)
-    });
-  }
-  dripSmokeParticles = dripSmokeParticles.slice(-160);
-}
-
-function updateDripSmokeParticles(dt: number) {
-  const nextSmoke: ChatSmokeParticle[] = [];
-  for (const smoke of dripSmokeParticles) {
-    smoke.age += dt;
-    smoke.x += smoke.vx * dt + Math.sin((smoke.age + smoke.spin) * 2.2) * 0.4;
-    smoke.y += smoke.vy * dt;
-    smoke.vx *= Math.pow(0.74, dt);
-    smoke.vy -= 5 * dt;
-    smoke.radius += 17 * dt;
-    if (smoke.age < smoke.life) nextSmoke.push(smoke);
-  }
-  dripSmokeParticles = nextSmoke.slice(-140);
-}
-
-function drawDripFrame(context: CanvasRenderingContext2D, width: number, height: number, particles: DripParticle[], smokeParticles: ChatSmokeParticle[]) {
+function drawDripFrame(context: CanvasRenderingContext2D, width: number, height: number, particles: DripParticle[]) {
   context.clearRect(0, 0, width, height);
-  drawDripSteam(context, smokeParticles);
   for (const particle of particles) {
     if (particle.state === "attached") drawAttachedDrip(context, particle);
     else if (particle.state === "falling") drawFallingDrip(context, particle);
     else drawSplashDrip(context, particle);
   }
-}
-
-function drawDripSteam(context: CanvasRenderingContext2D, particles: ChatSmokeParticle[]) {
-  context.save();
-  context.globalCompositeOperation = "source-over";
-  for (const smoke of particles) {
-    const t = clamp(smoke.age / smoke.life, 0, 1);
-    const alpha = smoke.alpha * Math.sin((1 - t) * Math.PI * 0.5);
-    if (alpha <= 0.005) continue;
-    const gradient = context.createRadialGradient(smoke.x, smoke.y, 2, smoke.x, smoke.y, smoke.radius);
-    gradient.addColorStop(0, `rgba(74, 85, 104, ${alpha})`);
-    gradient.addColorStop(0.52, `rgba(107, 114, 128, ${alpha * 0.48})`);
-    gradient.addColorStop(1, "rgba(148, 163, 184, 0)");
-    context.fillStyle = gradient;
-    context.beginPath();
-    context.ellipse(smoke.x, smoke.y, smoke.radius * (1.18 + t * 0.32), smoke.radius * (0.76 + t * 0.2), smoke.spin + t, 0, Math.PI * 2);
-    context.fill();
-  }
-  context.restore();
 }
 
 function drawAttachedDrip(context: CanvasRenderingContext2D, particle: DripParticle) {
@@ -4746,11 +4521,11 @@ function toggleMessageSelectionMode() {
   pendingPrayer.value = null;
 }
 
-function startMessageSelectionMode() {
+async function startMessageSelectionMode() {
   showAdmin.value = false;
   messageSelectionMode.value = true;
   selectedMessageIds.value = new Set();
-  nextTick(() => scrollBottom(false));
+  await restoreChatSurface();
 }
 
 function toggleMessageSelected(message: MessageDTO) {
@@ -5888,25 +5663,105 @@ async function saveNotice() {
 }
 
 async function loadAdmin() {
-  syncChannelEdits();
+  saveReadPosition();
   showAdmin.value = true;
+  adminPage.value = "home";
+  adminPageError.value = "";
+  adminMsg.value = "";
   if (!isAdmin.value) return;
-  const [a] = await Promise.all([api<{ accounts: any[] }>("/api/admin/accounts"), loadAdminChannels()]);
-  accounts.value = a.accounts;
-  syncAccountEdits();
-  syncChannelEdits();
   noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-  if (adminTab.value === "appearance") await loadAdminAttachments();
-  if (adminTab.value === "data") await loadAdminData();
-  if (adminTab.value === "release") await checkForUpdates();
-  void loadMcStatus();
 }
 
-async function loadAdminChannels() {
+async function loadAdminAccounts() {
+  const result = await api<{ accounts: any[] }>("/api/admin/accounts");
+  accounts.value = result.accounts;
+  syncAccountEdits();
+}
+
+async function loadAdminChannels(page = adminDirectPage.value) {
   if (!isAdmin.value) return;
-  const result = await api<{ channels: ChannelDTO[] }>("/api/admin/channels");
+  const params = new URLSearchParams({
+    directPage: String(page),
+    directPageSize: String(adminDirectPageSize)
+  });
+  if (adminDirectQuery.value.trim()) params.set("q", adminDirectQuery.value.trim());
+  const result = await api<{
+    channels: AdminChannelDTO[];
+    directConversations: AdminChannelDTO[];
+    directTotal: number;
+    directPage: number;
+  }>(`/api/admin/channels?${params.toString()}`);
   adminChannels.value = result.channels.filter(Boolean);
+  adminDirectConversations.value = result.directConversations.filter(Boolean);
+  adminDirectTotal.value = result.directTotal;
+  adminDirectPage.value = result.directPage;
   syncChannelEdits();
+}
+
+async function openAdminPage(page: AdminPage) {
+  const wasAppearancePage = adminAppearancePages.has(adminPage.value);
+  const nextIsAppearancePage = adminAppearancePages.has(page);
+  if (wasAppearancePage && !nextIsAppearancePage && page !== "appearance") {
+    abandonAppearanceDraft();
+    appearancePreviewOpen.value = false;
+  }
+  adminPage.value = page;
+  adminPageError.value = "";
+  adminMsg.value = "";
+  const sectionByPage: Partial<Record<AdminPage, AppearanceSection>> = {
+    appearanceBrand: "brand",
+    appearanceLogin: "login",
+    appearanceChat: "chat",
+    appearanceThemes: "themes",
+    appearanceFlash: "flash"
+  };
+  if (sectionByPage[page]) appearanceSection.value = sectionByPage[page]!;
+  adminPageLoading.value = true;
+  try {
+    if (page === "users") await loadAdminAccounts();
+    if (page === "channels") await loadAdminChannels();
+    if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
+    if (page === "backups") await loadAdminBackups();
+    if (page === "loginLogs") await loadAdminLoginLogs();
+    if (page === "release") await checkForUpdates();
+  } catch (error) {
+    adminPageError.value = error instanceof Error ? error.message : "页面加载失败，请稍后重试";
+  } finally {
+    adminPageLoading.value = false;
+  }
+}
+
+function openAdminChannelDetail(channel: AdminChannelDTO) {
+  adminSelectedChannelId.value = channel.id;
+  void openAdminPage("channelDetail");
+}
+
+function returnFromAdminPage() {
+  if (adminPage.value === "channelDetail") {
+    void openAdminPage("channels");
+    return;
+  }
+  if (adminAppearancePages.has(adminPage.value)) {
+    void openAdminPage("appearance");
+    return;
+  }
+  if (["backups", "messages", "resources", "loginLogs"].includes(adminPage.value)) {
+    void openAdminPage("data");
+    return;
+  }
+  void openAdminPage("home");
+}
+
+function searchDirectConversations() {
+  adminDirectPage.value = 1;
+  void openAdminPage("channels");
+}
+
+function changeDirectConversationPage(delta: number) {
+  const nextPage = Math.min(adminDirectPageCount.value, Math.max(1, adminDirectPage.value + delta));
+  if (nextPage === adminDirectPage.value) return;
+  adminDirectPage.value = nextPage;
+  void openAdminPage("channels");
 }
 
 async function loadMcStatus() {
@@ -5969,14 +5824,25 @@ function toggleMcCharacter(id: number) {
 }
 
 async function loadAdminData() {
-  await loadAdminAttachments();
+  await Promise.all([loadAdminAttachments(), loadAdminBackups()]);
 }
 
 async function loadAdminAttachments() {
-  const result = await api<{ attachments: AdminAttachmentDTO[] }>("/api/admin/attachments");
-  adminAttachments.value = result.attachments;
-  const available = new Set(result.attachments.map((item) => item.id));
-  selectedAttachmentIds.value = selectedAttachmentIds.value.filter((id) => available.has(id));
+  adminAttachmentsLoading.value = true;
+  adminAttachmentsError.value = "";
+  try {
+    const result = await api<{ attachments: AdminAttachmentDTO[] }>("/api/admin/attachments");
+    adminAttachments.value = result.attachments;
+  } catch (error) {
+    adminAttachmentsError.value = error instanceof Error ? error.message : "资源索引加载失败";
+  } finally {
+    adminAttachmentsLoading.value = false;
+  }
+}
+
+async function loadAdminBackups() {
+  const result = await api<{ backups: AdminBackupDTO[] }>("/api/admin/backups");
+  adminBackups.value = result.backups;
 }
 
 function adminDate(value?: string | null) {
@@ -6007,16 +5873,6 @@ function loginLogTone(kind: AdminLoginLogKind) {
   return "system";
 }
 
-function attachmentKindLabel(kind: AdminAttachmentDTO["kind"]) {
-  if (kind === "avatar") return "头像";
-  if (kind === "background") return "图片";
-  return "上传";
-}
-
-function attachmentUsage(item: AdminAttachmentDTO) {
-  return item.usage.length ? item.usage.join(" · ") : "未关联";
-}
-
 function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
   const usage = item.usage.length ? item.usage.join("、") : "未使用";
   const date = adminDate(item.createdAt);
@@ -6026,42 +5882,6 @@ function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
 function isImageAttachmentId(id: string) {
   const fileName = id.split(":").slice(1).join(":");
   return /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(fileName);
-}
-
-function adminAttachmentUrl(item: AdminAttachmentDTO | null) {
-  if (!item?.url) return "";
-  if (!item.url.startsWith("/api/")) return item.url;
-  const separator = item.url.includes("?") ? "&" : "?";
-  return `${item.url}${separator}token=${encodeURIComponent(getToken())}`;
-}
-
-function isImageAttachment(item: AdminAttachmentDTO) {
-  return isImageAttachmentId(item.id) || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(item.fileName);
-}
-
-function isAudioAttachment(item: AdminAttachmentDTO) {
-  return /\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(item.fileName);
-}
-
-function isVideoAttachment(item: AdminAttachmentDTO) {
-  return /\.(mp4|m4v|mov|webm)$/i.test(item.fileName);
-}
-
-function isPdfAttachment(item: AdminAttachmentDTO) {
-  return /\.pdf$/i.test(item.fileName);
-}
-
-function openAdminAttachmentPreview(item: AdminAttachmentDTO) {
-  if (!adminAttachmentUrl(item)) return;
-  previewAdminAttachment.value = item;
-}
-
-function closeAdminAttachmentPreview() {
-  previewAdminAttachment.value = null;
-}
-
-function toggleAllAttachments() {
-  selectedAttachmentIds.value = allAttachmentsSelected.value ? [] : adminAttachments.value.map((item) => item.id);
 }
 
 async function clearAdminMessages(channelId = dataChannelFilter.value) {
@@ -6083,7 +5903,6 @@ async function deleteAdminAttachments(ids: string[]) {
     body: JSON.stringify({ ids })
   });
   adminMsg.value = `已删除 ${result.deleted} 个文件，处理 ${result.requested} 条附件记录`;
-  selectedAttachmentIds.value = [];
   await loadAdminData();
   await store.loadChannels(store.currentChannelId);
 }
@@ -6096,9 +5915,35 @@ async function deleteAllAdminAttachments() {
     body: JSON.stringify({ all: true })
   });
   adminMsg.value = `已删除 ${result.deleted} 个文件，处理 ${result.requested} 条附件记录`;
-  selectedAttachmentIds.value = [];
   await loadAdminData();
   await store.loadChannels(store.currentChannelId);
+}
+
+async function createAdminBackup() {
+  if (adminBackupBusy.value) return;
+  adminBackupBusy.value = true;
+  adminMsg.value = "正在创建完整备份...";
+  try {
+    const result = await api<{ backup?: AdminBackupDTO }>("/api/admin/backups", { method: "POST" });
+    await loadAdminBackups();
+    if (result.backup) {
+      await downloadAdminFile(result.backup.url, result.backup.fileName);
+      adminMsg.value = `备份已创建并开始下载：${result.backup.fileName}`;
+    } else {
+      adminMsg.value = "备份已创建";
+    }
+  } catch (e: any) {
+    adminMsg.value = e?.message || "备份失败";
+  } finally {
+    adminBackupBusy.value = false;
+  }
+}
+
+async function deleteAdminBackup(backup: AdminBackupDTO) {
+  if (!confirm(`删除备份“${backup.fileName}”？`)) return;
+  const result = await api<{ backups: AdminBackupDTO[] }>(backup.url, { method: "DELETE" });
+  adminBackups.value = result.backups;
+  adminMsg.value = "备份已删除";
 }
 
 async function compressAdminAttachments(ids: string[]) {
@@ -6110,8 +5955,6 @@ async function compressAdminAttachments(ids: string[]) {
   });
   adminMsg.value = `已压缩 ${result.compressed} 张图片，跳过 ${result.skipped} 张，节省 ${compactBytes(result.savedBytes)}`;
   adminAttachments.value = result.attachments;
-  const available = new Set(result.attachments.map((item) => item.id));
-  selectedAttachmentIds.value = selectedAttachmentIds.value.filter((id) => available.has(id));
   await store.loadChannels(store.currentChannelId);
 }
 
@@ -6305,20 +6148,11 @@ function abandonAppearanceDraft() {
   appearanceImagePicker.value = null;
 }
 
-function switchAdminTab(tab: typeof adminTab.value) {
-  if (tab !== "appearance" && adminTab.value === "appearance") {
-    abandonAppearanceDraft();
-    appearancePreviewOpen.value = false;
-  }
-  adminTab.value = tab;
-  if (tab === "appearance") void loadAdminAttachments();
-  if (tab === "channels") void loadAdminChannels();
-}
-
-function closeAdminPanel() {
-  if (adminTab.value === "appearance") abandonAppearanceDraft();
+async function closeAdminPanel() {
+  if (adminAppearancePages.has(adminPage.value)) abandonAppearanceDraft();
   showAdmin.value = false;
   appearancePreviewOpen.value = false;
+  await restoreChatSurface();
 }
 
 function syncLoginAppearanceEdit() {
@@ -6455,6 +6289,26 @@ async function deleteChannel(channel: ChannelDTO) {
   adminMsg.value = `频道“${channel.name}”已删除`;
 }
 
+function directConversationLabel(channel: AdminChannelDTO) {
+  return channel.name.replace(/^私聊[：:]\s*/, "") || "未命名私聊";
+}
+
+function directConversationActivity(channel: AdminChannelDTO) {
+  const time = channel.lastMessageAt || channel.createdAt;
+  return time ? adminDateTime(time) : "无活动记录";
+}
+
+async function deleteDirectConversation(channel: AdminChannelDTO) {
+  const label = directConversationLabel(channel);
+  if (!confirm(`永久删除“${label}”的私聊历史？其中 ${channel.messageCount} 条消息和附件会一并删除，且无法恢复。`)) return;
+  const fallbackChannelId = channel.id === store.currentChannelId ? store.previousChannelId : store.currentChannelId;
+  await api(`/api/admin/direct-conversations/${channel.id}`, { method: "DELETE" });
+  if (channel.id === store.currentChannelId) await store.loadChannels(fallbackChannelId);
+  const targetPage = adminDirectConversations.value.length === 1 && adminDirectPage.value > 1 ? adminDirectPage.value - 1 : adminDirectPage.value;
+  await loadAdminChannels(targetPage);
+  adminMsg.value = `私聊历史“${label}”已删除`;
+}
+
 async function addVirtual() {
   await api("/api/virtual-characters", {
     method: "POST",
@@ -6505,7 +6359,21 @@ async function toggleVirtual(character: any) {
 </script>
 
 <template>
-  <FlamePrototype v-if="isFlamePrototypeRoute" />
+  <main v-if="appStarting" class="app-start-shell" :style="appearanceStyle" aria-live="polite">
+    <section class="app-start-card">
+      <span class="app-start-spinner" aria-hidden="true"></span>
+      <strong>正在打开聊天室</strong>
+      <small>正在载入外观、账号和最近消息…</small>
+    </section>
+  </main>
+  <main v-else-if="appStartError" class="app-start-shell" :style="appearanceStyle">
+    <section class="app-start-card error" role="alert">
+      <CircleOff :size="34" />
+      <strong>聊天室没有加载完成</strong>
+      <small>{{ appStartError }}</small>
+      <button class="primary-btn" @click="reloadApplication"><RotateCcw :size="16" />重新加载</button>
+    </section>
+  </main>
   <main v-else-if="isAiSettingsRoute && store.account?.isAdmin" class="ai-settings-page ai-settings-full-page" :style="appearanceStyle">
     <section class="ai-settings-panel ai-settings-workspace">
       <header class="ai-settings-head">
@@ -6740,7 +6608,7 @@ async function toggleVirtual(character: any) {
       <form @submit.prevent="doLogin">
         <input v-model="username" autocomplete="username" placeholder="用户名" />
         <input v-if="authMode === 'register'" v-model="displayName" autocomplete="name" placeholder="显示名" />
-        <input v-model="password" autocomplete="current-password" placeholder="密码" type="password" />
+        <input v-model="password" :autocomplete="authMode === 'register' ? 'new-password' : 'current-password'" :minlength="authMode === 'register' ? 10 : 1" maxlength="128" placeholder="密码" type="password" />
         <button class="primary-btn" type="submit">{{ authMode === "register" ? "注册并登录" : "登录" }}</button>
       </form>
       <button v-if="store.appearance.registrationEnabled" class="text-btn login-mode-btn" @click="authMode = authMode === 'register' ? 'login' : 'register'; loginError = ''">
@@ -6840,7 +6708,6 @@ async function toggleVirtual(character: any) {
 
     <section class="chat-pane">
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
-      <canvas ref="flameLayer" class="flame-layer" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
         <defs>
@@ -6888,6 +6755,9 @@ async function toggleVirtual(character: any) {
           />
         </g>
       </svg>
+      <div v-if="store.connectionState !== 'connected'" class="connection-banner" role="status">
+        <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
+      </div>
       <header class="chat-head">
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
@@ -7002,7 +6872,7 @@ async function toggleVirtual(character: any) {
       </section>
 
       <div class="messages-viewport">
-        <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll">
+        <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll" @load.capture="reconcileReadPositionAfterLayout">
         <button
           v-if="messageLoadBanner"
           type="button"
@@ -7704,25 +7574,7 @@ async function toggleVirtual(character: any) {
           <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="previewImageSrc()" alt="图片预览" draggable="false" />
           <audio v-else-if="isAudioMessage(previewMessage)" class="media-preview-audio" :src="fileUrl(previewMessage)" controls autoplay preload="metadata"></audio>
           <video v-else-if="isVideoMessage(previewMessage)" class="media-preview-video" :src="fileUrl(previewMessage)" controls autoplay playsinline preload="metadata"></video>
-          <iframe v-else-if="isPdfMessage(previewMessage)" class="media-preview-frame" :src="fileUrl(previewMessage)" title="文档预览"></iframe>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="previewAdminAttachment" class="modal-shell media-preview-shell" @click.self="closeAdminAttachmentPreview">
-      <div class="media-preview-modal">
-        <header class="modal-head">
-          <strong>{{ previewAdminAttachment.label || previewAdminAttachment.fileName }}</strong>
-          <div class="preview-actions">
-            <a class="icon-btn" :href="adminAttachmentUrl(previewAdminAttachment)" target="_blank" rel="noopener noreferrer" aria-label="打开文件"><Download :size="18" /></a>
-            <button class="icon-btn" @click="closeAdminAttachmentPreview" aria-label="关闭预览"><X :size="20" /></button>
-          </div>
-        </header>
-        <div class="media-preview-body admin-attachment-preview-body">
-          <img v-if="isImageAttachment(previewAdminAttachment)" class="media-preview-image admin-attachment-preview-image" :src="adminAttachmentUrl(previewAdminAttachment)" alt="附件预览" />
-          <audio v-else-if="isAudioAttachment(previewAdminAttachment)" class="media-preview-audio" :src="adminAttachmentUrl(previewAdminAttachment)" controls autoplay preload="metadata"></audio>
-          <video v-else-if="isVideoAttachment(previewAdminAttachment)" class="media-preview-video" :src="adminAttachmentUrl(previewAdminAttachment)" controls autoplay playsinline preload="metadata"></video>
-          <iframe v-else class="media-preview-frame" :src="adminAttachmentUrl(previewAdminAttachment)" :title="isPdfAttachment(previewAdminAttachment) ? '文档预览' : '文件预览'"></iframe>
+          <iframe v-else-if="isPdfMessage(previewMessage)" class="media-preview-frame" :src="fileUrl(previewMessage)" title="文档预览" sandbox=""></iframe>
         </div>
       </div>
     </section>
@@ -7810,21 +7662,37 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showSettings" class="modal-shell" @click.self="showSettings = false">
+    <section v-if="showSettings" class="modal-shell" role="dialog" aria-modal="true" aria-label="个人设置" @click.self="closeSettingsPanel">
       <div class="settings-modal">
-        <header class="modal-head">
-          <strong>设置</strong>
-          <button class="icon-btn" @click="showSettings = false" aria-label="关闭设置"><X :size="20" /></button>
-        </header>
-        <nav class="tabs">
-          <button :class="{ active: settingsTab === 'appearance' }" @click="settingsTab = 'appearance'"><Palette :size="16" />外观</button>
-          <button :class="{ active: settingsTab === 'bible' }" @click="settingsTab = 'bible'"><BookOpen :size="16" />经文</button>
-          <button :class="{ active: settingsTab === 'devices' }" @click="settingsTab = 'devices'; loadDevices()"><Monitor :size="16" />设备</button>
-          <button :class="{ active: settingsTab === 'notifications' }" @click="settingsTab = 'notifications'; loadNotificationSettings()"><Bell :size="16" />通知</button>
-          <button :class="{ active: settingsTab === 'release' }" @click="settingsTab = 'release'"><Info :size="16" />版本</button>
-        </nav>
-        <div class="admin-body">
-          <section v-if="settingsTab === 'appearance'" class="form-grid">
+        <aside class="settings-sidebar">
+          <header class="settings-profile">
+            <div class="avatar">
+              <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
+              <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
+            </div>
+            <span><strong>{{ store.account?.displayName }}</strong><small>@{{ store.account?.username }}</small></span>
+          </header>
+          <nav class="settings-nav" aria-label="设置分类">
+            <button :class="{ active: settingsTab === 'appearance' }" @click="selectSettingsTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
+            <button :class="{ active: settingsTab === 'bible' }" @click="selectSettingsTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
+            <button :class="{ active: settingsTab === 'notifications' }" @click="selectSettingsTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
+            <button :class="{ active: settingsTab === 'devices' }" @click="selectSettingsTab('devices')"><Monitor :size="19" /><span><b>登录设备</b><small>会话与安全</small></span></button>
+            <button :class="{ active: settingsTab === 'release' }" @click="selectSettingsTab('release')"><Info :size="19" /><span><b>关于</b><small>版本与更新</small></span></button>
+          </nav>
+          <small class="settings-sidebar-version">Team Chat v{{ APP_VERSION }}</small>
+        </aside>
+        <div class="settings-content">
+          <header class="settings-content-head">
+            <div>
+              <strong>{{ settingsTab === 'appearance' ? '外观' : settingsTab === 'bible' ? '经文显示' : settingsTab === 'notifications' ? '通知' : settingsTab === 'devices' ? '登录设备' : '关于' }}</strong>
+              <small>{{ settingsTab === 'appearance' ? '选择舒服、清晰的聊天主题' : settingsTab === 'bible' ? '控制经文弹出的阅读方式' : settingsTab === 'notifications' ? '决定哪些消息需要提醒你' : settingsTab === 'devices' ? '查看并退出已登录的设备' : '版本信息与更新说明' }}</small>
+            </div>
+            <button class="icon-btn" @click="closeSettingsPanel" aria-label="关闭设置"><X :size="20" /></button>
+          </header>
+          <div class="admin-body settings-body">
+          <div v-if="settingsLoadError" class="settings-load-error" role="alert"><CircleOff :size="17" /><span>{{ settingsLoadError }}</span><button @click="selectSettingsTab(settingsTab)">重试</button></div>
+          <section v-if="settingsTab === 'appearance'" class="form-grid settings-section">
+            <div class="settings-section-head"><strong>聊天主题</strong><small>仅影响你的账号，可随时切换。</small></div>
             <label>主题</label>
             <div class="theme-grid">
               <button
@@ -7840,7 +7708,8 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
 
-          <section v-if="settingsTab === 'bible'" class="form-grid">
+          <section v-if="settingsTab === 'bible'" class="form-grid settings-section">
+            <div class="settings-section-head"><strong>经文阅读</strong><small>保持聊天原文不变，只调整展开后的排版。</small></div>
             <label>经文弹出格式</label>
             <div class="bible-settings-grid">
               <button
@@ -7870,7 +7739,8 @@ async function toggleVirtual(character: any) {
             <p v-if="bibleSettingsMsg" class="settings-note">{{ bibleSettingsMsg }}</p>
           </section>
 
-          <section v-if="settingsTab === 'devices'" class="form-grid">
+          <section v-if="settingsTab === 'devices'" class="form-grid settings-section">
+            <div class="settings-section-head"><strong>会话安全</strong><small>不认识的设备应立即登出；当前设备退出后需要重新登录。</small></div>
             <label>已登录设备</label>
             <div class="device-list">
               <div v-for="device in devices" :key="device.id" class="device-row">
@@ -7884,7 +7754,8 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
 
-          <section v-if="settingsTab === 'notifications'" class="form-grid">
+          <section v-if="settingsTab === 'notifications'" class="form-grid settings-section">
+            <div class="settings-section-head"><strong>消息提醒</strong><small>先开启当前设备，再按频道精细控制。</small></div>
             <label>本设备通知</label>
             <div class="notification-card">
               <div>
@@ -7914,7 +7785,7 @@ async function toggleVirtual(character: any) {
             <p v-if="notificationMsg" class="settings-note">{{ notificationMsg }}</p>
           </section>
 
-          <section v-if="settingsTab === 'release'" class="release-panel">
+          <section v-if="settingsTab === 'release'" class="release-panel settings-section">
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>
@@ -7942,40 +7813,79 @@ async function toggleVirtual(character: any) {
               </article>
             </div>
           </section>
+          </div>
         </div>
       </div>
     </section>
 
-    <section v-if="showAdmin" class="modal-shell" @click.self="closeAdminPanel">
+    <section v-if="showAdmin" class="modal-shell" role="dialog" aria-modal="true" aria-label="管理面板" @click.self="closeAdminPanel">
       <div class="admin-modal">
-        <header class="modal-head">
-          <strong>管理面板</strong>
-          <div class="modal-head-actions">
-            <button class="mini-btn secondary" @click="openLoginLogPage"><Monitor :size="15" />登录记录</button>
-            <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
+        <header class="modal-head admin-page-head">
+          <button v-if="adminPage !== 'home'" class="icon-btn" @click="returnFromAdminPage" aria-label="返回上一级"><ChevronLeft :size="21" /></button>
+          <div class="admin-page-heading">
+            <strong>{{ activeAdminPageMeta.title }}</strong>
+            <small>{{ activeAdminPageMeta.description }}</small>
           </div>
+          <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
         </header>
-        <nav class="tabs">
-          <button :class="{ active: adminTab === 'pin' }" @click="switchAdminTab('pin')"><Pin :size="16" />置顶</button>
-          <button :class="{ active: adminTab === 'users' }" @click="switchAdminTab('users')"><Users :size="16" />用户</button>
-          <button :class="{ active: adminTab === 'channels' }" @click="switchAdminTab('channels')"><Menu :size="16" />频道</button>
-          <button :class="{ active: adminTab === 'appearance' }" @click="switchAdminTab('appearance')"><Palette :size="16" />外观</button>
-          <button :class="{ active: adminTab === 'data' }" @click="switchAdminTab('data')"><Download :size="16" />数据</button>
-          <button :class="{ active: adminTab === 'release' }" @click="switchAdminTab('release')"><Info :size="16" />版本</button>
-        </nav>
 
         <div class="admin-body">
-          <section v-if="adminTab === 'pin'" class="form-grid">
+          <div v-if="adminPageLoading" class="admin-page-state" role="status"><span class="loading-dot"></span>正在加载...</div>
+          <div v-else-if="adminPageError" class="admin-page-state error" role="alert">
+            <CircleOff :size="20" />
+            <span>{{ adminPageError }}</span>
+            <button class="mini-btn secondary" @click="openAdminPage(adminPage)">重试</button>
+          </div>
+
+          <section v-else-if="adminPage === 'home'" class="admin-hub">
+            <div class="admin-hub-intro">
+              <strong>管理聊天室</strong>
+              <small>选择一个功能进入独立页面；返回时会回到这一层。</small>
+            </div>
+            <div class="admin-hub-group">
+              <label>内容与成员</label>
+              <button class="admin-entry-row" @click="openAdminPage('pin')"><span class="admin-entry-icon"><Pin :size="20" /></span><span><b>置顶公告</b><small>管理当前频道的顶部公告</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('users')"><span class="admin-entry-icon"><Users :size="20" /></span><span><b>用户与权限</b><small>账号、头像、密码和管理权限</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
+            </div>
+            <div class="admin-hub-group">
+              <label>外观与数据</label>
+              <button class="admin-entry-row" @click="openAdminPage('appearance')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>外观与体验</b><small>品牌、登录页、聊天室和主题</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息、资源和登录记录</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('release')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>版本与更新</b><small>版本状态和发布记录</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'appearance'" class="admin-hub compact">
+            <div class="admin-hub-group">
+              <button class="admin-entry-row" @click="openAdminPage('appearanceBrand')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>品牌与标签页</b><small>浏览器标题、图标和应用入口</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceLogin')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>登录页</b><small>内容、背景、位置和注册入口</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceChat')"><span class="admin-entry-icon"><MessageCircle :size="20" /></span><span><b>聊天室外观</b><small>聊天区壁纸和显示方式</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceThemes')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>主题颜色</b><small>创建和维护聊天室配色</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceFlash')"><span class="admin-entry-icon"><Sparkles :size="20" /></span><span><b>消息闪动特效</b><small>颜色、过渡方式和闪动节奏</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'data'" class="admin-hub compact">
+            <div class="admin-hub-group">
+              <button class="admin-entry-row" @click="openAdminPage('backups')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>备份与迁移</b><small>完整备份及数据导入导出</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('messages')"><span class="admin-entry-icon"><MessageSquareQuote :size="20" /></span><span><b>聊天记录</b><small>选择消息或按频道清理</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('resources')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>资源管理</b><small>查看、压缩和删除附件</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('loginLogs')"><span class="admin-entry-icon"><Archive :size="20" /></span><span><b>登录记录</b><small>成员登录、退出和在线活动</small></span><ChevronRight :size="19" /></button>
+            </div>
+          </section>
+
+          <section v-else-if="adminPage === 'pin'" class="form-grid admin-page-section">
             <label>当前频道置顶公告</label>
             <textarea v-model="noticeText" rows="4" placeholder="留空并保存可撤下置顶公告"></textarea>
             <button class="primary-btn" @click="saveNotice">保存置顶</button>
           </section>
 
-          <section v-if="adminTab === 'users'" class="form-grid">
+          <section v-else-if="adminPage === 'users'" class="form-grid admin-page-section">
             <label>新增用户</label>
             <input v-model="newUser.username" placeholder="username" />
             <input v-model="newUser.displayName" placeholder="显示名" />
-            <input v-model="newUser.password" placeholder="初始密码" type="password" />
+            <input v-model="newUser.password" minlength="10" maxlength="128" placeholder="初始密码（至少 10 位）" type="password" />
             <button class="primary-btn" @click="addUser"><FilePlus :size="16" />添加用户</button>
             <div class="user-admin-list">
               <article v-for="account in accounts" :key="account.id" class="user-admin-row">
@@ -7989,7 +7899,7 @@ async function toggleVirtual(character: any) {
                   <div class="user-admin-edit-grid">
                     <div class="user-admin-fields">
                       <input v-model="accountEdits[account.id].displayName" placeholder="昵称" />
-                      <input v-model="accountEdits[account.id].password" placeholder="重置密码，留空不改" type="password" />
+                      <input v-model="accountEdits[account.id].password" minlength="10" maxlength="128" placeholder="重置密码，留空不改（至少 10 位）" type="password" />
                     </div>
                     <div class="user-admin-flags">
                       <label class="check-row"><input v-model="accountEdits[account.id].isAdmin" type="checkbox" /> 管理员</label>
@@ -8004,29 +7914,71 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
 
-          <section v-if="adminTab === 'channels'" class="form-grid">
-            <label>全局频道设置</label>
-            <div class="channel-admin-list">
-              <template v-for="channel in adminChannelRows" :key="channel.id">
-                <article v-if="channelEdits[channel.id]" class="channel-admin-row">
-                  <label class="channel-icon-admin upload-icon-trigger" :aria-label="`上传 ${channel.name} 的频道图标`" title="点击上传图标">
-                    <img :src="channelIconUrl(channel)" alt="" />
-                    <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(channel, $event)" />
-                  </label>
-                  <div class="channel-admin-main">
-                    <input v-model="channelEdits[channel.id].name" placeholder="频道名" />
-                    <input v-model="channelEdits[channel.id].description" placeholder="描述" />
-                    <small>{{ channel.isPrivate ? "私密频道" : "公开频道" }} · {{ channel.memberCount }} 人</small>
-                  </div>
-                  <button class="mini-btn" @click="updateChannel(channel)"><Save :size="15" />保存</button>
-                  <button v-if="channel.canManage" class="mini-btn secondary" @click="openAdminChannelMembers(channel)"><Users :size="15" />成员</button>
-                  <button v-if="channel.canManage && !channel.isDefault && !channel.directKey" class="mini-btn danger-action" @click="deleteChannel(channel)"><Trash2 :size="15" />删除</button>
-                </article>
-              </template>
+          <section v-else-if="adminPage === 'channels'" class="admin-page-section channel-history-page">
+            <div class="admin-section-heading">
+              <div><strong>正式频道</strong><small>公开和私密频道；点击进入详情页编辑。</small></div>
+              <span>{{ adminChannelRows.length }} 个</span>
+            </div>
+            <div class="admin-object-list">
+              <button v-for="channel in adminChannelRows" :key="channel.id" class="admin-object-row" @click="openAdminChannelDetail(channel)">
+                <span class="channel-icon-admin"><img :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="admin-object-main"><b>{{ channel.name }}</b><small>{{ channel.isPrivate ? '私密频道' : '公开频道' }} · {{ channel.memberCount }} 人 · {{ channel.messageCount }} 条消息</small></span>
+                <span v-if="channel.isDefault" class="admin-status-pill">默认</span>
+                <ChevronRight :size="19" />
+              </button>
+              <p v-if="!adminChannelRows.length" class="empty-note">还没有正式频道</p>
+            </div>
+
+            <div class="admin-section-heading direct-history-heading">
+              <div><strong>私聊历史</strong><small>保留的历史会话不再作为频道；可在这里查找和永久删除。</small></div>
+              <span>{{ adminDirectTotal }} 个</span>
+            </div>
+            <form class="admin-search-row" @submit.prevent="searchDirectConversations">
+              <input v-model="adminDirectQuery" maxlength="80" placeholder="搜索私聊参与者" aria-label="搜索私聊历史" />
+              <button class="mini-btn secondary" type="submit">搜索</button>
+            </form>
+            <div class="admin-object-list direct-history-list">
+              <article v-for="conversation in adminDirectConversations" :key="conversation.id" class="admin-object-row direct-history-row">
+                <span class="admin-entry-icon"><Archive :size="20" /></span>
+                <span class="admin-object-main">
+                  <b>{{ directConversationLabel(conversation) }}</b>
+                  <small>{{ conversation.messageCount }} 条消息 · {{ conversation.memberCount }} 位参与者 · 最后活动 {{ directConversationActivity(conversation) }}</small>
+                </span>
+                <button class="mini-btn danger-action" @click="deleteDirectConversation(conversation)"><Trash2 :size="15" />删除历史</button>
+              </article>
+              <p v-if="!adminDirectConversations.length" class="empty-note">{{ adminDirectQuery ? '没有匹配的私聊历史' : '还没有私聊历史' }}</p>
+            </div>
+            <div v-if="adminDirectTotal > adminDirectPageSize" class="admin-pagination">
+              <button class="mini-btn secondary" :disabled="adminDirectPage <= 1" @click="changeDirectConversationPage(-1)">上一页</button>
+              <span>第 {{ adminDirectPage }} / {{ adminDirectPageCount }} 页</span>
+              <button class="mini-btn secondary" :disabled="adminDirectPage >= adminDirectPageCount" @click="changeDirectConversationPage(1)">下一页</button>
             </div>
           </section>
 
-          <section v-if="adminTab === 'appearance'" class="appearance-admin-layout">
+          <section v-else-if="adminPage === 'channelDetail' && adminSelectedChannel && channelEdits[adminSelectedChannel.id]" class="form-grid admin-page-section channel-detail-page">
+            <label>频道图标</label>
+            <label class="channel-detail-icon upload-icon-trigger" :aria-label="`上传 ${adminSelectedChannel.name} 的频道图标`" title="点击上传图标">
+              <img :src="channelIconUrl(adminSelectedChannel)" alt="" />
+              <span>点击更换图标</span>
+              <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
+            </label>
+            <label for="admin-channel-name">频道名称</label>
+            <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" />
+            <label for="admin-channel-description">频道描述</label>
+            <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3"></textarea>
+            <div class="channel-detail-summary">
+              <span>{{ adminSelectedChannel.isPrivate ? '私密频道' : '公开频道' }}</span>
+              <span>{{ adminSelectedChannel.memberCount }} 位成员</span>
+              <span>{{ adminSelectedChannel.messageCount }} 条消息</span>
+            </div>
+            <div class="channel-detail-actions">
+              <button class="primary-btn" @click="updateChannel(adminSelectedChannel)"><Save :size="15" />保存修改</button>
+              <button class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
+              <button v-if="!adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
+            </div>
+          </section>
+
+          <section v-else-if="adminAppearancePages.has(adminPage)" class="appearance-admin-layout">
             <div class="appearance-save-bar">
               <div>
                 <b>外观草稿</b>
@@ -8037,18 +7989,6 @@ async function toggleVirtual(character: any) {
                 <button class="primary-btn" :class="{ attention: appearanceHasDraftChanges }" @click="saveLoginAppearance"><Save :size="15" />保存外观</button>
               </div>
             </div>
-
-            <nav class="appearance-section-nav">
-              <button
-                v-for="section in appearanceSections"
-                :key="section.id"
-                :class="{ active: appearanceSection === section.id }"
-                @click="appearanceSection = section.id"
-              >
-                <b>{{ section.label }}</b>
-                <small>{{ section.description }}</small>
-              </button>
-            </nav>
 
             <div class="appearance-editor-panel form-grid">
               <template v-if="appearanceSection === 'brand'">
@@ -8313,7 +8253,33 @@ async function toggleVirtual(character: any) {
             </aside>
           </section>
 
-          <section v-if="adminTab === 'data'" class="form-grid">
+          <section v-else-if="adminPage === 'backups'" class="form-grid admin-page-section">
+            <label>完整备份</label>
+            <div class="admin-inline-card backup-card">
+              <div>
+                <strong>备份全部数据和程序</strong>
+                <small>生成 ZIP 后会自动下载。备份包含聊天/用户导出、storage 数据、源码、配置和静态资源，不包含依赖目录、Git 元数据和已有备份。</small>
+              </div>
+              <button class="primary-btn" :disabled="adminBackupBusy" @click="createAdminBackup">
+                <Download :size="16" />{{ adminBackupBusy ? "备份中" : "一键备份并下载" }}
+              </button>
+            </div>
+            <div class="data-toolbar data-toolbar-compact">
+              <button class="mini-btn secondary" :disabled="adminBackupBusy" @click="loadAdminBackups"><RotateCcw :size="15" />刷新备份</button>
+            </div>
+            <div class="admin-data-list backup-list">
+              <article v-for="backup in adminBackups" :key="backup.fileName" class="admin-data-row backup-row">
+                <div class="admin-data-main">
+                  <strong>{{ backup.fileName }}</strong>
+                  <small>{{ compactBytes(backup.size) }} · {{ adminDateTime(backup.createdAt) }}</small>
+                </div>
+                <div class="backup-actions">
+                  <button class="mini-btn secondary" @click="downloadAdminFile(backup.url, backup.fileName)"><Download :size="15" />下载</button>
+                  <button class="mini-btn danger-action" @click="deleteAdminBackup(backup)"><Trash2 :size="15" />删除</button>
+                </div>
+              </article>
+              <p v-if="!adminBackups.length" class="empty-note">还没有完整备份</p>
+            </div>
             <label>聊天数据</label>
             <div class="action-grid">
               <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.json')"><Download :size="16" />导出聊天</button>
@@ -8330,6 +8296,9 @@ async function toggleVirtual(character: any) {
                 <input class="hidden" type="file" accept="application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
               </label>
             </div>
+          </section>
+
+          <section v-else-if="adminPage === 'messages'" class="form-grid admin-page-section">
             <label>聊天记录删除</label>
             <div class="admin-inline-card">
               <div>
@@ -8346,46 +8315,40 @@ async function toggleVirtual(character: any) {
               <button class="mini-btn danger-action" :disabled="!dataChannelFilter" @click="clearAdminMessages(dataChannelFilter)"><Trash2 :size="15" />清空当前频道</button>
               <button class="mini-btn danger-action" @click="clearAdminMessages(0)"><Trash2 :size="15" />清空全部记录</button>
             </div>
-            <label>附件管理</label>
-            <div class="data-toolbar attachment-toolbar">
-              <button class="mini-btn secondary" @click="toggleAllAttachments">{{ allAttachmentsSelected ? "取消全选" : "全选" }}</button>
-              <button class="mini-btn secondary" @click="loadAdminAttachments"><RotateCcw :size="15" />刷新</button>
-              <button class="mini-btn danger-action" :disabled="!adminAttachments.length" @click="deleteAllAdminAttachments"><Trash2 :size="15" />删除全部附件</button>
+          </section>
+
+          <section v-else-if="adminPage === 'resources'" class="admin-page-section">
+            <AdminResourceManager
+              :attachments="adminAttachments"
+              :loading="adminAttachmentsLoading"
+              :error="adminAttachmentsError"
+              @refresh="loadAdminAttachments"
+              @compress="compressAdminAttachments"
+              @delete="deleteAdminAttachments"
+              @delete-all="deleteAllAdminAttachments"
+            />
+          </section>
+
+          <section v-else-if="adminPage === 'loginLogs'" class="admin-page-section login-log-body embedded-login-logs">
+            <div class="data-toolbar data-toolbar-compact">
+              <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs"><RotateCcw :size="15" />{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
             </div>
-            <div class="admin-data-list attachment-grid">
-              <article v-for="attachment in adminAttachments" :key="attachment.id" class="admin-data-row attachment-row">
-                <label class="check-cell">
-                  <input v-model="selectedAttachmentIds" type="checkbox" :value="attachment.id" />
-                </label>
-                <button
-                  type="button"
-                  class="attachment-preview"
-                  :class="{ empty: !adminAttachmentUrl(attachment) || !isImageAttachment(attachment) }"
-                  :disabled="!adminAttachmentUrl(attachment)"
-                  @click="openAdminAttachmentPreview(attachment)"
-                  :aria-label="`预览 ${attachment.label}`"
-                >
-                  <img v-if="adminAttachmentUrl(attachment) && isImageAttachment(attachment)" :src="adminAttachmentUrl(attachment)" alt="" />
-                  <FileUp v-else :size="24" />
-                </button>
-                <div class="admin-data-main">
-                  <strong>{{ attachmentKindLabel(attachment.kind) }} · {{ attachment.label }}</strong>
-                  <span>{{ attachmentUsage(attachment) }}</span>
-                  <small>{{ compactBytes(attachment.size) }} · {{ adminDate(attachment.createdAt) }} · {{ attachment.fileName }}</small>
+            <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
+            <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载登录记录...</p>
+            <p v-else-if="!adminLoginLogs.length" class="settings-note">还没有登录记录。</p>
+            <div v-else class="login-log-list">
+              <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
+                <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
+                <div class="login-log-main">
+                  <div class="login-log-title"><strong>{{ log.displayName }}</strong><small>@{{ log.username }}</small><time>{{ adminDateTime(log.createdAt) }}</time></div>
+                  <div class="login-log-meta"><span v-if="log.deviceName">{{ log.deviceName }}</span><span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span><span v-if="log.ipAddress">IP {{ log.ipAddress }}</span></div>
+                  <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
                 </div>
               </article>
-              <p v-if="!adminAttachments.length" class="empty-note">没有可管理的附件</p>
-            </div>
-            <div class="attachment-bulk-actions">
-              <span>已选 {{ selectedAttachmentCount }} 个附件</span>
-              <button class="mini-btn secondary" :disabled="!selectedCompressibleAttachmentCount" @click="compressAdminAttachments(selectedCompressibleAttachmentIds)">
-                <WandSparkles :size="15" />压缩 {{ selectedCompressibleAttachmentCount }}
-              </button>
-              <button class="mini-btn danger-action" :disabled="!selectedAttachmentCount" @click="deleteAdminAttachments(selectedAttachmentIds)"><Trash2 :size="15" />删除 {{ selectedAttachmentCount }}</button>
             </div>
           </section>
 
-          <section v-if="adminTab === 'release'" class="release-panel">
+          <section v-else-if="adminPage === 'release'" class="release-panel admin-page-section">
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>
