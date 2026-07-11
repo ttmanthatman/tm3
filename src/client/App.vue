@@ -412,13 +412,16 @@ async function switchVisibleChannel(channelId: number, prayerOnly = false) {
 
 async function openChannelFromList(channelId: number, prayerOnly = false) {
   if (Date.now() < suppressNextTapUntil) return;
-  saveReadPosition();
+  if (!showFavorites.value) saveReadPosition();
+  showFavorites.value = false;
   await switchVisibleChannel(channelId, prayerOnly);
   showChannels.value = false;
 }
 
 async function openFavorites() {
+  if (!showFavorites.value) saveReadPosition();
   showFavorites.value = true;
+  showChannels.value = false;
   favoritesLoading.value = true;
   try {
     const result = await api<{ favorites: FavoriteMessageDTO[] }>("/api/favorites");
@@ -426,14 +429,6 @@ async function openFavorites() {
   } finally {
     favoritesLoading.value = false;
   }
-}
-
-function favoritePreview(favorite: FavoriteMessageDTO) {
-  const message = favorite.message;
-  if (isVoiceMessage(message)) return `语音消息 · ${formatDuration(voiceDurationMs(message))}`;
-  if (message.type === "image") return "图片";
-  if (message.type === "file") return message.fileName || "附件";
-  return plainTextFromHtml(message.content || message.fileName || "消息").slice(0, 90);
 }
 
 async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
@@ -506,6 +501,8 @@ const rainDurationMs = 15_000;
 const playedRainEffectIds = new Set<number>();
 let longPressTimer: number | undefined;
 let longPressStartedAt = { x: 0, y: 0 };
+let favoriteLongPressTimer: number | undefined;
+let favoriteLongPressStartedAt = { x: 0, y: 0 };
 let channelLongPressTimer: number | undefined;
 let channelLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
@@ -885,6 +882,7 @@ onBeforeUnmount(() => {
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   clearMessageLongPress();
+  clearFavoriteLongPress();
   clearChannelLongPress();
   stopRainEffect();
   stopDripPhysics(true);
@@ -4106,6 +4104,31 @@ function clearMessageLongPress() {
   longPressTimer = undefined;
 }
 
+function beginFavoriteLongPress(favorite: FavoriteMessageDTO, event: PointerEvent) {
+  if (event.button !== 0) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest("button, a, audio, video")) return;
+  favoriteLongPressStartedAt = { x: event.clientX, y: event.clientY };
+  clearFavoriteLongPress();
+  favoriteLongPressTimer = window.setTimeout(() => {
+    favoriteLongPressTimer = undefined;
+    suppressNextTapUntil = Date.now() + 650;
+    navigator.vibrate?.(12);
+    void openFavoriteMessage(favorite);
+  }, longPressMs);
+}
+
+function moveFavoriteLongPress(event: PointerEvent) {
+  if (!favoriteLongPressTimer) return;
+  const distance = Math.hypot(event.clientX - favoriteLongPressStartedAt.x, event.clientY - favoriteLongPressStartedAt.y);
+  if (distance > 10) clearFavoriteLongPress();
+}
+
+function clearFavoriteLongPress() {
+  if (favoriteLongPressTimer) window.clearTimeout(favoriteLongPressTimer);
+  favoriteLongPressTimer = undefined;
+}
+
 function beginChannelLongPress(channel: ChannelDTO, event: PointerEvent) {
   if (!canEditChannel(channel) || event.button !== 0) return;
   const target = event.target;
@@ -6769,27 +6792,12 @@ async function toggleVirtual(character: any) {
 
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
-        <button v-if="showFavorites" class="icon-btn" @click="showFavorites = false" aria-label="返回频道"><ChevronLeft :size="20" /></button>
-        <strong>{{ showFavorites ? "收藏夹" : "聊天室" }}</strong>
-        <button v-if="!showFavorites" class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
+        <strong>聊天室</strong>
+        <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
-      <div v-if="showFavorites" class="favorites-list">
-        <p v-if="favoritesLoading" class="favorites-empty">正在加载收藏…</p>
-        <p v-else-if="!favoriteMessages.length" class="favorites-empty">长按消息，点击爱心即可收藏。</p>
-        <template v-else>
-        <article v-for="favorite in favoriteMessages" :key="favorite.id" class="favorite-card">
-          <button class="favorite-card-main" type="button" @click="openFavoriteMessage(favorite)">
-            <span class="favorite-card-meta">{{ favorite.channel.name }} · {{ adminDate(favorite.savedAt) }}</span>
-            <strong>{{ favorite.message.sender.displayName }}</strong>
-            <span>{{ favoritePreview(favorite) }}</span>
-          </button>
-          <button class="favorite-remove" type="button" @click="removeFavorite(favorite)" aria-label="取消收藏"><X :size="15" /></button>
-        </article>
-        </template>
-      </div>
-      <div v-else class="channel-list">
+      <div class="channel-list">
       <template v-for="channel in store.channels" :key="channel.id">
         <div class="channel-row-wrap" :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel) }">
           <button
@@ -6836,7 +6844,7 @@ async function toggleVirtual(character: any) {
         </button>
       </template>
       </div>
-      <button v-if="!showFavorites" class="channel-row favorites-entry" type="button" @click="openFavorites">
+      <button class="channel-row favorites-entry" :class="{ active: showFavorites }" type="button" @click="openFavorites">
         <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
         <span class="channel-row-label"><b>收藏夹</b></span>
       </button>
@@ -6921,11 +6929,12 @@ async function toggleVirtual(character: any) {
             >
               <span aria-hidden="true">{{ notificationNudgeIcon }}</span>
             </button>
-            <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+            <strong>{{ showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <small v-if="store.prayerOnly">只显示本频道代祷卡片</small>
+          <small v-if="showFavorites">集中查看所有收藏，长按消息可跳转到聊天上下文</small>
+          <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
-        <div class="message-font-control" data-message-font-menu>
+        <div v-if="!showFavorites" class="message-font-control" data-message-font-menu>
           <button
             v-if="!showMessageFontMenu"
             class="icon-btn message-font-trigger"
@@ -6942,17 +6951,17 @@ async function toggleVirtual(character: any) {
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
           </div>
         </div>
-        <button class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
+        <button v-if="!showFavorites" class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
           <Users v-else :size="20" />
         </button>
-        <button v-if="currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
-        <button v-if="canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
-        <button v-if="isAdmin || canPinCurrentChannel" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
-        <button v-if="isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
+        <button v-if="!showFavorites && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
+        <button v-if="!showFavorites && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
+        <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
+        <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
       </header>
 
-      <section v-if="messageSelectionMode" class="message-selection-bar">
+      <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
         <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
@@ -6960,7 +6969,7 @@ async function toggleVirtual(character: any) {
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
-      <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`" aria-live="polite">
+      <section v-if="!showFavorites && activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`" aria-live="polite">
         <div class="top-notice-bar">
           <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind !== 'typing' }" @click="openTopNotice(activeTopNotice)">
             <span class="top-notice-icon">
@@ -6984,7 +6993,7 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <section v-if="visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
+      <section v-if="!showFavorites && visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
         <div class="pin-card-head">
           <button type="button" class="pin-card-open-button" @click="togglePinned" :aria-label="pinnedExpanded ? '收起置顶' : '展开置顶'" :aria-expanded="pinnedExpanded">
             <span class="pin-toggle" aria-hidden="true"><Pin :size="16" /></span>
@@ -6999,7 +7008,7 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <section v-if="visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
+      <section v-if="!showFavorites && visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
         <div class="pinned-view-modal">
           <header class="pinned-view-head">
             <span class="pinned-view-icon"><Pin :size="17" /></span>
@@ -7029,7 +7038,57 @@ async function toggleVirtual(character: any) {
         </div>
       </section>
 
-      <div class="messages-viewport">
+      <div v-if="showFavorites" class="messages-viewport favorites-viewport">
+        <div class="favorites-main-scroll">
+          <div class="favorites-main-head">
+            <span class="favorites-main-icon"><Heart :size="22" /></span>
+            <div>
+              <strong>我的收藏</strong>
+              <small>{{ favoriteMessages.length }} 条消息 · 长按任意卡片查看原消息上下文</small>
+            </div>
+          </div>
+          <p v-if="favoritesLoading" class="favorites-empty">正在加载收藏…</p>
+          <p v-else-if="!favoriteMessages.length" class="favorites-empty">还没有收藏。长按聊天消息，再点击爱心即可收藏。</p>
+          <div v-else class="favorites-main-list">
+            <article
+              v-for="favorite in favoriteMessages"
+              :key="favorite.id"
+              class="favorite-message-card"
+              @pointerdown="beginFavoriteLongPress(favorite, $event)"
+              @pointermove="moveFavoriteLongPress"
+              @pointerup="clearFavoriteLongPress"
+              @pointerleave="clearFavoriteLongPress"
+              @pointercancel="clearFavoriteLongPress"
+              @contextmenu.prevent
+            >
+              <header class="favorite-message-head">
+                <div class="avatar" :class="{ bot: favorite.message.sender.kind === 'virtual' }">
+                  <img v-if="avatarUrl(favorite.message.sender.avatarPath)" :src="avatarUrl(favorite.message.sender.avatarPath)" alt="" />
+                  <span v-else>{{ avatarText(favorite.message.sender.displayName) }}</span>
+                </div>
+                <div>
+                  <strong>{{ favorite.message.sender.displayName }}</strong>
+                  <small>{{ favorite.channel.name }} · 收藏于 {{ adminDate(favorite.savedAt) }}</small>
+                </div>
+                <button class="favorite-remove" type="button" @click="removeFavorite(favorite)" aria-label="取消收藏"><X :size="16" /></button>
+              </header>
+              <div class="favorite-message-content">
+                <img v-if="favorite.message.type === 'image'" class="favorite-message-image" :src="fileUrl(favorite.message)" loading="lazy" alt="收藏的图片" />
+                <div v-else-if="isVoiceMessage(favorite.message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(favorite.message)) }}</span></div>
+                <div v-else-if="favorite.message.type === 'file'" class="favorite-message-file"><FileUp :size="19" /><span>{{ favorite.message.fileName || "附件" }}</span><small>{{ compactBytes(favorite.message.fileSize) }}</small></div>
+                <div v-else-if="isMarkdownMessage(favorite.message)" class="message-text markdown-render" v-html="markdownMessageHtml(favorite.message)"></div>
+                <div v-else class="message-text" v-html="messageContentHtml(favorite.message)"></div>
+              </div>
+              <footer class="favorite-message-actions">
+                <span>长按卡片跳转</span>
+                <button class="mini-btn secondary" type="button" @click="openFavoriteMessage(favorite)"><MessageSquareQuote :size="15" />查看上下文</button>
+              </footer>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="messages-viewport">
         <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll" @load.capture="reconcileReadPositionAfterLayout">
         <button
           v-if="messageLoadBanner"
@@ -7348,11 +7407,11 @@ async function toggleVirtual(character: any) {
         </div>
       </div>
 
-      <button v-if="awayFromNewest || hasUnreadMessages || store.hasNewerMessages" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
+      <button v-if="!showFavorites && (awayFromNewest || hasUnreadMessages || store.hasNewerMessages)" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
         <ArrowDown :size="18" />
       </button>
 
-      <footer class="composer">
+      <footer v-if="!showFavorites" class="composer">
         <div v-if="replyTo" class="reply-bar">
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
           <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>

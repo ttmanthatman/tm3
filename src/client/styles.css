@@ -989,8 +989,7 @@ button {
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
-.channel-list,
-.favorites-list {
+.channel-list {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -1014,68 +1013,168 @@ button {
   background: #fff0f4;
 }
 
-.favorites-list {
-  padding: 10px;
-  display: grid;
-  align-content: start;
-  gap: 8px;
-}
-
 .favorites-empty {
-  margin: 24px 10px;
+  margin: 48px auto;
+  max-width: 420px;
+  padding: 0 18px;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   text-align: center;
 }
 
-.favorite-card {
-  position: relative;
-  min-width: 0;
-  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--panel) 92%, #ffffff);
-  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
-}
-
-.favorite-card-main {
-  width: 100%;
-  min-width: 0;
-  padding: 10px 34px 10px 11px;
+.favorite-remove {
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  flex: 0 0 30px;
+  border-radius: 50%;
   display: grid;
-  gap: 4px;
-  color: var(--text);
-  text-align: left;
+  place-items: center;
+  color: var(--muted);
 }
 
-.favorite-card-main > strong,
-.favorite-card-main > span {
+.favorites-main-scroll {
+  min-height: 0;
+  height: 100%;
+  padding: 18px clamp(14px, 4vw, 42px) 32px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.favorites-main-head,
+.favorites-main-list {
+  width: min(760px, 100%);
+  margin-inline: auto;
+}
+
+.favorites-main-head {
+  margin-bottom: 14px;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, #ef476f 22%, var(--line));
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, #fff0f4);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.favorites-main-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ef476f;
+  background: #fff0f4;
+}
+
+.favorites-main-head > div,
+.favorite-message-head > div:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.favorites-main-head small,
+.favorite-message-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.favorites-main-list {
+  display: grid;
+  gap: 12px;
+}
+
+.favorite-message-card {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 94%, #ffffff);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.favorite-message-card:active {
+  border-color: color-mix(in srgb, #ef476f 42%, var(--line));
+  transform: scale(0.997);
+}
+
+.favorite-message-head {
+  padding: 13px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.favorite-message-head .avatar {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+
+.favorite-message-content {
+  margin: 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--chat-bg) 52%, var(--panel));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.favorite-message-content .message-text {
+  white-space: normal;
+}
+
+.favorite-message-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, 420px);
+  max-height: 360px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.favorite-message-file {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.favorite-message-file span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.favorite-card-main > span:last-child {
+.favorite-message-file small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.favorite-message-actions {
+  min-height: 48px;
+  padding: 9px 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.favorite-message-actions > span {
   color: var(--muted);
   font-size: 12px;
-}
-
-.favorite-card-meta {
-  color: #b42355 !important;
-  font-size: 11px !important;
-}
-
-.favorite-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  width: 25px;
-  height: 25px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
 }
 
 .channel-row-wrap {

@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.10.2";
+export const APP_VERSION = "0.10.3";
 
 export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "收藏夹改为在聊天主体区域集中显示所有收藏消息，左侧频道栏保持正常可用。",
+  "长按收藏消息可切回原频道并跳转到消息上下文，同时保留明确的查看上下文按钮。"
+] as const;
+
+const RELEASE_0_10_2_NOTES = [
   "左侧收藏夹移至用户资料区上方并保持固定；频道过多时仅滚动频道列表，收藏夹和用户管理区不随之滚动。"
 ] as const;
 
@@ -393,9 +398,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.2",
+    version: "0.10.3",
     date: "2026-07-11",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.2",
+    date: "2026-07-11",
+    notes: RELEASE_0_10_2_NOTES
   },
   {
     version: "0.10.1",
