@@ -46,6 +46,7 @@ import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
 import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
+import { githubPackageManifestUrl } from "./updateManifest.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -252,11 +253,15 @@ function parseGitHubRepo(url: string) {
 async function latestGitHubPackage() {
   const repo = parseGitHubRepo(UPDATE_REPO_URL);
   if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
-  const encodedBranch = UPDATE_BRANCH.split("/").map((part) => encodeURIComponent(part)).join("/");
-  const url = `https://raw.githubusercontent.com/${repo.owner}/${repo.repo}/${encodedBranch}/package.json`;
-  const response = await fetch(url, { headers: { "user-agent": "team-chat-updater" } });
+  const url = githubPackageManifestUrl(repo.owner, repo.repo, UPDATE_BRANCH);
+  const response = await fetch(url, {
+    cache: "no-store",
+    headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
+  });
   if (!response.ok) throw new Error(`无法读取 GitHub 版本：HTTP ${response.status}`);
-  const pkg = (await response.json()) as { version?: string };
+  const manifest = (await response.json()) as { content?: string; encoding?: string };
+  if (!manifest.content || manifest.encoding !== "base64") throw new Error("GitHub package.json 内容无效");
+  const pkg = JSON.parse(Buffer.from(manifest.content, "base64").toString("utf8")) as { version?: string };
   if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) throw new Error("GitHub package.json 缺少有效版本号");
   return {
     owner: repo.owner,
