@@ -1330,10 +1330,19 @@ button {
   backdrop-filter: blur(12px);
 }
 
-.top-notice-card {
+.top-notice-bar {
   width: min(680px, 100%);
-  min-height: 42px;
   margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.top-notice-card {
+  width: 100%;
+  min-height: 42px;
+  margin: 0;
   padding: 7px 10px 7px 8px;
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 8px;
@@ -1367,6 +1376,20 @@ button {
 
 .top-notice-mention .top-notice-icon {
   background: #f59e0b;
+}
+
+.top-notice-like .top-notice-icon {
+  background: #3b82f6;
+}
+
+.top-notice-close {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
 }
 
 .top-notice-copy {
@@ -1699,95 +1722,22 @@ button {
 
 .new-message-jump {
   position: absolute;
-  left: auto;
-  right: 18px;
+  left: 50%;
+  right: auto;
   bottom: calc(78px + var(--keyboard-offset));
   z-index: 7;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 7px 13px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-  border-radius: 999px;
-  color: var(--button-text);
-  background: color-mix(in srgb, var(--accent) 92%, #ffffff 8%);
-  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.like-notification-stack {
-  position: absolute;
-  right: 16px;
-  bottom: calc(122px + var(--keyboard-offset));
-  z-index: 9;
-  width: min(310px, calc(100% - 32px));
-  display: grid;
-  gap: 7px;
-  pointer-events: none;
-}
-
-.like-notification {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 32px;
-  align-items: center;
-  border: 1px solid rgba(59, 130, 246, 0.2);
-  border-radius: 10px;
-  color: #1f2937;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
-  backdrop-filter: blur(12px);
-  pointer-events: auto;
-  animation: likeNoticeIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-}
-
-.like-notification-main {
-  min-width: 0;
-  padding: 9px 6px 9px 10px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  text-align: left;
-}
-
-.like-notification-main > span:last-child {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.like-notification-main strong,
-.like-notification-main small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.like-notification-main small {
-  color: #64748b;
-  font-size: 11px;
-}
-
-.like-notification-icon {
-  width: 30px;
-  height: 30px;
-  flex: 0 0 30px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid rgba(15, 23, 42, 0.16);
   border-radius: 50%;
   display: grid;
   place-items: center;
   color: #fff;
-  background: #3b82f6;
-  animation: reactionPop 0.7s ease both;
-}
-
-.like-notification-close {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: #64748b;
+  background: rgba(15, 23, 42, 0.52);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(8px);
+  transform: translateX(-50%);
 }
 
 .time-separator {

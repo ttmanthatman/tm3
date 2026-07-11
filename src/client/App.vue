@@ -100,6 +100,7 @@ import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
+import { likeNotificationToTopNotice } from "./likeNotification";
 import {
   NEWEST_READ_POSITION,
   normalizeSavedReadPosition,
@@ -386,11 +387,12 @@ const channelEditorMsg = ref("");
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
-  kind: "mention" | "typing";
+  kind: "mention" | "typing" | "like";
   title: string;
   body: string;
   channelId?: number;
   messageId?: number;
+  notificationId?: number;
 };
 const mentionToasts = ref<MentionToast[]>([]);
 const acknowledgedMentionIds = ref<Set<number>>(new Set());
@@ -812,14 +814,15 @@ watch(
 );
 
 watch(
-  () => mentionToasts.value.length + Object.keys(store.typing).length,
-  (length) => {
-    if (topNoticeIndex.value >= length) topNoticeIndex.value = 0;
+  () => `${store.likeNotifications.map((item) => item.id).join(",")}|${mentionToasts.value.map((item) => item.id).join(",")}|${Object.keys(store.typing).join(",")}`,
+  () => {
+    topNoticeIndex.value = 0;
     if (topNoticeTimer) {
       window.clearInterval(topNoticeTimer);
       topNoticeTimer = undefined;
     }
-    if (length > 1) {
+    const noticeCount = store.likeNotifications.length + mentionToasts.value.length + Object.keys(store.typing).length;
+    if (noticeCount > 1) {
       topNoticeTimer = window.setInterval(() => {
         topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, topNoticeItems.value.length);
       }, 3600);
@@ -910,7 +913,12 @@ const mentionNoticeItems = computed<TopNotice[]>(() =>
     messageId: toast.id
   }))
 );
-const topNoticeItems = computed<TopNotice[]>(() => [...mentionNoticeItems.value, ...typingNoticeItems.value]);
+const likeNoticeItems = computed<TopNotice[]>(() =>
+  store.likeNotifications.map((notification) =>
+    likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name)
+  )
+);
+const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value, ...typingNoticeItems.value]);
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
 const isAdmin = computed(() => !!store.account?.isAdmin);
 const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
@@ -1860,12 +1868,13 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
     await switchVisibleChannel(channelId);
     await nextTick();
   }
-  jumpToReply(messageId);
+  await jumpToReply(messageId);
 }
 
 async function openTopNotice(notice: TopNotice) {
-  if (notice.kind !== "mention" || !notice.channelId || !notice.messageId) return;
+  if (!notice.channelId || !notice.messageId || (notice.kind !== "mention" && notice.kind !== "like")) return;
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
+  if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
 }
 
 async function doLogin() {
@@ -4205,15 +4214,6 @@ function likedByTitle(message: MessageDTO) {
 async function dismissLikeNotification(id: number) {
   store.likeNotifications = store.likeNotifications.filter((item) => item.id !== id);
   await api(`/api/like-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
-}
-
-async function openLikeNotification(id: number) {
-  const notification = store.likeNotifications.find((item) => item.id === id);
-  if (!notification) return;
-  await store.switchChannel(notification.channelId);
-  await nextTick();
-  await jumpToReply(notification.messageId);
-  await dismissLikeNotification(id);
 }
 
 function closeMessageActionMenu() {
@@ -6923,7 +6923,7 @@ async function toggleVirtual(character: any) {
             </button>
             <strong>{{ store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <small>{{ store.prayerOnly ? "只显示本频道代祷卡片" : `${store.members.length} 人/角色` }}</small>
+          <small v-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
         <div class="message-font-control" data-message-font-menu>
           <button
@@ -6960,18 +6960,28 @@ async function toggleVirtual(character: any) {
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
-      <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`">
-        <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind === 'mention' }" @click="openTopNotice(activeTopNotice)">
-          <span class="top-notice-icon">
-            <AtSign v-if="activeTopNotice.kind === 'mention'" :size="16" />
-            <MessageCircle v-else :size="16" />
-          </span>
-          <span class="top-notice-copy">
-            <strong>{{ activeTopNotice.title }}</strong>
-            <small>{{ activeTopNotice.body }}</small>
-          </span>
-          <span v-if="topNoticeItems.length > 1" class="top-notice-count">{{ (topNoticeIndex % topNoticeItems.length) + 1 }}/{{ topNoticeItems.length }}</span>
-        </button>
+      <section v-if="activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`" aria-live="polite">
+        <div class="top-notice-bar">
+          <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind !== 'typing' }" @click="openTopNotice(activeTopNotice)">
+            <span class="top-notice-icon">
+              <AtSign v-if="activeTopNotice.kind === 'mention'" :size="16" />
+              <ThumbsUp v-else-if="activeTopNotice.kind === 'like'" :size="16" />
+              <MessageCircle v-else :size="16" />
+            </span>
+            <span class="top-notice-copy">
+              <strong>{{ activeTopNotice.title }}</strong>
+              <small>{{ activeTopNotice.body }}</small>
+            </span>
+            <span v-if="topNoticeItems.length > 1" class="top-notice-count">{{ (topNoticeIndex % topNoticeItems.length) + 1 }}/{{ topNoticeItems.length }}</span>
+          </button>
+          <button
+            v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
+            class="top-notice-close"
+            type="button"
+            aria-label="关闭点赞提醒"
+            @click="dismissLikeNotification(activeTopNotice.notificationId)"
+          ><X :size="15" /></button>
+        </div>
       </section>
 
       <section v-if="visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
@@ -7338,19 +7348,9 @@ async function toggleVirtual(character: any) {
         </div>
       </div>
 
-      <button v-if="awayFromNewest || hasUnreadMessages || store.hasNewerMessages" type="button" class="new-message-jump" @click="scrollToNewest()">
-        <ArrowDown :size="16" />{{ hasUnreadMessages ? "有新消息" : "最新消息" }}
+      <button v-if="awayFromNewest || hasUnreadMessages || store.hasNewerMessages" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
+        <ArrowDown :size="18" />
       </button>
-
-      <aside v-if="store.likeNotifications.length" class="like-notification-stack" aria-live="polite">
-        <article v-for="notification in store.likeNotifications.slice(0, 3)" :key="notification.id" class="like-notification">
-          <button class="like-notification-main" type="button" @click="openLikeNotification(notification.id)">
-            <span class="like-notification-icon"><ThumbsUp :size="16" /></span>
-            <span><strong>{{ notification.senderName }}的消息被点赞</strong><small>{{ notification.likerName }} · 点击查看</small></span>
-          </button>
-          <button class="like-notification-close" type="button" @click="dismissLikeNotification(notification.id)" aria-label="关闭点赞提醒"><X :size="14" /></button>
-        </article>
-      </aside>
 
       <footer class="composer">
         <div v-if="replyTo" class="reply-bar">
@@ -7483,7 +7483,7 @@ async function toggleVirtual(character: any) {
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
-          <small v-if="memberPaneSubtitle">{{ memberPaneSubtitle }} · {{ activeMemberPaneMembers.length }} 人/角色</small>
+          <small v-if="memberPaneSubtitle">{{ memberPaneSubtitle }}</small>
         </div>
         <button
           v-if="canManageActiveMembers"

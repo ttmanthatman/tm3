@@ -1964,6 +1964,18 @@ async function sendMessagePush(messageId: number, origin: string) {
   }, origin);
 }
 
+async function sendLikePush(accountId: number, channelId: number, messageId: number, likerName: string, origin: string) {
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
+  if (!channel) return;
+  await sendPushToAccounts([accountId], {
+    title: "消息被点赞",
+    body: `${likerName}点赞了你在「${channel.name}」中的消息`,
+    url: `/?channelId=${channelId}`,
+    tag: `message-like-${messageId}`,
+    channelId
+  }, origin);
+}
+
 async function sendAdminBroadcastPush(channelId: number, content: string, origin: string) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
   if (!channel) return;
@@ -3117,6 +3129,7 @@ async function broadcastMessageReactions(messageId: number, accountId?: number) 
 
 app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
   const messageId = Number((request.params as { messageId: string }).messageId);
   const body = z.object({ liked: z.boolean() }).parse(request.body);
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
@@ -3141,6 +3154,7 @@ app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (req
         createdAt: like.createdAt.toISOString()
       };
       io.to(`acct:${message.sender.accountId}`).emit("message:liked", notification);
+      await sendLikePush(message.sender.accountId, message.channelId, messageId, notification.likerName, pushOrigin);
     }
   } else if (existing) {
     await prisma.messageLike.delete({ where: key });
