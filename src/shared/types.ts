@@ -380,6 +380,8 @@ export interface AppearanceDTO {
   appIconPath?: string | null;
   wallpaperPath?: string | null;
   wallpaperFit: "cover" | "contain" | "stretch" | "repeat";
+  parallaxKit: "none" | "rural";
+  parallaxSpeed: number;
   loginIconPath?: string | null;
   loginShowIcon: boolean;
   loginTitle: string;

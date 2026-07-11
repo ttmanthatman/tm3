@@ -29,6 +29,8 @@ const defaultAppearance: AppearanceDTO = {
   appIconPath: null,
   wallpaperPath: null,
   wallpaperFit: "cover",
+  parallaxKit: "none",
+  parallaxSpeed: 1,
   loginIconPath: null,
   loginShowIcon: true,
   loginTitle: "Team Chat",

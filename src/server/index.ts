@@ -54,6 +54,7 @@ const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
 const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
 const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
 const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
+const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");
 const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
 const PORT = Number(process.env.PORT || 3003);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
@@ -104,6 +105,9 @@ const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
   intervalSeconds: 0.4,
   transitionMode: "smooth"
 };
+const PARALLAX_KITS = new Set(["none", "rural"]);
+const PARALLAX_SPEED_MIN = 0.25;
+const PARALLAX_SPEED_MAX = 3;
 const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   accent: "#1aad19",
   accentDark: "#129611",
@@ -177,7 +181,7 @@ const IMAGE_WEBP_QUALITY = 82;
 const IMAGE_WEBP_EFFORT = 5;
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
 
-for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR, BACKUP_DIR]) {
+for (const dir of [STORAGE_ROOT, UPLOAD_DIR, AVATAR_DIR, BG_DIR, PARALLAX_DIR, BACKUP_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
@@ -3586,6 +3590,8 @@ async function appearanceDto() {
           "appIconPath",
           "wallpaperPath",
           "wallpaperFit",
+          "parallaxKit",
+          "parallaxSpeed",
           "loginIconPath",
           "loginShowIcon",
           "loginTitle",
@@ -3605,11 +3611,18 @@ async function appearanceDto() {
   const wallpaperFit = settings.get("wallpaperFit") || "cover";
   const loginBackgroundFit = settings.get("loginBackgroundFit") || "cover";
   const loginFormPosition = settings.get("loginFormPosition") || "middle";
+  const parallaxKit = settings.get("parallaxKit") || "none";
+  const parsedParallaxSpeed = Number(settings.get("parallaxSpeed") || 1);
+  const parallaxSpeed = Number.isFinite(parsedParallaxSpeed)
+    ? Math.min(PARALLAX_SPEED_MAX, Math.max(PARALLAX_SPEED_MIN, parsedParallaxSpeed))
+    : 1;
   return {
     appTitle: settings.get("appTitle") || DEFAULT_APP_TITLE,
     appIconPath: settings.get("appIconPath") || null,
     wallpaperPath: settings.get("wallpaperPath") || null,
     wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
+    parallaxKit: PARALLAX_KITS.has(parallaxKit) ? parallaxKit : "none",
+    parallaxSpeed,
     loginIconPath: settings.get("loginIconPath") || null,
     loginShowIcon: settings.get("loginShowIcon") !== "false",
     loginTitle: settings.get("loginTitle") || DEFAULT_LOGIN_TITLE,
@@ -4052,6 +4065,20 @@ app.get("/api/settings/appearance", async () => {
   return appearanceDto();
 });
 
+app.get<{ Params: { kit: string; file: string } }>("/api/parallax/:kit/:file", async (request, reply) => {
+  const { kit, file } = request.params;
+  if (!PARALLAX_KITS.has(kit) || kit === "none" || path.basename(file) !== file || path.extname(file).toLowerCase() !== ".png") {
+    return reply.code(404).send({ success: false, message: "parallax asset not found" });
+  }
+  const filePath = path.join(PARALLAX_DIR, kit, file);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    return reply.code(404).send({ success: false, message: "parallax asset not found" });
+  }
+  reply.type("image/png");
+  reply.header("Cache-Control", "public, max-age=604800, immutable");
+  return reply.send(fs.createReadStream(filePath));
+});
+
 app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) => {
   const body = z
     .object({
@@ -4059,6 +4086,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       appTitle: z.string().max(80).nullable().optional(),
       appIconPath: z.string().nullable().optional(),
       wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
+      parallaxKit: z.enum(["none", "rural"]).optional(),
+      parallaxSpeed: z.number().min(PARALLAX_SPEED_MIN).max(PARALLAX_SPEED_MAX).optional(),
       loginIconPath: z.string().nullable().optional(),
       loginShowIcon: z.boolean().optional(),
       loginTitle: z.string().max(80).nullable().optional(),
@@ -4076,6 +4105,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "appIconPath")) await setSetting("appIconPath", body.appIconPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperPath")) await setSetting("wallpaperPath", body.wallpaperPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
+  if (Object.prototype.hasOwnProperty.call(body, "parallaxKit")) await setSetting("parallaxKit", body.parallaxKit || "none");
+  if (Object.prototype.hasOwnProperty.call(body, "parallaxSpeed")) await setSetting("parallaxSpeed", String(body.parallaxSpeed || 1));
   if (Object.prototype.hasOwnProperty.call(body, "loginIconPath")) await setSetting("loginIconPath", body.loginIconPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "loginShowIcon")) await setSetting("loginShowIcon", body.loginShowIcon ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "loginTitle")) await setSetting("loginTitle", (body.loginTitle || "").trim() || DEFAULT_LOGIN_TITLE);

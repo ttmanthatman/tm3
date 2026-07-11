@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.10.2";
+export const APP_VERSION = "0.10.3";
 
 export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "外观设置新增独立“卷轴背景”栏目，可选择乡野河谷多层套件并设置 0.25×–3.00× 相对移动速度。",
+  "卷轴会随消息阅读方向反向联动：向上查看历史时向左、向下阅读及新消息跟随时向右，远景与前景按层次产生不同速度。",
+  "卷轴素材改从本地 storage/parallax 读取，避免把第三方原始素材发布进 GPL 公共源码树。"
+] as const;
+
+const RELEASE_0_10_2_NOTES = [
   "左侧收藏夹移至用户资料区上方并保持固定；频道过多时仅滚动频道列表，收藏夹和用户管理区不随之滚动。"
 ] as const;
 
@@ -393,9 +399,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.2",
+    version: "0.10.3",
     date: "2026-07-11",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.2",
+    date: "2026-07-11",
+    notes: RELEASE_0_10_2_NOTES
   },
   {
     version: "0.10.1",

@@ -98,6 +98,8 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import ParallaxBackground from "./components/ParallaxBackground.vue";
+import { PARALLAX_KITS, cleanParallaxSpeed, parallaxKit, type ParallaxKitId } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { likeNotificationToTopNotice } from "./likeNotification";
@@ -161,6 +163,10 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const parallaxOffset = ref(0);
+let lastParallaxScrollTop: number | null = null;
+let pendingParallaxDelta = 0;
+let parallaxFrame = 0;
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; token: number } | null = null;
@@ -177,6 +183,7 @@ type AdminPage =
   | "appearanceBrand"
   | "appearanceLogin"
   | "appearanceChat"
+  | "appearanceParallax"
   | "appearanceThemes"
   | "appearanceFlash"
   | "data"
@@ -222,7 +229,7 @@ const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean;
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
 type LoginFormPosition = AppearanceDTO["loginFormPosition"];
-type AppearanceSection = "brand" | "login" | "chat" | "themes" | "flash";
+type AppearanceSection = "brand" | "login" | "chat" | "parallax" | "themes" | "flash";
 type AppearanceImageField = "appIconPath" | "loginIconPath" | "loginBackgroundPath" | "wallpaperPath";
 type AppearanceFitField = "loginBackgroundFit" | "wallpaperFit";
 const wallpaperFitOptions: Array<{ value: WallpaperFit; label: string }> = [
@@ -240,6 +247,7 @@ const appearanceSections: Array<{ id: AppearanceSection; label: string; descript
   { id: "brand", label: "品牌与标签页", description: "浏览器标题和站点图标" },
   { id: "login", label: "登录页", description: "登录内容、背景和入口" },
   { id: "chat", label: "聊天室", description: "聊天壁纸和显示方式" },
+  { id: "parallax", label: "卷轴背景", description: "随消息阅读方向横向移动的多层景色" },
   { id: "themes", label: "主题颜色", description: "成员可选的自定义主题" },
   { id: "flash", label: "闪动特效", description: "/闪动 消息的颜色节奏" }
 ];
@@ -260,6 +268,8 @@ const loginAppearanceEdit = ref({
   loginBackgroundFit: "cover" as WallpaperFit,
   wallpaperPath: null as string | null,
   wallpaperFit: "cover" as WallpaperFit,
+  parallaxKit: "none" as ParallaxKitId,
+  parallaxSpeed: 1,
   registrationEnabled: false
 });
 const flashEffectEdit = ref<FlashEffectSettingsDTO>({
@@ -738,6 +748,7 @@ watch(
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
+    lastParallaxScrollTop = null;
     hasUnreadMessages.value = false;
     pendingReadPositionRestore.value = true;
     await nextTick();
@@ -969,7 +980,7 @@ const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage
 const adminChannelRows = computed(() => adminChannels.value);
 const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
 const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
-const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceThemes", "appearanceFlash"]);
+const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceParallax", "appearanceThemes", "appearanceFlash"]);
 const adminPageMeta: Record<AdminPage, { title: string; description: string }> = {
   home: { title: "管理中心", description: "按功能进入独立管理页面" },
   pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
@@ -980,6 +991,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
   appearanceLogin: { title: "登录页", description: "登录内容、背景、位置与注册入口" },
   appearanceChat: { title: "聊天室外观", description: "聊天区壁纸和显示方式" },
+  appearanceParallax: { title: "卷轴背景", description: "选择多层卷轴套件并调整相对移动速度" },
   appearanceThemes: { title: "主题颜色", description: "创建和维护聊天室配色" },
   appearanceFlash: { title: "消息闪动特效", description: "配置闪动消息的颜色和节奏" },
   data: { title: "数据与系统", description: "备份、聊天记录、资源和审计记录" },
@@ -1063,6 +1075,10 @@ const appearancePreviewChatStyle = computed(() => {
     backgroundRepeat: fit.repeat
   };
 });
+const parallaxKitOptions = computed(() => PARALLAX_KITS);
+const activeParallaxKit = computed(() => parallaxKit(store.appearance.parallaxKit));
+const draftParallaxKit = computed(() => parallaxKit(loginAppearanceEdit.value.parallaxKit));
+const parallaxSpeedLabel = computed(() => `${cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed).toFixed(2)}×`);
 const appearancePreviewFlash = computed(() => cleanFlashEffectSettings(flashEffectEdit.value));
 const appearancePreviewFlashColor = computed(() => {
   const colors = appearancePreviewFlash.value.colors;
@@ -1092,6 +1108,8 @@ const appearanceSavePayload = computed(() => ({
   loginBackgroundFit: loginAppearanceEdit.value.loginBackgroundFit,
   wallpaperPath: loginAppearanceEdit.value.wallpaperPath,
   wallpaperFit: loginAppearanceEdit.value.wallpaperFit,
+  parallaxKit: loginAppearanceEdit.value.parallaxKit,
+  parallaxSpeed: cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed),
   registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
   flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
   customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } }))
@@ -1109,6 +1127,8 @@ const currentAppearancePayload = computed(() => ({
   loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
   wallpaperPath: store.appearance.wallpaperPath || null,
   wallpaperFit: store.appearance.wallpaperFit || "cover",
+  parallaxKit: store.appearance.parallaxKit || "none",
+  parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
   registrationEnabled: !!store.appearance.registrationEnabled,
   flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
   customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }))
@@ -5223,6 +5243,25 @@ function scrollBottom(smooth = true) {
   awayFromNewest.value = false;
 }
 
+function updateParallaxFromScroll(el: HTMLElement) {
+  const currentTop = el.scrollTop;
+  if (lastParallaxScrollTop === null) {
+    lastParallaxScrollTop = currentTop;
+    return;
+  }
+  const delta = currentTop - lastParallaxScrollTop;
+  lastParallaxScrollTop = currentTop;
+  if (!activeParallaxKit.value || pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll) return;
+  pendingParallaxDelta += Math.max(-180, Math.min(180, delta));
+  if (parallaxFrame) return;
+  parallaxFrame = requestAnimationFrame(() => {
+    const speed = cleanParallaxSpeed(store.appearance.parallaxSpeed);
+    parallaxOffset.value += pendingParallaxDelta * 0.28 * speed;
+    pendingParallaxDelta = 0;
+    parallaxFrame = 0;
+  });
+}
+
 function focusComposer() {
   requestAnimationFrame(() => scrollBottom(false));
 }
@@ -5230,6 +5269,7 @@ function focusComposer() {
 async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
+  updateParallaxFromScroll(el);
   saveReadPosition();
   awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
   if (!awayFromNewest.value) hasUnreadMessages.value = false;
@@ -5837,6 +5877,7 @@ async function openAdminPage(page: AdminPage) {
     appearanceBrand: "brand",
     appearanceLogin: "login",
     appearanceChat: "chat",
+    appearanceParallax: "parallax",
     appearanceThemes: "themes",
     appearanceFlash: "flash"
   };
@@ -6294,6 +6335,8 @@ function syncLoginAppearanceEdit() {
     loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
     wallpaperPath: store.appearance.wallpaperPath || null,
     wallpaperFit: store.appearance.wallpaperFit || "cover",
+    parallaxKit: store.appearance.parallaxKit || "none",
+    parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
     registrationEnabled: !!store.appearance.registrationEnabled
   };
   flashEffectEdit.value = {
@@ -6855,6 +6898,7 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <section class="chat-pane">
+      <ParallaxBackground :kit="store.appearance.parallaxKit" :offset="parallaxOffset" />
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
@@ -8054,6 +8098,7 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('appearanceBrand')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>品牌与标签页</b><small>浏览器标题、图标和应用入口</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceLogin')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>登录页</b><small>内容、背景、位置和注册入口</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceChat')"><span class="admin-entry-icon"><MessageCircle :size="20" /></span><span><b>聊天室外观</b><small>聊天区壁纸和显示方式</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceParallax')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>卷轴背景</b><small>多层景色和阅读联动速度</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceThemes')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>主题颜色</b><small>创建和维护聊天室配色</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceFlash')"><span class="admin-entry-icon"><Sparkles :size="20" /></span><span><b>消息闪动特效</b><small>颜色、过渡方式和闪动节奏</small></span><ChevronRight :size="19" /></button>
             </div>
@@ -8265,6 +8310,40 @@ async function toggleVirtual(character: any) {
                 </div>
               </template>
 
+              <template v-else-if="appearanceSection === 'parallax'">
+                <label>卷轴套件</label>
+                <div class="parallax-kit-grid">
+                  <button
+                    type="button"
+                    class="parallax-kit-card"
+                    :class="{ selected: loginAppearanceEdit.parallaxKit === 'none' }"
+                    @click="loginAppearanceEdit.parallaxKit = 'none'"
+                  >
+                    <span class="parallax-off-preview">关闭</span>
+                    <strong>不使用卷轴</strong>
+                    <small>继续显示聊天室壁纸或主题背景。</small>
+                  </button>
+                  <button
+                    v-for="kit in parallaxKitOptions"
+                    :key="kit.id"
+                    type="button"
+                    class="parallax-kit-card"
+                    :class="{ selected: loginAppearanceEdit.parallaxKit === kit.id }"
+                    @click="loginAppearanceEdit.parallaxKit = kit.id"
+                  >
+                    <span class="parallax-kit-thumbnail"><ParallaxBackground :kit="kit.id" :offset="34" preview /></span>
+                    <strong>{{ kit.name }}</strong>
+                    <small>{{ kit.description }}</small>
+                  </button>
+                </div>
+                <label class="parallax-speed-field">
+                  <span><b>相对移动速度</b><output>{{ parallaxSpeedLabel }}</output></span>
+                  <input v-model.number="loginAppearanceEdit.parallaxSpeed" type="range" min="0.25" max="3" step="0.05" :disabled="loginAppearanceEdit.parallaxKit === 'none'" />
+                  <small>1.00× 为推荐速度；向上查看历史时景色向左，向下阅读及新消息跟随时向右。</small>
+                </label>
+                <p v-if="draftParallaxKit" class="parallax-credit">素材：{{ draftParallaxKit.credit }}</p>
+              </template>
+
               <template v-else-if="appearanceSection === 'themes'">
                 <label>主题编辑</label>
                 <div class="theme-editor-head">
@@ -8406,6 +8485,19 @@ async function toggleVirtual(character: any) {
                           <p class="preview-message other">移动端消息</p>
                           <p class="preview-message mine">自己的回复</p>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <template v-else-if="appearanceSection === 'parallax'">
+                  <div class="appearance-preview-block wide">
+                    <strong>卷轴背景预览</strong>
+                    <div class="appearance-device desktop parallax-preview-device">
+                      <ParallaxBackground :kit="loginAppearanceEdit.parallaxKit" :offset="74 * cleanParallaxSpeed(loginAppearanceEdit.parallaxSpeed)" preview />
+                      <div class="parallax-preview-messages">
+                        <p class="preview-message other">向上看历史，景色向左。</p>
+                        <p class="preview-message mine">向下阅读，景色向右。</p>
                       </div>
                     </div>
                   </div>
