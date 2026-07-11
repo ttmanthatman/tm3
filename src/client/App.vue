@@ -88,6 +88,8 @@ import type {
   PinnedContentBlockDTO,
   PrayerPayload,
   PrayerStatus,
+  ParallaxKitDTO,
+  ParallaxLayerDTO,
   UpdateCheckDTO,
   UpdateStatusDTO,
   VersionDTO,
@@ -98,6 +100,8 @@ import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import ParallaxBackground from "./components/ParallaxBackground.vue";
+import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { likeNotificationToTopNotice } from "./likeNotification";
@@ -161,6 +165,12 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const parallaxLayerInput = ref<HTMLInputElement | null>(null);
+const parallaxLayerUploadBusy = ref(false);
+const parallaxOffset = ref(0);
+let lastParallaxScrollTop: number | null = null;
+let pendingParallaxDelta = 0;
+let parallaxFrame = 0;
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; token: number } | null = null;
@@ -178,6 +188,7 @@ type AdminPage =
   | "appearanceBrand"
   | "appearanceLogin"
   | "appearanceChat"
+  | "appearanceParallax"
   | "appearanceThemes"
   | "appearanceFlash"
   | "data"
@@ -223,7 +234,7 @@ const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean;
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
 type LoginFormPosition = AppearanceDTO["loginFormPosition"];
-type AppearanceSection = "brand" | "login" | "chat" | "themes" | "flash";
+type AppearanceSection = "brand" | "login" | "chat" | "parallax" | "themes" | "flash";
 type AppearanceImageField = "appIconPath" | "loginIconPath" | "loginBackgroundPath" | "wallpaperPath";
 type AppearanceFitField = "loginBackgroundFit" | "wallpaperFit";
 const wallpaperFitOptions: Array<{ value: WallpaperFit; label: string }> = [
@@ -241,6 +252,7 @@ const appearanceSections: Array<{ id: AppearanceSection; label: string; descript
   { id: "brand", label: "品牌与标签页", description: "浏览器标题和站点图标" },
   { id: "login", label: "登录页", description: "登录内容、背景和入口" },
   { id: "chat", label: "聊天室", description: "聊天壁纸和显示方式" },
+  { id: "parallax", label: "卷轴背景", description: "随消息阅读方向横向移动的多层景色" },
   { id: "themes", label: "主题颜色", description: "成员可选的自定义主题" },
   { id: "flash", label: "闪动特效", description: "/闪动 消息的颜色节奏" }
 ];
@@ -261,6 +273,9 @@ const loginAppearanceEdit = ref({
   loginBackgroundFit: "cover" as WallpaperFit,
   wallpaperPath: null as string | null,
   wallpaperFit: "cover" as WallpaperFit,
+  parallaxKit: "none",
+  parallaxSpeed: 1,
+  parallaxKits: cleanParallaxKits(DEFAULT_PARALLAX_KITS),
   registrationEnabled: false
 });
 const flashEffectEdit = ref<FlashEffectSettingsDTO>({
@@ -731,6 +746,7 @@ watch(
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
+    lastParallaxScrollTop = null;
     hasUnreadMessages.value = false;
     if (pendingMessageJumpId !== null) {
       pendingReadPositionRestore.value = false;
@@ -967,7 +983,7 @@ const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage
 const adminChannelRows = computed(() => adminChannels.value);
 const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
 const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
-const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceThemes", "appearanceFlash"]);
+const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceParallax", "appearanceThemes", "appearanceFlash"]);
 const adminPageMeta: Record<AdminPage, { title: string; description: string }> = {
   home: { title: "管理中心", description: "按功能进入独立管理页面" },
   pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
@@ -978,6 +994,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
   appearanceLogin: { title: "登录页", description: "登录内容、背景、位置与注册入口" },
   appearanceChat: { title: "聊天室外观", description: "聊天区壁纸和显示方式" },
+  appearanceParallax: { title: "卷轴背景", description: "选择多层卷轴套件并调整相对移动速度" },
   appearanceThemes: { title: "主题颜色", description: "创建和维护聊天室配色" },
   appearanceFlash: { title: "消息闪动特效", description: "配置闪动消息的颜色和节奏" },
   data: { title: "数据与系统", description: "备份、聊天记录、资源和审计记录" },
@@ -1061,6 +1078,10 @@ const appearancePreviewChatStyle = computed(() => {
     backgroundRepeat: fit.repeat
   };
 });
+const parallaxKitOptions = computed(() => loginAppearanceEdit.value.parallaxKits);
+const activeParallaxKit = computed(() => parallaxKit(store.appearance.parallaxKits || [], store.appearance.parallaxKit));
+const draftParallaxKit = computed(() => parallaxKit(loginAppearanceEdit.value.parallaxKits, loginAppearanceEdit.value.parallaxKit));
+const parallaxSpeedLabel = computed(() => `${cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed).toFixed(2)}×`);
 const appearancePreviewFlash = computed(() => cleanFlashEffectSettings(flashEffectEdit.value));
 const appearancePreviewFlashColor = computed(() => {
   const colors = appearancePreviewFlash.value.colors;
@@ -1090,6 +1111,9 @@ const appearanceSavePayload = computed(() => ({
   loginBackgroundFit: loginAppearanceEdit.value.loginBackgroundFit,
   wallpaperPath: loginAppearanceEdit.value.wallpaperPath,
   wallpaperFit: loginAppearanceEdit.value.wallpaperFit,
+  parallaxKit: loginAppearanceEdit.value.parallaxKit,
+  parallaxSpeed: cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed),
+  parallaxKits: cleanParallaxKits(loginAppearanceEdit.value.parallaxKits),
   registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
   flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
   customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } }))
@@ -1107,6 +1131,9 @@ const currentAppearancePayload = computed(() => ({
   loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
   wallpaperPath: store.appearance.wallpaperPath || null,
   wallpaperFit: store.appearance.wallpaperFit || "cover",
+  parallaxKit: store.appearance.parallaxKit || "none",
+  parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
+  parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
   registrationEnabled: !!store.appearance.registrationEnabled,
   flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
   customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }))
@@ -5271,6 +5298,25 @@ function scrollBottom(smooth = true) {
   awayFromNewest.value = false;
 }
 
+function updateParallaxFromScroll(el: HTMLElement) {
+  const currentTop = el.scrollTop;
+  if (lastParallaxScrollTop === null) {
+    lastParallaxScrollTop = currentTop;
+    return;
+  }
+  const delta = currentTop - lastParallaxScrollTop;
+  lastParallaxScrollTop = currentTop;
+  if (!activeParallaxKit.value || pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll) return;
+  pendingParallaxDelta += Math.max(-180, Math.min(180, delta));
+  if (parallaxFrame) return;
+  parallaxFrame = requestAnimationFrame(() => {
+    const speed = cleanParallaxSpeed(store.appearance.parallaxSpeed);
+    parallaxOffset.value += pendingParallaxDelta * 0.28 * speed;
+    pendingParallaxDelta = 0;
+    parallaxFrame = 0;
+  });
+}
+
 function focusComposer() {
   requestAnimationFrame(() => scrollBottom(false));
 }
@@ -5278,6 +5324,7 @@ function focusComposer() {
 async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
+  updateParallaxFromScroll(el);
   saveReadPosition();
   awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
   if (!awayFromNewest.value) hasUnreadMessages.value = false;
@@ -5885,6 +5932,7 @@ async function openAdminPage(page: AdminPage) {
     appearanceBrand: "brand",
     appearanceLogin: "login",
     appearanceChat: "chat",
+    appearanceParallax: "parallax",
     appearanceThemes: "themes",
     appearanceFlash: "flash"
   };
@@ -6295,6 +6343,81 @@ async function uploadAppearanceImageForPicker(event: Event) {
   await uploadAppearanceImage(event, config.url, picker.field, config.failure, config.success);
 }
 
+function createParallaxKit() {
+  const suffix = `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+  const kit: ParallaxKitDTO = {
+    id: `custom-${suffix}`,
+    name: `自定义卷轴 ${loginAppearanceEdit.value.parallaxKits.filter((item) => !item.builtIn).length + 1}`,
+    description: "上传透明 PNG，并按从后到前排列图层。",
+    credit: "",
+    builtIn: false,
+    layers: []
+  };
+  loginAppearanceEdit.value.parallaxKits.push(kit);
+  loginAppearanceEdit.value.parallaxKit = kit.id;
+  adminMsg.value = "已创建卷轴套件草稿，请上传至少一个图层";
+}
+
+function deleteParallaxKit(kit: ParallaxKitDTO) {
+  if (kit.builtIn || !confirm(`删除卷轴套件“${kit.name}”？已上传的文件仍保留在服务器。`)) return;
+  loginAppearanceEdit.value.parallaxKits = loginAppearanceEdit.value.parallaxKits.filter((item) => item.id !== kit.id);
+  if (loginAppearanceEdit.value.parallaxKit === kit.id) loginAppearanceEdit.value.parallaxKit = "none";
+}
+
+function restoreBuiltInParallaxKit() {
+  const defaultKit = cleanParallaxKits(DEFAULT_PARALLAX_KITS).find((kit) => kit.id === "rural");
+  if (!defaultKit) return;
+  const index = loginAppearanceEdit.value.parallaxKits.findIndex((kit) => kit.id === "rural");
+  if (index >= 0) loginAppearanceEdit.value.parallaxKits.splice(index, 1, defaultKit);
+  else loginAppearanceEdit.value.parallaxKits.unshift(defaultKit);
+  loginAppearanceEdit.value.parallaxKit = "rural";
+  adminMsg.value = "乡野河谷已恢复官方层序和速度草稿";
+}
+
+function moveParallaxLayer(index: number, direction: -1 | 1) {
+  const kit = draftParallaxKit.value;
+  const target = index + direction;
+  if (!kit || target < 0 || target >= kit.layers.length) return;
+  const [layer] = kit.layers.splice(index, 1);
+  if (layer) kit.layers.splice(target, 0, layer);
+}
+
+function removeParallaxLayer(index: number) {
+  const kit = draftParallaxKit.value;
+  if (!kit) return;
+  kit.layers.splice(index, 1);
+}
+
+function pickParallaxLayer() {
+  if (!draftParallaxKit.value) createParallaxKit();
+  parallaxLayerInput.value?.click();
+}
+
+async function uploadParallaxLayer(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  const kit = draftParallaxKit.value;
+  if (!file || !kit || parallaxLayerUploadBusy.value) return;
+  parallaxLayerUploadBusy.value = true;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch(`/api/admin/parallax/${encodeURIComponent(kit.id)}/layers`, { method: "POST", headers: authHeaders(), body: form });
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({ message: "卷轴图层上传失败" }));
+      throw new Error(result.message || "卷轴图层上传失败");
+    }
+    const result = (await response.json()) as { layer: ParallaxLayerDTO; size: { width: number; height: number } };
+    kit.layers.push(result.layer);
+    adminMsg.value = `已上传 ${result.layer.name}（${result.size.width}×${result.size.height}），保存外观后生效`;
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "卷轴图层上传失败");
+  } finally {
+    parallaxLayerUploadBusy.value = false;
+  }
+}
+
 function selectAppearanceImage(fileName: string) {
   const picker = appearanceImagePicker.value;
   if (!picker) return;
@@ -6342,6 +6465,9 @@ function syncLoginAppearanceEdit() {
     loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
     wallpaperPath: store.appearance.wallpaperPath || null,
     wallpaperFit: store.appearance.wallpaperFit || "cover",
+    parallaxKit: store.appearance.parallaxKit || "none",
+    parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
+    parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
     registrationEnabled: !!store.appearance.registrationEnabled
   };
   flashEffectEdit.value = {
@@ -6370,6 +6496,7 @@ async function saveLoginAppearance() {
     body: JSON.stringify(appearanceSavePayload.value)
   });
   store.appearance = result.appearance;
+  syncLoginAppearanceEdit();
   await loadAdminAttachments().catch(() => undefined);
   adminMsg.value = "外观设置已保存并生效";
 }
@@ -6888,6 +7015,7 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <section class="chat-pane">
+      <ParallaxBackground :kit="activeParallaxKit" :offset="parallaxOffset" />
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">
@@ -8138,6 +8266,7 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('appearanceBrand')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>品牌与标签页</b><small>浏览器标题、图标和应用入口</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceLogin')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>登录页</b><small>内容、背景、位置和注册入口</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceChat')"><span class="admin-entry-icon"><MessageCircle :size="20" /></span><span><b>聊天室外观</b><small>聊天区壁纸和显示方式</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('appearanceParallax')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>卷轴背景</b><small>多层景色和阅读联动速度</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceThemes')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>主题颜色</b><small>创建和维护聊天室配色</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('appearanceFlash')"><span class="admin-entry-icon"><Sparkles :size="20" /></span><span><b>消息闪动特效</b><small>颜色、过渡方式和闪动节奏</small></span><ChevronRight :size="19" /></button>
             </div>
@@ -8349,6 +8478,82 @@ async function toggleVirtual(character: any) {
                 </div>
               </template>
 
+              <template v-else-if="appearanceSection === 'parallax'">
+                <div class="parallax-section-heading">
+                  <div><b>卷轴套件</b><small>选择现有套件，或创建套件后逐层上传透明 PNG。</small></div>
+                  <button type="button" class="mini-btn secondary" @click="createParallaxKit"><Plus :size="14" />新建套件</button>
+                </div>
+                <div class="parallax-kit-grid">
+                  <button
+                    type="button"
+                    class="parallax-kit-card"
+                    :class="{ selected: loginAppearanceEdit.parallaxKit === 'none' }"
+                    @click="loginAppearanceEdit.parallaxKit = 'none'"
+                  >
+                    <span class="parallax-off-preview">关闭</span>
+                    <strong>不使用卷轴</strong>
+                    <small>继续显示聊天室壁纸或主题背景。</small>
+                  </button>
+                  <button
+                    v-for="kit in parallaxKitOptions"
+                    :key="kit.id"
+                    type="button"
+                    class="parallax-kit-card"
+                    :class="{ selected: loginAppearanceEdit.parallaxKit === kit.id }"
+                    @click="loginAppearanceEdit.parallaxKit = kit.id"
+                  >
+                    <span class="parallax-kit-thumbnail"><ParallaxBackground :kit="kit" :offset="34" preview /></span>
+                    <strong>{{ kit.name }}</strong>
+                    <small>{{ kit.description }}</small>
+                  </button>
+                </div>
+                <section v-if="draftParallaxKit" class="parallax-kit-editor">
+                  <header>
+                    <div>
+                      <b>套件设置</b>
+                      <small>{{ draftParallaxKit.layers.length }} 层 · 下方顺序为从后到前</small>
+                    </div>
+                    <button v-if="draftParallaxKit.builtIn" type="button" class="mini-btn secondary" @click="restoreBuiltInParallaxKit"><RotateCcw :size="14" />恢复官方设置</button>
+                    <button v-else type="button" class="mini-btn danger-action" @click="deleteParallaxKit(draftParallaxKit)"><Trash2 :size="14" />删除套件</button>
+                  </header>
+                  <div class="parallax-kit-fields">
+                    <label><span>套件名称</span><input v-model="draftParallaxKit.name" maxlength="40" /></label>
+                    <label><span>说明</span><input v-model="draftParallaxKit.description" maxlength="120" /></label>
+                    <label><span>素材署名</span><input v-model="draftParallaxKit.credit" maxlength="120" placeholder="可选" /></label>
+                  </div>
+                  <div class="parallax-layer-toolbar">
+                    <div><b>图层</b><small>速度 0 为固定；上下位置单位为像素；画布高度 1.00× 通常适合等尺寸图层。</small></div>
+                    <button type="button" class="mini-btn secondary" :disabled="parallaxLayerUploadBusy" @click="pickParallaxLayer"><Upload :size="14" />{{ parallaxLayerUploadBusy ? "上传中…" : "上传图层" }}</button>
+                    <input ref="parallaxLayerInput" class="hidden" type="file" accept="image/*" @change="uploadParallaxLayer" />
+                  </div>
+                  <div v-if="draftParallaxKit.layers.length" class="parallax-layer-list">
+                    <article v-for="(layer, index) in draftParallaxKit.layers" :key="layer.id" class="parallax-layer-row" :data-layer-id="layer.id">
+                      <div class="parallax-layer-thumb" :style="{ backgroundImage: `url(${parallaxAssetUrl(draftParallaxKit.id, layer.file)})` }"></div>
+                      <div class="parallax-layer-main">
+                        <label><span>{{ index + 1 }} · {{ index === 0 ? "最远" : index === draftParallaxKit.layers.length - 1 ? "最前" : "中间" }}</span><input v-model="layer.name" maxlength="40" /></label>
+                        <div class="parallax-layer-values">
+                          <label><span>速度比</span><input v-model.number="layer.speed" type="number" min="0" max="3" step="0.01" /></label>
+                          <label><span>上下位置</span><input v-model.number="layer.yOffset" type="number" min="-600" max="600" step="1" /><em>px</em></label>
+                          <label><span>画布高度</span><input v-model.number="layer.heightScale" type="number" min="0.25" max="4" step="0.05" /><em>×</em></label>
+                        </div>
+                      </div>
+                      <div class="parallax-layer-actions">
+                        <button type="button" class="icon-btn" :disabled="index === 0" title="向后移动" @click="moveParallaxLayer(index, -1)"><ArrowUp :size="15" /></button>
+                        <button type="button" class="icon-btn" :disabled="index === draftParallaxKit.layers.length - 1" title="向前移动" @click="moveParallaxLayer(index, 1)"><ArrowDown :size="15" /></button>
+                        <button type="button" class="icon-btn danger-action" title="移除图层" @click="removeParallaxLayer(index)"><Trash2 :size="15" /></button>
+                      </div>
+                    </article>
+                  </div>
+                  <p v-else class="parallax-empty-layers">还没有图层。上传的第一张图会作为最远背景，后续图层依次放在它前面。</p>
+                </section>
+                <label class="parallax-speed-field">
+                  <span><b>相对移动速度</b><output>{{ parallaxSpeedLabel }}</output></span>
+                  <input v-model.number="loginAppearanceEdit.parallaxSpeed" type="range" min="0.25" max="3" step="0.05" :disabled="loginAppearanceEdit.parallaxKit === 'none'" />
+                  <small>1.00× 为推荐速度；向上查看历史时景色向左，向下阅读及新消息跟随时向右。</small>
+                </label>
+                <p v-if="draftParallaxKit?.credit" class="parallax-credit">素材：{{ draftParallaxKit.credit }}</p>
+              </template>
+
               <template v-else-if="appearanceSection === 'themes'">
                 <label>主题编辑</label>
                 <div class="theme-editor-head">
@@ -8490,6 +8695,19 @@ async function toggleVirtual(character: any) {
                           <p class="preview-message other">移动端消息</p>
                           <p class="preview-message mine">自己的回复</p>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+
+                <template v-else-if="appearanceSection === 'parallax'">
+                  <div class="appearance-preview-block wide">
+                    <strong>卷轴背景预览</strong>
+                    <div class="appearance-device desktop parallax-preview-device">
+                      <ParallaxBackground :kit="draftParallaxKit" :offset="74 * cleanParallaxSpeed(loginAppearanceEdit.parallaxSpeed)" preview />
+                      <div class="parallax-preview-messages">
+                        <p class="preview-message other">向上看历史，景色向左。</p>
+                        <p class="preview-message mine">向下阅读，景色向右。</p>
                       </div>
                     </div>
                   </div>

@@ -2,6 +2,7 @@ import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
+import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -29,6 +30,9 @@ const defaultAppearance: AppearanceDTO = {
   appIconPath: null,
   wallpaperPath: null,
   wallpaperFit: "cover",
+  parallaxKit: "none",
+  parallaxSpeed: 1,
+  parallaxKits: DEFAULT_PARALLAX_KITS.map((kit) => ({ ...kit, layers: kit.layers.map((layer) => ({ ...layer })) })),
   loginIconPath: null,
   loginShowIcon: true,
   loginTitle: "Team Chat",

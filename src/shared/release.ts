@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.10.4";
+export const APP_VERSION = "0.10.5";
 
 export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "新增乡野河谷十层卷轴背景：消息阅读会驱动横向移动，官方层序会展示远湖、近河与云层倒影；倒影与云层保持相同速度。",
+  "外观后台支持创建卷轴套件、上传透明图片，并逐层调整前后顺序、速度比、上下位置和画布高度。",
+  "修复测试分支更新检测：支持带 / 的 Git 分支名并避免版本碰撞导致漏检。"
+] as const;
+
+const RELEASE_0_10_4_NOTES = [
   "修复从收藏夹查看上下文时可能跳到错误位置的问题；切换频道后会优先保持目标收藏消息的上下文位置。",
   "当目标消息上方的图片或链接预览稍后完成加载时，聊天区会继续锚定目标消息，不再被异步布局变化挤走。"
 ] as const;
@@ -403,9 +409,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.4",
+    version: "0.10.5",
     date: "2026-07-11",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.4",
+    date: "2026-07-11",
+    notes: RELEASE_0_10_4_NOTES
   },
   {
     version: "0.10.3",

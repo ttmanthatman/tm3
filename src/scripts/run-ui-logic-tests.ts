@@ -3,7 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const ROOT = process.cwd();
-const CLIENT_ROOT = path.join(ROOT, "src/client");
+const SOURCE_ROOT = path.join(ROOT, "src");
 
 function walk(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
@@ -14,10 +14,10 @@ function walk(dir: string): string[] {
   });
 }
 
-const tests = walk(CLIENT_ROOT).sort();
+const tests = walk(SOURCE_ROOT).sort();
 
 if (!tests.length) {
-  console.log("No UI logic tests found under src/client/**/*.test.ts or src/client/**/*.spec.ts.");
+  console.log("No logic tests found under src/**/*.test.ts or src/**/*.spec.ts.");
   process.exit(0);
 }
 

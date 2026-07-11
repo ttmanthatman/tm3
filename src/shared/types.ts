@@ -375,11 +375,32 @@ export interface FlashEffectSettingsDTO {
   transitionMode: "smooth" | "step";
 }
 
+export interface ParallaxLayerDTO {
+  id: string;
+  name: string;
+  file: string;
+  speed: number;
+  yOffset: number;
+  heightScale: number;
+}
+
+export interface ParallaxKitDTO {
+  id: string;
+  name: string;
+  description: string;
+  credit: string;
+  builtIn?: boolean;
+  layers: ParallaxLayerDTO[];
+}
+
 export interface AppearanceDTO {
   appTitle: string;
   appIconPath?: string | null;
   wallpaperPath?: string | null;
   wallpaperFit: "cover" | "contain" | "stretch" | "repeat";
+  parallaxKit: string;
+  parallaxSpeed: number;
+  parallaxKits: ParallaxKitDTO[];
   loginIconPath?: string | null;
   loginShowIcon: boolean;
   loginTitle: string;
