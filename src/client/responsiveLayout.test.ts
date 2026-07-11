@@ -47,3 +47,10 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /v-if="!showFavorites" class="composer"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(760px, 100%\);/);
 });
+
+test("explicit context jumps win over saved read-position restoration", () => {
+  assert.match(app, /pendingMessageJumpId = messageId;[\s\S]*?pendingReadPositionRestore\.value = false;[\s\S]*?switchVisibleChannel\(channelId\)/);
+  assert.match(app, /if \(pendingMessageJumpId !== null\) \{[\s\S]*?pendingReadPositionRestore\.value = false;[\s\S]*?return;/);
+  assert.match(app, /const contextOffset = Math\.min\(120,[\s\S]*?root\.scrollTo\(\{ top: Math\.max\(0, targetTop\), behavior: "auto" \}\)/);
+  assert.match(app, /activeReadAnchor = \{[\s\S]*?messageId: id,[\s\S]*?offset: contextOffset,[\s\S]*?reconcileReadPositionAfterLayout\(\)/);
+});

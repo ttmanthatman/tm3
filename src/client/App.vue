@@ -164,6 +164,7 @@ const scroller = ref<HTMLElement | null>(null);
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; token: number } | null = null;
+let pendingMessageJumpId: number | null = null;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
 const gooeyDripLayer = ref<SVGSVGElement | null>(null);
@@ -432,12 +433,7 @@ async function openFavorites() {
 }
 
 async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
-  saveReadPosition();
-  await store.switchChannel(favorite.channel.id);
-  showFavorites.value = false;
-  showChannels.value = false;
-  await nextTick();
-  await jumpToReply(favorite.message.id);
+  await jumpToMessageInChannel(favorite.channel.id, favorite.message.id);
 }
 
 async function removeFavorite(favorite: FavoriteMessageDTO) {
@@ -736,6 +732,10 @@ watch(
     messageSelectionMode.value = false;
     composerPanel.value = null;
     hasUnreadMessages.value = false;
+    if (pendingMessageJumpId !== null) {
+      pendingReadPositionRestore.value = false;
+      return;
+    }
     pendingReadPositionRestore.value = true;
     await nextTick();
     void restoreSavedReadPosition();
@@ -1861,12 +1861,23 @@ async function restoreChatSurface() {
 }
 
 async function jumpToMessageInChannel(channelId: number, messageId: number) {
-  if (store.currentChannelId !== channelId) {
-    saveReadPosition();
-    await switchVisibleChannel(channelId);
+  pendingMessageJumpId = messageId;
+  readPositionRestoreToken += 1;
+  activeReadAnchor = null;
+  pendingReadPositionRestore.value = false;
+  try {
+    if (store.currentChannelId !== channelId) {
+      saveReadPosition();
+      await switchVisibleChannel(channelId);
+    }
+    showFavorites.value = false;
+    showChannels.value = false;
     await nextTick();
+    await jumpToReply(messageId);
+  } finally {
+    pendingMessageJumpId = null;
+    pendingReadPositionRestore.value = false;
   }
-  await jumpToReply(messageId);
 }
 
 async function openTopNotice(notice: TopNotice) {
@@ -4533,7 +4544,21 @@ async function jumpToReply(id: number) {
     await nextTick();
     el = document.querySelector(`[data-message-id="${id}"]`);
   }
-  el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  const root = scroller.value;
+  if (el instanceof HTMLElement && root) {
+    const contextOffset = Math.min(120, Math.max(56, root.clientHeight * 0.16));
+    const targetTop = root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - contextOffset;
+    root.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
+    activeReadAnchor = {
+      messageId: id,
+      offset: contextOffset,
+      expiresAt: Date.now() + 8_000,
+      token: readPositionRestoreToken
+    };
+    reconcileReadPositionAfterLayout();
+  } else {
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
   el?.classList.add("flash");
   setTimeout(() => el?.classList.remove("flash"), 900);
 }
