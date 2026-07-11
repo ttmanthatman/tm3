@@ -28,3 +28,14 @@ test("like alerts use the top notice rail instead of a reading-area overlay", ()
   assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
   assert.doesNotMatch(app, /class="like-notification-stack"/);
 });
+
+test("favorites stays fixed above the profile while only channels scroll", () => {
+  const channelListEnd = app.indexOf('</div>\n      <button v-if="!showFavorites" class="channel-row favorites-entry"');
+  const profileStart = app.indexOf('<footer class="profile-row">');
+
+  assert.ok(channelListEnd >= 0, "favorites entry should follow the channel list");
+  assert.ok(profileStart > channelListEnd, "favorites entry should stay above the profile controls");
+  assert.match(css, /\.channel-list,\n\.favorites-list \{[\s\S]*?flex: 1 1 auto;[\s\S]*?overflow-y: auto;/);
+  assert.match(css, /\.favorites-entry \{[\s\S]*?z-index: 6;[\s\S]*?flex: 0 0 auto;/);
+  assert.match(css, /\.profile-row \{[\s\S]*?z-index: 7;[\s\S]*?flex: 0 0 auto;/);
+});

@@ -6790,10 +6790,6 @@ async function toggleVirtual(character: any) {
         </template>
       </div>
       <div v-else class="channel-list">
-        <button class="channel-row favorites-entry" type="button" @click="openFavorites">
-          <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
-          <span class="channel-row-label"><b>收藏夹</b></span>
-        </button>
       <template v-for="channel in store.channels" :key="channel.id">
         <div class="channel-row-wrap" :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel) }">
           <button
@@ -6840,6 +6836,10 @@ async function toggleVirtual(character: any) {
         </button>
       </template>
       </div>
+      <button v-if="!showFavorites" class="channel-row favorites-entry" type="button" @click="openFavorites">
+        <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
+        <span class="channel-row-label"><b>收藏夹</b></span>
+      </button>
       <footer class="profile-row">
         <div class="avatar">
           <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />

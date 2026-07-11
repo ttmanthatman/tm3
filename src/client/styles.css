@@ -814,6 +814,10 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
+.pane-head {
+  flex: 0 0 auto;
+}
+
 .chat-head {
   grid-row: 1;
   position: relative;
@@ -987,15 +991,22 @@ button {
 
 .channel-list,
 .favorites-list {
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
 
 .favorites-entry {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
   min-height: 54px;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
   color: #b42355;
   background: color-mix(in srgb, #ef476f 5%, transparent);
+  box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.05);
 }
 
 .favorites-icon {
@@ -1176,6 +1187,9 @@ button {
 }
 
 .profile-row {
+  position: relative;
+  z-index: 7;
+  flex: 0 0 auto;
   margin-top: auto;
   min-height: 64px;
   padding: 10px 12px calc(10px + var(--safe-bottom));
@@ -1183,6 +1197,7 @@ button {
   align-items: center;
   gap: 10px;
   border-top: 1px solid var(--line);
+  background: var(--panel);
 }
 
 .avatar {
