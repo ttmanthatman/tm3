@@ -108,7 +108,7 @@ AI 经文建议：
 - 内置微信绿、竹影、纸墨和夜间主题。
 - 管理员可以创建自定义主题，调整按钮、背景、面板、文字和气泡颜色。
 - 支持聊天室壁纸，壁纸可选择填满、适合、拉伸或平铺。
-- 支持独立的多层卷轴背景；消息向上、向下滚动及新消息带来的滚动会驱动背景横向移动，管理员可以选择套件并调整相对速度。
+- 支持独立的多层卷轴背景；消息滚动会驱动背景横向移动，管理员可以创建套件、上传透明 PNG，并逐层调整前后顺序、速度比、上下位置和画布高度。
 - 登录页支持自定义图标、标题、副标题、背景图和表单位置。
 - 管理员外观页按品牌与标签页、登录页、聊天室、主题颜色和闪动特效分组，桌面端实时预览当前场景，手机端可按需打开预览。
 - 外观图片在更换时弹出选择器，可上传新图片或复用已有外观素材；所有图片、主题和闪动特效改动都会先进入草稿，点击“保存外观”后才生效。
@@ -168,7 +168,7 @@ Team Chat is a lightweight web chat app for small teams, families, groups, and p
 - Built-in themes include WeChat Green, Jade, Paper, and Night.
 - Admins can create custom themes for buttons, backgrounds, panels, text, and chat bubbles.
 - Chat wallpapers support cover, contain, stretch, and repeat display modes.
-- Layered parallax backgrounds move horizontally with message scrolling; admins can select a kit and tune its relative speed.
+- Layered parallax backgrounds move horizontally with message scrolling; admins can upload kits and tune each layer's order, speed, vertical offset, and canvas height.
 - The login page supports custom icons, title, subtitle, background image, form position, and registration entry.
 - The admin appearance panel is organized by scenario: brand and browser tab, login page, chat room, theme colors, and flashing message effect.
 - Appearance images are chosen through a shared picker when they are needed. Admins can upload a new image or reuse existing appearance assets.
@@ -294,7 +294,7 @@ npm start
 
 ### 卷轴背景素材
 
-卷轴 PNG 属于运行时素材，不随 GPL 源码发布。`rural` 套件需要由部署者按原作者许可取得，并将 10 个原始 PNG 放入 `${STORAGE_ROOT}/parallax/rural/`；应用会通过受限的 `/api/parallax/rural/:file` 路由读取它们。当前文件名和层级定义见 `src/client/parallax.ts`。
+卷轴 PNG 属于运行时素材，不随 GPL 源码发布。`rural` 套件需要由部署者按原作者许可取得，并将 10 个原始 PNG 放入 `${STORAGE_ROOT}/parallax/rural/`。管理员也可以在外观后台创建自定义套件并上传图层，文件会转换为 PNG 存入 `${STORAGE_ROOT}/parallax/<kit-id>/`；套件与层级配置保存在应用设置中。默认层级定义见 `src/shared/parallax.ts`。
 
 ## 安全与发布注意事项
 

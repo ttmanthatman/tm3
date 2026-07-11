@@ -4999,6 +4999,31 @@ button.admin-object-row:focus-visible {
   gap: 12px;
 }
 
+.parallax-section-heading,
+.parallax-kit-editor > header,
+.parallax-layer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.parallax-section-heading > div,
+.parallax-kit-editor > header > div,
+.parallax-layer-toolbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.parallax-section-heading small,
+.parallax-kit-editor small,
+.parallax-layer-toolbar small,
+.parallax-empty-layers {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .parallax-kit-card {
   min-width: 0;
   border: 2px solid var(--line);
@@ -5076,6 +5101,133 @@ button.admin-object-row:focus-visible {
 
 .parallax-credit {
   margin: 0;
+}
+
+.parallax-kit-editor {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--accent) 6%);
+}
+
+.parallax-kit-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.parallax-kit-fields label,
+.parallax-layer-main label {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.parallax-kit-fields label:nth-child(2) {
+  grid-column: span 2;
+}
+
+.parallax-kit-fields span,
+.parallax-layer-main span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.parallax-layer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.parallax-layer-row {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  background: var(--panel);
+}
+
+.parallax-layer-thumb {
+  width: 108px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background-color: #b7c0c7;
+  background-position: left top;
+  background-repeat: no-repeat;
+  background-size: contain;
+}
+
+.parallax-layer-main {
+  min-width: 0;
+  display: grid;
+  gap: 9px;
+}
+
+.parallax-layer-values {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(95px, 1fr));
+  gap: 8px;
+}
+
+.parallax-layer-values label {
+  position: relative;
+}
+
+.parallax-layer-values em {
+  position: absolute;
+  right: 9px;
+  bottom: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  pointer-events: none;
+}
+
+.parallax-layer-values input {
+  padding-right: 28px;
+}
+
+.parallax-layer-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.parallax-empty-layers {
+  margin: 0;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .parallax-kit-fields,
+  .parallax-layer-values {
+    grid-template-columns: 1fr;
+  }
+
+  .parallax-kit-fields label:nth-child(2) {
+    grid-column: auto;
+  }
+
+  .parallax-layer-row {
+    grid-template-columns: 78px minmax(0, 1fr);
+  }
+
+  .parallax-layer-thumb {
+    width: 78px;
+  }
+
+  .parallax-layer-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: flex-end;
+  }
 }
 
 .parallax-preview-device {

@@ -41,6 +41,7 @@ import type {
   ThemePaletteDTO
 } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
+import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
@@ -106,7 +107,7 @@ const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
   intervalSeconds: 0.4,
   transitionMode: "smooth"
 };
-const PARALLAX_KITS = new Set(["none", "rural"]);
+const PARALLAX_KIT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const PARALLAX_SPEED_MIN = 0.25;
 const PARALLAX_SPEED_MAX = 3;
 const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
@@ -3597,6 +3598,7 @@ async function appearanceDto() {
           "wallpaperFit",
           "parallaxKit",
           "parallaxSpeed",
+          "parallaxKits",
           "loginIconPath",
           "loginShowIcon",
           "loginTitle",
@@ -3617,17 +3619,16 @@ async function appearanceDto() {
   const loginBackgroundFit = settings.get("loginBackgroundFit") || "cover";
   const loginFormPosition = settings.get("loginFormPosition") || "middle";
   const parallaxKit = settings.get("parallaxKit") || "none";
-  const parsedParallaxSpeed = Number(settings.get("parallaxSpeed") || 1);
-  const parallaxSpeed = Number.isFinite(parsedParallaxSpeed)
-    ? Math.min(PARALLAX_SPEED_MAX, Math.max(PARALLAX_SPEED_MIN, parsedParallaxSpeed))
-    : 1;
+  const parallaxSpeed = cleanParallaxSpeed(settings.get("parallaxSpeed"));
+  const parallaxKits = cleanParallaxKits(parseJsonField(settings.get("parallaxKits"), undefined));
   return {
     appTitle: settings.get("appTitle") || DEFAULT_APP_TITLE,
     appIconPath: settings.get("appIconPath") || null,
     wallpaperPath: settings.get("wallpaperPath") || null,
     wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
-    parallaxKit: PARALLAX_KITS.has(parallaxKit) ? parallaxKit : "none",
+    parallaxKit: parallaxKit === "none" || parallaxKits.some((kit) => kit.id === parallaxKit) ? parallaxKit : "none",
     parallaxSpeed,
+    parallaxKits,
     loginIconPath: settings.get("loginIconPath") || null,
     loginShowIcon: settings.get("loginShowIcon") !== "false",
     loginTitle: settings.get("loginTitle") || DEFAULT_LOGIN_TITLE,
@@ -4066,13 +4067,55 @@ async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, mis
   return safeName;
 }
 
+async function saveParallaxLayerUpload(request: FastifyRequest, reply: FastifyReply, kitId: string) {
+  const file = await request.file();
+  if (!file) {
+    reply.code(400).send({ success: false, message: "缺少卷轴图层图片" });
+    return null;
+  }
+  const ext = path.extname(file.filename).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) {
+    reply.code(400).send({ success: false, message: "只支持图片文件" });
+    return null;
+  }
+  const kitDir = path.join(PARALLAX_DIR, kitId);
+  fs.mkdirSync(kitDir, { recursive: true });
+  const token = crypto.randomUUID();
+  const tempPath = path.join(kitDir, `.${token}${ext}`);
+  const fileName = `${token}.png`;
+  const outputPath = path.join(kitDir, fileName);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const stream = fs.createWriteStream(tempPath);
+      file.file.pipe(stream);
+      file.file.on("error", reject);
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    });
+    if (!(await validateStoredImage(tempPath))) {
+      reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
+      return null;
+    }
+    const metadata = await sharp(tempPath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
+    await sharp(tempPath, { failOn: "error", limitInputPixels: 40_000_000 }).png({ compressionLevel: 9 }).toFile(outputPath);
+    return {
+      fileName,
+      originalName: path.basename(file.filename, ext).trim().slice(0, 40) || "新图层",
+      width: metadata.width || 0,
+      height: metadata.height || 0
+    };
+  } finally {
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
+  }
+}
+
 app.get("/api/settings/appearance", async () => {
   return appearanceDto();
 });
 
 app.get<{ Params: { kit: string; file: string } }>("/api/parallax/:kit/:file", async (request, reply) => {
   const { kit, file } = request.params;
-  if (!PARALLAX_KITS.has(kit) || kit === "none" || path.basename(file) !== file || path.extname(file).toLowerCase() !== ".png") {
+  if (!PARALLAX_KIT_ID_PATTERN.test(kit) || path.basename(file) !== file || path.extname(file).toLowerCase() !== ".png") {
     return reply.code(404).send({ success: false, message: "parallax asset not found" });
   }
   const filePath = path.join(PARALLAX_DIR, kit, file);
@@ -4084,6 +4127,25 @@ app.get<{ Params: { kit: string; file: string } }>("/api/parallax/:kit/:file", a
   return reply.send(fs.createReadStream(filePath));
 });
 
+app.post<{ Params: { kit: string } }>("/api/admin/parallax/:kit/layers", { preHandler: requireAdmin }, async (request, reply) => {
+  const kitId = request.params.kit.trim().toLowerCase();
+  if (!PARALLAX_KIT_ID_PATTERN.test(kitId)) return reply.code(400).send({ success: false, message: "卷轴套件编号无效" });
+  const uploaded = await saveParallaxLayerUpload(request, reply, kitId);
+  if (!uploaded) return reply;
+  return {
+    success: true,
+    layer: {
+      id: `layer-${crypto.randomBytes(6).toString("hex")}`,
+      name: uploaded.originalName,
+      file: uploaded.fileName,
+      speed: 1,
+      yOffset: 0,
+      heightScale: 1
+    },
+    size: { width: uploaded.width, height: uploaded.height }
+  };
+});
+
 app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) => {
   const body = z
     .object({
@@ -4091,8 +4153,9 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       appTitle: z.string().max(80).nullable().optional(),
       appIconPath: z.string().nullable().optional(),
       wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
-      parallaxKit: z.enum(["none", "rural"]).optional(),
+      parallaxKit: z.string().regex(/^(none|[a-z0-9][a-z0-9-]{0,63})$/).optional(),
       parallaxSpeed: z.number().min(PARALLAX_SPEED_MIN).max(PARALLAX_SPEED_MAX).optional(),
+      parallaxKits: z.array(z.unknown()).max(12).optional(),
       loginIconPath: z.string().nullable().optional(),
       loginShowIcon: z.boolean().optional(),
       loginTitle: z.string().max(80).nullable().optional(),
@@ -4112,6 +4175,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
   if (Object.prototype.hasOwnProperty.call(body, "parallaxKit")) await setSetting("parallaxKit", body.parallaxKit || "none");
   if (Object.prototype.hasOwnProperty.call(body, "parallaxSpeed")) await setSetting("parallaxSpeed", String(body.parallaxSpeed || 1));
+  if (Object.prototype.hasOwnProperty.call(body, "parallaxKits")) await setSetting("parallaxKits", JSON.stringify(cleanParallaxKits(body.parallaxKits)));
   if (Object.prototype.hasOwnProperty.call(body, "loginIconPath")) await setSetting("loginIconPath", body.loginIconPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "loginShowIcon")) await setSetting("loginShowIcon", body.loginShowIcon ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "loginTitle")) await setSetting("loginTitle", (body.loginTitle || "").trim() || DEFAULT_LOGIN_TITLE);

@@ -1,33 +1,31 @@
 <script setup lang="ts">
-import { computed } from "vue";
-import { parallaxAssetUrl, parallaxKit, type ParallaxKitId } from "../parallax";
+import type { ParallaxKitDTO, ParallaxLayerDTO } from "@shared/types";
+import { parallaxAssetUrl } from "../parallax";
 
 const props = defineProps<{
-  kit: ParallaxKitId;
+  kit?: ParallaxKitDTO | null;
   offset: number;
   preview?: boolean;
 }>();
 
-const activeKit = computed(() => parallaxKit(props.kit));
-
-function layerStyle(file: string, depth: number, doubleHeight = false) {
-  const shift = props.offset * depth;
+function layerStyle(layer: ParallaxLayerDTO) {
+  const shift = props.offset * layer.speed;
   return {
-    backgroundImage: `url("${parallaxAssetUrl(props.kit, file)}")`,
-    backgroundPosition: `calc(50% + ${shift.toFixed(2)}px) top`,
-    backgroundSize: doubleHeight ? "auto 200%" : "auto 100%"
+    backgroundImage: `url("${parallaxAssetUrl(props.kit?.id || "", layer.file)}")`,
+    backgroundPosition: `${shift.toFixed(2)}px ${layer.yOffset}px`,
+    backgroundSize: `auto ${(layer.heightScale * 100).toFixed(2)}%`
   };
 }
 </script>
 
 <template>
-  <div v-if="activeKit" class="parallax-background" :class="{ preview }" aria-hidden="true">
+  <div v-if="kit" class="parallax-background" :class="{ preview }" aria-hidden="true">
     <div
-      v-for="layer in activeKit.layers"
+      v-for="layer in kit.layers"
       :key="layer.id"
       class="parallax-layer"
       :class="`parallax-layer-${layer.id}`"
-      :style="layerStyle(layer.file, layer.depth, layer.doubleHeight)"
+      :style="layerStyle(layer)"
     ></div>
   </div>
 </template>
