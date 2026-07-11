@@ -186,7 +186,9 @@ fi
 
 cd "$RELEASE_DIR"
 
-run_logged 32 "安装依赖" npm ci --no-audit --no-fund
+# 前端构建工具（Vite、TypeScript）位于 devDependencies；生产环境中的 npm
+# 会默认省略它们，导致后续构建阶段出现 "vite: not found"。
+run_logged 32 "安装依赖" npm ci --include=dev --no-audit --no-fund
 run_logged 52 "生成 Prisma Client" npm run prisma:generate
 log_resources
 run_node_logged 62 "构建前端" npm run build:client
