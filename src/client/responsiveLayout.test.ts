@@ -26,7 +26,15 @@ test("pinned notices stay above chat content and retain their modal layer", () =
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
   assert.match(app, /class="new-message-jump"[\s\S]*?aria-label="跳到最新消息"[\s\S]*?<ArrowDown/);
   assert.doesNotMatch(app, /<ArrowDown :size="16" \/>\{\{ hasUnreadMessages/);
-  assert.match(css, /\.new-message-jump \{[\s\S]*?left: 50%;[\s\S]*?width: 34px;[\s\S]*?height: 34px;[\s\S]*?background: rgba\(/);
+  assert.match(css, /\.new-message-jump \{[\s\S]*?left: 50%;[\s\S]*?bottom: calc\(58px \+ var\(--keyboard-offset\)\);[\s\S]*?width: 34px;[\s\S]*?height: 34px;[\s\S]*?background: rgba\(/);
+});
+
+test("all file previews keep close at the upper right and download at the lower right", () => {
+  assert.match(app, /class="preview-control preview-close"[\s\S]*?aria-label="关闭预览"[\s\S]*?<X/);
+  assert.match(app, /class="preview-control preview-download"[\s\S]*?aria-label="下载"[\s\S]*?<Download/);
+  assert.doesNotMatch(app, /class="image-preview-download"/);
+  assert.match(css, /\.preview-close \{[\s\S]*?top: calc\(var\(--safe-top\) \+ 12px\);/);
+  assert.match(css, /\.preview-download \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
 });
 
 test("like alerts use the top notice rail instead of a reading-area overlay", () => {

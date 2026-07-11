@@ -7958,12 +7958,9 @@ async function toggleVirtual(character: any) {
       <div class="media-preview-modal" :class="{ 'image-preview-modal': previewMessage.type === 'image' }">
         <header v-if="previewMessage.type !== 'image'" class="modal-head">
           <strong>{{ previewMessage.fileName || "图片预览" }}</strong>
-          <div class="preview-actions">
-            <button class="icon-btn" @click="downloadFile(previewMessage)" aria-label="下载"><Download :size="18" /></button>
-            <button class="icon-btn" @click="closePreviewMessage" aria-label="关闭预览"><X :size="20" /></button>
-          </div>
         </header>
-        <button v-if="previewMessage.type === 'image'" class="image-preview-download" @click.stop="downloadPreviewImage" aria-label="下载图片"><Download :size="20" /></button>
+        <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
+        <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
         <div
           class="media-preview-body"
           :class="{ 'image-preview-body': previewMessage.type === 'image' }"

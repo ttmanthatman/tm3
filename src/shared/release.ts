@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.10.6";
+export const APP_VERSION = "0.10.7";
 
 export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "所有文件预览统一为右上角关闭、右下角下载，手机端查看图片后可以直接点叉退出。",
+  "回到最新消息的半透明向下按钮下移，更靠近消息输入栏。"
+] as const;
+
+const RELEASE_0_10_6_NOTES = [
   "修复卷轴背景启用后置顶消息弹窗被聊天内容或图片预览遮挡的问题；置顶层现在会覆盖聊天内容并可正常点击“朕知道了”。"
 ] as const;
 
@@ -413,9 +418,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.6",
+    version: "0.10.7",
     date: "2026-07-11",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.6",
+    date: "2026-07-11",
+    notes: RELEASE_0_10_6_NOTES
   },
   {
     version: "0.10.5",

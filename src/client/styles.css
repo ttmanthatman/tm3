@@ -1873,7 +1873,7 @@ button {
   position: absolute;
   left: 50%;
   right: auto;
-  bottom: calc(78px + var(--keyboard-offset));
+  bottom: calc(58px + var(--keyboard-offset));
   z-index: 7;
   width: 34px;
   height: 34px;
@@ -4246,12 +4246,6 @@ button {
   white-space: nowrap;
 }
 
-.preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
 .media-preview-body {
   min-height: 220px;
   padding: 10px;
@@ -4292,9 +4286,8 @@ button {
   -webkit-touch-callout: none;
 }
 
-.image-preview-download {
+.preview-control {
   position: fixed;
-  top: calc(var(--safe-top) + 12px);
   right: 14px;
   z-index: 2;
   width: 42px;
@@ -4306,6 +4299,14 @@ button {
   color: #fff;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
   backdrop-filter: blur(10px);
+}
+
+.preview-close {
+  top: calc(var(--safe-top) + 12px);
+}
+
+.preview-download {
+  bottom: calc(var(--safe-bottom) + 12px);
 }
 
 .media-preview-audio {
