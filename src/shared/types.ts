@@ -69,6 +69,35 @@ export interface MessageDTO {
   chainRootId?: number | null;
   chainVersion?: number | null;
   createdAt: string;
+  reactions?: MessageReactionsDTO;
+}
+
+export interface MessageReactionsDTO {
+  likeCount: number;
+  likedBy: Array<{
+    accountId: number;
+    displayName: string;
+    avatarPath?: string | null;
+  }>;
+  favoriteCount: number;
+  currentUserLiked: boolean;
+  currentUserFavorited: boolean;
+}
+
+export interface FavoriteMessageDTO {
+  id: number;
+  savedAt: string;
+  channel: { id: number; name: string };
+  message: MessageDTO;
+}
+
+export interface LikeNotificationDTO {
+  id: number;
+  channelId: number;
+  messageId: number;
+  senderName: string;
+  likerName: string;
+  createdAt: string;
 }
 
 export interface LinkPreviewDTO {

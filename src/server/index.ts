@@ -1016,6 +1016,22 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
     }
   }
   let payload: unknown = message.payload || undefined;
+  const loadedReactions = message as typeof message & {
+    likes?: Array<{ accountId: number; account: Pick<Account, "displayName" | "avatarPath"> }>;
+    favorites?: Array<{ accountId: number }>;
+  };
+  const [likes, favorites] = await Promise.all([
+    loadedReactions.likes
+      ? Promise.resolve(loadedReactions.likes)
+      : prisma.messageLike.findMany({
+          where: { messageId: message.id },
+          include: { account: { select: { displayName: true, avatarPath: true } } },
+          orderBy: { createdAt: "asc" }
+        }),
+    loadedReactions.favorites
+      ? Promise.resolve(loadedReactions.favorites)
+      : prisma.messageFavorite.findMany({ where: { messageId: message.id }, select: { accountId: true } })
+  ]);
   if (message.type === "prayer") {
     const aiSettings = await loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
@@ -1093,7 +1109,18 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       : null,
     chainRootId: message.chainRootId,
     chainVersion: message.chainVersion,
-    createdAt: message.createdAt.toISOString()
+    createdAt: message.createdAt.toISOString(),
+    reactions: {
+      likeCount: likes.length,
+      likedBy: likes.map((like) => ({
+        accountId: like.accountId,
+        displayName: like.account.displayName,
+        avatarPath: like.account.avatarPath
+      })),
+      favoriteCount: favorites.length,
+      currentUserLiked: !!viewerAccountId && likes.some((like) => like.accountId === viewerAccountId),
+      currentUserFavorited: !!viewerAccountId && favorites.some((favorite) => favorite.accountId === viewerAccountId)
+    }
   };
 }
 
@@ -3061,13 +3088,145 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
   };
   const rows = await prisma.message.findMany({
     where,
-    include: { sender: true, replyTo: { include: { sender: true } } },
+    include: {
+      sender: true,
+      replyTo: { include: { sender: true } },
+      likes: { include: { account: { select: { displayName: true, avatarPath: true } } }, orderBy: { createdAt: "asc" } },
+      favorites: { select: { accountId: true } }
+    },
     orderBy: { id: after > 0 ? "asc" : "desc" },
     take: limit
   });
   const filteredRows = query.prayers === "1" ? rows.filter((message) => !isPrayerUpdateMessage(message)) : rows;
   const messages = await Promise.all((after > 0 ? filteredRows : filteredRows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
   return { messages };
+});
+
+async function broadcastMessageReactions(messageId: number, accountId?: number) {
+  const dto = await hydrateMessage(messageId, accountId);
+  if (!dto?.reactions) return null;
+  const publicReaction = {
+    likeCount: dto.reactions.likeCount,
+    likedBy: dto.reactions.likedBy,
+    favoriteCount: dto.reactions.favoriteCount
+  };
+  io.to(`ch:${dto.channelId}`).emit("message:reaction", { messageId, channelId: dto.channelId, reactions: publicReaction });
+  if (accountId) io.to(`acct:${accountId}`).emit("message:reaction", { messageId, channelId: dto.channelId, reactions: dto.reactions });
+  return dto.reactions;
+}
+
+app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ liked: z.boolean() }).parse(request.body);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+  if (!message || !(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(404).send({ success: false, message: "消息不存在" });
+  const key = { messageId_accountId: { messageId, accountId: auth.accountId } };
+  const existing = await prisma.messageLike.findUnique({ where: key });
+  let notification = null;
+  if (body.liked) {
+    const like = await prisma.messageLike.upsert({
+      where: key,
+      create: { messageId, accountId: auth.accountId },
+      update: { dismissedAt: null }
+    });
+    if (!existing && message.sender.accountId && message.sender.accountId !== auth.accountId) {
+      const liker = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { displayName: true } });
+      notification = {
+        id: like.id,
+        channelId: message.channelId,
+        messageId,
+        senderName: message.sender.displayName,
+        likerName: liker?.displayName || auth.username,
+        createdAt: like.createdAt.toISOString()
+      };
+      io.to(`acct:${message.sender.accountId}`).emit("message:liked", notification);
+    }
+  } else if (existing) {
+    await prisma.messageLike.delete({ where: key });
+  }
+  const reactions = await broadcastMessageReactions(messageId, auth.accountId);
+  return { success: true, reactions, notification };
+});
+
+app.put("/api/messages/:messageId/favorite", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ favorited: z.boolean() }).parse(request.body);
+  const message = await prisma.message.findUnique({ where: { id: messageId }, select: { channelId: true } });
+  if (!message || !(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(404).send({ success: false, message: "消息不存在" });
+  const key = { messageId_accountId: { messageId, accountId: auth.accountId } };
+  if (body.favorited) {
+    await prisma.messageFavorite.upsert({ where: key, create: { messageId, accountId: auth.accountId }, update: {} });
+  } else {
+    await prisma.messageFavorite.deleteMany({ where: { messageId, accountId: auth.accountId } });
+  }
+  const reactions = await broadcastMessageReactions(messageId, auth.accountId);
+  return { success: true, reactions };
+});
+
+app.get("/api/favorites", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const rows = await prisma.messageFavorite.findMany({
+    where: { accountId: auth.accountId },
+    include: {
+      message: {
+        include: {
+          sender: true,
+          channel: { select: { id: true, name: true } },
+          replyTo: { include: { sender: true } },
+          likes: { include: { account: { select: { displayName: true, avatarPath: true } } }, orderBy: { createdAt: "asc" } },
+          favorites: { select: { accountId: true } }
+        }
+      }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200
+  });
+  const visible = [];
+  for (const favorite of rows) {
+    if (!(await canAccessChannel(auth.accountId, favorite.message.channelId))) continue;
+    visible.push({
+      id: favorite.id,
+      savedAt: favorite.createdAt.toISOString(),
+      channel: favorite.message.channel,
+      message: await serializeMessage(favorite.message, auth.accountId)
+    });
+  }
+  return { favorites: visible };
+});
+
+app.get("/api/like-notifications", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const rows = await prisma.messageLike.findMany({
+    where: {
+      dismissedAt: null,
+      accountId: { not: auth.accountId },
+      message: { sender: { accountId: auth.accountId } }
+    },
+    include: { account: { select: { displayName: true } }, message: { include: { sender: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 20
+  });
+  return {
+    notifications: rows.map((like) => ({
+      id: like.id,
+      channelId: like.message.channelId,
+      messageId: like.messageId,
+      senderName: like.message.sender.displayName,
+      likerName: like.account.displayName,
+      createdAt: like.createdAt.toISOString()
+    }))
+  };
+});
+
+app.patch("/api/like-notifications/:id/dismiss", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const id = Number((request.params as { id: string }).id);
+  const like = await prisma.messageLike.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
+  if (!like || like.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
+  await prisma.messageLike.update({ where: { id }, data: { dismissedAt: new Date() } });
+  return { success: true };
 });
 
 app.get("/api/link-preview", { preHandler: requireAuth }, async (request, reply) => {

@@ -985,6 +985,88 @@ button {
   border-bottom: 1px solid rgba(0, 0, 0, 0.04);
 }
 
+.channel-list,
+.favorites-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.favorites-entry {
+  min-height: 54px;
+  color: #b42355;
+  background: color-mix(in srgb, #ef476f 5%, transparent);
+}
+
+.favorites-icon {
+  color: #ef476f;
+  background: #fff0f4;
+}
+
+.favorites-list {
+  padding: 10px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.favorites-empty {
+  margin: 24px 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.favorite-card {
+  position: relative;
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 84%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel) 92%, #ffffff);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+}
+
+.favorite-card-main {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 34px 10px 11px;
+  display: grid;
+  gap: 4px;
+  color: var(--text);
+  text-align: left;
+}
+
+.favorite-card-main > strong,
+.favorite-card-main > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-card-main > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.favorite-card-meta {
+  color: #b42355 !important;
+  font-size: 11px !important;
+}
+
+.favorite-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 25px;
+  height: 25px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
 .channel-row-wrap {
   min-width: 0;
   display: grid;
@@ -1050,13 +1132,33 @@ button {
 }
 
 .channel-icon {
+  position: relative;
   width: 38px;
   height: 38px;
+  flex: 0 0 38px;
   border-radius: 8px;
   display: grid;
   place-items: center;
   overflow: hidden;
   background: #e9ecef;
+}
+
+.private-channel-badge {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 5px 0 6px 0;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: rgba(17, 24, 39, 0.82);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .channel-icon.prayer-icon {
@@ -1597,10 +1699,13 @@ button {
 
 .new-message-jump {
   position: absolute;
-  left: 50%;
+  left: auto;
+  right: 18px;
   bottom: calc(78px + var(--keyboard-offset));
   z-index: 7;
-  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 7px 13px;
   border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
   border-radius: 999px;
@@ -1609,6 +1714,80 @@ button {
   box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
   font-size: 13px;
   font-weight: 700;
+}
+
+.like-notification-stack {
+  position: absolute;
+  right: 16px;
+  bottom: calc(122px + var(--keyboard-offset));
+  z-index: 9;
+  width: min(310px, calc(100% - 32px));
+  display: grid;
+  gap: 7px;
+  pointer-events: none;
+}
+
+.like-notification {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 32px;
+  align-items: center;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 10px;
+  color: #1f2937;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+  animation: likeNoticeIn 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.like-notification-main {
+  min-width: 0;
+  padding: 9px 6px 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+}
+
+.like-notification-main > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.like-notification-main strong,
+.like-notification-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.like-notification-main small {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.like-notification-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #3b82f6;
+  animation: reactionPop 0.7s ease both;
+}
+
+.like-notification-close {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #64748b;
 }
 
 .time-separator {
@@ -1694,6 +1873,50 @@ button {
 .bubble-wrap {
   max-width: min(620px, 72%);
   min-width: 0;
+}
+
+.message-reaction-details {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.message-row.mine .message-reaction-details {
+  justify-content: flex-end;
+}
+
+.reaction-detail {
+  min-height: 24px;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  font-size: 11px;
+}
+
+.reaction-detail span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reaction-like.active {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(239, 246, 255, 0.9);
+}
+
+.reaction-favorite.active {
+  color: #e11d48;
+  border-color: rgba(225, 29, 72, 0.2);
+  background: rgba(255, 241, 242, 0.92);
 }
 
 .sender-line {
@@ -3801,6 +4024,59 @@ button {
   padding: 6px;
   display: grid;
   gap: 4px;
+}
+
+.message-quick-reactions {
+  padding: 7px 7px 5px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
+.message-quick-reactions button {
+  min-height: 54px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.message-quick-reactions button span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.message-quick-reactions button:hover,
+.message-quick-reactions button.active {
+  color: #2563eb;
+  background: #eff6ff;
+}
+
+.message-quick-reactions button.favorite:hover,
+.message-quick-reactions button.favorite.active {
+  color: #e11d48;
+  background: #fff1f2;
+}
+
+.message-quick-reactions button:active svg,
+.message-quick-reactions button.active svg {
+  animation: reactionPop 0.55s cubic-bezier(0.2, 0.9, 0.25, 1.3);
+}
+
+@keyframes reactionPop {
+  0% { transform: scale(0.72) rotate(-10deg); }
+  45% { transform: scale(1.32) rotate(8deg); }
+  72% { transform: scale(0.92) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+
+@keyframes likeNoticeIn {
+  from { opacity: 0; transform: translate3d(24px, 10px, 0) scale(0.96); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
 .message-actions-list button {

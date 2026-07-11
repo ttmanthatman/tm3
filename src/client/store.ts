@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
-import type { AccountDTO, AppearanceDTO, ChannelDTO, MessageDTO, PinnedDTO } from "@shared/types";
+import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
@@ -71,6 +71,7 @@ export const useChatStore = defineStore("chat", {
     online: [] as Array<{ accountId: number; actorId: number; displayName: string; avatarPath?: string | null }>,
     typing: {} as TypingState,
     lastIncomingMessage: null as MessageDTO | null,
+    likeNotifications: [] as LikeNotificationDTO[],
     socket: null as Socket | null,
     connectionState: "offline" as "offline" | "connecting" | "connected",
     loading: false
@@ -187,6 +188,7 @@ export const useChatStore = defineStore("chat", {
         const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
         if (me.token) setToken(me.token);
         this.account = me.account;
+        await this.loadLikeNotifications();
         await this.loadChannels(channelId);
         return true;
       } catch {
@@ -196,6 +198,7 @@ export const useChatStore = defineStore("chat", {
     },
     async afterLogin(account: AccountDTO) {
       this.account = account;
+      await this.loadLikeNotifications();
       await this.loadChannels();
       this.connectSocket();
     },
@@ -205,6 +208,7 @@ export const useChatStore = defineStore("chat", {
       this.socket = null;
       this.connectionState = "offline";
       this.account = null;
+      this.likeNotifications = [];
       this.resetMessageWindow();
       this.messageCache = {};
       this.messageCacheOrder = [];
@@ -212,6 +216,18 @@ export const useChatStore = defineStore("chat", {
     },
     async loadAppearance() {
       this.appearance = await api<AppearanceDTO>("/api/settings/appearance").catch(() => ({ ...defaultAppearance }));
+    },
+    async loadLikeNotifications() {
+      const result = await api<{ notifications: LikeNotificationDTO[] }>("/api/like-notifications").catch(() => ({ notifications: [] }));
+      this.likeNotifications = result.notifications;
+    },
+    updateMessageReactions(messageId: number, reactions: Partial<MessageReactionsDTO>) {
+      const message = this.messages.find((row) => row.id === messageId);
+      if (message) message.reactions = { ...(message.reactions || { likeCount: 0, likedBy: [], favoriteCount: 0, currentUserLiked: false, currentUserFavorited: false }), ...reactions };
+      if (this.pinned?.message?.id === messageId) {
+        this.pinned.message.reactions = { ...(this.pinned.message.reactions || { likeCount: 0, likedBy: [], favoriteCount: 0, currentUserLiked: false, currentUserFavorited: false }), ...reactions };
+      }
+      this.cacheCurrentMessages();
     },
     async loadChannels(preferredChannelId = 0) {
       const result = await api<{ channels: ChannelDTO[] }>("/api/channels");
@@ -427,6 +443,12 @@ export const useChatStore = defineStore("chat", {
       socket.on("message:updated", (message: MessageDTO) => {
         if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
         this.replaceMessage(message);
+      });
+      socket.on("message:reaction", (event: { messageId: number; channelId: number; reactions: Partial<MessageReactionsDTO> }) => {
+        if (event.channelId === this.currentChannelId) this.updateMessageReactions(event.messageId, event.reactions);
+      });
+      socket.on("message:liked", (notification: LikeNotificationDTO) => {
+        this.likeNotifications = [notification, ...this.likeNotifications.filter((item) => item.id !== notification.id)].slice(0, 20);
       });
       socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
         if (event.channelId !== this.currentChannelId || event.actor.id === this.account?.actorId) return;

@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.10.0";
+export const APP_VERSION = "0.10.1";
 
-export const RELEASE_DATE = "2026-07-10";
+export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "消息长按新增动画点赞与爱心收藏；点赞会显示详情并向消息作者发送可关闭、可跳转的提醒，收藏保持个人私有。",
+  "左侧新增收藏夹，可集中查看并跳转到收藏的文字、附件、图片和语音消息。",
+  "聊天区边缘新增回到最新消息浮动按钮，频道列表移除公开/私密副标题并为私密频道图标增加“私”角标。",
+  "修复桌面端左栏私聊图标被横向压缩的问题。"
+] as const;
+
+const RELEASE_0_10_0_NOTES = [
   "修复频道切换、打开设置和从全页管理界面返回聊天时的消息位置漂移，图片加载后也会继续保持阅读锚点。",
   "用户设置重构为清晰的分类侧栏与内容工作区，手机端使用紧凑图标导航，并补齐启动、失败重试和断线状态。",
   "管理员资源管理升级为独立按需模块，支持搜索、筛选、排序、分页、完整文件名、缺失与未引用标记、懒加载缩略图和安全预览。",
@@ -381,9 +388,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.10.1",
+    date: "2026-07-11",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.10.0",
     date: "2026-07-10",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_10_0_NOTES
   },
   {
     version: "0.9.1",
