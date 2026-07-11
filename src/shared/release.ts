@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.10.5";
+export const APP_VERSION = "0.10.6";
 
 export const RELEASE_DATE = "2026-07-11";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复卷轴背景启用后置顶消息弹窗被聊天内容或图片预览遮挡的问题；置顶层现在会覆盖聊天内容并可正常点击“朕知道了”。"
+] as const;
+
+const RELEASE_0_10_5_NOTES = [
   "新增乡野河谷十层卷轴背景：消息阅读会驱动横向移动，官方层序会展示远湖、近河与云层倒影；倒影与云层保持相同速度。",
   "外观后台支持创建卷轴套件、上传透明图片，并逐层调整前后顺序、速度比、上下位置和画布高度。",
   "修复测试分支更新检测：支持带 / 的 Git 分支名并避免版本碰撞导致漏检。"
@@ -409,9 +413,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.5",
+    version: "0.10.6",
     date: "2026-07-11",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.5",
+    date: "2026-07-11",
+    notes: RELEASE_0_10_5_NOTES
   },
   {
     version: "0.10.4",

@@ -1354,7 +1354,7 @@ button {
   isolation: isolate;
 }
 
-.chat-pane > :not(.parallax-background) {
+.chat-pane > :not(.parallax-background):not(.modal-shell) {
   z-index: 1;
 }
 
@@ -1671,7 +1671,7 @@ button {
 }
 
 .pinned-view-shell {
-  z-index: 24;
+  z-index: 50;
   padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px);
   align-items: end;
   background: rgba(0, 0, 0, 0.34);

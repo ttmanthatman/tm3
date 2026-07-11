@@ -17,6 +17,12 @@ test("mobile drawers stay above the chat header and their scrim", () => {
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.channel-pane \{[\s\S]*?z-index: 23;/);
 });
 
+test("pinned notices stay above chat content and retain their modal layer", () => {
+  assert.match(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\) \{[\s\S]*?z-index: 1;/);
+  assert.match(css, /\.pinned-view-shell \{[\s\S]*?z-index: 50;/);
+  assert.match(app, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
+});
+
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
   assert.match(app, /class="new-message-jump"[\s\S]*?aria-label="跳到最新消息"[\s\S]*?<ArrowDown/);
   assert.doesNotMatch(app, /<ArrowDown :size="16" \/>\{\{ hasUnreadMessages/);
