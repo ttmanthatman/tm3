@@ -6,6 +6,14 @@ export function nextMusicTrackIndex(length: number, currentIndex: number, delta:
   return (safeIndex + delta + length) % length;
 }
 
-export function shouldAdvanceMusic(mode: MusicPlaybackMode) {
-  return mode === "playlist";
+export function shouldAdvanceMusic(mode: MusicPlaybackMode, scoreOpen = false) {
+  return mode === "playlist" && !scoreOpen;
+}
+
+export function shouldShowMusicScoreTrigger(input: { playing: boolean; scoreOpen: boolean; pageCount: number }) {
+  return input.scoreOpen || (input.playing && input.pageCount > 0);
+}
+
+export function shouldKeepMusicScoreForTrack(pageCount: number) {
+  return pageCount > 0;
 }

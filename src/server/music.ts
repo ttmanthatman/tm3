@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const MUSIC_EXTENSIONS = new Set([".mp3", ".m4a"]);
+export const MUSIC_SCORE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"]);
 
 export function canManageMusicRole(account: { isAdmin: boolean; canPinMessages: boolean }) {
   return account.isAdmin || account.canPinMessages;
@@ -9,6 +10,10 @@ export function canManageMusicRole(account: { isAdmin: boolean; canPinMessages: 
 
 export function isMusicFileName(name?: string | null) {
   return MUSIC_EXTENSIONS.has(path.extname(name || "").toLowerCase());
+}
+
+export function isMusicScoreImageName(name?: string | null) {
+  return MUSIC_SCORE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
 }
 
 export function isMusicFileHeader(bytes: Buffer, extension: string) {

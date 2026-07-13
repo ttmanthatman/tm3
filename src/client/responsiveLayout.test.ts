@@ -94,3 +94,26 @@ test("opening the music player starts or resumes playback without pausing an act
   assert.doesNotMatch(openPlayer, /pauseMusic\(/);
   assert.match(openPlayer, /if \(!musicPlaying\.value\) void playCurrentMusic\(\);/);
 });
+
+test("song control stays to the left of the font or score control", () => {
+  const headerStart = app.indexOf('<header class="chat-head"');
+  const headerEnd = app.indexOf("</header>", headerStart);
+  const header = app.slice(headerStart, headerEnd);
+  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="message-font-control"'));
+  assert.match(header, /v-if="musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
+});
+
+test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
+  assert.match(app, /class="music-score-stage"[\s\S]*?class="music-score-close"[\s\S]*?class="music-score-pages"/);
+  assert.match(app, /score-exit-left[\s\S]*?score-exit-right/);
+  assert.match(css, /\.music-score-stage \{[\s\S]*?animation: musicScoreStageIn 760ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
+  assert.match(css, /\.music-score-page img \{[\s\S]*?width: 100%;/);
+  assert.match(css, /\.music-score-close \{[\s\S]*?background: rgba\(30, 30, 30, 0\.58\);[\s\S]*?backdrop-filter: blur/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.music-score-stage/);
+});
+
+test("score image preview fills the viewport width without black side bars", () => {
+  assert.match(app, /'score-preview-modal': previewPinnedImage\?\.score/);
+  assert.match(css, /\.media-preview-shell\.image\.score \{[\s\S]*?background: #fff;/);
+  assert.match(css, /\.media-preview-shell\.score \.media-preview-image \{[\s\S]*?width: 100vw;[\s\S]*?max-width: none;/);
+});

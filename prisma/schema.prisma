@@ -209,34 +209,52 @@ model ChannelNotificationPreference {
 }
 
 model Message {
-  id            Int            @id @default(autoincrement())
-  channelId     Int            @map("channel_id")
-  senderActorId Int            @map("sender_actor_id")
-  content       String?        @db.Text
-  type          MessageType    @default(text)
-  payload       Json?
-  fileName      String?        @map("file_name") @db.VarChar(255)
-  filePath      String?        @map("file_path") @db.VarChar(255)
-  fileSize      Int?           @map("file_size")
-  replyToId     Int?           @map("reply_to_id")
-  chainRootId   Int?           @map("chain_root_id")
-  chainVersion  Int?           @map("chain_version")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  channel       Channel        @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  sender        Actor          @relation(fields: [senderActorId], references: [id])
-  replyTo       Message?       @relation("message_replies", fields: [replyToId], references: [id])
-  replies       Message[]      @relation("message_replies")
-  voiceListens  VoiceListen[]
-  prayerActions PrayerAction[]
-  aiSuggestions MessageAiSuggestion[]
-  whyReads      WhyTopicRead[]
-  likes         MessageLike[]
-  favorites     MessageFavorite[]
+  id              Int                   @id @default(autoincrement())
+  channelId       Int                   @map("channel_id")
+  senderActorId   Int                   @map("sender_actor_id")
+  content         String?               @db.Text
+  type            MessageType           @default(text)
+  payload         Json?
+  fileName        String?               @map("file_name") @db.VarChar(255)
+  filePath        String?               @map("file_path") @db.VarChar(255)
+  fileSize        Int?                  @map("file_size")
+  replyToId       Int?                  @map("reply_to_id")
+  chainRootId     Int?                  @map("chain_root_id")
+  chainVersion    Int?                  @map("chain_version")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  channel         Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender          Actor                 @relation(fields: [senderActorId], references: [id])
+  replyTo         Message?              @relation("message_replies", fields: [replyToId], references: [id])
+  replies         Message[]             @relation("message_replies")
+  voiceListens    VoiceListen[]
+  prayerActions   PrayerAction[]
+  aiSuggestions   MessageAiSuggestion[]
+  whyReads        WhyTopicRead[]
+  likes           MessageLike[]
+  favorites       MessageFavorite[]
+  musicScorePages MusicScorePage[]
 
   @@index([channelId, id])
   @@index([replyToId])
   @@index([chainRootId])
   @@map("messages")
+}
+
+model MusicScorePage {
+  id        Int      @id @default(autoincrement())
+  trackId   Int      @map("track_id")
+  pageIndex Int      @map("page_index")
+  fileName  String   @map("file_name") @db.VarChar(255)
+  filePath  String   @unique @map("file_path") @db.VarChar(255)
+  fileSize  Int      @map("file_size")
+  width     Int
+  height    Int
+  createdAt DateTime @default(now()) @map("created_at")
+  track     Message  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([trackId, pageIndex])
+  @@index([trackId])
+  @@map("music_score_pages")
 }
 
 model MessageLike {
@@ -268,23 +286,23 @@ model MessageFavorite {
 }
 
 model WhyTopic {
-  id              Int            @id @default(autoincrement())
-  ownerAccountId  Int            @map("owner_account_id")
-  channelId       Int            @unique @map("channel_id")
-  sourceChannelId Int?           @map("source_channel_id")
-  sourceMessageId Int?           @map("source_message_id")
-  cardMessageId   Int?           @unique @map("card_message_id")
-  title           String         @db.VarChar(160)
-  summary         String         @db.Text
-  originalQuestion String        @map("original_question") @db.Text
-  completionNote  String?        @map("completion_note") @db.Text
-  status          WhyTopicStatus @default(active)
-  deletedAt       DateTime?      @map("deleted_at")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
-  members         WhyTopicMember[]
-  assistantRuns   WhyAssistantRun[]
-  reads           WhyTopicRead[]
+  id               Int               @id @default(autoincrement())
+  ownerAccountId   Int               @map("owner_account_id")
+  channelId        Int               @unique @map("channel_id")
+  sourceChannelId  Int?              @map("source_channel_id")
+  sourceMessageId  Int?              @map("source_message_id")
+  cardMessageId    Int?              @unique @map("card_message_id")
+  title            String            @db.VarChar(160)
+  summary          String            @db.Text
+  originalQuestion String            @map("original_question") @db.Text
+  completionNote   String?           @map("completion_note") @db.Text
+  status           WhyTopicStatus    @default(active)
+  deletedAt        DateTime?         @map("deleted_at")
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  members          WhyTopicMember[]
+  assistantRuns    WhyAssistantRun[]
+  reads            WhyTopicRead[]
 
   @@index([ownerAccountId, status, updatedAt])
   @@index([sourceChannelId, createdAt])
@@ -326,14 +344,14 @@ model WhyAssistantRun {
 }
 
 model WhyTopicRead {
-  id                Int       @id @default(autoincrement())
-  topicId           Int       @map("topic_id")
-  accountId         Int       @map("account_id")
-  lastReadMessageId Int?      @map("last_read_message_id")
-  readAt            DateTime  @default(now()) @map("read_at")
-  topic             WhyTopic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
-  account           Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  message           Message?  @relation(fields: [lastReadMessageId], references: [id], onDelete: SetNull)
+  id                Int      @id @default(autoincrement())
+  topicId           Int      @map("topic_id")
+  accountId         Int      @map("account_id")
+  lastReadMessageId Int?     @map("last_read_message_id")
+  readAt            DateTime @default(now()) @map("read_at")
+  topic             WhyTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  account           Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  message           Message? @relation(fields: [lastReadMessageId], references: [id], onDelete: SetNull)
 
   @@unique([topicId, accountId])
   @@index([accountId, readAt])
@@ -367,21 +385,21 @@ model PrayerAction {
 }
 
 model MessageAiSuggestion {
-  id                 Int       @id @default(autoincrement())
-  messageId          Int       @map("message_id")
-  kind               String    @default("prayer_related_verses") @db.VarChar(64)
-  status             String    @default("success") @db.VarChar(24)
-  promptCommand      String    @map("prompt_command") @db.Text
-  contextText        String    @map("context_text") @db.Text
-  responseText       String?   @map("response_text") @db.Text
+  id                 Int      @id @default(autoincrement())
+  messageId          Int      @map("message_id")
+  kind               String   @default("prayer_related_verses") @db.VarChar(64)
+  status             String   @default("success") @db.VarChar(24)
+  promptCommand      String   @map("prompt_command") @db.Text
+  contextText        String   @map("context_text") @db.Text
+  responseText       String?  @map("response_text") @db.Text
   references         Json?
-  errorText          String?   @map("error_text") @db.Text
-  model              String?   @db.VarChar(120)
-  baseUrl            String?   @map("base_url") @db.VarChar(255)
-  createdByAccountId Int?      @map("created_by_account_id")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  message            Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
-  createdBy          Account?  @relation(fields: [createdByAccountId], references: [id], onDelete: SetNull)
+  errorText          String?  @map("error_text") @db.Text
+  model              String?  @db.VarChar(120)
+  baseUrl            String?  @map("base_url") @db.VarChar(255)
+  createdByAccountId Int?     @map("created_by_account_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+  message            Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdBy          Account? @relation(fields: [createdByAccountId], references: [id], onDelete: SetNull)
 
   @@index([messageId, kind, status, createdAt])
   @@index([createdByAccountId, createdAt])
@@ -397,18 +415,18 @@ model Setting {
 }
 
 model PinnedItem {
-  id        Int        @id @default(autoincrement())
-  channelId Int        @map("channel_id")
+  id        Int          @id @default(autoincrement())
+  channelId Int          @map("channel_id")
   kind      PinnedKind
-  title     String?    @db.VarChar(160)
-  content   String?    @db.Text
+  title     String?      @db.VarChar(160)
+  content   String?      @db.Text
   body      Json?
-  messageId Int?       @map("message_id")
-  version   Int        @default(1)
-  active    Boolean    @default(true)
-  createdAt DateTime   @default(now()) @map("created_at")
-  updatedAt DateTime   @updatedAt @map("updated_at")
-  channel   Channel    @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  messageId Int?         @map("message_id")
+  version   Int          @default(1)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  channel   Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
   seens     PinnedSeen[]
 
   @@index([channelId, active])

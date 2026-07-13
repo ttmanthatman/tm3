@@ -194,6 +194,16 @@ export interface MusicTrackDTO {
   fileName: string;
   fileSize: number;
   createdAt: string;
+  scorePages: MusicScorePageDTO[];
+}
+
+export interface MusicScorePageDTO {
+  id: number;
+  pageIndex: number;
+  fileName: string;
+  fileSize: number;
+  width: number;
+  height: number;
 }
 
 export interface AdminChannelDTO extends ChannelDTO {

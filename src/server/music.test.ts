@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManageMusicRole, isMusicFileHeader, isMusicFileName, musicTrackTitle } from "./music.js";
+import { canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackTitle } from "./music.js";
 
 test("music management is limited to admins and treasury officers", () => {
   assert.equal(canManageMusicRole({ isAdmin: true, canPinMessages: false }), true);
@@ -13,6 +13,15 @@ test("music files accept only mp3 and m4a names", () => {
   assert.equal(isMusicFileName("song.m4a"), true);
   assert.equal(isMusicFileName("voice.wav"), false);
   assert.equal(isMusicFileName("fake.mp3.exe"), false);
+});
+
+test("music score pages accept safe browser and phone image formats", () => {
+  for (const fileName of ["page.png", "page.JPG", "page.jpeg", "page.webp", "page.heic", "page.HEIF"]) {
+    assert.equal(isMusicScoreImageName(fileName), true);
+  }
+  for (const fileName of ["page.gif", "page.svg", "page.pdf", "page.heic.exe"]) {
+    assert.equal(isMusicScoreImageName(fileName), false);
+  }
 });
 
 test("music signatures recognize MP3 and M4A containers", () => {
