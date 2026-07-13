@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.10.10.1";
+export const APP_VERSION = "0.10.10.2";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复 /流光 文字特效：高光改为单条垂直光带，从文字左侧外完整扫到右侧外后才重新开始，不再中途跳回。"
+] as const;
+
+const RELEASE_0_10_10_1_NOTES = [
   "维护性更新：版本号升级为 0.10.10.1。"
 ] as const;
 
@@ -435,9 +439,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.10.1",
+    version: "0.10.10.2",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.10.1",
+    date: "2026-07-13",
+    notes: RELEASE_0_10_10_1_NOTES
   },
   {
     version: "0.10.10",

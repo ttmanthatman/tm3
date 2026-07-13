@@ -2150,8 +2150,9 @@ button {
 
 .message-effect-shine .message-text {
   color: transparent;
-  background: linear-gradient(105deg, #161616 0%, #4f4f4f 34%, #ffffff 46%, #d7b45b 52%, #ffffff 58%, #1c1c1c 72%, #161616 100%);
-  background-size: 230% 100%;
+  background: linear-gradient(90deg, #161616 0%, #161616 48%, #ffffff 50%, #161616 52%, #161616 100%);
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -2159,7 +2160,7 @@ button {
 }
 
 .theme-night .message-effect-shine .message-text {
-  background-image: linear-gradient(105deg, #d7dde5 0%, #ffffff 38%, #f8d879 50%, #ffffff 62%, #b7c0cc 100%);
+  background-image: linear-gradient(90deg, #d7dde5 0%, #d7dde5 48%, #ffffff 50%, #d7dde5 52%, #d7dde5 100%);
 }
 
 .message-effect-shake {
@@ -6489,10 +6490,10 @@ button.admin-object-row:focus-visible {
 
 @keyframes messageShine {
   0% {
-    background-position: 130% 0;
+    background-position: 100% 0;
   }
   100% {
-    background-position: -130% 0;
+    background-position: 0 0;
   }
 }
 

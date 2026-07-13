@@ -43,6 +43,11 @@ test("like alerts use the top notice rail instead of a reading-area overlay", ()
   assert.doesNotMatch(app, /class="like-notification-stack"/);
 });
 
+test("shine scans one vertical highlight fully across message text before restarting", () => {
+  assert.match(css, /\.message-effect-shine \.message-text \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?#ffffff 50%,[\s\S]*?background-size: 300% 100%;[\s\S]*?background-repeat: no-repeat;/);
+  assert.match(css, /@keyframes messageShine \{[\s\S]*?0% \{[\s\S]*?background-position: 100% 0;[\s\S]*?100% \{[\s\S]*?background-position: 0 0;/);
+});
+
 test("favorites stays fixed above the profile while only channels scroll", () => {
   const channelListEnd = app.indexOf('</div>\n      <button class="channel-row favorites-entry"');
   const profileStart = app.indexOf('<footer class="profile-row">');
