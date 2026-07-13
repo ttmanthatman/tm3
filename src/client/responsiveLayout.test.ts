@@ -113,10 +113,23 @@ test("explicit context jumps win over saved read-position restoration", () => {
 });
 
 test("opening the music player starts or resumes playback without pausing an active song", () => {
-  const openPlayer = app.match(/function openMusicPlayer\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+  const openPlayer = app.match(/function openMusicPlayer\([^)]*\) \{([\s\S]*?)\n\}/)?.[1] || "";
 
   assert.doesNotMatch(openPlayer, /pauseMusic\(/);
   assert.match(openPlayer, /if \(!musicPlaying\.value\) void playCurrentMusic\(\);/);
+});
+
+test("expanded player keeps its main control on the clicked song-button axis", () => {
+  assert.match(app, /@click\.stop="openMusicPlayer\(\$event\)"/);
+  assert.match(app, /:style="musicPlayerAnchorStyle"/);
+  assert.match(app, /class="music-player-transport"[\s\S]*?class="icon-btn music-main-control"/);
+  assert.match(css, /\.music-player-transport \{[\s\S]*?left: var\(--music-player-anchor-x\);[\s\S]*?translateX\(-50%\)/);
+});
+
+test("manual music pause fades out within one second", () => {
+  assert.match(app, /const MUSIC_FADE_OUT_MS = 900;/);
+  assert.match(app, /function pauseMusic\(immediate = false\)[\s\S]*?musicFadeVolume[\s\S]*?audio\.pause\(\)/);
+  assert.match(app, /function playCurrentMusic\(\)[\s\S]*?cancelMusicFade\(\);[\s\S]*?musicAudio\.volume = 1;/);
 });
 
 test("song control stays to the left of the font or score control", () => {

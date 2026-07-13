@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextMusicTrackIndex, shouldAdvanceMusic, shouldKeepMusicScoreForTrack, shouldRestartOnlyTrack, shouldShowMusicScoreTrigger } from "./musicPlayer.js";
+import { musicFadeVolume, nextMusicTrackIndex, shouldAdvanceMusic, shouldKeepMusicScoreForTrack, shouldRestartOnlyTrack, shouldShowMusicScoreTrigger } from "./musicPlayer.js";
 
 test("playlist navigation wraps in both directions", () => {
   assert.equal(nextMusicTrackIndex(3, 0, -1), 2);
@@ -19,6 +19,13 @@ test("previous restarts the current song when the playlist contains only one tra
   assert.equal(shouldRestartOnlyTrack(1, -1), true);
   assert.equal(shouldRestartOnlyTrack(1, 1), false);
   assert.equal(shouldRestartOnlyTrack(2, -1), false);
+});
+
+test("music pause fade decreases smoothly to silence", () => {
+  assert.equal(musicFadeVolume(0), 1);
+  assert.equal(musicFadeVolume(0.5), 0.5);
+  assert.equal(musicFadeVolume(1), 0);
+  assert.equal(musicFadeVolume(2), 0);
 });
 
 test("score trigger appears only for a playing track with pages, then remains available while open", () => {

@@ -973,11 +973,34 @@ button {
 
 .music-player-head {
   padding-inline: 8px;
+  min-height: calc(96px + var(--safe-top));
+  align-items: stretch;
 }
 
 .music-player-bar {
+  position: relative;
   width: 100%;
   min-width: 0;
+  min-height: 96px;
+}
+
+.music-player-transport {
+  position: absolute;
+  top: 6px;
+  left: var(--music-player-anchor-x);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+}
+
+.music-player-details {
+  position: absolute;
+  right: 0;
+  bottom: 6px;
+  left: 0;
+  min-width: 0;
+  min-height: 36px;
   display: flex;
   align-items: center;
   gap: 6px;

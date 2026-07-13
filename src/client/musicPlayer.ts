@@ -10,6 +10,10 @@ export function shouldRestartOnlyTrack(trackCount: number, delta: number) {
   return trackCount === 1 && delta < 0;
 }
 
+export function musicFadeVolume(progress: number) {
+  return 1 - Math.min(1, Math.max(0, progress));
+}
+
 export function shouldAdvanceMusic(mode: MusicPlaybackMode, scoreOpen = false) {
   return mode === "playlist" && !scoreOpen;
 }

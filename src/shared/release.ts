@@ -1,10 +1,18 @@
-export const APP_VERSION = "0.11.2";
+export const APP_VERSION = "0.11.3";
 
-export const RELEASE_DATE = "2026-07-13";
+export const RELEASE_DATE = "2026-07-14";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "顶部播放器会记住“歌”按钮的点击位置，展开后让播放/暂停主键出现在同一横向位置附近，减少手指或鼠标移动距离。",
+  "主动暂停音乐时会在 900 毫秒内平滑渐隐后停止；恢复播放保持即时开始，不增加渐入等待。",
+  "普通音频上传后由服务器异步计算整曲真实波形并原位替换占位波形，历史普通音频也会在服务启动后自动补算。",
+  "当前播放列表只有一首歌曲时，点击上一曲会从头重新播放当前歌曲。",
+  "播放有谱歌曲时，长按聊天区空白位置也可以进入沉浸式歌谱阅读。"
+] as const;
+
+const RELEASE_0_11_2_NOTES = [
   "音乐频道支持为歌曲上传多页歌谱；播放有谱歌曲时顶部“字”会变为“谱”，可进入全宽沉浸式歌谱阅读，并在阅读期间停止自动切到下一首。",
   "歌谱入口改为无底框的缓慢呼吸与色彩变化；聊天气泡按视口从上到下徐徐退场后再展示歌谱，关闭时反向归位。",
   "已上传歌谱的音频消息会紧贴显示等高歌谱缩略图，可直接点击放大查看；缩略图不再带折角、悬停位移或按压缩放。",
@@ -472,9 +480,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.11.3",
+    date: "2026-07-14",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.11.2",
     date: "2026-07-13",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_11_2_NOTES
   },
   {
     version: "0.11.1",

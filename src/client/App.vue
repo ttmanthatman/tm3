@@ -123,6 +123,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 import {
+  musicFadeVolume,
   nextMusicTrackIndex,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
@@ -174,6 +175,7 @@ const musicTracks = ref<MusicTrackDTO[]>([]);
 const currentMusicTrackId = ref<number | null>(null);
 const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
 const musicPlayerExpanded = ref(false);
+const musicPlayerAnchorX = ref<number | null>(null);
 const musicPlaylistOpen = ref(false);
 const musicPlaying = ref(false);
 const musicLoading = ref(false);
@@ -188,8 +190,11 @@ const musicScoreInput = ref<HTMLInputElement | null>(null);
 const musicScoreUploadTrackId = ref<number | null>(null);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
+const MUSIC_FADE_OUT_MS = 900;
 let musicScoreTimer: number | undefined;
 let musicAudio: HTMLAudioElement | null = null;
+let musicFadeFrame: number | undefined;
+let musicFadeTimer: number | undefined;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -1000,6 +1005,9 @@ const musicScoreTriggerVisible = computed(() =>
     pageCount: currentMusicScorePages.value.length
   })
 );
+const musicPlayerAnchorStyle = computed(() => ({
+  "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
+}));
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
 const typingNoticeItems = computed<TopNotice[]>(() =>
   Object.entries(store.typing).map(([actorId, item]) => ({
@@ -5124,8 +5132,17 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
 }
 
+function cancelMusicFade(resetVolume = true) {
+  if (musicFadeFrame !== undefined) window.cancelAnimationFrame(musicFadeFrame);
+  if (musicFadeTimer !== undefined) window.clearTimeout(musicFadeTimer);
+  musicFadeFrame = undefined;
+  musicFadeTimer = undefined;
+  if (resetVolume && musicAudio) musicAudio.volume = 1;
+}
+
 function disposeMusicAudio() {
   if (!musicAudio) return;
+  cancelMusicFade();
   musicAudio.pause();
   musicAudio.removeEventListener("play", handleMusicPlay);
   musicAudio.removeEventListener("pause", handleMusicPause);
@@ -5166,6 +5183,7 @@ function handleMusicError() {
 function setMusicAudioTrack(track: MusicTrackDTO) {
   initializeMusicAudio();
   if (!musicAudio || musicAudio.dataset.trackId === String(track.id)) return;
+  cancelMusicFade();
   musicAudio.src = musicStreamUrl(track);
   musicAudio.dataset.trackId = String(track.id);
   musicAudio.load();
@@ -5179,10 +5197,14 @@ async function playCurrentMusic() {
   }
   setMusicAudioTrack(track);
   if (!musicAudio) return;
+  cancelMusicFade();
+  musicAudio.volume = 1;
   musicLoading.value = true;
   musicError.value = "";
   try {
     await musicAudio.play();
+    musicPlaying.value = true;
+    musicLoading.value = false;
   } catch (error) {
     musicLoading.value = false;
     musicPlaying.value = false;
@@ -5190,8 +5212,34 @@ async function playCurrentMusic() {
   }
 }
 
-function pauseMusic() {
-  musicAudio?.pause();
+function pauseMusic(immediate = false) {
+  const audio = musicAudio;
+  if (!audio) return;
+  cancelMusicFade();
+  if (immediate || audio.paused) {
+    audio.pause();
+    audio.volume = 1;
+    musicPlaying.value = false;
+    musicLoading.value = false;
+    return;
+  }
+  musicPlaying.value = false;
+  musicLoading.value = false;
+  const startedAt = performance.now();
+  const animate = (now: number) => {
+    if (audio !== musicAudio) return;
+    audio.volume = musicFadeVolume((now - startedAt) / MUSIC_FADE_OUT_MS);
+    if (audio.volume > 0) musicFadeFrame = window.requestAnimationFrame(animate);
+  };
+  const finish = () => {
+    if (audio !== musicAudio) return;
+    cancelMusicFade(false);
+    audio.volume = 0;
+    audio.pause();
+    audio.volume = 1;
+  };
+  musicFadeFrame = window.requestAnimationFrame(animate);
+  musicFadeTimer = window.setTimeout(finish, MUSIC_FADE_OUT_MS);
 }
 
 function toggleMusicPlayback() {
@@ -5221,6 +5269,7 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
 }
 
 function handleMusicEnded() {
+  cancelMusicFade();
   musicPlaying.value = false;
   if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
 }
@@ -5233,7 +5282,19 @@ function selectMusicTrack(track: MusicTrackDTO) {
   void playCurrentMusic();
 }
 
-function openMusicPlayer() {
+function openMusicPlayer(event?: MouseEvent) {
+  const trigger = event?.currentTarget;
+  const header = trigger instanceof HTMLElement ? trigger.closest<HTMLElement>(".chat-head") : null;
+  if (trigger instanceof HTMLElement && header) {
+    const triggerRect = trigger.getBoundingClientRect();
+    const headerRect = header.getBoundingClientRect();
+    const headerStyle = getComputedStyle(header);
+    const paddingLeft = Number.parseFloat(headerStyle.paddingLeft) || 0;
+    const paddingRight = Number.parseFloat(headerStyle.paddingRight) || 0;
+    const contentWidth = Math.max(0, headerRect.width - paddingLeft - paddingRight);
+    const relativeCenter = triggerRect.left + triggerRect.width / 2 - headerRect.left - paddingLeft;
+    musicPlayerAnchorX.value = Math.min(Math.max(relativeCenter, 64), Math.max(64, contentWidth - 64));
+  }
   musicPlayerExpanded.value = true;
   showMessageFontMenu.value = false;
   if (!musicPlaying.value) void playCurrentMusic();
@@ -5259,7 +5320,7 @@ async function loadMusicTracks() {
       currentMusicTrackId.value = previousId;
       reconcileOpenMusicScore();
     } else {
-      if (wasPlaying) pauseMusic();
+      if (wasPlaying) pauseMusic(true);
       currentMusicTrackId.value = result.tracks[0]?.id || null;
       reconcileOpenMusicScore();
       if (musicAudio) {
@@ -7682,13 +7743,16 @@ async function toggleVirtual(character: any) {
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
       <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }">
-        <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player @click.stop>
+        <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player :style="musicPlayerAnchorStyle" @click.stop>
+          <div class="music-player-transport">
           <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
           <button class="icon-btn music-main-control" type="button" :disabled="!currentMusicTrack" @click="toggleMusicPlayback" :aria-label="musicPlaying ? '暂停' : '播放'">
             <Pause v-if="musicPlaying" :size="21" />
             <Play v-else :size="21" />
           </button>
           <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
+          </div>
+          <div class="music-player-details">
           <div class="music-player-title">
             <strong>{{ currentMusicTrack?.title || "播放列表还是空的" }}</strong>
             <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
@@ -7702,6 +7766,7 @@ async function toggleVirtual(character: any) {
             :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
           >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
           <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
+          </div>
         </div>
         <template v-else>
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
@@ -7724,7 +7789,7 @@ async function toggleVirtual(character: any) {
           <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
         <div v-if="!showFavorites" class="music-player-control" data-music-player>
-          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer" aria-label="打开音乐播放器">
+          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer($event)" aria-label="打开音乐播放器">
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
