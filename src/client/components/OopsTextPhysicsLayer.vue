@@ -318,8 +318,8 @@ async function start(messageId: number, bubble: HTMLElement, textRoot: HTMLEleme
     const body = matter.Bodies.rectangle(
       rect.left - layerRect.left + rect.width / 2,
       rect.top - layerRect.top + rect.height / 2,
-      Math.max(3, rect.width * 0.88),
-      Math.max(4, rect.height * 0.82),
+      Math.max(3, rect.width),
+      Math.max(4, rect.height),
       {
         restitution: 0.28,
         friction: 0.48,
