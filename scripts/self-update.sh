@@ -9,6 +9,7 @@ RESTART_MODE="${UPDATE_RESTART_MODE:-pm2}"
 RESTART_COMMAND="${UPDATE_RESTART_COMMAND:-}"
 STATUS_PATH="${UPDATE_STATUS_PATH:-${APP_DIR}/storage/update-status.json}"
 LOG_PATH="${UPDATE_LOG_PATH:-${APP_DIR}/storage/update.log}"
+BRANCH_CONFIG_PATH="${UPDATE_BRANCH_CONFIG_PATH:-${APP_DIR}/storage/update-branch.json}"
 CLONE_ATTEMPTS="${UPDATE_CLONE_ATTEMPTS:-3}"
 BUILD_NODE_MAX_OLD_SPACE_SIZE="${UPDATE_NODE_MAX_OLD_SPACE_SIZE:-768}"
 
@@ -205,6 +206,18 @@ rsync -a --delete \
   "$RELEASE_DIR"/ "$APP_DIR"/ >>"$LOG_PATH" 2>&1
 
 cd "$APP_DIR"
+
+log_step 91 "保存更新分支"
+UPDATE_BRANCH="$BRANCH" UPDATE_BRANCH_CONFIG_PATH="$BRANCH_CONFIG_PATH" node --input-type=module <<'NODE'
+import fs from "node:fs";
+import path from "node:path";
+const configPath = process.env.UPDATE_BRANCH_CONFIG_PATH;
+const payload = { branch: process.env.UPDATE_BRANCH, updatedAt: new Date().toISOString() };
+const tempPath = `${configPath}.${process.pid}.tmp`;
+fs.mkdirSync(path.dirname(configPath), { recursive: true });
+fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
+fs.renameSync(tempPath, configPath);
+NODE
 
 if [ "$RESTART_MODE" = "none" ]; then
   log_step 100 "更新已同步，等待手动重启"

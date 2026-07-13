@@ -50,6 +50,7 @@ import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
 import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
 import { githubPackageManifestUrl } from "./updateManifest.js";
+import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -71,12 +72,13 @@ const PUSH_NOTIFICATIONS_ENABLED = envFlagEnabled(process.env.PUSH_NOTIFICATIONS
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
 const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
 const UPDATE_REPO_URL = process.env.UPDATE_REPO_URL || process.env.REPO_URL || "https://github.com/ttmanthatman/tm3.git";
-const UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
+const DEFAULT_UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
 const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
 const UPDATE_RESTART_MODE = process.env.UPDATE_RESTART_MODE || (process.env.UPDATE_RESTART_COMMAND ? "command" : "pm2");
 const UPDATE_RESTART_COMMAND = process.env.UPDATE_RESTART_COMMAND || "";
 const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
 const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
+const UPDATE_BRANCH_CONFIG_PATH = process.env.UPDATE_BRANCH_CONFIG_PATH || path.join(STORAGE_ROOT, "update-branch.json");
 const UPDATE_RUNNING_TIMEOUT_MS = Number(process.env.UPDATE_RUNNING_TIMEOUT_MS || 30 * 60 * 1000);
 const UPDATE_LOG_TAIL_BYTES = Math.max(64 * 1024, Number(process.env.UPDATE_LOG_TAIL_BYTES || 256 * 1024) || 256 * 1024);
 const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
@@ -252,10 +254,34 @@ function parseGitHubRepo(url: string) {
   }
 }
 
-async function latestGitHubPackage() {
+function configuredUpdateBranch() {
+  try {
+    const value = JSON.parse(fs.readFileSync(UPDATE_BRANCH_CONFIG_PATH, "utf8")) as { branch?: unknown };
+    return typeof value.branch === "string" && isSafeUpdateBranch(value.branch) ? value.branch : DEFAULT_UPDATE_BRANCH;
+  } catch {
+    return DEFAULT_UPDATE_BRANCH;
+  }
+}
+
+async function githubBranches() {
   const repo = parseGitHubRepo(UPDATE_REPO_URL);
   if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
-  const url = githubPackageManifestUrl(repo.owner, repo.repo, UPDATE_BRANCH);
+  const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/branches?per_page=100`, {
+    cache: "no-store",
+    headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
+  });
+  if (!response.ok) throw new Error(`无法读取 GitHub 分支：HTTP ${response.status}`);
+  const payload = await response.json() as unknown;
+  if (!Array.isArray(payload)) throw new Error("GitHub 分支列表无效");
+  const branches = normalizeUpdateBranches(payload.map((item) => typeof item === "object" && item ? (item as { name?: unknown }).name : undefined));
+  if (!branches.length) throw new Error("GitHub 没有可用更新分支");
+  return { repo, branches };
+}
+
+async function latestGitHubPackage(branch: string) {
+  const repo = parseGitHubRepo(UPDATE_REPO_URL);
+  if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
+  const url = githubPackageManifestUrl(repo.owner, repo.repo, branch);
   const response = await fetch(url, {
     cache: "no-store",
     headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
@@ -268,7 +294,7 @@ async function latestGitHubPackage() {
   return {
     owner: repo.owner,
     repo: repo.repo,
-    branch: UPDATE_BRANCH,
+    branch,
     version: String(pkg.version || ""),
     url: `https://github.com/${repo.owner}/${repo.repo}`
   };
@@ -2283,20 +2309,24 @@ app.get("/api/version", async () => ({
   notes: RELEASE_NOTES,
   update: {
     repoUrl: UPDATE_REPO_URL,
-    branch: UPDATE_BRANCH,
+    branch: configuredUpdateBranch(),
     restartMode: UPDATE_RESTART_MODE,
     pm2App: UPDATE_PM2_APP
   }
 }));
 
-app.get("/api/admin/update/check", { preHandler: requireAdmin }, async () => {
-  const latest = await latestGitHubPackage();
+app.get("/api/admin/update/check", { preHandler: requireAdmin }, async (request) => {
+  const { repo, branches } = await githubBranches();
+  const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
+  const branch = selectUpdateBranch((request.query as { branch?: unknown }).branch, branches, fallbackBranch);
+  const latest = await latestGitHubPackage(branch);
   return {
     current: APP_VERSION,
     latest: latest.version,
-    updateAvailable: compareVersions(latest.version, APP_VERSION) > 0,
-    repo: `${latest.owner}/${latest.repo}`,
+    updateAvailable: latest.branch !== configuredUpdateBranch() || compareVersions(latest.version, APP_VERSION) > 0,
+    repo: `${repo.owner}/${repo.repo}`,
     branch: latest.branch,
+    branches,
     url: latest.url,
     restartMode: UPDATE_RESTART_MODE,
     status: readUpdateStatus()
@@ -2308,10 +2338,13 @@ app.get("/api/admin/update/status", { preHandler: requireAdmin }, async () => re
 app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request, reply) => {
   const status = readUpdateStatus();
   if (status.state === "running") return reply.code(409).send({ success: false, message: "更新已经在进行中", status });
+  const { branches } = await githubBranches();
+  const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
+  const branch = selectUpdateBranch((request.body as { branch?: unknown } | undefined)?.branch, branches, fallbackBranch);
   const scriptPath = path.join(ROOT, "scripts", "self-update.sh");
   if (!fs.existsSync(scriptPath)) return reply.code(500).send({ success: false, message: "缺少更新脚本" });
   fs.writeFileSync(UPDATE_LOG_PATH, "");
-  writeUpdateStatus("running", 1, "准备更新");
+  writeUpdateStatus("running", 1, `准备更新 ${branch}`);
   const child = spawn("bash", [scriptPath], {
     cwd: ROOT,
     detached: true,
@@ -2320,12 +2353,13 @@ app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request
       ...process.env,
       APP_DIR: ROOT,
       UPDATE_REPO_URL,
-      UPDATE_BRANCH,
+      UPDATE_BRANCH: branch,
       UPDATE_PM2_APP,
       UPDATE_RESTART_MODE,
       UPDATE_RESTART_COMMAND,
       UPDATE_STATUS_PATH,
-      UPDATE_LOG_PATH
+      UPDATE_LOG_PATH,
+      UPDATE_BRANCH_CONFIG_PATH
     }
   });
   child.on("error", (error) => {

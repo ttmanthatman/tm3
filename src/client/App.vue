@@ -491,6 +491,7 @@ const staleVersionMessage = ref("");
 const updateCheck = ref<UpdateCheckDTO | null>(null);
 const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
+const selectedUpdateBranch = ref("");
 const rainActive = ref(false);
 const waterTilt = ref({ x: 0, y: 0 });
 const deviceGravity = ref<GravityVector>({ x: 0, y: 1, strength: 1 });
@@ -2713,8 +2714,10 @@ async function checkForUpdates() {
   if (!isAdmin.value) return;
   updateBusy.value = true;
   try {
-    const result = await api<UpdateCheckDTO>("/api/admin/update/check");
+    const params = selectedUpdateBranch.value ? `?branch=${encodeURIComponent(selectedUpdateBranch.value)}` : "";
+    const result = await api<UpdateCheckDTO>(`/api/admin/update/check${params}`);
     updateCheck.value = result;
+    selectedUpdateBranch.value = result.branch;
     updateStatus.value = result.status;
     if (result.status.state === "running") startUpdatePolling();
   } catch (error) {
@@ -2729,7 +2732,7 @@ async function startServerUpdate() {
   updateBusy.value = true;
   adminMsg.value = "已开始更新，服务器会在完成后自动重启。";
   try {
-    await api("/api/admin/update/start", { method: "POST", body: JSON.stringify({}) });
+    await api("/api/admin/update/start", { method: "POST", body: JSON.stringify({ branch: selectedUpdateBranch.value || updateCheck.value?.branch }) });
   } catch {
     // Restart may interrupt the request; the status poll will pick up progress when the server returns.
   } finally {
@@ -8894,10 +8897,16 @@ async function toggleVirtual(character: any) {
                   <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}</template>
                 </small>
                 <small v-if="updateCheck || serverVersion?.update">
-                  {{ updateCheck?.repo || serverVersion?.update?.repoUrl || "GitHub 仓库" }} · {{ updateCheck?.branch || serverVersion?.update?.branch || "main" }} · {{ updateRestartModeLabel }}
+                  {{ updateCheck?.repo || serverVersion?.update?.repoUrl || "GitHub 仓库" }} · {{ updateRestartModeLabel }}
                 </small>
               </div>
               <div class="release-update-actions">
+                <label>
+                  <span>更新分支</span>
+                  <select v-model="selectedUpdateBranch" :disabled="updateBusy || !updateCheck" @change="checkForUpdates">
+                    <option v-for="branch in updateCheck?.branches || []" :key="branch" :value="branch">{{ branch }}</option>
+                  </select>
+                </label>
                 <button class="mini-btn secondary" :disabled="updateBusy" @click="checkForUpdates"><RotateCcw :size="15" />检查</button>
                 <button class="mini-btn" :disabled="updateStartDisabled" @click="startServerUpdate">更新</button>
               </div>

@@ -6251,6 +6251,18 @@ button.admin-object-row:focus-visible {
   gap: 8px;
 }
 
+.release-update-actions label {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.release-update-actions select {
+  min-width: 150px;
+  max-width: 260px;
+}
+
 .update-progress {
   height: 8px;
   overflow: hidden;

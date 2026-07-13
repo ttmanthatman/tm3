@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.10.10.3";
+export const APP_VERSION = "0.10.11.0";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "版本与更新现在会读取 GitHub 上可用的其他分支，管理员可在页面中选择分支并检查对应版本。",
+  "更新按钮会使用所选分支同步代码，完成后保存该分支作为下一次检查和更新的默认选择。"
+] as const;
+
+const RELEASE_0_10_10_3_NOTES = [
   "新增 `/哎呀 内容` 本机文字坠落恶作剧特效：普通正文字素会以真实重力、旋转、摩擦、弹性和互相碰撞的刚体形式随机掉落，并可落在其他消息气泡或消息输入框底部。",
   "超长消息最多随机选取 160 个不重复字素，页面总预算为 240 个刚体；超过预算时会先无动画恢复最早触发的消息，未选中文字始终保留原位。",
   "点击任意掉落文字或原消息气泡后，所有字符会沿连续反重力路径准确归位；修复刚体休眠导致字符只转正后突然消失的问题。",
@@ -447,9 +452,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.10.3",
+    version: "0.10.11.0",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.10.3",
+    date: "2026-07-13",
+    notes: RELEASE_0_10_10_3_NOTES
   },
   {
     version: "0.10.10.2",

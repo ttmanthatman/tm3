@@ -265,6 +265,7 @@ export interface UpdateCheckDTO {
   updateAvailable: boolean;
   repo: string;
   branch: string;
+  branches: string[];
   url: string;
   restartMode?: string;
   status: UpdateStatusDTO;
