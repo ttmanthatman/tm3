@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.11.0";
+export const APP_VERSION = "0.11.1";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "音频附件消息现在会在原消息气泡内展开播放，不再弹出浏览器原生音频预览窗口。",
+  "播放器提供播放/暂停、可点击跳转的动态波形、当前与总时长、下载和收起操作，并适配手机窄屏。"
+] as const;
+
+const RELEASE_0_11_0_NOTES = [
   "顶部新增全局音乐播放器：点击“歌”会从上次进度继续播放，首次使用则从播放列表第一首开始；播放中展开播放器不会中断音乐。",
   "播放器支持播放、暂停、上一曲、下一曲、播放列表，以及可按账号保存的“列表循环”和“单曲播放”模式。",
   "新增仅管理员和户部尚书可见的音乐频道，可上传 MP3、M4A，并通过长按重命名或删除曲库歌曲。",
@@ -459,9 +464,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.11.0",
+    version: "0.11.1",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.11.0",
+    date: "2026-07-13",
+    notes: RELEASE_0_11_0_NOTES
   },
   {
     version: "0.10.11.0",
