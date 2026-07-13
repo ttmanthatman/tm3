@@ -65,7 +65,8 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
   assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
-  assert.match(app, /v-if="!showFavorites" class="composer"/);
+  assert.match(app, /v-else-if="!showFavorites" class="composer"/);
+  assert.match(app, /v-if="!showFavorites && isMusicChannel" class="composer music-channel-composer"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
   assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);

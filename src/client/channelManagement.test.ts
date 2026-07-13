@@ -8,10 +8,11 @@ test("createChannelDraft starts new channels as private", () => {
   assert.deepEqual(createChannelDraft(), { name: "", description: "", isPrivate: true });
 });
 
-test("canEditChannel only allows manageable non-AI channels", () => {
+test("canEditChannel excludes protected system channels", () => {
   assert.equal(canEditChannel({ canManage: true, kind: "standard" }), true);
   assert.equal(canEditChannel({ canManage: true, kind: "direct" }), true);
   assert.equal(canEditChannel({ canManage: true, kind: "aiLounge" }), false);
+  assert.equal(canEditChannel({ canManage: true, kind: "music" }), false);
   assert.equal(canEditChannel({ canManage: false, kind: "standard" }), false);
   assert.equal(canEditChannel(null), false);
 });
@@ -22,6 +23,7 @@ test("canManageChannelMembers only allows private manageable channels", () => {
   assert.equal(canManageChannelMembers({ canManage: true, kind: "standard", isPrivate: false }), false);
   assert.equal(canManageChannelMembers({ canManage: false, kind: "standard", isPrivate: true }), false);
   assert.equal(canManageChannelMembers({ canManage: true, kind: "aiLounge", isPrivate: true }), false);
+  assert.equal(canManageChannelMembers({ canManage: true, kind: "music", isPrivate: true }), false);
 });
 
 test("normalizeChannelDraft trims submitted fields but keeps privacy choice", () => {

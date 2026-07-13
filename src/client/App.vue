@@ -84,6 +84,7 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
+  MusicTrackDTO,
   PinnedBodyDTO,
   PinnedContentBlockDTO,
   PrayerPayload,
@@ -117,6 +118,7 @@ import {
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
+import { nextMusicTrackIndex, shouldAdvanceMusic, type MusicPlaybackMode } from "./musicPlayer";
 
 const store = useChatStore();
 const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
@@ -157,6 +159,15 @@ const legacyMessageFontSizes: Record<string, number> = {
 };
 const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
+const musicTracks = ref<MusicTrackDTO[]>([]);
+const currentMusicTrackId = ref<number | null>(null);
+const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
+const musicPlayerExpanded = ref(false);
+const musicPlaylistOpen = ref(false);
+const musicPlaying = ref(false);
+const musicLoading = ref(false);
+const musicError = ref("");
+let musicAudio: HTMLAudioElement | null = null;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -701,6 +712,7 @@ type VoicePayload = {
 
 onMounted(async () => {
   hydratePlayedRainEffectIds();
+  initializeMusicAudio();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   document.addEventListener("keydown", handleGlobalEscape);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
@@ -711,6 +723,11 @@ onMounted(async () => {
     return;
   } finally {
     appStarting.value = false;
+  }
+  if (store.account) {
+    loadMusicPlaybackMode();
+    await loadMusicTracks();
+    attachMusicSocket();
   }
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
@@ -870,7 +887,15 @@ watch(
     topNoticeIndex.value = 0;
     messageFontSize.value = loadMessageFontSizePreference(accountId);
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
-    if (accountId) void loadNotificationSettings();
+    if (accountId) {
+      loadMusicPlaybackMode();
+      void loadNotificationSettings();
+    } else {
+      pauseMusic();
+      musicTracks.value = [];
+      currentMusicTrackId.value = null;
+      closeMusicSurface();
+    }
   },
   { immediate: true }
 );
@@ -924,9 +949,15 @@ onBeforeUnmount(() => {
   oopsPhysicsLayer.value?.reset();
   stopAllVoicePlayback();
   resetRecording();
+  store.socket?.off("music:updated", handleMusicUpdated);
+  disposeMusicAudio();
 });
 
 const currentChannel = computed(() => store.currentChannel);
+const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
+const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || musicTracks.value[0] || null);
+const currentMusicTrackIndex = computed(() => musicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
+const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
 const typingNoticeItems = computed<TopNotice[]>(() =>
   Object.entries(store.typing).map(([actorId, item]) => ({
     id: `typing-${actorId}`,
@@ -998,7 +1029,7 @@ watch(
 );
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
-const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && !currentChannel.value.isDefault && !currentChannel.value.directKey);
+const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && currentChannel.value.kind !== "music" && !currentChannel.value.isDefault && !currentChannel.value.directKey);
 const adminChannelRows = computed(() => adminChannels.value);
 const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
 const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
@@ -1033,7 +1064,7 @@ const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value |
 const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
 const canManageActiveMembers = computed(() => {
   const channel = activeMemberPaneChannel.value;
-  return canManageChannelMembers(channel);
+  return channel?.kind !== "music" && canManageChannelMembers(channel);
 });
 const memberPaneTitle = computed(() => (memberPaneChannelOverride.value ? "成员管理" : "成员"));
 const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name || "");
@@ -1974,6 +2005,9 @@ async function doLogin() {
         ? await register(username.value.trim(), displayName.value.trim(), password.value)
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
+    loadMusicPlaybackMode();
+    await loadMusicTracks();
+    attachMusicSocket();
     if (isAiSettingsRoute.value) {
       if (account.isAdmin) {
         await loadAiSettings();
@@ -4369,6 +4403,45 @@ async function selectActionMessageText() {
   selection?.addRange(range);
 }
 
+function isManageableMusicMessage(message: MessageDTO) {
+  return canManageMusic.value && isMusicChannel.value && message.type === "file" && /\.(mp3|m4a)$/i.test(message.fileName || "");
+}
+
+async function renameMusicTrackAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !isManageableMusicMessage(message)) return;
+  const extension = (message.fileName || "").match(/\.(mp3|m4a)$/i)?.[0] || "";
+  const currentName = (message.fileName || "").slice(0, extension ? -extension.length : undefined);
+  const requested = window.prompt("重命名歌曲", currentName)?.trim();
+  if (!requested) return;
+  closeMessageActionMenu();
+  try {
+    await api(`/api/music/tracks/${message.id}`, { method: "PATCH", body: JSON.stringify({ name: requested }) });
+    await loadMusicTracks();
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "重命名失败");
+  }
+}
+
+async function deleteMusicTrackAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !isManageableMusicMessage(message)) return;
+  if (!window.confirm(`删除“${musicTrackTitleFromMessage(message)}”？删除后无法恢复。`)) return;
+  closeMessageActionMenu();
+  try {
+    await api(`/api/music/tracks/${message.id}`, { method: "DELETE" });
+    await loadMusicTracks();
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "删除失败");
+  }
+}
+
+function musicTrackTitleFromMessage(message: MessageDTO) {
+  return (message.fileName || "未命名歌曲").replace(/\.(mp3|m4a)$/i, "");
+}
+
 function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) {
     event.preventDefault();
@@ -4743,6 +4816,9 @@ function positionPromptNearEvent(event: MouseEvent | PointerEvent | undefined, s
 function closeTapPromptsFromOutside(event: PointerEvent) {
   const target = event.target;
   if (!(target instanceof Element)) return;
+  if ((musicPlayerExpanded.value || musicPlaylistOpen.value) && !target.closest("[data-music-player]") && !target.closest("[data-music-playlist]")) {
+    closeMusicSurface();
+  }
   if (showMessageFontMenu.value && !target.closest("[data-message-font-menu]")) {
     showMessageFontMenu.value = false;
   }
@@ -4773,6 +4849,182 @@ function clampMessageFontSize(value: number) {
 
 function toggleMessageFontMenu() {
   showMessageFontMenu.value = !showMessageFontMenu.value;
+}
+
+function musicPlaybackModeStorageKey(accountId: number) {
+  return `team-chat-music-playback-mode:${accountId}`;
+}
+
+function loadMusicPlaybackMode() {
+  const accountId = store.account?.id;
+  if (!accountId) return;
+  musicPlaybackMode.value = localStorage.getItem(musicPlaybackModeStorageKey(accountId)) === "single" ? "single" : "playlist";
+}
+
+function setMusicPlaybackMode(mode: MusicPlaybackMode) {
+  musicPlaybackMode.value = mode;
+  if (store.account?.id) localStorage.setItem(musicPlaybackModeStorageKey(store.account.id), mode);
+}
+
+function musicStreamUrl(track: MusicTrackDTO) {
+  return `/api/music/tracks/${track.id}/stream?token=${encodeURIComponent(getToken())}`;
+}
+
+function initializeMusicAudio() {
+  if (musicAudio) return;
+  musicAudio = new Audio();
+  musicAudio.preload = "metadata";
+  musicAudio.addEventListener("play", handleMusicPlay);
+  musicAudio.addEventListener("pause", handleMusicPause);
+  musicAudio.addEventListener("ended", handleMusicEnded);
+  musicAudio.addEventListener("error", handleMusicError);
+  musicAudio.addEventListener("waiting", handleMusicWaiting);
+  musicAudio.addEventListener("canplay", handleMusicCanPlay);
+}
+
+function disposeMusicAudio() {
+  if (!musicAudio) return;
+  musicAudio.pause();
+  musicAudio.removeEventListener("play", handleMusicPlay);
+  musicAudio.removeEventListener("pause", handleMusicPause);
+  musicAudio.removeEventListener("ended", handleMusicEnded);
+  musicAudio.removeEventListener("error", handleMusicError);
+  musicAudio.removeEventListener("waiting", handleMusicWaiting);
+  musicAudio.removeEventListener("canplay", handleMusicCanPlay);
+  musicAudio.removeAttribute("src");
+  musicAudio.load();
+  musicAudio = null;
+}
+
+function handleMusicPlay() {
+  musicPlaying.value = true;
+  musicLoading.value = false;
+  musicError.value = "";
+}
+
+function handleMusicPause() {
+  musicPlaying.value = false;
+  musicLoading.value = false;
+}
+
+function handleMusicWaiting() {
+  musicLoading.value = true;
+}
+
+function handleMusicCanPlay() {
+  musicLoading.value = false;
+}
+
+function handleMusicError() {
+  musicPlaying.value = false;
+  musicLoading.value = false;
+  musicError.value = "歌曲暂时无法播放";
+}
+
+function setMusicAudioTrack(track: MusicTrackDTO) {
+  initializeMusicAudio();
+  if (!musicAudio || musicAudio.dataset.trackId === String(track.id)) return;
+  musicAudio.src = musicStreamUrl(track);
+  musicAudio.dataset.trackId = String(track.id);
+  musicAudio.load();
+}
+
+async function playCurrentMusic() {
+  const track = currentMusicTrack.value;
+  if (!track) {
+    musicError.value = "播放列表还是空的";
+    return;
+  }
+  setMusicAudioTrack(track);
+  if (!musicAudio) return;
+  musicLoading.value = true;
+  musicError.value = "";
+  try {
+    await musicAudio.play();
+  } catch (error) {
+    musicLoading.value = false;
+    musicPlaying.value = false;
+    musicError.value = error instanceof Error && error.name === "NotAllowedError" ? "请再次点击播放" : "歌曲暂时无法播放";
+  }
+}
+
+function pauseMusic() {
+  musicAudio?.pause();
+}
+
+function toggleMusicPlayback() {
+  if (musicPlaying.value) pauseMusic();
+  else void playCurrentMusic();
+}
+
+async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.value) {
+  if (!musicTracks.value.length) return;
+  const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
+  const nextIndex = nextMusicTrackIndex(musicTracks.value.length, index, delta);
+  const track = musicTracks.value[nextIndex];
+  currentMusicTrackId.value = track.id;
+  setMusicAudioTrack(track);
+  musicError.value = "";
+  if (continuePlaying) await playCurrentMusic();
+}
+
+function handleMusicEnded() {
+  musicPlaying.value = false;
+  if (shouldAdvanceMusic(musicPlaybackMode.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
+}
+
+function selectMusicTrack(track: MusicTrackDTO) {
+  currentMusicTrackId.value = track.id;
+  musicPlaylistOpen.value = false;
+  setMusicAudioTrack(track);
+  void playCurrentMusic();
+}
+
+function openMusicPlayer() {
+  if (musicPlaying.value) pauseMusic();
+  musicPlayerExpanded.value = true;
+  showMessageFontMenu.value = false;
+}
+
+function toggleMusicPlaylist() {
+  musicPlaylistOpen.value = !musicPlaylistOpen.value;
+}
+
+function closeMusicSurface() {
+  musicPlaylistOpen.value = false;
+  musicPlayerExpanded.value = false;
+}
+
+async function loadMusicTracks() {
+  if (!store.account) return;
+  const previousId = currentMusicTrackId.value;
+  const wasPlaying = musicPlaying.value;
+  try {
+    const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
+    musicTracks.value = result.tracks;
+    if (previousId && result.tracks.some((track) => track.id === previousId)) {
+      currentMusicTrackId.value = previousId;
+    } else {
+      if (wasPlaying) pauseMusic();
+      currentMusicTrackId.value = result.tracks[0]?.id || null;
+      if (musicAudio) {
+        musicAudio.removeAttribute("src");
+        delete musicAudio.dataset.trackId;
+        musicAudio.load();
+      }
+    }
+  } catch (error) {
+    musicError.value = error instanceof Error ? error.message : "播放列表加载失败";
+  }
+}
+
+function handleMusicUpdated() {
+  void loadMusicTracks();
+}
+
+function attachMusicSocket() {
+  store.socket?.off("music:updated", handleMusicUpdated);
+  store.socket?.on("music:updated", handleMusicUpdated);
 }
 
 function adjustMessageFontSize(delta: number) {
@@ -4955,6 +5207,10 @@ function shouldKeepOriginalImage(file: File) {
 }
 
 function uploadPickedFile(file: File) {
+  if (isMusicChannel.value && !/\.(mp3|m4a)$/i.test(file.name)) {
+    alert("音乐频道只支持上传 MP3 和 M4A 文件");
+    return;
+  }
   const options = { originalImage: shouldKeepOriginalImage(file) };
   const pendingMessageId = pushPendingFileMessage(file, options);
   void uploadFile(file, { ...options, pendingMessageId });
@@ -7047,7 +7303,8 @@ async function toggleVirtual(character: any) {
             @pointercancel="clearChannelLongPress"
           >
             <span class="channel-icon">
-              <img :src="channelIconUrl(channel)" alt="" />
+              <span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
+              <img v-else :src="channelIconUrl(channel)" alt="" />
               <i v-if="channel.isPrivate" class="private-channel-badge">私</i>
             </span>
             <span class="channel-row-label">
@@ -7151,7 +7408,29 @@ async function toggleVirtual(character: any) {
       <div v-if="store.connectionState !== 'connected'" class="connection-banner" role="status">
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
-      <header class="chat-head">
+      <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }">
+        <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player @click.stop>
+          <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
+          <button class="icon-btn music-main-control" type="button" :disabled="!currentMusicTrack" @click="toggleMusicPlayback" :aria-label="musicPlaying ? '暂停' : '播放'">
+            <Pause v-if="musicPlaying" :size="21" />
+            <Play v-else :size="21" />
+          </button>
+          <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
+          <div class="music-player-title">
+            <strong>{{ currentMusicTrack?.title || "播放列表还是空的" }}</strong>
+            <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
+            <small v-else>{{ musicLoading ? "正在缓冲…" : musicPlaying ? "正在播放" : "已暂停" }}</small>
+          </div>
+          <button
+            class="music-mode-btn"
+            type="button"
+            :class="{ active: musicPlaybackMode === 'playlist' }"
+            @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
+            :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
+          >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
+          <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
+        </div>
+        <template v-else>
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
@@ -7188,6 +7467,11 @@ async function toggleVirtual(character: any) {
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
           </div>
         </div>
+        <div v-if="!showFavorites" class="music-player-control" data-music-player>
+          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer" aria-label="打开音乐播放器">
+            <span class="music-player-glyph" aria-hidden="true">歌</span>
+          </button>
+        </div>
         <button v-if="!showFavorites" class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
           <Users v-else :size="20" />
@@ -7196,6 +7480,7 @@ async function toggleVirtual(character: any) {
         <button v-if="!showFavorites && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
         <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
+        </template>
       </header>
 
       <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
@@ -7326,6 +7611,32 @@ async function toggleVirtual(character: any) {
       </div>
 
       <div v-else class="messages-viewport">
+        <section v-if="musicPlaylistOpen" class="music-playlist-overlay" data-music-playlist @click.self="closeMusicSurface">
+          <div class="music-playlist-panel" @click.stop>
+            <header>
+              <div>
+                <strong>播放列表</strong>
+                <small>最新上传优先 · {{ musicTracks.length }} 首</small>
+              </div>
+              <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭播放列表"><X :size="19" /></button>
+            </header>
+            <div v-if="musicTracks.length" class="music-track-list">
+              <button
+                v-for="(track, index) in musicTracks"
+                :key="track.id"
+                type="button"
+                class="music-track-row"
+                :class="{ active: currentMusicTrack?.id === track.id }"
+                @click="selectMusicTrack(track)"
+              >
+                <span class="music-track-index">{{ index + 1 }}</span>
+                <span class="music-track-copy"><strong>{{ track.title }}</strong><small>{{ compactBytes(track.fileSize) }}</small></span>
+                <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
+              </button>
+            </div>
+            <p v-else class="music-playlist-empty">播放列表还是空的</p>
+          </div>
+        </section>
         <div
           ref="scroller"
           class="messages-scroll"
@@ -7656,7 +7967,15 @@ async function toggleVirtual(character: any) {
         <ArrowDown :size="18" />
       </button>
 
-      <footer v-if="!showFavorites" class="composer">
+      <footer v-if="!showFavorites && isMusicChannel" class="composer music-channel-composer">
+        <button class="music-upload-button" type="button" :disabled="!canManageMusic" @click="fileInput?.click()">
+          <FileUp :size="22" />
+          <span><strong>上传音乐</strong><small>仅支持 MP3、M4A，单个文件最大 80MB</small></span>
+        </button>
+        <input ref="fileInput" class="hidden" type="file" accept=".mp3,.m4a,audio/mpeg,audio/mp4,audio/x-m4a" @change="handlePickedFile" />
+      </footer>
+
+      <footer v-else-if="!showFavorites" class="composer">
         <div v-if="replyTo" class="reply-bar">
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
           <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
@@ -7924,7 +8243,9 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
-          <button v-if="canRecallMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="renameMusicTrackAction"><FileText :size="15" />重命名</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicTrackAction"><Trash2 :size="15" />删除歌曲</button>
+          <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
         </div>
       </div>
@@ -7973,7 +8294,8 @@ async function toggleVirtual(character: any) {
           <template v-if="channelEditorMode === 'edit' && channelEditorChannel">
             <label>频道图标</label>
             <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
-              <img :src="channelIconUrl(channelEditorChannel)" alt="" />
+              <span v-if="channelEditorChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
+              <img v-else :src="channelIconUrl(channelEditorChannel)" alt="" />
               <span><Upload :size="15" />更换图标</span>
               <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
             </label>
@@ -8265,7 +8587,7 @@ async function toggleVirtual(character: any) {
             <label>频道通知</label>
             <div class="notification-channel-list">
               <article v-for="channel in store.channels" :key="channel.id" class="notification-channel-row">
-                <span class="channel-icon"><img :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="channel-icon"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
                 <div>
                   <strong>{{ channel.name }}</strong>
                   <small>{{ isChannelMuted(channel.id) ? "不通知普通消息" : "通知普通消息" }}</small>
@@ -8416,7 +8738,7 @@ async function toggleVirtual(character: any) {
             </div>
             <div class="admin-object-list">
               <button v-for="channel in adminChannelRows" :key="channel.id" class="admin-object-row" @click="openAdminChannelDetail(channel)">
-                <span class="channel-icon-admin"><img :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="channel-icon-admin"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
                 <span class="admin-object-main"><b>{{ channel.name }}</b><small>{{ channel.isPrivate ? '私密频道' : '公开频道' }} · {{ channel.memberCount }} 人 · {{ channel.messageCount }} 条消息</small></span>
                 <span v-if="channel.isDefault" class="admin-status-pill">默认</span>
                 <ChevronRight :size="19" />
@@ -8452,25 +8774,27 @@ async function toggleVirtual(character: any) {
 
           <section v-else-if="adminPage === 'channelDetail' && adminSelectedChannel && channelEdits[adminSelectedChannel.id]" class="form-grid admin-page-section channel-detail-page">
             <label>频道图标</label>
-            <label class="channel-detail-icon upload-icon-trigger" :aria-label="`上传 ${adminSelectedChannel.name} 的频道图标`" title="点击上传图标">
-              <img :src="channelIconUrl(adminSelectedChannel)" alt="" />
-              <span>点击更换图标</span>
-              <input class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
+            <label class="channel-detail-icon" :class="{ 'upload-icon-trigger': adminSelectedChannel.kind !== 'music' }" :aria-label="adminSelectedChannel.kind === 'music' ? '音乐频道系统图标' : `上传 ${adminSelectedChannel.name} 的频道图标`" :title="adminSelectedChannel.kind === 'music' ? '系统频道' : '点击上传图标'">
+              <span v-if="adminSelectedChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
+              <img v-else :src="channelIconUrl(adminSelectedChannel)" alt="" />
+              <span>{{ adminSelectedChannel.kind === "music" ? "系统频道" : "点击更换图标" }}</span>
+              <input v-if="adminSelectedChannel.kind !== 'music'" class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
             </label>
             <label for="admin-channel-name">频道名称</label>
-            <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" />
+            <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" :disabled="adminSelectedChannel.kind === 'music'" />
             <label for="admin-channel-description">频道描述</label>
-            <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3"></textarea>
+            <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3" :disabled="adminSelectedChannel.kind === 'music'"></textarea>
             <div class="channel-detail-summary">
               <span>{{ adminSelectedChannel.isPrivate ? '私密频道' : '公开频道' }}</span>
               <span>{{ adminSelectedChannel.memberCount }} 位成员</span>
               <span>{{ adminSelectedChannel.messageCount }} 条消息</span>
             </div>
-            <div class="channel-detail-actions">
+            <div v-if="adminSelectedChannel.kind !== 'music'" class="channel-detail-actions">
               <button class="primary-btn" @click="updateChannel(adminSelectedChannel)"><Save :size="15" />保存修改</button>
               <button class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
               <button v-if="!adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
             </div>
+            <p v-else class="settings-note">音乐频道由系统维护。请在频道内上传、重命名或删除歌曲。</p>
           </section>
 
           <section v-else-if="adminAppearancePages.has(adminPage)" class="appearance-admin-layout">

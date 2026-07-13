@@ -15,7 +15,7 @@ export function createChannelDraft(): ChannelDraft {
 }
 
 export function canEditChannel(channel?: EditableChannelLike | null) {
-  return !!channel?.canManage && channel.kind !== "aiLounge";
+  return !!channel?.canManage && channel.kind !== "aiLounge" && channel.kind !== "music";
 }
 
 export function canManageChannelMembers(channel?: EditableChannelLike | null) {

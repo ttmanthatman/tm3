@@ -177,7 +177,7 @@ export interface ChannelDTO {
   name: string;
   description: string;
   icon: string;
-  kind: "standard" | "direct" | "why" | "aiLounge";
+  kind: "standard" | "direct" | "why" | "aiLounge" | "music";
   isPrivate: boolean;
   isDefault: boolean;
   directKey?: string | null;
@@ -186,6 +186,14 @@ export interface ChannelDTO {
   hasPrayerItems?: boolean;
   memberCount: number;
   pinned?: PinnedDTO | null;
+}
+
+export interface MusicTrackDTO {
+  id: number;
+  title: string;
+  fileName: string;
+  fileSize: number;
+  createdAt: string;
 }
 
 export interface AdminChannelDTO extends ChannelDTO {

@@ -30,6 +30,7 @@ enum ChannelKind {
   direct
   why
   aiLounge
+  music
 }
 
 enum DeviceKind {
