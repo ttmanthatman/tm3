@@ -39,18 +39,27 @@ test("all file previews keep close at the upper right and download at the lower 
 
 test("audio attachments expand into an inline waveform player instead of the native preview modal", () => {
   assert.match(app, /if \(isAudioMessage\(message\) && !isVoiceMessage\(message\)\) \{[\s\S]*?expandInlineAudioPlayer\(message\);/);
-  assert.match(app, /v-if="isInlineAudioPlayerExpanded\(row\.message\)"[\s\S]*?class="inline-audio-player"[\s\S]*?class="inline-audio-waveform"/);
-  assert.match(app, /function seekInlineAudio\(message: MessageDTO, event: MouseEvent\)/);
+  assert.match(app, /v-if="isInlineAudioPlayerExpanded\(row\.message\)"[\s\S]*?class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
+  assert.match(app, /@seek="seekInlineAudio\(row\.message, \$event\)"/);
   assert.doesNotMatch(app, /class="media-preview-audio"/);
   assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
 });
 
-test("inline audio bars fill one seek track with uniform pixel widths and never escape the bubble", () => {
+test("inline audio waveform uses a responsive physical-pixel canvas and never escapes the bubble", () => {
+  const waveformCss = css.match(/\.inline-audio-waveform \{([^}]*)\}/)?.[1] || "";
   assert.match(css, /\.inline-audio-player \{[\s\S]*?box-sizing: border-box;[\s\S]*?max-width: 100%;[\s\S]*?min-width: 0;/);
-  assert.match(css, /\.inline-audio-waveform \{[\s\S]*?justify-content: space-between;[\s\S]*?gap: 0;/);
-  assert.match(css, /\.inline-audio-bar \{[\s\S]*?flex: 0 0 3px;/);
-  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-bar \{[\s\S]*?flex-basis: 2px;/);
+  assert.match(app, /import ResponsiveAudioWaveform from "\.\/components\/ResponsiveAudioWaveform\.vue"/);
+  assert.match(waveformCss, /width: 100%;[\s\S]*?overflow: hidden;/);
+  assert.doesNotMatch(waveformCss, /justify-content: space-between/);
+});
+
+test("audio messages with a score render an attached full-height clickable score preview", () => {
+  assert.match(app, /'audio-score-cluster': isAudioMessage\(row\.message\)/);
+  assert.match(app, /v-if="musicScorePreviewPage\(row\.message\)"[\s\S]*?class="music-score-inline-preview"/);
+  assert.match(app, /openMusicScorePreview\(musicScorePreviewPage\(row\.message\)!, row\.message\.id\)/);
+  assert.match(css, /\.audio-score-cluster \{[\s\S]*?display: flex;[\s\S]*?align-items: stretch;/);
+  assert.match(css, /\.music-score-inline-preview \{[\s\S]*?align-self: stretch;/);
 });
 
 test("like alerts use the top notice rail instead of a reading-area overlay", () => {
@@ -108,6 +117,9 @@ test("song control stays to the left of the font or score control", () => {
   const header = app.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="message-font-control"'));
   assert.match(header, /v-if="musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
+  assert.match(header, /'page-turning': musicPlaying/);
+  assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScorePageTurn/);
+  assert.match(css, /\.music-score-trigger \{[\s\S]*?overflow: hidden;/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
@@ -120,6 +132,8 @@ test("music score view parts chat rows and reveals full-width pages with a trans
   assert.match(css, /\.music-score-page img \{[\s\S]*?width: 100%;/);
   assert.match(css, /\.music-score-close \{[\s\S]*?background: rgba\(30, 30, 30, 0\.58\);[\s\S]*?backdrop-filter: blur/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.music-score-stage/);
+  assert.match(app, /prepareMusicScoreExitSequence\(\);[\s\S]*?musicScoreChatCleared\.value = true;/);
+  assert.match(css, /\.music-score-chat-cleared \.score-exit-left,[\s\S]*?transition-timing-function:[\s\S]*?cubic-bezier\(0\.55, 0, 1, 0\.45\)/);
 });
 
 test("score image preview fills the viewport width without black side bars", () => {

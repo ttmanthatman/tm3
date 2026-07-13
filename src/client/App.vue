@@ -105,6 +105,7 @@ import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
+import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
@@ -183,7 +184,7 @@ const musicScoreStageClosing = ref(false);
 const musicScoreUploadBusy = ref(false);
 const musicScoreInput = ref<HTMLInputElement | null>(null);
 const musicScoreUploadTrackId = ref<number | null>(null);
-const MUSIC_SCORE_CHAT_DURATION_MS = 1140;
+const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
 let musicScoreTimer: number | undefined;
 let musicAudio: HTMLAudioElement | null = null;
@@ -4539,8 +4540,12 @@ function musicScorePageUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.
   return `/api/music/tracks/${trackId}/score/${page.id}?token=${encodeURIComponent(getToken())}`;
 }
 
-function openMusicScorePreview(page: MusicScorePageDTO) {
-  const url = musicScorePageUrl(page);
+function musicScorePreviewPage(message: MessageDTO) {
+  return musicTracks.value.find((track) => track.id === message.id)?.scorePages[0] || null;
+}
+
+function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
+  const url = musicScorePageUrl(page, trackId);
   if (!url) return;
   previewPinnedImage.value = { url, fileName: page.fileName, score: true };
   previewMessage.value = {
@@ -4565,6 +4570,7 @@ function openMusicScore() {
   musicScoreStageClosing.value = false;
   musicScoreStageVisible.value = reduceMotion;
   musicScoreOpen.value = true;
+  prepareMusicScoreExitSequence();
   musicScoreChatCleared.value = true;
   showMessageFontMenu.value = false;
   closeMusicSurface();
@@ -4573,6 +4579,21 @@ function openMusicScore() {
       if (musicScoreOpen.value && !musicScoreClosing.value) musicScoreStageVisible.value = true;
     });
   }
+}
+
+function prepareMusicScoreExitSequence() {
+  const root = scroller.value;
+  if (!root) return;
+  const viewport = root.getBoundingClientRect();
+  const rows = Array.from(root.querySelectorAll<HTMLElement>(".score-exit-left, .score-exit-right"));
+  rows.forEach((row) => row.style.setProperty("--score-delay", "0ms"));
+  rows
+    .filter((row) => {
+      const rect = row.getBoundingClientRect();
+      return rect.bottom >= viewport.top && rect.top <= viewport.bottom;
+    })
+    .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top)
+    .forEach((row, index) => row.style.setProperty("--score-delay", `${Math.min(index, 12) * 45}ms`));
 }
 
 function closeMusicScore(immediate = false) {
@@ -5824,16 +5845,13 @@ function collapseInlineAudioPlayer(message: MessageDTO) {
   if (playingVoiceId.value === message.id) playingVoiceId.value = null;
 }
 
-function seekInlineAudio(message: MessageDTO, event: MouseEvent) {
-  const target = event.currentTarget as HTMLElement;
-  const rect = target.getBoundingClientRect();
-  if (!rect.width) return;
+function seekInlineAudio(message: MessageDTO, progress: number) {
   const audio = getVoicePlayer(message);
   const duration = Number.isFinite(audio.duration) ? audio.duration : voiceDurationMs(message) / 1000;
   if (!duration) return;
-  const progress = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
-  audio.currentTime = duration * progress;
-  setVoiceProgress(message.id, progress);
+  const normalizedProgress = Math.min(1, Math.max(0, progress));
+  audio.currentTime = duration * normalizedProgress;
+  setVoiceProgress(message.id, normalizedProgress);
   if (audio.paused) toggleVoicePlayback(message);
 }
 
@@ -7696,13 +7714,13 @@ async function toggleVirtual(character: any) {
           <button
             v-if="musicScoreTriggerVisible"
             class="icon-btn message-font-trigger music-score-trigger"
-            :class="{ active: musicScoreOpen }"
+            :class="{ active: musicScoreOpen, 'page-turning': musicPlaying }"
             type="button"
             aria-label="打开或关闭歌谱"
             :aria-expanded="musicScoreOpen"
             @click.stop="toggleMusicScore"
           >
-            <span class="message-font-glyph" aria-hidden="true">谱</span>
+            <span class="message-font-glyph music-score-page-glyph" aria-hidden="true">谱</span>
           </button>
           <button
             v-else-if="!showMessageFontMenu"
@@ -7938,7 +7956,6 @@ async function toggleVirtual(character: any) {
             v-if="row.kind === 'time'"
             class="time-separator"
             :class="timelineIndex % 2 === 0 ? 'score-exit-left' : 'score-exit-right'"
-            :style="{ '--score-delay': `${Math.min(timelineIndex, 10) * 18}ms` }"
           >{{ row.label }}</div>
           <article
             v-else
@@ -7953,7 +7970,6 @@ async function toggleVirtual(character: any) {
               'score-exit-left': row.message.type === 'system' ? timelineIndex % 2 === 0 : !isMine(row.message),
               'score-exit-right': row.message.type === 'system' ? timelineIndex % 2 !== 0 : isMine(row.message)
             }"
-            :style="{ '--score-delay': `${Math.min(timelineIndex, 10) * 18}ms` }"
             :data-message-id="row.message.id"
           >
             <button
@@ -7975,6 +7991,10 @@ async function toggleVirtual(character: any) {
                 <span>{{ row.message.sender.displayName }}</span>
                 <em v-if="row.message.sender.kind === 'virtual'">虚拟角色</em>
               </div>
+              <div
+                class="message-bubble-cluster"
+                :class="{ 'audio-score-cluster': isAudioMessage(row.message) && !!musicScorePreviewPage(row.message) }"
+              >
               <div
                 class="bubble"
                 :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
@@ -8199,15 +8219,11 @@ async function toggleVirtual(character: any) {
                         <Pause v-if="playingVoiceId === row.message.id" :size="21" />
                         <Play v-else :size="21" />
                       </button>
-                      <button type="button" class="inline-audio-waveform" @click="seekInlineAudio(row.message, $event)" aria-label="音频进度，点击跳转">
-                        <span
-                          v-for="(bar, idx) in waveformForMessage(row.message)"
-                          :key="idx"
-                          class="inline-audio-bar"
-                          :class="{ active: idx / waveformForMessage(row.message).length <= voiceProgressValue(row.message) }"
-                          :style="voiceBarStyle(bar, idx, waveformForMessage(row.message).length, voiceProgressValue(row.message))"
-                        ></span>
-                      </button>
+                      <ResponsiveAudioWaveform
+                        :samples="waveformForMessage(row.message)"
+                        :progress="voiceProgressValue(row.message)"
+                        @seek="seekInlineAudio(row.message, $event)"
+                      />
                     </div>
                     <div class="inline-audio-time">
                       <span>{{ formatDuration(audioElapsedMs(row.message)) }}</span>
@@ -8264,6 +8280,17 @@ async function toggleVirtual(character: any) {
                     <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
                   </a>
                 </template>
+              </div>
+              <button
+                v-if="musicScorePreviewPage(row.message)"
+                type="button"
+                class="music-score-inline-preview"
+                aria-label="查看这首歌的歌谱"
+                @click.stop="openMusicScorePreview(musicScorePreviewPage(row.message)!, row.message.id)"
+              >
+                <img :src="musicScorePageUrl(musicScorePreviewPage(row.message)!, row.message.id)" alt="" loading="lazy" />
+                <span aria-hidden="true">谱</span>
+              </button>
               </div>
               <div v-if="row.message.reactions && (row.message.reactions.likeCount || row.message.reactions.favoriteCount)" class="message-reaction-details">
                 <button
