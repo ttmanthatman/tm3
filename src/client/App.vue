@@ -107,9 +107,11 @@ import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createC
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { likeNotificationToTopNotice } from "./likeNotification";
 import {
+  NEWEST_POSITION_THRESHOLD,
   NEWEST_READ_POSITION,
   normalizeSavedReadPosition,
   shouldFollowMessageListChange,
+  shouldRestoreNewestPosition,
   type SavedReadPosition
 } from "./readPosition";
 import { marked } from "marked";
@@ -182,7 +184,10 @@ let pendingParallaxDelta = 0;
 let parallaxFrame = 0;
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
-let activeReadAnchor: { messageId: number; offset: number; expiresAt: number; token: number } | null = null;
+type ActiveReadAnchor =
+  | { kind: "message"; messageId: number; offset: number; expiresAt: number; token: number }
+  | { kind: "newest"; token: number };
+let activeReadAnchor: ActiveReadAnchor | null = null;
 let pendingMessageJumpId: number | null = null;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
@@ -1704,6 +1709,8 @@ async function ensureLinkPreview(url: string) {
     const preview = await api<LinkPreviewDTO>(`/api/link-preview?url=${encodeURIComponent(url)}`);
     if (!preview.title && !preview.image && !preview.description) throw new Error("empty preview");
     linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "ready", preview } };
+    await nextTick();
+    reconcileReadPositionAfterLayout();
   } catch (error) {
     linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "error", error: error instanceof Error ? error.message : "preview failed" } };
   }
@@ -1785,6 +1792,11 @@ function isNearMessageBottom(distance = 96) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < distance;
 }
 
+function messageBottomDistance(root = scroller.value) {
+  if (!root) return 0;
+  return Math.max(0, root.scrollHeight - root.scrollTop - root.clientHeight);
+}
+
 function readPositionStorageKey(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
   if (!store.account || !channelId) return "";
   return `team-chat-read-position-${store.account.id}-${channelId}-${prayerOnly ? "prayers" : "chat"}`;
@@ -1811,7 +1823,7 @@ function saveReadPosition() {
   const position: SavedReadPosition = {
     messageId,
     offset: firstVisible ? firstVisible.getBoundingClientRect().top - rootTop : 0,
-    atBottom: isNearMessageBottom(80),
+    atBottom: isNearMessageBottom(NEWEST_POSITION_THRESHOLD),
     scrollTop: root.scrollTop,
     savedAt: Date.now()
   };
@@ -1855,7 +1867,11 @@ async function restoreSavedReadPosition() {
     pendingReadPositionRestore.value = false;
     return;
   }
-  if (position.atBottom && !store.hasNewerMessages) {
+  if (shouldRestoreNewestPosition({
+    atBottom: position.atBottom,
+    hasNewerMessages: store.hasNewerMessages,
+    distanceFromBottom: Number.POSITIVE_INFINITY
+  })) {
     scrollBottom(false);
     pendingReadPositionRestore.value = false;
     return;
@@ -1868,7 +1884,15 @@ async function restoreSavedReadPosition() {
     if (target && currentRoot) {
       const rootTop = currentRoot.getBoundingClientRect().top;
       currentRoot.scrollTop += target.getBoundingClientRect().top - rootTop - position.offset;
-      activeReadAnchor = { messageId: position.messageId, offset: position.offset, expiresAt: Date.now() + 2500, token };
+      if (shouldRestoreNewestPosition({
+        atBottom: false,
+        hasNewerMessages: store.hasNewerMessages,
+        distanceFromBottom: messageBottomDistance(currentRoot)
+      })) {
+        scrollBottom(false);
+      } else {
+        activeReadAnchor = { kind: "message", messageId: position.messageId, offset: position.offset, expiresAt: Date.now() + 2500, token };
+      }
       hasUnreadMessages.value = false;
       pendingReadPositionRestore.value = false;
       return;
@@ -1881,17 +1905,32 @@ async function restoreSavedReadPosition() {
 
 function reconcileReadPositionAfterLayout() {
   const anchor = activeReadAnchor;
-  if (!anchor || anchor.token !== readPositionRestoreToken || anchor.expiresAt < Date.now()) {
+  if (!anchor || anchor.token !== readPositionRestoreToken || (anchor.kind === "message" && anchor.expiresAt < Date.now())) {
     activeReadAnchor = null;
     return;
   }
   requestAnimationFrame(() => {
     const root = scroller.value;
-    const target = root?.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`);
-    if (!root || !target || anchor.token !== readPositionRestoreToken) return;
+    if (!root || anchor.token !== readPositionRestoreToken) return;
+    if (anchor.kind === "newest") {
+      root.scrollTop = root.scrollHeight + 1000;
+      hasUnreadMessages.value = false;
+      awayFromNewest.value = false;
+      return;
+    }
+    const target = root.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`);
+    if (!target) return;
     const delta = target.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
     if (Math.abs(delta) > 0.5) root.scrollTop += delta;
   });
+}
+
+function stopFollowingNewest() {
+  if (activeReadAnchor?.kind === "newest") activeReadAnchor = null;
+}
+
+function stopFollowingNewestFromPointer(event: PointerEvent) {
+  if (event.target === scroller.value) stopFollowingNewest();
 }
 
 async function restoreChatSurface() {
@@ -4619,6 +4658,7 @@ async function jumpToReply(id: number) {
     const targetTop = root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - contextOffset;
     root.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
     activeReadAnchor = {
+      kind: "message",
       messageId: id,
       offset: contextOffset,
       expiresAt: Date.now() + 8_000,
@@ -5335,6 +5375,7 @@ function endPreviewPlayback() {
 function scrollBottom(smooth = true) {
   const el = scroller.value;
   if (!el) return;
+  activeReadAnchor = { kind: "newest", token: readPositionRestoreToken };
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
   hasUnreadMessages.value = false;
   awayFromNewest.value = false;
@@ -7285,7 +7326,15 @@ async function toggleVirtual(character: any) {
       </div>
 
       <div v-else class="messages-viewport">
-        <div ref="scroller" class="messages-scroll" @scroll.passive="handleMessagesScroll" @load.capture="reconcileReadPositionAfterLayout">
+        <div
+          ref="scroller"
+          class="messages-scroll"
+          @scroll.passive="handleMessagesScroll"
+          @load.capture="reconcileReadPositionAfterLayout"
+          @wheel.passive="stopFollowingNewest"
+          @touchmove.passive="stopFollowingNewest"
+          @pointerdown.passive="stopFollowingNewestFromPointer"
+        >
         <button
           v-if="messageLoadBanner"
           type="button"

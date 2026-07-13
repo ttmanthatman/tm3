@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSavedReadPosition, shouldFollowMessageListChange } from "./readPosition";
+import { normalizeSavedReadPosition, shouldFollowMessageListChange, shouldRestoreNewestPosition } from "./readPosition";
 
 test("normalizeSavedReadPosition rejects corrupt or stale pixel-only positions", () => {
   assert.equal(normalizeSavedReadPosition(null), null);
@@ -38,4 +38,10 @@ test("new messages follow only when already near the bottom or sent locally", ()
     shouldFollowMessageListChange({ restoring: true, loadingOlder: false, previousLength: 50, length: 51, nearBottom: true, latestIsMine: false }),
     false
   );
+});
+
+test("small layout shifts near the bottom still restore the semantic newest position", () => {
+  assert.equal(shouldRestoreNewestPosition({ atBottom: false, hasNewerMessages: false, distanceFromBottom: 98 }), true);
+  assert.equal(shouldRestoreNewestPosition({ atBottom: false, hasNewerMessages: false, distanceFromBottom: 480 }), false);
+  assert.equal(shouldRestoreNewestPosition({ atBottom: true, hasNewerMessages: true, distanceFromBottom: 0 }), false);
 });

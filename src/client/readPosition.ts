@@ -1,4 +1,5 @@
 export const NEWEST_READ_POSITION = "__newest__" as const;
+export const NEWEST_POSITION_THRESHOLD = 220;
 
 export type SavedReadPosition = {
   messageId: number | typeof NEWEST_READ_POSITION;
@@ -37,4 +38,13 @@ export function shouldFollowMessageListChange(input: {
 }) {
   if (input.restoring || input.loadingOlder || input.length <= input.previousLength) return false;
   return input.previousLength === 0 || input.nearBottom || input.latestIsMine;
+}
+
+export function shouldRestoreNewestPosition(input: {
+  atBottom: boolean;
+  hasNewerMessages: boolean;
+  distanceFromBottom: number;
+}) {
+  if (input.hasNewerMessages) return false;
+  return input.atBottom || (Number.isFinite(input.distanceFromBottom) && input.distanceFromBottom <= NEWEST_POSITION_THRESHOLD);
 }
