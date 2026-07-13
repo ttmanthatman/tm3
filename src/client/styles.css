@@ -1450,6 +1450,60 @@ button {
   pointer-events: none;
 }
 
+.oops-physics-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8 !important;
+  overflow: hidden;
+  pointer-events: none;
+  contain: layout paint style;
+}
+
+.oops-origin-glyph {
+  visibility: hidden;
+}
+
+.oops-falling-glyph {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: 0;
+  padding: 0;
+  display: block;
+  overflow: visible;
+  pointer-events: auto;
+  touch-action: manipulation;
+  cursor: pointer;
+  white-space: pre;
+  text-align: center;
+  user-select: none;
+  -webkit-user-select: none;
+  transform-origin: center;
+  will-change: transform;
+  filter: drop-shadow(0 2px 1px rgba(15, 23, 42, 0.12));
+}
+
+.message-effect-oops-active {
+  cursor: pointer;
+}
+
+.bubble.oops-bubble-hit {
+  animation: oopsBubbleHit 320ms cubic-bezier(0.22, 0.78, 0.25, 1);
+}
+
+@keyframes oopsBubbleHit {
+  0%, 100% { transform: translateX(0) rotate(0); }
+  28% { transform: translateX(var(--oops-hit-x, 3px)) rotate(var(--oops-hit-rotate, 1deg)); }
+  58% { transform: translateX(calc(0px - var(--oops-hit-x, 3px))) rotate(calc(0deg - var(--oops-hit-rotate, 1deg))); }
+  78% { transform: translateX(var(--oops-hit-x, 3px)) rotate(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble.oops-bubble-hit {
+    animation: none;
+  }
+}
+
 .rain-canvas {
   z-index: 6;
   mix-blend-mode: screen;

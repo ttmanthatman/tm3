@@ -101,6 +101,7 @@ import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
+import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
@@ -165,6 +166,14 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+type OopsPhysicsLayerHandle = {
+  start: (messageId: number, bubble: HTMLElement, textRoot: HTMLElement) => Promise<boolean>;
+  restore: (messageId: number) => void;
+  reset: () => void;
+  isActive: (messageId: number) => boolean;
+};
+const oopsPhysicsLayer = ref<OopsPhysicsLayerHandle | null>(null);
+const oopsActiveMessageIds = ref<Set<number>>(new Set());
 const parallaxLayerInput = ref<HTMLInputElement | null>(null);
 const parallaxLayerUploadBusy = ref(false);
 const parallaxOffset = ref(0);
@@ -667,7 +676,8 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
   { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane },
   { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
-  { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain }
+  { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain },
+  { command: "/哎呀", effect: "oops", label: "哎呀", hint: "点一下，文字会随机掉下来", icon: ArrowDown }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
@@ -743,6 +753,8 @@ watch(
     pendingPrayerUpdate.value = null;
     pendingMessageActions.value = null;
     textSelectableMessageId.value = null;
+    oopsPhysicsLayer.value?.reset();
+    oopsActiveMessageIds.value = new Set();
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
@@ -903,6 +915,7 @@ onBeforeUnmount(() => {
   stopRainEffect();
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
+  oopsPhysicsLayer.value?.reset();
   stopAllVoicePlayback();
   resetRecording();
 });
@@ -3249,7 +3262,7 @@ function isMessageEffectPaused(message: MessageDTO) {
 
 function toggleMessageEffect(message: MessageDTO) {
   const effect = messageEffect(message);
-  if (!effect || effect === "rain") return false;
+  if (!effect || effect === "rain" || effect === "oops") return false;
   const next = new Set(pausedEffectIds.value);
   if (next.has(message.id)) next.delete(message.id);
   else next.add(message.id);
@@ -4119,6 +4132,7 @@ function isOutsideLayer(rect: BubbleLayerRect, width: number, height: number, ma
 
 function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
   if (messageEffect(message) === "water" || messageEffect(message) === "dripGooey") requestDeviceOrientationPermissionOnce();
+  if (oopsActiveMessageIds.value.has(message.id)) return;
   if (message.id <= 0 || message.type === "system" || event.button !== 0) return;
   const target = event.target;
   if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
@@ -4326,6 +4340,24 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     return;
   }
   acknowledgeMentionAlert(message);
+  if (messageEffect(message) === "oops") {
+    const target = event.target instanceof Element ? event.target : null;
+    const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    if (oopsActiveMessageIds.value.has(message.id)) {
+      oopsPhysicsLayer.value?.restore(message.id);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const textRoot = target?.closest<HTMLElement>(".message-text");
+    const interactiveTarget = target?.closest("a, button, .inline-bible-reference, .markdown-render");
+    if (bubble && textRoot && bubble.contains(textRoot) && !interactiveTarget && message.type === "text" && !isMarkdownMessage(message)) {
+      void oopsPhysicsLayer.value?.start(message.id, bubble, textRoot);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+  }
   if (toggleMessageEffect(message)) {
     event.preventDefault();
     event.stopPropagation();
@@ -4334,6 +4366,13 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
   if (message.type !== "chain") return;
   event.stopPropagation();
   confirmJoinChain(message, event);
+}
+
+function handleOopsActiveChange(change: { messageId: number; active: boolean }) {
+  const next = new Set(oopsActiveMessageIds.value);
+  if (change.active) next.add(change.messageId);
+  else next.delete(change.messageId);
+  oopsActiveMessageIds.value = next;
 }
 
 function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
@@ -7016,6 +7055,7 @@ async function toggleVirtual(character: any) {
 
     <section class="chat-pane">
       <ParallaxBackground :kit="activeParallaxKit" :offset="parallaxOffset" />
+      <OopsTextPhysicsLayer ref="oopsPhysicsLayer" @active-change="handleOopsActiveChange" />
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
       <canvas ref="dripLayer" class="drip-layer" aria-hidden="true"></canvas>
       <svg ref="gooeyDripLayer" class="drip-gooey-layer" aria-hidden="true" focusable="false">

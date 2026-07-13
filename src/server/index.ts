@@ -42,6 +42,7 @@ import type {
 } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
+import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
@@ -87,7 +88,6 @@ const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const JWT_EXPIRES_IN = `${SESSION_TTL_DAYS}d`;
 const THEMES = new Set(["wechat", "jade", "paper", "night"]);
-const MESSAGE_EFFECTS = new Set<MessageEffect>(["flash", "shine", "shake", "fly", "drip", "rain"]);
 const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
 const BIBLE_OUTPUT_FORMATS = new Set(["referenceVerseLines", "continuousText", "referenceHeader", "numberedVerses"]);
@@ -523,10 +523,10 @@ function cleanText(input: unknown) {
 
 function cleanMessagePayload(input: unknown): { effect?: MessageEffect; contentFormat?: "markdown" } | undefined {
   if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
-  const effect = (input as { effect?: unknown }).effect;
+  const effect = cleanSupportedMessageEffect((input as { effect?: unknown }).effect);
   const contentFormat = (input as { contentFormat?: unknown; markdown?: unknown }).contentFormat;
   const payload = {
-    ...(typeof effect === "string" && MESSAGE_EFFECTS.has(effect as MessageEffect) ? { effect: effect as MessageEffect } : {}),
+    ...(effect ? { effect } : {}),
     ...(contentFormat === "markdown" || (input as { markdown?: unknown }).markdown === true ? { contentFormat: "markdown" as const } : {})
   };
   return Object.keys(payload).length ? payload : undefined;
