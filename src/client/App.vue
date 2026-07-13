@@ -519,7 +519,6 @@ const voiceSending = ref(false);
 const playingVoiceId = ref<number | null>(null);
 const voiceProgress = ref<Record<number, number>>({});
 const voiceDurations = ref<Record<number, number>>({});
-const expandedAudioMessageIds = ref<Set<number>>(new Set());
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
 const serverVersion = ref<VersionDTO | null>(null);
@@ -4706,10 +4705,6 @@ function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
     toggleMessageSelected(message);
     return;
   }
-  if (isAudioMessage(message) && !isVoiceMessage(message)) {
-    expandInlineAudioPlayer(message);
-    return;
-  }
   if (canPreviewMessage(message)) {
     openPreviewMessage(message);
     return;
@@ -5743,10 +5738,6 @@ function voiceProgressValue(message: MessageDTO) {
   return voiceProgress.value[message.id] || 0;
 }
 
-function isInlineAudioPlayerExpanded(message: MessageDTO) {
-  return expandedAudioMessageIds.value.has(message.id);
-}
-
 function audioElapsedMs(message: MessageDTO) {
   return Math.round(voiceDurationMs(message) * voiceProgressValue(message));
 }
@@ -5827,22 +5818,6 @@ function toggleVoicePlayback(message: MessageDTO) {
   playAttempt.catch(() => {
     playingVoiceId.value = null;
   });
-}
-
-function expandInlineAudioPlayer(message: MessageDTO) {
-  if (!expandedAudioMessageIds.value.has(message.id)) {
-    expandedAudioMessageIds.value = new Set([...expandedAudioMessageIds.value, message.id]);
-  }
-  if (playingVoiceId.value !== message.id) toggleVoicePlayback(message);
-}
-
-function collapseInlineAudioPlayer(message: MessageDTO) {
-  const next = new Set(expandedAudioMessageIds.value);
-  next.delete(message.id);
-  expandedAudioMessageIds.value = next;
-  const audio = voicePlayers.get(message.id);
-  audio?.pause();
-  if (playingVoiceId.value === message.id) playingVoiceId.value = null;
 }
 
 function seekInlineAudio(message: MessageDTO, progress: number) {
@@ -8191,7 +8166,6 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else-if="isAudioMessage(row.message)">
                   <div
-                    v-if="isInlineAudioPlayerExpanded(row.message)"
                     class="inline-audio-player"
                     :class="{ playing: playingVoiceId === row.message.id }"
                     role="group"
@@ -8206,7 +8180,6 @@ async function toggleVirtual(character: any) {
                       </span>
                       <span class="inline-audio-actions">
                         <button type="button" @click="requestDownload(row.message, $event)" aria-label="下载音频" title="下载音频"><Download :size="15" /></button>
-                        <button type="button" @click="collapseInlineAudioPlayer(row.message)" aria-label="收起播放器" title="收起播放器"><ChevronUp :size="16" /></button>
                       </span>
                     </div>
                     <div class="inline-audio-controls">
@@ -8230,11 +8203,6 @@ async function toggleVirtual(character: any) {
                       <span>{{ formatDuration(voiceDurationMs(row.message)) }}</span>
                     </div>
                   </div>
-                  <button v-else class="media-file-card audio-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
-                    <span class="media-file-icon"><AudioLines :size="22" /></span>
-                    <span>{{ row.message.fileName || "音频" }}</span>
-                    <small>音频 · {{ compactBytes(row.message.fileSize) }} · 点击播放</small>
-                  </button>
                 </template>
                 <template v-else-if="isVideoMessage(row.message)">
                   <button class="media-file-card video-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
@@ -8565,7 +8533,7 @@ async function toggleVirtual(character: any) {
     <section v-if="pendingDownload" class="tap-popover download-popover" :style="downloadPromptStyle" data-download-popover>
       <div class="tap-popover-card">
         <div class="compact-confirm">
-          <span>无法预览，下载？</span>
+          <span>确定下载？</span>
           <div class="compact-actions">
             <button class="mini-btn secondary" @click="pendingDownload = null">否</button>
             <button class="mini-btn" @click="downloadFile(pendingDownload)">是</button>

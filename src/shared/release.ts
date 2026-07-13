@@ -1,10 +1,18 @@
-export const APP_VERSION = "0.11.1";
+export const APP_VERSION = "0.11.2";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "音乐频道支持为歌曲上传多页歌谱；播放有谱歌曲时顶部“字”会变为“谱”，可进入全宽沉浸式歌谱阅读，并在阅读期间停止自动切到下一首。",
+  "歌谱入口改为无底框的缓慢呼吸与色彩变化；聊天气泡按视口从上到下徐徐退场后再展示歌谱，关闭时反向归位。",
+  "已上传歌谱的音频消息会紧贴显示等高歌谱缩略图，可直接点击放大查看；缩略图不再带折角、悬停位移或按压缩放。",
+  "音频附件上传完成后直接显示播放波形，不再保留需要点击展开的折叠形态；高密度波形按物理像素等宽绘制，窗口变化时自动调整柱数。",
+  "音频下载提示改为更直接的“确定下载？”。"
+] as const;
+
+const RELEASE_0_11_1_NOTES = [
   "音频附件消息现在会在原消息气泡内展开播放，不再弹出浏览器原生音频预览窗口。",
   "播放器提供播放/暂停、可点击跳转的动态波形、当前与总时长、下载和收起操作，并适配手机窄屏。"
 ] as const;
@@ -464,9 +472,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.11.1",
+    version: "0.11.2",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.11.1",
+    date: "2026-07-13",
+    notes: RELEASE_0_11_1_NOTES
   },
   {
     version: "0.11.0",

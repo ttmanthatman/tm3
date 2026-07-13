@@ -37,10 +37,11 @@ test("all file previews keep close at the upper right and download at the lower 
   assert.match(css, /\.preview-download \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
 });
 
-test("audio attachments expand into an inline waveform player instead of the native preview modal", () => {
-  assert.match(app, /if \(isAudioMessage\(message\) && !isVoiceMessage\(message\)\) \{[\s\S]*?expandInlineAudioPlayer\(message\);/);
-  assert.match(app, /v-if="isInlineAudioPlayerExpanded\(row\.message\)"[\s\S]*?class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
+test("audio attachments render their waveform player immediately without a collapsed state", () => {
+  assert.match(app, /<template v-else-if="isAudioMessage\(row\.message\)">[\s\S]*?class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
   assert.match(app, /@seek="seekInlineAudio\(row\.message, \$event\)"/);
+  assert.doesNotMatch(app, /isInlineAudioPlayerExpanded|expandInlineAudioPlayer|collapseInlineAudioPlayer|expandedAudioMessageIds/);
+  assert.doesNotMatch(app, /audio-file-card/);
   assert.doesNotMatch(app, /class="media-preview-audio"/);
   assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
@@ -60,6 +61,13 @@ test("audio messages with a score render an attached full-height clickable score
   assert.match(app, /openMusicScorePreview\(musicScorePreviewPage\(row\.message\)!, row\.message\.id\)/);
   assert.match(css, /\.audio-score-cluster \{[\s\S]*?display: flex;[\s\S]*?align-items: stretch;/);
   assert.match(css, /\.music-score-inline-preview \{[\s\S]*?align-self: stretch;/);
+  assert.doesNotMatch(css, /\.music-score-inline-preview::after/);
+  assert.doesNotMatch(css, /\.music-score-inline-preview:(?:hover|active) \{[\s\S]*?transform:/);
+});
+
+test("download confirmation uses a direct confirmation question", () => {
+  assert.match(app, /<span>确定下载？<\/span>/);
+  assert.doesNotMatch(app, /无法预览，下载？/);
 });
 
 test("like alerts use the top notice rail instead of a reading-area overlay", () => {
@@ -118,8 +126,10 @@ test("song control stays to the left of the font or score control", () => {
   assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="message-font-control"'));
   assert.match(header, /v-if="musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
   assert.match(header, /'page-turning': musicPlaying/);
-  assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScorePageTurn/);
-  assert.match(css, /\.music-score-trigger \{[\s\S]*?overflow: hidden;/);
+  assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);
+  assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
+  assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);
+  assert.doesNotMatch(css, /musicScorePageTurn/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
