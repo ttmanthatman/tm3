@@ -973,36 +973,34 @@ button {
 
 .music-player-head {
   padding-inline: 8px;
-  min-height: calc(96px + var(--safe-top));
-  align-items: stretch;
 }
 
 .music-player-bar {
-  position: relative;
   width: 100%;
   min-width: 0;
-  min-height: 96px;
+  display: grid;
+  grid-template-columns: minmax(72px, calc(var(--music-player-anchor-x) - 64px)) 128px minmax(0, 1fr);
+  align-items: center;
 }
 
 .music-player-transport {
-  position: absolute;
-  top: 6px;
-  left: var(--music-player-anchor-x);
+  grid-column: 2;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  transform: translateX(-50%);
 }
 
 .music-player-details {
-  position: absolute;
-  right: 0;
-  bottom: 6px;
-  left: 0;
+  display: contents;
+}
+
+.music-player-tools {
+  grid-column: 3;
   min-width: 0;
-  min-height: 36px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -1012,18 +1010,53 @@ button {
 }
 
 .music-player-title {
+  grid-column: 1;
   min-width: 0;
-  flex: 1;
+  padding-right: 8px;
   display: grid;
   gap: 1px;
-  text-align: center;
+  text-align: left;
 }
 
-.music-player-title strong,
 .music-player-title small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.music-title-viewport {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, #000 0, #000 calc(100% - 16px), transparent 100%);
+}
+
+.music-title-track {
+  display: block;
+  width: max-content;
+}
+
+.music-title-track.scrolling {
+  display: flex;
+  gap: 32px;
+  animation: musicTitleMarquee 9s linear infinite;
+}
+
+@keyframes musicTitleMarquee {
+  to { transform: translateX(calc(-50% - 16px)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .music-title-track.scrolling {
+    display: block;
+    animation: none;
+  }
+
+  .music-title-track.scrolling span + span {
+    display: none;
+  }
 }
 
 .music-player-title small {

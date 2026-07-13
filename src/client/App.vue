@@ -997,6 +997,8 @@ const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
 const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || musicTracks.value[0] || null);
 const currentMusicTrackIndex = computed(() => musicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
+const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
+const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
 const musicScoreTriggerVisible = computed(() =>
   shouldShowMusicScoreTrigger({
@@ -7745,27 +7747,34 @@ async function toggleVirtual(character: any) {
       <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }">
         <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player :style="musicPlayerAnchorStyle" @click.stop>
           <div class="music-player-transport">
-          <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
-          <button class="icon-btn music-main-control" type="button" :disabled="!currentMusicTrack" @click="toggleMusicPlayback" :aria-label="musicPlaying ? '暂停' : '播放'">
-            <Pause v-if="musicPlaying" :size="21" />
-            <Play v-else :size="21" />
-          </button>
-          <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
+            <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
+            <button class="icon-btn music-main-control" type="button" :disabled="!currentMusicTrack" @click="toggleMusicPlayback" :aria-label="musicPlaying ? '暂停' : '播放'">
+              <Pause v-if="musicPlaying" :size="21" />
+              <Play v-else :size="21" />
+            </button>
+            <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
           </div>
           <div class="music-player-details">
-          <div class="music-player-title">
-            <strong>{{ currentMusicTrack?.title || "播放列表还是空的" }}</strong>
-            <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
-            <small v-else>{{ musicLoading ? "正在缓冲…" : musicPlaying ? "正在播放" : "已暂停" }}</small>
-          </div>
-          <button
-            class="music-mode-btn"
-            type="button"
-            :class="{ active: musicPlaybackMode === 'playlist' }"
-            @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
-            :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
-          >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
-          <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
+            <div class="music-player-title">
+              <strong class="music-title-viewport">
+                <span class="music-title-track" :class="{ 'scrolling': musicTitleScrolling }">
+                  <span>{{ currentMusicTrackTitle }}</span>
+                  <span v-if="musicTitleScrolling" aria-hidden="true">{{ currentMusicTrackTitle }}</span>
+                </span>
+              </strong>
+              <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
+              <small v-else>{{ musicLoading ? "正在缓冲…" : musicPlaying ? "正在播放" : "已暂停" }}</small>
+            </div>
+            <div class="music-player-tools">
+              <button
+                class="music-mode-btn"
+                type="button"
+                :class="{ active: musicPlaybackMode === 'playlist' }"
+                @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
+                :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
+              >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
+              <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
+            </div>
           </div>
         </div>
         <template v-else>

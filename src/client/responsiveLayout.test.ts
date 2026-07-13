@@ -123,7 +123,17 @@ test("expanded player keeps its main control on the clicked song-button axis", (
   assert.match(app, /@click\.stop="openMusicPlayer\(\$event\)"/);
   assert.match(app, /:style="musicPlayerAnchorStyle"/);
   assert.match(app, /class="music-player-transport"[\s\S]*?class="icon-btn music-main-control"/);
-  assert.match(css, /\.music-player-transport \{[\s\S]*?left: var\(--music-player-anchor-x\);[\s\S]*?translateX\(-50%\)/);
+  assert.match(css, /\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(72px, calc\(var\(--music-player-anchor-x\) - 64px\)\) 128px minmax\(0, 1fr\);/);
+  assert.match(css, /\.music-player-transport \{[\s\S]*?grid-column: 2;[\s\S]*?align-items: center;/);
+  assert.doesNotMatch(css, /\.music-player-head \{[\s\S]*?min-height: calc\(96px/);
+});
+
+test("long music titles scroll in the left side of the single-row player", () => {
+  assert.match(app, /class="music-title-track"[\s\S]*?'scrolling': musicTitleScrolling/);
+  assert.match(app, /v-if="musicTitleScrolling" aria-hidden="true"/);
+  assert.match(app, /class="music-player-tools"/);
+  assert.match(css, /\.music-player-title \{[\s\S]*?grid-column: 1;[\s\S]*?text-align: left;/);
+  assert.match(css, /\.music-title-track\.scrolling \{[\s\S]*?animation: musicTitleMarquee/);
 });
 
 test("manual music pause fades out within one second", () => {

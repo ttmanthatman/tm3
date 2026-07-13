@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.11.3";
+export const APP_VERSION = "0.11.4";
 
 export const RELEASE_DATE = "2026-07-14";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "展开后的顶部播放器恢复为单行布局：歌曲信息、上一曲/播放/下一曲、循环模式和列表按钮全部与顶栏图标垂直居中，不再让信息区下沉。",
+  "歌曲信息移到播放器左侧；超过显示宽度的长歌名会无缝横向滚动，减少动态效果模式下保持静态显示。"
+] as const;
+
+const RELEASE_0_11_3_NOTES = [
   "顶部播放器会记住“歌”按钮的点击位置，展开后让播放/暂停主键出现在同一横向位置附近，减少手指或鼠标移动距离。",
   "主动暂停音乐时会在 900 毫秒内平滑渐隐后停止；恢复播放保持即时开始，不增加渐入等待。",
   "普通音频上传后由服务器异步计算整曲真实波形并原位替换占位波形，历史普通音频也会在服务启动后自动补算。",
@@ -480,9 +485,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.11.3",
+    version: "0.11.4",
     date: "2026-07-14",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.11.3",
+    date: "2026-07-14",
+    notes: RELEASE_0_11_3_NOTES
   },
   {
     version: "0.11.2",
