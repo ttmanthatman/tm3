@@ -124,7 +124,9 @@ test("expanded player keeps its main control on the clicked song-button axis", (
   assert.match(app, /:style="musicPlayerAnchorStyle"/);
   assert.match(app, /class="music-player-transport"[\s\S]*?class="icon-btn music-main-control"/);
   assert.match(css, /\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(72px, calc\(var\(--music-player-anchor-x\) - 64px\)\) 128px minmax\(0, 1fr\);/);
-  assert.match(css, /\.music-player-transport \{[\s\S]*?grid-column: 2;[\s\S]*?align-items: center;/);
+  assert.match(css, /\.music-player-transport \{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;[\s\S]*?align-items: center;/);
+  assert.match(css, /\.music-player-title \{[\s\S]*?grid-column: 1;[\s\S]*?grid-row: 1;/);
+  assert.match(css, /\.music-player-tools \{[\s\S]*?grid-column: 3;[\s\S]*?grid-row: 1;/);
   assert.doesNotMatch(css, /\.music-player-head \{[\s\S]*?min-height: calc\(96px/);
 });
 
