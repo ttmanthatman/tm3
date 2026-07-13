@@ -2150,17 +2150,17 @@ button {
 
 .message-effect-shine .message-text {
   color: transparent;
-  background: linear-gradient(90deg, #161616 0%, #161616 48%, #ffffff 50%, #161616 52%, #161616 100%);
+  background: linear-gradient(90deg, #161616 0%, #161616 42%, #6a6a6a 45%, #c9c9c9 48%, #ffffff 50%, #c9c9c9 52%, #6a6a6a 55%, #161616 58%, #161616 100%);
   background-size: 300% 100%;
   background-repeat: no-repeat;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: messageShine 1.9s linear infinite;
+  animation: messageShine 3.6s linear infinite;
 }
 
 .theme-night .message-effect-shine .message-text {
-  background-image: linear-gradient(90deg, #d7dde5 0%, #d7dde5 48%, #ffffff 50%, #d7dde5 52%, #d7dde5 100%);
+  background-image: linear-gradient(90deg, #d7dde5 0%, #d7dde5 42%, #e5e9ef 45%, #f4f6f8 48%, #ffffff 50%, #f4f6f8 52%, #e5e9ef 55%, #d7dde5 58%, #d7dde5 100%);
 }
 
 .message-effect-shake {

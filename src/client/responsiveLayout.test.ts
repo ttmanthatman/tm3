@@ -44,7 +44,7 @@ test("like alerts use the top notice rail instead of a reading-area overlay", ()
 });
 
 test("shine scans one vertical highlight fully across message text before restarting", () => {
-  assert.match(css, /\.message-effect-shine \.message-text \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?#ffffff 50%,[\s\S]*?background-size: 300% 100%;[\s\S]*?background-repeat: no-repeat;/);
+  assert.match(css, /\.message-effect-shine \.message-text \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?#6a6a6a 45%,[\s\S]*?#ffffff 50%,[\s\S]*?#6a6a6a 55%,[\s\S]*?background-size: 300% 100%;[\s\S]*?background-repeat: no-repeat;[\s\S]*?animation: messageShine 3\.6s linear infinite;/);
   assert.match(css, /@keyframes messageShine \{[\s\S]*?0% \{[\s\S]*?background-position: 100% 0;[\s\S]*?100% \{[\s\S]*?background-position: 0 0;/);
 });
 
