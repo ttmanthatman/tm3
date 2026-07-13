@@ -7,7 +7,12 @@ import {
   sampleWithoutReplacement,
   segmentTextGraphemes
 } from "../oopsText";
-import { keepReturningBodyAwake, returnHasSettled } from "../oopsPhysics";
+import {
+  isBodyRestingOnTop,
+  keepReturningBodyAwake,
+  releaseBodyFromMovingObstacle,
+  returnHasSettled
+} from "../oopsPhysics";
 
 type MatterModule = typeof import("matter-js");
 type GlyphCandidate = {
@@ -37,6 +42,7 @@ const emit = defineEmits<{ "active-change": [change: ActiveChange] }>();
 const layer = ref<HTMLElement | null>(null);
 const activeMessages = new Map<number, ActiveMessage>();
 const bubbleTargets = new Map<number, HTMLElement>();
+let bubbleBodies = new Map<HTMLElement, Body>();
 const hitAt = new WeakMap<HTMLElement, number>();
 let matter: MatterModule | null = null;
 let matterPromise: Promise<MatterModule> | null = null;
@@ -200,11 +206,22 @@ function visibleBubbleElements() {
   });
 }
 
+function clearStaticBodies() {
+  if (matter && engine) {
+    for (const body of staticBodies) matter.Composite.remove(engine.world, body);
+  }
+  staticBodies = [];
+  bubbleTargets.clear();
+  bubbleBodies.clear();
+}
+
 function rebuildStaticBodies() {
   if (!matter || !engine || !layer.value || !activeMessages.size) return;
+  const previousBubbleBodies = bubbleBodies;
   for (const body of staticBodies) matter.Composite.remove(engine.world, body);
   staticBodies = [];
   bubbleTargets.clear();
+  bubbleBodies = new Map();
   const layerRect = layer.value.getBoundingClientRect();
   const composerRect = composerElement()?.getBoundingClientRect();
   const floorY = composerRect ? Math.min(layerRect.height, composerRect.bottom - layerRect.top) : layerRect.height;
@@ -218,6 +235,7 @@ function rebuildStaticBodies() {
   const leftWall = matter.Bodies.rectangle(-wallThickness / 2, floorY / 2, wallThickness, floorY + wallThickness, { isStatic: true, restitution: 0.28 });
   const rightWall = matter.Bodies.rectangle(layerRect.width + wallThickness / 2, floorY / 2, wallThickness, floorY + wallThickness, { isStatic: true, restitution: 0.28 });
   staticBodies.push(floor, leftWall, rightWall);
+  const movedObstacles: Array<{ body: Body; motion: { x: number; y: number } }> = [];
   for (const bubble of visibleBubbleElements()) {
     const rect = bubble.getBoundingClientRect();
     const width = Math.max(4, rect.width);
@@ -232,8 +250,26 @@ function rebuildStaticBodies() {
     body.plugin = { ...body.plugin, oops: { kind: "bubble" } };
     staticBodies.push(body);
     bubbleTargets.set(body.id, bubble);
+    bubbleBodies.set(bubble, body);
+    const previousBody = previousBubbleBodies.get(bubble);
+    if (previousBody) {
+      const motion = { x: body.position.x - previousBody.position.x, y: body.position.y - previousBody.position.y };
+      if (Math.hypot(motion.x, motion.y) > 0.75) movedObstacles.push({ body: previousBody, motion });
+    }
+  }
+  for (const [bubble, previousBody] of previousBubbleBodies) {
+    if (!bubbleBodies.has(bubble)) movedObstacles.push({ body: previousBody, motion: { x: 0, y: 40 } });
   }
   matter.Composite.add(engine.world, staticBodies);
+  if (movedObstacles.length) {
+    for (const active of activeMessages.values()) {
+      if (active.state !== "falling") continue;
+      for (const glyph of active.glyphs) {
+        const support = movedObstacles.find((obstacle) => isBodyRestingOnTop(glyph.body, obstacle.body));
+        if (support) releaseBodyFromMovingObstacle(matter, glyph.body, support.body, support.motion);
+      }
+    }
+  }
 }
 
 function scheduleLayoutRefresh() {
@@ -275,8 +311,11 @@ function finishMessage(messageId: number) {
   active.bubble.classList.remove("message-effect-oops-active");
   activeMessages.delete(messageId);
   emit("active-change", { messageId, active: false });
-  rebuildStaticBodies();
-  if (!activeMessages.size) stopLoop();
+  if (activeMessages.size) rebuildStaticBodies();
+  else {
+    clearStaticBodies();
+    stopLoop();
+  }
 }
 
 function freeBudgetFor(count: number) {
