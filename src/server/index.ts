@@ -45,6 +45,7 @@ import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { lookupBibleReference } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
+import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
 import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
 import { githubPackageManifestUrl } from "./updateManifest.js";
@@ -364,7 +365,7 @@ app.addHook("onRequest", async (_request, reply) => {
   reply.header("Permissions-Policy", "camera=(), geolocation=(), payment=(), usb=()");
   reply.header(
     "Content-Security-Policy",
-    "default-src 'self'; base-uri 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; frame-ancestors 'self'; frame-src 'self' blob:; form-action 'self'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+    CONTENT_SECURITY_POLICY
   );
 });
 
