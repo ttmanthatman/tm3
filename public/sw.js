@@ -1,4 +1,4 @@
-const CACHE_NAME = "team-chat-v7";
+const CACHE_NAME = "team-chat-v8";
 const CORE = [
   "/",
   "/manifest.json",

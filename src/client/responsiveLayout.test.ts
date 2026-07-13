@@ -78,3 +78,10 @@ test("explicit context jumps win over saved read-position restoration", () => {
   assert.match(app, /const contextOffset = Math\.min\(120,[\s\S]*?root\.scrollTo\(\{ top: Math\.max\(0, targetTop\), behavior: "auto" \}\)/);
   assert.match(app, /activeReadAnchor = \{[\s\S]*?messageId: id,[\s\S]*?offset: contextOffset,[\s\S]*?reconcileReadPositionAfterLayout\(\)/);
 });
+
+test("opening the music player starts or resumes playback without pausing an active song", () => {
+  const openPlayer = app.match(/function openMusicPlayer\(\) \{([\s\S]*?)\n\}/)?.[1] || "";
+
+  assert.doesNotMatch(openPlayer, /pauseMusic\(/);
+  assert.match(openPlayer, /if \(!musicPlaying\.value\) void playCurrentMusic\(\);/);
+});

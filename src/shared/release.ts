@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.10.11.0";
+export const APP_VERSION = "0.11.0";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "顶部新增全局音乐播放器：点击“歌”会从上次进度继续播放，首次使用则从播放列表第一首开始；播放中展开播放器不会中断音乐。",
+  "播放器支持播放、暂停、上一曲、下一曲、播放列表，以及可按账号保存的“列表循环”和“单曲播放”模式。",
+  "新增仅管理员和户部尚书可见的音乐频道，可上传 MP3、M4A，并通过长按重命名或删除曲库歌曲。",
+  "所有已登录成员都能通过受保护的流式接口收听曲库，歌曲上传、重命名和删除会实时同步到在线播放器。"
+] as const;
+
+const RELEASE_0_10_11_0_NOTES = [
   "版本与更新现在会读取 GitHub 上可用的其他分支，管理员可在页面中选择分支并检查对应版本。",
   "更新按钮会使用所选分支同步代码，完成后保存该分支作为下一次检查和更新的默认选择。"
 ] as const;
@@ -452,9 +459,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.11.0",
+    version: "0.11.0",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.11.0",
+    date: "2026-07-13",
+    notes: RELEASE_0_10_11_0_NOTES
   },
   {
     version: "0.10.10.3",

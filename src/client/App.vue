@@ -4981,9 +4981,9 @@ function selectMusicTrack(track: MusicTrackDTO) {
 }
 
 function openMusicPlayer() {
-  if (musicPlaying.value) pauseMusic();
   musicPlayerExpanded.value = true;
   showMessageFontMenu.value = false;
+  if (!musicPlaying.value) void playCurrentMusic();
 }
 
 function toggleMusicPlaylist() {
