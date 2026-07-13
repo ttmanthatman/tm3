@@ -53,6 +53,7 @@ import { pushOriginFromHeaders } from "./pushOrigin.js";
 import { githubPackageManifestUrl } from "./updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
 import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
+import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -1212,6 +1213,42 @@ async function hydrateMessage(id: number, viewerAccountId?: number) {
     include: { sender: true, replyTo: { include: { sender: true } } }
   });
   return message ? serializeMessage(message, viewerAccountId) : null;
+}
+
+const audioWaveformJobs = new Set<number>();
+
+async function enrichAudioMessageWaveform(messageId: number, expectedFilePath: string) {
+  if (audioWaveformJobs.has(messageId)) return;
+  audioWaveformJobs.add(messageId);
+  try {
+    const storedPath = path.join(UPLOAD_DIR, path.basename(expectedFilePath));
+    if (!fs.existsSync(storedPath)) return;
+    const waveform = await analyzeAudioWaveform(storedPath);
+    const current = await prisma.message.findUnique({ where: { id: messageId }, select: { channelId: true, filePath: true, payload: true } });
+    if (!current || current.filePath !== expectedFilePath) return;
+    const payload = mergeAudioWaveformPayload(current.payload, waveform);
+    await prisma.message.update({ where: { id: messageId }, data: { payload: payload as Prisma.InputJsonObject } });
+    const dto = await hydrateMessage(messageId);
+    if (dto) io.to(`ch:${current.channelId}`).emit("message:updated", dto);
+  } catch (error) {
+    app.log.warn({ error, messageId }, "audio waveform analysis failed; keeping placeholder waveform");
+  } finally {
+    audioWaveformJobs.delete(messageId);
+  }
+}
+
+async function backfillAudioMessageWaveforms() {
+  const messages = await prisma.message.findMany({
+    where: { type: "file", filePath: { not: null } },
+    select: { id: true, fileName: true, filePath: true, payload: true },
+    orderBy: { id: "asc" }
+  });
+  for (const message of messages) {
+    if (!message.filePath || !isAudioFileName(message.fileName)) continue;
+    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+    if (payload.kind === "voice" || normalizedWaveform(payload.waveform)?.length) continue;
+    await enrichAudioMessageWaveform(message.id, message.filePath);
+  }
 }
 
 function plainTextPreview(input?: string | null, maxLength = 80) {
@@ -3510,6 +3547,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     fileSize: stat.size,
     pushOrigin
   });
+  if (!voicePayload && isAudioFileName(displayFileName)) void enrichAudioMessageWaveform(message.id, storedFileName);
   if (channel?.kind === "music") io.emit("music:updated", { action: "created", trackId: message.id });
   return { success: true, message: await hydrateMessage(message.id) };
 });
@@ -6138,3 +6176,4 @@ process.on("SIGTERM", async () => {
 await ensureBootstrap();
 await ensureWebPush();
 await app.listen({ port: PORT, host: "0.0.0.0" });
+void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));

@@ -146,6 +146,13 @@ test("music score view parts chat rows and reveals full-width pages with a trans
   assert.match(css, /\.music-score-chat-cleared \.score-exit-left,[\s\S]*?transition-timing-function:[\s\S]*?cubic-bezier\(0\.55, 0, 1, 0\.45\)/);
 });
 
+test("long pressing an empty part of the chat opens the available music score", () => {
+  assert.match(app, /class="messages-scroll"[\s\S]*?@pointerdown\.passive="handleMessagesPointerDown"[\s\S]*?@pointermove\.passive="moveBlankScoreLongPress"/);
+  assert.match(app, /function beginBlankScoreLongPress\(event: PointerEvent\)[\s\S]*?!musicScoreTriggerVisible\.value \|\| musicScoreOpen\.value[\s\S]*?openMusicScore\(\);/);
+  assert.match(app, /target\.closest\("\.bubble,[\s\S]*?button,[\s\S]*?audio,[\s\S]*?video/);
+  assert.match(app, /function moveBlankScoreLongPress\(event: PointerEvent\)[\s\S]*?distance > 10[\s\S]*?clearBlankScoreLongPress\(\)/);
+});
+
 test("score image preview fills the viewport width without black side bars", () => {
   assert.match(app, /'score-preview-modal': previewPinnedImage\?\.score/);
   assert.match(css, /\.media-preview-shell\.image\.score \{[\s\S]*?background: #fff;/);

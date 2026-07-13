@@ -41,6 +41,21 @@ export function resampleWaveform(source: number[], targetCount: number) {
   });
 }
 
+export function resolveMessageWaveform(source: unknown, seed: number, fallbackCount = 48) {
+  if (Array.isArray(source)) {
+    const computed = source
+      .slice(0, 512)
+      .map((sample) => Number(sample))
+      .filter(Number.isFinite)
+      .map(normalizeSample);
+    if (computed.length) return computed;
+  }
+  return Array.from({ length: fallbackCount }, (_, index) => {
+    const value = Math.abs(Math.sin((index + 1) * 1.37 + seed * 0.013) * 0.75 + Math.sin(index * 0.41) * 0.25);
+    return Math.min(1, Math.max(0.16, value));
+  });
+}
+
 function normalizeSample(value: number) {
   if (!Number.isFinite(value)) return 0.08;
   return Math.min(1, Math.max(0.08, value));

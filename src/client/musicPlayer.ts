@@ -6,6 +6,10 @@ export function nextMusicTrackIndex(length: number, currentIndex: number, delta:
   return (safeIndex + delta + length) % length;
 }
 
+export function shouldRestartOnlyTrack(trackCount: number, delta: number) {
+  return trackCount === 1 && delta < 0;
+}
+
 export function shouldAdvanceMusic(mode: MusicPlaybackMode, scoreOpen = false) {
   return mode === "playlist" && !scoreOpen;
 }

@@ -106,6 +106,7 @@ import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
+import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
@@ -125,6 +126,7 @@ import {
   nextMusicTrackIndex,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
+  shouldRestartOnlyTrack,
   shouldShowMusicScoreTrigger,
   type MusicPlaybackMode
 } from "./musicPlayer";
@@ -558,6 +560,8 @@ const rainDurationMs = 15_000;
 const playedRainEffectIds = new Set<number>();
 let longPressTimer: number | undefined;
 let longPressStartedAt = { x: 0, y: 0 };
+let blankScoreLongPressTimer: number | undefined;
+let blankScoreLongPressStartedAt = { x: 0, y: 0 };
 let favoriteLongPressTimer: number | undefined;
 let favoriteLongPressStartedAt = { x: 0, y: 0 };
 let channelLongPressTimer: number | undefined;
@@ -971,6 +975,7 @@ onBeforeUnmount(() => {
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   if (musicScoreTimer) window.clearTimeout(musicScoreTimer);
   clearMessageLongPress();
+  clearBlankScoreLongPress();
   clearFavoriteLongPress();
   clearChannelLongPress();
   stopRainEffect();
@@ -1996,10 +2001,12 @@ function reconcileReadPositionAfterLayout() {
 
 function stopFollowingNewest() {
   if (activeReadAnchor?.kind === "newest") activeReadAnchor = null;
+  clearBlankScoreLongPress();
 }
 
-function stopFollowingNewestFromPointer(event: PointerEvent) {
+function handleMessagesPointerDown(event: PointerEvent) {
   if (event.target === scroller.value) stopFollowingNewest();
+  beginBlankScoreLongPress(event);
 }
 
 async function restoreChatSurface() {
@@ -4270,6 +4277,33 @@ function clearMessageLongPress() {
   longPressTimer = undefined;
 }
 
+function beginBlankScoreLongPress(event: PointerEvent) {
+  clearBlankScoreLongPress();
+  if (event.button !== 0 || !musicScoreTriggerVisible.value || musicScoreOpen.value) return;
+  const target = event.target;
+  if (
+    target instanceof Element &&
+    target.closest(".bubble, .avatar, .sender-line, .time-separator, button, a, input, textarea, img, audio, video, iframe")
+  ) return;
+  blankScoreLongPressStartedAt = { x: event.clientX, y: event.clientY };
+  blankScoreLongPressTimer = window.setTimeout(() => {
+    blankScoreLongPressTimer = undefined;
+    navigator.vibrate?.(12);
+    openMusicScore();
+  }, longPressMs);
+}
+
+function moveBlankScoreLongPress(event: PointerEvent) {
+  if (!blankScoreLongPressTimer) return;
+  const distance = Math.hypot(event.clientX - blankScoreLongPressStartedAt.x, event.clientY - blankScoreLongPressStartedAt.y);
+  if (distance > 10) clearBlankScoreLongPress();
+}
+
+function clearBlankScoreLongPress() {
+  if (blankScoreLongPressTimer) window.clearTimeout(blankScoreLongPressTimer);
+  blankScoreLongPressTimer = undefined;
+}
+
 function beginFavoriteLongPress(favorite: FavoriteMessageDTO, event: PointerEvent) {
   if (event.button !== 0) return;
   const target = event.target;
@@ -5167,6 +5201,15 @@ function toggleMusicPlayback() {
 
 async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.value) {
   if (!musicTracks.value.length) return;
+  if (shouldRestartOnlyTrack(musicTracks.value.length, delta)) {
+    const track = musicTracks.value[0];
+    currentMusicTrackId.value = track.id;
+    setMusicAudioTrack(track);
+    if (musicAudio) musicAudio.currentTime = 0;
+    musicError.value = "";
+    await playCurrentMusic();
+    return;
+  }
   const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
   const nextIndex = nextMusicTrackIndex(musicTracks.value.length, index, delta);
   const track = musicTracks.value[nextIndex];
@@ -5681,17 +5724,17 @@ function voicePayload(message: MessageDTO): VoicePayload {
   return payload?.kind === "voice" ? payload : {};
 }
 
+function audioPayload(message: MessageDTO): VoicePayload {
+  const payload = message.payload as VoicePayload | undefined;
+  return payload?.kind === "voice" || payload?.kind === "audio" ? payload : {};
+}
+
 function isVoiceMessage(message: MessageDTO) {
   return isAudioMessage(message) && voicePayload(message).kind === "voice";
 }
 
 function hasUnlistenedVoice(message: MessageDTO) {
   return isVoiceMessage(message) && message.sender.id !== store.account?.actorId && !message.voiceListened;
-}
-
-function normalizedWaveform(input?: number[]) {
-  if (!Array.isArray(input) || !input.length) return [];
-  return input.slice(0, 64).map((bar) => Math.min(1, Math.max(0.08, Number(bar) || 0.08)));
 }
 
 function fallbackWaveform(seed: number, bars = 48) {
@@ -5726,12 +5769,11 @@ async function analyzeAudioBlob(blob: Blob, bars = 48) {
 }
 
 function waveformForMessage(message: MessageDTO) {
-  const bars = normalizedWaveform(voicePayload(message).waveform);
-  return bars.length ? bars : fallbackWaveform(message.id);
+  return resolveMessageWaveform(audioPayload(message).waveform, message.id);
 }
 
 function voiceDurationMs(message: MessageDTO) {
-  return voiceDurations.value[message.id] || voicePayload(message).durationMs || 0;
+  return voiceDurations.value[message.id] || audioPayload(message).durationMs || 0;
 }
 
 function voiceProgressValue(message: MessageDTO) {
@@ -5893,6 +5935,7 @@ function focusComposer() {
 async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
+  clearBlankScoreLongPress();
   updateParallaxFromScroll(el);
   saveReadPosition();
   awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
@@ -7909,7 +7952,11 @@ async function toggleVirtual(character: any) {
           @load.capture="reconcileReadPositionAfterLayout"
           @wheel.passive="stopFollowingNewest"
           @touchmove.passive="stopFollowingNewest"
-          @pointerdown.passive="stopFollowingNewestFromPointer"
+          @pointerdown.passive="handleMessagesPointerDown"
+          @pointermove.passive="moveBlankScoreLongPress"
+          @pointerup="clearBlankScoreLongPress"
+          @pointercancel="clearBlankScoreLongPress"
+          @pointerleave="clearBlankScoreLongPress"
         >
         <button
           v-if="messageLoadBanner"

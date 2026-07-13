@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computeWaveformGeometry, resampleWaveform } from "./audioWaveform.js";
+import { computeWaveformGeometry, resolveMessageWaveform, resampleWaveform } from "./audioWaveform.js";
 
 test("responsive waveform changes bar count without changing physical bar thickness", () => {
   const narrow = computeWaveformGeometry(275, 1.3);
@@ -22,4 +22,14 @@ test("waveform resampling produces one normalized value for every rendered bar",
   assert.equal(compact.length, 3);
   assert.ok(dense.every((value) => value >= 0.08 && value <= 1));
   assert.ok(compact.every((value) => value >= 0.08 && value <= 1));
+});
+
+test("a server-computed waveform replaces the immediate placeholder", () => {
+  const placeholder = resolveMessageWaveform(undefined, 42);
+  const computed = [0.12, 0.36, 0.94, 0.51];
+  const resolved = resolveMessageWaveform(computed, 42);
+
+  assert.equal(placeholder.length, 48);
+  assert.deepEqual(resolved, computed);
+  assert.notDeepEqual(resolved, placeholder);
 });
