@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.10.8";
+export const APP_VERSION = "0.10.9";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复聊天链接卡片的文章特色图片：离线缓存不再拦截外站图片，特色图现在可以正常加载。"
+] as const;
+
+const RELEASE_0_10_8_NOTES = [
   "修复聊天链接卡片的文章特色图片：安全策略现允许加载 HTTPS 图片，不再将网站文章图片拦截为破图。"
 ] as const;
 
@@ -422,9 +426,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.8",
+    version: "0.10.9",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.8",
+    date: "2026-07-13",
+    notes: RELEASE_0_10_8_NOTES
   },
   {
     version: "0.10.7",

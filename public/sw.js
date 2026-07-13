@@ -1,4 +1,4 @@
-const CACHE_NAME = "team-chat-v6";
+const CACHE_NAME = "team-chat-v7";
 const CORE = [
   "/",
   "/manifest.json",
@@ -26,7 +26,7 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) return;
+  if (url.origin !== self.location.origin || url.pathname.startsWith("/api/") || url.pathname.startsWith("/socket.io/")) return;
   event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then((res) => res || caches.match("/"))));
 });
 
