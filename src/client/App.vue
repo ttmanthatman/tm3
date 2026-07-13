@@ -2,6 +2,7 @@
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   Archive,
+  AudioLines,
   AtSign,
   ArrowDown,
   ArrowUp,
@@ -499,6 +500,7 @@ const voiceSending = ref(false);
 const playingVoiceId = ref<number | null>(null);
 const voiceProgress = ref<Record<number, number>>({});
 const voiceDurations = ref<Record<number, number>>({});
+const expandedAudioMessageIds = ref<Set<number>>(new Set());
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
 const serverVersion = ref<VersionDTO | null>(null);
@@ -4497,6 +4499,10 @@ function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
     toggleMessageSelected(message);
     return;
   }
+  if (isAudioMessage(message) && !isVoiceMessage(message)) {
+    expandInlineAudioPlayer(message);
+    return;
+  }
   if (canPreviewMessage(message)) {
     openPreviewMessage(message);
     return;
@@ -4690,7 +4696,7 @@ function isVideoMessage(message: MessageDTO) {
 }
 
 function canPreviewMessage(message: MessageDTO) {
-  return message.type === "image" || isAudioMessage(message) || isVideoMessage(message) || isPdfMessage(message);
+  return message.type === "image" || isVideoMessage(message) || isPdfMessage(message);
 }
 
 function isDocumentMessage(message: MessageDTO) {
@@ -5526,6 +5532,14 @@ function voiceProgressValue(message: MessageDTO) {
   return voiceProgress.value[message.id] || 0;
 }
 
+function isInlineAudioPlayerExpanded(message: MessageDTO) {
+  return expandedAudioMessageIds.value.has(message.id);
+}
+
+function audioElapsedMs(message: MessageDTO) {
+  return Math.round(voiceDurationMs(message) * voiceProgressValue(message));
+}
+
 function voiceBarStyle(bar: number, index: number, total: number, progress: number) {
   return {
     height: `${Math.round(7 + bar * 25)}px`,
@@ -5592,12 +5606,45 @@ function toggleVoicePlayback(message: MessageDTO) {
     return;
   }
   stopAllVoicePlayback(message.id);
+  if (audio.ended) {
+    audio.currentTime = 0;
+    setVoiceProgress(message.id, 0);
+  }
   playingVoiceId.value = message.id;
   const playAttempt = audio.play();
   void markVoiceListened(message);
   playAttempt.catch(() => {
     playingVoiceId.value = null;
   });
+}
+
+function expandInlineAudioPlayer(message: MessageDTO) {
+  if (!expandedAudioMessageIds.value.has(message.id)) {
+    expandedAudioMessageIds.value = new Set([...expandedAudioMessageIds.value, message.id]);
+  }
+  if (playingVoiceId.value !== message.id) toggleVoicePlayback(message);
+}
+
+function collapseInlineAudioPlayer(message: MessageDTO) {
+  const next = new Set(expandedAudioMessageIds.value);
+  next.delete(message.id);
+  expandedAudioMessageIds.value = next;
+  const audio = voicePlayers.get(message.id);
+  audio?.pause();
+  if (playingVoiceId.value === message.id) playingVoiceId.value = null;
+}
+
+function seekInlineAudio(message: MessageDTO, event: MouseEvent) {
+  const target = event.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  if (!rect.width) return;
+  const audio = getVoicePlayer(message);
+  const duration = Number.isFinite(audio.duration) ? audio.duration : voiceDurationMs(message) / 1000;
+  if (!duration) return;
+  const progress = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+  audio.currentTime = duration * progress;
+  setVoiceProgress(message.id, progress);
+  if (audio.paused) toggleVoicePlayback(message);
 }
 
 function togglePreviewPlayback() {
@@ -7883,10 +7930,54 @@ async function toggleVirtual(character: any) {
                   </div>
                 </template>
                 <template v-else-if="isAudioMessage(row.message)">
-                  <button class="media-file-card audio-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
-                    <span class="media-file-icon"><Mic :size="22" /></span>
-                    <span>{{ row.message.fileName }}</span>
-                    <small>音频 · {{ compactBytes(row.message.fileSize) }}</small>
+                  <div
+                    v-if="isInlineAudioPlayerExpanded(row.message)"
+                    class="inline-audio-player"
+                    :class="{ playing: playingVoiceId === row.message.id }"
+                    role="group"
+                    :aria-label="`${row.message.fileName || '音频'}播放器`"
+                    @click.stop
+                  >
+                    <div class="inline-audio-head">
+                      <span class="inline-audio-art" aria-hidden="true"><AudioLines :size="22" /></span>
+                      <span class="inline-audio-title">
+                        <strong :title="row.message.fileName || '音频'">{{ row.message.fileName || "音频" }}</strong>
+                        <small>音频 · {{ compactBytes(row.message.fileSize) }}</small>
+                      </span>
+                      <span class="inline-audio-actions">
+                        <button type="button" @click="requestDownload(row.message, $event)" aria-label="下载音频" title="下载音频"><Download :size="15" /></button>
+                        <button type="button" @click="collapseInlineAudioPlayer(row.message)" aria-label="收起播放器" title="收起播放器"><ChevronUp :size="16" /></button>
+                      </span>
+                    </div>
+                    <div class="inline-audio-controls">
+                      <button
+                        type="button"
+                        class="inline-audio-play"
+                        @click="toggleVoicePlayback(row.message)"
+                        :aria-label="playingVoiceId === row.message.id ? '暂停音频' : '播放音频'"
+                      >
+                        <Pause v-if="playingVoiceId === row.message.id" :size="21" />
+                        <Play v-else :size="21" />
+                      </button>
+                      <button type="button" class="inline-audio-waveform" @click="seekInlineAudio(row.message, $event)" aria-label="音频进度，点击跳转">
+                        <span
+                          v-for="(bar, idx) in waveformForMessage(row.message)"
+                          :key="idx"
+                          class="inline-audio-bar"
+                          :class="{ active: idx / waveformForMessage(row.message).length <= voiceProgressValue(row.message) }"
+                          :style="voiceBarStyle(bar, idx, waveformForMessage(row.message).length, voiceProgressValue(row.message))"
+                        ></span>
+                      </button>
+                    </div>
+                    <div class="inline-audio-time">
+                      <span>{{ formatDuration(audioElapsedMs(row.message)) }}</span>
+                      <span>{{ formatDuration(voiceDurationMs(row.message)) }}</span>
+                    </div>
+                  </div>
+                  <button v-else class="media-file-card audio-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
+                    <span class="media-file-icon"><AudioLines :size="22" /></span>
+                    <span>{{ row.message.fileName || "音频" }}</span>
+                    <small>音频 · {{ compactBytes(row.message.fileSize) }} · 点击播放</small>
                   </button>
                 </template>
                 <template v-else-if="isVideoMessage(row.message)">
@@ -8388,7 +8479,6 @@ async function toggleVirtual(character: any) {
           @click.self="previewMessage.type === 'image' && closePreviewMessage()"
         >
           <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="previewImageSrc()" alt="图片预览" draggable="false" />
-          <audio v-else-if="isAudioMessage(previewMessage)" class="media-preview-audio" :src="fileUrl(previewMessage)" controls autoplay preload="metadata"></audio>
           <video v-else-if="isVideoMessage(previewMessage)" class="media-preview-video" :src="fileUrl(previewMessage)" controls autoplay playsinline preload="metadata"></video>
           <iframe v-else-if="isPdfMessage(previewMessage)" class="media-preview-frame" :src="fileUrl(previewMessage)" title="文档预览" sandbox=""></iframe>
         </div>

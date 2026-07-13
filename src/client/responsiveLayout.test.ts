@@ -37,6 +37,15 @@ test("all file previews keep close at the upper right and download at the lower 
   assert.match(css, /\.preview-download \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
 });
 
+test("audio attachments expand into an inline waveform player instead of the native preview modal", () => {
+  assert.match(app, /if \(isAudioMessage\(message\) && !isVoiceMessage\(message\)\) \{[\s\S]*?expandInlineAudioPlayer\(message\);/);
+  assert.match(app, /v-if="isInlineAudioPlayerExpanded\(row\.message\)"[\s\S]*?class="inline-audio-player"[\s\S]*?class="inline-audio-waveform"/);
+  assert.match(app, /function seekInlineAudio\(message: MessageDTO, event: MouseEvent\)/);
+  assert.doesNotMatch(app, /class="media-preview-audio"/);
+  assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
+});
+
 test("like alerts use the top notice rail instead of a reading-area overlay", () => {
   assert.match(app, /likeNotificationToTopNotice\(/);
   assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
