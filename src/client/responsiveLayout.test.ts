@@ -46,6 +46,13 @@ test("audio attachments expand into an inline waveform player instead of the nat
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
 });
 
+test("inline audio bars fill one seek track with uniform pixel widths and never escape the bubble", () => {
+  assert.match(css, /\.inline-audio-player \{[\s\S]*?box-sizing: border-box;[\s\S]*?max-width: 100%;[\s\S]*?min-width: 0;/);
+  assert.match(css, /\.inline-audio-waveform \{[\s\S]*?justify-content: space-between;[\s\S]*?gap: 0;/);
+  assert.match(css, /\.inline-audio-bar \{[\s\S]*?flex: 0 0 3px;/);
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-bar \{[\s\S]*?flex-basis: 2px;/);
+});
+
 test("like alerts use the top notice rail instead of a reading-area overlay", () => {
   assert.match(app, /likeNotificationToTopNotice\(/);
   assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
@@ -104,9 +111,12 @@ test("song control stays to the left of the font or score control", () => {
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
-  assert.match(app, /class="music-score-stage"[\s\S]*?class="music-score-close"[\s\S]*?class="music-score-pages"/);
+  assert.match(app, /v-if="musicScoreStageVisible" class="music-score-stage"[\s\S]*?class="music-score-close"[\s\S]*?class="music-score-pages"/);
   assert.match(app, /score-exit-left[\s\S]*?score-exit-right/);
-  assert.match(css, /\.music-score-stage \{[\s\S]*?animation: musicScoreStageIn 760ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
+  assert.match(app, /'music-score-chat-cleared': musicScoreChatCleared/);
+  assert.match(app, /musicScoreChatCleared\.value = true;[\s\S]*?setMusicScoreTimer\(MUSIC_SCORE_CHAT_DURATION_MS, \(\) => \{[\s\S]*?musicScoreStageVisible\.value = true;/);
+  assert.match(app, /musicScoreStageClosing\.value = true;[\s\S]*?setMusicScoreTimer\(MUSIC_SCORE_STAGE_DURATION_MS, \(\) => \{[\s\S]*?musicScoreStageVisible\.value = false;[\s\S]*?musicScoreChatCleared\.value = false;/);
+  assert.match(css, /\.music-score-stage \{[\s\S]*?animation: musicScoreStageIn 980ms cubic-bezier\(0\.22, 1, 0\.36, 1\)/);
   assert.match(css, /\.music-score-page img \{[\s\S]*?width: 100%;/);
   assert.match(css, /\.music-score-close \{[\s\S]*?background: rgba\(30, 30, 30, 0\.58\);[\s\S]*?backdrop-filter: blur/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.music-score-stage/);

@@ -177,10 +177,15 @@ const musicLoading = ref(false);
 const musicError = ref("");
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
+const musicScoreChatCleared = ref(false);
+const musicScoreStageVisible = ref(false);
+const musicScoreStageClosing = ref(false);
 const musicScoreUploadBusy = ref(false);
 const musicScoreInput = ref<HTMLInputElement | null>(null);
 const musicScoreUploadTrackId = ref<number | null>(null);
-let musicScoreCloseTimer: number | undefined;
+const MUSIC_SCORE_CHAT_DURATION_MS = 1140;
+const MUSIC_SCORE_STAGE_DURATION_MS = 980;
+let musicScoreTimer: number | undefined;
 let musicAudio: HTMLAudioElement | null = null;
 const showAdmin = ref(false);
 const showSettings = ref(false);
@@ -917,8 +922,7 @@ watch(
       pauseMusic();
       musicTracks.value = [];
       currentMusicTrackId.value = null;
-      musicScoreOpen.value = false;
-      musicScoreClosing.value = false;
+      resetMusicScoreState();
       closeMusicSurface();
     }
   },
@@ -965,7 +969,7 @@ onBeforeUnmount(() => {
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
-  if (musicScoreCloseTimer) window.clearTimeout(musicScoreCloseTimer);
+  if (musicScoreTimer) window.clearTimeout(musicScoreTimer);
   clearMessageLongPress();
   clearFavoriteLongPress();
   clearChannelLongPress();
@@ -4555,27 +4559,66 @@ function openMusicScorePreview(page: MusicScorePageDTO) {
 
 function openMusicScore() {
   if (!currentMusicScorePages.value.length) return;
-  if (musicScoreCloseTimer) window.clearTimeout(musicScoreCloseTimer);
+  clearMusicScoreTimer();
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   musicScoreClosing.value = false;
+  musicScoreStageClosing.value = false;
+  musicScoreStageVisible.value = reduceMotion;
   musicScoreOpen.value = true;
+  musicScoreChatCleared.value = true;
   showMessageFontMenu.value = false;
   closeMusicSurface();
+  if (!reduceMotion) {
+    setMusicScoreTimer(MUSIC_SCORE_CHAT_DURATION_MS, () => {
+      if (musicScoreOpen.value && !musicScoreClosing.value) musicScoreStageVisible.value = true;
+    });
+  }
 }
 
 function closeMusicScore(immediate = false) {
   if (!musicScoreOpen.value) return;
-  if (musicScoreCloseTimer) window.clearTimeout(musicScoreCloseTimer);
+  if (musicScoreClosing.value && !immediate) return;
+  clearMusicScoreTimer();
   if (immediate || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-    musicScoreOpen.value = false;
-    musicScoreClosing.value = false;
+    resetMusicScoreState();
     return;
   }
   musicScoreClosing.value = true;
-  musicScoreCloseTimer = window.setTimeout(() => {
-    musicScoreOpen.value = false;
-    musicScoreClosing.value = false;
-    musicScoreCloseTimer = undefined;
-  }, 760);
+  if (!musicScoreStageVisible.value) {
+    musicScoreChatCleared.value = false;
+    setMusicScoreTimer(MUSIC_SCORE_CHAT_DURATION_MS, resetMusicScoreState);
+    return;
+  }
+  musicScoreStageClosing.value = true;
+  setMusicScoreTimer(MUSIC_SCORE_STAGE_DURATION_MS, () => {
+    musicScoreStageVisible.value = false;
+    musicScoreStageClosing.value = false;
+    musicScoreChatCleared.value = false;
+    setMusicScoreTimer(MUSIC_SCORE_CHAT_DURATION_MS, resetMusicScoreState);
+  });
+}
+
+function clearMusicScoreTimer() {
+  if (!musicScoreTimer) return;
+  window.clearTimeout(musicScoreTimer);
+  musicScoreTimer = undefined;
+}
+
+function setMusicScoreTimer(delay: number, callback: () => void) {
+  clearMusicScoreTimer();
+  musicScoreTimer = window.setTimeout(() => {
+    musicScoreTimer = undefined;
+    callback();
+  }, delay);
+}
+
+function resetMusicScoreState() {
+  clearMusicScoreTimer();
+  musicScoreOpen.value = false;
+  musicScoreClosing.value = false;
+  musicScoreChatCleared.value = false;
+  musicScoreStageVisible.value = false;
+  musicScoreStageClosing.value = false;
 }
 
 function toggleMusicScore() {
@@ -7818,7 +7861,11 @@ async function toggleVirtual(character: any) {
       <div
         v-else
         class="messages-viewport"
-        :class="{ 'music-score-open': musicScoreOpen, 'music-score-closing': musicScoreClosing }"
+        :class="{
+          'music-score-open': musicScoreOpen,
+          'music-score-closing': musicScoreClosing,
+          'music-score-chat-cleared': musicScoreChatCleared
+        }"
       >
         <section v-if="musicPlaylistOpen" class="music-playlist-overlay" data-music-playlist @click.self="closeMusicSurface">
           <div class="music-playlist-panel" @click.stop>
@@ -7846,7 +7893,7 @@ async function toggleVirtual(character: any) {
             <p v-else class="music-playlist-empty">播放列表还是空的</p>
           </div>
         </section>
-        <section v-if="musicScoreOpen" class="music-score-stage" :class="{ closing: musicScoreClosing }" aria-label="当前歌曲歌谱">
+        <section v-if="musicScoreStageVisible" class="music-score-stage" :class="{ closing: musicScoreStageClosing }" aria-label="当前歌曲歌谱">
           <button class="music-score-close" type="button" @click="closeMusicScore()" aria-label="关闭歌谱"><X :size="21" /></button>
           <div class="music-score-pages">
             <button
