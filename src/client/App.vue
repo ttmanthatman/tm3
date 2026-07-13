@@ -7197,7 +7197,6 @@ async function toggleVirtual(character: any) {
             <span class="favorites-main-icon"><Heart :size="22" /></span>
             <div>
               <strong>我的收藏</strong>
-              <small>{{ favoriteMessages.length }} 条消息 · 长按任意卡片查看原消息上下文</small>
             </div>
           </div>
           <p v-if="favoritesLoading" class="favorites-empty">正在加载收藏…</p>
@@ -7207,6 +7206,7 @@ async function toggleVirtual(character: any) {
               v-for="favorite in favoriteMessages"
               :key="favorite.id"
               class="favorite-message-card"
+              :class="{ 'favorite-image-card': favorite.message.type === 'image' }"
               @pointerdown="beginFavoriteLongPress(favorite, $event)"
               @pointermove="moveFavoriteLongPress"
               @pointerup="clearFavoriteLongPress"

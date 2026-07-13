@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.10.9";
+export const APP_VERSION = "0.10.10";
 
 export const RELEASE_DATE = "2026-07-13";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "收藏夹图片卡片改为紧凑展示：去除图片旁的大块灰色留白，并收窄整体卡片宽度。",
+  "收藏夹顶部移除重复的长按操作提示，保留明确的查看上下文入口。"
+] as const;
+
+const RELEASE_0_10_9_NOTES = [
   "修复聊天链接卡片的文章特色图片：离线缓存不再拦截外站图片，特色图现在可以正常加载。"
 ] as const;
 
@@ -426,9 +431,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.10.9",
+    version: "0.10.10",
     date: "2026-07-13",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.10.9",
+    date: "2026-07-13",
+    notes: RELEASE_0_10_9_NOTES
   },
   {
     version: "0.10.8",

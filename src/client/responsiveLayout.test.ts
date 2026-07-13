@@ -57,9 +57,13 @@ test("favorites stays fixed above the profile while only channels scroll", () =>
 test("favorites render in the main chat surface and support context jumps", () => {
   assert.match(app, /v-if="showFavorites" class="messages-viewport favorites-viewport"/);
   assert.match(app, /class="favorites-main-list"[\s\S]*?beginFavoriteLongPress\(favorite, \$event\)/);
+  assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
+  assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
   assert.match(app, /v-if="!showFavorites" class="composer"/);
-  assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(760px, 100%\);/);
+  assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
+  assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
+  assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);
 });
 
 test("explicit context jumps win over saved read-position restoration", () => {

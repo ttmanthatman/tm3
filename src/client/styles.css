@@ -1045,7 +1045,7 @@ button {
 
 .favorites-main-head,
 .favorites-main-list {
-  width: min(760px, 100%);
+  width: min(620px, 100%);
   margin-inline: auto;
 }
 
@@ -1141,6 +1141,23 @@ button {
   max-height: 360px;
   border-radius: 8px;
   object-fit: contain;
+}
+
+.favorite-image-card {
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+}
+
+.favorite-image-card .favorite-message-content {
+  margin: 0 10px;
+  padding: 0;
+  background: transparent;
+}
+
+.favorite-image-card .favorite-message-image {
+  max-width: min(100%, 320px);
+  max-height: 520px;
 }
 
 .favorite-message-file {
