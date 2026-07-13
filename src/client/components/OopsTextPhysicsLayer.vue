@@ -7,6 +7,7 @@ import {
   sampleWithoutReplacement,
   segmentTextGraphemes
 } from "../oopsText";
+import { keepReturningBodyAwake, returnHasSettled } from "../oopsPhysics";
 
 type MatterModule = typeof import("matter-js");
 type GlyphCandidate = {
@@ -206,7 +207,7 @@ function rebuildStaticBodies() {
   bubbleTargets.clear();
   const layerRect = layer.value.getBoundingClientRect();
   const composerRect = composerElement()?.getBoundingClientRect();
-  const floorY = composerRect ? composerRect.top - layerRect.top : layerRect.height;
+  const floorY = composerRect ? Math.min(layerRect.height, composerRect.bottom - layerRect.top) : layerRect.height;
   const wallThickness = 90;
   const floor = matter.Bodies.rectangle(layerRect.width / 2, floorY + wallThickness / 2, layerRect.width + wallThickness * 2, wallThickness, {
     isStatic: true,
@@ -369,19 +370,19 @@ function updateReturning(active: ActiveMessage, now: number) {
   if (!matter || !layer.value) return;
   const elapsed = now - active.returnStartedAt;
   const layerRect = layer.value.getBoundingClientRect();
-  let allClose = elapsed > 420;
+  const remainingDistances: number[] = [];
   for (const glyph of active.glyphs) {
     if (!glyph.origin.isConnected) {
       finishMessage(active.id);
       return;
     }
+    keepReturningBodyAwake(matter, glyph.body);
     const targetRect = glyph.origin.getBoundingClientRect();
     const targetX = targetRect.left - layerRect.left + targetRect.width / 2;
     const targetY = targetRect.top - layerRect.top + targetRect.height / 2;
     const dx = targetX - glyph.body.position.x;
     const dy = targetY - glyph.body.position.y;
     const distance = Math.hypot(dx, dy);
-    if (distance > 2.2) allClose = false;
     if (elapsed < 320) {
       matter.Body.setVelocity(glyph.body, {
         x: glyph.body.velocity.x * 0.9 + dx * 0.012,
@@ -395,10 +396,26 @@ function updateReturning(active: ActiveMessage, now: number) {
         y: glyph.body.velocity.y * 0.72 + targetVelocity.y * 0.28
       });
     }
+    let remainingDistance = distance;
+    if (elapsed > 1_200) {
+      const ease = elapsed > 1_800 ? 0.3 : 0.16;
+      const nextPosition = {
+        x: glyph.body.position.x + dx * ease,
+        y: glyph.body.position.y + dy * ease
+      };
+      matter.Body.setPosition(glyph.body, nextPosition);
+      remainingDistance = distance * (1 - ease);
+      if (remainingDistance <= 1.2) {
+        matter.Body.setPosition(glyph.body, { x: targetX, y: targetY });
+        matter.Body.setVelocity(glyph.body, { x: 0, y: 0 });
+        remainingDistance = 0;
+      }
+    }
+    remainingDistances.push(remainingDistance);
     matter.Body.setAngularVelocity(glyph.body, glyph.body.angularVelocity * 0.84);
     matter.Body.setAngle(glyph.body, glyph.body.angle * 0.88);
   }
-  if (allClose || elapsed > 1900) finishMessage(active.id);
+  if (returnHasSettled(elapsed, remainingDistances)) finishMessage(active.id);
 }
 
 function sourceStillVisible(active: ActiveMessage) {
