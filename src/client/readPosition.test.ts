@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSavedReadPosition, shouldFollowMessageListChange, shouldRestoreNewestPosition } from "./readPosition";
+import { newestPositionForSessionEntry, normalizeSavedReadPosition, shouldFollowMessageListChange, shouldRestoreNewestPosition } from "./readPosition";
+
+test("a fresh browser or login session always starts at the semantic newest position", () => {
+  assert.deepEqual(newestPositionForSessionEntry(1234), {
+    messageId: "__newest__",
+    offset: 0,
+    atBottom: true,
+    scrollTop: 0,
+    savedAt: 1234
+  });
+});
 
 test("normalizeSavedReadPosition rejects corrupt or stale pixel-only positions", () => {
   assert.equal(normalizeSavedReadPosition(null), null);

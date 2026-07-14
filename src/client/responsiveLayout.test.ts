@@ -198,7 +198,7 @@ test("double-at song mentions render inline with independent playback controls",
   assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
   assert.match(app, /toggleMentionedMusic\(row\.message\)[\s\S]*?stopMentionedMusic\(row\.message\)/);
   assert.match(app, /function stopMentionedMusic[\s\S]*?musicAudio\.currentTime = 0/);
-  assert.match(app, /v-if="!isMentionedMusicPlaying\(row\.message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-pause[\s\S]*?music-mention-capsule-stop/);
+  assert.match(app, /v-if="!isMentionedMusicPlaying\(row\.message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-stop[\s\S]*?music-mention-capsule-pause/);
   assert.match(css, /\.music-mention-text \.music-mention-title \{[\s\S]*?color: #ed741b;[\s\S]*?font-weight: 850;/);
   assert.match(css, /\.music-mention-capsule \{[\s\S]*?border-radius: 999px;[\s\S]*?radial-gradient[\s\S]*?box-shadow:/);
 });
@@ -212,11 +212,26 @@ test("audio messages offer multi-group forwarding from the long-press menu", () 
 });
 
 test("forwarded audio copies attached score pages and exposes them on the new message", () => {
-  assert.match(server, /include: \{ musicScorePages: \{ orderBy: \{ pageIndex: "asc" \} \} \}/);
+  assert.match(server, /include: \{ musicScorePages: \{ orderBy: \{ pageIndex: "asc" \} \}, musicLyrics: true \}/);
   assert.match(server, /scorePages: source\.musicScorePages\.map[\s\S]*?fs\.promises\.copyFile\(page\.sourcePath, path\.join\(MUSIC_SCORE_DIR, page\.filePath\)\)/);
   assert.match(server, /musicScorePages: \{[\s\S]*?create: copy\.scorePages\.map/);
   assert.match(app, /return message\.scorePages\?\.\[0\][\s\S]*?musicTracks\.value\.find/);
   assert.match(app, /const previewScorePages = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)\?\.scorePages/);
+});
+
+test("SRT lyrics upload from audio actions and render over the header during playback", () => {
+  assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,application\/x-subrip,text\/plain"/);
+  assert.match(app, /requestMusicLyricsUpload[\s\S]*?\/api\/music\/tracks\/\$\{trackId\}\/lyrics/);
+  assert.match(app, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
+  assert.match(app, /scheduleMusicLyricsHeaderResume[\s\S]*?5000/);
+  assert.match(app, /compactBytes\(row\.message\.fileSize\)[\s\S]*?带歌词/);
+  assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/lyrics"/);
+  assert.match(server, /source\.musicLyrics[\s\S]*?musicLyrics: \{ create: \{ fileName: source\.musicLyrics\.fileName/);
+});
+
+test("fresh browser and login entry force the chat to the newest semantic position", () => {
+  assert.match(app, /onMounted\([\s\S]*?await enterChatAtNewest\(\)/);
+  assert.match(app, /async function doLogin\([\s\S]*?await enterChatAtNewest\(\)/);
 });
 
 test("playlist supports search, four sort modes, and manual movement controls", () => {

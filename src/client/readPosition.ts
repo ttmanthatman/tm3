@@ -9,6 +9,16 @@ export type SavedReadPosition = {
   savedAt: number;
 };
 
+export function newestPositionForSessionEntry(savedAt = Date.now()): SavedReadPosition {
+  return {
+    messageId: NEWEST_READ_POSITION,
+    offset: 0,
+    atBottom: true,
+    scrollTop: 0,
+    savedAt
+  };
+}
+
 function finiteNumber(value: unknown, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;

@@ -115,6 +115,7 @@ import { likeNotificationToTopNotice } from "./likeNotification";
 import {
   NEWEST_POSITION_THRESHOLD,
   NEWEST_READ_POSITION,
+  newestPositionForSessionEntry,
   normalizeSavedReadPosition,
   shouldFollowMessageListChange,
   shouldRestoreNewestPosition,
@@ -199,6 +200,11 @@ const musicScoreInput = ref<HTMLInputElement | null>(null);
 const musicScoreUploadTrackId = ref<number | null>(null);
 const musicScoreManageTrackId = ref<number | null>(null);
 const musicScoreManageBusy = ref(false);
+const musicLyricsInput = ref<HTMLInputElement | null>(null);
+const musicLyricsUploadTrackId = ref<number | null>(null);
+const musicLyricsUploadBusy = ref(false);
+const musicCurrentTimeMs = ref(0);
+const musicLyricsHeaderSuppressed = ref(false);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
 const MUSIC_FADE_OUT_MS = 900;
@@ -206,6 +212,7 @@ let musicScoreTimer: number | undefined;
 let musicAudio: HTMLAudioElement | null = null;
 let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
+let musicLyricsHeaderResumeTimer: number | undefined;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -782,8 +789,7 @@ onMounted(async () => {
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
-  pendingReadPositionRestore.value = true;
-  await restoreSavedReadPosition();
+  await enterChatAtNewest();
 });
 
 function reloadApplication() {
@@ -1000,6 +1006,7 @@ onBeforeUnmount(() => {
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
   if (musicScoreTimer) window.clearTimeout(musicScoreTimer);
+  clearMusicLyricsHeaderResumeTimer();
   clearMessageLongPress();
   clearBlankScoreLongPress();
   clearFavoriteLongPress();
@@ -1030,6 +1037,27 @@ const currentMusicTrackIndex = computed(() => sortedMusicTracks.value.findIndex(
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
+const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
+const currentMusicLyricIndex = computed(() => {
+  const cues = currentMusicLyricCues.value;
+  if (!cues.length) return -1;
+  let index = -1;
+  for (let cueIndex = 0; cueIndex < cues.length; cueIndex += 1) {
+    if (cues[cueIndex].startMs > musicCurrentTimeMs.value) break;
+    index = cueIndex;
+  }
+  return Math.max(0, index);
+});
+const currentMusicLyricCue = computed(() => currentMusicLyricCues.value[currentMusicLyricIndex.value] || null);
+const nextMusicLyricCue = computed(() => currentMusicLyricCues.value[currentMusicLyricIndex.value + 1] || null);
+const currentMusicLyricProgress = computed(() => {
+  const cue = currentMusicLyricCue.value;
+  if (!cue) return 0;
+  return Math.max(0, Math.min(100, ((musicCurrentTimeMs.value - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)) * 100));
+});
+const musicLyricsHeaderVisible = computed(
+  () => musicPlaying.value && currentMusicLyricCues.value.length > 0 && !musicLyricsHeaderSuppressed.value
+);
 const musicScoreManageTrack = computed(() => musicTracks.value.find((track) => track.id === musicScoreManageTrackId.value) || null);
 const previewScorePages = computed(() => {
   const trackId = previewPinnedImage.value?.trackId;
@@ -1048,6 +1076,45 @@ const musicPlayerAnchorStyle = computed(() => ({
   "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
 }));
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
+
+function lyricDisplayText(text?: string | null) {
+  return String(text || "").replace(/\s*\n\s*/g, " ");
+}
+
+function clearMusicLyricsHeaderResumeTimer() {
+  if (musicLyricsHeaderResumeTimer !== undefined) window.clearTimeout(musicLyricsHeaderResumeTimer);
+  musicLyricsHeaderResumeTimer = undefined;
+}
+
+function scheduleMusicLyricsHeaderResume() {
+  clearMusicLyricsHeaderResumeTimer();
+  if (!musicPlaying.value || !currentMusicLyricCues.value.length) return;
+  musicLyricsHeaderResumeTimer = window.setTimeout(() => {
+    musicLyricsHeaderResumeTimer = undefined;
+    if (musicPlaying.value && currentMusicLyricCues.value.length) musicLyricsHeaderSuppressed.value = false;
+  }, 5000);
+}
+
+function hideMusicLyricsHeader() {
+  musicLyricsHeaderSuppressed.value = true;
+  scheduleMusicLyricsHeaderResume();
+}
+
+function handleChatHeaderInteraction() {
+  if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
+}
+
+watch(
+  () => [currentMusicTrack.value?.id, currentMusicTrack.value?.lyrics?.fileName, musicPlaying.value] as const,
+  ([trackId, lyricsFile, playing], [previousTrackId, previousLyricsFile]) => {
+    if (!playing || !lyricsFile) {
+      clearMusicLyricsHeaderResumeTimer();
+      musicLyricsHeaderSuppressed.value = false;
+      return;
+    }
+    if (trackId !== previousTrackId || lyricsFile !== previousLyricsFile) musicLyricsHeaderSuppressed.value = false;
+  }
+);
 const typingNoticeItems = computed<TopNotice[]>(() =>
   Object.entries(store.typing).map(([actorId, item]) => ({
     id: `typing-${actorId}`,
@@ -1758,6 +1825,7 @@ function stopMentionedMusic(message: MessageDTO) {
   if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
   pauseMusic(true);
   if (musicAudio) musicAudio.currentTime = 0;
+  musicCurrentTimeMs.value = 0;
   musicError.value = "";
 }
 
@@ -2061,10 +2129,15 @@ function loadSavedReadPosition(): SavedReadPosition | null {
 function saveNewestReadPosition(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
   const key = readPositionStorageKey(channelId, prayerOnly);
   if (!key) return;
-  localStorage.setItem(
-    key,
-    JSON.stringify({ messageId: newestReadPositionKey, offset: 0, atBottom: true, scrollTop: 0, savedAt: Date.now() })
-  );
+  localStorage.setItem(key, JSON.stringify(newestPositionForSessionEntry()));
+}
+
+async function enterChatAtNewest() {
+  readPositionRestoreToken += 1;
+  activeReadAnchor = null;
+  saveNewestReadPosition();
+  pendingReadPositionRestore.value = true;
+  await restoreSavedReadPosition();
 }
 
 async function restoreSavedReadPosition() {
@@ -2209,8 +2282,7 @@ async function doLogin() {
       return;
     }
     await switchToLinkedChannel();
-    await nextTick();
-    scrollBottom(false);
+    await enterChatAtNewest();
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : authMode.value === "register" ? "注册失败" : "登录失败";
   }
@@ -4743,6 +4815,77 @@ function requestMusicScoreUpload() {
   void nextTick(() => musicScoreInput.value?.click());
 }
 
+function musicLyricsForMessage(message: MessageDTO) {
+  return message.lyrics || musicTracks.value.find((track) => track.id === message.id)?.lyrics || null;
+}
+
+function requestMusicLyricsUpload() {
+  const message = pendingMessageActions.value;
+  if (!message || !isManageableMusicMessage(message) || musicLyricsUploadBusy.value) return;
+  musicLyricsUploadTrackId.value = message.id;
+  closeMessageActionMenu();
+  void nextTick(() => musicLyricsInput.value?.click());
+}
+
+async function deleteMusicLyricsAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !isManageableMusicMessage(message) || !musicLyricsForMessage(message)) return;
+  if (!window.confirm(`删除“${musicTrackTitleFromMessage(message)}”的歌词？`)) return;
+  closeMessageActionMenu();
+  try {
+    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${message.id}/lyrics`, { method: "DELETE" });
+    mergeMusicTrackSnapshot(result.track);
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "删除歌词失败");
+  }
+}
+
+async function handleMusicLyricsPicked(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = "";
+  const trackId = musicLyricsUploadTrackId.value;
+  if (!trackId || !file || musicLyricsUploadBusy.value) return;
+  if (!/\.srt$/i.test(file.name)) {
+    alert("歌词只支持 SRT 文件");
+    musicLyricsUploadTrackId.value = null;
+    return;
+  }
+  if (file.size > 1024 * 1024) {
+    alert("歌词文件不能超过 1MB");
+    musicLyricsUploadTrackId.value = null;
+    return;
+  }
+  const form = new FormData();
+  form.append("lyrics", file);
+  musicLyricsUploadBusy.value = true;
+  try {
+    const result = await new Promise<{ success?: boolean; track?: MusicTrackDTO; message?: string }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", `/api/music/tracks/${trackId}/lyrics`);
+      for (const [key, value] of Object.entries(authHeaders())) xhr.setRequestHeader(key, String(value));
+      xhr.onload = () => {
+        try {
+          resolve(JSON.parse(xhr.responseText || "{}"));
+        } catch {
+          resolve({ success: false, message: xhr.responseText || "歌词上传失败" });
+        }
+      };
+      xhr.onerror = () => reject(new Error("网络连接失败"));
+      xhr.send(form);
+    });
+    if (!result.success || !result.track) throw new Error(result.message || "歌词上传失败");
+    mergeMusicTrackSnapshot(result.track);
+    await store.loadMessages();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "歌词上传失败");
+  } finally {
+    musicLyricsUploadBusy.value = false;
+    musicLyricsUploadTrackId.value = null;
+  }
+}
+
 function openMusicScoreManagerAction() {
   const message = pendingMessageActions.value;
   if (!message || !isManageableMusicMessage(message)) return;
@@ -5402,6 +5545,8 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("error", handleMusicError);
   musicAudio.addEventListener("waiting", handleMusicWaiting);
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
+  musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
+  musicAudio.addEventListener("seeked", handleMusicTimeUpdate);
 }
 
 function cancelMusicFade(resetVolume = true) {
@@ -5422,9 +5567,12 @@ function disposeMusicAudio() {
   musicAudio.removeEventListener("error", handleMusicError);
   musicAudio.removeEventListener("waiting", handleMusicWaiting);
   musicAudio.removeEventListener("canplay", handleMusicCanPlay);
+  musicAudio.removeEventListener("timeupdate", handleMusicTimeUpdate);
+  musicAudio.removeEventListener("seeked", handleMusicTimeUpdate);
   musicAudio.removeAttribute("src");
   musicAudio.load();
   musicAudio = null;
+  musicCurrentTimeMs.value = 0;
 }
 
 function handleMusicPlay() {
@@ -5446,6 +5594,10 @@ function handleMusicCanPlay() {
   musicLoading.value = false;
 }
 
+function handleMusicTimeUpdate() {
+  musicCurrentTimeMs.value = Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000));
+}
+
 function handleMusicError() {
   musicPlaying.value = false;
   musicLoading.value = false;
@@ -5458,6 +5610,7 @@ function setMusicAudioTrack(track: MusicTrackDTO) {
   cancelMusicFade();
   musicAudio.src = musicStreamUrl(track);
   musicAudio.dataset.trackId = String(track.id);
+  musicCurrentTimeMs.value = 0;
   musicAudio.load();
 }
 
@@ -8036,7 +8189,7 @@ async function toggleVirtual(character: any) {
       <div v-if="store.connectionState !== 'connected'" class="connection-banner" role="status">
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
-      <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }">
+      <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }" @pointerdown="handleChatHeaderInteraction">
         <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player :style="musicPlayerAnchorStyle" @click.stop>
           <div class="music-player-transport">
             <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
@@ -8131,6 +8284,14 @@ async function toggleVirtual(character: any) {
         <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
         </template>
+        <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
+          <span class="music-lyrics-track-title">{{ currentMusicTrackTitle }}</span>
+          <span class="music-lyrics-current">
+            <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+            <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+          </span>
+          <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
+        </button>
       </header>
 
       <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
@@ -8601,7 +8762,7 @@ async function toggleVirtual(character: any) {
                     <div class="inline-audio-head">
                       <span class="inline-audio-title">
                         <strong :title="row.message.fileName || '音频'">{{ row.message.fileName || "音频" }}</strong>
-                        <small>音频 · {{ compactBytes(row.message.fileSize) }}</small>
+                        <small>音频 · {{ compactBytes(row.message.fileSize) }}<template v-if="row.message.lyrics"> · 带歌词</template></small>
                       </span>
                       <span class="inline-audio-actions">
                         <button type="button" @click="requestDownload(row.message, $event)" aria-label="下载音频" title="下载音频"><Download :size="15" /></button>
@@ -8666,14 +8827,14 @@ async function toggleVirtual(character: any) {
                         <span>播放</span>
                       </button>
                       <template v-else>
-                        <button type="button" class="music-mention-capsule-action music-mention-capsule-pause" @click="toggleMentionedMusic(row.message)" aria-label="暂停歌曲">
-                          <Pause :size="15" fill="currentColor" />
-                          <span>暂停</span>
-                        </button>
-                        <i class="music-mention-capsule-divider" aria-hidden="true"></i>
                         <button type="button" class="music-mention-capsule-action music-mention-capsule-stop" @click="stopMentionedMusic(row.message)" aria-label="停止歌曲">
                           <Square :size="13" fill="currentColor" />
                           <span>停止</span>
+                        </button>
+                        <i class="music-mention-capsule-divider" aria-hidden="true"></i>
+                        <button type="button" class="music-mention-capsule-action music-mention-capsule-pause" @click="toggleMentionedMusic(row.message)" aria-label="暂停歌曲">
+                          <Pause :size="15" fill="currentColor" />
+                          <span>暂停</span>
                         </button>
                       </template>
                     </div>
@@ -9042,6 +9203,7 @@ async function toggleVirtual(character: any) {
       accept=".png,.jpg,.jpeg,.webp,.heic,.heif,image/png,image/jpeg,image/webp,image/heic,image/heif"
       @change="handleMusicScorePicked"
     />
+    <input ref="musicLyricsInput" class="hidden" type="file" accept=".srt,application/x-subrip,text/plain" @change="handleMusicLyricsPicked" />
 
     <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
       <div class="tap-popover-card">
@@ -9060,6 +9222,8 @@ async function toggleVirtual(character: any) {
           <button v-if="isAudioMessage(pendingMessageActions)" type="button" @click="openForwardMessageDialog"><Send :size="15" />转发到其他群</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions) && musicScorePreviewPage(pendingMessageActions)" type="button" @click="openMusicScoreManagerAction"><ImageIcon :size="15" />管理歌谱页面</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicScoreUploadBusy" @click="requestMusicScoreUpload"><ImageIcon :size="15" />{{ musicScoreUploadBusy ? "正在上传歌谱" : musicScorePreviewPage(pendingMessageActions) ? "替换整套歌谱" : "上传歌谱" }}</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicLyricsUploadBusy" @click="requestMusicLyricsUpload"><FileUp :size="15" />{{ musicLyricsUploadBusy ? "正在上传歌词" : musicLyricsForMessage(pendingMessageActions) ? "替换歌词" : "上传歌词" }}</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions) && musicLyricsForMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicLyricsAction"><Trash2 :size="15" />删除歌词</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="renameMusicTrackAction"><FileText :size="15" />重命名</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicTrackAction"><Trash2 :size="15" />删除歌曲</button>
           <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>

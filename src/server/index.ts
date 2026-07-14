@@ -11,7 +11,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageType, type MusicScorePage, type PinnedItem } from "@prisma/client";
+import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageType, type MusicLyrics, type MusicScorePage, type PinnedItem } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
 import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
@@ -54,6 +54,7 @@ import { githubPackageManifestUrl } from "./updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
 import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
+import { parseSrt } from "./srt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -846,6 +847,7 @@ function isAudioFileName(name?: string | null) {
 function serializeMusicTrack(
   message: Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder"> & {
     musicScorePages?: Array<Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">>;
+    musicLyrics?: Pick<MusicLyrics, "fileName" | "content"> | null;
     _count?: { likes: number };
   },
   fallbackOrder = 0
@@ -866,7 +868,8 @@ function serializeMusicTrack(
       fileSize: page.fileSize,
       width: page.width,
       height: page.height
-    }))
+    })),
+    lyrics: message.musicLyrics ? { fileName: message.musicLyrics.fileName, cues: parseSrt(message.musicLyrics.content) } : null
   };
 }
 
@@ -1136,11 +1139,16 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       ? Promise.resolve(loadedReactions.favorites)
       : prisma.messageFavorite.findMany({ where: { messageId: message.id }, select: { accountId: true } })
   ]);
-  const loadedScorePages = (message as typeof message & { musicScorePages?: MusicScorePage[] }).musicScorePages;
-  const scorePages =
-    message.type === "file" && isAudioFileName(message.fileName)
-      ? loadedScorePages || (await prisma.musicScorePage.findMany({ where: { trackId: message.id }, orderBy: { pageIndex: "asc" } }))
-      : [];
+  const loadedAudioRelations = message as typeof message & { musicScorePages?: MusicScorePage[]; musicLyrics?: MusicLyrics | null };
+  const isAudio = message.type === "file" && isAudioFileName(message.fileName);
+  const [scorePages, musicLyrics] = isAudio
+    ? await Promise.all([
+        loadedAudioRelations.musicScorePages || prisma.musicScorePage.findMany({ where: { trackId: message.id }, orderBy: { pageIndex: "asc" } }),
+        loadedAudioRelations.musicLyrics !== undefined
+          ? Promise.resolve(loadedAudioRelations.musicLyrics)
+          : prisma.musicLyrics.findUnique({ where: { trackId: message.id } })
+      ])
+    : [[], null];
   if (message.type === "prayer") {
     const aiSettings = await loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
@@ -1215,6 +1223,7 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       width: page.width,
       height: page.height
     })),
+    lyrics: musicLyrics ? { fileName: musicLyrics.fileName, cues: parseSrt(musicLyrics.content) } : null,
     voiceListened,
     replyTo: message.replyTo
       ? {
@@ -3363,7 +3372,7 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
   const body = z.object({ channelIds: z.array(z.number().int().positive()).min(1).max(50) }).parse(request.body);
   const source = await prisma.message.findUnique({
     where: { id: messageId },
-    include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
   });
   if (!source || !(await canAccessChannel(auth.accountId, source.channelId))) {
     return reply.code(404).send({ success: false, message: "音频消息不存在" });
@@ -3418,9 +3427,12 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
             fileSize: source.fileSize,
             musicScorePages: {
               create: copy.scorePages.map(({ sourcePath: _sourcePath, ...page }) => page)
-            }
+            },
+            ...(source.musicLyrics
+              ? { musicLyrics: { create: { fileName: source.musicLyrics.fileName, content: source.musicLyrics.content } } }
+              : {})
           },
-          include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+          include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
         })
       )
     );
@@ -3824,7 +3836,7 @@ app.get("/api/music/tracks", { preHandler: requireAuth }, async () => {
   const messages = await prisma.message.findMany({
     where: { channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
     orderBy: [{ musicOrder: "asc" }, { createdAt: "desc" }, { id: "desc" }],
-    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, _count: { select: { likes: true } } }
+    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { likes: true } } }
   });
   return { tracks: messages.filter((message) => isMusicFileName(message.fileName)).map((message, index) => serializeMusicTrack(message, index)) };
 });
@@ -3845,6 +3857,57 @@ app.patch("/api/music/tracks/order", { preHandler: requireAuth }, async (request
   await prisma.$transaction(trackIds.map((id, musicOrder) => prisma.message.update({ where: { id }, data: { musicOrder } })));
   io.emit("music:updated", { action: "reordered" });
   return { success: true };
+});
+
+app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
+  const id = Number((request.params as { id: string }).id);
+  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  try {
+    const file = await request.file({ limits: { files: 1, fileSize: 1024 * 1024, parts: 1 } });
+    if (!file || !/\.srt$/i.test(file.filename || "")) return reply.code(400).send({ success: false, message: "歌词只支持 SRT 文件" });
+    const buffer = await file.toBuffer();
+    if (file.file.truncated || buffer.length > 1024 * 1024) return reply.code(400).send({ success: false, message: "歌词文件不能超过 1MB" });
+    const content = buffer.toString("utf8");
+    const cues = parseSrt(content);
+    if (!cues.length) return reply.code(400).send({ success: false, message: "SRT 中没有有效的歌词时间轴" });
+    const updated = await prisma.$transaction(async (transaction) => {
+      await transaction.musicLyrics.upsert({
+        where: { trackId: id },
+        create: { trackId: id, fileName: path.basename(file.filename).slice(0, 255), content },
+        update: { fileName: path.basename(file.filename).slice(0, 255), content }
+      });
+      return transaction.message.findUniqueOrThrow({
+        where: { id },
+        include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+      });
+    });
+    io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
+    io.emit("music:updated", { action: "lyrics-updated", trackId: id });
+    return { success: true, track: serializeMusicTrack(updated) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "歌词上传失败";
+    request.log.warn({ error, trackId: id }, "music lyrics upload failed");
+    return reply.code(400).send({ success: false, message });
+  }
+});
+
+app.delete("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
+  const id = Number((request.params as { id: string }).id);
+  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  await prisma.musicLyrics.deleteMany({ where: { trackId: id } });
+  const updated = await prisma.message.findUniqueOrThrow({
+    where: { id },
+    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+  });
+  io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
+  io.emit("music:updated", { action: "lyrics-deleted", trackId: id });
+  return { success: true, track: serializeMusicTrack(updated) };
 });
 
 app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (request, reply) => {
@@ -3909,7 +3972,7 @@ app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (reque
       await transaction.musicScorePage.createMany({ data: pages.map((page) => ({ trackId: id, ...page })) });
       return transaction.message.findUniqueOrThrow({
         where: { id },
-        include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+        include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
       });
     });
     createdPaths.length = 0;
@@ -3948,7 +4011,7 @@ app.patch("/api/music/tracks/:trackId/score", { preHandler: requireAuth }, async
     }
     return transaction.message.findUniqueOrThrow({
       where: { id: trackId },
-      include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
     });
   });
   io.emit("music:updated", { action: "score-reordered", trackId });
@@ -3977,7 +4040,7 @@ app.delete("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireAuth
     }
     return transaction.message.findUniqueOrThrow({
       where: { id: trackId },
-      include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
     });
   });
   safeUnlinkMusicScore(page.filePath);
@@ -4045,7 +4108,7 @@ app.patch("/api/music/tracks/:id", { preHandler: requireAuth }, async (request, 
   const updated = await prisma.message.update({
     where: { id },
     data: { fileName: `${requested}${extension}` },
-    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } } }
+    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
   });
   io.to(`ch:${message.channelId}`).emit("message:updated", await serializeMessage(updated));
   io.emit("music:updated", { action: "renamed", trackId: id });

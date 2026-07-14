@@ -65,6 +65,7 @@ export interface MessageDTO {
   fileName?: string | null;
   fileSize?: number | null;
   scorePages?: MusicScorePageDTO[];
+  lyrics?: MusicLyricsDTO | null;
   voiceListened?: boolean;
   replyTo?: ReplyPreviewDTO | null;
   chainRootId?: number | null;
@@ -198,6 +199,19 @@ export interface MusicTrackDTO {
   heat: number;
   manualOrder: number;
   scorePages: MusicScorePageDTO[];
+  lyrics: MusicLyricsDTO | null;
+}
+
+export interface MusicLyricCueDTO {
+  index: number;
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
+export interface MusicLyricsDTO {
+  fileName: string;
+  cues: MusicLyricCueDTO[];
 }
 
 export interface MusicMentionPayload {
