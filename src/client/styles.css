@@ -1731,7 +1731,7 @@ button {
   isolation: isolate;
 }
 
-.chat-pane > :not(.parallax-background):not(.modal-shell) {
+.chat-pane > :not(.parallax-background):not(.modal-shell):not(.music-lyrics-header) {
   z-index: 1;
 }
 

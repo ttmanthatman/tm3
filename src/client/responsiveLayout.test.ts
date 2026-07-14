@@ -19,7 +19,7 @@ test("mobile drawers stay above the chat header and their scrim", () => {
 });
 
 test("pinned notices stay above chat content and retain their modal layer", () => {
-  assert.match(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\) \{[\s\S]*?z-index: 1;/);
+  assert.match(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\) \{[\s\S]*?z-index: 1;/);
   assert.match(css, /\.pinned-view-shell \{[\s\S]*?z-index: 50;/);
   assert.match(app, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
 });
@@ -246,11 +246,12 @@ test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
   assert.match(server, /parseLyrics\(content, file\.filename\)/);
 });
 
-test("karaoke lyrics expand over pinned content with refined enter and leave motion", () => {
+test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
   assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?class="music-lyrics-header"/);
   assert.doesNotMatch(app, /music-lyrics-track-title/);
   assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(112px \+ var\(--safe-top\)\);[\s\S]*?border-radius: 0;/);
   assert.match(css, /\.chat-pane > \.music-lyrics-header \{[\s\S]*?z-index: 30;/);
+  assert.doesNotMatch(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\) \{[\s\S]*?z-index: 1;/);
   assert.doesNotMatch(css, /round 0 0 26px 26px/);
   assert.match(css, /\.music-lyrics-panel-enter-active[\s\S]*?musicLyricsReveal/);
   assert.match(css, /\.music-lyrics-panel-leave-active[\s\S]*?musicLyricsRetract/);
