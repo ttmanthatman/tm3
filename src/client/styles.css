@@ -833,14 +833,14 @@ button {
   top: 0;
   right: 0;
   left: 0;
-  height: calc(168px + var(--safe-top));
+  height: calc(112px + var(--safe-top));
   z-index: 30;
   width: 100%;
   min-width: 0;
-  padding: calc(var(--safe-top) + 28px) clamp(22px, 6vw, 58px) 26px;
+  padding: calc(var(--safe-top) + 14px) clamp(18px, 5vw, 48px) 14px;
   border: 0;
   border-bottom: 1px solid rgba(255, 215, 159, 0.24);
-  border-radius: 0 0 26px 26px;
+  border-radius: 0;
   color: #fff;
   background:
     radial-gradient(circle at 18% 6%, rgba(255, 180, 85, 0.24), transparent 42%),
@@ -853,7 +853,7 @@ button {
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 15px;
+  gap: 8px;
   overflow: hidden;
   cursor: pointer;
   font: inherit;
@@ -959,12 +959,12 @@ button {
 @keyframes musicLyricsReveal {
   from {
     opacity: 0.35;
-    clip-path: inset(0 0 100% 0 round 0 0 26px 26px);
+    clip-path: inset(0 0 100% 0);
     transform: translateY(-12px);
   }
   to {
     opacity: 1;
-    clip-path: inset(0 0 0 0 round 0 0 26px 26px);
+    clip-path: inset(0);
     transform: translateY(0);
   }
 }
@@ -972,12 +972,12 @@ button {
 @keyframes musicLyricsRetract {
   from {
     opacity: 1;
-    clip-path: inset(0 0 0 0 round 0 0 26px 26px);
+    clip-path: inset(0);
     transform: translateY(0);
   }
   to {
     opacity: 0.18;
-    clip-path: inset(0 0 100% 0 round 0 0 26px 26px);
+    clip-path: inset(0 0 100% 0);
     transform: translateY(-18px);
   }
 }
@@ -1738,6 +1738,10 @@ button {
 .chat-pane > .chat-head {
   z-index: 21;
   overflow: visible;
+}
+
+.chat-pane > .music-lyrics-header {
+  z-index: 30;
 }
 
 .parallax-background {
@@ -8065,10 +8069,10 @@ button.admin-object-row:focus-visible {
   }
 
   .music-lyrics-header {
-    height: calc(144px + var(--safe-top));
-    padding: calc(var(--safe-top) + 22px) 18px 22px;
-    gap: 12px;
-    border-radius: 0 0 22px 22px;
+    height: calc(104px + var(--safe-top));
+    padding: calc(var(--safe-top) + 12px) 14px 12px;
+    gap: 7px;
+    border-radius: 0;
   }
 
   .messages-scroll {

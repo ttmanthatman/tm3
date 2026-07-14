@@ -55,6 +55,7 @@ import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranch
 import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { parseLyrics } from "./srt.js";
+import { canReadMusicScore } from "./musicScoreAccess.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -4053,10 +4054,11 @@ app.get("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireMediaAu
   const { trackId, pageId } = request.params as { trackId: string; pageId: string };
   const page = await prisma.musicScorePage.findFirst({
     where: { id: Number(pageId), trackId: Number(trackId), track: { type: "file" } },
-    include: { track: { select: { channelId: true, fileName: true } } }
+    include: { track: { select: { channelId: true, fileName: true, channel: { select: { kind: true } } } } }
   });
   if (!page || !isAudioFileName(page.track.fileName)) return reply.code(404).send({ success: false, message: "歌谱不存在" });
-  if (!(await canAccessChannel(auth.accountId, page.track.channelId))) return reply.code(403).send({ success: false, message: "无权查看歌谱" });
+  const canAccessSourceChannel = page.track.channel.kind === "music" || (await canAccessChannel(auth.accountId, page.track.channelId));
+  if (!canReadMusicScore(page.track.channel.kind, canAccessSourceChannel)) return reply.code(403).send({ success: false, message: "无权查看歌谱" });
   const filePath = path.join(MUSIC_SCORE_DIR, path.basename(page.filePath));
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "歌谱文件不存在" });
   applyFileResponseHeaders(reply, page.fileName, false);

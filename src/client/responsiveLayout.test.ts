@@ -219,6 +219,15 @@ test("forwarded audio copies attached score pages and exposes them on the new me
   assert.match(app, /const previewScorePages = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)\?\.scorePages/);
 });
 
+test("music scores preload through authenticated blobs for reliable Safari rendering", () => {
+  assert.match(app, /async function preloadMusicScorePages/);
+  assert.match(app, /fetch\(musicScoreRequestUrl\(page, trackId\), \{ headers: authHeaders\(\) \}\)/);
+  assert.match(app, /URL\.createObjectURL\(blob\)/);
+  assert.match(app, /void preloadMusicScorePages\(result\.tracks\)/);
+  assert.match(app, /musicScoreCachedUrls\.value\[page\.id\]/);
+  assert.match(server, /canReadMusicScore\(page\.track\.channel\.kind, canAccessSourceChannel\)/);
+});
+
 test("SRT and LRC lyrics upload from audio actions and render over the header during playback", () => {
   assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,\.lrc,application\/x-subrip,text\/plain"/);
   assert.match(app, /requestMusicLyricsUpload[\s\S]*?\/api\/music\/tracks\/\$\{trackId\}\/lyrics/);
@@ -238,10 +247,11 @@ test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
 });
 
 test("karaoke lyrics expand over pinned content with refined enter and leave motion", () => {
-  assert.match(app, /<Transition name="music-lyrics-panel">[\s\S]*?class="music-lyrics-header"/);
+  assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?class="music-lyrics-header"/);
   assert.doesNotMatch(app, /music-lyrics-track-title/);
-  assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(168px \+ var\(--safe-top\)\);[\s\S]*?z-index: 30;/);
-  assert.match(css, /\.chat-pane > \.chat-head \{[\s\S]*?z-index: 21;[\s\S]*?overflow: visible;/);
+  assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(112px \+ var\(--safe-top\)\);[\s\S]*?border-radius: 0;/);
+  assert.match(css, /\.chat-pane > \.music-lyrics-header \{[\s\S]*?z-index: 30;/);
+  assert.doesNotMatch(css, /round 0 0 26px 26px/);
   assert.match(css, /\.music-lyrics-panel-enter-active[\s\S]*?musicLyricsReveal/);
   assert.match(css, /\.music-lyrics-panel-leave-active[\s\S]*?musicLyricsRetract/);
 });

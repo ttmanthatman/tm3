@@ -180,6 +180,9 @@ const legacyMessageFontSizes: Record<string, number> = {
 const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
+const musicScoreCachedUrls = ref<Record<number, string>>({});
+const musicScorePreloadPromises = new Map<number, Promise<string>>();
+let musicScoreCacheGeneration = 0;
 const currentMusicTrackId = ref<number | null>(null);
 const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
 const musicPlayerExpanded = ref(false);
@@ -958,6 +961,7 @@ watch(
       void loadNotificationSettings();
     } else {
       pauseMusic();
+      clearMusicScoreCache();
       musicTracks.value = [];
       currentMusicTrackId.value = null;
       resetMusicScoreState();
@@ -1020,6 +1024,7 @@ onBeforeUnmount(() => {
   stopAllVoicePlayback();
   resetRecording();
   store.socket?.off("music:updated", handleMusicUpdated);
+  clearMusicScoreCache();
   disposeMusicAudio();
 });
 
@@ -4905,6 +4910,7 @@ function mergeMusicTrackSnapshot(track: MusicTrackDTO) {
       ? { ...existing, ...track, heat: track.heat || existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
       : existing
   );
+  void preloadMusicScorePages([track]);
 }
 
 async function moveMusicScorePage(index: number, delta: number) {
@@ -4932,6 +4938,7 @@ async function deleteMusicScorePage(page: MusicScorePageDTO) {
   musicScoreManageBusy.value = true;
   try {
     const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/score/${page.id}`, { method: "DELETE" });
+    removeMusicScoreCachePage(page.id);
     mergeMusicTrackSnapshot(result.track);
     if (!result.track.scorePages.length) musicScoreManageTrackId.value = null;
     if (previewPinnedImage.value?.pageId === page.id) closePreviewMessage();
@@ -4988,17 +4995,79 @@ async function handleMusicScorePicked(event: Event) {
   }
 }
 
-function musicScorePageUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
+function musicScoreRequestUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
   if (!trackId) return "";
-  return `/api/music/tracks/${trackId}/score/${page.id}?token=${encodeURIComponent(getToken())}`;
+  return `/api/music/tracks/${trackId}/score/${page.id}`;
+}
+
+function musicScorePageUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
+  const cachedUrl = musicScoreCachedUrls.value[page.id];
+  if (cachedUrl) return cachedUrl;
+  const requestUrl = musicScoreRequestUrl(page, trackId);
+  return requestUrl ? `${requestUrl}?token=${encodeURIComponent(getToken())}` : "";
+}
+
+function clearMusicScoreCache() {
+  musicScoreCacheGeneration += 1;
+  for (const url of Object.values(musicScoreCachedUrls.value)) URL.revokeObjectURL(url);
+  musicScoreCachedUrls.value = {};
+  musicScorePreloadPromises.clear();
+}
+
+function removeMusicScoreCachePage(pageId: number) {
+  const cachedUrl = musicScoreCachedUrls.value[pageId];
+  if (!cachedUrl) return;
+  URL.revokeObjectURL(cachedUrl);
+  const next = { ...musicScoreCachedUrls.value };
+  delete next[pageId];
+  musicScoreCachedUrls.value = next;
+}
+
+async function preloadMusicScorePage(page: MusicScorePageDTO, trackId: number) {
+  const cachedUrl = musicScoreCachedUrls.value[page.id];
+  if (cachedUrl) return cachedUrl;
+  const pending = musicScorePreloadPromises.get(page.id);
+  if (pending) return pending;
+  const generation = musicScoreCacheGeneration;
+  const request = (async () => {
+    const response = await fetch(musicScoreRequestUrl(page, trackId), { headers: authHeaders() });
+    if (!response.ok) throw new Error(`歌谱预加载失败：HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("歌谱预加载失败：文件为空");
+    const objectUrl = URL.createObjectURL(blob);
+    if (generation !== musicScoreCacheGeneration) {
+      URL.revokeObjectURL(objectUrl);
+      return "";
+    }
+    musicScoreCachedUrls.value = { ...musicScoreCachedUrls.value, [page.id]: objectUrl };
+    return objectUrl;
+  })()
+    .catch(() => "")
+    .finally(() => musicScorePreloadPromises.delete(page.id));
+  musicScorePreloadPromises.set(page.id, request);
+  return request;
+}
+
+async function preloadMusicScorePages(tracks: ReadonlyArray<{ id: number; scorePages?: MusicScorePageDTO[] }>) {
+  const pages = tracks.flatMap((track) => (track.scorePages || []).map((page) => ({ page, trackId: track.id })));
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < pages.length) {
+      const item = pages[nextIndex];
+      nextIndex += 1;
+      await preloadMusicScorePage(item.page, item.trackId);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(3, pages.length) }, worker));
 }
 
 function musicScorePreviewPage(message: MessageDTO) {
   return message.scorePages?.[0] || musicTracks.value.find((track) => track.id === message.id)?.scorePages[0] || null;
 }
 
-function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
-  const url = musicScorePageUrl(page, trackId);
+async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
+  if (!trackId) return;
+  const url = (await preloadMusicScorePage(page, trackId)) || musicScorePageUrl(page, trackId);
   if (!url) return;
   previewPinnedImage.value = { url, fileName: page.fileName, score: true, trackId, pageId: page.id };
   previewMessage.value = {
@@ -5789,6 +5858,7 @@ async function loadMusicTracks() {
   try {
     const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
     musicTracks.value = result.tracks;
+    void preloadMusicScorePages(result.tracks);
     if (previousId && result.tracks.some((track) => track.id === previousId)) {
       currentMusicTrackId.value = previousId;
       reconcileOpenMusicScore();
@@ -8310,22 +8380,23 @@ async function toggleVirtual(character: any) {
         <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
         </template>
-        <Transition name="music-lyrics-panel">
-          <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
-            <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
-              <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
-                <span class="music-lyrics-segment-base">{{ segment.text }}</span>
-                <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
-              </span>
-            </span>
-            <span v-else class="music-lyrics-current">
-              <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-              <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-            </span>
-            <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
-          </button>
-        </Transition>
       </header>
+
+      <Transition name="music-lyrics-panel">
+        <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
+          <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
+            <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
+              <span class="music-lyrics-segment-base">{{ segment.text }}</span>
+              <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
+            </span>
+          </span>
+          <span v-else class="music-lyrics-current">
+            <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+            <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+          </span>
+          <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
+        </button>
+      </Transition>
 
       <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
