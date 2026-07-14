@@ -2,7 +2,7 @@
 
 > 自己搭、自己管、自己玩。给个人、家庭、朋友、学习搭子和小团队准备的自托管聊天室。
 
-![Version](https://img.shields.io/badge/version-0.12.1-5f8d4e)
+![Version](https://img.shields.io/badge/version-0.12.2-5f8d4e)
 ![Node](https://img.shields.io/badge/Node.js-22%2B-339933)
 ![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)
 

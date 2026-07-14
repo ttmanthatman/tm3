@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.12.1";
+export const APP_VERSION = "0.12.2";
 
 export const RELEASE_DATE = "2026-07-14";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "iPhone、Safari 和 Chrome 在播放音乐时会暂停不可见歌词刷新；页面隐藏、息屏、暂停播放或退出歌词后不再维持无效的歌词渲染循环。",
+  "大量聊天记录改为按视口动态渲染，普通频道、代祷、私密频道和私聊只保留视口附近的消息；其他频道的消息特效不会在后台运行。",
+  "消息特效和掉落物理效果会在离开视口或页面隐藏时暂停；全局下雨只在当前可见聊天触发，并修复移动气泡被自身观察器反复暂停造成的列表闪动。",
+  "飞机气泡会完整飞出屏幕再循环，不再在仍有一半可见时突然消失；开发流程新增特效渲染经济性检查。"
+] as const;
+
+const RELEASE_0_12_1_NOTES = [
   "曲库载入时会通过授权请求预加载歌谱页面为本地 Blob URL，改善 Safari 上打开和查看歌谱的稳定性；转发歌谱仍会按来源频道权限校验。",
   "卡拉 OK 歌词区改为独立的顶部覆盖层并精简展示；修复聊天消息可覆盖歌词的问题，歌词始终位于聊天内容上方。"
 ] as const;
@@ -498,9 +505,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.1",
+    version: "0.12.2",
     date: "2026-07-14",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.1",
+    date: "2026-07-14",
+    notes: RELEASE_0_12_1_NOTES
   },
   {
     version: "0.12.0",

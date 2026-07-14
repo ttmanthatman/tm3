@@ -46,6 +46,18 @@ This index is the first file to read before changing Team Chat. It is intentiona
 - Gestures should require a clear horizontal axis and sufficient distance. Do not add speed-only panel switching.
 - Avoid animating the same element with both inline `transform` and CSS keyframes.
 
+## Effect Rendering Economy Checklist
+
+Complete this checklist whenever a message effect, ambient animation, lyric display, canvas, or physics interaction is added or changed.
+
+- Define the effect lifecycle explicitly: active, paused, and torn down. Pause it when the document is hidden or the stable message row leaves the viewport; stop it on `pagehide` and component unmount.
+- Observe a stable wrapper such as `.message-row`, never the animated or transformed child whose own movement can cross an intersection threshold.
+- Virtualized or offscreen messages must not retain active DOM animation, `requestAnimationFrame`, timers, observers, or physics bodies. Effects in other channels and direct chats must remain inactive until that view is current.
+- Start global one-shot effects only for the current visible chat view. Start canvas or physics loops only while visible participants exist, then cancel the frame and release transient state when none remain.
+- A cyclic movement must travel fully outside the visual region before it resets. Test both directions at 360px and 390px mobile widths and at least 1280px desktop width.
+- Prefer compositor-friendly `transform` and `opacity`; avoid layout-changing animation. Pausing or resuming pseudo-elements must not change message height, scroll height, or reading position.
+- Add a regression test for lifecycle and loop boundaries. For higher-risk effects, sample DOM count, `scrollHeight`, `scrollTop`, animation frames, and CPU activity in a real browser while visible, offscreen, hidden, and paused.
+
 ## Release Checklist
 
 - Bump `package.json` and `package-lock.json` together.

@@ -89,6 +89,12 @@ test("shine scans one vertical highlight fully across message text before restar
   assert.match(css, /@keyframes messageShine \{[\s\S]*?0% \{[\s\S]*?background-position: 100% 0;[\s\S]*?100% \{[\s\S]*?background-position: 0 0;/);
 });
 
+test("fly effects fully leave both sides of the viewport before looping", () => {
+  assert.match(css, /@keyframes messageFly \{[\s\S]*?translateX\(-100vw\)[\s\S]*?translateX\(100vw\)/);
+  assert.match(css, /@keyframes messageFlyReverse \{[\s\S]*?translateX\(100vw\)[\s\S]*?translateX\(-100vw\)/);
+  assert.doesNotMatch(css, /@keyframes messageFly[\s\S]*?72vw/);
+});
+
 test("favorites stays fixed above the profile while only channels scroll", () => {
   const channelListEnd = app.indexOf('</div>\n      <button class="channel-row favorites-entry"');
   const profileStart = app.indexOf('<footer class="profile-row">');

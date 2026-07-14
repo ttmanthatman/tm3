@@ -7802,19 +7802,19 @@ button.admin-object-row:focus-visible {
 
 @keyframes messageFly {
   0% {
-    transform: translateX(-72vw);
+    transform: translateX(-100vw);
   }
   100% {
-    transform: translateX(72vw);
+    transform: translateX(100vw);
   }
 }
 
 @keyframes messageFlyReverse {
   0% {
-    transform: translateX(72vw);
+    transform: translateX(100vw);
   }
   100% {
-    transform: translateX(-72vw);
+    transform: translateX(-100vw);
   }
 }
 
