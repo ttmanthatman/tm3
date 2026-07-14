@@ -78,7 +78,7 @@ test("download confirmation uses a direct confirmation question", () => {
   assert.doesNotMatch(app, /无法预览，下载？/);
 });
 
-test("like alerts use the top notice rail instead of a reading-area overlay", () => {
+test("like alerts use the header status line instead of a reading-area overlay", () => {
   assert.match(app, /likeNotificationToTopNotice\(/);
   assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
   assert.doesNotMatch(app, /class="like-notification-stack"/);
@@ -169,6 +169,21 @@ test("song control stays to the left of the font or score control", () => {
   assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
   assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);
   assert.doesNotMatch(css, /musicScorePageTurn/);
+});
+
+test("activity notices stay inside the fixed chat header as lightweight status text", () => {
+  const headerStart = app.indexOf('<header class="chat-head"');
+  const headerEnd = app.indexOf("</header>", headerStart);
+  const header = app.slice(headerStart, headerEnd);
+  const afterHeader = app.slice(headerEnd);
+
+  assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
+  assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
+  assert.match(app, /title: `\$\{item\.displayName\}正在输入`/);
+  assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
+  assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
+  assert.match(header, /class="typing-dots"[\s\S]*?<span>\.\.\.<\/span>/);
+  assert.match(css, /\.typing-dots > span \{[\s\S]*?animation: typingDotsReveal[\s\S]*?steps\(3, end\)/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {

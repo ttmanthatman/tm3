@@ -1149,7 +1149,7 @@ const typingNoticeItems = computed<TopNotice[]>(() =>
   Object.entries(store.typing).map(([actorId, item]) => ({
     id: `typing-${actorId}`,
     kind: "typing",
-    title: `${item.displayName} 正在输入`,
+    title: `${item.displayName}正在输入`,
     body: currentChannel.value?.name || "当前频道",
     channelId: store.currentChannelId
   }))
@@ -8597,6 +8597,25 @@ async function toggleVirtual(character: any) {
             <strong>{{ showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
           <small v-if="showFavorites">集中查看所有收藏，长按消息可跳转到聊天上下文</small>
+          <div v-else-if="activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
+            <button
+              class="chat-status-text"
+              :class="{ clickable: activeTopNotice.kind !== 'typing' }"
+              type="button"
+              :disabled="activeTopNotice.kind === 'typing'"
+              :aria-label="activeTopNotice.kind === 'typing' ? `${activeTopNotice.title}...` : activeTopNotice.title"
+              @click="openTopNotice(activeTopNotice)"
+            >
+              <span class="chat-status-copy">{{ activeTopNotice.title }}<span v-if="activeTopNotice.kind === 'typing'" class="typing-dots" aria-hidden="true"><span>...</span></span></span>
+            </button>
+            <button
+              v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
+              class="chat-status-close"
+              type="button"
+              aria-label="关闭点赞提醒"
+              @click="dismissLikeNotification(activeTopNotice.notificationId)"
+            ><X :size="11" /></button>
+          </div>
           <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
         <div v-if="!showFavorites" class="music-player-control" data-music-player>
@@ -8659,30 +8678,6 @@ async function toggleVirtual(character: any) {
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
         <button v-if="isAdmin" class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
-      </section>
-
-      <section v-if="!showFavorites && activeTopNotice" class="top-notice-shell" :class="`top-notice-${activeTopNotice.kind}`" aria-live="polite">
-        <div class="top-notice-bar">
-          <button class="top-notice-card" :class="{ clickable: activeTopNotice.kind !== 'typing' }" @click="openTopNotice(activeTopNotice)">
-            <span class="top-notice-icon">
-              <AtSign v-if="activeTopNotice.kind === 'mention'" :size="16" />
-              <ThumbsUp v-else-if="activeTopNotice.kind === 'like'" :size="16" />
-              <MessageCircle v-else :size="16" />
-            </span>
-            <span class="top-notice-copy">
-              <strong>{{ activeTopNotice.title }}</strong>
-              <small>{{ activeTopNotice.body }}</small>
-            </span>
-            <span v-if="topNoticeItems.length > 1" class="top-notice-count">{{ (topNoticeIndex % topNoticeItems.length) + 1 }}/{{ topNoticeItems.length }}</span>
-          </button>
-          <button
-            v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
-            class="top-notice-close"
-            type="button"
-            aria-label="关闭点赞提醒"
-            @click="dismissLikeNotification(activeTopNotice.notificationId)"
-          ><X :size="15" /></button>
-        </div>
       </section>
 
       <section v-if="!showFavorites && visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">

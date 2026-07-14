@@ -823,6 +823,7 @@ button {
   position: relative;
   z-index: 21;
   padding-top: var(--safe-top);
+  height: calc(56px + var(--safe-top));
   min-height: calc(56px + var(--safe-top));
   background: color-mix(in srgb, var(--panel) 88%, transparent);
   backdrop-filter: blur(12px);
@@ -1911,111 +1912,78 @@ button {
   max-width: 100%;
 }
 
-.top-notice-shell {
-  grid-row: 2;
-  padding: 8px 14px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.top-notice-bar {
-  width: min(680px, 100%);
-  margin: 0 auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 6px;
-}
-
-.top-notice-card {
-  width: 100%;
-  min-height: 42px;
-  margin: 0;
-  padding: 7px 10px 7px 8px;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  text-align: left;
-  background: color-mix(in srgb, var(--panel) 90%, #ffffff 10%);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-  animation: topNoticeSlide 0.28s ease both;
-}
-
-.top-notice-card.clickable {
-  cursor: pointer;
-}
-
-.top-notice-card:active {
-  transform: translateY(1px);
-}
-
-.top-notice-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  color: #fff;
-  background: var(--accent);
-}
-
-.top-notice-mention .top-notice-icon {
-  background: #f59e0b;
-}
-
-.top-notice-like .top-notice-icon {
-  background: #3b82f6;
-}
-
-.top-notice-close {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-}
-
-.top-notice-copy {
+.chat-status-line {
   min-width: 0;
-  display: grid;
-  gap: 1px;
+  min-height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   overflow: hidden;
 }
 
-.top-notice-copy strong,
-.top-notice-copy small {
+.chat-status-text {
+  min-width: 0;
+  max-width: 100%;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  line-height: 14px;
+  animation: chatStatusShimmer 2.4s ease-in-out infinite;
+}
+
+.chat-status-text:disabled {
+  opacity: 1;
+}
+
+.chat-status-text.clickable {
+  cursor: pointer;
+}
+
+.chat-status-text.clickable:active {
+  opacity: 0.58;
+}
+
+.chat-status-copy {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.top-notice-copy strong {
-  color: var(--text);
-  font-size: 13px;
-  line-height: 1.2;
+.chat-status-close {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  padding: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: color-mix(in srgb, var(--muted) 74%, transparent);
+  background: transparent;
 }
 
-.top-notice-copy small {
-  color: var(--muted);
-  font-size: 12px;
+.typing-dots {
+  width: 1.35em;
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  text-align: left;
+  white-space: nowrap;
 }
 
-.top-notice-count {
-  min-width: 34px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  color: var(--muted);
-  background: rgba(0, 0, 0, 0.05);
-  font-size: 12px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
+.typing-dots > span {
+  width: 0;
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: bottom;
+  animation: typingDotsReveal 1.4s steps(3, end) infinite;
 }
 
 .pin-card {
@@ -7950,14 +7918,37 @@ button.admin-object-row:focus-visible {
   }
 }
 
-@keyframes topNoticeSlide {
-  from {
-    opacity: 0;
-    transform: translateY(-8px);
+@keyframes chatStatusShimmer {
+  0%,
+  100% {
+    opacity: 0.58;
+    text-shadow: 0 0 0 transparent;
   }
-  to {
+  46% {
     opacity: 1;
-    transform: translateY(0);
+    text-shadow: 0 0 7px color-mix(in srgb, var(--muted) 46%, transparent);
+  }
+}
+
+@keyframes typingDotsReveal {
+  0% {
+    width: 0;
+  }
+  75%,
+  100% {
+    width: 1.35em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-status-text {
+    opacity: 0.82;
+    animation: none;
+  }
+
+  .typing-dots > span {
+    width: 1.35em;
+    animation: none;
   }
 }
 
@@ -8070,6 +8061,7 @@ button.admin-object-row:focus-visible {
   }
 
   .chat-head {
+    height: calc(48px + var(--safe-top));
     min-height: calc(48px + var(--safe-top));
     padding-left: 6px;
     padding-right: 6px;
@@ -8178,22 +8170,6 @@ button.admin-object-row:focus-visible {
   .pin-card-head {
     min-height: 34px;
     padding: 6px 10px;
-  }
-
-  .top-notice-shell {
-    padding: 6px 8px;
-  }
-
-  .top-notice-card {
-    min-height: 40px;
-    grid-template-columns: 28px minmax(0, 1fr) auto;
-    gap: 7px;
-  }
-
-  .top-notice-icon {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
   }
 
   .pin-card-body {
