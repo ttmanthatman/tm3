@@ -2529,6 +2529,13 @@ button {
   flex: 1 0 0;
 }
 
+.message-virtual-spacer {
+  width: 100%;
+  min-height: 0;
+  flex: 0 0 auto;
+  pointer-events: none;
+}
+
 .message-load-banner {
   width: fit-content;
   max-width: min(420px, 100%);

@@ -257,6 +257,22 @@ test("message effects pause outside the chat viewport and when the document is h
   assert.match(app, /syncFlashEffectTimer\(\)/);
 });
 
+test("large message timelines render a measured virtual window", () => {
+  assert.match(app, /const renderedTimelineRows = computed/);
+  assert.match(app, /new ResizeObserver\(handleTimelineResize\)/);
+  assert.match(app, /class="message-virtual-spacer message-virtual-spacer-top"/);
+  assert.match(app, /v-for="\{ row, timelineIndex, key: timelineKey \} in renderedTimelineRows"/);
+  assert.match(app, /class="message-virtual-spacer message-virtual-spacer-bottom"/);
+  assert.doesNotMatch(app, /v-for="\(row, timelineIndex\) in timeline"/);
+});
+
+test("karaoke clock sleeps across iOS page hiding and component exit", () => {
+  assert.match(lyricsHeader, /window\.addEventListener\("pagehide", handlePageHide\)/);
+  assert.match(lyricsHeader, /window\.addEventListener\("pageshow", handlePageShow\)/);
+  assert.match(lyricsHeader, /onBeforeUnmount\([\s\S]*?clearClock\(\)/);
+  assert.match(app, /if \(!documentVisible\.value\) \{\s*clearMusicLyricsHeaderResumeTimer\(\)/);
+});
+
 test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
   assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
   assert.doesNotMatch(lyricsHeader, /music-lyrics-track-title/);

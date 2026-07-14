@@ -26,3 +26,19 @@ export function shouldRunFlashEffectTimer(input: {
 }) {
   return input.documentVisible && (input.visibleFlashMessage || input.previewVisible);
 }
+
+export function shouldTriggerIncomingRainEffect(input: {
+  effect: string | null;
+  messageChannelId: number;
+  currentChannelId: number;
+  prayerOnly: boolean;
+  messageType: string;
+  activeView: boolean;
+  documentVisible: boolean;
+}) {
+  return input.effect === "rain"
+    && input.messageChannelId === input.currentChannelId
+    && (!input.prayerOnly || input.messageType === "prayer")
+    && input.activeView
+    && input.documentVisible;
+}

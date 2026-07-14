@@ -4,7 +4,8 @@ import {
   MUSIC_LYRICS_TICK_MS,
   shouldRenderMessageEffect,
   shouldRunFlashEffectTimer,
-  shouldRunMusicLyricsClock
+  shouldRunMusicLyricsClock,
+  shouldTriggerIncomingRainEffect
 } from "./animationPolicy.js";
 
 test("karaoke clock runs at a bounded rate only while visible lyrics need it", () => {
@@ -29,4 +30,14 @@ test("flash timer sleeps unless a visible bubble or the admin preview needs it",
   assert.equal(shouldRunFlashEffectTimer({ visibleFlashMessage: false, previewVisible: true, documentVisible: true }), true);
   assert.equal(shouldRunFlashEffectTimer({ visibleFlashMessage: false, previewVisible: false, documentVisible: true }), false);
   assert.equal(shouldRunFlashEffectTimer({ visibleFlashMessage: true, previewVisible: true, documentVisible: false }), false);
+});
+
+test("incoming rain runs only for a message visible in the active channel view", () => {
+  const visible = { messageChannelId: 3, currentChannelId: 3, prayerOnly: false, messageType: "text", activeView: true, documentVisible: true };
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain" }), true);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", messageChannelId: 4 }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", prayerOnly: true }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "fly" }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", activeView: false }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", documentVisible: false }), false);
 });

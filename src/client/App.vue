@@ -108,7 +108,8 @@ import ParallaxBackground from "./components/ParallaxBackground.vue";
 import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
-import { shouldRenderMessageEffect, shouldRunFlashEffectTimer } from "./animationPolicy";
+import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
+import { calculateVirtualWindow, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
 import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
@@ -228,6 +229,11 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const timelineScrollTop = ref(0);
+const timelineViewportHeight = ref(0);
+const measuredTimelineHeights = ref<Record<string, number>>({});
+let timelineResizeObserver: ResizeObserver | null = null;
+let timelineScrollFrame: number | undefined;
 type OopsPhysicsLayerHandle = {
   start: (messageId: number, bubble: HTMLElement, textRoot: HTMLElement) => Promise<boolean>;
   restore: (messageId: number) => void;
@@ -783,6 +789,7 @@ onMounted(async () => {
   document.addEventListener("keydown", handleGlobalEscape);
   document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
+  window.addEventListener("resize", handleTimelineViewportResize, { passive: true });
   try {
     await store.bootstrap();
   } catch (error) {
@@ -807,6 +814,8 @@ onMounted(async () => {
   await switchToLinkedChannel();
   await enterChatAtNewest();
   await nextTick();
+  syncVirtualTimelineViewport();
+  refreshTimelineMeasurements();
   refreshMessageEffectObserver();
   syncFlashEffectTimer();
 });
@@ -926,9 +935,18 @@ watch(
   () => store.lastIncomingMessage?.id,
   () => {
     if (store.lastIncomingMessage) {
-      queueMentionToast(store.lastIncomingMessage);
-      triggerOneShotMessageEffects(store.lastIncomingMessage);
-      if (store.lastIncomingMessage.channelId === store.currentChannelId && !isMine(store.lastIncomingMessage) && !isNearMessageBottom(220)) {
+      const incoming = store.lastIncomingMessage;
+      queueMentionToast(incoming);
+      if (shouldTriggerIncomingRainEffect({
+        effect: messageEffect(incoming),
+        messageChannelId: incoming.channelId,
+        currentChannelId: store.currentChannelId,
+        prayerOnly: store.prayerOnly,
+        messageType: incoming.type,
+        activeView: !showFavorites.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
+        documentVisible: documentVisible.value
+      })) triggerOneShotMessageEffects(incoming);
+      if (incoming.channelId === store.currentChannelId && !isMine(incoming) && !isNearMessageBottom(220)) {
         hasUnreadMessages.value = true;
       }
     }
@@ -1026,6 +1044,11 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", handleGlobalEscape);
   document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
+  window.removeEventListener("resize", handleTimelineViewportResize);
+  timelineResizeObserver?.disconnect();
+  timelineResizeObserver = null;
+  if (timelineScrollFrame !== undefined) window.cancelAnimationFrame(timelineScrollFrame);
+  timelineScrollFrame = undefined;
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
@@ -1095,7 +1118,7 @@ function clearMusicLyricsHeaderResumeTimer() {
 
 function scheduleMusicLyricsHeaderResume() {
   clearMusicLyricsHeaderResumeTimer();
-  if (!musicPlaying.value || !currentMusicLyricCues.value.length) return;
+  if (!musicPlaying.value || !currentMusicLyricCues.value.length || document.visibilityState !== "visible") return;
   musicLyricsHeaderResumeTimer = window.setTimeout(() => {
     musicLyricsHeaderResumeTimer = undefined;
     if (musicPlaying.value && currentMusicLyricCues.value.length) musicLyricsHeaderSuppressed.value = false;
@@ -1605,8 +1628,12 @@ function replacePendingMessage(pendingId: number, message: MessageDTO) {
   store.replaceMessage(message, pendingId);
 }
 
-const timeline = computed(() => {
-  const rows: Array<{ kind: "time"; label: string; id: string } | { kind: "message"; message: MessageDTO }> = [];
+type TimelineRow = { kind: "time"; label: string; id: string } | { kind: "message"; message: MessageDTO };
+const VIRTUAL_TIMELINE_THRESHOLD = 40;
+const VIRTUAL_TIMELINE_OVERSCAN = 320;
+
+const timeline = computed<TimelineRow[]>(() => {
+  const rows: TimelineRow[] = [];
   let prev: string | undefined;
   for (const message of store.messages) {
     if (shouldShowSeparator(prev, message.createdAt)) rows.push({ kind: "time", label: formatSeparator(message.createdAt), id: `t-${message.id}` });
@@ -1615,6 +1642,138 @@ const timeline = computed(() => {
   }
   return rows;
 });
+
+function timelineRowKey(row: TimelineRow) {
+  return row.kind === "time" ? `time:${row.id}` : `message:${row.message.id}`;
+}
+
+function estimatedTimelineRowHeight(row: TimelineRow) {
+  if (row.kind === "time") return 52;
+  if (row.message.type === "image") return 280;
+  if (row.message.type === "prayer") return 280;
+  if (row.message.type === "chain") return 190;
+  if (isAudioMessage(row.message)) return 112;
+  if (row.message.type === "file") return 126;
+  if (row.message.type === "system") return 64;
+  const visualLines = Math.max(1, Math.ceil(Array.from(row.message.content || "").length / 24));
+  return 68 + Math.min(160, visualLines * 20);
+}
+
+const virtualTimelineItems = computed<VirtualTimelineItem[]>(() => timeline.value.map((row) => ({
+  key: timelineRowKey(row),
+  estimatedHeight: estimatedTimelineRowHeight(row)
+})));
+const virtualTimelineActive = computed(() => timeline.value.length > VIRTUAL_TIMELINE_THRESHOLD);
+const virtualTimelineWindow = computed(() => {
+  if (!virtualTimelineActive.value) {
+    const renderedHeight = virtualTimelineItems.value.reduce((sum, item) => sum + (measuredTimelineHeights.value[item.key] || item.estimatedHeight), 0);
+    return { start: 0, end: timeline.value.length, topSpacer: 0, bottomSpacer: 0, renderedHeight, totalHeight: renderedHeight };
+  }
+  return calculateVirtualWindow({
+    items: virtualTimelineItems.value,
+    measuredHeights: measuredTimelineHeights.value,
+    scrollTop: timelineScrollTop.value,
+    viewportHeight: timelineViewportHeight.value,
+    overscan: VIRTUAL_TIMELINE_OVERSCAN
+  });
+});
+const renderedTimelineRows = computed(() => timeline.value
+  .slice(virtualTimelineWindow.value.start, virtualTimelineWindow.value.end)
+  .map((row, offset) => ({
+    row,
+    timelineIndex: virtualTimelineWindow.value.start + offset,
+    key: timelineRowKey(row)
+  })));
+const timelineTopSpacerHeight = computed(() => virtualTimelineWindow.value.topSpacer);
+const timelineBottomSpacerHeight = computed(() => virtualTimelineWindow.value.bottomSpacer);
+
+function syncVirtualTimelineViewport(root = scroller.value) {
+  if (!root) return;
+  timelineScrollTop.value = root.scrollTop;
+  timelineViewportHeight.value = root.clientHeight;
+}
+
+function scheduleVirtualTimelineViewport(root = scroller.value) {
+  if (!root || timelineScrollFrame !== undefined) return;
+  timelineScrollFrame = window.requestAnimationFrame(() => {
+    timelineScrollFrame = undefined;
+    syncVirtualTimelineViewport(root);
+  });
+}
+
+function handleTimelineViewportResize() {
+  syncVirtualTimelineViewport();
+}
+
+function measuredTimelineRowHeight(element: HTMLElement) {
+  const style = window.getComputedStyle(element);
+  const marginTop = Number.parseFloat(style.marginTop) || 0;
+  const marginBottom = Number.parseFloat(style.marginBottom) || 0;
+  return Math.max(1, element.getBoundingClientRect().height + marginTop + marginBottom);
+}
+
+function handleTimelineResize(entries: ResizeObserverEntry[]) {
+  const root = scroller.value;
+  const current = measuredTimelineHeights.value;
+  const next = { ...current };
+  let changed = false;
+  let scrollAdjustment = 0;
+  for (const entry of entries) {
+    const element = entry.target;
+    if (!(element instanceof HTMLElement)) continue;
+    const key = element.dataset.timelineKey;
+    if (!key) continue;
+    const height = measuredTimelineRowHeight(element);
+    const item = virtualTimelineItems.value.find((candidate) => candidate.key === key);
+    if (!item) continue;
+    const previousHeight = current[key] || item.estimatedHeight;
+    if (Math.abs(previousHeight - height) < 0.5) continue;
+    if (root) {
+      const offset = virtualItemOffset(virtualTimelineItems.value, current, key);
+      if (offset !== null && offset + previousHeight <= root.scrollTop) scrollAdjustment += height - previousHeight;
+    }
+    next[key] = height;
+    changed = true;
+  }
+  if (!changed) return;
+  measuredTimelineHeights.value = next;
+  if (root && Math.abs(scrollAdjustment) > 0.5 && !pendingReadPositionRestore.value) root.scrollTop += scrollAdjustment;
+  syncVirtualTimelineViewport(root);
+  reconcileReadPositionAfterLayout();
+}
+
+function refreshTimelineMeasurements() {
+  timelineResizeObserver?.disconnect();
+  if (typeof ResizeObserver === "undefined") return;
+  if (!timelineResizeObserver) timelineResizeObserver = new ResizeObserver(handleTimelineResize);
+  for (const row of scroller.value?.querySelectorAll<HTMLElement>("[data-timeline-key]") || []) timelineResizeObserver.observe(row);
+}
+
+watch(
+  () => virtualTimelineItems.value.map((item) => item.key).join("|"),
+  () => {
+    const activeKeys = new Set(virtualTimelineItems.value.map((item) => item.key));
+    measuredTimelineHeights.value = Object.fromEntries(Object.entries(measuredTimelineHeights.value).filter(([key]) => activeKeys.has(key)));
+    nextTick(() => {
+      syncVirtualTimelineViewport();
+      refreshTimelineMeasurements();
+    });
+  },
+  { flush: "post" }
+);
+
+watch(
+  () => renderedTimelineRows.value.map((entry) => entry.key).join("|"),
+  () => {
+    nextTick(() => {
+      refreshTimelineMeasurements();
+      refreshMessageEffectObserver();
+      ensureDripPhysics();
+      ensureGooeyDripPhysics();
+    });
+  },
+  { flush: "post", immediate: true }
+);
 
 function plainTextFromHtml(value: string) {
   const el = document.createElement("div");
@@ -3711,11 +3870,13 @@ function refreshMessageEffectObserver() {
 function handleDocumentVisibilityChange() {
   documentVisible.value = document.visibilityState === "visible";
   if (!documentVisible.value) {
+    clearMusicLyricsHeaderResumeTimer();
     stopRainEffect();
     stopDripPhysics(true);
     stopGooeyDripPhysics(true);
     oopsPhysicsLayer.value?.reset();
   } else {
+    if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
     nextTick(() => {
       refreshMessageEffectObserver();
       ensureDripPhysics();
@@ -5546,14 +5707,14 @@ function documentKindLabel(message: MessageDTO) {
 }
 
 async function jumpToReply(id: number) {
-  let el = document.querySelector(`[data-message-id="${id}"]`);
+  const root = scroller.value;
+  let el = root?.querySelector<HTMLElement>(`[data-message-id="${id}"]`) || null;
   if (!el && id > 0) {
     await loadUntilMessageVisible(id);
     await nextTick();
-    el = document.querySelector(`[data-message-id="${id}"]`);
+    el = root?.querySelector<HTMLElement>(`[data-message-id="${id}"]`) || null;
   }
-  const root = scroller.value;
-  if (el instanceof HTMLElement && root) {
+  if (el && root) {
     const contextOffset = Math.min(120, Math.max(56, root.clientHeight * 0.16));
     const targetTop = root.scrollTop + el.getBoundingClientRect().top - root.getBoundingClientRect().top - contextOffset;
     root.scrollTo({ top: Math.max(0, targetTop), behavior: "auto" });
@@ -5572,9 +5733,27 @@ async function jumpToReply(id: number) {
   setTimeout(() => el?.classList.remove("flash"), 900);
 }
 
+async function ensureLoadedMessageRendered(id: number) {
+  const root = scroller.value;
+  if (!root || !store.messages.some((message) => message.id === id)) return false;
+  if (root.querySelector(`[data-message-id="${id}"]`)) return true;
+  if (!virtualTimelineActive.value) {
+    await nextTick();
+    return !!root.querySelector(`[data-message-id="${id}"]`);
+  }
+  const offset = virtualItemOffset(virtualTimelineItems.value, measuredTimelineHeights.value, `message:${id}`);
+  if (offset === null) return false;
+  const contextOffset = Math.min(120, Math.max(56, root.clientHeight * 0.16));
+  root.scrollTop = Math.max(0, offset - contextOffset);
+  syncVirtualTimelineViewport(root);
+  await nextTick();
+  refreshTimelineMeasurements();
+  return !!root.querySelector(`[data-message-id="${id}"]`);
+}
+
 async function loadUntilMessageVisible(id: number) {
   for (let attempts = 0; attempts < 30; attempts += 1) {
-    if (document.querySelector(`[data-message-id="${id}"]`)) return true;
+    if (store.messages.some((message) => message.id === id)) return ensureLoadedMessageRendered(id);
     const positiveMessages = store.messages.filter((message) => message.id > 0);
     const oldest = positiveMessages[0]?.id || 0;
     const newest = positiveMessages[positiveMessages.length - 1]?.id || 0;
@@ -6570,6 +6749,7 @@ function scrollBottom(smooth = true) {
   if (!el) return;
   activeReadAnchor = { kind: "newest", token: readPositionRestoreToken };
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
+  if (!smooth) syncVirtualTimelineViewport(el);
   hasUnreadMessages.value = false;
   awayFromNewest.value = false;
 }
@@ -6600,6 +6780,7 @@ function focusComposer() {
 async function handleMessagesScroll() {
   const el = scroller.value;
   if (!el) return;
+  scheduleVirtualTimelineViewport(el);
   clearBlankScoreLongPress();
   updateParallaxFromScroll(el);
   saveReadPosition();
@@ -8689,11 +8870,18 @@ async function toggleVirtual(character: any) {
           <span></span>
           <span></span>
         </div>
-        <template v-for="(row, timelineIndex) in timeline" :key="row.kind === 'time' ? row.id : row.message.id">
+        <div
+          v-if="timelineTopSpacerHeight > 0"
+          class="message-virtual-spacer message-virtual-spacer-top"
+          :style="{ height: `${timelineTopSpacerHeight}px` }"
+          aria-hidden="true"
+        ></div>
+        <template v-for="{ row, timelineIndex, key: timelineKey } in renderedTimelineRows" :key="timelineKey">
           <div
             v-if="row.kind === 'time'"
             class="time-separator"
             :class="timelineIndex % 2 === 0 ? 'score-exit-left' : 'score-exit-right'"
+            :data-timeline-key="timelineKey"
           >{{ row.label }}</div>
           <article
             v-else
@@ -8709,6 +8897,7 @@ async function toggleVirtual(character: any) {
               'score-exit-right': row.message.type === 'system' ? timelineIndex % 2 !== 0 : isMine(row.message)
             }"
             :data-message-id="row.message.id"
+            :data-timeline-key="timelineKey"
           >
             <button
               v-if="messageSelectionMode && row.message.id > 0"
@@ -9084,6 +9273,12 @@ async function toggleVirtual(character: any) {
             </div>
           </article>
         </template>
+        <div
+          v-if="timelineBottomSpacerHeight > 0"
+          class="message-virtual-spacer message-virtual-spacer-bottom"
+          :style="{ height: `${timelineBottomSpacerHeight}px` }"
+          aria-hidden="true"
+        ></div>
         </div>
       </div>
 

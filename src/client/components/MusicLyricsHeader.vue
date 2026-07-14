@@ -75,6 +75,16 @@ function handleVisibilityChange() {
   scheduleClock();
 }
 
+function handlePageHide() {
+  documentVisible.value = false;
+  clearClock();
+}
+
+function handlePageShow() {
+  documentVisible.value = document.visibilityState === "visible";
+  scheduleClock();
+}
+
 function cueProgress(cue: MusicLyricCueDTO | MusicLyricSegmentDTO | null) {
   if (!cue) return 0;
   return Math.max(0, Math.min(100, ((currentTimeMs.value - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)) * 100));
@@ -88,11 +98,15 @@ watch(() => [props.playing, props.cues, props.suppressed] as const, scheduleCloc
 
 onMounted(() => {
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pagehide", handlePageHide);
+  window.addEventListener("pageshow", handlePageShow);
   scheduleClock();
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", handleVisibilityChange);
+  window.removeEventListener("pagehide", handlePageHide);
+  window.removeEventListener("pageshow", handlePageShow);
   clearClock();
 });
 </script>
