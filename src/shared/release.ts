@@ -1,10 +1,18 @@
-export const APP_VERSION = "0.11.4";
+export const APP_VERSION = "0.12.0";
 
 export const RELEASE_DATE = "2026-07-14";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "歌曲歌词支持 SRT、标准 LRC 和 Enhanced LRC；管理员或户部尚书可在音乐频道长按音频上传、替换或删除歌词。",
+  "Enhanced LRC 会使用字词级时间标签，让当前歌词随演唱进度逐字、逐词渐变为橙色；普通 SRT/LRC 保持整句卡拉 OK 进度。",
+  "播放带歌词歌曲时，歌词会覆盖顶部栏；点按可暂时隐藏，顶部区域 5 秒无操作后自动恢复歌词，音频消息会标记“带歌词”。",
+  "音频转发会连同已有歌词和曲谱一起转发；歌曲提及胶囊调整为停止在左、暂停在右。",
+  "重新打开浏览器或登录聊天室后会直接定位到最新消息，不再恢复到上次的旧阅读位置。"
+] as const;
+
+const RELEASE_0_11_4_NOTES = [
   "展开后的顶部播放器恢复为单行布局：歌曲信息、上一曲/播放/下一曲、循环模式和列表按钮全部与顶栏图标垂直居中，不再让信息区下沉。",
   "歌曲信息移到播放器左侧；超过显示宽度的长歌名会无缝横向滚动，减少动态效果模式下保持静态显示。"
 ] as const;
@@ -485,9 +493,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.11.4",
+    version: "0.12.0",
     date: "2026-07-14",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.11.4",
+    date: "2026-07-14",
+    notes: RELEASE_0_11_4_NOTES
   },
   {
     version: "0.11.3",

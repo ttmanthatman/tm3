@@ -219,14 +219,22 @@ test("forwarded audio copies attached score pages and exposes them on the new me
   assert.match(app, /const previewScorePages = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)\?\.scorePages/);
 });
 
-test("SRT lyrics upload from audio actions and render over the header during playback", () => {
-  assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,application\/x-subrip,text\/plain"/);
+test("SRT and LRC lyrics upload from audio actions and render over the header during playback", () => {
+  assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,\.lrc,application\/x-subrip,text\/plain"/);
   assert.match(app, /requestMusicLyricsUpload[\s\S]*?\/api\/music\/tracks\/\$\{trackId\}\/lyrics/);
   assert.match(app, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
   assert.match(app, /scheduleMusicLyricsHeaderResume[\s\S]*?5000/);
   assert.match(app, /compactBytes\(row\.message\.fileSize\)[\s\S]*?带歌词/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/lyrics"/);
   assert.match(server, /source\.musicLyrics[\s\S]*?musicLyrics: \{ create: \{ fileName: source\.musicLyrics\.fileName/);
+});
+
+test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
+  assert.match(app, /currentMusicLyricCue\?\.segments\?\.length[\s\S]*?music-lyrics-segment-fill/);
+  assert.match(app, /musicLyricSegmentProgress\(segment\)/);
+  assert.match(app, /startMusicLyricsClock[\s\S]*?requestAnimationFrame\(tick\)/);
+  assert.match(css, /\.music-lyrics-segment-fill \{[\s\S]*?transition: clip-path 70ms linear;/);
+  assert.match(server, /parseLyrics\(content, file\.filename\)/);
 });
 
 test("fresh browser and login entry force the chat to the newest semantic position", () => {

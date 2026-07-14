@@ -85,6 +85,7 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
+  MusicLyricSegmentDTO,
   MusicMentionPayload,
   MusicScorePageDTO,
   MusicTrackDTO,
@@ -213,6 +214,7 @@ let musicAudio: HTMLAudioElement | null = null;
 let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
+let musicLyricsFrame: number | undefined;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -1055,6 +1057,10 @@ const currentMusicLyricProgress = computed(() => {
   if (!cue) return 0;
   return Math.max(0, Math.min(100, ((musicCurrentTimeMs.value - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)) * 100));
 });
+
+function musicLyricSegmentProgress(segment: MusicLyricSegmentDTO) {
+  return Math.max(0, Math.min(100, ((musicCurrentTimeMs.value - segment.startMs) / Math.max(1, segment.endMs - segment.startMs)) * 100));
+}
 const musicLyricsHeaderVisible = computed(
   () => musicPlaying.value && currentMusicLyricCues.value.length > 0 && !musicLyricsHeaderSuppressed.value
 );
@@ -4847,8 +4853,8 @@ async function handleMusicLyricsPicked(event: Event) {
   input.value = "";
   const trackId = musicLyricsUploadTrackId.value;
   if (!trackId || !file || musicLyricsUploadBusy.value) return;
-  if (!/\.srt$/i.test(file.name)) {
-    alert("歌词只支持 SRT 文件");
+  if (!/\.(srt|lrc)$/i.test(file.name)) {
+    alert("歌词只支持 SRT、LRC 和 Enhanced LRC 文件");
     musicLyricsUploadTrackId.value = null;
     return;
   }
@@ -5560,6 +5566,7 @@ function cancelMusicFade(resetVolume = true) {
 function disposeMusicAudio() {
   if (!musicAudio) return;
   cancelMusicFade();
+  stopMusicLyricsClock();
   musicAudio.pause();
   musicAudio.removeEventListener("play", handleMusicPlay);
   musicAudio.removeEventListener("pause", handleMusicPause);
@@ -5579,11 +5586,13 @@ function handleMusicPlay() {
   musicPlaying.value = true;
   musicLoading.value = false;
   musicError.value = "";
+  startMusicLyricsClock();
 }
 
 function handleMusicPause() {
   musicPlaying.value = false;
   musicLoading.value = false;
+  stopMusicLyricsClock();
 }
 
 function handleMusicWaiting() {
@@ -5598,10 +5607,26 @@ function handleMusicTimeUpdate() {
   musicCurrentTimeMs.value = Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000));
 }
 
+function startMusicLyricsClock() {
+  if (musicLyricsFrame !== undefined) return;
+  const tick = () => {
+    musicLyricsFrame = undefined;
+    handleMusicTimeUpdate();
+    if (musicPlaying.value && musicAudio && !musicAudio.paused) musicLyricsFrame = window.requestAnimationFrame(tick);
+  };
+  musicLyricsFrame = window.requestAnimationFrame(tick);
+}
+
+function stopMusicLyricsClock() {
+  if (musicLyricsFrame !== undefined) window.cancelAnimationFrame(musicLyricsFrame);
+  musicLyricsFrame = undefined;
+}
+
 function handleMusicError() {
   musicPlaying.value = false;
   musicLoading.value = false;
   musicError.value = "歌曲暂时无法播放";
+  stopMusicLyricsClock();
 }
 
 function setMusicAudioTrack(track: MusicTrackDTO) {
@@ -5695,6 +5720,7 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
 
 function handleMusicEnded() {
   cancelMusicFade();
+  stopMusicLyricsClock();
   musicPlaying.value = false;
   if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
 }
@@ -8286,7 +8312,13 @@ async function toggleVirtual(character: any) {
         </template>
         <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
           <span class="music-lyrics-track-title">{{ currentMusicTrackTitle }}</span>
-          <span class="music-lyrics-current">
+          <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
+            <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
+              <span class="music-lyrics-segment-base">{{ segment.text }}</span>
+              <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
+            </span>
+          </span>
+          <span v-else class="music-lyrics-current">
             <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
             <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
           </span>
@@ -9203,7 +9235,7 @@ async function toggleVirtual(character: any) {
       accept=".png,.jpg,.jpeg,.webp,.heic,.heif,image/png,image/jpeg,image/webp,image/heic,image/heif"
       @change="handleMusicScorePicked"
     />
-    <input ref="musicLyricsInput" class="hidden" type="file" accept=".srt,application/x-subrip,text/plain" @change="handleMusicLyricsPicked" />
+    <input ref="musicLyricsInput" class="hidden" type="file" accept=".srt,.lrc,application/x-subrip,text/plain" @change="handleMusicLyricsPicked" />
 
     <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
       <div class="tap-popover-card">

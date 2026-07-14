@@ -207,6 +207,13 @@ export interface MusicLyricCueDTO {
   startMs: number;
   endMs: number;
   text: string;
+  segments?: MusicLyricSegmentDTO[];
+}
+
+export interface MusicLyricSegmentDTO {
+  startMs: number;
+  endMs: number;
+  text: string;
 }
 
 export interface MusicLyricsDTO {

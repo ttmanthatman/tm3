@@ -890,6 +890,31 @@ button {
   transition: clip-path 120ms linear;
 }
 
+.music-lyrics-current-enhanced {
+  display: block;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.music-lyrics-segment {
+  position: relative;
+  display: inline-block;
+  white-space: pre;
+}
+
+.music-lyrics-segment-base,
+.music-lyrics-segment-fill {
+  display: block;
+}
+
+.music-lyrics-segment-fill {
+  position: absolute;
+  inset: 0;
+  color: #ffb54d;
+  text-shadow: 0 0 9px rgba(255, 137, 28, 0.62), 0 1px 0 rgba(0, 0, 0, 0.35);
+  transition: clip-path 70ms linear;
+}
+
 .music-lyrics-next {
   max-width: 92%;
   overflow: hidden;

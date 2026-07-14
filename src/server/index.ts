@@ -54,7 +54,7 @@ import { githubPackageManifestUrl } from "./updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
 import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
-import { parseSrt } from "./srt.js";
+import { parseLyrics } from "./srt.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -869,7 +869,7 @@ function serializeMusicTrack(
       width: page.width,
       height: page.height
     })),
-    lyrics: message.musicLyrics ? { fileName: message.musicLyrics.fileName, cues: parseSrt(message.musicLyrics.content) } : null
+    lyrics: message.musicLyrics ? { fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) } : null
   };
 }
 
@@ -1223,7 +1223,7 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       width: page.width,
       height: page.height
     })),
-    lyrics: musicLyrics ? { fileName: musicLyrics.fileName, cues: parseSrt(musicLyrics.content) } : null,
+    lyrics: musicLyrics ? { fileName: musicLyrics.fileName, cues: parseLyrics(musicLyrics.content, musicLyrics.fileName) } : null,
     voiceListened,
     replyTo: message.replyTo
       ? {
@@ -3867,12 +3867,12 @@ app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (requ
   if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
   try {
     const file = await request.file({ limits: { files: 1, fileSize: 1024 * 1024, parts: 1 } });
-    if (!file || !/\.srt$/i.test(file.filename || "")) return reply.code(400).send({ success: false, message: "歌词只支持 SRT 文件" });
+    if (!file || !/\.(srt|lrc)$/i.test(file.filename || "")) return reply.code(400).send({ success: false, message: "歌词只支持 SRT、LRC 和 Enhanced LRC 文件" });
     const buffer = await file.toBuffer();
     if (file.file.truncated || buffer.length > 1024 * 1024) return reply.code(400).send({ success: false, message: "歌词文件不能超过 1MB" });
     const content = buffer.toString("utf8");
-    const cues = parseSrt(content);
-    if (!cues.length) return reply.code(400).send({ success: false, message: "SRT 中没有有效的歌词时间轴" });
+    const cues = parseLyrics(content, file.filename);
+    if (!cues.length) return reply.code(400).send({ success: false, message: "歌词文件中没有有效的时间轴" });
     const updated = await prisma.$transaction(async (transaction) => {
       await transaction.musicLyrics.upsert({
         where: { trackId: id },
