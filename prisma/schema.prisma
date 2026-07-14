@@ -221,6 +221,7 @@ model Message {
   replyToId       Int?                  @map("reply_to_id")
   chainRootId     Int?                  @map("chain_root_id")
   chainVersion    Int?                  @map("chain_version")
+  musicOrder      Int?                  @map("music_order")
   createdAt       DateTime              @default(now()) @map("created_at")
   channel         Channel               @relation(fields: [channelId], references: [id], onDelete: Cascade)
   sender          Actor                 @relation(fields: [senderActorId], references: [id])

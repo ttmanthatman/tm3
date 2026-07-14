@@ -183,3 +183,25 @@ test("score image preview fills the viewport width without black side bars", () 
   assert.match(css, /\.media-preview-shell\.image\.score \{[\s\S]*?background: #fff;/);
   assert.match(css, /\.media-preview-shell\.score \.media-preview-image \{[\s\S]*?width: 100vw;[\s\S]*?max-width: none;/);
 });
+
+test("double-at song mentions render as one clickable playback card", () => {
+  assert.match(app, /musicMentionTokenAtCursor\(input\.value, composerCaret\.value\)/);
+  assert.match(app, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
+  assert.match(app, /class="music-mention-card"[\s\S]*?点击消息立即播放/);
+  assert.match(app, /const mentionedTrack = musicMentionPayload\(message\);[\s\S]*?setMusicAudioTrack\(track\);[\s\S]*?playCurrentMusic\(\)/);
+  assert.match(css, /\.music-mention-card \{[\s\S]*?grid-template-columns: 44px minmax\(0, 1fr\) auto;/);
+});
+
+test("playlist supports search, four sort modes, and manual movement controls", () => {
+  assert.match(app, /v-model="musicPlaylistQuery"[^>]*type="search"/);
+  for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(app, new RegExp(`<option value="${value}">`));
+  assert.match(app, /moveMusicPlaylistTrack\(track, -1\)[\s\S]*?moveMusicPlaylistTrack\(track, 1\)/);
+  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
+});
+
+test("score pages can be managed individually and paged in preview", () => {
+  assert.match(app, /管理歌谱页面[\s\S]*?class="settings-modal music-score-manager-modal"/);
+  assert.match(app, /moveMusicScorePage\(index, -1\)[\s\S]*?deleteMusicScorePage\(page\)/);
+  assert.match(app, /class="score-preview-arrow score-preview-previous"[\s\S]*?class="score-preview-arrow score-preview-next"/);
+  assert.match(css, /\.score-preview-arrow \{[\s\S]*?background: rgba\(20, 20, 20, 0\.42\);/);
+});

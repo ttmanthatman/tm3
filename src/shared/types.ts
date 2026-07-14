@@ -194,7 +194,14 @@ export interface MusicTrackDTO {
   fileName: string;
   fileSize: number;
   createdAt: string;
+  heat: number;
+  manualOrder: number;
   scorePages: MusicScorePageDTO[];
+}
+
+export interface MusicMentionPayload {
+  musicTrackId: number;
+  musicTrackTitle: string;
 }
 
 export interface MusicScorePageDTO {

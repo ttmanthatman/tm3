@@ -85,6 +85,7 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
+  MusicMentionPayload,
   MusicScorePageDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
@@ -123,13 +124,17 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 import {
+  moveMusicTrack,
   musicFadeVolume,
+  musicMentionTokenAtCursor,
   nextMusicTrackIndex,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
   shouldRestartOnlyTrack,
   shouldShowMusicScoreTrigger,
-  type MusicPlaybackMode
+  sortMusicTracks,
+  type MusicPlaybackMode,
+  type MusicPlaylistSort
 } from "./musicPlayer";
 
 const store = useChatStore();
@@ -148,6 +153,7 @@ const displayName = ref("");
 const authMode = ref<"login" | "register">("login");
 const loginError = ref("");
 const input = ref("");
+const selectedMusicMention = ref<MusicTrackDTO | null>(null);
 const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
@@ -177,6 +183,9 @@ const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
 const musicPlayerExpanded = ref(false);
 const musicPlayerAnchorX = ref<number | null>(null);
 const musicPlaylistOpen = ref(false);
+const musicPlaylistQuery = ref("");
+const musicPlaylistSort = ref<MusicPlaylistSort>("manual");
+const musicPlaylistReorderBusy = ref(false);
 const musicPlaying = ref(false);
 const musicLoading = ref(false);
 const musicError = ref("");
@@ -188,6 +197,8 @@ const musicScoreStageClosing = ref(false);
 const musicScoreUploadBusy = ref(false);
 const musicScoreInput = ref<HTMLInputElement | null>(null);
 const musicScoreUploadTrackId = ref<number | null>(null);
+const musicScoreManageTrackId = ref<number | null>(null);
+const musicScoreManageBusy = ref(false);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
 const MUSIC_FADE_OUT_MS = 900;
@@ -416,7 +427,7 @@ const bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: str
   { value: "square", label: "保留方引号 「 」" }
 ];
 const previewMessage = ref<MessageDTO | null>(null);
-const previewPinnedImage = ref<{ url: string; fileName: string; score?: boolean } | null>(null);
+const previewPinnedImage = ref<{ url: string; fileName: string; score?: boolean; trackId?: number; pageId?: number } | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptPosition = ref({ x: 0, y: 0 });
@@ -776,6 +787,11 @@ function reloadApplication() {
 }
 
 function handleGlobalEscape(event: KeyboardEvent) {
+  if (previewPinnedImage.value?.score && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+    event.preventDefault();
+    shiftMusicScorePreview(event.key === "ArrowLeft" ? -1 : 1);
+    return;
+  }
   if (event.key !== "Escape") return;
   if (previewMessage.value) {
     closePreviewMessage();
@@ -818,6 +834,7 @@ watch(
     selectedMessageIds.value = new Set();
     messageSelectionMode.value = false;
     composerPanel.value = null;
+    selectedMusicMention.value = null;
     lastParallaxScrollTop = null;
     hasUnreadMessages.value = false;
     if (pendingMessageJumpId !== null) {
@@ -995,11 +1012,20 @@ onBeforeUnmount(() => {
 
 const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
-const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || musicTracks.value[0] || null);
-const currentMusicTrackIndex = computed(() => musicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
+const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
+const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || sortedMusicTracks.value[0] || null);
+const filteredMusicTracks = computed(() => {
+  const query = musicPlaylistQuery.value.trim().toLowerCase();
+  if (!query) return sortedMusicTracks.value;
+  return sortedMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
+});
+const currentMusicTrackIndex = computed(() => sortedMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
+const musicScoreManageTrack = computed(() => musicTracks.value.find((track) => track.id === musicScoreManageTrackId.value) || null);
+const previewScoreTrack = computed(() => musicTracks.value.find((track) => track.id === previewPinnedImage.value?.trackId) || null);
+const previewScorePageIndex = computed(() => previewScoreTrack.value?.scorePages.findIndex((page) => page.id === previewPinnedImage.value?.pageId) ?? -1);
 const musicScoreTriggerVisible = computed(() =>
   shouldShowMusicScoreTrigger({
     playing: musicPlaying.value,
@@ -1307,20 +1333,33 @@ const matchingMentionMembers = computed(() => {
     return member.displayName.toLowerCase().includes(query) || (member.username || "").toLowerCase().includes(query);
   });
 });
-const activeComposerSuggestionKind = computed<"mention" | "effect" | null>(() => {
+const musicMentionToken = computed(() => (selectedMusicMention.value ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)));
+const matchingMusicMentionTracks = computed(() => {
+  const token = musicMentionToken.value;
+  if (!token) return [];
+  const query = token.query.trim().toLowerCase();
+  if (!query) return sortedMusicTracks.value;
+  return sortedMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
+});
+const activeComposerSuggestionKind = computed<"music" | "mention" | "effect" | null>(() => {
+  if (matchingMusicMentionTracks.value.length > 0) return "music";
   if (matchingMentionMembers.value.length > 0) return "mention";
   if (matchingSlashCommands.value.length > 0) return "effect";
   return null;
 });
 const composerSuggestionCount = computed(() =>
-  activeComposerSuggestionKind.value === "mention" ? matchingMentionMembers.value.length : matchingSlashCommands.value.length
+  activeComposerSuggestionKind.value === "music"
+    ? matchingMusicMentionTracks.value.length
+    : activeComposerSuggestionKind.value === "mention"
+      ? matchingMentionMembers.value.length
+      : matchingSlashCommands.value.length
 );
 const showComposerSuggestionMenu = computed(() => !composerSuggestionSuppressed.value && !!activeComposerSuggestionKind.value && composerSuggestionCount.value > 0);
 watch(composerSuggestionCount, (count) => {
   if (composerSuggestionIndex.value >= count) composerSuggestionIndex.value = 0;
 });
 const canSendText = computed(() => {
-  return !!parseComposerText(input.value).content;
+  return !!selectedMusicMention.value || !!parseComposerText(input.value).content;
 });
 const loginBrand = computed(() => ({
   iconPath: store.appearance.loginIconPath || "/images/icon-192.svg",
@@ -1626,6 +1665,25 @@ function isAiAssistantMessage(message: MessageDTO) {
 
 function messagePayloadRecord(message: MessageDTO) {
   return message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+}
+
+function musicMentionPayload(message: MessageDTO): MusicMentionPayload | null {
+  const payload = messagePayloadRecord(message);
+  const musicTrackId = Number(payload.musicTrackId);
+  const musicTrackTitle = typeof payload.musicTrackTitle === "string" ? payload.musicTrackTitle.trim() : "";
+  return Number.isInteger(musicTrackId) && musicTrackId > 0 ? { musicTrackId, musicTrackTitle: musicTrackTitle || "歌曲" } : null;
+}
+
+function musicMentionTitle(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  if (!payload) return "歌曲";
+  return musicTracks.value.find((track) => track.id === payload.musicTrackId)?.title || payload.musicTrackTitle;
+}
+
+function musicMentionCommentHtml(message: MessageDTO) {
+  const content = (message.content || "").trim();
+  if (!content || content === `提及歌曲：${musicMentionTitle(message)}` || content === `提及歌曲：${musicMentionPayload(message)?.musicTrackTitle}`) return "";
+  return messageContentHtml(message);
 }
 
 function isMarkdownMessage(message: MessageDTO) {
@@ -2991,8 +3049,34 @@ function chooseMentionSuggestion(member: { displayName: string }) {
   });
 }
 
+function chooseMusicMentionSuggestion(track: MusicTrackDTO) {
+  const token = musicMentionToken.value;
+  const start = token?.start ?? input.value.length;
+  const end = token?.end ?? input.value.length;
+  input.value = `${input.value.slice(0, start)}${input.value.slice(end)}`.replace(/[ \t]{2,}/g, " ");
+  selectedMusicMention.value = track;
+  composerPanel.value = null;
+  composerSuggestionSuppressed.value = true;
+  nextTick(() => {
+    composerInput.value?.focus();
+    const cursor = Math.min(start, input.value.length);
+    composerInput.value?.setSelectionRange(cursor, cursor);
+    syncComposerCaret();
+  });
+}
+
+function removeMusicMention() {
+  selectedMusicMention.value = null;
+  nextTick(() => composerInput.value?.focus());
+}
+
 function chooseActiveComposerSuggestion() {
   const index = Math.min(composerSuggestionIndex.value, Math.max(0, composerSuggestionCount.value - 1));
+  if (activeComposerSuggestionKind.value === "music") {
+    const track = matchingMusicMentionTracks.value[index];
+    if (track) chooseMusicMentionSuggestion(track);
+    return;
+  }
   if (activeComposerSuggestionKind.value === "mention") {
     const member = matchingMentionMembers.value[index];
     if (member) chooseMentionSuggestion(member);
@@ -3004,14 +3088,17 @@ function chooseActiveComposerSuggestion() {
 
 async function sendText() {
   const parsed = parseComposerText(input.value);
-  const content = parsed.content;
+  const musicMention = selectedMusicMention.value;
+  const content = parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
   if (!content || !store.currentChannelId) return;
   const originalInput = input.value;
-  const messageType = parsed.type || (store.prayerOnly ? "prayer" : "text");
+  const originalMusicMention = musicMention;
+  const messageType = musicMention ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
   const messagePayload = {
     ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
     ...(parsed.effect ? { effect: parsed.effect } : {}),
-    ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {})
+    ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
+    ...(musicMention ? { musicTrackId: musicMention.id } : {})
   };
   const payload = {
     channelId: store.currentChannelId,
@@ -3021,10 +3108,12 @@ async function sendText() {
     replyToId: replyTo.value?.id || null
   };
   input.value = "";
+  selectedMusicMention.value = null;
   replyTo.value = null;
   store.socket?.emit("message:send", payload, async (ack: { success: boolean; message?: string }) => {
     if (!ack?.success) {
       input.value = originalInput;
+      selectedMusicMention.value = originalMusicMention;
       alert(ack?.message || "发送失败");
     }
   });
@@ -4532,6 +4621,56 @@ function requestMusicScoreUpload() {
   void nextTick(() => musicScoreInput.value?.click());
 }
 
+function openMusicScoreManagerAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !isManageableMusicMessage(message)) return;
+  musicScoreManageTrackId.value = message.id;
+  closeMessageActionMenu();
+}
+
+function mergeMusicTrackSnapshot(track: MusicTrackDTO) {
+  musicTracks.value = musicTracks.value.map((existing) =>
+    existing.id === track.id
+      ? { ...existing, ...track, heat: track.heat || existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
+      : existing
+  );
+}
+
+async function moveMusicScorePage(index: number, delta: number) {
+  const track = musicScoreManageTrack.value;
+  if (!track || musicScoreManageBusy.value) return;
+  const pages = moveMusicTrack(track.scorePages, index, delta);
+  if (pages[index]?.id === track.scorePages[index]?.id) return;
+  musicScoreManageBusy.value = true;
+  try {
+    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/score`, {
+      method: "PATCH",
+      body: JSON.stringify({ pageIds: pages.map((page) => page.id) })
+    });
+    mergeMusicTrackSnapshot(result.track);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "调整歌谱顺序失败");
+  } finally {
+    musicScoreManageBusy.value = false;
+  }
+}
+
+async function deleteMusicScorePage(page: MusicScorePageDTO) {
+  const track = musicScoreManageTrack.value;
+  if (!track || musicScoreManageBusy.value || !window.confirm(`删除歌谱“${page.fileName}”？`)) return;
+  musicScoreManageBusy.value = true;
+  try {
+    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/score/${page.id}`, { method: "DELETE" });
+    mergeMusicTrackSnapshot(result.track);
+    if (!result.track.scorePages.length) musicScoreManageTrackId.value = null;
+    if (previewPinnedImage.value?.pageId === page.id) closePreviewMessage();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "删除歌谱失败");
+  } finally {
+    musicScoreManageBusy.value = false;
+  }
+}
+
 async function handleMusicScorePicked(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []);
@@ -4569,7 +4708,7 @@ async function handleMusicScorePicked(event: Event) {
       xhr.send(form);
     });
     if (!result.success || !result.track) throw new Error(result.message || "歌谱上传失败");
-    musicTracks.value = musicTracks.value.map((track) => (track.id === result.track?.id ? result.track : track));
+    mergeMusicTrackSnapshot(result.track);
   } catch (error) {
     alert(error instanceof Error ? error.message : "歌谱上传失败");
   } finally {
@@ -4590,7 +4729,7 @@ function musicScorePreviewPage(message: MessageDTO) {
 function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
   const url = musicScorePageUrl(page, trackId);
   if (!url) return;
-  previewPinnedImage.value = { url, fileName: page.fileName, score: true };
+  previewPinnedImage.value = { url, fileName: page.fileName, score: true, trackId, pageId: page.id };
   previewMessage.value = {
     id: -page.id,
     channelId: store.currentChannelId,
@@ -4603,6 +4742,15 @@ function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTr
   };
   pendingDownload.value = null;
   resetImagePreviewTransform();
+}
+
+function shiftMusicScorePreview(delta: number) {
+  const track = previewScoreTrack.value;
+  const index = previewScorePageIndex.value;
+  if (!track || index < 0) return;
+  const nextIndex = index + delta;
+  if (nextIndex < 0 || nextIndex >= track.scorePages.length) return;
+  openMusicScorePreview(track.scorePages[nextIndex], track.id);
 }
 
 function openMusicScore() {
@@ -4707,6 +4855,23 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     return;
   }
   acknowledgeMentionAlert(message);
+  const mentionedTrack = musicMentionPayload(message);
+  if (mentionedTrack) {
+    const track = musicTracks.value.find((item) => item.id === mentionedTrack.musicTrackId);
+    if (!track) {
+      alert("这首歌曲已被删除或暂时不可用");
+      return;
+    }
+    currentMusicTrackId.value = track.id;
+    reconcileOpenMusicScore();
+    musicPlayerExpanded.value = true;
+    musicPlaylistOpen.value = false;
+    setMusicAudioTrack(track);
+    void playCurrentMusic();
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
   if (messageEffect(message) === "oops") {
     const target = event.target instanceof Element ? event.target : null;
     const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -5250,9 +5415,9 @@ function toggleMusicPlayback() {
 }
 
 async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.value) {
-  if (!musicTracks.value.length) return;
-  if (shouldRestartOnlyTrack(musicTracks.value.length, delta)) {
-    const track = musicTracks.value[0];
+  if (!sortedMusicTracks.value.length) return;
+  if (shouldRestartOnlyTrack(sortedMusicTracks.value.length, delta)) {
+    const track = sortedMusicTracks.value[0];
     currentMusicTrackId.value = track.id;
     setMusicAudioTrack(track);
     if (musicAudio) musicAudio.currentTime = 0;
@@ -5261,8 +5426,8 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
     return;
   }
   const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
-  const nextIndex = nextMusicTrackIndex(musicTracks.value.length, index, delta);
-  const track = musicTracks.value[nextIndex];
+  const nextIndex = nextMusicTrackIndex(sortedMusicTracks.value.length, index, delta);
+  const track = sortedMusicTracks.value[nextIndex];
   currentMusicTrackId.value = track.id;
   reconcileOpenMusicScore();
   setMusicAudioTrack(track);
@@ -5306,6 +5471,28 @@ function toggleMusicPlaylist() {
   musicPlaylistOpen.value = !musicPlaylistOpen.value;
 }
 
+async function moveMusicPlaylistTrack(track: MusicTrackDTO, delta: number) {
+  if (!canManageMusic.value || musicPlaylistReorderBusy.value || musicPlaylistSort.value !== "manual" || musicPlaylistQuery.value.trim()) return;
+  const manualTracks = sortMusicTracks(musicTracks.value, "manual");
+  const fromIndex = manualTracks.findIndex((item) => item.id === track.id);
+  const reordered = moveMusicTrack(manualTracks, fromIndex, delta);
+  if (reordered[fromIndex]?.id === track.id) return;
+  const previous = musicTracks.value;
+  musicTracks.value = reordered.map((item, manualOrder) => ({ ...item, manualOrder }));
+  musicPlaylistReorderBusy.value = true;
+  try {
+    await api("/api/music/tracks/order", {
+      method: "PATCH",
+      body: JSON.stringify({ trackIds: reordered.map((item) => item.id) })
+    });
+  } catch (error) {
+    musicTracks.value = previous;
+    alert(error instanceof Error ? error.message : "保存歌曲排序失败");
+  } finally {
+    musicPlaylistReorderBusy.value = false;
+  }
+}
+
 function closeMusicSurface() {
   musicPlaylistOpen.value = false;
   musicPlayerExpanded.value = false;
@@ -5323,7 +5510,7 @@ async function loadMusicTracks() {
       reconcileOpenMusicScore();
     } else {
       if (wasPlaying) pauseMusic(true);
-      currentMusicTrackId.value = result.tracks[0]?.id || null;
+      currentMusicTrackId.value = sortMusicTracks(result.tracks, musicPlaylistSort.value)[0]?.id || null;
       reconcileOpenMusicScore();
       if (musicAudio) {
         musicAudio.removeAttribute("src");
@@ -7982,25 +8169,38 @@ async function toggleVirtual(character: any) {
             <header>
               <div>
                 <strong>播放列表</strong>
-                <small>最新上传优先 · {{ musicTracks.length }} 首</small>
+                <small>{{ musicTracks.length }} 首 · 支持搜索与排序</small>
               </div>
               <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭播放列表"><X :size="19" /></button>
             </header>
-            <div v-if="musicTracks.length" class="music-track-list">
-              <button
-                v-for="(track, index) in musicTracks"
+            <div class="music-playlist-tools">
+              <input v-model="musicPlaylistQuery" type="search" placeholder="搜索歌曲或文件名" aria-label="搜索播放列表" />
+              <select v-model="musicPlaylistSort" aria-label="播放列表排序">
+                <option value="manual">手动排序</option>
+                <option value="heat">按热度</option>
+                <option value="uploaded">按上传时间</option>
+                <option value="filename">按文件名</option>
+              </select>
+            </div>
+            <div v-if="filteredMusicTracks.length" class="music-track-list">
+              <div
+                v-for="(track, index) in filteredMusicTracks"
                 :key="track.id"
-                type="button"
                 class="music-track-row"
                 :class="{ active: currentMusicTrack?.id === track.id }"
-                @click="selectMusicTrack(track)"
               >
-                <span class="music-track-index">{{ index + 1 }}</span>
-                <span class="music-track-copy"><strong>{{ track.title }}</strong><small>{{ compactBytes(track.fileSize) }}</small></span>
-                <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
-              </button>
+                <button type="button" class="music-track-select" @click="selectMusicTrack(track)">
+                  <span class="music-track-index">{{ index + 1 }}</span>
+                  <span class="music-track-copy"><strong>{{ track.title }}</strong><small>热度 {{ track.heat }} · {{ compactBytes(track.fileSize) }}</small></span>
+                  <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
+                </button>
+                <span v-if="canManageMusic && musicPlaylistSort === 'manual'" class="music-track-order-actions">
+                  <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === 0 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, -1)" aria-label="歌曲上移"><ArrowUp :size="15" /></button>
+                  <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === filteredMusicTracks.length - 1 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, 1)" aria-label="歌曲下移"><ArrowDown :size="15" /></button>
+                </span>
+              </div>
             </div>
-            <p v-else class="music-playlist-empty">播放列表还是空的</p>
+            <p v-else class="music-playlist-empty">{{ musicTracks.length ? "没有找到匹配的歌曲" : "播放列表还是空的" }}</p>
           </div>
         </section>
         <section v-if="musicScoreStageVisible" class="music-score-stage" :class="{ closing: musicScoreStageClosing }" aria-label="当前歌曲歌谱">
@@ -8341,33 +8541,43 @@ async function toggleVirtual(character: any) {
                   </button>
                 </template>
                 <template v-else>
-                  <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
-                  <div v-else class="message-text bible-rich-text">
-                    <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
-                      <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
-                      <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
-                        <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
-                          <BookOpen :size="13" />{{ segment.reference }}
-                        </button>
-                        <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-popover">
-                          <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
-                          <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
-                            <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
-                            <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
-                          </template>
-                          <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
+                  <template v-if="musicMentionPayload(row.message)">
+                    <div class="music-mention-card">
+                      <span class="music-mention-art"><AudioLines :size="24" /></span>
+                      <span class="music-mention-copy"><small>提及歌曲</small><strong>{{ musicMentionTitle(row.message) }}</strong><em>点击消息立即播放</em></span>
+                      <Play :size="20" />
+                    </div>
+                    <div v-if="musicMentionCommentHtml(row.message)" class="message-text music-mention-comment" v-html="musicMentionCommentHtml(row.message)"></div>
+                  </template>
+                  <template v-else>
+                    <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
+                    <div v-else class="message-text bible-rich-text">
+                      <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
+                        <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
+                        <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
+                          <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
+                            <BookOpen :size="13" />{{ segment.reference }}
+                          </button>
+                          <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-popover">
+                            <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
+                            <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
+                              <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
+                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
+                            </template>
+                            <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
+                          </span>
                         </span>
+                      </template>
+                    </div>
+                    <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
+                      <span class="link-preview-copy">
+                        <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
+                        <strong>{{ linkPreviewFor(row.message)?.title }}</strong>
+                        <em v-if="linkPreviewFor(row.message)?.description">{{ linkPreviewFor(row.message)?.description }}</em>
                       </span>
-                    </template>
-                  </div>
-                  <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
-                    <span class="link-preview-copy">
-                      <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
-                      <strong>{{ linkPreviewFor(row.message)?.title }}</strong>
-                      <em v-if="linkPreviewFor(row.message)?.description">{{ linkPreviewFor(row.message)?.description }}</em>
-                    </span>
-                    <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
-                  </a>
+                      <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
+                    </a>
+                  </template>
                 </template>
               </div>
               <button
@@ -8427,6 +8637,11 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
           <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
         </div>
+        <div v-if="selectedMusicMention" class="music-mention-chip">
+          <AudioLines :size="17" />
+          <span><small>已提及歌曲</small><strong>{{ selectedMusicMention.title }}</strong></span>
+          <button class="icon-btn" type="button" @click="removeMusicMention" aria-label="取消提及歌曲"><X :size="16" /></button>
+        </div>
         <div class="composer-input-shell">
           <div class="composer-main" :class="{ raised: composerPanel }">
             <button class="icon-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
@@ -8448,7 +8663,21 @@ async function toggleVirtual(character: any) {
             <input ref="photoInput" class="hidden" type="file" accept="image/*" @change="handlePickedFile" />
           </div>
           <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
-            <template v-if="activeComposerSuggestionKind === 'mention'">
+            <template v-if="activeComposerSuggestionKind === 'music'">
+              <button
+                v-for="(track, index) in matchingMusicMentionTracks"
+                :key="track.id"
+                type="button"
+                class="composer-suggestion music-suggestion"
+                :class="{ active: index === composerSuggestionIndex }"
+                @click="chooseMusicMentionSuggestion(track)"
+              >
+                <AudioLines :size="18" />
+                <span>{{ track.title }}</span>
+                <small>热度 {{ track.heat }}</small>
+              </button>
+            </template>
+            <template v-else-if="activeComposerSuggestionKind === 'mention'">
               <button
                 v-for="(member, index) in matchingMentionMembers"
                 :key="member.id"
@@ -8699,7 +8928,8 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicScoreUploadBusy" @click="requestMusicScoreUpload"><ImageIcon :size="15" />{{ musicScoreUploadBusy ? "正在上传歌谱" : "上传歌谱" }}</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions) && musicScorePreviewPage(pendingMessageActions)" type="button" @click="openMusicScoreManagerAction"><ImageIcon :size="15" />管理歌谱页面</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicScoreUploadBusy" @click="requestMusicScoreUpload"><ImageIcon :size="15" />{{ musicScoreUploadBusy ? "正在上传歌谱" : musicScorePreviewPage(pendingMessageActions) ? "替换整套歌谱" : "上传歌谱" }}</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="renameMusicTrackAction"><FileText :size="15" />重命名</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicTrackAction"><Trash2 :size="15" />删除歌曲</button>
           <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
@@ -8825,6 +9055,28 @@ async function toggleVirtual(character: any) {
       </form>
     </section>
 
+    <section v-if="musicScoreManageTrack" class="modal-shell" @click.self="musicScoreManageTrackId = null">
+      <div class="settings-modal music-score-manager-modal">
+        <header class="modal-head">
+          <div><strong>管理歌谱</strong><small>{{ musicScoreManageTrack.title }} · {{ musicScoreManageTrack.scorePages.length }} 页</small></div>
+          <button class="icon-btn" type="button" @click="musicScoreManageTrackId = null" aria-label="关闭歌谱管理"><X :size="20" /></button>
+        </header>
+        <div class="music-score-manager-list">
+          <article v-for="(page, index) in musicScoreManageTrack.scorePages" :key="page.id" class="music-score-manager-row">
+            <button class="music-score-manager-thumb" type="button" @click="openMusicScorePreview(page, musicScoreManageTrack.id)">
+              <img :src="musicScorePageUrl(page, musicScoreManageTrack.id)" alt="" />
+            </button>
+            <span><strong>第 {{ index + 1 }} 页</strong><small>{{ page.fileName }} · {{ compactBytes(page.fileSize) }}</small></span>
+            <span class="music-score-manager-actions">
+              <button type="button" :disabled="index === 0 || musicScoreManageBusy" @click="moveMusicScorePage(index, -1)" aria-label="歌谱上移"><ArrowUp :size="16" /></button>
+              <button type="button" :disabled="index === musicScoreManageTrack.scorePages.length - 1 || musicScoreManageBusy" @click="moveMusicScorePage(index, 1)" aria-label="歌谱下移"><ArrowDown :size="16" /></button>
+              <button type="button" class="danger" :disabled="musicScoreManageBusy" @click="deleteMusicScorePage(page)" aria-label="删除这页歌谱"><Trash2 :size="16" /></button>
+            </span>
+          </article>
+        </div>
+      </div>
+    </section>
+
     <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image', score: previewPinnedImage?.score }" @click.self="closePreviewMessage">
       <div class="media-preview-modal" :class="{ 'image-preview-modal': previewMessage.type === 'image', 'score-preview-modal': previewPinnedImage?.score }">
         <header v-if="previewMessage.type !== 'image'" class="modal-head">
@@ -8832,6 +9084,23 @@ async function toggleVirtual(character: any) {
         </header>
         <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
         <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
+        <button
+          v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1"
+          class="score-preview-arrow score-preview-previous"
+          type="button"
+          :disabled="previewScorePageIndex <= 0"
+          @click.stop="shiftMusicScorePreview(-1)"
+          aria-label="上一页歌谱"
+        ><ChevronLeft :size="30" /></button>
+        <button
+          v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1"
+          class="score-preview-arrow score-preview-next"
+          type="button"
+          :disabled="previewScorePageIndex >= (previewScoreTrack?.scorePages.length || 0) - 1"
+          @click.stop="shiftMusicScorePreview(1)"
+          aria-label="下一页歌谱"
+        ><ChevronRight :size="30" /></button>
+        <span v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1" class="score-preview-counter">{{ previewScorePageIndex + 1 }} / {{ previewScoreTrack?.scorePages.length }}</span>
         <div
           class="media-preview-body"
           :class="{ 'image-preview-body': previewMessage.type === 'image' }"
