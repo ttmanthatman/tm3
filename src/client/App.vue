@@ -480,6 +480,10 @@ const pausedEffectIds = ref<Set<number>>(new Set());
 const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
 const pendingMessageActions = ref<MessageDTO | null>(null);
+const forwardMessage = ref<MessageDTO | null>(null);
+const forwardChannelIds = ref<number[]>([]);
+const forwardBusy = ref(false);
+const forwardError = ref("");
 const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const composerPanel = ref<"voice" | "more" | null>(null);
@@ -1012,6 +1016,9 @@ onBeforeUnmount(() => {
 
 const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
+const forwardTargetChannels = computed(() =>
+  store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
+);
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
 const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || sortedMusicTracks.value[0] || null);
 const filteredMusicTracks = computed(() => {
@@ -1680,10 +1687,74 @@ function musicMentionTitle(message: MessageDTO) {
   return musicTracks.value.find((track) => track.id === payload.musicTrackId)?.title || payload.musicTrackTitle;
 }
 
-function musicMentionCommentHtml(message: MessageDTO) {
-  const content = (message.content || "").trim();
-  if (!content || content === `提及歌曲：${musicMentionTitle(message)}` || content === `提及歌曲：${musicMentionPayload(message)?.musicTrackTitle}`) return "";
-  return messageContentHtml(message);
+function musicMentionTextHtml(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  const title = musicMentionTitle(message);
+  const root = document.createElement("div");
+  root.innerHTML = message.content || "";
+  const plainText = (root.textContent || "").trim();
+  const legacyPlaceholders = new Set([`提及歌曲：${title}`, `提及歌曲：${payload?.musicTrackTitle || title}`]);
+  const makeTitle = () => {
+    const strong = document.createElement("strong");
+    strong.className = "music-mention-title";
+    strong.textContent = title;
+    return strong;
+  };
+  if (!plainText || legacyPlaceholders.has(plainText)) {
+    root.replaceChildren(makeTitle());
+    return root.innerHTML;
+  }
+  const markers = [...new Set([`@@${payload?.musicTrackTitle || ""}`, `@@${title}`].filter((marker) => marker.length > 2))];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let replaced = false;
+  while (walker.nextNode() && !replaced) {
+    const node = walker.currentNode as Text;
+    const text = node.textContent || "";
+    for (const marker of markers) {
+      const index = text.indexOf(marker);
+      if (index < 0) continue;
+      const fragment = document.createDocumentFragment();
+      fragment.append(document.createTextNode(text.slice(0, index)), makeTitle(), document.createTextNode(text.slice(index + marker.length)));
+      node.replaceWith(fragment);
+      replaced = true;
+      break;
+    }
+  }
+  if (!replaced) root.prepend(makeTitle(), document.createTextNode(" "));
+  return linkifyMessageHtml(root.innerHTML);
+}
+
+function isMentionedMusicPlaying(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  return !!payload && currentMusicTrackId.value === payload.musicTrackId && musicPlaying.value;
+}
+
+async function toggleMentionedMusic(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  if (!payload) return;
+  const track = musicTracks.value.find((item) => item.id === payload.musicTrackId);
+  if (!track) {
+    alert("这首歌曲已被删除或暂时不可用");
+    return;
+  }
+  if (currentMusicTrackId.value === track.id && musicPlaying.value) {
+    pauseMusic(true);
+    return;
+  }
+  currentMusicTrackId.value = track.id;
+  reconcileOpenMusicScore();
+  musicPlayerExpanded.value = true;
+  musicPlaylistOpen.value = false;
+  setMusicAudioTrack(track);
+  await playCurrentMusic();
+}
+
+function stopMentionedMusic(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
+  pauseMusic(true);
+  if (musicAudio) musicAudio.currentTime = 0;
+  musicError.value = "";
 }
 
 function isMarkdownMessage(message: MessageDTO) {
@@ -3053,19 +3124,22 @@ function chooseMusicMentionSuggestion(track: MusicTrackDTO) {
   const token = musicMentionToken.value;
   const start = token?.start ?? input.value.length;
   const end = token?.end ?? input.value.length;
-  input.value = `${input.value.slice(0, start)}${input.value.slice(end)}`.replace(/[ \t]{2,}/g, " ");
+  const mention = `@@${track.title} `;
+  input.value = `${input.value.slice(0, start)}${mention}${input.value.slice(end)}`;
   selectedMusicMention.value = track;
   composerPanel.value = null;
   composerSuggestionSuppressed.value = true;
   nextTick(() => {
     composerInput.value?.focus();
-    const cursor = Math.min(start, input.value.length);
+    const cursor = Math.min(start + mention.length, input.value.length);
     composerInput.value?.setSelectionRange(cursor, cursor);
     syncComposerCaret();
   });
 }
 
 function removeMusicMention() {
+  const marker = selectedMusicMention.value ? `@@${selectedMusicMention.value.title}` : "";
+  if (marker) input.value = input.value.replace(marker, "").replace(/[ \t]{2,}/g, " ").trim();
   selectedMusicMention.value = null;
   nextTick(() => composerInput.value?.focus());
 }
@@ -4461,7 +4535,7 @@ function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
 
 function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
   clearMessageLongPress();
-  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: 198 });
+  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: isAudioMessage(message) ? 244 : 198 });
   pendingMessageActions.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
@@ -4540,6 +4614,50 @@ async function dismissLikeNotification(id: number) {
 
 function closeMessageActionMenu() {
   pendingMessageActions.value = null;
+}
+
+function openForwardMessageDialog() {
+  const message = pendingMessageActions.value;
+  if (!message || !isAudioMessage(message)) return;
+  forwardMessage.value = message;
+  forwardChannelIds.value = [];
+  forwardError.value = "";
+  closeMessageActionMenu();
+}
+
+function closeForwardMessageDialog() {
+  if (forwardBusy.value) return;
+  forwardMessage.value = null;
+  forwardChannelIds.value = [];
+  forwardError.value = "";
+}
+
+function toggleForwardChannel(channelId: number) {
+  const next = new Set(forwardChannelIds.value);
+  if (next.has(channelId)) next.delete(channelId);
+  else next.add(channelId);
+  forwardChannelIds.value = [...next];
+}
+
+async function submitAudioForward() {
+  const message = forwardMessage.value;
+  if (!message || forwardBusy.value || !forwardChannelIds.value.length) return;
+  forwardBusy.value = true;
+  forwardError.value = "";
+  try {
+    const result = await api<{ success: boolean; forwarded: number }>(`/api/messages/${message.id}/forward`, {
+      method: "POST",
+      body: JSON.stringify({ channelIds: forwardChannelIds.value })
+    });
+    const forwarded = result.forwarded;
+    forwardMessage.value = null;
+    forwardChannelIds.value = [];
+    alert(`已转发到 ${forwarded} 个群`);
+  } catch (error) {
+    forwardError.value = error instanceof Error ? error.message : "转发失败";
+  } finally {
+    forwardBusy.value = false;
+  }
 }
 
 function quoteActionMessage() {
@@ -4855,23 +4973,6 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     return;
   }
   acknowledgeMentionAlert(message);
-  const mentionedTrack = musicMentionPayload(message);
-  if (mentionedTrack) {
-    const track = musicTracks.value.find((item) => item.id === mentionedTrack.musicTrackId);
-    if (!track) {
-      alert("这首歌曲已被删除或暂时不可用");
-      return;
-    }
-    currentMusicTrackId.value = track.id;
-    reconcileOpenMusicScore();
-    musicPlayerExpanded.value = true;
-    musicPlaylistOpen.value = false;
-    setMusicAudioTrack(track);
-    void playCurrentMusic();
-    event.preventDefault();
-    event.stopPropagation();
-    return;
-  }
   if (messageEffect(message) === "oops") {
     const target = event.target instanceof Element ? event.target : null;
     const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
@@ -8542,12 +8643,24 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else>
                   <template v-if="musicMentionPayload(row.message)">
-                    <div class="music-mention-card">
-                      <span class="music-mention-art"><AudioLines :size="24" /></span>
-                      <span class="music-mention-copy"><small>提及歌曲</small><strong>{{ musicMentionTitle(row.message) }}</strong><em>点击消息立即播放</em></span>
-                      <Play :size="20" />
+                    <div class="message-text music-mention-text" v-html="musicMentionTextHtml(row.message)"></div>
+                    <div class="music-mention-controls" role="group" :aria-label="`${musicMentionTitle(row.message)}播放控制`" @click.stop @pointerdown.stop>
+                      <button
+                        type="button"
+                        class="music-mention-control music-mention-play"
+                        :class="{ playing: isMentionedMusicPlaying(row.message) }"
+                        @click="toggleMentionedMusic(row.message)"
+                        :aria-label="isMentionedMusicPlaying(row.message) ? '暂停歌曲' : '播放歌曲'"
+                      >
+                        <Pause v-if="isMentionedMusicPlaying(row.message)" :size="16" />
+                        <Play v-else :size="16" />
+                        <span>{{ isMentionedMusicPlaying(row.message) ? "暂停" : "播放" }}</span>
+                      </button>
+                      <button type="button" class="music-mention-control music-mention-stop" @click="stopMentionedMusic(row.message)" aria-label="停止歌曲">
+                        <Square :size="14" fill="currentColor" />
+                        <span>停止</span>
+                      </button>
                     </div>
-                    <div v-if="musicMentionCommentHtml(row.message)" class="message-text music-mention-comment" v-html="musicMentionCommentHtml(row.message)"></div>
                   </template>
                   <template v-else>
                     <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
@@ -8928,6 +9041,7 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
+          <button v-if="isAudioMessage(pendingMessageActions)" type="button" @click="openForwardMessageDialog"><Send :size="15" />转发到其他群</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions) && musicScorePreviewPage(pendingMessageActions)" type="button" @click="openMusicScoreManagerAction"><ImageIcon :size="15" />管理歌谱页面</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicScoreUploadBusy" @click="requestMusicScoreUpload"><ImageIcon :size="15" />{{ musicScoreUploadBusy ? "正在上传歌谱" : musicScorePreviewPage(pendingMessageActions) ? "替换整套歌谱" : "上传歌谱" }}</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="renameMusicTrackAction"><FileText :size="15" />重命名</button>
@@ -8936,6 +9050,39 @@ async function toggleVirtual(character: any) {
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
         </div>
       </div>
+    </section>
+
+    <section v-if="forwardMessage" class="modal-shell" @click.self="closeForwardMessageDialog">
+      <form class="small-modal forward-message-modal" @submit.prevent="submitAudioForward">
+        <header class="modal-head">
+          <div><strong>转发音频</strong><small>{{ forwardMessage.fileName || "音频" }}</small></div>
+          <button class="icon-btn" type="button" :disabled="forwardBusy" @click="closeForwardMessageDialog" aria-label="关闭转发"><X :size="20" /></button>
+        </header>
+        <div class="forward-channel-body">
+          <div v-if="forwardTargetChannels.length" class="forward-channel-list">
+            <button
+              v-for="channel in forwardTargetChannels"
+              :key="channel.id"
+              type="button"
+              class="forward-channel-row"
+              :class="{ selected: forwardChannelIds.includes(channel.id) }"
+              @click="toggleForwardChannel(channel.id)"
+            >
+              <span class="channel-icon">{{ channel.icon }}</span>
+              <span><strong>{{ channel.name }}</strong><small>{{ channel.description || "群聊" }}</small></span>
+              <CheckCircle2 v-if="forwardChannelIds.includes(channel.id)" :size="19" />
+            </button>
+          </div>
+          <div v-else class="member-picker-empty">没有可转发的其他群</div>
+          <p v-if="forwardError" class="form-error">{{ forwardError }}</p>
+        </div>
+        <div class="confirm-actions member-picker-actions">
+          <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="closeForwardMessageDialog">取消</button>
+          <button class="primary-btn" type="submit" :disabled="forwardBusy || !forwardChannelIds.length">
+            {{ forwardBusy ? "转发中..." : `转发到 ${forwardChannelIds.length || ""} 个群` }}
+          </button>
+        </div>
+      </form>
     </section>
 
     <section v-if="pendingPrayer" class="tap-popover prayer-popover" :style="prayerPromptStyle" data-prayer-popover>
@@ -9084,23 +9231,11 @@ async function toggleVirtual(character: any) {
         </header>
         <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
         <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
-        <button
-          v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1"
-          class="score-preview-arrow score-preview-previous"
-          type="button"
-          :disabled="previewScorePageIndex <= 0"
-          @click.stop="shiftMusicScorePreview(-1)"
-          aria-label="上一页歌谱"
-        ><ChevronLeft :size="30" /></button>
-        <button
-          v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1"
-          class="score-preview-arrow score-preview-next"
-          type="button"
-          :disabled="previewScorePageIndex >= (previewScoreTrack?.scorePages.length || 0) - 1"
-          @click.stop="shiftMusicScorePreview(1)"
-          aria-label="下一页歌谱"
-        ><ChevronRight :size="30" /></button>
-        <span v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1" class="score-preview-counter">{{ previewScorePageIndex + 1 }} / {{ previewScoreTrack?.scorePages.length }}</span>
+        <div v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1" class="score-preview-pager">
+          <button type="button" :disabled="previewScorePageIndex <= 0" @click.stop="shiftMusicScorePreview(-1)" aria-label="上一页歌谱"><ChevronLeft :size="23" /></button>
+          <span>{{ previewScorePageIndex + 1 }} / {{ previewScoreTrack?.scorePages.length }}</span>
+          <button type="button" :disabled="previewScorePageIndex >= (previewScoreTrack?.scorePages.length || 0) - 1" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
+        </div>
         <div
           class="media-preview-body"
           :class="{ 'image-preview-body': previewMessage.type === 'image' }"

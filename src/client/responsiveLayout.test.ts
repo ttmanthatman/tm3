@@ -184,12 +184,22 @@ test("score image preview fills the viewport width without black side bars", () 
   assert.match(css, /\.media-preview-shell\.score \.media-preview-image \{[\s\S]*?width: 100vw;[\s\S]*?max-width: none;/);
 });
 
-test("double-at song mentions render as one clickable playback card", () => {
+test("double-at song mentions render inline with independent playback controls", () => {
   assert.match(app, /musicMentionTokenAtCursor\(input\.value, composerCaret\.value\)/);
   assert.match(app, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
-  assert.match(app, /class="music-mention-card"[\s\S]*?点击消息立即播放/);
-  assert.match(app, /const mentionedTrack = musicMentionPayload\(message\);[\s\S]*?setMusicAudioTrack\(track\);[\s\S]*?playCurrentMusic\(\)/);
-  assert.match(css, /\.music-mention-card \{[\s\S]*?grid-template-columns: 44px minmax\(0, 1fr\) auto;/);
+  assert.match(app, /const mention = `@@\$\{track\.title\} `/);
+  assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-controls"/);
+  assert.match(app, /toggleMentionedMusic\(row\.message\)[\s\S]*?stopMentionedMusic\(row\.message\)/);
+  assert.match(app, /function stopMentionedMusic[\s\S]*?musicAudio\.currentTime = 0/);
+  assert.match(css, /\.music-mention-text \.music-mention-title \{[\s\S]*?color: #ed741b;[\s\S]*?font-weight: 850;/);
+});
+
+test("audio messages offer multi-group forwarding from the long-press menu", () => {
+  assert.match(app, /isAudioMessage\(pendingMessageActions\)[^>]*[\s\S]*?openForwardMessageDialog[\s\S]*?转发到其他群/);
+  assert.match(app, /class="small-modal forward-message-modal"[^>]*submitAudioForward/);
+  assert.match(app, /v-for="channel in forwardTargetChannels"/);
+  assert.match(app, /\/api\/messages\/\$\{message\.id\}\/forward/);
+  assert.match(css, /\.forward-channel-row\.selected \{/);
 });
 
 test("playlist supports search, four sort modes, and manual movement controls", () => {
@@ -202,6 +212,7 @@ test("playlist supports search, four sort modes, and manual movement controls", 
 test("score pages can be managed individually and paged in preview", () => {
   assert.match(app, /管理歌谱页面[\s\S]*?class="settings-modal music-score-manager-modal"/);
   assert.match(app, /moveMusicScorePage\(index, -1\)[\s\S]*?deleteMusicScorePage\(page\)/);
-  assert.match(app, /class="score-preview-arrow score-preview-previous"[\s\S]*?class="score-preview-arrow score-preview-next"/);
-  assert.match(css, /\.score-preview-arrow \{[\s\S]*?background: rgba\(20, 20, 20, 0\.42\);/);
+  assert.match(app, /class="score-preview-pager"[\s\S]*?上一页歌谱[\s\S]*?下一页歌谱/);
+  assert.match(css, /\.score-preview-pager \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
+  assert.match(css, /\.score-preview-pager button \{[\s\S]*?background: rgba\(20, 20, 20, 0\.24\);/);
 });

@@ -3343,6 +3343,65 @@ app.put("/api/messages/:messageId/favorite", { preHandler: requireAuth }, async 
   return { success: true, reactions };
 });
 
+app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
+  const messageId = Number((request.params as { messageId: string }).messageId);
+  const body = z.object({ channelIds: z.array(z.number().int().positive()).min(1).max(50) }).parse(request.body);
+  const source = await prisma.message.findUnique({ where: { id: messageId } });
+  if (!source || !(await canAccessChannel(auth.accountId, source.channelId))) {
+    return reply.code(404).send({ success: false, message: "音频消息不存在" });
+  }
+  if (source.type !== "file" || !source.filePath || !/\.(webm|mp3|m4a|wav|ogg|aac)$/i.test(source.fileName || "")) {
+    return reply.code(400).send({ success: false, message: "只能转发音频消息" });
+  }
+  const channelIds = [...new Set(body.channelIds)].filter((channelId) => channelId !== source.channelId);
+  if (!channelIds.length) return reply.code(400).send({ success: false, message: "请选择其他群" });
+  const targetChannels = await prisma.channel.findMany({
+    where: { id: { in: channelIds }, kind: "standard", directKey: null },
+    select: { id: true }
+  });
+  if (targetChannels.length !== channelIds.length) return reply.code(400).send({ success: false, message: "目标群不存在或不支持转发" });
+  for (const channelId of channelIds) {
+    if (!(await canWriteChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权在所选群发言" });
+  }
+  const sourcePath = path.join(UPLOAD_DIR, path.basename(source.filePath));
+  if (!fs.existsSync(sourcePath)) return reply.code(404).send({ success: false, message: "音频文件不存在" });
+  const extension = path.extname(source.filePath).toLowerCase() || path.extname(source.fileName || "").toLowerCase() || ".bin";
+  const copies = channelIds.map((channelId) => ({ channelId, filePath: `${crypto.randomUUID()}${extension}` }));
+  try {
+    for (const copy of copies) await fs.promises.copyFile(sourcePath, path.join(UPLOAD_DIR, copy.filePath));
+    const created = await prisma.$transaction(
+      copies.map((copy) =>
+        prisma.message.create({
+          data: {
+            channelId: copy.channelId,
+            senderActorId: auth.actorId,
+            content: source.content || "",
+            type: "file",
+            ...(source.payload === null ? {} : { payload: source.payload as Prisma.InputJsonValue }),
+            fileName: source.fileName,
+            filePath: copy.filePath,
+            fileSize: source.fileSize
+          }
+        })
+      )
+    );
+    for (const message of created) {
+      await emitMessage(message.id).catch((error) => request.log.warn({ error, messageId: message.id }, "forwarded message emit failed"));
+      void sendMessagePush(message.id, pushOrigin).catch((error) => request.log.warn({ error, messageId: message.id }, "forwarded message push failed"));
+    }
+    return { success: true, forwarded: created.length };
+  } catch (error) {
+    for (const copy of copies) {
+      const copiedPath = path.join(UPLOAD_DIR, copy.filePath);
+      if (fs.existsSync(copiedPath)) fs.unlinkSync(copiedPath);
+    }
+    request.log.error({ error, sourceMessageId: source.id }, "audio forward failed");
+    return reply.code(500).send({ success: false, message: "转发失败，请稍后重试" });
+  }
+});
+
 app.get("/api/favorites", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
   const rows = await prisma.messageFavorite.findMany({
