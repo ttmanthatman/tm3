@@ -86,6 +86,7 @@ import type {
   MessageEffect,
   MessageEffectPayload,
   MusicMentionPayload,
+  MusicListenerDTO,
   MusicScorePageDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
@@ -127,6 +128,7 @@ import {
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
+import { creditedMusicListenMs, isQualifiedMusicPlay } from "@shared/musicPlayback";
 import {
   moveMusicTrack,
   musicFadeVolume,
@@ -182,6 +184,7 @@ const legacyMessageFontSizes: Record<string, number> = {
 const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
+const musicListeners = ref<MusicListenerDTO[]>([]);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
@@ -218,6 +221,16 @@ let musicAudio: HTMLAudioElement | null = null;
 let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
+let musicListenerHeartbeatTimer: number | undefined;
+type MusicPlaySession = {
+  trackId: number;
+  playbackId: string;
+  listenedMs: number;
+  lastMediaMs: number;
+  lastObservedAt: number;
+  reported: boolean;
+};
+let musicPlaySession: MusicPlaySession | null = null;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -1067,7 +1080,11 @@ onBeforeUnmount(() => {
   oopsPhysicsLayer.value?.reset();
   stopAllVoicePlayback();
   resetRecording();
+  stopPublishingMusicListening();
   store.socket?.off("music:updated", handleMusicUpdated);
+  store.socket?.off("music:listeners", handleMusicListeners);
+  store.socket?.off("connect", handleMusicSocketConnect);
+  if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
   clearMusicScoreCache();
   disposeMusicAudio();
 });
@@ -1087,6 +1104,18 @@ const filteredMusicTracks = computed(() => {
 const currentMusicTrackIndex = computed(() => sortedMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
+const musicListenerTickerText = computed(() =>
+  musicListeners.value.map((listener) => `${listener.displayName}正在听《${listener.trackTitle}》`).join(" · ")
+);
+const currentTrackOtherListeners = computed(() =>
+  musicListeners.value.filter((listener) => listener.trackId === currentMusicTrack.value?.id && listener.accountId !== store.account?.id)
+);
+const currentMusicListenerStatus = computed(() => {
+  const listeners = currentTrackOtherListeners.value;
+  if (!listeners.length) return "正在收听";
+  if (listeners.length <= 2) return `${listeners.map((listener) => listener.displayName).join("、")}也正在收听`;
+  return `${listeners[0].displayName}等${listeners.length}人也正在收听`;
+});
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
 const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
 const musicLyricsHeaderVisible = computed(
@@ -5157,7 +5186,7 @@ function openMusicScoreManagerAction() {
 function mergeMusicTrackSnapshot(track: MusicTrackDTO) {
   musicTracks.value = musicTracks.value.map((existing) =>
     existing.id === track.id
-      ? { ...existing, ...track, heat: track.heat || existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
+      ? { ...existing, ...track, heat: Number.isFinite(track.heat) ? track.heat : existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
       : existing
   );
   void preloadMusicScorePages([track]);
@@ -5888,6 +5917,8 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("error", handleMusicError);
   musicAudio.addEventListener("waiting", handleMusicWaiting);
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
+  musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
+  musicAudio.addEventListener("seeking", handleMusicSeeking);
 }
 
 function cancelMusicFade(resetVolume = true) {
@@ -5908,6 +5939,8 @@ function disposeMusicAudio() {
   musicAudio.removeEventListener("error", handleMusicError);
   musicAudio.removeEventListener("waiting", handleMusicWaiting);
   musicAudio.removeEventListener("canplay", handleMusicCanPlay);
+  musicAudio.removeEventListener("timeupdate", handleMusicTimeUpdate);
+  musicAudio.removeEventListener("seeking", handleMusicSeeking);
   musicAudio.removeAttribute("src");
   musicAudio.load();
   musicAudio = null;
@@ -5917,19 +5950,86 @@ function handleMusicPlay() {
   musicPlaying.value = true;
   musicLoading.value = false;
   musicError.value = "";
+  prepareMusicPlaySession();
+  publishMusicListening();
 }
 
 function handleMusicPause() {
   musicPlaying.value = false;
   musicLoading.value = false;
+  resetMusicPlayObservation();
+  publishMusicListening();
 }
 
 function handleMusicWaiting() {
   musicLoading.value = true;
+  resetMusicPlayObservation();
 }
 
 function handleMusicCanPlay() {
   musicLoading.value = false;
+  resetMusicPlayObservation();
+}
+
+function beginMusicPlaySession(track: MusicTrackDTO) {
+  musicPlaySession = {
+    trackId: track.id,
+    playbackId: crypto.randomUUID(),
+    listenedMs: 0,
+    lastMediaMs: Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000)),
+    lastObservedAt: performance.now(),
+    reported: false
+  };
+}
+
+function prepareMusicPlaySession() {
+  const track = currentMusicTrack.value;
+  if (!track || !musicAudio) return;
+  if (!musicPlaySession || musicPlaySession.trackId !== track.id || musicAudio.ended) beginMusicPlaySession(track);
+  else resetMusicPlayObservation();
+}
+
+function resetMusicPlayObservation() {
+  if (!musicPlaySession || !musicAudio) return;
+  musicPlaySession.lastMediaMs = Math.max(0, Math.round(musicAudio.currentTime * 1000));
+  musicPlaySession.lastObservedAt = performance.now();
+}
+
+function handleMusicSeeking() {
+  resetMusicPlayObservation();
+}
+
+function handleMusicTimeUpdate() {
+  const session = musicPlaySession;
+  const audio = musicAudio;
+  if (!session || !audio || session.trackId !== currentMusicTrack.value?.id) return;
+  const now = performance.now();
+  const currentMediaMs = Math.max(0, Math.round(audio.currentTime * 1000));
+  if (!audio.paused && !audio.seeking && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    session.listenedMs += creditedMusicListenMs(session.lastMediaMs, currentMediaMs, now - session.lastObservedAt);
+  }
+  session.lastMediaMs = currentMediaMs;
+  session.lastObservedAt = now;
+  void reportQualifiedMusicPlay(session, audio.duration);
+}
+
+async function reportQualifiedMusicPlay(session: MusicPlaySession, durationSeconds: number) {
+  if (session.reported || !Number.isFinite(durationSeconds)) return;
+  const durationMs = Math.round(durationSeconds * 1000);
+  const listenedMs = Math.min(durationMs, Math.ceil(session.listenedMs));
+  if (!isQualifiedMusicPlay(durationMs, listenedMs)) return;
+  session.reported = true;
+  try {
+    const result = await api<{ heat: number }>(`/api/music/tracks/${session.trackId}/play`, {
+      method: "POST",
+      body: JSON.stringify({ playbackId: session.playbackId, durationMs, listenedMs })
+    });
+    if (Number.isFinite(result.heat)) {
+      musicTracks.value = musicTracks.value.map((track) => (track.id === session.trackId ? { ...track, heat: result.heat } : track));
+    }
+  } catch {
+    if (musicPlaySession === session) session.reported = false;
+  }
 }
 
 function currentMusicPlaybackTimeMs() {
@@ -5940,6 +6040,7 @@ function handleMusicError() {
   musicPlaying.value = false;
   musicLoading.value = false;
   musicError.value = "歌曲暂时无法播放";
+  publishMusicListening();
 }
 
 function setMusicAudioTrack(track: MusicTrackDTO) {
@@ -5949,6 +6050,7 @@ function setMusicAudioTrack(track: MusicTrackDTO) {
   musicAudio.src = musicStreamUrl(track);
   musicAudio.dataset.trackId = String(track.id);
   musicAudio.load();
+  beginMusicPlaySession(track);
 }
 
 async function playCurrentMusic() {
@@ -5961,6 +6063,7 @@ async function playCurrentMusic() {
   if (!musicAudio) return;
   cancelMusicFade();
   musicAudio.volume = 1;
+  prepareMusicPlaySession();
   musicLoading.value = true;
   musicError.value = "";
   try {
@@ -5983,10 +6086,12 @@ function pauseMusic(immediate = false) {
     audio.volume = 1;
     musicPlaying.value = false;
     musicLoading.value = false;
+    publishMusicListening();
     return;
   }
   musicPlaying.value = false;
   musicLoading.value = false;
+  publishMusicListening();
   const startedAt = performance.now();
   const animate = (now: number) => {
     if (audio !== musicAudio) return;
@@ -6016,6 +6121,7 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
     currentMusicTrackId.value = track.id;
     setMusicAudioTrack(track);
     if (musicAudio) musicAudio.currentTime = 0;
+    beginMusicPlaySession(track);
     musicError.value = "";
     await playCurrentMusic();
     return;
@@ -6033,6 +6139,7 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
 function handleMusicEnded() {
   cancelMusicFade();
   musicPlaying.value = false;
+  publishMusicListening();
   if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
 }
 
@@ -6119,13 +6226,48 @@ async function loadMusicTracks() {
   }
 }
 
-function handleMusicUpdated() {
+function handleMusicUpdated(event?: { action?: string; trackId?: number; heat?: number }) {
+  if (event?.action === "heat-updated" && Number.isFinite(event.trackId) && Number.isFinite(event.heat)) {
+    musicTracks.value = musicTracks.value.map((track) => (track.id === event.trackId ? { ...track, heat: Number(event.heat) } : track));
+    return;
+  }
   void loadMusicTracks();
+}
+
+function handleMusicListeners(listeners: MusicListenerDTO[]) {
+  musicListeners.value = Array.isArray(listeners)
+    ? listeners.filter(
+        (listener) =>
+          Number.isFinite(listener?.accountId) &&
+          Number.isFinite(listener?.trackId) &&
+          typeof listener?.displayName === "string" &&
+          typeof listener?.trackTitle === "string"
+      )
+    : [];
+}
+
+function publishMusicListening() {
+  store.socket?.emit("music:listening", { trackId: musicPlaying.value ? currentMusicTrack.value?.id || null : null });
+}
+
+function stopPublishingMusicListening() {
+  store.socket?.emit("music:listening", { trackId: null });
+}
+
+function handleMusicSocketConnect() {
+  publishMusicListening();
 }
 
 function attachMusicSocket() {
   store.socket?.off("music:updated", handleMusicUpdated);
   store.socket?.on("music:updated", handleMusicUpdated);
+  store.socket?.off("music:listeners", handleMusicListeners);
+  store.socket?.on("music:listeners", handleMusicListeners);
+  store.socket?.off("connect", handleMusicSocketConnect);
+  store.socket?.on("connect", handleMusicSocketConnect);
+  if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
+  musicListenerHeartbeatTimer = window.setInterval(publishMusicListening, 15_000);
+  publishMusicListening();
 }
 
 function adjustMessageFontSize(delta: number) {
@@ -8565,7 +8707,14 @@ async function toggleVirtual(character: any) {
                 </span>
               </strong>
               <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
-              <small v-else>{{ musicLoading ? "正在缓冲…" : musicPlaying ? "正在播放" : "已暂停" }}</small>
+              <small v-else-if="musicLoading">正在缓冲…</small>
+              <small v-else-if="musicPlaying" class="music-player-listener-marquee">
+                <span class="music-player-listener-track">
+                  <span>{{ currentMusicListenerStatus }}</span>
+                  <span aria-hidden="true">{{ currentMusicListenerStatus }}</span>
+                </span>
+              </small>
+              <small v-else>已暂停</small>
             </div>
             <div class="music-player-tools">
               <button
@@ -8615,6 +8764,12 @@ async function toggleVirtual(character: any) {
               aria-label="关闭点赞提醒"
               @click="dismissLikeNotification(activeTopNotice.notificationId)"
             ><X :size="11" /></button>
+          </div>
+          <div v-else-if="musicListenerTickerText" class="music-listener-marquee" aria-live="polite">
+            <span class="music-listener-marquee-track">
+              <span>{{ musicListenerTickerText }}</span>
+              <span aria-hidden="true">{{ musicListenerTickerText }}</span>
+            </span>
           </div>
           <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>

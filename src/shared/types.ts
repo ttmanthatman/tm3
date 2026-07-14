@@ -202,6 +202,13 @@ export interface MusicTrackDTO {
   lyrics: MusicLyricsDTO | null;
 }
 
+export interface MusicListenerDTO {
+  accountId: number;
+  displayName: string;
+  trackId: number;
+  trackTitle: string;
+}
+
 export interface MusicLyricCueDTO {
   index: number;
   startMs: number;

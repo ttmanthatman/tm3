@@ -105,6 +105,7 @@ model Account {
   pinnedSeens             PinnedSeen[]
   messageLikes            MessageLike[]
   messageFavorites        MessageFavorite[]
+  musicPlays              MusicPlay[]
   whyReads                WhyTopicRead[]
 
   @@map("accounts")
@@ -235,6 +236,7 @@ model Message {
   favorites       MessageFavorite[]
   musicScorePages MusicScorePage[]
   musicLyrics     MusicLyrics?
+  musicPlays      MusicPlay[]
 
   @@index([channelId, id])
   @@index([replyToId])
@@ -269,6 +271,22 @@ model MusicLyrics {
   track     Message  @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@map("music_lyrics")
+}
+
+model MusicPlay {
+  id          Int      @id @default(autoincrement())
+  trackId     Int      @map("track_id")
+  accountId   Int      @map("account_id")
+  playbackId  String   @unique @map("playback_id") @db.Char(36)
+  durationMs  Int      @map("duration_ms")
+  listenedMs  Int      @map("listened_ms")
+  qualifiedAt DateTime @default(now()) @map("qualified_at")
+  track       Message  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([trackId, qualifiedAt])
+  @@index([accountId, qualifiedAt])
+  @@map("music_plays")
 }
 
 model MessageLike {

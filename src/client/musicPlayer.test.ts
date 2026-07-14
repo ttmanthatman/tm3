@@ -11,6 +11,7 @@ import {
   shouldShowMusicScoreTrigger,
   sortMusicTracks
 } from "./musicPlayer.js";
+import { creditedMusicListenMs, isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 
 test("playlist navigation wraps in both directions", () => {
   assert.equal(nextMusicTrackIndex(3, 0, -1), 2);
@@ -66,4 +67,13 @@ test("playlist tracks sort by manual order, heat, upload time, and filename", ()
   assert.deepEqual(sortMusicTracks(tracks, "uploaded").map((track) => track.id), [2, 1]);
   assert.deepEqual(sortMusicTracks(tracks, "filename").map((track) => track.id), [2, 1]);
   assert.deepEqual(moveMusicTrack(tracks, 1, -1).map((track) => track.id), [2, 1]);
+});
+
+test("music heat only counts natural playback beyond half of the song", () => {
+  assert.equal(creditedMusicListenMs(1_000, 2_000, 1_000), 1_000);
+  assert.equal(creditedMusicListenMs(1_000, 31_000, 200), 0);
+  assert.equal(creditedMusicListenMs(2_000, 1_000, 1_000), 0);
+  assert.equal(isQualifiedMusicPlay(120_000, 60_000), false);
+  assert.equal(isQualifiedMusicPlay(120_000, 60_001), true);
+  assert.equal(isQualifiedMusicPlay(4_000, 3_000), false);
 });

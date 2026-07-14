@@ -34,6 +34,7 @@ import type {
   FlashEffectSettingsDTO,
   MessageDTO,
   MessageEffect,
+  MusicListenerDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
   PinnedContentBlockDTO,
@@ -56,6 +57,7 @@ import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImag
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
+import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -440,6 +442,7 @@ type LoginLogSession = Pick<AccountSession, "id" | "deviceKind" | "deviceName" |
 
 const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null }>();
 const accountSocketIds = new Map<number, Set<string>>();
+const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
 let pushReady = false;
 
@@ -849,7 +852,7 @@ function serializeMusicTrack(
   message: Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder"> & {
     musicScorePages?: Array<Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">>;
     musicLyrics?: Pick<MusicLyrics, "fileName" | "content"> | null;
-    _count?: { likes: number };
+    _count?: { musicPlays: number };
   },
   fallbackOrder = 0
 ): MusicTrackDTO {
@@ -860,7 +863,7 @@ function serializeMusicTrack(
     fileName,
     fileSize: message.fileSize || 0,
     createdAt: message.createdAt.toISOString(),
-    heat: message._count?.likes || 0,
+    heat: message._count?.musicPlays || 0,
     manualOrder: message.musicOrder ?? fallbackOrder,
     scorePages: (message.musicScorePages || []).map((page) => ({
       id: page.id,
@@ -2196,6 +2199,26 @@ async function broadcastPresence() {
   io.emit("presence:updated", unique);
 }
 
+function broadcastMusicListeners() {
+  const listeners = [...musicListeners.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .filter((listener, index, all) => all.findIndex((candidate) => candidate.accountId === listener.accountId) === index)
+    .map(({ updatedAt: _updatedAt, ...listener }) => listener);
+  io.emit("music:listeners", listeners);
+}
+
+const musicListenerCleanupTimer = setInterval(() => {
+  const staleBefore = Date.now() - 45_000;
+  let changed = false;
+  for (const [socketId, listener] of musicListeners) {
+    if (listener.updatedAt >= staleBefore) continue;
+    musicListeners.delete(socketId);
+    changed = true;
+  }
+  if (changed) broadcastMusicListeners();
+}, 15_000);
+musicListenerCleanupTimer.unref();
+
 function disconnectSessions(sessionIds: string[]) {
   const targets = new Set(sessionIds);
   if (!targets.size) return;
@@ -3346,7 +3369,6 @@ app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (req
     await prisma.messageLike.delete({ where: key });
   }
   const reactions = await broadcastMessageReactions(messageId, auth.accountId);
-  if (isMusicFileName(message.fileName) && (await isMusicChannel(message.channelId))) io.emit("music:updated", { action: "heat-updated", trackId: messageId });
   return { success: true, reactions, notification };
 });
 
@@ -3837,9 +3859,42 @@ app.get("/api/music/tracks", { preHandler: requireAuth }, async () => {
   const messages = await prisma.message.findMany({
     where: { channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
     orderBy: [{ musicOrder: "asc" }, { createdAt: "desc" }, { id: "desc" }],
-    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { likes: true } } }
+    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
   });
   return { tracks: messages.filter((message) => isMusicFileName(message.fileName)).map((message, index) => serializeMusicTrack(message, index)) };
+});
+
+app.post("/api/music/tracks/:id/play", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const trackId = Number((request.params as { id: string }).id);
+  const body = z
+    .object({
+      playbackId: z.string().uuid(),
+      durationMs: z.number().int().min(5_000).max(6 * 60 * 60 * 1000),
+      listenedMs: z.number().int().positive().max(6 * 60 * 60 * 1000)
+    })
+    .parse(request.body);
+  if (!isQualifiedMusicPlay(body.durationMs, body.listenedMs)) {
+    return reply.code(400).send({ success: false, message: "播放超过歌曲一半后才会计入热度" });
+  }
+  const track = await prisma.message.findFirst({
+    where: { id: trackId, channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
+    select: { id: true, fileName: true }
+  });
+  if (!track || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+
+  let created = false;
+  try {
+    await prisma.musicPlay.create({
+      data: { trackId, accountId: auth.accountId, playbackId: body.playbackId, durationMs: body.durationMs, listenedMs: body.listenedMs }
+    });
+    created = true;
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+  }
+  const heat = await prisma.musicPlay.count({ where: { trackId } });
+  if (created) io.emit("music:updated", { action: "heat-updated", trackId, heat });
+  return { success: true, counted: created, heat };
 });
 
 app.patch("/api/music/tracks/order", { preHandler: requireAuth }, async (request, reply) => {
@@ -3882,7 +3937,7 @@ app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (requ
       });
       return transaction.message.findUniqueOrThrow({
         where: { id },
-        include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+        include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
       });
     });
     io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
@@ -3904,7 +3959,7 @@ app.delete("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (r
   await prisma.musicLyrics.deleteMany({ where: { trackId: id } });
   const updated = await prisma.message.findUniqueOrThrow({
     where: { id },
-    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
   });
   io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
   io.emit("music:updated", { action: "lyrics-deleted", trackId: id });
@@ -3973,7 +4028,7 @@ app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (reque
       await transaction.musicScorePage.createMany({ data: pages.map((page) => ({ trackId: id, ...page })) });
       return transaction.message.findUniqueOrThrow({
         where: { id },
-        include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+        include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
       });
     });
     createdPaths.length = 0;
@@ -4012,7 +4067,7 @@ app.patch("/api/music/tracks/:trackId/score", { preHandler: requireAuth }, async
     }
     return transaction.message.findUniqueOrThrow({
       where: { id: trackId },
-      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
     });
   });
   io.emit("music:updated", { action: "score-reordered", trackId });
@@ -4041,7 +4096,7 @@ app.delete("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireAuth
     }
     return transaction.message.findUniqueOrThrow({
       where: { id: trackId },
-      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+      include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
     });
   });
   safeUnlinkMusicScore(page.filePath);
@@ -4110,7 +4165,7 @@ app.patch("/api/music/tracks/:id", { preHandler: requireAuth }, async (request, 
   const updated = await prisma.message.update({
     where: { id },
     data: { fileName: `${requested}${extension}` },
-    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true }
+    include: { sender: true, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
   });
   io.to(`ch:${message.channelId}`).emit("message:updated", await serializeMessage(updated));
   io.emit("music:updated", { action: "renamed", trackId: id });
@@ -6310,6 +6365,7 @@ const multicharManager = createMulticharManager(multicharDeps);
 registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin);
 
 app.addHook("onClose", async () => {
+  clearInterval(musicListenerCleanupTimer);
   multicharManager.stopAll();
 });
 
@@ -6356,6 +6412,7 @@ io.on("connection", async (socket: Socket) => {
   });
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));
   await broadcastPresence();
+  broadcastMusicListeners();
 
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
@@ -6408,8 +6465,38 @@ io.on("connection", async (socket: Socket) => {
     });
   });
 
+  socket.on("music:listening", async (data: unknown) => {
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    const body = z.object({ trackId: z.number().int().positive().nullable() }).safeParse(data);
+    if (!body.success || body.data.trackId === null) {
+      if (musicListeners.delete(socket.id)) broadcastMusicListeners();
+      else broadcastMusicListeners();
+      return;
+    }
+    const existing = musicListeners.get(socket.id);
+    if (existing?.trackId === body.data.trackId) {
+      existing.updatedAt = Date.now();
+      return;
+    }
+    const track = await prisma.message.findFirst({
+      where: { id: body.data.trackId, channel: { kind: "music" }, type: "file", fileName: { not: null } },
+      select: { id: true, fileName: true }
+    });
+    if (!track || !isMusicFileName(track.fileName)) return;
+    musicListeners.set(socket.id, {
+      accountId: currentAuth.accountId,
+      displayName: account.displayName,
+      trackId: track.id,
+      trackTitle: musicTrackTitle(track.fileName || ""),
+      updatedAt: Date.now()
+    });
+    broadcastMusicListeners();
+  });
+
   socket.on("disconnect", async () => {
     online.delete(socket.id);
+    const musicListenerChanged = musicListeners.delete(socket.id);
     const set = accountSocketIds.get(account.id);
     let isOffline = false;
     if (set) {
@@ -6421,6 +6508,7 @@ io.on("connection", async (socket: Socket) => {
     }
     if (isOffline) await writeLoginLog("presence_leave", account.id, session);
     await broadcastPresence();
+    if (musicListenerChanged) broadcastMusicListeners();
   });
 });
 

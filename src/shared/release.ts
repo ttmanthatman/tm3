@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.12.2";
+export const APP_VERSION = "0.12.3";
 
-export const RELEASE_DATE = "2026-07-14";
+export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "歌曲热度改为合格实际播放次数：同一次播放只有自然收听超过整首歌曲一半才计数，快速切歌和拖动进度不计入，并会实时同步到所有在线用户。",
+  "聊天顶部会用彩色滚动文字展示正在听歌的用户及歌曲；展开播放器后会滚动显示同时收听当前歌曲的其他用户。",
+  "修复顶部输入、提及和点赞活动提示可能越出聊天标题栏、覆盖其他顶部控件的问题。"
+] as const;
+
+const RELEASE_0_12_2_NOTES = [
   "iPhone、Safari 和 Chrome 在播放音乐时会暂停不可见歌词刷新；页面隐藏、息屏、暂停播放或退出歌词后不再维持无效的歌词渲染循环。",
   "大量聊天记录改为按视口动态渲染，普通频道、代祷、私密频道和私聊只保留视口附近的消息；其他频道的消息特效不会在后台运行。",
   "消息特效和掉落物理效果会在离开视口或页面隐藏时暂停；全局下雨只在当前可见聊天触发，并修复移动气泡被自身观察器反复暂停造成的列表闪动。",
@@ -505,9 +511,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "0.12.3",
+    date: "2026-07-15",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "0.12.2",
     date: "2026-07-14",
-    notes: RELEASE_NOTES
+    notes: RELEASE_0_12_2_NOTES
   },
   {
     version: "0.12.1",
