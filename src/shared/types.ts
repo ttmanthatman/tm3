@@ -64,6 +64,7 @@ export interface MessageDTO {
   payload?: unknown;
   fileName?: string | null;
   fileSize?: number | null;
+  scorePages?: MusicScorePageDTO[];
   voiceListened?: boolean;
   replyTo?: ReplyPreviewDTO | null;
   chainRootId?: number | null;

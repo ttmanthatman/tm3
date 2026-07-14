@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
+const server = fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
 
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);
@@ -45,6 +46,12 @@ test("audio attachments render their waveform player immediately without a colla
   assert.doesNotMatch(app, /class="media-preview-audio"/);
   assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
+});
+
+test("audio attachment headers omit the redundant decorative audio icon", () => {
+  assert.doesNotMatch(app, /class="inline-audio-art"/);
+  assert.match(css, /\.inline-audio-head \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.doesNotMatch(css, /\.inline-audio-art/);
 });
 
 test("inline audio waveform uses a responsive physical-pixel canvas and never escapes the bubble", () => {
@@ -188,10 +195,12 @@ test("double-at song mentions render inline with independent playback controls",
   assert.match(app, /musicMentionTokenAtCursor\(input\.value, composerCaret\.value\)/);
   assert.match(app, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
   assert.match(app, /const mention = `@@\$\{track\.title\} `/);
-  assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-controls"/);
+  assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
   assert.match(app, /toggleMentionedMusic\(row\.message\)[\s\S]*?stopMentionedMusic\(row\.message\)/);
   assert.match(app, /function stopMentionedMusic[\s\S]*?musicAudio\.currentTime = 0/);
+  assert.match(app, /v-if="!isMentionedMusicPlaying\(row\.message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-pause[\s\S]*?music-mention-capsule-stop/);
   assert.match(css, /\.music-mention-text \.music-mention-title \{[\s\S]*?color: #ed741b;[\s\S]*?font-weight: 850;/);
+  assert.match(css, /\.music-mention-capsule \{[\s\S]*?border-radius: 999px;[\s\S]*?radial-gradient[\s\S]*?box-shadow:/);
 });
 
 test("audio messages offer multi-group forwarding from the long-press menu", () => {
@@ -200,6 +209,14 @@ test("audio messages offer multi-group forwarding from the long-press menu", () 
   assert.match(app, /v-for="channel in forwardTargetChannels"/);
   assert.match(app, /\/api\/messages\/\$\{message\.id\}\/forward/);
   assert.match(css, /\.forward-channel-row\.selected \{/);
+});
+
+test("forwarded audio copies attached score pages and exposes them on the new message", () => {
+  assert.match(server, /include: \{ musicScorePages: \{ orderBy: \{ pageIndex: "asc" \} \} \}/);
+  assert.match(server, /scorePages: source\.musicScorePages\.map[\s\S]*?fs\.promises\.copyFile\(page\.sourcePath, path\.join\(MUSIC_SCORE_DIR, page\.filePath\)\)/);
+  assert.match(server, /musicScorePages: \{[\s\S]*?create: copy\.scorePages\.map/);
+  assert.match(app, /return message\.scorePages\?\.\[0\][\s\S]*?musicTracks\.value\.find/);
+  assert.match(app, /const previewScorePages = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)\?\.scorePages/);
 });
 
 test("playlist supports search, four sort modes, and manual movement controls", () => {

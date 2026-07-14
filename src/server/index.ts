@@ -1136,6 +1136,11 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       ? Promise.resolve(loadedReactions.favorites)
       : prisma.messageFavorite.findMany({ where: { messageId: message.id }, select: { accountId: true } })
   ]);
+  const loadedScorePages = (message as typeof message & { musicScorePages?: MusicScorePage[] }).musicScorePages;
+  const scorePages =
+    message.type === "file" && isAudioFileName(message.fileName)
+      ? loadedScorePages || (await prisma.musicScorePage.findMany({ where: { trackId: message.id }, orderBy: { pageIndex: "asc" } }))
+      : [];
   if (message.type === "prayer") {
     const aiSettings = await loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
@@ -1202,6 +1207,14 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
     payload,
     fileName: message.fileName,
     fileSize: message.fileSize,
+    scorePages: scorePages.map((page) => ({
+      id: page.id,
+      pageIndex: page.pageIndex,
+      fileName: page.fileName,
+      fileSize: page.fileSize,
+      width: page.width,
+      height: page.height
+    })),
     voiceListened,
     replyTo: message.replyTo
       ? {
@@ -3348,7 +3361,10 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
   const pushOrigin = pushOriginFromHeaders(request.headers);
   const messageId = Number((request.params as { messageId: string }).messageId);
   const body = z.object({ channelIds: z.array(z.number().int().positive()).min(1).max(50) }).parse(request.body);
-  const source = await prisma.message.findUnique({ where: { id: messageId } });
+  const source = await prisma.message.findUnique({
+    where: { id: messageId },
+    include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
+  });
   if (!source || !(await canAccessChannel(auth.accountId, source.channelId))) {
     return reply.code(404).send({ success: false, message: "音频消息不存在" });
   }
@@ -3367,10 +3383,27 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
   }
   const sourcePath = path.join(UPLOAD_DIR, path.basename(source.filePath));
   if (!fs.existsSync(sourcePath)) return reply.code(404).send({ success: false, message: "音频文件不存在" });
+  const missingScorePage = source.musicScorePages.find((page) => !fs.existsSync(path.join(MUSIC_SCORE_DIR, path.basename(page.filePath))));
+  if (missingScorePage) return reply.code(404).send({ success: false, message: `曲谱文件不存在：${missingScorePage.fileName}` });
   const extension = path.extname(source.filePath).toLowerCase() || path.extname(source.fileName || "").toLowerCase() || ".bin";
-  const copies = channelIds.map((channelId) => ({ channelId, filePath: `${crypto.randomUUID()}${extension}` }));
+  const copies = channelIds.map((channelId) => ({
+    channelId,
+    filePath: `${crypto.randomUUID()}${extension}`,
+    scorePages: source.musicScorePages.map((page) => ({
+      pageIndex: page.pageIndex,
+      fileName: page.fileName,
+      filePath: `${crypto.randomUUID()}${path.extname(page.filePath).toLowerCase() || ".webp"}`,
+      fileSize: page.fileSize,
+      width: page.width,
+      height: page.height,
+      sourcePath: path.join(MUSIC_SCORE_DIR, path.basename(page.filePath))
+    }))
+  }));
   try {
-    for (const copy of copies) await fs.promises.copyFile(sourcePath, path.join(UPLOAD_DIR, copy.filePath));
+    for (const copy of copies) {
+      await fs.promises.copyFile(sourcePath, path.join(UPLOAD_DIR, copy.filePath));
+      for (const page of copy.scorePages) await fs.promises.copyFile(page.sourcePath, path.join(MUSIC_SCORE_DIR, page.filePath));
+    }
     const created = await prisma.$transaction(
       copies.map((copy) =>
         prisma.message.create({
@@ -3382,8 +3415,12 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
             ...(source.payload === null ? {} : { payload: source.payload as Prisma.InputJsonValue }),
             fileName: source.fileName,
             filePath: copy.filePath,
-            fileSize: source.fileSize
-          }
+            fileSize: source.fileSize,
+            musicScorePages: {
+              create: copy.scorePages.map(({ sourcePath: _sourcePath, ...page }) => page)
+            }
+          },
+          include: { musicScorePages: { orderBy: { pageIndex: "asc" } } }
         })
       )
     );
@@ -3396,6 +3433,10 @@ app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async 
     for (const copy of copies) {
       const copiedPath = path.join(UPLOAD_DIR, copy.filePath);
       if (fs.existsSync(copiedPath)) fs.unlinkSync(copiedPath);
+      for (const page of copy.scorePages) {
+        const copiedScorePath = path.join(MUSIC_SCORE_DIR, page.filePath);
+        if (fs.existsSync(copiedScorePath)) fs.unlinkSync(copiedScorePath);
+      }
     }
     request.log.error({ error, sourceMessageId: source.id }, "audio forward failed");
     return reply.code(500).send({ success: false, message: "转发失败，请稍后重试" });
@@ -3948,10 +3989,10 @@ app.get("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireMediaAu
   const auth = (request as AuthedRequest).auth;
   const { trackId, pageId } = request.params as { trackId: string; pageId: string };
   const page = await prisma.musicScorePage.findFirst({
-    where: { id: Number(pageId), trackId: Number(trackId), track: { channel: { kind: "music" }, type: "file" } },
-    include: { track: { select: { channelId: true } } }
+    where: { id: Number(pageId), trackId: Number(trackId), track: { type: "file" } },
+    include: { track: { select: { channelId: true, fileName: true } } }
   });
-  if (!page) return reply.code(404).send({ success: false, message: "歌谱不存在" });
+  if (!page || !isAudioFileName(page.track.fileName)) return reply.code(404).send({ success: false, message: "歌谱不存在" });
   if (!(await canAccessChannel(auth.accountId, page.track.channelId))) return reply.code(403).send({ success: false, message: "无权查看歌谱" });
   const filePath = path.join(MUSIC_SCORE_DIR, path.basename(page.filePath));
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "歌谱文件不存在" });

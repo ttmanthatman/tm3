@@ -1031,8 +1031,12 @@ const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || 
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
 const musicScoreManageTrack = computed(() => musicTracks.value.find((track) => track.id === musicScoreManageTrackId.value) || null);
-const previewScoreTrack = computed(() => musicTracks.value.find((track) => track.id === previewPinnedImage.value?.trackId) || null);
-const previewScorePageIndex = computed(() => previewScoreTrack.value?.scorePages.findIndex((page) => page.id === previewPinnedImage.value?.pageId) ?? -1);
+const previewScorePages = computed(() => {
+  const trackId = previewPinnedImage.value?.trackId;
+  if (!trackId) return [];
+  return musicTracks.value.find((track) => track.id === trackId)?.scorePages || store.messages.find((message) => message.id === trackId)?.scorePages || [];
+});
+const previewScorePageIndex = computed(() => previewScorePages.value.findIndex((page) => page.id === previewPinnedImage.value?.pageId));
 const musicScoreTriggerVisible = computed(() =>
   shouldShowMusicScoreTrigger({
     playing: musicPlaying.value,
@@ -4841,7 +4845,7 @@ function musicScorePageUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.
 }
 
 function musicScorePreviewPage(message: MessageDTO) {
-  return musicTracks.value.find((track) => track.id === message.id)?.scorePages[0] || null;
+  return message.scorePages?.[0] || musicTracks.value.find((track) => track.id === message.id)?.scorePages[0] || null;
 }
 
 function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
@@ -4863,12 +4867,12 @@ function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTr
 }
 
 function shiftMusicScorePreview(delta: number) {
-  const track = previewScoreTrack.value;
   const index = previewScorePageIndex.value;
-  if (!track || index < 0) return;
+  const trackId = previewPinnedImage.value?.trackId;
+  if (!trackId || index < 0) return;
   const nextIndex = index + delta;
-  if (nextIndex < 0 || nextIndex >= track.scorePages.length) return;
-  openMusicScorePreview(track.scorePages[nextIndex], track.id);
+  if (nextIndex < 0 || nextIndex >= previewScorePages.value.length) return;
+  openMusicScorePreview(previewScorePages.value[nextIndex], trackId);
 }
 
 function openMusicScore() {
@@ -8595,7 +8599,6 @@ async function toggleVirtual(character: any) {
                     @click.stop
                   >
                     <div class="inline-audio-head">
-                      <span class="inline-audio-art" aria-hidden="true"><AudioLines :size="22" /></span>
                       <span class="inline-audio-title">
                         <strong :title="row.message.fileName || '音频'">{{ row.message.fileName || "音频" }}</strong>
                         <small>音频 · {{ compactBytes(row.message.fileSize) }}</small>
@@ -8644,22 +8647,35 @@ async function toggleVirtual(character: any) {
                 <template v-else>
                   <template v-if="musicMentionPayload(row.message)">
                     <div class="message-text music-mention-text" v-html="musicMentionTextHtml(row.message)"></div>
-                    <div class="music-mention-controls" role="group" :aria-label="`${musicMentionTitle(row.message)}播放控制`" @click.stop @pointerdown.stop>
+                    <div
+                      class="music-mention-capsule"
+                      :class="{ playing: isMentionedMusicPlaying(row.message) }"
+                      role="group"
+                      :aria-label="`${musicMentionTitle(row.message)}播放控制`"
+                      @click.stop
+                      @pointerdown.stop
+                    >
                       <button
+                        v-if="!isMentionedMusicPlaying(row.message)"
                         type="button"
-                        class="music-mention-control music-mention-play"
-                        :class="{ playing: isMentionedMusicPlaying(row.message) }"
+                        class="music-mention-capsule-action music-mention-capsule-play"
                         @click="toggleMentionedMusic(row.message)"
-                        :aria-label="isMentionedMusicPlaying(row.message) ? '暂停歌曲' : '播放歌曲'"
+                        aria-label="播放歌曲"
                       >
-                        <Pause v-if="isMentionedMusicPlaying(row.message)" :size="16" />
-                        <Play v-else :size="16" />
-                        <span>{{ isMentionedMusicPlaying(row.message) ? "暂停" : "播放" }}</span>
+                        <Play :size="16" fill="currentColor" />
+                        <span>播放</span>
                       </button>
-                      <button type="button" class="music-mention-control music-mention-stop" @click="stopMentionedMusic(row.message)" aria-label="停止歌曲">
-                        <Square :size="14" fill="currentColor" />
-                        <span>停止</span>
-                      </button>
+                      <template v-else>
+                        <button type="button" class="music-mention-capsule-action music-mention-capsule-pause" @click="toggleMentionedMusic(row.message)" aria-label="暂停歌曲">
+                          <Pause :size="15" fill="currentColor" />
+                          <span>暂停</span>
+                        </button>
+                        <i class="music-mention-capsule-divider" aria-hidden="true"></i>
+                        <button type="button" class="music-mention-capsule-action music-mention-capsule-stop" @click="stopMentionedMusic(row.message)" aria-label="停止歌曲">
+                          <Square :size="13" fill="currentColor" />
+                          <span>停止</span>
+                        </button>
+                      </template>
                     </div>
                   </template>
                   <template v-else>
@@ -9231,10 +9247,10 @@ async function toggleVirtual(character: any) {
         </header>
         <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
         <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
-        <div v-if="previewPinnedImage?.score && (previewScoreTrack?.scorePages.length || 0) > 1" class="score-preview-pager">
+        <div v-if="previewPinnedImage?.score && previewScorePages.length > 1" class="score-preview-pager">
           <button type="button" :disabled="previewScorePageIndex <= 0" @click.stop="shiftMusicScorePreview(-1)" aria-label="上一页歌谱"><ChevronLeft :size="23" /></button>
-          <span>{{ previewScorePageIndex + 1 }} / {{ previewScoreTrack?.scorePages.length }}</span>
-          <button type="button" :disabled="previewScorePageIndex >= (previewScoreTrack?.scorePages.length || 0) - 1" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
+          <span>{{ previewScorePageIndex + 1 }} / {{ previewScorePages.length }}</span>
+          <button type="button" :disabled="previewScorePageIndex >= previewScorePages.length - 1" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
         </div>
         <div
           class="media-preview-body"
