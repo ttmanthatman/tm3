@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.12.0";
+export const APP_VERSION = "0.12.1";
 
 export const RELEASE_DATE = "2026-07-14";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "曲库载入时会通过授权请求预加载歌谱页面为本地 Blob URL，改善 Safari 上打开和查看歌谱的稳定性；转发歌谱仍会按来源频道权限校验。",
+  "卡拉 OK 歌词区改为独立的顶部覆盖层并精简展示；修复聊天消息可覆盖歌词的问题，歌词始终位于聊天内容上方。"
+] as const;
+
+const RELEASE_0_12_0_NOTES = [
   "歌曲歌词支持 SRT、标准 LRC 和 Enhanced LRC；管理员或户部尚书可在音乐频道长按音频上传、替换或删除歌词。",
   "Enhanced LRC 会使用字词级时间标签，让当前歌词随演唱进度逐字、逐词渐变为橙色；普通 SRT/LRC 保持整句卡拉 OK 进度。",
   "播放带歌词歌曲时，歌词会覆盖顶部栏；点按可暂时隐藏，顶部区域 5 秒无操作后自动恢复歌词，音频消息会标记“带歌词”。",
@@ -493,9 +498,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.0",
+    version: "0.12.1",
     date: "2026-07-14",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.0",
+    date: "2026-07-14",
+    notes: RELEASE_0_12_0_NOTES
   },
   {
     version: "0.11.4",
