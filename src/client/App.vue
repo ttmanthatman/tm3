@@ -8310,20 +8310,21 @@ async function toggleVirtual(character: any) {
         <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
         </template>
-        <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
-          <span class="music-lyrics-track-title">{{ currentMusicTrackTitle }}</span>
-          <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
-            <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
-              <span class="music-lyrics-segment-base">{{ segment.text }}</span>
-              <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
+        <Transition name="music-lyrics-panel">
+          <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
+            <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
+              <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
+                <span class="music-lyrics-segment-base">{{ segment.text }}</span>
+                <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
+              </span>
             </span>
-          </span>
-          <span v-else class="music-lyrics-current">
-            <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-            <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-          </span>
-          <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
-        </button>
+            <span v-else class="music-lyrics-current">
+              <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+              <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
+            </span>
+            <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
+          </button>
+        </Transition>
       </header>
 
       <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">

@@ -237,6 +237,15 @@ test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
   assert.match(server, /parseLyrics\(content, file\.filename\)/);
 });
 
+test("karaoke lyrics expand over pinned content with refined enter and leave motion", () => {
+  assert.match(app, /<Transition name="music-lyrics-panel">[\s\S]*?class="music-lyrics-header"/);
+  assert.doesNotMatch(app, /music-lyrics-track-title/);
+  assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(168px \+ var\(--safe-top\)\);[\s\S]*?z-index: 30;/);
+  assert.match(css, /\.chat-pane > \.chat-head \{[\s\S]*?z-index: 21;[\s\S]*?overflow: visible;/);
+  assert.match(css, /\.music-lyrics-panel-enter-active[\s\S]*?musicLyricsReveal/);
+  assert.match(css, /\.music-lyrics-panel-leave-active[\s\S]*?musicLyricsRetract/);
+});
+
 test("fresh browser and login entry force the chat to the newest semantic position", () => {
   assert.match(app, /onMounted\([\s\S]*?await enterChatAtNewest\(\)/);
   assert.match(app, /async function doLogin\([\s\S]*?await enterChatAtNewest\(\)/);

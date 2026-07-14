@@ -830,48 +830,56 @@ button {
 
 .music-lyrics-header {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: calc(168px + var(--safe-top));
   z-index: 30;
   width: 100%;
   min-width: 0;
-  padding: calc(var(--safe-top) + 4px) 18px 5px;
+  padding: calc(var(--safe-top) + 28px) clamp(22px, 6vw, 58px) 26px;
   border: 0;
-  border-radius: 0;
+  border-bottom: 1px solid rgba(255, 215, 159, 0.24);
+  border-radius: 0 0 26px 26px;
   color: #fff;
   background:
-    radial-gradient(circle at 16% 18%, rgba(255, 170, 61, 0.3), transparent 34%),
-    linear-gradient(115deg, rgba(22, 29, 44, 0.97), rgba(76, 45, 27, 0.96) 54%, rgba(18, 27, 43, 0.97));
-  box-shadow: inset 0 -1px rgba(255, 205, 128, 0.25), 0 8px 28px rgba(8, 15, 28, 0.22);
+    radial-gradient(circle at 18% 6%, rgba(255, 180, 85, 0.24), transparent 42%),
+    radial-gradient(circle at 84% 92%, rgba(101, 126, 181, 0.18), transparent 38%),
+    linear-gradient(148deg, rgba(18, 24, 37, 0.985), rgba(53, 38, 34, 0.975) 56%, rgba(15, 24, 39, 0.985));
+  box-shadow:
+    inset 0 -1px rgba(255, 225, 184, 0.16),
+    0 18px 42px rgba(8, 15, 28, 0.28),
+    0 4px 12px rgba(8, 15, 28, 0.18);
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 0;
+  gap: 15px;
   overflow: hidden;
   cursor: pointer;
   font: inherit;
   text-align: center;
+  transform-origin: top center;
+  backdrop-filter: blur(24px) saturate(1.18);
   -webkit-tap-highlight-color: transparent;
 }
 
-.music-lyrics-track-title {
-  max-width: 92%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgba(255, 226, 184, 0.7);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
+.music-lyrics-header::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 32%, rgba(0, 0, 0, 0.06));
 }
 
 .music-lyrics-current {
   position: relative;
-  max-width: 100%;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 17px;
-  font-weight: 800;
-  line-height: 1.2;
-  letter-spacing: 0.025em;
+  z-index: 1;
+  max-width: 96%;
+  color: rgba(255, 255, 255, 0.44);
+  font-size: clamp(24px, 3.2vw, 30px);
+  font-weight: 820;
+  line-height: 1.25;
+  letter-spacing: 0.035em;
   white-space: nowrap;
 }
 
@@ -916,14 +924,85 @@ button {
 }
 
 .music-lyrics-next {
-  max-width: 92%;
+  position: relative;
+  z-index: 1;
+  max-width: 90%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 10px;
-  font-weight: 550;
-  line-height: 1.1;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: clamp(14px, 1.8vw, 17px);
+  font-weight: 580;
+  line-height: 1.25;
+  letter-spacing: 0.02em;
+}
+
+.music-lyrics-panel-enter-active {
+  animation: musicLyricsReveal 0.72s cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: clip-path, opacity, transform;
+}
+
+.music-lyrics-panel-enter-active .music-lyrics-current {
+  animation: musicLyricsLineArrive 0.56s 0.12s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.music-lyrics-panel-enter-active .music-lyrics-next {
+  animation: musicLyricsLineArrive 0.54s 0.2s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.music-lyrics-panel-leave-active {
+  animation: musicLyricsRetract 0.23s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+  will-change: clip-path, opacity, transform;
+}
+
+@keyframes musicLyricsReveal {
+  from {
+    opacity: 0.35;
+    clip-path: inset(0 0 100% 0 round 0 0 26px 26px);
+    transform: translateY(-12px);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round 0 0 26px 26px);
+    transform: translateY(0);
+  }
+}
+
+@keyframes musicLyricsRetract {
+  from {
+    opacity: 1;
+    clip-path: inset(0 0 0 0 round 0 0 26px 26px);
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0.18;
+    clip-path: inset(0 0 100% 0 round 0 0 26px 26px);
+    transform: translateY(-18px);
+  }
+}
+
+@keyframes musicLyricsLineArrive {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .music-lyrics-panel-enter-active,
+  .music-lyrics-panel-leave-active,
+  .music-lyrics-panel-enter-active .music-lyrics-current,
+  .music-lyrics-panel-enter-active .music-lyrics-next {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
 }
 
 .chat-title {
@@ -1654,6 +1733,11 @@ button {
 
 .chat-pane > :not(.parallax-background):not(.modal-shell) {
   z-index: 1;
+}
+
+.chat-pane > .chat-head {
+  z-index: 21;
+  overflow: visible;
 }
 
 .parallax-background {
@@ -7978,6 +8062,13 @@ button.admin-object-row:focus-visible {
     min-height: calc(48px + var(--safe-top));
     padding-left: 6px;
     padding-right: 6px;
+  }
+
+  .music-lyrics-header {
+    height: calc(144px + var(--safe-top));
+    padding: calc(var(--safe-top) + 22px) 18px 22px;
+    gap: 12px;
+    border-radius: 0 0 22px 22px;
   }
 
   .messages-scroll {
