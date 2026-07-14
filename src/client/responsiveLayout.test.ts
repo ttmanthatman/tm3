@@ -252,6 +252,9 @@ test("message effects pause outside the chat viewport and when the document is h
   assert.match(app, /new IntersectionObserver\(handleMessageEffectIntersections/);
   assert.match(app, /root: scroller\.value/);
   assert.match(app, /:data-message-effect="messageEffect\(row\.message\) \|\| null"/);
+  assert.match(app, /const observationTarget = bubble\.closest<HTMLElement>\("\.message-row\[data-message-id\]"\)/);
+  assert.match(app, /messageEffectObserver\.observe\(observationTarget\)/);
+  assert.doesNotMatch(app, /messageEffectObserver\.observe\(bubble\)/);
   assert.match(app, /shouldRenderMessageEffect\(/);
   assert.match(app, /document\.addEventListener\("visibilitychange", handleDocumentVisibilityChange\)/);
   assert.match(app, /syncFlashEffectTimer\(\)/);

@@ -3857,12 +3857,14 @@ function refreshMessageEffectObserver() {
     threshold: 0.01
   });
   for (const bubble of root.querySelectorAll<HTMLElement>("[data-message-effect]")) {
+    const observationTarget = bubble.closest<HTMLElement>(".message-row[data-message-id]");
+    if (!observationTarget) continue;
     const id = messageIdForEffectElement(bubble);
     if (id === null) continue;
     observed.add(id);
-    const rect = bubble.getBoundingClientRect();
+    const rect = observationTarget.getBoundingClientRect();
     if (rect.bottom >= rootRect.top - preloadMargin && rect.top <= rootRect.bottom + preloadMargin) visible.add(id);
-    messageEffectObserver.observe(bubble);
+    messageEffectObserver.observe(observationTarget);
   }
   updateEffectVisibility(observed, visible);
 }
