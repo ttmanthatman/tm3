@@ -85,7 +85,6 @@ import type {
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
-  MusicLyricSegmentDTO,
   MusicMentionPayload,
   MusicScorePageDTO,
   MusicTrackDTO,
@@ -106,8 +105,10 @@ import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
+import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
+import { shouldRenderMessageEffect, shouldRunFlashEffectTimer } from "./animationPolicy";
 import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
@@ -207,7 +208,6 @@ const musicScoreManageBusy = ref(false);
 const musicLyricsInput = ref<HTMLInputElement | null>(null);
 const musicLyricsUploadTrackId = ref<number | null>(null);
 const musicLyricsUploadBusy = ref(false);
-const musicCurrentTimeMs = ref(0);
 const musicLyricsHeaderSuppressed = ref(false);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
@@ -217,7 +217,6 @@ let musicAudio: HTMLAudioElement | null = null;
 let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
-let musicLyricsFrame: number | undefined;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -489,6 +488,17 @@ const mentionToasts = ref<MentionToast[]>([]);
 const acknowledgedMentionIds = ref<Set<number>>(new Set());
 const topNoticeIndex = ref(0);
 const pausedEffectIds = ref<Set<number>>(new Set());
+const observedEffectIds = ref<Set<number>>(new Set());
+const visibleEffectIds = ref<Set<number>>(new Set());
+const documentVisible = ref(document.visibilityState === "visible");
+let messageEffectObserver: IntersectionObserver | null = null;
+const orientationEffectsVisible = computed(() => store.messages.some((message) => {
+  const effect = String((message.payload as MessageEffectPayload | undefined)?.effect || "");
+  return ["water", "drip", "dripGooey"].includes(effect) && !isMessageEffectPaused(message);
+}));
+const waterEffectVisible = computed(() => store.messages.some((message) => (
+  String((message.payload as MessageEffectPayload | undefined)?.effect || "") === "water" && !isMessageEffectPaused(message)
+)));
 const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
 const pendingMessageActions = ref<MessageDTO | null>(null);
@@ -564,7 +574,7 @@ const updateBusy = ref(false);
 const selectedUpdateBranch = ref("");
 const rainActive = ref(false);
 const waterTilt = ref({ x: 0, y: 0 });
-const deviceGravity = ref<GravityVector>({ x: 0, y: 1, strength: 1 });
+let deviceGravity: GravityVector = { x: 0, y: 1, strength: 1 };
 const gooeyBlobs = ref<GooeyBlob[]>([]);
 const gooeyHighlights = ref<GooeyHighlight[]>([]);
 const hasUnreadMessages = ref(false);
@@ -771,6 +781,7 @@ onMounted(async () => {
   initializeMusicAudio();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   document.addEventListener("keydown", handleGlobalEscape);
+  document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   try {
     await store.bootstrap();
@@ -795,6 +806,9 @@ onMounted(async () => {
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
   await switchToLinkedChannel();
   await enterChatAtNewest();
+  await nextTick();
+  refreshMessageEffectObserver();
+  syncFlashEffectTimer();
 });
 
 function reloadApplication() {
@@ -922,12 +936,16 @@ watch(
 );
 
 watch(
-  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(",")] as const,
+  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showFavorites.value] as const,
   () => {
-    nextTick(() => ensureDripPhysics());
-    nextTick(() => ensureGooeyDripPhysics());
+    nextTick(() => {
+      refreshMessageEffectObserver();
+      ensureDripPhysics();
+      ensureGooeyDripPhysics();
+      syncFlashEffectTimer();
+    });
   },
-  { flush: "post" }
+  { flush: "post", immediate: true }
 );
 
 watch(
@@ -1006,7 +1024,10 @@ watch(
 onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
   document.removeEventListener("keydown", handleGlobalEscape);
+  document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
+  messageEffectObserver?.disconnect();
+  messageEffectObserver = null;
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
@@ -1045,27 +1066,6 @@ const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || 
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
 const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
-const currentMusicLyricIndex = computed(() => {
-  const cues = currentMusicLyricCues.value;
-  if (!cues.length) return -1;
-  let index = -1;
-  for (let cueIndex = 0; cueIndex < cues.length; cueIndex += 1) {
-    if (cues[cueIndex].startMs > musicCurrentTimeMs.value) break;
-    index = cueIndex;
-  }
-  return Math.max(0, index);
-});
-const currentMusicLyricCue = computed(() => currentMusicLyricCues.value[currentMusicLyricIndex.value] || null);
-const nextMusicLyricCue = computed(() => currentMusicLyricCues.value[currentMusicLyricIndex.value + 1] || null);
-const currentMusicLyricProgress = computed(() => {
-  const cue = currentMusicLyricCue.value;
-  if (!cue) return 0;
-  return Math.max(0, Math.min(100, ((musicCurrentTimeMs.value - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)) * 100));
-});
-
-function musicLyricSegmentProgress(segment: MusicLyricSegmentDTO) {
-  return Math.max(0, Math.min(100, ((musicCurrentTimeMs.value - segment.startMs) / Math.max(1, segment.endMs - segment.startMs)) * 100));
-}
 const musicLyricsHeaderVisible = computed(
   () => musicPlaying.value && currentMusicLyricCues.value.length > 0 && !musicLyricsHeaderSuppressed.value
 );
@@ -1087,10 +1087,6 @@ const musicPlayerAnchorStyle = computed(() => ({
   "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
 }));
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
-
-function lyricDisplayText(text?: string | null) {
-  return String(text || "").replace(/\s*\n\s*/g, " ");
-}
 
 function clearMusicLyricsHeaderResumeTimer() {
   if (musicLyricsHeaderResumeTimer !== undefined) window.clearTimeout(musicLyricsHeaderResumeTimer);
@@ -1358,9 +1354,16 @@ const currentAppearancePayload = computed(() => ({
 }));
 const appearanceHasDraftChanges = computed(() => JSON.stringify(appearanceSavePayload.value) !== JSON.stringify(currentAppearancePayload.value));
 watch(
-  () => `${appearancePreviewFlash.value.colors.join(",")}:${appearancePreviewFlash.value.intervalSeconds}:${appearancePreviewFlash.value.transitionMode}`,
-  () => restartFlashEffectTimer(),
+  () => [
+    `${appearancePreviewFlash.value.colors.join(",")}:${appearancePreviewFlash.value.intervalSeconds}:${appearancePreviewFlash.value.transitionMode}`,
+    `${flashEffect.value.colors.join(",")}:${flashEffect.value.intervalSeconds}:${flashEffect.value.transitionMode}`
+  ] as const,
+  () => syncFlashEffectTimer(true),
   { immediate: true }
+);
+watch(
+  () => [showAdmin.value, adminPage.value, appearanceSection.value, appearancePreviewOpen.value] as const,
+  () => syncFlashEffectTimer()
 );
 const selectableMessages = computed(() => store.messages.filter((message) => message.id > 0));
 const selectedMessageCount = computed(() => selectedMessageIds.value.size);
@@ -1836,7 +1839,6 @@ function stopMentionedMusic(message: MessageDTO) {
   if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
   pauseMusic(true);
   if (musicAudio) musicAudio.currentTime = 0;
-  musicCurrentTimeMs.value = 0;
   musicError.value = "";
 }
 
@@ -3638,7 +3640,89 @@ function messageEffect(message: MessageDTO): MessageEffect | null {
 }
 
 function isMessageEffectPaused(message: MessageDTO) {
-  return pausedEffectIds.value.has(message.id);
+  return !shouldRenderMessageEffect({
+    manuallyPaused: pausedEffectIds.value.has(message.id),
+    visibilityKnown: observedEffectIds.value.has(message.id),
+    visible: visibleEffectIds.value.has(message.id),
+    documentVisible: documentVisible.value
+  });
+}
+
+function messageIdForEffectElement(element: Element) {
+  const row = element.closest<HTMLElement>(".message-row[data-message-id]");
+  const id = Number(row?.dataset.messageId);
+  return Number.isFinite(id) ? id : null;
+}
+
+function setsEqual(left: Set<number>, right: Set<number>) {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function updateEffectVisibility(observed: Set<number>, visible: Set<number>) {
+  if (!setsEqual(observedEffectIds.value, observed)) observedEffectIds.value = observed;
+  if (!setsEqual(visibleEffectIds.value, visible)) visibleEffectIds.value = visible;
+}
+
+function handleMessageEffectIntersections(entries: IntersectionObserverEntry[]) {
+  const observed = new Set(observedEffectIds.value);
+  const visible = new Set(visibleEffectIds.value);
+  for (const entry of entries) {
+    const id = messageIdForEffectElement(entry.target);
+    if (id === null) continue;
+    observed.add(id);
+    if (entry.isIntersecting && entry.intersectionRatio > 0) visible.add(id);
+    else visible.delete(id);
+  }
+  updateEffectVisibility(observed, visible);
+  ensureDripPhysics();
+  ensureGooeyDripPhysics();
+  syncFlashEffectTimer();
+}
+
+function refreshMessageEffectObserver() {
+  messageEffectObserver?.disconnect();
+  messageEffectObserver = null;
+  const root = scroller.value;
+  if (!root || typeof IntersectionObserver === "undefined") {
+    updateEffectVisibility(new Set(), new Set());
+    return;
+  }
+
+  const observed = new Set<number>();
+  const visible = new Set<number>();
+  const rootRect = root.getBoundingClientRect();
+  const preloadMargin = 96;
+  messageEffectObserver = new IntersectionObserver(handleMessageEffectIntersections, {
+    root: scroller.value,
+    rootMargin: `${preloadMargin}px 0px`,
+    threshold: 0.01
+  });
+  for (const bubble of root.querySelectorAll<HTMLElement>("[data-message-effect]")) {
+    const id = messageIdForEffectElement(bubble);
+    if (id === null) continue;
+    observed.add(id);
+    const rect = bubble.getBoundingClientRect();
+    if (rect.bottom >= rootRect.top - preloadMargin && rect.top <= rootRect.bottom + preloadMargin) visible.add(id);
+    messageEffectObserver.observe(bubble);
+  }
+  updateEffectVisibility(observed, visible);
+}
+
+function handleDocumentVisibilityChange() {
+  documentVisible.value = document.visibilityState === "visible";
+  if (!documentVisible.value) {
+    stopRainEffect();
+    stopDripPhysics(true);
+    stopGooeyDripPhysics(true);
+    oopsPhysicsLayer.value?.reset();
+  } else {
+    nextTick(() => {
+      refreshMessageEffectObserver();
+      ensureDripPhysics();
+      ensureGooeyDripPhysics();
+    });
+  }
+  syncFlashEffectTimer();
 }
 
 function toggleMessageEffect(message: MessageDTO) {
@@ -3681,13 +3765,16 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function handleDeviceOrientation(event: DeviceOrientationEvent) {
+  if (!documentVisible.value || !orientationEffectsVisible.value) return;
   const gamma = Number.isFinite(event.gamma) ? Number(event.gamma) : 0;
   const beta = Number.isFinite(event.beta) ? Number(event.beta) : 0;
-  waterTilt.value = {
-    x: clamp(gamma, -36, 36) * 0.42,
-    y: clamp(beta - 35, -42, 42) * 0.28
-  };
-  deviceGravity.value = screenGravityFromOrientation(beta, gamma);
+  if (waterEffectVisible.value) {
+    waterTilt.value = {
+      x: clamp(gamma, -36, 36) * 0.42,
+      y: clamp(beta - 35, -42, 42) * 0.28
+    };
+  }
+  deviceGravity = screenGravityFromOrientation(beta, gamma);
 }
 
 function screenGravityFromOrientation(beta: number, gamma: number): GravityVector {
@@ -4241,7 +4328,7 @@ function updateGooeyDripPhysics(now: number) {
     spawnGooeyDripParticles(layer);
     gooeyLastSpawn = now;
   }
-  const gravity = deviceGravity.value;
+  const gravity = deviceGravity;
   const bubbleRects = gooeyCollisionRects(layer);
   const nextParticles: GooeyDripParticle[] = [];
   for (const particle of gooeyParticles) {
@@ -4287,7 +4374,7 @@ function updateGooeyDripPhysics(now: number) {
 
 function spawnGooeyDripParticles(layer: SVGSVGElement) {
   const layerRect = layer.getBoundingClientRect();
-  const gravity = deviceGravity.value;
+  const gravity = deviceGravity;
   for (const { message, bubble } of activeGooeyDripBubbles().slice(-5)) {
     const rect = bubble.getBoundingClientRect();
     if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
@@ -5620,8 +5707,6 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("error", handleMusicError);
   musicAudio.addEventListener("waiting", handleMusicWaiting);
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
-  musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
-  musicAudio.addEventListener("seeked", handleMusicTimeUpdate);
 }
 
 function cancelMusicFade(resetVolume = true) {
@@ -5635,7 +5720,6 @@ function cancelMusicFade(resetVolume = true) {
 function disposeMusicAudio() {
   if (!musicAudio) return;
   cancelMusicFade();
-  stopMusicLyricsClock();
   musicAudio.pause();
   musicAudio.removeEventListener("play", handleMusicPlay);
   musicAudio.removeEventListener("pause", handleMusicPause);
@@ -5643,25 +5727,20 @@ function disposeMusicAudio() {
   musicAudio.removeEventListener("error", handleMusicError);
   musicAudio.removeEventListener("waiting", handleMusicWaiting);
   musicAudio.removeEventListener("canplay", handleMusicCanPlay);
-  musicAudio.removeEventListener("timeupdate", handleMusicTimeUpdate);
-  musicAudio.removeEventListener("seeked", handleMusicTimeUpdate);
   musicAudio.removeAttribute("src");
   musicAudio.load();
   musicAudio = null;
-  musicCurrentTimeMs.value = 0;
 }
 
 function handleMusicPlay() {
   musicPlaying.value = true;
   musicLoading.value = false;
   musicError.value = "";
-  startMusicLyricsClock();
 }
 
 function handleMusicPause() {
   musicPlaying.value = false;
   musicLoading.value = false;
-  stopMusicLyricsClock();
 }
 
 function handleMusicWaiting() {
@@ -5672,30 +5751,14 @@ function handleMusicCanPlay() {
   musicLoading.value = false;
 }
 
-function handleMusicTimeUpdate() {
-  musicCurrentTimeMs.value = Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000));
-}
-
-function startMusicLyricsClock() {
-  if (musicLyricsFrame !== undefined) return;
-  const tick = () => {
-    musicLyricsFrame = undefined;
-    handleMusicTimeUpdate();
-    if (musicPlaying.value && musicAudio && !musicAudio.paused) musicLyricsFrame = window.requestAnimationFrame(tick);
-  };
-  musicLyricsFrame = window.requestAnimationFrame(tick);
-}
-
-function stopMusicLyricsClock() {
-  if (musicLyricsFrame !== undefined) window.cancelAnimationFrame(musicLyricsFrame);
-  musicLyricsFrame = undefined;
+function currentMusicPlaybackTimeMs() {
+  return Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000));
 }
 
 function handleMusicError() {
   musicPlaying.value = false;
   musicLoading.value = false;
   musicError.value = "歌曲暂时无法播放";
-  stopMusicLyricsClock();
 }
 
 function setMusicAudioTrack(track: MusicTrackDTO) {
@@ -5704,7 +5767,6 @@ function setMusicAudioTrack(track: MusicTrackDTO) {
   cancelMusicFade();
   musicAudio.src = musicStreamUrl(track);
   musicAudio.dataset.trackId = String(track.id);
-  musicCurrentTimeMs.value = 0;
   musicAudio.load();
 }
 
@@ -5789,7 +5851,6 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
 
 function handleMusicEnded() {
   cancelMusicFade();
-  stopMusicLyricsClock();
   musicPlaying.value = false;
   if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
 }
@@ -6667,12 +6728,29 @@ function readableTextColor(hex: string) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? "#111111" : "#ffffff";
 }
 
-function restartFlashEffectTimer() {
+function stopFlashEffectTimer(resetStep = false) {
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
-  flashEffectStep.value = 0;
+  flashEffectTimer = 0;
+  if (resetStep) flashEffectStep.value = 0;
+}
+
+function flashPreviewVisible() {
+  return showAdmin.value && adminAppearancePages.has(adminPage.value) && appearanceSection.value === "flash";
+}
+
+function syncFlashEffectTimer(forceRestart = false) {
+  if (forceRestart) stopFlashEffectTimer(true);
+  const previewVisible = flashPreviewVisible();
+  const visibleFlashMessage = store.messages.some((message) => messageEffect(message) === "flash" && !isMessageEffectPaused(message));
+  if (!shouldRunFlashEffectTimer({ visibleFlashMessage, previewVisible, documentVisible: documentVisible.value })) {
+    stopFlashEffectTimer(true);
+    return;
+  }
+  if (flashEffectTimer) return;
+  const config = previewVisible ? appearancePreviewFlash.value : flashEffect.value;
   flashEffectTimer = window.setInterval(() => {
-    flashEffectStep.value = (flashEffectStep.value + 1) % appearancePreviewFlash.value.colors.length;
-  }, Math.max(10, Math.round(appearancePreviewFlash.value.intervalSeconds * 1000)));
+    flashEffectStep.value = (flashEffectStep.value + 1) % config.colors.length;
+  }, Math.max(10, Math.round(config.intervalSeconds * 1000)));
 }
 
 function wallpaperFitStyle(fit?: WallpaperFit | null) {
@@ -8383,19 +8461,13 @@ async function toggleVirtual(character: any) {
       </header>
 
       <Transition name="music-lyrics-panel">
-        <button v-if="musicLyricsHeaderVisible" type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="hideMusicLyricsHeader">
-          <span v-if="currentMusicLyricCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
-            <span v-for="(segment, segmentIndex) in currentMusicLyricCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
-              <span class="music-lyrics-segment-base">{{ segment.text }}</span>
-              <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - musicLyricSegmentProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
-            </span>
-          </span>
-          <span v-else class="music-lyrics-current">
-            <span class="music-lyrics-current-base">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-            <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentMusicLyricProgress}% 0 0)` }">{{ lyricDisplayText(currentMusicLyricCue?.text) }}</span>
-          </span>
-          <span v-if="nextMusicLyricCue" class="music-lyrics-next">{{ lyricDisplayText(nextMusicLyricCue.text) }}</span>
-        </button>
+        <MusicLyricsHeader
+          v-if="musicLyricsHeaderVisible"
+          :cues="currentMusicLyricCues"
+          :playing="musicPlaying"
+          :get-current-time-ms="currentMusicPlaybackTimeMs"
+          @hide="hideMusicLyricsHeader"
+        />
       </Transition>
 
       <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
@@ -8665,6 +8737,7 @@ async function toggleVirtual(character: any) {
                 class="bubble"
                 :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
+                :data-message-effect="messageEffect(row.message) || null"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
                 @pointerdown="beginMessageLongPress(row.message, $event)"
                 @pointermove="handleBubblePointerMove(row.message, $event)"

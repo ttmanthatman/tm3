@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
+const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const server = fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
 
 test("narrow viewports always switch the chat shell to one column", () => {
@@ -231,7 +232,7 @@ test("music scores preload through authenticated blobs for reliable Safari rende
 test("SRT and LRC lyrics upload from audio actions and render over the header during playback", () => {
   assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,\.lrc,application\/x-subrip,text\/plain"/);
   assert.match(app, /requestMusicLyricsUpload[\s\S]*?\/api\/music\/tracks\/\$\{trackId\}\/lyrics/);
-  assert.match(app, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
+  assert.match(lyricsHeader, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
   assert.match(app, /scheduleMusicLyricsHeaderResume[\s\S]*?5000/);
   assert.match(app, /compactBytes\(row\.message\.fileSize\)[\s\S]*?带歌词/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/lyrics"/);
@@ -239,16 +240,26 @@ test("SRT and LRC lyrics upload from audio actions and render over the header du
 });
 
 test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
-  assert.match(app, /currentMusicLyricCue\?\.segments\?\.length[\s\S]*?music-lyrics-segment-fill/);
-  assert.match(app, /musicLyricSegmentProgress\(segment\)/);
-  assert.match(app, /startMusicLyricsClock[\s\S]*?requestAnimationFrame\(tick\)/);
+  assert.match(app, /import MusicLyricsHeader from "\.\/components\/MusicLyricsHeader\.vue"/);
+  assert.match(app, /<MusicLyricsHeader[\s\S]*?:get-current-time-ms="currentMusicPlaybackTimeMs"/);
+  assert.doesNotMatch(app, /musicLyricsFrame|requestAnimationFrame\(tick\)|musicCurrentTimeMs/);
+  assert.match(lyricsHeader, /window\.setTimeout\(runClock, MUSIC_LYRICS_TICK_MS\)/);
   assert.match(css, /\.music-lyrics-segment-fill \{[\s\S]*?transition: clip-path 70ms linear;/);
   assert.match(server, /parseLyrics\(content, file\.filename\)/);
 });
 
+test("message effects pause outside the chat viewport and when the document is hidden", () => {
+  assert.match(app, /new IntersectionObserver\(handleMessageEffectIntersections/);
+  assert.match(app, /root: scroller\.value/);
+  assert.match(app, /:data-message-effect="messageEffect\(row\.message\) \|\| null"/);
+  assert.match(app, /shouldRenderMessageEffect\(/);
+  assert.match(app, /document\.addEventListener\("visibilitychange", handleDocumentVisibilityChange\)/);
+  assert.match(app, /syncFlashEffectTimer\(\)/);
+});
+
 test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
-  assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?class="music-lyrics-header"/);
-  assert.doesNotMatch(app, /music-lyrics-track-title/);
+  assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
+  assert.doesNotMatch(lyricsHeader, /music-lyrics-track-title/);
   assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(112px \+ var\(--safe-top\)\);[\s\S]*?border-radius: 0;/);
   assert.match(css, /\.chat-pane > \.music-lyrics-header \{[\s\S]*?z-index: 30;/);
   assert.doesNotMatch(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\) \{[\s\S]*?z-index: 1;/);
