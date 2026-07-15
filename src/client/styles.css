@@ -2574,7 +2574,7 @@ button {
 .music-playlist-tools {
   padding: 9px 10px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
   border-bottom: 1px solid var(--line);
 }

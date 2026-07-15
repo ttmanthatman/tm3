@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.12.7";
+export const APP_VERSION = "0.12.8";
 
 export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "顶部播放器不再单独显示“列表循环 / 单曲播放”按钮；循环模式切换已移入播放列表工具区，为歌曲信息和播放控制腾出空间。"
+] as const;
+
+const RELEASE_0_12_7_NOTES = [
   "向上翻阅聊天记录时，会等滚轮或触摸惯性停止后再校正消息高度和加载历史消息；图片及消息位置会提前保留，避免异步内容与原生滚动惯性互相拉扯。",
   "“推拉摇移”背景在刷新或刚进入聊天室时会先稳定铺满，实际显示图片会直接提供尺寸；短暂加载失败会自动重试，不再留下空背景。",
   "修复手机端展开顶部音乐播放器后，“列表循环”按钮覆盖播放键的问题；歌曲标题、播放控制和右侧工具现在会各自保留所需空间。"
@@ -535,9 +539,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.7",
+    version: "0.12.8",
     date: "2026-07-15",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.7",
+    date: "2026-07-15",
+    notes: RELEASE_0_12_7_NOTES
   },
   {
     version: "0.12.6",

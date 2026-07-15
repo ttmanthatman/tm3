@@ -9078,13 +9078,6 @@ async function toggleVirtual(character: any) {
               <small v-else>已暂停</small>
             </div>
             <div class="music-player-tools">
-              <button
-                class="music-mode-btn"
-                type="button"
-                :class="{ active: musicPlaybackMode === 'playlist' }"
-                @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
-                :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
-              >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
               <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
             </div>
           </div>
@@ -9317,6 +9310,13 @@ async function toggleVirtual(character: any) {
                 <option value="uploaded">按上传时间</option>
                 <option value="filename">按文件名</option>
               </select>
+              <button
+                class="music-mode-btn"
+                type="button"
+                :class="{ active: musicPlaybackMode === 'playlist' }"
+                @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
+                :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
+              >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
             </div>
             <div v-if="filteredMusicTracks.length" class="music-track-list">
               <div

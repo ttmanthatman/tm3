@@ -170,6 +170,20 @@ test("mobile expanded player reserves intrinsic width for transport and tool but
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content max-content;/);
 });
 
+test("playback mode lives inside the playlist instead of taking header space", () => {
+  const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
+  const playerEnd = app.indexOf("</header>", playerStart);
+  const player = app.slice(playerStart, playerEnd);
+  const playlistStart = app.indexOf('<section v-if="musicPlaylistOpen"');
+  const playlistEnd = app.indexOf("</section>", playlistStart);
+  const playlist = app.slice(playlistStart, playlistEnd);
+
+  assert.doesNotMatch(player, /class="music-mode-btn"/);
+  assert.match(player, /aria-label="播放列表"/);
+  assert.match(playlist, /class="music-playlist-tools"[\s\S]*?class="music-mode-btn"/);
+  assert.match(playlist, /musicPlaybackMode === "playlist" \? "列表循环" : "单曲播放"/);
+});
+
 test("long music titles scroll in the left side of the single-row player", () => {
   assert.match(app, /class="music-title-track"[\s\S]*?'scrolling': musicTitleScrolling/);
   assert.match(app, /v-if="musicTitleScrolling" aria-hidden="true"/);
@@ -367,7 +381,7 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(app, /v-model="musicPlaylistQuery"[^>]*type="search"/);
   for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(app, new RegExp(`<option value="${value}">`));
   assert.match(app, /moveMusicPlaylistTrack\(track, -1\)[\s\S]*?moveMusicPlaylistTrack\(track, 1\)/);
-  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
 });
 
 test("score pages can be managed individually and paged in preview", () => {
