@@ -8454,6 +8454,10 @@ button.admin-object-row:focus-visible {
     padding-right: 6px;
   }
 
+  .music-player-bar {
+    grid-template-columns: minmax(0, 1fr) max-content max-content;
+  }
+
   .music-lyrics-header {
     height: calc(104px + var(--safe-top));
     padding: calc(var(--safe-top) + 12px) 14px 12px;

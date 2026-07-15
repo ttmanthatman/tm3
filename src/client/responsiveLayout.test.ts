@@ -166,6 +166,10 @@ test("expanded player keeps its main control on the clicked song-button axis", (
   assert.doesNotMatch(css, /\.music-player-head \{[\s\S]*?min-height: calc\(96px/);
 });
 
+test("mobile expanded player reserves intrinsic width for transport and tool buttons", () => {
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content max-content;/);
+});
+
 test("long music titles scroll in the left side of the single-row player", () => {
   assert.match(app, /class="music-title-track"[\s\S]*?'scrolling': musicTitleScrolling/);
   assert.match(app, /v-if="musicTitleScrolling" aria-hidden="true"/);
