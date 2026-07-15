@@ -20,7 +20,7 @@ test("mobile drawers stay above the chat header and their scrim", () => {
 });
 
 test("pinned notices stay above chat content and retain their modal layer", () => {
-  assert.match(css, /\.chat-pane > :not\(\.wallpaper-pan-background\):not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\) \{[\s\S]*?z-index: 1;/);
+  assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\)\) \{[\s\S]*?z-index: 1;/);
   assert.match(css, /\.pinned-view-shell \{[\s\S]*?z-index: 50;/);
   assert.match(app, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
 });
@@ -32,13 +32,14 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
   assert.match(app, /wallpaperPanImageWidth\.value = (?:next|bounds)\.imageWidth/g);
   assert.match(app, /pendingReadPositionRestore\.value \|\| loadingHistoryFromScroll \|\| loadingNewerFromScroll \|\| activeReadAnchor/);
   assert.match(css, /\.wallpaper-pan-background \{[\s\S]*?position: absolute;[\s\S]*?backface-visibility: hidden;[\s\S]*?will-change: transform;/);
-  assert.match(css, /\.chat-pane > :not\(\.wallpaper-pan-background\):not\(\.parallax-background\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
+  assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\)\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
 });
 
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
   assert.match(app, /class="new-message-jump"[\s\S]*?aria-label="跳到最新消息"[\s\S]*?<ArrowDown/);
   assert.doesNotMatch(app, /<ArrowDown :size="16" \/>\{\{ hasUnreadMessages/);
-  assert.match(css, /\.new-message-jump \{[\s\S]*?left: 50%;[\s\S]*?bottom: calc\(58px \+ var\(--keyboard-offset\)\);[\s\S]*?width: 34px;[\s\S]*?height: 34px;[\s\S]*?background: rgba\(/);
+  assert.match(css, /\.new-message-jump \{[\s\S]*?left: 50%;[\s\S]*?bottom: calc\(58px \+ var\(--keyboard-offset\)\);[\s\S]*?z-index: 7;[\s\S]*?width: 34px;[\s\S]*?height: 34px;[\s\S]*?background: rgba\(/);
+  assert.doesNotMatch(css, /\.chat-pane > :not\([^\n]+\) \{/);
 });
 
 test("all file previews keep close at the upper right and download at the lower right", () => {

@@ -1944,7 +1944,7 @@ button {
   opacity: 1;
 }
 
-.chat-pane > :not(.wallpaper-pan-background):not(.parallax-background):not(.modal-shell):not(.music-lyrics-header) {
+.chat-pane > :where(:not(.wallpaper-pan-background):not(.parallax-background):not(.modal-shell):not(.music-lyrics-header)) {
   z-index: 1;
 }
 
@@ -2118,7 +2118,7 @@ button {
   mix-blend-mode: screen;
 }
 
-.chat-pane > :not(.wallpaper-pan-background):not(.parallax-background) {
+.chat-pane > :where(:not(.wallpaper-pan-background):not(.parallax-background)) {
   min-width: 0;
   width: 100%;
   max-width: 100%;
