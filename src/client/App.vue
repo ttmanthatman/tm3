@@ -316,11 +316,15 @@ let parallaxFrame = 0;
 const wallpaperPanOffset = ref(0);
 const wallpaperPanImageWidth = ref(0);
 const wallpaperPanReady = ref(false);
+const wallpaperPanImage = ref<HTMLImageElement | null>(null);
+const wallpaperPanRetryKey = ref(0);
 let wallpaperPanDirection: WallpaperPanDirection = "left";
 let wallpaperPanMetrics: WallpaperPanBounds | null = null;
 let wallpaperPanNaturalSize: { width: number; height: number } | null = null;
-let wallpaperPanLoadToken = 0;
 let wallpaperPanResizeObserver: ResizeObserver | null = null;
+let wallpaperPanRetryTimer: number | undefined;
+let wallpaperPanRetryAttempt = 0;
+let wallpaperPanRetrySource = "";
 let pendingWallpaperPanDelta = 0;
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
@@ -1136,7 +1140,8 @@ onBeforeUnmount(() => {
   timelineResizeObserver = null;
   wallpaperPanResizeObserver?.disconnect();
   wallpaperPanResizeObserver = null;
-  wallpaperPanLoadToken += 1;
+  if (wallpaperPanRetryTimer !== undefined) window.clearTimeout(wallpaperPanRetryTimer);
+  wallpaperPanRetryTimer = undefined;
   if (timelineScrollFrame !== undefined) window.cancelAnimationFrame(timelineScrollFrame);
   timelineScrollFrame = undefined;
   if (timelineMeasurementFrame !== undefined) window.cancelAnimationFrame(timelineMeasurementFrame);
@@ -1301,7 +1306,14 @@ const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath
 const wallpaperPanActive = computed(() => hasWallpaper.value && store.appearance.wallpaperFit === "pan");
 const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
-const wallpaperPanLayerStyle = computed(() => wallpaperPanLayerPresentation(wallpaperPanImageWidth.value, wallpaperPanOffset.value));
+const wallpaperPanImageSource = computed(() => {
+  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  if (!source || !wallpaperPanRetryKey.value) return source;
+  return `${source}${source.includes("?") ? "&" : "?"}pan-retry=${wallpaperPanRetryKey.value}`;
+});
+const wallpaperPanLayerStyle = computed(() => wallpaperPanReady.value
+  ? wallpaperPanLayerPresentation(wallpaperPanImageWidth.value, wallpaperPanOffset.value)
+  : { width: "100%", transform: "translate3d(0, 0, 0)" });
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
   "--message-content-font-size": `${messageFontSize.value}px`,
@@ -7092,6 +7104,7 @@ function resizeWallpaperPan() {
   const next = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, natural.width, natural.height);
   wallpaperPanMetrics = next;
   wallpaperPanImageWidth.value = next.imageWidth;
+  wallpaperPanReady.value = pane.clientWidth > 0 && pane.clientHeight > 0 && next.imageWidth > 0;
   if (!previous || previous.maxOffset - previous.minOffset <= 0.001) {
     wallpaperPanOffset.value = initialWallpaperPanOffset(next, store.appearance.wallpaperPanFocusX);
     return;
@@ -7100,8 +7113,47 @@ function resizeWallpaperPan() {
   wallpaperPanOffset.value = next.minOffset + Math.max(0, Math.min(1, progress)) * (next.maxOffset - next.minOffset);
 }
 
+function syncWallpaperPanImage(image: HTMLImageElement) {
+  if (!wallpaperPanActive.value || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+  wallpaperPanNaturalSize = { width: image.naturalWidth, height: image.naturalHeight };
+  resizeWallpaperPan();
+}
+
+function handleWallpaperPanImageLoad(event: Event) {
+  const image = event.currentTarget as HTMLImageElement;
+  if (image !== wallpaperPanImage.value) return;
+  if (wallpaperPanRetryTimer !== undefined) window.clearTimeout(wallpaperPanRetryTimer);
+  wallpaperPanRetryTimer = undefined;
+  wallpaperPanRetryAttempt = 0;
+  syncWallpaperPanImage(image);
+}
+
+function handleWallpaperPanImageError(event: Event) {
+  const image = event.currentTarget as HTMLImageElement;
+  if (image !== wallpaperPanImage.value || !wallpaperPanActive.value) return;
+  wallpaperPanReady.value = false;
+  wallpaperPanMetrics = null;
+  wallpaperPanNaturalSize = null;
+  wallpaperPanImageWidth.value = 0;
+  if (wallpaperPanRetryTimer !== undefined || wallpaperPanRetryAttempt >= 3) return;
+  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  const attempt = ++wallpaperPanRetryAttempt;
+  wallpaperPanRetryTimer = window.setTimeout(() => {
+    wallpaperPanRetryTimer = undefined;
+    if (!wallpaperPanActive.value || source !== wallpaperPanRetrySource) return;
+    wallpaperPanRetryKey.value = attempt;
+  }, attempt * 250);
+}
+
 async function resetWallpaperPan() {
-  const token = ++wallpaperPanLoadToken;
+  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  if (source !== wallpaperPanRetrySource) {
+    if (wallpaperPanRetryTimer !== undefined) window.clearTimeout(wallpaperPanRetryTimer);
+    wallpaperPanRetryTimer = undefined;
+    wallpaperPanRetryAttempt = 0;
+    wallpaperPanRetrySource = source;
+    wallpaperPanRetryKey.value = 0;
+  }
   wallpaperPanReady.value = false;
   pendingWallpaperPanDelta = 0;
   wallpaperPanDirection = cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection);
@@ -7109,22 +7161,10 @@ async function resetWallpaperPan() {
   wallpaperPanNaturalSize = null;
   wallpaperPanOffset.value = 0;
   wallpaperPanImageWidth.value = 0;
-  const pane = chatPane.value;
-  const source = store.appearance.wallpaperPath;
-  if (!pane || !source || !wallpaperPanActive.value) return;
-  const image = new Image();
-  const loaded = new Promise<boolean>((resolve) => {
-    image.onload = () => resolve(true);
-    image.onerror = () => resolve(false);
-  });
-  image.src = wallpaperUrl(source);
-  if (!(await loaded) || token !== wallpaperPanLoadToken || !wallpaperPanActive.value) return;
-  wallpaperPanNaturalSize = { width: image.naturalWidth, height: image.naturalHeight };
-  const bounds = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, image.naturalWidth, image.naturalHeight);
-  wallpaperPanMetrics = bounds;
-  wallpaperPanImageWidth.value = bounds.imageWidth;
-  wallpaperPanOffset.value = initialWallpaperPanOffset(bounds, store.appearance.wallpaperPanFocusX);
-  wallpaperPanReady.value = true;
+  if (!source || !wallpaperPanActive.value) return;
+  await nextTick();
+  const image = wallpaperPanImage.value;
+  if (image?.complete && image.naturalWidth > 0) syncWallpaperPanImage(image);
 }
 
 function updateParallaxFromScroll(el: HTMLElement) {
@@ -8945,10 +8985,13 @@ async function toggleVirtual(character: any) {
     <section ref="chatPane" class="chat-pane">
       <img
         v-if="wallpaperPanActive"
+        ref="wallpaperPanImage"
         class="wallpaper-pan-background"
         :class="{ ready: wallpaperPanReady }"
-        :src="wallpaperUrl(store.appearance.wallpaperPath)"
+        :src="wallpaperPanImageSource"
         :style="wallpaperPanLayerStyle"
+        @load="handleWallpaperPanImageLoad"
+        @error="handleWallpaperPanImageError"
         alt=""
         aria-hidden="true"
         draggable="false"

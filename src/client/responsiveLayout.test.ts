@@ -35,6 +35,17 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
   assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\)\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
 });
 
+test("panning wallpaper stays visible while its dimensions load and retries transient failures", () => {
+  const wallpaperPanCss = css.match(/\.wallpaper-pan-background \{([^}]*)\}/)?.[1] || "";
+  assert.match(app, /const wallpaperPanImage = ref<HTMLImageElement \| null>\(null\)/);
+  assert.match(app, /const wallpaperPanLayerStyle = computed\(\(\) => wallpaperPanReady\.value[\s\S]*?width: "100%"/);
+  assert.match(app, /ref="wallpaperPanImage"[\s\S]*?:src="wallpaperPanImageSource"[\s\S]*?@load="handleWallpaperPanImageLoad"[\s\S]*?@error="handleWallpaperPanImageError"/);
+  assert.match(app, /function handleWallpaperPanImageError[\s\S]*?wallpaperPanRetryKey\.value = attempt/);
+  assert.doesNotMatch(app, /const image = new Image\(\)/);
+  assert.match(wallpaperPanCss, /object-fit: cover;/);
+  assert.doesNotMatch(wallpaperPanCss, /opacity: 0;/);
+});
+
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
   assert.match(app, /class="new-message-jump"[\s\S]*?aria-label="跳到最新消息"[\s\S]*?<ArrowDown/);
   assert.doesNotMatch(app, /<ArrowDown :size="16" \/>\{\{ hasUnreadMessages/);
