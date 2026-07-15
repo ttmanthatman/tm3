@@ -435,6 +435,32 @@ body {
   padding: 14px;
 }
 
+.activity-log-filters {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.activity-log-filters button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.activity-log-filters button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 12%, white);
+}
+
 .login-log-list {
   display: grid;
   gap: 8px;
@@ -472,6 +498,16 @@ body {
   background: #fee2e2;
 }
 
+.login-log-badge.music {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
+.login-log-badge.usage {
+  color: #1e3a8a;
+  background: #dbeafe;
+}
+
 .login-log-main {
   min-width: 0;
   display: grid;
@@ -497,6 +533,12 @@ body {
 .login-log-agent {
   color: var(--muted);
   font-size: 12px;
+}
+
+.activity-log-detail {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .login-log-agent {
@@ -6122,10 +6164,6 @@ button.admin-object-row:focus-visible {
   background: #eef0f2;
   color: var(--muted);
   font-size: 12px;
-}
-
-.embedded-login-logs .data-toolbar {
-  justify-content: flex-end;
 }
 
 .admin-list {

@@ -384,6 +384,19 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
 });
 
+test("the admin-only log workspace combines sessions, music progress, and usage activity", () => {
+  assert.match(server, /app\.get\("\/api\/admin\/activity-logs", \{ preHandler: requireAdmin \}, adminActivityLogs\)/);
+  assert.match(server, /CREATE TABLE IF NOT EXISTS account_activity_logs/);
+  assert.match(server, /kind: "channel_view"/);
+  assert.match(server, /kind: "message_sent"/);
+  assert.match(app, /isLogRoute && store\.account\?\.isAdmin/);
+  assert.doesNotMatch(app, /@click="openAdminPage\('loginLogs'\)"/);
+  assert.match(app, /activityLogFilterOptions[\s\S]*?"session"[\s\S]*?"music"[\s\S]*?"usage"/);
+  assert.match(app, /\/api\/music\/tracks\/\$\{session\.trackId\}\/progress/);
+  assert.match(app, /本次在线 \{\{ activityDuration\(log\.durationMs\) \}\}/);
+  assert.match(app, /当时服务器 v\{\{ log\.latestVersion \}\}/);
+});
+
 test("score pages can be managed individually and paged in preview", () => {
   assert.match(app, /管理歌谱页面[\s\S]*?class="settings-modal music-score-manager-modal"/);
   assert.match(app, /moveMusicScorePage\(index, -1\)[\s\S]*?deleteMusicScorePage\(page\)/);

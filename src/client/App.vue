@@ -141,6 +141,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 import { creditedMusicListenMs, isQualifiedMusicPlay } from "@shared/musicPlayback";
+import { friendlyDeviceName, shouldWriteMusicProgress, type ActivityLogCategory, type MusicProgressState } from "@shared/activityLog";
 import {
   moveMusicTrack,
   musicFadeVolume,
@@ -240,6 +241,7 @@ type MusicPlaySession = {
   listenedMs: number;
   lastMediaMs: number;
   lastObservedAt: number;
+  lastProgressLoggedAt: number;
   reported: boolean;
 };
 let musicPlaySession: MusicPlaySession | null = null;
@@ -353,7 +355,6 @@ type AdminPage =
   | "backups"
   | "messages"
   | "resources"
-  | "loginLogs"
   | "release";
 const adminPage = ref<AdminPage>("home");
 const adminPageLoading = ref(false);
@@ -458,6 +459,13 @@ const adminBackupBusy = ref(false);
 const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
 const adminLoginLogsBusy = ref(false);
 const adminLoginLogsMsg = ref("");
+const activityLogFilter = ref<"all" | ActivityLogCategory>("all");
+const activityLogFilterOptions: Array<{ value: "all" | ActivityLogCategory; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "session", label: "会话" },
+  { value: "music", label: "音乐" },
+  { value: "usage", label: "使用情况" }
+];
 const dataChannelFilter = ref(0);
 const devices = ref<DeviceSessionDTO[]>([]);
 const notificationMsg = ref("");
@@ -1374,7 +1382,6 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
   messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
   resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
-  loginLogs: { title: "登录记录", description: "查看成员登录、退出和在线活动" },
   release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
 };
 const activeAdminPageMeta = computed(() => {
@@ -2715,11 +2722,6 @@ async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
   if (tab === "virtuals") await loadVirtualCharacters().catch(() => undefined);
 }
 
-async function openLoginLogPage() {
-  if (!store.account?.isAdmin) return;
-  await openAdminPage("loginLogs");
-}
-
 function syncAiSettingsEdit(settings: AiSettingsDTO) {
   aiSettings.value = settings;
   aiSettingsEdit.value = {
@@ -3122,13 +3124,19 @@ async function loadAdminLoginLogs() {
   adminLoginLogsBusy.value = true;
   adminLoginLogsMsg.value = "";
   try {
-    const result = await api<{ logs: AdminLoginLogDTO[] }>("/api/admin/login-logs?limit=200");
+    const params = new URLSearchParams({ limit: "300", category: activityLogFilter.value });
+    const result = await api<{ logs: AdminLoginLogDTO[] }>(`/api/admin/activity-logs?${params.toString()}`);
     adminLoginLogs.value = result.logs;
   } catch (error) {
-    adminLoginLogsMsg.value = error instanceof Error ? error.message : "登录记录加载失败";
+    adminLoginLogsMsg.value = error instanceof Error ? error.message : "活动日志加载失败";
   } finally {
     adminLoginLogsBusy.value = false;
   }
+}
+
+async function setActivityLogFilter(filter: "all" | ActivityLogCategory) {
+  activityLogFilter.value = filter;
+  await loadAdminLoginLogs();
 }
 
 async function saveAiSettings() {
@@ -6123,12 +6131,14 @@ function handleMusicPlay() {
   musicLoading.value = false;
   musicError.value = "";
   prepareMusicPlaySession();
+  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "started");
   publishMusicListening();
 }
 
 function handleMusicPause() {
   musicPlaying.value = false;
   musicLoading.value = false;
+  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "paused");
   resetMusicPlayObservation();
   publishMusicListening();
 }
@@ -6150,6 +6160,7 @@ function beginMusicPlaySession(track: MusicTrackDTO) {
     listenedMs: 0,
     lastMediaMs: Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000)),
     lastObservedAt: performance.now(),
+    lastProgressLoggedAt: Number.NEGATIVE_INFINITY,
     reported: false
   };
 }
@@ -6182,7 +6193,21 @@ function handleMusicTimeUpdate() {
   }
   session.lastMediaMs = currentMediaMs;
   session.lastObservedAt = now;
+  void reportMusicProgress(session, audio, "progress", now);
   void reportQualifiedMusicPlay(session, audio.duration);
+}
+
+async function reportMusicProgress(session: MusicPlaySession, audio: HTMLAudioElement, state: MusicProgressState, now = performance.now()) {
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+  if (!shouldWriteMusicProgress(state, now - session.lastProgressLoggedAt)) return;
+  session.lastProgressLoggedAt = now;
+  const durationMs = Math.max(1, Math.round(audio.duration * 1000));
+  const progressMs = Math.min(durationMs, Math.max(0, Math.round(audio.currentTime * 1000)));
+  const listenedMs = Math.min(durationMs, Math.max(0, Math.ceil(session.listenedMs)));
+  await api(`/api/music/tracks/${session.trackId}/progress`, {
+    method: "POST",
+    body: JSON.stringify({ playbackId: session.playbackId, state, progressMs, listenedMs, durationMs, appVersion: APP_VERSION })
+  }).catch(() => undefined);
 }
 
 async function reportQualifiedMusicPlay(session: MusicPlaySession, durationSeconds: number) {
@@ -6209,6 +6234,7 @@ function currentMusicPlaybackTimeMs() {
 }
 
 function handleMusicError() {
+  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "error");
   musicPlaying.value = false;
   musicLoading.value = false;
   musicError.value = "歌曲暂时无法播放";
@@ -6218,6 +6244,7 @@ function handleMusicError() {
 function setMusicAudioTrack(track: MusicTrackDTO) {
   initializeMusicAudio();
   if (!musicAudio || musicAudio.dataset.trackId === String(track.id)) return;
+  if (musicPlaySession && musicAudio.dataset.trackId) void reportMusicProgress(musicPlaySession, musicAudio, "changed");
   cancelMusicFade();
   musicAudio.src = musicStreamUrl(track);
   musicAudio.dataset.trackId = String(track.id);
@@ -6311,6 +6338,7 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
 function handleMusicEnded() {
   cancelMusicFade();
   musicPlaying.value = false;
+  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "ended");
   publishMusicListening();
   if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
 }
@@ -7883,7 +7911,6 @@ async function openAdminPage(page: AdminPage) {
     if (page === "channels") await loadAdminChannels();
     if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
     if (page === "backups") await loadAdminBackups();
-    if (page === "loginLogs") await loadAdminLoginLogs();
     if (page === "release") await checkForUpdates();
   } catch (error) {
     adminPageError.value = error instanceof Error ? error.message : "页面加载失败，请稍后重试";
@@ -7906,7 +7933,7 @@ function returnFromAdminPage() {
     void openAdminPage("appearance");
     return;
   }
-  if (["backups", "messages", "resources", "loginLogs"].includes(adminPage.value)) {
+  if (["backups", "messages", "resources"].includes(adminPage.value)) {
     void openAdminPage("data");
     return;
   }
@@ -8023,7 +8050,10 @@ function loginLogKindLabel(kind: AdminLoginLogKind) {
     session_replaced: "旧设备被新登录替换",
     session_revoked: "设备被撤销",
     presence_join: "进入聊天",
-    presence_leave: "离开聊天"
+    presence_leave: "离开聊天",
+    music_progress: "歌曲进度",
+    channel_view: "查看频道",
+    message_sent: "发送消息"
   };
   return labels[kind] || kind;
 }
@@ -8031,7 +8061,41 @@ function loginLogKindLabel(kind: AdminLoginLogKind) {
 function loginLogTone(kind: AdminLoginLogKind) {
   if (kind === "auth_login" || kind === "presence_join") return "enter";
   if (kind === "auth_logout" || kind === "presence_leave") return "leave";
+  if (kind === "music_progress") return "music";
+  if (kind === "channel_view" || kind === "message_sent") return "usage";
   return "system";
+}
+
+function displayedDeviceName(log: Pick<AdminLoginLogDTO, "deviceName" | "userAgent"> | Pick<DeviceSessionDTO, "deviceName">) {
+  return friendlyDeviceName(log.deviceName, "userAgent" in log ? log.userAgent || "" : "");
+}
+
+function activityStateLabel(state?: string | null) {
+  const labels: Record<string, string> = {
+    started: "开始 / 恢复",
+    progress: "播放中",
+    paused: "暂停",
+    changed: "切换歌曲",
+    ended: "播放完毕",
+    error: "播放出错",
+    text: "文字消息",
+    prayer: "代祷消息"
+  };
+  return state ? labels[state] || state : "";
+}
+
+function activityDuration(value?: number | null) {
+  const totalSeconds = Math.max(0, Math.round((value || 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return [hours ? `${hours} 小时` : "", minutes ? `${minutes} 分` : "", `${seconds} 秒`].filter(Boolean).join(" ");
+}
+
+function musicProgressSummary(log: AdminLoginLogDTO) {
+  const durationMs = Math.max(1, log.durationMs || 0);
+  const percent = Math.min(100, Math.max(0, Math.round(((log.progressMs || 0) / durationMs) * 100)));
+  return `进度 ${activityDuration(log.progressMs)} / ${activityDuration(log.durationMs)}（${percent}%） · 自然收听 ${activityDuration(log.listenedMs)}`;
 }
 
 function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
@@ -8830,8 +8894,8 @@ async function toggleVirtual(character: any) {
     <section class="ai-settings-panel login-log-panel">
       <header class="ai-settings-head">
         <div>
-          <strong>登录记录</strong>
-          <small>成员登录、退出、进入和离开聊天</small>
+          <strong>活动日志</strong>
+          <small>会话、版本、在线时长、音乐进度与主要功能使用情况</small>
         </div>
         <div class="login-log-actions">
           <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
@@ -8839,9 +8903,12 @@ async function toggleVirtual(character: any) {
         </div>
       </header>
       <section class="login-log-body">
+        <nav class="activity-log-filters" aria-label="日志分类">
+          <button v-for="option in activityLogFilterOptions" :key="option.value" type="button" :class="{ active: activityLogFilter === option.value }" @click="setActivityLogFilter(option.value)">{{ option.label }}</button>
+        </nav>
         <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
-        <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载登录记录...</p>
-        <p v-else-if="!adminLoginLogs.length" class="settings-note">还没有登录记录。</p>
+        <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载活动日志...</p>
+        <p v-else-if="!adminLoginLogs.length" class="settings-note">这个分类还没有日志。</p>
         <div v-else class="login-log-list">
           <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
             <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
@@ -8852,11 +8919,20 @@ async function toggleVirtual(character: any) {
                 <time>{{ adminDateTime(log.createdAt) }}</time>
               </div>
               <div class="login-log-meta">
-                <span v-if="log.deviceName">{{ log.deviceName }}</span>
+                <span v-if="log.deviceName">{{ displayedDeviceName(log) }}</span>
                 <span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span>
+                <span v-if="log.channelName">频道：{{ log.channelName }}</span>
+                <span v-if="log.trackTitle">歌曲：{{ log.trackTitle }}</span>
+                <span v-if="log.state">{{ activityStateLabel(log.state) }}</span>
                 <span v-if="log.ipAddress">IP {{ log.ipAddress }}</span>
                 <span v-if="log.sessionId">会话 {{ log.sessionId.slice(0, 8) }}</span>
               </div>
+              <small v-if="log.kind === 'music_progress'" class="activity-log-detail">{{ musicProgressSummary(log) }}</small>
+              <small v-if="log.kind === 'presence_leave' && log.durationMs != null" class="activity-log-detail">本次在线 {{ activityDuration(log.durationMs) }}</small>
+              <small v-if="log.appVersion" class="activity-log-detail">
+                客户端 v{{ log.appVersion }}<template v-if="log.latestVersion"> · 当时服务器 v{{ log.latestVersion }} · {{ log.isLatestVersion ? "已是最新版" : "不是最新版" }}</template>
+              </small>
+              <small v-if="log.playbackId" class="activity-log-detail">播放会话 {{ log.playbackId.slice(0, 8) }}</small>
               <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
             </div>
           </article>
@@ -8897,8 +8973,8 @@ async function toggleVirtual(character: any) {
   <main v-else-if="isLogRoute" class="ai-settings-page" :style="appearanceStyle">
     <section class="ai-settings-panel ai-denied-panel">
       <Monitor :size="30" />
-      <strong>无权查看登录记录</strong>
-      <p>只有管理员可以查看成员登录、退出和离开聊天的记录。</p>
+      <strong>无权查看活动日志</strong>
+      <p>只有管理员可以查看会话、音乐进度和功能使用记录。</p>
       <button class="primary-btn" @click="returnToChat">回到聊天</button>
     </section>
   </main>
@@ -10505,7 +10581,7 @@ async function toggleVirtual(character: any) {
               <div v-for="device in devices" :key="device.id" class="device-row">
                 <component :is="deviceIcon(device.deviceKind)" :size="20" />
                 <span>
-                  <b>{{ device.deviceName }}</b>
+                  <b>{{ displayedDeviceName(device) }}</b>
                   <small>{{ deviceLabel(device.deviceKind) }} · {{ new Date(device.lastSeenAt).toLocaleString() }}<template v-if="device.current"> · 当前设备</template></small>
                 </span>
                 <button class="mini-btn secondary" @click="revokeDevice(device)">登出</button>
@@ -10610,7 +10686,7 @@ async function toggleVirtual(character: any) {
             <div class="admin-hub-group">
               <label>外观与数据</label>
               <button class="admin-entry-row" @click="openAdminPage('appearance')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>外观与体验</b><small>品牌、登录页、聊天室和主题</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息、资源和登录记录</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息和资源管理</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('release')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>版本与更新</b><small>版本状态和发布记录</small></span><ChevronRight :size="19" /></button>
             </div>
           </section>
@@ -10631,7 +10707,6 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('backups')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>备份与迁移</b><small>完整备份及数据导入导出</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('messages')"><span class="admin-entry-icon"><MessageSquareQuote :size="20" /></span><span><b>聊天记录</b><small>选择消息或按频道清理</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('resources')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>资源管理</b><small>查看、压缩和删除附件</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('loginLogs')"><span class="admin-entry-icon"><Archive :size="20" /></span><span><b>登录记录</b><small>成员登录、退出和在线活动</small></span><ChevronRight :size="19" /></button>
             </div>
           </section>
 
@@ -11211,25 +11286,6 @@ async function toggleVirtual(character: any) {
               @delete="deleteAdminAttachments"
               @delete-all="deleteAllAdminAttachments"
             />
-          </section>
-
-          <section v-else-if="adminPage === 'loginLogs'" class="admin-page-section login-log-body embedded-login-logs">
-            <div class="data-toolbar data-toolbar-compact">
-              <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs"><RotateCcw :size="15" />{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
-            </div>
-            <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
-            <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载登录记录...</p>
-            <p v-else-if="!adminLoginLogs.length" class="settings-note">还没有登录记录。</p>
-            <div v-else class="login-log-list">
-              <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
-                <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
-                <div class="login-log-main">
-                  <div class="login-log-title"><strong>{{ log.displayName }}</strong><small>@{{ log.username }}</small><time>{{ adminDateTime(log.createdAt) }}</time></div>
-                  <div class="login-log-meta"><span v-if="log.deviceName">{{ log.deviceName }}</span><span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span><span v-if="log.ipAddress">IP {{ log.ipAddress }}</span></div>
-                  <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
-                </div>
-              </article>
-            </div>
           </section>
 
           <section v-else-if="adminPage === 'release'" class="release-panel admin-page-section">

@@ -58,6 +58,7 @@ import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform
 import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
 import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
+import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.js";
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
 import { imageDimensionsFromPayload, mergeImageDimensionsPayload, type ImageDimensions } from "../shared/imageDimensions.js";
 import {
@@ -449,9 +450,30 @@ type VoicePayload = {
   mimeType?: string;
 };
 type LoginLogSession = Pick<AccountSession, "id" | "deviceKind" | "deviceName" | "ipAddress" | "userAgent">;
+type ActivityLogInput = {
+  kind: AdminLoginLogKind;
+  accountId: number;
+  sessionId?: string | null;
+  channelId?: number | null;
+  trackId?: number | null;
+  playbackId?: string | null;
+  deviceKind?: string | null;
+  deviceName?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  appVersion?: string | null;
+  latestVersion?: string | null;
+  isLatestVersion?: boolean | null;
+  state?: string | null;
+  progressMs?: number | null;
+  listenedMs?: number | null;
+  durationMs?: number | null;
+  createdAt?: Date;
+};
 
 const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null }>();
 const accountSocketIds = new Map<number, Set<string>>();
+const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
 let pushReady = false;
@@ -473,16 +495,8 @@ function detectDeviceKind(userAgent: string): DeviceKind {
 }
 
 function deviceNameFromRequest(request: FastifyRequest, override?: string) {
-  const name = String(override || "").trim().slice(0, 120);
-  if (name) return name;
   const ua = String(request.headers["user-agent"] || "");
-  if (/iphone/i.test(ua)) return "iPhone";
-  if (/ipad/i.test(ua)) return "iPad";
-  if (/android/i.test(ua) && /mobile/i.test(ua)) return "Android 手机";
-  if (/android/i.test(ua)) return "Android 平板";
-  if (/macintosh|mac os/i.test(ua)) return "Mac";
-  if (/windows/i.test(ua)) return "Windows";
-  return "未知设备";
+  return friendlyDeviceName(override, ua);
 }
 
 function clientIp(request: FastifyRequest) {
@@ -2307,16 +2321,80 @@ async function ensureLoginLogTable() {
   `;
 }
 
-async function writeLoginLog(kind: AdminLoginLogKind, accountId: number, session?: LoginLogSession | null, createdAt = new Date()) {
-  await prisma
-    .$executeRaw`
-      INSERT INTO account_login_logs (kind, account_id, session_id, device_kind, device_name, ip_address, user_agent, created_at)
-      VALUES (${kind}, ${accountId}, ${session?.id || null}, ${session?.deviceKind || null}, ${session?.deviceName || null}, ${session?.ipAddress || null}, ${session?.userAgent || null}, ${createdAt})
-    `
-    .catch((error) => app.log.warn({ error, kind, accountId }, "Failed to write login log"));
+async function ensureActivityLogTable() {
+  await prisma.$executeRaw`
+    CREATE TABLE IF NOT EXISTS account_activity_logs (
+      id INT NOT NULL AUTO_INCREMENT,
+      kind VARCHAR(48) NOT NULL,
+      account_id INT NOT NULL,
+      session_id VARCHAR(64) NULL,
+      channel_id INT NULL,
+      track_id INT NULL,
+      playback_id CHAR(36) NULL,
+      device_kind VARCHAR(16) NULL,
+      device_name VARCHAR(120) NULL,
+      ip_address VARCHAR(64) NULL,
+      user_agent TEXT NULL,
+      app_version VARCHAR(32) NULL,
+      latest_version VARCHAR(32) NULL,
+      is_latest_version BOOLEAN NULL,
+      event_state VARCHAR(32) NULL,
+      progress_ms INT NULL,
+      listened_ms INT NULL,
+      duration_ms INT NULL,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      PRIMARY KEY (id),
+      INDEX account_activity_logs_created_at_idx (created_at),
+      INDEX account_activity_logs_account_created_idx (account_id, created_at),
+      INDEX account_activity_logs_kind_created_idx (kind, created_at),
+      INDEX account_activity_logs_track_created_idx (track_id, created_at),
+      INDEX account_activity_logs_playback_created_idx (playback_id, created_at)
+    )
+  `;
 }
 
-async function createAuthSession(accountId: number, request: FastifyRequest, deviceNameOverride?: string) {
+async function writeActivityLog(input: ActivityLogInput) {
+  const createdAt = input.createdAt || new Date();
+  await prisma
+    .$executeRaw`
+      INSERT INTO account_activity_logs (
+        kind, account_id, session_id, channel_id, track_id, playback_id, device_kind, device_name, ip_address, user_agent,
+        app_version, latest_version, is_latest_version, event_state, progress_ms, listened_ms, duration_ms, created_at
+      ) VALUES (
+        ${input.kind}, ${input.accountId}, ${input.sessionId || null}, ${input.channelId || null}, ${input.trackId || null}, ${input.playbackId || null},
+        ${input.deviceKind || null}, ${input.deviceName || null}, ${input.ipAddress || null}, ${input.userAgent || null},
+        ${input.appVersion || null}, ${input.latestVersion || null}, ${input.isLatestVersion ?? null}, ${input.state || null},
+        ${input.progressMs ?? null}, ${input.listenedMs ?? null}, ${input.durationMs ?? null}, ${createdAt}
+      )
+    `
+    .catch((error) => app.log.warn({ error, kind: input.kind, accountId: input.accountId }, "Failed to write activity log"));
+}
+
+async function writeLoginLog(
+  kind: AdminLoginLogKind,
+  accountId: number,
+  session?: LoginLogSession | null,
+  createdAt = new Date(),
+  options: Pick<ActivityLogInput, "appVersion" | "durationMs"> = {}
+) {
+  const appVersion = options.appVersion || null;
+  await writeActivityLog({
+    kind,
+    accountId,
+    sessionId: session?.id || null,
+    deviceKind: session?.deviceKind || null,
+    deviceName: session?.deviceName || null,
+    ipAddress: session?.ipAddress || null,
+    userAgent: session?.userAgent || null,
+    appVersion,
+    latestVersion: kind === "auth_login" ? APP_VERSION : null,
+    isLatestVersion: kind === "auth_login" && appVersion ? appVersion === APP_VERSION : null,
+    durationMs: options.durationMs,
+    createdAt
+  });
+}
+
+async function createAuthSession(accountId: number, request: FastifyRequest, deviceNameOverride?: string, appVersion?: string) {
   const now = new Date();
   const deviceKind = detectDeviceKind(String(request.headers["user-agent"] || ""));
   const deviceName = deviceNameFromRequest(request, deviceNameOverride);
@@ -2345,7 +2423,7 @@ async function createAuthSession(accountId: number, request: FastifyRequest, dev
   });
   disconnectSessions(replacedSessions.map((row) => row.id));
   await Promise.all([
-    writeLoginLog("auth_login", accountId, session, now),
+    writeLoginLog("auth_login", accountId, session, now, { appVersion }),
     ...replacedSessions.map((row) => writeLoginLog("session_replaced", accountId, row, now))
   ]);
   return session;
@@ -2373,7 +2451,7 @@ async function emitChannelMembersChanged(channelId: number, action: string, affe
 }
 
 async function ensureBootstrap() {
-  await ensureLoginLogTable();
+  await Promise.all([ensureLoginLogTable(), ensureActivityLogTable()]);
   const defaultChannel = await prisma.channel.findFirst({ where: { isDefault: true } });
   if (!defaultChannel) {
     await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
@@ -2580,13 +2658,13 @@ app.get("/backgrounds/:file", async (request, reply) => {
 });
 
 app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
-  const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional() }).safeParse(request.body);
+  const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional(), appVersion: z.string().max(32).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
   const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
   if (!account || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
     return reply.code(401).send({ success: false, message: "用户名或密码错误" });
   }
-  const session = await createAuthSession(account.id, request, body.data.deviceName);
+  const session = await createAuthSession(account.id, request, body.data.deviceName, body.data.appVersion);
   const updated = await prisma.account.findUniqueOrThrow({ where: { id: account.id }, include: { actor: true } });
   return { success: true, token: signToken(updated, session), account: authDto(updated) };
 });
@@ -2599,7 +2677,8 @@ app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 m
       username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
       displayName: z.string().min(1).max(80),
       password: z.string().min(10).max(128),
-      deviceName: z.string().max(120).optional()
+      deviceName: z.string().max(120).optional(),
+      appVersion: z.string().max(32).optional()
     })
     .safeParse(request.body);
   if (!body.success) return reply.code(400).send({ success: false, message: "用户名需 2-40 位，密码需 10-128 位" });
@@ -2622,7 +2701,7 @@ app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 m
       skipDuplicates: true
     });
   }
-  const session = await createAuthSession(account.id, request, body.data.deviceName);
+  const session = await createAuthSession(account.id, request, body.data.deviceName, body.data.appVersion);
   return { success: true, token: signToken(account, session), account: authDto(account) };
 });
 
@@ -2704,10 +2783,74 @@ app.delete("/api/me/sessions/:id", { preHandler: requireAuth }, async (request, 
   return { success: true, current: sessionId === auth.sessionId };
 });
 
-app.get("/api/admin/login-logs", { preHandler: requireAdmin }, async (request, reply) => {
-  const parsed = z.object({ limit: z.coerce.number().int().min(1).max(500).default(200) }).safeParse(request.query);
+async function adminActivityLogs(request: FastifyRequest, reply: FastifyReply) {
+  const parsed = z
+    .object({
+      limit: z.coerce.number().int().min(1).max(500).default(300),
+      category: z.enum(["all", "session", "music", "usage"]).default("all")
+    })
+    .safeParse(request.query);
   if (!parsed.success) return reply.code(400).send({ success: false, message: "日志参数无效" });
-  const rows = await prisma.$queryRaw<
+  const sourceLimit = Math.min(1000, parsed.data.limit * 3);
+  const activityRows = await prisma.$queryRaw<
+    Array<{
+      id: number;
+      kind: AdminLoginLogKind;
+      accountId: number;
+      username: string | null;
+      displayName: string | null;
+      deviceKind: DeviceKind | null;
+      deviceName: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
+      sessionId: string | null;
+      channelId: number | null;
+      channelName: string | null;
+      trackId: number | null;
+      trackFileName: string | null;
+      playbackId: string | null;
+      appVersion: string | null;
+      latestVersion: string | null;
+      isLatestVersion: boolean | number | null;
+      state: string | null;
+      progressMs: number | null;
+      listenedMs: number | null;
+      durationMs: number | null;
+      createdAt: Date;
+    }>
+  >`
+    SELECT
+      log.id,
+      log.kind,
+      log.account_id AS accountId,
+      account.username AS username,
+      account.display_name AS displayName,
+      log.device_kind AS deviceKind,
+      log.device_name AS deviceName,
+      log.ip_address AS ipAddress,
+      log.user_agent AS userAgent,
+      log.session_id AS sessionId,
+      log.channel_id AS channelId,
+      channel.name AS channelName,
+      log.track_id AS trackId,
+      track.file_name AS trackFileName,
+      log.playback_id AS playbackId,
+      log.app_version AS appVersion,
+      log.latest_version AS latestVersion,
+      log.is_latest_version AS isLatestVersion,
+      log.event_state AS state,
+      log.progress_ms AS progressMs,
+      log.listened_ms AS listenedMs,
+      log.duration_ms AS durationMs,
+      log.created_at AS createdAt
+    FROM account_activity_logs log
+    LEFT JOIN accounts account ON account.id = log.account_id
+    LEFT JOIN channels channel ON channel.id = log.channel_id
+    LEFT JOIN messages track ON track.id = log.track_id
+    ORDER BY log.created_at DESC, log.id DESC
+    LIMIT ${sourceLimit}
+  `;
+  const legacyRows = await prisma.$queryRaw<
     Array<{
       id: number;
       kind: AdminLoginLogKind;
@@ -2737,24 +2880,57 @@ app.get("/api/admin/login-logs", { preHandler: requireAdmin }, async (request, r
     FROM account_login_logs log
     LEFT JOIN accounts account ON account.id = log.account_id
     ORDER BY log.created_at DESC, log.id DESC
-    LIMIT ${parsed.data.limit}
+    LIMIT ${sourceLimit}
   `;
-  return {
-    logs: rows.map((row) => ({
-      id: row.id,
-      kind: row.kind,
-      accountId: row.accountId,
-      username: row.username || `user-${row.accountId}`,
-      displayName: row.displayName || row.username || `用户 ${row.accountId}`,
-      deviceKind: row.deviceKind,
-      deviceName: row.deviceName,
-      ipAddress: row.ipAddress,
-      userAgent: row.userAgent,
-      sessionId: row.sessionId,
-      createdAt: row.createdAt.toISOString()
-    }))
-  };
-});
+  const activityLogs = activityRows.map((row) => ({
+    id: `activity-${row.id}`,
+    kind: row.kind,
+    category: activityLogCategory(row.kind),
+    accountId: row.accountId,
+    username: row.username || `user-${row.accountId}`,
+    displayName: row.displayName || row.username || `用户 ${row.accountId}`,
+    deviceKind: row.deviceKind,
+    deviceName: row.deviceName || row.userAgent ? friendlyDeviceName(row.deviceName, row.userAgent || "") : null,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    sessionId: row.sessionId,
+    channelId: row.channelId,
+    channelName: row.channelName,
+    trackId: row.trackId,
+    trackTitle: row.trackFileName ? musicTrackTitle(row.trackFileName) : null,
+    playbackId: row.playbackId,
+    appVersion: row.appVersion,
+    latestVersion: row.latestVersion,
+    isLatestVersion: row.isLatestVersion === null ? null : !!row.isLatestVersion,
+    state: row.state,
+    progressMs: row.progressMs,
+    listenedMs: row.listenedMs,
+    durationMs: row.durationMs,
+    createdAt: row.createdAt.toISOString()
+  }));
+  const legacyLogs = legacyRows.map((row) => ({
+    id: `legacy-${row.id}`,
+    kind: row.kind,
+    category: "session" as const,
+    accountId: row.accountId,
+    username: row.username || `user-${row.accountId}`,
+    displayName: row.displayName || row.username || `用户 ${row.accountId}`,
+    deviceKind: row.deviceKind,
+    deviceName: row.deviceName || row.userAgent ? friendlyDeviceName(row.deviceName, row.userAgent || "") : null,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    sessionId: row.sessionId,
+    createdAt: row.createdAt.toISOString()
+  }));
+  const logs = [...activityLogs, ...legacyLogs]
+    .filter((row) => parsed.data.category === "all" || row.category === parsed.data.category)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, parsed.data.limit);
+  return { logs };
+}
+
+app.get("/api/admin/activity-logs", { preHandler: requireAdmin }, adminActivityLogs);
+app.get("/api/admin/login-logs", { preHandler: requireAdmin }, adminActivityLogs);
 
 app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
@@ -3957,6 +4133,38 @@ app.post("/api/music/tracks/:id/play", { preHandler: requireAuth }, async (reque
   const heat = await prisma.musicPlay.count({ where: { trackId } });
   if (created) io.emit("music:updated", { action: "heat-updated", trackId, heat });
   return { success: true, counted: created, heat };
+});
+
+app.post("/api/music/tracks/:id/progress", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const trackId = Number((request.params as { id: string }).id);
+  if (!Number.isInteger(trackId) || trackId <= 0) return reply.code(400).send({ success: false, message: "歌曲参数无效" });
+  const body = z
+    .object({
+      playbackId: z.string().uuid(),
+      state: z.enum(["started", "progress", "paused", "changed", "ended", "error"]),
+      progressMs: z.number().int().min(0).max(6 * 60 * 60 * 1000),
+      listenedMs: z.number().int().min(0).max(6 * 60 * 60 * 1000),
+      durationMs: z.number().int().min(1).max(6 * 60 * 60 * 1000),
+      appVersion: z.string().max(32).optional()
+    })
+    .safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "播放进度参数无效" });
+  await writeActivityLog({
+    kind: "music_progress",
+    accountId: auth.accountId,
+    sessionId: auth.sessionId,
+    trackId,
+    playbackId: body.data.playbackId,
+    appVersion: body.data.appVersion || null,
+    latestVersion: APP_VERSION,
+    isLatestVersion: body.data.appVersion ? body.data.appVersion === APP_VERSION : null,
+    state: body.data.state,
+    progressMs: Math.min(body.data.progressMs, body.data.durationMs),
+    listenedMs: Math.min(body.data.listenedMs, body.data.durationMs),
+    durationMs: body.data.durationMs
+  });
+  return { success: true };
 });
 
 app.patch("/api/music/tracks/order", { preHandler: requireAuth }, async (request, reply) => {
@@ -6474,7 +6682,11 @@ io.on("connection", async (socket: Socket) => {
   accountSocketIds.set(account.id, ids);
   socket.join(`acct:${account.id}`);
   online.set(socket.id, { actorId: account.actor.id, accountId: account.id, username: account.username, displayName: account.displayName, avatarPath: account.avatarPath });
-  if (wasOffline) await writeLoginLog("presence_join", account.id, session);
+  if (wasOffline) {
+    const joinedAt = new Date();
+    accountPresenceStartedAt.set(account.id, joinedAt);
+    await writeLoginLog("presence_join", account.id, session, joinedAt);
+  }
   const channels = await prisma.channel.findMany({
     where: canManageMusic(auth)
       ? {
@@ -6496,7 +6708,11 @@ io.on("connection", async (socket: Socket) => {
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
-    if (await canAccessChannel(currentAuth.accountId, Number(data.channelId))) socket.join(`ch:${Number(data.channelId)}`);
+    const channelId = Number(data.channelId);
+    if (await canAccessChannel(currentAuth.accountId, channelId)) {
+      socket.join(`ch:${channelId}`);
+      void writeActivityLog({ kind: "channel_view", accountId: currentAuth.accountId, sessionId: currentAuth.sessionId, channelId });
+    }
   });
 
   socket.on("message:send", async (data: unknown, ack?: (payload: unknown) => void) => {
@@ -6525,6 +6741,13 @@ io.on("connection", async (socket: Socket) => {
         payload,
         replyToId: body.replyToId || null,
         pushOrigin
+      });
+      void writeActivityLog({
+        kind: "message_sent",
+        accountId: currentAuth.accountId,
+        sessionId: currentAuth.sessionId,
+        channelId: body.channelId,
+        state: body.type
       });
       ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });
     } catch (error) {
@@ -6585,7 +6808,14 @@ io.on("connection", async (socket: Socket) => {
         isOffline = true;
       }
     }
-    if (isOffline) await writeLoginLog("presence_leave", account.id, session);
+    if (isOffline) {
+      const leftAt = new Date();
+      const joinedAt = accountPresenceStartedAt.get(account.id);
+      accountPresenceStartedAt.delete(account.id);
+      await writeLoginLog("presence_leave", account.id, session, leftAt, {
+        durationMs: joinedAt ? Math.max(0, leftAt.getTime() - joinedAt.getTime()) : undefined
+      });
+    }
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
   });

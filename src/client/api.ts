@@ -1,4 +1,6 @@
 import type { AuthResponse } from "@shared/types";
+import { friendlyDeviceName } from "@shared/activityLog";
+import { APP_VERSION } from "@shared/release";
 
 const TOKEN_KEY = "team-chat-token";
 
@@ -40,7 +42,12 @@ export async function api<T>(url: string, options: RequestInit = {}): Promise<T>
 export async function login(username: string, password: string) {
   const result = await api<{ success: boolean } & AuthResponse>("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ username, password, deviceName: navigator.platform || navigator.userAgent || "当前设备" })
+    body: JSON.stringify({
+      username,
+      password,
+      deviceName: friendlyDeviceName(navigator.platform, navigator.userAgent, navigator.maxTouchPoints),
+      appVersion: APP_VERSION
+    })
   });
   setToken(result.token);
   return result.account;
@@ -49,7 +56,13 @@ export async function login(username: string, password: string) {
 export async function register(username: string, displayName: string, password: string) {
   const result = await api<{ success: boolean } & AuthResponse>("/api/auth/register", {
     method: "POST",
-    body: JSON.stringify({ username, displayName, password, deviceName: navigator.platform || navigator.userAgent || "当前设备" })
+    body: JSON.stringify({
+      username,
+      displayName,
+      password,
+      deviceName: friendlyDeviceName(navigator.platform, navigator.userAgent, navigator.maxTouchPoints),
+      appVersion: APP_VERSION
+    })
   });
   setToken(result.token);
   return result.account;

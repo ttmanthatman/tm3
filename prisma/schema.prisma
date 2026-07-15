@@ -145,6 +145,35 @@ model AccountLoginLog {
   @@map("account_login_logs")
 }
 
+model AccountActivityLog {
+  id              Int      @id @default(autoincrement())
+  kind            String   @db.VarChar(48)
+  accountId       Int      @map("account_id")
+  sessionId       String?  @map("session_id") @db.VarChar(64)
+  channelId       Int?     @map("channel_id")
+  trackId         Int?     @map("track_id")
+  playbackId      String?  @map("playback_id") @db.Char(36)
+  deviceKind      String?  @map("device_kind") @db.VarChar(16)
+  deviceName      String?  @map("device_name") @db.VarChar(120)
+  ipAddress       String?  @map("ip_address") @db.VarChar(64)
+  userAgent       String?  @map("user_agent") @db.Text
+  appVersion      String?  @map("app_version") @db.VarChar(32)
+  latestVersion   String?  @map("latest_version") @db.VarChar(32)
+  isLatestVersion Boolean? @map("is_latest_version")
+  eventState      String?  @map("event_state") @db.VarChar(32)
+  progressMs      Int?     @map("progress_ms")
+  listenedMs      Int?     @map("listened_ms")
+  durationMs      Int?     @map("duration_ms")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt], map: "account_activity_logs_created_at_idx")
+  @@index([accountId, createdAt], map: "account_activity_logs_account_created_idx")
+  @@index([kind, createdAt], map: "account_activity_logs_kind_created_idx")
+  @@index([trackId, createdAt], map: "account_activity_logs_track_created_idx")
+  @@index([playbackId, createdAt], map: "account_activity_logs_playback_created_idx")
+  @@map("account_activity_logs")
+}
+
 model Actor {
   id          Int               @id @default(autoincrement())
   kind        ActorKind

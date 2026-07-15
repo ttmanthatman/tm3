@@ -276,11 +276,21 @@ export interface DeviceSessionDTO {
   current: boolean;
 }
 
-export type AdminLoginLogKind = "auth_login" | "auth_logout" | "session_replaced" | "session_revoked" | "presence_join" | "presence_leave";
+export type AdminLoginLogKind =
+  | "auth_login"
+  | "auth_logout"
+  | "session_replaced"
+  | "session_revoked"
+  | "presence_join"
+  | "presence_leave"
+  | "music_progress"
+  | "channel_view"
+  | "message_sent";
 
 export interface AdminLoginLogDTO {
-  id: number;
+  id: string;
   kind: AdminLoginLogKind;
+  category: "session" | "music" | "usage";
   accountId: number;
   username: string;
   displayName: string;
@@ -289,6 +299,18 @@ export interface AdminLoginLogDTO {
   ipAddress?: string | null;
   userAgent?: string | null;
   sessionId?: string | null;
+  channelId?: number | null;
+  channelName?: string | null;
+  trackId?: number | null;
+  trackTitle?: string | null;
+  playbackId?: string | null;
+  appVersion?: string | null;
+  latestVersion?: string | null;
+  isLatestVersion?: boolean | null;
+  state?: string | null;
+  progressMs?: number | null;
+  listenedMs?: number | null;
+  durationMs?: number | null;
   createdAt: string;
 }
 
