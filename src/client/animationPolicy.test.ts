@@ -18,7 +18,7 @@ test("karaoke clock runs at a bounded rate only while visible lyrics need it", (
 });
 
 test("message effects render only while their observed bubble is visible", () => {
-  assert.equal(shouldRenderMessageEffect({ manuallyPaused: false, visibilityKnown: false, visible: false, documentVisible: true }), true);
+  assert.equal(shouldRenderMessageEffect({ manuallyPaused: false, visibilityKnown: false, visible: false, documentVisible: true }), false);
   assert.equal(shouldRenderMessageEffect({ manuallyPaused: false, visibilityKnown: true, visible: true, documentVisible: true }), true);
   assert.equal(shouldRenderMessageEffect({ manuallyPaused: false, visibilityKnown: true, visible: false, documentVisible: true }), false);
   assert.equal(shouldRenderMessageEffect({ manuallyPaused: true, visibilityKnown: true, visible: true, documentVisible: true }), false);
@@ -33,11 +33,12 @@ test("flash timer sleeps unless a visible bubble or the admin preview needs it",
 });
 
 test("incoming rain runs only for a message visible in the active channel view", () => {
-  const visible = { messageChannelId: 3, currentChannelId: 3, prayerOnly: false, messageType: "text", activeView: true, documentVisible: true };
+  const visible = { messageChannelId: 3, currentChannelId: 3, prayerOnly: false, messageType: "text", activeView: true, messageVisible: true, documentVisible: true };
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain" }), true);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", messageChannelId: 4 }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", prayerOnly: true }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "fly" }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", activeView: false }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", messageVisible: false }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", documentVisible: false }), false);
 });

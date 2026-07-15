@@ -17,7 +17,8 @@ type VirtualWindowInput = {
   measuredHeights: Record<string, number>;
   scrollTop: number;
   viewportHeight: number;
-  overscan: number;
+  overscanBefore: number;
+  overscanAfter: number;
 };
 
 function itemHeight(item: VirtualTimelineItem, measuredHeights: Record<string, number>) {
@@ -49,8 +50,8 @@ export function calculateVirtualWindow(input: VirtualWindowInput): VirtualTimeli
   if (!input.items.length) return { start: 0, end: 0, topSpacer: 0, bottomSpacer: 0, renderedHeight: 0, totalHeight: 0 };
   const offsets = virtualTimelineOffsets(input.items, input.measuredHeights);
   const totalHeight = offsets[offsets.length - 1];
-  const startTarget = Math.max(0, input.scrollTop - Math.max(0, input.overscan));
-  const endTarget = Math.min(totalHeight, input.scrollTop + Math.max(0, input.viewportHeight) + Math.max(0, input.overscan));
+  const startTarget = Math.max(0, input.scrollTop - Math.max(0, input.overscanBefore));
+  const endTarget = Math.min(totalHeight, input.scrollTop + Math.max(0, input.viewportHeight) + Math.max(0, input.overscanAfter));
   const start = Math.max(0, Math.min(input.items.length - 1, lowerBound(offsets, startTarget + Number.EPSILON) - 1));
   const end = Math.max(start + 1, Math.min(input.items.length, lowerBound(offsets, endTarget)));
   const topSpacer = offsets[start];

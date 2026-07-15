@@ -983,6 +983,7 @@ watch(
         prayerOnly: store.prayerOnly,
         messageType: incoming.type,
         activeView: !showFavorites.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
+        messageVisible: isNearMessageBottom(220),
         documentVisible: documentVisible.value
       })) triggerOneShotMessageEffects(incoming);
       if (incoming.channelId === store.currentChannelId && !isMine(incoming) && !isNearMessageBottom(220)) {
@@ -1711,7 +1712,9 @@ function replacePendingMessage(pendingId: number, message: MessageDTO) {
 
 type TimelineRow = { kind: "time"; label: string; id: string } | { kind: "message"; message: MessageDTO };
 const VIRTUAL_TIMELINE_THRESHOLD = 40;
-const VIRTUAL_TIMELINE_OVERSCAN = 320;
+const VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN = 2_400;
+const VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS = 4;
+const VIRTUAL_TIMELINE_FORWARD_OVERSCAN = 320;
 
 const timeline = computed<TimelineRow[]>(() => {
   const rows: TimelineRow[] = [];
@@ -1755,7 +1758,8 @@ const virtualTimelineWindow = computed(() => {
     measuredHeights: measuredTimelineHeights.value,
     scrollTop: timelineScrollTop.value,
     viewportHeight: timelineViewportHeight.value,
-    overscan: VIRTUAL_TIMELINE_OVERSCAN
+    overscanBefore: Math.max(VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN, timelineViewportHeight.value * VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS),
+    overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN
   });
 });
 const renderedTimelineRows = computed(() => timeline.value
@@ -3931,10 +3935,9 @@ function refreshMessageEffectObserver() {
   const observed = new Set<number>();
   const visible = new Set<number>();
   const rootRect = root.getBoundingClientRect();
-  const preloadMargin = 96;
   messageEffectObserver = new IntersectionObserver(handleMessageEffectIntersections, {
     root: scroller.value,
-    rootMargin: `${preloadMargin}px 0px`,
+    rootMargin: "0px",
     threshold: 0.01
   });
   for (const bubble of root.querySelectorAll<HTMLElement>("[data-message-effect]")) {
@@ -3944,7 +3947,7 @@ function refreshMessageEffectObserver() {
     if (id === null) continue;
     observed.add(id);
     const rect = observationTarget.getBoundingClientRect();
-    if (rect.bottom >= rootRect.top - preloadMargin && rect.top <= rootRect.bottom + preloadMargin) visible.add(id);
+    if (rect.bottom >= rootRect.top && rect.top <= rootRect.bottom) visible.add(id);
     messageEffectObserver.observe(observationTarget);
   }
   updateEffectVisibility(observed, visible);
@@ -6504,11 +6507,11 @@ function shouldKeepOriginalImage(file: File) {
 function uploadPickedFile(file: File) {
   if (isMusicChannel.value && !/\.(mp3|m4a)$/i.test(file.name)) {
     alert("音乐频道只支持上传 MP3 和 M4A 文件");
-    return;
+    return Promise.resolve({ success: false, duplicate: false, skipped: false });
   }
   const options = { originalImage: shouldKeepOriginalImage(file) };
   const pendingMessageId = pushPendingFileMessage(file, options);
-  void uploadFile(file, { ...options, pendingMessageId });
+  return uploadFile(file, { ...options, pendingMessageId });
 }
 
 function handlePickedFile(event: Event) {
@@ -6516,6 +6519,18 @@ function handlePickedFile(event: Event) {
   const file = input.files?.[0];
   if (file) uploadPickedFile(file);
   input.value = "";
+}
+
+async function handlePickedFiles(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = "";
+  let skipped = 0;
+  for (const file of files) {
+    const result = await uploadPickedFile(file);
+    if (result.skipped) skipped += 1;
+  }
+  if (skipped) alert(`已按文件内容跳过 ${skipped} 首重复歌曲`);
 }
 
 function extensionFromImageMime(type: string) {
@@ -6560,7 +6575,7 @@ function handleComposerPaste(event: ClipboardEvent) {
 }
 
 async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean } = {}) {
-  if (!store.currentChannelId) return false;
+  if (!store.currentChannelId) return { success: false, duplicate: false, skipped: false };
   const form = new FormData();
   form.append("channelId", String(store.currentChannelId));
   if (options.originalImage && isImageFile(file)) form.append("originalImage", "1");
@@ -6571,7 +6586,7 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
   }
   form.append("file", file);
   try {
-    const result = await new Promise<{ success: boolean; message?: MessageDTO; error?: string }>((resolve, reject) => {
+    const result = await new Promise<{ success: boolean; duplicate?: boolean; skipped?: boolean; message?: MessageDTO; error?: string }>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/files/upload");
       const headers = authHeaders();
@@ -6581,14 +6596,14 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
         setPendingUpload(options.pendingMessageId, { progress: Math.max(1, Math.round((event.loaded / event.total) * 92)), status: "uploading" });
       };
       xhr.onload = () => {
-        let payload: { success?: boolean; message?: MessageDTO; error?: string; messageText?: string } = {};
+        let payload: { success?: boolean; duplicate?: boolean; skipped?: boolean; message?: MessageDTO; error?: string; messageText?: string } = {};
         try {
           payload = JSON.parse(xhr.responseText || "{}") as typeof payload;
         } catch {
           payload = { error: xhr.responseText || "上传失败" };
         }
         if (xhr.status >= 200 && xhr.status < 300 && payload.success && payload.message) {
-          resolve({ success: true, message: payload.message });
+          resolve({ success: true, duplicate: !!payload.duplicate, skipped: !!payload.skipped, message: payload.message });
           return;
         }
         resolve({ success: false, error: payload.error || payload.messageText || (payload as { message?: string }).message || `HTTP ${xhr.status}` });
@@ -6600,20 +6615,25 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
     if (!result.success || !result.message) {
       if (options.pendingMessageId) setPendingUpload(options.pendingMessageId, { status: "failed", message: result.error || "上传失败" });
       else alert(result.error || "上传失败");
-      return false;
+      return { success: false, duplicate: false, skipped: false };
     }
     if (options.pendingMessageId) {
-      setPendingUpload(options.pendingMessageId, { progress: 100, status: "processing", message: "正在发布" });
-      replacePendingMessage(options.pendingMessageId, result.message);
+      if (result.skipped) {
+        store.removeMessage(options.pendingMessageId);
+      } else {
+        setPendingUpload(options.pendingMessageId, { progress: 100, status: "processing", message: "正在发布" });
+        replacePendingMessage(options.pendingMessageId, result.message);
+      }
       removePendingUpload(options.pendingMessageId);
     }
+    if (result.duplicate && !result.skipped && !isMusicChannel.value) alert("文件内容已经存在，已引用原文件并发送消息");
     composerPanel.value = null;
-    return true;
+    return { success: true, duplicate: !!result.duplicate, skipped: !!result.skipped };
   } catch (error) {
     const message = error instanceof Error ? error.message : "上传失败";
     if (options.pendingMessageId) setPendingUpload(options.pendingMessageId, { status: "failed", message });
     else alert(message);
-    return false;
+    return { success: false, duplicate: false, skipped: false };
   }
 }
 
@@ -9572,7 +9592,7 @@ async function toggleVirtual(character: any) {
           <FileUp :size="22" />
           <span><strong>上传音乐</strong><small>仅支持 MP3、M4A，单个文件最大 80MB</small></span>
         </button>
-        <input ref="fileInput" class="hidden" type="file" accept=".mp3,.m4a,audio/mpeg,audio/mp4,audio/x-m4a" @change="handlePickedFile" />
+        <input ref="fileInput" class="hidden" type="file" accept=".mp3,.m4a,audio/mpeg,audio/mp4,audio/x-m4a" multiple @change="handlePickedFiles" />
       </footer>
 
       <footer v-else-if="!showFavorites" class="composer">

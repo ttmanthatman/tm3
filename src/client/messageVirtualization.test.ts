@@ -13,15 +13,30 @@ test("large timelines render only a bounded window around the viewport", () => {
     measuredHeights: {},
     scrollTop: 16_000,
     viewportHeight: 800,
-    overscan: 320
+    overscanBefore: 3_200,
+    overscanAfter: 320
   });
 
   assert.ok(window.start > 0);
   assert.ok(window.end < items.length);
-  assert.ok(window.end - window.start <= 24);
+  assert.ok(window.end - window.start <= 60);
   assert.equal(window.topSpacer + window.renderedHeight + window.bottomSpacer, 40_000);
-  assert.ok(window.topSpacer <= 16_000);
+  assert.ok(window.topSpacer <= 12_800);
   assert.ok(window.topSpacer + window.renderedHeight >= 16_800);
+});
+
+test("backward overscan can preload static rows without expanding the forward window", () => {
+  const window = calculateVirtualWindow({
+    items,
+    measuredHeights: {},
+    scrollTop: 20_000,
+    viewportHeight: 800,
+    overscanBefore: 4_000,
+    overscanAfter: 0
+  });
+
+  assert.equal(window.start, 199);
+  assert.equal(window.end, 260);
 });
 
 test("measured dynamic heights update offsets and total spacer height", () => {
@@ -33,7 +48,8 @@ test("measured dynamic heights update offsets and total spacer height", () => {
     measuredHeights,
     scrollTop: 0,
     viewportHeight: 200,
-    overscan: 0
+    overscanBefore: 0,
+    overscanAfter: 0
   });
   assert.equal(window.totalHeight, 520);
   assert.equal(window.start, 0);
@@ -46,7 +62,8 @@ test("small timelines can be rendered without spacer bookkeeping", () => {
     measuredHeights: {},
     scrollTop: 0,
     viewportHeight: 800,
-    overscan: 320
+    overscanBefore: 320,
+    overscanAfter: 320
   });
   assert.deepEqual({ start: window.start, end: window.end, top: window.topSpacer, bottom: window.bottomSpacer }, { start: 0, end: 8, top: 0, bottom: 0 });
 });

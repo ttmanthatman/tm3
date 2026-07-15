@@ -16,7 +16,7 @@ export function shouldRenderMessageEffect(input: {
   documentVisible: boolean;
 }) {
   if (input.manuallyPaused || !input.documentVisible) return false;
-  return !input.visibilityKnown || input.visible;
+  return input.visibilityKnown && input.visible;
 }
 
 export function shouldRunFlashEffectTimer(input: {
@@ -34,11 +34,13 @@ export function shouldTriggerIncomingRainEffect(input: {
   prayerOnly: boolean;
   messageType: string;
   activeView: boolean;
+  messageVisible: boolean;
   documentVisible: boolean;
 }) {
   return input.effect === "rain"
     && input.messageChannelId === input.currentChannelId
     && (!input.prayerOnly || input.messageType === "prayer")
     && input.activeView
+    && input.messageVisible
     && input.documentVisible;
 }

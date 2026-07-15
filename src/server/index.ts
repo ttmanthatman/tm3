@@ -58,6 +58,7 @@ import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform
 import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
 import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
+import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -3081,8 +3082,7 @@ async function deleteChannelWithAttachments(channelId: number) {
 
   for (const attachment of messages) {
     if (!attachment.filePath) continue;
-    const filePath = path.join(UPLOAD_DIR, path.basename(attachment.filePath));
-    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    if (!(await uploadIsStillReferenced(attachment.filePath))) safeUnlink("upload", attachment.filePath);
   }
   io.emit("channel:updated", { action: "deleted", channelId });
 }
@@ -3664,6 +3664,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     stream.on("finish", resolve);
     stream.on("error", reject);
   });
+  const uploadContentHash = await sha256File(outPath);
   let storedFileName = safeName;
   let displayFileName = file.filename;
   let stat = fs.statSync(outPath);
@@ -3700,6 +3701,30 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
       request.log.warn({ error }, "voice transcode failed; storing original audio");
     }
   }
+  const preferredMusicFiles = channel?.kind === "music"
+    ? (await prisma.message.findMany({
+        where: { channel: { kind: "music" }, type: "file", filePath: { not: null } },
+        select: { filePath: true }
+      })).flatMap((message) => (message.filePath ? [message.filePath] : []))
+    : [];
+  const deduplicated = await deduplicateStoredUpload({
+    directory: UPLOAD_DIR,
+    candidatePath: path.join(UPLOAD_DIR, storedFileName),
+    contentHash: uploadContentHash,
+    preferredFileNames: preferredMusicFiles
+  });
+  storedFileName = deduplicated.storedFileName;
+  stat = fs.statSync(path.join(UPLOAD_DIR, storedFileName));
+  if (channel?.kind === "music" && deduplicated.duplicate) {
+    const existingTrack = await prisma.message.findFirst({
+      where: { channel: { kind: "music" }, type: "file", filePath: storedFileName },
+      orderBy: { id: "asc" },
+      select: { id: true }
+    });
+    if (existingTrack) {
+      return { success: true, duplicate: true, skipped: true, message: await hydrateMessage(existingTrack.id) };
+    }
+  }
   const type: MessageType = isImageUpload ? "image" : "file";
   const message = await createMessageFromActor({
     channelId,
@@ -3714,7 +3739,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   });
   if (!voicePayload && isAudioFileName(displayFileName)) void enrichAudioMessageWaveform(message.id, storedFileName);
   if (channel?.kind === "music") io.emit("music:updated", { action: "created", trackId: message.id });
-  return { success: true, message: await hydrateMessage(message.id) };
+  return { success: true, duplicate: deduplicated.duplicate, skipped: false, message: await hydrateMessage(message.id) };
 });
 
 app.post("/api/messages/:messageId/voice-listened", { preHandler: requireAuth }, async (request, reply) => {
@@ -5149,6 +5174,11 @@ async function activePinnedUsesUpload(fileName: string) {
   return pins.some((pin) => pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content)).has(target));
 }
 
+async function uploadIsStillReferenced(fileName: string) {
+  const target = path.basename(fileName);
+  return (await prisma.message.count({ where: { filePath: target } })) > 0 || (await activePinnedUsesUpload(target));
+}
+
 function listStorageFiles(dir: string) {
   if (!fs.existsSync(dir)) return [];
   return fs
@@ -5172,9 +5202,6 @@ async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "ch
   const scorePages = ids.length
     ? await prisma.musicScorePage.findMany({ where: { trackId: { in: ids } }, select: { filePath: true } })
     : [];
-  for (const message of messages) {
-    if (message.filePath && !(await activePinnedUsesUpload(message.filePath))) safeUnlink("upload", message.filePath);
-  }
   if (ids.length) {
     await prisma.$transaction([
       prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
@@ -5185,6 +5212,9 @@ async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "ch
         data: { type: "text", content: "[附件已由管理员删除]", payload: Prisma.JsonNull, fileName: null, filePath: null, fileSize: null }
       })
     ]);
+  }
+  for (const message of messages) {
+    if (message.filePath && !(await uploadIsStillReferenced(message.filePath))) safeUnlink("upload", message.filePath);
   }
   for (const page of scorePages) safeUnlinkMusicScore(page.filePath);
   for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
@@ -5205,7 +5235,7 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
     prisma.message.deleteMany({ where: { id: { in: ids } } })
   ]);
   for (const message of messages) {
-    if (message.filePath && !(await activePinnedUsesUpload(message.filePath))) safeUnlink("upload", message.filePath);
+    if (message.filePath && !(await uploadIsStillReferenced(message.filePath))) safeUnlink("upload", message.filePath);
   }
   for (const page of scorePages) safeUnlinkMusicScore(page.filePath);
   for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });

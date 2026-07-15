@@ -276,6 +276,8 @@ test("message effects pause outside the chat viewport and when the document is h
   assert.match(app, /const observationTarget = bubble\.closest<HTMLElement>\("\.message-row\[data-message-id\]"\)/);
   assert.match(app, /messageEffectObserver\.observe\(observationTarget\)/);
   assert.doesNotMatch(app, /messageEffectObserver\.observe\(bubble\)/);
+  assert.match(app, /rootMargin: "0px"/);
+  assert.doesNotMatch(app, /preloadMargin/);
   assert.match(app, /shouldRenderMessageEffect\(/);
   assert.match(app, /document\.addEventListener\("visibilitychange", handleDocumentVisibilityChange\)/);
   assert.match(app, /syncFlashEffectTimer\(\)/);
@@ -288,6 +290,14 @@ test("large message timelines render a measured virtual window", () => {
   assert.match(app, /v-for="\{ row, timelineIndex, key: timelineKey \} in renderedTimelineRows"/);
   assert.match(app, /class="message-virtual-spacer message-virtual-spacer-bottom"/);
   assert.doesNotMatch(app, /v-for="\(row, timelineIndex\) in timeline"/);
+  assert.match(app, /overscanBefore: Math\.max\(VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN, timelineViewportHeight\.value \* VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS\)/);
+  assert.match(app, /overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN/);
+});
+
+test("music uploads accept multiple files and report hash-based reuse", () => {
+  assert.match(app, /accept="\.mp3,\.m4a,audio\/mpeg,audio\/mp4,audio\/x-m4a" multiple @change="handlePickedFiles"/);
+  assert.match(app, /result\.duplicate/);
+  assert.match(app, /result\.skipped/);
 });
 
 test("karaoke clock sleeps across iOS page hiding and component exit", () => {
