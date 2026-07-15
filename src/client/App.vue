@@ -9086,6 +9086,7 @@ async function toggleVirtual(character: any) {
 
     <BibleWorkspace
       :open="bibleOpen"
+      :account-id="store.account?.id || 0"
       :channel-name="bibleTargetChannel?.name || '聊天室'"
       :can-send="bibleCanSend"
       :send-unavailable-reason="bibleSendUnavailableReason"

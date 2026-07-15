@@ -4978,7 +4978,10 @@ app.get("/api/bible/search", { preHandler: requireAuth }, async (request) => {
 
 app.post("/api/bible/related", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  const body = z.object({ query: z.string().trim().min(2).max(200) }).parse(request.body);
+  const body = z.object({
+    query: z.string().trim().min(2).max(200),
+    excludeReferences: z.array(z.string().trim().min(1).max(120)).max(60).default([])
+  }).parse(request.body);
   const aiSettings = await loadAiSettings();
   const settings = aiSettings.value;
   const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
@@ -4987,7 +4990,16 @@ app.post("/api/bible/related", { preHandler: requireAuth }, async (request, repl
     return reply.code(429).send({ success: false, message: "主题检索太频繁了，请稍后再试。" });
   }
   try {
-    const generated = await callDeepSeekBibleReferences(settings, apiKey, BIBLE_TOPIC_SEARCH_PROMPT, `用户想查找关于“${body.query}”的经文。`, 10);
+    const exclusionInstruction = body.excludeReferences.length
+      ? `请追加不同的经文，不要重复这些已有出处：${body.excludeReferences.join("、")}。`
+      : "";
+    const generated = await callDeepSeekBibleReferences(
+      settings,
+      apiKey,
+      BIBLE_TOPIC_SEARCH_PROMPT,
+      `用户想查找关于“${body.query}”的经文。${exclusionInstruction}`,
+      10
+    );
     const seen = new Set<string>();
     const results: BibleLookupDTO[] = [];
     for (const reference of generated.references) {

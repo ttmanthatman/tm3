@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { BookOpen, ChevronLeft, Home, Search, Send } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { BookOpen, ChevronLeft, History, Home, Plus, Search, Send, Trash2 } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -12,9 +12,23 @@ import type {
   BibleVerseLineDTO
 } from "@shared/types";
 import { api } from "../api";
+import {
+  findBibleTopicHistory,
+  loadBibleWorkspaceState,
+  mergeBibleTopicResults,
+  normalizeBibleSearchQuery,
+  saveBibleWorkspaceState,
+  upsertBibleSearchHistory,
+  type BibleReaderTarget,
+  type BibleSearchHistoryEntry,
+  type BibleWorkspaceSearchMode,
+  type BibleWorkspaceState,
+  type BibleWorkspaceView
+} from "../bibleWorkspaceState";
 
 const props = defineProps<{
   open: boolean;
+  accountId: number;
   channelName: string;
   canSend: boolean;
   sendUnavailableReason: string;
@@ -23,16 +37,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{ close: [] }>();
 
-type WorkspaceView = "home" | "chapters" | "reader";
-type SearchMode = "topic" | "text";
 type TextSegment = { text: string; highlighted: boolean };
 
 const poetryBooks = new Set(["JOB", "PSA", "PRO", "ECC", "SNG"]);
 const catalog = ref<BibleCatalogDTO | null>(null);
 const catalogBusy = ref(false);
 const catalogError = ref("");
-const view = ref<WorkspaceView>("home");
-const searchMode = ref<SearchMode>("topic");
+const view = ref<BibleWorkspaceView>("home");
+const searchMode = ref<BibleWorkspaceSearchMode>("topic");
 const topicQuery = ref("");
 const textQuery = ref("");
 const topicResult = ref<BibleRelatedSearchDTO | null>(null);
@@ -48,11 +60,15 @@ const readerBusyChapters = ref<Set<number>>(new Set());
 const readerError = ref("");
 const readerScroll = ref<HTMLElement | null>(null);
 const visibleChapter = ref(1);
-const targetVerse = ref<{ chapter: number; verse: number; endVerse: number; matches: BibleTextMatchRangeDTO[] } | null>(null);
+const targetVerse = ref<BibleReaderTarget | null>(null);
 const selectedVerse = ref<BibleVerseLineDTO | null>(null);
+const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
 const sendBusyKey = ref("");
 const toast = ref("");
 let toastTimer = 0;
+let persistTimer = 0;
+let componentMounted = false;
+let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
 
 const allBooks = computed(() => [...(catalog.value?.oldTestament || []), ...(catalog.value?.newTestament || [])]);
@@ -64,6 +80,7 @@ const headerTitle = computed(() => {
 });
 const textHasMore = computed(() => !!textResult.value && textResult.value.items.length < textResult.value.total);
 const textModeLabel = computed(() => textResult.value?.mode === "allTerms" ? "多关键词匹配" : "连续原文匹配");
+const matchingTopicHistory = computed(() => findBibleTopicHistory(searchHistory.value, topicQuery.value));
 
 watch(
   () => props.open,
@@ -73,9 +90,109 @@ watch(
   { immediate: true }
 );
 
-onBeforeUnmount(() => {
-  if (toastTimer) window.clearTimeout(toastTimer);
+watch(
+  () => props.accountId,
+  (accountId, previousAccountId) => {
+    if (componentMounted && accountId && accountId !== previousAccountId) void restoreWorkspaceState();
+  }
+);
+
+watch(
+  [view, searchMode, topicQuery, textQuery, topicResult, textResult, selectedBook, readerBook, visibleChapter, targetVerse, selectedVerse, searchHistory],
+  scheduleWorkspacePersistence,
+  { deep: true }
+);
+
+onMounted(() => {
+  componentMounted = true;
+  window.addEventListener("pagehide", persistWorkspaceState);
+  void restoreWorkspaceState();
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener("pagehide", persistWorkspaceState);
+  persistWorkspaceState();
+  if (toastTimer) window.clearTimeout(toastTimer);
+  if (persistTimer) window.clearTimeout(persistTimer);
+});
+
+async function restoreWorkspaceState() {
+  stateRestored = false;
+  resetWorkspaceState();
+  const saved = loadBibleWorkspaceState(window.localStorage, props.accountId);
+  if (!saved) {
+    stateRestored = true;
+    return;
+  }
+  searchMode.value = saved.searchMode === "text" ? "text" : "topic";
+  topicQuery.value = saved.topicQuery || "";
+  textQuery.value = saved.textQuery || "";
+  topicResult.value = saved.topicResult || null;
+  textResult.value = saved.textResult || null;
+  selectedBook.value = saved.selectedBook || null;
+  searchHistory.value = saved.history || [];
+  visibleChapter.value = Math.max(1, saved.visibleChapter || 1);
+
+  if (saved.view === "reader" && saved.readerBook) {
+    const target = saved.targetVerse?.chapter === visibleChapter.value ? saved.targetVerse : null;
+    await openReader(saved.readerBook, visibleChapter.value, target);
+    const restoredVerse = Object.values(readerChapters.value)
+      .flatMap((lookup) => lookup.verses)
+      .find((verse) => verse.reference === saved.selectedVerseReference);
+    selectedVerse.value = restoredVerse || null;
+  } else {
+    readerBook.value = saved.readerBook || null;
+    targetVerse.value = saved.targetVerse || null;
+    view.value = saved.view === "chapters" && saved.selectedBook ? "chapters" : "home";
+  }
+  stateRestored = true;
+}
+
+function resetWorkspaceState() {
+  view.value = "home";
+  searchMode.value = "topic";
+  topicQuery.value = "";
+  textQuery.value = "";
+  topicResult.value = null;
+  textResult.value = null;
+  selectedBook.value = null;
+  readerBook.value = null;
+  readerChapters.value = {};
+  visibleChapter.value = 1;
+  targetVerse.value = null;
+  selectedVerse.value = null;
+  searchHistory.value = [];
+}
+
+function scheduleWorkspacePersistence() {
+  if (!stateRestored || !props.accountId) return;
+  if (persistTimer) window.clearTimeout(persistTimer);
+  persistTimer = window.setTimeout(persistWorkspaceState, 180);
+}
+
+function persistWorkspaceState() {
+  if (!stateRestored || !props.accountId) return;
+  const state: BibleWorkspaceState = {
+    version: 1,
+    view: view.value,
+    searchMode: searchMode.value,
+    topicQuery: topicQuery.value,
+    textQuery: textQuery.value,
+    topicResult: topicResult.value,
+    textResult: textResult.value,
+    selectedBook: selectedBook.value,
+    readerBook: readerBook.value,
+    visibleChapter: visibleChapter.value,
+    targetVerse: targetVerse.value,
+    selectedVerseReference: selectedVerse.value?.reference || null,
+    history: searchHistory.value
+  };
+  try {
+    saveBibleWorkspaceState(window.localStorage, props.accountId, state);
+  } catch {
+    // Storage can be unavailable in private browsing; the mounted component still retains state.
+  }
+}
 
 async function ensureCatalog() {
   if (catalog.value || catalogBusy.value) return;
@@ -113,17 +230,28 @@ function chooseBook(book: BibleBookCatalogDTO) {
   view.value = "chapters";
 }
 
-async function searchTopic() {
+async function searchTopic(append = false) {
   const query = topicQuery.value.trim();
   if (query.length < 2 || topicBusy.value) return;
+  const historyEntry = findBibleTopicHistory(searchHistory.value, query);
+  if (historyEntry && !append) {
+    restoreSearchHistory(historyEntry);
+    return;
+  }
   topicBusy.value = true;
   topicError.value = "";
   try {
     const response = await api<{ success: boolean; result: BibleRelatedSearchDTO }>("/api/bible/related", {
       method: "POST",
-      body: JSON.stringify({ query })
+      body: JSON.stringify({
+        query,
+        excludeReferences: append ? historyEntry?.result.results.map((lookup) => lookup.normalizedReference) || [] : []
+      })
     });
-    topicResult.value = response.result;
+    topicResult.value = append && historyEntry
+      ? mergeBibleTopicResults(historyEntry.result, response.result)
+      : response.result;
+    recordSearchHistory({ kind: "topic", query, updatedAt: new Date().toISOString(), result: topicResult.value });
   } catch (error) {
     topicError.value = error instanceof Error ? error.message : "主题检索失败";
   } finally {
@@ -136,19 +264,56 @@ async function searchText(loadMore = false) {
   if (!query || textBusy.value) return;
   textBusy.value = true;
   textError.value = "";
-  const offset = loadMore ? textResult.value?.items.length || 0 : 0;
+  const extendingCurrentSearch = loadMore
+    && normalizeBibleSearchQuery(textResult.value?.query || "") === normalizeBibleSearchQuery(query);
+  const offset = extendingCurrentSearch ? textResult.value?.items.length || 0 : 0;
   try {
     const response = await api<{ success: boolean; result: BibleTextSearchDTO }>(
       `/api/bible/search?query=${encodeURIComponent(query)}&offset=${offset}&limit=50`
     );
-    textResult.value = loadMore && textResult.value
+    textResult.value = extendingCurrentSearch && textResult.value
       ? { ...response.result, items: [...textResult.value.items, ...response.result.items] }
       : response.result;
+    recordSearchHistory({ kind: "text", query, updatedAt: new Date().toISOString(), result: textResult.value });
   } catch (error) {
     textError.value = error instanceof Error ? error.message : "文本检索失败";
   } finally {
     textBusy.value = false;
   }
+}
+
+function recordSearchHistory(entry: BibleSearchHistoryEntry) {
+  searchHistory.value = upsertBibleSearchHistory(searchHistory.value, entry);
+}
+
+function restoreSearchHistory(entry: BibleSearchHistoryEntry) {
+  view.value = "home";
+  if (entry.kind === "topic") {
+    searchMode.value = "topic";
+    topicQuery.value = entry.query;
+    topicResult.value = entry.result;
+    topicError.value = "";
+  } else {
+    searchMode.value = "text";
+    textQuery.value = entry.query;
+    textResult.value = entry.result;
+    textError.value = "";
+  }
+  recordSearchHistory({ ...entry, updatedAt: new Date().toISOString() });
+}
+
+function clearSearchHistory() {
+  searchHistory.value = [];
+}
+
+function historyResultCount(entry: BibleSearchHistoryEntry) {
+  return entry.kind === "topic" ? `${entry.result.results.length} 处` : `${entry.result.total} 节`;
+}
+
+function historyTimeLabel(updatedAt: string) {
+  const date = new Date(updatedAt);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
 function bookForVerse(verse: BibleVerseLineDTO) {
@@ -182,7 +347,7 @@ function openTopicResult(lookup: BibleLookupDTO) {
 async function openReader(
   book: BibleBookCatalogDTO,
   chapter: number,
-  target: { chapter: number; verse: number; endVerse: number; matches: BibleTextMatchRangeDTO[] } | null = null
+  target: BibleReaderTarget | null = null
 ) {
   readerBook.value = book;
   readerChapters.value = {};
@@ -352,10 +517,14 @@ function handleTouchEnd(event: TouchEvent) {
           <button type="button" :class="{ active: searchMode === 'text' }" @click="searchMode = 'text'">文本检索</button>
         </div>
 
-        <form v-if="searchMode === 'topic'" class="bible-search-form" @submit.prevent="searchTopic">
+        <form v-if="searchMode === 'topic'" class="bible-search-form" @submit.prevent="searchTopic(false)">
           <label for="bible-topic-query">想查看关于什么的经文？</label>
-          <div><input id="bible-topic-query" v-model="topicQuery" maxlength="200" placeholder="例如：焦虑时怎样信靠神" /><button :disabled="topicBusy || topicQuery.trim().length < 2"><Search :size="18" />{{ topicBusy ? "查找中" : "查找" }}</button></div>
+          <div><input id="bible-topic-query" v-model="topicQuery" maxlength="200" placeholder="例如：焦虑时怎样信靠神" /><button :disabled="topicBusy || topicQuery.trim().length < 2"><History v-if="matchingTopicHistory" :size="18" /><Search v-else :size="18" />{{ topicBusy ? "查找中" : matchingTopicHistory ? "查看历史" : "AI查找" }}</button></div>
           <small>AI只查找出处，经文正文始终来自本地和合本。</small>
+          <div v-if="matchingTopicHistory" class="bible-history-match">
+            <span>已搜索过，历史中有 {{ matchingTopicHistory.result.results.length }} 处经文。</span>
+            <button type="button" :disabled="topicBusy" @click="searchTopic(true)"><Plus :size="16" />{{ topicBusy ? "生成中" : "追加生成" }}</button>
+          </div>
           <p v-if="topicError" class="bible-search-error" role="alert">{{ topicError }}</p>
         </form>
 
@@ -365,6 +534,17 @@ function handleTouchEnd(event: TouchEvent) {
           <small>先匹配连续原文；没有结果时自动尝试所有关键词同时包含。</small>
           <p v-if="textError" class="bible-search-error" role="alert">{{ textError }}</p>
         </form>
+
+        <section v-if="searchHistory.length" class="bible-search-history" aria-label="经文搜索历史">
+          <header><span><History :size="18" /><strong>搜索历史</strong></span><button type="button" @click="clearSearchHistory"><Trash2 :size="15" />清空</button></header>
+          <div class="bible-history-list">
+            <button v-for="entry in searchHistory" :key="`${entry.kind}:${entry.query}`" type="button" @click="restoreSearchHistory(entry)">
+              <span>{{ entry.kind === "topic" ? "AI主题" : "原文" }}</span>
+              <strong>{{ entry.query }}</strong>
+              <small>{{ historyResultCount(entry) }} · {{ historyTimeLabel(entry.updatedAt) }}</small>
+            </button>
+          </div>
+        </section>
 
         <section v-if="searchMode === 'topic' && topicResult" class="bible-results" aria-live="polite">
           <header><strong>相关经文</strong><span>{{ topicResult.results.length }} 处</span></header>
@@ -470,6 +650,19 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-search-form button:disabled, .bible-result-card button:disabled, .bible-verse-action button:disabled { opacity: .45; cursor: not-allowed; }
 .bible-search-form small { color: #8a735c; }
 .bible-search-error { margin: 0; color: #a4382c; }
+.bible-search-form > .bible-history-match { display: flex; grid-template-columns: none; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid rgba(128, 97, 63, .2); border-radius: 10px; color: #74583b; background: #f6efe2; }
+.bible-history-match span { min-width: 0; }
+.bible-history-match button { flex: 0 0 auto; min-height: 34px; padding: 0 11px; border: 1px solid #b89b77; border-radius: 8px; color: #6d5135; background: #fffaf1; font-size: 13px; }
+.bible-search-history { display: grid; gap: 10px; margin-top: 18px; padding-top: 15px; border-top: 1px solid rgba(116, 84, 48, .16); }
+.bible-search-history > header { display: flex; align-items: center; justify-content: space-between; color: #6d5135; }
+.bible-search-history > header span, .bible-search-history > header button { display: inline-flex; align-items: center; gap: 6px; }
+.bible-search-history > header button { border: 0; padding: 5px 7px; color: #91765b; background: transparent; font: inherit; font-size: 13px; cursor: pointer; }
+.bible-history-list { display: flex; gap: 8px; overflow-x: auto; padding: 1px 1px 5px; scrollbar-width: thin; }
+.bible-history-list > button { flex: 0 0 min(230px, 72vw); min-width: 0; padding: 10px 12px; border: 1px solid rgba(116, 84, 48, .16); border-radius: 10px; color: #4f3b29; background: #fffdf7; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px 8px; text-align: left; font: inherit; cursor: pointer; }
+.bible-history-list > button:hover { border-color: rgba(128, 97, 63, .4); }
+.bible-history-list > button > span { padding: 2px 6px; border-radius: 999px; color: #7b5b3d; background: #eee2cf; font-size: 11px; }
+.bible-history-list > button > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bible-history-list > button > small { grid-column: 1 / -1; color: #91775d; }
 .bible-results { display: grid; gap: 12px; margin-top: 22px; }
 .bible-results > header { display: flex; align-items: center; justify-content: space-between; color: #6d5135; }
 .bible-result-card { padding: 16px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 13px; background: #fffdf7; cursor: pointer; }

@@ -22,6 +22,10 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
   assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);
   assert.match(bibleWorkspace, /scrollTop < 220[\s\S]*?loadChapter\(first - 1, true\)[\s\S]*?loadChapter\(last \+ 1\)/);
+  assert.match(bibleWorkspace, /loadBibleWorkspaceState[\s\S]*?saveBibleWorkspaceState/);
+  assert.match(bibleWorkspace, />搜索历史<[\s\S]*?>清空</);
+  assert.match(bibleWorkspace, /matchingTopicHistory[\s\S]*?查看历史[\s\S]*?追加生成/);
+  assert.match(app, /<BibleWorkspace[\s\S]*?:account-id="store\.account\?\.id \|\| 0"/);
 });
 
 test("mobile drawers stay above the chat header and their scrim", () => {
