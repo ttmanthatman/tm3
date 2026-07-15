@@ -1,10 +1,16 @@
-export const APP_VERSION = "0.12.10";
+export const APP_VERSION = "1.0.1";
 
 export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "新增与聊天室并列的负一屏电子圣经：完整展示新标点和合本（简体）66 卷目录，支持章节连续阅读、经节定位和发送到进入前的聊天室。",
+  "圣经首页同时提供 AI 主题检索与本地原文检索；主题结果只采用本地校验后的出处和正文，文本结果支持安全高亮及多关键词回退。",
+  "手机端精简聊天顶栏，不再显示书本入口，仍可从聊天区向右滑进入圣经；平板和桌面继续保留书本按钮。"
+] as const;
+
+const RELEASE_0_12_10_NOTES = [
   "聊天室音乐播放器现在会接入系统媒体控制：键盘媒体键和蓝牙耳机的播放/暂停、上一曲、下一曲可直接控制当前歌曲，并会同步歌曲名称和播放状态。"
 ] as const;
 
@@ -550,9 +556,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.10",
+    version: "1.0.1",
     date: "2026-07-15",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.10",
+    date: "2026-07-15",
+    notes: RELEASE_0_12_10_NOTES
   },
   {
     version: "0.12.9",

@@ -16,6 +16,8 @@ test("narrow viewports always switch the chat shell to one column", () => {
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
   assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
   assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
+  assert.match(app, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
   assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);
   assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
   assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);

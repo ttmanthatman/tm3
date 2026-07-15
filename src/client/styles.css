@@ -8943,6 +8943,10 @@ button.admin-object-row:focus-visible {
     grid-template-rows: minmax(0, 1fr);
   }
 
+  .bible-header-trigger {
+    display: none;
+  }
+
   .desktop-only {
     display: none;
   }

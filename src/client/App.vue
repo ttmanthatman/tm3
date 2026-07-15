@@ -9316,7 +9316,7 @@ async function toggleVirtual(character: any) {
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
-        <button v-if="!showFavorites" class="icon-btn" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
+        <button v-if="!showFavorites" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <div v-if="!showFavorites" class="message-font-control" data-message-font-menu>
           <button
             v-if="musicScoreTriggerVisible"
