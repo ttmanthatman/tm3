@@ -10,6 +10,64 @@ export type SortableMusicTrack = {
   manualOrder: number;
 };
 
+export type MusicMediaSessionHandlers = {
+  play: () => void;
+  pause: () => void;
+  previousTrack: () => void;
+  nextTrack: () => void;
+};
+
+type MusicMediaSessionAction = "play" | "pause" | "previoustrack" | "nexttrack";
+type MusicMediaSessionActionTarget = {
+  setActionHandler: (action: MusicMediaSessionAction, handler: (() => void) | null) => void;
+};
+type MusicMediaSessionStateTarget<TMetadata> = {
+  playbackState: "none" | "paused" | "playing";
+  metadata: TMetadata | null;
+};
+
+export function bindMusicMediaSession(session: MusicMediaSessionActionTarget | null | undefined, handlers: MusicMediaSessionHandlers) {
+  if (!session) return () => undefined;
+  const bindings: Array<[MusicMediaSessionAction, () => void]> = [
+    ["play", handlers.play],
+    ["pause", handlers.pause],
+    ["previoustrack", handlers.previousTrack],
+    ["nexttrack", handlers.nextTrack]
+  ];
+  for (const [action, handler] of bindings) {
+    try {
+      session.setActionHandler(action, handler);
+    } catch {
+      // Media Session support differs by browser and action; keep the actions it accepts.
+    }
+  }
+  return () => {
+    for (const [action] of bindings) {
+      try {
+        session.setActionHandler(action, null);
+      } catch {
+        // Ignore actions that were unsupported during registration.
+      }
+    }
+  };
+}
+
+export function syncMusicMediaSession<TMetadata>(
+  session: MusicMediaSessionStateTarget<TMetadata> | null | undefined,
+  state: { title: string; playing: boolean },
+  createMetadata: (metadata: { title: string; artist: string }) => TMetadata
+) {
+  if (!session) return;
+  const title = state.title.trim();
+  if (!title) {
+    session.playbackState = "none";
+    session.metadata = null;
+    return;
+  }
+  session.playbackState = state.playing ? "playing" : "paused";
+  session.metadata = createMetadata({ title, artist: "聊天室音乐" });
+}
+
 export function nextMusicTrackIndex(length: number, currentIndex: number, delta: number) {
   if (length <= 0) return -1;
   const safeIndex = currentIndex >= 0 && currentIndex < length ? currentIndex : 0;

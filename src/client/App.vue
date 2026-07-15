@@ -143,6 +143,7 @@ import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_
 import { creditedMusicListenMs, isQualifiedMusicPlay } from "@shared/musicPlayback";
 import { friendlyDeviceName, shouldWriteMusicProgress, type ActivityLogCategory, type MusicProgressState } from "@shared/activityLog";
 import {
+  bindMusicMediaSession,
   moveMusicTrack,
   musicFadeVolume,
   musicMentionTokenAtCursor,
@@ -151,6 +152,7 @@ import {
   shouldKeepMusicScoreForTrack,
   shouldRestartOnlyTrack,
   shouldShowMusicScoreTrigger,
+  syncMusicMediaSession,
   sortMusicTracks,
   type MusicPlaybackMode,
   type MusicPlaylistSort
@@ -231,6 +233,7 @@ const MUSIC_SCORE_STAGE_DURATION_MS = 980;
 const MUSIC_FADE_OUT_MS = 900;
 let musicScoreTimer: number | undefined;
 let musicAudio: HTMLAudioElement | null = null;
+let unbindMusicMediaSession: (() => void) | null = null;
 let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
@@ -1233,6 +1236,8 @@ const musicScoreTriggerVisible = computed(() =>
 const musicPlayerAnchorStyle = computed(() => ({
   "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
 }));
+
+watch([() => currentMusicTrack.value?.title || "", musicPlaying], syncCurrentMusicMediaSession, { flush: "sync" });
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
 
 function clearMusicLyricsHeaderResumeTimer() {
@@ -6099,6 +6104,28 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
   musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
   musicAudio.addEventListener("seeking", handleMusicSeeking);
+  initializeMusicMediaSession();
+}
+
+function initializeMusicMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  unbindMusicMediaSession?.();
+  unbindMusicMediaSession = bindMusicMediaSession(navigator.mediaSession, {
+    play: () => void playCurrentMusic(),
+    pause: () => pauseMusic(true),
+    previousTrack: () => void shiftMusicTrack(-1),
+    nextTrack: () => void shiftMusicTrack(1)
+  });
+  syncCurrentMusicMediaSession();
+}
+
+function syncCurrentMusicMediaSession() {
+  if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
+  syncMusicMediaSession(
+    navigator.mediaSession,
+    { title: currentMusicTrack.value?.title || "", playing: musicPlaying.value },
+    (metadata) => new MediaMetadata(metadata)
+  );
 }
 
 function cancelMusicFade(resetVolume = true) {
@@ -6111,6 +6138,12 @@ function cancelMusicFade(resetVolume = true) {
 
 function disposeMusicAudio() {
   if (!musicAudio) return;
+  unbindMusicMediaSession?.();
+  unbindMusicMediaSession = null;
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.playbackState = "none";
+    navigator.mediaSession.metadata = null;
+  }
   cancelMusicFade();
   musicAudio.pause();
   musicAudio.removeEventListener("play", handleMusicPlay);
