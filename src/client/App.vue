@@ -121,6 +121,7 @@ import {
   cleanWallpaperPanSpeed,
   initialWallpaperPanOffset,
   wallpaperPanBounds,
+  wallpaperPanTransform,
   type WallpaperPanBounds,
   type WallpaperPanDirection
 } from "@shared/wallpaperPan";
@@ -275,6 +276,7 @@ let lastParallaxScrollTop: number | null = null;
 let pendingParallaxDelta = 0;
 let parallaxFrame = 0;
 const wallpaperPanOffset = ref(0);
+const wallpaperPanReady = ref(false);
 let wallpaperPanDirection: WallpaperPanDirection = "left";
 let wallpaperPanMetrics: WallpaperPanBounds | null = null;
 let wallpaperPanNaturalSize: { width: number; height: number } | null = null;
@@ -1251,6 +1253,7 @@ const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath
 const wallpaperPanActive = computed(() => hasWallpaper.value && store.appearance.wallpaperFit === "pan");
 const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
+const wallpaperPanLayerStyle = computed(() => ({ transform: wallpaperPanTransform(wallpaperPanOffset.value) }));
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
   "--message-content-font-size": `${messageFontSize.value}px`,
@@ -1260,10 +1263,9 @@ const appearanceStyle = computed(() => ({
   "--water-tilt-x": `${waterTilt.value.x.toFixed(2)}px`,
   "--water-tilt-y": `${waterTilt.value.y.toFixed(2)}px`,
   "--water-tilt-rotate": `${(waterTilt.value.x * 0.26).toFixed(2)}deg`,
-  "--wallpaper-image": hasWallpaper.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
+  "--wallpaper-image": hasWallpaper.value && !wallpaperPanActive.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
   "--wallpaper-size": wallpaperBackground.value.size,
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
-  "--wallpaper-position": wallpaperPanActive.value ? `${wallpaperPanOffset.value.toFixed(2)}px center` : "center",
   "--login-background-image": hasLoginBackground.value ? `url("${wallpaperUrl(store.appearance.loginBackgroundPath)}")` : "none",
   "--login-background-size": loginBackground.value.size,
   "--login-background-repeat": loginBackground.value.repeat
@@ -7007,6 +7009,7 @@ function resizeWallpaperPan() {
 
 async function resetWallpaperPan() {
   const token = ++wallpaperPanLoadToken;
+  wallpaperPanReady.value = false;
   pendingWallpaperPanDelta = 0;
   wallpaperPanDirection = cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection);
   wallpaperPanMetrics = null;
@@ -7026,6 +7029,7 @@ async function resetWallpaperPan() {
   const bounds = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, image.naturalWidth, image.naturalHeight);
   wallpaperPanMetrics = bounds;
   wallpaperPanOffset.value = initialWallpaperPanOffset(bounds, store.appearance.wallpaperPanFocusX);
+  wallpaperPanReady.value = true;
 }
 
 function updateParallaxFromScroll(el: HTMLElement) {
@@ -8795,6 +8799,16 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <section ref="chatPane" class="chat-pane">
+      <img
+        v-if="wallpaperPanActive"
+        class="wallpaper-pan-background"
+        :class="{ ready: wallpaperPanReady }"
+        :src="wallpaperUrl(store.appearance.wallpaperPath)"
+        :style="wallpaperPanLayerStyle"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
       <ParallaxBackground :kit="activeParallaxKit" :offset="parallaxOffset" />
       <OopsTextPhysicsLayer ref="oopsPhysicsLayer" @active-change="handleOopsActiveChange" />
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>

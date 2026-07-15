@@ -1777,7 +1777,32 @@ button {
   isolation: isolate;
 }
 
-.chat-pane > :not(.parallax-background):not(.modal-shell):not(.music-lyrics-header) {
+.wallpaper-pan-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  z-index: 0;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transform-origin: left center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  will-change: transform;
+}
+
+.wallpaper-pan-background.ready {
+  opacity: 1;
+}
+
+.chat-pane > :not(.wallpaper-pan-background):not(.parallax-background):not(.modal-shell):not(.music-lyrics-header) {
   z-index: 1;
 }
 

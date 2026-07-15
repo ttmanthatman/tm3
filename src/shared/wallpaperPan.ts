@@ -51,6 +51,11 @@ export function initialWallpaperPanOffset(bounds: WallpaperPanBounds, focusX: un
   return Math.max(bounds.minOffset, Math.min(bounds.maxOffset, desired));
 }
 
+export function wallpaperPanTransform(offset: number) {
+  const safeOffset = Number.isFinite(offset) ? offset : 0;
+  return `translate3d(${safeOffset.toFixed(2)}px, 0, 0)`;
+}
+
 export function advanceWallpaperPan(
   offset: number,
   direction: WallpaperPanDirection,

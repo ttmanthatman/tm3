@@ -20,9 +20,16 @@ test("mobile drawers stay above the chat header and their scrim", () => {
 });
 
 test("pinned notices stay above chat content and retain their modal layer", () => {
-  assert.match(css, /\.chat-pane > :not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\) \{[\s\S]*?z-index: 1;/);
+  assert.match(css, /\.chat-pane > :not\(\.wallpaper-pan-background\):not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\) \{[\s\S]*?z-index: 1;/);
   assert.match(css, /\.pinned-view-shell \{[\s\S]*?z-index: 50;/);
   assert.match(app, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
+});
+
+test("panning wallpaper stays on its own compositor layer during mobile scrolling", () => {
+  assert.match(app, /"--wallpaper-image": hasWallpaper\.value && !wallpaperPanActive\.value/);
+  assert.doesNotMatch(app, /"--wallpaper-position": wallpaperPanActive\.value/);
+  assert.match(app, /v-if="wallpaperPanActive"[\s\S]*?class="wallpaper-pan-background"[\s\S]*?:style="wallpaperPanLayerStyle"/);
+  assert.match(css, /\.wallpaper-pan-background \{[\s\S]*?position: absolute;[\s\S]*?backface-visibility: hidden;[\s\S]*?will-change: transform;/);
 });
 
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
