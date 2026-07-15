@@ -1,10 +1,14 @@
-export const APP_VERSION = "0.12.9";
+export const APP_VERSION = "0.12.10";
 
 export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室音乐播放器现在会接入系统媒体控制：键盘媒体键和蓝牙耳机的播放/暂停、上一曲、下一曲可直接控制当前歌曲，并会同步歌曲名称和播放状态。"
+] as const;
+
+const RELEASE_0_12_9_NOTES = [
   "歌曲热度改为自然播放达到歌曲时长的 33%（包含正好 33%）即计入；客户端和服务端共用同一判定规则，拖动跳播仍不会增加热度。",
   "新增仅管理员可直接通过 /log 访问的活动日志工作区，按会话、音乐和使用情况分类；音乐会记录开始、恢复、约每 5 秒进度、暂停、切歌、结束和错误。",
   "会话日志新增本次在线时长、客户端版本、当时服务器版本及是否为当时最新版，并记录频道查看和消息发送等主要使用情况。",
@@ -546,9 +550,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.9",
+    version: "0.12.10",
     date: "2026-07-15",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.9",
+    date: "2026-07-15",
+    notes: RELEASE_0_12_9_NOTES
   },
   {
     version: "0.12.8",
