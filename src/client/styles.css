@@ -24,6 +24,7 @@
   --wallpaper-image: none;
   --wallpaper-size: cover;
   --wallpaper-repeat: no-repeat;
+  --wallpaper-position: center;
   --login-background-image: none;
   --login-background-size: cover;
   --login-background-repeat: no-repeat;
@@ -1771,7 +1772,7 @@ button {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr) auto;
   background:
-    var(--wallpaper-image) center / var(--wallpaper-size) var(--wallpaper-repeat),
+    var(--wallpaper-image) var(--wallpaper-position) / var(--wallpaper-size) var(--wallpaper-repeat),
     var(--chat-bg);
   isolation: isolate;
 }
@@ -6636,6 +6637,134 @@ button.admin-object-row:focus-visible {
   gap: 10px;
 }
 
+.wallpaper-pan-settings {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--chat-bg));
+}
+
+.wallpaper-pan-settings > div:first-child,
+.wallpaper-pan-controls,
+.wallpaper-pan-controls > label {
+  display: grid;
+  gap: 6px;
+}
+
+.wallpaper-pan-settings small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.wallpaper-pan-focus-picker {
+  position: relative;
+  min-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: #151515;
+  cursor: crosshair;
+}
+
+.wallpaper-pan-focus-image {
+  position: relative;
+  max-width: 100%;
+  display: inline-grid;
+}
+
+.wallpaper-pan-focus-picker img {
+  display: block;
+  max-width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.wallpaper-pan-focus-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  transform: translateX(-50%);
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.56), 0 0 14px rgba(0, 0, 0, 0.72);
+  pointer-events: none;
+}
+
+.wallpaper-pan-focus-line i {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: color-mix(in srgb, var(--accent) 72%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.wallpaper-pan-controls {
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 14px;
+}
+
+.wallpaper-pan-controls > label > span:first-child {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wallpaper-pan-controls output {
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-weight: 700;
+}
+
+.wallpaper-pan-controls input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.segmented-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.segmented-buttons button {
+  border: 1px solid var(--line);
+  padding: 7px 12px;
+  color: var(--text);
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.segmented-buttons button:first-child {
+  border-radius: 7px 0 0 7px;
+}
+
+.segmented-buttons button:last-child {
+  margin-left: -1px;
+  border-radius: 0 7px 7px 0;
+}
+
+.segmented-buttons button.selected {
+  position: relative;
+  border-color: var(--accent);
+  color: var(--button-text);
+  background: var(--accent);
+}
+
 .login-background-preview {
   width: 54px;
   height: 42px;
@@ -8481,6 +8610,14 @@ button.admin-object-row:focus-visible {
 
   .appearance-image-control select {
     grid-column: 1 / -1;
+  }
+
+  .wallpaper-pan-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wallpaper-pan-focus-picker {
+    min-height: 130px;
   }
 
   .appearance-image-control .mini-btn,

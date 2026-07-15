@@ -452,7 +452,10 @@ export interface AppearanceDTO {
   appTitle: string;
   appIconPath?: string | null;
   wallpaperPath?: string | null;
-  wallpaperFit: "cover" | "contain" | "stretch" | "repeat";
+  wallpaperFit: "cover" | "contain" | "stretch" | "repeat" | "pan";
+  wallpaperPanFocusX: number;
+  wallpaperPanDirection: "left" | "right";
+  wallpaperPanSpeed: number;
   parallaxKit: string;
   parallaxSpeed: number;
   parallaxKits: ParallaxKitDTO[];

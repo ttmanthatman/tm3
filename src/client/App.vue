@@ -113,6 +113,16 @@ import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerInco
 import { calculateVirtualWindow, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
 import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
+import {
+  advanceWallpaperPan,
+  cleanWallpaperPanDirection,
+  cleanWallpaperPanFocusX,
+  cleanWallpaperPanSpeed,
+  initialWallpaperPanOffset,
+  wallpaperPanBounds,
+  type WallpaperPanBounds,
+  type WallpaperPanDirection
+} from "@shared/wallpaperPan";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { likeNotificationToTopNotice } from "./likeNotification";
@@ -242,6 +252,7 @@ const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
+const chatPane = ref<HTMLElement | null>(null);
 const timelineScrollTop = ref(0);
 const timelineViewportHeight = ref(0);
 const measuredTimelineHeights = ref<Record<string, number>>({});
@@ -261,6 +272,13 @@ const parallaxOffset = ref(0);
 let lastParallaxScrollTop: number | null = null;
 let pendingParallaxDelta = 0;
 let parallaxFrame = 0;
+const wallpaperPanOffset = ref(0);
+let wallpaperPanDirection: WallpaperPanDirection = "left";
+let wallpaperPanMetrics: WallpaperPanBounds | null = null;
+let wallpaperPanNaturalSize: { width: number; height: number } | null = null;
+let wallpaperPanLoadToken = 0;
+let wallpaperPanResizeObserver: ResizeObserver | null = null;
+let pendingWallpaperPanDelta = 0;
 const pendingReadPositionRestore = ref(false);
 let readPositionRestoreToken = 0;
 type ActiveReadAnchor =
@@ -326,6 +344,7 @@ const adminSelectedChannelId = ref<number | null>(null);
 const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
+type LoginBackgroundFit = AppearanceDTO["loginBackgroundFit"];
 type LoginFormPosition = AppearanceDTO["loginFormPosition"];
 type AppearanceSection = "brand" | "login" | "chat" | "parallax" | "themes" | "flash";
 type AppearanceImageField = "appIconPath" | "loginIconPath" | "loginBackgroundPath" | "wallpaperPath";
@@ -334,8 +353,10 @@ const wallpaperFitOptions: Array<{ value: WallpaperFit; label: string }> = [
   { value: "cover", label: "填满" },
   { value: "contain", label: "适合" },
   { value: "stretch", label: "拉伸" },
-  { value: "repeat", label: "平铺" }
+  { value: "repeat", label: "平铺" },
+  { value: "pan", label: "推拉摇移" }
 ];
+const loginBackgroundFitOptions = wallpaperFitOptions.filter((option): option is { value: LoginBackgroundFit; label: string } => option.value !== "pan");
 const loginPositionOptions: Array<{ value: LoginFormPosition; label: string }> = [
   { value: "top", label: "上" },
   { value: "middle", label: "中" },
@@ -363,9 +384,12 @@ const loginAppearanceEdit = ref({
   loginShowSubtitle: true,
   loginBackgroundPath: null as string | null,
   loginFormPosition: "middle" as LoginFormPosition,
-  loginBackgroundFit: "cover" as WallpaperFit,
+  loginBackgroundFit: "cover" as LoginBackgroundFit,
   wallpaperPath: null as string | null,
   wallpaperFit: "cover" as WallpaperFit,
+  wallpaperPanFocusX: 0.5,
+  wallpaperPanDirection: "left" as WallpaperPanDirection,
+  wallpaperPanSpeed: 0.18,
   parallaxKit: "none",
   parallaxSpeed: 1,
   parallaxKits: cleanParallaxKits(DEFAULT_PARALLAX_KITS),
@@ -827,6 +851,8 @@ onMounted(async () => {
   await switchToLinkedChannel();
   await enterChatAtNewest();
   await nextTick();
+  observeWallpaperPanViewport();
+  await resetWallpaperPan();
   syncVirtualTimelineViewport();
   refreshTimelineMeasurements();
   refreshMessageEffectObserver();
@@ -1060,6 +1086,9 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", handleTimelineViewportResize);
   timelineResizeObserver?.disconnect();
   timelineResizeObserver = null;
+  wallpaperPanResizeObserver?.disconnect();
+  wallpaperPanResizeObserver = null;
+  wallpaperPanLoadToken += 1;
   if (timelineScrollFrame !== undefined) window.cancelAnimationFrame(timelineScrollFrame);
   timelineScrollFrame = undefined;
   messageEffectObserver?.disconnect();
@@ -1216,6 +1245,7 @@ const activeFlashColor = computed(() => {
 });
 const hasWallpaper = computed(() => !!store.appearance.wallpaperPath);
 const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath);
+const wallpaperPanActive = computed(() => hasWallpaper.value && store.appearance.wallpaperFit === "pan");
 const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
 const appearanceStyle = computed(() => ({
@@ -1230,6 +1260,7 @@ const appearanceStyle = computed(() => ({
   "--wallpaper-image": hasWallpaper.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
   "--wallpaper-size": wallpaperBackground.value.size,
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
+  "--wallpaper-position": wallpaperPanActive.value ? `${wallpaperPanOffset.value.toFixed(2)}px center` : "center",
   "--login-background-image": hasLoginBackground.value ? `url("${wallpaperUrl(store.appearance.loginBackgroundPath)}")` : "none",
   "--login-background-size": loginBackground.value.size,
   "--login-background-repeat": loginBackground.value.repeat
@@ -1242,6 +1273,17 @@ watch(
     applyAppChrome();
   },
   { deep: true, immediate: true }
+);
+
+watch(
+  () => [
+    store.appearance.wallpaperPath,
+    store.appearance.wallpaperFit,
+    store.appearance.wallpaperPanFocusX,
+    store.appearance.wallpaperPanDirection
+  ] as const,
+  () => void nextTick(resetWallpaperPan),
+  { immediate: true }
 );
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
@@ -1328,6 +1370,7 @@ const appearanceImagePickerFit = computed(() => {
   const picker = appearanceImagePicker.value;
   return picker?.fitField ? loginAppearanceEdit.value[picker.fitField] : null;
 });
+const appearanceImagePickerFitOptions = computed(() => appearanceImagePicker.value?.fitField === "loginBackgroundFit" ? loginBackgroundFitOptions : wallpaperFitOptions);
 const appearancePreviewLoginStyle = computed(() => {
   const fit = wallpaperFitStyle(loginAppearanceEdit.value.loginBackgroundFit);
   return {
@@ -1341,9 +1384,12 @@ const appearancePreviewChatStyle = computed(() => {
   return {
     backgroundImage: appearanceDraftWallpaper.value ? `url(${wallpaperUrl(appearanceDraftWallpaper.value)})` : "none",
     backgroundSize: fit.size,
-    backgroundRepeat: fit.repeat
+    backgroundRepeat: fit.repeat,
+    backgroundPosition: "center"
   };
 });
+const wallpaperPanFocusMarkerStyle = computed(() => ({ left: `${cleanWallpaperPanFocusX(loginAppearanceEdit.value.wallpaperPanFocusX) * 100}%` }));
+const wallpaperPanSpeedLabel = computed(() => `${cleanWallpaperPanSpeed(loginAppearanceEdit.value.wallpaperPanSpeed).toFixed(2)}×`);
 const parallaxKitOptions = computed(() => loginAppearanceEdit.value.parallaxKits);
 const activeParallaxKit = computed(() => parallaxKit(store.appearance.parallaxKits || [], store.appearance.parallaxKit));
 const draftParallaxKit = computed(() => parallaxKit(loginAppearanceEdit.value.parallaxKits, loginAppearanceEdit.value.parallaxKit));
@@ -1377,6 +1423,9 @@ const appearanceSavePayload = computed(() => ({
   loginBackgroundFit: loginAppearanceEdit.value.loginBackgroundFit,
   wallpaperPath: loginAppearanceEdit.value.wallpaperPath,
   wallpaperFit: loginAppearanceEdit.value.wallpaperFit,
+  wallpaperPanFocusX: cleanWallpaperPanFocusX(loginAppearanceEdit.value.wallpaperPanFocusX),
+  wallpaperPanDirection: cleanWallpaperPanDirection(loginAppearanceEdit.value.wallpaperPanDirection),
+  wallpaperPanSpeed: cleanWallpaperPanSpeed(loginAppearanceEdit.value.wallpaperPanSpeed),
   parallaxKit: loginAppearanceEdit.value.parallaxKit,
   parallaxSpeed: cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed),
   parallaxKits: cleanParallaxKits(loginAppearanceEdit.value.parallaxKits),
@@ -1397,6 +1446,9 @@ const currentAppearancePayload = computed(() => ({
   loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
   wallpaperPath: store.appearance.wallpaperPath || null,
   wallpaperFit: store.appearance.wallpaperFit || "cover",
+  wallpaperPanFocusX: cleanWallpaperPanFocusX(store.appearance.wallpaperPanFocusX),
+  wallpaperPanDirection: cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection),
+  wallpaperPanSpeed: cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
   parallaxKit: store.appearance.parallaxKit || "none",
   parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
   parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
@@ -6898,6 +6950,53 @@ function scrollBottom(smooth = true) {
   awayFromNewest.value = false;
 }
 
+function observeWallpaperPanViewport() {
+  wallpaperPanResizeObserver?.disconnect();
+  wallpaperPanResizeObserver = null;
+  const pane = chatPane.value;
+  if (!pane || typeof ResizeObserver === "undefined") return;
+  wallpaperPanResizeObserver = new ResizeObserver(() => resizeWallpaperPan());
+  wallpaperPanResizeObserver.observe(pane);
+}
+
+function resizeWallpaperPan() {
+  const pane = chatPane.value;
+  const natural = wallpaperPanNaturalSize;
+  if (!pane || !natural || !wallpaperPanActive.value) return;
+  const previous = wallpaperPanMetrics;
+  const next = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, natural.width, natural.height);
+  wallpaperPanMetrics = next;
+  if (!previous || previous.maxOffset - previous.minOffset <= 0.001) {
+    wallpaperPanOffset.value = initialWallpaperPanOffset(next, store.appearance.wallpaperPanFocusX);
+    return;
+  }
+  const progress = (wallpaperPanOffset.value - previous.minOffset) / (previous.maxOffset - previous.minOffset);
+  wallpaperPanOffset.value = next.minOffset + Math.max(0, Math.min(1, progress)) * (next.maxOffset - next.minOffset);
+}
+
+async function resetWallpaperPan() {
+  const token = ++wallpaperPanLoadToken;
+  pendingWallpaperPanDelta = 0;
+  wallpaperPanDirection = cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection);
+  wallpaperPanMetrics = null;
+  wallpaperPanNaturalSize = null;
+  wallpaperPanOffset.value = 0;
+  const pane = chatPane.value;
+  const source = store.appearance.wallpaperPath;
+  if (!pane || !source || !wallpaperPanActive.value) return;
+  const image = new Image();
+  const loaded = new Promise<boolean>((resolve) => {
+    image.onload = () => resolve(true);
+    image.onerror = () => resolve(false);
+  });
+  image.src = wallpaperUrl(source);
+  if (!(await loaded) || token !== wallpaperPanLoadToken || !wallpaperPanActive.value) return;
+  wallpaperPanNaturalSize = { width: image.naturalWidth, height: image.naturalHeight };
+  const bounds = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, image.naturalWidth, image.naturalHeight);
+  wallpaperPanMetrics = bounds;
+  wallpaperPanOffset.value = initialWallpaperPanOffset(bounds, store.appearance.wallpaperPanFocusX);
+}
+
 function updateParallaxFromScroll(el: HTMLElement) {
   const currentTop = el.scrollTop;
   if (lastParallaxScrollTop === null) {
@@ -6906,13 +7005,31 @@ function updateParallaxFromScroll(el: HTMLElement) {
   }
   const delta = currentTop - lastParallaxScrollTop;
   lastParallaxScrollTop = currentTop;
-  if (!activeParallaxKit.value || pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll) return;
-  pendingParallaxDelta += Math.max(-180, Math.min(180, delta));
+  if (pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll) return;
+  const clampedDelta = Math.max(-180, Math.min(180, delta));
+  const parallaxActive = !!activeParallaxKit.value;
+  const panActive = wallpaperPanActive.value && !!wallpaperPanMetrics;
+  if (!parallaxActive && !panActive) return;
+  if (parallaxActive) pendingParallaxDelta += clampedDelta;
+  if (panActive) pendingWallpaperPanDelta += Math.abs(clampedDelta);
   if (parallaxFrame) return;
   parallaxFrame = requestAnimationFrame(() => {
-    const speed = cleanParallaxSpeed(store.appearance.parallaxSpeed);
-    parallaxOffset.value += pendingParallaxDelta * 0.28 * speed;
+    if (activeParallaxKit.value) {
+      const speed = cleanParallaxSpeed(store.appearance.parallaxSpeed);
+      parallaxOffset.value += pendingParallaxDelta * 0.28 * speed;
+    }
+    if (wallpaperPanActive.value && wallpaperPanMetrics) {
+      const moved = advanceWallpaperPan(
+        wallpaperPanOffset.value,
+        wallpaperPanDirection,
+        pendingWallpaperPanDelta * cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
+        wallpaperPanMetrics
+      );
+      wallpaperPanOffset.value = moved.offset;
+      wallpaperPanDirection = moved.direction;
+    }
     pendingParallaxDelta = 0;
+    pendingWallpaperPanDelta = 0;
     parallaxFrame = 0;
   });
 }
@@ -7079,6 +7196,7 @@ function syncFlashEffectTimer(forceRestart = false) {
 }
 
 function wallpaperFitStyle(fit?: WallpaperFit | null) {
+  if (fit === "pan") return { size: "auto 100%", repeat: "no-repeat" };
   if (fit === "contain") return { size: "contain", repeat: "no-repeat" };
   if (fit === "stretch") return { size: "100% 100%", repeat: "no-repeat" };
   if (fit === "repeat") return { size: "auto", repeat: "repeat" };
@@ -8045,6 +8163,14 @@ function selectAppearanceImage(fileName: string) {
   setAppearanceDraftImage(picker.field, image.fileName, "已选择图片草稿，保存后生效");
 }
 
+function setWallpaperPanFocus(event: MouseEvent) {
+  const image = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLImageElement>("img");
+  if (!image) return;
+  const rect = image.getBoundingClientRect();
+  if (rect.width <= 0) return;
+  loginAppearanceEdit.value.wallpaperPanFocusX = cleanWallpaperPanFocusX((event.clientX - rect.left) / rect.width);
+}
+
 function clearAppearancePickerImage() {
   const picker = appearanceImagePicker.value;
   if (!picker) return;
@@ -8084,6 +8210,9 @@ function syncLoginAppearanceEdit() {
     loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
     wallpaperPath: store.appearance.wallpaperPath || null,
     wallpaperFit: store.appearance.wallpaperFit || "cover",
+    wallpaperPanFocusX: cleanWallpaperPanFocusX(store.appearance.wallpaperPanFocusX),
+    wallpaperPanDirection: cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection),
+    wallpaperPanSpeed: cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
     parallaxKit: store.appearance.parallaxKit || "none",
     parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
     parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
@@ -8634,7 +8763,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section class="chat-pane">
+    <section ref="chatPane" class="chat-pane">
       <ParallaxBackground :kit="activeParallaxKit" :offset="parallaxOffset" />
       <OopsTextPhysicsLayer ref="oopsPhysicsLayer" @active-change="handleOopsActiveChange" />
       <canvas v-if="rainActive" ref="rainCanvas" class="rain-canvas" aria-hidden="true"></canvas>
@@ -10432,7 +10561,7 @@ async function toggleVirtual(character: any) {
                       <small>{{ loginAppearanceEdit.loginBackgroundPath || "未设置背景图，点击预览更换" }}</small>
                     </div>
                     <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
-                      <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+                      <option v-for="option in loginBackgroundFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                     </select>
                   </div>
                 </div>
@@ -10444,7 +10573,7 @@ async function toggleVirtual(character: any) {
               <template v-else-if="appearanceSection === 'chat'">
                 <label>聊天室壁纸</label>
                 <div class="appearance-image-control">
-                  <button class="appearance-image-preview-button login-background-preview chat" :style="appearancePreviewChatStyle" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸或平铺。', 'wallpaperFit')" aria-label="选择聊天室壁纸"></button>
+                  <button class="appearance-image-preview-button login-background-preview chat" :style="appearancePreviewChatStyle" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸、平铺或推拉摇移。', 'wallpaperFit')" aria-label="选择聊天室壁纸"></button>
                   <div>
                     <strong>聊天区背景图</strong>
                     <small>{{ loginAppearanceEdit.wallpaperPath || "未设置壁纸，点击预览更换" }}</small>
@@ -10453,6 +10582,39 @@ async function toggleVirtual(character: any) {
                     <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
                   </select>
                 </div>
+                <section v-if="loginAppearanceEdit.wallpaperFit === 'pan'" class="wallpaper-pan-settings">
+                  <div>
+                    <b>初始画面中心</b>
+                    <small>在图上点选一个位置；打开聊天室时，该横坐标会尽量对准视口中心。</small>
+                  </div>
+                  <button
+                    v-if="appearanceDraftWallpaper"
+                    type="button"
+                    class="wallpaper-pan-focus-picker"
+                    @click="setWallpaperPanFocus"
+                    aria-label="在壁纸上指定初始画面中心"
+                  >
+                    <span class="wallpaper-pan-focus-image">
+                      <img :src="wallpaperUrl(appearanceDraftWallpaper)" alt="" />
+                      <span class="wallpaper-pan-focus-line" :style="wallpaperPanFocusMarkerStyle"><i></i></span>
+                    </span>
+                  </button>
+                  <p v-else class="settings-note">请先选择一张聊天室壁纸。</p>
+                  <div class="wallpaper-pan-controls">
+                    <label>
+                      <span>初始移动方向</span>
+                      <span class="segmented-buttons">
+                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'left' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'left'">向左</button>
+                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'right' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'right'">向右</button>
+                      </span>
+                    </label>
+                    <label>
+                      <span><b>相对消息移动速度</b><output>{{ wallpaperPanSpeedLabel }}</output></span>
+                      <input v-model.number="loginAppearanceEdit.wallpaperPanSpeed" type="range" min="0.02" max="1" step="0.01" />
+                      <small>消息上下移动 100 像素时，壁纸移动 {{ Math.round(cleanWallpaperPanSpeed(loginAppearanceEdit.wallpaperPanSpeed) * 100) }} 像素。</small>
+                    </label>
+                  </div>
+                </section>
               </template>
 
               <template v-else-if="appearanceSection === 'parallax'">
@@ -10890,14 +11052,14 @@ async function toggleVirtual(character: any) {
             </label>
             <button class="mini-btn secondary" :disabled="!appearanceImagePickerSelection" @click="clearAppearancePickerImage">移除当前</button>
             <select v-if="appearanceImagePicker.fitField" v-model="loginAppearanceEdit[appearanceImagePicker.fitField]" aria-label="图片显示方式">
-              <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+              <option v-for="option in appearanceImagePickerFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
             </select>
           </div>
           <div v-if="appearanceImagePickerSelection" class="appearance-picker-current">
             <img :src="wallpaperUrl(appearanceImagePickerSelection)" alt="" />
             <div>
               <b>当前草稿</b>
-              <small>{{ appearanceImagePickerSelection }}<template v-if="appearanceImagePickerFit"> · {{ wallpaperFitOptions.find((option) => option.value === appearanceImagePickerFit)?.label }}</template></small>
+              <small>{{ appearanceImagePickerSelection }}<template v-if="appearanceImagePickerFit"> · {{ appearanceImagePickerFitOptions.find((option) => option.value === appearanceImagePickerFit)?.label }}</template></small>
             </div>
           </div>
           <div v-if="backgroundAttachmentOptions.length" class="appearance-image-grid picker-grid">

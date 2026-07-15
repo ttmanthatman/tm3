@@ -58,6 +58,13 @@ import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform
 import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
 import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
+import {
+  WALLPAPER_PAN_SPEED_MAX,
+  WALLPAPER_PAN_SPEED_MIN,
+  cleanWallpaperPanDirection,
+  cleanWallpaperPanFocusX,
+  cleanWallpaperPanSpeed
+} from "../shared/wallpaperPan.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = process.cwd();
@@ -98,7 +105,8 @@ const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const JWT_EXPIRES_IN = `${SESSION_TTL_DAYS}d`;
 const THEMES = new Set(["wechat", "jade", "paper", "night"]);
-const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
+const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat", "pan"]);
+const LOGIN_BACKGROUND_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
 const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
 const BIBLE_OUTPUT_FORMATS = new Set(["referenceVerseLines", "continuousText", "referenceHeader", "numberedVerses"]);
 const BIBLE_REFERENCE_LABEL_MODES = new Set(["normalizedFull", "preserveInput", "omit"]);
@@ -4225,6 +4233,9 @@ async function appearanceDto() {
           "appIconPath",
           "wallpaperPath",
           "wallpaperFit",
+          "wallpaperPanFocusX",
+          "wallpaperPanDirection",
+          "wallpaperPanSpeed",
           "parallaxKit",
           "parallaxSpeed",
           "parallaxKits",
@@ -4255,6 +4266,9 @@ async function appearanceDto() {
     appIconPath: settings.get("appIconPath") || null,
     wallpaperPath: settings.get("wallpaperPath") || null,
     wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
+    wallpaperPanFocusX: cleanWallpaperPanFocusX(settings.get("wallpaperPanFocusX")),
+    wallpaperPanDirection: cleanWallpaperPanDirection(settings.get("wallpaperPanDirection")),
+    wallpaperPanSpeed: cleanWallpaperPanSpeed(settings.get("wallpaperPanSpeed")),
     parallaxKit: parallaxKit === "none" || parallaxKits.some((kit) => kit.id === parallaxKit) ? parallaxKit : "none",
     parallaxSpeed,
     parallaxKits,
@@ -4264,7 +4278,7 @@ async function appearanceDto() {
     loginSubtitle: settings.has("loginSubtitle") ? settings.get("loginSubtitle") || "" : DEFAULT_LOGIN_SUBTITLE,
     loginShowSubtitle: settings.get("loginShowSubtitle") !== "false",
     loginBackgroundPath: settings.get("loginBackgroundPath") || null,
-    loginBackgroundFit: WALLPAPER_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
+    loginBackgroundFit: LOGIN_BACKGROUND_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
     loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
     registrationEnabled: settings.get("registrationEnabled") === "true",
     flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
@@ -4781,7 +4795,10 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       wallpaperPath: z.string().nullable().optional(),
       appTitle: z.string().max(80).nullable().optional(),
       appIconPath: z.string().nullable().optional(),
-      wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
+      wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat", "pan"]).optional(),
+      wallpaperPanFocusX: z.number().min(0).max(1).optional(),
+      wallpaperPanDirection: z.enum(["left", "right"]).optional(),
+      wallpaperPanSpeed: z.number().min(WALLPAPER_PAN_SPEED_MIN).max(WALLPAPER_PAN_SPEED_MAX).optional(),
       parallaxKit: z.string().regex(/^(none|[a-z0-9][a-z0-9-]{0,63})$/).optional(),
       parallaxSpeed: z.number().min(PARALLAX_SPEED_MIN).max(PARALLAX_SPEED_MAX).optional(),
       parallaxKits: z.array(z.unknown()).max(12).optional(),
@@ -4802,6 +4819,9 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "appIconPath")) await setSetting("appIconPath", body.appIconPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperPath")) await setSetting("wallpaperPath", body.wallpaperPath || "");
   if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
+  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanFocusX")) await setSetting("wallpaperPanFocusX", String(cleanWallpaperPanFocusX(body.wallpaperPanFocusX)));
+  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanDirection")) await setSetting("wallpaperPanDirection", cleanWallpaperPanDirection(body.wallpaperPanDirection));
+  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanSpeed")) await setSetting("wallpaperPanSpeed", String(cleanWallpaperPanSpeed(body.wallpaperPanSpeed)));
   if (Object.prototype.hasOwnProperty.call(body, "parallaxKit")) await setSetting("parallaxKit", body.parallaxKit || "none");
   if (Object.prototype.hasOwnProperty.call(body, "parallaxSpeed")) await setSetting("parallaxSpeed", String(body.parallaxSpeed || 1));
   if (Object.prototype.hasOwnProperty.call(body, "parallaxKits")) await setSetting("parallaxKits", JSON.stringify(cleanParallaxKits(body.parallaxKits)));
