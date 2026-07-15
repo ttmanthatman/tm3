@@ -69,11 +69,11 @@ test("playlist tracks sort by manual order, heat, upload time, and filename", ()
   assert.deepEqual(moveMusicTrack(tracks, 1, -1).map((track) => track.id), [2, 1]);
 });
 
-test("music heat only counts natural playback beyond half of the song", () => {
+test("music heat counts natural playback after reaching one third of the song", () => {
   assert.equal(creditedMusicListenMs(1_000, 2_000, 1_000), 1_000);
   assert.equal(creditedMusicListenMs(1_000, 31_000, 200), 0);
   assert.equal(creditedMusicListenMs(2_000, 1_000, 1_000), 0);
-  assert.equal(isQualifiedMusicPlay(120_000, 60_000), false);
-  assert.equal(isQualifiedMusicPlay(120_000, 60_001), true);
+  assert.equal(isQualifiedMusicPlay(120_000, 39_599), false);
+  assert.equal(isQualifiedMusicPlay(120_000, 39_600), true);
   assert.equal(isQualifiedMusicPlay(4_000, 3_000), false);
 });

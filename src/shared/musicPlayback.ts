@@ -1,4 +1,4 @@
-export const MUSIC_PLAY_QUALIFY_RATIO = 0.5;
+export const MUSIC_PLAY_QUALIFY_RATIO = 0.33;
 
 export function creditedMusicListenMs(previousMediaMs: number, currentMediaMs: number, elapsedWallMs: number) {
   const mediaDelta = currentMediaMs - previousMediaMs;
@@ -8,5 +8,5 @@ export function creditedMusicListenMs(previousMediaMs: number, currentMediaMs: n
 }
 
 export function isQualifiedMusicPlay(durationMs: number, listenedMs: number) {
-  return Number.isFinite(durationMs) && Number.isFinite(listenedMs) && durationMs >= 5_000 && listenedMs > durationMs * MUSIC_PLAY_QUALIFY_RATIO;
+  return Number.isFinite(durationMs) && Number.isFinite(listenedMs) && durationMs >= 5_000 && listenedMs >= durationMs * MUSIC_PLAY_QUALIFY_RATIO;
 }

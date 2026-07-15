@@ -3937,7 +3937,7 @@ app.post("/api/music/tracks/:id/play", { preHandler: requireAuth }, async (reque
     })
     .parse(request.body);
   if (!isQualifiedMusicPlay(body.durationMs, body.listenedMs)) {
-    return reply.code(400).send({ success: false, message: "播放超过歌曲一半后才会计入热度" });
+    return reply.code(400).send({ success: false, message: "播放达到歌曲的 33% 后才会计入热度" });
   }
   const track = await prisma.message.findFirst({
     where: { id: trackId, channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
