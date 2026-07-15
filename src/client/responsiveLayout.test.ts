@@ -304,7 +304,7 @@ test("media and link preview bubbles use compact aligned frames", () => {
   assert.match(app, /'link-preview-bubble': !!linkPreviewFor\(row\.message\)/);
   assert.match(css, /\.bubble\.media-bubble \{[\s\S]*?padding: 3px;/);
   assert.match(css, /\.media-bubble \.chat-image,[\s\S]*?\.media-bubble \.image-preview-button \{[\s\S]*?border-radius: 0;/);
-  assert.match(css, /\.link-preview-bubble \{[\s\S]*?width: min\(428px, 100%\);[\s\S]*?padding: 4px;/);
+  assert.match(css, /\.bubble\.link-preview-bubble \{[\s\S]*?width: min\(428px, calc\(100vw - 94px\)\);[\s\S]*?padding: 4px;/);
   assert.match(css, /\.link-preview-bubble \.message-text \{[\s\S]*?overflow-wrap: anywhere;/);
 });
 
