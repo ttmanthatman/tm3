@@ -295,6 +295,10 @@ const timelineViewportWidth = ref(window.innerWidth);
 const measuredTimelineHeights = ref<Record<string, number>>({});
 let timelineResizeObserver: ResizeObserver | null = null;
 let timelineScrollFrame: number | undefined;
+let timelineMeasurementFrame: number | undefined;
+let timelineScrollIdleTimer: number | undefined;
+const timelineScrollActive = ref(false);
+const pendingTimelineHeights = new Map<string, number>();
 type OopsPhysicsLayerHandle = {
   start: (messageId: number, bubble: HTMLElement, textRoot: HTMLElement) => Promise<boolean>;
   restore: (messageId: number) => void;
@@ -1135,6 +1139,11 @@ onBeforeUnmount(() => {
   wallpaperPanLoadToken += 1;
   if (timelineScrollFrame !== undefined) window.cancelAnimationFrame(timelineScrollFrame);
   timelineScrollFrame = undefined;
+  if (timelineMeasurementFrame !== undefined) window.cancelAnimationFrame(timelineMeasurementFrame);
+  timelineMeasurementFrame = undefined;
+  if (timelineScrollIdleTimer !== undefined) window.clearTimeout(timelineScrollIdleTimer);
+  timelineScrollIdleTimer = undefined;
+  pendingTimelineHeights.clear();
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
@@ -1758,6 +1767,8 @@ const VIRTUAL_TIMELINE_THRESHOLD = 40;
 const VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN = 2_400;
 const VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS = 4;
 const VIRTUAL_TIMELINE_FORWARD_OVERSCAN = 320;
+// Keep layout measurement and history prepends out of native wheel/touch momentum.
+const TIMELINE_SCROLL_IDLE_MS = 500;
 
 const timeline = computed<TimelineRow[]>(() => {
   const rows: TimelineRow[] = [];
@@ -1788,6 +1799,14 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
 
 function messageImageDimensions(message: MessageDTO) {
   return imageDimensionsFromPayload(message.payload);
+}
+
+function messageImagePresentationStyle(message: MessageDTO) {
+  const dimensions = messageImageDimensions(message);
+  if (!dimensions) return undefined;
+  const availableWidth = timelineViewportWidth.value > 0 ? timelineViewportWidth.value * 0.62 : 260;
+  const width = Math.min(dimensions.width, 260, availableWidth);
+  return { width: `${Math.round(width)}px`, aspectRatio: `${dimensions.width} / ${dimensions.height}` };
 }
 
 function estimatedImageTimelineRowHeight(message: MessageDTO, viewportWidth: number) {
@@ -1823,6 +1842,11 @@ const renderedTimelineRows = computed(() => timeline.value
 const timelineTopSpacerHeight = computed(() => virtualTimelineWindow.value.topSpacer);
 const timelineBottomSpacerHeight = computed(() => virtualTimelineWindow.value.bottomSpacer);
 
+function timelineReservedHeight(key: string) {
+  const item = virtualTimelineItems.value.find((candidate) => candidate.key === key);
+  return measuredTimelineHeights.value[key] || item?.estimatedHeight || 1;
+}
+
 function syncVirtualTimelineViewport(root = scroller.value) {
   if (!root) return;
   timelineScrollTop.value = root.scrollTop;
@@ -1849,34 +1873,58 @@ function measuredTimelineRowHeight(element: HTMLElement) {
   return Math.max(1, element.getBoundingClientRect().height + marginTop + marginBottom);
 }
 
-function handleTimelineResize(entries: ResizeObserverEntry[]) {
+function visibleTimelineAnchor(root: HTMLElement) {
+  const rootTop = root.getBoundingClientRect().top;
+  const element = Array.from(root.querySelectorAll<HTMLElement>("[data-timeline-key]")).find((candidate) => candidate.getBoundingClientRect().bottom >= rootTop);
+  return element ? { key: element.dataset.timelineKey || "", offset: element.getBoundingClientRect().top - rootTop } : null;
+}
+
+async function flushPendingTimelineMeasurements() {
+  if (timelineScrollActive.value || !pendingTimelineHeights.size) return;
   const root = scroller.value;
   const current = measuredTimelineHeights.value;
   const next = { ...current };
   let changed = false;
-  let scrollAdjustment = 0;
-  for (const entry of entries) {
-    const element = entry.target;
-    if (!(element instanceof HTMLElement)) continue;
-    const key = element.dataset.timelineKey;
-    if (!key) continue;
-    const height = measuredTimelineRowHeight(element);
+  const anchor = root ? visibleTimelineAnchor(root) : null;
+  for (const [key, height] of pendingTimelineHeights) {
     const item = virtualTimelineItems.value.find((candidate) => candidate.key === key);
     if (!item) continue;
     const previousHeight = current[key] || item.estimatedHeight;
     if (Math.abs(previousHeight - height) < 0.5) continue;
-    if (root) {
-      const offset = virtualItemOffset(virtualTimelineItems.value, current, key);
-      if (offset !== null && offset + previousHeight <= root.scrollTop) scrollAdjustment += height - previousHeight;
-    }
     next[key] = height;
     changed = true;
   }
+  pendingTimelineHeights.clear();
   if (!changed) return;
   measuredTimelineHeights.value = next;
-  if (root && Math.abs(scrollAdjustment) > 0.5 && !pendingReadPositionRestore.value) root.scrollTop += scrollAdjustment;
+  await nextTick();
+  if (root && anchor?.key && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
+    const element = root.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchor.key)}"]`);
+    if (element) {
+      const delta = element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
+      if (Math.abs(delta) > 0.5) root.scrollTop += delta;
+    }
+  }
   syncVirtualTimelineViewport(root);
   reconcileReadPositionAfterLayout();
+}
+
+function scheduleTimelineMeasurementFlush() {
+  if (timelineScrollActive.value || timelineMeasurementFrame !== undefined) return;
+  timelineMeasurementFrame = window.requestAnimationFrame(() => {
+    timelineMeasurementFrame = undefined;
+    void flushPendingTimelineMeasurements();
+  });
+}
+
+function handleTimelineResize(entries: ResizeObserverEntry[]) {
+  for (const entry of entries) {
+    const element = entry.target;
+    if (!(element instanceof HTMLElement)) continue;
+    const key = element.dataset.timelineKey;
+    if (key) pendingTimelineHeights.set(key, measuredTimelineRowHeight(element));
+  }
+  scheduleTimelineMeasurementFlush();
 }
 
 function refreshTimelineMeasurements() {
@@ -2525,8 +2573,13 @@ function reconcileReadPositionAfterLayout() {
 }
 
 function stopFollowingNewest() {
-  if (activeReadAnchor?.kind === "newest") activeReadAnchor = null;
+  activeReadAnchor = null;
   clearBlankScoreLongPress();
+}
+
+function handleTimelineScrollIntent() {
+  stopFollowingNewest();
+  markTimelineScrolling();
 }
 
 function handleMessagesPointerDown(event: PointerEvent) {
@@ -7115,23 +7168,31 @@ function focusComposer() {
   requestAnimationFrame(() => scrollBottom(false));
 }
 
-async function handleMessagesScroll() {
+async function loadTimelineEdgesAfterScroll() {
   const el = scroller.value;
   if (!el) return;
-  scheduleVirtualTimelineViewport(el);
-  clearBlankScoreLongPress();
-  updateParallaxFromScroll(el);
-  saveReadPosition();
-  awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
-  if (!awayFromNewest.value) hasUnreadMessages.value = false;
   if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
     loadingHistoryFromScroll = true;
     const beforeHeight = el.scrollHeight;
     const beforeTop = el.scrollTop;
+    const rootTop = el.getBoundingClientRect().top;
+    const anchorElement = visibleMessageElements()[0];
+    const anchorMessageId = Number(anchorElement?.dataset.messageId || 0);
+    const edgeAnchor: ActiveReadAnchor | null = anchorElement && anchorMessageId
+      ? {
+        kind: "message",
+        messageId: anchorMessageId,
+        offset: anchorElement.getBoundingClientRect().top - rootTop,
+        expiresAt: Date.now() + 2500,
+        token: readPositionRestoreToken
+      }
+      : null;
     const loaded = await store.loadOlderMessages();
+    if (loaded && edgeAnchor) activeReadAnchor = edgeAnchor;
     await nextTick();
     if (loaded && scroller.value === el) {
       el.scrollTop = el.scrollHeight - beforeHeight + beforeTop;
+      reconcileReadPositionAfterLayout();
       saveReadPosition();
     }
     loadingHistoryFromScroll = false;
@@ -7148,6 +7209,31 @@ async function handleMessagesScroll() {
   }
 }
 
+function markTimelineScrolling() {
+  timelineScrollActive.value = true;
+  if (timelineMeasurementFrame !== undefined) window.cancelAnimationFrame(timelineMeasurementFrame);
+  timelineMeasurementFrame = undefined;
+  if (timelineScrollIdleTimer !== undefined) window.clearTimeout(timelineScrollIdleTimer);
+  timelineScrollIdleTimer = window.setTimeout(async () => {
+    timelineScrollIdleTimer = undefined;
+    timelineScrollActive.value = false;
+    await flushPendingTimelineMeasurements();
+    await loadTimelineEdgesAfterScroll();
+  }, TIMELINE_SCROLL_IDLE_MS);
+}
+
+function handleMessagesScroll() {
+  const el = scroller.value;
+  if (!el) return;
+  markTimelineScrolling();
+  scheduleVirtualTimelineViewport(el);
+  clearBlankScoreLongPress();
+  updateParallaxFromScroll(el);
+  saveReadPosition();
+  awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
+  if (!awayFromNewest.value) hasUnreadMessages.value = false;
+}
+
 async function retryMessageLoad() {
   if (store.loadingInitialMessages || store.loadingOlderMessages || store.loadingNewerMessages) return;
   if (!store.messages.length) {
@@ -7156,7 +7242,7 @@ async function retryMessageLoad() {
     scrollBottom(false);
     return;
   }
-  await handleMessagesScroll();
+  await loadTimelineEdgesAfterScroll();
 }
 
 async function scrollToNewest(smooth = true) {
@@ -9229,10 +9315,11 @@ async function toggleVirtual(character: any) {
         <div
           ref="scroller"
           class="messages-scroll"
+          :class="{ 'timeline-scrolling': timelineScrollActive }"
           @scroll.passive="handleMessagesScroll"
           @load.capture="reconcileReadPositionAfterLayout"
-          @wheel.passive="stopFollowingNewest"
-          @touchmove.passive="stopFollowingNewest"
+          @wheel.passive="handleTimelineScrollIntent"
+          @touchmove.passive="handleTimelineScrollIntent"
           @pointerdown.passive="handleMessagesPointerDown"
           @pointermove.passive="moveBlankScoreLongPress"
           @pointerup="clearBlankScoreLongPress"
@@ -9261,6 +9348,7 @@ async function toggleVirtual(character: any) {
           aria-hidden="true"
         ></div>
         <template v-for="{ row, timelineIndex, key: timelineKey } in renderedTimelineRows" :key="timelineKey">
+          <div class="message-timeline-slot" :style="{ height: `${timelineReservedHeight(timelineKey)}px` }">
           <div
             v-if="row.kind === 'time'"
             class="time-separator"
@@ -9475,13 +9563,22 @@ async function toggleVirtual(character: any) {
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'image'">
-                  <button class="image-preview-button" @click.stop="openAttachmentFromTap(row.message, $event)">
+                  <button
+                    class="image-preview-button"
+                    :class="{ 'image-preview-sized': !!messageImageDimensions(row.message) }"
+                    :style="messageImagePresentationStyle(row.message)"
+                    aria-label="查看图片"
+                    @click.stop="openAttachmentFromTap(row.message, $event)"
+                  >
                     <img
                       class="chat-image"
                       :src="fileUrl(row.message)"
                       :width="messageImageDimensions(row.message)?.width"
                       :height="messageImageDimensions(row.message)?.height"
-                      alt="图片"
+                      loading="lazy"
+                      decoding="async"
+                      fetchpriority="low"
+                      alt=""
                     />
                   </button>
                 </template>
@@ -9662,6 +9759,7 @@ async function toggleVirtual(character: any) {
               </div>
             </div>
           </article>
+          </div>
         </template>
         <div
           v-if="timelineBottomSpacerHeight > 0"

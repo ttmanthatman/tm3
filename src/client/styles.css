@@ -2711,6 +2711,18 @@ button {
   pointer-events: none;
 }
 
+.message-timeline-slot {
+  width: 100%;
+  min-height: 0;
+  flex: 0 0 auto;
+  display: flow-root;
+}
+
+.messages-scroll.timeline-scrolling .message-timeline-slot {
+  overflow: hidden;
+  overflow: clip;
+}
+
 .message-load-banner {
   width: fit-content;
   max-width: min(420px, 100%);
@@ -3816,6 +3828,7 @@ button {
 
 .link-preview-card img {
   width: 100%;
+  aspect-ratio: 16 / 9;
   max-height: 240px;
   display: block;
   object-fit: cover;
@@ -3854,6 +3867,16 @@ button {
   color: inherit;
   border-radius: 6px;
   overflow: visible;
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+
+.image-preview-button.image-preview-sized {
+  overflow: hidden;
+}
+
+.image-preview-button.image-preview-sized .chat-image {
+  width: 100%;
+  height: 100%;
 }
 
 .file-card {
