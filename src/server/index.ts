@@ -59,6 +59,7 @@ import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
 import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
+import { imageDimensionsFromPayload, mergeImageDimensionsPayload, type ImageDimensions } from "../shared/imageDimensions.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -853,6 +854,16 @@ async function validateStoredImage(filePath: string) {
   }
 }
 
+async function storedImageDimensions(filePath: string): Promise<ImageDimensions | undefined> {
+  try {
+    const metadata = await sharp(filePath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
+    if (!metadata.width || !metadata.height || metadata.width > 20_000 || metadata.height > 20_000) return undefined;
+    return { width: metadata.width, height: metadata.height };
+  } catch {
+    return undefined;
+  }
+}
+
 function isAudioFileName(name?: string | null) {
   return /\.(webm|mp3|m4a|wav|ogg|aac|mp4)$/i.test(name || "");
 }
@@ -1304,6 +1315,23 @@ async function backfillAudioMessageWaveforms() {
     const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
     if (payload.kind === "voice" || normalizedWaveform(payload.waveform)?.length) continue;
     await enrichAudioMessageWaveform(message.id, message.filePath);
+  }
+}
+
+async function backfillImageMessageDimensions() {
+  const messages = await prisma.message.findMany({
+    where: { type: "image", filePath: { not: null } },
+    select: { id: true, filePath: true, payload: true },
+    orderBy: { id: "asc" }
+  });
+  for (const message of messages) {
+    if (!message.filePath || imageDimensionsFromPayload(message.payload)) continue;
+    const dimensions = await storedImageDimensions(path.join(UPLOAD_DIR, path.basename(message.filePath)));
+    if (!dimensions) continue;
+    await prisma.message.update({
+      where: { id: message.id },
+      data: { payload: mergeImageDimensionsPayload(message.payload, dimensions) as Prisma.InputJsonObject }
+    });
   }
 }
 
@@ -3715,6 +3743,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   });
   storedFileName = deduplicated.storedFileName;
   stat = fs.statSync(path.join(UPLOAD_DIR, storedFileName));
+  const imageDimensions = isImageUpload ? await storedImageDimensions(path.join(UPLOAD_DIR, storedFileName)) : undefined;
   if (channel?.kind === "music" && deduplicated.duplicate) {
     const existingTrack = await prisma.message.findFirst({
       where: { channel: { kind: "music" }, type: "file", filePath: storedFileName },
@@ -3731,7 +3760,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     actorId: auth.actorId,
     content: "",
     type,
-    payload: voicePayload,
+    payload: imageDimensions ? mergeImageDimensionsPayload(voicePayload, imageDimensions) : voicePayload,
     fileName: displayFileName,
     filePath: storedFileName,
     fileSize: stat.size,
@@ -6578,5 +6607,6 @@ process.on("SIGTERM", async () => {
 
 await ensureBootstrap();
 await ensureWebPush();
+await backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
 await app.listen({ port: PORT, host: "0.0.0.0" });
 void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));

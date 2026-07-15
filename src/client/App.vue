@@ -110,7 +110,8 @@ import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
-import { calculateVirtualWindow, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
+import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
+import { imageDimensionsFromPayload } from "@shared/imageDimensions";
 import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import {
@@ -255,6 +256,7 @@ const scroller = ref<HTMLElement | null>(null);
 const chatPane = ref<HTMLElement | null>(null);
 const timelineScrollTop = ref(0);
 const timelineViewportHeight = ref(0);
+const timelineViewportWidth = ref(window.innerWidth);
 const measuredTimelineHeights = ref<Record<string, number>>({});
 let timelineResizeObserver: ResizeObserver | null = null;
 let timelineScrollFrame: number | undefined;
@@ -1733,7 +1735,7 @@ function timelineRowKey(row: TimelineRow) {
 
 function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.kind === "time") return 52;
-  if (row.message.type === "image") return 280;
+  if (row.message.type === "image") return estimatedImageTimelineRowHeight(row.message, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "chain") return 190;
   if (isAudioMessage(row.message)) return 112;
@@ -1741,6 +1743,14 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.message.type === "system") return 64;
   const visualLines = Math.max(1, Math.ceil(Array.from(row.message.content || "").length / 24));
   return 68 + Math.min(160, visualLines * 20);
+}
+
+function messageImageDimensions(message: MessageDTO) {
+  return imageDimensionsFromPayload(message.payload);
+}
+
+function estimatedImageTimelineRowHeight(message: MessageDTO, viewportWidth: number) {
+  return estimatedImageTimelineHeight(messageImageDimensions(message), viewportWidth);
 }
 
 const virtualTimelineItems = computed<VirtualTimelineItem[]>(() => timeline.value.map((row) => ({
@@ -1776,6 +1786,7 @@ function syncVirtualTimelineViewport(root = scroller.value) {
   if (!root) return;
   timelineScrollTop.value = root.scrollTop;
   timelineViewportHeight.value = root.clientHeight;
+  timelineViewportWidth.value = root.clientWidth;
 }
 
 function scheduleVirtualTimelineViewport(root = scroller.value) {
@@ -9225,7 +9236,7 @@ async function toggleVirtual(character: any) {
               >
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'prayer-bubble': row.message.type === 'prayer', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
                 :data-message-effect="messageEffect(row.message) || null"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
@@ -9393,7 +9404,13 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else-if="row.message.type === 'image'">
                   <button class="image-preview-button" @click.stop="openAttachmentFromTap(row.message, $event)">
-                    <img class="chat-image" :src="fileUrl(row.message)" alt="图片" />
+                    <img
+                      class="chat-image"
+                      :src="fileUrl(row.message)"
+                      :width="messageImageDimensions(row.message)?.width"
+                      :height="messageImageDimensions(row.message)?.height"
+                      alt="图片"
+                    />
                   </button>
                 </template>
                 <template v-else-if="isVoiceMessage(row.message)">

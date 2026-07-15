@@ -12,6 +12,15 @@ export type VirtualTimelineWindow = {
   totalHeight: number;
 };
 
+type ImageDimensions = { width: number; height: number };
+
+export function estimatedImageTimelineHeight(dimensions: ImageDimensions | undefined, viewportWidth: number) {
+  if (!dimensions) return 280;
+  const availableWidth = viewportWidth > 0 ? viewportWidth * 0.62 : 260;
+  const renderedWidth = Math.min(dimensions.width, 260, availableWidth);
+  return Math.round((renderedWidth * dimensions.height) / dimensions.width + 36);
+}
+
 type VirtualWindowInput = {
   items: VirtualTimelineItem[];
   measuredHeights: Record<string, number>;

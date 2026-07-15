@@ -294,6 +294,20 @@ test("large message timelines render a measured virtual window", () => {
   assert.match(app, /overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN/);
 });
 
+test("image messages reserve their intrinsic aspect ratio before loading", () => {
+  assert.match(app, /:width="messageImageDimensions\(row\.message\)\?\.width"/);
+  assert.match(app, /:height="messageImageDimensions\(row\.message\)\?\.height"/);
+  assert.match(app, /estimatedImageTimelineRowHeight\(row\.message, timelineViewportWidth\.value\)/);
+});
+
+test("media and link preview bubbles use compact aligned frames", () => {
+  assert.match(app, /'link-preview-bubble': !!linkPreviewFor\(row\.message\)/);
+  assert.match(css, /\.bubble\.media-bubble \{[\s\S]*?padding: 3px;/);
+  assert.match(css, /\.media-bubble \.chat-image,[\s\S]*?\.media-bubble \.image-preview-button \{[\s\S]*?border-radius: 0;/);
+  assert.match(css, /\.link-preview-bubble \{[\s\S]*?width: min\(428px, 100%\);[\s\S]*?padding: 4px;/);
+  assert.match(css, /\.link-preview-bubble \.message-text \{[\s\S]*?overflow-wrap: anywhere;/);
+});
+
 test("music uploads accept multiple files and report hash-based reuse", () => {
   assert.match(app, /accept="\.mp3,\.m4a,audio\/mpeg,audio\/mp4,audio\/x-m4a" multiple @change="handlePickedFiles"/);
   assert.match(app, /result\.duplicate/);

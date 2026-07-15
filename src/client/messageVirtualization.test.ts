@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateVirtualWindow, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization.js";
+import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization.js";
 
 const items: VirtualTimelineItem[] = Array.from({ length: 500 }, (_, index) => ({
   key: `message:${index + 1}`,
@@ -66,4 +66,10 @@ test("small timelines can be rendered without spacer bookkeeping", () => {
     overscanAfter: 320
   });
   assert.deepEqual({ start: window.start, end: window.end, top: window.topSpacer, bottom: window.bottomSpacer }, { start: 0, end: 8, top: 0, bottom: 0 });
+});
+
+test("image estimates preserve tall-image aspect ratios", () => {
+  assert.equal(estimatedImageTimelineHeight({ width: 1179, height: 2556 }, 758), 600);
+  assert.equal(estimatedImageTimelineHeight({ width: 1242, height: 883 }, 758), 221);
+  assert.equal(estimatedImageTimelineHeight(undefined, 758), 280);
 });

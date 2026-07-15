@@ -3272,8 +3272,13 @@ button {
   border-radius: inherit;
 }
 
-.media-bubble {
-  padding: 6px;
+.bubble.media-bubble {
+  padding: 3px;
+}
+
+.media-bubble .chat-image,
+.media-bubble .image-preview-button {
+  border-radius: 0;
 }
 
 .bubble p {
@@ -3590,6 +3595,21 @@ button {
   text-decoration: none;
   background: color-mix(in srgb, var(--panel) 88%, #ffffff 12%);
   box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.link-preview-bubble {
+  box-sizing: border-box;
+  width: min(428px, 100%);
+  padding: 4px;
+}
+
+.link-preview-bubble .message-text {
+  overflow-wrap: anywhere;
+}
+
+.link-preview-bubble .link-preview-card {
+  width: 100%;
+  margin-top: 4px;
 }
 
 .message-row.mine .link-preview-card {
