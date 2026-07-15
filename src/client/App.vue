@@ -247,6 +247,40 @@ const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
 const appStartError = ref("");
+const appStartCodeLines = [
+  '// src/client/main.ts',
+  'import { createApp } from "vue";',
+  'import { createPinia } from "pinia";',
+  'import App from "./App.vue";',
+  'import "./styles.css";',
+  '',
+  'syncViewportHeight();',
+  'window.visualViewport?.addEventListener("resize", syncViewportHeight);',
+  'window.visualViewport?.addEventListener("scroll", syncViewportHeight);',
+  '',
+  'if ("serviceWorker" in navigator) {',
+  '  window.addEventListener("load", () => {',
+  '    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});',
+  '  });',
+  '}',
+  '',
+  'createApp(App).use(createPinia()).mount("#app");',
+  '',
+  '// src/client/store.ts',
+  'async bootstrap() {',
+  '  await this.loadAppearance();',
+  '  if (!getToken()) return;',
+  '  if (await this.refreshCurrentAccount()) this.connectSocket();',
+  '}',
+  '',
+  '// src/client/App.vue',
+  'hydratePlayedRainEffectIds();',
+  'initializeMusicAudio();',
+  'document.addEventListener("visibilitychange", handleDocumentVisibilityChange);',
+  'window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });',
+  'window.addEventListener("resize", handleTimelineViewportResize, { passive: true });',
+  'await store.bootstrap();'
+] as const;
 const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
@@ -8443,10 +8477,26 @@ async function toggleVirtual(character: any) {
 
 <template>
   <main v-if="appStarting" class="app-start-shell" :style="appearanceStyle" aria-live="polite">
-    <section class="app-start-card">
-      <span class="app-start-spinner" aria-hidden="true"></span>
-      <strong>正在打开聊天室</strong>
-      <small>正在载入外观、账号和最近消息…</small>
+    <div class="app-start-code" aria-hidden="true">
+      <div class="app-start-code-track">
+        <pre v-for="copy in 2" :key="copy"><code><span v-for="(line, index) in appStartCodeLines" :key="`${copy}-${index}`">{{ line || " " }}</span></code></pre>
+      </div>
+    </div>
+    <section class="app-start-card" role="status">
+      <header class="app-start-heading">
+        <span class="app-start-spinner" aria-hidden="true"></span>
+        <div>
+          <strong>正在打开聊天室</strong>
+          <small>正在载入外观、账号和最近消息…</small>
+        </div>
+        <span class="app-start-version">v{{ APP_VERSION }}</span>
+      </header>
+      <div class="app-start-release">
+        <span>本次更新</span>
+        <ul>
+          <li v-for="note in RELEASE_NOTES" :key="note">{{ note }}</li>
+        </ul>
+      </div>
     </section>
   </main>
   <main v-else-if="appStartError" class="app-start-shell" :style="appearanceStyle">

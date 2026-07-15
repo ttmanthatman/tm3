@@ -564,25 +564,133 @@ button {
   padding: calc(var(--safe-top) + 24px) 18px calc(var(--safe-bottom) + 24px);
   display: grid;
   place-items: center;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
   background: var(--bg);
 }
 
+.app-start-code {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  color: color-mix(in srgb, var(--accent) 58%, var(--text));
+  background:
+    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--panel) 76%, transparent), transparent 58%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg) 20%, transparent), color-mix(in srgb, var(--bg) 62%, transparent));
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+}
+
+.app-start-code-track {
+  width: max-content;
+  min-width: 100%;
+  animation: appStartCodeScroll 28s linear infinite;
+}
+
+.app-start-code pre {
+  min-width: 100vw;
+  min-height: max(760px, 100vh);
+  margin: 0;
+  padding: 18px clamp(18px, 5vw, 72px);
+  box-sizing: border-box;
+  font: 500 clamp(10px, 1.15vw, 13px) / 1.8 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0.01em;
+  opacity: 0.32;
+  text-align: left;
+  white-space: pre;
+}
+
+.app-start-code code,
+.app-start-code code span {
+  display: block;
+}
+
 .app-start-card {
-  width: min(360px, 100%);
+  width: min(560px, 100%);
+  max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 48px);
   border: 1px solid var(--line);
   border-radius: 14px;
-  padding: 28px;
+  padding: 24px;
   display: grid;
-  justify-items: center;
-  gap: 10px;
-  background: var(--panel);
+  position: relative;
+  z-index: 1;
+  gap: 18px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(18px);
   box-shadow: 0 14px 42px rgba(15, 23, 42, 0.1);
-  text-align: center;
+  text-align: left;
 }
 
 .app-start-card small {
   color: var(--muted);
   line-height: 1.5;
+}
+
+.app-start-card.error {
+  width: min(360px, 100%);
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.app-start-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-start-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.app-start-heading strong,
+.app-start-heading small {
+  display: block;
+}
+
+.app-start-version {
+  align-self: start;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.app-start-release {
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+
+.app-start-release > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.app-start-release ul {
+  margin: 0;
+  padding-left: 1.25em;
+  display: grid;
+  gap: 7px;
+}
+
+.app-start-release li {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .app-start-card.error > svg {
@@ -604,6 +712,40 @@ button {
 
 @keyframes appStartSpin {
   to { transform: rotate(360deg); }
+}
+
+@keyframes appStartCodeScroll {
+  to { transform: translateY(-50%); }
+}
+
+@media (max-width: 560px) {
+  .app-start-shell {
+    padding-inline: 14px;
+  }
+
+  .app-start-card {
+    padding: 20px;
+  }
+
+  .app-start-heading {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .app-start-version {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .app-start-release li {
+    font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-start-code-track,
+  .app-start-spinner {
+    animation: none;
+  }
 }
 
 .login-shell {
