@@ -8487,7 +8487,7 @@ async function toggleVirtual(character: any) {
   <main v-if="appStarting" class="app-start-shell" :style="appearanceStyle" aria-live="polite">
     <div class="app-start-code" aria-hidden="true">
       <div class="app-start-code-track">
-        <pre v-for="copy in 2" :key="copy"><code><span v-for="(line, index) in appStartCodeLines" :key="`${copy}-${index}`">{{ line || " " }}</span></code></pre>
+        <pre v-for="copy in 4" :key="copy"><code><span v-for="(line, index) in appStartCodeLines" :key="`${copy}-${index}`">{{ line || " " }}</span></code></pre>
       </div>
     </div>
     <section class="app-start-card" role="status">

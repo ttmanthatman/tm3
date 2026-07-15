@@ -577,28 +577,23 @@ button {
   pointer-events: none;
   user-select: none;
   color: color-mix(in srgb, var(--accent) 58%, var(--text));
-  background:
-    radial-gradient(circle at 50% 45%, color-mix(in srgb, var(--panel) 76%, transparent), transparent 58%),
-    linear-gradient(180deg, color-mix(in srgb, var(--bg) 20%, transparent), color-mix(in srgb, var(--bg) 62%, transparent));
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
-  mask-image: linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent);
+  background: var(--bg);
 }
 
 .app-start-code-track {
   width: max-content;
   min-width: 100%;
-  animation: appStartCodeScroll 28s linear infinite;
+  animation: appStartCodeScroll 6s linear infinite;
 }
 
 .app-start-code pre {
   min-width: 100vw;
-  min-height: max(760px, 100vh);
   margin: 0;
-  padding: 18px clamp(18px, 5vw, 72px);
+  padding: 10px clamp(14px, 3vw, 42px);
   box-sizing: border-box;
-  font: 500 clamp(10px, 1.15vw, 13px) / 1.8 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font: 550 clamp(11px, 1.25vw, 14px) / 1.62 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   letter-spacing: 0.01em;
-  opacity: 0.32;
+  opacity: 0.46;
   text-align: left;
   white-space: pre;
 }
@@ -715,7 +710,7 @@ button {
 }
 
 @keyframes appStartCodeScroll {
-  to { transform: translateY(-50%); }
+  to { transform: translateY(-25%); }
 }
 
 @media (max-width: 560px) {
