@@ -1,10 +1,15 @@
-export const APP_VERSION = "0.12.3";
+export const APP_VERSION = "0.12.4";
 
 export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室壁纸新增“推拉摇移”显示模式：壁纸会按聊天区域高度等比缩放，并随消息上下移动在左右边界之间平滑反向循环。",
+  "管理员可直接在壁纸图上指定初始画面中心，并设置初始移动方向和相对消息移动速度。"
+] as const;
+
+const RELEASE_0_12_3_NOTES = [
   "歌曲热度改为合格实际播放次数：同一次播放只有自然收听超过整首歌曲一半才计数，快速切歌和拖动进度不计入，并会实时同步到所有在线用户。",
   "聊天顶部会用彩色滚动文字展示正在听歌的用户及歌曲；展开播放器后会滚动显示同时收听当前歌曲的其他用户。",
   "修复顶部输入、提及和点赞活动提示可能越出聊天标题栏、覆盖其他顶部控件的问题。"
@@ -511,9 +516,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.3",
+    version: "0.12.4",
     date: "2026-07-15",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.3",
+    date: "2026-07-15",
+    notes: RELEASE_0_12_3_NOTES
   },
   {
     version: "0.12.2",
