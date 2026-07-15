@@ -56,6 +56,14 @@ export function wallpaperPanTransform(offset: number) {
   return `translate3d(${safeOffset.toFixed(2)}px, 0, 0)`;
 }
 
+export function wallpaperPanLayerPresentation(imageWidth: number, offset: number) {
+  const safeWidth = Number.isFinite(imageWidth) ? Math.max(0, imageWidth) : 0;
+  return {
+    width: `${safeWidth.toFixed(2)}px`,
+    transform: wallpaperPanTransform(offset)
+  };
+}
+
 export function advanceWallpaperPan(
   offset: number,
   direction: WallpaperPanDirection,

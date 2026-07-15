@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { advanceWallpaperPan, initialWallpaperPanOffset, wallpaperPanBounds, wallpaperPanTransform } from "./wallpaperPan.js";
+import {
+  advanceWallpaperPan,
+  initialWallpaperPanOffset,
+  wallpaperPanBounds,
+  wallpaperPanLayerPresentation,
+  wallpaperPanTransform
+} from "./wallpaperPan.js";
 
 test("scales the wallpaper to the viewport height and aligns the chosen image coordinate with the viewport center", () => {
   const bounds = wallpaperPanBounds(1000, 500, 3000, 1000);
@@ -28,4 +34,12 @@ test("reverses at both edges and keeps the unconsumed movement", () => {
 test("moves the wallpaper on its own compositor layer", () => {
   assert.equal(wallpaperPanTransform(-125.678), "translate3d(-125.68px, 0, 0)");
   assert.equal(wallpaperPanTransform(Number.NaN), "translate3d(0.00px, 0, 0)");
+});
+
+test("gives the compositor layer the same scaled width used by the pan bounds", () => {
+  const bounds = wallpaperPanBounds(630, 841, 1774, 887);
+  assert.deepEqual(wallpaperPanLayerPresentation(bounds.imageWidth, -213.909), {
+    width: "1682.00px",
+    transform: "translate3d(-213.91px, 0, 0)"
+  });
 });

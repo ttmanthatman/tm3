@@ -29,7 +29,10 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
   assert.match(app, /"--wallpaper-image": hasWallpaper\.value && !wallpaperPanActive\.value/);
   assert.doesNotMatch(app, /"--wallpaper-position": wallpaperPanActive\.value/);
   assert.match(app, /v-if="wallpaperPanActive"[\s\S]*?class="wallpaper-pan-background"[\s\S]*?:style="wallpaperPanLayerStyle"/);
+  assert.match(app, /wallpaperPanImageWidth\.value = (?:next|bounds)\.imageWidth/g);
+  assert.match(app, /pendingReadPositionRestore\.value \|\| loadingHistoryFromScroll \|\| loadingNewerFromScroll \|\| activeReadAnchor/);
   assert.match(css, /\.wallpaper-pan-background \{[\s\S]*?position: absolute;[\s\S]*?backface-visibility: hidden;[\s\S]*?will-change: transform;/);
+  assert.match(css, /\.chat-pane > :not\(\.wallpaper-pan-background\):not\(\.parallax-background\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
 });
 
 test("new-message jump is a compact translucent arrow centered above the composer", () => {

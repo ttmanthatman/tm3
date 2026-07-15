@@ -2118,7 +2118,7 @@ button {
   mix-blend-mode: screen;
 }
 
-.chat-pane > * {
+.chat-pane > :not(.wallpaper-pan-background):not(.parallax-background) {
   min-width: 0;
   width: 100%;
   max-width: 100%;

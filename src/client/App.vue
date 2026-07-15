@@ -121,7 +121,7 @@ import {
   cleanWallpaperPanSpeed,
   initialWallpaperPanOffset,
   wallpaperPanBounds,
-  wallpaperPanTransform,
+  wallpaperPanLayerPresentation,
   type WallpaperPanBounds,
   type WallpaperPanDirection
 } from "@shared/wallpaperPan";
@@ -310,6 +310,7 @@ let lastParallaxScrollTop: number | null = null;
 let pendingParallaxDelta = 0;
 let parallaxFrame = 0;
 const wallpaperPanOffset = ref(0);
+const wallpaperPanImageWidth = ref(0);
 const wallpaperPanReady = ref(false);
 let wallpaperPanDirection: WallpaperPanDirection = "left";
 let wallpaperPanMetrics: WallpaperPanBounds | null = null;
@@ -951,6 +952,10 @@ watch(
     composerPanel.value = null;
     selectedMusicMention.value = null;
     lastParallaxScrollTop = null;
+    pendingParallaxDelta = 0;
+    pendingWallpaperPanDelta = 0;
+    if (parallaxFrame) window.cancelAnimationFrame(parallaxFrame);
+    parallaxFrame = 0;
     hasUnreadMessages.value = false;
     if (pendingMessageJumpId !== null) {
       pendingReadPositionRestore.value = false;
@@ -1287,7 +1292,7 @@ const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath
 const wallpaperPanActive = computed(() => hasWallpaper.value && store.appearance.wallpaperFit === "pan");
 const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
-const wallpaperPanLayerStyle = computed(() => ({ transform: wallpaperPanTransform(wallpaperPanOffset.value) }));
+const wallpaperPanLayerStyle = computed(() => wallpaperPanLayerPresentation(wallpaperPanImageWidth.value, wallpaperPanOffset.value));
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
   "--message-content-font-size": `${messageFontSize.value}px`,
@@ -7033,6 +7038,7 @@ function resizeWallpaperPan() {
   const previous = wallpaperPanMetrics;
   const next = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, natural.width, natural.height);
   wallpaperPanMetrics = next;
+  wallpaperPanImageWidth.value = next.imageWidth;
   if (!previous || previous.maxOffset - previous.minOffset <= 0.001) {
     wallpaperPanOffset.value = initialWallpaperPanOffset(next, store.appearance.wallpaperPanFocusX);
     return;
@@ -7049,6 +7055,7 @@ async function resetWallpaperPan() {
   wallpaperPanMetrics = null;
   wallpaperPanNaturalSize = null;
   wallpaperPanOffset.value = 0;
+  wallpaperPanImageWidth.value = 0;
   const pane = chatPane.value;
   const source = store.appearance.wallpaperPath;
   if (!pane || !source || !wallpaperPanActive.value) return;
@@ -7062,6 +7069,7 @@ async function resetWallpaperPan() {
   wallpaperPanNaturalSize = { width: image.naturalWidth, height: image.naturalHeight };
   const bounds = wallpaperPanBounds(pane.clientWidth, pane.clientHeight, image.naturalWidth, image.naturalHeight);
   wallpaperPanMetrics = bounds;
+  wallpaperPanImageWidth.value = bounds.imageWidth;
   wallpaperPanOffset.value = initialWallpaperPanOffset(bounds, store.appearance.wallpaperPanFocusX);
   wallpaperPanReady.value = true;
 }
@@ -7074,7 +7082,7 @@ function updateParallaxFromScroll(el: HTMLElement) {
   }
   const delta = currentTop - lastParallaxScrollTop;
   lastParallaxScrollTop = currentTop;
-  if (pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll) return;
+  if (pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll || activeReadAnchor) return;
   const clampedDelta = Math.max(-180, Math.min(180, delta));
   const parallaxActive = !!activeParallaxKit.value;
   const panActive = wallpaperPanActive.value && !!wallpaperPanMetrics;
