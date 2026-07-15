@@ -1,10 +1,17 @@
-export const APP_VERSION = "0.12.5";
+export const APP_VERSION = "0.12.6";
 
 export const RELEASE_DATE = "2026-07-15";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室加载页现在会显示当前版本与本次更新，并以快速滚动的真实启动代码铺满背景；在手机和桌面均保持单列阅读布局。",
+  "图片和链接预览在手机端恢复紧凑稳定的尺寸，避免内容加载或布局变化时出现异常留白与跳动。",
+  "“推拉摇移”壁纸改在独立合成层渲染，iOS 惯性滚动不再闪烁；壁纸缩放边界会持续同步，不会露出聊天背景。",
+  "回到最新消息等悬浮控件保持紧凑尺寸，不再受到壁纸样式的影响。"
+] as const;
+
+const RELEASE_0_12_5_NOTES = [
   "首次向上翻阅历史消息时会在视口上方预先保留多屏静态消息，减少逐条挂载和高度校正造成的卡顿；消息特效、物理动画和全屏下雨严格只在当前视口内运行。",
   "音乐频道支持一次多选 MP3、M4A；服务器按文件内容 SHA-256 识别改名后的相同歌曲，已有歌曲会自动跳过。",
   "图片、PDF 和其他附件也会按内容去重；重复附件不再写入第二份文件，但仍会发送一条指向原文件的新消息，并在界面提示复用结果。共享附件只有在最后一条引用删除后才会清理实体文件。"
@@ -522,9 +529,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "0.12.5",
+    version: "0.12.6",
     date: "2026-07-15",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "0.12.5",
+    date: "2026-07-15",
+    notes: RELEASE_0_12_5_NOTES
   },
   {
     version: "0.12.4",
