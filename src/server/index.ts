@@ -28,8 +28,11 @@ import type {
   AiRoleDTO,
   AiSettingsDTO,
   AiSuggestionDTO,
+  BibleCatalogDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
+  BibleRelatedSearchDTO,
+  BibleTextSearchDTO,
   ChainPayload,
   FlashEffectSettingsDTO,
   MessageDTO,
@@ -45,7 +48,7 @@ import type {
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
-import { lookupBibleReference } from "./bible/lookup.js";
+import { bibleCatalog, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
 import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
@@ -148,6 +151,13 @@ const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
   bubbleMineText: "#111111"
 };
 const AI_RELATED_VERSES_KIND = "prayer_related_verses";
+const BIBLE_TOPIC_SEARCH_PROMPT = [
+  "你根据用户输入的主题推荐圣经经文出处。",
+  "只输出 8 个真实存在的经文出处，每行一个。",
+  "可以输出单节或连续几节，但不要输出整章。",
+  "不要输出经文正文、解释、标题、序号或其他文字。",
+  "如果不确定出处是否存在，不要输出。"
+].join("\n");
 const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
 const MUSIC_CHANNEL_NAME = "音乐频道";
 const MUSIC_CHANNEL_ICON = "歌";
@@ -203,6 +213,7 @@ const DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT = [
   "只输出 yes 或 no，不要解释。"
 ].join("\n");
 const AI_ROLE_USERNAMES = new Set([WHY_ASSISTANT_USERNAME, QUESTION_ASSISTANT_USERNAME]);
+const bibleTopicSearchWindows = new Map<number, number[]>();
 const IMAGE_WEBP_QUALITY = 82;
 const IMAGE_WEBP_EFFORT = 5;
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
@@ -754,7 +765,7 @@ function cleanAiError(error: unknown) {
   return String(error || "AI request failed").slice(0, 1000);
 }
 
-function parseAiVerseReferences(input: string) {
+function parseAiVerseReferences(input: string, limit = 3) {
   const seen = new Set<string>();
   const references: string[] = [];
   for (const rawLine of input.split(/\n|;|；/g)) {
@@ -766,9 +777,21 @@ function parseAiVerseReferences(input: string) {
     if (!cleaned || seen.has(cleaned)) continue;
     seen.add(cleaned);
     references.push(cleaned);
-    if (references.length >= 3) break;
+    if (references.length >= limit) break;
   }
   return references;
+}
+
+function bibleTopicSearchAllowed(accountId: number, limit: number) {
+  const cutoff = Date.now() - 60_000;
+  const recent = (bibleTopicSearchWindows.get(accountId) || []).filter((timestamp) => timestamp >= cutoff);
+  if (recent.length >= limit) {
+    bibleTopicSearchWindows.set(accountId, recent);
+    return false;
+  }
+  recent.push(Date.now());
+  bibleTopicSearchWindows.set(accountId, recent);
+  return true;
 }
 
 function serializeAiSuggestion(row: {
@@ -2508,6 +2531,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     isDefault: channel.isDefault,
     directKey: channel.directKey,
     canManage: viewer ? await canManageChannel(viewer.accountId, channelId) : undefined,
+    canWrite: viewer ? await canWriteChannel(viewer.accountId, channelId) : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     hasPrayerItems: prayerCount > 0,
     memberCount: channel._count.members,
@@ -4656,7 +4680,7 @@ function buildRelatedVersesContext(message: Message & { sender: Actor }, previou
   return lines.join("\n").slice(0, 5000);
 }
 
-async function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string, contextText: string) {
+async function callDeepSeekBibleReferences(settings: AiSettingsDTO, apiKey: string, systemPrompt: string, contextText: string, limit: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -4669,7 +4693,7 @@ async function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string
       body: JSON.stringify({
         model: settings.model,
         messages: [
-          { role: "system", content: settings.promptCommand },
+          { role: "system", content: systemPrompt },
           { role: "user", content: contextText }
         ],
         thinking: { type: "disabled" },
@@ -4684,12 +4708,16 @@ async function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string
     }
     const responseText = String(payload?.choices?.[0]?.message?.content || "").trim();
     if (!responseText) throw new Error("DeepSeek returned empty content");
-    const references = parseAiVerseReferences(responseText);
+    const references = parseAiVerseReferences(responseText, limit);
     if (!references.length) throw new Error("DeepSeek did not return verse references");
     return { responseText, references };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string, contextText: string) {
+  return callDeepSeekBibleReferences(settings, apiKey, settings.promptCommand, contextText, 3);
 }
 
 app.get("/api/admin/ai-settings", { preHandler: requireAdmin }, async () => {
@@ -4928,6 +4956,57 @@ app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request) => {
     return { success: true, result };
   } catch {
     return { success: false, message: "暂时找不到这处经文" };
+  }
+});
+
+app.get("/api/bible/catalog", { preHandler: requireAuth }, async () => {
+  const result: BibleCatalogDTO = bibleCatalog();
+  return { success: true, result };
+});
+
+app.get("/api/bible/search", { preHandler: requireAuth }, async (request) => {
+  const query = z
+    .object({
+      query: z.string().min(1).max(200),
+      offset: z.coerce.number().int().min(0).default(0),
+      limit: z.coerce.number().int().min(1).max(50).default(50)
+    })
+    .parse(request.query);
+  const result: BibleTextSearchDTO = searchBibleText(query.query, query.offset, query.limit);
+  return { success: true, result };
+});
+
+app.post("/api/bible/related", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ query: z.string().trim().min(2).max(200) }).parse(request.body);
+  const aiSettings = await loadAiSettings();
+  const settings = aiSettings.value;
+  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
+  if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
+  if (!bibleTopicSearchAllowed(auth.accountId, settings.userLimitPerMinute)) {
+    return reply.code(429).send({ success: false, message: "主题检索太频繁了，请稍后再试。" });
+  }
+  try {
+    const generated = await callDeepSeekBibleReferences(settings, apiKey, BIBLE_TOPIC_SEARCH_PROMPT, `用户想查找关于“${body.query}”的经文。`, 10);
+    const seen = new Set<string>();
+    const results: BibleLookupDTO[] = [];
+    for (const reference of generated.references) {
+      try {
+        const lookup = lookupBibleReference(reference);
+        if (!lookup.verses.length || seen.has(lookup.normalizedReference)) continue;
+        seen.add(lookup.normalizedReference);
+        results.push(lookup);
+        if (results.length >= 6) break;
+      } catch {
+        // AI references must resolve against the bundled Bible before being returned.
+      }
+    }
+    if (!results.length) throw new Error("AI did not return locally valid Bible references");
+    const result: BibleRelatedSearchDTO = { query: body.query, results };
+    return { success: true, result };
+  } catch (error) {
+    request.log.warn({ error }, "Bible topic search failed");
+    return reply.code(502).send({ success: false, message: auth.isAdmin ? `主题检索失败：${cleanAiError(error)}` : "主题检索暂时不可用，请稍后重试。" });
   }
 });
 

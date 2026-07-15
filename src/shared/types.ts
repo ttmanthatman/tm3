@@ -184,6 +184,7 @@ export interface ChannelDTO {
   isDefault: boolean;
   directKey?: string | null;
   canManage?: boolean;
+  canWrite?: boolean;
   canPin?: boolean;
   hasPrayerItems?: boolean;
   memberCount: number;
@@ -398,6 +399,46 @@ export interface BibleLookupDTO {
   translation: string;
   sourceId: string;
   verses: BibleVerseLineDTO[];
+}
+
+export interface BibleBookCatalogDTO {
+  code: string;
+  name: string;
+  chapterCount: number;
+}
+
+export interface BibleCatalogDTO {
+  translation: string;
+  sourceId: string;
+  oldTestament: BibleBookCatalogDTO[];
+  newTestament: BibleBookCatalogDTO[];
+}
+
+export type BibleTextSearchMode = "phrase" | "allTerms";
+
+export interface BibleTextMatchRangeDTO {
+  start: number;
+  end: number;
+}
+
+export interface BibleTextSearchItemDTO {
+  verse: BibleVerseLineDTO;
+  matches: BibleTextMatchRangeDTO[];
+}
+
+export interface BibleTextSearchDTO {
+  query: string;
+  mode: BibleTextSearchMode;
+  terms: string[];
+  total: number;
+  offset: number;
+  limit: number;
+  items: BibleTextSearchItemDTO[];
+}
+
+export interface BibleRelatedSearchDTO {
+  query: string;
+  results: BibleLookupDTO[];
 }
 
 export type BibleOutputFormat = "referenceVerseLines" | "continuousText" | "referenceHeader" | "numberedVerses";

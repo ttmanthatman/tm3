@@ -5,11 +5,21 @@ import test from "node:test";
 const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
+const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const server = fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
 
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.app-shell \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+});
+
+test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
+  assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
+  assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
+  assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);
+  assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
+  assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);
+  assert.match(bibleWorkspace, /scrollTop < 220[\s\S]*?loadChapter\(first - 1, true\)[\s\S]*?loadChapter\(last \+ 1\)/);
 });
 
 test("mobile drawers stay above the chat header and their scrim", () => {

@@ -931,6 +931,12 @@ button {
   grid-template-columns: 0 minmax(0, 1fr) 0;
 }
 
+.app-shell.bible-open > .channel-pane,
+.app-shell.bible-open > .chat-pane,
+.app-shell.bible-open > .member-pane {
+  visibility: hidden;
+}
+
 .version-refresh-banner {
   position: fixed;
   top: max(10px, calc(var(--safe-top) + 8px));

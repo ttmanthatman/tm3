@@ -1,5 +1,12 @@
 import biblePayload from "./cmn-cu89s.json" with { type: "json" };
-import type { BibleLookupDTO, BibleVerseLineDTO } from "../../shared/types.js";
+import type {
+  BibleCatalogDTO,
+  BibleLookupDTO,
+  BibleTextMatchRangeDTO,
+  BibleTextSearchDTO,
+  BibleTextSearchItemDTO,
+  BibleVerseLineDTO
+} from "../../shared/types.js";
 
 type BibleBook = {
   code: string;
@@ -105,6 +112,7 @@ const BOOKS: BibleBook[] = [
 
 const payload = biblePayload as BiblePayload;
 const bookByCode = new Map(BOOKS.map((book) => [book.code, book]));
+const bookOrder = new Map(BOOKS.map((book, index) => [book.code, index]));
 const startAliases = BOOKS.flatMap((book) => [book.chineseName, book.code, ...book.aliases].map((alias) => ({ alias: normalizeBook(alias), book })))
   .filter((item) => item.alias)
   .sort((left, right) => right.alias.length - left.alias.length);
@@ -124,6 +132,59 @@ for (const [key, verses] of chapterMap.entries()) {
     key,
     verses.sort((left, right) => (left.order === right.order ? left.verse - right.verse : left.order - right.order))
   );
+}
+
+const searchableVerses = [...payload.verses].sort(compareBibleVerses);
+const catalogBooks = BOOKS.map((book) => ({
+  code: book.code,
+  name: book.chineseName,
+  chapterCount: Math.max(0, ...payload.verses.filter((verse) => verse.book === book.code).map((verse) => verse.chapter))
+}));
+const catalog: BibleCatalogDTO = {
+  translation: payload.displayName,
+  sourceId: payload.id,
+  oldTestament: catalogBooks.slice(0, 39),
+  newTestament: catalogBooks.slice(39)
+};
+
+export function bibleCatalog(): BibleCatalogDTO {
+  return catalog;
+}
+
+export function searchBibleText(rawQuery: string, offset = 0, limit = 50): BibleTextSearchDTO {
+  const query = rawQuery.replace(/\u3000/g, " ").replace(/\s+/g, " ").trim();
+  if (!query) throw new Error("empty query");
+  const normalizedQuery = normalizeSearchText(query);
+  const phraseMatches = searchableVerses.flatMap((verse) => {
+    const text = cleanVerseText(verse.text);
+    const matches = findTextMatches(text, [normalizedQuery]);
+    return matches.length ? [{ verse, matches }] : [];
+  });
+  const terms = query.split(/\s+/).map(normalizeSearchText).filter(Boolean);
+  const useAllTerms = phraseMatches.length === 0 && terms.length > 1;
+  const matches = useAllTerms
+    ? searchableVerses.flatMap((verse) => {
+        const text = cleanVerseText(verse.text);
+        const normalizedText = normalizeSearchText(text);
+        if (!terms.every((term) => normalizedText.includes(term))) return [];
+        return [{ verse, matches: findTextMatches(text, terms) }];
+      })
+    : phraseMatches;
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  const items: BibleTextSearchItemDTO[] = matches.slice(safeOffset, safeOffset + safeLimit).map(({ verse, matches: ranges }) => ({
+    verse: serializeVerse(verse),
+    matches: ranges
+  }));
+  return {
+    query,
+    mode: useAllTerms ? "allTerms" : "phrase",
+    terms: useAllTerms ? terms : [normalizedQuery],
+    total: matches.length,
+    offset: safeOffset,
+    limit: safeLimit,
+    items
+  };
 }
 
 export function lookupBibleReference(reference: string): BibleLookupDTO {
@@ -298,7 +359,7 @@ function versesForParsedReference(parsedReference: ParsedReference) {
       result.push(verse);
     }
   }
-  return result.sort((left, right) => (left.order === right.order ? left.verse - right.verse : left.order - right.order));
+  return result.sort(compareBibleVerses);
 }
 
 function versesForPassage(passage: PassageReference) {
@@ -365,6 +426,32 @@ function cleanVerseText(raw: string) {
   return raw.replace(/\u3000/g, "").trim();
 }
 
+function normalizeSearchText(raw: string) {
+  return raw.toLocaleLowerCase();
+}
+
+function findTextMatches(text: string, terms: string[]): BibleTextMatchRangeDTO[] {
+  const normalizedText = normalizeSearchText(text);
+  const ranges: BibleTextMatchRangeDTO[] = [];
+  for (const term of terms) {
+    if (!term) continue;
+    let cursor = 0;
+    while (cursor <= normalizedText.length - term.length) {
+      const start = normalizedText.indexOf(term, cursor);
+      if (start < 0) break;
+      ranges.push({ start, end: start + term.length });
+      cursor = start + Math.max(1, term.length);
+    }
+  }
+  ranges.sort((left, right) => left.start - right.start || left.end - right.end);
+  return ranges.reduce<BibleTextMatchRangeDTO[]>((merged, range) => {
+    const previous = merged[merged.length - 1];
+    if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end);
+    else merged.push({ ...range });
+    return merged;
+  }, []);
+}
+
 function numberGroup(match: RegExpMatchArray, index: number) {
   return Number(match[index] || 0);
 }
@@ -388,6 +475,13 @@ function chapterKey(book: string, chapter: number) {
 
 function canonicalVerseKey(verse: BibleVerse) {
   return `${verse.book}#${verse.chapter}#${verse.verse}#${verse.endVerse}`;
+}
+
+function compareBibleVerses(left: BibleVerse, right: BibleVerse) {
+  return (bookOrder.get(left.book) ?? Number.MAX_SAFE_INTEGER) - (bookOrder.get(right.book) ?? Number.MAX_SAFE_INTEGER)
+    || left.chapter - right.chapter
+    || left.verse - right.verse
+    || left.endVerse - right.endVerse;
 }
 
 function normalizeBook(raw: string) {

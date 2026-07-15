@@ -109,6 +109,7 @@ import ParallaxBackground from "./components/ParallaxBackground.vue";
 import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
+import BibleWorkspace from "./components/BibleWorkspace.vue";
 import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
@@ -517,6 +518,9 @@ const aiSuggestionErrors = ref<Record<number, string>>({});
 const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
 const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
+const bibleOpen = ref(false);
+const bibleTargetChannelId = ref<number | null>(null);
+let bibleSwipeStart: { x: number; y: number } | null = null;
 const bibleSettingsMsg = ref("");
 const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
   { value: "continuousText", label: "连续正文", description: "创世记 1:1 起初，神创造天地。" },
@@ -928,6 +932,10 @@ function handleGlobalEscape(event: KeyboardEvent) {
     return;
   }
   if (event.key !== "Escape") return;
+  if (bibleOpen.value) {
+    bibleOpen.value = false;
+    return;
+  }
   if (previewMessage.value) {
     closePreviewMessage();
     return;
@@ -1189,6 +1197,14 @@ onBeforeUnmount(() => {
 
 const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
+const bibleTargetChannel = computed(() => store.channels.find((channel) => channel.id === bibleTargetChannelId.value) || null);
+const bibleCanSend = computed(() => !!bibleTargetChannel.value && bibleTargetChannel.value.kind !== "music" && bibleTargetChannel.value.canWrite !== false);
+const bibleSendUnavailableReason = computed(() => {
+  if (!bibleTargetChannel.value) return "进入圣经前的聊天室已不可用";
+  if (bibleTargetChannel.value.kind === "music") return "音乐频道不能发送文字经文";
+  if (bibleTargetChannel.value.canWrite === false) return "你在当前频道没有发送权限";
+  return "";
+});
 const forwardTargetChannels = computed(() =>
   store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
 );
@@ -3621,6 +3637,56 @@ function chooseActiveComposerSuggestion() {
   }
   const command = matchingSlashCommands.value[index];
   if (command) chooseSlashCommand(command);
+}
+
+function openBibleWorkspace() {
+  showChannels.value = false;
+  showMembers.value = false;
+  bibleTargetChannelId.value = currentChannel.value?.id || null;
+  bibleOpen.value = true;
+}
+
+function closeBibleWorkspace() {
+  bibleOpen.value = false;
+}
+
+function handleBibleSwipeStart(event: TouchEvent) {
+  if (bibleOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
+  const touch = event.touches[0];
+  const target = event.target as HTMLElement | null;
+  if (!touch || touch.clientX <= 20 || target?.closest("button, input, textarea, select, a, video, audio, [contenteditable='true'], [role='button'], [data-no-bible-swipe]")) {
+    bibleSwipeStart = null;
+    return;
+  }
+  bibleSwipeStart = { x: touch.clientX, y: touch.clientY };
+}
+
+function handleBibleSwipeEnd(event: TouchEvent) {
+  const touch = event.changedTouches[0];
+  if (!touch || !bibleSwipeStart) return;
+  const deltaX = touch.clientX - bibleSwipeStart.x;
+  const deltaY = touch.clientY - bibleSwipeStart.y;
+  bibleSwipeStart = null;
+  if (deltaX >= 64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) openBibleWorkspace();
+}
+
+async function sendBiblePassage(lookup: BibleLookupDTO) {
+  const channel = bibleTargetChannel.value;
+  if (!channel) throw new Error("进入圣经前的聊天室已不可用");
+  if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
+  if (!store.socket?.connected) throw new Error("聊天室连接尚未恢复，请稍后重试");
+  const body = lookup.verses.map((verse) => verse.text).join("");
+  const content = `${escapeHtmlText(lookup.normalizedReference)}<br>“${escapeHtmlText(body)}”<br>——${escapeHtmlText(lookup.translation)}`;
+  await new Promise<void>((resolve, reject) => {
+    store.socket?.emit(
+      "message:send",
+      { channelId: channel.id, content, type: "text", replyToId: null },
+      (ack: { success?: boolean; message?: string }) => {
+        if (ack?.success) resolve();
+        else reject(new Error(ack?.message || "发送失败，请重试"));
+      }
+    );
+  });
 }
 
 async function sendText() {
@@ -9012,13 +9078,22 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed }" :style="appearanceStyle">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen }" :style="appearanceStyle">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
     </section>
 
-    <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
+    <BibleWorkspace
+      :open="bibleOpen"
+      :channel-name="bibleTargetChannel?.name || '聊天室'"
+      :can-send="bibleCanSend"
+      :send-unavailable-reason="bibleSendUnavailableReason"
+      :send-passage="sendBiblePassage"
+      @close="closeBibleWorkspace"
+    />
+
+    <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }" :inert="bibleOpen" :aria-hidden="bibleOpen">
       <header class="pane-head">
         <strong>聊天室</strong>
         <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
@@ -9091,7 +9166,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section ref="chatPane" class="chat-pane">
+    <section ref="chatPane" class="chat-pane" :inert="bibleOpen" :aria-hidden="bibleOpen" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -9241,6 +9316,7 @@ async function toggleVirtual(character: any) {
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
+        <button v-if="!showFavorites" class="icon-btn" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <div v-if="!showFavorites" class="message-font-control" data-message-font-menu>
           <button
             v-if="musicScoreTriggerVisible"
@@ -10080,7 +10156,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </section>
 
-    <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
+    <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }" :inert="bibleOpen" :aria-hidden="bibleOpen">
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
