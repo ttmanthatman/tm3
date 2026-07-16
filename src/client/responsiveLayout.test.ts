@@ -26,6 +26,9 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(bibleWorkspace, />搜索历史<[\s\S]*?>清空</);
   assert.match(bibleWorkspace, /matchingTopicHistory[\s\S]*?查看历史[\s\S]*?追加生成/);
   assert.match(app, /<BibleWorkspace[\s\S]*?:account-id="store\.account\?\.id \|\| 0"/);
+  assert.match(app, /class="inline-bible-reader-link"[\s\S]*?openBibleReferenceInWorkspace/);
+  assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext \}\)/);
+  assert.match(bibleWorkspace, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
 });
 
 test("mobile drawers stay above the chat header and their scrim", () => {
@@ -227,7 +230,7 @@ test("song control stays to the left of the font or score control", () => {
   assert.doesNotMatch(css, /musicScorePageTurn/);
 });
 
-test("activity notices stay inside the fixed chat header as lightweight status text", () => {
+test("notifications stay in the header while live activity moves into its own ticker", () => {
   const headerStart = app.indexOf('<header class="chat-head"');
   const headerEnd = app.indexOf("</header>", headerStart);
   const header = app.slice(headerStart, headerEnd);
@@ -235,11 +238,14 @@ test("activity notices stay inside the fixed chat header as lightweight status t
 
   assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
-  assert.match(app, /title: `\$\{item\.displayName\}正在输入`/);
+  assert.match(afterHeader, /class="chat-activity-ticker"[\s\S]*?activityTickerText/);
+  assert.match(app, /activityTickerItems\([\s\S]*?bibleReaders\.value[\s\S]*?musicListeners\.value[\s\S]*?Object\.values\(store\.typing\)/);
+  assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
+  assert.match(server, /bibleReaderCleanupTimer[\s\S]*?45_000/);
+  assert.match(css, /\.chat-activity-ticker \{[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
+  assert.match(css, /\.chat-activity-track > span \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
-  assert.match(header, /class="typing-dots"[\s\S]*?<span>\.\.\.<\/span>/);
-  assert.match(css, /\.typing-dots > span \{[\s\S]*?animation: typingDotsReveal[\s\S]*?steps\(3, end\)/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
@@ -378,7 +384,7 @@ test("karaoke clock sleeps across iOS page hiding and component exit", () => {
 });
 
 test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
-  assert.match(app, /<\/header>\s*<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
+  assert.match(app, /<\/header>[\s\S]*?<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
   assert.doesNotMatch(lyricsHeader, /music-lyrics-track-title/);
   assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(112px \+ var\(--safe-top\)\);[\s\S]*?border-radius: 0;/);
   assert.match(css, /\.chat-pane > \.music-lyrics-header \{[\s\S]*?z-index: 30;/);

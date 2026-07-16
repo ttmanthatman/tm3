@@ -45,7 +45,10 @@ const props = defineProps<{
   sendPassage: (lookup: BibleLookupDTO) => Promise<void>;
 }>();
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{
+  close: [];
+  "reading-change": [activity: { active: boolean; bookName: string | null }];
+}>();
 
 type TextSegment = { text: string; highlighted: boolean };
 
@@ -70,6 +73,7 @@ const readerError = ref("");
 const readerScroll = ref<HTMLElement | null>(null);
 const visibleChapter = ref(1);
 const targetVerse = ref<BibleReaderTarget | null>(null);
+const linkedTargetVerseKeys = ref<Set<string>>(new Set());
 const selectedVerseKeys = ref<Set<string>>(new Set());
 const selectionAnchorKey = ref<string | null>(null);
 const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
@@ -108,6 +112,17 @@ const headerTitle = computed(() => {
 const textHasMore = computed(() => !!textResult.value && textResult.value.items.length < textResult.value.total);
 const textModeLabel = computed(() => textResult.value?.mode === "allTerms" ? "多关键词匹配" : "连续原文匹配");
 const matchingTopicHistory = computed(() => findBibleTopicHistory(searchHistory.value, topicQuery.value));
+const readingBookName = computed(() => {
+  if (view.value === "reader") return readerBook.value?.name || null;
+  if (view.value === "chapters") return selectedBook.value?.name || null;
+  return null;
+});
+
+watch(
+  [() => props.open, readingBookName],
+  ([open, bookName]) => emit("reading-change", { active: open, bookName: open ? bookName : null }),
+  { immediate: true }
+);
 
 watch(
   () => props.open,
@@ -194,6 +209,7 @@ function resetWorkspaceState() {
   readerChapters.value = {};
   visibleChapter.value = 1;
   targetVerse.value = null;
+  linkedTargetVerseKeys.value = new Set();
   clearVerseSelection();
   searchHistory.value = [];
 }
@@ -397,12 +413,14 @@ function openTopicResult(lookup: BibleLookupDTO) {
 async function openReader(
   book: BibleBookCatalogDTO,
   chapter: number,
-  target: BibleReaderTarget | null = null
+  target: BibleReaderTarget | null = null,
+  linkedTargets: ReadonlySet<string> | null = null
 ) {
   readerBook.value = book;
   readerChapters.value = {};
   readerError.value = "";
   targetVerse.value = target;
+  linkedTargetVerseKeys.value = new Set(linkedTargets || []);
   clearVerseSelection();
   visibleChapter.value = chapter;
   view.value = "reader";
@@ -414,6 +432,35 @@ async function openReader(
   const element = readerScroll.value?.querySelector<HTMLElement>(selector);
   element?.scrollIntoView({ block: target ? "center" : "start" });
 }
+
+async function openLookupContext(lookup: BibleLookupDTO) {
+  const first = lookup.verses[0];
+  if (!first) return;
+  await ensureCatalog();
+  const book = bookForVerse(first);
+  if (!book) {
+    showToast("暂时无法定位这处经文");
+    return;
+  }
+  const targetKeys = new Set<string>();
+  for (const verse of lookup.verses) {
+    if (verse.book !== first.book) continue;
+    for (let number = verse.verse; number <= verse.endVerse; number += 1) {
+      targetKeys.add(bibleVerseKey(book.code, { chapter: verse.chapter, verse: number }));
+    }
+  }
+  await openReader(book, first.chapter, {
+    chapter: first.chapter,
+    verse: first.verse,
+    endVerse: first.endVerse,
+    matches: []
+  }, targetKeys);
+  const extraChapters = [...new Set(lookup.verses.filter((verse) => verse.book === first.book).map((verse) => verse.chapter))]
+    .filter((chapter) => chapter !== first.chapter);
+  await Promise.all(extraChapters.map((chapter) => loadChapter(chapter)));
+}
+
+defineExpose({ openLookupContext });
 
 async function loadChapter(chapter: number, prepend = false) {
   const book = readerBook.value;
@@ -474,6 +521,12 @@ function fragmentMatches(fragment: BibleChapterVerseFragmentDTO) {
 }
 
 function isTargetVerse(verse: BibleVerseLineDTO) {
+  if (readerBook.value && linkedTargetVerseKeys.value.size) {
+    for (let number = verse.verse; number <= verse.endVerse; number += 1) {
+      if (linkedTargetVerseKeys.value.has(bibleVerseKey(readerBook.value.code, { chapter: verse.chapter, verse: number }))) return true;
+    }
+    return false;
+  }
   const target = targetVerse.value;
   return !!target && target.chapter === verse.chapter && verse.verse <= target.endVerse && verse.endVerse >= target.verse;
 }

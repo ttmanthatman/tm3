@@ -71,6 +71,7 @@ import type {
   AiSettingsDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
+  BibleReaderPresenceDTO,
   BibleOutputFormat,
   BibleReferenceLabelMode,
   BibleCombinedPassageMode,
@@ -110,6 +111,7 @@ import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import BibleWorkspace from "./components/BibleWorkspace.vue";
+import { activityTickerItems } from "./activityTicker";
 import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
@@ -203,6 +205,7 @@ const messageFontSize = ref(defaultMessageFontSize);
 const showMessageFontMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
 const musicListeners = ref<MusicListenerDTO[]>([]);
+const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
@@ -524,6 +527,9 @@ const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
 const bibleOpen = ref(false);
 const bibleTargetChannelId = ref<number | null>(null);
+type BibleWorkspaceHandle = { openLookupContext: (lookup: BibleLookupDTO) => Promise<void> };
+const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
+const bibleReadingActivity = ref<{ active: boolean; bookName: string | null }>({ active: false, bookName: null });
 let bibleSwipeStart: { x: number; y: number } | null = null;
 const bibleSettingsMsg = ref("");
 const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
@@ -586,7 +592,7 @@ const channelEditorMsg = ref("");
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
-  kind: "mention" | "typing" | "like";
+  kind: "mention" | "like";
   title: string;
   body: string;
   channelId?: number;
@@ -1081,14 +1087,14 @@ watch(
 );
 
 watch(
-  () => `${store.likeNotifications.map((item) => item.id).join(",")}|${mentionToasts.value.map((item) => item.id).join(",")}|${Object.keys(store.typing).join(",")}`,
+  () => `${store.likeNotifications.map((item) => item.id).join(",")}|${mentionToasts.value.map((item) => item.id).join(",")}`,
   () => {
     topNoticeIndex.value = 0;
     if (topNoticeTimer) {
       window.clearInterval(topNoticeTimer);
       topNoticeTimer = undefined;
     }
-    const noticeCount = store.likeNotifications.length + mentionToasts.value.length + Object.keys(store.typing).length;
+    const noticeCount = store.likeNotifications.length + mentionToasts.value.length;
     if (noticeCount > 1) {
       topNoticeTimer = window.setInterval(() => {
         topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, topNoticeItems.value.length);
@@ -1191,9 +1197,11 @@ onBeforeUnmount(() => {
   stopAllVoicePlayback();
   resetRecording();
   stopPublishingMusicListening();
+  stopPublishingBibleReading();
   store.socket?.off("music:updated", handleMusicUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
-  store.socket?.off("connect", handleMusicSocketConnect);
+  store.socket?.off("bible:readers", handleBibleReaders);
+  store.socket?.off("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
   clearMusicScoreCache();
   disposeMusicAudio();
@@ -1222,9 +1230,12 @@ const filteredMusicTracks = computed(() => {
 const currentMusicTrackIndex = computed(() => sortedMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
-const musicListenerTickerText = computed(() =>
-  musicListeners.value.map((listener) => `${listener.displayName}正在听《${listener.trackTitle}》`).join(" · ")
-);
+const activityStatusItems = computed(() => activityTickerItems(
+  bibleReaders.value,
+  musicListeners.value,
+  Object.values(store.typing)
+));
+const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
 const currentTrackOtherListeners = computed(() =>
   musicListeners.value.filter((listener) => listener.trackId === currentMusicTrack.value?.id && listener.accountId !== store.account?.id)
 );
@@ -1294,15 +1305,6 @@ watch(
     if (trackId !== previousTrackId || lyricsFile !== previousLyricsFile) musicLyricsHeaderSuppressed.value = false;
   }
 );
-const typingNoticeItems = computed<TopNotice[]>(() =>
-  Object.entries(store.typing).map(([actorId, item]) => ({
-    id: `typing-${actorId}`,
-    kind: "typing",
-    title: `${item.displayName}正在输入`,
-    body: currentChannel.value?.name || "当前频道",
-    channelId: store.currentChannelId
-  }))
-);
 const mentionNoticeItems = computed<TopNotice[]>(() =>
   mentionToasts.value.map((toast) => ({
     id: `mention-${toast.id}`,
@@ -1318,7 +1320,7 @@ const likeNoticeItems = computed<TopNotice[]>(() =>
     likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name)
   )
 );
-const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value, ...typingNoticeItems.value]);
+const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value]);
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
 const isAdmin = computed(() => !!store.account?.isAdmin);
 const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
@@ -3675,6 +3677,11 @@ function openBibleWorkspace() {
 
 function closeBibleWorkspace() {
   bibleOpen.value = false;
+}
+
+function handleBibleReadingChange(activity: { active: boolean; bookName: string | null }) {
+  bibleReadingActivity.value = activity;
+  publishBibleReading();
 }
 
 function handleBibleSwipeStart(event: TouchEvent) {
@@ -6572,6 +6579,17 @@ function handleMusicListeners(listeners: MusicListenerDTO[]) {
     : [];
 }
 
+function handleBibleReaders(readers: BibleReaderPresenceDTO[]) {
+  bibleReaders.value = Array.isArray(readers)
+    ? readers.filter(
+        (reader) =>
+          Number.isFinite(reader?.accountId) &&
+          typeof reader?.displayName === "string" &&
+          (reader.bookName === null || typeof reader.bookName === "string")
+      )
+    : [];
+}
+
 function publishMusicListening() {
   store.socket?.emit("music:listening", { trackId: musicPlaying.value ? currentMusicTrack.value?.id || null : null });
 }
@@ -6580,8 +6598,21 @@ function stopPublishingMusicListening() {
   store.socket?.emit("music:listening", { trackId: null });
 }
 
-function handleMusicSocketConnect() {
+function publishBibleReading() {
+  store.socket?.emit("bible:reading", bibleReadingActivity.value);
+}
+
+function stopPublishingBibleReading() {
+  store.socket?.emit("bible:reading", { active: false, bookName: null });
+}
+
+function publishPresenceActivities() {
   publishMusicListening();
+  publishBibleReading();
+}
+
+function handleActivitySocketConnect() {
+  publishPresenceActivities();
 }
 
 function attachMusicSocket() {
@@ -6589,11 +6620,13 @@ function attachMusicSocket() {
   store.socket?.on("music:updated", handleMusicUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.on("music:listeners", handleMusicListeners);
-  store.socket?.off("connect", handleMusicSocketConnect);
-  store.socket?.on("connect", handleMusicSocketConnect);
+  store.socket?.off("bible:readers", handleBibleReaders);
+  store.socket?.on("bible:readers", handleBibleReaders);
+  store.socket?.off("connect", handleActivitySocketConnect);
+  store.socket?.on("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
-  musicListenerHeartbeatTimer = window.setInterval(publishMusicListening, 15_000);
-  publishMusicListening();
+  musicListenerHeartbeatTimer = window.setInterval(publishPresenceActivities, 15_000);
+  publishPresenceActivities();
 }
 
 function adjustMessageFontSize(delta: number) {
@@ -7823,6 +7856,14 @@ async function toggleBibleReference(scope: string | number, reference: string) {
   } finally {
     setBibleReferenceBusy(key, false);
   }
+}
+
+async function openBibleReferenceInWorkspace(scope: string | number, reference: string) {
+  const lookup = bibleReferenceLookup(scope, reference);
+  if (!lookup?.verses.length) return;
+  openBibleWorkspace();
+  await nextTick();
+  await bibleWorkspace.value?.openLookupContext(lookup);
 }
 
 async function togglePrayerAiSuggestions(message: MessageDTO) {
@@ -9145,6 +9186,7 @@ async function toggleVirtual(character: any) {
     </section>
 
     <BibleWorkspace
+      ref="bibleWorkspace"
       :open="bibleOpen"
       :account-id="store.account?.id || 0"
       :channel-name="bibleTargetChannel?.name || '聊天室'"
@@ -9152,6 +9194,7 @@ async function toggleVirtual(character: any) {
       :send-unavailable-reason="bibleSendUnavailableReason"
       :send-passage="sendBiblePassage"
       @close="closeBibleWorkspace"
+      @reading-change="handleBibleReadingChange"
     />
 
     <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }" :inert="bibleOpen" :aria-hidden="bibleOpen">
@@ -9347,14 +9390,12 @@ async function toggleVirtual(character: any) {
           <small v-if="showFavorites">集中查看所有收藏，长按消息可跳转到聊天上下文</small>
           <div v-else-if="activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
             <button
-              class="chat-status-text"
-              :class="{ clickable: activeTopNotice.kind !== 'typing' }"
+              class="chat-status-text clickable"
               type="button"
-              :disabled="activeTopNotice.kind === 'typing'"
-              :aria-label="activeTopNotice.kind === 'typing' ? `${activeTopNotice.title}...` : activeTopNotice.title"
+              :aria-label="activeTopNotice.title"
               @click="openTopNotice(activeTopNotice)"
             >
-              <span class="chat-status-copy">{{ activeTopNotice.title }}<span v-if="activeTopNotice.kind === 'typing'" class="typing-dots" aria-hidden="true"><span>...</span></span></span>
+              <span class="chat-status-copy">{{ activeTopNotice.title }}</span>
             </button>
             <button
               v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
@@ -9363,12 +9404,6 @@ async function toggleVirtual(character: any) {
               aria-label="关闭点赞提醒"
               @click="dismissLikeNotification(activeTopNotice.notificationId)"
             ><X :size="11" /></button>
-          </div>
-          <div v-else-if="musicListenerTickerText" class="music-listener-marquee" aria-live="polite">
-            <span class="music-listener-marquee-track">
-              <span>{{ musicListenerTickerText }}</span>
-              <span aria-hidden="true">{{ musicListenerTickerText }}</span>
-            </span>
           </div>
           <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
         </div>
@@ -9416,6 +9451,16 @@ async function toggleVirtual(character: any) {
         <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
         </template>
       </header>
+
+      <section v-if="!showFavorites && activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
+        <span class="chat-activity-orbit" aria-hidden="true"></span>
+        <span class="chat-activity-viewport">
+          <span class="chat-activity-track">
+            <span>{{ activityTickerText }}</span>
+            <span aria-hidden="true">{{ activityTickerText }}</span>
+          </span>
+        </span>
+      </section>
 
       <Transition name="music-lyrics-panel">
         <MusicLyricsHeader
@@ -9715,7 +9760,7 @@ async function toggleVirtual(character: any) {
                             <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'chain'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
                             <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference)?.verses.length">
                               <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference)?.translation }}</small>
-                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference), segment.reference) }}</span>
+                              <span class="inline-bible-passage"><span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'chain'), segment.reference), segment.reference) }}</span><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(messageBibleReferenceScope(row.message, 'chain'), segment.reference)"><BookOpen :size="15" /></button></span>
                             </template>
                             <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
                           </span>
@@ -9750,7 +9795,7 @@ async function toggleVirtual(character: any) {
                             <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
                             <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
                               <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
-                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
+                              <span class="inline-bible-passage"><span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(messageBibleReferenceScope(row.message, 'content'), segment.reference)"><BookOpen :size="15" /></button></span>
                             </template>
                             <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
                           </span>
@@ -9809,7 +9854,7 @@ async function toggleVirtual(character: any) {
                               <p v-if="isBibleReferenceBusy(suggestion.id, reference)" class="prayer-ai-empty">正在查找经文...</p>
                               <template v-else-if="bibleReferenceLookup(suggestion.id, reference)?.verses.length">
                                 <small>{{ bibleReferenceLookup(suggestion.id, reference)?.translation }}</small>
-                                <p class="formatted-bible-text">{{ formatBibleLookup(bibleReferenceLookup(suggestion.id, reference), reference) }}</p>
+                                <div class="inline-bible-passage"><p class="formatted-bible-text">{{ formatBibleLookup(bibleReferenceLookup(suggestion.id, reference), reference) }}</p><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(suggestion.id, reference)"><BookOpen :size="15" /></button></div>
                               </template>
                               <p v-else class="prayer-ai-empty">暂时找不到这处经文</p>
                             </div>
@@ -9995,7 +10040,7 @@ async function toggleVirtual(character: any) {
                             <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
                             <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
                               <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
-                              <span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span>
+                              <span class="inline-bible-passage"><span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(messageBibleReferenceScope(row.message, 'content'), segment.reference)"><BookOpen :size="15" /></button></span>
                             </template>
                             <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
                           </span>

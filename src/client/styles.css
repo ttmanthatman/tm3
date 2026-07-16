@@ -1955,7 +1955,7 @@ button {
   height: 100%;
   overflow: hidden;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
   background:
     var(--wallpaper-image) var(--wallpaper-position) / var(--wallpaper-size) var(--wallpaper-repeat),
     var(--chat-bg);
@@ -1991,6 +1991,64 @@ button {
 .chat-pane > .chat-head {
   z-index: 21;
   overflow: visible;
+}
+
+.chat-activity-ticker {
+  grid-row: 2;
+  min-width: 0;
+  min-height: 31px;
+  padding: 5px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--panel) 72%, transparent), color-mix(in srgb, var(--panel) 54%, transparent)),
+    radial-gradient(circle at 14% 50%, color-mix(in srgb, var(--accent) 15%, transparent), transparent 44%);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.22), 0 5px 16px rgba(15, 23, 42, 0.045);
+  backdrop-filter: blur(14px) saturate(135%);
+}
+
+.chat-activity-orbit {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #fb7185, #f59e0b 34%, #22c55e 66%, #38bdf8);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 8%, transparent), 0 0 12px rgba(56, 189, 248, 0.28);
+}
+
+.chat-activity-viewport {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+
+.chat-activity-track {
+  width: max-content;
+  display: flex;
+  gap: 56px;
+  animation: chatActivityMarquee 17s linear infinite;
+}
+
+.chat-activity-track > span {
+  color: transparent;
+  background: linear-gradient(90deg, #e11d48, #ea580c, #16a34a, #0284c7, #7c3aed, #e11d48);
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.015em;
+  animation: musicListenerColors 6s linear infinite;
+}
+
+@keyframes chatActivityMarquee {
+  to { transform: translateX(calc(-50% - 28px)); }
 }
 
 .chat-pane > .music-lyrics-header {
@@ -2239,7 +2297,7 @@ button {
 }
 
 .pin-card {
-  grid-row: 3;
+  grid-row: 4;
   display: grid;
   color: #7a4b00;
   background: #fff7df;
@@ -2450,7 +2508,7 @@ button {
 }
 
 .messages-viewport {
-  grid-row: 4;
+  grid-row: 5;
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -3606,6 +3664,36 @@ button {
   font-size: var(--message-content-font-size);
   line-height: 1.55;
   white-space: pre-wrap;
+}
+
+.inline-bible-passage {
+  min-width: 0;
+}
+
+.inline-bible-passage .formatted-bible-text {
+  display: inline;
+}
+
+.inline-bible-reader-link {
+  width: 25px;
+  height: 25px;
+  margin-left: 6px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 7px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -5px;
+  color: color-mix(in srgb, var(--accent) 84%, #0f3f5f 16%);
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel));
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--accent) 12%, transparent);
+  cursor: pointer;
+}
+
+.inline-bible-reader-link:hover {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel));
 }
 
 .inline-bible-empty {
@@ -8086,6 +8174,7 @@ button.admin-object-row:focus-visible {
 }
 
 .message-selection-bar {
+  grid-row: 3;
   min-height: 50px;
   padding: 8px 12px;
   display: flex;
@@ -8407,8 +8496,14 @@ button.admin-object-row:focus-visible {
   }
 
   .music-player-listener-track > span + span,
-  .music-listener-marquee-track > span + span {
+  .music-listener-marquee-track > span + span,
+  .chat-activity-track > span + span {
     display: none;
+  }
+
+  .chat-activity-track,
+  .chat-activity-track > span {
+    animation: none;
   }
 }
 

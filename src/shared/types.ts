@@ -210,6 +210,12 @@ export interface MusicListenerDTO {
   trackTitle: string;
 }
 
+export interface BibleReaderPresenceDTO {
+  accountId: number;
+  displayName: string;
+  bookName: string | null;
+}
+
 export interface MusicLyricCueDTO {
   index: number;
   startMs: number;

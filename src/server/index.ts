@@ -34,6 +34,7 @@ import type {
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
+  BibleReaderPresenceDTO,
   BibleRelatedSearchDTO,
   BibleTextSearchDTO,
   ChainPayload,
@@ -490,6 +491,7 @@ const online = new Map<string, { actorId: number; accountId: number; username: s
 const accountSocketIds = new Map<number, Set<string>>();
 const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
+const bibleReaders = new Map<string, BibleReaderPresenceDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
 let pushReady = false;
 
@@ -2285,6 +2287,14 @@ function broadcastMusicListeners() {
   io.emit("music:listeners", listeners);
 }
 
+function broadcastBibleReaders() {
+  const readers = [...bibleReaders.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .filter((reader, index, all) => all.findIndex((candidate) => candidate.accountId === reader.accountId) === index)
+    .map(({ updatedAt: _updatedAt, ...reader }) => reader);
+  io.emit("bible:readers", readers);
+}
+
 const musicListenerCleanupTimer = setInterval(() => {
   const staleBefore = Date.now() - 45_000;
   let changed = false;
@@ -2296,6 +2306,18 @@ const musicListenerCleanupTimer = setInterval(() => {
   if (changed) broadcastMusicListeners();
 }, 15_000);
 musicListenerCleanupTimer.unref();
+
+const bibleReaderCleanupTimer = setInterval(() => {
+  const staleBefore = Date.now() - 45_000;
+  let changed = false;
+  for (const [socketId, reader] of bibleReaders) {
+    if (reader.updatedAt >= staleBefore) continue;
+    bibleReaders.delete(socketId);
+    changed = true;
+  }
+  if (changed) broadcastBibleReaders();
+}, 15_000);
+bibleReaderCleanupTimer.unref();
 
 function disconnectSessions(sessionIds: string[]) {
   const targets = new Set(sessionIds);
@@ -6836,6 +6858,7 @@ registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin);
 
 app.addHook("onClose", async () => {
   clearInterval(musicListenerCleanupTimer);
+  clearInterval(bibleReaderCleanupTimer);
   multicharManager.stopAll();
 });
 
@@ -6979,9 +7002,33 @@ io.on("connection", async (socket: Socket) => {
     broadcastMusicListeners();
   });
 
+  socket.on("bible:reading", async (data: unknown) => {
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    const body = z.object({ active: z.boolean(), bookName: z.string().trim().min(1).max(40).nullable() }).safeParse(data);
+    if (!body.success || !body.data.active) {
+      bibleReaders.delete(socket.id);
+      broadcastBibleReaders();
+      return;
+    }
+    const existing = bibleReaders.get(socket.id);
+    if (existing?.bookName === body.data.bookName) {
+      existing.updatedAt = Date.now();
+      return;
+    }
+    bibleReaders.set(socket.id, {
+      accountId: currentAuth.accountId,
+      displayName: account.displayName,
+      bookName: body.data.bookName,
+      updatedAt: Date.now()
+    });
+    broadcastBibleReaders();
+  });
+
   socket.on("disconnect", async () => {
     online.delete(socket.id);
     const musicListenerChanged = musicListeners.delete(socket.id);
+    const bibleReaderChanged = bibleReaders.delete(socket.id);
     const set = accountSocketIds.get(account.id);
     let isOffline = false;
     if (set) {
@@ -7001,6 +7048,7 @@ io.on("connection", async (socket: Socket) => {
     }
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
+    if (bibleReaderChanged) broadcastBibleReaders();
   });
 });
 
