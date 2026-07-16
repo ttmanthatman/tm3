@@ -1,10 +1,17 @@
-export const APP_VERSION = "1.1.0";
+export const APP_VERSION = "1.2.0";
 
 export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天消息中的经文引用现在可展开查看正文；点击书本图标会进入电子圣经并自动定位、高亮所引用的一节、多节连续范围或每一处非连续引用。",
+  "顶栏下方新增半透明彩色实时动态条，统一展示正在阅读圣经、正在听歌和正在输入；多人输入会合并为一条提示，动态覆盖消息区且不再挤压聊天气泡。",
+  "移动端聊天恢复全宽布局；空间不足时频道副标题才会平滑滚动，避免顶栏文字被截断。",
+  "经文跳转会等待圣经目录加载完成再定位，修复首次点击偶发的“暂时无法定位这处经文”。通知入口改为黄底轮显“请打开通知”，虚拟角色标记改为浅天蓝色“诶哎”。"
+] as const;
+
+const RELEASE_1_1_0_NOTES = [
   "电子圣经恢复原始经文数据中的自然分段、小标题和诗歌排版，连续阅读时更接近纸质和合本的结构。",
   "经文支持点选多节，并可按住 Shift 跨章节范围选中；选中后可统一复制，单节仍可直接发送到聊天室。",
   "原文与主题搜索结果支持逐条复制和整体复制，复制内容会保留清晰的经文出处。",
@@ -571,9 +578,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.1.0",
+    version: "1.2.0",
     date: "2026-07-16",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.1.0",
+    date: "2026-07-16",
+    notes: RELEASE_1_1_0_NOTES
   },
   {
     version: "1.0.2",
