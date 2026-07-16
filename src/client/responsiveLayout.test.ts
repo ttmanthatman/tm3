@@ -405,11 +405,13 @@ test("playlist is composited above message water effects", () => {
   assert.match(css, /\.messages-viewport\.music-playlist-open \{[\s\S]*?z-index: [7-9];/);
 });
 
-test("wallpaper labels expose adaptive high-contrast colors", () => {
+test("wallpaper labels adapt sender names without changing system notices", () => {
   assert.match(app, /"--wallpaper-label-text": wallpaperLabelText\.value/);
   assert.match(app, /syncWallpaperLabelToneFromImage/);
   assert.match(css, /\.sender-line \{[\s\S]*?color: var\(--wallpaper-label-text\);[\s\S]*?text-shadow: var\(--wallpaper-label-shadow\);/);
-  assert.match(css, /\.message-row\.system \.bubble,[\s\S]*?color: var\(--wallpaper-label-text\);[\s\S]*?text-shadow: var\(--wallpaper-label-shadow\);/);
+  const systemBubbleRule = css.match(/\.message-row\.system \.bubble,\s*\.message-row\.mine\.system \.bubble \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(systemBubbleRule, /color: var\(--muted\);/);
+  assert.doesNotMatch(systemBubbleRule, /text-shadow|font-weight/);
 });
 
 test("reaction details use distinct polished icon treatments", () => {

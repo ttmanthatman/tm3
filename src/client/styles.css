@@ -3175,10 +3175,8 @@ button {
 .message-row.mine.system .bubble {
   padding: 0;
   background: transparent;
-  color: var(--wallpaper-label-text);
-  text-shadow: var(--wallpaper-label-shadow);
+  color: var(--muted);
   font-size: 13px;
-  font-weight: 650;
   text-align: center;
   box-shadow: none;
 }
