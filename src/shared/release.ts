@@ -1,10 +1,17 @@
-export const APP_VERSION = "1.0.2";
+export const APP_VERSION = "1.1.0";
 
 export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "电子圣经恢复原始经文数据中的自然分段、小标题和诗歌排版，连续阅读时更接近纸质和合本的结构。",
+  "经文支持点选多节，并可按住 Shift 跨章节范围选中；选中后可统一复制，单节仍可直接发送到聊天室。",
+  "原文与主题搜索结果支持逐条复制和整体复制，复制内容会保留清晰的经文出处。",
+  "新增按账号保存的独立经文收藏夹：可收藏选中经节、在正文中高亮显示，并可从圣经首页查看、复制、定位或移除；不会加入聊天室收藏。"
+] as const;
+
+const RELEASE_1_0_2_NOTES = [
   "电子圣经会按账号保存阅读位置、检索模式、检索结果和搜索历史，重新进入后可以继续上次进度。",
   "撤回消息会同时移除自身引用预览，并让昵称和撤回提示根据壁纸明暗自动使用高对比文字。",
   "重新设计消息点赞与收藏详情，以更清晰的图标、颜色、间距和背景呈现成员反馈。",
@@ -564,9 +571,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.0.2",
+    version: "1.1.0",
     date: "2026-07-16",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.0.2",
+    date: "2026-07-16",
+    notes: RELEASE_1_0_2_NOTES
   },
   {
     version: "1.0.1",
