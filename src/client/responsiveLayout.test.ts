@@ -28,7 +28,7 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
   assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
   assert.match(app, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
-  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
+  assert.doesNotMatch(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
   assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);
   assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
   assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);
@@ -241,6 +241,7 @@ test("song control stays to the left of the font or score control", () => {
   const headerStart = app.indexOf('<header class="chat-head"');
   const headerEnd = app.indexOf("</header>", headerStart);
   const header = app.slice(headerStart, headerEnd);
+  assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
   assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="message-font-control"'));
   assert.match(header, /v-if="musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
   assert.match(header, /'page-turning': musicPlaying/);
@@ -250,7 +251,7 @@ test("song control stays to the left of the font or score control", () => {
   assert.doesNotMatch(css, /musicScorePageTurn/);
 });
 
-test("notifications stay in the header while live activity moves into its own ticker", () => {
+test("pinned content and live activity share one ordered notice stack", () => {
   const headerStart = app.indexOf('<header class="chat-head"');
   const headerEnd = app.indexOf("</header>", headerStart);
   const header = app.slice(headerStart, headerEnd);
@@ -258,17 +259,24 @@ test("notifications stay in the header while live activity moves into its own ti
 
   assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
-  assert.match(afterHeader, /class="chat-activity-ticker"[\s\S]*?activityTickerText/);
-  const tickerStart = afterHeader.indexOf('class="chat-activity-ticker"');
-  const tickerEnd = afterHeader.indexOf("</section>", tickerStart);
-  const ticker = afterHeader.slice(tickerStart, tickerEnd);
+  assert.match(afterHeader, /class="chat-notice-stack"[\s\S]*?class="pinned-ticker-row"[\s\S]*?pinnedText[\s\S]*?pinnedTickerBody[\s\S]*?class="chat-activity-ticker"[\s\S]*?activityTickerText/);
+  const noticeStart = afterHeader.indexOf('class="chat-notice-stack"');
+  const noticeEnd = afterHeader.indexOf("</section>", noticeStart);
+  const notice = afterHeader.slice(noticeStart, noticeEnd);
+  const tickerStart = notice.indexOf('class="chat-activity-ticker"');
+  const ticker = notice.slice(tickerStart);
+  assert.match(notice, /@click="openPinnedFromTicker"/);
+  assert.match(app, /function openPinnedFromTicker\(\)[\s\S]*?canPinCurrentChannel\.value[\s\S]*?openPinnedEditor\(\)[\s\S]*?pinnedExpanded\.value = true/);
+  assert.doesNotMatch(notice, /pinned-image|block\.type === 'image'/);
   assert.doesNotMatch(ticker, /chat-activity-orbit/);
   assert.equal(ticker.match(/\{\{ activityTickerText \}\}/g)?.length, 1);
   assert.match(app, /activityTickerItems\([\s\S]*?bibleReaders\.value[\s\S]*?musicListeners\.value[\s\S]*?Object\.values\(store\.typing\)/);
   assert.match(app, /function handleActivitySocketConnect\(\)[\s\S]*?publishPresenceActivities\(\)[\s\S]*?setTimeout\([\s\S]*?publishPresenceActivities\(\)[\s\S]*?700/);
   assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
   assert.match(server, /bibleReaderCleanupTimer[\s\S]*?45_000/);
-  assert.match(css, /\.chat-activity-ticker \{[\s\S]*?position: absolute;[\s\S]*?z-index: 20;[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
+  assert.match(css, /\.chat-notice-stack \{[\s\S]*?grid-row: 4;[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
+  const activityTickerRule = css.match(/\.chat-activity-ticker \{([^}]*)\}/)?.[1] ?? "";
+  assert.doesNotMatch(activityTickerRule, /position: absolute;/);
   assert.match(css, /\.chat-activity-track > span \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);

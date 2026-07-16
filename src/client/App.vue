@@ -1475,6 +1475,13 @@ const pinnedSummary = computed(() => {
   const text = blocks.filter((block) => block.type === "text").map((block) => block.text).join(" ").replace(/\s+/g, " ").trim();
   return labels.length ? labels.join(" · ") : text.slice(0, 42) || "点击查看";
 });
+const pinnedTickerBody = computed(() =>
+  pinnedBlocks.value
+    .filter((block) => block.type === "text")
+    .map((block) => block.text.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("　")
+);
 const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.exists && item.url));
@@ -6727,9 +6734,13 @@ async function collapsePinned() {
   }).catch(() => undefined);
 }
 
-function togglePinned() {
-  if (pinnedExpanded.value) void collapsePinned();
-  else pinnedExpanded.value = true;
+function openPinnedFromTicker() {
+  if (!visiblePinned.value) return;
+  if (canPinCurrentChannel.value) {
+    openPinnedEditor();
+    return;
+  }
+  pinnedExpanded.value = true;
 }
 
 function clonePinnedBlock(block: PinnedContentBlockDTO): PinnedContentBlockDTO {
@@ -9426,12 +9437,12 @@ async function toggleVirtual(character: any) {
           </div>
           <OverflowMarquee v-else-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
+        <button v-if="!showFavorites" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <div v-if="!showFavorites" class="music-player-control" data-music-player>
           <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer($event)" aria-label="打开音乐播放器">
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
-        <button v-if="!showFavorites" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <div v-if="!showFavorites" class="message-font-control" data-message-font-menu>
           <button
             v-if="musicScoreTriggerVisible"
@@ -9471,10 +9482,32 @@ async function toggleVirtual(character: any) {
         </template>
       </header>
 
-      <section v-if="!showFavorites && activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
-        <span class="chat-activity-viewport">
-          <span class="chat-activity-track">
-            <span>{{ activityTickerText }}</span>
+      <section
+        v-if="!showFavorites && (visiblePinned || activityTickerText)"
+        class="chat-notice-stack"
+        :class="{ 'has-pinned': !!visiblePinned, 'has-activity': !!activityTickerText }"
+        :role="visiblePinned ? 'button' : undefined"
+        :tabindex="visiblePinned ? 0 : undefined"
+        :aria-label="visiblePinned ? (canPinCurrentChannel ? '编辑置顶消息' : '查看置顶消息') : '聊天室实时动态'"
+        @click="openPinnedFromTicker"
+        @keydown.enter="openPinnedFromTicker"
+        @keydown.space.prevent="openPinnedFromTicker"
+      >
+        <span v-if="visiblePinned" class="pinned-ticker-row">
+          <span class="pinned-ticker-icon" aria-hidden="true"><Pin :size="14" /></span>
+          <span class="pinned-ticker-viewport">
+            <span class="pinned-ticker-track">
+              <strong>{{ pinnedText }}</strong>
+              <span v-if="pinnedTickerBody">{{ pinnedTickerBody }}</span>
+            </span>
+          </span>
+          <span class="pinned-ticker-action">{{ canPinCurrentChannel ? "编辑" : "查看" }}</span>
+        </span>
+        <span v-if="activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
+          <span class="chat-activity-viewport">
+            <span class="chat-activity-track">
+              <span>{{ activityTickerText }}</span>
+            </span>
           </span>
         </span>
       </section>
@@ -9495,21 +9528,6 @@ async function toggleVirtual(character: any) {
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
         <button v-if="isAdmin" class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
-      </section>
-
-      <section v-if="!showFavorites && visiblePinned" class="pin-card" :class="{ expanded: pinnedExpanded }">
-        <div class="pin-card-head">
-          <button type="button" class="pin-card-open-button" @click="togglePinned" :aria-label="pinnedExpanded ? '收起置顶' : '展开置顶'" :aria-expanded="pinnedExpanded">
-            <span class="pin-toggle" aria-hidden="true"><Pin :size="16" /></span>
-            <span class="pin-card-copy">
-              <strong>{{ pinnedText }}</strong>
-              <small>{{ pinnedSummary }}</small>
-            </span>
-            <ChevronUp v-if="pinnedExpanded" :size="17" />
-            <ChevronDown v-else :size="17" />
-          </button>
-          <button v-if="canPinCurrentChannel" class="mini-btn secondary" @click.stop="openPinnedEditor">编辑</button>
-        </div>
       </section>
 
       <section v-if="!showFavorites && visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
