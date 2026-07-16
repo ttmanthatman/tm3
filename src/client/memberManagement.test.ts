@@ -7,6 +7,7 @@ import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 test("canRemoveChannelMember allows managers to remove regular human members", () => {
   assert.equal(canRemoveChannelMember({ kind: "human", accountId: 2, role: "member" }, { canManage: true, currentAccountId: 1 }), true);
   assert.equal(canRemoveChannelMember({ kind: "human", accountId: 3, role: "admin", membershipRole: "member" }, { canManage: true, currentAccountId: 1 }), true);
+  assert.equal(canRemoveChannelMember({ kind: "virtual", characterId: 7, role: "virtual" }, { canManage: true, currentAccountId: 1 }), true);
 });
 
 test("canRemoveChannelMember blocks unsafe or non-member removals", () => {

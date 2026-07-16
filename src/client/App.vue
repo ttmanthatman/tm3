@@ -567,6 +567,7 @@ const memberPromptPosition = ref({ x: 0, y: 0 });
 type MemberActionTarget = {
   id: number;
   accountId?: number;
+  characterId?: number;
   kind: string;
   username?: string;
   displayName: string;
@@ -575,14 +576,23 @@ type MemberActionTarget = {
   membershipRole?: string | null;
   isSiteAdmin?: boolean;
 };
+type MemberPickerCandidate = {
+  id: number;
+  accountId?: number;
+  characterId?: number;
+  kind: "human" | "virtual";
+  username: string;
+  displayName: string;
+  avatarPath?: string | null;
+};
 const selectedMember = ref<MemberActionTarget | null>(null);
 const memberPaneChannelOverride = ref<ChannelDTO | null>(null);
 const managedMembers = ref<MemberActionTarget[]>([]);
 const memberRemoveMode = ref(false);
 const memberPickerOpen = ref(false);
 const memberPickerChannel = ref<ChannelDTO | null>(null);
-const memberPickerCandidates = ref<AccountDTO[]>([]);
-const memberPickerSelectedIds = ref<number[]>([]);
+const memberPickerCandidates = ref<MemberPickerCandidate[]>([]);
+const memberPickerSelectedIds = ref<string[]>([]);
 const memberPickerBusy = ref(false);
 const memberManageMsg = ref("");
 const showChannelEditor = ref(false);
@@ -2161,6 +2171,11 @@ function linkifyMessageHtml(html: string) {
   for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
     anchor.target = "_blank";
     anchor.rel = "noopener noreferrer";
+  }
+  const anchors = [...root.querySelectorAll<HTMLAnchorElement>("a[href]")];
+  if (anchors.length === 1 && (root.textContent || "").trim() === (anchors[0].textContent || "").trim()) {
+    anchors[0].classList.add("collapsible-message-url");
+    anchors[0].setAttribute("aria-expanded", "false");
   }
   return root.innerHTML;
 }
@@ -3991,8 +4006,18 @@ async function openMemberPicker(channel = activeMemberPaneChannel.value) {
   memberPickerBusy.value = true;
   memberManageMsg.value = "";
   try {
-    const result = await api<{ accounts: AccountDTO[] }>(`/api/channels/${channel.id}/member-candidates`);
-    memberPickerCandidates.value = result.accounts;
+    const result = await api<{ accounts: AccountDTO[]; virtuals: MemberPickerCandidate[] }>(`/api/channels/${channel.id}/member-candidates`);
+    memberPickerCandidates.value = [
+      ...result.accounts.map((account) => ({
+        id: account.id,
+        accountId: account.id,
+        kind: "human" as const,
+        username: account.username,
+        displayName: account.displayName,
+        avatarPath: account.avatarPath
+      })),
+      ...(result.virtuals || [])
+    ];
   } catch (error) {
     memberManageMsg.value = error instanceof Error ? error.message : "成员候选加载失败";
   } finally {
@@ -4007,21 +4032,28 @@ function closeMemberPicker() {
   memberPickerSelectedIds.value = [];
 }
 
-function toggleMemberPickerAccount(accountId: number) {
-  memberPickerSelectedIds.value = memberPickerSelectedIds.value.includes(accountId)
-    ? memberPickerSelectedIds.value.filter((id) => id !== accountId)
-    : [...memberPickerSelectedIds.value, accountId];
+function memberPickerCandidateKey(candidate: MemberPickerCandidate) {
+  return candidate.kind === "virtual" ? `virtual:${candidate.characterId}` : `human:${candidate.accountId}`;
+}
+
+function toggleMemberPickerAccount(candidate: MemberPickerCandidate) {
+  const key = memberPickerCandidateKey(candidate);
+  memberPickerSelectedIds.value = memberPickerSelectedIds.value.includes(key)
+    ? memberPickerSelectedIds.value.filter((id) => id !== key)
+    : [...memberPickerSelectedIds.value, key];
 }
 
 async function addSelectedMembers() {
   const channel = memberPickerChannel.value;
-  const accountIds = memberPickerSelectedIds.value;
-  if (!channel || !accountIds.length) return;
+  const selectedCandidates = memberPickerCandidates.value.filter((candidate) => memberPickerSelectedIds.value.includes(memberPickerCandidateKey(candidate)));
+  const accountIds = selectedCandidates.flatMap((candidate) => candidate.accountId ? [candidate.accountId] : []);
+  const virtualCharacterIds = selectedCandidates.flatMap((candidate) => candidate.characterId ? [candidate.characterId] : []);
+  if (!channel || (!accountIds.length && !virtualCharacterIds.length)) return;
   memberPickerBusy.value = true;
   try {
     const result = await api<{ channel: ChannelDTO; added: number }>(`/api/channels/${channel.id}/members`, {
       method: "POST",
-      body: JSON.stringify({ accountIds })
+      body: JSON.stringify({ accountIds, virtualCharacterIds })
     });
     replaceChannelSnapshot(result.channel);
     await refreshMembersForChannel(channel.id);
@@ -4036,10 +4068,13 @@ async function addSelectedMembers() {
 
 async function removeMemberFromActive(member: MemberActionTarget) {
   const channel = activeMemberPaneChannel.value;
-  if (!channel || !member.accountId || !canRemoveMemberFromActive(member)) return;
+  if (!channel || !canRemoveMemberFromActive(member)) return;
   if (!confirm(`从“${channel.name}”移除 ${member.displayName}？`)) return;
   try {
-    const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}/members/${member.accountId}`, { method: "DELETE" });
+    const endpoint = member.kind === "virtual"
+      ? `/api/channels/${channel.id}/virtual-members/${member.characterId}`
+      : `/api/channels/${channel.id}/members/${member.accountId}`;
+    const result = await api<{ channel: ChannelDTO }>(endpoint, { method: "DELETE" });
     replaceChannelSnapshot(result.channel);
     await refreshMembersForChannel(channel.id);
     memberManageMsg.value = `已移除 ${member.displayName}`;
@@ -5762,6 +5797,19 @@ function reconcileOpenMusicScore() {
   if (musicScoreOpen.value && !shouldKeepMusicScoreForTrack(currentMusicScorePages.value.length)) closeMusicScore();
 }
 
+function expandLongMessageUrl(event: MouseEvent) {
+  const target = event.target instanceof Element ? event.target : null;
+  const link = target?.closest<HTMLAnchorElement>("a.collapsible-message-url");
+  if (!link || link.classList.contains("expanded")) return false;
+  const isOverflowing = link.scrollHeight > link.clientHeight + 1;
+  if (!isOverflowing) return false;
+  event.preventDefault();
+  event.stopPropagation();
+  link.classList.add("expanded");
+  link.setAttribute("aria-expanded", "true");
+  return true;
+}
+
 function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) {
     event.preventDefault();
@@ -5774,6 +5822,7 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     event.stopPropagation();
     return;
   }
+  if (expandLongMessageUrl(event)) return;
   acknowledgeMentionAlert(message);
   if (messageEffect(message) === "oops") {
     const target = event.target instanceof Element ? event.target : null;
@@ -10582,23 +10631,23 @@ async function toggleVirtual(character: any) {
           <div v-if="memberPickerBusy" class="member-picker-empty">加载中...</div>
           <div v-else-if="memberPickerCandidates.length" class="member-picker-list">
             <button
-              v-for="account in memberPickerCandidates"
-              :key="account.id"
+              v-for="candidate in memberPickerCandidates"
+              :key="memberPickerCandidateKey(candidate)"
               type="button"
               class="member-picker-row"
-              :class="{ selected: memberPickerSelectedIds.includes(account.id) }"
-              @click="toggleMemberPickerAccount(account.id)"
+              :class="{ selected: memberPickerSelectedIds.includes(memberPickerCandidateKey(candidate)) }"
+              @click="toggleMemberPickerAccount(candidate)"
             >
-              <div class="avatar presence-avatar">
-                <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
-                <span v-else>{{ avatarText(account.displayName) }}</span>
-                <i v-if="isAccountOnline(account.id)" class="online-dot" aria-label="在线"></i>
+              <div class="avatar presence-avatar" :class="{ bot: candidate.kind === 'virtual' }">
+                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(candidate.displayName) }}</span>
+                <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
               </div>
               <span>
-                <strong>{{ account.displayName }}</strong>
-                <small>@{{ account.username }}</small>
+                <strong>{{ candidate.displayName }}</strong>
+                <small>{{ candidate.kind === "virtual" ? "AI 角色" : `@${candidate.username}` }}</small>
               </span>
-              <CheckCircle2 v-if="memberPickerSelectedIds.includes(account.id)" :size="18" />
+              <CheckCircle2 v-if="memberPickerSelectedIds.includes(memberPickerCandidateKey(candidate))" :size="18" />
             </button>
           </div>
           <div v-else class="member-picker-empty">没有可添加的人</div>

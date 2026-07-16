@@ -86,12 +86,63 @@ function firstMetaContent(html: string, keys: string[]) {
   return "";
 }
 
-function firstImageSrc(html: string) {
+function firstSrcsetUrl(value: string) {
+  const candidates = value
+    .split(",")
+    .map((item) => item.trim().split(/\s+/, 1)[0])
+    .filter(Boolean);
+  return candidates.at(-1) || "";
+}
+
+function numericImageHint(attrs: Record<string, string>, source: string, name: "width" | "height") {
+  const direct = Number.parseInt(attrs[name] || "", 10);
+  if (Number.isFinite(direct)) return direct;
+  const styled = Number.parseInt(attrs.style?.match(new RegExp(`${name}\\s*:\\s*(\\d+)`, "i"))?.[1] || "", 10);
+  if (Number.isFinite(styled)) return styled;
+  if (name === "width") {
+    const queryWidth = Number.parseInt(source.match(/[?&](?:w|width)=(\d+)/i)?.[1] || "", 10);
+    if (Number.isFinite(queryWidth)) return queryWidth;
+  }
+  return 0;
+}
+
+function imageCandidateScore(attrs: Record<string, string>, source: string, index: number) {
+  const clues = `${source} ${attrs.class || ""} ${attrs.id || ""} ${attrs.alt || ""}`.toLowerCase();
+  let score = Math.max(0, 20 - index);
+  if (/(?:article|story|post|news|hero|cover|main|content|swiper|a-img)/.test(clues)) score += 150;
+  if (/(?:logo|icon|avatar|sprite|emoji|qrcode|qr-code|wechat|footer|header|speech|play|loading)/.test(clues)) score -= 320;
+  const width = numericImageHint(attrs, source, "width");
+  const height = numericImageHint(attrs, source, "height");
+  if (width) score += Math.min(100, Math.round(width / 10));
+  if (width >= 600) score += 70;
+  else if (width > 0 && width < 180) score -= 70;
+  if (height >= 300) score += 45;
+  else if (height > 0 && height < 120) score -= 45;
+  if (attrs["data-src"] || attrs["data-original"] || attrs["data-lazy-src"]) score += 12;
+  return score;
+}
+
+function bestImageSrc(html: string) {
+  let best = { source: "", score: Number.NEGATIVE_INFINITY };
+  let index = 0;
   for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
     const attrs = parseHtmlAttributes(match[0]);
-    if (attrs.src) return attrs.src;
+    const source =
+      attrs["data-src"] ||
+      attrs["data-original"] ||
+      attrs["data-lazy-src"] ||
+      attrs["data-original-src"] ||
+      attrs.src ||
+      firstSrcsetUrl(attrs["data-srcset"] || attrs.srcset || "");
+    if (!source || /^data:/i.test(source)) {
+      index += 1;
+      continue;
+    }
+    const score = imageCandidateScore(attrs, source, index);
+    if (score > best.score) best = { source, score };
+    index += 1;
   }
-  return "";
+  return best.score > -100 ? best.source : "";
 }
 
 function absoluteHttpUrl(value: string, baseUrl: string) {
@@ -106,12 +157,12 @@ function absoluteHttpUrl(value: string, baseUrl: string) {
   }
 }
 
-function parseLinkPreview(html: string, finalUrl: string): LinkPreviewDTO {
+export function parseLinkPreview(html: string, finalUrl: string): LinkPreviewDTO {
   const title =
     firstMetaContent(html, ["og:title", "twitter:title"]) ||
     decodeHtmlEntities(html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.replace(/<[^>]*>/g, "") || "");
   const description = firstMetaContent(html, ["og:description", "twitter:description", "description"]);
-  const image = absoluteHttpUrl(firstMetaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) || firstImageSrc(html), finalUrl);
+  const image = absoluteHttpUrl(firstMetaContent(html, ["og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"]) || bestImageSrc(html), finalUrl);
   const siteName = firstMetaContent(html, ["og:site_name", "application-name"]) || new URL(finalUrl).hostname.replace(/^www\./, "");
   return {
     url: finalUrl,

@@ -4006,12 +4006,30 @@ button {
 
 .bubble.link-preview-bubble {
   box-sizing: border-box;
-  width: min(428px, calc(100vw - 94px));
+  width: 428px;
+  max-width: 100%;
   padding: 4px;
 }
 
 .link-preview-bubble .message-text {
   overflow-wrap: anywhere;
+}
+
+.collapsible-message-url:not(.expanded) {
+  max-width: 100%;
+  overflow: hidden;
+  display: -webkit-box;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  cursor: zoom-in;
+}
+
+.collapsible-message-url.expanded {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .link-preview-bubble .link-preview-card {

@@ -404,8 +404,15 @@ test("media and link preview bubbles use compact aligned frames", () => {
   assert.match(app, /'link-preview-bubble': !!linkPreviewFor\(row\.message\)/);
   assert.match(css, /\.bubble\.media-bubble \{[\s\S]*?padding: 3px;/);
   assert.match(css, /\.media-bubble \.chat-image,[\s\S]*?\.media-bubble \.image-preview-button \{[\s\S]*?border-radius: 0;/);
-  assert.match(css, /\.bubble\.link-preview-bubble \{[\s\S]*?width: min\(428px, calc\(100vw - 94px\)\);[\s\S]*?padding: 4px;/);
+  assert.match(css, /\.bubble\.link-preview-bubble \{[\s\S]*?width: 428px;[\s\S]*?max-width: 100%;[\s\S]*?padding: 4px;/);
   assert.match(css, /\.link-preview-bubble \.message-text \{[\s\S]*?overflow-wrap: anywhere;/);
+});
+
+test("URL-only messages collapse after two lines and expand before navigating", () => {
+  assert.match(app, /anchors\[0\]\.classList\.add\("collapsible-message-url"\)/);
+  assert.match(app, /function expandLongMessageUrl[\s\S]*?scrollHeight > link\.clientHeight[\s\S]*?event\.preventDefault\(\)[\s\S]*?classList\.add\("expanded"\)/);
+  assert.match(app, /handleBubbleClick[\s\S]*?expandLongMessageUrl\(event\)/);
+  assert.match(css, /\.collapsible-message-url:not\(\.expanded\) \{[\s\S]*?-webkit-line-clamp: 2;/);
 });
 
 test("music uploads accept multiple files and report hash-based reuse", () => {

@@ -54,6 +54,7 @@ import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
 import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
+import { channelNeedsExplicitMembership, virtualCharacterConfigForChannel, virtualCharacterVisibleInChannel } from "./channelMembership.js";
 import { fileResponsePolicy } from "./filePolicy.js";
 import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
 import { envFlagEnabled } from "./featureFlags.js";
@@ -1106,17 +1107,7 @@ async function canAccessChannel(accountId: number, channelId: number) {
   if (!channel) return false;
   if (channel.kind === "aiLounge") return false;
   if (channel.kind === "music") return canManageMusicAccount(accountId);
-  if (channel.kind === "why") {
-    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
-    return !!member;
-  }
-  if (channel.directKey) {
-    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
-    return !!member;
-  }
-  if (!channel.isPrivate) return true;
-  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
-  if (account?.role === "admin") return true;
+  if (!channelNeedsExplicitMembership(channel)) return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return !!member;
 }
@@ -1126,17 +1117,7 @@ async function canWriteChannel(accountId: number, channelId: number) {
   if (!channel) return false;
   if (channel.kind === "aiLounge") return false;
   if (channel.kind === "music") return canManageMusicAccount(accountId);
-  if (channel.kind === "why") {
-    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
-    return !!member && member.role !== "viewer";
-  }
-  if (channel.directKey) {
-    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
-    return !!member && member.role !== "viewer";
-  }
-  if (!channel.isPrivate) return true;
-  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
-  if (account?.role === "admin") return true;
+  if (!channelNeedsExplicitMembership(channel)) return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return !!member && member.role !== "viewer";
 }
@@ -1898,7 +1879,7 @@ async function callQuestionAssistantActivationJudge(
 async function maybeTriggerQuestionAssistant(messageId: number) {
   const message = await prisma.message.findUnique({
     where: { id: messageId },
-    include: { sender: true, channel: { select: { name: true, directKey: true } } }
+    include: { sender: true, channel: { select: { id: true, name: true, isPrivate: true, directKey: true } } }
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
   if (message.channel.directKey === virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
@@ -1910,6 +1891,8 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   let activationAnchor: Message | null | undefined = directActivation ? message : null;
   if (activationMode === "strong" && !settings.value.questionTriggerEnabled) return;
   const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
+  const assistantCharacter = await prisma.virtualCharacter.findUnique({ where: { actorId: assistant.id }, select: { config: true } });
+  if (!virtualCharacterVisibleInChannel(message.channel, { username: QUESTION_ASSISTANT_USERNAME, config: assistantCharacter?.config })) return;
   if (!activationMode) {
     activationAnchor = await findQuestionAssistantActivationAnchor(message, settings.value);
     if (!activationAnchor) return;
@@ -2151,13 +2134,7 @@ async function ensureWebPush() {
 async function notificationRecipientIds(channelId: number, senderAccountId?: number | null, force = false) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isPrivate: true, directKey: true, kind: true } });
   if (!channel) return [];
-  const where = channel.kind === "why"
-    ? { memberships: { some: { channelId } } }
-    : channel.directKey
-    ? { memberships: { some: { channelId } } }
-    : channel.isPrivate
-      ? { OR: [{ role: "admin" as const }, { memberships: { some: { channelId } } }] }
-      : {};
+  const where = channelNeedsExplicitMembership(channel) ? { memberships: { some: { channelId } } } : {};
   const accounts = await prisma.account.findMany({ where, select: { id: true } });
   let ids = accounts.map((account) => account.id).filter((id) => id !== senderAccountId);
   if (!force && ids.length) {
@@ -3184,9 +3161,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
     ? {
         OR: [
           { kind: "music" as const },
-          auth.isAdmin
-            ? { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ directKey: null }, { members: { some: { accountId: auth.accountId } } }] }
-            : { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] }
+          { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] }
         ]
       }
     : { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] };
@@ -3264,10 +3239,7 @@ app.post("/api/channels", { preHandler: requireAuth }, async (request) => {
     }
   });
   let audienceAccountIds = [auth.accountId];
-  if (body.isPrivate) {
-    const admins = await prisma.account.findMany({ where: { role: "admin" }, select: { id: true } });
-    audienceAccountIds = [...new Set([auth.accountId, ...admins.map((a) => a.id)])];
-  } else {
+  if (!body.isPrivate) {
     const accounts = await prisma.account.findMany({ select: { id: true } });
     audienceAccountIds = accounts.map((a) => a.id);
     await prisma.channelMember.createMany({
@@ -3457,19 +3429,19 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
   if (!(await canAccessChannel(auth.accountId, channelId)) && !(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, isPrivate: true, kind: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, isPrivate: true, kind: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   const accounts = await prisma.account.findMany({
     where: channel?.kind === "music"
       ? { OR: [{ role: "admin" }, { canPinMessages: true }] }
-      : channel?.directKey
-      ? { memberships: { some: { channelId } } }
-      : channel?.isPrivate
-        ? { OR: [{ role: "admin" }, { memberships: { some: { channelId } } }] }
+      : channel && channelNeedsExplicitMembership(channel)
+        ? { memberships: { some: { channelId } } }
         : {},
     include: { actor: true, memberships: { where: { channelId } } },
     orderBy: { displayName: "asc" }
   });
-  const virtuals = await prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } });
+  const virtuals = (await prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } }))
+    .filter((character) => virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }));
   return {
     members: [
       ...accounts.map((a) => ({
@@ -3485,6 +3457,10 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
       })),
       ...virtuals.map((v) => ({
         id: v.actor.id,
+        characterId:
+          AI_ROLE_USERNAMES.has(v.actor.username) && !(channel.directKey?.startsWith("virtual:") && channel.directKey.endsWith(`:${v.actor.username}`))
+            ? v.id
+            : undefined,
         kind: "virtual",
         username: v.actor.username,
         displayName: v.actor.displayName,
@@ -3498,17 +3474,31 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
 app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true, isPrivate: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, directKey: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
-  if (!channel.isPrivate) return { accounts: [] };
-  const accounts = await prisma.account.findMany({
-    where: { memberships: { none: { channelId } } },
-    include: { actor: true },
-    orderBy: { displayName: "asc" }
-  });
-  return { accounts: accounts.map((account) => authDto(account)) };
+  if (!channel.isPrivate) return { accounts: [], virtuals: [] };
+  const [accounts, virtualCharacters] = await Promise.all([
+    prisma.account.findMany({
+      where: { memberships: { none: { channelId } } },
+      include: { actor: true },
+      orderBy: { displayName: "asc" }
+    }),
+    prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } })
+  ]);
+  const virtuals = virtualCharacters
+    .filter((character) => AI_ROLE_USERNAMES.has(character.actor.username))
+    .filter((character) => !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }))
+    .map((character) => ({
+      id: character.actor.id,
+      characterId: character.id,
+      kind: "virtual" as const,
+      username: character.actor.username,
+      displayName: character.actor.displayName,
+      avatarPath: character.actor.avatarPath
+    }));
+  return { accounts: accounts.map((account) => authDto(account)), virtuals };
 });
 
 app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
@@ -3522,20 +3512,54 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
   const body = z
     .object({
       accountId: z.number().int().positive().optional(),
-      accountIds: z.array(z.number().int().positive()).max(100).optional()
+      accountIds: z.array(z.number().int().positive()).max(100).optional(),
+      virtualCharacterIds: z.array(z.number().int().positive()).max(20).optional()
     })
     .parse(request.body);
   const requestedIds = [...new Set([...(body.accountIds || []), ...(body.accountId ? [body.accountId] : [])])];
-  if (!requestedIds.length) return reply.code(400).send({ success: false, message: "请选择要添加的人" });
-  const accounts = await prisma.account.findMany({ where: { id: { in: requestedIds } }, select: { id: true } });
+  const requestedVirtualIds = [...new Set(body.virtualCharacterIds || [])];
+  if (!requestedIds.length && !requestedVirtualIds.length) return reply.code(400).send({ success: false, message: "请选择要添加的人" });
+  const [accounts, virtualCharacters] = await Promise.all([
+    prisma.account.findMany({ where: { id: { in: requestedIds } }, select: { id: true } }),
+    prisma.virtualCharacter.findMany({ where: { id: { in: requestedVirtualIds }, enabled: true }, include: { actor: true } })
+  ]);
   if (accounts.length !== requestedIds.length) return reply.code(404).send({ success: false, message: "用户不存在" });
+  if (virtualCharacters.length !== requestedVirtualIds.length || virtualCharacters.some((character) => !AI_ROLE_USERNAMES.has(character.actor.username))) {
+    return reply.code(404).send({ success: false, message: "AI 角色不存在" });
+  }
   await prisma.channelMember.createMany({
     data: accounts.map((account) => ({ channelId, accountId: account.id, role: "member" as const })),
     skipDuplicates: true
   });
+  await Promise.all(
+    virtualCharacters.map((character) =>
+      prisma.virtualCharacter.update({
+        where: { id: character.id },
+        data: { config: virtualCharacterConfigForChannel(character.config, channelId, true) as Prisma.InputJsonObject }
+      })
+    )
+  );
   for (const account of accounts) joinAccountChannel(account.id, channelId);
   const dto = await emitChannelMembersChanged(channelId, "members-added", accounts.map((account) => account.id));
-  return { success: true, channel: dto, added: accounts.length };
+  return { success: true, channel: dto, added: accounts.length + virtualCharacters.length };
+});
+
+app.delete("/api/channels/:id/virtual-members/:characterId", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const channelId = Number((request.params as { id: string }).id);
+  const characterId = Number((request.params as { characterId: string }).characterId);
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true, isPrivate: true } });
+  if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  if (!channel.isPrivate || channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持角色管理" });
+  if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  const character = await prisma.virtualCharacter.findUnique({ where: { id: characterId }, include: { actor: true } });
+  if (!character || !AI_ROLE_USERNAMES.has(character.actor.username)) return reply.code(404).send({ success: false, message: "AI 角色不存在" });
+  await prisma.virtualCharacter.update({
+    where: { id: character.id },
+    data: { config: virtualCharacterConfigForChannel(character.config, channelId, false) as Prisma.InputJsonObject }
+  });
+  const dto = await emitChannelMembersChanged(channelId, "members-removed");
+  return { success: true, channel: dto, removed: characterId };
 });
 
 app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, async (request, reply) => {
@@ -6898,9 +6922,7 @@ io.on("connection", async (socket: Socket) => {
       ? {
           OR: [
             { kind: "music" },
-            auth.isAdmin
-              ? { kind: { in: PUBLIC_CHANNEL_KINDS }, directKey: null }
-              : { kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false },
+            { kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false },
             { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }
           ]
         }

@@ -1,5 +1,6 @@
 export type ChannelMemberLike = {
   accountId?: number;
+  characterId?: number;
   kind: string;
   role?: string;
   membershipRole?: string | null;
@@ -13,10 +14,10 @@ export function memberRoleLabel(member: ChannelMemberLike) {
 }
 
 export function canRemoveChannelMember(member: ChannelMemberLike, options: { canManage: boolean; currentAccountId?: number | null }) {
+  if (member.kind === "virtual") return options.canManage && Boolean(member.characterId);
   const channelRole = member.membershipRole ?? member.role;
   return (
     options.canManage &&
-    member.kind !== "virtual" &&
     !!member.accountId &&
     member.accountId !== options.currentAccountId &&
     channelRole !== "owner" &&
