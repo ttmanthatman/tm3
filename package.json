@@ -14,6 +14,7 @@
     "prisma:push": "prisma db push",
     "migrate:sqlite": "node dist/server/scripts/migrate-sqlite.js",
     "migrate:sqlite:src": "tsx src/scripts/migrate-sqlite.ts",
+    "bible:import-layout": "tsx src/scripts/import-bible-layout.ts",
     "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "check:public-tree": "tsx src/scripts/check-public-tree.ts",
     "check:quick": "npm run check:public-tree && npm run check",

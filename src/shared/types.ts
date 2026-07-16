@@ -401,6 +401,32 @@ export interface BibleLookupDTO {
   verses: BibleVerseLineDTO[];
 }
 
+export interface BibleChapterVerseFragmentDTO {
+  verse: BibleVerseLineDTO;
+  text: string;
+  start: number;
+  end: number;
+  showVerseNumber: boolean;
+}
+
+export type BibleChapterBlockDTO =
+  | { type: "heading"; level: 1 | 2; text: string }
+  | { type: "parallel"; text: string }
+  | { type: "description"; text: string }
+  | { type: "speaker"; text: string }
+  | { type: "spacing" }
+  | { type: "paragraph"; style: "prose" | "poetry"; fragments: BibleChapterVerseFragmentDTO[] };
+
+export interface BibleChapterDTO {
+  bookCode: string;
+  bookName: string;
+  chapter: number;
+  translation: string;
+  sourceId: string;
+  verses: BibleVerseLineDTO[];
+  blocks: BibleChapterBlockDTO[];
+}
+
 export interface BibleBookCatalogDTO {
   code: string;
   name: string;

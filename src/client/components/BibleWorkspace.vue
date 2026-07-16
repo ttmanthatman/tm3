@@ -4,6 +4,8 @@ import { BookOpen, ChevronLeft, History, Home, Plus, Search, Send, Trash2 } from
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
+  BibleChapterDTO,
+  BibleChapterVerseFragmentDTO,
   BibleLookupDTO,
   BibleRelatedSearchDTO,
   BibleTextMatchRangeDTO,
@@ -39,7 +41,6 @@ const emit = defineEmits<{ close: [] }>();
 
 type TextSegment = { text: string; highlighted: boolean };
 
-const poetryBooks = new Set(["JOB", "PSA", "PRO", "ECC", "SNG"]);
 const catalog = ref<BibleCatalogDTO | null>(null);
 const catalogBusy = ref(false);
 const catalogError = ref("");
@@ -55,7 +56,7 @@ const topicError = ref("");
 const textError = ref("");
 const selectedBook = ref<BibleBookCatalogDTO | null>(null);
 const readerBook = ref<BibleBookCatalogDTO | null>(null);
-const readerChapters = ref<Record<number, BibleLookupDTO>>({});
+const readerChapters = ref<Record<number, BibleChapterDTO>>({});
 const readerBusyChapters = ref<Set<number>>(new Set());
 const readerError = ref("");
 const readerScroll = ref<HTMLElement | null>(null);
@@ -358,7 +359,10 @@ async function openReader(
   view.value = "reader";
   await loadChapter(chapter);
   await nextTick();
-  const element = readerScroll.value?.querySelector<HTMLElement>(`[data-verse-key="${book.code}-${chapter}-${target?.verse || 1}"]`);
+  const selector = target
+    ? `[data-verse-key="${book.code}-${chapter}-${target.verse}"]`
+    : `[data-reader-chapter="${chapter}"]`;
+  const element = readerScroll.value?.querySelector<HTMLElement>(selector);
   element?.scrollIntoView({ block: target ? "center" : "start" });
 }
 
@@ -370,8 +374,8 @@ async function loadChapter(chapter: number, prepend = false) {
   readerBusyChapters.value = busy;
   const previousHeight = prepend ? readerScroll.value?.scrollHeight || 0 : 0;
   try {
-    const response = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(
-      `/api/bible/lookup?reference=${encodeURIComponent(`${book.name} ${chapter}`)}`
+    const response = await api<{ success: boolean; result?: BibleChapterDTO; message?: string }>(
+      `/api/bible/chapter?book=${encodeURIComponent(book.code)}&chapter=${chapter}`
     );
     if (!response.success || !response.result) throw new Error(response.message || "章节加载失败");
     readerChapters.value = { ...readerChapters.value, [chapter]: response.result };
@@ -410,6 +414,14 @@ function handleReaderScroll() {
 function targetMatches(verse: BibleVerseLineDTO) {
   const target = targetVerse.value;
   return target && target.chapter === verse.chapter && target.verse === verse.verse ? target.matches : [];
+}
+
+function fragmentMatches(fragment: BibleChapterVerseFragmentDTO) {
+  return targetMatches(fragment.verse).flatMap((range) => {
+    const start = Math.max(fragment.start, range.start);
+    const end = Math.min(fragment.end, range.end);
+    return end > start ? [{ start: start - fragment.start, end: end - fragment.start }] : [];
+  });
 }
 
 function isTargetVerse(verse: BibleVerseLineDTO) {
@@ -583,18 +595,27 @@ function handleTouchEnd(event: TouchEvent) {
       <div v-if="loadedChapters[0] === 1" class="bible-book-boundary">本卷开始</div>
       <section v-for="chapter in loadedChapters" :key="chapter" class="bible-reader-chapter" :data-reader-chapter="chapter">
         <header><span>{{ readerBook.name }}</span><h1>第{{ chapter }}章</h1></header>
-        <div class="bible-chapter-text" :class="{ poetry: poetryBooks.has(readerBook.code) }">
-          <span
-            v-for="verse in readerChapters[chapter]?.verses || []"
-            :key="verse.reference"
-            class="bible-reader-verse"
-            :class="{ target: isTargetVerse(verse), selected: selectedVerse?.reference === verse.reference }"
-            :data-verse-key="`${readerBook.code}-${verse.chapter}-${verse.verse}`"
-            role="button"
-            tabindex="0"
-            @click="selectVerse(verse)"
-            @keydown.enter.prevent="selectVerse(verse)"
-          ><sup>{{ verse.verse }}</sup><template v-for="(segment, index) in verseSegments(verse.text, targetMatches(verse))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
+        <div class="bible-chapter-text">
+          <template v-for="(block, blockIndex) in readerChapters[chapter]?.blocks || []" :key="`${chapter}-${blockIndex}`">
+            <h2 v-if="block.type === 'heading'" class="bible-structure-heading" :class="`level-${block.level}`">{{ block.text }}</h2>
+            <p v-else-if="block.type === 'parallel'" class="bible-structure-parallel">{{ block.text }}</p>
+            <p v-else-if="block.type === 'description'" class="bible-structure-description">{{ block.text }}</p>
+            <p v-else-if="block.type === 'speaker'" class="bible-structure-speaker">{{ block.text }}</p>
+            <div v-else-if="block.type === 'spacing'" class="bible-structure-spacing" aria-hidden="true"></div>
+            <p v-else-if="block.type === 'paragraph'" class="bible-structure-paragraph" :class="block.style">
+              <span
+                v-for="fragment in block.fragments"
+                :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"
+                class="bible-reader-verse"
+                :class="{ target: isTargetVerse(fragment.verse), selected: selectedVerse?.reference === fragment.verse.reference }"
+                :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
+                role="button"
+                tabindex="0"
+                @click="selectVerse(fragment.verse)"
+                @keydown.enter.prevent="selectVerse(fragment.verse)"
+              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
+            </p>
+          </template>
         </div>
       </section>
       <div v-if="readerError" class="bible-state error">{{ readerError }}</div>
@@ -701,13 +722,21 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-reader-chapter > header { margin-bottom: 22px; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-reader-chapter > header span { color: #947657; letter-spacing: .18em; }
 .bible-reader-chapter > header h1 { margin: 8px 0 0; font-size: 32px; }
-.bible-chapter-text { font-family: "Songti SC", "STSong", "Noto Serif CJK SC", serif; font-size: clamp(18px, 2.15vw, 21px); line-height: 1.95; text-align: justify; }
+.bible-chapter-text { font-family: "Songti SC", "STSong", "Noto Serif CJK SC", serif; font-size: clamp(18px, 2.15vw, 21px); line-height: 1.95; }
+.bible-structure-heading { margin: 2.1em 0 .75em; color: #684728; text-align: center; font-size: 1.25em; line-height: 1.4; }
+.bible-structure-heading:first-child { margin-top: 0; }
+.bible-structure-heading.level-2 { font-size: 1.08em; }
+.bible-structure-parallel { margin: -.45em 0 1.2em; color: #9a7d60; text-align: center; font-size: .72em; line-height: 1.55; }
+.bible-structure-description { margin: 0 0 1em; color: #775b3f; text-align: center; font-size: .88em; font-style: italic; line-height: 1.65; }
+.bible-structure-speaker { margin: 1em 0 .25em; color: #8a6847; font-size: .82em; font-weight: 700; }
+.bible-structure-spacing { height: .9em; }
+.bible-structure-paragraph { margin: 0 0 1em; text-align: justify; }
+.bible-structure-paragraph.poetry { margin: 0; padding-left: 1.75em; text-indent: -1.75em; text-align: left; }
 .bible-reader-verse { border-radius: 4px; padding: 2px 1px; cursor: pointer; transition: background-color 160ms ease; }
 .bible-reader-verse::after { content: " "; }
 .bible-reader-verse sup { margin-right: 2px; color: #9b7a58; font-size: .55em; font-weight: 700; vertical-align: super; }
 .bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
 .bible-reader-verse.selected { outline: 1px solid rgba(150, 104, 52, .55); background: rgba(221, 180, 92, .28); }
-.bible-chapter-text.poetry .bible-reader-verse { display: block; padding-left: 1.5em; text-indent: -1.5em; }
 .bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-verse-action { position: fixed; left: 50%; bottom: calc(14px + var(--safe-bottom)); z-index: 3; width: min(700px, calc(100vw - 24px)); transform: translateX(-50%); padding: 10px 11px 10px 14px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 14px; background: rgba(255, 252, 245, .97); box-shadow: 0 13px 36px rgba(58, 39, 20, .2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .bible-verse-action div { min-width: 0; display: grid; gap: 2px; }

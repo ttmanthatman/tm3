@@ -29,6 +29,7 @@ import type {
   AiSettingsDTO,
   AiSuggestionDTO,
   BibleCatalogDTO,
+  BibleChapterDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleRelatedSearchDTO,
@@ -48,7 +49,7 @@ import type {
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
-import { bibleCatalog, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
+import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import { fileResponsePolicy } from "./filePolicy.js";
 import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
@@ -4948,6 +4949,19 @@ app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request) => {
     return { success: true, result };
   } catch {
     return { success: false, message: "暂时找不到这处经文" };
+  }
+});
+
+app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request) => {
+  const query = z.object({
+    book: z.string().trim().min(3).max(3),
+    chapter: z.coerce.number().int().positive()
+  }).parse(request.query);
+  try {
+    const result: BibleChapterDTO = lookupBibleChapter(query.book, query.chapter);
+    return { success: true, result };
+  } catch {
+    return { success: false, message: "暂时找不到这一章经文" };
   }
 });
 

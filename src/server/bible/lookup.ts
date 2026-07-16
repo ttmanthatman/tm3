@@ -1,6 +1,9 @@
 import biblePayload from "./cmn-cu89s.json" with { type: "json" };
+import bibleLayoutPayload from "./cmn-cu89s-layout.json" with { type: "json" };
 import type {
   BibleCatalogDTO,
+  BibleChapterBlockDTO,
+  BibleChapterDTO,
   BibleLookupDTO,
   BibleTextMatchRangeDTO,
   BibleTextSearchDTO,
@@ -27,6 +30,21 @@ type BiblePayload = {
   id: string;
   displayName: string;
   verses: BibleVerse[];
+};
+
+type BibleLayoutFragment = [verse: number, start: number, end: number];
+type BibleLayoutBlock =
+  | [kind: "h", level: number, text: string]
+  | [kind: "r", text: string]
+  | [kind: "d", text: string]
+  | [kind: "sp", text: string]
+  | [kind: "b"]
+  | [kind: "p", fragments: BibleLayoutFragment[]]
+  | [kind: "q", fragments: BibleLayoutFragment[]];
+
+type BibleLayoutPayload = {
+  id: string;
+  chapters: Record<string, BibleLayoutBlock[]>;
 };
 
 type PassageReference = {
@@ -111,6 +129,8 @@ const BOOKS: BibleBook[] = [
 ];
 
 const payload = biblePayload as BiblePayload;
+const layoutPayload = bibleLayoutPayload as unknown as BibleLayoutPayload;
+if (layoutPayload.id !== payload.id) throw new Error("Bible text and layout source IDs do not match");
 const bookByCode = new Map(BOOKS.map((book) => [book.code, book]));
 const bookOrder = new Map(BOOKS.map((book, index) => [book.code, index]));
 const startAliases = BOOKS.flatMap((book) => [book.chineseName, book.code, ...book.aliases].map((alias) => ({ alias: normalizeBook(alias), book })))
@@ -196,6 +216,60 @@ export function lookupBibleReference(reference: string): BibleLookupDTO {
     translation: payload.displayName,
     sourceId: payload.id,
     verses: verses.map(serializeVerse)
+  };
+}
+
+export function lookupBibleChapter(bookCode: string, chapter: number): BibleChapterDTO {
+  const book = bookByCode.get(bookCode.toUpperCase());
+  if (!book || !Number.isInteger(chapter) || chapter < 1) throw new Error("invalid chapter");
+  const verses = versesForWholeChapter(book, chapter);
+  const rawBlocks = layoutPayload.chapters[`${book.code}.${chapter}`];
+  if (!rawBlocks) throw new Error("chapter layout not found");
+
+  const serializedVerses = verses.map(serializeVerse);
+  const serializedByStartVerse = new Map(serializedVerses.map((verse) => [verse.verse, verse]));
+  const numberedVerses = new Set<number>();
+  const blocks: BibleChapterBlockDTO[] = [];
+  for (const block of rawBlocks) {
+    if (block[0] === "h") {
+      blocks.push({ type: "heading", level: block[1] === 2 ? 2 : 1, text: block[2] });
+      continue;
+    }
+    if (block[0] === "r") {
+      blocks.push({ type: "parallel", text: block[1] });
+      continue;
+    }
+    if (block[0] === "d") {
+      blocks.push({ type: "description", text: block[1] });
+      continue;
+    }
+    if (block[0] === "sp") {
+      blocks.push({ type: "speaker", text: block[1] });
+      continue;
+    }
+    if (block[0] === "b") {
+      blocks.push({ type: "spacing" });
+      continue;
+    }
+
+    const fragments = block[1].flatMap(([verseNumber, start, end]) => {
+      const verse = serializedByStartVerse.get(verseNumber);
+      if (!verse || start < 0 || end <= start || end > verse.text.length) return [];
+      const showVerseNumber = !numberedVerses.has(verseNumber);
+      numberedVerses.add(verseNumber);
+      return [{ verse, text: verse.text.slice(start, end), start, end, showVerseNumber }];
+    });
+    if (fragments.length) blocks.push({ type: "paragraph", style: block[0] === "q" ? "poetry" : "prose", fragments });
+  }
+
+  return {
+    bookCode: book.code,
+    bookName: book.chineseName,
+    chapter,
+    translation: payload.displayName,
+    sourceId: payload.id,
+    verses: serializedVerses,
+    blocks
   };
 }
 
