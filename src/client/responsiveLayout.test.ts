@@ -6,6 +6,7 @@ const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
+const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
 const server = fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
 
 test("narrow viewports always switch the chat shell to one column", () => {
@@ -39,6 +40,15 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(app, /class="inline-bible-reader-link"[\s\S]*?openBibleReferenceInWorkspace/);
   assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext \}\)/);
   assert.match(bibleWorkspace, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
+  assert.match(bibleWorkspace, /let catalogLoadPromise: Promise<void> \| null = null/);
+  assert.match(bibleWorkspace, /if \(catalogLoadPromise\) \{[\s\S]*?await catalogLoadPromise;[\s\S]*?return;/);
+});
+
+test("chat subtitles scroll only when their rendered text overflows", () => {
+  assert.match(app, /<OverflowMarquee[\s\S]*?:text="chatSubtitleText"/);
+  assert.match(overflowMarquee, /contentElement\.scrollWidth - viewportElement\.clientWidth/);
+  assert.match(overflowMarquee, /new ResizeObserver\(measureOverflow\)/);
+  assert.match(overflowMarquee, /chatSubtitleMarquee[\s\S]*?translateX\(calc\(0px - var\(--overflow-distance\)\)\)/);
 });
 
 test("mobile drawers stay above the chat header and their scrim", () => {
@@ -249,14 +259,23 @@ test("notifications stay in the header while live activity moves into its own ti
   assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
   assert.match(afterHeader, /class="chat-activity-ticker"[\s\S]*?activityTickerText/);
+  const tickerStart = afterHeader.indexOf('class="chat-activity-ticker"');
+  const tickerEnd = afterHeader.indexOf("</section>", tickerStart);
+  const ticker = afterHeader.slice(tickerStart, tickerEnd);
+  assert.doesNotMatch(ticker, /chat-activity-orbit/);
+  assert.equal(ticker.match(/\{\{ activityTickerText \}\}/g)?.length, 1);
   assert.match(app, /activityTickerItems\([\s\S]*?bibleReaders\.value[\s\S]*?musicListeners\.value[\s\S]*?Object\.values\(store\.typing\)/);
   assert.match(app, /function handleActivitySocketConnect\(\)[\s\S]*?publishPresenceActivities\(\)[\s\S]*?setTimeout\([\s\S]*?publishPresenceActivities\(\)[\s\S]*?700/);
   assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
   assert.match(server, /bibleReaderCleanupTimer[\s\S]*?45_000/);
-  assert.match(css, /\.chat-activity-ticker \{[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
+  assert.match(css, /\.chat-activity-ticker \{[\s\S]*?position: absolute;[\s\S]*?z-index: 20;[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
   assert.match(css, /\.chat-activity-track > span \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
+  assert.match(header, /aria-label="请打开通知"[\s\S]*?notificationNudgeCharacters/);
+  assert.match(css, /\.notification-nudge \{[\s\S]*?background: #facc15;[\s\S]*?animation: none;/);
+  assert.match(app, /<em v-if="row\.message\.sender\.kind === 'virtual'">诶哎<\/em>/);
+  assert.match(css, /\.sender-line em \{[\s\S]*?color: #38bdf8;[\s\S]*?text-shadow: none;/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {

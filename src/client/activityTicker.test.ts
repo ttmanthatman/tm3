@@ -10,13 +10,17 @@ test("activity ticker combines Bible, music, and typing presence", () => {
         { accountId: 2, displayName: "小光", bookName: null }
       ],
       [{ accountId: 3, displayName: "小乐", trackId: 9, trackTitle: "奇异恩典" }],
-      [{ displayName: "小平" }]
+      [{ displayName: "小平" }, { displayName: "小安" }, { displayName: "小平" }]
     ),
     [
       "小恩正在读《创世记》",
       "小光正在读圣经",
       "小乐正在听《奇异恩典》",
-      "小平正在输入…"
+      "小平、小安正在输入"
     ]
   );
+});
+
+test("a single typing user keeps the compact ellipsis treatment", () => {
+  assert.deepEqual(activityTickerItems([], [], [{ displayName: "小平" }]), ["小平正在输入…"]);
 });

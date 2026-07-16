@@ -84,6 +84,7 @@ const sendBusyKey = ref("");
 const toast = ref("");
 let toastTimer = 0;
 let persistTimer = 0;
+let catalogLoadPromise: Promise<void> | null = null;
 let componentMounted = false;
 let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
@@ -247,17 +248,25 @@ function persistWorkspaceState() {
 }
 
 async function ensureCatalog() {
-  if (catalog.value || catalogBusy.value) return;
+  if (catalog.value) return;
+  if (catalogLoadPromise) {
+    await catalogLoadPromise;
+    return;
+  }
   catalogBusy.value = true;
   catalogError.value = "";
-  try {
-    const response = await api<{ success: boolean; result: BibleCatalogDTO }>("/api/bible/catalog");
-    catalog.value = response.result;
-  } catch (error) {
-    catalogError.value = error instanceof Error ? error.message : "圣经目录加载失败";
-  } finally {
-    catalogBusy.value = false;
-  }
+  catalogLoadPromise = api<{ success: boolean; result: BibleCatalogDTO }>("/api/bible/catalog")
+    .then((response) => {
+      catalog.value = response.result;
+    })
+    .catch((error) => {
+      catalogError.value = error instanceof Error ? error.message : "圣经目录加载失败";
+    })
+    .finally(() => {
+      catalogBusy.value = false;
+      catalogLoadPromise = null;
+    });
+  await catalogLoadPromise;
 }
 
 async function ensureFavorites(force = false) {

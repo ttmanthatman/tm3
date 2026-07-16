@@ -111,6 +111,7 @@ import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import BibleWorkspace from "./components/BibleWorkspace.vue";
+import OverflowMarquee from "./components/OverflowMarquee.vue";
 import { activityTickerItems } from "./activityTicker";
 import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
@@ -1324,6 +1325,11 @@ const likeNoticeItems = computed<TopNotice[]>(() =>
 );
 const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value]);
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
+const chatSubtitleText = computed(() => {
+  if (showFavorites.value) return "集中查看所有收藏，长按消息可跳转到聊天上下文";
+  if (!activeTopNotice.value && store.prayerOnly) return "只显示本频道代祷卡片";
+  return "";
+});
 const isAdmin = computed(() => !!store.account?.isAdmin);
 const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
 const visiblePinned = computed(() => (!store.prayerOnly && store.pinned ? store.pinned : null));
@@ -1609,6 +1615,7 @@ const notificationNudgeIcon = computed(() => {
   if (notificationNudgeLevel.value === "muted") return "🔕";
   return "🔔";
 });
+const notificationNudgeCharacters = ["请", "打", "开", "通", "知"] as const;
 const notificationPromptHint = computed(() => {
   if (!notificationSupported.value) return "当前浏览器不支持网页推送；iPhone/iPad 通常需要先把聊天室添加到主屏幕。";
   if (notificationPermission.value === "denied") return "你之前拒绝了通知，需要在浏览器或系统设置里把本网站通知改为允许。";
@@ -9385,17 +9392,22 @@ async function toggleVirtual(character: any) {
             <button
               v-if="notificationAttentionVisible"
               class="notification-nudge"
-              :class="`level-${notificationNudgeLevel}`"
               type="button"
-              aria-label="通知体检"
+              aria-label="请打开通知"
               @click="openNotificationPrompt"
             >
-              <span aria-hidden="true">{{ notificationNudgeIcon }}</span>
+              <span class="notification-nudge-characters" aria-hidden="true">
+                <span
+                  v-for="(character, index) in notificationNudgeCharacters"
+                  :key="character"
+                  class="notification-nudge-character"
+                  :style="{ '--notification-char-index': index }"
+                >{{ character }}</span>
+              </span>
             </button>
             <strong>{{ showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <small v-if="showFavorites">集中查看所有收藏，长按消息可跳转到聊天上下文</small>
-          <div v-else-if="activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
+          <div v-if="!showFavorites && activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
             <button
               class="chat-status-text clickable"
               type="button"
@@ -9412,7 +9424,7 @@ async function toggleVirtual(character: any) {
               @click="dismissLikeNotification(activeTopNotice.notificationId)"
             ><X :size="11" /></button>
           </div>
-          <small v-else-if="store.prayerOnly">只显示本频道代祷卡片</small>
+          <OverflowMarquee v-else-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
         <div v-if="!showFavorites" class="music-player-control" data-music-player>
           <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer($event)" aria-label="打开音乐播放器">
@@ -9460,11 +9472,9 @@ async function toggleVirtual(character: any) {
       </header>
 
       <section v-if="!showFavorites && activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
-        <span class="chat-activity-orbit" aria-hidden="true"></span>
         <span class="chat-activity-viewport">
           <span class="chat-activity-track">
             <span>{{ activityTickerText }}</span>
-            <span aria-hidden="true">{{ activityTickerText }}</span>
           </span>
         </span>
       </section>
@@ -9730,7 +9740,7 @@ async function toggleVirtual(character: any) {
             <div class="bubble-wrap">
               <div class="sender-line">
                 <span>{{ row.message.sender.displayName }}</span>
-                <em v-if="row.message.sender.kind === 'virtual'">虚拟角色</em>
+                <em v-if="row.message.sender.kind === 'virtual'">诶哎</em>
               </div>
               <div
                 class="message-bubble-cluster"
