@@ -1,10 +1,17 @@
-export const APP_VERSION = "1.3.0";
+export const APP_VERSION = "1.3.1";
 
 export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天图片会自动校正拍摄方向，并按真实尺寸计算气泡；已查看图片会在账号私有缓存中保留 7 天，视口外的图片会提前预加载，切换频道不再反复缓慢载入。",
+  "音乐播放器新增红心收藏与“只播放收藏”筛选；播放列表支持列表循环、单曲循环和随机播放，顶部播放器仅显示歌曲播放状态，不再展示“某人正在收听”。",
+  "手机端彩色实时动态条改为连续像素滚动；收听或阅读状态变化时，离开的文字会立即移除，其他文字会平滑跟进，不再半途消失。",
+  "圣经首页的经文收藏夹现在默认折叠，可按需展开；聊天室更新后会出现精简的版本提示，点击即可查看本次更新说明。"
+] as const;
+
+const RELEASE_1_3_0_NOTES = [
   "手机后台、息屏或网络切换导致实时连接中断后，聊天室会在连接恢复时自动补拉遗漏消息，不再需要退出后重新进入。",
   "实时连接状态现在会准确显示离线与重连，修复 Socket 对象被响应式代理后断线判断失效的问题。",
   "消息列表加载期间收到的新消息会与服务器结果合并，避免请求返回时覆盖刚到达的实时消息。"
@@ -584,9 +591,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.3.0",
+    version: "1.3.1",
     date: "2026-07-16",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.3.0",
+    date: "2026-07-16",
+    notes: RELEASE_1_3_0_NOTES
   },
   {
     version: "1.2.0",
