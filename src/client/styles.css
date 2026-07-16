@@ -1622,6 +1622,18 @@ button {
   background: #fff0f4;
 }
 
+.bible-favorites-entry {
+  color: #76502d;
+  background: color-mix(in srgb, #c28a43 7%, transparent);
+  box-shadow: none;
+}
+
+.bible-favorites-icon,
+.bible-favorites-main-icon {
+  color: #80613f;
+  background: #f3e7d2;
+}
+
 .favorites-empty {
   margin: 48px auto;
   max-width: 420px;
@@ -1697,6 +1709,76 @@ button {
 .favorites-main-list {
   display: grid;
   gap: 12px;
+}
+
+.bible-favorites-main-head {
+  border-color: color-mix(in srgb, #a87943 28%, var(--line));
+  background: color-mix(in srgb, var(--panel) 86%, #f3e7d2);
+}
+
+.bible-favorite-passage-list {
+  gap: 14px;
+}
+
+.bible-favorites-error {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: #a4382c;
+}
+
+.bible-favorite-passage-card {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.bible-favorite-passage-head {
+  min-height: 48px;
+  padding: 8px 10px 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, #a87943 18%, var(--line));
+  background: color-mix(in srgb, #f3e7d2 42%, var(--panel));
+}
+
+.bible-favorite-passage-head > button:first-child {
+  min-width: 0;
+  border: 0;
+  padding: 6px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #76502d;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bible-favorite-passage-head strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 18px;
+}
+
+.bible-favorite-expanded {
+  padding: 15px 16px 17px;
+  color: #4f3b29;
+  background: color-mix(in srgb, var(--panel) 96%, #fff9ed);
+}
+
+.bible-favorite-expanded small {
+  display: block;
+  margin-bottom: 7px;
+  color: #92775b;
+  font-size: 11px;
+}
+
+.bible-favorite-expanded .formatted-bible-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: calc(var(--message-content-font-size) + 2px);
+  line-height: 1.85;
 }
 
 .favorite-message-card {
@@ -2011,7 +2093,21 @@ button {
   transform-origin: left center;
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
+  will-change: auto;
+}
+
+.wallpaper-pan-background.ready:not(.playback-paused) {
   will-change: transform;
+}
+
+.app-shell.music-low-power .music-player-trigger.spinning .music-player-glyph,
+.app-shell.music-low-power .music-score-trigger.page-turning .music-score-page-glyph,
+.app-shell.music-low-power .music-title-track.scrolling,
+.app-shell.music-low-power .music-player-listener-track,
+.app-shell.music-low-power .music-listener-marquee-track,
+.app-shell.music-low-power .music-player-listener-track > span,
+.app-shell.music-low-power .music-listener-marquee-track > span {
+  animation: none;
 }
 
 .chat-pane > :where(:not(.wallpaper-pan-background):not(.parallax-background):not(.modal-shell):not(.music-lyrics-header)) {
@@ -3019,6 +3115,9 @@ button {
 }
 
 .version-update-separator {
+  display: block;
+  max-width: calc(100% - 24px);
+  text-align: center;
   border: 0;
   font: inherit;
   font-size: 12px;

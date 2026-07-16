@@ -35,6 +35,7 @@ import {
   formatBibleVersesForCopy,
   selectBibleVerseKeys
 } from "../bibleVerseActions";
+import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 
 const props = defineProps<{
   open: boolean;
@@ -43,6 +44,9 @@ const props = defineProps<{
   canSend: boolean;
   sendUnavailableReason: string;
   sendPassage: (lookup: BibleLookupDTO) => Promise<void>;
+  favorites: BibleFavoriteDTO[];
+  favoritesBusy: boolean;
+  updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -76,19 +80,21 @@ const targetVerse = ref<BibleReaderTarget | null>(null);
 const linkedTargetVerseKeys = ref<Set<string>>(new Set());
 const selectedVerseKeys = ref<Set<string>>(new Set());
 const selectionAnchorKey = ref<string | null>(null);
-const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
 const favoritesCollapsed = ref(true);
-const favoritesBusy = ref(false);
-const favoritesLoadedAccountId = ref(0);
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
 const sendBusyKey = ref("");
 const toast = ref("");
 let toastTimer = 0;
 let persistTimer = 0;
 let catalogLoadPromise: Promise<void> | null = null;
+const chapterCache = new Map<string, BibleChapterDTO>();
+const chapterLoadPromises = new Map<string, Promise<BibleChapterDTO>>();
 let componentMounted = false;
 let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
+let readerGeneration = 0;
+let nearbyPreloadTimer = 0;
+let catalogPreloadTimer = 0;
 
 function favoritesCollapsedStorageKey(accountId: number) {
   return `team-chat-bible-favorites-collapsed:${accountId}`;
@@ -112,7 +118,7 @@ const orderedLoadedVerseKeys = computed(() => readerBook.value
 const selectedVerses = computed(() => readerBook.value
   ? loadedVerses.value.filter((verse) => selectedVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
   : []);
-const favoriteVerseKeys = computed(() => new Set(bibleFavorites.value.map((favorite) => bibleVerseKey(favorite.bookCode, favorite.verseLine))));
+const favoriteVerseKeys = computed(() => new Set(props.favorites.map((favorite) => bibleVerseKey(favorite.bookCode, favorite.verseLine))));
 const allSelectedFavorited = computed(() => selectedVerses.value.length > 0 && readerBook.value
   ? selectedVerses.value.every((verse) => favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
   : false);
@@ -144,7 +150,6 @@ watch(
   (open) => {
     if (open) {
       void ensureCatalog();
-      void ensureFavorites();
     }
   },
   { immediate: true }
@@ -154,9 +159,6 @@ watch(
   () => props.accountId,
   (accountId, previousAccountId) => {
     if (componentMounted && accountId && accountId !== previousAccountId) {
-      favoritesLoadedAccountId.value = 0;
-      bibleFavorites.value = [];
-      void ensureFavorites();
       void restoreWorkspaceState();
     }
   }
@@ -172,6 +174,7 @@ onMounted(() => {
   componentMounted = true;
   window.addEventListener("pagehide", persistWorkspaceState);
   void restoreWorkspaceState();
+  catalogPreloadTimer = window.setTimeout(() => void ensureCatalog(), 500);
 });
 
 onBeforeUnmount(() => {
@@ -179,6 +182,8 @@ onBeforeUnmount(() => {
   persistWorkspaceState();
   if (toastTimer) window.clearTimeout(toastTimer);
   if (persistTimer) window.clearTimeout(persistTimer);
+  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
+  if (catalogPreloadTimer) window.clearTimeout(catalogPreloadTimer);
 });
 
 async function restoreWorkspaceState() {
@@ -213,6 +218,8 @@ async function restoreWorkspaceState() {
 }
 
 function resetWorkspaceState() {
+  readerGeneration += 1;
+  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   view.value = "home";
   searchMode.value = "topic";
   topicQuery.value = "";
@@ -281,20 +288,6 @@ async function ensureCatalog() {
       catalogLoadPromise = null;
     });
   await catalogLoadPromise;
-}
-
-async function ensureFavorites(force = false) {
-  if (!props.accountId || favoritesBusy.value || (!force && favoritesLoadedAccountId.value === props.accountId)) return;
-  favoritesBusy.value = true;
-  try {
-    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites");
-    bibleFavorites.value = response.favorites;
-    favoritesLoadedAccountId.value = props.accountId;
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "经文收藏加载失败");
-  } finally {
-    favoritesBusy.value = false;
-  }
 }
 
 function returnHome() {
@@ -439,8 +432,11 @@ async function openReader(
   target: BibleReaderTarget | null = null,
   linkedTargets: ReadonlySet<string> | null = null
 ) {
+  const generation = ++readerGeneration;
+  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   readerBook.value = book;
   readerChapters.value = {};
+  readerBusyChapters.value = new Set();
   readerError.value = "";
   targetVerse.value = target;
   linkedTargetVerseKeys.value = new Set(linkedTargets || []);
@@ -448,12 +444,20 @@ async function openReader(
   visibleChapter.value = chapter;
   view.value = "reader";
   await loadChapter(chapter);
+  if (generation !== readerGeneration || readerBook.value?.code !== book.code) return;
   await nextTick();
   const selector = target
     ? `[data-verse-key="${book.code}-${chapter}-${target.verse}"]`
     : `[data-reader-chapter="${chapter}"]`;
-  const element = readerScroll.value?.querySelector<HTMLElement>(selector);
-  element?.scrollIntoView({ block: target ? "center" : "start" });
+  const scroller = readerScroll.value;
+  const element = scroller?.querySelector<HTMLElement>(selector);
+  if (scroller && element) {
+    const previousScrollBehavior = scroller.style.scrollBehavior;
+    scroller.style.scrollBehavior = "auto";
+    element.scrollIntoView({ block: target ? "center" : "start", behavior: "auto" });
+    scroller.style.scrollBehavior = previousScrollBehavior;
+  }
+  scheduleNearbyChapterPreloads(book, chapter, generation);
 }
 
 async function openLookupContext(lookup: BibleLookupDTO) {
@@ -485,27 +489,68 @@ async function openLookupContext(lookup: BibleLookupDTO) {
 
 defineExpose({ openLookupContext });
 
+function chapterCacheKey(bookCode: string, chapter: number) {
+  return `${bookCode.toUpperCase()}:${chapter}`;
+}
+
+async function fetchChapter(book: BibleBookCatalogDTO, chapter: number) {
+  const key = chapterCacheKey(book.code, chapter);
+  const cached = chapterCache.get(key);
+  if (cached) return cached;
+  const pending = chapterLoadPromises.get(key);
+  if (pending) return pending;
+  const promise = api<{ success: boolean; result?: BibleChapterDTO; message?: string }>(
+    `/api/bible/chapter?book=${encodeURIComponent(book.code)}&chapter=${chapter}`
+  ).then((response) => {
+    if (!response.success || !response.result) throw new Error(response.message || "章节加载失败");
+    chapterCache.set(key, response.result);
+    return response.result;
+  }).finally(() => chapterLoadPromises.delete(key));
+  chapterLoadPromises.set(key, promise);
+  return promise;
+}
+
+function scheduleNearbyChapterPreloads(book: BibleBookCatalogDTO, chapter: number, generation: number) {
+  const queue = nearbyBibleChapterPreloadOrder(chapter, book.chapterCount, 5).slice(1);
+  const pump = () => {
+    if (generation !== readerGeneration || readerBook.value?.code !== book.code) return;
+    const nextChapter = queue.shift();
+    if (!nextChapter) return;
+    void fetchChapter(book, nextChapter).catch(() => undefined).finally(() => {
+      nearbyPreloadTimer = window.setTimeout(pump, 420);
+    });
+  };
+  nearbyPreloadTimer = window.setTimeout(pump, 280);
+}
+
 async function loadChapter(chapter: number, prepend = false) {
   const book = readerBook.value;
   if (!book || chapter < 1 || chapter > book.chapterCount || readerChapters.value[chapter] || readerBusyChapters.value.has(chapter)) return;
   const busy = new Set(readerBusyChapters.value);
   busy.add(chapter);
   readerBusyChapters.value = busy;
-  const previousHeight = prepend ? readerScroll.value?.scrollHeight || 0 : 0;
+  const scroller = readerScroll.value;
+  const anchorChapter = prepend ? loadedChapters.value[0] : undefined;
+  const anchorBefore = anchorChapter
+    ? scroller?.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top
+    : undefined;
   try {
-    const response = await api<{ success: boolean; result?: BibleChapterDTO; message?: string }>(
-      `/api/bible/chapter?book=${encodeURIComponent(book.code)}&chapter=${chapter}`
-    );
-    if (!response.success || !response.result) throw new Error(response.message || "章节加载失败");
-    readerChapters.value = { ...readerChapters.value, [chapter]: response.result };
+    const result = await fetchChapter(book, chapter);
+    if (readerBook.value?.code !== book.code) return;
+    readerChapters.value = { ...readerChapters.value, [chapter]: result };
     await nextTick();
-    if (prepend && readerScroll.value) readerScroll.value.scrollTop += readerScroll.value.scrollHeight - previousHeight;
+    if (scroller && anchorChapter && anchorBefore !== undefined) {
+      const anchorAfter = scroller.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top;
+      if (anchorAfter !== undefined) scroller.scrollTop = preservedScrollTop(scroller.scrollTop, anchorBefore, anchorAfter);
+    }
   } catch (error) {
-    readerError.value = error instanceof Error ? error.message : "章节加载失败";
+    if (readerBook.value?.code === book.code) readerError.value = error instanceof Error ? error.message : "章节加载失败";
   } finally {
-    const next = new Set(readerBusyChapters.value);
-    next.delete(chapter);
-    readerBusyChapters.value = next;
+    if (readerBook.value?.code === book.code) {
+      const next = new Set(readerBusyChapters.value);
+      next.delete(chapter);
+      readerBusyChapters.value = next;
+    }
   }
 }
 
@@ -683,36 +728,22 @@ function favoriteKey(verse: BibleVerseLineDTO): BibleFavoriteKeyDTO | null {
 
 async function updateSelectedFavorites(remove: boolean) {
   const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
-  if (!verses.length || favoritesBusy.value) return;
-  favoritesBusy.value = true;
+  if (!verses.length || props.favoritesBusy) return;
   try {
-    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
-      method: remove ? "DELETE" : "POST",
-      body: JSON.stringify({ verses })
-    });
-    bibleFavorites.value = response.favorites;
+    await props.updateFavorites(verses, !remove);
     showToast(remove ? `已取消收藏 ${verses.length} 节经文` : `已收藏 ${verses.length} 节经文`);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "经文收藏更新失败");
-  } finally {
-    favoritesBusy.value = false;
   }
 }
 
 async function removeBibleFavorite(favorite: BibleFavoriteDTO) {
-  if (favoritesBusy.value) return;
-  favoritesBusy.value = true;
+  if (props.favoritesBusy) return;
   try {
-    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
-      method: "DELETE",
-      body: JSON.stringify({ verses: [{ bookCode: favorite.bookCode, chapter: favorite.chapter, verse: favorite.verse }] })
-    });
-    bibleFavorites.value = response.favorites;
+    await props.updateFavorites([{ bookCode: favorite.bookCode, chapter: favorite.chapter, verse: favorite.verse }], false);
     showToast(`已取消收藏 ${favorite.verseLine.reference}`);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "取消收藏失败");
-  } finally {
-    favoritesBusy.value = false;
   }
 }
 
@@ -852,15 +883,15 @@ function handleTouchEnd(event: TouchEvent) {
           <button type="button" class="bible-favorites-toggle" :aria-expanded="!favoritesCollapsed" @click="toggleFavoritesCollapsed">
             <Bookmark :size="24" />
             <div><h2>经文收藏夹</h2><p>独立保存的经文，不会加入聊天室收藏频道</p></div>
-            <span>{{ bibleFavorites.length }} 节</span>
+            <span>{{ favorites.length }} 节</span>
             <ChevronRight v-if="favoritesCollapsed" :size="20" />
             <ChevronDown v-else :size="20" />
           </button>
         </header>
-        <p v-if="!favoritesCollapsed && favoritesBusy && !bibleFavorites.length" class="bible-empty">正在加载收藏…</p>
-        <p v-else-if="!favoritesCollapsed && !bibleFavorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
+        <p v-if="!favoritesCollapsed && favoritesBusy && !favorites.length" class="bible-empty">正在加载收藏…</p>
+        <p v-else-if="!favoritesCollapsed && !favorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
         <div v-else-if="!favoritesCollapsed" class="bible-favorite-grid">
-          <article v-for="favorite in bibleFavorites" :key="favorite.id" @click="openBibleFavorite(favorite)">
+          <article v-for="favorite in favorites" :key="favorite.id" @click="openBibleFavorite(favorite)">
             <h3><BookmarkCheck :size="16" />{{ favorite.verseLine.reference }}</h3>
             <p>{{ favorite.verseLine.text }}</p>
             <footer><button type="button" @click.stop="copyTextItem({ verse: favorite.verseLine, matches: [] })"><ClipboardCopy :size="15" />复制</button><button type="button" :disabled="favoritesBusy" @click.stop="removeBibleFavorite(favorite)"><Trash2 :size="15" />取消收藏</button></footer>

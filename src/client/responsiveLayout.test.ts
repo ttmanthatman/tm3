@@ -74,6 +74,14 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
   assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\)\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
 });
 
+test("music playback freezes panning wallpaper and continuous music decoration animations", () => {
+  assert.match(app, /'music-low-power': musicPlaying && wallpaperPanActive/);
+  assert.match(app, /'playback-paused': musicPlaying/);
+  assert.match(app, /shouldAdvanceWallpaperPan\(\{[\s\S]*?musicPlaying: musicPlaying\.value/);
+  assert.match(css, /\.wallpaper-pan-background\.ready:not\(\.playback-paused\) \{[\s\S]*?will-change: transform;/);
+  assert.match(css, /\.app-shell\.music-low-power \.music-player-trigger\.spinning \.music-player-glyph,[\s\S]*?animation: none;/);
+});
+
 test("panning wallpaper stays visible while its dimensions load and retries transient failures", () => {
   const wallpaperPanCss = css.match(/\.wallpaper-pan-background \{([^}]*)\}/)?.[1] || "";
   assert.match(app, /const wallpaperPanImage = ref<HTMLImageElement \| null>\(null\)/);
@@ -173,11 +181,27 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
   assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
-  assert.match(app, /v-else-if="!showFavorites" class="composer"/);
-  assert.match(app, /v-if="!showFavorites && isMusicChannel" class="composer music-channel-composer"/);
+  assert.match(app, /v-else-if="!showingFavoriteSurface" class="composer"/);
+  assert.match(app, /v-if="!showingFavoriteSurface && isMusicChannel" class="composer music-channel-composer"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
   assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);
+});
+
+test("Bible favorites share one source and render each passage body exactly once", () => {
+  const surfaceStart = app.indexOf('v-else-if="showBibleFavorites"');
+  const surfaceEnd = app.indexOf('<div\n        v-else', surfaceStart);
+  const surface = app.slice(surfaceStart, surfaceEnd);
+  assert.match(app, />经文收藏<\/b>/);
+  assert.match(app, /:favorites="bibleFavorites"[\s\S]*?:update-favorites="updateBibleFavorites"/);
+  assert.match(surface, /bibleFavoritePassages[\s\S]*?formatBibleFavoriteBody\(passage\.lookup\)/);
+  assert.doesNotMatch(surface, /toggleBibleReference/);
+});
+
+test("opening the Bible unmounts every chat pane instead of only hiding it", () => {
+  assert.match(app, /<aside v-if="!bibleOpen" class="channel-pane"/);
+  assert.match(app, /<section v-if="!bibleOpen" ref="chatPane" class="chat-pane"/);
+  assert.match(app, /<aside v-if="!bibleOpen" class="member-pane"/);
 });
 
 test("explicit context jumps win over saved read-position restoration", () => {
@@ -305,6 +329,7 @@ test("version changes add one clickable timeline-style update notice", () => {
   assert.match(app, /previousVersion !== APP_VERSION[\s\S]*?聊天室刚刚更新到版本 \$\{APP_VERSION\}/);
   assert.match(app, /row\.kind === 'version'[\s\S]*?class="time-separator version-update-separator"[\s\S]*?@click="openVersionUpdateNotice"/);
   assert.match(app, /openVersionUpdateNotice[\s\S]*?openSettings\("release"\)/);
+  assert.match(css, /\.version-update-separator \{[\s\S]*?display: block;[\s\S]*?text-align: center;/);
 });
 
 test("chat images correct EXIF dimensions, cache privately, and preload offscreen rows", () => {

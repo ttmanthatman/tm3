@@ -1,5 +1,13 @@
 export const MUSIC_LYRICS_TICK_MS = 100;
 
+export function shouldAdvanceWallpaperPan(input: {
+  musicPlaying: boolean;
+  bibleOpen: boolean;
+  documentVisible: boolean;
+}) {
+  return input.documentVisible && !input.musicPlaying && !input.bibleOpen;
+}
+
 export function shouldRunMusicLyricsClock(input: {
   playing: boolean;
   cueCount: number;

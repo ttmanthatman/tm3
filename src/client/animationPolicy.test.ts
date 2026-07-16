@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   MUSIC_LYRICS_TICK_MS,
+  shouldAdvanceWallpaperPan,
   shouldRenderMessageEffect,
   shouldRunFlashEffectTimer,
   shouldRunMusicLyricsClock,
   shouldTriggerIncomingRainEffect
 } from "./animationPolicy.js";
+
+test("freezes wallpaper pan while music is playing or the Bible is open", () => {
+  assert.equal(shouldAdvanceWallpaperPan({ musicPlaying: false, bibleOpen: false, documentVisible: true }), true);
+  assert.equal(shouldAdvanceWallpaperPan({ musicPlaying: true, bibleOpen: false, documentVisible: true }), false);
+  assert.equal(shouldAdvanceWallpaperPan({ musicPlaying: false, bibleOpen: true, documentVisible: true }), false);
+  assert.equal(shouldAdvanceWallpaperPan({ musicPlaying: false, bibleOpen: false, documentVisible: false }), false);
+});
 
 test("karaoke clock runs at a bounded rate only while visible lyrics need it", () => {
   assert.equal(MUSIC_LYRICS_TICK_MS, 100);

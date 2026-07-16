@@ -67,6 +67,8 @@ import type {
   AdminLoginLogDTO,
   AdminLoginLogKind,
   AppearanceDTO,
+  BibleFavoriteDTO,
+  BibleFavoriteKeyDTO,
   AiRoleDTO,
   AiSettingsDTO,
   BibleLookupDTO,
@@ -104,6 +106,7 @@ import type {
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
+import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
@@ -114,7 +117,7 @@ import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import { activityTickerItems } from "./activityTicker";
-import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
+import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
 import { resolveMessageWaveform } from "./audioWaveform";
@@ -189,8 +192,14 @@ const composerSuggestionSuppressed = ref(false);
 const replyTo = ref<MessageDTO | null>(null);
 const showChannels = ref(false);
 const showFavorites = ref(false);
+const showBibleFavorites = ref(false);
 const favoriteMessages = ref<FavoriteMessageDTO[]>([]);
 const favoritesLoading = ref(false);
+const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
+const bibleFavoritesLoading = ref(false);
+const bibleFavoritesError = ref("");
+const showingFavoriteSurface = computed(() => showFavorites.value || showBibleFavorites.value);
+const bibleFavoritePassages = computed(() => groupBibleFavoritePassages(bibleFavorites.value));
 const showMembers = ref(false);
 const channelsCollapsed = ref(false);
 const membersCollapsed = ref(false);
@@ -651,8 +660,9 @@ async function switchVisibleChannel(channelId: number, prayerOnly = false) {
 
 async function openChannelFromList(channelId: number, prayerOnly = false) {
   if (Date.now() < suppressNextTapUntil) return;
-  if (!showFavorites.value) saveReadPosition();
+  if (!showingFavoriteSurface.value) saveReadPosition();
   showFavorites.value = false;
+  showBibleFavorites.value = false;
   await switchVisibleChannel(channelId, prayerOnly);
   showChannels.value = false;
 }
@@ -660,6 +670,7 @@ async function openChannelFromList(channelId: number, prayerOnly = false) {
 async function openFavorites() {
   if (!showFavorites.value) saveReadPosition();
   showFavorites.value = true;
+  showBibleFavorites.value = false;
   showChannels.value = false;
   favoritesLoading.value = true;
   try {
@@ -668,6 +679,64 @@ async function openFavorites() {
   } finally {
     favoritesLoading.value = false;
   }
+}
+
+async function loadBibleFavorites() {
+  if (!store.account || bibleFavoritesLoading.value) return;
+  bibleFavoritesLoading.value = true;
+  bibleFavoritesError.value = "";
+  try {
+    const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites");
+    bibleFavorites.value = result.favorites;
+  } catch (error) {
+    bibleFavoritesError.value = error instanceof Error ? error.message : "经文收藏加载失败";
+  } finally {
+    bibleFavoritesLoading.value = false;
+  }
+}
+
+async function updateBibleFavorites(verses: BibleFavoriteKeyDTO[], favorited: boolean) {
+  if (!verses.length || bibleFavoritesLoading.value) return;
+  bibleFavoritesLoading.value = true;
+  bibleFavoritesError.value = "";
+  try {
+    const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
+      method: favorited ? "POST" : "DELETE",
+      body: JSON.stringify({ verses })
+    });
+    bibleFavorites.value = result.favorites;
+  } catch (error) {
+    bibleFavoritesError.value = error instanceof Error ? error.message : "经文收藏更新失败";
+    throw error;
+  } finally {
+    bibleFavoritesLoading.value = false;
+  }
+}
+
+async function openBibleFavorites() {
+  if (!showBibleFavorites.value) saveReadPosition();
+  showBibleFavorites.value = true;
+  showFavorites.value = false;
+  showChannels.value = false;
+  await loadBibleFavorites();
+}
+
+async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
+  try {
+    await updateBibleFavorites(passage.favorites.map((favorite) => ({
+      bookCode: favorite.bookCode,
+      chapter: favorite.chapter,
+      verse: favorite.verse
+    })), false);
+  } catch {
+    // The dedicated surface keeps the error visible and leaves the passage intact.
+  }
+}
+
+async function openBibleFavoritePassage(passage: BibleFavoritePassage) {
+  openBibleWorkspace();
+  await nextTick();
+  await bibleWorkspace.value?.openLookupContext(passage.lookup);
 }
 
 async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
@@ -1083,7 +1152,7 @@ watch(
         currentChannelId: store.currentChannelId,
         prayerOnly: store.prayerOnly,
         messageType: incoming.type,
-        activeView: !showFavorites.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
+        activeView: !showingFavoriteSurface.value && !bibleOpen.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
         messageVisible: isNearMessageBottom(220),
         documentVisible: documentVisible.value
       })) triggerOneShotMessageEffects(incoming);
@@ -1095,8 +1164,16 @@ watch(
 );
 
 watch(
-  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showFavorites.value] as const,
+  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, bibleOpen.value] as const,
   () => {
+    if (bibleOpen.value) {
+      messageEffectObserver?.disconnect();
+      stopRainEffect();
+      stopDripPhysics(true);
+      stopGooeyDripPhysics(true);
+      syncFlashEffectTimer();
+      return;
+    }
     nextTick(() => {
       refreshMessageEffectObserver();
       ensureDripPhysics();
@@ -1139,8 +1216,12 @@ watch(
       initializeVersionUpdateNotice(accountId);
       loadMusicPlaybackMode();
       void loadNotificationSettings();
+      void loadBibleFavorites();
     } else {
       versionUpdateNotice.value = "";
+      bibleFavorites.value = [];
+      bibleFavoritesError.value = "";
+      showBibleFavorites.value = false;
       pauseMusic();
       clearMusicScoreCache();
       musicTracks.value = [];
@@ -1344,6 +1425,7 @@ const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ..
 const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
 const chatSubtitleText = computed(() => {
   if (showFavorites.value) return "集中查看所有收藏，长按消息可跳转到聊天上下文";
+  if (showBibleFavorites.value) return "经文正文只展开一次，避免出处与正文重复嵌套";
   if (!activeTopNotice.value && store.prayerOnly) return "只显示本频道代祷卡片";
   return "";
 });
@@ -1932,6 +2014,7 @@ function pumpMessageImagePreloads() {
 }
 
 function preloadMessageImages(messages: MessageDTO[]) {
+  if (bibleOpen.value) return;
   for (const message of messages) {
     if (message.type !== "image" || message.id <= 0 || queuedMessageImagePreloads.has(message.id)) continue;
     queuedMessageImagePreloads.add(message.id);
@@ -2749,6 +2832,7 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
       await switchVisibleChannel(channelId);
     }
     showFavorites.value = false;
+    showBibleFavorites.value = false;
     showChannels.value = false;
     await nextTick();
     await jumpToReply(messageId);
@@ -3771,6 +3855,7 @@ function chooseActiveComposerSuggestion() {
 }
 
 function openBibleWorkspace() {
+  if (!bibleOpen.value) saveReadPosition();
   showChannels.value = false;
   showMembers.value = false;
   bibleTargetChannelId.value = currentChannel.value?.id || null;
@@ -3780,6 +3865,30 @@ function openBibleWorkspace() {
 function closeBibleWorkspace() {
   bibleOpen.value = false;
 }
+
+watch(bibleOpen, async (open) => {
+  if (open) {
+    if (parallaxFrame) window.cancelAnimationFrame(parallaxFrame);
+    parallaxFrame = 0;
+    pendingParallaxDelta = 0;
+    pendingWallpaperPanDelta = 0;
+    wallpaperPanResizeObserver?.disconnect();
+    messageEffectObserver?.disconnect();
+    stopRainEffect();
+    stopDripPhysics(true);
+    stopGooeyDripPhysics(true);
+    syncFlashEffectTimer();
+    return;
+  }
+  await nextTick();
+  observeWallpaperPanViewport();
+  await resetWallpaperPan();
+  await restoreChatSurface();
+  refreshTimelineMeasurements();
+  refreshMessageEffectObserver();
+  preloadMessageImages(store.messages);
+  syncFlashEffectTimer();
+});
 
 function handleBibleReadingChange(activity: { active: boolean; bookName: string | null }) {
   bibleReadingActivity.value = activity;
@@ -7615,7 +7724,11 @@ function updateParallaxFromScroll(el: HTMLElement) {
   if (pendingReadPositionRestore.value || loadingHistoryFromScroll || loadingNewerFromScroll || activeReadAnchor) return;
   const clampedDelta = Math.max(-180, Math.min(180, delta));
   const parallaxActive = !!activeParallaxKit.value;
-  const panActive = wallpaperPanActive.value && !!wallpaperPanMetrics;
+  const panActive = wallpaperPanActive.value && !!wallpaperPanMetrics && shouldAdvanceWallpaperPan({
+    musicPlaying: musicPlaying.value,
+    bibleOpen: bibleOpen.value,
+    documentVisible: documentVisible.value
+  });
   if (!parallaxActive && !panActive) return;
   if (parallaxActive) pendingParallaxDelta += clampedDelta;
   if (panActive) pendingWallpaperPanDelta += Math.abs(clampedDelta);
@@ -7625,7 +7738,7 @@ function updateParallaxFromScroll(el: HTMLElement) {
       const speed = cleanParallaxSpeed(store.appearance.parallaxSpeed);
       parallaxOffset.value += pendingParallaxDelta * 0.28 * speed;
     }
-    if (wallpaperPanActive.value && wallpaperPanMetrics) {
+    if (panActive && wallpaperPanMetrics) {
       const moved = advanceWallpaperPan(
         wallpaperPanOffset.value,
         wallpaperPanDirection,
@@ -7823,7 +7936,7 @@ function flashPreviewVisible() {
 function syncFlashEffectTimer(forceRestart = false) {
   if (forceRestart) stopFlashEffectTimer(true);
   const previewVisible = flashPreviewVisible();
-  const visibleFlashMessage = store.messages.some((message) => messageEffect(message) === "flash" && !isMessageEffectPaused(message));
+  const visibleFlashMessage = !bibleOpen.value && store.messages.some((message) => messageEffect(message) === "flash" && !isMessageEffectPaused(message));
   if (!shouldRunFlashEffectTimer({ visibleFlashMessage, previewVisible, documentVisible: documentVisible.value })) {
     stopFlashEffectTimer(true);
     return;
@@ -8031,6 +8144,19 @@ function formatBibleLookup(lookup: BibleLookupDTO | null | undefined, originalRe
   const label = bibleReferenceLabel(lookup, originalReference);
   const body = groups.map((group) => group.verses.map((verse) => bibleVerseText(verse)).join("")).join("……");
   return label ? `${label} ${body}` : body;
+}
+
+function formatBibleFavoriteBody(lookup: BibleLookupDTO) {
+  const preferences = biblePreferences();
+  if (preferences.outputFormat === "referenceVerseLines" || preferences.outputFormat === "numberedVerses") {
+    return lookup.verses.map((verse) => `${compactVerseLabel(verse)} ${bibleVerseText(verse)}`).join("\n");
+  }
+  if (preferences.outputFormat === "referenceHeader") {
+    return lookup.verses.map((verse) => bibleVerseText(verse)).join("\n");
+  }
+  return bibleVerseGroups(lookup)
+    .map((group) => group.verses.map((verse) => bibleVerseText(verse)).join(""))
+    .join(preferences.combinedPassageMode === "groupedLines" ? "\n" : "……");
 }
 
 function isBibleReferenceExpanded(scope: string | number, reference: string) {
@@ -9396,7 +9522,7 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen }" :style="appearanceStyle">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="appearanceStyle">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
@@ -9410,11 +9536,14 @@ async function toggleVirtual(character: any) {
       :can-send="bibleCanSend"
       :send-unavailable-reason="bibleSendUnavailableReason"
       :send-passage="sendBiblePassage"
+      :favorites="bibleFavorites"
+      :favorites-busy="bibleFavoritesLoading"
+      :update-favorites="updateBibleFavorites"
       @close="closeBibleWorkspace"
       @reading-change="handleBibleReadingChange"
     />
 
-    <aside class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }" :inert="bibleOpen" :aria-hidden="bibleOpen">
+    <aside v-if="!bibleOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
         <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
@@ -9473,6 +9602,10 @@ async function toggleVirtual(character: any) {
         <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
         <span class="channel-row-label"><b>收藏夹</b></span>
       </button>
+      <button class="channel-row favorites-entry bible-favorites-entry" :class="{ active: showBibleFavorites }" type="button" @click="openBibleFavorites">
+        <span class="channel-icon bible-favorites-icon"><Bookmark :size="20" /></span>
+        <span class="channel-row-label"><b>经文收藏</b><small>{{ bibleFavorites.length }} 节</small></span>
+      </button>
       <footer class="profile-row">
         <div class="avatar">
           <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />
@@ -9487,12 +9620,12 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section ref="chatPane" class="chat-pane" :inert="bibleOpen" :aria-hidden="bibleOpen" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
+    <section v-if="!bibleOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
         class="wallpaper-pan-background"
-        :class="{ ready: wallpaperPanReady }"
+        :class="{ ready: wallpaperPanReady, 'playback-paused': musicPlaying }"
         :src="wallpaperPanImageSource"
         :style="wallpaperPanLayerStyle"
         @load="handleWallpaperPanImageLoad"
@@ -9619,9 +9752,9 @@ async function toggleVirtual(character: any) {
                 >{{ character }}</span>
               </span>
             </button>
-            <strong>{{ showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+            <strong>{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <div v-if="!showFavorites && activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
+          <div v-if="!showingFavoriteSurface && activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
             <button
               class="chat-status-text clickable"
               type="button"
@@ -9640,13 +9773,13 @@ async function toggleVirtual(character: any) {
           </div>
           <OverflowMarquee v-else-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
-        <button v-if="!showFavorites" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
-        <div v-if="!showFavorites" class="music-player-control" data-music-player>
+        <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
+        <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
           <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer($event)" aria-label="打开音乐播放器">
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
-        <div v-if="!showFavorites" class="message-font-control" data-message-font-menu>
+        <div v-if="!showingFavoriteSurface" class="message-font-control" data-message-font-menu>
           <button
             v-if="musicScoreTriggerVisible"
             class="icon-btn message-font-trigger music-score-trigger"
@@ -9674,19 +9807,19 @@ async function toggleVirtual(character: any) {
             <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
           </div>
         </div>
-        <button v-if="!showFavorites" class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
+        <button v-if="!showingFavoriteSurface" class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
           <PanelRightOpen v-if="membersCollapsed" :size="20" />
           <Users v-else :size="20" />
         </button>
-        <button v-if="!showFavorites && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
-        <button v-if="!showFavorites && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
-        <button v-if="!showFavorites && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
-        <button v-if="!showFavorites && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
+        <button v-if="!showingFavoriteSurface && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
+        <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
+        <button v-if="!showingFavoriteSurface && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
+        <button v-if="!showingFavoriteSurface && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
         </template>
       </header>
 
       <section
-        v-if="!showFavorites && (visiblePinned || activityTickerText)"
+        v-if="!showingFavoriteSurface && (visiblePinned || activityTickerText)"
         class="chat-notice-stack"
         :class="{ 'has-pinned': !!visiblePinned, 'has-activity': !!activityTickerText }"
         :role="visiblePinned ? 'button' : undefined"
@@ -9721,7 +9854,7 @@ async function toggleVirtual(character: any) {
         />
       </Transition>
 
-      <section v-if="!showFavorites && messageSelectionMode" class="message-selection-bar">
+      <section v-if="!showingFavoriteSurface && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
         <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
@@ -9729,7 +9862,7 @@ async function toggleVirtual(character: any) {
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
-      <section v-if="!showFavorites && visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
+      <section v-if="!showingFavoriteSurface && visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
         <div class="pinned-view-modal">
           <header class="pinned-view-head">
             <span class="pinned-view-icon"><Pin :size="17" /></span>
@@ -9803,6 +9936,40 @@ async function toggleVirtual(character: any) {
               <footer class="favorite-message-actions">
                 <span>长按卡片跳转</span>
                 <button class="mini-btn secondary" type="button" @click="openFavoriteMessage(favorite)"><MessageSquareQuote :size="15" />查看上下文</button>
+              </footer>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="showBibleFavorites" class="messages-viewport favorites-viewport bible-favorites-viewport">
+        <div class="favorites-main-scroll">
+          <div class="favorites-main-head bible-favorites-main-head">
+            <span class="favorites-main-icon bible-favorites-main-icon"><Bookmark :size="22" /></span>
+            <div>
+              <strong>经文收藏</strong>
+              <small>出处作为标题，正文自动展开一次</small>
+            </div>
+          </div>
+          <p v-if="bibleFavoritesLoading && !bibleFavoritePassages.length" class="favorites-empty">正在加载经文收藏…</p>
+          <p v-else-if="bibleFavoritesError" class="favorites-empty bible-favorites-error">{{ bibleFavoritesError }}<button class="mini-btn secondary" type="button" @click="loadBibleFavorites">重试</button></p>
+          <p v-else-if="!bibleFavoritePassages.length" class="favorites-empty">还没有收藏经文。打开圣经，点选经文后点击“收藏”。</p>
+          <div v-else class="favorites-main-list bible-favorite-passage-list">
+            <article v-for="passage in bibleFavoritePassages" :key="passage.key" class="favorite-message-card bible-favorite-passage-card">
+              <header class="bible-favorite-passage-head">
+                <button type="button" @click="openBibleFavoritePassage(passage)">
+                  <Bookmark :size="17" />
+                  <strong>{{ passage.lookup.normalizedReference }}</strong>
+                </button>
+                <button class="favorite-remove" type="button" :disabled="bibleFavoritesLoading" @click="removeBibleFavoritePassage(passage)" aria-label="取消收藏这段经文"><X :size="16" /></button>
+              </header>
+              <div class="bible-favorite-expanded" aria-label="已自动展开的经文正文">
+                <small>{{ passage.lookup.translation }}</small>
+                <p class="formatted-bible-text">{{ formatBibleFavoriteBody(passage.lookup) }}</p>
+              </div>
+              <footer class="favorite-message-actions">
+                <span>收藏于 {{ adminDate(passage.savedAt) }}</span>
+                <button class="mini-btn secondary" type="button" @click="openBibleFavoritePassage(passage)"><BookOpen :size="15" />在圣经中阅读</button>
               </footer>
             </article>
           </div>
@@ -10348,11 +10515,11 @@ async function toggleVirtual(character: any) {
         </div>
       </div>
 
-      <button v-if="!showFavorites && (awayFromNewest || hasUnreadMessages || store.hasNewerMessages)" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
+      <button v-if="!showingFavoriteSurface && (awayFromNewest || hasUnreadMessages || store.hasNewerMessages)" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
         <ArrowDown :size="18" />
       </button>
 
-      <footer v-if="!showFavorites && isMusicChannel" class="composer music-channel-composer">
+      <footer v-if="!showingFavoriteSurface && isMusicChannel" class="composer music-channel-composer">
         <button class="music-upload-button" type="button" :disabled="!canManageMusic" @click="fileInput?.click()">
           <FileUp :size="22" />
           <span><strong>上传音乐</strong><small>仅支持 MP3、M4A，单个文件最大 80MB</small></span>
@@ -10360,7 +10527,7 @@ async function toggleVirtual(character: any) {
         <input ref="fileInput" class="hidden" type="file" accept=".mp3,.m4a,audio/mpeg,audio/mp4,audio/x-m4a" multiple @change="handlePickedFiles" />
       </footer>
 
-      <footer v-else-if="!showFavorites" class="composer">
+      <footer v-else-if="!showingFavoriteSurface" class="composer">
         <div v-if="replyTo" class="reply-bar">
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
           <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
@@ -10506,7 +10673,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </section>
 
-    <aside class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }" :inert="bibleOpen" :aria-hidden="bibleOpen">
+    <aside v-if="!bibleOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
