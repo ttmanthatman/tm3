@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { BookOpen, ChevronLeft, History, Home, Plus, Search, Send, Trash2 } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronLeft, ClipboardCopy, History, Home, Plus, Search, Send, Trash2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
   BibleChapterDTO,
   BibleChapterVerseFragmentDTO,
+  BibleFavoriteDTO,
+  BibleFavoriteKeyDTO,
   BibleLookupDTO,
   BibleRelatedSearchDTO,
   BibleTextMatchRangeDTO,
@@ -27,6 +29,12 @@ import {
   type BibleWorkspaceState,
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
+import {
+  bibleVerseKey,
+  formatBibleLookupsForCopy,
+  formatBibleVersesForCopy,
+  selectBibleVerseKeys
+} from "../bibleVerseActions";
 
 const props = defineProps<{
   open: boolean;
@@ -62,7 +70,11 @@ const readerError = ref("");
 const readerScroll = ref<HTMLElement | null>(null);
 const visibleChapter = ref(1);
 const targetVerse = ref<BibleReaderTarget | null>(null);
-const selectedVerse = ref<BibleVerseLineDTO | null>(null);
+const selectedVerseKeys = ref<Set<string>>(new Set());
+const selectionAnchorKey = ref<string | null>(null);
+const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
+const favoritesBusy = ref(false);
+const favoritesLoadedAccountId = ref(0);
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
 const sendBusyKey = ref("");
 const toast = ref("");
@@ -74,6 +86,20 @@ let swipeStart: { x: number; y: number } | null = null;
 
 const allBooks = computed(() => [...(catalog.value?.oldTestament || []), ...(catalog.value?.newTestament || [])]);
 const loadedChapters = computed(() => Object.keys(readerChapters.value).map(Number).sort((left, right) => left - right));
+const loadedVerses = computed(() => loadedChapters.value.flatMap((chapter) => readerChapters.value[chapter]?.verses || []));
+const orderedLoadedVerseKeys = computed(() => readerBook.value
+  ? loadedVerses.value.map((verse) => bibleVerseKey(readerBook.value!.code, verse))
+  : []);
+const selectedVerses = computed(() => readerBook.value
+  ? loadedVerses.value.filter((verse) => selectedVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
+  : []);
+const favoriteVerseKeys = computed(() => new Set(bibleFavorites.value.map((favorite) => bibleVerseKey(favorite.bookCode, favorite.verseLine))));
+const allSelectedFavorited = computed(() => selectedVerses.value.length > 0 && readerBook.value
+  ? selectedVerses.value.every((verse) => favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
+  : false);
+const selectedVerseSummary = computed(() => selectedVerses.value.length === 1
+  ? selectedVerses.value[0].reference
+  : `已选 ${selectedVerses.value.length} 节经文`);
 const headerTitle = computed(() => {
   if (view.value === "reader" && readerBook.value) return `${readerBook.value.name} 第${visibleChapter.value}章`;
   if (view.value === "chapters" && selectedBook.value) return selectedBook.value.name;
@@ -86,7 +112,10 @@ const matchingTopicHistory = computed(() => findBibleTopicHistory(searchHistory.
 watch(
   () => props.open,
   (open) => {
-    if (open) void ensureCatalog();
+    if (open) {
+      void ensureCatalog();
+      void ensureFavorites();
+    }
   },
   { immediate: true }
 );
@@ -94,12 +123,17 @@ watch(
 watch(
   () => props.accountId,
   (accountId, previousAccountId) => {
-    if (componentMounted && accountId && accountId !== previousAccountId) void restoreWorkspaceState();
+    if (componentMounted && accountId && accountId !== previousAccountId) {
+      favoritesLoadedAccountId.value = 0;
+      bibleFavorites.value = [];
+      void ensureFavorites();
+      void restoreWorkspaceState();
+    }
   }
 );
 
 watch(
-  [view, searchMode, topicQuery, textQuery, topicResult, textResult, selectedBook, readerBook, visibleChapter, targetVerse, selectedVerse, searchHistory],
+  [view, searchMode, topicQuery, textQuery, topicResult, textResult, selectedBook, readerBook, visibleChapter, targetVerse, selectedVerseKeys, selectionAnchorKey, searchHistory],
   scheduleWorkspacePersistence,
   { deep: true }
 );
@@ -137,10 +171,9 @@ async function restoreWorkspaceState() {
   if (saved.view === "reader" && saved.readerBook) {
     const target = saved.targetVerse?.chapter === visibleChapter.value ? saved.targetVerse : null;
     await openReader(saved.readerBook, visibleChapter.value, target);
-    const restoredVerse = Object.values(readerChapters.value)
-      .flatMap((lookup) => lookup.verses)
-      .find((verse) => verse.reference === saved.selectedVerseReference);
-    selectedVerse.value = restoredVerse || null;
+    const prefix = `${saved.readerBook.code.toUpperCase()}:`;
+    selectedVerseKeys.value = new Set((saved.selectedVerseKeys || []).filter((key) => key.startsWith(prefix)));
+    selectionAnchorKey.value = saved.selectionAnchorKey?.startsWith(prefix) ? saved.selectionAnchorKey : null;
   } else {
     readerBook.value = saved.readerBook || null;
     targetVerse.value = saved.targetVerse || null;
@@ -161,7 +194,7 @@ function resetWorkspaceState() {
   readerChapters.value = {};
   visibleChapter.value = 1;
   targetVerse.value = null;
-  selectedVerse.value = null;
+  clearVerseSelection();
   searchHistory.value = [];
 }
 
@@ -185,7 +218,9 @@ function persistWorkspaceState() {
     readerBook: readerBook.value,
     visibleChapter: visibleChapter.value,
     targetVerse: targetVerse.value,
-    selectedVerseReference: selectedVerse.value?.reference || null,
+    selectedVerseReference: null,
+    selectedVerseKeys: [...selectedVerseKeys.value],
+    selectionAnchorKey: selectionAnchorKey.value,
     history: searchHistory.value
   };
   try {
@@ -209,17 +244,31 @@ async function ensureCatalog() {
   }
 }
 
+async function ensureFavorites(force = false) {
+  if (!props.accountId || favoritesBusy.value || (!force && favoritesLoadedAccountId.value === props.accountId)) return;
+  favoritesBusy.value = true;
+  try {
+    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites");
+    bibleFavorites.value = response.favorites;
+    favoritesLoadedAccountId.value = props.accountId;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "经文收藏加载失败");
+  } finally {
+    favoritesBusy.value = false;
+  }
+}
+
 function returnHome() {
   view.value = "home";
   selectedBook.value = null;
-  selectedVerse.value = null;
+  clearVerseSelection();
 }
 
 function reopenChapterPicker() {
   if (!readerBook.value) return;
   selectedBook.value = readerBook.value;
   view.value = "chapters";
-  selectedVerse.value = null;
+  clearVerseSelection();
 }
 
 function chooseBook(book: BibleBookCatalogDTO) {
@@ -354,7 +403,7 @@ async function openReader(
   readerChapters.value = {};
   readerError.value = "";
   targetVerse.value = target;
-  selectedVerse.value = null;
+  clearVerseSelection();
   visibleChapter.value = chapter;
   view.value = "reader";
   await loadChapter(chapter);
@@ -429,8 +478,31 @@ function isTargetVerse(verse: BibleVerseLineDTO) {
   return !!target && target.chapter === verse.chapter && verse.verse <= target.endVerse && verse.endVerse >= target.verse;
 }
 
-function selectVerse(verse: BibleVerseLineDTO) {
-  selectedVerse.value = selectedVerse.value?.reference === verse.reference ? null : verse;
+function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
+  const book = readerBook.value;
+  if (!book) return;
+  const clickedKey = bibleVerseKey(book.code, verse);
+  selectedVerseKeys.value = selectBibleVerseKeys(
+    orderedLoadedVerseKeys.value,
+    selectedVerseKeys.value,
+    clickedKey,
+    selectionAnchorKey.value,
+    shiftKey
+  );
+  if (!shiftKey || !selectionAnchorKey.value) selectionAnchorKey.value = clickedKey;
+}
+
+function clearVerseSelection() {
+  selectedVerseKeys.value = new Set();
+  selectionAnchorKey.value = null;
+}
+
+function isSelectedVerse(verse: BibleVerseLineDTO) {
+  return !!readerBook.value && selectedVerseKeys.value.has(bibleVerseKey(readerBook.value.code, verse));
+}
+
+function isFavoriteVerse(verse: BibleVerseLineDTO) {
+  return !!readerBook.value && favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value.code, verse));
 }
 
 function verseSegments(text: string, ranges: BibleTextMatchRangeDTO[]): TextSegment[] {
@@ -457,6 +529,126 @@ function singleVerseLookup(verse: BibleVerseLineDTO): BibleLookupDTO {
     sourceId: catalog.value?.sourceId || "cmn-cu89s",
     verses: [verse]
   };
+}
+
+async function writeClipboard(text: string, successMessage: string) {
+  if (!text) return;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      const textarea = document.createElement("textarea");
+      try {
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        if (!document.execCommand("copy")) throw new Error("copy unavailable");
+      } finally {
+        textarea.remove();
+      }
+    }
+    showToast(successMessage);
+  } catch {
+    showToast("复制失败，请检查浏览器剪贴板权限");
+  }
+}
+
+function copyLookup(lookup: BibleLookupDTO) {
+  return writeClipboard(formatBibleLookupsForCopy([lookup], lookup.translation), `已复制 ${lookup.normalizedReference}`);
+}
+
+function copyTopicResults() {
+  if (!topicResult.value) return;
+  return writeClipboard(
+    formatBibleLookupsForCopy(topicResult.value.results, catalog.value?.translation || "新标点和合本（简体）"),
+    `已复制 ${topicResult.value.results.length} 处结果`
+  );
+}
+
+function copyTextItem(item: BibleTextSearchItemDTO) {
+  return writeClipboard(
+    formatBibleVersesForCopy([item.verse], catalog.value?.translation || "新标点和合本（简体）"),
+    `已复制 ${item.verse.reference}`
+  );
+}
+
+async function copyAllTextResults() {
+  const query = textResult.value?.query;
+  if (!query || textBusy.value) return;
+  textBusy.value = true;
+  try {
+    const response = await api<{ success: boolean; result: BibleTextSearchDTO }>(
+      `/api/bible/search/export?query=${encodeURIComponent(query)}`
+    );
+    await writeClipboard(
+      formatBibleVersesForCopy(response.result.items.map((item) => item.verse), catalog.value?.translation || "新标点和合本（简体）"),
+      `已复制全部 ${response.result.total} 节结果`
+    );
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "复制全部结果失败");
+  } finally {
+    textBusy.value = false;
+  }
+}
+
+function copySelectedVerses() {
+  return writeClipboard(
+    formatBibleVersesForCopy(selectedVerses.value, catalog.value?.translation || "新标点和合本（简体）"),
+    `已复制 ${selectedVerses.value.length} 节经文`
+  );
+}
+
+function favoriteKey(verse: BibleVerseLineDTO): BibleFavoriteKeyDTO | null {
+  if (!readerBook.value) return null;
+  return { bookCode: readerBook.value.code, chapter: verse.chapter, verse: verse.verse };
+}
+
+async function updateSelectedFavorites(remove: boolean) {
+  const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
+  if (!verses.length || favoritesBusy.value) return;
+  favoritesBusy.value = true;
+  try {
+    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
+      method: remove ? "DELETE" : "POST",
+      body: JSON.stringify({ verses })
+    });
+    bibleFavorites.value = response.favorites;
+    showToast(remove ? `已取消收藏 ${verses.length} 节经文` : `已收藏 ${verses.length} 节经文`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "经文收藏更新失败");
+  } finally {
+    favoritesBusy.value = false;
+  }
+}
+
+async function removeBibleFavorite(favorite: BibleFavoriteDTO) {
+  if (favoritesBusy.value) return;
+  favoritesBusy.value = true;
+  try {
+    const response = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
+      method: "DELETE",
+      body: JSON.stringify({ verses: [{ bookCode: favorite.bookCode, chapter: favorite.chapter, verse: favorite.verse }] })
+    });
+    bibleFavorites.value = response.favorites;
+    showToast(`已取消收藏 ${favorite.verseLine.reference}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "取消收藏失败");
+  } finally {
+    favoritesBusy.value = false;
+  }
+}
+
+function openBibleFavorite(favorite: BibleFavoriteDTO) {
+  const book = allBooks.value.find((item) => item.code === favorite.bookCode);
+  if (!book) return;
+  void openReader(book, favorite.chapter, {
+    chapter: favorite.chapter,
+    verse: favorite.verse,
+    endVerse: favorite.verseLine.endVerse,
+    matches: []
+  });
 }
 
 async function sendLookup(lookup: BibleLookupDTO, key: string) {
@@ -559,24 +751,37 @@ function handleTouchEnd(event: TouchEvent) {
         </section>
 
         <section v-if="searchMode === 'topic' && topicResult" class="bible-results" aria-live="polite">
-          <header><strong>相关经文</strong><span>{{ topicResult.results.length }} 处</span></header>
+          <header><strong>相关经文</strong><span>{{ topicResult.results.length }} 处</span><button v-if="topicResult.results.length" type="button" class="bible-copy-all" @click="copyTopicResults"><ClipboardCopy :size="15" />复制全部</button></header>
           <article v-for="lookup in topicResult.results" :key="lookup.normalizedReference" class="bible-result-card" @click="openTopicResult(lookup)">
             <h3>{{ lookup.normalizedReference }}</h3>
             <p><template v-for="verse in lookup.verses" :key="verse.reference"><sup>{{ verse.verse }}</sup>{{ verse.text }}</template></p>
-            <footer><button type="button" @click.stop="openTopicResult(lookup)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(lookup, lookup.normalizedReference)"><Send :size="16" />发送</button></footer>
+            <footer><button type="button" @click.stop="copyLookup(lookup)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTopicResult(lookup)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(lookup, lookup.normalizedReference)"><Send :size="16" />发送</button></footer>
           </article>
         </section>
 
         <section v-if="searchMode === 'text' && textResult" class="bible-results" aria-live="polite">
-          <header><strong>{{ textModeLabel }}</strong><span>共 {{ textResult.total }} 节</span></header>
+          <header><strong>{{ textModeLabel }}</strong><span>共 {{ textResult.total }} 节</span><button v-if="textResult.total" type="button" class="bible-copy-all" :disabled="textBusy" @click="copyAllTextResults"><ClipboardCopy :size="15" />{{ textBusy ? "整理中…" : "复制全部" }}</button></header>
           <p v-if="!textResult.items.length" class="bible-empty">没有找到包含这段文字的经文。</p>
           <article v-for="item in textResult.items" :key="item.verse.reference" class="bible-result-card" @click="openTextResult(item)">
             <h3>{{ item.verse.reference }}</h3>
             <p><template v-for="(segment, index) in verseSegments(item.verse.text, item.matches)" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></p>
-            <footer><button type="button" @click.stop="openTextResult(item)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(singleVerseLookup(item.verse), item.verse.reference)"><Send :size="16" />发送</button></footer>
+            <footer><button type="button" @click.stop="copyTextItem(item)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTextResult(item)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(singleVerseLookup(item.verse), item.verse.reference)"><Send :size="16" />发送</button></footer>
           </article>
           <button v-if="textHasMore" type="button" class="bible-load-more" :disabled="textBusy" @click="searchText(true)">{{ textBusy ? "加载中…" : "加载更多" }}</button>
         </section>
+      </section>
+
+      <section class="bible-favorites" aria-label="经文收藏夹">
+        <header><Bookmark :size="24" /><div><h2>经文收藏夹</h2><p>独立保存的经文，不会加入聊天室收藏频道</p></div><span>{{ bibleFavorites.length }} 节</span></header>
+        <p v-if="favoritesBusy && !bibleFavorites.length" class="bible-empty">正在加载收藏…</p>
+        <p v-else-if="!bibleFavorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
+        <div v-else class="bible-favorite-grid">
+          <article v-for="favorite in bibleFavorites" :key="favorite.id" @click="openBibleFavorite(favorite)">
+            <h3><BookmarkCheck :size="16" />{{ favorite.verseLine.reference }}</h3>
+            <p>{{ favorite.verseLine.text }}</p>
+            <footer><button type="button" @click.stop="copyTextItem({ verse: favorite.verseLine, matches: [] })"><ClipboardCopy :size="15" />复制</button><button type="button" :disabled="favoritesBusy" @click.stop="removeBibleFavorite(favorite)"><Trash2 :size="15" />取消收藏</button></footer>
+          </article>
+        </div>
       </section>
 
       <section v-if="catalog" class="bible-catalog">
@@ -607,12 +812,14 @@ function handleTouchEnd(event: TouchEvent) {
                 v-for="fragment in block.fragments"
                 :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"
                 class="bible-reader-verse"
-                :class="{ target: isTargetVerse(fragment.verse), selected: selectedVerse?.reference === fragment.verse.reference }"
+                :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse) }"
                 :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
                 role="button"
                 tabindex="0"
-                @click="selectVerse(fragment.verse)"
-                @keydown.enter.prevent="selectVerse(fragment.verse)"
+                :aria-pressed="isSelectedVerse(fragment.verse)"
+                :title="isFavoriteVerse(fragment.verse) ? '已收藏；按住 Shift 可跨章范围选择' : '点选经文；按住 Shift 可跨章范围选择'"
+                @click="selectVerse(fragment.verse, $event.shiftKey)"
+                @keydown.enter.prevent="selectVerse(fragment.verse, $event.shiftKey)"
               ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
             </p>
           </template>
@@ -623,9 +830,14 @@ function handleTouchEnd(event: TouchEvent) {
       <div v-else class="bible-reader-loading">继续向下阅读下一章</div>
     </main>
 
-    <footer v-if="view === 'reader' && selectedVerse" class="bible-verse-action">
-      <div><strong>{{ selectedVerse.reference }}</strong><small>{{ selectedVerse.text }}</small></div>
-      <button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click="sendLookup(singleVerseLookup(selectedVerse), selectedVerse.reference)"><Send :size="18" />发送本节</button>
+    <footer v-if="view === 'reader' && selectedVerses.length" class="bible-verse-action">
+      <div><strong>{{ selectedVerseSummary }}</strong><small>{{ selectedVerses.length === 1 ? selectedVerses[0].text : '按住 Shift 点选另一节，可连续选择并跨章节' }}</small></div>
+      <div class="bible-verse-action-buttons">
+        <button type="button" @click="copySelectedVerses"><ClipboardCopy :size="18" />复制</button>
+        <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="18" /><Bookmark v-else :size="18" />{{ allSelectedFavorited ? "取消收藏" : "收藏" }}</button>
+        <button v-if="selectedVerses.length === 1" type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click="sendLookup(singleVerseLookup(selectedVerses[0]), selectedVerses[0].reference)"><Send :size="18" />发送</button>
+        <button type="button" class="secondary" aria-label="清除选择" title="清除选择" @click="clearVerseSelection"><X :size="18" /></button>
+      </div>
     </footer>
     <div v-if="toast" class="bible-toast" role="status">{{ toast }}</div>
   </section>
@@ -686,6 +898,8 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-history-list > button > small { grid-column: 1 / -1; color: #91775d; }
 .bible-results { display: grid; gap: 12px; margin-top: 22px; }
 .bible-results > header { display: flex; align-items: center; justify-content: space-between; color: #6d5135; }
+.bible-copy-all { min-height: 32px; border: 1px solid #bda581; border-radius: 9px; padding: 0 10px; color: #6d5135; background: #fffaf1; display: inline-flex; align-items: center; gap: 5px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.bible-copy-all:disabled { opacity: .5; cursor: wait; }
 .bible-result-card { padding: 16px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 13px; background: #fffdf7; cursor: pointer; }
 .bible-result-card:hover { border-color: rgba(128, 97, 63, .4); box-shadow: 0 7px 20px rgba(76, 51, 25, .08); }
 .bible-result-card h3 { margin: 0 0 9px; color: #76502d; font-family: "Songti SC", "STSong", serif; }
@@ -697,6 +911,19 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-result-card footer button:last-child { color: white; border-color: #80613f; background: #80613f; }
 .bible-load-more { min-height: 42px; margin: 4px auto 0; }
 .bible-empty { margin: 0; padding: 16px; text-align: center; color: #8c745c; }
+.bible-favorites { max-width: 1120px; margin: 0 auto 34px; padding: 18px; border: 1px solid rgba(116, 84, 48, .18); border-radius: 18px; background: rgba(255, 252, 245, .74); }
+.bible-favorites > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 14px; color: #6d5135; }
+.bible-favorites h2, .bible-favorites p { margin: 0; }
+.bible-favorites h2 { font-family: "Songti SC", "STSong", serif; }
+.bible-favorites > header p { margin-top: 3px; color: #8b7259; font-size: 13px; }
+.bible-favorites > header > span { color: #8b7259; font-size: 13px; }
+.bible-favorite-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bible-favorite-grid article { min-width: 0; padding: 14px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 12px; background: #fffdf7; cursor: pointer; }
+.bible-favorite-grid h3 { margin: 0 0 7px; color: #76502d; display: flex; align-items: center; gap: 6px; font-family: "Songti SC", "STSong", serif; }
+.bible-favorite-grid p { color: #574330; font-family: "Songti SC", "STSong", serif; line-height: 1.7; }
+.bible-favorite-grid footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.bible-favorite-grid button { min-height: 34px; border: 1px solid #cbb797; border-radius: 8px; padding: 0 9px; color: #6d5135; background: #faf4e8; display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 13px; cursor: pointer; }
+.bible-favorite-grid button:disabled { opacity: .45; }
 .bible-catalog { max-width: 1120px; margin: 0 auto; }
 .bible-catalog > header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; color: #6d5135; }
 .bible-catalog h2, .bible-catalog h3, .bible-catalog p { margin: 0; }
@@ -736,12 +963,15 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-reader-verse::after { content: " "; }
 .bible-reader-verse sup { margin-right: 2px; color: #9b7a58; font-size: .55em; font-weight: 700; vertical-align: super; }
 .bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
+.bible-reader-verse.favorite { box-shadow: inset 0 -0.5em rgba(248, 210, 86, .26); }
 .bible-reader-verse.selected { outline: 1px solid rgba(150, 104, 52, .55); background: rgba(221, 180, 92, .28); }
 .bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-verse-action { position: fixed; left: 50%; bottom: calc(14px + var(--safe-bottom)); z-index: 3; width: min(700px, calc(100vw - 24px)); transform: translateX(-50%); padding: 10px 11px 10px 14px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 14px; background: rgba(255, 252, 245, .97); box-shadow: 0 13px 36px rgba(58, 39, 20, .2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .bible-verse-action div { min-width: 0; display: grid; gap: 2px; }
 .bible-verse-action small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #816a53; }
 .bible-verse-action button { min-height: 42px; border: 0; border-radius: 10px; padding: 0 14px; color: white; background: #80613f; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 700; cursor: pointer; }
+.bible-verse-action .bible-verse-action-buttons { display: flex; align-items: center; gap: 7px; }
+.bible-verse-action button.secondary { padding: 0 11px; color: #74583b; background: #eee3d2; }
 .bible-state { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 220px; color: #80674e; }
 .bible-state.error { color: #a33d30; }
 .bible-state button { border: 0; border-radius: 9px; padding: 9px 14px; color: white; background: #80613f; }
@@ -751,15 +981,19 @@ function handleTouchEnd(event: TouchEvent) {
   .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: 76px minmax(0, 1fr) 76px; }
   .bible-home { padding: 15px 12px calc(34px + var(--safe-bottom)); }
   .bible-search-panel { padding: 13px; border-radius: 14px; }
+  .bible-results > header { flex-wrap: wrap; gap: 8px; }
   .bible-search-form > div { grid-template-columns: minmax(0, 1fr); }
   .bible-search-form button { min-height: 44px; }
   .bible-book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .bible-favorites { padding: 13px; border-radius: 14px; }
+  .bible-favorite-grid { grid-template-columns: minmax(0, 1fr); }
   .bible-book-grid button { min-height: 66px; }
   .bible-chapter-picker { padding-top: 32px; }
   .bible-chapter-grid { grid-template-columns: repeat(5, 1fr); gap: 9px; }
   .bible-reader { padding-top: 24px; }
   .bible-verse-action { grid-template-columns: minmax(0, 1fr); }
-  .bible-verse-action button { justify-content: center; }
+  .bible-verse-action .bible-verse-action-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
+  .bible-verse-action button { justify-content: center; padding: 0 9px; }
 }
 @media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } .bible-reader { scroll-behavior: auto; } }
 </style>

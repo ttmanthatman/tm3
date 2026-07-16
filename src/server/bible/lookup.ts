@@ -171,7 +171,7 @@ export function bibleCatalog(): BibleCatalogDTO {
   return catalog;
 }
 
-export function searchBibleText(rawQuery: string, offset = 0, limit = 50): BibleTextSearchDTO {
+export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximumLimit = 50): BibleTextSearchDTO {
   const query = rawQuery.replace(/\u3000/g, " ").replace(/\s+/g, " ").trim();
   if (!query) throw new Error("empty query");
   const normalizedQuery = normalizeSearchText(query);
@@ -191,7 +191,7 @@ export function searchBibleText(rawQuery: string, offset = 0, limit = 50): Bible
       })
     : phraseMatches;
   const safeOffset = Math.max(0, Math.floor(offset));
-  const safeLimit = Math.max(1, Math.min(50, Math.floor(limit)));
+  const safeLimit = Math.max(1, Math.min(maximumLimit, Math.floor(limit)));
   const items: BibleTextSearchItemDTO[] = matches.slice(safeOffset, safeOffset + safeLimit).map(({ verse, matches: ranges }) => ({
     verse: serializeVerse(verse),
     matches: ranges

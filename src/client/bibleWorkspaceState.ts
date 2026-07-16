@@ -44,6 +44,8 @@ export type BibleWorkspaceState = {
   visibleChapter: number;
   targetVerse: BibleReaderTarget | null;
   selectedVerseReference: string | null;
+  selectedVerseKeys?: string[];
+  selectionAnchorKey?: string | null;
   history: BibleSearchHistoryEntry[];
 };
 

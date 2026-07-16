@@ -30,6 +30,8 @@ import type {
   AiSuggestionDTO,
   BibleCatalogDTO,
   BibleChapterDTO,
+  BibleFavoriteDTO,
+  BibleFavoriteKeyDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleRelatedSearchDTO,
@@ -4967,6 +4969,90 @@ app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request) => {
 
 app.get("/api/bible/catalog", { preHandler: requireAuth }, async () => {
   const result: BibleCatalogDTO = bibleCatalog();
+  return { success: true, result };
+});
+
+const bibleFavoriteKeySchema = z.object({
+  bookCode: z.string().trim().length(3).transform((value) => value.toUpperCase()),
+  chapter: z.coerce.number().int().positive(),
+  verse: z.coerce.number().int().positive()
+});
+
+function resolveBibleFavorite(key: BibleFavoriteKeyDTO) {
+  const chapter = lookupBibleChapter(key.bookCode, key.chapter);
+  const verseLine = chapter.verses.find((verse) => verse.verse === key.verse);
+  if (!verseLine) throw new Error("invalid verse");
+  return { bookCode: chapter.bookCode, chapter: chapter.chapter, verse: verseLine.verse, verseLine };
+}
+
+async function listBibleFavorites(accountId: number): Promise<BibleFavoriteDTO[]> {
+  const rows = await prisma.bibleFavorite.findMany({
+    where: { accountId },
+    orderBy: { createdAt: "desc" },
+    take: 1000
+  });
+  return rows.flatMap((row) => {
+    try {
+      const resolved = resolveBibleFavorite(row);
+      return [{
+        id: row.id,
+        bookCode: resolved.bookCode,
+        chapter: resolved.chapter,
+        verse: resolved.verse,
+        savedAt: row.createdAt.toISOString(),
+        verseLine: resolved.verseLine
+      }];
+    } catch {
+      return [];
+    }
+  });
+}
+
+app.get("/api/bible/favorites", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
+});
+
+app.post("/api/bible/favorites", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ verses: z.array(bibleFavoriteKeySchema).min(1).max(500) }).parse(request.body);
+  let verses: ReturnType<typeof resolveBibleFavorite>[];
+  try {
+    verses = body.verses.map(resolveBibleFavorite);
+  } catch {
+    return reply.code(400).send({ success: false, message: "收藏中包含无效经文" });
+  }
+  await prisma.bibleFavorite.createMany({
+    data: verses.map((verse) => ({
+      accountId: auth.accountId,
+      bookCode: verse.bookCode,
+      chapter: verse.chapter,
+      verse: verse.verse
+    })),
+    skipDuplicates: true
+  });
+  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
+});
+
+app.delete("/api/bible/favorites", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ verses: z.array(bibleFavoriteKeySchema).min(1).max(500) }).parse(request.body);
+  await prisma.bibleFavorite.deleteMany({
+    where: {
+      accountId: auth.accountId,
+      OR: body.verses.map((verse) => ({
+        bookCode: verse.bookCode,
+        chapter: verse.chapter,
+        verse: verse.verse
+      }))
+    }
+  });
+  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
+});
+
+app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request) => {
+  const query = z.object({ query: z.string().min(1).max(200) }).parse(request.query);
+  const result = searchBibleText(query.query, 0, 40000, 40000);
   return { success: true, result };
 });
 

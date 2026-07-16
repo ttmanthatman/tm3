@@ -105,6 +105,7 @@ model Account {
   pinnedSeens             PinnedSeen[]
   messageLikes            MessageLike[]
   messageFavorites        MessageFavorite[]
+  bibleFavorites          BibleFavorite[]
   musicPlays              MusicPlay[]
   whyReads                WhyTopicRead[]
 
@@ -344,6 +345,20 @@ model MessageFavorite {
   @@unique([messageId, accountId])
   @@index([accountId, createdAt])
   @@map("message_favorites")
+}
+
+model BibleFavorite {
+  id        Int      @id @default(autoincrement())
+  accountId Int      @map("account_id")
+  bookCode  String   @map("book_code") @db.Char(3)
+  chapter   Int
+  verse     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, bookCode, chapter, verse])
+  @@index([accountId, createdAt])
+  @@map("bible_favorites")
 }
 
 model WhyTopic {

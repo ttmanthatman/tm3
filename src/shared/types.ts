@@ -427,6 +427,18 @@ export interface BibleChapterDTO {
   blocks: BibleChapterBlockDTO[];
 }
 
+export interface BibleFavoriteKeyDTO {
+  bookCode: string;
+  chapter: number;
+  verse: number;
+}
+
+export interface BibleFavoriteDTO extends BibleFavoriteKeyDTO {
+  id: number;
+  savedAt: string;
+  verseLine: BibleVerseLineDTO;
+}
+
 export interface BibleBookCatalogDTO {
   code: string;
   name: string;
