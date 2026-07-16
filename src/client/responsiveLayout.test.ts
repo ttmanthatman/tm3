@@ -242,7 +242,7 @@ test("playback mode lives inside the playlist instead of taking header space", (
   const playlist = app.slice(playlistStart, playlistEnd);
 
   assert.doesNotMatch(player, /class="music-mode-btn"/);
-  assert.match(player, /aria-label="播放列表"/);
+  assert.match(player, /aria-label="歌单"/);
   assert.match(playlist, /class="music-playlist-tools"[\s\S]*?class="music-mode-btn active"/);
   assert.match(playlist, /@click="cycleMusicPlaybackMode"[\s\S]*?musicPlaybackModeLabel\(\)/);
 });
@@ -250,7 +250,7 @@ test("playback mode lives inside the playlist instead of taking header space", (
 test("music favorites persist per account and can constrain the playback queue", () => {
   assert.match(app, /class="icon-btn music-favorite-control"[\s\S]*?@click="toggleCurrentMusicFavorite"/);
   assert.match(app, /class="music-favorites-only-btn"[\s\S]*?>只播放收藏</);
-  assert.match(app, /const playableMusicTracks = computed\(\(\) => musicOnlyFavorites\.value \? favoriteMusicTracks\.value : sortedMusicTracks\.value\)/);
+  assert.match(app, /const playableMusicTracks = computed[\s\S]*?musicSourceKind\.value === "favorites"[\s\S]*?favoriteMusicTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
 
@@ -335,7 +335,7 @@ test("version changes add one clickable timeline-style update notice", () => {
 test("chat images correct EXIF dimensions, cache privately, and preload offscreen rows", () => {
   assert.match(app, /function handleMessageImageLoad[\s\S]*?image\.naturalWidth[\s\S]*?resolvedMessageImageDimensions/);
   assert.match(app, /function preloadMessageImages[\s\S]*?messageImagePreloadQueue\.push/);
-  assert.match(server, /isImageFileName\(fileName\)[\s\S]*?Cache-Control", "private, max-age=604800, immutable"/);
+  assert.match(server, /function applyFileValidation[\s\S]*?Cache-Control", "private, no-cache"/);
 });
 
 test("Bible favorites collapse by default and remember the account preference", () => {
@@ -507,6 +507,23 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(app, new RegExp(`<option value="${value}">`));
   assert.match(app, /moveMusicPlaylistTrack\(track, -1\)[\s\S]*?moveMusicPlaylistTrack\(track, 1\)/);
   assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+});
+
+test("personal playlists use a layered library with batch add, quick add, and live sharing", () => {
+  assert.match(app, /musicPlaylistView === 'home'[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏</);
+  assert.match(app, /@click="createMusicPlaylist"[\s\S]*?创建歌单/);
+  assert.match(app, /musicPlaylistView === 'picker'[\s\S]*?musicPlaylistPickerIds\.has/);
+  assert.match(app, /@change="addTrackToMusicPlaylist\(track, \$event\)"/);
+  assert.match(app, /shareSelectedMusicPlaylist[\s\S]*?\/share/);
+  assert.match(app, /row\.message\.type === 'music_playlist'[\s\S]*?openSharedMusicPlaylist/);
+});
+
+test("music restores account state and defaults new listeners to shuffle", () => {
+  assert.match(app, /const musicPlaybackMode = ref<MusicPlaybackMode>\("shuffle"\)/);
+  assert.match(app, /loadMusicPlaybackState[\s\S]*?Date\.parse\(local\.updatedAt\)[\s\S]*?Date\.parse\(server\.updatedAt\)/);
+  assert.match(app, /pendingRestoredMusicProgressMs[\s\S]*?handleMusicMetadataLoaded[\s\S]*?musicAudio\.currentTime/);
+  assert.match(app, /setInterval\(\(\) => \{\s*if \(musicPlaying\.value\) persistMusicPlaybackState\(true\);\s*\}, 15_000\)/);
+  assert.match(app, /addEventListener\("seeked", handleMusicSeeked\)[\s\S]*?function handleMusicSeeked\(\)[\s\S]*?persistMusicPlaybackState\(true\)/);
 });
 
 test("playlist is composited above message water effects", () => {

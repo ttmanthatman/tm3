@@ -1,5 +1,5 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "chain" | "prayer" | "why_topic_card" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "why_topic_card" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -72,6 +72,7 @@ export interface MessageDTO {
   chainVersion?: number | null;
   createdAt: string;
   reactions?: MessageReactionsDTO;
+  musicPlaylist?: MusicPlaylistDTO | null;
 }
 
 export interface MessageReactionsDTO {
@@ -202,6 +203,30 @@ export interface MusicTrackDTO {
   favorited?: boolean;
   scorePages: MusicScorePageDTO[];
   lyrics: MusicLyricsDTO | null;
+}
+
+export type MusicPlaylistSourceKind = "library" | "favorites" | "playlist";
+export type MusicPlaybackModeDTO = "playlist" | "single" | "shuffle";
+
+export interface MusicPlaylistDTO {
+  id: number;
+  name: string;
+  ownerAccountId: number;
+  ownerName: string;
+  isOwner: boolean;
+  trackCount: number;
+  tracks: MusicTrackDTO[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MusicPlaybackStateDTO {
+  sourceKind: MusicPlaylistSourceKind;
+  playlistId: number | null;
+  trackId: number | null;
+  progressMs: number;
+  playbackMode: MusicPlaybackModeDTO;
+  updatedAt: string;
 }
 
 export interface MusicListenerDTO {

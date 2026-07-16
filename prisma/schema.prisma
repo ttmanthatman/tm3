@@ -43,6 +43,7 @@ enum MessageType {
   text
   image
   file
+  music_playlist
   chain
   prayer
   why_topic_card
@@ -108,6 +109,8 @@ model Account {
   bibleFavorites          BibleFavorite[]
   musicFavorites          MusicFavorite[]
   musicPlays              MusicPlay[]
+  musicPlaylists          MusicPlaylist[]
+  musicPlaybackState      MusicPlaybackState?
   whyReads                WhyTopicRead[]
 
   @@map("accounts")
@@ -269,6 +272,9 @@ model Message {
   musicLyrics     MusicLyrics?
   musicPlays      MusicPlay[]
   musicFavorites  MusicFavorite[]
+  playlistTracks  MusicPlaylistTrack[]
+  playlistShares  MusicPlaylistShare[]
+  musicPlaybackStates MusicPlaybackState[]
 
   @@index([channelId, id])
   @@index([replyToId])
@@ -332,6 +338,65 @@ model MusicFavorite {
   @@unique([trackId, accountId])
   @@index([accountId, createdAt])
   @@map("music_favorites")
+}
+
+model MusicPlaylist {
+  id         Int                  @id @default(autoincrement())
+  accountId  Int                  @map("account_id")
+  name       String               @db.VarChar(120)
+  createdAt  DateTime             @default(now()) @map("created_at")
+  updatedAt  DateTime             @updatedAt @map("updated_at")
+  account    Account              @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  tracks     MusicPlaylistTrack[]
+  shares     MusicPlaylistShare[]
+  playStates MusicPlaybackState[]
+
+  @@index([accountId, updatedAt])
+  @@map("music_playlists")
+}
+
+model MusicPlaylistTrack {
+  id         Int           @id @default(autoincrement())
+  playlistId Int           @map("playlist_id")
+  trackId    Int           @map("track_id")
+  position   Int
+  createdAt  DateTime      @default(now()) @map("created_at")
+  playlist   MusicPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track      Message       @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, trackId])
+  @@unique([playlistId, position])
+  @@index([trackId])
+  @@map("music_playlist_tracks")
+}
+
+model MusicPlaylistShare {
+  id         Int           @id @default(autoincrement())
+  playlistId Int           @map("playlist_id")
+  messageId  Int           @unique @map("message_id")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  playlist   MusicPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  message    Message       @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([playlistId])
+  @@map("music_playlist_shares")
+}
+
+model MusicPlaybackState {
+  accountId    Int            @id @map("account_id")
+  sourceKind   String         @default("library") @map("source_kind") @db.VarChar(16)
+  playlistId   Int?           @map("playlist_id")
+  trackId      Int?           @map("track_id")
+  progressMs   Int            @default(0) @map("progress_ms")
+  playbackMode String         @default("shuffle") @map("playback_mode") @db.VarChar(16)
+  updatedAt    DateTime       @updatedAt @map("updated_at")
+  account      Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  playlist     MusicPlaylist? @relation(fields: [playlistId], references: [id], onDelete: SetNull)
+  track        Message?       @relation(fields: [trackId], references: [id], onDelete: SetNull)
+
+  @@index([playlistId])
+  @@index([trackId])
+  @@map("music_playback_states")
 }
 
 model MessageLike {

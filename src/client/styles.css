@@ -2851,8 +2851,8 @@ button {
   max-height: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   background: var(--panel);
   box-shadow: 0 16px 46px rgba(15, 23, 42, 0.18);
@@ -2870,8 +2870,23 @@ button {
 
 .music-playlist-panel > header > div {
   min-width: 0;
-  display: grid;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 2px;
+}
+
+.music-playlist-panel > header > div small { flex-basis: 100%; }
+
+.music-playlist-back {
+  width: 30px;
+  height: 30px;
+  margin-right: 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel) 86%, var(--chat-bg));
 }
 
 .music-playlist-panel > header small,
@@ -2902,11 +2917,111 @@ button {
 }
 
 .music-track-list {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   background: var(--panel);
 }
+
+.music-library-home,
+.music-playlist-picker {
+  min-height: 0;
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.music-library-builtins,
+.music-library-cards {
+  display: grid;
+  gap: 8px;
+}
+
+.music-library-builtins { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.music-library-builtins > button,
+.music-library-cards > button {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  text-align: left;
+  background: color-mix(in srgb, var(--panel) 88%, var(--chat-bg));
+}
+
+.music-library-builtins > button > span,
+.music-library-cards > button > span:not(.music-library-card-icon) { min-width: 0; display: grid; gap: 2px; }
+.music-library-builtins small,
+.music-library-cards small { color: var(--muted); font-size: 12px; }
+.music-library-cards > button > svg:last-child { margin-left: auto; }
+
+.music-library-section-head {
+  margin: 18px 0 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.music-library-section-head button,
+.music-playlist-owner-tools button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.music-playlist-owner-tools {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.music-playlist-owner-tools select,
+.music-track-add-select {
+  min-width: 108px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.music-playlist-picker { display: grid; align-content: start; gap: 7px; }
+.music-playlist-picker label { padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 10px; }
+.music-playlist-picker label > span { min-width: 0; display: grid; gap: 2px; }
+.music-playlist-picker label small { color: var(--muted); }
+.music-playlist-picker-actions { position: sticky; bottom: 0; padding: 10px 0 0; display: flex; justify-content: flex-end; gap: 8px; background: var(--panel); }
+.music-track-add-select { margin-right: 8px; max-width: 126px; }
+
+.music-playlist-message-card {
+  width: min(390px, 100%);
+  padding: 13px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 12px;
+  color: var(--text);
+  text-align: left;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent));
+}
+.music-playlist-message-icon { width: 42px; height: 42px; border-radius: 10px; display: grid; place-items: center; color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.music-playlist-message-copy { min-width: 0; display: grid; gap: 2px; }
+.music-playlist-message-copy small,
+.music-playlist-message-copy em { overflow: hidden; color: var(--muted); font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
 
 .music-track-row {
   width: 100%;

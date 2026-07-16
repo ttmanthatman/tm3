@@ -90,6 +90,9 @@ import type {
   MessageEffectPayload,
   MusicMentionPayload,
   MusicListenerDTO,
+  MusicPlaybackStateDTO,
+  MusicPlaylistDTO,
+  MusicPlaylistSourceKind,
   MusicScorePageDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
@@ -222,8 +225,19 @@ const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
 const currentMusicTrackId = ref<number | null>(null);
-const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
+const musicPlaybackMode = ref<MusicPlaybackMode>("shuffle");
 const musicOnlyFavorites = ref(false);
+const musicPlaylists = ref<MusicPlaylistDTO[]>([]);
+const musicSourceKind = ref<MusicPlaylistSourceKind>("library");
+const selectedMusicPlaylistId = ref<number | null>(null);
+const musicPlaylistView = ref<"home" | "tracks" | "picker">("home");
+const musicPlaylistPickerIds = ref<Set<number>>(new Set());
+const musicPlaylistBusy = ref(false);
+const musicPlaylistShareChannelId = ref<number | null>(null);
+const musicPlaybackStateUpdatedAt = ref("");
+const musicPlaybackServerUpdatedAt = ref("");
+let pendingRestoredMusicProgressMs = 0;
+let musicStateSyncTimer: number | undefined;
 const musicPlayerExpanded = ref(false);
 const musicPlayerAnchorX = ref<number | null>(null);
 const musicPlaylistOpen = ref(false);
@@ -285,7 +299,7 @@ const appStartCodeLines = [
   '',
   'if ("serviceWorker" in navigator) {',
   '  window.addEventListener("load", () => {',
-  '    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});',
+  '    navigator.serviceWorker.register(`/sw.js?v=${APP_VERSION}`, { updateViaCache: "none" }).catch(() => {});',
   '  });',
   '}',
   '',
@@ -998,8 +1012,14 @@ onMounted(async () => {
   }
   if (store.account) {
     loadMusicPlaybackMode();
+    await loadMusicPlaybackState();
+    await loadMusicPlaylists();
     await loadMusicTracks();
     attachMusicSocket();
+    musicStateSyncTimer = window.setInterval(() => {
+      if (musicPlaying.value) persistMusicPlaybackState(true);
+    }, 15_000);
+    void navigator.storage?.persist?.().catch(() => false);
   }
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
@@ -1305,13 +1325,16 @@ onBeforeUnmount(() => {
   stopPublishingMusicListening();
   stopPublishingBibleReading();
   store.socket?.off("music:updated", handleMusicUpdated);
+  store.socket?.off("music:playlist-updated", handleMusicPlaylistUpdated);
   store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.off("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
+  if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
+  persistMusicPlaybackState(true);
   disposeMusicAudio();
 });
 
@@ -1330,15 +1353,25 @@ const forwardTargetChannels = computed(() =>
 );
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
-const playableMusicTracks = computed(() => musicOnlyFavorites.value ? favoriteMusicTracks.value : sortedMusicTracks.value);
-const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || sortedMusicTracks.value[0] || null);
+const selectedMusicPlaylist = computed(() => musicPlaylists.value.find((playlist) => playlist.id === selectedMusicPlaylistId.value) || null);
+const playlistMusicTracks = computed(() => {
+  const tracks = selectedMusicPlaylist.value?.tracks || [];
+  return musicPlaylistSort.value === "manual" ? tracks : sortMusicTracks(tracks, musicPlaylistSort.value);
+});
+const playableMusicTracks = computed(() => {
+  if (musicSourceKind.value === "playlist") return playlistMusicTracks.value;
+  if (musicSourceKind.value === "favorites" || musicOnlyFavorites.value) return favoriteMusicTracks.value;
+  return sortedMusicTracks.value;
+});
+const currentMusicTrack = computed(() => playableMusicTracks.value.find((track) => track.id === currentMusicTrackId.value) || playableMusicTracks.value[0] || null);
 const filteredMusicTracks = computed(() => {
   const query = musicPlaylistQuery.value.trim().toLowerCase();
   if (!query) return playableMusicTracks.value;
   return playableMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
 });
 const currentMusicTrackIndex = computed(() => playableMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
-const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
+const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
+const shareableMusicChannels = computed(() => store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false));
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
   bibleReaders.value,
@@ -2397,6 +2430,9 @@ async function toggleMentionedMusic(message: MessageDTO) {
     pauseMusic(true);
     return;
   }
+  musicSourceKind.value = "library";
+  musicOnlyFavorites.value = false;
+  selectedMusicPlaylistId.value = null;
   currentMusicTrackId.value = track.id;
   reconcileOpenMusicScore();
   musicPlayerExpanded.value = true;
@@ -2857,8 +2893,14 @@ async function doLogin() {
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
     loadMusicPlaybackMode();
+    await loadMusicPlaybackState();
+    await loadMusicPlaylists();
     await loadMusicTracks();
     attachMusicSocket();
+    if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
+    musicStateSyncTimer = window.setInterval(() => {
+      if (musicPlaying.value) persistMusicPlaybackState(true);
+    }, 15_000);
     if (isAiSettingsRoute.value) {
       if (account.isAdmin) {
         await loadAiSettings();
@@ -2876,6 +2918,20 @@ async function doLogin() {
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : authMode.value === "register" ? "注册失败" : "登录失败";
   }
+}
+
+async function logoutApp() {
+  persistMusicPlaybackState(true);
+  if ("serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    registration?.active?.postMessage({ type: "CLEAR_PRIVATE_CACHE", token: getToken() });
+  }
+  await store.logout();
+  musicTracks.value = [];
+  musicPlaylists.value = [];
+  currentMusicTrackId.value = null;
+  if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
+  musicStateSyncTimer = undefined;
 }
 
 async function switchToLinkedChannel() {
@@ -3616,7 +3672,7 @@ async function clearAppCaches() {
   }
   if ("caches" in window) {
     const keys = await caches.keys();
-    await Promise.all(keys.map((key) => caches.delete(key)));
+    await Promise.all(keys.filter((key) => key.startsWith("team-chat-app-")).map((key) => caches.delete(key)));
   }
 }
 
@@ -4418,6 +4474,7 @@ function handleDocumentVisibilityChange() {
   documentVisible.value = document.visibilityState === "visible";
   if (!documentVisible.value) {
     clearMusicLyricsHeaderResumeTimer();
+    persistMusicPlaybackState(true);
     stopRainEffect();
     stopDripPhysics(true);
     stopGooeyDripPhysics(true);
@@ -5705,6 +5762,14 @@ function mergeMusicTrackSnapshot(track: MusicTrackDTO) {
       ? { ...existing, ...track, heat: Number.isFinite(track.heat) ? track.heat : existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
       : existing
   );
+  musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
+    ...playlist,
+    tracks: playlist.tracks.map((existing) =>
+      existing.id === track.id
+        ? { ...existing, ...track, heat: Number.isFinite(track.heat) ? track.heat : existing.heat, manualOrder: existing.manualOrder }
+        : existing
+    )
+  }));
   void preloadMusicScorePages([track]);
 }
 
@@ -6426,17 +6491,91 @@ function musicOnlyFavoritesStorageKey(accountId: number) {
   return `team-chat-music-only-favorites:${accountId}`;
 }
 
+function musicPlaybackStateStorageKey(accountId: number) {
+  return `team-chat-music-playback-state:${accountId}`;
+}
+
+function parseStoredMusicPlaybackState(value: string | null): MusicPlaybackStateDTO | null {
+  if (!value) return null;
+  try {
+    const state = JSON.parse(value) as MusicPlaybackStateDTO;
+    if (!state || !["library", "favorites", "playlist"].includes(state.sourceKind)) return null;
+    if (!["playlist", "single", "shuffle"].includes(state.playbackMode)) return null;
+    return { ...state, playlistId: Number(state.playlistId) || null, trackId: Number(state.trackId) || null, progressMs: Math.max(0, Number(state.progressMs) || 0) };
+  } catch {
+    return null;
+  }
+}
+
+function applyMusicPlaybackState(state: MusicPlaybackStateDTO) {
+  musicSourceKind.value = state.sourceKind;
+  musicOnlyFavorites.value = state.sourceKind === "favorites";
+  selectedMusicPlaylistId.value = state.sourceKind === "playlist" ? state.playlistId : null;
+  currentMusicTrackId.value = state.trackId;
+  pendingRestoredMusicProgressMs = state.progressMs;
+  musicPlaybackMode.value = state.playbackMode;
+  musicPlaybackStateUpdatedAt.value = state.updatedAt;
+}
+
+async function loadMusicPlaybackState() {
+  const accountId = store.account?.id;
+  if (!accountId) return;
+  const local = parseStoredMusicPlaybackState(localStorage.getItem(musicPlaybackStateStorageKey(accountId)));
+  const result = await api<{ state: MusicPlaybackStateDTO | null }>("/api/music/playback-state").catch(() => ({ state: null }));
+  const server = result.state;
+  if (server) musicPlaybackServerUpdatedAt.value = server.updatedAt;
+  const state = local && (!server || Date.parse(local.updatedAt) > Date.parse(server.updatedAt)) ? local : server;
+  if (state) {
+    applyMusicPlaybackState(state);
+    if (state === local) void syncMusicPlaybackState(state);
+  }
+}
+
+function musicPlaybackStateSnapshot(): MusicPlaybackStateDTO | null {
+  if (!store.account) return null;
+  return {
+    sourceKind: musicSourceKind.value,
+    playlistId: musicSourceKind.value === "playlist" ? selectedMusicPlaylistId.value : null,
+    trackId: currentMusicTrack.value?.id || null,
+    progressMs: currentMusicPlaybackTimeMs(),
+    playbackMode: musicPlaybackMode.value,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function persistMusicPlaybackState(syncNow = false) {
+  const accountId = store.account?.id;
+  const state = musicPlaybackStateSnapshot();
+  if (!accountId || !state) return;
+  musicPlaybackStateUpdatedAt.value = state.updatedAt;
+  localStorage.setItem(musicPlaybackStateStorageKey(accountId), JSON.stringify(state));
+  if (syncNow) void syncMusicPlaybackState(state);
+}
+
+async function syncMusicPlaybackState(state = musicPlaybackStateSnapshot()) {
+  if (!state) return;
+  const result = await api<{ accepted: boolean; state: MusicPlaybackStateDTO }>("/api/music/playback-state", {
+    method: "PUT",
+    body: JSON.stringify({ ...state, knownUpdatedAt: musicPlaybackServerUpdatedAt.value || undefined })
+  }).catch(() => null);
+  if (!result?.state) return;
+  musicPlaybackServerUpdatedAt.value = result.state.updatedAt;
+  if (!result.accepted && !musicPlaying.value) applyMusicPlaybackState(result.state);
+}
+
 function loadMusicPlaybackMode() {
   const accountId = store.account?.id;
   if (!accountId) return;
   const savedMode = localStorage.getItem(musicPlaybackModeStorageKey(accountId));
-  musicPlaybackMode.value = savedMode === "single" || savedMode === "shuffle" ? savedMode : "playlist";
+  musicPlaybackMode.value = savedMode === "single" || savedMode === "playlist" ? savedMode : "shuffle";
   musicOnlyFavorites.value = localStorage.getItem(musicOnlyFavoritesStorageKey(accountId)) === "1";
+  if (musicOnlyFavorites.value) musicSourceKind.value = "favorites";
 }
 
 function setMusicPlaybackMode(mode: MusicPlaybackMode) {
   musicPlaybackMode.value = mode;
   if (store.account?.id) localStorage.setItem(musicPlaybackModeStorageKey(store.account.id), mode);
+  persistMusicPlaybackState(true);
 }
 
 function cycleMusicPlaybackMode() {
@@ -6451,21 +6590,43 @@ function musicPlaybackModeLabel(mode = musicPlaybackMode.value) {
 }
 
 function setMusicOnlyFavorites(onlyFavorites: boolean) {
+  const previousTrackId = currentMusicTrackId.value;
+  const continuePlaying = musicPlaying.value;
   musicOnlyFavorites.value = onlyFavorites;
+  musicSourceKind.value = onlyFavorites ? "favorites" : "library";
+  selectedMusicPlaylistId.value = null;
   const accountId = store.account?.id;
   if (accountId) localStorage.setItem(musicOnlyFavoritesStorageKey(accountId), onlyFavorites ? "1" : "0");
-  if (!onlyFavorites || currentMusicTrack.value?.favorited || !favoriteMusicTracks.value.length) return;
-  const track = favoriteMusicTracks.value[0];
-  const continuePlaying = musicPlaying.value;
+
+  const availableTracks = onlyFavorites ? favoriteMusicTracks.value : musicTracks.value;
+  const previousTrack = availableTracks.find((track) => track.id === previousTrackId);
+  if (previousTrack) {
+    persistMusicPlaybackState(true);
+    return;
+  }
+
+  const track = randomMusicTrack(availableTracks);
+  if (!track) {
+    currentMusicTrackId.value = null;
+    pauseMusic(true);
+    persistMusicPlaybackState(true);
+    return;
+  }
   currentMusicTrackId.value = track.id;
+  pendingRestoredMusicProgressMs = 0;
   reconcileOpenMusicScore();
   setMusicAudioTrack(track);
   if (continuePlaying) void playCurrentMusic();
+  persistMusicPlaybackState(true);
 }
 
 function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
   if (!Number.isFinite(event?.trackId) || typeof event?.favorited !== "boolean") return;
   musicTracks.value = musicTracks.value.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track);
+  musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
+    ...playlist,
+    tracks: playlist.tracks.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track)
+  }));
 }
 
 async function toggleCurrentMusicFavorite() {
@@ -6500,6 +6661,12 @@ function musicStreamUrl(track: MusicTrackDTO) {
   return `/api/music/tracks/${track.id}/stream?token=${encodeURIComponent(getToken())}`;
 }
 
+async function primeMusicTrackCache(track: MusicTrackDTO) {
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  registration?.active?.postMessage({ type: "CACHE_RESOURCE", url: musicStreamUrl(track) });
+}
+
 function initializeMusicAudio() {
   if (musicAudio) return;
   musicAudio = new Audio();
@@ -6512,6 +6679,8 @@ function initializeMusicAudio() {
   musicAudio.addEventListener("canplay", handleMusicCanPlay);
   musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
   musicAudio.addEventListener("seeking", handleMusicSeeking);
+  musicAudio.addEventListener("seeked", handleMusicSeeked);
+  musicAudio.addEventListener("loadedmetadata", handleMusicMetadataLoaded);
   initializeMusicMediaSession();
 }
 
@@ -6562,6 +6731,8 @@ function disposeMusicAudio() {
   musicAudio.removeEventListener("canplay", handleMusicCanPlay);
   musicAudio.removeEventListener("timeupdate", handleMusicTimeUpdate);
   musicAudio.removeEventListener("seeking", handleMusicSeeking);
+  musicAudio.removeEventListener("seeked", handleMusicSeeked);
+  musicAudio.removeEventListener("loadedmetadata", handleMusicMetadataLoaded);
   musicAudio.removeAttribute("src");
   musicAudio.load();
   musicAudio = null;
@@ -6574,6 +6745,7 @@ function handleMusicPlay() {
   prepareMusicPlaySession();
   if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "started");
   publishMusicListening();
+  persistMusicPlaybackState(true);
 }
 
 function handleMusicPause() {
@@ -6582,6 +6754,14 @@ function handleMusicPause() {
   if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "paused");
   resetMusicPlayObservation();
   publishMusicListening();
+  persistMusicPlaybackState(true);
+}
+
+function handleMusicMetadataLoaded() {
+  if (!musicAudio || pendingRestoredMusicProgressMs <= 0 || !Number.isFinite(musicAudio.duration)) return;
+  musicAudio.currentTime = Math.min(pendingRestoredMusicProgressMs / 1000, Math.max(0, musicAudio.duration - 0.25));
+  pendingRestoredMusicProgressMs = 0;
+  resetMusicPlayObservation();
 }
 
 function handleMusicWaiting() {
@@ -6621,6 +6801,11 @@ function resetMusicPlayObservation() {
 
 function handleMusicSeeking() {
   resetMusicPlayObservation();
+}
+
+function handleMusicSeeked() {
+  resetMusicPlayObservation();
+  persistMusicPlaybackState(true);
 }
 
 function handleMusicTimeUpdate() {
@@ -6684,6 +6869,7 @@ function handleMusicError() {
 
 function setMusicAudioTrack(track: MusicTrackDTO) {
   initializeMusicAudio();
+  void primeMusicTrackCache(track);
   if (!musicAudio || musicAudio.dataset.trackId === String(track.id)) return;
   if (musicPlaySession && musicAudio.dataset.trackId) void reportMusicProgress(musicPlaySession, musicAudio, "changed");
   cancelMusicFade();
@@ -6696,7 +6882,7 @@ function setMusicAudioTrack(track: MusicTrackDTO) {
 async function playCurrentMusic() {
   const track = currentMusicTrack.value;
   if (!track) {
-    musicError.value = "播放列表还是空的";
+    musicError.value = "歌单还是空的";
     return;
   }
   setMusicAudioTrack(track);
@@ -6759,21 +6945,25 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
   if (shouldRestartOnlyTrack(playableMusicTracks.value.length, delta)) {
     const track = playableMusicTracks.value[0];
     currentMusicTrackId.value = track.id;
+    pendingRestoredMusicProgressMs = 0;
     setMusicAudioTrack(track);
     if (musicAudio) musicAudio.currentTime = 0;
     beginMusicPlaySession(track);
     musicError.value = "";
     await playCurrentMusic();
+    persistMusicPlaybackState(true);
     return;
   }
   const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
   const nextIndex = nextMusicTrackIndexForMode(playableMusicTracks.value.length, index, delta, musicPlaybackMode.value);
   const track = playableMusicTracks.value[nextIndex];
   currentMusicTrackId.value = track.id;
+  pendingRestoredMusicProgressMs = 0;
   reconcileOpenMusicScore();
   setMusicAudioTrack(track);
   musicError.value = "";
   if (continuePlaying) await playCurrentMusic();
+  persistMusicPlaybackState(true);
 }
 
 function handleMusicEnded() {
@@ -6792,10 +6982,12 @@ function handleMusicEnded() {
 
 function selectMusicTrack(track: MusicTrackDTO) {
   currentMusicTrackId.value = track.id;
+  pendingRestoredMusicProgressMs = 0;
   reconcileOpenMusicScore();
   musicPlaylistOpen.value = false;
   setMusicAudioTrack(track);
   void playCurrentMusic();
+  persistMusicPlaybackState(true);
 }
 
 function openMusicPlayer(event?: MouseEvent) {
@@ -6816,12 +7008,180 @@ function openMusicPlayer(event?: MouseEvent) {
   if (!musicPlaying.value) void playCurrentMusic();
 }
 
+function randomMusicTrack(tracks: MusicTrackDTO[], excludeId?: number | null) {
+  if (!tracks.length) return null;
+  const candidates = tracks.length > 1 && excludeId ? tracks.filter((track) => track.id !== excludeId) : tracks;
+  return candidates[Math.floor(Math.random() * candidates.length)] || tracks[0];
+}
+
+async function loadMusicPlaylists() {
+  if (!store.account) return;
+  const result = await api<{ playlists: MusicPlaylistDTO[] }>("/api/music/playlists").catch(() => ({ playlists: [] }));
+  musicPlaylists.value = result.playlists;
+  const selectedId = selectedMusicPlaylistId.value;
+  if (selectedId && !musicPlaylists.value.some((playlist) => playlist.id === selectedId)) {
+    const shared = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${selectedId}`).catch(() => null);
+    if (shared?.playlist) musicPlaylists.value = [...musicPlaylists.value, shared.playlist];
+    else {
+      musicSourceKind.value = "library";
+      selectedMusicPlaylistId.value = null;
+      pendingRestoredMusicProgressMs = 0;
+    }
+  }
+}
+
+function selectMusicSource(kind: MusicPlaylistSourceKind, playlist?: MusicPlaylistDTO | null) {
+  musicSourceKind.value = kind;
+  musicOnlyFavorites.value = kind === "favorites";
+  selectedMusicPlaylistId.value = kind === "playlist" ? playlist?.id || null : null;
+  musicPlaylistView.value = "tracks";
+  const tracks = kind === "playlist" ? playlist?.tracks || [] : kind === "favorites" ? favoriteMusicTracks.value : sortedMusicTracks.value;
+  if (!tracks.some((track) => track.id === currentMusicTrackId.value)) {
+    const next = randomMusicTrack(tracks);
+    currentMusicTrackId.value = next?.id || null;
+    pendingRestoredMusicProgressMs = 0;
+    if (next) setMusicAudioTrack(next);
+  }
+  persistMusicPlaybackState(true);
+}
+
+async function createMusicPlaylist() {
+  if (musicPlaylistBusy.value) return;
+  musicPlaylistBusy.value = true;
+  try {
+    const result = await api<{ playlist: MusicPlaylistDTO }>("/api/music/playlists", { method: "POST", body: JSON.stringify({}) });
+    musicPlaylists.value = [result.playlist, ...musicPlaylists.value];
+    selectMusicSource("playlist", result.playlist);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "创建歌单失败");
+  } finally {
+    musicPlaylistBusy.value = false;
+  }
+}
+
+async function renameSelectedMusicPlaylist() {
+  const playlist = selectedMusicPlaylist.value;
+  if (!playlist?.isOwner) return;
+  const name = prompt("歌单名称", playlist.name)?.trim();
+  if (!name || name === playlist.name) return;
+  try {
+    const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    musicPlaylists.value = musicPlaylists.value.map((item) => item.id === playlist.id ? result.playlist : item);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "歌单改名失败");
+  }
+}
+
+async function deleteSelectedMusicPlaylist() {
+  const playlist = selectedMusicPlaylist.value;
+  if (!playlist?.isOwner || !confirm(`删除歌单“${playlist.name}”？聊天室中分享过的卡片将显示为已删除。`)) return;
+  try {
+    await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
+    musicPlaylists.value = musicPlaylists.value.filter((item) => item.id !== playlist.id);
+    selectMusicSource("library");
+    musicPlaylistView.value = "home";
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "删除歌单失败");
+  }
+}
+
+function openMusicPlaylistPicker() {
+  const playlist = selectedMusicPlaylist.value;
+  if (!playlist?.isOwner) return;
+  musicPlaylistPickerIds.value = new Set(playlist.tracks.map((track) => track.id));
+  musicPlaylistView.value = "picker";
+}
+
+function toggleMusicPlaylistPickerTrack(trackId: number) {
+  const next = new Set(musicPlaylistPickerIds.value);
+  if (next.has(trackId)) next.delete(trackId);
+  else next.add(trackId);
+  musicPlaylistPickerIds.value = next;
+}
+
+async function saveMusicPlaylistTracks(playlist: MusicPlaylistDTO, trackIds: number[]) {
+  const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}/tracks`, {
+    method: "PUT",
+    body: JSON.stringify({ trackIds })
+  });
+  musicPlaylists.value = musicPlaylists.value.map((item) => item.id === playlist.id ? result.playlist : item);
+  return result.playlist;
+}
+
+async function saveMusicPlaylistPicker() {
+  const playlist = selectedMusicPlaylist.value;
+  if (!playlist?.isOwner || musicPlaylistBusy.value) return;
+  musicPlaylistBusy.value = true;
+  try {
+    await saveMusicPlaylistTracks(playlist, musicTracks.value.filter((track) => musicPlaylistPickerIds.value.has(track.id)).map((track) => track.id));
+    musicPlaylistView.value = "tracks";
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "保存歌单失败");
+  } finally {
+    musicPlaylistBusy.value = false;
+  }
+}
+
+async function addTrackToMusicPlaylist(track: MusicTrackDTO, event: Event) {
+  const select = event.target as HTMLSelectElement;
+  const playlistId = Number(select.value);
+  select.value = "";
+  const playlist = musicPlaylists.value.find((item) => item.id === playlistId && item.isOwner);
+  if (!playlist || playlist.tracks.some((item) => item.id === track.id)) return;
+  try {
+    await saveMusicPlaylistTracks(playlist, [...playlist.tracks.map((item) => item.id), track.id]);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "加入歌单失败");
+  }
+}
+
+async function shareSelectedMusicPlaylist() {
+  const playlist = selectedMusicPlaylist.value;
+  const channelId = musicPlaylistShareChannelId.value;
+  if (!playlist?.isOwner || !channelId) return;
+  try {
+    await api(`/api/music/playlists/${playlist.id}/share`, { method: "POST", body: JSON.stringify({ channelId }) });
+    alert("歌单已分享到聊天室");
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "分享歌单失败");
+  }
+}
+
+function openSharedMusicPlaylist(message: MessageDTO) {
+  const playlist = message.musicPlaylist;
+  if (!playlist) {
+    alert("这个歌单已被删除");
+    return;
+  }
+  if (!musicPlaylists.value.some((item) => item.id === playlist.id)) musicPlaylists.value = [...musicPlaylists.value, playlist];
+  musicPlaylistOpen.value = true;
+  selectMusicSource("playlist", playlist);
+}
+
 function toggleMusicPlaylist() {
   musicPlaylistOpen.value = !musicPlaylistOpen.value;
+  if (musicPlaylistOpen.value) musicPlaylistView.value = "home";
 }
 
 async function moveMusicPlaylistTrack(track: MusicTrackDTO, delta: number) {
-  if (!canManageMusic.value || musicPlaylistReorderBusy.value || musicPlaylistSort.value !== "manual" || musicPlaylistQuery.value.trim()) return;
+  if (musicPlaylistReorderBusy.value || musicPlaylistSort.value !== "manual" || musicPlaylistQuery.value.trim()) return;
+  const personalPlaylist = musicSourceKind.value === "playlist" ? selectedMusicPlaylist.value : null;
+  if (personalPlaylist) {
+    if (!personalPlaylist.isOwner) return;
+    const fromIndex = personalPlaylist.tracks.findIndex((item) => item.id === track.id);
+    const reordered = moveMusicTrack(personalPlaylist.tracks, fromIndex, delta);
+    if (reordered[fromIndex]?.id === track.id) return;
+    musicPlaylistReorderBusy.value = true;
+    try {
+      await saveMusicPlaylistTracks(personalPlaylist, reordered.map((item) => item.id));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "保存歌单排序失败");
+    } finally {
+      musicPlaylistReorderBusy.value = false;
+    }
+    return;
+  }
+  if (!canManageMusic.value) return;
   const manualTracks = sortMusicTracks(musicTracks.value, "manual");
   const fromIndex = manualTracks.findIndex((item) => item.id === track.id);
   const reordered = moveMusicTrack(manualTracks, fromIndex, delta);
@@ -6854,14 +7214,26 @@ async function loadMusicTracks() {
   try {
     const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
     musicTracks.value = result.tracks;
+    const byId = new Map(result.tracks.map((track) => [track.id, track]));
+    musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
+      ...playlist,
+      tracks: playlist.tracks.flatMap((track) => {
+        const current = byId.get(track.id);
+        return current ? [current] : [];
+      }),
+      trackCount: playlist.tracks.filter((track) => byId.has(track.id)).length
+    }));
     void preloadMusicScorePages(result.tracks);
-    if (previousId && result.tracks.some((track) => track.id === previousId)) {
+    if (previousId && playableMusicTracks.value.some((track) => track.id === previousId)) {
       currentMusicTrackId.value = previousId;
       reconcileOpenMusicScore();
     } else {
       if (wasPlaying) pauseMusic(true);
-      const availableTracks = musicOnlyFavorites.value ? result.tracks.filter((track) => track.favorited) : result.tracks;
-      currentMusicTrackId.value = sortMusicTracks(availableTracks.length ? availableTracks : result.tracks, musicPlaylistSort.value)[0]?.id || null;
+      const availableTracks = playableMusicTracks.value.length
+        ? playableMusicTracks.value
+        : musicSourceKind.value === "library" ? result.tracks : [];
+      currentMusicTrackId.value = randomMusicTrack(availableTracks, previousId)?.id || null;
+      pendingRestoredMusicProgressMs = 0;
       reconcileOpenMusicScore();
       if (musicAudio) {
         musicAudio.removeAttribute("src");
@@ -6869,8 +7241,11 @@ async function loadMusicTracks() {
         musicAudio.load();
       }
     }
+    const restoredTrack = currentMusicTrack.value;
+    if (restoredTrack) setMusicAudioTrack(restoredTrack);
+    if (!pendingRestoredMusicProgressMs) persistMusicPlaybackState(false);
   } catch (error) {
-    musicError.value = error instanceof Error ? error.message : "播放列表加载失败";
+    musicError.value = error instanceof Error ? error.message : "歌单加载失败";
   }
 }
 
@@ -6880,6 +7255,10 @@ function handleMusicUpdated(event?: { action?: string; trackId?: number; heat?: 
     return;
   }
   void loadMusicTracks();
+}
+
+function handleMusicPlaylistUpdated() {
+  void loadMusicPlaylists();
 }
 
 function handleMusicListeners(listeners: MusicListenerDTO[]) {
@@ -6938,6 +7317,8 @@ function handleActivitySocketConnect() {
 function attachMusicSocket() {
   store.socket?.off("music:updated", handleMusicUpdated);
   store.socket?.on("music:updated", handleMusicUpdated);
+  store.socket?.off("music:playlist-updated", handleMusicPlaylistUpdated);
+  store.socket?.on("music:playlist-updated", handleMusicPlaylistUpdated);
   store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.on("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
@@ -9616,7 +9997,7 @@ async function toggleVirtual(character: any) {
           <small>{{ store.account.isAdmin ? "管理员" : "成员" }}</small>
         </div>
         <button class="icon-btn" @click="openSettings()" aria-label="设置"><Settings :size="18" /></button>
-        <button class="icon-btn" @click="store.logout()" aria-label="退出"><LogOut :size="18" /></button>
+        <button class="icon-btn" @click="logoutApp" aria-label="退出"><LogOut :size="18" /></button>
       </footer>
     </aside>
 
@@ -9727,7 +10108,7 @@ async function toggleVirtual(character: any) {
                 @click="setMusicOnlyFavorites(!musicOnlyFavorites)"
                 aria-label="只播放收藏曲目"
               ><Heart :size="15" :fill="musicOnlyFavorites ? 'currentColor' : 'none'" /><span>只播放收藏</span></button>
-              <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
+              <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="歌单"><Menu :size="20" /></button>
             </div>
           </div>
         </div>
@@ -9990,14 +10371,46 @@ async function toggleVirtual(character: any) {
           <div class="music-playlist-panel" @click.stop>
             <header>
               <div>
-                <strong>播放列表</strong>
-                <small>{{ musicTracks.length }} 首 · 支持搜索与排序</small>
+                <button v-if="musicPlaylistView !== 'home'" class="music-playlist-back" type="button" @click="musicPlaylistView = 'home'" aria-label="返回歌单首页"><ChevronLeft :size="18" /></button>
+                <strong>{{ musicPlaylistView === 'home' ? '歌单' : musicPlaylistView === 'picker' ? '选择歌曲' : selectedMusicPlaylist?.name || (musicSourceKind === 'favorites' ? '我的收藏' : '全部歌曲') }}</strong>
+                <small>{{ musicPlaylistView === 'home' ? `${musicPlaylists.filter((item) => item.isOwner).length} 个个人歌单` : `${playableMusicTracks.length} 首` }}</small>
               </div>
-              <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭播放列表"><X :size="19" /></button>
+              <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭歌单"><X :size="19" /></button>
             </header>
+
+            <div v-if="musicPlaylistView === 'home'" class="music-library-home">
+              <div class="music-library-builtins">
+                <button type="button" @click="selectMusicSource('library')"><Menu :size="21" /><span><strong>全部歌曲</strong><small>{{ musicTracks.length }} 首</small></span></button>
+                <button type="button" @click="selectMusicSource('favorites')"><Heart :size="21" fill="currentColor" /><span><strong>我的收藏</strong><small>{{ favoriteMusicTracks.length }} 首</small></span></button>
+              </div>
+              <div class="music-library-section-head"><strong>我的歌单</strong><button type="button" :disabled="musicPlaylistBusy" @click="createMusicPlaylist"><Plus :size="16" />创建歌单</button></div>
+              <div v-if="musicPlaylists.filter((item) => item.isOwner).length" class="music-library-cards">
+                <button v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" type="button" @click="selectMusicSource('playlist', playlist)">
+                  <span class="music-library-card-icon"><AudioLines :size="22" /></span><span><strong>{{ playlist.name }}</strong><small>{{ playlist.trackCount }} 首 · {{ playlist.ownerName }}</small></span><ChevronRight :size="17" />
+                </button>
+              </div>
+              <p v-else class="music-playlist-empty">还没有个人歌单，点击“创建歌单”开始整理歌曲。</p>
+            </div>
+
+            <div v-else-if="musicPlaylistView === 'picker'" class="music-playlist-picker">
+              <label v-for="track in musicTracks" :key="track.id">
+                <input type="checkbox" :checked="musicPlaylistPickerIds.has(track.id)" @change="toggleMusicPlaylistPickerTrack(track.id)" />
+                <span><strong>{{ track.title }}</strong><small>{{ compactBytes(track.fileSize) }}</small></span>
+              </label>
+              <div class="music-playlist-picker-actions"><button class="mini-btn secondary" type="button" @click="musicPlaylistView = 'tracks'">取消</button><button class="mini-btn" type="button" :disabled="musicPlaylistBusy" @click="saveMusicPlaylistPicker">保存 {{ musicPlaylistPickerIds.size }} 首</button></div>
+            </div>
+
+            <template v-else>
+            <div v-if="selectedMusicPlaylist?.isOwner" class="music-playlist-owner-tools">
+              <button type="button" @click="openMusicPlaylistPicker"><Plus :size="15" />添加歌曲</button>
+              <button type="button" @click="renameSelectedMusicPlaylist">改名</button>
+              <button type="button" class="danger-action" @click="deleteSelectedMusicPlaylist"><Trash2 :size="14" />删除</button>
+              <select v-model="musicPlaylistShareChannelId" aria-label="分享歌单到聊天室"><option :value="null">选择分享频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
+              <button type="button" :disabled="!musicPlaylistShareChannelId" @click="shareSelectedMusicPlaylist"><Send :size="14" />分享</button>
+            </div>
             <div class="music-playlist-tools">
-              <input v-model="musicPlaylistQuery" type="search" placeholder="搜索歌曲或文件名" aria-label="搜索播放列表" />
-              <select v-model="musicPlaylistSort" aria-label="播放列表排序">
+              <input v-model="musicPlaylistQuery" type="search" placeholder="搜索歌曲或文件名" aria-label="搜索歌单" />
+              <select v-model="musicPlaylistSort" aria-label="歌单排序">
                 <option value="manual">手动排序</option>
                 <option value="heat">按热度</option>
                 <option value="uploaded">按上传时间</option>
@@ -10023,13 +10436,15 @@ async function toggleVirtual(character: any) {
                   <Heart v-if="track.favorited" class="music-track-favorite" :size="15" fill="currentColor" aria-label="已收藏" />
                   <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
                 </button>
-                <span v-if="canManageMusic && musicPlaylistSort === 'manual'" class="music-track-order-actions">
+                <span v-if="(selectedMusicPlaylist?.isOwner || (!selectedMusicPlaylist && canManageMusic)) && musicPlaylistSort === 'manual'" class="music-track-order-actions">
                   <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === 0 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, -1)" aria-label="歌曲上移"><ArrowUp :size="15" /></button>
                   <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === filteredMusicTracks.length - 1 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, 1)" aria-label="歌曲下移"><ArrowDown :size="15" /></button>
                 </span>
+                <select v-if="musicPlaylists.some((item) => item.isOwner)" class="music-track-add-select" aria-label="加入歌单" @change="addTrackToMusicPlaylist(track, $event)"><option value="">＋ 加入歌单</option><option v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" :value="playlist.id" :disabled="playlist.tracks.some((item) => item.id === track.id)">{{ playlist.name }}</option></select>
               </div>
             </div>
-            <p v-else class="music-playlist-empty">{{ musicTracks.length ? "没有找到匹配的歌曲" : "播放列表还是空的" }}</p>
+            <p v-else class="music-playlist-empty">{{ playableMusicTracks.length ? "没有找到匹配的歌曲" : "歌单还是空的" }}</p>
+            </template>
           </div>
         </section>
         <section v-if="musicScoreStageVisible" class="music-score-stage" :class="{ closing: musicScoreStageClosing }" aria-label="当前歌曲歌谱">
@@ -10305,6 +10720,18 @@ async function toggleVirtual(character: any) {
                       <button class="mini-icon-btn" @click="removePendingMessage(row.message.id)" aria-label="移除上传状态"><Trash2 :size="15" /></button>
                     </div>
                   </div>
+                </template>
+                <template v-else-if="row.message.type === 'music_playlist'">
+                  <button class="music-playlist-message-card" type="button" @click.stop="openSharedMusicPlaylist(row.message)">
+                    <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
+                    <span v-if="row.message.musicPlaylist" class="music-playlist-message-copy">
+                      <small>{{ row.message.musicPlaylist.ownerName }} 分享的歌单</small>
+                      <strong>{{ row.message.musicPlaylist.name }}</strong>
+                      <em>{{ row.message.musicPlaylist.trackCount }} 首<template v-if="row.message.musicPlaylist.tracks.length"> · {{ row.message.musicPlaylist.tracks.slice(0, 3).map((track) => track.title).join('、') }}</template></em>
+                    </span>
+                    <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong><em>创建者已移除这个歌单</em></span>
+                    <ChevronRight :size="18" />
+                  </button>
                 </template>
                 <template v-else-if="row.message.type === 'image'">
                   <button

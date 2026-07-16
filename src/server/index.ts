@@ -42,6 +42,8 @@ import type {
   MessageDTO,
   MessageEffect,
   MusicListenerDTO,
+  MusicPlaybackStateDTO,
+  MusicPlaylistDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
   PinnedContentBlockDTO,
@@ -838,6 +840,22 @@ function applyFileResponseHeaders(reply: FastifyReply, name: string, forceDownlo
   return policy;
 }
 
+function applyFileValidation(request: FastifyRequest, reply: FastifyReply, stat: fs.Stats) {
+  const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
+  reply.header("ETag", etag);
+  reply.header("Last-Modified", stat.mtime.toUTCString());
+  reply.header("Cache-Control", "private, no-cache");
+  const noneMatch = String(request.headers["if-none-match"] || "");
+  const modifiedSince = Date.parse(String(request.headers["if-modified-since"] || ""));
+  return noneMatch === etag || (!noneMatch && Number.isFinite(modifiedSince) && stat.mtimeMs <= modifiedSince + 999);
+}
+
+function applyJsonValidation(request: FastifyRequest, reply: FastifyReply, etag: string) {
+  reply.header("ETag", etag);
+  reply.header("Cache-Control", "private, no-cache");
+  return String(request.headers["if-none-match"] || "") === etag;
+}
+
 function isImageFileName(name?: string | null) {
   return IMAGE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
 }
@@ -940,6 +958,67 @@ function serializeMusicTrack(
       height: page.height
     })),
     lyrics: message.musicLyrics ? { fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) } : null
+  };
+}
+
+async function musicPlaylistDto(playlistId: number, viewerAccountId: number): Promise<MusicPlaylistDTO | null> {
+  const playlist = await prisma.musicPlaylist.findUnique({
+    where: { id: playlistId },
+    include: {
+      account: { select: { displayName: true } },
+      tracks: {
+        orderBy: { position: "asc" },
+        include: {
+          track: {
+            include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
+          }
+        }
+      }
+    }
+  });
+  if (!playlist) return null;
+  const favorites = await prisma.musicFavorite.findMany({
+    where: { accountId: viewerAccountId, trackId: { in: playlist.tracks.map((item) => item.trackId) } },
+    select: { trackId: true }
+  });
+  const favoriteIds = new Set(favorites.map((favorite) => favorite.trackId));
+  const tracks = playlist.tracks
+    .filter((item) => item.track.channelId && item.track.type === "file" && isMusicFileName(item.track.fileName))
+    .map((item, index) => serializeMusicTrack(item.track, index, favoriteIds.has(item.trackId)));
+  return {
+    id: playlist.id,
+    name: playlist.name,
+    ownerAccountId: playlist.accountId,
+    ownerName: playlist.account.displayName,
+    isOwner: playlist.accountId === viewerAccountId,
+    trackCount: tracks.length,
+    tracks,
+    createdAt: playlist.createdAt.toISOString(),
+    updatedAt: playlist.updatedAt.toISOString()
+  };
+}
+
+async function canAccessMusicPlaylist(accountId: number, playlistId: number) {
+  const playlist = await prisma.musicPlaylist.findUnique({
+    where: { id: playlistId },
+    select: { accountId: true, shares: { select: { message: { select: { channelId: true } } } } }
+  });
+  if (!playlist) return false;
+  if (playlist.accountId === accountId) return true;
+  for (const share of playlist.shares) {
+    if (await canAccessChannel(accountId, share.message.channelId)) return true;
+  }
+  return false;
+}
+
+function cleanMusicPlaybackState(row: { sourceKind: string; playlistId: number | null; trackId: number | null; progressMs: number; playbackMode: string; updatedAt: Date }): MusicPlaybackStateDTO {
+  return {
+    sourceKind: row.sourceKind === "favorites" || row.sourceKind === "playlist" ? row.sourceKind : "library",
+    playlistId: row.playlistId,
+    trackId: row.trackId,
+    progressMs: Math.max(0, row.progressMs),
+    playbackMode: row.playbackMode === "single" || row.playbackMode === "playlist" ? row.playbackMode : "shuffle",
+    updatedAt: row.updatedAt.toISOString()
   };
 }
 
@@ -1250,6 +1329,10 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       aiSuggestionMaxSuccess: aiSettings.value.maxSuccessPerMessage
     };
   }
+  const playlistId = message.type === "music_playlist" && payload && typeof payload === "object"
+    ? Number((payload as { playlistId?: unknown }).playlistId || 0)
+    : 0;
+  const sharedMusicPlaylist = playlistId ? await musicPlaylistDto(playlistId, viewerAccountId || 0) : undefined;
   return {
     id: message.id,
     channelId: message.channelId,
@@ -1296,7 +1379,8 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       favoriteCount: favorites.length,
       currentUserLiked: !!viewerAccountId && likes.some((like) => like.accountId === viewerAccountId),
       currentUserFavorited: !!viewerAccountId && favorites.some((favorite) => favorite.accountId === viewerAccountId)
-    }
+    },
+    ...(message.type === "music_playlist" ? { musicPlaylist: sharedMusicPlaylist || null } : {})
   };
 }
 
@@ -2681,8 +2765,11 @@ app.get("/avatars/:file", async (request, reply) => {
   const file = path.basename((request.params as { file: string }).file);
   const filePath = path.join(AVATAR_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  const stat = fs.statSync(filePath);
   applyFileResponseHeaders(reply, file, false);
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
+  reply.header("Cache-Control", "public, no-cache");
+  reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -2690,8 +2777,11 @@ app.get("/backgrounds/:file", async (request, reply) => {
   const file = path.basename((request.params as { file: string }).file);
   const filePath = path.join(BG_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  reply.header("Cache-Control", "public, max-age=2592000, immutable");
+  const stat = fs.statSync(filePath);
   applyFileResponseHeaders(reply, file, false);
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
+  reply.header("Cache-Control", "public, no-cache");
+  reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -4155,6 +4245,7 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
     prisma.pinnedItem.updateMany({ where: { messageId }, data: { active: false, messageId: null } }),
     prisma.message.updateMany({ where: { replyToId: messageId }, data: { replyToId: null } }),
     prisma.voiceListen.deleteMany({ where: { messageId } }),
+    prisma.musicPlaylistShare.deleteMany({ where: { messageId } }),
     prisma.prayerAction.deleteMany({ where: { messageId } }),
     prisma.messageAiSuggestion.deleteMany({ where: { messageId } }),
     prisma.message.update({
@@ -4183,6 +4274,168 @@ app.get("/api/music/tracks", { preHandler: requireAuth }, async (request) => {
       .filter((message) => isMusicFileName(message.fileName))
       .map((message, index) => serializeMusicTrack(message, index, favoriteTrackIds.has(message.id)))
   };
+});
+
+app.get("/api/music/playlists", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const rows = await prisma.musicPlaylist.findMany({
+    where: { accountId: auth.accountId },
+    orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+    select: { id: true }
+  });
+  const playlists = await Promise.all(rows.map((row) => musicPlaylistDto(row.id, auth.accountId)));
+  return { playlists: playlists.filter((playlist): playlist is MusicPlaylistDTO => !!playlist) };
+});
+
+app.post("/api/music/playlists", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const parsed = z.object({ name: z.string().trim().min(1).max(120).optional() }).safeParse(request.body || {});
+  if (!parsed.success) return reply.code(400).send({ success: false, message: "歌单名称需为 1-120 个字符" });
+  const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, select: { displayName: true } });
+  const baseName = parsed.data.name || `${account.displayName}的歌单`;
+  let name = baseName;
+  if (!parsed.data.name) {
+    const existing = await prisma.musicPlaylist.findMany({
+      where: { accountId: auth.accountId, name: { startsWith: baseName } },
+      select: { name: true }
+    });
+    const names = new Set(existing.map((item) => item.name));
+    let suffix = 2;
+    while (names.has(name)) name = `${baseName} (${suffix++})`;
+  }
+  const created = await prisma.musicPlaylist.create({ data: { accountId: auth.accountId, name } });
+  return { success: true, playlist: await musicPlaylistDto(created.id, auth.accountId) };
+});
+
+app.get("/api/music/playlists/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const playlistId = Number((request.params as { id: string }).id);
+  if (!(await canAccessMusicPlaylist(auth.accountId, playlistId))) return reply.code(404).send({ success: false, message: "歌单不存在或尚未分享给你" });
+  return { playlist: await musicPlaylistDto(playlistId, auth.accountId) };
+});
+
+app.patch("/api/music/playlists/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const playlistId = Number((request.params as { id: string }).id);
+  const body = z.object({ name: z.string().trim().min(1).max(120) }).parse(request.body);
+  const playlist = await prisma.musicPlaylist.findUnique({ where: { id: playlistId }, select: { accountId: true } });
+  if (!playlist || playlist.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "只能修改自己的歌单" });
+  await prisma.musicPlaylist.update({ where: { id: playlistId }, data: { name: body.name } });
+  io.emit("music:playlist-updated", { playlistId });
+  return { success: true, playlist: await musicPlaylistDto(playlistId, auth.accountId) };
+});
+
+app.delete("/api/music/playlists/:id", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const playlistId = Number((request.params as { id: string }).id);
+  const playlist = await prisma.musicPlaylist.findUnique({ where: { id: playlistId }, select: { accountId: true } });
+  if (!playlist || playlist.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "只能删除自己的歌单" });
+  await prisma.$transaction([
+    prisma.musicPlaybackState.updateMany({
+      where: { playlistId },
+      data: { sourceKind: "library", playlistId: null }
+    }),
+    prisma.musicPlaylist.delete({ where: { id: playlistId } })
+  ]);
+  io.emit("music:playlist-updated", { playlistId, deleted: true });
+  return { success: true };
+});
+
+app.put("/api/music/playlists/:id/tracks", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const playlistId = Number((request.params as { id: string }).id);
+  const body = z.object({ trackIds: z.array(z.number().int().positive()).max(500) }).parse(request.body);
+  const trackIds = [...new Set(body.trackIds)];
+  if (trackIds.length !== body.trackIds.length) return reply.code(400).send({ success: false, message: "歌单中不能重复添加同一首歌" });
+  const playlist = await prisma.musicPlaylist.findUnique({ where: { id: playlistId }, select: { accountId: true } });
+  if (!playlist || playlist.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "只能管理自己的歌单" });
+  const tracks = trackIds.length
+    ? await prisma.message.findMany({ where: { id: { in: trackIds }, channel: { kind: "music" }, type: "file" }, select: { id: true, fileName: true } })
+    : [];
+  if (tracks.length !== trackIds.length || tracks.some((track) => !isMusicFileName(track.fileName))) {
+    return reply.code(400).send({ success: false, message: "歌单中包含已经失效的歌曲" });
+  }
+  await prisma.$transaction(async (transaction) => {
+    await transaction.musicPlaylistTrack.deleteMany({ where: { playlistId } });
+    if (trackIds.length) {
+      await transaction.musicPlaylistTrack.createMany({ data: trackIds.map((trackId, position) => ({ playlistId, trackId, position })) });
+    }
+    await transaction.musicPlaylist.update({ where: { id: playlistId }, data: { updatedAt: new Date() } });
+  });
+  io.emit("music:playlist-updated", { playlistId });
+  return { success: true, playlist: await musicPlaylistDto(playlistId, auth.accountId) };
+});
+
+app.post("/api/music/playlists/:id/share", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const pushOrigin = pushOriginFromHeaders(request.headers);
+  const playlistId = Number((request.params as { id: string }).id);
+  const body = z.object({ channelId: z.number().int().positive() }).parse(request.body);
+  const playlist = await prisma.musicPlaylist.findUnique({ where: { id: playlistId }, select: { accountId: true, name: true } });
+  if (!playlist || playlist.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "只能分享自己的歌单" });
+  const channel = await prisma.channel.findUnique({ where: { id: body.channelId }, select: { kind: true } });
+  if (!channel || (channel.kind !== "standard" && channel.kind !== "direct") || !(await canWriteChannel(auth.accountId, body.channelId))) {
+    return reply.code(400).send({ success: false, message: "歌单只能分享到公开、私密聊天频道或私聊" });
+  }
+  const message = await prisma.$transaction(async (transaction) => {
+    const created = await transaction.message.create({
+      data: {
+        channelId: body.channelId,
+        senderActorId: auth.actorId,
+        content: `分享了歌单“${playlist.name}”`,
+        type: "music_playlist",
+        payload: { playlistId, nameSnapshot: playlist.name }
+      }
+    });
+    await transaction.musicPlaylistShare.create({ data: { playlistId, messageId: created.id } });
+    return created;
+  });
+  await emitMessage(message.id);
+  void sendMessagePush(message.id, pushOrigin).catch((error) => request.log.warn({ error, messageId: message.id }, "playlist share push failed"));
+  return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
+});
+
+app.get("/api/music/playback-state", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
+  const state = await prisma.musicPlaybackState.findUnique({ where: { accountId: auth.accountId } });
+  return { state: state ? cleanMusicPlaybackState(state) : null };
+});
+
+app.put("/api/music/playback-state", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({
+    sourceKind: z.enum(["library", "favorites", "playlist"]),
+    playlistId: z.number().int().positive().nullable().default(null),
+    trackId: z.number().int().positive().nullable().default(null),
+    progressMs: z.number().int().min(0).max(24 * 60 * 60 * 1000),
+    playbackMode: z.enum(["playlist", "single", "shuffle"]),
+    knownUpdatedAt: z.string().datetime().optional()
+  }).parse(request.body);
+  const current = await prisma.musicPlaybackState.findUnique({ where: { accountId: auth.accountId } });
+  if (current && body.knownUpdatedAt && current.updatedAt.getTime() > new Date(body.knownUpdatedAt).getTime()) {
+    return { success: true, accepted: false, state: cleanMusicPlaybackState(current) };
+  }
+  if (body.sourceKind === "playlist") {
+    if (!body.playlistId || !(await canAccessMusicPlaylist(auth.accountId, body.playlistId))) return reply.code(403).send({ success: false, message: "无法保存无权访问的歌单" });
+  }
+  if (body.trackId) {
+    const track = await prisma.message.findFirst({ where: { id: body.trackId, channel: { kind: "music" }, type: "file" }, select: { id: true, fileName: true } });
+    if (!track || !isMusicFileName(track.fileName)) return reply.code(400).send({ success: false, message: "歌曲已经失效" });
+    if (body.sourceKind === "playlist") {
+      const included = await prisma.musicPlaylistTrack.findUnique({ where: { playlistId_trackId: { playlistId: body.playlistId!, trackId: body.trackId } } });
+      if (!included) return reply.code(400).send({ success: false, message: "歌曲不在当前歌单中" });
+    }
+    if (body.sourceKind === "favorites") {
+      const favorited = await prisma.musicFavorite.findUnique({ where: { trackId_accountId: { trackId: body.trackId, accountId: auth.accountId } } });
+      if (!favorited) return reply.code(400).send({ success: false, message: "歌曲不在收藏中" });
+    }
+  }
+  const state = await prisma.musicPlaybackState.upsert({
+    where: { accountId: auth.accountId },
+    create: { accountId: auth.accountId, sourceKind: body.sourceKind, playlistId: body.sourceKind === "playlist" ? body.playlistId : null, trackId: body.trackId, progressMs: body.progressMs, playbackMode: body.playbackMode },
+    update: { sourceKind: body.sourceKind, playlistId: body.sourceKind === "playlist" ? body.playlistId : null, trackId: body.trackId, progressMs: body.progressMs, playbackMode: body.playbackMode }
+  });
+  return { success: true, accepted: true, state: cleanMusicPlaybackState(state) };
 });
 
 app.put("/api/music/tracks/:id/favorite", { preHandler: requireAuth }, async (request, reply) => {
@@ -4491,8 +4744,10 @@ app.get("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireMediaAu
   if (!canReadMusicScore(page.track.channel.kind, canAccessSourceChannel)) return reply.code(403).send({ success: false, message: "无权查看歌谱" });
   const filePath = path.join(MUSIC_SCORE_DIR, path.basename(page.filePath));
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "歌谱文件不存在" });
+  const stat = fs.statSync(filePath);
   applyFileResponseHeaders(reply, page.fileName, false);
-  reply.header("Content-Length", String(fs.statSync(filePath).size));
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
+  reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -4506,6 +4761,7 @@ app.get("/api/music/tracks/:id/stream", { preHandler: requireMediaAuth }, async 
   const range = request.headers.range;
   reply.header("Accept-Ranges", "bytes");
   applyFileResponseHeaders(reply, message.fileName || message.filePath, false);
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (match) {
@@ -4571,7 +4827,7 @@ app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (reques
   const fileName = message.fileName || message.filePath;
   reply.header("Accept-Ranges", "bytes");
   applyFileResponseHeaders(reply, fileName, query.download === "1");
-  if (isImageFileName(fileName) && query.download !== "1") reply.header("Cache-Control", "private, max-age=604800, immutable");
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (match) {
@@ -5031,7 +5287,8 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
   }
 });
 
-app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request) => {
+app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request, reply) => {
+  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
   const query = z.object({ reference: z.string().min(1).max(120) }).parse(request.query);
   try {
     const result: BibleLookupDTO = lookupBibleReference(query.reference);
@@ -5041,7 +5298,8 @@ app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request) => {
   }
 });
 
-app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request) => {
+app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request, reply) => {
+  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
   const query = z.object({
     book: z.string().trim().min(3).max(3),
     chapter: z.coerce.number().int().positive()
@@ -5054,7 +5312,8 @@ app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request) => {
   }
 });
 
-app.get("/api/bible/catalog", { preHandler: requireAuth }, async () => {
+app.get("/api/bible/catalog", { preHandler: requireAuth }, async (request, reply) => {
+  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
   const result: BibleCatalogDTO = bibleCatalog();
   return { success: true, result };
 });
@@ -5143,7 +5402,8 @@ app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request)
   return { success: true, result };
 });
 
-app.get("/api/bible/search", { preHandler: requireAuth }, async (request) => {
+app.get("/api/bible/search", { preHandler: requireAuth }, async (request, reply) => {
+  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
   const query = z
     .object({
       query: z.string().min(1).max(200),
@@ -5297,8 +5557,11 @@ app.get<{ Params: { kit: string; file: string } }>("/api/parallax/:kit/:file", a
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return reply.code(404).send({ success: false, message: "parallax asset not found" });
   }
+  const stat = fs.statSync(filePath);
   reply.type("image/png");
-  reply.header("Cache-Control", "public, max-age=604800, immutable");
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
+  reply.header("Cache-Control", "public, no-cache");
+  reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));
 });
 
@@ -6134,8 +6397,10 @@ app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireMediaAuth }
   if (!pin || !pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content)).has(file)) return reply.code(404).send("Not found");
   const filePath = path.join(UPLOAD_DIR, file);
   if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  reply.header("Cache-Control", "private, max-age=86400");
+  const stat = fs.statSync(filePath);
   applyFileResponseHeaders(reply, file, false);
+  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
+  reply.header("Content-Length", String(stat.size));
   return reply.send(fs.createReadStream(filePath));
 });
 

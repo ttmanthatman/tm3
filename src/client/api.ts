@@ -13,6 +13,10 @@ export function setToken(token: string) {
 }
 
 export function clearToken() {
+  const token = getToken();
+  if (token && "serviceWorker" in navigator) {
+    navigator.serviceWorker.controller?.postMessage({ type: "CLEAR_PRIVATE_CACHE", token });
+  }
   localStorage.removeItem(TOKEN_KEY);
 }
 

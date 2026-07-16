@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
 import "./styles.css";
+import { APP_VERSION } from "@shared/release";
 
 function syncViewportHeight() {
   const vv = window.visualViewport;
@@ -37,7 +38,7 @@ document.addEventListener(
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => {});
+    navigator.serviceWorker.register(`/sw.js?v=${encodeURIComponent(APP_VERSION)}`, { updateViaCache: "none" }).catch(() => {});
   });
 }
 
