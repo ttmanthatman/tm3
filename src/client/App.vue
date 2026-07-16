@@ -244,6 +244,7 @@ let musicFadeFrame: number | undefined;
 let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
 let musicListenerHeartbeatTimer: number | undefined;
+let activityConnectRetryTimer: number | undefined;
 type MusicPlaySession = {
   trackId: number;
   playbackId: string;
@@ -1203,6 +1204,7 @@ onBeforeUnmount(() => {
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.off("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
+  if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
   disposeMusicAudio();
 });
@@ -6613,6 +6615,11 @@ function publishPresenceActivities() {
 
 function handleActivitySocketConnect() {
   publishPresenceActivities();
+  if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
+  activityConnectRetryTimer = window.setTimeout(() => {
+    activityConnectRetryTimer = undefined;
+    publishPresenceActivities();
+  }, 700);
 }
 
 function attachMusicSocket() {

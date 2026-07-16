@@ -240,6 +240,7 @@ test("notifications stay in the header while live activity moves into its own ti
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
   assert.match(afterHeader, /class="chat-activity-ticker"[\s\S]*?activityTickerText/);
   assert.match(app, /activityTickerItems\([\s\S]*?bibleReaders\.value[\s\S]*?musicListeners\.value[\s\S]*?Object\.values\(store\.typing\)/);
+  assert.match(app, /function handleActivitySocketConnect\(\)[\s\S]*?publishPresenceActivities\(\)[\s\S]*?setTimeout\([\s\S]*?publishPresenceActivities\(\)[\s\S]*?700/);
   assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
   assert.match(server, /bibleReaderCleanupTimer[\s\S]*?45_000/);
   assert.match(css, /\.chat-activity-ticker \{[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
