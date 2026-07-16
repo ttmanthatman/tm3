@@ -198,7 +198,7 @@ test("expanded player keeps its main control on the clicked song-button axis", (
   assert.match(app, /@click\.stop="openMusicPlayer\(\$event\)"/);
   assert.match(app, /:style="musicPlayerAnchorStyle"/);
   assert.match(app, /class="music-player-transport"[\s\S]*?class="icon-btn music-main-control"/);
-  assert.match(css, /\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(72px, calc\(var\(--music-player-anchor-x\) - 64px\)\) 128px minmax\(0, 1fr\);/);
+  assert.match(css, /\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(72px, calc\(var\(--music-player-anchor-x\) - 84px\)\) 168px minmax\(0, 1fr\);/);
   assert.match(css, /\.music-player-transport \{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;[\s\S]*?align-items: center;/);
   assert.match(css, /\.music-player-title \{[\s\S]*?grid-column: 1;[\s\S]*?grid-row: 1;/);
   assert.match(css, /\.music-player-tools \{[\s\S]*?grid-column: 3;[\s\S]*?grid-row: 1;/);
@@ -219,8 +219,23 @@ test("playback mode lives inside the playlist instead of taking header space", (
 
   assert.doesNotMatch(player, /class="music-mode-btn"/);
   assert.match(player, /aria-label="播放列表"/);
-  assert.match(playlist, /class="music-playlist-tools"[\s\S]*?class="music-mode-btn"/);
-  assert.match(playlist, /musicPlaybackMode === "playlist" \? "列表循环" : "单曲播放"/);
+  assert.match(playlist, /class="music-playlist-tools"[\s\S]*?class="music-mode-btn active"/);
+  assert.match(playlist, /@click="cycleMusicPlaybackMode"[\s\S]*?musicPlaybackModeLabel\(\)/);
+});
+
+test("music favorites persist per account and can constrain the playback queue", () => {
+  assert.match(app, /class="icon-btn music-favorite-control"[\s\S]*?@click="toggleCurrentMusicFavorite"/);
+  assert.match(app, /class="music-favorites-only-btn"[\s\S]*?>只播放收藏</);
+  assert.match(app, /const playableMusicTracks = computed\(\(\) => musicOnlyFavorites\.value \? favoriteMusicTracks\.value : sortedMusicTracks\.value\)/);
+  assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
+});
+
+test("expanded player omits the changing listener marquee", () => {
+  const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
+  const playerEnd = app.indexOf("</header>", playerStart);
+  const player = app.slice(playerStart, playerEnd);
+  assert.doesNotMatch(player, /currentMusicListenerStatus|music-player-listener-marquee/);
+  assert.match(player, /<small v-else-if="musicPlaying">正在播放<\/small>/);
 });
 
 test("long music titles scroll in the left side of the single-row player", () => {
@@ -259,7 +274,7 @@ test("pinned content and live activity share one ordered notice stack", () => {
 
   assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
-  assert.match(afterHeader, /class="chat-notice-stack"[\s\S]*?class="pinned-ticker-row"[\s\S]*?pinnedText[\s\S]*?pinnedTickerBody[\s\S]*?class="chat-activity-ticker"[\s\S]*?activityTickerText/);
+  assert.match(afterHeader, /class="chat-notice-stack"[\s\S]*?class="pinned-ticker-row"[\s\S]*?pinnedText[\s\S]*?pinnedTickerBody[\s\S]*?class="chat-activity-ticker"[\s\S]*?<ActivityTicker :items="activityStatusItems"/);
   const noticeStart = afterHeader.indexOf('class="chat-notice-stack"');
   const noticeEnd = afterHeader.indexOf("</section>", noticeStart);
   const notice = afterHeader.slice(noticeStart, noticeEnd);
@@ -269,7 +284,7 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(app, /function openPinnedFromTicker\(\)[\s\S]*?canPinCurrentChannel\.value[\s\S]*?openPinnedEditor\(\)[\s\S]*?pinnedExpanded\.value = true/);
   assert.doesNotMatch(notice, /pinned-image|block\.type === 'image'/);
   assert.doesNotMatch(ticker, /chat-activity-orbit/);
-  assert.equal(ticker.match(/\{\{ activityTickerText \}\}/g)?.length, 1);
+  assert.equal(ticker.match(/<ActivityTicker :items="activityStatusItems"/g)?.length, 1);
   assert.match(app, /activityTickerItems\([\s\S]*?bibleReaders\.value[\s\S]*?musicListeners\.value[\s\S]*?Object\.values\(store\.typing\)/);
   assert.match(app, /function handleActivitySocketConnect\(\)[\s\S]*?publishPresenceActivities\(\)[\s\S]*?setTimeout\([\s\S]*?publishPresenceActivities\(\)[\s\S]*?700/);
   assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
@@ -277,13 +292,31 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(css, /\.chat-notice-stack \{[\s\S]*?grid-row: 4;[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
   const activityTickerRule = css.match(/\.chat-activity-ticker \{([^}]*)\}/)?.[1] ?? "";
   assert.doesNotMatch(activityTickerRule, /position: absolute;/);
-  assert.match(css, /\.chat-activity-track > span \{[\s\S]*?background: linear-gradient/);
+  assert.match(css, /\.chat-activity-item \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
   assert.match(header, /aria-label="请打开通知"[\s\S]*?notificationNudgeCharacters/);
   assert.match(css, /\.notification-nudge \{[\s\S]*?background: #facc15;[\s\S]*?animation: none;/);
   assert.match(app, /<em v-if="row\.message\.sender\.kind === 'virtual'">诶哎<\/em>/);
   assert.match(css, /\.sender-line em \{[\s\S]*?color: #38bdf8;[\s\S]*?text-shadow: none;/);
+});
+
+test("version changes add one clickable timeline-style update notice", () => {
+  assert.match(app, /previousVersion !== APP_VERSION[\s\S]*?聊天室刚刚更新到版本 \$\{APP_VERSION\}/);
+  assert.match(app, /row\.kind === 'version'[\s\S]*?class="time-separator version-update-separator"[\s\S]*?@click="openVersionUpdateNotice"/);
+  assert.match(app, /openVersionUpdateNotice[\s\S]*?openSettings\("release"\)/);
+});
+
+test("chat images correct EXIF dimensions, cache privately, and preload offscreen rows", () => {
+  assert.match(app, /function handleMessageImageLoad[\s\S]*?image\.naturalWidth[\s\S]*?resolvedMessageImageDimensions/);
+  assert.match(app, /function preloadMessageImages[\s\S]*?messageImagePreloadQueue\.push/);
+  assert.match(server, /isImageFileName\(fileName\)[\s\S]*?Cache-Control", "private, max-age=604800, immutable"/);
+});
+
+test("Bible favorites collapse by default and remember the account preference", () => {
+  assert.match(bibleWorkspace, /const favoritesCollapsed = ref\(true\)/);
+  assert.match(bibleWorkspace, /class="bible-favorites"[\s\S]*?:aria-expanded="!favoritesCollapsed"[\s\S]*?toggleFavoritesCollapsed/);
+  assert.match(bibleWorkspace, /team-chat-bible-favorites-collapsed/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {

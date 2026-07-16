@@ -2,6 +2,17 @@ import type { BibleReaderPresenceDTO, MusicListenerDTO } from "@shared/types";
 
 export type TypingActivity = { displayName: string };
 
+export function advanceActivityTickerPosition(
+  position: number,
+  elapsedMs: number,
+  contentWidth: number,
+  viewportWidth: number,
+  speedPxPerSecond = 36
+) {
+  const next = position - Math.max(0, elapsedMs) * speedPxPerSecond / 1000;
+  return next <= -Math.max(0, contentWidth) ? Math.max(0, viewportWidth) : next;
+}
+
 export function activityTickerItems(
   bibleReaders: BibleReaderPresenceDTO[],
   musicListeners: MusicListenerDTO[],

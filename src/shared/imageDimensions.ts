@@ -3,6 +3,10 @@ export type ImageDimensions = {
   height: number;
 };
 
+export function orientedImageDimensions(width: number, height: number, orientation?: number | null): ImageDimensions {
+  return orientation && orientation >= 5 && orientation <= 8 ? { width: height, height: width } : { width, height };
+}
+
 const MAX_IMAGE_DIMENSION = 20_000;
 
 function validDimension(value: unknown) {

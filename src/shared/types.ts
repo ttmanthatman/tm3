@@ -199,6 +199,7 @@ export interface MusicTrackDTO {
   createdAt: string;
   heat: number;
   manualOrder: number;
+  favorited?: boolean;
   scorePages: MusicScorePageDTO[];
   lyrics: MusicLyricsDTO | null;
 }

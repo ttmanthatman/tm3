@@ -1,4 +1,4 @@
-export type MusicPlaybackMode = "single" | "playlist";
+export type MusicPlaybackMode = "single" | "playlist" | "shuffle";
 export type MusicPlaylistSort = "manual" | "heat" | "uploaded" | "filename";
 
 export type SortableMusicTrack = {
@@ -74,6 +74,19 @@ export function nextMusicTrackIndex(length: number, currentIndex: number, delta:
   return (safeIndex + delta + length) % length;
 }
 
+export function nextMusicTrackIndexForMode(
+  length: number,
+  currentIndex: number,
+  delta: number,
+  mode: MusicPlaybackMode,
+  random: () => number = Math.random
+) {
+  if (mode !== "shuffle" || length <= 1) return nextMusicTrackIndex(length, currentIndex, delta);
+  const safeIndex = currentIndex >= 0 && currentIndex < length ? currentIndex : 0;
+  const candidates = Array.from({ length }, (_, index) => index).filter((index) => index !== safeIndex);
+  return candidates[Math.min(candidates.length - 1, Math.floor(Math.max(0, Math.min(0.999999, random())) * candidates.length))];
+}
+
 export function shouldRestartOnlyTrack(trackCount: number, delta: number) {
   return trackCount === 1 && delta < 0;
 }
@@ -83,7 +96,11 @@ export function musicFadeVolume(progress: number) {
 }
 
 export function shouldAdvanceMusic(mode: MusicPlaybackMode, scoreOpen = false) {
-  return mode === "playlist" && !scoreOpen;
+  return mode !== "single" && !scoreOpen;
+}
+
+export function shouldRepeatCurrentMusic(mode: MusicPlaybackMode, scoreOpen = false) {
+  return mode === "single" && !scoreOpen;
 }
 
 export function shouldShowMusicScoreTrigger(input: { playing: boolean; scoreOpen: boolean; pageCount: number }) {

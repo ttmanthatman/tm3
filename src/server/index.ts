@@ -68,7 +68,7 @@ import { canReadMusicScore } from "./musicScoreAccess.js";
 import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.js";
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
-import { imageDimensionsFromPayload, mergeImageDimensionsPayload, type ImageDimensions } from "../shared/imageDimensions.js";
+import { imageDimensionsFromPayload, mergeImageDimensionsPayload, orientedImageDimensions, type ImageDimensions } from "../shared/imageDimensions.js";
 import { recalledMessageData } from "./messageRecall.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
@@ -902,7 +902,7 @@ async function storedImageDimensions(filePath: string): Promise<ImageDimensions 
   try {
     const metadata = await sharp(filePath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
     if (!metadata.width || !metadata.height || metadata.width > 20_000 || metadata.height > 20_000) return undefined;
-    return { width: metadata.width, height: metadata.height };
+    return orientedImageDimensions(metadata.width, metadata.height, metadata.orientation);
   } catch {
     return undefined;
   }
@@ -918,7 +918,8 @@ function serializeMusicTrack(
     musicLyrics?: Pick<MusicLyrics, "fileName" | "content"> | null;
     _count?: { musicPlays: number };
   },
-  fallbackOrder = 0
+  fallbackOrder = 0,
+  favorited?: boolean
 ): MusicTrackDTO {
   const fileName = message.fileName || "未命名歌曲.mp3";
   return {
@@ -929,6 +930,7 @@ function serializeMusicTrack(
     createdAt: message.createdAt.toISOString(),
     heat: message._count?.musicPlays || 0,
     manualOrder: message.musicOrder ?? fallbackOrder,
+    ...(favorited === undefined ? {} : { favorited }),
     scorePages: (message.musicScorePages || []).map((page) => ({
       id: page.id,
       pageIndex: page.pageIndex,
@@ -1349,12 +1351,21 @@ async function backfillImageMessageDimensions() {
     orderBy: { id: "asc" }
   });
   for (const message of messages) {
-    if (!message.filePath || imageDimensionsFromPayload(message.payload)) continue;
+    if (!message.filePath) continue;
+    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload)
+      ? message.payload as Record<string, unknown>
+      : {};
+    if (payload.imageDimensionsVersion === 2) continue;
     const dimensions = await storedImageDimensions(path.join(UPLOAD_DIR, path.basename(message.filePath)));
     if (!dimensions) continue;
     await prisma.message.update({
       where: { id: message.id },
-      data: { payload: mergeImageDimensionsPayload(message.payload, dimensions) as Prisma.InputJsonObject }
+      data: {
+        payload: {
+          ...mergeImageDimensionsPayload(message.payload, dimensions),
+          imageDimensionsVersion: 2
+        } as Prisma.InputJsonObject
+      }
     });
   }
 }
@@ -4010,7 +4021,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     actorId: auth.actorId,
     content: "",
     type,
-    payload: imageDimensions ? mergeImageDimensionsPayload(voicePayload, imageDimensions) : voicePayload,
+    payload: imageDimensions ? { ...mergeImageDimensionsPayload(voicePayload, imageDimensions), imageDimensionsVersion: 2 } : voicePayload,
     fileName: displayFileName,
     filePath: storedFileName,
     fileSize: stat.size,
@@ -4158,13 +4169,42 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
   return { success: true };
 });
 
-app.get("/api/music/tracks", { preHandler: requireAuth }, async () => {
+app.get("/api/music/tracks", { preHandler: requireAuth }, async (request) => {
+  const auth = (request as AuthedRequest).auth;
   const messages = await prisma.message.findMany({
     where: { channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
     orderBy: [{ musicOrder: "asc" }, { createdAt: "desc" }, { id: "desc" }],
     include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
   });
-  return { tracks: messages.filter((message) => isMusicFileName(message.fileName)).map((message, index) => serializeMusicTrack(message, index)) };
+  const favorites = await prisma.musicFavorite.findMany({ where: { accountId: auth.accountId }, select: { trackId: true } });
+  const favoriteTrackIds = new Set(favorites.map((favorite) => favorite.trackId));
+  return {
+    tracks: messages
+      .filter((message) => isMusicFileName(message.fileName))
+      .map((message, index) => serializeMusicTrack(message, index, favoriteTrackIds.has(message.id)))
+  };
+});
+
+app.put("/api/music/tracks/:id/favorite", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const trackId = Number((request.params as { id: string }).id);
+  const body = z.object({ favorited: z.boolean() }).parse(request.body);
+  const track = await prisma.message.findFirst({
+    where: { id: trackId, channel: { kind: "music" }, type: "file" },
+    select: { id: true, fileName: true }
+  });
+  if (!track || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (body.favorited) {
+    await prisma.musicFavorite.upsert({
+      where: { trackId_accountId: { trackId, accountId: auth.accountId } },
+      update: {},
+      create: { trackId, accountId: auth.accountId }
+    });
+  } else {
+    await prisma.musicFavorite.deleteMany({ where: { trackId, accountId: auth.accountId } });
+  }
+  io.to(`acct:${auth.accountId}`).emit("music:favorite-updated", { trackId, favorited: body.favorited });
+  return { success: true, trackId, favorited: body.favorited };
 });
 
 app.post("/api/music/tracks/:id/play", { preHandler: requireAuth }, async (request, reply) => {
@@ -4531,6 +4571,7 @@ app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (reques
   const fileName = message.fileName || message.filePath;
   reply.header("Accept-Ranges", "bytes");
   applyFileResponseHeaders(reply, fileName, query.download === "1");
+  if (isImageFileName(fileName) && query.download !== "1") reply.header("Cache-Control", "private, max-age=604800, immutable");
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (match) {
@@ -7090,6 +7131,6 @@ process.on("SIGTERM", async () => {
 
 await ensureBootstrap();
 await ensureWebPush();
-await backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
 await app.listen({ port: PORT, host: "0.0.0.0" });
+void backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
 void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));

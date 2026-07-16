@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ChevronLeft, ClipboardCopy, History, Home, Plus, Search, Send, Trash2, X } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronDown, ChevronLeft, ChevronRight, ClipboardCopy, History, Home, Plus, Search, Send, Trash2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -77,6 +77,7 @@ const linkedTargetVerseKeys = ref<Set<string>>(new Set());
 const selectedVerseKeys = ref<Set<string>>(new Set());
 const selectionAnchorKey = ref<string | null>(null);
 const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
+const favoritesCollapsed = ref(true);
 const favoritesBusy = ref(false);
 const favoritesLoadedAccountId = ref(0);
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
@@ -88,6 +89,19 @@ let catalogLoadPromise: Promise<void> | null = null;
 let componentMounted = false;
 let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
+
+function favoritesCollapsedStorageKey(accountId: number) {
+  return `team-chat-bible-favorites-collapsed:${accountId}`;
+}
+
+function toggleFavoritesCollapsed() {
+  favoritesCollapsed.value = !favoritesCollapsed.value;
+  localStorage.setItem(favoritesCollapsedStorageKey(props.accountId), favoritesCollapsed.value ? "1" : "0");
+}
+
+watch(() => props.accountId, (accountId) => {
+  favoritesCollapsed.value = localStorage.getItem(favoritesCollapsedStorageKey(accountId)) !== "0";
+}, { immediate: true });
 
 const allBooks = computed(() => [...(catalog.value?.oldTestament || []), ...(catalog.value?.newTestament || [])]);
 const loadedChapters = computed(() => Object.keys(readerChapters.value).map(Number).sort((left, right) => left - right));
@@ -833,11 +847,19 @@ function handleTouchEnd(event: TouchEvent) {
         </section>
       </section>
 
-      <section class="bible-favorites" aria-label="经文收藏夹">
-        <header><Bookmark :size="24" /><div><h2>经文收藏夹</h2><p>独立保存的经文，不会加入聊天室收藏频道</p></div><span>{{ bibleFavorites.length }} 节</span></header>
-        <p v-if="favoritesBusy && !bibleFavorites.length" class="bible-empty">正在加载收藏…</p>
-        <p v-else-if="!bibleFavorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
-        <div v-else class="bible-favorite-grid">
+      <section class="bible-favorites" :class="{ collapsed: favoritesCollapsed }" aria-label="经文收藏夹">
+        <header>
+          <button type="button" class="bible-favorites-toggle" :aria-expanded="!favoritesCollapsed" @click="toggleFavoritesCollapsed">
+            <Bookmark :size="24" />
+            <div><h2>经文收藏夹</h2><p>独立保存的经文，不会加入聊天室收藏频道</p></div>
+            <span>{{ bibleFavorites.length }} 节</span>
+            <ChevronRight v-if="favoritesCollapsed" :size="20" />
+            <ChevronDown v-else :size="20" />
+          </button>
+        </header>
+        <p v-if="!favoritesCollapsed && favoritesBusy && !bibleFavorites.length" class="bible-empty">正在加载收藏…</p>
+        <p v-else-if="!favoritesCollapsed && !bibleFavorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
+        <div v-else-if="!favoritesCollapsed" class="bible-favorite-grid">
           <article v-for="favorite in bibleFavorites" :key="favorite.id" @click="openBibleFavorite(favorite)">
             <h3><BookmarkCheck :size="16" />{{ favorite.verseLine.reference }}</h3>
             <p>{{ favorite.verseLine.text }}</p>
@@ -974,11 +996,14 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-load-more { min-height: 42px; margin: 4px auto 0; }
 .bible-empty { margin: 0; padding: 16px; text-align: center; color: #8c745c; }
 .bible-favorites { max-width: 1120px; margin: 0 auto 34px; padding: 18px; border: 1px solid rgba(116, 84, 48, .18); border-radius: 18px; background: rgba(255, 252, 245, .74); }
-.bible-favorites > header { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 14px; color: #6d5135; }
+.bible-favorites.collapsed { padding-top: 12px; padding-bottom: 12px; }
+.bible-favorites > header { margin-bottom: 14px; color: #6d5135; }
+.bible-favorites.collapsed > header { margin-bottom: 0; }
+.bible-favorites-toggle { width: 100%; padding: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; color: inherit; text-align: left; }
 .bible-favorites h2, .bible-favorites p { margin: 0; }
 .bible-favorites h2 { font-family: "Songti SC", "STSong", serif; }
-.bible-favorites > header p { margin-top: 3px; color: #8b7259; font-size: 13px; }
-.bible-favorites > header > span { color: #8b7259; font-size: 13px; }
+.bible-favorites-toggle p { margin-top: 3px; color: #8b7259; font-size: 13px; }
+.bible-favorites-toggle > span { color: #8b7259; font-size: 13px; }
 .bible-favorite-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .bible-favorite-grid article { min-width: 0; padding: 14px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 12px; background: #fffdf7; cursor: pointer; }
 .bible-favorite-grid h3 { margin: 0 0 7px; color: #76502d; display: flex; align-items: center; gap: 6px; font-family: "Songti SC", "STSong", serif; }

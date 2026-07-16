@@ -112,6 +112,7 @@ import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
+import ActivityTicker from "./components/ActivityTicker.vue";
 import { activityTickerItems } from "./activityTicker";
 import { shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
@@ -153,10 +154,11 @@ import {
   moveMusicTrack,
   musicFadeVolume,
   musicMentionTokenAtCursor,
-  nextMusicTrackIndex,
+  nextMusicTrackIndexForMode,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
   shouldRestartOnlyTrack,
+  shouldRepeatCurrentMusic,
   shouldShowMusicScoreTrigger,
   syncMusicMediaSession,
   sortMusicTracks,
@@ -212,6 +214,7 @@ const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
 const currentMusicTrackId = ref<number | null>(null);
 const musicPlaybackMode = ref<MusicPlaybackMode>("playlist");
+const musicOnlyFavorites = ref(false);
 const musicPlayerExpanded = ref(false);
 const musicPlayerAnchorX = ref<number | null>(null);
 const musicPlaylistOpen = ref(false);
@@ -305,6 +308,10 @@ const chatPane = ref<HTMLElement | null>(null);
 const timelineScrollTop = ref(0);
 const timelineViewportHeight = ref(0);
 const timelineViewportWidth = ref(window.innerWidth);
+const resolvedMessageImageDimensions = ref<Record<number, { width: number; height: number }>>({});
+const queuedMessageImagePreloads = new Set<number>();
+const messageImagePreloadQueue: MessageDTO[] = [];
+let activeMessageImagePreloads = 0;
 const measuredTimelineHeights = ref<Record<string, number>>({});
 let timelineResizeObserver: ResizeObserver | null = null;
 let timelineScrollFrame: number | undefined;
@@ -693,6 +700,7 @@ const voiceDurations = ref<Record<number, number>>({});
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
 const serverVersion = ref<VersionDTO | null>(null);
+const versionUpdateNotice = ref("");
 const staleVersionVisible = ref(false);
 const staleVersionMessage = ref("");
 const updateCheck = ref<UpdateCheckDTO | null>(null);
@@ -1058,6 +1066,7 @@ watch(
   () => store.messages.map((message) => `${message.id}:${message.type}:${message.content}`).join("|"),
   () => {
     void ensureVisibleLinkPreviews();
+    preloadMessageImages(store.messages);
   },
   { immediate: true }
 );
@@ -1119,15 +1128,19 @@ watch(
 watch(
   () => store.account?.id,
   (accountId) => {
+    queuedMessageImagePreloads.clear();
+    messageImagePreloadQueue.splice(0);
     mentionToasts.value = [];
     acknowledgedMentionIds.value = loadAcknowledgedMentionIds();
     topNoticeIndex.value = 0;
     messageFontSize.value = loadMessageFontSizePreference(accountId);
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
     if (accountId) {
+      initializeVersionUpdateNotice(accountId);
       loadMusicPlaybackMode();
       void loadNotificationSettings();
     } else {
+      versionUpdateNotice.value = "";
       pauseMusic();
       clearMusicScoreCache();
       musicTracks.value = [];
@@ -1211,6 +1224,7 @@ onBeforeUnmount(() => {
   stopPublishingMusicListening();
   stopPublishingBibleReading();
   store.socket?.off("music:updated", handleMusicUpdated);
+  store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.off("connect", handleActivitySocketConnect);
@@ -1234,13 +1248,15 @@ const forwardTargetChannels = computed(() =>
   store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
 );
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
+const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
+const playableMusicTracks = computed(() => musicOnlyFavorites.value ? favoriteMusicTracks.value : sortedMusicTracks.value);
 const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || sortedMusicTracks.value[0] || null);
 const filteredMusicTracks = computed(() => {
   const query = musicPlaylistQuery.value.trim().toLowerCase();
-  if (!query) return sortedMusicTracks.value;
-  return sortedMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
+  if (!query) return playableMusicTracks.value;
+  return playableMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
 });
-const currentMusicTrackIndex = computed(() => sortedMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
+const currentMusicTrackIndex = computed(() => playableMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "播放列表还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
@@ -1249,15 +1265,6 @@ const activityStatusItems = computed(() => activityTickerItems(
   Object.values(store.typing)
 ));
 const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
-const currentTrackOtherListeners = computed(() =>
-  musicListeners.value.filter((listener) => listener.trackId === currentMusicTrack.value?.id && listener.accountId !== store.account?.id)
-);
-const currentMusicListenerStatus = computed(() => {
-  const listeners = currentTrackOtherListeners.value;
-  if (!listeners.length) return "正在收听";
-  if (listeners.length <= 2) return `${listeners.map((listener) => listener.displayName).join("、")}也正在收听`;
-  return `${listeners[0].displayName}等${listeners.length}人也正在收听`;
-});
 const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
 const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
 const musicLyricsHeaderVisible = computed(
@@ -1848,7 +1855,10 @@ function replacePendingMessage(pendingId: number, message: MessageDTO) {
   store.replaceMessage(message, pendingId);
 }
 
-type TimelineRow = { kind: "time"; label: string; id: string } | { kind: "message"; message: MessageDTO };
+type TimelineRow =
+  | { kind: "time"; label: string; id: string }
+  | { kind: "version"; label: string; id: string }
+  | { kind: "message"; message: MessageDTO };
 const VIRTUAL_TIMELINE_THRESHOLD = 40;
 const VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN = 2_400;
 const VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS = 4;
@@ -1864,15 +1874,20 @@ const timeline = computed<TimelineRow[]>(() => {
     rows.push({ kind: "message", message });
     prev = message.createdAt;
   }
+  if (versionUpdateNotice.value && !store.loadingInitialMessages) {
+    rows.push({ kind: "version", label: versionUpdateNotice.value, id: `version-${APP_VERSION}` });
+  }
   return rows;
 });
 
 function timelineRowKey(row: TimelineRow) {
-  return row.kind === "time" ? `time:${row.id}` : `message:${row.message.id}`;
+  if (row.kind === "time") return `time:${row.id}`;
+  if (row.kind === "version") return `version:${row.id}`;
+  return `message:${row.message.id}`;
 }
 
 function estimatedTimelineRowHeight(row: TimelineRow) {
-  if (row.kind === "time") return 52;
+  if (row.kind === "time" || row.kind === "version") return 52;
   if (row.message.type === "image") return estimatedImageTimelineRowHeight(row.message, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "chain") return 190;
@@ -1884,7 +1899,45 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
 }
 
 function messageImageDimensions(message: MessageDTO) {
-  return imageDimensionsFromPayload(message.payload);
+  return resolvedMessageImageDimensions.value[message.id] || imageDimensionsFromPayload(message.payload);
+}
+
+function handleMessageImageLoad(message: MessageDTO, event: Event) {
+  const image = event.currentTarget;
+  if (!(image instanceof HTMLImageElement) || !image.naturalWidth || !image.naturalHeight) return;
+  const current = messageImageDimensions(message);
+  if (current?.width === image.naturalWidth && current.height === image.naturalHeight) return;
+  resolvedMessageImageDimensions.value = {
+    ...resolvedMessageImageDimensions.value,
+    [message.id]: { width: image.naturalWidth, height: image.naturalHeight }
+  };
+}
+
+function pumpMessageImagePreloads() {
+  while (activeMessageImagePreloads < 2 && messageImagePreloadQueue.length) {
+    const message = messageImagePreloadQueue.shift();
+    if (!message) return;
+    activeMessageImagePreloads += 1;
+    void fetch(fileUrl(message), { cache: "force-cache", credentials: "same-origin" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`image preload failed: ${response.status}`);
+        return response.blob();
+      })
+      .catch(() => queuedMessageImagePreloads.delete(message.id))
+      .finally(() => {
+        activeMessageImagePreloads -= 1;
+        pumpMessageImagePreloads();
+      });
+  }
+}
+
+function preloadMessageImages(messages: MessageDTO[]) {
+  for (const message of messages) {
+    if (message.type !== "image" || message.id <= 0 || queuedMessageImagePreloads.has(message.id)) continue;
+    queuedMessageImagePreloads.add(message.id);
+    messageImagePreloadQueue.push(message);
+  }
+  pumpMessageImagePreloads();
 }
 
 function messageImagePresentationStyle(message: MessageDTO) {
@@ -2756,6 +2809,24 @@ async function openSettings(tab: "appearance" | "devices" | "notifications" | "r
   saveReadPosition();
   showSettings.value = true;
   await selectSettingsTab(tab);
+}
+
+function versionNoticeStorageKey(accountId: number) {
+  return `team-chat-last-noticed-version:${accountId}`;
+}
+
+function initializeVersionUpdateNotice(accountId: number) {
+  const key = versionNoticeStorageKey(accountId);
+  const previousVersion = localStorage.getItem(key);
+  versionUpdateNotice.value = previousVersion !== APP_VERSION
+    ? `聊天室刚刚更新到版本 ${APP_VERSION}`
+    : "";
+}
+
+async function openVersionUpdateNotice() {
+  if (store.account?.id) localStorage.setItem(versionNoticeStorageKey(store.account.id), APP_VERSION);
+  versionUpdateNotice.value = "";
+  await openSettings("release");
 }
 
 async function selectSettingsTab(tab: typeof settingsTab.value) {
@@ -6242,15 +6313,78 @@ function musicPlaybackModeStorageKey(accountId: number) {
   return `team-chat-music-playback-mode:${accountId}`;
 }
 
+function musicOnlyFavoritesStorageKey(accountId: number) {
+  return `team-chat-music-only-favorites:${accountId}`;
+}
+
 function loadMusicPlaybackMode() {
   const accountId = store.account?.id;
   if (!accountId) return;
-  musicPlaybackMode.value = localStorage.getItem(musicPlaybackModeStorageKey(accountId)) === "single" ? "single" : "playlist";
+  const savedMode = localStorage.getItem(musicPlaybackModeStorageKey(accountId));
+  musicPlaybackMode.value = savedMode === "single" || savedMode === "shuffle" ? savedMode : "playlist";
+  musicOnlyFavorites.value = localStorage.getItem(musicOnlyFavoritesStorageKey(accountId)) === "1";
 }
 
 function setMusicPlaybackMode(mode: MusicPlaybackMode) {
   musicPlaybackMode.value = mode;
   if (store.account?.id) localStorage.setItem(musicPlaybackModeStorageKey(store.account.id), mode);
+}
+
+function cycleMusicPlaybackMode() {
+  const modes: MusicPlaybackMode[] = ["playlist", "single", "shuffle"];
+  setMusicPlaybackMode(modes[(modes.indexOf(musicPlaybackMode.value) + 1) % modes.length]);
+}
+
+function musicPlaybackModeLabel(mode = musicPlaybackMode.value) {
+  if (mode === "single") return "单曲循环";
+  if (mode === "shuffle") return "随机播放";
+  return "列表循环";
+}
+
+function setMusicOnlyFavorites(onlyFavorites: boolean) {
+  musicOnlyFavorites.value = onlyFavorites;
+  const accountId = store.account?.id;
+  if (accountId) localStorage.setItem(musicOnlyFavoritesStorageKey(accountId), onlyFavorites ? "1" : "0");
+  if (!onlyFavorites || currentMusicTrack.value?.favorited || !favoriteMusicTracks.value.length) return;
+  const track = favoriteMusicTracks.value[0];
+  const continuePlaying = musicPlaying.value;
+  currentMusicTrackId.value = track.id;
+  reconcileOpenMusicScore();
+  setMusicAudioTrack(track);
+  if (continuePlaying) void playCurrentMusic();
+}
+
+function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
+  if (!Number.isFinite(event?.trackId) || typeof event?.favorited !== "boolean") return;
+  musicTracks.value = musicTracks.value.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track);
+}
+
+async function toggleCurrentMusicFavorite() {
+  const track = currentMusicTrack.value;
+  if (!track) return;
+  const favorited = !track.favorited;
+  handleMusicFavoriteUpdated({ trackId: track.id, favorited });
+  try {
+    await api(`/api/music/tracks/${track.id}/favorite`, {
+      method: "PUT",
+      body: JSON.stringify({ favorited })
+    });
+    if (!favorited && musicOnlyFavorites.value && currentMusicTrackId.value === track.id) {
+      const next = favoriteMusicTracks.value[0];
+      if (!next) {
+        pauseMusic(true);
+      } else {
+        const continuePlaying = musicPlaying.value;
+        currentMusicTrackId.value = next.id;
+        reconcileOpenMusicScore();
+        setMusicAudioTrack(next);
+        if (continuePlaying) await playCurrentMusic();
+      }
+    }
+  } catch (error) {
+    handleMusicFavoriteUpdated({ trackId: track.id, favorited: !favorited });
+    alert(error instanceof Error ? error.message : "保存歌曲收藏失败");
+  }
 }
 
 function musicStreamUrl(track: MusicTrackDTO) {
@@ -6512,9 +6646,9 @@ function toggleMusicPlayback() {
 }
 
 async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.value) {
-  if (!sortedMusicTracks.value.length) return;
-  if (shouldRestartOnlyTrack(sortedMusicTracks.value.length, delta)) {
-    const track = sortedMusicTracks.value[0];
+  if (!playableMusicTracks.value.length) return;
+  if (shouldRestartOnlyTrack(playableMusicTracks.value.length, delta)) {
+    const track = playableMusicTracks.value[0];
     currentMusicTrackId.value = track.id;
     setMusicAudioTrack(track);
     if (musicAudio) musicAudio.currentTime = 0;
@@ -6524,8 +6658,8 @@ async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.val
     return;
   }
   const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
-  const nextIndex = nextMusicTrackIndex(sortedMusicTracks.value.length, index, delta);
-  const track = sortedMusicTracks.value[nextIndex];
+  const nextIndex = nextMusicTrackIndexForMode(playableMusicTracks.value.length, index, delta, musicPlaybackMode.value);
+  const track = playableMusicTracks.value[nextIndex];
   currentMusicTrackId.value = track.id;
   reconcileOpenMusicScore();
   setMusicAudioTrack(track);
@@ -6538,7 +6672,13 @@ function handleMusicEnded() {
   musicPlaying.value = false;
   if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "ended");
   publishMusicListening();
-  if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && musicTracks.value.length) void shiftMusicTrack(1, true);
+  if (shouldRepeatCurrentMusic(musicPlaybackMode.value, musicScoreOpen.value) && currentMusicTrack.value) {
+    if (musicAudio) musicAudio.currentTime = 0;
+    beginMusicPlaySession(currentMusicTrack.value);
+    void playCurrentMusic();
+  } else if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && playableMusicTracks.value.length) {
+    void shiftMusicTrack(1, true);
+  }
 }
 
 function selectMusicTrack(track: MusicTrackDTO) {
@@ -6611,7 +6751,8 @@ async function loadMusicTracks() {
       reconcileOpenMusicScore();
     } else {
       if (wasPlaying) pauseMusic(true);
-      currentMusicTrackId.value = sortMusicTracks(result.tracks, musicPlaylistSort.value)[0]?.id || null;
+      const availableTracks = musicOnlyFavorites.value ? result.tracks.filter((track) => track.favorited) : result.tracks;
+      currentMusicTrackId.value = sortMusicTracks(availableTracks.length ? availableTracks : result.tracks, musicPlaylistSort.value)[0]?.id || null;
       reconcileOpenMusicScore();
       if (musicAudio) {
         musicAudio.removeAttribute("src");
@@ -6688,6 +6829,8 @@ function handleActivitySocketConnect() {
 function attachMusicSocket() {
   store.socket?.off("music:updated", handleMusicUpdated);
   store.socket?.on("music:updated", handleMusicUpdated);
+  store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
+  store.socket?.on("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.on("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
@@ -9419,6 +9562,14 @@ async function toggleVirtual(character: any) {
               <Pause v-if="musicPlaying" :size="21" />
               <Play v-else :size="21" />
             </button>
+            <button
+              class="icon-btn music-favorite-control"
+              type="button"
+              :class="{ active: !!currentMusicTrack?.favorited }"
+              :disabled="!currentMusicTrack"
+              @click="toggleCurrentMusicFavorite"
+              :aria-label="currentMusicTrack?.favorited ? '取消收藏当前歌曲' : '收藏当前歌曲'"
+            ><Heart :size="19" :fill="currentMusicTrack?.favorited ? 'currentColor' : 'none'" /></button>
             <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
           </div>
           <div class="music-player-details">
@@ -9431,15 +9582,18 @@ async function toggleVirtual(character: any) {
               </strong>
               <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
               <small v-else-if="musicLoading">正在缓冲…</small>
-              <small v-else-if="musicPlaying" class="music-player-listener-marquee">
-                <span class="music-player-listener-track">
-                  <span>{{ currentMusicListenerStatus }}</span>
-                  <span aria-hidden="true">{{ currentMusicListenerStatus }}</span>
-                </span>
-              </small>
+              <small v-else-if="musicPlaying">正在播放</small>
               <small v-else>已暂停</small>
             </div>
             <div class="music-player-tools">
+              <button
+                class="music-favorites-only-btn"
+                type="button"
+                :class="{ active: musicOnlyFavorites }"
+                :disabled="!favoriteMusicTracks.length && !musicOnlyFavorites"
+                @click="setMusicOnlyFavorites(!musicOnlyFavorites)"
+                aria-label="只播放收藏曲目"
+              ><Heart :size="15" :fill="musicOnlyFavorites ? 'currentColor' : 'none'" /><span>只播放收藏</span></button>
               <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="播放列表"><Menu :size="20" /></button>
             </div>
           </div>
@@ -9553,11 +9707,7 @@ async function toggleVirtual(character: any) {
           <span class="pinned-ticker-action">{{ canPinCurrentChannel ? "编辑" : "查看" }}</span>
         </span>
         <span v-if="activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
-          <span class="chat-activity-viewport">
-            <span class="chat-activity-track">
-              <span>{{ activityTickerText }}</span>
-            </span>
-          </span>
+          <ActivityTicker :items="activityStatusItems" />
         </span>
       </section>
 
@@ -9687,12 +9837,11 @@ async function toggleVirtual(character: any) {
                 <option value="filename">按文件名</option>
               </select>
               <button
-                class="music-mode-btn"
+                class="music-mode-btn active"
                 type="button"
-                :class="{ active: musicPlaybackMode === 'playlist' }"
-                @click="setMusicPlaybackMode(musicPlaybackMode === 'playlist' ? 'single' : 'playlist')"
-                :aria-label="musicPlaybackMode === 'playlist' ? '当前列表循环，点击切换单曲播放' : '当前单曲播放，点击切换列表循环'"
-              >{{ musicPlaybackMode === "playlist" ? "列表循环" : "单曲播放" }}</button>
+                @click="cycleMusicPlaybackMode"
+                :aria-label="`当前${musicPlaybackModeLabel()}，点击切换播放模式`"
+              >{{ musicPlaybackModeLabel() }}</button>
             </div>
             <div v-if="filteredMusicTracks.length" class="music-track-list">
               <div
@@ -9704,6 +9853,7 @@ async function toggleVirtual(character: any) {
                 <button type="button" class="music-track-select" @click="selectMusicTrack(track)">
                   <span class="music-track-index">{{ index + 1 }}</span>
                   <span class="music-track-copy"><strong>{{ track.title }}</strong><small>热度 {{ track.heat }} · {{ compactBytes(track.fileSize) }}</small></span>
+                  <Heart v-if="track.favorited" class="music-track-favorite" :size="15" fill="currentColor" aria-label="已收藏" />
                   <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
                 </button>
                 <span v-if="canManageMusic && musicPlaylistSort === 'manual'" class="music-track-order-actions">
@@ -9774,6 +9924,14 @@ async function toggleVirtual(character: any) {
             :class="timelineIndex % 2 === 0 ? 'score-exit-left' : 'score-exit-right'"
             :data-timeline-key="timelineKey"
           >{{ row.label }}</div>
+          <button
+            v-else-if="row.kind === 'version'"
+            type="button"
+            class="time-separator version-update-separator"
+            :class="timelineIndex % 2 === 0 ? 'score-exit-left' : 'score-exit-right'"
+            :data-timeline-key="timelineKey"
+            @click="openVersionUpdateNotice"
+          >{{ row.label }}</button>
           <article
             v-else
             class="message-row"
@@ -9997,6 +10155,7 @@ async function toggleVirtual(character: any) {
                       loading="lazy"
                       decoding="async"
                       fetchpriority="low"
+                      @load="handleMessageImageLoad(row.message, $event)"
                       alt=""
                     />
                   </button>

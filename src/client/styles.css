@@ -1343,7 +1343,7 @@ button {
   width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(72px, calc(var(--music-player-anchor-x) - 64px)) 128px minmax(0, 1fr);
+  grid-template-columns: minmax(72px, calc(var(--music-player-anchor-x) - 84px)) 168px minmax(0, 1fr);
   align-items: center;
 }
 
@@ -1373,6 +1373,36 @@ button {
 .music-main-control {
   color: var(--button-text);
   background: var(--accent);
+}
+
+.music-favorite-control.active {
+  color: #e11d48;
+}
+
+.music-favorites-only-btn {
+  min-height: 32px;
+  flex: 0 1 auto;
+  max-width: 128px;
+  padding: 0 9px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 86%, var(--accent) 14%);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.music-favorites-only-btn.active {
+  color: #e11d48;
+  background: color-mix(in srgb, #fb7185 16%, var(--panel));
+}
+
+.music-favorites-only-btn:disabled {
+  opacity: 0.42;
 }
 
 .music-player-title {
@@ -2095,11 +2125,12 @@ button {
 .chat-activity-track {
   width: max-content;
   display: inline-flex;
-  padding-left: 100%;
-  animation: chatActivityMarquee 18s linear infinite;
+  align-items: center;
+  gap: 12px;
+  will-change: transform;
 }
 
-.chat-activity-track > span {
+.chat-activity-item {
   color: transparent;
   background: linear-gradient(90deg, #e11d48, #ea580c, #16a34a, #0284c7, #7c3aed, #e11d48);
   background-size: 220% 100%;
@@ -2111,9 +2142,11 @@ button {
   animation: musicListenerColors 6s linear infinite;
 }
 
-@keyframes chatActivityMarquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-100%); }
+.chat-activity-item:not(:last-child)::after {
+  content: "✦";
+  margin-left: 12px;
+  color: #7c3aed;
+  -webkit-text-fill-color: #7c3aed;
 }
 
 @keyframes pinnedTickerMarquee {
@@ -2800,11 +2833,15 @@ button {
   min-height: 58px;
   padding: 8px 14px;
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr) auto;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   color: inherit;
   text-align: left;
+}
+
+.music-track-favorite {
+  color: #e11d48;
 }
 
 .music-track-order-actions {
@@ -2979,6 +3016,18 @@ button {
   color: #fff;
   background: rgba(0, 0, 0, 0.18);
   font-size: 12px;
+}
+
+.version-update-separator {
+  border: 0;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.version-update-separator:hover,
+.version-update-separator:focus-visible {
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .message-row {

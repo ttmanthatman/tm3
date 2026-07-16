@@ -6,9 +6,11 @@ import {
   musicFadeVolume,
   musicMentionTokenAtCursor,
   nextMusicTrackIndex,
+  nextMusicTrackIndexForMode,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
   shouldRestartOnlyTrack,
+  shouldRepeatCurrentMusic,
   shouldShowMusicScoreTrigger,
   syncMusicMediaSession,
   sortMusicTracks
@@ -24,8 +26,18 @@ test("playlist navigation wraps in both directions", () => {
 
 test("only playlist mode advances after a track ends", () => {
   assert.equal(shouldAdvanceMusic("playlist"), true);
+  assert.equal(shouldAdvanceMusic("shuffle"), true);
   assert.equal(shouldAdvanceMusic("single"), false);
   assert.equal(shouldAdvanceMusic("playlist", true), false);
+});
+
+test("single mode repeats while shuffle chooses another track", () => {
+  assert.equal(shouldRepeatCurrentMusic("single"), true);
+  assert.equal(shouldRepeatCurrentMusic("single", true), false);
+  assert.equal(nextMusicTrackIndexForMode(4, 1, 1, "shuffle", () => 0), 0);
+  assert.equal(nextMusicTrackIndexForMode(4, 1, 1, "shuffle", () => 0.99), 3);
+  assert.equal(nextMusicTrackIndexForMode(1, 0, 1, "shuffle", () => 0.5), 0);
+  assert.equal(nextMusicTrackIndexForMode(4, 1, -1, "playlist", () => 0.5), 0);
 });
 
 test("previous restarts the current song when the playlist contains only one track", () => {
