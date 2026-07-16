@@ -4743,7 +4743,7 @@ button {
 }
 
 .composer {
-  grid-row: 5;
+  grid-row: 6;
   padding: 8px 10px var(--composer-bottom-gap);
   position: relative;
   display: grid;

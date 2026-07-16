@@ -13,6 +13,16 @@ test("narrow viewports always switch the chat shell to one column", () => {
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.app-shell \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
 });
 
+test("the message viewport and composer occupy separate chat grid rows", () => {
+  const chatPaneRule = css.match(/\.chat-pane \{([^}]*)\}/)?.[1] ?? "";
+  const messagesRule = css.match(/\.messages-viewport \{([^}]*)\}/)?.[1] ?? "";
+  const composerRule = css.match(/\.composer \{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(chatPaneRule, /grid-template-rows: auto auto auto auto minmax\(0, 1fr\) auto;/);
+  assert.match(messagesRule, /grid-row: 5;/);
+  assert.match(composerRule, /grid-row: 6;/);
+});
+
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
   assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
   assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
