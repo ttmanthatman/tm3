@@ -1,10 +1,17 @@
-export const APP_VERSION = "1.3.1";
+export const APP_VERSION = "1.4.0";
 
 export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "聊天室左侧收藏夹新增“经文收藏”，与圣经首页共用账号收藏；连续经文只显示一次出处和一段已展开正文，避免与聊天引用重复展开。",
+  "打开圣经负一屏时会暂停聊天区渲染；当前章节优先加载，相邻章节在后台预热缓存，滚动加载通过阅读锚点保持位置，减少突然跳动。",
+  "播放音乐时暂停壁纸“推拉摇移”，并降低持续装饰动画，缓解移动设备发热和耗电。",
+  "聊天室版本更新提示调整为消息区居中显示。"
+] as const;
+
+const RELEASE_1_3_1_NOTES = [
   "聊天图片会自动校正拍摄方向，并按真实尺寸计算气泡；已查看图片会在账号私有缓存中保留 7 天，视口外的图片会提前预加载，切换频道不再反复缓慢载入。",
   "音乐播放器新增红心收藏与“只播放收藏”筛选；播放列表支持列表循环、单曲循环和随机播放，顶部播放器仅显示歌曲播放状态，不再展示“某人正在收听”。",
   "手机端彩色实时动态条改为连续像素滚动；收听或阅读状态变化时，离开的文字会立即移除，其他文字会平滑跟进，不再半途消失。",
@@ -591,9 +598,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.3.1",
+    version: "1.4.0",
     date: "2026-07-16",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.3.1",
+    date: "2026-07-16",
+    notes: RELEASE_1_3_1_NOTES
   },
   {
     version: "1.3.0",
