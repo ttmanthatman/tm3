@@ -2459,6 +2459,10 @@ button {
   touch-action: pan-y;
 }
 
+.messages-viewport.music-playlist-open {
+  z-index: 9;
+}
+
 .message-row,
 .time-separator {
   transition:
@@ -2593,7 +2597,7 @@ button {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
-  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  background: var(--panel);
   box-shadow: 0 16px 46px rgba(15, 23, 42, 0.18);
 }
 
@@ -2644,6 +2648,7 @@ button {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  background: var(--panel);
 }
 
 .music-track-row {
@@ -3085,17 +3090,39 @@ button {
 }
 
 .reaction-detail {
-  min-height: 24px;
+  min-height: 28px;
   max-width: 100%;
-  padding: 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  padding: 3px 9px 3px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  font-size: 11px;
+  color: #344054;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.reaction-detail svg {
+  width: 21px;
+  height: 21px;
+  padding: 5px;
+  flex: 0 0 21px;
+  border-radius: 50%;
+  color: #fff;
+  stroke-width: 2.4;
+}
+
+.reaction-like svg {
+  background: linear-gradient(145deg, #60a5fa, #2563eb);
+  box-shadow: 0 2px 6px rgba(37, 99, 235, 0.3);
+}
+
+.reaction-favorite svg {
+  background: linear-gradient(145deg, #fb7185, #e11d48);
+  box-shadow: 0 2px 6px rgba(225, 29, 72, 0.28);
 }
 
 .reaction-detail span {
@@ -3105,15 +3132,15 @@ button {
 }
 
 .reaction-like.active {
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.22);
-  background: rgba(239, 246, 255, 0.9);
+  color: #1d4ed8;
+  border-color: rgba(96, 165, 250, 0.42);
+  background: #eff6ff;
 }
 
 .reaction-favorite.active {
   color: #e11d48;
   border-color: rgba(225, 29, 72, 0.2);
-  background: rgba(255, 241, 242, 0.92);
+  background: #fff1f2;
 }
 
 .sender-line {
@@ -3121,8 +3148,10 @@ button {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #666;
+  color: var(--wallpaper-label-text);
+  text-shadow: var(--wallpaper-label-shadow);
   font-size: 12px;
+  font-weight: 650;
 }
 
 .message-row.mine .sender-line {
@@ -3146,8 +3175,10 @@ button {
 .message-row.mine.system .bubble {
   padding: 0;
   background: transparent;
-  color: var(--muted);
+  color: var(--wallpaper-label-text);
+  text-shadow: var(--wallpaper-label-shadow);
   font-size: 13px;
+  font-weight: 650;
   text-align: center;
   box-shadow: none;
 }
@@ -4748,7 +4779,7 @@ button {
 .composer textarea {
   min-width: 0;
   flex: 1;
-  max-height: 110px;
+  max-height: 280px;
   min-height: 38px;
   padding: 8px 10px;
   border: 0;

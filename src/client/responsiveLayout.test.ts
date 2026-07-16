@@ -400,6 +400,31 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
 });
 
+test("playlist is composited above message water effects", () => {
+  assert.match(app, /'music-playlist-open': musicPlaylistOpen/);
+  assert.match(css, /\.messages-viewport\.music-playlist-open \{[\s\S]*?z-index: [7-9];/);
+});
+
+test("wallpaper labels expose adaptive high-contrast colors", () => {
+  assert.match(app, /"--wallpaper-label-text": wallpaperLabelText\.value/);
+  assert.match(app, /syncWallpaperLabelToneFromImage/);
+  assert.match(css, /\.sender-line \{[\s\S]*?color: var\(--wallpaper-label-text\);[\s\S]*?text-shadow: var\(--wallpaper-label-shadow\);/);
+  assert.match(css, /\.message-row\.system \.bubble,[\s\S]*?color: var\(--wallpaper-label-text\);[\s\S]*?text-shadow: var\(--wallpaper-label-shadow\);/);
+});
+
+test("reaction details use distinct polished icon treatments", () => {
+  assert.match(css, /\.reaction-detail \{[\s\S]*?font-size: 12px;/);
+  assert.match(css, /\.reaction-like svg \{[\s\S]*?linear-gradient/);
+  assert.match(css, /\.reaction-favorite svg \{[\s\S]*?linear-gradient/);
+});
+
+test("composer autosizes through twelve rows while controls keep their dimensions", () => {
+  assert.match(app, /function syncComposerHeight/);
+  assert.match(app, /watch\(input,[\s\S]*?syncComposerHeight/);
+  assert.match(css, /\.composer textarea \{[\s\S]*?max-height: 280px;/);
+  assert.match(css, /\.composer-main \{[\s\S]*?align-items: flex-end;/);
+});
+
 test("the admin-only log workspace combines sessions, music progress, and usage activity", () => {
   assert.match(server, /app\.get\("\/api\/admin\/activity-logs", \{ preHandler: requireAdmin \}, adminActivityLogs\)/);
   assert.match(server, /CREATE TABLE IF NOT EXISTS account_activity_logs/);

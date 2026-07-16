@@ -1,10 +1,18 @@
-export const APP_VERSION = "1.0.1";
+export const APP_VERSION = "1.0.2";
 
-export const RELEASE_DATE = "2026-07-15";
+export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "电子圣经会按账号保存阅读位置、检索模式、检索结果和搜索历史，重新进入后可以继续上次进度。",
+  "撤回消息会同时移除自身引用预览，并让昵称和撤回提示根据壁纸明暗自动使用高对比文字。",
+  "重新设计消息点赞与收藏详情，以更清晰的图标、颜色、间距和背景呈现成员反馈。",
+  "修复播放列表被水滴特效穿透的问题；列表面板和歌曲区域现在使用不透明背景并位于消息特效上方。",
+  "消息输入框会随内容从一行逐行增高，最多显示十二行；语音、发送和更多按钮保持原有尺寸及底部位置。"
+] as const;
+
+const RELEASE_1_0_1_NOTES = [
   "新增与聊天室并列的负一屏电子圣经：完整展示新标点和合本（简体）66 卷目录，支持章节连续阅读、经节定位和发送到进入前的聊天室。",
   "圣经首页同时提供 AI 主题检索与本地原文检索；主题结果只采用本地校验后的出处和正文，文本结果支持安全高亮及多关键词回退。",
   "手机端精简聊天顶栏，不再显示书本入口，仍可从聊天区向右滑进入圣经；平板和桌面继续保留书本按钮。"
@@ -556,9 +564,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.0.2",
+    date: "2026-07-16",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.0.1",
     date: "2026-07-15",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_0_1_NOTES
   },
   {
     version: "0.12.10",

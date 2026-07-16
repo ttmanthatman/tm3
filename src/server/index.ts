@@ -64,6 +64,7 @@ import { isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.js";
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
 import { imageDimensionsFromPayload, mergeImageDimensionsPayload, type ImageDimensions } from "../shared/imageDimensions.js";
+import { recalledMessageData } from "./messageRecall.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -4098,16 +4099,7 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
     prisma.messageAiSuggestion.deleteMany({ where: { messageId } }),
     prisma.message.update({
       where: { id: messageId },
-      data: {
-        type: "system",
-        content: `${message.sender.displayName} 撤回了一条消息`,
-        payload: { recalled: true },
-        fileName: null,
-        filePath: null,
-        fileSize: null,
-        chainRootId: null,
-        chainVersion: null
-      }
+      data: recalledMessageData(message.sender.displayName)
     })
   ]);
   if (message.filePath) safeUnlink("upload", message.filePath);

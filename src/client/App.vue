@@ -128,6 +128,8 @@ import {
 } from "@shared/wallpaperPan";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
+import { composerHeightForContent } from "./composerLayout";
+import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
 import { likeNotificationToTopNotice } from "./likeNotification";
 import {
   NEWEST_POSITION_THRESHOLD,
@@ -323,6 +325,8 @@ const wallpaperPanOffset = ref(0);
 const wallpaperPanImageWidth = ref(0);
 const wallpaperPanReady = ref(false);
 const wallpaperPanImage = ref<HTMLImageElement | null>(null);
+const wallpaperLabelToneValue = ref<WallpaperLabelTone>("dark");
+let wallpaperLabelSampleGeneration = 0;
 const wallpaperPanRetryKey = ref(0);
 let wallpaperPanDirection: WallpaperPanDirection = "left";
 let wallpaperPanMetrics: WallpaperPanBounds | null = null;
@@ -1343,6 +1347,10 @@ const wallpaperPanImageSource = computed(() => {
 const wallpaperPanLayerStyle = computed(() => wallpaperPanReady.value
   ? wallpaperPanLayerPresentation(wallpaperPanImageWidth.value, wallpaperPanOffset.value)
   : { width: "100%", transform: "translate3d(0, 0, 0)" });
+const wallpaperLabelText = computed(() => wallpaperLabelToneValue.value === "light" ? "#f8fafc" : "#18212b");
+const wallpaperLabelShadow = computed(() => wallpaperLabelToneValue.value === "light"
+  ? "0 1px 2px rgba(0, 0, 0, 0.92), 0 0 5px rgba(0, 0, 0, 0.58)"
+  : "0 1px 2px rgba(255, 255, 255, 0.96), 0 0 5px rgba(255, 255, 255, 0.68)");
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
   "--message-content-font-size": `${messageFontSize.value}px`,
@@ -1355,6 +1363,8 @@ const appearanceStyle = computed(() => ({
   "--wallpaper-image": hasWallpaper.value && !wallpaperPanActive.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
   "--wallpaper-size": wallpaperBackground.value.size,
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
+  "--wallpaper-label-text": wallpaperLabelText.value,
+  "--wallpaper-label-shadow": wallpaperLabelShadow.value,
   "--login-background-image": hasLoginBackground.value ? `url("${wallpaperUrl(store.appearance.loginBackgroundPath)}")` : "none",
   "--login-background-size": loginBackground.value.size,
   "--login-background-repeat": loginBackground.value.repeat
@@ -1368,6 +1378,14 @@ watch(
   },
   { deep: true, immediate: true }
 );
+
+watch(
+  () => [store.appearance.wallpaperPath, activePalette.value.chatBg] as const,
+  () => updateWallpaperLabelTone(),
+  { immediate: true }
+);
+
+watch(input, () => void nextTick(syncComposerHeight), { immediate: true });
 
 watch(
   () => [
@@ -3555,6 +3573,15 @@ function slashCommandTokenAtCursor(value: string, caret: number) {
 function syncComposerCaret() {
   const el = composerInput.value;
   composerCaret.value = el?.selectionStart ?? input.value.length;
+}
+
+function syncComposerHeight() {
+  const textarea = composerInput.value;
+  if (!textarea) return;
+  textarea.style.height = "auto";
+  const height = composerHeightForContent(textarea.scrollHeight);
+  textarea.style.height = `${height}px`;
+  textarea.style.overflowY = textarea.scrollHeight > height ? "auto" : "hidden";
 }
 
 function chooseSlashCommand(item: SlashCommandSuggestion) {
@@ -7253,6 +7280,39 @@ function handleWallpaperPanImageLoad(event: Event) {
   wallpaperPanRetryTimer = undefined;
   wallpaperPanRetryAttempt = 0;
   syncWallpaperPanImage(image);
+  syncWallpaperLabelToneFromImage(image);
+}
+
+function syncWallpaperLabelToneFromImage(image: HTMLImageElement) {
+  if (image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = 32;
+    canvas.height = 32;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    wallpaperLabelToneValue.value = wallpaperLabelToneFromPixels(context.getImageData(0, 0, canvas.width, canvas.height).data);
+  } catch {
+    wallpaperLabelToneValue.value = wallpaperLabelTone(activePalette.value.chatBg);
+  }
+}
+
+function updateWallpaperLabelTone() {
+  const generation = ++wallpaperLabelSampleGeneration;
+  wallpaperLabelToneValue.value = wallpaperLabelTone(activePalette.value.chatBg);
+  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  if (!source) return;
+  const mountedPanImage = wallpaperPanImage.value;
+  if (mountedPanImage?.complete && mountedPanImage.naturalWidth > 0) {
+    syncWallpaperLabelToneFromImage(mountedPanImage);
+    return;
+  }
+  const sampler = document.createElement("img");
+  sampler.onload = () => {
+    if (generation === wallpaperLabelSampleGeneration) syncWallpaperLabelToneFromImage(sampler);
+  };
+  sampler.src = source;
 }
 
 function handleWallpaperPanImageError(event: Event) {
@@ -9474,6 +9534,7 @@ async function toggleVirtual(character: any) {
         v-else
         class="messages-viewport"
         :class="{
+          'music-playlist-open': musicPlaylistOpen,
           'music-score-open': musicScoreOpen,
           'music-score-closing': musicScoreClosing,
           'music-score-chat-cleared': musicScoreChatCleared
