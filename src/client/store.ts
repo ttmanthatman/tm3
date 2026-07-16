@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
+import { markRaw } from "vue";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
@@ -294,13 +295,15 @@ export const useChatStore = defineStore("chat", {
       if (!this.currentChannelId) return;
       const channelId = this.currentChannelId;
       const prayerOnly = this.prayerOnly;
+      const messageIdsBeforeLoad = new Set(this.messages.map((message) => message.id));
       this.loading = true;
       this.loadingInitialMessages = true;
       this.messageLoadError = "";
       try {
         const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly));
         if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return;
-        this.messages = this.dedupeMessages(result.messages);
+        const messagesReceivedDuringLoad = this.messages.filter((message) => !messageIdsBeforeLoad.has(message.id));
+        this.messages = this.dedupeMessages([...result.messages, ...messagesReceivedDuringLoad]);
         this.prefetchedOlderMessages = [];
         this.updateMessageWindowFlagsFromRows(result.messages, "initial");
         this.cacheCurrentMessages();
@@ -423,11 +426,15 @@ export const useChatStore = defineStore("chat", {
       if (!getToken() || this.socket?.connected) return;
       this.socket?.disconnect();
       this.connectionState = "connecting";
-      const socket = io("/", { auth: { token: getToken() }, transports: ["websocket", "polling"] });
+      const socket = markRaw(io("/", { auth: { token: getToken() }, transports: ["websocket", "polling"] }));
+      let connectedOnce = false;
       this.socket = socket;
       socket.on("connect", () => {
+        const reconnecting = connectedOnce;
+        connectedOnce = true;
         this.connectionState = "connected";
         if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
+        if (reconnecting && this.currentChannelId) void this.loadMessages().catch(() => undefined);
       });
       socket.on("connect_error", (error: Error) => {
         this.connectionState = "offline";

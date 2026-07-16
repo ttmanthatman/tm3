@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.2.0";
+export const APP_VERSION = "1.3.0";
 
 export const RELEASE_DATE = "2026-07-16";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "手机后台、息屏或网络切换导致实时连接中断后，聊天室会在连接恢复时自动补拉遗漏消息，不再需要退出后重新进入。",
+  "实时连接状态现在会准确显示离线与重连，修复 Socket 对象被响应式代理后断线判断失效的问题。",
+  "消息列表加载期间收到的新消息会与服务器结果合并，避免请求返回时覆盖刚到达的实时消息。"
+] as const;
+
+const RELEASE_1_2_0_NOTES = [
   "聊天消息中的经文引用现在可展开查看正文；点击书本图标会进入电子圣经并自动定位、高亮所引用的一节、多节连续范围或每一处非连续引用。",
   "顶栏下方新增半透明彩色实时动态条，统一展示正在阅读圣经、正在听歌和正在输入；多人输入会合并为一条提示，动态覆盖消息区且不再挤压聊天气泡。",
   "移动端聊天恢复全宽布局；空间不足时频道副标题才会平滑滚动，避免顶栏文字被截断。",
@@ -578,9 +584,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.2.0",
+    version: "1.3.0",
     date: "2026-07-16",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.2.0",
+    date: "2026-07-16",
+    notes: RELEASE_1_2_0_NOTES
   },
   {
     version: "1.1.0",
