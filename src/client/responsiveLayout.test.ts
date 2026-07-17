@@ -568,10 +568,10 @@ test("personal playlists use long-press actions, top tabs, multi-select, and com
   assert.match(app, /class="music-library-card-main"[\s\S]*?@pointerdown\.stop="beginMusicPlaylistLongPress\(playlist, \$event\)"/);
   assert.match(app, /v-if="musicPlaylistActionTarget"[\s\S]*?>分享<[\s\S]*?>重命名<[\s\S]*?>删除</);
   assert.match(app, /v-if="musicPlaylistRenameTarget"[\s\S]*?@submit\.prevent="saveMusicPlaylistRename"[\s\S]*?v-model="musicPlaylistRenameDraft"/);
-  assert.doesNotMatch(app, /class="music-library-card-share"/);
+  assert.match(app, /class="music-library-card-share"[\s\S]*?@click\.stop="openMusicPlaylistShare\(playlist\)"/);
   assert.match(app, /v-if="selectedMusicPlaylist\?\.isOwner" class="music-playlist-owner-tools"[\s\S]{0,260}?openMusicPlaylistPicker/);
   assert.doesNotMatch(app, /class="music-playlist-owner-tools"[\s\S]{0,800}?分享歌单到聊天室/);
-  assert.match(app, /v-model\.number="musicPlaylistShareChannelId"/);
+  assert.match(app, /v-if="musicPlaylistShareTarget"[\s\S]*?>分享到<[\s\S]*?v-model\.number="musicPlaylistShareChannelId"/);
   assert.match(app, /v-model="musicPlaylistShareDescription"/);
   assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?description: musicPlaylistShareDescription\.value[\s\S]*?musicPlaylistShareStatus/);
   assert.match(app, /function sharedMusicPlaylistDescription[\s\S]*?messagePayloadRecord/);
