@@ -4370,7 +4370,10 @@ app.post("/api/music/playlists/:id/share", { preHandler: requireAuth }, async (r
   const auth = (request as AuthedRequest).auth;
   const pushOrigin = pushOriginFromHeaders(request.headers);
   const playlistId = Number((request.params as { id: string }).id);
-  const body = z.object({ channelId: z.number().int().positive() }).parse(request.body);
+  const body = z.object({
+    channelId: z.number().int().positive(),
+    description: z.string().trim().max(500).optional().default("")
+  }).parse(request.body);
   const playlist = await prisma.musicPlaylist.findUnique({ where: { id: playlistId }, select: { accountId: true, name: true } });
   if (!playlist || playlist.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "只能分享自己的歌单" });
   const channel = await prisma.channel.findUnique({ where: { id: body.channelId }, select: { kind: true } });
@@ -4382,9 +4385,13 @@ app.post("/api/music/playlists/:id/share", { preHandler: requireAuth }, async (r
       data: {
         channelId: body.channelId,
         senderActorId: auth.actorId,
-        content: `分享了歌单“${playlist.name}”`,
+        content: body.description || `分享了歌单“${playlist.name}”`,
         type: "music_playlist",
-        payload: { playlistId, nameSnapshot: playlist.name }
+        payload: {
+          playlistId,
+          nameSnapshot: playlist.name,
+          ...(body.description ? { description: body.description } : {})
+        }
       }
     });
     await transaction.musicPlaylistShare.create({ data: { playlistId, messageId: created.id } });

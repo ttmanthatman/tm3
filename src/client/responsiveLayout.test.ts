@@ -251,7 +251,7 @@ test("playback mode lives inside the playlist instead of taking header space", (
 test("music favorites persist per account and can constrain the playback queue", () => {
   assert.match(app, /class="icon-btn music-favorite-control"[\s\S]*?@click="toggleCurrentMusicFavorite"/);
   assert.match(app, /class="music-favorites-only-btn"[\s\S]*?>只播放收藏</);
-  assert.match(app, /const playableMusicTracks = computed[\s\S]*?musicSourceKind\.value === "favorites"[\s\S]*?favoriteMusicTracks\.value/);
+  assert.match(app, /const playableMusicTracks = computed[\s\S]*?musicPlaybackSourceKind\.value === "favorites"[\s\S]*?favoriteMusicTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
 
@@ -507,20 +507,36 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(app, /v-model="musicPlaylistQuery"[^>]*type="search"/);
   for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(app, new RegExp(`<option value="${value}">`));
   assert.match(app, /moveMusicPlaylistTrack\(track, -1\)[\s\S]*?moveMusicPlaylistTrack\(track, 1\)/);
-  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\) auto auto;/);
 });
 
-test("personal playlists use top tabs with batch add, quick add, and visible sharing feedback", () => {
+test("personal playlists use top tabs, multi-select actions, optional share descriptions, and compact shared cards", () => {
   assert.match(app, /const musicPlaylistView = ref<"tracks" \| "playlists" \| "picker">\("tracks"\)/);
   assert.match(app, /class="music-library-tabs" role="tablist"[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏<[\s\S]*?>我的歌单</);
   assert.match(app, /class="music-library-favorite-icon"[\s\S]*?fill="currentColor"/);
   assert.match(app, /@click="createMusicPlaylist"[\s\S]*?创建歌单/);
   assert.match(app, /musicPlaylistView === 'picker'[\s\S]*?musicPlaylistPickerIds\.has/);
-  assert.match(app, /@change="addTrackToMusicPlaylist\(track, \$event\)"/);
+  assert.match(app, /toggleMusicTrackSelectionMode[\s\S]*?toggleSelectedMusicTrack/);
+  assert.match(app, /addSelectedMusicTracksToPlaylist[\s\S]*?deleteSelectedMusicTracks/);
+  assert.doesNotMatch(app, /class="music-track-add-select"/);
   assert.match(app, /class="music-library-card-share"[\s\S]*?openMusicPlaylistShare\(playlist\)/);
   assert.match(app, /v-model\.number="musicPlaylistShareChannelId"/);
-  assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?musicPlaylistShareStatus/);
-  assert.match(app, /row\.message\.type === 'music_playlist'[\s\S]*?openSharedMusicPlaylist/);
+  assert.match(app, /v-model="musicPlaylistShareDescription"/);
+  assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?description: musicPlaylistShareDescription\.value[\s\S]*?musicPlaylistShareStatus/);
+  assert.match(app, /function sharedMusicPlaylistDescription[\s\S]*?messagePayloadRecord/);
+  assert.match(app, /row\.message\.type === 'music_playlist'[\s\S]*?sharedMusicPlaylistDescription\(row\.message\)/);
+  assert.match(app, /openSharedMusicPlaylist\(row\.message\)/);
+  assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(500\)[\s\S]*?payload:[\s\S]*?description: body\.description/);
+  assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
+  assert.match(css, /\.music-playlist-message-card \{[\s\S]*?width: min\(320px,/);
+});
+
+test("browsing a playlist leaves the active audio alone while clicking a track switches and plays it", () => {
+  const sourceSelection = app.match(/function selectMusicSource\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.doesNotMatch(sourceSelection, /setMusicAudioTrack|currentMusicTrackId\.value\s*=/);
+  assert.match(app, /const currentMusicTrack = computed\(\(\) => musicTracks\.value\.find/);
+  assert.match(app, /function selectMusicTrack[\s\S]*?pushMusicPlaybackHistory[\s\S]*?setMusicAudioTrack\(track\)[\s\S]*?playCurrentMusic/);
+  assert.match(app, /function shiftMusicTrack[\s\S]*?takePreviousMusicTrack/);
 });
 
 test("music restores account state and defaults new listeners to shuffle", () => {

@@ -7,13 +7,15 @@ import {
   musicMentionTokenAtCursor,
   nextMusicTrackIndex,
   nextMusicTrackIndexForMode,
+  pushMusicPlaybackHistory,
   shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
   shouldRestartOnlyTrack,
   shouldRepeatCurrentMusic,
   shouldShowMusicScoreTrigger,
   syncMusicMediaSession,
-  sortMusicTracks
+  sortMusicTracks,
+  takePreviousMusicTrack
 } from "./musicPlayer.js";
 import { creditedMusicListenMs, isQualifiedMusicPlay } from "../shared/musicPlayback.js";
 
@@ -44,6 +46,14 @@ test("previous restarts the current song when the playlist contains only one tra
   assert.equal(shouldRestartOnlyTrack(1, -1), true);
   assert.equal(shouldRestartOnlyTrack(1, 1), false);
   assert.equal(shouldRestartOnlyTrack(2, -1), false);
+});
+
+test("manual track changes preserve playback history independently of the new playlist queue", () => {
+  assert.deepEqual(pushMusicPlaybackHistory([3], 8, 12), [3, 8]);
+  assert.deepEqual(pushMusicPlaybackHistory([3], 8, 8), [3]);
+  assert.deepEqual(pushMusicPlaybackHistory([1, 2, 3], 4, 5, 3), [2, 3, 4]);
+  assert.deepEqual(takePreviousMusicTrack([3, 8, 99], [3, 8, 12]), { trackId: 8, history: [3] });
+  assert.deepEqual(takePreviousMusicTrack([99], [3, 8, 12]), { trackId: null, history: [] });
 });
 
 test("music pause fade decreases smoothly to silence", () => {

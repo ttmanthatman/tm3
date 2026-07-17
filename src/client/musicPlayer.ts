@@ -91,6 +91,26 @@ export function shouldRestartOnlyTrack(trackCount: number, delta: number) {
   return trackCount === 1 && delta < 0;
 }
 
+export function pushMusicPlaybackHistory(
+  history: number[],
+  currentTrackId: number | null | undefined,
+  nextTrackId: number | null | undefined,
+  limit = 100
+) {
+  if (!currentTrackId || !nextTrackId || currentTrackId === nextTrackId) return [...history];
+  return [...history, currentTrackId].slice(-Math.max(1, limit));
+}
+
+export function takePreviousMusicTrack(history: number[], availableTrackIds: number[]) {
+  const available = new Set(availableTrackIds);
+  const remaining = [...history];
+  while (remaining.length) {
+    const trackId = remaining.pop()!;
+    if (available.has(trackId)) return { trackId, history: remaining };
+  }
+  return { trackId: null, history: remaining };
+}
+
 export function musicFadeVolume(progress: number) {
   return 1 - Math.min(1, Math.max(0, progress));
 }

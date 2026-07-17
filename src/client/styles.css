@@ -2897,7 +2897,7 @@ button {
 .music-playlist-tools {
   padding: 9px 10px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
   gap: 8px;
   border-bottom: 1px solid var(--line);
 }
@@ -2913,6 +2913,76 @@ button {
   background: var(--panel);
   font: inherit;
   font-size: 13px;
+}
+
+.music-track-selection-toggle {
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.music-track-selection-toggle.active {
+  color: var(--accent-dark);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
+@media (max-width: 420px) {
+  .music-playlist-tools {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .music-playlist-tools .music-mode-btn {
+    grid-column: 1 / -1;
+  }
+}
+
+.music-track-batch-actions {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+}
+
+.music-track-batch-actions strong {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.music-track-batch-actions select {
+  min-width: 120px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.music-track-batch-actions button {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  color: var(--text);
+  background: var(--panel);
+}
+
+.music-track-batch-actions button:disabled {
+  opacity: 0.45;
 }
 
 .music-track-list {
@@ -3045,6 +3115,18 @@ button {
   background: var(--panel);
 }
 
+.music-playlist-card-share-panel input {
+  grid-column: 1 / -1;
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+}
+
 .music-playlist-card-share-panel select {
   min-width: 0;
   height: 34px;
@@ -3102,13 +3184,15 @@ button {
 }
 
 .music-playlist-owner-tools select,
-.music-track-add-select {
+.music-playlist-owner-tools input {
   min-width: 108px;
   height: 32px;
   border: 1px solid var(--line);
   border-radius: 7px;
+  padding: 0 8px;
   color: var(--text);
   background: var(--panel);
+  font: inherit;
 }
 
 .music-playlist-share-status {
@@ -3123,11 +3207,16 @@ button {
 .music-playlist-picker label > span { min-width: 0; display: grid; gap: 2px; }
 .music-playlist-picker label small { color: var(--muted); }
 .music-playlist-picker-actions { position: sticky; bottom: 0; padding: 10px 0 0; display: flex; justify-content: flex-end; gap: 8px; background: var(--panel); }
-.music-track-add-select { margin-right: 8px; max-width: 126px; }
+
+.music-playlist-bubble {
+  width: fit-content;
+  max-width: 100%;
+  padding: 6px;
+}
 
 .music-playlist-message-card {
-  width: min(390px, 100%);
-  padding: 13px;
+  width: min(320px, 100%);
+  padding: 11px;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
@@ -3142,6 +3231,15 @@ button {
 .music-playlist-message-copy { min-width: 0; display: grid; gap: 2px; }
 .music-playlist-message-copy small,
 .music-playlist-message-copy em { overflow: hidden; color: var(--muted); font-size: 12px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.music-playlist-message-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
 
 .music-track-row {
   width: 100%;
@@ -3157,6 +3255,27 @@ button {
 .music-track-row.active {
   color: var(--accent-dark);
   background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+
+.music-track-row.selected {
+  background: color-mix(in srgb, var(--accent) 17%, var(--panel));
+}
+
+.music-track-row.selection-mode {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.music-track-checkbox {
+  min-height: 58px;
+  padding-left: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.music-track-checkbox input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-dark);
 }
 
 .music-track-select {
