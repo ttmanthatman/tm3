@@ -361,10 +361,21 @@ test("chat images correct EXIF dimensions, cache privately, and preload offscree
   assert.match(server, /function applyFileValidation[\s\S]*?Cache-Control", "private, no-cache"/);
 });
 
-test("Bible favorites collapse by default and remember the account preference", () => {
-  assert.match(bibleWorkspace, /const favoritesCollapsed = ref\(true\)/);
-  assert.match(bibleWorkspace, /class="bible-favorites"[\s\S]*?:aria-expanded="!favoritesCollapsed"[\s\S]*?toggleFavoritesCollapsed/);
-  assert.match(bibleWorkspace, /team-chat-bible-favorites-collapsed/);
+test("Bible workspace promotes grouped favorites beside search", () => {
+  assert.match(bibleWorkspace, /const homeSection = ref<"search" \| "favorites">\("search"\)/);
+  assert.match(bibleWorkspace, /aria-label="书房功能"[\s\S]*?>经文检索<[\s\S]*?>经文收藏</);
+  assert.match(bibleWorkspace, /groupBibleFavoritePassages\(props\.favorites\)/);
+  assert.match(bibleWorkspace, /v-for="passage in favoritePassages"[\s\S]*?passage\.lookup\.normalizedReference/);
+  assert.match(bibleWorkspace, /removeBibleFavoritePassage\(passage\)/);
+  assert.doesNotMatch(bibleWorkspace, /favoritesCollapsed|team-chat-bible-favorites-collapsed/);
+});
+
+test("Bible workspace keeps its study title and offers a persistent font stepper", () => {
+  assert.match(bibleWorkspace, /<strong>小故事的书房<\/strong>/);
+  assert.match(bibleWorkspace, /<span>圣经<\/span><Sparkles[\s\S]*?新标点和合本（简体）/);
+  assert.match(bibleWorkspace, /team-chat-bible-font-size/);
+  assert.match(bibleWorkspace, /adjustBibleFontSize\(-1\)[\s\S]*?adjustBibleFontSize\(1\)/);
+  assert.match(bibleWorkspace, /font-size: var\(--bible-font-size\)/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {
