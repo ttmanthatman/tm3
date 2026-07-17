@@ -6726,6 +6726,51 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
   return { success: true, account: authDto(updated) };
 });
 
+app.delete("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const id = Number((request.params as { id: string }).id);
+  if (!Number.isInteger(id) || id < 1) return reply.code(400).send({ success: false, message: "用户编号无效" });
+  if (id === auth.accountId) return reply.code(400).send({ success: false, message: "不能删除当前登录的管理员账号" });
+
+  const account = await prisma.account.findUnique({
+    where: { id },
+    include: {
+      actor: true,
+      sessions: { select: { id: true } },
+      memberships: { select: { channelId: true } }
+    }
+  });
+  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+  if (account.role === "admin") {
+    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: id } } });
+    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (account.actor) {
+      await tx.actor.update({
+        where: { id: account.actor.id },
+        data: {
+          accountId: null,
+          username: `deleted-account-${id}`,
+          displayName: `${account.displayName}（已删除用户）`,
+          avatarPath: null,
+          status: "deleted"
+        }
+      });
+    }
+    await tx.account.delete({ where: { id } });
+  });
+
+  disconnectSessions(account.sessions.map((session) => session.id));
+  io.emit("channel:updated", {
+    action: "account-deleted",
+    accountId: id,
+    channelIds: account.memberships.map((membership) => membership.channelId)
+  });
+  return { success: true };
+});
+
 app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
   const id = Number((request.params as { id: string }).id);
   return updateAccountAvatarFromUpload(id, request, reply);

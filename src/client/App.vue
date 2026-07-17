@@ -9624,6 +9624,21 @@ async function updateAccount(account: any) {
   adminMsg.value = "用户资料已更新";
 }
 
+async function deleteAccount(account: any) {
+  if (store.account?.id === account.id) {
+    alert("不能删除当前登录的管理员账号");
+    return;
+  }
+  const confirmed = confirm(
+    `警告：确定删除用户“${account.displayName}”（@${account.username}）吗？\n\n该用户将无法再登录，个人收藏、会话和频道成员关系会被永久删除；历史消息会保留并标记为“已删除用户”。此操作无法撤销。`
+  );
+  if (!confirmed) return;
+  await api(`/api/admin/accounts/${account.id}`, { method: "DELETE" });
+  accounts.value = accounts.value.filter((row) => row.id !== account.id);
+  syncAccountEdits();
+  adminMsg.value = `用户“${account.displayName}”已删除`;
+}
+
 async function uploadAccountAvatar(account: any, event: Event) {
   const file = (event.target as HTMLInputElement).files?.[0];
   (event.target as HTMLInputElement).value = "";
@@ -12441,6 +12456,7 @@ async function toggleVirtual(character: any) {
                 </div>
                 <div class="user-admin-actions">
                   <button class="mini-btn" @click="updateAccount(account)">保存</button>
+                  <button class="mini-btn danger-action" :disabled="store.account?.id === account.id" @click="deleteAccount(account)"><Trash2 :size="15" />删除</button>
                 </div>
               </article>
             </div>

@@ -44,6 +44,18 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(bibleWorkspace, /if \(catalogLoadPromise\) \{[\s\S]*?await catalogLoadPromise;[\s\S]*?return;/);
 });
 
+test("Bible reader offers compact book, chapter, and verse jumps beside the resource link", () => {
+  assert.match(bibleWorkspace, /aria-label="经文快速跳转"[\s\S]*?aria-label="选择圣经书卷"[\s\S]*?aria-label="选择章节"[\s\S]*?aria-label="选择经节"/);
+  assert.match(bibleWorkspace, /href="http:\/\/www\.https\.ng:1234\/"[\s\S]*?>资</);
+  assert.match(bibleWorkspace, /suppressReaderScrollUntil = Date\.now\(\) \+ 500/);
+  assert.match(bibleWorkspace, /Date\.now\(\) < suppressReaderScrollUntil/);
+});
+
+test("user administration exposes a confirmation-gated delete action", () => {
+  assert.match(app, /async function deleteAccount[\s\S]*?警告：确定删除用户[\s\S]*?method: "DELETE"/);
+  assert.match(app, /class="mini-btn danger-action"[\s\S]*?:disabled="store\.account\?\.id === account\.id"[\s\S]*?@click="deleteAccount\(account\)"/);
+});
+
 test("chat subtitles scroll only when their rendered text overflows", () => {
   assert.match(app, /<OverflowMarquee[\s\S]*?:text="chatSubtitleText"/);
   assert.match(overflowMarquee, /contentElement\.scrollWidth - viewportElement\.clientWidth/);

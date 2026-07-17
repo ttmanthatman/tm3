@@ -83,6 +83,7 @@ const readerBusyChapters = ref<Set<number>>(new Set());
 const readerError = ref("");
 const readerScroll = ref<HTMLElement | null>(null);
 const visibleChapter = ref(1);
+const jumpVerse = ref<number | "">("");
 const targetVerse = ref<BibleReaderTarget | null>(null);
 const linkedTargetVerseKeys = ref<Set<string>>(new Set());
 const selectedVerseKeys = ref<Set<string>>(new Set());
@@ -107,6 +108,7 @@ let swipeStart: { x: number; y: number } | null = null;
 let readerGeneration = 0;
 let nearbyPreloadTimer = 0;
 let catalogPreloadTimer = 0;
+let suppressReaderScrollUntil = 0;
 
 function clampBibleFontSize(value: number) {
   if (!Number.isFinite(value)) return defaultBibleFontSize;
@@ -139,6 +141,13 @@ watch(bibleFontSize, (value) => {
 const allBooks = computed(() => [...(catalog.value?.oldTestament || []), ...(catalog.value?.newTestament || [])]);
 const loadedChapters = computed(() => Object.keys(readerChapters.value).map(Number).sort((left, right) => left - right));
 const loadedVerses = computed(() => loadedChapters.value.flatMap((chapter) => readerChapters.value[chapter]?.verses || []));
+const visibleChapterVerseNumbers = computed(() => {
+  const numbers = new Set<number>();
+  for (const verse of readerChapters.value[visibleChapter.value]?.verses || []) {
+    for (let number = verse.verse; number <= verse.endVerse; number += 1) numbers.add(number);
+  }
+  return [...numbers].sort((left, right) => left - right);
+});
 const orderedLoadedVerseKeys = computed(() => readerBook.value
   ? loadedVerses.value.map((verse) => bibleVerseKey(readerBook.value!.code, verse))
   : []);
@@ -265,6 +274,7 @@ function resetWorkspaceState() {
   readerBook.value = null;
   readerChapters.value = {};
   visibleChapter.value = 1;
+  jumpVerse.value = "";
   targetVerse.value = null;
   linkedTargetVerseKeys.value = new Set();
   clearVerseSelection();
@@ -331,11 +341,27 @@ function returnHome() {
   clearVerseSelection();
 }
 
-function reopenChapterPicker() {
-  if (!readerBook.value) return;
-  selectedBook.value = readerBook.value;
-  view.value = "chapters";
-  clearVerseSelection();
+function jumpToBook(event: Event) {
+  const bookCode = (event.target as HTMLSelectElement).value;
+  const book = allBooks.value.find((candidate) => candidate.code === bookCode);
+  if (book) void openReader(book, 1);
+}
+
+function jumpToChapter(event: Event) {
+  const chapter = Number((event.target as HTMLSelectElement).value);
+  if (readerBook.value && Number.isInteger(chapter)) void openReader(readerBook.value, chapter);
+}
+
+function jumpToVerse(event: Event) {
+  const verse = Number((event.target as HTMLSelectElement).value);
+  if (!readerBook.value || !Number.isInteger(verse) || verse < 1) return;
+  jumpVerse.value = verse;
+  void openReader(readerBook.value, visibleChapter.value, {
+    chapter: visibleChapter.value,
+    verse,
+    endVerse: verse,
+    matches: []
+  });
 }
 
 function chooseBook(book: BibleBookCatalogDTO) {
@@ -468,6 +494,7 @@ async function openReader(
   linkedTargets: ReadonlySet<string> | null = null
 ) {
   const generation = ++readerGeneration;
+  suppressReaderScrollUntil = Date.now() + 500;
   if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   readerBook.value = book;
   readerChapters.value = {};
@@ -477,6 +504,7 @@ async function openReader(
   linkedTargetVerseKeys.value = new Set(linkedTargets || []);
   clearVerseSelection();
   visibleChapter.value = chapter;
+  jumpVerse.value = target?.verse || "";
   view.value = "reader";
   await loadChapter(chapter);
   if (generation !== readerGeneration || readerBook.value?.code !== book.code) return;
@@ -592,7 +620,7 @@ async function loadChapter(chapter: number, prepend = false) {
 function handleReaderScroll() {
   const scroller = readerScroll.value;
   const book = readerBook.value;
-  if (!scroller || !book || !loadedChapters.value.length) return;
+  if (!scroller || !book || !loadedChapters.value.length || Date.now() < suppressReaderScrollUntil) return;
   const chapters = Array.from(scroller.querySelectorAll<HTMLElement>("[data-reader-chapter]"));
   let closest = visibleChapter.value;
   let distance = Number.POSITIVE_INFINITY;
@@ -603,7 +631,10 @@ function handleReaderScroll() {
       closest = Number(element.dataset.readerChapter || closest);
     }
   }
-  visibleChapter.value = closest;
+  if (visibleChapter.value !== closest) {
+    visibleChapter.value = closest;
+    jumpVerse.value = "";
+  }
   const first = loadedChapters.value[0];
   const last = loadedChapters.value[loadedChapters.value.length - 1];
   if (scroller.scrollTop < 220 && first > 1) void loadChapter(first - 1, true);
@@ -879,11 +910,24 @@ function handleTouchEnd(event: TouchEvent) {
   >
     <header class="bible-topbar">
       <button type="button" class="bible-topbar-button" @click="emit('close')"><ChevronLeft :size="20" />聊天</button>
-      <button type="button" class="bible-topbar-title" :class="{ interactive: view === 'reader' }" :disabled="view !== 'reader'" @click="reopenChapterPicker">
+      <button v-if="view !== 'reader'" type="button" class="bible-topbar-title" disabled>
         <strong>小故事的书房</strong>
         <small><span>圣经</span><Sparkles :size="11" aria-hidden="true" /><span>{{ catalog?.translation || "新标点和合本（简体）" }}</span></small>
       </button>
+      <nav v-else-if="readerBook" class="bible-jump-nav" aria-label="经文快速跳转">
+        <select :value="readerBook.code" aria-label="选择圣经书卷" @change="jumpToBook">
+          <option v-for="book in allBooks" :key="book.code" :value="book.code">{{ book.name }}</option>
+        </select>
+        <select :value="visibleChapter" aria-label="选择章节" @change="jumpToChapter">
+          <option v-for="chapter in readerBook.chapterCount" :key="chapter" :value="chapter">{{ chapter }}章</option>
+        </select>
+        <select :value="jumpVerse" :disabled="!visibleChapterVerseNumbers.length" aria-label="选择经节" @change="jumpToVerse">
+          <option value="">节</option>
+          <option v-for="verse in visibleChapterVerseNumbers" :key="verse" :value="verse">{{ verse }}节</option>
+        </select>
+      </nav>
       <div class="bible-topbar-actions">
+        <a class="bible-resource-link" href="http://www.https.ng:1234/" aria-label="打开资料网站" title="资料">资</a>
         <div class="bible-font-control" data-bible-font-menu>
           <button
             v-if="!showBibleFontMenu"
@@ -1084,13 +1128,17 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-topbar-button.home { justify-self: end; }
 .bible-topbar-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
 .bible-topbar-title { min-width: 0; border: 0; padding: 5px 8px; display: grid; justify-items: center; color: inherit; background: transparent; font: inherit; line-height: 1.2; }
-.bible-topbar-title.interactive { border-radius: 9px; cursor: pointer; }
-.bible-topbar-title.interactive:hover { background: rgba(128, 97, 63, .08); }
 .bible-topbar-title strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Songti SC", "STSong", serif; font-size: 18px; }
 .bible-topbar-title small { margin-top: 3px; color: #92775b; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
 .bible-topbar-title small svg { color: #ad875a; }
+.bible-jump-nav { min-width: 0; width: min(100%, 360px); justify-self: center; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(50px, .72fr) minmax(46px, .66fr); gap: 5px; }
+.bible-jump-nav select { min-width: 0; height: 34px; border: 1px solid rgba(128, 97, 63, .25); border-radius: 8px; padding: 0 6px; color: #5e452f; background: #fffaf1; font: inherit; font-size: 13px; font-weight: 700; outline: none; cursor: pointer; }
+.bible-jump-nav select:focus { border-color: #967046; box-shadow: 0 0 0 2px rgba(150, 112, 70, .14); }
+.bible-jump-nav select:disabled { opacity: .5; cursor: wait; }
 .bible-font-control { flex: 0 0 auto; }
-.bible-font-trigger { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
+.bible-resource-link, .bible-font-trigger { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
+.bible-resource-link { display: grid; place-items: center; text-decoration: none; }
+.bible-resource-link:hover, .bible-font-trigger:hover { background: rgba(128, 97, 63, .16); }
 .bible-font-stepper { min-height: 36px; display: flex; align-items: center; gap: 4px; }
 .bible-font-stepper button, .bible-font-stepper span { min-width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; }
 .bible-font-stepper button { border: 0; padding: 0 7px; color: #654a31; background: rgba(128, 97, 63, .12); font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; }
@@ -1218,6 +1266,8 @@ function handleTouchEnd(event: TouchEvent) {
 @media (max-width: 600px) {
   .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: 62px minmax(0, 1fr) auto; }
   .bible-topbar-actions { gap: 5px; }
+  .bible-jump-nav { gap: 3px; grid-template-columns: minmax(0, 1.2fr) minmax(48px, .72fr) minmax(44px, .65fr); }
+  .bible-jump-nav select { padding: 0 3px; font-size: 12px; }
   .bible-topbar-button.home { font-size: 0; }
   .bible-topbar-button.home svg { width: 20px; height: 20px; }
   .bible-font-stepper { position: absolute; right: 10px; top: calc(var(--safe-top) + 10px); z-index: 2; padding: 3px; border-radius: 10px; background: rgba(250, 246, 237, .98); box-shadow: 0 8px 24px rgba(74, 52, 29, .18); }
