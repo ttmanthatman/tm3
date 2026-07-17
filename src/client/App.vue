@@ -10255,8 +10255,7 @@ async function toggleVirtual(character: any) {
               </strong>
               <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
               <small v-else-if="musicLoading">正在缓冲…</small>
-              <small v-else-if="musicPlaying">正在播放</small>
-              <small v-else>已暂停</small>
+              <small v-else-if="!musicPlaying">已暂停</small>
             </div>
             <div class="music-player-tools">
               <button
@@ -10735,7 +10734,10 @@ async function toggleVirtual(character: any) {
               </div>
               <div
                 class="message-bubble-cluster"
-                :class="{ 'audio-score-cluster': isAudioMessage(row.message) && !!musicScorePreviewPage(row.message) }"
+                :class="{
+                  'audio-score-cluster': isAudioMessage(row.message) && !!musicScorePreviewPage(row.message),
+                  'music-playlist-cluster': row.message.type === 'music_playlist'
+                }"
               >
               <div
                 class="bubble"
@@ -10906,12 +10908,11 @@ async function toggleVirtual(character: any) {
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'music_playlist'">
+                  <p v-if="sharedMusicPlaylistDescription(row.message)" class="music-playlist-message-text">{{ sharedMusicPlaylistDescription(row.message) }}</p>
                   <button class="music-playlist-message-card" type="button" @click.stop="openSharedMusicPlaylist(row.message)">
                     <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
                     <span v-if="row.message.musicPlaylist" class="music-playlist-message-copy">
-                      <small>{{ row.message.musicPlaylist.ownerName }} 分享的歌单</small>
                       <strong>{{ row.message.musicPlaylist.name }}</strong>
-                      <span v-if="sharedMusicPlaylistDescription(row.message)" class="music-playlist-message-description">{{ sharedMusicPlaylistDescription(row.message) }}</span>
                       <em>{{ row.message.musicPlaylist.trackCount }} 首<template v-if="row.message.musicPlaylist.tracks.length"> · {{ row.message.musicPlaylist.tracks.slice(0, 3).map((track) => track.title).join('、') }}</template></em>
                     </span>
                     <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong><em>创建者已移除这个歌单</em></span>
@@ -11652,12 +11653,8 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showPinnedEditor" class="modal-shell" @click.self="showPinnedEditor = false">
-      <div class="settings-modal pinned-editor-modal">
-        <header class="modal-head">
-          <strong>编辑置顶消息</strong>
-          <button class="icon-btn" @click="showPinnedEditor = false" aria-label="关闭置顶编辑"><X :size="20" /></button>
-        </header>
+    <section v-if="showPinnedEditor" class="modal-shell" role="dialog" aria-modal="true" aria-label="编辑置顶消息" @click.self="showPinnedEditor = false">
+      <div class="small-modal pinned-editor-modal">
         <div class="form-grid">
           <label>标题（可选）</label>
           <input v-model="pinnedEditTitle" placeholder="置顶消息" />

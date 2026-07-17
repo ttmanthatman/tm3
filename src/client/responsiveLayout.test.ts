@@ -260,7 +260,8 @@ test("expanded player omits the changing listener marquee", () => {
   const playerEnd = app.indexOf("</header>", playerStart);
   const player = app.slice(playerStart, playerEnd);
   assert.doesNotMatch(player, /currentMusicListenerStatus|music-player-listener-marquee/);
-  assert.match(player, /<small v-else-if="musicPlaying">正在播放<\/small>/);
+  assert.doesNotMatch(player, /正在播放/);
+  assert.match(player, /<small v-else-if="!musicPlaying">已暂停<\/small>/);
 });
 
 test("long music titles scroll in the left side of the single-row player", () => {
@@ -524,11 +525,25 @@ test("personal playlists use top tabs, multi-select actions, optional share desc
   assert.match(app, /v-model="musicPlaylistShareDescription"/);
   assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?description: musicPlaylistShareDescription\.value[\s\S]*?musicPlaylistShareStatus/);
   assert.match(app, /function sharedMusicPlaylistDescription[\s\S]*?messagePayloadRecord/);
-  assert.match(app, /row\.message\.type === 'music_playlist'[\s\S]*?sharedMusicPlaylistDescription\(row\.message\)/);
+  assert.match(app, /class="music-playlist-message-text"[\s\S]*?class="music-playlist-message-card"/);
+  assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}music-playlist-message-description/);
+  assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}ownerName \}\} 分享的歌单/);
   assert.match(app, /openSharedMusicPlaylist\(row\.message\)/);
   assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(500\)[\s\S]*?payload:[\s\S]*?description: body\.description/);
   assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
+  assert.match(css, /\.music-playlist-cluster \{[\s\S]*?width: fit-content;/);
   assert.match(css, /\.music-playlist-message-card \{[\s\S]*?width: min\(320px,/);
+});
+
+test("mobile settings categories run horizontally across the top", () => {
+  assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*?\.settings-modal \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*?\.settings-nav \{[\s\S]*?display: flex;[\s\S]*?overflow-x: auto;/);
+});
+
+test("pinned editor is a compact single-column dialog without a visible title bar", () => {
+  assert.match(app, /aria-label="编辑置顶消息"[\s\S]*?class="small-modal pinned-editor-modal"/);
+  assert.doesNotMatch(app, /<strong>编辑置顶消息<\/strong>/);
+  assert.match(css, /\.pinned-editor-modal \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);/);
 });
 
 test("browsing a playlist leaves the active audio alone while clicking a track switches and plays it", () => {
