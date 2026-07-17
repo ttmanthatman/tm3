@@ -52,6 +52,7 @@ import type {
   ThemePaletteDTO
 } from "../shared/types.js";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
+import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../shared/bibleFavoriteColors.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
 import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
@@ -5556,6 +5557,7 @@ async function listBibleFavorites(accountId: number): Promise<BibleFavoriteDTO[]
         bookCode: resolved.bookCode,
         chapter: resolved.chapter,
         verse: resolved.verse,
+        color: normalizeBibleFavoriteColor(row.color),
         savedAt: row.createdAt.toISOString(),
         verseLine: resolved.verseLine
       }];
@@ -5572,22 +5574,38 @@ app.get("/api/bible/favorites", { preHandler: requireAuth }, async (request) => 
 
 app.post("/api/bible/favorites", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  const body = z.object({ verses: z.array(bibleFavoriteKeySchema).min(1).max(500) }).parse(request.body);
+  const body = z.object({
+    verses: z.array(bibleFavoriteKeySchema).min(1).max(500),
+    color: z.string().optional()
+  }).parse(request.body);
+  const color = normalizeBibleFavoriteColor(body.color || DEFAULT_BIBLE_FAVORITE_COLOR);
   let verses: ReturnType<typeof resolveBibleFavorite>[];
   try {
     verses = body.verses.map(resolveBibleFavorite);
   } catch {
     return reply.code(400).send({ success: false, message: "收藏中包含无效经文" });
   }
-  await prisma.bibleFavorite.createMany({
-    data: verses.map((verse) => ({
-      accountId: auth.accountId,
-      bookCode: verse.bookCode,
-      chapter: verse.chapter,
-      verse: verse.verse
-    })),
-    skipDuplicates: true
-  });
+  const verseWhere = verses.map((verse) => ({
+    bookCode: verse.bookCode,
+    chapter: verse.chapter,
+    verse: verse.verse
+  }));
+  await prisma.$transaction([
+    prisma.bibleFavorite.createMany({
+      data: verses.map((verse) => ({
+        accountId: auth.accountId,
+        bookCode: verse.bookCode,
+        chapter: verse.chapter,
+        verse: verse.verse,
+        color
+      })),
+      skipDuplicates: true
+    }),
+    prisma.bibleFavorite.updateMany({
+      where: { accountId: auth.accountId, OR: verseWhere },
+      data: { color }
+    })
+  ]);
   return { success: true, favorites: await listBibleFavorites(auth.accountId) };
 });
 

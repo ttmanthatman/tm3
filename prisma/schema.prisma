@@ -433,6 +433,7 @@ model BibleFavorite {
   bookCode  String   @map("book_code") @db.Char(3)
   chapter   Int
   verse     Int
+  color     String   @default("#f28b82") @db.Char(7)
   createdAt DateTime @default(now()) @map("created_at")
   account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 

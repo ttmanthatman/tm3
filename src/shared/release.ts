@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.5.2";
+export const APP_VERSION = "1.5.3";
 
 export const RELEASE_DATE = "2026-07-17";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复频道、消息和成员头像的方形遮罩，纵向图片不再越过图标边界，锁标与在线圆点仍保持可见。",
+  "别人分享的歌单支持稳定长按收藏，收藏成功后直接进入收藏夹，并在收藏夹中完整显示歌单卡片。",
+  "经文收藏默认改为淡红标线，并提供红、橙、黄、绿、青、蓝、紫 7 种彩色预选；取消收藏会清除残留选中高亮，收藏夹移除操作新增确认提醒。"
+] as const;
+
+const RELEASE_1_5_2_NOTES = [
   "圣经书房改为“经文检索 / 经文收藏”顶部标签；连续收藏经文会合并为一段，标题固定为“小故事的书房”，并新增按账号保存的字号调节。",
   "账号设置补齐头像、昵称、密码和删除账号等自助操作；私聊两人时展示对方昵称和头像，多人私聊可生成、重选或自定义频道名，并优化锁标和在线状态层级。",
   "输入栏仅在有文字时显示发送入口，照片原图选项移至照片操作；左右图标间距收紧，歌单分享和移动端设置/置顶窗口的细节同步优化。"
@@ -617,9 +623,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.5.2",
+    version: "1.5.3",
     date: "2026-07-17",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.5.2",
+    date: "2026-07-17",
+    notes: RELEASE_1_5_2_NOTES
   },
   {
     version: "1.5.1",

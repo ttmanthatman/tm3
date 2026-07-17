@@ -467,6 +467,7 @@ export interface BibleFavoriteKeyDTO {
 
 export interface BibleFavoriteDTO extends BibleFavoriteKeyDTO {
   id: number;
+  color: string;
   savedAt: string;
   verseLine: BibleVerseLineDTO;
 }

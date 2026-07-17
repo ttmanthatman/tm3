@@ -208,6 +208,8 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
   assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);
+  assert.match(app, /favorite\.message\.type === 'music_playlist'[\s\S]*?music-playlist-message-card[\s\S]*?openSharedMusicPlaylistFromTap\(favorite\.message\)/);
+  assert.match(app, /async function removeFavorite[\s\S]*?window\.confirm\("取消收藏这条消息？"\)/);
 });
 
 test("Bible favorites share one source and render each passage body exactly once", () => {
@@ -218,6 +220,17 @@ test("Bible favorites share one source and render each passage body exactly once
   assert.match(app, /:favorites="bibleFavorites"[\s\S]*?:update-favorites="updateBibleFavorites"/);
   assert.match(surface, /bibleFavoritePassages[\s\S]*?formatBibleFavoriteBody\(passage\.lookup\)/);
   assert.doesNotMatch(surface, /toggleBibleReference/);
+  assert.match(app, /async function removeBibleFavoritePassage[\s\S]*?window\.confirm/);
+  assert.match(bibleWorkspace, /BIBLE_FAVORITE_COLOR_PRESETS/);
+  assert.match(bibleWorkspace, /class="bible-favorite-color-picker"[\s\S]*?收藏标线颜色/);
+  assert.match(bibleWorkspace, /updateSelectedFavorites[\s\S]*?if \(remove\) \{[\s\S]*?clearVerseSelection\(\);[\s\S]*?targetVerse\.value = null;[\s\S]*?linkedTargetVerseKeys\.value = new Set\(\)/);
+  assert.match(bibleWorkspace, /removeBibleFavoritePassage[\s\S]*?window\.confirm/);
+});
+
+test("avatar and channel images are pinned to their square masks without clipping presence badges", () => {
+  assert.match(css, /\.channel-icon img \{[\s\S]*?position: absolute;[\s\S]*?inset: 0;[\s\S]*?width: 100%;[\s\S]*?height: 100%;/);
+  assert.match(css, /\.avatar img \{[\s\S]*?position: absolute;[\s\S]*?inset: 0;[\s\S]*?width: 100%;[\s\S]*?height: 100%;/);
+  assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
 });
 
 test("opening the Bible unmounts every chat pane instead of only hiding it", () => {
@@ -560,7 +573,9 @@ test("personal playlists use top tabs, multi-select actions, optional share desc
   assert.match(app, /class="music-playlist-message-text"[\s\S]*?class="music-playlist-message-card"/);
   assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}music-playlist-message-description/);
   assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}ownerName \}\} 分享的歌单/);
-  assert.match(app, /openSharedMusicPlaylist\(row\.message\)/);
+  assert.match(app, /openSharedMusicPlaylistFromTap\(row\.message\)/);
+  assert.match(app, /openSharedMusicPlaylistFromTap[\s\S]*?suppressNextTapUntil/);
+  assert.match(app, /music-playlist-message-card[\s\S]*?@pointerdown\.stop="beginMessageLongPress\(row\.message, \$event\)"/);
   assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(500\)[\s\S]*?payload:[\s\S]*?description: body\.description/);
   assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
   assert.match(css, /\.music-playlist-cluster \{[\s\S]*?width: fit-content;/);

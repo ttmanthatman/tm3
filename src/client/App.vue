@@ -746,14 +746,14 @@ async function loadBibleFavorites() {
   }
 }
 
-async function updateBibleFavorites(verses: BibleFavoriteKeyDTO[], favorited: boolean) {
+async function updateBibleFavorites(verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) {
   if (!verses.length || bibleFavoritesLoading.value) return;
   bibleFavoritesLoading.value = true;
   bibleFavoritesError.value = "";
   try {
     const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
       method: favorited ? "POST" : "DELETE",
-      body: JSON.stringify({ verses })
+      body: JSON.stringify({ verses, ...(favorited && color ? { color } : {}) })
     });
     bibleFavorites.value = result.favorites;
   } catch (error) {
@@ -773,6 +773,7 @@ async function openBibleFavorites() {
 }
 
 async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
+  if (!window.confirm(`取消收藏“${passage.lookup.normalizedReference}”？`)) return;
   try {
     await updateBibleFavorites(passage.favorites.map((favorite) => ({
       bookCode: favorite.bookCode,
@@ -795,6 +796,7 @@ async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
 }
 
 async function removeFavorite(favorite: FavoriteMessageDTO) {
+  if (!window.confirm("取消收藏这条消息？")) return;
   await api(`/api/messages/${favorite.message.id}/favorite`, { method: "PUT", body: JSON.stringify({ favorited: false }) });
   favoriteMessages.value = favoriteMessages.value.filter((item) => item.id !== favorite.id);
   store.updateMessageReactions(favorite.message.id, { currentUserFavorited: false, favoriteCount: Math.max(0, (favorite.message.reactions?.favoriteCount || 1) - 1) });
@@ -5689,7 +5691,7 @@ async function toggleMessageLike(message: MessageDTO) {
 }
 
 async function toggleMessageFavorite(message: MessageDTO) {
-  if (message.id <= 0 || message.type === "system") return;
+  if (message.id <= 0 || message.type === "system") return false;
   const previous = message.reactions || defaultMessageReactions();
   const favorited = !previous.currentUserFavorited;
   message.reactions = {
@@ -5704,8 +5706,10 @@ async function toggleMessageFavorite(message: MessageDTO) {
     });
     store.updateMessageReactions(message.id, result.reactions);
     if (showFavorites.value) await openFavorites();
+    return true;
   } catch {
     message.reactions = previous;
+    return false;
   }
 }
 
@@ -5719,8 +5723,10 @@ async function likeActionMessage() {
 async function favoriteActionMessage() {
   const message = pendingMessageActions.value;
   if (!message) return;
-  await toggleMessageFavorite(message);
+  const shouldOpenFavorites = message.type === "music_playlist" && !message.reactions?.currentUserFavorited;
+  const updated = await toggleMessageFavorite(message);
   closeMessageActionMenu();
+  if (updated && shouldOpenFavorites) await openFavorites();
 }
 
 function likedByTitle(message: MessageDTO) {
@@ -7463,6 +7469,11 @@ function openSharedMusicPlaylist(message: MessageDTO) {
   if (!musicPlaylists.value.some((item) => item.id === playlist.id)) musicPlaylists.value = [...musicPlaylists.value, playlist];
   musicPlaylistOpen.value = true;
   selectMusicSource("playlist", playlist);
+}
+
+function openSharedMusicPlaylistFromTap(message: MessageDTO) {
+  if (Date.now() < suppressNextTapUntil) return;
+  openSharedMusicPlaylist(message);
 }
 
 function toggleMusicPlaylist() {
@@ -10625,6 +10636,12 @@ async function toggleVirtual(character: any) {
                 <img v-if="favorite.message.type === 'image'" class="favorite-message-image" :src="fileUrl(favorite.message)" loading="lazy" alt="收藏的图片" />
                 <div v-else-if="isVoiceMessage(favorite.message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(favorite.message)) }}</span></div>
                 <div v-else-if="favorite.message.type === 'file'" class="favorite-message-file"><FileUp :size="19" /><span>{{ favorite.message.fileName || "附件" }}</span><small>{{ compactBytes(favorite.message.fileSize) }}</small></div>
+                <button v-else-if="favorite.message.type === 'music_playlist'" class="music-playlist-message-card" type="button" @click="openSharedMusicPlaylistFromTap(favorite.message)">
+                  <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
+                  <span v-if="favorite.message.musicPlaylist" class="music-playlist-message-copy"><strong>{{ favorite.message.musicPlaylist.name }}</strong><em>{{ favorite.message.musicPlaylist.trackCount }} 首</em></span>
+                  <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
+                  <ChevronRight :size="18" />
+                </button>
                 <div v-else-if="isMarkdownMessage(favorite.message)" class="message-text markdown-render" v-html="markdownMessageHtml(favorite.message)"></div>
                 <div v-else class="message-text" v-html="messageContentHtml(favorite.message)"></div>
               </div>
@@ -11065,7 +11082,16 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else-if="row.message.type === 'music_playlist'">
                   <p v-if="sharedMusicPlaylistDescription(row.message)" class="music-playlist-message-text">{{ sharedMusicPlaylistDescription(row.message) }}</p>
-                  <button class="music-playlist-message-card" type="button" @click.stop="openSharedMusicPlaylist(row.message)">
+                  <button
+                    class="music-playlist-message-card"
+                    type="button"
+                    @pointerdown.stop="beginMessageLongPress(row.message, $event)"
+                    @pointermove.stop="moveMessageLongPress"
+                    @pointerup.stop="clearMessageLongPress"
+                    @pointercancel.stop="clearMessageLongPress"
+                    @pointerleave.stop="clearMessageLongPress"
+                    @click.stop="openSharedMusicPlaylistFromTap(row.message)"
+                  >
                     <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
                     <span v-if="row.message.musicPlaylist" class="music-playlist-message-copy">
                       <strong>{{ row.message.musicPlaylist.name }}</strong>

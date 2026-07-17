@@ -6,6 +6,7 @@ import { groupBibleFavoritePassages } from "./bibleFavorites.js";
 function favorite(id: number, verse: number, savedAt = "2026-07-16T08:00:00.000Z"): BibleFavoriteDTO {
   return {
     id,
+    color: "#f28b82",
     bookCode: "DEU",
     chapter: 33,
     verse,

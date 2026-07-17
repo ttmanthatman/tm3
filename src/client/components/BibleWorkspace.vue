@@ -37,6 +37,11 @@ import {
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
+import {
+  BIBLE_FAVORITE_COLOR_PRESETS,
+  DEFAULT_BIBLE_FAVORITE_COLOR,
+  normalizeBibleFavoriteColor
+} from "@shared/bibleFavoriteColors";
 
 const props = defineProps<{
   open: boolean;
@@ -47,7 +52,7 @@ const props = defineProps<{
   sendPassage: (lookup: BibleLookupDTO) => Promise<void>;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
-  updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean) => Promise<void>;
+  updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
 }>();
 
 const emit = defineEmits<{
@@ -82,6 +87,7 @@ const targetVerse = ref<BibleReaderTarget | null>(null);
 const linkedTargetVerseKeys = ref<Set<string>>(new Set());
 const selectedVerseKeys = ref<Set<string>>(new Set());
 const selectionAnchorKey = ref<string | null>(null);
+const selectedFavoriteColor = ref<string>(DEFAULT_BIBLE_FAVORITE_COLOR);
 const minBibleFontSize = 16;
 const maxBibleFontSize = 40;
 const defaultBibleFontSize = 20;
@@ -141,6 +147,9 @@ const selectedVerses = computed(() => readerBook.value
   : []);
 const favoritePassages = computed(() => groupBibleFavoritePassages(props.favorites));
 const favoriteVerseKeys = computed(() => new Set(props.favorites.map((favorite) => bibleVerseKey(favorite.bookCode, favorite.verseLine))));
+const favoriteVerseColors = computed(() => new Map(
+  props.favorites.map((favorite) => [bibleVerseKey(favorite.bookCode, favorite.verseLine), normalizeBibleFavoriteColor(favorite.color)])
+));
 const allSelectedFavorited = computed(() => selectedVerses.value.length > 0 && readerBook.value
   ? selectedVerses.value.every((verse) => favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
   : false);
@@ -652,6 +661,15 @@ function isFavoriteVerse(verse: BibleVerseLineDTO) {
   return !!readerBook.value && favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value.code, verse));
 }
 
+function favoriteColorForVerse(verse: BibleVerseLineDTO) {
+  if (!readerBook.value) return DEFAULT_BIBLE_FAVORITE_COLOR;
+  return favoriteVerseColors.value.get(bibleVerseKey(readerBook.value.code, verse)) || DEFAULT_BIBLE_FAVORITE_COLOR;
+}
+
+function favoriteVerseStyle(verse: BibleVerseLineDTO) {
+  return isFavoriteVerse(verse) ? { "--bible-favorite-color": favoriteColorForVerse(verse) } : undefined;
+}
+
 function verseSegments(text: string, ranges: BibleTextMatchRangeDTO[]): TextSegment[] {
   const safeRanges = ranges
     .map((range) => ({ start: Math.max(0, Math.min(text.length, range.start)), end: Math.max(0, Math.min(text.length, range.end)) }))
@@ -756,8 +774,13 @@ async function updateSelectedFavorites(remove: boolean) {
   const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
   if (!verses.length || props.favoritesBusy) return;
   try {
-    await props.updateFavorites(verses, !remove);
+    await props.updateFavorites(verses, !remove, remove ? undefined : selectedFavoriteColor.value);
     showToast(remove ? `已取消收藏 ${verses.length} 节经文` : `已收藏 ${verses.length} 节经文`);
+    if (remove) {
+      clearVerseSelection();
+      targetVerse.value = null;
+      linkedTargetVerseKeys.value = new Set();
+    }
   } catch (error) {
     showToast(error instanceof Error ? error.message : "经文收藏更新失败");
   }
@@ -765,6 +788,7 @@ async function updateSelectedFavorites(remove: boolean) {
 
 async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
   if (props.favoritesBusy) return;
+  if (!window.confirm(`取消收藏“${passage.lookup.normalizedReference}”？`)) return;
   try {
     await props.updateFavorites(
       passage.favorites.map((favorite) => ({
@@ -779,6 +803,24 @@ async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
     showToast(error instanceof Error ? error.message : "取消收藏失败");
   }
 }
+
+async function chooseFavoriteColor(color: string) {
+  selectedFavoriteColor.value = normalizeBibleFavoriteColor(color);
+  if (!allSelectedFavorited.value || props.favoritesBusy) return;
+  const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
+  if (!verses.length) return;
+  try {
+    await props.updateFavorites(verses, true, selectedFavoriteColor.value);
+    showToast("已更新收藏标线颜色");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "标线颜色更新失败");
+  }
+}
+
+watch([selectedVerseKeys, () => props.favorites], () => {
+  const first = selectedVerses.value[0];
+  if (first && isFavoriteVerse(first)) selectedFavoriteColor.value = favoriteColorForVerse(first);
+});
 
 function openBibleFavoritePassage(passage: BibleFavoritePassage) {
   void openLookupContext(passage.lookup);
@@ -972,6 +1014,7 @@ function handleTouchEnd(event: TouchEvent) {
                 :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"
                 class="bible-reader-verse"
                 :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse) }"
+                :style="favoriteVerseStyle(fragment.verse)"
                 :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
                 role="button"
                 tabindex="0"
@@ -990,7 +1033,25 @@ function handleTouchEnd(event: TouchEvent) {
     </main>
 
     <footer v-if="view === 'reader' && selectedVerses.length" class="bible-verse-action">
-      <div><strong>{{ selectedVerseSummary }}</strong><small>{{ selectedVerses.length === 1 ? selectedVerses[0].text : '按住 Shift 点选另一节，可连续选择并跨章节' }}</small></div>
+      <div>
+        <strong>{{ selectedVerseSummary }}</strong>
+        <small>{{ selectedVerses.length === 1 ? selectedVerses[0].text : '按住 Shift 点选另一节，可连续选择并跨章节' }}</small>
+        <span class="bible-favorite-color-picker" aria-label="收藏标线颜色">
+          <em>标线</em>
+          <button
+            v-for="preset in BIBLE_FAVORITE_COLOR_PRESETS"
+            :key="preset.color"
+            type="button"
+            class="bible-favorite-color-swatch"
+            :class="{ active: selectedFavoriteColor === preset.color }"
+            :style="{ '--swatch-color': preset.color }"
+            :aria-label="`${preset.name}标线`"
+            :title="preset.name"
+            :disabled="favoritesBusy"
+            @click="chooseFavoriteColor(preset.color)"
+          ></button>
+        </span>
+      </div>
       <div class="bible-verse-action-buttons">
         <button type="button" @click="copySelectedVerses"><ClipboardCopy :size="18" />复制</button>
         <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="18" /><Bookmark v-else :size="18" />{{ allSelectedFavorited ? "取消收藏" : "收藏" }}</button>
@@ -1136,7 +1197,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-reader-verse::after { content: " "; }
 .bible-reader-verse sup { margin-right: 2px; color: #9b7a58; font-size: .55em; font-weight: 700; vertical-align: super; }
 .bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
-.bible-reader-verse.favorite { box-shadow: inset 0 -0.5em rgba(248, 210, 86, .26); }
+.bible-reader-verse.favorite { box-shadow: inset 0 -0.24em color-mix(in srgb, var(--bible-favorite-color, #f28b82) 72%, transparent); }
 .bible-reader-verse.selected { outline: 1px solid rgba(150, 104, 52, .55); background: rgba(221, 180, 92, .28); }
 .bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-verse-action { position: fixed; left: 50%; bottom: calc(14px + var(--safe-bottom)); z-index: 3; width: min(700px, calc(100vw - 24px)); transform: translateX(-50%); padding: 10px 11px 10px 14px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 14px; background: rgba(255, 252, 245, .97); box-shadow: 0 13px 36px rgba(58, 39, 20, .2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
@@ -1144,6 +1205,10 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-verse-action small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #816a53; }
 .bible-verse-action button { min-height: 42px; border: 0; border-radius: 10px; padding: 0 14px; color: white; background: #80613f; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 700; cursor: pointer; }
 .bible-verse-action .bible-verse-action-buttons { display: flex; align-items: center; gap: 7px; }
+.bible-favorite-color-picker { min-height: 24px; margin-top: 5px; display: flex; align-items: center; gap: 7px; }
+.bible-favorite-color-picker em { color: #816a53; font-size: 11px; font-style: normal; font-weight: 700; }
+.bible-verse-action .bible-favorite-color-swatch { width: 21px; height: 21px; min-height: 21px; border: 2px solid rgba(255, 255, 255, .94); border-radius: 999px; padding: 0; display: block; background: var(--swatch-color); box-shadow: 0 0 0 1px rgba(84, 57, 31, .2); }
+.bible-verse-action .bible-favorite-color-swatch.active { outline: 2px solid #6f5133; outline-offset: 2px; }
 .bible-verse-action button.secondary { padding: 0 11px; color: #74583b; background: #eee3d2; }
 .bible-state { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 220px; color: #80674e; }
 .bible-state.error { color: #a33d30; }

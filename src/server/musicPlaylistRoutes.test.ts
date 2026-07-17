@@ -32,3 +32,10 @@ test("media and Bible responses expose conditional validators", () => {
   assert.match(server, /app\.get\("\/avatars\/:file"[\s\S]*?applyFileValidation/);
   assert.match(server, /app\.get<\{ Params: \{ kit: string; file: string \} \}>\("\/api\/parallax\/:kit\/:file"[\s\S]*?applyFileValidation/);
 });
+
+test("Bible favorites persist a validated colorful underline choice", () => {
+  assert.match(schema, /model BibleFavorite \{[\s\S]*?color\s+String\s+@default\("#f28b82"\)/);
+  assert.match(server, /app\.post\("\/api\/bible\/favorites"[\s\S]*?normalizeBibleFavoriteColor[\s\S]*?color/);
+  assert.match(server, /prisma\.bibleFavorite\.updateMany[\s\S]*?data: \{ color \}/);
+  assert.match(server, /listBibleFavorites[\s\S]*?color: normalizeBibleFavoriteColor\(row\.color\)/);
+});
