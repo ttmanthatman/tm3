@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.5.5";
+export const APP_VERSION = "1.5.6";
 
 export const RELEASE_DATE = "2026-07-17";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "圣经阅读页新增书卷、章节、经节三级快速跳转，浏览其他经卷时可直接定位到指定章节或经节。",
+  "圣经顶栏新增“资”入口，可直接前往资料网站。",
+  "管理员现在可在用户与权限页删除用户；操作会二次确认，保留历史消息并阻止删除当前或最后一个管理员。"
+] as const;
+
+const RELEASE_1_5_5_NOTES = [
   "歌单分享统一改为明确的频道选择窗口，歌单卡片新增小飞机分享入口，分享后会显示目标频道与结果。",
   "修复从歌单操作窗口进入重命名时输入界面消失的问题，并在打开后稳定聚焦歌单名称。",
   "音乐频道的消息多选栏新增“添加到歌单”，可把多首所选音频一次加入个人歌单。"
@@ -635,9 +641,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.5.5",
+    version: "1.5.6",
     date: "2026-07-17",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.5.5",
+    date: "2026-07-17",
+    notes: RELEASE_1_5_5_NOTES
   },
   {
     version: "1.5.4",
