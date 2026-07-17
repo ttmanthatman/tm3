@@ -589,6 +589,36 @@ test("composer autosizes through twelve rows while controls keep their dimension
   assert.match(css, /\.composer-main \{[\s\S]*?align-items: flex-end;/);
 });
 
+test("the profile settings entry opens complete self-service account controls", () => {
+  assert.match(app, /async function openSettings\(tab: SettingsTab = "account"\)/);
+  assert.match(app, /settingsTab === 'account'[\s\S]*?>账号<[\s\S]*?class="account-avatar-card"/);
+  assert.match(app, /uploadOwnAvatar[\s\S]*?\/api\/me\/avatar/);
+  assert.match(app, /saveOwnProfile[\s\S]*?\/api\/me\/profile/);
+  assert.match(app, /changeOwnPassword[\s\S]*?\/api\/auth\/change-password/);
+  assert.match(app, /deleteOwnAccount[\s\S]*?\/api\/me\/account/);
+  assert.match(server, /app\.patch\("\/api\/me\/profile", \{ preHandler: requireAuth \}/);
+  assert.match(server, /app\.post\("\/api\/me\/avatar", \{ preHandler: requireAuth \}/);
+  assert.match(server, /app\.delete\("\/api\/me\/account", \{ preHandler: requireAuth \}/);
+  assert.match(server, /至少需要保留一个管理员/);
+  assert.match(server, /accountId: null,[\s\S]*?displayName: "已注销用户"[\s\S]*?await tx\.account\.delete/);
+});
+
+test("composer swaps one compact trailing action between more and send", () => {
+  assert.match(app, /<button v-if="canSendText" class="send-btn composer-edge-btn composer-send-btn"/);
+  assert.match(app, /<button v-else class="icon-btn composer-edge-btn"[\s\S]*?aria-label="更多功能"/);
+  assert.doesNotMatch(app, /class="send-btn" :disabled="!canSendText"/);
+  assert.match(css, /\.composer-main \{[\s\S]*?gap: 2px;/);
+  assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 34px;[\s\S]*?flex: 0 0 34px;[\s\S]*?padding: 0;/);
+});
+
+test("original image selection is a small unchecked control on the photo tile", () => {
+  assert.match(app, /const keepOriginalImages = ref\(false\)/);
+  assert.match(app, /class="tool-tile-wrap photo-tool-wrap"[\s\S]*?class="original-image-corner"[\s\S]*?>原图</);
+  assert.doesNotMatch(app, /class="original-image-toggle"/);
+  assert.match(css, /\.original-image-corner \{[\s\S]*?position: absolute;[\s\S]*?bottom: -1px;/);
+  assert.match(css, /\.original-image-check \{[\s\S]*?width: 14px;[\s\S]*?border-radius: 50%;/);
+});
+
 test("the admin-only log workspace combines sessions, music progress, and usage activity", () => {
   assert.match(server, /app\.get\("\/api\/admin\/activity-logs", \{ preHandler: requireAdmin \}, adminActivityLogs\)/);
   assert.match(server, /CREATE TABLE IF NOT EXISTS account_activity_logs/);

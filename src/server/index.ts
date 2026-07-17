@@ -1163,6 +1163,43 @@ function authDto(account: AccountWithActor) {
   };
 }
 
+async function updateAccountAvatarFromUpload(accountId: number, request: FastifyRequest, reply: FastifyReply) {
+  const account = await prisma.account.findUnique({ where: { id: accountId } });
+  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+  const file = await request.file();
+  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
+  const ext = path.extname(file.filename).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) {
+    return reply.code(400).send({ success: false, message: "只支持图片头像" });
+  }
+  const safeName = `${crypto.randomUUID()}${ext}`;
+  const outPath = path.join(AVATAR_DIR, safeName);
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createWriteStream(outPath);
+    file.file.pipe(stream);
+    file.file.on("error", reject);
+    stream.on("finish", resolve);
+    stream.on("error", reject);
+  });
+  if (!(await validateStoredImage(outPath))) {
+    safeUnlink("avatar", safeName);
+    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
+  }
+  let avatarPath = safeName;
+  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  if (compressed) {
+    fs.unlinkSync(outPath);
+    avatarPath = compressed.fileName;
+  }
+  const updated = await prisma.account.update({
+    where: { id: accountId },
+    data: { avatarPath, actor: { update: { avatarPath } } },
+    include: { actor: true }
+  });
+  refreshAccountConnections(updated);
+  return { success: true, account: authDto(updated) };
+}
+
 function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
   const row = value && typeof value === "object" ? (value as Partial<BiblePreferencesDTO>) : {};
   return {
@@ -2842,6 +2879,27 @@ app.get("/api/auth/me", { preHandler: requireAuth }, async (request) => {
   return { account: authDto(account), token: signToken(account, session) };
 });
 
+app.patch("/api/me/profile", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ displayName: z.string().trim().min(1).max(80) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "昵称需为 1-80 个字符" });
+  const updated = await prisma.account.update({
+    where: { id: auth.accountId },
+    data: {
+      displayName: body.data.displayName,
+      actor: { update: { displayName: body.data.displayName } }
+    },
+    include: { actor: true }
+  });
+  refreshAccountConnections(updated);
+  return { success: true, account: authDto(updated) };
+});
+
+app.post("/api/me/avatar", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  return updateAccountAvatarFromUpload(auth.accountId, request, reply);
+});
+
 app.post("/api/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const body = z.object({ oldPassword: z.string().max(128), newPassword: z.string().min(10).max(128) }).safeParse(request.body);
@@ -2857,6 +2915,39 @@ app.post("/api/auth/change-password", { preHandler: requireAuth }, async (reques
   await prisma.accountSession.updateMany({ where: { id: { in: sessionsToRevoke.map((session) => session.id) } }, data: { revokedAt } });
   await Promise.all(sessionsToRevoke.map((session) => writeLoginLog("session_revoked", auth.accountId, session, revokedAt)));
   disconnectSessions(sessionsToRevoke.map((session) => session.id));
+  return { success: true };
+});
+
+app.delete("/api/me/account", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const body = z.object({ password: z.string().min(1).max(128) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ success: false, message: "请输入当前密码" });
+  const account = await prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } });
+  if (!account) return reply.code(404).send({ success: false, message: "账号不存在" });
+  if (!(await bcrypt.compare(body.data.password, account.passwordHash))) {
+    return reply.code(400).send({ success: false, message: "当前密码错误" });
+  }
+  if (account.role === "admin") {
+    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: account.id } } });
+    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
+  }
+  const sessions = await prisma.accountSession.findMany({ where: { accountId: account.id }, select: { id: true } });
+  await prisma.$transaction(async (tx) => {
+    if (account.actor) {
+      await tx.actor.update({
+        where: { id: account.actor.id },
+        data: {
+          accountId: null,
+          username: `deleted-${account.id}-${crypto.randomUUID()}`,
+          displayName: "已注销用户",
+          avatarPath: null,
+          status: "deleted"
+        }
+      });
+    }
+    await tx.account.delete({ where: { id: account.id } });
+  });
+  disconnectSessions(sessions.map((session) => session.id));
   return { success: true };
 });
 
@@ -6504,39 +6595,7 @@ app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (reques
 
 app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
   const id = Number((request.params as { id: string }).id);
-  const account = await prisma.account.findUnique({ where: { id } });
-  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
-  const file = await request.file();
-  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
-  const ext = path.extname(file.filename).toLowerCase();
-  const allowed = IMAGE_EXTENSIONS;
-  if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
-  const safeName = `${crypto.randomUUID()}${ext}`;
-  const outPath = path.join(AVATAR_DIR, safeName);
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createWriteStream(outPath);
-    file.file.pipe(stream);
-    file.file.on("error", reject);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
-  if (!(await validateStoredImage(outPath))) {
-    safeUnlink("avatar", safeName);
-    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
-  }
-  let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR);
-  if (compressed) {
-    fs.unlinkSync(outPath);
-    avatarPath = compressed.fileName;
-  }
-  const updated = await prisma.account.update({
-    where: { id },
-    data: { avatarPath, actor: { update: { avatarPath } } },
-    include: { actor: true }
-  });
-  refreshAccountConnections(updated);
-  return { success: true, account: authDto(updated) };
+  return updateAccountAvatarFromUpload(id, request, reply);
 });
 
 app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {

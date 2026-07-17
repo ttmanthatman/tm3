@@ -415,8 +415,29 @@ type AdminPage =
 const adminPage = ref<AdminPage>("home");
 const adminPageLoading = ref(false);
 const adminPageError = ref("");
-const settingsTab = ref<"appearance" | "bible" | "devices" | "notifications" | "release">("appearance");
+type SettingsTab = "account" | "appearance" | "bible" | "devices" | "notifications" | "release";
+const settingsTab = ref<SettingsTab>("account");
+const settingsTabMeta: Record<SettingsTab, { title: string; description: string }> = {
+  account: { title: "账号", description: "管理头像、昵称、密码和账号" },
+  appearance: { title: "外观", description: "选择舒服、清晰的聊天主题" },
+  bible: { title: "经文显示", description: "控制经文弹出的阅读方式" },
+  notifications: { title: "通知", description: "决定哪些消息需要提醒你" },
+  devices: { title: "登录设备", description: "查看并退出已登录的设备" },
+  release: { title: "关于", description: "版本信息与更新说明" }
+};
 const settingsLoadError = ref("");
+const accountDisplayName = ref("");
+const accountCurrentPassword = ref("");
+const accountNewPassword = ref("");
+const accountConfirmPassword = ref("");
+const accountDeletePassword = ref("");
+const accountAvatarBusy = ref(false);
+const accountProfileBusy = ref(false);
+const accountPasswordBusy = ref(false);
+const accountDeleteBusy = ref(false);
+const accountProfileMsg = ref("");
+const accountPasswordMsg = ref("");
+const accountDeleteMsg = ref("");
 const adminMsg = ref("");
 const newUser = ref({ username: "", displayName: "", password: "" });
 const newVirtual = ref({
@@ -2947,13 +2968,13 @@ async function doLogin() {
   }
 }
 
-async function logoutApp() {
+async function logoutApp(revoke = true) {
   persistMusicPlaybackState(true);
   if ("serviceWorker" in navigator) {
     const registration = await navigator.serviceWorker.ready.catch(() => null);
     registration?.active?.postMessage({ type: "CLEAR_PRIVATE_CACHE", token: getToken() });
   }
-  await store.logout();
+  await store.logout(revoke);
   musicTracks.value = [];
   musicPlaylists.value = [];
   currentMusicTrackId.value = null;
@@ -2972,7 +2993,7 @@ async function switchToLinkedChannel() {
   window.history.replaceState({}, "", `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ""}${window.location.hash}`);
 }
 
-async function openSettings(tab: "appearance" | "devices" | "notifications" | "release" = "appearance") {
+async function openSettings(tab: SettingsTab = "account") {
   saveReadPosition();
   showSettings.value = true;
   await selectSettingsTab(tab);
@@ -3000,11 +3021,115 @@ async function selectSettingsTab(tab: typeof settingsTab.value) {
   settingsTab.value = tab;
   settingsLoadError.value = "";
   try {
+    if (tab === "account") syncAccountSettings();
     if (tab === "devices") await loadDevices();
     if (tab === "notifications") await loadNotificationSettings();
     if (tab === "release") await checkServerVersion();
   } catch (error) {
     settingsLoadError.value = error instanceof Error ? error.message : "设置加载失败";
+  }
+}
+
+function syncAccountSettings() {
+  accountDisplayName.value = store.account?.displayName || "";
+  accountCurrentPassword.value = "";
+  accountNewPassword.value = "";
+  accountConfirmPassword.value = "";
+  accountDeletePassword.value = "";
+  accountProfileMsg.value = "";
+  accountPasswordMsg.value = "";
+  accountDeleteMsg.value = "";
+}
+
+async function uploadOwnAvatar(event: Event) {
+  const inputElement = event.target as HTMLInputElement;
+  const file = inputElement.files?.[0];
+  if (!file) return;
+  accountAvatarBusy.value = true;
+  accountProfileMsg.value = "";
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const result = await api<{ success: true; account: AccountDTO }>("/api/me/avatar", { method: "POST", body: form });
+    store.account = result.account;
+    accountProfileMsg.value = "头像已更新";
+  } catch (error) {
+    accountProfileMsg.value = error instanceof Error ? error.message : "头像更新失败";
+  } finally {
+    accountAvatarBusy.value = false;
+    inputElement.value = "";
+  }
+}
+
+async function saveOwnProfile() {
+  const nextDisplayName = accountDisplayName.value.trim();
+  if (!nextDisplayName) {
+    accountProfileMsg.value = "请输入昵称";
+    return;
+  }
+  accountProfileBusy.value = true;
+  accountProfileMsg.value = "";
+  try {
+    const result = await api<{ success: true; account: AccountDTO }>("/api/me/profile", {
+      method: "PATCH",
+      body: JSON.stringify({ displayName: nextDisplayName })
+    });
+    store.account = result.account;
+    accountDisplayName.value = result.account.displayName;
+    accountProfileMsg.value = "昵称已保存";
+  } catch (error) {
+    accountProfileMsg.value = error instanceof Error ? error.message : "昵称保存失败";
+  } finally {
+    accountProfileBusy.value = false;
+  }
+}
+
+async function changeOwnPassword() {
+  if (accountNewPassword.value.length < 10) {
+    accountPasswordMsg.value = "新密码至少需要 10 位";
+    return;
+  }
+  if (accountNewPassword.value !== accountConfirmPassword.value) {
+    accountPasswordMsg.value = "两次输入的新密码不一致";
+    return;
+  }
+  accountPasswordBusy.value = true;
+  accountPasswordMsg.value = "";
+  try {
+    await api<{ success: true }>("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ oldPassword: accountCurrentPassword.value, newPassword: accountNewPassword.value })
+    });
+    accountCurrentPassword.value = "";
+    accountNewPassword.value = "";
+    accountConfirmPassword.value = "";
+    accountPasswordMsg.value = "密码已修改，其他设备已退出登录";
+  } catch (error) {
+    accountPasswordMsg.value = error instanceof Error ? error.message : "密码修改失败";
+  } finally {
+    accountPasswordBusy.value = false;
+  }
+}
+
+async function deleteOwnAccount() {
+  if (!accountDeletePassword.value) {
+    accountDeleteMsg.value = "请输入当前密码";
+    return;
+  }
+  if (!window.confirm("确定永久删除账号吗？账号数据无法恢复，历史消息会显示为“已注销用户”。")) return;
+  accountDeleteBusy.value = true;
+  accountDeleteMsg.value = "";
+  try {
+    await api<{ success: true }>("/api/me/account", {
+      method: "DELETE",
+      body: JSON.stringify({ password: accountDeletePassword.value })
+    });
+    showSettings.value = false;
+    await logoutApp(false);
+  } catch (error) {
+    accountDeleteMsg.value = error instanceof Error ? error.message : "账号删除失败";
+  } finally {
+    accountDeleteBusy.value = false;
   }
 }
 
@@ -10156,7 +10281,7 @@ async function toggleVirtual(character: any) {
           <small>{{ store.account.isAdmin ? "管理员" : "成员" }}</small>
         </div>
         <button class="icon-btn" @click="openSettings()" aria-label="设置"><Settings :size="18" /></button>
-        <button class="icon-btn" @click="logoutApp" aria-label="退出"><LogOut :size="18" /></button>
+        <button class="icon-btn" @click="logoutApp()" aria-label="退出"><LogOut :size="18" /></button>
       </footer>
     </aside>
 
@@ -11152,7 +11277,7 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="composer-input-shell">
           <div class="composer-main" :class="{ raised: composerPanel }">
-            <button class="icon-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
+            <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
             <textarea
               ref="composerInput"
               v-model="input"
@@ -11165,8 +11290,8 @@ async function toggleVirtual(character: any) {
               @keydown="onKeydown"
               @paste="handleComposerPaste"
             ></textarea>
-            <button class="send-btn" :disabled="!canSendText" @click="sendText" aria-label="发送"><Send :size="19" /></button>
-            <button class="icon-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
+            <button v-if="canSendText" class="send-btn composer-edge-btn composer-send-btn" @click="sendText" aria-label="发送"><Send :size="19" /></button>
+            <button v-else class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
             <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
             <input ref="photoInput" class="hidden" type="file" accept="image/*" @change="handlePickedFile" />
           </div>
@@ -11259,21 +11384,21 @@ async function toggleVirtual(character: any) {
           </div>
         </div>
         <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
-          <label class="original-image-toggle">
-            <input v-model="keepOriginalImages" type="checkbox" />
-            <span>
-              <strong>原图</strong>
-              <small>默认压缩图片，勾选后保留原文件。</small>
-            </span>
-          </label>
           <button class="tool-tile" @click="fileInput?.click()">
             <span><FileUp :size="25" /></span>
             <small>文件</small>
           </button>
-          <button class="tool-tile" @click="photoInput?.click()">
-            <span><ImageIcon :size="25" /></span>
-            <small>照片</small>
-          </button>
+          <div class="tool-tile-wrap photo-tool-wrap">
+            <button class="tool-tile" @click="photoInput?.click()">
+              <span><ImageIcon :size="25" /></span>
+              <small>照片</small>
+            </button>
+            <label class="original-image-corner" :class="{ active: keepOriginalImages }" title="保留原图">
+              <input v-model="keepOriginalImages" type="checkbox" />
+              <span class="original-image-check"><CheckCircle2 v-if="keepOriginalImages" :size="13" /></span>
+              <small>原图</small>
+            </label>
+          </div>
           <button class="tool-tile" @click="openChainModal">
             <span><Plus :size="25" /></span>
             <small>接龙</small>
@@ -11743,6 +11868,7 @@ async function toggleVirtual(character: any) {
             <span><strong>{{ store.account?.displayName }}</strong><small>@{{ store.account?.username }}</small></span>
           </header>
           <nav class="settings-nav" aria-label="设置分类">
+            <button :class="{ active: settingsTab === 'account' }" @click="selectSettingsTab('account')"><Users :size="19" /><span><b>账号</b><small>头像与安全</small></span></button>
             <button :class="{ active: settingsTab === 'appearance' }" @click="selectSettingsTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
             <button :class="{ active: settingsTab === 'bible' }" @click="selectSettingsTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
             <button :class="{ active: settingsTab === 'notifications' }" @click="selectSettingsTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
@@ -11754,13 +11880,48 @@ async function toggleVirtual(character: any) {
         <div class="settings-content">
           <header class="settings-content-head">
             <div>
-              <strong>{{ settingsTab === 'appearance' ? '外观' : settingsTab === 'bible' ? '经文显示' : settingsTab === 'notifications' ? '通知' : settingsTab === 'devices' ? '登录设备' : '关于' }}</strong>
-              <small>{{ settingsTab === 'appearance' ? '选择舒服、清晰的聊天主题' : settingsTab === 'bible' ? '控制经文弹出的阅读方式' : settingsTab === 'notifications' ? '决定哪些消息需要提醒你' : settingsTab === 'devices' ? '查看并退出已登录的设备' : '版本信息与更新说明' }}</small>
+              <strong>{{ settingsTabMeta[settingsTab].title }}</strong>
+              <small>{{ settingsTabMeta[settingsTab].description }}</small>
             </div>
             <button class="icon-btn" @click="closeSettingsPanel" aria-label="关闭设置"><X :size="20" /></button>
           </header>
           <div class="admin-body settings-body">
           <div v-if="settingsLoadError" class="settings-load-error" role="alert"><CircleOff :size="17" /><span>{{ settingsLoadError }}</span><button @click="selectSettingsTab(settingsTab)">重试</button></div>
+          <section v-if="settingsTab === 'account'" class="form-grid settings-section account-settings">
+            <div class="settings-section-head"><strong>个人账号</strong><small>头像和昵称会显示在聊天消息旁。</small></div>
+            <label class="account-avatar-card" :class="{ busy: accountAvatarBusy }">
+              <span class="avatar account-settings-avatar">
+                <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
+              </span>
+              <span><strong>{{ accountAvatarBusy ? "正在上传头像" : "更换头像" }}</strong><small>选择 JPG、PNG、GIF 或 WebP 图片</small></span>
+              <Upload :size="19" />
+              <input class="hidden" type="file" accept="image/*" :disabled="accountAvatarBusy" @change="uploadOwnAvatar" />
+            </label>
+            <label for="account-display-name">昵称</label>
+            <div class="account-inline-form">
+              <input id="account-display-name" v-model="accountDisplayName" maxlength="80" autocomplete="nickname" />
+              <button class="primary-btn" :disabled="accountProfileBusy" @click="saveOwnProfile"><Save :size="16" />{{ accountProfileBusy ? "保存中" : "保存昵称" }}</button>
+            </div>
+            <p v-if="accountProfileMsg" class="settings-note">{{ accountProfileMsg }}</p>
+
+            <div class="account-security-grid">
+              <div class="account-setting-card">
+                <div><strong>修改密码</strong><small>修改后，其他已登录设备会自动退出。</small></div>
+                <label>当前密码<input v-model="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password" /></label>
+                <label>新密码<input v-model="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
+                <label>再次输入新密码<input v-model="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
+                <button class="primary-btn" :disabled="accountPasswordBusy" @click="changeOwnPassword">{{ accountPasswordBusy ? "修改中" : "修改密码" }}</button>
+                <p v-if="accountPasswordMsg" class="settings-note">{{ accountPasswordMsg }}</p>
+              </div>
+              <div class="account-setting-card account-danger-card">
+                <div><strong>删除账号</strong><small>账号与个人数据将永久删除，历史消息会匿名保留。</small></div>
+                <label>当前密码<input v-model="accountDeletePassword" type="password" maxlength="128" autocomplete="current-password" /></label>
+                <button class="mini-btn danger-action" :disabled="accountDeleteBusy" @click="deleteOwnAccount"><Trash2 :size="16" />{{ accountDeleteBusy ? "删除中" : "永久删除账号" }}</button>
+                <p v-if="accountDeleteMsg" class="settings-note">{{ accountDeleteMsg }}</p>
+              </div>
+            </div>
+          </section>
           <section v-if="settingsTab === 'appearance'" class="form-grid settings-section">
             <div class="settings-section-head"><strong>聊天主题</strong><small>仅影响你的账号，可随时切换。</small></div>
             <label>主题</label>

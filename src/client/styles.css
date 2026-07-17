@@ -5345,7 +5345,7 @@ button {
 
 .composer {
   grid-row: 6;
-  padding: 8px 10px var(--composer-bottom-gap);
+  padding: 8px 6px var(--composer-bottom-gap);
   position: relative;
   display: grid;
   gap: 6px;
@@ -5452,11 +5452,24 @@ button {
   width: 100%;
   display: flex;
   align-items: flex-end;
-  gap: 6px;
+  gap: 2px;
 }
 
 .composer-main.raised {
   align-items: center;
+}
+
+.composer-main .composer-edge-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 36px;
+  flex: 0 0 34px;
+  padding: 0;
+}
+
+.composer-main .composer-send-btn {
+  background: var(--wechat-green);
+  color: var(--button-text);
 }
 
 .icon-btn.active {
@@ -5656,34 +5669,59 @@ button {
   gap: 12px;
 }
 
-.original-image-toggle {
-  grid-column: 1 / -1;
+.tool-tile-wrap {
+  position: relative;
   min-width: 0;
-  border-radius: 6px;
-  padding: 8px 10px;
+}
+
+.tool-tile-wrap .tool-tile {
+  width: 100%;
+}
+
+.original-image-corner {
+  position: absolute;
+  right: max(2px, calc(50% - 38px));
+  bottom: -1px;
+  z-index: 2;
+  width: 30px;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
-  background: #fff;
-  color: #333;
-}
-
-.original-image-toggle span {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.original-image-toggle strong {
-  font-size: 13px;
-}
-
-.original-image-toggle small {
-  min-width: 0;
+  justify-items: center;
+  gap: 1px;
   color: var(--muted);
-  font-size: 12px;
-  line-height: 1.35;
+  cursor: pointer;
+  user-select: none;
+}
+
+.original-image-corner input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.original-image-check {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #fff;
+}
+
+.original-image-corner.active {
+  color: var(--accent-dark);
+}
+
+.original-image-corner.active .original-image-check {
+  border: 0;
+  color: var(--wechat-green);
+}
+
+.original-image-corner small {
+  font-size: 9px;
+  line-height: 1;
 }
 
 .tool-tile {
@@ -6041,6 +6079,89 @@ button {
   color: #475569;
   font-size: 13px;
   font-weight: 700;
+}
+
+.account-avatar-card {
+  min-width: 0;
+  min-height: 70px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.account-avatar-card.busy {
+  opacity: 0.62;
+  pointer-events: none;
+}
+
+.account-settings-avatar {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+}
+
+.account-avatar-card > span:nth-child(2),
+.account-setting-card > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.account-avatar-card small,
+.account-setting-card small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.account-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.account-security-grid {
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.account-setting-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: #fff;
+}
+
+.account-setting-card > label {
+  display: grid;
+  gap: 5px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.account-setting-card input {
+  padding: 10px;
+}
+
+.account-danger-card {
+  border-color: #fecaca;
+  background: #fffafa;
+}
+
+.account-danger-card > div strong {
+  color: #b42318;
 }
 
 .settings-load-error {
@@ -9297,7 +9418,7 @@ button.admin-object-row:focus-visible {
   }
 
   .composer {
-    padding: 6px 7px var(--composer-bottom-gap);
+    padding: 6px 4px var(--composer-bottom-gap);
   }
 
   .modal-shell {
@@ -9327,7 +9448,7 @@ button.admin-object-row:focus-visible {
   }
 
   .composer-main {
-    gap: 4px;
+    gap: 2px;
   }
 
   .icon-btn {
@@ -9339,6 +9460,13 @@ button.admin-object-row:focus-visible {
   .send-btn {
     min-width: 42px;
     padding: 0 10px;
+  }
+
+  .composer-main .composer-edge-btn {
+    width: 34px;
+    min-width: 34px;
+    flex-basis: 34px;
+    padding: 0;
   }
 
   .pin-card-body {
@@ -9798,6 +9926,10 @@ button.admin-object-row:focus-visible {
 
   .settings-body {
     padding: 12px;
+  }
+
+  .account-security-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
