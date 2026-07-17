@@ -72,6 +72,7 @@ import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.j
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
 import { imageDimensionsFromPayload, mergeImageDimensionsPayload, orientedImageDimensions, type ImageDimensions } from "../shared/imageDimensions.js";
 import { recalledMessageData } from "./messageRecall.js";
+import { fallbackDirectChatNames, isAutomaticDirectChatName, parseDirectChatNameSuggestions } from "./directChatNames.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -732,6 +733,77 @@ async function loadAiSettings(force = false) {
   };
   aiSettingsCache = { value, encryptedApiKey, loadedAt: Date.now() };
   return aiSettingsCache;
+}
+
+async function directChatMemberNames(channelId: number) {
+  const members = await prisma.channelMember.findMany({
+    where: { channelId },
+    select: { account: { select: { displayName: true } } },
+    orderBy: { createdAt: "asc" }
+  });
+  return members.map((member) => member.account.displayName);
+}
+
+async function generateDirectChatNameSuggestions(memberNames: string[]) {
+  const fallback = fallbackDirectChatNames(memberNames);
+  const aiSettings = await loadAiSettings();
+  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
+  if (!apiKey) return fallback;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    const response = await fetch(`${aiSettings.value.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: aiSettings.value.model,
+        messages: [
+          {
+            role: "system",
+            content: "你是聊天群命名助手。请只返回一个 JSON 字符串数组，严格包含 7 个简短、友好、有趣且彼此不同的中文名称；每个名称 2 至 12 个汉字，不要解释。"
+          },
+          {
+            role: "user",
+            content: `请根据这些成员昵称起名：${JSON.stringify(memberNames)}`
+          }
+        ],
+        thinking: { type: "disabled" },
+        temperature: 1.1,
+        max_tokens: 300,
+        stream: false
+      }),
+      signal: controller.signal
+    });
+    const payload = (await response.json().catch(() => ({}))) as any;
+    if (!response.ok) throw new Error(String(payload?.error?.message || payload?.message || `AI HTTP ${response.status}`));
+    return parseDirectChatNameSuggestions(String(payload?.choices?.[0]?.message?.content || ""), memberNames);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function ensureDirectGroupDefaultName(channelId: number) {
+  const channel = await prisma.channel.findUnique({
+    where: { id: channelId },
+    select: { kind: true, directKey: true, name: true, _count: { select: { members: true } } }
+  });
+  if (
+    channel?.kind !== "direct" ||
+    !channel.directKey ||
+    channel.directKey.startsWith("virtual:") ||
+    channel._count.members <= 2 ||
+    !isAutomaticDirectChatName(channel.name)
+  ) {
+    return;
+  }
+  const memberNames = await directChatMemberNames(channelId);
+  const [name] = await generateDirectChatNameSuggestions(memberNames);
+  if (name) await prisma.channel.update({ where: { id: channelId }, data: { name } });
 }
 
 function resetAiSettingsCache() {
@@ -2647,10 +2719,23 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     where: { id: channelId },
     include: {
       _count: { select: { members: true } },
+      members: {
+        select: {
+          account: { select: { id: true, displayName: true, avatarPath: true } }
+        }
+      },
       pinned: { where: { active: true }, orderBy: { updatedAt: "desc" }, take: 1 }
     }
   });
   if (!channel) return null;
+  const directPeer =
+    viewer &&
+    channel.kind === "direct" &&
+    channel.directKey &&
+    !channel.directKey.startsWith("virtual:") &&
+    channel._count.members === 2
+      ? channel.members.find((member) => member.account.id !== viewer.accountId)?.account
+      : null;
   const pin = channel.pinned[0];
   const [pinned, prayerCount] = await Promise.all([
     pin ? serializePinnedItem(pin, viewer) : Promise.resolve(null),
@@ -2658,9 +2743,13 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   ]);
   return {
     id: channel.id,
-    name: channel.name,
+    name: directPeer?.displayName || channel.name,
     description: channel.description,
-    icon: cleanChannelIcon(channel.icon),
+    icon: directPeer?.avatarPath
+      ? directPeer.avatarPath.startsWith("/")
+        ? directPeer.avatarPath
+        : `/avatars/${directPeer.avatarPath}`
+      : cleanChannelIcon(channel.icon),
     kind: channel.kind,
     isPrivate: channel.isPrivate,
     isDefault: channel.isDefault,
@@ -3471,10 +3560,30 @@ app.patch("/api/channels/:id", { preHandler: requireAuth }, async (request, repl
       icon: body.icon === undefined ? undefined : cleanChannelIcon(body.icon)
     }
   });
-  const dto = await channelDto(channelId);
+  const dto = await channelDto(channelId, auth);
   io.emit("channel:updated", { action: "updated", channel: dto });
   return { success: true, channel: dto };
 });
+
+app.post(
+  "/api/channels/:id/name-suggestions",
+  { preHandler: requireAuth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+  async (request, reply) => {
+    const auth = (request as AuthedRequest).auth;
+    const channelId = Number((request.params as { id: string }).id);
+    const channel = await prisma.channel.findUnique({
+      where: { id: channelId },
+      select: { kind: true, directKey: true, _count: { select: { members: true } } }
+    });
+    if (!channel) return reply.code(404).send({ success: false, message: "私聊不存在" });
+    if (channel.kind !== "direct" || !channel.directKey || channel.directKey.startsWith("virtual:") || channel._count.members <= 2) {
+      return reply.code(400).send({ success: false, message: "只有多人私聊可以更换名称" });
+    }
+    if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此私聊" });
+    const memberNames = await directChatMemberNames(channelId);
+    return { suggestions: await generateDirectChatNameSuggestions(memberNames) };
+  }
+);
 
 app.post("/api/channels/:id/icon", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
@@ -3567,7 +3676,7 @@ app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, re
   });
   joinAccountChannel(auth.accountId, channel.id);
   joinAccountChannel(body.accountId, channel.id);
-  const dto = await channelDto(channel.id);
+  const dto = await channelDto(channel.id, auth);
   io.to(`acct:${auth.accountId}`).to(`acct:${body.accountId}`).emit("channel:updated", { action: "direct", channel: dto });
   return { success: true, channel: dto };
 });
@@ -3732,7 +3841,9 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
     )
   );
   for (const account of accounts) joinAccountChannel(account.id, channelId);
-  const dto = await emitChannelMembersChanged(channelId, "members-added", accounts.map((account) => account.id));
+  await ensureDirectGroupDefaultName(channelId);
+  await emitChannelMembersChanged(channelId, "members-added", accounts.map((account) => account.id));
+  const dto = await channelDto(channelId, auth);
   return { success: true, channel: dto, added: accounts.length + virtualCharacters.length };
 });
 
@@ -3750,7 +3861,8 @@ app.delete("/api/channels/:id/virtual-members/:characterId", { preHandler: requi
     where: { id: character.id },
     data: { config: virtualCharacterConfigForChannel(character.config, channelId, false) as Prisma.InputJsonObject }
   });
-  const dto = await emitChannelMembersChanged(channelId, "members-removed");
+  await emitChannelMembersChanged(channelId, "members-removed");
+  const dto = await channelDto(channelId, auth);
   return { success: true, channel: dto, removed: characterId };
 });
 
@@ -3768,7 +3880,8 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
   if (member.role === "owner") return reply.code(400).send({ success: false, message: "不能移除频道创建者" });
   await prisma.channelMember.delete({ where: { channelId_accountId: { channelId, accountId } } });
   leaveAccountChannel(accountId, channelId);
-  const dto = await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
+  await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
+  const dto = await channelDto(channelId, auth);
   return { success: true, channel: dto, removed: accountId };
 });
 

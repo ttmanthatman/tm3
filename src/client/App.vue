@@ -27,6 +27,7 @@ import {
   Heart,
   Image as ImageIcon,
   Info,
+  LockKeyhole,
   LogOut,
   Menu,
   MessageSquareQuote,
@@ -665,6 +666,8 @@ const channelEditorChannel = ref<ChannelDTO | null>(null);
 const channelEditorDraft = ref(createChannelDraft());
 const channelEditorBusy = ref(false);
 const channelEditorMsg = ref("");
+const channelNameSuggestions = ref<string[]>([]);
+const channelNameSuggestionBusy = ref(false);
 type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
 type TopNotice = {
   id: string;
@@ -1626,6 +1629,14 @@ const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name ||
 const memberPickerTitle = computed(() => (memberPickerChannel.value ? `添加到 ${memberPickerChannel.value.name}` : "添加成员"));
 const channelEditorTitle = computed(() => (channelEditorMode.value === "create" ? "创建频道" : "频道设置"));
 const channelEditorSubtitle = computed(() => (channelEditorMode.value === "create" ? "创建后可立即添加成员" : channelEditorChannel.value?.name || ""));
+const isTwoPersonDirectEditor = computed(() => {
+  const channel = channelEditorChannel.value;
+  return channelEditorMode.value === "edit" && channel?.kind === "direct" && !channel.directKey?.startsWith("virtual:") && channel.memberCount === 2;
+});
+const isGroupDirectEditor = computed(() => {
+  const channel = channelEditorChannel.value;
+  return channelEditorMode.value === "edit" && channel?.kind === "direct" && !channel.directKey?.startsWith("virtual:") && channel.memberCount > 2;
+});
 const messageLoadBanner = computed(() => {
   if (store.messageLoadError) return { kind: "error", text: `${store.messageLoadError}，点按重试` };
   if (store.loadingInitialMessages && !store.messages.length) return { kind: "loading", text: "正在加载最近消息..." };
@@ -4245,6 +4256,7 @@ function openCreateChannelEditor() {
   channelEditorChannel.value = null;
   resetChannelEditorDraft();
   channelEditorMsg.value = "";
+  channelNameSuggestions.value = [];
   showChannelEditor.value = true;
 }
 
@@ -4258,6 +4270,7 @@ function openEditChannelEditor(channel: ChannelDTO) {
     isPrivate: channel.isPrivate
   };
   channelEditorMsg.value = "";
+  channelNameSuggestions.value = [];
   showChannelEditor.value = true;
 }
 
@@ -4265,6 +4278,22 @@ function closeChannelEditor() {
   if (channelEditorBusy.value) return;
   showChannelEditor.value = false;
   channelEditorMsg.value = "";
+  channelNameSuggestions.value = [];
+}
+
+async function requestDirectChatNameSuggestions() {
+  const channel = channelEditorChannel.value;
+  if (!channel || !isGroupDirectEditor.value || channelNameSuggestionBusy.value) return;
+  channelNameSuggestionBusy.value = true;
+  channelEditorMsg.value = "";
+  try {
+    const result = await api<{ suggestions: string[] }>(`/api/channels/${channel.id}/name-suggestions`, { method: "POST" });
+    channelNameSuggestions.value = result.suggestions;
+  } catch (error) {
+    channelEditorMsg.value = error instanceof Error ? error.message : "暂时想不到新名字，请稍后再试";
+  } finally {
+    channelNameSuggestionBusy.value = false;
+  }
 }
 
 async function openChannelEditorMembers() {
@@ -10232,7 +10261,9 @@ async function toggleVirtual(character: any) {
             <span class="channel-icon">
               <span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
               <img v-else :src="channelIconUrl(channel)" alt="" />
-              <i v-if="channel.isPrivate" class="private-channel-badge">私</i>
+              <i v-if="channel.isPrivate" class="private-channel-badge" aria-label="私密频道" title="私密频道">
+                <LockKeyhole :size="11" :stroke-width="2.6" />
+              </i>
             </span>
             <span class="channel-row-label">
               <b>{{ channel.name }}</b>
@@ -11648,7 +11679,14 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor" aria-label="关闭频道设置"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form channel-editor-form">
-          <template v-if="channelEditorMode === 'edit' && channelEditorChannel">
+          <div v-if="isTwoPersonDirectEditor" class="direct-chat-follow-note">
+            <span class="direct-chat-follow-icon"><LockKeyhole :size="18" /></span>
+            <span>
+              <strong>显示对方的资料</strong>
+              <small>双人私聊的名称和图标会自动跟随对方的昵称与头像。</small>
+            </span>
+          </div>
+          <template v-if="channelEditorMode === 'edit' && channelEditorChannel && !isTwoPersonDirectEditor">
             <label>频道图标</label>
             <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
               <span v-if="channelEditorChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
@@ -11657,10 +11695,35 @@ async function toggleVirtual(character: any) {
               <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
             </label>
           </template>
-          <label>频道名称</label>
-          <input v-model="channelEditorDraft.name" maxlength="80" autocomplete="off" placeholder="频道名" />
-          <label>频道描述</label>
-          <textarea v-model="channelEditorDraft.description" maxlength="255" rows="3" placeholder="描述"></textarea>
+          <template v-if="!isTwoPersonDirectEditor">
+            <label class="channel-name-label">
+              <span>频道名称</span>
+              <button
+                v-if="isGroupDirectEditor"
+                class="text-action"
+                type="button"
+                :disabled="channelNameSuggestionBusy"
+                @click="requestDirectChatNameSuggestions"
+              >
+                <WandSparkles :size="14" />{{ channelNameSuggestionBusy ? "正在想..." : "换一个" }}
+              </button>
+            </label>
+            <input v-model="channelEditorDraft.name" maxlength="80" autocomplete="off" placeholder="频道名" />
+            <div v-if="isGroupDirectEditor && channelNameSuggestions.length" class="direct-name-suggestions" aria-label="私聊名称备选">
+              <button
+                v-for="suggestion in channelNameSuggestions"
+                :key="suggestion"
+                class="direct-name-option"
+                :class="{ selected: channelEditorDraft.name === suggestion }"
+                type="button"
+                @click="channelEditorDraft.name = suggestion"
+              >
+                {{ suggestion }}
+              </button>
+            </div>
+            <label>频道描述</label>
+            <textarea v-model="channelEditorDraft.description" maxlength="255" rows="3" placeholder="描述"></textarea>
+          </template>
           <label v-if="channelEditorMode === 'create'" class="check-row check-row-inline">
             <input v-model="channelEditorDraft.isPrivate" type="checkbox" />
             <span>私密频道</span>
@@ -11677,7 +11740,7 @@ async function toggleVirtual(character: any) {
               <Users :size="15" />成员
             </button>
             <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">取消</button>
-            <button class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
+            <button v-if="!isTwoPersonDirectEditor" class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
               {{ channelEditorBusy ? "保存中..." : channelEditorMode === "create" ? "创建" : "保存" }}
             </button>
           </div>

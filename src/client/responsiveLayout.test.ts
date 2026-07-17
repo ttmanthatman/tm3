@@ -148,6 +148,27 @@ test("download confirmation uses a direct confirmation question", () => {
   assert.doesNotMatch(app, /无法预览，下载？/);
 });
 
+test("direct chats present the peer in pairs and offer seven AI names for groups", () => {
+  assert.match(server, /channel\._count\.members === 2[\s\S]*?member\.account\.id !== viewer\.accountId/);
+  assert.match(server, /name: directPeer\?\.displayName \|\| channel\.name/);
+  assert.match(server, /`\/avatars\/\$\{directPeer\.avatarPath\}`/);
+  assert.match(server, /"\/api\/channels\/:id\/name-suggestions"[\s\S]*?generateDirectChatNameSuggestions/);
+  assert.match(server, /ensureDirectGroupDefaultName\(channelId\)[\s\S]*?emitChannelMembersChanged/);
+  assert.match(app, /channelNameSuggestions[\s\S]*?requestDirectChatNameSuggestions/);
+  assert.match(app, /class="direct-name-option"[\s\S]*?\{\{ suggestion \}\}/);
+  assert.match(app, /双人私聊的名称和图标会自动跟随对方的昵称与头像/);
+});
+
+test("private locks and online dots sit above unclipped avatar artwork", () => {
+  assert.match(app, /class="private-channel-badge"[\s\S]*?<LockKeyhole/);
+  assert.doesNotMatch(app, /class="private-channel-badge">私</);
+  assert.match(css, /\.channel-icon \{[\s\S]*?overflow: visible;/);
+  assert.match(css, /\.private-channel-badge \{[\s\S]*?z-index: 2;[\s\S]*?right: -4px;[\s\S]*?bottom: -4px;/);
+  assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
+  assert.match(css, /\.presence-avatar > img \{[\s\S]*?border-radius: inherit;/);
+  assert.match(css, /\.online-dot \{[\s\S]*?right: -3px;[\s\S]*?bottom: -3px;/);
+});
+
 test("like alerts use the header status line instead of a reading-area overlay", () => {
   assert.match(app, /likeNotificationToTopNotice\(/);
   assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
