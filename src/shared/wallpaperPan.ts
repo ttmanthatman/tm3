@@ -34,7 +34,10 @@ export function wallpaperPanBounds(viewportWidth: number, viewportHeight: number
   const safeViewportHeight = Math.max(0, viewportHeight);
   const safeNaturalWidth = Math.max(0, naturalWidth);
   const safeNaturalHeight = Math.max(0, naturalHeight);
-  const imageWidth = safeNaturalHeight > 0 ? (safeNaturalWidth / safeNaturalHeight) * safeViewportHeight : 0;
+  const scale = safeNaturalWidth > 0 && safeNaturalHeight > 0
+    ? Math.max(safeViewportWidth / safeNaturalWidth, safeViewportHeight / safeNaturalHeight)
+    : 0;
+  const imageWidth = safeNaturalWidth * scale;
   const centeredOffset = (safeViewportWidth - imageWidth) / 2;
   const hasHorizontalOverflow = imageWidth > safeViewportWidth;
   return {

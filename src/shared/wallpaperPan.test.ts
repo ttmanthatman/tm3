@@ -16,12 +16,12 @@ test("scales the wallpaper to the viewport height and aligns the chosen image co
   assert.equal(initialWallpaperPanOffset(bounds, 1), -500);
 });
 
-test("centers a height-fitted wallpaper when it is narrower than the viewport", () => {
+test("keeps a portrait wallpaper wide enough to cover a resized viewport", () => {
   const bounds = wallpaperPanBounds(1000, 500, 1000, 1000);
-  assert.equal(bounds.imageWidth, 500);
-  assert.equal(bounds.minOffset, 250);
-  assert.equal(bounds.maxOffset, 250);
-  assert.equal(initialWallpaperPanOffset(bounds, 0.8), 250);
+  assert.equal(bounds.imageWidth, 1000);
+  assert.equal(bounds.minOffset, 0);
+  assert.equal(bounds.maxOffset, 0);
+  assert.equal(initialWallpaperPanOffset(bounds, 0.8), 0);
 });
 
 test("reverses at both edges and keeps the unconsumed movement", () => {
