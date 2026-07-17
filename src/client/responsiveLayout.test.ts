@@ -556,7 +556,7 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\) auto auto;/);
 });
 
-test("personal playlists use top tabs, multi-select actions, optional share descriptions, and compact shared cards", () => {
+test("personal playlists use long-press actions, top tabs, multi-select, and compact shared cards", () => {
   assert.match(app, /const musicPlaylistView = ref<"tracks" \| "playlists" \| "picker">\("tracks"\)/);
   assert.match(app, /class="music-library-tabs" role="tablist"[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏<[\s\S]*?>我的歌单</);
   assert.match(app, /class="music-library-favorite-icon"[\s\S]*?fill="currentColor"/);
@@ -565,7 +565,12 @@ test("personal playlists use top tabs, multi-select actions, optional share desc
   assert.match(app, /toggleMusicTrackSelectionMode[\s\S]*?toggleSelectedMusicTrack/);
   assert.match(app, /addSelectedMusicTracksToPlaylist[\s\S]*?deleteSelectedMusicTracks/);
   assert.doesNotMatch(app, /class="music-track-add-select"/);
-  assert.match(app, /class="music-library-card-share"[\s\S]*?openMusicPlaylistShare\(playlist\)/);
+  assert.match(app, /class="music-library-card-main"[\s\S]*?@pointerdown\.stop="beginMusicPlaylistLongPress\(playlist, \$event\)"/);
+  assert.match(app, /v-if="musicPlaylistActionTarget"[\s\S]*?>分享<[\s\S]*?>重命名<[\s\S]*?>删除</);
+  assert.match(app, /v-if="musicPlaylistRenameTarget"[\s\S]*?@submit\.prevent="saveMusicPlaylistRename"[\s\S]*?v-model="musicPlaylistRenameDraft"/);
+  assert.doesNotMatch(app, /class="music-library-card-share"/);
+  assert.match(app, /v-if="selectedMusicPlaylist\?\.isOwner" class="music-playlist-owner-tools"[\s\S]{0,260}?openMusicPlaylistPicker/);
+  assert.doesNotMatch(app, /class="music-playlist-owner-tools"[\s\S]{0,800}?分享歌单到聊天室/);
   assert.match(app, /v-model\.number="musicPlaylistShareChannelId"/);
   assert.match(app, /v-model="musicPlaylistShareDescription"/);
   assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?description: musicPlaylistShareDescription\.value[\s\S]*?musicPlaylistShareStatus/);
@@ -580,6 +585,16 @@ test("personal playlists use top tabs, multi-select actions, optional share desc
   assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
   assert.match(css, /\.music-playlist-cluster \{[\s\S]*?width: fit-content;/);
   assert.match(css, /\.music-playlist-message-card \{[\s\S]*?width: min\(320px,/);
+});
+
+test("the photo picker uploads every selected image", () => {
+  assert.match(app, /ref="photoInput"[^>]*accept="image\/\*"[^>]*multiple[^>]*@change="handlePickedFiles"/);
+  assert.match(app, /async function handlePickedFiles[\s\S]*?Array\.from\(input\.files \|\| \[\]\)[\s\S]*?for \(const file of files\)/);
+});
+
+test("music actions use the server-authorized track ownership flag", () => {
+  assert.match(app, /function isManageableMusicMessage[\s\S]*?musicTracks\.value\.some\(\(track\) => track\.id === message\.id && track\.canManage\)/);
+  assert.match(app, /const canDeleteSelectedMusicTracks[\s\S]*?musicTracks\.value\.find\([\s\S]*?\?\.canManage/);
 });
 
 test("mobile settings categories run horizontally across the top", () => {

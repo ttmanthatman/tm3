@@ -64,7 +64,7 @@ import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
 import { githubPackageManifestUrl } from "./updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
-import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
+import { MUSIC_EXTENSIONS, canManageMusicAsset, canManageMusicRole, isMusicFileName, isMusicScoreImageName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { parseLyrics } from "./srt.js";
 import { canReadMusicScore } from "./musicScoreAccess.js";
@@ -1005,16 +1005,19 @@ function isAudioFileName(name?: string | null) {
 
 function serializeMusicTrack(
   message: Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder"> & {
+    sender?: { accountId: number | null };
     musicScorePages?: Array<Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">>;
     musicLyrics?: Pick<MusicLyrics, "fileName" | "content"> | null;
     _count?: { musicPlays: number };
   },
   fallbackOrder = 0,
-  favorited?: boolean
+  favorited?: boolean,
+  canManage = false
 ): MusicTrackDTO {
   const fileName = message.fileName || "未命名歌曲.mp3";
   return {
     id: message.id,
+    canManage,
     title: musicTrackTitle(fileName),
     fileName,
     fileSize: message.fileSize || 0,
@@ -1043,7 +1046,7 @@ async function musicPlaylistDto(playlistId: number, viewerAccountId: number): Pr
         orderBy: { position: "asc" },
         include: {
           track: {
-            include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
+            include: { sender: { select: { accountId: true } }, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
           }
         }
       }
@@ -1055,9 +1058,10 @@ async function musicPlaylistDto(playlistId: number, viewerAccountId: number): Pr
     select: { trackId: true }
   });
   const favoriteIds = new Set(favorites.map((favorite) => favorite.trackId));
+  const viewerCanManageAll = await canManageMusicAccount(viewerAccountId);
   const tracks = playlist.tracks
     .filter((item) => item.track.channelId && item.track.type === "file" && isMusicFileName(item.track.fileName))
-    .map((item, index) => serializeMusicTrack(item.track, index, favoriteIds.has(item.trackId)));
+    .map((item, index) => serializeMusicTrack(item.track, index, favoriteIds.has(item.trackId), viewerCanManageAll || item.track.sender.accountId === viewerAccountId));
   return {
     id: playlist.id,
     name: playlist.name,
@@ -1297,7 +1301,7 @@ async function canAccessChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId } });
   if (!channel) return false;
   if (channel.kind === "aiLounge") return false;
-  if (channel.kind === "music") return canManageMusicAccount(accountId);
+  if (channel.kind === "music") return true;
   if (!channelNeedsExplicitMembership(channel)) return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return !!member;
@@ -1307,7 +1311,7 @@ async function canWriteChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId } });
   if (!channel) return false;
   if (channel.kind === "aiLounge") return false;
-  if (channel.kind === "music") return canManageMusicAccount(accountId);
+  if (channel.kind === "music") return true;
   if (!channelNeedsExplicitMembership(channel)) return true;
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   return !!member && member.role !== "viewer";
@@ -2688,7 +2692,7 @@ async function ensureBootstrap() {
     await prisma.channel.create({ data: { name: "综合频道", description: "默认公开频道", isDefault: true } });
   }
   const musicChannel = await prisma.channel.findFirst({ where: { kind: "music" } });
-  const musicChannelData = { name: MUSIC_CHANNEL_NAME, description: "管理员和户部尚书维护的公共音乐曲库", icon: MUSIC_CHANNEL_ICON, isPrivate: true, isDefault: false, directKey: null };
+  const musicChannelData = { name: MUSIC_CHANNEL_NAME, description: "所有成员均可上传音乐；管理员和户部尚书可管理全部内容", icon: MUSIC_CHANNEL_ICON, isPrivate: false, isDefault: false, directKey: null };
   if (musicChannel) await prisma.channel.update({ where: { id: musicChannel.id }, data: musicChannelData });
   else await prisma.channel.create({ data: { kind: "music", ...musicChannelData } });
   const aiLoungeChannel = await prisma.channel.findFirst({ where: { kind: "aiLounge" } });
@@ -3439,14 +3443,12 @@ app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, r
 
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const where = canManageMusic(auth)
-    ? {
-        OR: [
-          { kind: "music" as const },
-          { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] }
-        ]
-      }
-    : { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] };
+  const where = {
+    OR: [
+      { kind: "music" as const },
+      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] }
+    ]
+  };
   const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
   return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
 });
@@ -4235,7 +4237,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   const rawExt = path.extname(file.filename).toLowerCase();
   const ext = rawExt || ".bin";
   const voicePayload = parseVoiceUploadPayload(fields, file.mimetype);
-  if (channel?.kind === "music" && (!canManageMusic(auth) || voicePayload || !MUSIC_EXTENSIONS.has(ext))) {
+  if (channel?.kind === "music" && (voicePayload || !MUSIC_EXTENSIONS.has(ext))) {
     file.file.resume();
     return reply.code(400).send({ success: false, message: "音乐频道只支持上传 MP3 和 M4A 文件" });
   }
@@ -4470,14 +4472,14 @@ app.get("/api/music/tracks", { preHandler: requireAuth }, async (request) => {
   const messages = await prisma.message.findMany({
     where: { channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
     orderBy: [{ musicOrder: "asc" }, { createdAt: "desc" }, { id: "desc" }],
-    include: { musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
+    include: { sender: { select: { accountId: true } }, musicScorePages: { orderBy: { pageIndex: "asc" } }, musicLyrics: true, _count: { select: { musicPlays: true } } }
   });
   const favorites = await prisma.musicFavorite.findMany({ where: { accountId: auth.accountId }, select: { trackId: true } });
   const favoriteTrackIds = new Set(favorites.map((favorite) => favorite.trackId));
   return {
     tracks: messages
       .filter((message) => isMusicFileName(message.fileName))
-      .map((message, index) => serializeMusicTrack(message, index, favoriteTrackIds.has(message.id)))
+      .map((message, index) => serializeMusicTrack(message, index, favoriteTrackIds.has(message.id), canManageMusicAsset(auth, message.sender.accountId)))
   };
 });
 
@@ -4757,10 +4759,10 @@ app.patch("/api/music/tracks/order", { preHandler: requireAuth }, async (request
 
 app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const id = Number((request.params as { id: string }).id);
-  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, track.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐" });
   try {
     const file = await request.file({ limits: { files: 1, fileSize: 1024 * 1024, parts: 1 } });
     if (!file || !/\.(srt|lrc)$/i.test(file.filename || "")) return reply.code(400).send({ success: false, message: "歌词只支持 SRT、LRC 和 Enhanced LRC 文件" });
@@ -4782,7 +4784,7 @@ app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (requ
     });
     io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
     io.emit("music:updated", { action: "lyrics-updated", trackId: id });
-    return { success: true, track: serializeMusicTrack(updated) };
+    return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
   } catch (error) {
     const message = error instanceof Error ? error.message : "歌词上传失败";
     request.log.warn({ error, trackId: id }, "music lyrics upload failed");
@@ -4792,10 +4794,10 @@ app.put("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (requ
 
 app.delete("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const id = Number((request.params as { id: string }).id);
-  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, track.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐" });
   await prisma.musicLyrics.deleteMany({ where: { trackId: id } });
   const updated = await prisma.message.findUniqueOrThrow({
     where: { id },
@@ -4803,15 +4805,15 @@ app.delete("/api/music/tracks/:id/lyrics", { preHandler: requireAuth }, async (r
   });
   io.to(`ch:${track.channelId}`).emit("message:updated", await serializeMessage(updated));
   io.emit("music:updated", { action: "lyrics-deleted", trackId: id });
-  return { success: true, track: serializeMusicTrack(updated) };
+  return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
 });
 
 app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const id = Number((request.params as { id: string }).id);
-  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  const track = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, track.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐和曲谱" });
 
   const temporaryPaths: string[] = [];
   const createdPaths: string[] = [];
@@ -4874,7 +4876,7 @@ app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (reque
     createdPaths.length = 0;
     for (const page of previousPages) safeUnlinkMusicScore(page.filePath);
     io.emit("music:updated", { action: "score-updated", trackId: id });
-    return { success: true, track: serializeMusicTrack(updated) };
+    return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
   } catch (error) {
     for (const filePath of [...temporaryPaths, ...createdPaths]) {
       if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
@@ -4887,13 +4889,13 @@ app.put("/api/music/tracks/:id/score", { preHandler: requireAuth }, async (reque
 
 app.patch("/api/music/tracks/:trackId/score", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const trackId = Number((request.params as { trackId: string }).trackId);
   const body = z.object({ pageIds: z.array(z.number().int().positive()).max(20) }).parse(request.body);
   const pageIds = [...new Set(body.pageIds)];
   if (pageIds.length !== body.pageIds.length) return reply.code(400).send({ success: false, message: "歌谱排序中包含重复页面" });
-  const track = await prisma.message.findFirst({ where: { id: trackId, channel: { kind: "music" }, type: "file" } });
+  const track = await prisma.message.findFirst({ where: { id: trackId, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!track?.fileName || !isMusicFileName(track.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, track.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐和曲谱" });
   const existing = await prisma.musicScorePage.findMany({ where: { trackId }, orderBy: { pageIndex: "asc" }, select: { id: true } });
   if (existing.length !== pageIds.length || existing.some((page) => !pageIds.includes(page.id))) {
     return reply.code(400).send({ success: false, message: "歌谱页面已经变化，请刷新后重试" });
@@ -4911,20 +4913,20 @@ app.patch("/api/music/tracks/:trackId/score", { preHandler: requireAuth }, async
     });
   });
   io.emit("music:updated", { action: "score-reordered", trackId });
-  return { success: true, track: serializeMusicTrack(updated) };
+  return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
 });
 
 app.delete("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const { trackId: rawTrackId, pageId: rawPageId } = request.params as { trackId: string; pageId: string };
   const trackId = Number(rawTrackId);
   const pageId = Number(rawPageId);
   const page = await prisma.musicScorePage.findFirst({
     where: { id: pageId, trackId, track: { channel: { kind: "music" }, type: "file" } },
-    include: { track: true }
+    include: { track: { include: { sender: true } } }
   });
   if (!page || !page.track.fileName || !isMusicFileName(page.track.fileName)) return reply.code(404).send({ success: false, message: "歌谱页面不存在" });
+  if (!canManageMusicAsset(auth, page.track.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐和曲谱" });
   const remaining = await prisma.musicScorePage.findMany({ where: { trackId, id: { not: pageId } }, orderBy: { pageIndex: "asc" }, select: { id: true } });
   const updated = await prisma.$transaction(async (transaction) => {
     await transaction.musicScorePage.delete({ where: { id: pageId } });
@@ -4941,7 +4943,7 @@ app.delete("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireAuth
   });
   safeUnlinkMusicScore(page.filePath);
   io.emit("music:updated", { action: "score-page-deleted", trackId, pageId });
-  return { success: true, track: serializeMusicTrack(updated) };
+  return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
 });
 
 app.get("/api/music/tracks/:trackId/score/:pageId", { preHandler: requireMediaAuth }, async (request, reply) => {
@@ -4997,11 +4999,11 @@ app.get("/api/music/tracks/:id/stream", { preHandler: requireMediaAuth }, async 
 
 app.patch("/api/music/tracks/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const id = Number((request.params as { id: string }).id);
   const body = z.object({ name: z.string().trim().min(1).max(200) }).parse(request.body);
-  const message = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  const message = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!message?.fileName || !isMusicFileName(message.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, message.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐" });
   const extension = path.extname(message.fileName).toLowerCase();
   const requested = path.basename(body.name).replace(/\.(mp3|m4a)$/i, "").trim();
   if (!requested) return reply.code(400).send({ success: false, message: "歌曲名称不能为空" });
@@ -5012,15 +5014,15 @@ app.patch("/api/music/tracks/:id", { preHandler: requireAuth }, async (request, 
   });
   io.to(`ch:${message.channelId}`).emit("message:updated", await serializeMessage(updated));
   io.emit("music:updated", { action: "renamed", trackId: id });
-  return { success: true, track: serializeMusicTrack(updated) };
+  return { success: true, track: serializeMusicTrack(updated, 0, undefined, true) };
 });
 
 app.delete("/api/music/tracks/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  if (!canManageMusic(auth)) return reply.code(403).send({ success: false, message: "需要管理员或户部尚书权限" });
   const id = Number((request.params as { id: string }).id);
-  const message = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" } });
+  const message = await prisma.message.findFirst({ where: { id, channel: { kind: "music" }, type: "file" }, include: { sender: true } });
   if (!message?.filePath || !isMusicFileName(message.fileName)) return reply.code(404).send({ success: false, message: "歌曲不存在" });
+  if (!canManageMusicAsset(auth, message.sender.accountId)) return reply.code(403).send({ success: false, message: "只能管理自己上传的音乐" });
   await deleteMessages([message]);
   return { success: true };
 });
@@ -7421,15 +7423,13 @@ io.on("connection", async (socket: Socket) => {
     await writeLoginLog("presence_join", account.id, session, joinedAt);
   }
   const channels = await prisma.channel.findMany({
-    where: canManageMusic(auth)
-      ? {
-          OR: [
-            { kind: "music" },
-            { kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false },
-            { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }
-          ]
-        }
-      : { OR: [{ kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false }, { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }] },
+    where: {
+      OR: [
+        { kind: "music" },
+        { kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false },
+        { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }
+      ]
+    },
     select: { id: true }
   });
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));

@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.5.3";
+export const APP_VERSION = "1.5.4";
 
 export const RELEASE_DATE = "2026-07-17";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "音乐频道向所有登录成员开放浏览和上传；管理员与户部尚书可管理全部歌曲、歌词和曲谱，其他成员只能管理自己上传的内容。",
+  "个人歌单改为长按呼出分享、重命名和删除；移除歌单详情中分散且失效的旧按钮，并改用应用内重命名窗口。",
+  "聊天照片选择支持一次选择并依次上传多张图片。"
+] as const;
+
+const RELEASE_1_5_3_NOTES = [
   "修复频道、消息和成员头像的方形遮罩，纵向图片不再越过图标边界，锁标与在线圆点仍保持可见。",
   "别人分享的歌单支持稳定长按收藏，收藏成功后直接进入收藏夹，并在收藏夹中完整显示歌单卡片。",
   "经文收藏默认改为淡红标线，并提供红、橙、黄、绿、青、蓝、紫 7 种彩色预选；取消收藏会清除残留选中高亮，收藏夹移除操作新增确认提醒。"
@@ -623,9 +629,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.5.3",
+    version: "1.5.4",
     date: "2026-07-17",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.5.3",
+    date: "2026-07-17",
+    notes: RELEASE_1_5_3_NOTES
   },
   {
     version: "1.5.2",

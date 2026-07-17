@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackTitle } from "./music.js";
+import { canManageMusicAsset, canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackTitle } from "./music.js";
 
 test("music management is limited to admins and treasury officers", () => {
   assert.equal(canManageMusicRole({ isAdmin: true, canPinMessages: false }), true);
   assert.equal(canManageMusicRole({ isAdmin: false, canPinMessages: true }), true);
   assert.equal(canManageMusicRole({ isAdmin: false, canPinMessages: false }), false);
+});
+
+test("regular users manage only music assets they uploaded", () => {
+  assert.equal(canManageMusicAsset({ accountId: 1, isAdmin: true, canPinMessages: false }, 2), true);
+  assert.equal(canManageMusicAsset({ accountId: 1, isAdmin: false, canPinMessages: true }, 2), true);
+  assert.equal(canManageMusicAsset({ accountId: 1, isAdmin: false, canPinMessages: false }, 1), true);
+  assert.equal(canManageMusicAsset({ accountId: 1, isAdmin: false, canPinMessages: false }, 2), false);
+  assert.equal(canManageMusicAsset({ accountId: 1, isAdmin: false, canPinMessages: false }, null), false);
 });
 
 test("music files accept only mp3 and m4a names", () => {

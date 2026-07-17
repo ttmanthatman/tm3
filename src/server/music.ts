@@ -8,6 +8,13 @@ export function canManageMusicRole(account: { isAdmin: boolean; canPinMessages: 
   return account.isAdmin || account.canPinMessages;
 }
 
+export function canManageMusicAsset(
+  account: { accountId: number; isAdmin: boolean; canPinMessages: boolean },
+  ownerAccountId: number | null | undefined
+) {
+  return canManageMusicRole(account) || (!!ownerAccountId && ownerAccountId === account.accountId);
+}
+
 export function isMusicFileName(name?: string | null) {
   return MUSIC_EXTENSIONS.has(path.extname(name || "").toLowerCase());
 }

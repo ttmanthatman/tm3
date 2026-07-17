@@ -244,6 +244,10 @@ const musicPlaylistShareTargetId = ref<number | null>(null);
 const musicPlaylistShareDescription = ref("");
 const musicPlaylistShareBusy = ref(false);
 const musicPlaylistShareStatus = ref("");
+const musicPlaylistActionTarget = ref<MusicPlaylistDTO | null>(null);
+const musicPlaylistRenameTarget = ref<MusicPlaylistDTO | null>(null);
+const musicPlaylistRenameDraft = ref("");
+const musicPlaylistRenameBusy = ref(false);
 const musicTrackSelectionMode = ref(false);
 const selectedMusicTrackIds = ref<Set<number>>(new Set());
 const selectedMusicTrackTargetPlaylistId = ref<number | null>(null);
@@ -865,6 +869,8 @@ let favoriteLongPressTimer: number | undefined;
 let favoriteLongPressStartedAt = { x: 0, y: 0 };
 let channelLongPressTimer: number | undefined;
 let channelLongPressStartedAt = { x: 0, y: 0 };
+let musicPlaylistLongPressTimer: number | undefined;
+let musicPlaylistLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
 let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let imagePinchStart: { distance: number; scale: number } | null = null;
@@ -1355,6 +1361,7 @@ onBeforeUnmount(() => {
   clearBlankScoreLongPress();
   clearFavoriteLongPress();
   clearChannelLongPress();
+  clearMusicPlaylistLongPress();
   stopRainEffect();
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
@@ -1419,7 +1426,10 @@ const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || 
 const shareableMusicChannels = computed(() => store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false));
 const ownedMusicPlaylists = computed(() => musicPlaylists.value.filter((playlist) => playlist.isOwner));
 const canDeleteSelectedMusicTracks = computed(() =>
-  !!selectedMusicTrackIds.value.size && (!!selectedMusicPlaylist.value?.isOwner || (musicSourceKind.value === "library" && canManageMusic.value))
+  !!selectedMusicTrackIds.value.size && (
+    !!selectedMusicPlaylist.value?.isOwner ||
+    (musicSourceKind.value === "library" && [...selectedMusicTrackIds.value].every((trackId) => musicTracks.value.find((track) => track.id === trackId)?.canManage))
+  )
 );
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
@@ -5819,7 +5829,10 @@ async function selectActionMessageText() {
 }
 
 function isManageableMusicMessage(message: MessageDTO) {
-  return canManageMusic.value && isMusicChannel.value && message.type === "file" && /\.(mp3|m4a)$/i.test(message.fileName || "");
+  return isMusicChannel.value &&
+    message.type === "file" &&
+    /\.(mp3|m4a)$/i.test(message.fileName || "") &&
+    (canManageMusic.value || musicTracks.value.some((track) => track.id === message.id && track.canManage));
 }
 
 async function renameMusicTrackAction() {
@@ -7293,21 +7306,85 @@ async function createMusicPlaylist() {
   }
 }
 
-async function renameSelectedMusicPlaylist() {
-  const playlist = selectedMusicPlaylist.value;
+function clearMusicPlaylistLongPress() {
+  if (musicPlaylistLongPressTimer) window.clearTimeout(musicPlaylistLongPressTimer);
+  musicPlaylistLongPressTimer = undefined;
+}
+
+function beginMusicPlaylistLongPress(playlist: MusicPlaylistDTO, event: PointerEvent) {
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  clearMusicPlaylistLongPress();
+  musicPlaylistLongPressStartedAt = { x: event.clientX, y: event.clientY };
+  musicPlaylistLongPressTimer = window.setTimeout(() => {
+    musicPlaylistActionTarget.value = playlist;
+    suppressNextTapUntil = Date.now() + 700;
+    navigator.vibrate?.(20);
+    clearMusicPlaylistLongPress();
+  }, longPressMs);
+}
+
+function moveMusicPlaylistLongPress(event: PointerEvent) {
+  if (
+    Math.abs(event.clientX - musicPlaylistLongPressStartedAt.x) > 10 ||
+    Math.abs(event.clientY - musicPlaylistLongPressStartedAt.y) > 10
+  ) clearMusicPlaylistLongPress();
+}
+
+function openMusicPlaylistFromTap(playlist: MusicPlaylistDTO) {
+  clearMusicPlaylistLongPress();
+  if (Date.now() < suppressNextTapUntil) return;
+  selectMusicSource("playlist", playlist);
+}
+
+function closeMusicPlaylistActions() {
+  musicPlaylistActionTarget.value = null;
+}
+
+function shareMusicPlaylistAction() {
+  const playlist = musicPlaylistActionTarget.value;
+  closeMusicPlaylistActions();
+  if (playlist) openMusicPlaylistShare(playlist);
+}
+
+function beginMusicPlaylistRename() {
+  const playlist = musicPlaylistActionTarget.value;
   if (!playlist?.isOwner) return;
-  const name = prompt("歌单名称", playlist.name)?.trim();
-  if (!name || name === playlist.name) return;
+  musicPlaylistRenameTarget.value = playlist;
+  musicPlaylistRenameDraft.value = playlist.name;
+  closeMusicPlaylistActions();
+}
+
+function closeMusicPlaylistRename() {
+  if (musicPlaylistRenameBusy.value) return;
+  musicPlaylistRenameTarget.value = null;
+  musicPlaylistRenameDraft.value = "";
+}
+
+async function saveMusicPlaylistRename() {
+  const playlist = musicPlaylistRenameTarget.value;
+  const name = musicPlaylistRenameDraft.value.trim();
+  if (!playlist?.isOwner || !name || musicPlaylistRenameBusy.value) return;
+  if (name === playlist.name) {
+    closeMusicPlaylistRename();
+    return;
+  }
+  musicPlaylistRenameBusy.value = true;
   try {
-    const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}`, { method: "PATCH", body: JSON.stringify({ name }) });
+    const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name })
+    });
     musicPlaylists.value = musicPlaylists.value.map((item) => item.id === playlist.id ? result.playlist : item);
+    musicPlaylistRenameTarget.value = null;
+    musicPlaylistRenameDraft.value = "";
   } catch (error) {
     alert(error instanceof Error ? error.message : "歌单改名失败");
+  } finally {
+    musicPlaylistRenameBusy.value = false;
   }
 }
 
-async function deleteSelectedMusicPlaylist() {
-  const playlist = selectedMusicPlaylist.value;
+async function deleteMusicPlaylist(playlist: MusicPlaylistDTO | null) {
   if (!playlist?.isOwner || !confirm(`删除歌单“${playlist.name}”？聊天室中分享过的卡片将显示为已删除。`)) return;
   try {
     await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
@@ -7321,6 +7398,12 @@ async function deleteSelectedMusicPlaylist() {
   } catch (error) {
     alert(error instanceof Error ? error.message : "删除歌单失败");
   }
+}
+
+function deleteMusicPlaylistAction() {
+  const playlist = musicPlaylistActionTarget.value;
+  closeMusicPlaylistActions();
+  void deleteMusicPlaylist(playlist);
 }
 
 function openMusicPlaylistPicker() {
@@ -7448,11 +7531,6 @@ async function shareMusicPlaylist(playlist: MusicPlaylistDTO) {
   } finally {
     musicPlaylistShareBusy.value = false;
   }
-}
-
-async function shareSelectedMusicPlaylist() {
-  const playlist = selectedMusicPlaylist.value;
-  if (playlist) await shareMusicPlaylist(playlist);
 }
 
 function sharedMusicPlaylistDescription(message: MessageDTO) {
@@ -10719,10 +10797,19 @@ async function toggleVirtual(character: any) {
               <div class="music-library-section-head"><strong>我的歌单</strong><button type="button" :disabled="musicPlaylistBusy" @click="createMusicPlaylist"><Plus :size="16" />创建歌单</button></div>
               <div v-if="musicPlaylists.filter((item) => item.isOwner).length" class="music-library-cards">
                 <article v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" class="music-library-card">
-                  <button class="music-library-card-main" type="button" @click="selectMusicSource('playlist', playlist)">
+                  <button
+                    class="music-library-card-main"
+                    type="button"
+                    @pointerdown.stop="beginMusicPlaylistLongPress(playlist, $event)"
+                    @pointermove.stop="moveMusicPlaylistLongPress"
+                    @pointerup.stop="clearMusicPlaylistLongPress"
+                    @pointercancel.stop="clearMusicPlaylistLongPress"
+                    @pointerleave="clearMusicPlaylistLongPress"
+                    @contextmenu.prevent="musicPlaylistActionTarget = playlist"
+                    @click="openMusicPlaylistFromTap(playlist)"
+                  >
                     <span class="music-library-card-icon"><AudioLines :size="22" /></span><span><strong>{{ playlist.name }}</strong><small>{{ playlist.trackCount }} 首 · {{ playlist.ownerName }}</small></span><ChevronRight :size="17" />
                   </button>
-                  <button class="music-library-card-share" type="button" :aria-expanded="musicPlaylistShareTargetId === playlist.id" @click="openMusicPlaylistShare(playlist)"><Send :size="15" />分享</button>
                   <div v-if="musicPlaylistShareTargetId === playlist.id" class="music-playlist-card-share-panel">
                     <input v-model="musicPlaylistShareDescription" maxlength="500" placeholder="添加歌单介绍（可选）" aria-label="歌单介绍（可选）" />
                     <select v-model.number="musicPlaylistShareChannelId" aria-label="选择接收歌单的频道"><option :value="null">选择接收频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
@@ -10745,12 +10832,6 @@ async function toggleVirtual(character: any) {
             <template v-else>
             <div v-if="selectedMusicPlaylist?.isOwner" class="music-playlist-owner-tools">
               <button type="button" @click="openMusicPlaylistPicker"><Plus :size="15" />添加歌曲</button>
-              <button type="button" @click="renameSelectedMusicPlaylist">改名</button>
-              <button type="button" class="danger-action" @click="deleteSelectedMusicPlaylist"><Trash2 :size="14" />删除</button>
-              <input v-model="musicPlaylistShareDescription" maxlength="500" placeholder="歌单介绍（可选）" aria-label="歌单介绍（可选）" />
-              <select v-model.number="musicPlaylistShareChannelId" aria-label="分享歌单到聊天室"><option :value="null">选择分享频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
-              <button type="button" :disabled="musicPlaylistShareBusy || !musicPlaylistShareChannelId" @click="shareSelectedMusicPlaylist"><Send :size="14" />{{ musicPlaylistShareBusy ? "分享中" : "分享" }}</button>
-              <small v-if="musicPlaylistShareStatus" class="music-playlist-share-status" role="status">{{ musicPlaylistShareStatus }}</small>
             </div>
             <div class="music-playlist-tools">
               <button class="music-track-selection-toggle" type="button" :class="{ active: musicTrackSelectionMode }" :aria-pressed="musicTrackSelectionMode" @click="toggleMusicTrackSelectionMode"><CheckCircle2 :size="17" />{{ musicTrackSelectionMode ? "取消选择" : "选择" }}</button>
@@ -11315,7 +11396,7 @@ async function toggleVirtual(character: any) {
       </button>
 
       <footer v-if="!showingFavoriteSurface && isMusicChannel" class="composer music-channel-composer">
-        <button class="music-upload-button" type="button" :disabled="!canManageMusic" @click="fileInput?.click()">
+        <button class="music-upload-button" type="button" @click="fileInput?.click()">
           <FileUp :size="22" />
           <span><strong>上传音乐</strong><small>仅支持 MP3、M4A，单个文件最大 80MB</small></span>
         </button>
@@ -11350,7 +11431,7 @@ async function toggleVirtual(character: any) {
             <button v-if="canSendText" class="send-btn composer-edge-btn composer-send-btn" @click="sendText" aria-label="发送"><Send :size="19" /></button>
             <button v-else class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
             <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
-            <input ref="photoInput" class="hidden" type="file" accept="image/*" @change="handlePickedFile" />
+            <input ref="photoInput" class="hidden" type="file" accept="image/*" multiple @change="handlePickedFiles" />
           </div>
           <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
             <template v-if="activeComposerSuggestionKind === 'music'">
@@ -11518,6 +11599,37 @@ async function toggleVirtual(character: any) {
     </aside>
 
     <div v-if="showChannels || showMembers" class="scrim" @click="showChannels = false; showMembers = false"></div>
+
+    <section v-if="musicPlaylistActionTarget" class="modal-shell music-playlist-action-shell" role="dialog" aria-modal="true" aria-label="歌单操作" @click.self="closeMusicPlaylistActions">
+      <div class="small-modal music-playlist-action-modal">
+        <header class="modal-head">
+          <div><strong>{{ musicPlaylistActionTarget.name }}</strong><small>选择歌单操作</small></div>
+          <button class="icon-btn" type="button" @click="closeMusicPlaylistActions" aria-label="关闭歌单操作"><X :size="20" /></button>
+        </header>
+        <div class="message-actions-list">
+          <button type="button" @click="shareMusicPlaylistAction"><Send :size="17" />分享</button>
+          <button type="button" @click="beginMusicPlaylistRename"><FileText :size="17" />重命名</button>
+          <button type="button" class="danger" @click="deleteMusicPlaylistAction"><Trash2 :size="17" />删除</button>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="musicPlaylistRenameTarget" class="modal-shell" role="dialog" aria-modal="true" aria-label="重命名歌单" @click.self="closeMusicPlaylistRename">
+      <form class="small-modal music-playlist-rename-modal" @submit.prevent="saveMusicPlaylistRename">
+        <header class="modal-head">
+          <strong>重命名歌单</strong>
+          <button class="icon-btn" type="button" :disabled="musicPlaylistRenameBusy" @click="closeMusicPlaylistRename" aria-label="关闭重命名"><X :size="20" /></button>
+        </header>
+        <div class="form-grid modal-form">
+          <label for="music-playlist-rename-input">歌单名称</label>
+          <input id="music-playlist-rename-input" v-model="musicPlaylistRenameDraft" maxlength="80" autocomplete="off" autofocus />
+          <div class="confirm-actions">
+            <button class="mini-btn secondary" type="button" :disabled="musicPlaylistRenameBusy" @click="closeMusicPlaylistRename">取消</button>
+            <button class="primary-btn" type="submit" :disabled="musicPlaylistRenameBusy || !musicPlaylistRenameDraft.trim()">{{ musicPlaylistRenameBusy ? "保存中…" : "保存" }}</button>
+          </div>
+        </div>
+      </form>
+    </section>
 
     <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">
       <form class="small-modal" @submit.prevent="createChain">

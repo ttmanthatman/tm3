@@ -39,3 +39,28 @@ test("Bible favorites persist a validated colorful underline choice", () => {
   assert.match(server, /prisma\.bibleFavorite\.updateMany[\s\S]*?data: \{ color \}/);
   assert.match(server, /listBibleFavorites[\s\S]*?color: normalizeBibleFavoriteColor\(row\.color\)/);
 });
+
+test("the music channel is visible and uploadable for every authenticated account", () => {
+  assert.match(server, /async function canAccessChannel[\s\S]*?channel\.kind === "music"\) return true/);
+  assert.match(server, /async function canWriteChannel[\s\S]*?channel\.kind === "music"\) return true/);
+  assert.match(server, /app\.get\("\/api\/channels"[\s\S]*?\{ kind: "music" as const \}/);
+  assert.match(server, /io\.on\("connection"[\s\S]*?\{ kind: "music" \}/);
+  assert.doesNotMatch(server, /channel\?\.kind === "music" && \(!canManageMusic\(auth\)/);
+});
+
+test("music and score mutations allow global managers or the original uploader", () => {
+  for (const route of [
+    'app.patch("/api/music/tracks/:id"',
+    'app.delete("/api/music/tracks/:id"',
+    'app.put("/api/music/tracks/:id/lyrics"',
+    'app.delete("/api/music/tracks/:id/lyrics"',
+    'app.put("/api/music/tracks/:id/score"',
+    'app.patch("/api/music/tracks/:trackId/score"',
+    'app.delete("/api/music/tracks/:trackId/score/:pageId"'
+  ]) {
+    const start = server.indexOf(route);
+    assert.notEqual(start, -1, `missing ${route}`);
+    assert.match(server.slice(start, start + 3200), /canManageMusicAsset\(auth,/);
+  }
+  assert.match(server, /serializeMusicTrack[\s\S]*?canManage:/);
+});

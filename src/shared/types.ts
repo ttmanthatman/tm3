@@ -194,6 +194,7 @@ export interface ChannelDTO {
 
 export interface MusicTrackDTO {
   id: number;
+  canManage: boolean;
   title: string;
   fileName: string;
   fileSize: number;
