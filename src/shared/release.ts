@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.5.1";
+export const APP_VERSION = "1.5.2";
 
 export const RELEASE_DATE = "2026-07-17";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "圣经书房改为“经文检索 / 经文收藏”顶部标签；连续收藏经文会合并为一段，标题固定为“小故事的书房”，并新增按账号保存的字号调节。",
+  "账号设置补齐头像、昵称、密码和删除账号等自助操作；私聊两人时展示对方昵称和头像，多人私聊可生成、重选或自定义频道名，并优化锁标和在线状态层级。",
+  "输入栏仅在有文字时显示发送入口，照片原图选项移至照片操作；左右图标间距收紧，歌单分享和移动端设置/置顶窗口的细节同步优化。"
+] as const;
+
+const RELEASE_1_5_1_NOTES = [
   "歌单首页改为“全部歌曲 / 我的收藏 / 我的歌单”顶部标签，默认直接显示全部歌曲；收藏标签固定使用红色爱心。",
   "个人歌单卡片新增分享入口，可选择有发送权限的公开频道、私密频道或私聊；分享过程和结果会直接显示在页面中。",
   "修复歌单详情分享按钮缺少明确反馈的问题，并恢复播放音乐时顶栏“歌”字持续旋转。"
@@ -611,9 +617,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.5.1",
+    version: "1.5.2",
     date: "2026-07-17",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.5.1",
+    date: "2026-07-17",
+    notes: RELEASE_1_5_1_NOTES
   },
   {
     version: "1.5.0",
