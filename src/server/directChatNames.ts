@@ -50,4 +50,3 @@ export function parseDirectChatNameSuggestions(raw: string, memberNames: string[
 export function isAutomaticDirectChatName(name: string) {
   return /^私聊[：:]/.test(String(name || "").trim());
 }
-
