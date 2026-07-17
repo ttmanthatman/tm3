@@ -2100,7 +2100,6 @@ button {
   will-change: transform;
 }
 
-.app-shell.music-low-power .music-player-trigger.spinning .music-player-glyph,
 .app-shell.music-low-power .music-score-trigger.page-turning .music-score-page-glyph,
 .app-shell.music-low-power .music-title-track.scrolling,
 .app-shell.music-low-power .music-player-listener-track,
@@ -2926,38 +2925,152 @@ button {
 
 .music-library-home,
 .music-playlist-picker {
+  flex: 1;
   min-height: 0;
   padding: 12px;
   overflow-y: auto;
 }
 
-.music-library-builtins,
+.music-library-tabs {
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 92%, var(--chat-bg));
+}
+
+.music-library-tabs button {
+  min-width: 0;
+  min-height: 38px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  background: transparent;
+}
+
+.music-library-tabs button.active {
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+}
+
+.music-library-tabs button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-library-tabs button small {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: inherit;
+  font-size: 11px;
+  text-align: center;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+
+.music-library-favorite-icon {
+  color: #e11d48;
+}
+
 .music-library-cards {
   display: grid;
   gap: 8px;
 }
 
-.music-library-builtins { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-
-.music-library-builtins > button,
-.music-library-cards > button {
+.music-library-card {
   min-width: 0;
-  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 10px;
   color: var(--text);
-  text-align: left;
+  overflow: hidden;
   background: color-mix(in srgb, var(--panel) 88%, var(--chat-bg));
 }
 
-.music-library-builtins > button > span,
-.music-library-cards > button > span:not(.music-library-card-icon) { min-width: 0; display: grid; gap: 2px; }
-.music-library-builtins small,
-.music-library-cards small { color: var(--muted); font-size: 12px; }
-.music-library-cards > button > svg:last-child { margin-left: auto; }
+.music-library-card-main {
+  min-width: 0;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-align: left;
+}
+
+.music-library-card-main > span:not(.music-library-card-icon) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.music-library-card-main small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.music-library-card-main > svg:last-child { margin-left: auto; }
+
+.music-library-card-share {
+  min-height: 34px;
+  margin-right: 10px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent-dark);
+  background: var(--panel);
+}
+
+.music-playlist-card-share-panel {
+  grid-column: 1 / -1;
+  padding: 9px 10px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel);
+}
+
+.music-playlist-card-share-panel select {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 0 8px;
+  color: var(--text);
+  background: var(--panel);
+  font: inherit;
+}
+
+.music-playlist-card-share-panel button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--button-text);
+  background: var(--accent);
+}
+
+.music-playlist-card-share-panel small {
+  grid-column: 1 / -1;
+  color: var(--accent-dark);
+}
 
 .music-library-section-head {
   margin: 18px 0 8px;
@@ -2996,6 +3109,13 @@ button {
   border-radius: 7px;
   color: var(--text);
   background: var(--panel);
+}
+
+.music-playlist-share-status {
+  flex: 0 0 auto;
+  color: var(--accent-dark);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .music-playlist-picker { display: grid; align-content: start; gap: 7px; }

@@ -1,10 +1,16 @@
-export const APP_VERSION = "1.5.0";
+export const APP_VERSION = "1.5.1";
 
 export const RELEASE_DATE = "2026-07-17";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "歌单首页改为“全部歌曲 / 我的收藏 / 我的歌单”顶部标签，默认直接显示全部歌曲；收藏标签固定使用红色爱心。",
+  "个人歌单卡片新增分享入口，可选择有发送权限的公开频道、私密频道或私聊；分享过程和结果会直接显示在页面中。",
+  "修复歌单详情分享按钮缺少明确反馈的问题，并恢复播放音乐时顶栏“歌”字持续旋转。"
+] as const;
+
+const RELEASE_1_5_0_NOTES = [
   "音乐入口统一改名为“歌单”，新增账号私有歌单、批量或单曲加歌、改名、删除、手动排序，以及向公开频道、私密频道和私聊分享只读歌单卡片。",
   "播放器会按账号保存上次来源、歌曲、进度和播放模式，切歌、暂停、拖动、离开页面及播放中的每 15 秒都会同步；新用户默认随机播放，失效歌曲会从有效来源随机回退。",
   "歌曲、歌谱、聊天图片与附件、置顶附件、头像、背景和圣经查询改为长期设备缓存，使用时通过 ETag 或 Last-Modified 后台校验；完整歌曲缓存支持 Range 续播和拖动。",
@@ -605,9 +611,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.5.0",
+    version: "1.5.1",
     date: "2026-07-17",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.5.0",
+    date: "2026-07-17",
+    notes: RELEASE_1_5_0_NOTES
   },
   {
     version: "1.4.0",

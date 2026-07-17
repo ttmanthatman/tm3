@@ -74,12 +74,13 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
   assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\)\) \{[\s\S]*?width: 100%;[\s\S]*?max-width: 100%;/);
 });
 
-test("music playback freezes panning wallpaper and continuous music decoration animations", () => {
+test("music playback freezes panning wallpaper while keeping the song glyph spinning", () => {
   assert.match(app, /'music-low-power': musicPlaying && wallpaperPanActive/);
   assert.match(app, /'playback-paused': musicPlaying/);
   assert.match(app, /shouldAdvanceWallpaperPan\(\{[\s\S]*?musicPlaying: musicPlaying\.value/);
   assert.match(css, /\.wallpaper-pan-background\.ready:not\(\.playback-paused\) \{[\s\S]*?will-change: transform;/);
-  assert.match(css, /\.app-shell\.music-low-power \.music-player-trigger\.spinning \.music-player-glyph,[\s\S]*?animation: none;/);
+  assert.match(css, /\.music-player-trigger\.spinning \.music-player-glyph \{[\s\S]*?animation: musicDiscSpin/);
+  assert.doesNotMatch(css, /\.app-shell\.music-low-power \.music-player-trigger\.spinning \.music-player-glyph/);
 });
 
 test("panning wallpaper stays visible while its dimensions load and retries transient failures", () => {
@@ -509,12 +510,16 @@ test("playlist supports search, four sort modes, and manual movement controls", 
   assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto auto;/);
 });
 
-test("personal playlists use a layered library with batch add, quick add, and live sharing", () => {
-  assert.match(app, /musicPlaylistView === 'home'[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏</);
+test("personal playlists use top tabs with batch add, quick add, and visible sharing feedback", () => {
+  assert.match(app, /const musicPlaylistView = ref<"tracks" \| "playlists" \| "picker">\("tracks"\)/);
+  assert.match(app, /class="music-library-tabs" role="tablist"[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏<[\s\S]*?>我的歌单</);
+  assert.match(app, /class="music-library-favorite-icon"[\s\S]*?fill="currentColor"/);
   assert.match(app, /@click="createMusicPlaylist"[\s\S]*?创建歌单/);
   assert.match(app, /musicPlaylistView === 'picker'[\s\S]*?musicPlaylistPickerIds\.has/);
   assert.match(app, /@change="addTrackToMusicPlaylist\(track, \$event\)"/);
-  assert.match(app, /shareSelectedMusicPlaylist[\s\S]*?\/share/);
+  assert.match(app, /class="music-library-card-share"[\s\S]*?openMusicPlaylistShare\(playlist\)/);
+  assert.match(app, /v-model\.number="musicPlaylistShareChannelId"/);
+  assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?musicPlaylistShareStatus/);
   assert.match(app, /row\.message\.type === 'music_playlist'[\s\S]*?openSharedMusicPlaylist/);
 });
 

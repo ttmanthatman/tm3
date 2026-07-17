@@ -230,10 +230,13 @@ const musicOnlyFavorites = ref(false);
 const musicPlaylists = ref<MusicPlaylistDTO[]>([]);
 const musicSourceKind = ref<MusicPlaylistSourceKind>("library");
 const selectedMusicPlaylistId = ref<number | null>(null);
-const musicPlaylistView = ref<"home" | "tracks" | "picker">("home");
+const musicPlaylistView = ref<"tracks" | "playlists" | "picker">("tracks");
 const musicPlaylistPickerIds = ref<Set<number>>(new Set());
 const musicPlaylistBusy = ref(false);
 const musicPlaylistShareChannelId = ref<number | null>(null);
+const musicPlaylistShareTargetId = ref<number | null>(null);
+const musicPlaylistShareBusy = ref(false);
+const musicPlaylistShareStatus = ref("");
 const musicPlaybackStateUpdatedAt = ref("");
 const musicPlaybackServerUpdatedAt = ref("");
 let pendingRestoredMusicProgressMs = 0;
@@ -7035,6 +7038,8 @@ function selectMusicSource(kind: MusicPlaylistSourceKind, playlist?: MusicPlayli
   musicOnlyFavorites.value = kind === "favorites";
   selectedMusicPlaylistId.value = kind === "playlist" ? playlist?.id || null : null;
   musicPlaylistView.value = "tracks";
+  musicPlaylistShareTargetId.value = null;
+  musicPlaylistShareStatus.value = "";
   const tracks = kind === "playlist" ? playlist?.tracks || [] : kind === "favorites" ? favoriteMusicTracks.value : sortedMusicTracks.value;
   if (!tracks.some((track) => track.id === currentMusicTrackId.value)) {
     const next = randomMusicTrack(tracks);
@@ -7043,6 +7048,16 @@ function selectMusicSource(kind: MusicPlaylistSourceKind, playlist?: MusicPlayli
     if (next) setMusicAudioTrack(next);
   }
   persistMusicPlaybackState(true);
+}
+
+function selectMusicLibraryTab(tab: "library" | "favorites" | "playlists") {
+  if (tab === "playlists") {
+    musicPlaylistView.value = "playlists";
+    musicPlaylistShareTargetId.value = null;
+    musicPlaylistShareStatus.value = "";
+    return;
+  }
+  selectMusicSource(tab);
 }
 
 async function createMusicPlaylist() {
@@ -7079,7 +7094,7 @@ async function deleteSelectedMusicPlaylist() {
     await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
     musicPlaylists.value = musicPlaylists.value.filter((item) => item.id !== playlist.id);
     selectMusicSource("library");
-    musicPlaylistView.value = "home";
+    musicPlaylistView.value = "playlists";
   } catch (error) {
     alert(error instanceof Error ? error.message : "删除歌单失败");
   }
@@ -7135,16 +7150,37 @@ async function addTrackToMusicPlaylist(track: MusicTrackDTO, event: Event) {
   }
 }
 
-async function shareSelectedMusicPlaylist() {
-  const playlist = selectedMusicPlaylist.value;
-  const channelId = musicPlaylistShareChannelId.value;
-  if (!playlist?.isOwner || !channelId) return;
+function openMusicPlaylistShare(playlist: MusicPlaylistDTO) {
+  musicPlaylistShareTargetId.value = musicPlaylistShareTargetId.value === playlist.id ? null : playlist.id;
+  musicPlaylistShareStatus.value = "";
+  const currentChannelId = currentChannel.value?.id;
+  musicPlaylistShareChannelId.value = currentChannelId && shareableMusicChannels.value.some((channel) => channel.id === currentChannelId)
+    ? currentChannelId
+    : null;
+}
+
+async function shareMusicPlaylist(playlist: MusicPlaylistDTO) {
+  const channelId = Number(musicPlaylistShareChannelId.value);
+  if (!playlist.isOwner || !channelId || musicPlaylistShareBusy.value) {
+    if (!channelId) musicPlaylistShareStatus.value = "请先选择接收频道";
+    return;
+  }
+  musicPlaylistShareBusy.value = true;
+  musicPlaylistShareStatus.value = "分享中…";
   try {
     await api(`/api/music/playlists/${playlist.id}/share`, { method: "POST", body: JSON.stringify({ channelId }) });
-    alert("歌单已分享到聊天室");
+    const channelName = shareableMusicChannels.value.find((channel) => channel.id === channelId)?.name || "聊天室";
+    musicPlaylistShareStatus.value = `已分享到“${channelName}”`;
   } catch (error) {
-    alert(error instanceof Error ? error.message : "分享歌单失败");
+    musicPlaylistShareStatus.value = error instanceof Error ? error.message : "分享歌单失败";
+  } finally {
+    musicPlaylistShareBusy.value = false;
   }
+}
+
+async function shareSelectedMusicPlaylist() {
+  const playlist = selectedMusicPlaylist.value;
+  if (playlist) await shareMusicPlaylist(playlist);
 }
 
 function openSharedMusicPlaylist(message: MessageDTO) {
@@ -7160,7 +7196,7 @@ function openSharedMusicPlaylist(message: MessageDTO) {
 
 function toggleMusicPlaylist() {
   musicPlaylistOpen.value = !musicPlaylistOpen.value;
-  if (musicPlaylistOpen.value) musicPlaylistView.value = "home";
+  if (musicPlaylistOpen.value) selectMusicLibraryTab("library");
 }
 
 async function moveMusicPlaylistTrack(track: MusicTrackDTO, delta: number) {
@@ -10371,23 +10407,33 @@ async function toggleVirtual(character: any) {
           <div class="music-playlist-panel" @click.stop>
             <header>
               <div>
-                <button v-if="musicPlaylistView !== 'home'" class="music-playlist-back" type="button" @click="musicPlaylistView = 'home'" aria-label="返回歌单首页"><ChevronLeft :size="18" /></button>
-                <strong>{{ musicPlaylistView === 'home' ? '歌单' : musicPlaylistView === 'picker' ? '选择歌曲' : selectedMusicPlaylist?.name || (musicSourceKind === 'favorites' ? '我的收藏' : '全部歌曲') }}</strong>
-                <small>{{ musicPlaylistView === 'home' ? `${musicPlaylists.filter((item) => item.isOwner).length} 个个人歌单` : `${playableMusicTracks.length} 首` }}</small>
+                <button v-if="musicPlaylistView === 'picker'" class="music-playlist-back" type="button" @click="musicPlaylistView = 'tracks'" aria-label="返回当前歌单"><ChevronLeft :size="18" /></button>
+                <strong>{{ musicPlaylistView === 'picker' ? '选择歌曲' : '歌单' }}</strong>
+                <small>{{ musicPlaylistView === 'playlists' ? `${musicPlaylists.filter((item) => item.isOwner).length} 个个人歌单` : `${playableMusicTracks.length} 首` }}</small>
               </div>
               <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭歌单"><X :size="19" /></button>
             </header>
 
-            <div v-if="musicPlaylistView === 'home'" class="music-library-home">
-              <div class="music-library-builtins">
-                <button type="button" @click="selectMusicSource('library')"><Menu :size="21" /><span><strong>全部歌曲</strong><small>{{ musicTracks.length }} 首</small></span></button>
-                <button type="button" @click="selectMusicSource('favorites')"><Heart :size="21" fill="currentColor" /><span><strong>我的收藏</strong><small>{{ favoriteMusicTracks.length }} 首</small></span></button>
-              </div>
+            <nav v-if="musicPlaylistView !== 'picker'" class="music-library-tabs" role="tablist" aria-label="歌单分类">
+              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'tracks' && musicSourceKind === 'library' }" :aria-selected="musicPlaylistView === 'tracks' && musicSourceKind === 'library'" @click="selectMusicLibraryTab('library')"><Menu :size="18" /><span>全部歌曲</span><small>{{ musicTracks.length }}</small></button>
+              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'tracks' && musicSourceKind === 'favorites' }" :aria-selected="musicPlaylistView === 'tracks' && musicSourceKind === 'favorites'" @click="selectMusicLibraryTab('favorites')"><Heart class="music-library-favorite-icon" :size="18" fill="currentColor" /><span>我的收藏</span><small>{{ favoriteMusicTracks.length }}</small></button>
+              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'playlists' || (musicPlaylistView === 'tracks' && musicSourceKind === 'playlist') }" :aria-selected="musicPlaylistView === 'playlists' || (musicPlaylistView === 'tracks' && musicSourceKind === 'playlist')" @click="selectMusicLibraryTab('playlists')"><AudioLines :size="18" /><span>我的歌单</span><small>{{ musicPlaylists.filter((item) => item.isOwner).length }}</small></button>
+            </nav>
+
+            <div v-if="musicPlaylistView === 'playlists'" class="music-library-home">
               <div class="music-library-section-head"><strong>我的歌单</strong><button type="button" :disabled="musicPlaylistBusy" @click="createMusicPlaylist"><Plus :size="16" />创建歌单</button></div>
               <div v-if="musicPlaylists.filter((item) => item.isOwner).length" class="music-library-cards">
-                <button v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" type="button" @click="selectMusicSource('playlist', playlist)">
-                  <span class="music-library-card-icon"><AudioLines :size="22" /></span><span><strong>{{ playlist.name }}</strong><small>{{ playlist.trackCount }} 首 · {{ playlist.ownerName }}</small></span><ChevronRight :size="17" />
-                </button>
+                <article v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" class="music-library-card">
+                  <button class="music-library-card-main" type="button" @click="selectMusicSource('playlist', playlist)">
+                    <span class="music-library-card-icon"><AudioLines :size="22" /></span><span><strong>{{ playlist.name }}</strong><small>{{ playlist.trackCount }} 首 · {{ playlist.ownerName }}</small></span><ChevronRight :size="17" />
+                  </button>
+                  <button class="music-library-card-share" type="button" :aria-expanded="musicPlaylistShareTargetId === playlist.id" @click="openMusicPlaylistShare(playlist)"><Send :size="15" />分享</button>
+                  <div v-if="musicPlaylistShareTargetId === playlist.id" class="music-playlist-card-share-panel">
+                    <select v-model.number="musicPlaylistShareChannelId" aria-label="选择接收歌单的频道"><option :value="null">选择接收频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
+                    <button type="button" :disabled="musicPlaylistShareBusy || !musicPlaylistShareChannelId" @click="shareMusicPlaylist(playlist)"><Send :size="14" />{{ musicPlaylistShareBusy ? "分享中" : "发送" }}</button>
+                    <small v-if="musicPlaylistShareStatus" role="status">{{ musicPlaylistShareStatus }}</small>
+                  </div>
+                </article>
               </div>
               <p v-else class="music-playlist-empty">还没有个人歌单，点击“创建歌单”开始整理歌曲。</p>
             </div>
@@ -10405,8 +10451,9 @@ async function toggleVirtual(character: any) {
               <button type="button" @click="openMusicPlaylistPicker"><Plus :size="15" />添加歌曲</button>
               <button type="button" @click="renameSelectedMusicPlaylist">改名</button>
               <button type="button" class="danger-action" @click="deleteSelectedMusicPlaylist"><Trash2 :size="14" />删除</button>
-              <select v-model="musicPlaylistShareChannelId" aria-label="分享歌单到聊天室"><option :value="null">选择分享频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
-              <button type="button" :disabled="!musicPlaylistShareChannelId" @click="shareSelectedMusicPlaylist"><Send :size="14" />分享</button>
+              <select v-model.number="musicPlaylistShareChannelId" aria-label="分享歌单到聊天室"><option :value="null">选择分享频道</option><option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select>
+              <button type="button" :disabled="musicPlaylistShareBusy || !musicPlaylistShareChannelId" @click="shareSelectedMusicPlaylist"><Send :size="14" />{{ musicPlaylistShareBusy ? "分享中" : "分享" }}</button>
+              <small v-if="musicPlaylistShareStatus" class="music-playlist-share-status" role="status">{{ musicPlaylistShareStatus }}</small>
             </div>
             <div class="music-playlist-tools">
               <input v-model="musicPlaylistQuery" type="search" placeholder="搜索歌曲或文件名" aria-label="搜索歌单" />
