@@ -44,6 +44,8 @@ Full verification checks the public repository tree, type-checks the Vue client 
 - `src/shared/types.ts`: DTO interfaces shared by client and server.
 - `src/server/main.ts`: server process entry point for runtime configuration, listening, signals, and graceful shutdown.
 - `src/server/index.ts`: Fastify application construction, auth, channels, messages, admin endpoints, update endpoints, and attachment endpoints.
+- `src/server/routes/adminAccounts.ts`: authenticated administrator account listing, creation, update, deletion, and avatar route registration.
+- `src/server/services/accountDeletion.ts`: transactional account deletion rules that preserve historic Actors and return post-commit session/channel effects.
 - `src/server/linkPreview.ts`: safe link preview fetcher. Keep URL normalization, DNS/private-address blocking, redirect limits, response byte limits, and HTML metadata extraction behind this interface.
 - `src/server/multichar/`: autonomous virtual-role engine modules.
 - `src/server/bible/` and `src/client/bibleReferences.ts`: Bible lookup and reference parsing.

@@ -18,6 +18,8 @@ import { z } from "zod";
 import { createMulticharManager } from "./multichar/index.js";
 import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
+import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
+import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import type {
   AdminAttachmentDTO,
   AdminBackupDTO,
@@ -6636,145 +6638,25 @@ app.get("/api/channels/:id/pinned/files/:file", { preHandler: requireMediaAuth }
   return reply.send(fs.createReadStream(filePath));
 });
 
-app.get("/api/admin/accounts", { preHandler: requireAdmin }, async () => {
-  const accounts = await prisma.account.findMany({ include: { actor: true }, orderBy: { id: "asc" } });
-  return { accounts: accounts.map((a) => authDto(a)) };
-});
-
-app.post("/api/admin/accounts", { preHandler: requireAdmin }, async (request, reply) => {
-  const body = z
-    .object({
-      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
-      password: z.string().min(10).max(128),
-      displayName: z.string().min(1).max(80),
-      isAdmin: z.boolean().optional(),
-      canPinMessages: z.boolean().optional()
-    })
-    .parse(request.body);
-  try {
-    const account = await prisma.account.create({
-      data: {
-        username: body.username,
-        passwordHash: await bcrypt.hash(body.password, 12),
-        displayName: body.displayName,
-        role: body.isAdmin ? "admin" : "user",
-        canPinMessages: !!body.canPinMessages,
-        actor: { create: { kind: "human", username: body.username, displayName: body.displayName } }
+registerAdminAccountRoutes(app, {
+  prisma,
+  requireAdmin,
+  toAccountDto: authDto,
+  updateAccountAvatarFromUpload,
+  writeLoginLog,
+  disconnectSessions,
+  refreshAccountConnections,
+  deleteAccount: (input) =>
+    deleteAccountService(
+      {
+        runTransaction: (operation) =>
+          prisma.$transaction((tx) => operation(tx))
       },
-      include: { actor: true }
-    });
-    const publicChannels = await prisma.channel.findMany({ where: { isPrivate: false }, select: { id: true } });
-    await prisma.channelMember.createMany({ data: publicChannels.map((c) => ({ channelId: c.id, accountId: account.id, role: "member" })), skipDuplicates: true });
-    return { success: true, account: authDto(account) };
-  } catch {
-    return reply.code(409).send({ success: false, message: "用户名已存在" });
+      input
+    ),
+  emitAccountDeleted: (payload) => {
+    io.emit("channel:updated", payload);
   }
-});
-
-app.patch("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const id = Number((request.params as { id: string }).id);
-  const body = z
-    .object({
-      displayName: z.string().min(1).max(80).optional(),
-      isAdmin: z.boolean().optional(),
-      canPinMessages: z.boolean().optional(),
-      password: z.string().min(10).max(128).optional(),
-      avatarPath: z.string().max(255).nullable().optional()
-    })
-    .parse(request.body);
-  const current = await prisma.account.findUnique({ where: { id }, include: { actor: true } });
-  if (!current) return reply.code(404).send({ success: false, message: "用户不存在" });
-  if (body.isAdmin === false) {
-    if (id === auth.accountId) return reply.code(400).send({ success: false, message: "不能取消自己的管理员权限" });
-    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: id } } });
-    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
-  }
-  const updated = await prisma.account.update({
-    where: { id },
-    data: {
-      displayName: body.displayName,
-      avatarPath: body.avatarPath === undefined ? undefined : body.avatarPath || null,
-      role: body.isAdmin === undefined ? undefined : body.isAdmin ? "admin" : "user",
-      canPinMessages: body.canPinMessages,
-      passwordHash: body.password ? await bcrypt.hash(body.password, 12) : undefined,
-      actor:
-        body.displayName || body.avatarPath !== undefined
-          ? {
-              update: {
-                displayName: body.displayName,
-                avatarPath: body.avatarPath === undefined ? undefined : body.avatarPath || null
-              }
-            }
-          : undefined
-    },
-    include: { actor: true }
-  });
-  if (body.password) {
-    const sessionsToRevoke = await prisma.accountSession.findMany({
-      where: { accountId: id, revokedAt: null, ...(id === auth.accountId ? { id: { not: auth.sessionId } } : {}) },
-      select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
-    });
-    const revokedAt = new Date();
-    await prisma.accountSession.updateMany({
-      where: { id: { in: sessionsToRevoke.map((session) => session.id) } },
-      data: { revokedAt }
-    });
-    await Promise.all(sessionsToRevoke.map((session) => writeLoginLog("session_revoked", id, session, revokedAt)));
-    disconnectSessions(sessionsToRevoke.map((session) => session.id));
-  }
-  refreshAccountConnections(updated);
-  return { success: true, account: authDto(updated) };
-});
-
-app.delete("/api/admin/accounts/:id", { preHandler: requireAdmin }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const id = Number((request.params as { id: string }).id);
-  if (!Number.isInteger(id) || id < 1) return reply.code(400).send({ success: false, message: "用户编号无效" });
-  if (id === auth.accountId) return reply.code(400).send({ success: false, message: "不能删除当前登录的管理员账号" });
-
-  const account = await prisma.account.findUnique({
-    where: { id },
-    include: {
-      actor: true,
-      sessions: { select: { id: true } },
-      memberships: { select: { channelId: true } }
-    }
-  });
-  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
-  if (account.role === "admin") {
-    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: id } } });
-    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (account.actor) {
-      await tx.actor.update({
-        where: { id: account.actor.id },
-        data: {
-          accountId: null,
-          username: `deleted-account-${id}`,
-          displayName: `${account.displayName}（已删除用户）`,
-          avatarPath: null,
-          status: "deleted"
-        }
-      });
-    }
-    await tx.account.delete({ where: { id } });
-  });
-
-  disconnectSessions(account.sessions.map((session) => session.id));
-  io.emit("channel:updated", {
-    action: "account-deleted",
-    accountId: id,
-    channelIds: account.memberships.map((membership) => membership.channelId)
-  });
-  return { success: true };
-});
-
-app.post("/api/admin/accounts/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
-  const id = Number((request.params as { id: string }).id);
-  return updateAccountAvatarFromUpload(id, request, reply);
 });
 
 app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {
