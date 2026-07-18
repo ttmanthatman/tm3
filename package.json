@@ -34,6 +34,7 @@
     "test:migrations": "bash scripts/verify-prisma-migrations.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:e2e:local": "bash scripts/run-e2e-local.sh",
+    "test:e2e:remote": "bash scripts/run-e2e-remote.sh",
     "e2e:prepare": "tsx e2e/prepare.ts",
     "e2e:server": "tsx src/server/main.ts",
     "e2e:client": "vite --host 127.0.0.1 --port 4173 --strictPort",

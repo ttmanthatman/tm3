@@ -261,6 +261,8 @@ E2E_DATABASE_URL='mysql://<user>:<password>@127.0.0.1:3306/tm3_e2e' npm run test
 
 失败时才保留截图、trace 和视频，连同 HTML 报告写入忽略的 `output/e2e/`。重复运行会先重置数据库，不受上一次遗留数据影响。
 
+测试站的非破坏性浏览器检查与本地 E2E 完全分开：凭证只可放在被 Git 忽略且权限为 `600` 的 `.env.remote-e2e.local`，并且只允许专用账号、专用频道和精确批准的测试站域名。运行 `npm run test:e2e:remote` 前，脚本会拒绝任何其他 hostname、账号或频道；它不会 reset、seed 或直接清理数据库。失败产物仅写入忽略的 `output/e2e-remote/`。
+
 更详细的模块地图和回归检查见 [开发索引](docs/development-index.md)。
 
 ## 发布维护

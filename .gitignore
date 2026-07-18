@@ -11,6 +11,8 @@ blob-report/
 .env
 .env.*
 !.env.example
+.env.remote-e2e.local
+output/e2e-remote/
 AGENTS.local.md
 *.local.md
 .DS_Store

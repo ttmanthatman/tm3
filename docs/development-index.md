@@ -71,6 +71,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
 - `e2e/` and `playwright.config.ts`: isolated MySQL reset/seed, local Docker service, and the small critical browser smoke suite. Run with `npm run test:e2e:local`, or provide a local `E2E_DATABASE_URL` for a database named exactly `tm3_e2e`.
+- `e2e-remote/`, `playwright.remote.config.ts`, and `scripts/run-e2e-remote.sh`: a separate, non-destructive test-station smoke runner. It requires ignored local credentials, accepts only the dedicated test hostname/account/channel, blocks every other browser origin, and never invokes reset, seed, Prisma cleanup, or direct database writes.
 - `prisma/schema.prisma` and `prisma/migrations/`: the current database model and its immutable, ordered migration history.
 - `scripts/verify-prisma-migrations.sh`: guarded empty-database apply, status, schema-diff, and migration-history verification for local work and CI.
 - `public/sw.js`: service worker cache versioning.

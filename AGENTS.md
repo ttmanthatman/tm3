@@ -92,6 +92,7 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 - Run `npm run verify:full` before a commit or handoff that requires complete verification.
 - Keep CI and final pre-commit verification on `npm run verify:full`; `verify:changed` is only a local iteration shortcut.
 - Run a production build when code paths or build configuration change.
+- For UI behavior, use the existing isolated local Playwright suite; any retained-environment browser check must be a separate, non-destructive runner with an exact approved hostname and ignored local credentials.
 - Run `npm run check:public-tree` for tracked-file or publication-safety changes.
 - Run `git diff --check` before committing.
 - Do not claim a check passed unless its command completed successfully.
