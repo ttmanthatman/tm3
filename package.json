@@ -15,7 +15,9 @@
     "migrate:sqlite": "node dist/server/scripts/migrate-sqlite.js",
     "migrate:sqlite:src": "tsx src/scripts/migrate-sqlite.ts",
     "bible:import-layout": "tsx src/scripts/import-bible-layout.ts",
-    "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "check": "npm run check:client && npm run check:server",
+    "check:client": "vue-tsc --noEmit",
+    "check:server": "tsc -p tsconfig.server.json --noEmit",
     "check:public-tree": "tsx src/scripts/check-public-tree.ts",
     "check:release": "tsx src/scripts/check-release-consistency.ts",
     "check:quick": "npm run check:public-tree && npm run check",
@@ -28,9 +30,11 @@
     "test:all": "tsx src/scripts/run-tests.ts all",
     "test:public-tree": "node --import tsx --test --test-reporter=dot src/scripts/check-public-tree.test.ts",
     "test:release": "node --import tsx --test --test-reporter=dot src/scripts/release.test.ts",
+    "test:verify-changed": "node --import tsx --test --test-reporter=dot src/scripts/verify-changed.test.ts",
     "test:ui-logic": "npm run test:all",
     "test:security": "npm run test:server && npm run test:scripts && npm run test:service-worker",
     "release:prepare": "tsx src/scripts/prepare-release.ts",
+    "verify:changed": "tsx src/scripts/verify-changed.ts",
     "verify:full": "npm run check:public-tree && npm run check:release && npm run check && npm run test:all && npm run build"
   },
   "dependencies": {

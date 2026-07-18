@@ -206,7 +206,14 @@ npm start
 npm run dev
 ```
 
-提交前检查：
+开发过程中可按当前 Git 改动选择快速检查；需要覆盖相对远端主分支的全部改动时可指定基线：
+
+```bash
+npm run verify:changed
+npm run verify:changed -- --base origin/main
+```
+
+该命令会列出检测到的文件、领域和将运行的命令；遇到依赖、锁文件、TypeScript/构建配置、工作流或无法安全分类的关键文件时，会自动回退到完整验证。提交前和 CI 始终运行：
 
 ```bash
 npm run verify:full

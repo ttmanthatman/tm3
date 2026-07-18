@@ -72,12 +72,14 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 ## Validation
 
 - Run targeted tests for every changed behavior before broad checks.
+- Use `npm run verify:changed` during development to select conservative checks from the current Git diff; pass `-- --base <ref>` when comparing with another baseline.
 - Prefer the narrowest relevant test command during iteration.
 - Run type checks when TypeScript or Vue code changes.
 - Run `npm run test:client` when client state, layout logic, or interaction behavior changes.
 - Run `npm run test:server` when server, authentication, authorization, upload, or URL handling changes.
 - Run `npm run test:all` for complete test coverage without duplicate file execution.
 - Run `npm run verify:full` before a commit or handoff that requires complete verification.
+- Keep CI and final pre-commit verification on `npm run verify:full`; `verify:changed` is only a local iteration shortcut.
 - Run a production build when code paths or build configuration change.
 - Run `npm run check:public-tree` for tracked-file or publication-safety changes.
 - Run `git diff --check` before committing.

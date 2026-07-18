@@ -23,6 +23,8 @@ The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`
 
 Full verification checks the public repository tree, type-checks the Vue client and TypeScript server, runs every classified test file once, and builds the client and server. These checks do not require a database service or repository secrets, and the workflow does not deploy, migrate data, publish releases, or push changes.
 
+During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included. CI and final pre-commit validation must continue to use `verify:full`.
+
 ## Frequent Regression Areas
 
 - Mobile layout and safe areas: headers, composers, side panels, long admin/settings modals, iOS viewport height, and outside-click closing.
@@ -53,6 +55,7 @@ Full verification checks the public repository tree, type-checks the Vue client 
 - `src/server/multichar/`: autonomous virtual-role engine modules.
 - `src/server/bible/` and `src/client/bibleReferences.ts`: Bible lookup and reference parsing.
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
+- `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
 - `prisma/schema.prisma`: database schema and channel/message/pinned/AI data model.
 - `public/sw.js`: service worker cache versioning.
 
