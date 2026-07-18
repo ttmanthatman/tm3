@@ -9,6 +9,7 @@ const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue"
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
+const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
@@ -305,7 +306,7 @@ test("playback mode lives inside the playlist instead of taking header space", (
 test("music favorites persist per account and can constrain the playback queue", () => {
   assert.match(app, /class="icon-btn music-favorite-control"[\s\S]*?@click="toggleCurrentMusicFavorite"/);
   assert.match(app, /class="music-favorites-only-btn"[\s\S]*?>只播放收藏</);
-  assert.match(app, /const playableMusicTracks = computed[\s\S]*?musicPlaybackSourceKind\.value === "favorites"[\s\S]*?favoriteMusicTracks\.value/);
+  assert.match(musicPlayer, /const playableTracks = computed[\s\S]*?playbackSourceKind\.value === "favorites"[\s\S]*?options\.favoriteTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
 
@@ -327,9 +328,9 @@ test("long music titles scroll in the left side of the single-row player", () =>
 });
 
 test("manual music pause fades out within one second", () => {
-  assert.match(app, /const MUSIC_FADE_OUT_MS = 900;/);
-  assert.match(app, /function pauseMusic\(immediate = false\)[\s\S]*?musicFadeVolume[\s\S]*?audio\.pause\(\)/);
-  assert.match(app, /function playCurrentMusic\(\)[\s\S]*?cancelMusicFade\(\);[\s\S]*?musicAudio\.volume = 1;/);
+  assert.match(musicPlayer, /const MUSIC_FADE_OUT_MS = 900;/);
+  assert.match(musicPlayer, /function pause\(immediate = false\)[\s\S]*?musicFadeVolume[\s\S]*?targetAudio\.pause\(\)/);
+  assert.match(musicPlayer, /async function play\(\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = 1;/);
 });
 
 test("song control stays to the left of the font or score control", () => {
@@ -444,7 +445,8 @@ test("double-at song mentions render inline with independent playback controls",
   assert.match(app, /const mention = `@@\$\{track\.title\} `/);
   assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
   assert.match(app, /toggleMentionedMusic\(row\.message\)[\s\S]*?stopMentionedMusic\(row\.message\)/);
-  assert.match(app, /function stopMentionedMusic[\s\S]*?musicAudio\.currentTime = 0/);
+  assert.match(app, /function stopMentionedMusic[\s\S]*?stopMusic\(\)/);
+  assert.match(musicPlayer, /function stop\(\)[\s\S]*?audio\.currentTime = 0/);
   assert.match(app, /v-if="!isMentionedMusicPlaying\(row\.message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-stop[\s\S]*?music-mention-capsule-pause/);
   assert.match(css, /\.music-mention-text \.music-mention-title \{[\s\S]*?color: #ed741b;[\s\S]*?font-weight: 850;/);
   assert.match(css, /\.music-mention-capsule \{[\s\S]*?border-radius: 999px;[\s\S]*?radial-gradient[\s\S]*?box-shadow:/);
@@ -631,17 +633,19 @@ test("pinned editor is a compact single-column dialog without a visible title ba
 test("browsing a playlist leaves the active audio alone while clicking a track switches and plays it", () => {
   const sourceSelection = app.match(/function selectMusicSource\([\s\S]*?\n\}/)?.[0] ?? "";
   assert.doesNotMatch(sourceSelection, /setMusicAudioTrack|currentMusicTrackId\.value\s*=/);
-  assert.match(app, /const currentMusicTrack = computed\(\(\) => musicTracks\.value\.find/);
-  assert.match(app, /function selectMusicTrack[\s\S]*?pushMusicPlaybackHistory[\s\S]*?setMusicAudioTrack\(track\)[\s\S]*?playCurrentMusic/);
-  assert.match(app, /function shiftMusicTrack[\s\S]*?takePreviousMusicTrack/);
+  assert.match(musicPlayer, /const currentTrack = computed\(\(\) =>[\s\S]*?options\.tracks\.value\.find/);
+  assert.match(app, /function selectMusicTrack[\s\S]*?selectMusicTrackCore\(track\)/);
+  assert.match(musicPlayer, /function selectTrack[\s\S]*?pushMusicPlaybackHistory[\s\S]*?setAudioTrack\(track\)[\s\S]*?void play\(\)/);
+  assert.match(musicPlayer, /function shiftTrack[\s\S]*?takePreviousMusicTrack/);
 });
 
 test("music restores account state and defaults new listeners to shuffle", () => {
-  assert.match(app, /const musicPlaybackMode = ref<MusicPlaybackMode>\("shuffle"\)/);
-  assert.match(app, /loadMusicPlaybackState[\s\S]*?Date\.parse\(local\.updatedAt\)[\s\S]*?Date\.parse\(server\.updatedAt\)/);
-  assert.match(app, /pendingRestoredMusicProgressMs[\s\S]*?handleMusicMetadataLoaded[\s\S]*?musicAudio\.currentTime/);
-  assert.match(app, /setInterval\(\(\) => \{\s*if \(musicPlaying\.value\) persistMusicPlaybackState\(true\);\s*\}, 15_000\)/);
-  assert.match(app, /addEventListener\("seeked", handleMusicSeeked\)[\s\S]*?function handleMusicSeeked\(\)[\s\S]*?persistMusicPlaybackState\(true\)/);
+  assert.match(musicPlayer, /const playbackMode = ref<MusicPlaybackMode>\("shuffle"\)/);
+  assert.match(musicPlayer, /activateAccount[\s\S]*?Date\.parse\(local\.updatedAt\)[\s\S]*?Date\.parse\(server\.updatedAt\)/);
+  assert.match(musicPlayer, /pendingRestoredProgressMs[\s\S]*?handleMetadataLoaded[\s\S]*?audio\.currentTime/);
+  assert.match(musicPlayer, /runtime\.setInterval\(\(\) => \{\s*if \(playing\.value\) persistPlaybackState\(true\);\s*\}, MUSIC_STATE_SYNC_INTERVAL_MS\)/);
+  assert.match(musicPlayer, /function handleSeeked\(\)[\s\S]*?persistPlaybackState\(true\)/);
+  assert.match(musicPlayer, /addEventListener\("seeked", handleSeeked\)/);
 });
 
 test("playlist is composited above message water effects", () => {
@@ -709,7 +713,7 @@ test("the admin-only log workspace combines sessions, music progress, and usage 
   assert.match(app, /isLogRoute && store\.account\?\.isAdmin/);
   assert.doesNotMatch(app, /@click="openAdminPage\('loginLogs'\)"/);
   assert.match(app, /activityLogFilterOptions[\s\S]*?"session"[\s\S]*?"music"[\s\S]*?"usage"/);
-  assert.match(app, /\/api\/music\/tracks\/\$\{session\.trackId\}\/progress/);
+  assert.match(musicPlayer, /\/api\/music\/tracks\/\$\{session\.trackId\}\/progress/);
   assert.match(app, /本次在线 \{\{ activityDuration\(log\.durationMs\) \}\}/);
   assert.match(app, /当时服务器 v\{\{ log\.latestVersion \}\}/);
 });

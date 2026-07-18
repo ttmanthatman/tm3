@@ -90,7 +90,6 @@ import type {
   MessageEffectPayload,
   MusicMentionPayload,
   MusicListenerDTO,
-  MusicPlaybackStateDTO,
   MusicPlaylistDTO,
   MusicPlaylistSourceKind,
   MusicScorePageDTO,
@@ -154,26 +153,16 @@ import {
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
-import { creditedMusicListenMs, isQualifiedMusicPlay } from "@shared/musicPlayback";
-import { friendlyDeviceName, shouldWriteMusicProgress, type ActivityLogCategory, type MusicProgressState } from "@shared/activityLog";
+import { friendlyDeviceName, type ActivityLogCategory } from "@shared/activityLog";
 import {
-  bindMusicMediaSession,
   moveMusicTrack,
-  musicFadeVolume,
   musicMentionTokenAtCursor,
-  nextMusicTrackIndexForMode,
-  pushMusicPlaybackHistory,
-  shouldAdvanceMusic,
   shouldKeepMusicScoreForTrack,
-  shouldRestartOnlyTrack,
-  shouldRepeatCurrentMusic,
   shouldShowMusicScoreTrigger,
-  syncMusicMediaSession,
   sortMusicTracks,
-  takePreviousMusicTrack,
-  type MusicPlaybackMode,
   type MusicPlaylistSort
 } from "./musicPlayer";
+import { useMusicPlayer } from "./features/music/useMusicPlayer";
 
 const store = useChatStore();
 const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
@@ -227,15 +216,9 @@ const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
-const currentMusicTrackId = ref<number | null>(null);
-const musicPlaybackMode = ref<MusicPlaybackMode>("shuffle");
-const musicOnlyFavorites = ref(false);
 const musicPlaylists = ref<MusicPlaylistDTO[]>([]);
 const musicSourceKind = ref<MusicPlaylistSourceKind>("library");
 const selectedMusicPlaylistId = ref<number | null>(null);
-const musicPlaybackSourceKind = ref<MusicPlaylistSourceKind>("library");
-const musicPlaybackPlaylistId = ref<number | null>(null);
-const musicPlaybackHistoryIds = ref<number[]>([]);
 const musicPlaylistView = ref<"tracks" | "playlists" | "picker">("tracks");
 const musicPlaylistPickerIds = ref<Set<number>>(new Set());
 const musicPlaylistBusy = ref(false);
@@ -253,19 +236,12 @@ const musicTrackSelectionMode = ref(false);
 const selectedMusicTrackIds = ref<Set<number>>(new Set());
 const selectedMusicTrackTargetPlaylistId = ref<number | null>(null);
 const musicTrackBatchBusy = ref(false);
-const musicPlaybackStateUpdatedAt = ref("");
-const musicPlaybackServerUpdatedAt = ref("");
-let pendingRestoredMusicProgressMs = 0;
-let musicStateSyncTimer: number | undefined;
 const musicPlayerExpanded = ref(false);
 const musicPlayerAnchorX = ref<number | null>(null);
 const musicPlaylistOpen = ref(false);
 const musicPlaylistQuery = ref("");
 const musicPlaylistSort = ref<MusicPlaylistSort>("manual");
 const musicPlaylistReorderBusy = ref(false);
-const musicPlaying = ref(false);
-const musicLoading = ref(false);
-const musicError = ref("");
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
 const musicScoreChatCleared = ref(false);
@@ -282,25 +258,10 @@ const musicLyricsUploadBusy = ref(false);
 const musicLyricsHeaderSuppressed = ref(false);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
-const MUSIC_FADE_OUT_MS = 900;
 let musicScoreTimer: number | undefined;
-let musicAudio: HTMLAudioElement | null = null;
-let unbindMusicMediaSession: (() => void) | null = null;
-let musicFadeFrame: number | undefined;
-let musicFadeTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
 let musicListenerHeartbeatTimer: number | undefined;
 let activityConnectRetryTimer: number | undefined;
-type MusicPlaySession = {
-  trackId: number;
-  playbackId: string;
-  listenedMs: number;
-  lastMediaMs: number;
-  lastObservedAt: number;
-  lastProgressLoggedAt: number;
-  reported: boolean;
-};
-let musicPlaySession: MusicPlaySession | null = null;
 const showAdmin = ref(false);
 const showSettings = ref(false);
 const appStarting = ref(true);
@@ -1043,7 +1004,7 @@ type VoicePayload = {
 
 onMounted(async () => {
   hydratePlayedRainEffectIds();
-  initializeMusicAudio();
+  mountMusicPlayer();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   document.addEventListener("keydown", handleGlobalEscape);
   document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
@@ -1058,14 +1019,10 @@ onMounted(async () => {
     appStarting.value = false;
   }
   if (store.account) {
-    loadMusicPlaybackMode();
-    await loadMusicPlaybackState();
+    await activateMusicAccount(store.account.id);
     await loadMusicPlaylists();
     await loadMusicTracks();
     attachMusicSocket();
-    musicStateSyncTimer = window.setInterval(() => {
-      if (musicPlaying.value) persistMusicPlaybackState(true);
-    }, 15_000);
     void navigator.storage?.persist?.().catch(() => false);
   }
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
@@ -1281,7 +1238,6 @@ watch(
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
     if (accountId) {
       initializeVersionUpdateNotice(accountId);
-      loadMusicPlaybackMode();
       void loadNotificationSettings();
       void loadBibleFavorites();
     } else {
@@ -1289,10 +1245,8 @@ watch(
       bibleFavorites.value = [];
       bibleFavoritesError.value = "";
       showBibleFavorites.value = false;
-      pauseMusic();
       clearMusicScoreCache();
       musicTracks.value = [];
-      currentMusicTrackId.value = null;
       resetMusicScoreState();
       closeMusicSurface();
     }
@@ -1379,11 +1333,9 @@ onBeforeUnmount(() => {
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.off("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
-  if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
-  persistMusicPlaybackState(true);
-  disposeMusicAudio();
+  disposeMusicPlayer();
 });
 
 const currentChannel = computed(() => store.currentChannel);
@@ -1402,7 +1354,6 @@ const forwardTargetChannels = computed(() =>
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
 const selectedMusicPlaylist = computed(() => musicPlaylists.value.find((playlist) => playlist.id === selectedMusicPlaylistId.value) || null);
-const playbackMusicPlaylist = computed(() => musicPlaylists.value.find((playlist) => playlist.id === musicPlaybackPlaylistId.value) || null);
 const playlistMusicTracks = computed(() => {
   const tracks = selectedMusicPlaylist.value?.tracks || [];
   return musicPlaylistSort.value === "manual" ? tracks : sortMusicTracks(tracks, musicPlaylistSort.value);
@@ -1412,18 +1363,55 @@ const visibleMusicTracks = computed(() => {
   if (musicSourceKind.value === "favorites") return favoriteMusicTracks.value;
   return sortedMusicTracks.value;
 });
-const playableMusicTracks = computed(() => {
-  if (musicPlaybackSourceKind.value === "playlist") return playbackMusicPlaylist.value?.tracks || [];
-  if (musicPlaybackSourceKind.value === "favorites" || musicOnlyFavorites.value) return favoriteMusicTracks.value;
-  return sortedMusicTracks.value;
+const musicPlayer = useMusicPlayer({
+  tracks: musicTracks,
+  libraryTracks: sortedMusicTracks,
+  favoriteTracks: favoriteMusicTracks,
+  playlists: musicPlaylists,
+  selectedSourceKind: musicSourceKind,
+  selectedPlaylistId: selectedMusicPlaylistId,
+  scoreOpen: musicScoreOpen,
+  onCurrentTrackChanged: reconcileOpenMusicScore,
+  onListeningChanged: publishMusicListening,
+  onHeatChanged: (trackId, heat) => {
+    musicTracks.value = musicTracks.value.map((track) => track.id === trackId ? { ...track, heat } : track);
+  }
 });
-const currentMusicTrack = computed(() => musicTracks.value.find((track) => track.id === currentMusicTrackId.value) || null);
+const {
+  currentTrackId: currentMusicTrackId,
+  currentTrack: currentMusicTrack,
+  playableTracks: playableMusicTracks,
+  playbackMode: musicPlaybackMode,
+  onlyFavorites: musicOnlyFavorites,
+  playing: musicPlaying,
+  loading: musicLoading,
+  error: musicError
+} = musicPlayer.state;
+const {
+  mount: mountMusicPlayer,
+  dispose: disposeMusicPlayer,
+  handleAccountChange: handleMusicAccountChange,
+  activateAccount: activateMusicAccount,
+  persistPlaybackState: persistMusicPlaybackState,
+  cyclePlaybackMode: cycleMusicPlaybackMode,
+  playbackModeLabel: musicPlaybackModeLabel,
+  setOnlyFavorites: setMusicOnlyFavoritesCore,
+  play: playCurrentMusic,
+  pause: pauseMusic,
+  stop: stopMusic,
+  togglePlayback: toggleMusicPlayback,
+  shiftTrack: shiftMusicTrack,
+  selectTrack: selectMusicTrackCore,
+  replaceCurrentTrack: replaceCurrentMusicTrack,
+  reconcileTracks: reconcileMusicTracks,
+  handlePlaylistDeleted: handleMusicPlaylistDeleted,
+  currentPlaybackTimeMs: currentMusicPlaybackTimeMs
+} = musicPlayer.controls;
 const filteredMusicTracks = computed(() => {
   const query = musicPlaylistQuery.value.trim().toLowerCase();
   if (!query) return visibleMusicTracks.value;
   return visibleMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
 });
-const currentMusicTrackIndex = computed(() => playableMusicTracks.value.findIndex((track) => track.id === currentMusicTrack.value?.id));
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
 const shareableMusicChannels = computed(() => store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false));
 const ownedMusicPlaylists = computed(() => musicPlaylists.value.filter((playlist) => playlist.isOwner));
@@ -1465,7 +1453,11 @@ const musicPlayerAnchorStyle = computed(() => ({
   "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
 }));
 
-watch([() => currentMusicTrack.value?.title || "", musicPlaying], syncCurrentMusicMediaSession, { flush: "sync" });
+watch(
+  () => store.account?.id,
+  (accountId) => handleMusicAccountChange(accountId),
+  { immediate: true }
+);
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
 
 function clearMusicLyricsHeaderResumeTimer() {
@@ -2502,26 +2494,16 @@ async function toggleMentionedMusic(message: MessageDTO) {
     return;
   }
   musicSourceKind.value = "library";
-  musicPlaybackSourceKind.value = "library";
-  musicOnlyFavorites.value = false;
-  if (store.account?.id) localStorage.setItem(musicOnlyFavoritesStorageKey(store.account.id), "0");
   selectedMusicPlaylistId.value = null;
-  musicPlaybackPlaylistId.value = null;
-  musicPlaybackHistoryIds.value = pushMusicPlaybackHistory(musicPlaybackHistoryIds.value, currentMusicTrackId.value, track.id);
-  currentMusicTrackId.value = track.id;
-  reconcileOpenMusicScore();
   musicPlayerExpanded.value = true;
   musicPlaylistOpen.value = false;
-  setMusicAudioTrack(track);
-  await playCurrentMusic();
+  selectMusicTrackCore(track);
 }
 
 function stopMentionedMusic(message: MessageDTO) {
   const payload = musicMentionPayload(message);
   if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
-  pauseMusic(true);
-  if (musicAudio) musicAudio.currentTime = 0;
-  musicError.value = "";
+  stopMusic();
 }
 
 function isMarkdownMessage(message: MessageDTO) {
@@ -2967,15 +2949,10 @@ async function doLogin() {
         ? await register(username.value.trim(), displayName.value.trim(), password.value)
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
-    loadMusicPlaybackMode();
-    await loadMusicPlaybackState();
+    await activateMusicAccount(account.id);
     await loadMusicPlaylists();
     await loadMusicTracks();
     attachMusicSocket();
-    if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
-    musicStateSyncTimer = window.setInterval(() => {
-      if (musicPlaying.value) persistMusicPlaybackState(true);
-    }, 15_000);
     if (isAiSettingsRoute.value) {
       if (account.isAdmin) {
         await loadAiSettings();
@@ -3004,9 +2981,6 @@ async function logoutApp(revoke = true) {
   await store.logout(revoke);
   musicTracks.value = [];
   musicPlaylists.value = [];
-  currentMusicTrackId.value = null;
-  if (musicStateSyncTimer) window.clearInterval(musicStateSyncTimer);
-  musicStateSyncTimer = undefined;
 }
 
 async function switchToLinkedChannel() {
@@ -4671,7 +4645,6 @@ function handleDocumentVisibilityChange() {
   documentVisible.value = document.visibilityState === "visible";
   if (!documentVisible.value) {
     clearMusicLyricsHeaderResumeTimer();
-    persistMusicPlaybackState(true);
     stopRainEffect();
     stopDripPhysics(true);
     stopGooeyDripPhysics(true);
@@ -6687,151 +6660,8 @@ function toggleMessageFontMenu() {
   showMessageFontMenu.value = !showMessageFontMenu.value;
 }
 
-function musicPlaybackModeStorageKey(accountId: number) {
-  return `team-chat-music-playback-mode:${accountId}`;
-}
-
-function musicOnlyFavoritesStorageKey(accountId: number) {
-  return `team-chat-music-only-favorites:${accountId}`;
-}
-
-function musicPlaybackStateStorageKey(accountId: number) {
-  return `team-chat-music-playback-state:${accountId}`;
-}
-
-function parseStoredMusicPlaybackState(value: string | null): MusicPlaybackStateDTO | null {
-  if (!value) return null;
-  try {
-    const state = JSON.parse(value) as MusicPlaybackStateDTO;
-    if (!state || !["library", "favorites", "playlist"].includes(state.sourceKind)) return null;
-    if (!["playlist", "single", "shuffle"].includes(state.playbackMode)) return null;
-    return { ...state, playlistId: Number(state.playlistId) || null, trackId: Number(state.trackId) || null, progressMs: Math.max(0, Number(state.progressMs) || 0) };
-  } catch {
-    return null;
-  }
-}
-
-function applyMusicPlaybackState(state: MusicPlaybackStateDTO) {
-  musicSourceKind.value = state.sourceKind;
-  musicPlaybackSourceKind.value = state.sourceKind;
-  musicOnlyFavorites.value = state.sourceKind === "favorites";
-  selectedMusicPlaylistId.value = state.sourceKind === "playlist" ? state.playlistId : null;
-  musicPlaybackPlaylistId.value = state.sourceKind === "playlist" ? state.playlistId : null;
-  currentMusicTrackId.value = state.trackId;
-  pendingRestoredMusicProgressMs = state.progressMs;
-  musicPlaybackMode.value = state.playbackMode;
-  musicPlaybackStateUpdatedAt.value = state.updatedAt;
-}
-
-async function loadMusicPlaybackState() {
-  const accountId = store.account?.id;
-  if (!accountId) return;
-  const local = parseStoredMusicPlaybackState(localStorage.getItem(musicPlaybackStateStorageKey(accountId)));
-  const result = await api<{ state: MusicPlaybackStateDTO | null }>("/api/music/playback-state").catch(() => ({ state: null }));
-  const server = result.state;
-  if (server) musicPlaybackServerUpdatedAt.value = server.updatedAt;
-  const state = local && (!server || Date.parse(local.updatedAt) > Date.parse(server.updatedAt)) ? local : server;
-  if (state) {
-    applyMusicPlaybackState(state);
-    if (state === local) void syncMusicPlaybackState(state);
-  }
-}
-
-function musicPlaybackStateSnapshot(): MusicPlaybackStateDTO | null {
-  if (!store.account) return null;
-  const currentTrackId = currentMusicTrack.value?.id || null;
-  const currentBelongsToQueue = !currentTrackId || playableMusicTracks.value.some((track) => track.id === currentTrackId);
-  const sourceKind = currentBelongsToQueue ? musicPlaybackSourceKind.value : "library";
-  return {
-    sourceKind,
-    playlistId: sourceKind === "playlist" ? musicPlaybackPlaylistId.value : null,
-    trackId: currentTrackId,
-    progressMs: currentMusicPlaybackTimeMs(),
-    playbackMode: musicPlaybackMode.value,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function persistMusicPlaybackState(syncNow = false) {
-  const accountId = store.account?.id;
-  const state = musicPlaybackStateSnapshot();
-  if (!accountId || !state) return;
-  musicPlaybackStateUpdatedAt.value = state.updatedAt;
-  localStorage.setItem(musicPlaybackStateStorageKey(accountId), JSON.stringify(state));
-  if (syncNow) void syncMusicPlaybackState(state);
-}
-
-async function syncMusicPlaybackState(state = musicPlaybackStateSnapshot()) {
-  if (!state) return;
-  const result = await api<{ accepted: boolean; state: MusicPlaybackStateDTO }>("/api/music/playback-state", {
-    method: "PUT",
-    body: JSON.stringify({ ...state, knownUpdatedAt: musicPlaybackServerUpdatedAt.value || undefined })
-  }).catch(() => null);
-  if (!result?.state) return;
-  musicPlaybackServerUpdatedAt.value = result.state.updatedAt;
-  if (!result.accepted && !musicPlaying.value) applyMusicPlaybackState(result.state);
-}
-
-function loadMusicPlaybackMode() {
-  const accountId = store.account?.id;
-  if (!accountId) return;
-  const savedMode = localStorage.getItem(musicPlaybackModeStorageKey(accountId));
-  musicPlaybackMode.value = savedMode === "single" || savedMode === "playlist" ? savedMode : "shuffle";
-  musicOnlyFavorites.value = localStorage.getItem(musicOnlyFavoritesStorageKey(accountId)) === "1";
-  if (musicOnlyFavorites.value) {
-    musicSourceKind.value = "favorites";
-    musicPlaybackSourceKind.value = "favorites";
-  }
-}
-
-function setMusicPlaybackMode(mode: MusicPlaybackMode) {
-  musicPlaybackMode.value = mode;
-  if (store.account?.id) localStorage.setItem(musicPlaybackModeStorageKey(store.account.id), mode);
-  persistMusicPlaybackState(true);
-}
-
-function cycleMusicPlaybackMode() {
-  const modes: MusicPlaybackMode[] = ["playlist", "single", "shuffle"];
-  setMusicPlaybackMode(modes[(modes.indexOf(musicPlaybackMode.value) + 1) % modes.length]);
-}
-
-function musicPlaybackModeLabel(mode = musicPlaybackMode.value) {
-  if (mode === "single") return "单曲循环";
-  if (mode === "shuffle") return "随机播放";
-  return "列表循环";
-}
-
 function setMusicOnlyFavorites(onlyFavorites: boolean) {
-  const previousTrackId = currentMusicTrackId.value;
-  const continuePlaying = musicPlaying.value;
-  musicOnlyFavorites.value = onlyFavorites;
-  musicSourceKind.value = onlyFavorites ? "favorites" : "library";
-  musicPlaybackSourceKind.value = onlyFavorites ? "favorites" : "library";
-  selectedMusicPlaylistId.value = null;
-  musicPlaybackPlaylistId.value = null;
-  const accountId = store.account?.id;
-  if (accountId) localStorage.setItem(musicOnlyFavoritesStorageKey(accountId), onlyFavorites ? "1" : "0");
-
-  const availableTracks = onlyFavorites ? favoriteMusicTracks.value : musicTracks.value;
-  const previousTrack = availableTracks.find((track) => track.id === previousTrackId);
-  if (previousTrack) {
-    persistMusicPlaybackState(true);
-    return;
-  }
-
-  const track = randomMusicTrack(availableTracks);
-  if (!track) {
-    currentMusicTrackId.value = null;
-    pauseMusic(true);
-    persistMusicPlaybackState(true);
-    return;
-  }
-  currentMusicTrackId.value = track.id;
-  pendingRestoredMusicProgressMs = 0;
-  reconcileOpenMusicScore();
-  setMusicAudioTrack(track);
-  if (continuePlaying) void playCurrentMusic();
-  persistMusicPlaybackState(true);
+  setMusicOnlyFavoritesCore(onlyFavorites);
 }
 
 function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
@@ -6859,10 +6689,7 @@ async function toggleCurrentMusicFavorite() {
         pauseMusic(true);
       } else {
         const continuePlaying = musicPlaying.value;
-        currentMusicTrackId.value = next.id;
-        reconcileOpenMusicScore();
-        setMusicAudioTrack(next);
-        if (continuePlaying) await playCurrentMusic();
+        replaceCurrentMusicTrack(next, continuePlaying);
       }
     }
   } catch (error) {
@@ -6871,363 +6698,9 @@ async function toggleCurrentMusicFavorite() {
   }
 }
 
-function musicStreamUrl(track: MusicTrackDTO) {
-  return `/api/music/tracks/${track.id}/stream?token=${encodeURIComponent(getToken())}`;
-}
-
-async function primeMusicTrackCache(track: MusicTrackDTO) {
-  if (!("serviceWorker" in navigator)) return;
-  const registration = await navigator.serviceWorker.ready.catch(() => null);
-  registration?.active?.postMessage({ type: "CACHE_RESOURCE", url: musicStreamUrl(track) });
-}
-
-function initializeMusicAudio() {
-  if (musicAudio) return;
-  musicAudio = new Audio();
-  musicAudio.preload = "metadata";
-  musicAudio.addEventListener("play", handleMusicPlay);
-  musicAudio.addEventListener("pause", handleMusicPause);
-  musicAudio.addEventListener("ended", handleMusicEnded);
-  musicAudio.addEventListener("error", handleMusicError);
-  musicAudio.addEventListener("waiting", handleMusicWaiting);
-  musicAudio.addEventListener("canplay", handleMusicCanPlay);
-  musicAudio.addEventListener("timeupdate", handleMusicTimeUpdate);
-  musicAudio.addEventListener("seeking", handleMusicSeeking);
-  musicAudio.addEventListener("seeked", handleMusicSeeked);
-  musicAudio.addEventListener("loadedmetadata", handleMusicMetadataLoaded);
-  initializeMusicMediaSession();
-}
-
-function initializeMusicMediaSession() {
-  if (!("mediaSession" in navigator)) return;
-  unbindMusicMediaSession?.();
-  unbindMusicMediaSession = bindMusicMediaSession(navigator.mediaSession, {
-    play: () => void playCurrentMusic(),
-    pause: () => pauseMusic(true),
-    previousTrack: () => void shiftMusicTrack(-1),
-    nextTrack: () => void shiftMusicTrack(1)
-  });
-  syncCurrentMusicMediaSession();
-}
-
-function syncCurrentMusicMediaSession() {
-  if (!("mediaSession" in navigator) || typeof MediaMetadata === "undefined") return;
-  syncMusicMediaSession(
-    navigator.mediaSession,
-    { title: currentMusicTrack.value?.title || "", playing: musicPlaying.value },
-    (metadata) => new MediaMetadata(metadata)
-  );
-}
-
-function cancelMusicFade(resetVolume = true) {
-  if (musicFadeFrame !== undefined) window.cancelAnimationFrame(musicFadeFrame);
-  if (musicFadeTimer !== undefined) window.clearTimeout(musicFadeTimer);
-  musicFadeFrame = undefined;
-  musicFadeTimer = undefined;
-  if (resetVolume && musicAudio) musicAudio.volume = 1;
-}
-
-function disposeMusicAudio() {
-  if (!musicAudio) return;
-  unbindMusicMediaSession?.();
-  unbindMusicMediaSession = null;
-  if ("mediaSession" in navigator) {
-    navigator.mediaSession.playbackState = "none";
-    navigator.mediaSession.metadata = null;
-  }
-  cancelMusicFade();
-  musicAudio.pause();
-  musicAudio.removeEventListener("play", handleMusicPlay);
-  musicAudio.removeEventListener("pause", handleMusicPause);
-  musicAudio.removeEventListener("ended", handleMusicEnded);
-  musicAudio.removeEventListener("error", handleMusicError);
-  musicAudio.removeEventListener("waiting", handleMusicWaiting);
-  musicAudio.removeEventListener("canplay", handleMusicCanPlay);
-  musicAudio.removeEventListener("timeupdate", handleMusicTimeUpdate);
-  musicAudio.removeEventListener("seeking", handleMusicSeeking);
-  musicAudio.removeEventListener("seeked", handleMusicSeeked);
-  musicAudio.removeEventListener("loadedmetadata", handleMusicMetadataLoaded);
-  musicAudio.removeAttribute("src");
-  musicAudio.load();
-  musicAudio = null;
-}
-
-function handleMusicPlay() {
-  musicPlaying.value = true;
-  musicLoading.value = false;
-  musicError.value = "";
-  prepareMusicPlaySession();
-  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "started");
-  publishMusicListening();
-  persistMusicPlaybackState(true);
-}
-
-function handleMusicPause() {
-  musicPlaying.value = false;
-  musicLoading.value = false;
-  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "paused");
-  resetMusicPlayObservation();
-  publishMusicListening();
-  persistMusicPlaybackState(true);
-}
-
-function handleMusicMetadataLoaded() {
-  if (!musicAudio || pendingRestoredMusicProgressMs <= 0 || !Number.isFinite(musicAudio.duration)) return;
-  musicAudio.currentTime = Math.min(pendingRestoredMusicProgressMs / 1000, Math.max(0, musicAudio.duration - 0.25));
-  pendingRestoredMusicProgressMs = 0;
-  resetMusicPlayObservation();
-}
-
-function handleMusicWaiting() {
-  musicLoading.value = true;
-  resetMusicPlayObservation();
-}
-
-function handleMusicCanPlay() {
-  musicLoading.value = false;
-  resetMusicPlayObservation();
-}
-
-function beginMusicPlaySession(track: MusicTrackDTO) {
-  musicPlaySession = {
-    trackId: track.id,
-    playbackId: crypto.randomUUID(),
-    listenedMs: 0,
-    lastMediaMs: Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000)),
-    lastObservedAt: performance.now(),
-    lastProgressLoggedAt: Number.NEGATIVE_INFINITY,
-    reported: false
-  };
-}
-
-function prepareMusicPlaySession() {
-  const track = currentMusicTrack.value;
-  if (!track || !musicAudio) return;
-  if (!musicPlaySession || musicPlaySession.trackId !== track.id || musicAudio.ended) beginMusicPlaySession(track);
-  else resetMusicPlayObservation();
-}
-
-function resetMusicPlayObservation() {
-  if (!musicPlaySession || !musicAudio) return;
-  musicPlaySession.lastMediaMs = Math.max(0, Math.round(musicAudio.currentTime * 1000));
-  musicPlaySession.lastObservedAt = performance.now();
-}
-
-function handleMusicSeeking() {
-  resetMusicPlayObservation();
-}
-
-function handleMusicSeeked() {
-  resetMusicPlayObservation();
-  persistMusicPlaybackState(true);
-}
-
-function handleMusicTimeUpdate() {
-  const session = musicPlaySession;
-  const audio = musicAudio;
-  if (!session || !audio || session.trackId !== currentMusicTrack.value?.id) return;
-  const now = performance.now();
-  const currentMediaMs = Math.max(0, Math.round(audio.currentTime * 1000));
-  if (!audio.paused && !audio.seeking && audio.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-    session.listenedMs += creditedMusicListenMs(session.lastMediaMs, currentMediaMs, now - session.lastObservedAt);
-  }
-  session.lastMediaMs = currentMediaMs;
-  session.lastObservedAt = now;
-  void reportMusicProgress(session, audio, "progress", now);
-  void reportQualifiedMusicPlay(session, audio.duration);
-}
-
-async function reportMusicProgress(session: MusicPlaySession, audio: HTMLAudioElement, state: MusicProgressState, now = performance.now()) {
-  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
-  if (!shouldWriteMusicProgress(state, now - session.lastProgressLoggedAt)) return;
-  session.lastProgressLoggedAt = now;
-  const durationMs = Math.max(1, Math.round(audio.duration * 1000));
-  const progressMs = Math.min(durationMs, Math.max(0, Math.round(audio.currentTime * 1000)));
-  const listenedMs = Math.min(durationMs, Math.max(0, Math.ceil(session.listenedMs)));
-  await api(`/api/music/tracks/${session.trackId}/progress`, {
-    method: "POST",
-    body: JSON.stringify({ playbackId: session.playbackId, state, progressMs, listenedMs, durationMs, appVersion: APP_VERSION })
-  }).catch(() => undefined);
-}
-
-async function reportQualifiedMusicPlay(session: MusicPlaySession, durationSeconds: number) {
-  if (session.reported || !Number.isFinite(durationSeconds)) return;
-  const durationMs = Math.round(durationSeconds * 1000);
-  const listenedMs = Math.min(durationMs, Math.ceil(session.listenedMs));
-  if (!isQualifiedMusicPlay(durationMs, listenedMs)) return;
-  session.reported = true;
-  try {
-    const result = await api<{ heat: number }>(`/api/music/tracks/${session.trackId}/play`, {
-      method: "POST",
-      body: JSON.stringify({ playbackId: session.playbackId, durationMs, listenedMs })
-    });
-    if (Number.isFinite(result.heat)) {
-      musicTracks.value = musicTracks.value.map((track) => (track.id === session.trackId ? { ...track, heat: result.heat } : track));
-    }
-  } catch {
-    if (musicPlaySession === session) session.reported = false;
-  }
-}
-
-function currentMusicPlaybackTimeMs() {
-  return Math.max(0, Math.round((musicAudio?.currentTime || 0) * 1000));
-}
-
-function handleMusicError() {
-  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "error");
-  musicPlaying.value = false;
-  musicLoading.value = false;
-  musicError.value = "歌曲暂时无法播放";
-  publishMusicListening();
-}
-
-function setMusicAudioTrack(track: MusicTrackDTO) {
-  initializeMusicAudio();
-  void primeMusicTrackCache(track);
-  if (!musicAudio || musicAudio.dataset.trackId === String(track.id)) return;
-  if (musicPlaySession && musicAudio.dataset.trackId) void reportMusicProgress(musicPlaySession, musicAudio, "changed");
-  cancelMusicFade();
-  musicAudio.src = musicStreamUrl(track);
-  musicAudio.dataset.trackId = String(track.id);
-  musicAudio.load();
-  beginMusicPlaySession(track);
-}
-
-async function playCurrentMusic() {
-  const track = currentMusicTrack.value;
-  if (!track) {
-    musicError.value = "歌单还是空的";
-    return;
-  }
-  setMusicAudioTrack(track);
-  if (!musicAudio) return;
-  cancelMusicFade();
-  musicAudio.volume = 1;
-  prepareMusicPlaySession();
-  musicLoading.value = true;
-  musicError.value = "";
-  try {
-    await musicAudio.play();
-    musicPlaying.value = true;
-    musicLoading.value = false;
-  } catch (error) {
-    musicLoading.value = false;
-    musicPlaying.value = false;
-    musicError.value = error instanceof Error && error.name === "NotAllowedError" ? "请再次点击播放" : "歌曲暂时无法播放";
-  }
-}
-
-function pauseMusic(immediate = false) {
-  const audio = musicAudio;
-  if (!audio) return;
-  cancelMusicFade();
-  if (immediate || audio.paused) {
-    audio.pause();
-    audio.volume = 1;
-    musicPlaying.value = false;
-    musicLoading.value = false;
-    publishMusicListening();
-    return;
-  }
-  musicPlaying.value = false;
-  musicLoading.value = false;
-  publishMusicListening();
-  const startedAt = performance.now();
-  const animate = (now: number) => {
-    if (audio !== musicAudio) return;
-    audio.volume = musicFadeVolume((now - startedAt) / MUSIC_FADE_OUT_MS);
-    if (audio.volume > 0) musicFadeFrame = window.requestAnimationFrame(animate);
-  };
-  const finish = () => {
-    if (audio !== musicAudio) return;
-    cancelMusicFade(false);
-    audio.volume = 0;
-    audio.pause();
-    audio.volume = 1;
-  };
-  musicFadeFrame = window.requestAnimationFrame(animate);
-  musicFadeTimer = window.setTimeout(finish, MUSIC_FADE_OUT_MS);
-}
-
-function toggleMusicPlayback() {
-  if (musicPlaying.value) pauseMusic();
-  else void playCurrentMusic();
-}
-
-async function shiftMusicTrack(delta: number, continuePlaying = musicPlaying.value) {
-  if (delta < 0) {
-    const previous = takePreviousMusicTrack(musicPlaybackHistoryIds.value, musicTracks.value.map((track) => track.id));
-    musicPlaybackHistoryIds.value = previous.history;
-    if (previous.trackId) {
-      const track = musicTracks.value.find((item) => item.id === previous.trackId);
-      if (!track) return;
-      currentMusicTrackId.value = track.id;
-      pendingRestoredMusicProgressMs = 0;
-      reconcileOpenMusicScore();
-      setMusicAudioTrack(track);
-      musicError.value = "";
-      if (continuePlaying) await playCurrentMusic();
-      persistMusicPlaybackState(true);
-      return;
-    }
-  }
-  if (!playableMusicTracks.value.length) return;
-  if (shouldRestartOnlyTrack(playableMusicTracks.value.length, delta)) {
-    const track = playableMusicTracks.value[0];
-    currentMusicTrackId.value = track.id;
-    pendingRestoredMusicProgressMs = 0;
-    setMusicAudioTrack(track);
-    if (musicAudio) musicAudio.currentTime = 0;
-    beginMusicPlaySession(track);
-    musicError.value = "";
-    await playCurrentMusic();
-    persistMusicPlaybackState(true);
-    return;
-  }
-  const index = currentMusicTrackIndex.value >= 0 ? currentMusicTrackIndex.value : 0;
-  const nextIndex = nextMusicTrackIndexForMode(playableMusicTracks.value.length, index, delta, musicPlaybackMode.value);
-  const track = playableMusicTracks.value[nextIndex];
-  if (delta > 0) {
-    musicPlaybackHistoryIds.value = pushMusicPlaybackHistory(musicPlaybackHistoryIds.value, currentMusicTrackId.value, track.id);
-  }
-  currentMusicTrackId.value = track.id;
-  pendingRestoredMusicProgressMs = 0;
-  reconcileOpenMusicScore();
-  setMusicAudioTrack(track);
-  musicError.value = "";
-  if (continuePlaying) await playCurrentMusic();
-  persistMusicPlaybackState(true);
-}
-
-function handleMusicEnded() {
-  cancelMusicFade();
-  musicPlaying.value = false;
-  if (musicPlaySession && musicAudio) void reportMusicProgress(musicPlaySession, musicAudio, "ended");
-  publishMusicListening();
-  if (shouldRepeatCurrentMusic(musicPlaybackMode.value, musicScoreOpen.value) && currentMusicTrack.value) {
-    if (musicAudio) musicAudio.currentTime = 0;
-    beginMusicPlaySession(currentMusicTrack.value);
-    void playCurrentMusic();
-  } else if (shouldAdvanceMusic(musicPlaybackMode.value, musicScoreOpen.value) && playableMusicTracks.value.length) {
-    void shiftMusicTrack(1, true);
-  }
-}
-
 function selectMusicTrack(track: MusicTrackDTO) {
-  musicPlaybackHistoryIds.value = pushMusicPlaybackHistory(musicPlaybackHistoryIds.value, currentMusicTrackId.value, track.id);
-  musicPlaybackSourceKind.value = musicSourceKind.value;
-  musicPlaybackPlaylistId.value = musicSourceKind.value === "playlist" ? selectedMusicPlaylistId.value : null;
-  musicOnlyFavorites.value = musicSourceKind.value === "favorites";
-  if (store.account?.id) {
-    localStorage.setItem(musicOnlyFavoritesStorageKey(store.account.id), musicOnlyFavorites.value ? "1" : "0");
-  }
-  currentMusicTrackId.value = track.id;
-  pendingRestoredMusicProgressMs = 0;
-  reconcileOpenMusicScore();
   musicPlaylistOpen.value = false;
-  setMusicAudioTrack(track);
-  void playCurrentMusic();
-  persistMusicPlaybackState(true);
+  selectMusicTrackCore(track);
 }
 
 function openMusicPlayer(event?: MouseEvent) {
@@ -7248,12 +6721,6 @@ function openMusicPlayer(event?: MouseEvent) {
   if (!musicPlaying.value) void playCurrentMusic();
 }
 
-function randomMusicTrack(tracks: MusicTrackDTO[], excludeId?: number | null) {
-  if (!tracks.length) return null;
-  const candidates = tracks.length > 1 && excludeId ? tracks.filter((track) => track.id !== excludeId) : tracks;
-  return candidates[Math.floor(Math.random() * candidates.length)] || tracks[0];
-}
-
 async function loadMusicPlaylists() {
   if (!store.account) return;
   const result = await api<{ playlists: MusicPlaylistDTO[] }>("/api/music/playlists").catch(() => ({ playlists: [] }));
@@ -7265,7 +6732,6 @@ async function loadMusicPlaylists() {
     else {
       musicSourceKind.value = "library";
       selectedMusicPlaylistId.value = null;
-      pendingRestoredMusicProgressMs = 0;
     }
   }
 }
@@ -7399,10 +6865,7 @@ async function deleteMusicPlaylist(playlist: MusicPlaylistDTO | null) {
   try {
     await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
     musicPlaylists.value = musicPlaylists.value.filter((item) => item.id !== playlist.id);
-    if (musicPlaybackPlaylistId.value === playlist.id) {
-      musicPlaybackSourceKind.value = "library";
-      musicPlaybackPlaylistId.value = null;
-    }
+    handleMusicPlaylistDeleted(playlist.id);
     selectMusicSource("library");
     musicPlaylistView.value = "playlists";
   } catch (error) {
@@ -7623,8 +7086,6 @@ function closeMusicSurface() {
 
 async function loadMusicTracks() {
   if (!store.account) return;
-  const previousId = currentMusicTrackId.value;
-  const wasPlaying = musicPlaying.value;
   try {
     const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
     musicTracks.value = result.tracks;
@@ -7638,26 +7099,7 @@ async function loadMusicTracks() {
       trackCount: playlist.tracks.filter((track) => byId.has(track.id)).length
     }));
     void preloadMusicScorePages(result.tracks);
-    if (previousId && byId.has(previousId)) {
-      currentMusicTrackId.value = previousId;
-      reconcileOpenMusicScore();
-    } else {
-      if (wasPlaying) pauseMusic(true);
-      const availableTracks = playableMusicTracks.value.length
-        ? playableMusicTracks.value
-        : musicSourceKind.value === "library" ? result.tracks : [];
-      currentMusicTrackId.value = randomMusicTrack(availableTracks, previousId)?.id || null;
-      pendingRestoredMusicProgressMs = 0;
-      reconcileOpenMusicScore();
-      if (musicAudio) {
-        musicAudio.removeAttribute("src");
-        delete musicAudio.dataset.trackId;
-        musicAudio.load();
-      }
-    }
-    const restoredTrack = currentMusicTrack.value;
-    if (restoredTrack) setMusicAudioTrack(restoredTrack);
-    if (!pendingRestoredMusicProgressMs) persistMusicPlaybackState(false);
+    reconcileMusicTracks();
   } catch (error) {
     musicError.value = error instanceof Error ? error.message : "歌单加载失败";
   }
@@ -7672,12 +7114,7 @@ function handleMusicUpdated(event?: { action?: string; trackId?: number; heat?: 
 }
 
 function handleMusicPlaylistUpdated(event?: { playlistId?: number; deleted?: boolean }) {
-  if (event?.deleted && event.playlistId === musicPlaybackPlaylistId.value) {
-    musicPlaybackSourceKind.value = "library";
-    musicPlaybackPlaylistId.value = null;
-    musicOnlyFavorites.value = false;
-    persistMusicPlaybackState(true);
-  }
+  if (event?.deleted && Number.isFinite(event.playlistId)) handleMusicPlaylistDeleted(Number(event.playlistId));
   void loadMusicPlaylists();
 }
 

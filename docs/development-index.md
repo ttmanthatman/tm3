@@ -37,6 +37,7 @@ Full verification checks the public repository tree, type-checks the Vue client 
 ## Module Map
 
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, admin, settings, modals, composer, effects, and release UI.
+- `src/client/features/music/useMusicPlayer.ts`: music playback queue, current track, playback mode, audio element, progress restoration/reporting, Media Session, account-scoped playback persistence, and playback timer lifecycle.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
 - `src/client/api.ts`: auth token storage and fetch wrapper.
@@ -54,6 +55,14 @@ Full verification checks the public repository tree, type-checks the Vue client 
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `prisma/schema.prisma`: database schema and channel/message/pinned/AI data model.
 - `public/sw.js`: service worker cache versioning.
+
+## Music Player State Ownership
+
+- Track and playlist data: `App.vue` still loads and mutates the library and playlists; the composable consumes those collections as its playback queue inputs.
+- Current playback source, track, progress, mode, random history, Media Session, server playback/progress synchronization, playback timers, page-exit persistence, and the audio element lifecycle belong to `useMusicPlayer`.
+- Favorite filtering is split deliberately: the composable owns the account-scoped “only favorites” playback constraint, while `App.vue` keeps favorite mutation and its UI.
+- Lyrics, score pages, their UI timers, player/playlist dialogs, and playlist management windows stay in `App.vue` for the second extraction phase.
+- Music listener presence remains with the shared music/Bible socket heartbeat in `App.vue`; separating that combined activity lifecycle is also second-phase work.
 
 ## UI Change Checklist
 
