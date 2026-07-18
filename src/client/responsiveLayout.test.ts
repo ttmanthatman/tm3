@@ -7,7 +7,10 @@ const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
-const server = fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8");
+const server = [
+  fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
+].join("\n");
 
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);

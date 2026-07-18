@@ -3,6 +3,8 @@ import fs from "node:fs";
 import test from "node:test";
 
 const server = fs.readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const musicRoutes = fs.readFileSync(new URL("./routes/music.ts", import.meta.url), "utf8");
+const musicService = fs.readFileSync(new URL("./services/musicService.ts", import.meta.url), "utf8");
 const schema = fs.readFileSync(new URL("../../prisma/schema.prisma", import.meta.url), "utf8");
 
 test("personal playlists keep ordered music references and account playback state", () => {
@@ -12,23 +14,23 @@ test("personal playlists keep ordered music references and account playback stat
 });
 
 test("playlist routes enforce ownership, valid music tracks, and chat-only sharing", () => {
-  assert.match(server, /app\.post\("\/api\/music\/playlists"[\s\S]*?\$\{account\.displayName\}的歌单[\s\S]*?while \(names\.has\(name\)\)/);
-  assert.match(server, /app\.put\("\/api\/music\/playlists\/:id\/tracks"[\s\S]*?playlist\.accountId !== auth\.accountId[\s\S]*?channel: \{ kind: "music" \}/);
-  assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?channel\.kind !== "standard" && channel\.kind !== "direct"/);
-  assert.match(server, /type: "music_playlist"[\s\S]*?musicPlaylistShare\.create/);
+  assert.match(musicRoutes, /app\.post\("\/api\/music\/playlists"[\s\S]*?\$\{account\.displayName\}的歌单[\s\S]*?while \(names\.has\(name\)\)/);
+  assert.match(musicRoutes, /app\.put\("\/api\/music\/playlists\/:id\/tracks"[\s\S]*?playlist\.accountId !== auth\.accountId[\s\S]*?channel: \{ kind: "music" \}/);
+  assert.match(musicRoutes, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?channel\.kind !== "standard" && channel\.kind !== "direct"/);
+  assert.match(musicRoutes, /type: "music_playlist"[\s\S]*?musicPlaylistShare\.create/);
 });
 
 test("playback state validates shared playlist access and rejects stale writers", () => {
-  assert.match(server, /app\.put\("\/api\/music\/playback-state"[\s\S]*?knownUpdatedAt[\s\S]*?accepted: false/);
-  assert.match(server, /body\.sourceKind === "playlist"[\s\S]*?canAccessMusicPlaylist/);
-  assert.match(server, /body\.sourceKind === "favorites"[\s\S]*?musicFavorite\.findUnique/);
-  assert.match(server, /app\.delete\("\/api\/music\/playlists\/:id"[\s\S]*?musicPlaybackState\.updateMany[\s\S]*?sourceKind: "library"/);
+  assert.match(musicRoutes, /app\.put\("\/api\/music\/playback-state"[\s\S]*?knownUpdatedAt[\s\S]*?accepted: false/);
+  assert.match(musicRoutes, /body\.sourceKind === "playlist"[\s\S]*?canAccessPlaylist/);
+  assert.match(musicRoutes, /body\.sourceKind === "favorites"[\s\S]*?musicFavorite\.findUnique/);
+  assert.match(musicRoutes, /app\.delete\("\/api\/music\/playlists\/:id"[\s\S]*?musicPlaybackState\.updateMany[\s\S]*?sourceKind: "library"/);
 });
 
 test("media and Bible responses expose conditional validators", () => {
   assert.match(server, /function applyFileValidation[\s\S]*?ETag[\s\S]*?Last-Modified[\s\S]*?private, no-cache/);
   assert.match(server, /api\/bible\/chapter[\s\S]*?applyJsonValidation/);
-  assert.match(server, /api\/music\/tracks\/:id\/stream[\s\S]*?applyFileValidation/);
+  assert.match(musicRoutes, /api\/music\/tracks\/:id\/stream[\s\S]*?applyFileValidation/);
   assert.match(server, /app\.get\("\/avatars\/:file"[\s\S]*?applyFileValidation/);
   assert.match(server, /app\.get<\{ Params: \{ kit: string; file: string \} \}>\("\/api\/parallax\/:kit\/:file"[\s\S]*?applyFileValidation/);
 });
@@ -58,9 +60,14 @@ test("music and score mutations allow global managers or the original uploader",
     'app.patch("/api/music/tracks/:trackId/score"',
     'app.delete("/api/music/tracks/:trackId/score/:pageId"'
   ]) {
-    const start = server.indexOf(route);
+    const start = musicRoutes.indexOf(route);
     assert.notEqual(start, -1, `missing ${route}`);
-    assert.match(server.slice(start, start + 3200), /canManageMusicAsset\(auth,/);
+    assert.match(musicRoutes.slice(start, start + 3200), /canManageMusicAsset\(auth,/);
   }
-  assert.match(server, /serializeMusicTrack[\s\S]*?canManage:/);
+  assert.match(musicService, /function serializeTrack[\s\S]*?canManage,/);
+});
+
+test("the main application registers music routes without retaining endpoint bodies", () => {
+  assert.match(server, /registerMusicRoutes\(app, \{/);
+  assert.doesNotMatch(server, /app\.(?:get|post|put|patch|delete)\("\/api\/music/);
 });
