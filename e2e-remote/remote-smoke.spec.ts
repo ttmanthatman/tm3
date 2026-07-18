@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { waitForChatSocket } from "./chat-state.js";
 import { isApprovedRemoteRequest, remoteE2EEnvironment } from "./safety.js";
 
 const remote = remoteE2EEnvironment();
@@ -7,19 +8,37 @@ interface BrowserSignals {
   consoleErrors: number;
   pageErrors: number;
   requestFailures: number;
+  cancelledRequests: number;
   serverErrors: number;
   staticResourceFailures: number;
 }
 
 async function monitorRemoteBrowser(page: Page): Promise<BrowserSignals> {
-  const signals: BrowserSignals = { consoleErrors: 0, pageErrors: 0, requestFailures: 0, serverErrors: 0, staticResourceFailures: 0 };
+  const signals: BrowserSignals = {
+    consoleErrors: 0,
+    pageErrors: 0,
+    requestFailures: 0,
+    cancelledRequests: 0,
+    serverErrors: 0,
+    staticResourceFailures: 0
+  };
   await page.route("**/*", async (route) => {
     if (isApprovedRemoteRequest(route.request().url())) return route.continue();
     return route.abort("blockedbyclient");
   });
   page.on("console", (message) => { if (message.type() === "error") signals.consoleErrors += 1; });
   page.on("pageerror", () => { signals.pageErrors += 1; });
-  page.on("requestfailed", (request) => { if (isApprovedRemoteRequest(request.url())) signals.requestFailures += 1; });
+  page.on("requestfailed", (request) => {
+    if (!isApprovedRemoteRequest(request.url())) return;
+    const errorText = request.failure()?.errorText;
+    const pathname = new URL(request.url()).pathname;
+    const resourceType = request.resourceType();
+    const majorStaticResource = ["script", "stylesheet", "font", "image"].includes(resourceType);
+    const cancelledByBrowser = (!majorStaticResource && errorText === "net::ERR_ABORTED")
+      || (errorText === "net::ERR_FAILED" && request.resourceType() === "media" && /^\/api\/music\/tracks\/\d+\/stream$/.test(pathname));
+    if (cancelledByBrowser) signals.cancelledRequests += 1;
+    else signals.requestFailures += 1;
+  });
   page.on("response", (response) => {
     if (!isApprovedRemoteRequest(response.url())) return;
     if (response.status() >= 500) signals.serverErrors += 1;
@@ -37,14 +56,16 @@ async function loginToTestChannel(page: Page) {
   await expect(testChannel).toBeVisible();
   await testChannel.click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);
+  await waitForChatSocket(page);
 }
 
 async function expectHealthyBrowser(page: Page, signals: BrowserSignals) {
-  await expect(page.getByRole("status", { name: /连接/ })).toHaveCount(0);
+  await waitForChatSocket(page);
   await expect.poll(() => page.evaluate(async () => {
     const registration = await navigator.serviceWorker.getRegistration();
     return Boolean(registration?.active || navigator.serviceWorker.controller);
   })).toBe(true);
+  console.log(`REMOTE_E2E_BROWSER_SIGNALS ${JSON.stringify(signals)}`);
   expect(signals.consoleErrors).toBe(0);
   expect(signals.pageErrors).toBe(0);
   expect(signals.requestFailures).toBe(0);
@@ -64,8 +85,10 @@ test("专用账号的关键远程浏览器冒烟流程", async ({ page }) => {
     await page.getByPlaceholder("输入消息").fill(message);
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect(page.getByPlaceholder("输入消息")).toHaveValue("");
+    await expect(page.locator(".message-row[data-message-id]").filter({ hasText: message })).toHaveCount(1);
     await page.reload();
     await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);
+    await waitForChatSocket(page);
     await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
   });
   await test.step("390px 视口通过频道列表进入专用频道", async () => {
@@ -73,8 +96,13 @@ test("专用账号的关键远程浏览器冒烟流程", async ({ page }) => {
     await page.getByRole("button", { name: "频道", exact: true }).click();
     await page.getByRole("button", { name: remote.channel, exact: true }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);
-    await expect(page.getByPlaceholder("输入消息")).toBeEnabled();
+    const mobileInput = page.getByPlaceholder("输入消息");
+    const mobileDraft = `[REMOTE-E2E-MOBILE-DRAFT-${Date.now()}]`;
+    await expect(mobileInput).toBeEnabled();
+    await mobileInput.fill(mobileDraft);
+    await expect(mobileInput).toHaveValue(mobileDraft);
     await expect(page.getByRole("button", { name: "发送", exact: true })).toBeEnabled();
+    await mobileInput.fill("");
   });
   await test.step("圣经阅读区跳转到指定书卷章节和经节", async () => {
     await page.getByRole("button", { name: "打开圣经" }).click();

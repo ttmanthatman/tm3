@@ -47,7 +47,9 @@ test("remote browser smoke accepts only the dedicated test site, account, and ch
 test("remote browser smoke ignores credentials and failure artifacts and contains no data reset commands", () => {
   const runner = fs.readFileSync(path.join(root, "scripts/run-e2e-remote.sh"), "utf8");
   const config = fs.readFileSync(path.join(root, "playwright.remote.config.ts"), "utf8");
-  const spec = fs.readFileSync(path.join(root, "e2e-remote/remote-smoke.spec.ts"), "utf8");
+  const remoteSources = fs.readdirSync(path.join(root, "e2e-remote"))
+    .filter((file) => file.endsWith(".ts"))
+    .map((file) => fs.readFileSync(path.join(root, "e2e-remote", file), "utf8"));
   const gitignore = fs.readFileSync(path.join(root, ".gitignore"), "utf8");
   assert.match(runner, /\.env\.remote-e2e\.local/);
   assert.match(runner, /remoteE2EEnvironment/);
@@ -58,6 +60,6 @@ test("remote browser smoke ignores credentials and failure artifacts and contain
   assert.match(gitignore, /^output\/e2e-remote\/$/m);
   for (const forbidden of [/migrate reset/i, /db push/i, /deleteMany/i, /truncate/i, /\bdrop\b/i, /seed/i]) {
     assert.doesNotMatch(runner, forbidden);
-    assert.doesNotMatch(spec, forbidden);
+    for (const source of remoteSources) assert.doesNotMatch(source, forbidden);
   }
 });
