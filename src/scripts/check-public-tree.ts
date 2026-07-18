@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 
-const FORBIDDEN_TRACKED_PATHS = ["AGENTS.md", ".env", "storage", "node_modules"];
+const FORBIDDEN_TRACKED_PATHS = [".env", "storage", "node_modules"];
+const FORBIDDEN_TRACKED_FILENAMES = ["AGENTS.local.md", ".DS_Store"];
 
 function gitLsFiles() {
   const result = spawnSync("git", ["ls-files", "-z"], { encoding: "utf8" });
@@ -12,7 +13,10 @@ function gitLsFiles() {
 }
 
 function isForbiddenPath(file: string) {
-  return FORBIDDEN_TRACKED_PATHS.some((forbidden) => file === forbidden || file.startsWith(`${forbidden}/`));
+  return (
+    FORBIDDEN_TRACKED_PATHS.some((forbidden) => file === forbidden || file.startsWith(`${forbidden}/`)) ||
+    FORBIDDEN_TRACKED_FILENAMES.some((forbidden) => file === forbidden || file.endsWith(`/${forbidden}`))
+  );
 }
 
 function forbiddenContentPatterns() {

@@ -6,5 +6,7 @@ output/
 .env
 .env.*
 !.env.example
-AGENTS.md
+AGENTS.local.md
 *.local.md
+.DS_Store
+**/.DS_Store

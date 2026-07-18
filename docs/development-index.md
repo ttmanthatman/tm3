@@ -2,6 +2,13 @@
 
 This index is the first file to read before changing Team Chat. It is intentionally short and public-safe: do not add deployment hosts, private domains, `.env` values, database snapshots, or local machine notes here.
 
+## Codex Guidance
+
+- The root `AGENTS.md` is the Codex entry point and contains repository-wide behavior rules.
+- `AGENTS.local.md` is only for private, machine-local instructions and must never be committed.
+- A nested `AGENTS.md` applies to work inside its directory and supplements the root rules.
+- Keep detailed module knowledge in this development index instead of expanding agent guidance into a second handbook.
+
 ## Start Every Work Session
 
 1. Run `git status --short`, `git branch --show-current`, and `git log --oneline -n 20`.
@@ -68,12 +75,12 @@ Complete this checklist whenever a message effect, ambient animation, lyric disp
 
 ## Publish Safety
 
-Before pushing a public branch, verify the tree does not include `AGENTS.md`, `.env`, runtime data, private deployment notes, server addresses, private domains, or private organization names. Runtime data belongs outside the repo or in ignored folders.
+Before pushing a public branch, verify the tree does not include `AGENTS.local.md`, `.env`, runtime data, private deployment notes, server addresses, private domains, or private organization names. Public-safe `AGENTS.md` files are allowed. Runtime data belongs outside the repo or in ignored folders.
 
 Useful checks:
 
 ```bash
-git ls-files AGENTS.md .env storage node_modules
+git ls-files AGENTS.local.md .env storage node_modules
 npm run check:public-tree
 npm run test:ui-logic
 npm run check
