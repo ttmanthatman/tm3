@@ -17,6 +17,7 @@
     "bible:import-layout": "tsx src/scripts/import-bible-layout.ts",
     "check": "vue-tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "check:public-tree": "tsx src/scripts/check-public-tree.ts",
+    "check:release": "tsx src/scripts/check-release-consistency.ts",
     "check:quick": "npm run check:public-tree && npm run check",
     "check:test-files": "tsx src/scripts/run-tests.ts --list",
     "test:client": "tsx src/scripts/run-tests.ts client",
@@ -26,9 +27,11 @@
     "test:service-worker": "tsx src/scripts/run-tests.ts service-worker",
     "test:all": "tsx src/scripts/run-tests.ts all",
     "test:public-tree": "node --import tsx --test --test-reporter=dot src/scripts/check-public-tree.test.ts",
+    "test:release": "node --import tsx --test --test-reporter=dot src/scripts/release.test.ts",
     "test:ui-logic": "npm run test:all",
     "test:security": "npm run test:server && npm run test:scripts && npm run test:service-worker",
-    "verify:full": "npm run check:public-tree && npm run check && npm run test:all && npm run build"
+    "release:prepare": "tsx src/scripts/prepare-release.ts",
+    "verify:full": "npm run check:public-tree && npm run check:release && npm run check && npm run test:all && npm run build"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

@@ -81,9 +81,11 @@ Complete this checklist whenever a message effect, ambient animation, lyric disp
 
 ## Release Checklist
 
-- Bump `package.json` and `package-lock.json` together.
-- Update `APP_VERSION`, `RELEASE_NOTES`, and `RELEASE_HISTORY` in `src/shared/release.ts`.
-- Add the same user-facing notes to the top of `CHANGELOG.md`.
+- Feature pull requests add user-visible notes only to `CHANGELOG.md` under `## Unreleased`; they do not change release versions or dates.
+- Run `npm run check:release` to verify package metadata, shared release metadata, the latest formal changelog entry, the README badge, the license, and the shared Service Worker cache-version source.
+- Preview a release with `npm run release:prepare -- <version> --dry-run`.
+- From a clean worktree, run `npm run release:prepare -- <version>` to update the package files through npm, archive `Unreleased` under the new version and date, update `APP_VERSION`, `RELEASE_DATE`, `RELEASE_NOTES`, and `RELEASE_HISTORY`, and run the consistency check.
+- The preparation command does not commit, tag, push, deploy, publish, or create a GitHub Release.
 - Confirm settings/admin release pages still display the current version and notes.
 - Keep `license` as `GPL-3.0-only`.
 

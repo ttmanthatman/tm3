@@ -2,7 +2,7 @@
 
 > 自己搭、自己管、自己玩。给个人、家庭、朋友、学习搭子和小团队准备的自托管聊天室。
 
-![Version](https://img.shields.io/badge/version-0.12.3-5f8d4e)
+![Version](https://img.shields.io/github/package-json/v/ttmanthatman/tm3?label=version&color=5f8d4e)
 ![Node](https://img.shields.io/badge/Node.js-22%2B-339933)
 ![License](https://img.shields.io/badge/license-GPL--3.0--only-blue)
 
@@ -215,6 +215,23 @@ npm run verify:full
 需要只运行一类测试时，可使用 `npm run test:client`、`npm run test:server`、`npm run test:shared`、`npm run test:scripts` 或 `npm run test:service-worker`。`npm run test:all` 会验证分类后恰好运行每个测试文件一次；旧的 `test:ui-logic` 和 `test:security` 命令保留为兼容入口。
 
 更详细的模块地图和回归检查见 [开发索引](docs/development-index.md)。
+
+## 发布维护
+
+普通功能 PR 只把用户可见说明添加到 `CHANGELOG.md` 顶部的 `Unreleased`，不要修改版本号或正式版本记录。随时可运行以下命令检查 package、应用元数据、正式变更记录、README 徽章和 Service Worker 缓存版本源是否一致：
+
+```bash
+npm run check:release
+```
+
+准备正式版本前先确认 `Unreleased` 至少有一条说明，并在干净工作区运行：
+
+```bash
+npm run release:prepare -- 1.5.7 --dry-run
+npm run release:prepare -- 1.5.7
+```
+
+将示例版本替换为高于当前版本的合法 SemVer。正式命令会用 npm 同步 `package.json` 与 `package-lock.json`，更新应用版本、日期、发布说明、发布历史和 Changelog，并运行一致性检查。它不会提交、打 tag、推送、部署或创建 GitHub Release；检查 diff 并运行 `npm run verify:full` 后，仍需由维护者明确执行后续发布动作。
 
 ## 配置速查
 

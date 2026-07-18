@@ -27,6 +27,9 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 ## Change Authority
 
 - Do not change version numbers, `CHANGELOG.md`, or release metadata unless explicitly requested.
+- Feature work adds user-visible release notes only under `## Unreleased`; do not bump versions in feature pull requests.
+- Prepare an explicitly requested release with `npm run release:prepare -- <version>` instead of manually editing synchronized version files.
+- Release preparation does not authorize commits, tags, pushes, deployments, publishing, or GitHub Releases.
 - Do not modify release or service-worker files unless explicitly requested.
 - Do not deploy, push, merge, publish, or create a release unless explicitly requested.
 - Treat destructive data actions, migrations, authentication, and file storage as high risk.
