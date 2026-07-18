@@ -34,6 +34,10 @@ Follow the root `AGENTS.md` first and use `docs/development-index.md` for the mo
 - Trace all callers and consumers before changing shared server helpers.
 - Require explicit task authority before changing database schema or migrations.
 - Preserve cleanup, rollback, and failure behavior around external side effects.
+- Create a new Prisma migration for every schema change; never edit or delete `0_init` or another committed migration.
+- Use `prisma migrate dev` only for development migration creation and `prisma migrate deploy` for long-lived environments.
+- Never use `prisma db push` against a long-lived test or production database.
+- Resolve `0_init` as applied on an existing database only after a verified backup and an empty `prisma migrate diff`.
 
 ## Testing
 
@@ -44,6 +48,8 @@ Follow the root `AGENTS.md` first and use `docs/development-index.md` for the mo
 - Assert status code and response shape for route changes.
 - Run the narrowest relevant server test during iteration.
 - Run `npm run test:server` for authentication, authorization, file, or URL changes.
+- Run `npm run test:scripts` for migration history or migration safety changes.
+- Validate migrations by applying them to a fresh local `tm3_migration_verify` database; never substitute a retained application database.
 - Run `npm run check` for server TypeScript changes.
 - Run `npm run build` when server code or build behavior changes.
 

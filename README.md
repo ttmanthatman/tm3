@@ -195,7 +195,7 @@ cp .env.example .env
 
 ```bash
 npm run prisma:generate
-npm run prisma:push
+npm run prisma:migrate
 npm run build
 npm start
 ```
@@ -204,6 +204,31 @@ npm start
 
 ```bash
 npm run dev
+```
+
+### 数据库迁移
+
+`prisma/migrations/0_init/migration.sql` 是当前完整 schema 的初始基线。修改 `prisma/schema.prisma` 时，在一次性开发数据库上同时创建新迁移：
+
+```bash
+npx prisma migrate dev --name <change-name>
+```
+
+不要修改或删除已经提交的 migration。长期保存数据的测试站和正式站只运行 `npm run prisma:migrate`（即 `prisma migrate deploy`），不要使用 `prisma db push` 更新。
+
+既有数据库首次接入 Prisma Migrate 前，必须先完成数据库与存储备份，并用 `prisma migrate diff` 确认数据库结构与当前 baseline 完全一致。确认没有 schema 差异后，才可以执行：
+
+```bash
+npx prisma migrate resolve --applied 0_init
+npm run prisma:migrate
+```
+
+迁移本身可在全新的本机临时库中验证。脚本只接受 localhost 上精确命名为 `tm3_migration_verify` 的空 MySQL 数据库：
+
+```bash
+MIGRATION_VERIFY_RUN=1 \
+DATABASE_URL='mysql://<user>:<password>@127.0.0.1:3306/tm3_migration_verify' \
+npm run test:migrations
 ```
 
 开发过程中可按当前 Git 改动选择快速检查；需要覆盖相对远端主分支的全部改动时可指定基线：
@@ -228,7 +253,7 @@ npx playwright install chromium
 npm run test:e2e:local
 ```
 
-该命令每次都会强制重建名为 `tm3_e2e` 的测试数据库，seed 固定的测试管理员与频道，测试结束后关闭数据库、服务端和前端进程并删除容器卷。测试脚本只接受本机 MySQL 和精确的 `tm3_e2e` 数据库名，不读取 `.env` 或生产 Secret。已有本地 MySQL 时，也可以自行创建专用数据库和账号后运行：
+该命令每次都会强制重建名为 `tm3_e2e` 的一次性测试数据库，seed 固定的测试管理员与频道，测试结束后关闭数据库、服务端和前端进程并删除容器卷。此处的 `db push --force-reset` 只允许用于该受保护的一次性 E2E 数据库，绝不能用于测试站、正式站或其他长期数据库。测试脚本只接受本机 MySQL 和精确的 `tm3_e2e` 数据库名，不读取 `.env` 或生产 Secret。已有本地 MySQL 时，也可以自行创建专用数据库和账号后运行：
 
 ```bash
 E2E_DATABASE_URL='mysql://<user>:<password>@127.0.0.1:3306/tm3_e2e' npm run test:e2e

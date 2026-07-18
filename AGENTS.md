@@ -69,6 +69,14 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 - Keep authorization checks on the server even when the client also hides an action.
 - Avoid speculative abstraction; extract only around a demonstrated responsibility.
 
+## Database Migration Discipline
+
+- Every `prisma/schema.prisma` change must include a new migration created with `prisma migrate dev` against a disposable development database.
+- Never modify or delete a committed migration. `prisma/migrations/0_init` is the immutable baseline for the current schema.
+- Use `prisma migrate deploy` for long-lived test and production databases; never update those databases with `prisma db push`.
+- Before baselining an existing database with `prisma migrate resolve --applied 0_init`, prove with `prisma migrate diff` that its structure exactly matches the baseline and take a verified backup.
+- Keep destructive reset and seed commands restricted to explicitly guarded disposable test databases.
+
 ## Validation
 
 - Run targeted tests for every changed behavior before broad checks.
@@ -77,6 +85,8 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 - Run type checks when TypeScript or Vue code changes.
 - Run `npm run test:client` when client state, layout logic, or interaction behavior changes.
 - Run `npm run test:server` when server, authentication, authorization, upload, or URL handling changes.
+- Run `npm run test:scripts` when migration files or migration verification scripts change.
+- Run `npm run test:migrations` only with `MIGRATION_VERIFY_RUN=1` and a fresh local MySQL database named exactly `tm3_migration_verify`.
 - Run `npm run test:e2e` with the isolated `tm3_e2e` database when UI changes affect login, channel navigation, message persistence, Bible reading, or administrator account workflows.
 - Run `npm run test:all` for complete test coverage without duplicate file execution.
 - Run `npm run verify:full` before a commit or handoff that requires complete verification.

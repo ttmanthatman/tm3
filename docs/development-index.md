@@ -23,9 +23,21 @@ The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`
 
 Full verification checks the public repository tree, type-checks the Vue client and TypeScript server, runs every classified test file once, and builds the client and server. These checks do not require a database service or repository secrets, and the workflow does not deploy, migrate data, publish releases, or push changes.
 
+After `verify` succeeds, the independent migration job starts a disposable MySQL service with only the `tm3_migration_verify` database. It applies the committed migration history, checks `prisma migrate status`, confirms that the migrated database has no schema diff, and requires one successful `0_init` history record. It uses fixed CI-only credentials and never reads deployment secrets or connects to a retained database.
+
 After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service, installs Chromium, resets and seeds the dedicated `tm3_e2e` database, and runs the six critical Playwright browser flows. The Playwright web servers are process-managed and shut down with the test runner. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
 
 During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included. CI and final pre-commit validation must continue to use `verify:full`.
+
+## Database Migrations
+
+- `prisma/migrations/0_init/migration.sql` is the immutable initial migration for the complete current MySQL schema.
+- Change `prisma/schema.prisma` and create the matching migration together with `npx prisma migrate dev --name <change-name>` against a disposable development database.
+- Do not modify or delete a committed `migration.sql`. Follow-up corrections require a new migration.
+- Long-lived test and production environments use `npm run prisma:migrate` (`prisma migrate deploy`). `prisma db push` is not an update mechanism for retained data.
+- A pre-existing database may join the migration history with `npx prisma migrate resolve --applied 0_init` only after a verified backup and a no-difference `prisma migrate diff` against the baseline schema.
+- `scripts/verify-prisma-migrations.sh` refuses non-local hosts and any database name other than `tm3_migration_verify`. Set `MIGRATION_VERIFY_RUN=1` and point `DATABASE_URL` at a fresh local database before running `npm run test:migrations`.
+- The destructive `db push --force-reset` path in `e2e/prepare.ts` remains limited to the guarded, disposable local `tm3_e2e` database and must never be reused for retained environments.
 
 ## Frequent Regression Areas
 
@@ -59,7 +71,8 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
 - `e2e/` and `playwright.config.ts`: isolated MySQL reset/seed, local Docker service, and the small critical browser smoke suite. Run with `npm run test:e2e:local`, or provide a local `E2E_DATABASE_URL` for a database named exactly `tm3_e2e`.
-- `prisma/schema.prisma`: database schema and channel/message/pinned/AI data model.
+- `prisma/schema.prisma` and `prisma/migrations/`: the current database model and its immutable, ordered migration history.
+- `scripts/verify-prisma-migrations.sh`: guarded empty-database apply, status, schema-diff, and migration-history verification for local work and CI.
 - `public/sw.js`: service worker cache versioning.
 
 ## Music Player State Ownership

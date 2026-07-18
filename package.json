@@ -31,6 +31,7 @@
     "test:public-tree": "node --import tsx --test --test-reporter=dot src/scripts/check-public-tree.test.ts",
     "test:release": "node --import tsx --test --test-reporter=dot src/scripts/release.test.ts",
     "test:verify-changed": "node --import tsx --test --test-reporter=dot src/scripts/verify-changed.test.ts",
+    "test:migrations": "bash scripts/verify-prisma-migrations.sh",
     "test:e2e": "bash scripts/run-e2e.sh",
     "test:e2e:local": "bash scripts/run-e2e-local.sh",
     "e2e:prepare": "tsx e2e/prepare.ts",
