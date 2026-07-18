@@ -17,6 +17,12 @@ This index is the first file to read before changing Team Chat. It is intentiona
 4. Before release or push, run `npm run verify:full`.
 5. Review `git diff` locally before deployment or publishing.
 
+## Continuous Integration
+
+The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`, and manual dispatches. It uses Node.js 22, installs the lockfile with `npm ci` and the setup-node npm cache, generates the Prisma client, then runs `npm run verify:full`.
+
+Full verification checks the public repository tree, type-checks the Vue client and TypeScript server, runs every classified test file once, and builds the client and server. These checks do not require a database service or repository secrets, and the workflow does not deploy, migrate data, publish releases, or push changes.
+
 ## Frequent Regression Areas
 
 - Mobile layout and safe areas: headers, composers, side panels, long admin/settings modals, iOS viewport height, and outside-click closing.
