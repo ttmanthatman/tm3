@@ -11,7 +11,8 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 3. Run `git log --oneline -n 20`.
 4. Stop if the worktree contains changes that are not understood.
 5. Read `docs/development-index.md` before locating implementation code.
-6. Check for a more specific `AGENTS.md` in the target directory.
+6. Read `docs/model-task-routing.md` and apply its model and escalation rules.
+7. Check for a more specific `AGENTS.md` in the target directory.
 
 ## Scope Discipline
 
