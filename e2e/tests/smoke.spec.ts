@@ -1,0 +1,102 @@
+import { expect, test, type Page } from "@playwright/test";
+import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
+
+async function blockPublicNetwork(page: Page) {
+  await page.route("**/*", async (route) => {
+    const hostname = new URL(route.request().url()).hostname;
+    if (hostname === "127.0.0.1" || hostname === "localhost") {
+      await route.continue();
+      return;
+    }
+    await route.abort("blockedbyclient");
+  });
+}
+
+async function loginAsAdmin(page: Page) {
+  await page.goto("/");
+  await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
+  await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+}
+
+async function openAccountsAdmin(page: Page) {
+  await page.getByRole("button", { name: "管理", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "管理面板" })).toBeVisible();
+  await page.getByRole("button", { name: /用户与权限/ }).click();
+  await expect(page.getByText("新增用户", { exact: true })).toBeVisible();
+}
+
+test.beforeEach(async ({ page }) => {
+  await blockPublicNetwork(page);
+});
+
+test("管理员登录并进入默认频道", async ({ page }) => {
+  await loginAsAdmin(page);
+  await expect(page.getByRole("button", { name: "退出", exact: true })).toBeVisible();
+});
+
+test("文字消息刷新后仍然存在", async ({ page }) => {
+  const message = "浏览器冒烟消息：刷新后仍然存在";
+  await loginAsAdmin(page);
+
+  await page.getByPlaceholder("输入消息").fill(message);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
+
+  await page.reload();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
+});
+
+test("390px 手机视口打开频道列表并切换频道", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginAsAdmin(page);
+
+  await page.getByRole("button", { name: "频道", exact: true }).click();
+  await page.getByRole("button", { name: E2E_CHANNELS.secondary, exact: true }).click();
+
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
+});
+
+test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.getByRole("button", { name: "打开圣经" }).click();
+  await page.getByRole("button", { name: /^创世记/ }).click();
+  await page.getByRole("button", { name: "1", exact: true }).click();
+
+  await page.getByLabel("选择圣经书卷").selectOption("JHN");
+  await page.getByLabel("选择章节").selectOption("3");
+  await page.getByLabel("选择经节").selectOption("16");
+
+  const targetVerse = page.locator('[data-verse-key="JHN-3-16"]');
+  await expect(targetVerse).toBeVisible();
+  await expect(targetVerse).toHaveClass(/target/);
+});
+
+test("管理员账号显示且当前管理员不可删除", async ({ page }) => {
+  await loginAsAdmin(page);
+  await openAccountsAdmin(page);
+
+  const currentAdmin = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_ADMIN.username}` });
+  await expect(currentAdmin).toBeVisible();
+  await expect(currentAdmin.getByRole("button", { name: "删除", exact: true })).toBeDisabled();
+});
+
+test("创建并删除测试普通账号", async ({ page }) => {
+  await loginAsAdmin(page);
+  await openAccountsAdmin(page);
+
+  await page.getByPlaceholder("username").fill(E2E_MEMBER.username);
+  await page.getByPlaceholder("显示名").fill(E2E_MEMBER.displayName);
+  await page.getByPlaceholder("初始密码（至少 10 位）").fill(E2E_MEMBER.password);
+  await page.getByRole("button", { name: "添加用户" }).click();
+
+  const member = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_MEMBER.username}` });
+  await expect(member).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await member.getByRole("button", { name: "删除", exact: true }).click();
+
+  await expect(member).toHaveCount(0);
+  await expect(page.getByText(`用户“${E2E_MEMBER.displayName}”已删除`, { exact: true })).toBeVisible();
+});

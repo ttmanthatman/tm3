@@ -61,6 +61,7 @@ test("tracked local environment, runtime, agent, and QA paths are blocked", () =
   assert.equal(trackedPathViolation(".env.local")?.category, "tracked environment file");
   assert.equal(trackedPathViolation("storage/database.sqlite")?.category, "runtime data directory");
   assert.equal(trackedPathViolation("docs/AGENTS.local.md")?.category, "local agent guidance");
+  assert.equal(trackedPathViolation("output/e2e/report/index.html")?.category, "generated output directory");
   const reportPath = ["playwright-report", "index.html"].join("/");
   assert.equal(trackedPathViolation(reportPath)?.category, "Playwright report directory");
 });

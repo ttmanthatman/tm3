@@ -55,7 +55,7 @@ onMounted(loadAccounts);
     <input v-model="newUser.password" minlength="10" maxlength="128" placeholder="初始密码（至少 10 位）" type="password" />
     <button class="primary-btn" @click="addUser"><FilePlus :size="16" />添加用户</button>
     <div class="user-admin-list">
-      <article v-for="account in accounts" :key="account.id" class="user-admin-row">
+      <article v-for="account in accounts" :key="account.id" class="user-admin-row" data-testid="admin-account-row" :data-account-username="account.username">
         <label class="avatar upload-avatar-trigger" :aria-label="`上传 ${account.displayName} 的头像`" title="点击上传头像">
           <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
           <span v-else>{{ avatarText(account.displayName) }}</span>

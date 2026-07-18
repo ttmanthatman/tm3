@@ -77,6 +77,7 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 - Run type checks when TypeScript or Vue code changes.
 - Run `npm run test:client` when client state, layout logic, or interaction behavior changes.
 - Run `npm run test:server` when server, authentication, authorization, upload, or URL handling changes.
+- Run `npm run test:e2e` with the isolated `tm3_e2e` database when UI changes affect login, channel navigation, message persistence, Bible reading, or administrator account workflows.
 - Run `npm run test:all` for complete test coverage without duplicate file execution.
 - Run `npm run verify:full` before a commit or handoff that requires complete verification.
 - Keep CI and final pre-commit verification on `npm run verify:full`; `verify:changed` is only a local iteration shortcut.

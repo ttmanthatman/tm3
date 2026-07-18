@@ -9950,7 +9950,7 @@ async function toggleVirtual(character: any) {
                 >{{ character }}</span>
               </span>
             </button>
-            <strong>{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+            <strong data-testid="active-channel-name">{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
           <div v-if="!showingFavoriteSurface && activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
             <button

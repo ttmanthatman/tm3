@@ -221,6 +221,21 @@ npm run verify:full
 
 需要只运行一类测试时，可使用 `npm run test:client`、`npm run test:server`、`npm run test:shared`、`npm run test:scripts` 或 `npm run test:service-worker`。`npm run test:all` 会验证分类后恰好运行每个测试文件一次；旧的 `test:ui-logic` 和 `test:security` 命令保留为兼容入口。
 
+关键浏览器流程使用独立 MySQL 和 Chromium 运行。推荐用 Docker 启动、等待并自动清理专用数据库容器：
+
+```bash
+npx playwright install chromium
+npm run test:e2e:local
+```
+
+该命令每次都会强制重建名为 `tm3_e2e` 的测试数据库，seed 固定的测试管理员与频道，测试结束后关闭数据库、服务端和前端进程并删除容器卷。测试脚本只接受本机 MySQL 和精确的 `tm3_e2e` 数据库名，不读取 `.env` 或生产 Secret。已有本地 MySQL 时，也可以自行创建专用数据库和账号后运行：
+
+```bash
+E2E_DATABASE_URL='mysql://<user>:<password>@127.0.0.1:3306/tm3_e2e' npm run test:e2e
+```
+
+失败时才保留截图、trace 和视频，连同 HTML 报告写入忽略的 `output/e2e/`。重复运行会先重置数据库，不受上一次遗留数据影响。
+
 更详细的模块地图和回归检查见 [开发索引](docs/development-index.md)。
 
 ## 发布维护

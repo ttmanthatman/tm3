@@ -19,9 +19,11 @@ This index is the first file to read before changing Team Chat. It is intentiona
 
 ## Continuous Integration
 
-The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`, and manual dispatches. It uses Node.js 22, installs the lockfile with `npm ci` and the setup-node npm cache, generates the Prisma client, then runs `npm run verify:full`.
+The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`, and manual dispatches. Its `verify` job uses Node.js 22, installs the lockfile with `npm ci` and the setup-node npm cache, generates the Prisma client, then runs `npm run verify:full`.
 
 Full verification checks the public repository tree, type-checks the Vue client and TypeScript server, runs every classified test file once, and builds the client and server. These checks do not require a database service or repository secrets, and the workflow does not deploy, migrate data, publish releases, or push changes.
+
+After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service, installs Chromium, resets and seeds the dedicated `tm3_e2e` database, and runs the six critical Playwright browser flows. The Playwright web servers are process-managed and shut down with the test runner. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
 
 During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included. CI and final pre-commit validation must continue to use `verify:full`.
 
@@ -56,6 +58,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/server/bible/` and `src/client/bibleReferences.ts`: Bible lookup and reference parsing.
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
+- `e2e/` and `playwright.config.ts`: isolated MySQL reset/seed, local Docker service, and the small critical browser smoke suite. Run with `npm run test:e2e:local`, or provide a local `E2E_DATABASE_URL` for a database named exactly `tm3_e2e`.
 - `prisma/schema.prisma`: database schema and channel/message/pinned/AI data model.
 - `public/sw.js`: service worker cache versioning.
 

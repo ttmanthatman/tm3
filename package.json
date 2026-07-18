@@ -31,6 +31,11 @@
     "test:public-tree": "node --import tsx --test --test-reporter=dot src/scripts/check-public-tree.test.ts",
     "test:release": "node --import tsx --test --test-reporter=dot src/scripts/release.test.ts",
     "test:verify-changed": "node --import tsx --test --test-reporter=dot src/scripts/verify-changed.test.ts",
+    "test:e2e": "bash scripts/run-e2e.sh",
+    "test:e2e:local": "bash scripts/run-e2e-local.sh",
+    "e2e:prepare": "tsx e2e/prepare.ts",
+    "e2e:server": "tsx src/server/main.ts",
+    "e2e:client": "vite --host 127.0.0.1 --port 4173 --strictPort",
     "test:ui-logic": "npm run test:all",
     "test:security": "npm run test:server && npm run test:scripts && npm run test:service-worker",
     "release:prepare": "tsx src/scripts/prepare-release.ts",
@@ -62,6 +67,7 @@
     "zod": "^3.25.64"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jsonwebtoken": "^9.0.10",
