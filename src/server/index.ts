@@ -1,9 +1,7 @@
-import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import bcrypt from "bcryptjs";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -82,7 +80,10 @@ import {
   cleanWallpaperPanSpeed
 } from "../shared/wallpaperPan.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export type BuildAppOptions = {
+  runStartupTasks?: boolean;
+};
+
 const ROOT = process.cwd();
 const DIST_CLIENT = path.join(ROOT, "dist/client");
 const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
@@ -92,7 +93,6 @@ const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
 const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
 const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");
 const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
-const PORT = Number(process.env.PORT || 3003);
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SECRET.length < 32)) {
@@ -227,10 +227,6 @@ const bibleTopicSearchWindows = new Map<number, number[]>();
 const IMAGE_WEBP_QUALITY = 82;
 const IMAGE_WEBP_EFFORT = 5;
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
-
-for (const dir of [STORAGE_ROOT, UPLOAD_DIR, MUSIC_SCORE_DIR, AVATAR_DIR, BG_DIR, PARALLAX_DIR, BACKUP_DIR]) {
-  fs.mkdirSync(dir, { recursive: true });
-}
 
 const allowedOrigins = new Set(CONFIGURED_CORS_ORIGINS.map((origin) => normalizeOrigin(origin)).filter(Boolean));
 
@@ -2481,29 +2477,34 @@ function broadcastBibleReaders() {
   io.emit("bible:readers", readers);
 }
 
-const musicListenerCleanupTimer = setInterval(() => {
-  const staleBefore = Date.now() - 45_000;
-  let changed = false;
-  for (const [socketId, listener] of musicListeners) {
-    if (listener.updatedAt >= staleBefore) continue;
-    musicListeners.delete(socketId);
-    changed = true;
-  }
-  if (changed) broadcastMusicListeners();
-}, 15_000);
-musicListenerCleanupTimer.unref();
+let musicListenerCleanupTimer: NodeJS.Timeout | undefined;
+let bibleReaderCleanupTimer: NodeJS.Timeout | undefined;
 
-const bibleReaderCleanupTimer = setInterval(() => {
-  const staleBefore = Date.now() - 45_000;
-  let changed = false;
-  for (const [socketId, reader] of bibleReaders) {
-    if (reader.updatedAt >= staleBefore) continue;
-    bibleReaders.delete(socketId);
-    changed = true;
-  }
-  if (changed) broadcastBibleReaders();
-}, 15_000);
-bibleReaderCleanupTimer.unref();
+function startCleanupTimers() {
+  musicListenerCleanupTimer = setInterval(() => {
+    const staleBefore = Date.now() - 45_000;
+    let changed = false;
+    for (const [socketId, listener] of musicListeners) {
+      if (listener.updatedAt >= staleBefore) continue;
+      musicListeners.delete(socketId);
+      changed = true;
+    }
+    if (changed) broadcastMusicListeners();
+  }, 15_000);
+  musicListenerCleanupTimer.unref();
+
+  bibleReaderCleanupTimer = setInterval(() => {
+    const staleBefore = Date.now() - 45_000;
+    let changed = false;
+    for (const [socketId, reader] of bibleReaders) {
+      if (reader.updatedAt >= staleBefore) continue;
+      bibleReaders.delete(socketId);
+      changed = true;
+    }
+    if (changed) broadcastBibleReaders();
+  }, 15_000);
+  bibleReaderCleanupTimer.unref();
+}
 
 function disconnectSessions(sessionIds: string[]) {
   const targets = new Set(sessionIds);
@@ -7431,9 +7432,11 @@ const multicharManager = createMulticharManager(multicharDeps);
 registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin);
 
 app.addHook("onClose", async () => {
-  clearInterval(musicListenerCleanupTimer);
-  clearInterval(bibleReaderCleanupTimer);
+  if (musicListenerCleanupTimer) clearInterval(musicListenerCleanupTimer);
+  if (bibleReaderCleanupTimer) clearInterval(bibleReaderCleanupTimer);
   multicharManager.stopAll();
+  io.close();
+  await prisma.$disconnect();
 });
 
 io.use(async (socket, next) => {
@@ -7629,15 +7632,28 @@ app.setNotFoundHandler((request, reply) => {
   return reply.code(404).send("Client build not found");
 });
 
-process.on("SIGTERM", async () => {
-  io.close();
-  await app.close();
-  await prisma.$disconnect();
-  process.exit(0);
+app.addHook("onListen", async () => {
+  void backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
+  void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));
 });
 
-await ensureBootstrap();
-await ensureWebPush();
-await app.listen({ port: PORT, host: "0.0.0.0" });
-void backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
-void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));
+let appBuilt = false;
+
+export async function buildApp(options: BuildAppOptions = {}) {
+  if (appBuilt) throw new Error("Fastify application has already been built");
+  appBuilt = true;
+  for (const dir of [STORAGE_ROOT, UPLOAD_DIR, MUSIC_SCORE_DIR, AVATAR_DIR, BG_DIR, PARALLAX_DIR, BACKUP_DIR]) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  startCleanupTimers();
+  try {
+    if (options.runStartupTasks !== false) {
+      await ensureBootstrap();
+      await ensureWebPush();
+    }
+    return app;
+  } catch (error) {
+    await app.close();
+    throw error;
+  }
+}
