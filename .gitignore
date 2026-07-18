@@ -2,6 +2,11 @@ node_modules/
 dist/
 storage/
 output/
+.codex/
+artifacts/
+test-results/
+playwright-report/
+blob-report/
 .playwright-cli/
 .env
 .env.*

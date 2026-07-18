@@ -53,6 +53,14 @@ This index is the first file to read before changing Team Chat. It is intentiona
 - Gestures should require a clear horizontal axis and sufficient distance. Do not add speed-only panel switching.
 - Avoid animating the same element with both inline `transform` and CSS keyframes.
 
+## Design QA Checklist
+
+- Compare the source reference and browser-rendered result at the same viewport. Review both the full view and dense regions where controls can overflow or primary actions can be clipped.
+- Check typography, spacing, colors, asset fidelity, copy, and responsive behavior separately instead of relying on a general visual impression.
+- Exercise changed interactions end to end, including state synchronization after programmatic navigation and server-side protection for destructive actions.
+- Check browser warnings and errors, then re-run the affected flow after each fix and record the original finding plus the post-fix evidence.
+- Keep reusable conclusions in tracked documentation. Keep temporary reports, screenshots, browser traces, and machine-specific paths in ignored local artifact directories.
+
 ## Effect Rendering Economy Checklist
 
 Complete this checklist whenever a message effect, ambient animation, lyric display, canvas, or physics interaction is added or changed.
