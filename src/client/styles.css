@@ -8442,6 +8442,13 @@ button.admin-object-row:focus-visible {
   background: #fff;
 }
 
+.user-admin-main > strong {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .user-admin-actions {
   display: flex;
   flex-wrap: wrap;

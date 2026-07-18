@@ -19,7 +19,6 @@ import {
   Droplet,
   Download,
   FileText,
-  FilePlus,
   FileUp,
   CheckCircle2,
   CircleOff,
@@ -120,6 +119,7 @@ import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
+import AdminAccountsPage from "./features/admin/AdminAccountsPage.vue";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
@@ -445,7 +445,6 @@ const accountProfileMsg = ref("");
 const accountPasswordMsg = ref("");
 const accountDeleteMsg = ref("");
 const adminMsg = ref("");
-const newUser = ref({ username: "", displayName: "", password: "" });
 const newVirtual = ref({
   username: "",
   displayName: "",
@@ -464,7 +463,6 @@ const mcSelectedChannelId = ref<number | null>(null);
 const mcSelectedCharacterIds = ref<number[]>([]);
 const mcBusy = ref(false);
 const mcMsg = ref("");
-const accounts = ref<any[]>([]);
 const adminChannels = ref<AdminChannelDTO[]>([]);
 const adminDirectConversations = ref<AdminChannelDTO[]>([]);
 const adminDirectTotal = ref(0);
@@ -472,7 +470,6 @@ const adminDirectPage = ref(1);
 const adminDirectPageSize = 30;
 const adminDirectQuery = ref("");
 const adminSelectedChannelId = ref<number | null>(null);
-const accountEdits = ref<Record<number, { displayName: string; isAdmin: boolean; canPinMessages: boolean; password: string }>>({});
 const channelEdits = ref<Record<number, { name: string; description: string }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
 type LoginBackgroundFit = AppearanceDTO["loginBackgroundFit"];
@@ -9245,12 +9242,6 @@ async function loadAdmin() {
   noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
 }
 
-async function loadAdminAccounts() {
-  const result = await api<{ accounts: any[] }>("/api/admin/accounts");
-  accounts.value = result.accounts;
-  syncAccountEdits();
-}
-
 async function loadAdminChannels(page = adminDirectPage.value) {
   if (!isAdmin.value) return;
   const params = new URLSearchParams({
@@ -9292,7 +9283,6 @@ async function openAdminPage(page: AdminPage) {
   if (sectionByPage[page]) appearanceSection.value = sectionByPage[page]!;
   adminPageLoading.value = true;
   try {
-    if (page === "users") await loadAdminAccounts();
     if (page === "channels") await loadAdminChannels();
     if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
     if (page === "backups") await loadAdminBackups();
@@ -9568,20 +9558,6 @@ async function compressAdminAttachments(ids: string[]) {
   await store.loadChannels(store.currentChannelId);
 }
 
-function syncAccountEdits() {
-  accountEdits.value = Object.fromEntries(
-    accounts.value.map((account) => [
-      account.id,
-      {
-        displayName: account.displayName,
-        isAdmin: !!account.isAdmin,
-        canPinMessages: !!account.canPinMessages,
-        password: ""
-      }
-    ])
-  );
-}
-
 function syncChannelEdits() {
   const rows = adminChannelRows.value;
   channelEdits.value = Object.fromEntries(
@@ -9593,69 +9569,6 @@ function syncChannelEdits() {
       }
     ])
   );
-}
-
-async function addUser() {
-  adminMsg.value = "";
-  await api("/api/admin/accounts", { method: "POST", body: JSON.stringify(newUser.value) });
-  newUser.value = { username: "", displayName: "", password: "" };
-  const a = await api<{ accounts: any[] }>("/api/admin/accounts");
-  accounts.value = a.accounts;
-  syncAccountEdits();
-  adminMsg.value = "用户已添加";
-}
-
-async function updateAccount(account: any) {
-  const edit = accountEdits.value[account.id];
-  if (!edit) return;
-  const result = await api<{ account: any }>(`/api/admin/accounts/${account.id}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      displayName: edit.displayName,
-      isAdmin: edit.isAdmin,
-      canPinMessages: edit.canPinMessages,
-      password: edit.password || undefined
-    })
-  });
-  const index = accounts.value.findIndex((row) => row.id === account.id);
-  if (index >= 0) accounts.value[index] = result.account;
-  if (store.account?.id === result.account.id) store.account = result.account;
-  syncAccountEdits();
-  adminMsg.value = "用户资料已更新";
-}
-
-async function deleteAccount(account: any) {
-  if (store.account?.id === account.id) {
-    alert("不能删除当前登录的管理员账号");
-    return;
-  }
-  const confirmed = confirm(
-    `警告：确定删除用户“${account.displayName}”（@${account.username}）吗？\n\n该用户将无法再登录，个人收藏、会话和频道成员关系会被永久删除；历史消息会保留并标记为“已删除用户”。此操作无法撤销。`
-  );
-  if (!confirmed) return;
-  await api(`/api/admin/accounts/${account.id}`, { method: "DELETE" });
-  accounts.value = accounts.value.filter((row) => row.id !== account.id);
-  syncAccountEdits();
-  adminMsg.value = `用户“${account.displayName}”已删除`;
-}
-
-async function uploadAccountAvatar(account: any, event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(`/api/admin/accounts/${account.id}/avatar`, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "头像上传失败" }));
-    alert(result.message || "头像上传失败");
-    return;
-  }
-  const result = (await response.json()) as { account: any };
-  const index = accounts.value.findIndex((row) => row.id === account.id);
-  if (index >= 0) accounts.value[index] = result.account;
-  if (store.account?.id === result.account.id) store.account = result.account;
-  adminMsg.value = "头像已更新";
 }
 
 async function downloadAdminFile(url: string, filename: string) {
@@ -9690,17 +9603,7 @@ async function importAdminFile(url: string, event: Event) {
   }
   await store.loadChannels();
   syncChannelEdits();
-  const a = await api<{ accounts: any[] }>("/api/admin/accounts");
-  accounts.value = a.accounts;
-  syncAccountEdits();
   adminMsg.value = "导入完成";
-}
-
-async function deleteAccountAttachments(account: any) {
-  if (!confirm(`删除 ${account.displayName} 发过的所有附件？消息会保留为删除提示。`)) return;
-  const result = await api<{ deleted: number }>(`/api/admin/accounts/${account.id}/attachments`, { method: "DELETE" });
-  adminMsg.value = `已删除 ${result.deleted} 个附件`;
-  await store.loadMessages();
 }
 
 function setAppearanceDraftImage(field: AppearanceImageField, fileName: string | null, message: string) {
@@ -12428,39 +12331,7 @@ async function toggleVirtual(character: any) {
             <button class="primary-btn" @click="saveNotice">保存置顶</button>
           </section>
 
-          <section v-else-if="adminPage === 'users'" class="form-grid admin-page-section">
-            <label>新增用户</label>
-            <input v-model="newUser.username" placeholder="username" />
-            <input v-model="newUser.displayName" placeholder="显示名" />
-            <input v-model="newUser.password" minlength="10" maxlength="128" placeholder="初始密码（至少 10 位）" type="password" />
-            <button class="primary-btn" @click="addUser"><FilePlus :size="16" />添加用户</button>
-            <div class="user-admin-list">
-              <article v-for="account in accounts" :key="account.id" class="user-admin-row">
-                <label class="avatar upload-avatar-trigger" :aria-label="`上传 ${account.displayName} 的头像`" title="点击上传头像">
-                  <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
-                  <span v-else>{{ avatarText(account.displayName) }}</span>
-                  <input class="hidden" type="file" accept="image/*" @change="uploadAccountAvatar(account, $event)" />
-                </label>
-                <div class="user-admin-main">
-                  <strong>@{{ account.username }}</strong>
-                  <div class="user-admin-edit-grid">
-                    <div class="user-admin-fields">
-                      <input v-model="accountEdits[account.id].displayName" placeholder="昵称" />
-                      <input v-model="accountEdits[account.id].password" minlength="10" maxlength="128" placeholder="重置密码，留空不改（至少 10 位）" type="password" />
-                    </div>
-                    <div class="user-admin-flags">
-                      <label class="check-row"><input v-model="accountEdits[account.id].isAdmin" type="checkbox" /> 管理员</label>
-                      <label class="check-row"><input v-model="accountEdits[account.id].canPinMessages" type="checkbox" /> 户部尚书（默认频道置顶）</label>
-                    </div>
-                  </div>
-                </div>
-                <div class="user-admin-actions">
-                  <button class="mini-btn" @click="updateAccount(account)">保存</button>
-                  <button class="mini-btn danger-action" :disabled="store.account?.id === account.id" @click="deleteAccount(account)"><Trash2 :size="15" />删除</button>
-                </div>
-              </article>
-            </div>
-          </section>
+          <AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = $event" />
 
           <section v-else-if="adminPage === 'channels'" class="admin-page-section channel-history-page">
             <div class="admin-section-heading">

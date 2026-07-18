@@ -7,6 +7,8 @@ const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
+const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
+const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
@@ -55,8 +57,11 @@ test("Bible reader offers compact book, chapter, and verse jumps beside the reso
 });
 
 test("user administration exposes a confirmation-gated delete action", () => {
-  assert.match(app, /async function deleteAccount[\s\S]*?警告：确定删除用户[\s\S]*?method: "DELETE"/);
-  assert.match(app, /class="mini-btn danger-action"[\s\S]*?:disabled="store\.account\?\.id === account\.id"[\s\S]*?@click="deleteAccount\(account\)"/);
+  assert.match(app, /<AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = \$event" \/>/);
+  assert.doesNotMatch(app, /\/api\/admin\/accounts/);
+  assert.match(adminAccountsLogic, /adminAccountDeleteConfirmation[\s\S]*?警告：确定删除用户[\s\S]*?method: "DELETE"/);
+  assert.match(adminAccountsPage, /class="mini-btn danger-action"[\s\S]*?:disabled="!canDeleteAccount\(account\)"[\s\S]*?@click="deleteAccount\(account\)"/);
+  assert.match(css, /\.user-admin-main > strong \{[\s\S]*?max-width: 100%;[\s\S]*?overflow-wrap: anywhere;/);
 });
 
 test("chat subtitles scroll only when their rendered text overflows", () => {
