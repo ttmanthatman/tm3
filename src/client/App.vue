@@ -139,6 +139,7 @@ import {
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
+import { composerDraftAfterSend, isComposerSendKey, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
 import { likeNotificationToTopNotice } from "./likeNotification";
 import {
@@ -165,6 +166,12 @@ import {
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
 
 const store = useChatStore();
+const {
+  pending: messageSendPending,
+  statusMessage: messageSendStatus,
+  send: sendMessage,
+  clearStatus: clearMessageSendStatus
+} = useMessageSender({ getSocket: () => store.socket });
 const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
@@ -1881,6 +1888,26 @@ watch(composerSuggestionCount, (count) => {
 const canSendText = computed(() => {
   return !!selectedMusicMention.value || !!parseComposerText(input.value).content;
 });
+const socketReadyToSend = computed(() => store.connectionState === "connected" && store.socket?.connected === true);
+const canSubmitText = computed(() => canSendText.value && socketReadyToSend.value && !messageSendPending.value);
+const composerSendStatus = computed(() => {
+  if (messageSendPending.value) return "正在发送…";
+  if (canSendText.value && !socketReadyToSend.value) {
+    return store.connectionState === "connecting" ? "正在连接……" : "连接恢复后再发送";
+  }
+  return messageSendStatus.value;
+});
+const composerSendState = computed(() => {
+  if (messageSendPending.value) return "pending";
+  if (canSendText.value && !socketReadyToSend.value) return "retry";
+  return messageSendStatus.value ? "failed" : undefined;
+});
+watch(
+  () => store.connectionState,
+  (state) => {
+    if (state === "connected" && messageSendStatus.value === "连接恢复后再发送") clearMessageSendStatus();
+  }
+);
 const loginBrand = computed(() => ({
   iconPath: store.appearance.loginIconPath || "/images/icon-192.svg",
   showIcon: store.appearance.loginShowIcon !== false,
@@ -4150,6 +4177,7 @@ async function sendText() {
   if (!content || !store.currentChannelId) return;
   const originalInput = input.value;
   const originalMusicMention = musicMention;
+  const originalReply = replyTo.value;
   const messageType = musicMention ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
   const messagePayload = {
     ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
@@ -4162,18 +4190,18 @@ async function sendText() {
     content,
     type: messageType,
     payload: Object.keys(messagePayload).length ? messagePayload : undefined,
-    replyToId: replyTo.value?.id || null
+    replyToId: originalReply?.id || null
   };
-  input.value = "";
+  const result = await sendMessage(payload);
+  const submittedComposerIsCurrent =
+    input.value === originalInput &&
+    selectedMusicMention.value === originalMusicMention &&
+    replyTo.value === originalReply;
+  if (!submittedComposerIsCurrent) return;
+  input.value = composerDraftAfterSend(result, originalInput, input.value);
+  if (!result.ok) return;
   selectedMusicMention.value = null;
   replyTo.value = null;
-  store.socket?.emit("message:send", payload, async (ack: { success: boolean; message?: string }) => {
-    if (!ack?.success) {
-      input.value = originalInput;
-      selectedMusicMention.value = originalMusicMention;
-      alert(ack?.message || "发送失败");
-    }
-  });
 }
 
 function mentionMember(member: { displayName: string }) {
@@ -4555,9 +4583,9 @@ function onKeydown(event: KeyboardEvent) {
       return;
     }
   }
-  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+  if (isComposerSendKey(event)) {
     event.preventDefault();
-    sendText();
+    void sendText();
   }
 }
 
@@ -10839,11 +10867,25 @@ async function toggleVirtual(character: any) {
               @keydown="onKeydown"
               @paste="handleComposerPaste"
             ></textarea>
-            <button v-if="canSendText" class="send-btn composer-edge-btn composer-send-btn" @click="sendText" aria-label="发送"><Send :size="19" /></button>
+            <button
+              v-if="canSendText"
+              class="send-btn composer-edge-btn composer-send-btn"
+              :disabled="!canSubmitText"
+              :aria-label="messageSendPending ? '正在发送' : '发送'"
+              :title="composerSendStatus || '发送'"
+              @click="sendText"
+            ><Send :size="19" /></button>
             <button v-else class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
             <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
             <input ref="photoInput" class="hidden" type="file" accept="image/*" multiple @change="handlePickedFiles" />
           </div>
+          <small
+            v-if="composerSendStatus"
+            class="composer-send-status"
+            :data-send-state="composerSendState"
+            role="status"
+            aria-live="polite"
+          >{{ composerSendStatus }}</small>
           <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
             <template v-if="activeComposerSuggestionKind === 'music'">
               <button

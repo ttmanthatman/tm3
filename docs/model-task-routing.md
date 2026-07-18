@@ -117,19 +117,19 @@ Fastify and owns the main route/socket implementation.
 
 ### Test inventory
 
-There are **59 test files** in the repository:
+There are **60 test files** in the repository:
 
 | Classification | Files | Canonical command or role |
 | --- | ---: | --- |
-| Client | 23 | `npm run test:client` |
+| Client | 24 | `npm run test:client` |
 | Server | 21 | `npm run test:server` |
 | Shared | 5 | `npm run test:shared` |
 | Scripts | 6 | `npm run test:scripts` |
 | Service Worker | 1 | `npm run test:service-worker` |
-| Isolated local E2E | 1 | Six critical Playwright flows via `npm run test:e2e` |
+| Isolated local E2E | 1 | Seven critical Playwright flows via `npm run test:e2e` |
 | Non-destructive remote E2E | 2 | Diagnostic and retained-test-station smoke flows |
 
-`npm run test:all` classifies and runs the first 56 source test files exactly once. Browser
+`npm run test:all` classifies and runs the first 57 source test files exactly once. Browser
 files are intentionally separate because they require isolated database/browser infrastructure
 or the guarded remote test environment.
 
@@ -160,12 +160,12 @@ manual dispatch:
 
 1. **Verify** uses Node.js 22, `npm ci`, Prisma client generation, and
    `npm run verify:full`. That covers public-tree safety, release consistency, client/server
-   type checks, all 56 classified source tests, and client/server production builds.
+   type checks, all 57 classified source tests, and client/server production builds.
 2. **Prisma migration baseline** uses a disposable MySQL 8.4 database to apply committed
    migrations, check migration status, verify no schema diff, and confirm the `0_init`
    history.
 3. **Browser smoke tests** use a separate disposable MySQL 8.4 database, install Chromium,
-   reset/seed only the guarded E2E database, and run the six critical Playwright flows.
+   reset/seed only the guarded E2E database, and run the seven critical Playwright flows.
    Failure-only browser artifacts are retained for seven days.
 
 CI does not deploy, publish, push, connect to a retained application database, or run the

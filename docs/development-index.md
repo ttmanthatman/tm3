@@ -25,7 +25,7 @@ Full verification checks the public repository tree, type-checks the Vue client 
 
 After `verify` succeeds, the independent migration job starts a disposable MySQL service with only the `tm3_migration_verify` database. It applies the committed migration history, checks `prisma migrate status`, confirms that the migrated database has no schema diff, and requires one successful `0_init` history record. It uses fixed CI-only credentials and never reads deployment secrets or connects to a retained database.
 
-After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service, installs Chromium, resets and seeds the dedicated `tm3_e2e` database, and runs the six critical Playwright browser flows. The Playwright web servers are process-managed and shut down with the test runner. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
+After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service, installs Chromium, resets and seeds the dedicated `tm3_e2e` database, and runs the seven critical Playwright browser flows. The Playwright web servers are process-managed and shut down with the test runner. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
 
 During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included. CI and final pre-commit validation must continue to use `verify:full`.
 
@@ -54,6 +54,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, admin, settings, modals, composer, effects, and release UI.
 - `src/client/features/music/useMusicPlayer.ts`: music playback queue, current track, playback mode, audio element, progress restoration/reporting, Media Session, account-scoped playback persistence, and playback timer lifecycle.
+- `src/client/messageSending.ts`: connection-aware text-message delivery, single in-flight send locking, Socket ACK timeout handling, and draft-preservation outcomes.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
 - `src/client/api.ts`: auth token storage and fetch wrapper.

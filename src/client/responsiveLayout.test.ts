@@ -689,12 +689,14 @@ test("the profile settings entry opens complete self-service account controls", 
   assert.match(server, /accountId: null,[\s\S]*?displayName: "已注销用户"[\s\S]*?await tx\.account\.delete/);
 });
 
-test("composer swaps one compact trailing action between more and send", () => {
-  assert.match(app, /<button v-if="canSendText" class="send-btn composer-edge-btn composer-send-btn"/);
+test("composer swaps one compact trailing action between more and a connection-aware send", () => {
+  assert.match(app, /v-if="canSendText"[\s\S]*?class="send-btn composer-edge-btn composer-send-btn"[\s\S]*?:disabled="!canSubmitText"/);
   assert.match(app, /<button v-else class="icon-btn composer-edge-btn"[\s\S]*?aria-label="更多功能"/);
-  assert.doesNotMatch(app, /class="send-btn" :disabled="!canSendText"/);
+  assert.match(app, /class="composer-send-status"[\s\S]*?:data-send-state="composerSendState"[\s\S]*?aria-live="polite"/);
+  assert.match(app, /const canSubmitText = computed\(\(\) => canSendText\.value && socketReadyToSend\.value && !messageSendPending\.value\)/);
   assert.match(css, /\.composer-main \{[\s\S]*?gap: 2px;/);
   assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 34px;[\s\S]*?flex: 0 0 34px;[\s\S]*?padding: 0;/);
+  assert.match(css, /\.composer-main \.composer-send-btn:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity: 0\.48;/);
 });
 
 test("original image selection is a small unchecked control on the photo tile", () => {

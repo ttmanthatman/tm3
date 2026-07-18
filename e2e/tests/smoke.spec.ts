@@ -18,6 +18,40 @@ async function loginAsAdmin(page: Page) {
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await waitForChatSocket(page);
+}
+
+async function readChatSocket(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as
+      | { _s?: Map<string, Record<string, unknown>> }
+      | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => "connectionState" in candidate && "socket" in candidate);
+    const socket = store?.socket as { connected?: boolean } | undefined;
+    return { socketFound: Boolean(socket), connected: socket?.connected === true };
+  });
+}
+
+async function waitForChatSocket(page: Page, connected = true) {
+  await expect.poll(() => readChatSocket(page).then((state) => state.connected)).toBe(connected);
+}
+
+async function setChatSocketConnection(page: Page, connected: boolean) {
+  await page.evaluate((shouldConnect) => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as
+      | { _s?: Map<string, Record<string, unknown>> }
+      | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => "connectionState" in candidate && "socket" in candidate);
+    const socket = store?.socket as { connect: () => unknown; disconnect: () => unknown } | undefined;
+    if (!socket) throw new Error("chat socket was not found");
+    if (shouldConnect) socket.connect();
+    else socket.disconnect();
+  }, connected);
+  await waitForChatSocket(page, connected);
 }
 
 async function openAccountsAdmin(page: Page) {
@@ -46,6 +80,34 @@ test("文字消息刷新后仍然存在", async ({ page }) => {
 
   await page.reload();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
+});
+
+test("390px 手机端断线期间保留草稿并在重连后发送一次", async ({ page }) => {
+  const message = "浏览器断线恢复消息：草稿不会丢失";
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginAsAdmin(page);
+
+  const input = page.getByPlaceholder("输入消息");
+  const send = page.getByRole("button", { name: "发送", exact: true });
+  await input.fill(message);
+  await setChatSocketConnection(page, false);
+
+  await expect(send).toBeDisabled();
+  await expect(page.getByText("连接恢复后再发送", { exact: true })).toBeVisible();
+  await send.evaluate((button: HTMLButtonElement) => button.click());
+  await input.press("Enter");
+  await expect(input).toHaveValue(message);
+  await input.press("Shift+Enter");
+  await expect(input).toHaveValue(`${message}\n`);
+  await input.press("Backspace");
+  await expect(input).toHaveValue(message);
+
+  await setChatSocketConnection(page, true);
+  await expect(input).toHaveValue(message);
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(input).toHaveValue("");
   await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
 });
 
