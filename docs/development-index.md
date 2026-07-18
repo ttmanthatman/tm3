@@ -14,7 +14,7 @@ This index is the first file to read before changing Team Chat. It is intentiona
 1. Run `git status --short`, `git branch --show-current`, and `git log --oneline -n 20`.
 2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
 3. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
-4. Before release or push, run at least `npm run check:quick`, `npm run test:ui-logic`, and `npm run build`.
+4. Before release or push, run `npm run verify:full`.
 5. Review `git diff` locally before deployment or publishing.
 
 ## Frequent Regression Areas
@@ -89,11 +89,10 @@ Useful checks:
 
 ```bash
 git ls-files AGENTS.local.md .env storage node_modules
-npm run check:public-tree
-npm run test:ui-logic
-npm run check
-npm run build
+npm run verify:full
 ```
+
+The canonical test entry point is `npm run test:all`. It classifies every `src/**/*.test.ts` and `src/**/*.spec.ts` file into client, server, shared, scripts, or service-worker coverage, rejects overlaps and omissions, and executes each file once. Use `npm run check:test-files` to print and validate that mapping without running tests. Focused commands are `test:client`, `test:server`, `test:shared`, `test:scripts`, and `test:service-worker`; `test:ui-logic` and `test:security` remain compatibility aliases.
 
 Also run a local grep for any project-specific private hostnames, addresses, organization names, or deployment paths. Keep those patterns in your local shell history or notes, not in this public file.
 

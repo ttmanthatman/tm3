@@ -71,8 +71,10 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 - Run targeted tests for every changed behavior before broad checks.
 - Prefer the narrowest relevant test command during iteration.
 - Run type checks when TypeScript or Vue code changes.
-- Run UI logic tests when client state, layout logic, or interaction behavior changes.
-- Run security tests when server, authentication, authorization, upload, or URL handling changes.
+- Run `npm run test:client` when client state, layout logic, or interaction behavior changes.
+- Run `npm run test:server` when server, authentication, authorization, upload, or URL handling changes.
+- Run `npm run test:all` for complete test coverage without duplicate file execution.
+- Run `npm run verify:full` before a commit or handoff that requires complete verification.
 - Run a production build when code paths or build configuration change.
 - Run `npm run check:public-tree` for tracked-file or publication-safety changes.
 - Run `git diff --check` before committing.

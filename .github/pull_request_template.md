@@ -1,8 +1,6 @@
 ## Verification
 
-- [ ] `npm run check:quick`
-- [ ] `npm run test:ui-logic`
-- [ ] `npm run build`
+- [ ] `npm run verify:full`
 
 ## Effects and animation
 

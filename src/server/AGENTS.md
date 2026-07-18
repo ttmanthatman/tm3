@@ -43,7 +43,7 @@ Follow the root `AGENTS.md` first and use `docs/development-index.md` for the mo
 - Test malformed and boundary inputs when validation changes.
 - Assert status code and response shape for route changes.
 - Run the narrowest relevant server test during iteration.
-- Run `npm run test:security` for authentication, authorization, file, or URL changes.
+- Run `npm run test:server` for authentication, authorization, file, or URL changes.
 - Run `npm run check` for server TypeScript changes.
 - Run `npm run build` when server code or build behavior changes.
 

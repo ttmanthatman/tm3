@@ -48,7 +48,7 @@ Follow the root `AGENTS.md` first and use `docs/development-index.md` for the mo
 ## Validation
 
 - Run the most relevant focused UI logic test while iterating.
-- Run `npm run test:ui-logic` for client logic or interaction changes.
+- Run `npm run test:client` for client logic or interaction changes.
 - Run `npm run check` for Vue or TypeScript changes.
 - Run `npm run build` when client code or build behavior changes.
 - Use a real browser for changed responsive, keyboard, modal, or gesture behavior.

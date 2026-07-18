@@ -209,10 +209,10 @@ npm run dev
 提交前检查：
 
 ```bash
-npm run check:quick
-npm run test:ui-logic
-npm run test:security
+npm run verify:full
 ```
+
+需要只运行一类测试时，可使用 `npm run test:client`、`npm run test:server`、`npm run test:shared`、`npm run test:scripts` 或 `npm run test:service-worker`。`npm run test:all` 会验证分类后恰好运行每个测试文件一次；旧的 `test:ui-logic` 和 `test:security` 命令保留为兼容入口。
 
 更详细的模块地图和回归检查见 [开发索引](docs/development-index.md)。
 
