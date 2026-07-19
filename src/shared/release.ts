@@ -1,14 +1,20 @@
-export const APP_VERSION = "1.5.6";
+export const APP_VERSION = "1.5.7";
 
-export const RELEASE_DATE = "2026-07-17";
+export const RELEASE_DATE = "2026-07-19";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "管理员“用户与权限”改为可搜索的紧凑用户列表与详情编辑；手机端使用列表到详情的单栏流程，密码重置与删除操作也移入独立区域。",
+  "修复管理员创建用户时失败无反馈、可重复提交及公共频道成员关系可能部分写入的问题；表单现在提供字段校验、明确状态和真实服务端错误。",
+  "Socket 尚未连接或正在重连时，聊天输入会保留草稿并暂停发送；消息只在成功确认后清空，失败或超时会显示可重试提示。"
+] as const;
+
+const RELEASE_1_5_6_NOTES = [
   "圣经阅读页新增书卷、章节、经节三级快速跳转，浏览其他经卷时可直接定位到指定章节或经节。",
   "圣经顶栏新增“资”入口，可直接前往资料网站。",
   "管理员现在可在用户与权限页删除用户；操作会二次确认，保留历史消息并阻止删除当前或最后一个管理员。"
-] as const;
+] as const
 
 const RELEASE_1_5_5_NOTES = [
   "歌单分享统一改为明确的频道选择窗口，歌单卡片新增小飞机分享入口，分享后会显示目标频道与结果。",
@@ -641,9 +647,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.5.7",
+    date: "2026-07-19",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.5.6",
     date: "2026-07-17",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_5_6_NOTES
   },
   {
     version: "1.5.5",
