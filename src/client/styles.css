@@ -8385,14 +8385,12 @@ button.admin-object-row:focus-visible {
   background: linear-gradient(135deg, #171b20 0 50%, #245d82 50%);
 }
 
-.device-list,
-.user-admin-list {
+.device-list {
   display: grid;
   gap: 10px;
 }
 
-.device-row,
-.user-admin-row {
+.device-row {
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 10px;
@@ -8406,8 +8404,7 @@ button.admin-object-row:focus-visible {
   align-items: center;
 }
 
-.device-row span,
-.user-admin-main {
+.device-row span {
   min-width: 0;
   display: grid;
   gap: 4px;
@@ -8416,11 +8413,6 @@ button.admin-object-row:focus-visible {
 .device-row small {
   color: var(--muted);
   font-size: 12px;
-}
-
-.user-admin-row {
-  grid-template-columns: 42px minmax(0, 1fr) minmax(150px, auto);
-  align-items: start;
 }
 
 .upload-avatar-trigger {
@@ -8432,51 +8424,611 @@ button.admin-object-row:focus-visible {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-.user-admin-edit-grid {
-  display: grid;
-  grid-template-columns: minmax(160px, 280px) minmax(150px, 1fr);
-  align-items: start;
-  gap: 8px 10px;
-}
-
-.user-admin-fields,
-.user-admin-flags {
-  min-width: 0;
-  display: grid;
-  gap: 6px;
-}
-
-.user-admin-flags {
-  align-content: start;
-  padding-top: 2px;
-}
-
-.user-admin-main input {
-  min-width: 0;
+.admin-accounts-page {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 10px;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   background: #fff;
 }
 
-.user-admin-main > strong {
+.admin-accounts-toolbar {
   min-width: 0;
+  padding: 12px 16px;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(190px, 260px) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+
+.admin-accounts-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.admin-accounts-title strong {
+  font-size: 17px;
+}
+
+.admin-accounts-title span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.admin-account-search {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f8f9;
+  color: var(--muted);
+}
+
+.admin-account-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.admin-account-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.admin-account-add {
+  min-height: 38px;
+  white-space: nowrap;
+}
+
+.admin-accounts-workspace {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(250px, 31%) minmax(0, 1fr);
+}
+
+.admin-account-list-pane,
+.admin-account-detail-pane {
+  min-width: 0;
+  min-height: 0;
+}
+
+.admin-account-list-pane {
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: #f8f9fa;
+}
+
+.admin-account-list {
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-account-list-row {
+  width: 100%;
+  min-height: 54px;
+  padding: 7px 10px;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto 17px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+  text-align: left;
+  background: transparent;
+}
+
+.admin-account-list-row:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.admin-account-list-row.active {
+  background: color-mix(in srgb, var(--accent) 11%, #fff);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.admin-account-list-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+}
+
+.admin-account-list-copy {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.admin-account-list-name {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.admin-account-list-name b,
+.admin-account-list-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-account-list-name b {
+  font-size: 14px;
+}
+
+.admin-account-list-copy small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-account-list-name em,
+.admin-current-account-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: #e6f4ea;
+  color: #16733b;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.admin-account-badges {
+  display: flex;
+  gap: 3px;
+}
+
+.admin-account-badges em {
+  border-radius: 4px;
+  padding: 2px 4px;
+  background: #e9ecef;
+  color: #4b5563;
+  font-size: 9px;
+  font-style: normal;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.admin-account-list-chevron {
+  color: #9aa1aa;
+}
+
+.admin-account-empty {
+  margin: 0;
+  padding: 32px 16px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.admin-account-detail-pane {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+  background: #fff;
+}
+
+.admin-account-details-view,
+.admin-account-create-view {
+  width: min(620px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 20px 24px 0;
+  display: grid;
+  align-content: start;
+  gap: 15px;
+}
+
+.admin-account-detail-heading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-account-detail-heading.create {
+  grid-template-columns: 52px minmax(0, 1fr);
+}
+
+.admin-account-detail-heading > div {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+}
+
+.admin-account-detail-heading strong,
+.admin-account-detail-heading small {
   max-width: 100%;
   overflow-wrap: anywhere;
-  word-break: break-word;
 }
 
-.user-admin-actions {
+.admin-account-detail-heading strong {
+  font-size: 20px;
+}
+
+.admin-account-detail-heading small,
+.admin-account-avatar-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.admin-account-detail-avatar {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  font-size: 20px;
+}
+
+.admin-account-avatar-action {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #2f343b;
+  color: #fff;
+}
+
+.admin-account-detail-icon {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 14%, #fff);
+  color: var(--accent);
+}
+
+.admin-account-section {
+  min-width: 0;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.admin-account-section.danger {
+  border-color: #f2c3bf;
+  background: #fffafa;
+}
+
+.admin-account-section-heading {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-account-section-heading.security {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.admin-account-section-heading.security > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-account-section-heading b {
+  font-size: 14px;
+}
+
+.admin-account-section-heading small,
+.admin-account-field small,
+.admin-account-readonly-field span,
+.admin-account-permission small,
+.admin-account-danger-row small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.admin-account-field {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.admin-account-field > span,
+.admin-account-readonly-field > span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.admin-account-field input {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.admin-account-field input:focus {
+  outline: 0;
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.admin-account-field input[aria-invalid="true"] {
+  border-color: #d92d20;
+}
+
+.admin-field-error,
+.admin-operation-error {
+  color: #b42318;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.4;
+}
+
+.admin-operation-error {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: 7px;
+  background: #fff0ee;
+}
+
+.admin-account-readonly-field {
+  min-width: 0;
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+  border-radius: 7px;
+  background: #f5f6f7;
+}
+
+.admin-account-readonly-field strong {
+  overflow-wrap: anywhere;
+}
+
+.admin-account-permission {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+}
+
+.admin-account-permission input {
+  width: 17px;
+  height: 17px;
+  margin: 2px 0 0;
+}
+
+.admin-account-permission > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.admin-account-permission b {
+  font-size: 13px;
+}
+
+.admin-password-reset {
+  padding-top: 2px;
+  display: grid;
+  gap: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.admin-password-reset .admin-account-field:first-child {
+  margin-top: 10px;
+}
+
+.admin-password-reset > .mini-btn {
+  justify-self: end;
+}
+
+.admin-account-danger-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.admin-account-danger-row > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-account-danger-row strong {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.admin-account-action-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin: 1px -24px 0;
+  padding: 12px 24px max(12px, var(--safe-bottom));
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
-  gap: 7px;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(8px);
 }
 
-.user-admin-actions .mini-btn {
-  min-height: 34px;
-  padding: 0 12px;
+.admin-account-save-summary {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.admin-account-empty-detail {
+  min-height: 100%;
+  padding: 30px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.admin-account-empty-detail strong {
+  color: #343a40;
+}
+
+.admin-account-mobile-back {
+  min-height: 42px;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+@media (max-width: 700px) {
+  .admin-accounts-toolbar {
+    padding: 10px 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .admin-account-search {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .admin-account-add {
+    min-height: 36px;
+    padding: 0 10px;
+  }
+
+  .admin-accounts-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-account-detail-pane {
+    display: none;
+  }
+
+  .admin-accounts-page.mobile-detail-open {
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .admin-accounts-page.mobile-detail-open .admin-accounts-toolbar,
+  .admin-accounts-page.mobile-detail-open .admin-account-list-pane {
+    display: none;
+  }
+
+  .admin-accounts-page.mobile-detail-open .admin-account-detail-pane {
+    display: block;
+  }
+
+  .admin-account-details-view,
+  .admin-account-create-view {
+    min-height: 100%;
+    padding: 0 12px;
+    gap: 12px;
+  }
+
+  .admin-account-mobile-back {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .admin-account-detail-heading {
+    grid-template-columns: 50px minmax(0, 1fr);
+    padding-top: 3px;
+  }
+
+  .admin-account-detail-heading.create {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .admin-account-avatar-status {
+    grid-column: 2;
+  }
+
+  .admin-account-detail-avatar {
+    width: 50px;
+    height: 50px;
+  }
+
+  .admin-account-detail-icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .admin-account-detail-heading strong {
+    font-size: 18px;
+  }
+
+  .admin-account-section {
+    padding: 12px;
+  }
+
+  .admin-account-action-bar {
+    margin: 0 -12px;
+    padding: 10px 12px max(10px, var(--safe-bottom));
+  }
+
+  .admin-account-save-summary {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .admin-account-list-row {
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+  }
+
+  .admin-account-list-chevron {
+    display: none;
+  }
+
+  .admin-account-section-heading.security,
+  .admin-account-danger-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-account-section-heading.security .mini-btn,
+  .admin-account-danger-row .mini-btn,
+  .admin-password-reset > .mini-btn {
+    width: 100%;
+  }
+
+  .admin-account-action-bar .primary-btn {
+    flex: 1 1 auto;
+  }
 }
 
 .pinned-editor-modal {
@@ -9662,7 +10214,6 @@ button.admin-object-row:focus-visible {
   }
 
   .device-row,
-  .user-admin-row,
   .channel-admin-row,
   .admin-data-row {
     grid-template-columns: minmax(0, 1fr);
@@ -9679,7 +10230,6 @@ button.admin-object-row:focus-visible {
   }
 
   .device-row .mini-btn,
-  .user-admin-actions,
   .channel-icon-admin,
   .channel-admin-row .mini-btn,
   .admin-data-row .mini-btn,
@@ -9849,27 +10399,6 @@ button.admin-object-row:focus-visible {
     flex-basis: 100%;
   }
 
-  .user-admin-actions {
-    justify-content: flex-start;
-  }
-
-  .user-admin-row {
-    grid-template-columns: 42px minmax(0, 1fr);
-  }
-
-  .user-admin-main,
-  .user-admin-actions {
-    grid-column: 2;
-  }
-
-  .user-admin-edit-grid {
-    grid-template-columns: minmax(132px, 0.72fr) minmax(118px, 0.28fr);
-  }
-
-  .user-admin-actions {
-    display: flex;
-  }
-
   .channel-admin-row {
     grid-template-columns: 56px minmax(0, 1fr);
   }
@@ -9926,12 +10455,6 @@ button.admin-object-row:focus-visible {
   .channel-pane.collapsed {
     opacity: 1;
     pointer-events: auto;
-  }
-}
-
-@media (max-width: 420px) {
-  .user-admin-edit-grid {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 

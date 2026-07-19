@@ -12402,7 +12402,7 @@ async function toggleVirtual(character: any) {
             </div>
           </section>
         </div>
-        <footer v-if="adminMsg" class="admin-msg">{{ adminMsg }}</footer>
+        <footer v-if="adminMsg" class="admin-msg" role="status" aria-live="polite">{{ adminMsg }}</footer>
       </div>
     </section>
 

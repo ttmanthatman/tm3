@@ -5,6 +5,7 @@ import type {
   Actor,
   PrismaClient
 } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import type {
   FastifyInstance,
   FastifyReply,
@@ -54,9 +55,20 @@ export type AdminAccountRouteDependencies = {
 };
 
 const createAccountSchema = z.object({
-  username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
-  password: z.string().min(10).max(128),
-  displayName: z.string().min(1).max(80),
+  username: z
+    .string({ message: "用户名不能为空" })
+    .min(2, "用户名长度必须为 2–40 位")
+    .max(40, "用户名长度必须为 2–40 位")
+    .regex(/^[a-zA-Z0-9_.-]+$/, "用户名只能包含英文字母、数字、下划线、点和短横线"),
+  password: z
+    .string({ message: "密码不能为空" })
+    .min(10, "密码长度必须为 10–128 位")
+    .max(128, "密码长度必须为 10–128 位"),
+  displayName: z
+    .string({ message: "显示名不能为空" })
+    .trim()
+    .min(1, "显示名不能为空")
+    .max(80, "显示名最长 80 个字符"),
   isAdmin: z.boolean().optional(),
   canPinMessages: z.boolean().optional()
 });
@@ -102,42 +114,63 @@ export function registerAdminAccountRoutes(
     "/api/admin/accounts",
     { preHandler: deps.requireAdmin },
     async (request, reply) => {
-      const body = createAccountSchema.parse(request.body);
+      const parsed = createAccountSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsed.error.issues[0]?.message || "创建用户资料无效",
+          issues: parsed.error.issues
+        });
+      }
+      const body = parsed.data;
       try {
-        const account = await deps.prisma.account.create({
-          data: {
-            username: body.username,
-            passwordHash: await bcrypt.hash(body.password, 12),
-            displayName: body.displayName,
-            role: body.isAdmin ? "admin" : "user",
-            canPinMessages: !!body.canPinMessages,
-            actor: {
-              create: {
-                kind: "human",
-                username: body.username,
-                displayName: body.displayName
+        const passwordHash = await bcrypt.hash(body.password, 12);
+        const account = await deps.prisma.$transaction(async (transaction) => {
+          const created = await transaction.account.create({
+            data: {
+              username: body.username,
+              passwordHash,
+              displayName: body.displayName,
+              role: body.isAdmin ? "admin" : "user",
+              canPinMessages: !!body.canPinMessages,
+              actor: {
+                create: {
+                  kind: "human",
+                  username: body.username,
+                  displayName: body.displayName
+                }
               }
-            }
-          },
-          include: { actor: true }
-        });
-        const publicChannels = await deps.prisma.channel.findMany({
-          where: { isPrivate: false },
-          select: { id: true }
-        });
-        await deps.prisma.channelMember.createMany({
-          data: publicChannels.map((channel) => ({
-            channelId: channel.id,
-            accountId: account.id,
-            role: "member"
-          })),
-          skipDuplicates: true
+            },
+            include: { actor: true }
+          });
+          const publicChannels = await transaction.channel.findMany({
+            where: { isPrivate: false },
+            select: { id: true }
+          });
+          if (publicChannels.length) {
+            await transaction.channelMember.createMany({
+              data: publicChannels.map((channel) => ({
+                channelId: channel.id,
+                accountId: created.id,
+                role: "member"
+              })),
+              skipDuplicates: true
+            });
+          }
+          return created;
         });
         return { success: true, account: deps.toAccountDto(account) };
-      } catch {
-        return reply
-          .code(409)
-          .send({ success: false, message: "用户名已存在" });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          return reply
+            .code(409)
+            .send({ success: false, message: "用户名已存在" });
+        }
+        request.log.error({ err: error }, "创建管理员账号失败");
+        throw error;
       }
     }
   );

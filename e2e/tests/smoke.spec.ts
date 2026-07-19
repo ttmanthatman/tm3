@@ -140,25 +140,84 @@ test("管理员账号显示且当前管理员不可删除", async ({ page }) => 
   await loginAsAdmin(page);
   await openAccountsAdmin(page);
 
+  await expect(page.locator(".admin-account-list-pane")).toBeVisible();
+  await expect(page.locator(".admin-account-detail-pane")).toBeVisible();
   const currentAdmin = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_ADMIN.username}` });
   await expect(currentAdmin).toBeVisible();
-  await expect(currentAdmin.getByRole("button", { name: "删除", exact: true })).toBeDisabled();
+  await currentAdmin.click();
+  await expect(page.getByRole("button", { name: "删除用户", exact: true })).toBeDisabled();
+  await expect(page.getByText("不能删除当前登录账号", { exact: true })).toBeVisible();
 });
 
-test("创建并删除测试普通账号", async ({ page }) => {
+test("管理员创建用户、修改资料并在刷新后确认持久化", async ({ page }) => {
   await loginAsAdmin(page);
   await openAccountsAdmin(page);
 
-  await page.getByPlaceholder("username").fill(E2E_MEMBER.username);
-  await page.getByPlaceholder("显示名").fill(E2E_MEMBER.displayName);
-  await page.getByPlaceholder("初始密码（至少 10 位）").fill(E2E_MEMBER.password);
-  await page.getByRole("button", { name: "添加用户" }).click();
+  await page.getByRole("button", { name: "新增用户", exact: true }).click();
+  await page.getByPlaceholder("例如 xiaoma").fill(E2E_MEMBER.username);
+  await page.getByPlaceholder("用户看到的昵称").fill(E2E_MEMBER.displayName);
+  await page.getByPlaceholder("输入初始密码").fill(E2E_MEMBER.password);
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
 
   const member = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_MEMBER.username}` });
   await expect(member).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await member.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(member).toHaveAttribute("aria-current", "true");
+  await expect(page.getByText("用户已创建", { exact: true })).toBeVisible();
 
-  await expect(member).toHaveCount(0);
-  await expect(page.getByText(`用户“${E2E_MEMBER.displayName}”已删除`, { exact: true })).toBeVisible();
+  const updatedDisplayName = `${E2E_MEMBER.displayName}已更新`;
+  await page.getByPlaceholder("昵称").fill(updatedDisplayName);
+  await page.getByLabel("频道置顶管理").check();
+  await page.getByRole("button", { name: "保存修改", exact: true }).click();
+  await expect(page.getByText("用户资料已更新", { exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await openAccountsAdmin(page);
+  const persistedMember = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_MEMBER.username}` });
+  await expect(persistedMember).toContainText(updatedDisplayName);
+  await persistedMember.click();
+  await expect(page.getByPlaceholder("昵称")).toHaveValue(updatedDisplayName);
+  await expect(page.getByLabel("频道置顶管理")).toBeChecked();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "删除用户", exact: true }).click();
+
+  await expect(persistedMember).toHaveCount(0);
+  await expect(page.getByText(`用户“${updatedDisplayName}”已删除`, { exact: true })).toBeVisible();
+});
+
+test("360px 和 390px 用户管理使用列表到详情的单栏流程", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 });
+  await loginAsAdmin(page);
+  let createRequests = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().endsWith("/api/admin/accounts")) {
+      createRequests += 1;
+    }
+  });
+  await openAccountsAdmin(page);
+
+  const currentAdmin = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_ADMIN.username}` });
+  await expect(currentAdmin).toBeVisible();
+  await expect(page.locator(".admin-account-detail-pane")).toBeHidden();
+  await currentAdmin.click();
+  await expect(page.getByRole("button", { name: "返回用户列表", exact: true })).toBeVisible();
+  await expect(page.locator(".admin-account-list-pane")).toBeHidden();
+  await page.getByRole("button", { name: "返回用户列表", exact: true }).click();
+
+  await page.getByRole("button", { name: "新增用户", exact: true }).click();
+  await page.getByRole("button", { name: "创建用户", exact: true }).click();
+  await expect(page.getByText("用户名不能为空", { exact: true })).toBeVisible();
+  await expect(page.getByText("显示名不能为空", { exact: true })).toBeVisible();
+  await expect(page.getByText("密码长度必须为 10–128 位", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("例如 xiaoma")).toBeFocused();
+  expect(createRequests).toBe(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => ({
+    viewport: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth
+  }))).toEqual({ viewport: 390, documentWidth: 390 });
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.locator(".admin-account-list-pane")).toBeVisible();
 });

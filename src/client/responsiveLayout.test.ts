@@ -57,12 +57,18 @@ test("Bible reader offers compact book, chapter, and verse jumps beside the reso
   assert.match(bibleWorkspace, /Date\.now\(\) < suppressReaderScrollUntil/);
 });
 
-test("user administration exposes a confirmation-gated delete action", () => {
+test("user administration uses a searchable master-detail layout with guarded destructive actions", () => {
   assert.match(app, /<AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = \$event" \/>/);
   assert.doesNotMatch(app, /\/api\/admin\/accounts/);
   assert.match(adminAccountsLogic, /adminAccountDeleteConfirmation[\s\S]*?警告：确定删除用户[\s\S]*?method: "DELETE"/);
-  assert.match(adminAccountsPage, /class="mini-btn danger-action"[\s\S]*?:disabled="!canDeleteAccount\(account\)"[\s\S]*?@click="deleteAccount\(account\)"/);
-  assert.match(css, /\.user-admin-main > strong \{[\s\S]*?max-width: 100%;[\s\S]*?overflow-wrap: anywhere;/);
+  assert.match(adminAccountsPage, /class="admin-account-list-pane"[\s\S]*?class="admin-account-detail-pane"/);
+  assert.match(adminAccountsPage, /placeholder="搜索用户……"[\s\S]*?data-testid="admin-account-row"/);
+  assert.match(adminAccountsPage, /v-if="account\.id === store\.account\?\.id">当前账号/);
+  assert.match(adminAccountsPage, /v-if="passwordOpen" class="admin-password-reset"/);
+  assert.match(adminAccountsPage, /class="mini-btn danger-action"[\s\S]*?:disabled="!canDeleteAccount\(selectedAccount\) \|\| deletingAccountId !== null"/);
+  assert.doesNotMatch(adminAccountsPage, /v-for="account in accounts"[\s\S]*?type="password"/);
+  assert.match(css, /\.admin-accounts-workspace \{[\s\S]*?grid-template-columns: minmax\(250px, 31%\) minmax\(0, 1fr\);/);
+  assert.match(css, /@media \(max-width: 700px\) \{[\s\S]*?\.admin-accounts-page\.mobile-detail-open \.admin-account-list-pane[\s\S]*?display: none;/);
 });
 
 test("chat subtitles scroll only when their rendered text overflows", () => {
