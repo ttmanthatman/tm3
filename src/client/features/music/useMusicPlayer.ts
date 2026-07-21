@@ -9,6 +9,7 @@ import { APP_VERSION } from "@shared/release";
 import { creditedMusicListenMs, isQualifiedMusicPlay } from "@shared/musicPlayback";
 import { shouldWriteMusicProgress, type MusicProgressState } from "@shared/activityLog";
 import { api, getToken } from "../../api";
+import { randomId } from "../../randomId";
 import {
   bindMusicMediaSession,
   musicFadeVolume,
@@ -86,7 +87,7 @@ function browserRuntime(): MusicPlayerRuntime {
     storage: localStorage,
     now: () => performance.now(),
     random: Math.random,
-    randomUUID: () => crypto.randomUUID(),
+    randomUUID: () => randomId(),
     setInterval: (handler, delay) => window.setInterval(handler, delay),
     clearInterval: (timer) => window.clearInterval(timer),
     setTimeout: (handler, delay) => window.setTimeout(handler, delay),

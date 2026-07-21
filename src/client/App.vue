@@ -108,6 +108,7 @@ import type {
   ThemePaletteDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
+import { randomId } from "./randomId";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
@@ -8526,7 +8527,7 @@ async function uploadAppearanceImageForPicker(event: Event) {
 }
 
 function createParallaxKit() {
-  const suffix = `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
+  const suffix = `${Date.now().toString(36)}-${randomId().slice(0, 8)}`;
   const kit: ParallaxKitDTO = {
     id: `custom-${suffix}`,
     name: `自定义卷轴 ${loginAppearanceEdit.value.parallaxKits.filter((item) => !item.builtIn).length + 1}`,
