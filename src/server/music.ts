@@ -52,3 +52,12 @@ export function musicTrackTitle(fileName?: string | null) {
   const extension = path.extname(safeName);
   return (extension ? safeName.slice(0, -extension.length) : safeName).trim() || "未命名歌曲";
 }
+
+export function musicTrackInfo(payload: unknown): { background: string | null; lyricsText: string | null } {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return { background: null, lyricsText: null };
+  const record = payload as Record<string, unknown>;
+  return {
+    background: typeof record.background === "string" ? record.background : null,
+    lyricsText: typeof record.lyricsText === "string" ? record.lyricsText : null
+  };
+}

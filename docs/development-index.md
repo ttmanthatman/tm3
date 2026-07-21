@@ -23,7 +23,7 @@ The `.github/workflows/ci.yml` workflow runs for pull requests, pushes to `main`
 
 Full verification checks the public repository tree, type-checks the Vue client and TypeScript server, runs every classified test file once, and builds the client and server. These checks do not require a database service or repository secrets, and the workflow does not deploy, migrate data, publish releases, or push changes.
 
-After `verify` succeeds, the independent migration job starts a disposable MySQL service with only the `tm3_migration_verify` database. It applies the committed migration history, checks `prisma migrate status`, confirms that the migrated database has no schema diff, and requires one successful `0_init` history record. It uses fixed CI-only credentials and never reads deployment secrets or connects to a retained database.
+After `verify` succeeds, the independent migration job starts a disposable MySQL service with only the `tm3_migration_verify` database. It applies the committed migration history, checks `prisma migrate status`, confirms that the migrated database has no schema diff, and requires a fully applied migration history starting with the `0_init` baseline. It uses fixed CI-only credentials and never reads deployment secrets or connects to a retained database.
 
 After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service, installs Chromium, resets and seeds the dedicated `tm3_e2e` database, and runs the seven critical Playwright browser flows. The Playwright web servers are process-managed and shut down with the test runner. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
 
@@ -54,6 +54,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, admin, settings, modals, composer, effects, and release UI.
 - `src/client/features/music/useMusicPlayer.ts`: music playback queue, current track, playback mode, audio element, progress restoration/reporting, Media Session, account-scoped playback persistence, and playback timer lifecycle.
+- `src/client/features/music/MusicManager.vue` and `useMusicLibrary.ts`: the unified music manager (tracks, lyrics/score binding, resource pool, playlists). Rendered as an overlay from the player bar and embedded full-page in the music channel; `App.vue` only mounts it and owns the underlying track/playlist collections.
 - `src/client/messageSending.ts`: connection-aware text-message delivery, single in-flight send locking, Socket ACK timeout handling, and draft-preservation outcomes.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
@@ -82,7 +83,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - Track and playlist data: `App.vue` still loads and mutates the library and playlists; the composable consumes those collections as its playback queue inputs.
 - Current playback source, track, progress, mode, random history, Media Session, server playback/progress synchronization, playback timers, page-exit persistence, and the audio element lifecycle belong to `useMusicPlayer`.
 - Favorite filtering is split deliberately: the composable owns the account-scoped “only favorites” playback constraint, while `App.vue` keeps favorite mutation and its UI.
-- Lyrics, score pages, their UI timers, player/playlist dialogs, and playlist management windows stay in `App.vue` for the second extraction phase.
+- Lyrics and score viewing (lyrics header, score stage/preview, per-track score selection via `currentMusicScoreId`) with their UI timers stay in `App.vue`; track/playlist/resource management UI lives in `features/music/MusicManager.vue`.
 - Music listener presence remains with the shared music/Bible socket heartbeat in `App.vue`; separating that combined activity lifecycle is also second-phase work.
 
 ## UI Change Checklist

@@ -10,6 +10,7 @@ const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vu
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
 const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
+const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
@@ -230,8 +231,8 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
   assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
-  assert.match(app, /v-else-if="!showingFavoriteSurface" class="composer"/);
-  assert.match(app, /v-if="!showingFavoriteSurface && isMusicChannel" class="composer music-channel-composer"/);
+  assert.match(app, /v-if="!showingFavoriteSurface && !isMusicChannel" class="composer"/);
+  assert.match(app, /<MusicManager[\s\S]*?embedded[\s\S]*?:tracks="musicTracks"[\s\S]*?@refresh-tracks="loadMusicTracks"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
   assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);
@@ -295,18 +296,15 @@ test("mobile expanded player reserves intrinsic width for transport and tool but
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content max-content;/);
 });
 
-test("playback mode lives inside the playlist instead of taking header space", () => {
+test("music manager opens from the player bar instead of taking header space", () => {
   const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
   const playerEnd = app.indexOf("</header>", playerStart);
   const player = app.slice(playerStart, playerEnd);
-  const playlistStart = app.indexOf('<section v-if="musicPlaylistOpen"');
-  const playlistEnd = app.indexOf("</section>", playlistStart);
-  const playlist = app.slice(playlistStart, playlistEnd);
 
-  assert.doesNotMatch(player, /class="music-mode-btn"/);
-  assert.match(player, /aria-label="歌单"/);
-  assert.match(playlist, /class="music-playlist-tools"[\s\S]*?class="music-mode-btn active"/);
-  assert.match(playlist, /@click="cycleMusicPlaybackMode"[\s\S]*?musicPlaybackModeLabel\(\)/);
+  assert.match(player, /class="music-mode-btn active"[\s\S]*?@click="cycleMusicPlaybackMode"/);
+  assert.match(player, /aria-label="音乐管理"/);
+  assert.match(player, /@click="toggleMusicManager"/);
+  assert.match(app, /<MusicManager\s+v-if="musicManagerOpen"/);
 });
 
 test("music favorites persist per account and can constrain the playback queue", () => {
@@ -467,30 +465,31 @@ test("audio messages offer multi-group forwarding from the long-press menu", () 
 });
 
 test("forwarded audio copies attached score pages and exposes them on the new message", () => {
-  assert.match(server, /include: \{ musicScorePages: \{ orderBy: \{ pageIndex: "asc" \} \}, musicLyrics: true \}/);
-  assert.match(server, /scorePages: source\.musicScorePages\.map[\s\S]*?fs\.promises\.copyFile\(page\.sourcePath, path\.join\(MUSIC_SCORE_DIR, page\.filePath\)\)/);
-  assert.match(server, /musicScorePages: \{[\s\S]*?create: copy\.scorePages\.map/);
-  assert.match(app, /return message\.scorePages\?\.\[0\][\s\S]*?musicTracks\.value\.find/);
-  assert.match(app, /const previewScorePages = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)\?\.scorePages/);
+  assert.match(server, /include: \{ musicScores: \{ orderBy: \{ id: "asc" \}, include: \{ pages: \{ orderBy: \{ pageIndex: "asc" \} \} \} \}, musicLyrics: true \}/);
+  assert.match(server, /scores: source\.musicScores\.map[\s\S]*?fs\.promises\.copyFile\(page\.sourcePath, path\.join\(MUSIC_SCORE_DIR, page\.filePath\)\)/);
+  assert.match(server, /musicScores: \{[\s\S]*?create: copy\.scores\.map/);
+  assert.match(app, /return message\.scores\?\.\[0\]\?\.pages\[0\][\s\S]*?musicTracks\.value\.find/);
+  assert.match(app, /const previewScoreTrack = computed[\s\S]*?store\.messages\.find\(\(message\) => message\.id === trackId\)/);
 });
 
 test("music scores preload through authenticated blobs for reliable Safari rendering", () => {
   assert.match(app, /async function preloadMusicScorePages/);
-  assert.match(app, /fetch\(musicScoreRequestUrl\(page, trackId\), \{ headers: authHeaders\(\) \}\)/);
+  assert.match(app, /fetch\(musicScoreRequestUrl\(page\), \{ headers: authHeaders\(\) \}\)/);
+  assert.match(app, /\/api\/music\/scores\/\$\{page\.scoreId\}\/pages\/\$\{page\.id\}/);
   assert.match(app, /URL\.createObjectURL\(blob\)/);
   assert.match(app, /void preloadMusicScorePages\(result\.tracks\)/);
   assert.match(app, /musicScoreCachedUrls\.value\[page\.id\]/);
-  assert.match(server, /canReadMusicScore\(page\.track\.channel\.kind, canAccessSourceChannel\)/);
+  assert.match(server, /canReadMusicScore\(score\.track\.channel\.kind, canAccessSourceChannel\)/);
 });
 
-test("SRT and LRC lyrics upload from audio actions and render over the header during playback", () => {
-  assert.match(app, /ref="musicLyricsInput"[\s\S]*?accept="\.srt,\.lrc,application\/x-subrip,text\/plain"/);
-  assert.match(app, /requestMusicLyricsUpload[\s\S]*?\/api\/music\/tracks\/\$\{trackId\}\/lyrics/);
+test("SRT and LRC lyrics upload from the music manager and render over the header during playback", () => {
+  assert.match(musicManager, /ref="trackLyricsInput" type="file" accept="\.lrc,\.srt"/);
+  assert.match(musicManager, /xhrUpload\("PUT", `\/api\/music\/tracks\/\$\{track\.id\}\/lyrics`, form\)/);
   assert.match(lyricsHeader, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
   assert.match(app, /scheduleMusicLyricsHeaderResume[\s\S]*?5000/);
   assert.match(app, /compactBytes\(row\.message\.fileSize\)[\s\S]*?带歌词/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/lyrics"/);
-  assert.match(server, /source\.musicLyrics[\s\S]*?musicLyrics: \{ create: \{ fileName: source\.musicLyrics\.fileName/);
+  assert.match(server, /source\.musicLyrics[\s\S]*?musicLyrics: \{\s*create: \{\s*fileName: source\.musicLyrics\.fileName/);
 });
 
 test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
@@ -549,7 +548,8 @@ test("URL-only messages collapse after two lines and expand before navigating", 
 });
 
 test("music uploads accept multiple files and report hash-based reuse", () => {
-  assert.match(app, /accept="\.mp3,\.m4a,audio\/mpeg,audio\/mp4,audio\/x-m4a" multiple @change="handlePickedFiles"/);
+  assert.match(musicManager, /ref="songInput" type="file" accept="\.mp3,\.m4a" multiple hidden @change="handleSongPicked"/);
+  assert.match(musicManager, /result\.skipped/);
   assert.match(app, /result\.duplicate/);
   assert.match(app, /result\.skipped/);
 });
@@ -577,37 +577,31 @@ test("fresh browser and login entry force the chat to the newest semantic positi
   assert.match(app, /async function doLogin\([\s\S]*?await enterChatAtNewest\(\)/);
 });
 
-test("playlist supports search, four sort modes, and manual movement controls", () => {
-  assert.match(app, /v-model="musicPlaylistQuery"[^>]*type="search"/);
-  for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(app, new RegExp(`<option value="${value}">`));
-  assert.match(app, /moveMusicPlaylistTrack\(track, -1\)[\s\S]*?moveMusicPlaylistTrack\(track, 1\)/);
-  assert.match(css, /\.music-playlist-tools \{[\s\S]*?grid-template-columns: auto minmax\(0, 1fr\) auto auto;/);
+test("music manager supports search, four sort modes, and manual movement controls", () => {
+  assert.match(musicManager, /v-model="query" type="search"/);
+  for (const value of ["manual", "heat", "uploaded", "filename"]) assert.match(musicManager, new RegExp(`value: "${value}"`));
+  assert.match(musicManager, /movePlaylistTrack\(activePlaylist, track\.id, -1\)[\s\S]*?movePlaylistTrack\(activePlaylist, track\.id, 1\)/);
+  assert.match(css, /\.music-manager-toolbar \{[\s\S]*?display: flex;/);
 });
 
-test("personal playlists use long-press actions, top tabs, multi-select, and compact shared cards", () => {
-  assert.match(app, /const musicPlaylistView = ref<"tracks" \| "playlists" \| "picker">\("tracks"\)/);
-  assert.match(app, /class="music-library-tabs" role="tablist"[\s\S]*?>全部歌曲<[\s\S]*?>我的收藏<[\s\S]*?>我的歌单</);
-  assert.match(app, /class="music-library-favorite-icon"[\s\S]*?fill="currentColor"/);
-  assert.match(app, /@click="createMusicPlaylist"[\s\S]*?创建歌单/);
-  assert.match(app, /musicPlaylistView === 'picker'[\s\S]*?musicPlaylistPickerIds\.has/);
-  assert.match(app, /toggleMusicTrackSelectionMode[\s\S]*?toggleSelectedMusicTrack/);
-  assert.match(app, /addSelectedMusicTracksToPlaylist[\s\S]*?deleteSelectedMusicTracks/);
-  assert.doesNotMatch(app, /class="music-track-add-select"/);
-  assert.match(app, /class="music-library-card-main"[\s\S]*?@pointerdown\.stop="beginMusicPlaylistLongPress\(playlist, \$event\)"/);
-  assert.match(app, /v-if="musicPlaylistActionTarget"[\s\S]*?>分享<[\s\S]*?>重命名<[\s\S]*?>删除</);
-  assert.match(app, /v-if="musicPlaylistRenameTarget"[\s\S]*?@submit\.prevent="saveMusicPlaylistRename"[\s\S]*?v-model="musicPlaylistRenameDraft"/);
-  assert.match(app, /class="music-library-card-share"[\s\S]*?@click\.stop="openMusicPlaylistShare\(playlist\)"/);
-  assert.match(app, /v-if="selectedMusicPlaylist\?\.isOwner" class="music-playlist-owner-tools"[\s\S]{0,260}?openMusicPlaylistPicker/);
-  assert.doesNotMatch(app, /class="music-playlist-owner-tools"[\s\S]{0,800}?分享歌单到聊天室/);
-  assert.match(app, /v-if="musicPlaylistShareTarget"[\s\S]*?>分享到<[\s\S]*?v-model\.number="musicPlaylistShareChannelId"/);
-  assert.match(app, /v-model="musicPlaylistShareDescription"/);
-  assert.match(app, /shareMusicPlaylist[\s\S]*?\/share[\s\S]*?description: musicPlaylistShareDescription\.value[\s\S]*?musicPlaylistShareStatus/);
+test("music manager offers library navigation, playlists, multi-select, and compact shared cards", () => {
+  assert.match(musicManager, />全部诗歌</);
+  assert.match(musicManager, />我的收藏</);
+  assert.match(musicManager, />我的歌单</);
+  assert.match(musicManager, /aria-label="新建歌单" @click="createPlaylist"/);
+  assert.match(musicManager, /toggleSelectionMode[\s\S]*?toggleTrackSelected/);
+  assert.match(musicManager, /addSelectedToPlaylist[\s\S]*?deleteSelectedTracks/);
+  assert.match(musicManager, /@click="openPlaylistPicker\(activePlaylist\)"/);
+  assert.match(musicManager, /v-if="shareTarget"[\s\S]*?分享到[\s\S]*?v-model\.number="shareChannelId"/);
+  assert.match(musicManager, /v-model="shareDescription"/);
+  assert.match(musicManager, /sharePlaylist[\s\S]*?\/share[\s\S]*?description: shareDescription\.value[\s\S]*?shareStatus/);
   assert.match(app, /function sharedMusicPlaylistDescription[\s\S]*?messagePayloadRecord/);
   assert.match(app, /class="music-playlist-message-text"[\s\S]*?class="music-playlist-message-card"/);
   assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}music-playlist-message-description/);
   assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}ownerName \}\} 分享的歌单/);
   assert.match(app, /openSharedMusicPlaylistFromTap\(row\.message\)/);
   assert.match(app, /openSharedMusicPlaylistFromTap[\s\S]*?suppressNextTapUntil/);
+  assert.match(app, /openMusicManager\(\{ kind: "playlist", id: playlist\.id \}\)/);
   assert.match(app, /music-playlist-message-card[\s\S]*?@pointerdown\.stop="beginMessageLongPress\(row\.message, \$event\)"/);
   assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(500\)[\s\S]*?payload:[\s\S]*?description: body\.description/);
   assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
@@ -622,7 +616,8 @@ test("the photo picker uploads every selected image", () => {
 
 test("music actions use the server-authorized track ownership flag", () => {
   assert.match(app, /function isManageableMusicMessage[\s\S]*?musicTracks\.value\.some\(\(track\) => track\.id === message\.id && track\.canManage\)/);
-  assert.match(app, /const canDeleteSelectedMusicTracks[\s\S]*?musicTracks\.value\.find\([\s\S]*?\?\.canManage/);
+  assert.match(app, /function openMusicTrackInManager[\s\S]*?openMusicManager\(\{ kind: "track", id: message\.id \}\)/);
+  assert.match(musicManager, /v-if="track\.canManage"/);
 });
 
 test("mobile settings categories run horizontally across the top", () => {
@@ -654,9 +649,9 @@ test("music restores account state and defaults new listeners to shuffle", () =>
   assert.match(musicPlayer, /addEventListener\("seeked", handleSeeked\)/);
 });
 
-test("playlist is composited above message water effects", () => {
-  assert.match(app, /'music-playlist-open': musicPlaylistOpen/);
-  assert.match(css, /\.messages-viewport\.music-playlist-open \{[\s\S]*?z-index: [7-9];/);
+test("music manager overlay is composited above message water effects", () => {
+  assert.match(app, /<MusicManager\s+v-if="musicManagerOpen"/);
+  assert.match(css, /\.music-manager-shell \{[\s\S]*?position: fixed;[\s\S]*?z-index: 3[0-9];/);
 });
 
 test("wallpaper labels adapt sender names without changing system notices", () => {
@@ -727,8 +722,8 @@ test("the admin-only log workspace combines sessions, music progress, and usage 
 });
 
 test("score pages can be managed individually and paged in preview", () => {
-  assert.match(app, /管理歌谱页面[\s\S]*?class="settings-modal music-score-manager-modal"/);
-  assert.match(app, /moveMusicScorePage\(index, -1\)[\s\S]*?deleteMusicScorePage\(page\)/);
+  assert.match(musicManager, /moveScorePage\(score, pageIndex, -1\)[\s\S]*?moveScorePage\(score, pageIndex, 1\)/);
+  assert.match(musicManager, /removeScorePage\(score, page\)/);
   assert.match(app, /class="score-preview-pager"[\s\S]*?上一页歌谱[\s\S]*?下一页歌谱/);
   assert.match(css, /\.score-preview-pager \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
   assert.match(css, /\.score-preview-pager button \{[\s\S]*?background: rgba\(20, 20, 20, 0\.24\);/);

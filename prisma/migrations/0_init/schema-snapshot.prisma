@@ -268,7 +268,7 @@ model Message {
   whyReads        WhyTopicRead[]
   likes           MessageLike[]
   favorites       MessageFavorite[]
-  musicScores     MusicScore[]
+  musicScorePages MusicScorePage[]
   musicLyrics     MusicLyrics?
   musicPlays      MusicPlay[]
   musicFavorites  MusicFavorite[]
@@ -282,46 +282,31 @@ model Message {
   @@map("messages")
 }
 
-model MusicScore {
-  id                  Int              @id @default(autoincrement())
-  trackId             Int?             @map("track_id")
-  title               String           @db.VarChar(255)
-  uploadedByAccountId Int?             @map("uploaded_by_account_id")
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
-  track               Message?         @relation(fields: [trackId], references: [id], onDelete: Cascade)
-  pages               MusicScorePage[]
-
-  @@index([trackId])
-  @@map("music_scores")
-}
-
 model MusicScorePage {
-  id        Int         @id @default(autoincrement())
-  scoreId   Int         @map("score_id")
-  pageIndex Int         @map("page_index")
-  fileName  String      @map("file_name") @db.VarChar(255)
-  filePath  String      @unique @map("file_path") @db.VarChar(255)
-  fileSize  Int         @map("file_size")
+  id        Int      @id @default(autoincrement())
+  trackId   Int      @map("track_id")
+  pageIndex Int      @map("page_index")
+  fileName  String   @map("file_name") @db.VarChar(255)
+  filePath  String   @unique @map("file_path") @db.VarChar(255)
+  fileSize  Int      @map("file_size")
   width     Int
   height    Int
-  createdAt DateTime    @default(now()) @map("created_at")
-  score     MusicScore  @relation(fields: [scoreId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+  track     Message  @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
-  @@unique([scoreId, pageIndex])
-  @@index([scoreId])
+  @@unique([trackId, pageIndex])
+  @@index([trackId])
   @@map("music_score_pages")
 }
 
 model MusicLyrics {
-  id                  Int      @id @default(autoincrement())
-  trackId             Int?     @unique @map("track_id")
-  fileName            String   @map("file_name") @db.VarChar(255)
-  content             String   @db.LongText
-  uploadedByAccountId Int?     @map("uploaded_by_account_id")
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-  track               Message? @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  id        Int      @id @default(autoincrement())
+  trackId   Int      @unique @map("track_id")
+  fileName  String   @map("file_name") @db.VarChar(255)
+  content   String   @db.LongText
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  track     Message  @relation(fields: [trackId], references: [id], onDelete: Cascade)
 
   @@map("music_lyrics")
 }

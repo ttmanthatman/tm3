@@ -47,8 +47,10 @@ function track(id: number, favorited = false): MusicTrackDTO {
     heat: 0,
     manualOrder: id,
     favorited,
-    scorePages: [],
-    lyrics: null
+    scores: [],
+    lyrics: null,
+    background: null,
+    lyricsText: null
   };
 }
 

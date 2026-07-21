@@ -1,12 +1,14 @@
-import type { Message, MusicLyrics, MusicScorePage, PrismaClient } from "@prisma/client";
+import type { Message, MusicLyrics, MusicScore, MusicScorePage, PrismaClient } from "@prisma/client";
 import type { MusicPlaybackStateDTO, MusicPlaylistDTO, MusicTrackDTO } from "../../shared/types.js";
-import { canManageMusicRole, isMusicFileName, musicTrackTitle } from "../music.js";
+import { canManageMusicRole, isMusicFileName, musicTrackInfo, musicTrackTitle } from "../music.js";
 import { parseLyrics } from "../srt.js";
 
-type MusicTrackRecord = Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder"> & {
+type MusicScorePageRecord = Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">;
+
+type MusicTrackRecord = Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder" | "payload"> & {
   sender?: { accountId: number | null };
-  musicScorePages?: Array<Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">>;
-  musicLyrics?: Pick<MusicLyrics, "fileName" | "content"> | null;
+  musicScores?: Array<Pick<MusicScore, "id" | "title"> & { pages: MusicScorePageRecord[] }>;
+  musicLyrics?: Pick<MusicLyrics, "id" | "fileName" | "content"> | null;
   _count?: { musicPlays: number };
 };
 
@@ -40,6 +42,7 @@ export function createMusicService(deps: {
     canManage = false
   ): MusicTrackDTO {
     const fileName = message.fileName || "未命名歌曲.mp3";
+    const info = musicTrackInfo(message.payload);
     return {
       id: message.id,
       canManage,
@@ -50,17 +53,24 @@ export function createMusicService(deps: {
       heat: message._count?.musicPlays || 0,
       manualOrder: message.musicOrder ?? fallbackOrder,
       ...(favorited === undefined ? {} : { favorited }),
-      scorePages: (message.musicScorePages || []).map((page) => ({
-        id: page.id,
-        pageIndex: page.pageIndex,
-        fileName: page.fileName,
-        fileSize: page.fileSize,
-        width: page.width,
-        height: page.height
+      scores: (message.musicScores || []).map((score) => ({
+        id: score.id,
+        title: score.title,
+        pages: score.pages.map((page) => ({
+          id: page.id,
+          scoreId: score.id,
+          pageIndex: page.pageIndex,
+          fileName: page.fileName,
+          fileSize: page.fileSize,
+          width: page.width,
+          height: page.height
+        }))
       })),
       lyrics: message.musicLyrics
-        ? { fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) }
-        : null
+        ? { id: message.musicLyrics.id, fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) }
+        : null,
+      background: info.background,
+      lyricsText: info.lyricsText
     };
   }
 
@@ -80,7 +90,7 @@ export function createMusicService(deps: {
             track: {
               include: {
                 sender: { select: { accountId: true } },
-                musicScorePages: { orderBy: { pageIndex: "asc" } },
+                musicScores: { orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } },
                 musicLyrics: true,
                 _count: { select: { musicPlays: true } }
               }

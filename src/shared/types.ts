@@ -64,7 +64,7 @@ export interface MessageDTO {
   payload?: unknown;
   fileName?: string | null;
   fileSize?: number | null;
-  scorePages?: MusicScorePageDTO[];
+  scores?: MusicScoreDTO[];
   lyrics?: MusicLyricsDTO | null;
   voiceListened?: boolean;
   replyTo?: ReplyPreviewDTO | null;
@@ -202,8 +202,10 @@ export interface MusicTrackDTO {
   heat: number;
   manualOrder: number;
   favorited?: boolean;
-  scorePages: MusicScorePageDTO[];
+  scores: MusicScoreDTO[];
   lyrics: MusicLyricsDTO | null;
+  background: string | null;
+  lyricsText: string | null;
 }
 
 export type MusicPlaylistSourceKind = "library" | "favorites" | "playlist";
@@ -258,6 +260,7 @@ export interface MusicLyricSegmentDTO {
 }
 
 export interface MusicLyricsDTO {
+  id: number;
   fileName: string;
   cues: MusicLyricCueDTO[];
 }
@@ -267,8 +270,39 @@ export interface MusicMentionPayload {
   musicTrackTitle: string;
 }
 
+export interface MusicScoreDTO {
+  id: number;
+  title: string;
+  pages: MusicScorePageDTO[];
+}
+
+export interface MusicLyricsResourceDTO {
+  id: number;
+  fileName: string;
+  cueCount: number;
+  createdAt: string;
+  uploadedByAccountId: number | null;
+  uploadedByName: string | null;
+}
+
+export interface MusicScoreResourceDTO {
+  id: number;
+  title: string;
+  pageCount: number;
+  previewPageId: number | null;
+  createdAt: string;
+  uploadedByAccountId: number | null;
+  uploadedByName: string | null;
+}
+
+export interface MusicResourcePoolDTO {
+  lyrics: MusicLyricsResourceDTO[];
+  scores: MusicScoreResourceDTO[];
+}
+
 export interface MusicScorePageDTO {
   id: number;
+  scoreId: number;
   pageIndex: number;
   fileName: string;
   fileSize: number;

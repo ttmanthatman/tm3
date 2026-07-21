@@ -54,16 +54,26 @@ test("music and score mutations allow global managers or the original uploader",
   for (const route of [
     'app.patch("/api/music/tracks/:id"',
     'app.delete("/api/music/tracks/:id"',
+    'app.put("/api/music/tracks/:id/info"',
     'app.put("/api/music/tracks/:id/lyrics"',
     'app.delete("/api/music/tracks/:id/lyrics"',
-    'app.put("/api/music/tracks/:id/score"',
-    'app.patch("/api/music/tracks/:trackId/score"',
-    'app.delete("/api/music/tracks/:trackId/score/:pageId"'
+    'app.put("/api/music/tracks/:id/score"'
   ]) {
     const start = musicRoutes.indexOf(route);
     assert.notEqual(start, -1, `missing ${route}`);
     assert.match(musicRoutes.slice(start, start + 3200), /canManageMusicAsset\(auth,/);
   }
+  for (const route of [
+    'app.patch("/api/music/scores/:id"',
+    'app.delete("/api/music/scores/:id"',
+    'app.patch("/api/music/scores/:id/pages"',
+    'app.delete("/api/music/scores/:id/pages/:pageId"'
+  ]) {
+    const start = musicRoutes.indexOf(route);
+    assert.notEqual(start, -1, `missing ${route}`);
+    assert.match(musicRoutes.slice(start, start + 3200), /canManageScore\(auth,/);
+  }
+  assert.match(musicRoutes, /function canManageScore[\s\S]*?canManageMusicAsset\(auth, score\.track\?\.sender\.accountId\)/);
   assert.match(musicService, /function serializeTrack[\s\S]*?canManage,/);
 });
 

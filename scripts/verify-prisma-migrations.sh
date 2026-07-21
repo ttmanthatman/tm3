@@ -57,13 +57,12 @@ try {
     "SELECT migration_name, finished_at, rolled_back_at, applied_steps_count FROM _prisma_migrations ORDER BY started_at ASC"
   );
   if (
-    migrations.length !== 1 ||
+    migrations.length < 1 ||
     migrations[0].migration_name !== "0_init" ||
-    !migrations[0].finished_at ||
-    migrations[0].rolled_back_at !== null ||
+    migrations.some((migration) => !migration.finished_at || migration.rolled_back_at !== null) ||
     Number(migrations[0].applied_steps_count) !== 1
   ) {
-    throw new Error("Expected one successfully applied 0_init migration.");
+    throw new Error("Expected a fully applied migration history starting with 0_init.");
   }
 } finally {
   await prisma.$disconnect();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManageMusicAsset, canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackTitle } from "./music.js";
+import { canManageMusicAsset, canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackInfo, musicTrackTitle } from "./music.js";
 
 test("music management is limited to admins and treasury officers", () => {
   assert.equal(canManageMusicRole({ isAdmin: true, canPinMessages: false }), true);
@@ -44,4 +44,13 @@ test("music titles remove the extension and unsafe path", () => {
   assert.equal(musicTrackTitle("晨光.mp3"), "晨光");
   assert.equal(musicTrackTitle("../夜曲.m4a"), "夜曲");
   assert.equal(musicTrackTitle(".mp3"), "未命名歌曲");
+});
+
+test("music track info reads only string fields from object payloads", () => {
+  assert.deepEqual(musicTrackInfo({ background: "背景", lyricsText: "歌词", playlistId: 7 }), { background: "背景", lyricsText: "歌词" });
+  assert.deepEqual(musicTrackInfo({ playlistId: 7 }), { background: null, lyricsText: null });
+  assert.deepEqual(musicTrackInfo({ background: 42, lyricsText: ["不是字符串"] }), { background: null, lyricsText: null });
+  assert.deepEqual(musicTrackInfo(null), { background: null, lyricsText: null });
+  assert.deepEqual(musicTrackInfo(["背景"]), { background: null, lyricsText: null });
+  assert.deepEqual(musicTrackInfo("背景"), { background: null, lyricsText: null });
 });

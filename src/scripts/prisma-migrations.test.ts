@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsRoot = path.join(root, "prisma/migrations");
 const initialMigrationPath = path.join(migrationsRoot, "0_init/migration.sql");
-const schemaPath = path.join(root, "prisma/schema.prisma");
+const initialSchemaSnapshotPath = path.join(migrationsRoot, "0_init/schema-snapshot.prisma");
 const databaseVerifierPath = path.join(root, "scripts/verify-prisma-migrations.sh");
 
 function migrationDirectories() {
@@ -37,9 +37,10 @@ test("migration history starts with an immutable, ordered 0_init baseline", () =
   }
 });
 
-test("0_init is generated from the current schema and contains no destructive or private SQL", () => {
+test("0_init is generated from its schema snapshot and contains no destructive or private SQL", () => {
   const sql = fs.readFileSync(initialMigrationPath, "utf8");
-  const schema = fs.readFileSync(schemaPath, "utf8");
+  assert.equal(fs.existsSync(initialSchemaSnapshotPath), true, "0_init must keep its schema snapshot");
+  const schema = fs.readFileSync(initialSchemaSnapshotPath, "utf8");
   const forbidden = [
     /\bDROP\b/i,
     /\bTRUNCATE\b/i,
@@ -87,7 +88,7 @@ test("0_init is generated from the current schema and contains no destructive or
       "diff",
       "--from-empty",
       "--to-schema-datamodel",
-      schemaPath,
+      initialSchemaSnapshotPath,
       "--script"
     ],
     {

@@ -92,6 +92,7 @@ import type {
   MusicListenerDTO,
   MusicPlaylistDTO,
   MusicPlaylistSourceKind,
+  MusicScoreDTO,
   MusicScorePageDTO,
   MusicTrackDTO,
   PinnedBodyDTO,
@@ -156,14 +157,14 @@ import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
 import { friendlyDeviceName, type ActivityLogCategory } from "@shared/activityLog";
 import {
-  moveMusicTrack,
   musicMentionTokenAtCursor,
   shouldKeepMusicScoreForTrack,
   shouldShowMusicScoreTrigger,
-  sortMusicTracks,
-  type MusicPlaylistSort
+  sortMusicTracks
 } from "./musicPlayer";
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
+import MusicManager from "./features/music/MusicManager.vue";
+import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 
 const store = useChatStore();
 const {
@@ -226,42 +227,17 @@ let musicScoreCacheGeneration = 0;
 const musicPlaylists = ref<MusicPlaylistDTO[]>([]);
 const musicSourceKind = ref<MusicPlaylistSourceKind>("library");
 const selectedMusicPlaylistId = ref<number | null>(null);
-const musicPlaylistView = ref<"tracks" | "playlists" | "picker">("tracks");
-const musicPlaylistPickerIds = ref<Set<number>>(new Set());
-const musicPlaylistBusy = ref(false);
-const musicPlaylistShareChannelId = ref<number | null>(null);
-const musicPlaylistShareTargetId = ref<number | null>(null);
-const musicPlaylistShareDescription = ref("");
-const musicPlaylistShareBusy = ref(false);
-const musicPlaylistShareStatus = ref("");
-const musicPlaylistActionTarget = ref<MusicPlaylistDTO | null>(null);
-const musicPlaylistRenameTarget = ref<MusicPlaylistDTO | null>(null);
-const musicPlaylistRenameDraft = ref("");
-const musicPlaylistRenameBusy = ref(false);
-const musicPlaylistRenameInput = ref<HTMLInputElement | null>(null);
-const musicTrackSelectionMode = ref(false);
-const selectedMusicTrackIds = ref<Set<number>>(new Set());
-const selectedMusicTrackTargetPlaylistId = ref<number | null>(null);
-const musicTrackBatchBusy = ref(false);
+const musicManagerOpen = ref(false);
+const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
+const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
 const musicPlayerExpanded = ref(false);
 const musicPlayerAnchorX = ref<number | null>(null);
-const musicPlaylistOpen = ref(false);
-const musicPlaylistQuery = ref("");
-const musicPlaylistSort = ref<MusicPlaylistSort>("manual");
-const musicPlaylistReorderBusy = ref(false);
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
 const musicScoreChatCleared = ref(false);
 const musicScoreStageVisible = ref(false);
 const musicScoreStageClosing = ref(false);
-const musicScoreUploadBusy = ref(false);
-const musicScoreInput = ref<HTMLInputElement | null>(null);
-const musicScoreUploadTrackId = ref<number | null>(null);
-const musicScoreManageTrackId = ref<number | null>(null);
-const musicScoreManageBusy = ref(false);
-const musicLyricsInput = ref<HTMLInputElement | null>(null);
-const musicLyricsUploadTrackId = ref<number | null>(null);
-const musicLyricsUploadBusy = ref(false);
+const currentMusicScoreId = ref<number | null>(null);
 const musicLyricsHeaderSuppressed = ref(false);
 const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
@@ -557,6 +533,7 @@ const prayerUpdateContent = ref("");
 const prayerUpdateBusy = ref(false);
 const prayerUpdateError = ref("");
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
+const expandedMusicBackgroundMessageIds = ref<Set<number>>(new Set());
 const aiSuggestionBusyIds = ref<Set<number>>(new Set());
 const aiSuggestionErrors = ref<Record<number, string>>({});
 const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
@@ -665,10 +642,6 @@ const waterEffectVisible = computed(() => store.messages.some((message) => (
 )));
 const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
-const selectedMessagesPlaylistOpen = ref(false);
-const selectedMessagesPlaylistTargetId = ref<number | null>(null);
-const selectedMessagesPlaylistBusy = ref(false);
-const selectedMessagesPlaylistStatus = ref("");
 const pendingMessageActions = ref<MessageDTO | null>(null);
 const forwardMessage = ref<MessageDTO | null>(null);
 const forwardChannelIds = ref<number[]>([]);
@@ -839,8 +812,6 @@ let favoriteLongPressTimer: number | undefined;
 let favoriteLongPressStartedAt = { x: 0, y: 0 };
 let channelLongPressTimer: number | undefined;
 let channelLongPressStartedAt = { x: 0, y: 0 };
-let musicPlaylistLongPressTimer: number | undefined;
-let musicPlaylistLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
 let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let imagePinchStart: { distance: number; scale: number } | null = null;
@@ -1324,7 +1295,6 @@ onBeforeUnmount(() => {
   clearBlankScoreLongPress();
   clearFavoriteLongPress();
   clearChannelLongPress();
-  clearMusicPlaylistLongPress();
   stopRainEffect();
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
@@ -1358,18 +1328,8 @@ const bibleSendUnavailableReason = computed(() => {
 const forwardTargetChannels = computed(() =>
   store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
 );
-const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, musicPlaylistSort.value));
+const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, "manual"));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
-const selectedMusicPlaylist = computed(() => musicPlaylists.value.find((playlist) => playlist.id === selectedMusicPlaylistId.value) || null);
-const playlistMusicTracks = computed(() => {
-  const tracks = selectedMusicPlaylist.value?.tracks || [];
-  return musicPlaylistSort.value === "manual" ? tracks : sortMusicTracks(tracks, musicPlaylistSort.value);
-});
-const visibleMusicTracks = computed(() => {
-  if (musicSourceKind.value === "playlist") return playlistMusicTracks.value;
-  if (musicSourceKind.value === "favorites") return favoriteMusicTracks.value;
-  return sortedMusicTracks.value;
-});
 const musicPlayer = useMusicPlayer({
   tracks: musicTracks,
   libraryTracks: sortedMusicTracks,
@@ -1388,7 +1348,6 @@ const {
   currentTrackId: currentMusicTrackId,
   currentTrack: currentMusicTrack,
   playableTracks: playableMusicTracks,
-  playbackMode: musicPlaybackMode,
   onlyFavorites: musicOnlyFavorites,
   playing: musicPlaying,
   loading: musicLoading,
@@ -1414,22 +1373,7 @@ const {
   handlePlaylistDeleted: handleMusicPlaylistDeleted,
   currentPlaybackTimeMs: currentMusicPlaybackTimeMs
 } = musicPlayer.controls;
-const filteredMusicTracks = computed(() => {
-  const query = musicPlaylistQuery.value.trim().toLowerCase();
-  if (!query) return visibleMusicTracks.value;
-  return visibleMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
-});
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
-const shareableMusicChannels = computed(() => store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false));
-const ownedMusicPlaylists = computed(() => musicPlaylists.value.filter((playlist) => playlist.isOwner));
-const musicPlaylistShareTarget = computed(() => musicPlaylists.value.find((playlist) => playlist.id === musicPlaylistShareTargetId.value) || null);
-const selectedMessageMusicTracks = computed(() => musicTracks.value.filter((track) => selectedMessageIds.value.has(track.id)));
-const canDeleteSelectedMusicTracks = computed(() =>
-  !!selectedMusicTrackIds.value.size && (
-    !!selectedMusicPlaylist.value?.isOwner ||
-    (musicSourceKind.value === "library" && [...selectedMusicTrackIds.value].every((trackId) => musicTracks.value.find((track) => track.id === trackId)?.canManage))
-  )
-);
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
   bibleReaders.value,
@@ -1437,17 +1381,31 @@ const activityStatusItems = computed(() => activityTickerItems(
   Object.values(store.typing)
 ));
 const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
-const currentMusicScorePages = computed(() => currentMusicTrack.value?.scorePages || []);
+const currentMusicScores = computed(() => currentMusicTrack.value?.scores || []);
+const currentMusicScore = computed(
+  () => currentMusicScores.value.find((score) => score.id === currentMusicScoreId.value) || currentMusicScores.value[0] || null
+);
+const currentMusicScorePages = computed(() => currentMusicScore.value?.pages || []);
 const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
 const musicLyricsHeaderVisible = computed(
-  () => musicPlaying.value && currentMusicLyricCues.value.length > 0 && !musicLyricsHeaderSuppressed.value
+  () =>
+    musicPlaying.value &&
+    currentMusicLyricCues.value.length > 0 &&
+    !musicLyricsHeaderSuppressed.value &&
+    // 歌谱舞台全屏展示时让位于舞台，避免悬浮歌词头盖住舞台页签；关闭舞台后自动恢复
+    !musicScoreStageVisible.value
 );
-const musicScoreManageTrack = computed(() => musicTracks.value.find((track) => track.id === musicScoreManageTrackId.value) || null);
-const previewScorePages = computed(() => {
+const previewScoreTrack = computed(() => {
   const trackId = previewPinnedImage.value?.trackId;
-  if (!trackId) return [];
-  return musicTracks.value.find((track) => track.id === trackId)?.scorePages || store.messages.find((message) => message.id === trackId)?.scorePages || [];
+  if (!trackId) return null;
+  return musicTracks.value.find((track) => track.id === trackId) || store.messages.find((message) => message.id === trackId) || null;
 });
+const previewScoreEntry = computed(() => {
+  const scores = previewScoreTrack.value?.scores || [];
+  if (!scores.length) return null;
+  return scores.find((score) => score.pages.some((page) => page.id === previewPinnedImage.value?.pageId)) || scores[0];
+});
+const previewScorePages = computed(() => previewScoreEntry.value?.pages || []);
 const previewScorePageIndex = computed(() => previewScorePages.value.findIndex((page) => page.id === previewPinnedImage.value?.pageId));
 const musicScoreTriggerVisible = computed(() =>
   shouldShowMusicScoreTrigger({
@@ -1459,6 +1417,10 @@ const musicScoreTriggerVisible = computed(() =>
 const musicPlayerAnchorStyle = computed(() => ({
   "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
 }));
+
+watch(currentMusicTrackId, () => {
+  currentMusicScoreId.value = null;
+});
 
 watch(
   () => store.account?.id,
@@ -2523,7 +2485,7 @@ async function toggleMentionedMusic(message: MessageDTO) {
   musicSourceKind.value = "library";
   selectedMusicPlaylistId.value = null;
   musicPlayerExpanded.value = true;
-  musicPlaylistOpen.value = false;
+  musicManagerOpen.value = false;
   selectMusicTrackCore(track);
 }
 
@@ -2531,6 +2493,23 @@ function stopMentionedMusic(message: MessageDTO) {
   const payload = musicMentionPayload(message);
   if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
   stopMusic();
+}
+
+function musicMentionBackground(message: MessageDTO) {
+  const payload = musicMentionPayload(message);
+  if (!payload) return "";
+  return musicTracks.value.find((track) => track.id === payload.musicTrackId)?.background?.trim() || "";
+}
+
+function isMusicMentionBackgroundExpanded(message: MessageDTO) {
+  return expandedMusicBackgroundMessageIds.value.has(message.id);
+}
+
+function toggleMusicMentionBackground(message: MessageDTO) {
+  const next = new Set(expandedMusicBackgroundMessageIds.value);
+  if (next.has(message.id)) next.delete(message.id);
+  else next.add(message.id);
+  expandedMusicBackgroundMessageIds.value = next;
 }
 
 function isMarkdownMessage(message: MessageDTO) {
@@ -5672,7 +5651,7 @@ function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
 
 function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
   clearMessageLongPress();
-  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: isAudioMessage(message) ? 244 : 198 });
+  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: isAudioMessage(message) ? 200 : 164 });
   pendingMessageActions.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
@@ -5840,235 +5819,22 @@ function isManageableMusicMessage(message: MessageDTO) {
     (canManageMusic.value || musicTracks.value.some((track) => track.id === message.id && track.canManage));
 }
 
-async function renameMusicTrackAction() {
+function openMusicTrackInManager() {
   const message = pendingMessageActions.value;
   if (!message || !isManageableMusicMessage(message)) return;
-  const extension = (message.fileName || "").match(/\.(mp3|m4a)$/i)?.[0] || "";
-  const currentName = (message.fileName || "").slice(0, extension ? -extension.length : undefined);
-  const requested = window.prompt("重命名歌曲", currentName)?.trim();
-  if (!requested) return;
   closeMessageActionMenu();
-  try {
-    await api(`/api/music/tracks/${message.id}`, { method: "PATCH", body: JSON.stringify({ name: requested }) });
-    await loadMusicTracks();
-    await store.loadMessages();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "重命名失败");
-  }
+  openMusicManager({ kind: "track", id: message.id });
 }
 
-async function deleteMusicTrackAction() {
-  const message = pendingMessageActions.value;
-  if (!message || !isManageableMusicMessage(message)) return;
-  if (!window.confirm(`删除“${musicTrackTitleFromMessage(message)}”？删除后无法恢复。`)) return;
-  closeMessageActionMenu();
-  try {
-    await api(`/api/music/tracks/${message.id}`, { method: "DELETE" });
-    await loadMusicTracks();
-    await store.loadMessages();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "删除失败");
-  }
+function musicScoreRequestUrl(page: MusicScorePageDTO) {
+  if (!page.scoreId) return "";
+  return `/api/music/scores/${page.scoreId}/pages/${page.id}`;
 }
 
-function musicTrackTitleFromMessage(message: MessageDTO) {
-  return (message.fileName || "未命名歌曲").replace(/\.(mp3|m4a)$/i, "");
-}
-
-function requestMusicScoreUpload() {
-  const message = pendingMessageActions.value;
-  if (!message || !isManageableMusicMessage(message) || musicScoreUploadBusy.value) return;
-  musicScoreUploadTrackId.value = message.id;
-  closeMessageActionMenu();
-  void nextTick(() => musicScoreInput.value?.click());
-}
-
-function musicLyricsForMessage(message: MessageDTO) {
-  return message.lyrics || musicTracks.value.find((track) => track.id === message.id)?.lyrics || null;
-}
-
-function requestMusicLyricsUpload() {
-  const message = pendingMessageActions.value;
-  if (!message || !isManageableMusicMessage(message) || musicLyricsUploadBusy.value) return;
-  musicLyricsUploadTrackId.value = message.id;
-  closeMessageActionMenu();
-  void nextTick(() => musicLyricsInput.value?.click());
-}
-
-async function deleteMusicLyricsAction() {
-  const message = pendingMessageActions.value;
-  if (!message || !isManageableMusicMessage(message) || !musicLyricsForMessage(message)) return;
-  if (!window.confirm(`删除“${musicTrackTitleFromMessage(message)}”的歌词？`)) return;
-  closeMessageActionMenu();
-  try {
-    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${message.id}/lyrics`, { method: "DELETE" });
-    mergeMusicTrackSnapshot(result.track);
-    await store.loadMessages();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "删除歌词失败");
-  }
-}
-
-async function handleMusicLyricsPicked(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  const trackId = musicLyricsUploadTrackId.value;
-  if (!trackId || !file || musicLyricsUploadBusy.value) return;
-  if (!/\.(srt|lrc)$/i.test(file.name)) {
-    alert("歌词只支持 SRT、LRC 和 Enhanced LRC 文件");
-    musicLyricsUploadTrackId.value = null;
-    return;
-  }
-  if (file.size > 1024 * 1024) {
-    alert("歌词文件不能超过 1MB");
-    musicLyricsUploadTrackId.value = null;
-    return;
-  }
-  const form = new FormData();
-  form.append("lyrics", file);
-  musicLyricsUploadBusy.value = true;
-  try {
-    const result = await new Promise<{ success?: boolean; track?: MusicTrackDTO; message?: string }>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", `/api/music/tracks/${trackId}/lyrics`);
-      for (const [key, value] of Object.entries(authHeaders())) xhr.setRequestHeader(key, String(value));
-      xhr.onload = () => {
-        try {
-          resolve(JSON.parse(xhr.responseText || "{}"));
-        } catch {
-          resolve({ success: false, message: xhr.responseText || "歌词上传失败" });
-        }
-      };
-      xhr.onerror = () => reject(new Error("网络连接失败"));
-      xhr.send(form);
-    });
-    if (!result.success || !result.track) throw new Error(result.message || "歌词上传失败");
-    mergeMusicTrackSnapshot(result.track);
-    await store.loadMessages();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "歌词上传失败");
-  } finally {
-    musicLyricsUploadBusy.value = false;
-    musicLyricsUploadTrackId.value = null;
-  }
-}
-
-function openMusicScoreManagerAction() {
-  const message = pendingMessageActions.value;
-  if (!message || !isManageableMusicMessage(message)) return;
-  musicScoreManageTrackId.value = message.id;
-  closeMessageActionMenu();
-}
-
-function mergeMusicTrackSnapshot(track: MusicTrackDTO) {
-  musicTracks.value = musicTracks.value.map((existing) =>
-    existing.id === track.id
-      ? { ...existing, ...track, heat: Number.isFinite(track.heat) ? track.heat : existing.heat, manualOrder: Number.isFinite(track.manualOrder) ? track.manualOrder : existing.manualOrder }
-      : existing
-  );
-  musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
-    ...playlist,
-    tracks: playlist.tracks.map((existing) =>
-      existing.id === track.id
-        ? { ...existing, ...track, heat: Number.isFinite(track.heat) ? track.heat : existing.heat, manualOrder: existing.manualOrder }
-        : existing
-    )
-  }));
-  void preloadMusicScorePages([track]);
-}
-
-async function moveMusicScorePage(index: number, delta: number) {
-  const track = musicScoreManageTrack.value;
-  if (!track || musicScoreManageBusy.value) return;
-  const pages = moveMusicTrack(track.scorePages, index, delta);
-  if (pages[index]?.id === track.scorePages[index]?.id) return;
-  musicScoreManageBusy.value = true;
-  try {
-    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/score`, {
-      method: "PATCH",
-      body: JSON.stringify({ pageIds: pages.map((page) => page.id) })
-    });
-    mergeMusicTrackSnapshot(result.track);
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "调整歌谱顺序失败");
-  } finally {
-    musicScoreManageBusy.value = false;
-  }
-}
-
-async function deleteMusicScorePage(page: MusicScorePageDTO) {
-  const track = musicScoreManageTrack.value;
-  if (!track || musicScoreManageBusy.value || !window.confirm(`删除歌谱“${page.fileName}”？`)) return;
-  musicScoreManageBusy.value = true;
-  try {
-    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/score/${page.id}`, { method: "DELETE" });
-    removeMusicScoreCachePage(page.id);
-    mergeMusicTrackSnapshot(result.track);
-    if (!result.track.scorePages.length) musicScoreManageTrackId.value = null;
-    if (previewPinnedImage.value?.pageId === page.id) closePreviewMessage();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "删除歌谱失败");
-  } finally {
-    musicScoreManageBusy.value = false;
-  }
-}
-
-async function handleMusicScorePicked(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-  input.value = "";
-  const trackId = musicScoreUploadTrackId.value;
-  if (!trackId || !files.length || musicScoreUploadBusy.value) return;
-  if (files.length > 20) {
-    alert("一套歌谱最多上传 20 页");
-    return;
-  }
-  if (files.some((file) => !/\.(png|jpe?g|webp|heic|heif)$/i.test(file.name))) {
-    alert("歌谱只支持 PNG、JPG、JPEG、WebP、HEIC 和 HEIF 图片");
-    return;
-  }
-  if (files.some((file) => file.size > 20 * 1024 * 1024)) {
-    alert("单页歌谱不能超过 20MB");
-    return;
-  }
-  const form = new FormData();
-  files.forEach((file) => form.append("pages", file));
-  musicScoreUploadBusy.value = true;
-  try {
-    const result = await new Promise<{ success?: boolean; track?: MusicTrackDTO; message?: string }>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", `/api/music/tracks/${trackId}/score`);
-      for (const [key, value] of Object.entries(authHeaders())) xhr.setRequestHeader(key, String(value));
-      xhr.onload = () => {
-        try {
-          resolve(JSON.parse(xhr.responseText || "{}"));
-        } catch {
-          resolve({ success: false, message: xhr.responseText || "歌谱上传失败" });
-        }
-      };
-      xhr.onerror = () => reject(new Error("网络连接失败"));
-      xhr.send(form);
-    });
-    if (!result.success || !result.track) throw new Error(result.message || "歌谱上传失败");
-    mergeMusicTrackSnapshot(result.track);
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "歌谱上传失败");
-  } finally {
-    musicScoreUploadBusy.value = false;
-    musicScoreUploadTrackId.value = null;
-  }
-}
-
-function musicScoreRequestUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
-  if (!trackId) return "";
-  return `/api/music/tracks/${trackId}/score/${page.id}`;
-}
-
-function musicScorePageUrl(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
+function musicScorePageUrl(page: MusicScorePageDTO) {
   const cachedUrl = musicScoreCachedUrls.value[page.id];
   if (cachedUrl) return cachedUrl;
-  const requestUrl = musicScoreRequestUrl(page, trackId);
+  const requestUrl = musicScoreRequestUrl(page);
   return requestUrl ? `${requestUrl}?token=${encodeURIComponent(getToken())}` : "";
 }
 
@@ -6079,23 +5845,14 @@ function clearMusicScoreCache() {
   musicScorePreloadPromises.clear();
 }
 
-function removeMusicScoreCachePage(pageId: number) {
-  const cachedUrl = musicScoreCachedUrls.value[pageId];
-  if (!cachedUrl) return;
-  URL.revokeObjectURL(cachedUrl);
-  const next = { ...musicScoreCachedUrls.value };
-  delete next[pageId];
-  musicScoreCachedUrls.value = next;
-}
-
-async function preloadMusicScorePage(page: MusicScorePageDTO, trackId: number) {
+async function preloadMusicScorePage(page: MusicScorePageDTO) {
   const cachedUrl = musicScoreCachedUrls.value[page.id];
   if (cachedUrl) return cachedUrl;
   const pending = musicScorePreloadPromises.get(page.id);
   if (pending) return pending;
   const generation = musicScoreCacheGeneration;
   const request = (async () => {
-    const response = await fetch(musicScoreRequestUrl(page, trackId), { headers: authHeaders() });
+    const response = await fetch(musicScoreRequestUrl(page), { headers: authHeaders() });
     if (!response.ok) throw new Error(`歌谱预加载失败：HTTP ${response.status}`);
     const blob = await response.blob();
     if (!blob.size) throw new Error("歌谱预加载失败：文件为空");
@@ -6113,26 +5870,26 @@ async function preloadMusicScorePage(page: MusicScorePageDTO, trackId: number) {
   return request;
 }
 
-async function preloadMusicScorePages(tracks: ReadonlyArray<{ id: number; scorePages?: MusicScorePageDTO[] }>) {
-  const pages = tracks.flatMap((track) => (track.scorePages || []).map((page) => ({ page, trackId: track.id })));
+async function preloadMusicScorePages(tracks: ReadonlyArray<{ scores?: MusicScoreDTO[] }>) {
+  const pages = tracks.flatMap((track) => (track.scores || []).flatMap((score) => score.pages));
   let nextIndex = 0;
   const worker = async () => {
     while (nextIndex < pages.length) {
-      const item = pages[nextIndex];
+      const page = pages[nextIndex];
       nextIndex += 1;
-      await preloadMusicScorePage(item.page, item.trackId);
+      await preloadMusicScorePage(page);
     }
   };
   await Promise.all(Array.from({ length: Math.min(3, pages.length) }, worker));
 }
 
 function musicScorePreviewPage(message: MessageDTO) {
-  return message.scorePages?.[0] || musicTracks.value.find((track) => track.id === message.id)?.scorePages[0] || null;
+  return message.scores?.[0]?.pages[0] || musicTracks.value.find((track) => track.id === message.id)?.scores[0]?.pages[0] || null;
 }
 
 async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
   if (!trackId) return;
-  const url = (await preloadMusicScorePage(page, trackId)) || musicScorePageUrl(page, trackId);
+  const url = (await preloadMusicScorePage(page)) || musicScorePageUrl(page);
   if (!url) return;
   previewPinnedImage.value = { url, fileName: page.fileName, score: true, trackId, pageId: page.id };
   previewMessage.value = {
@@ -6152,10 +5909,10 @@ async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentM
 function shiftMusicScorePreview(delta: number) {
   const index = previewScorePageIndex.value;
   const trackId = previewPinnedImage.value?.trackId;
-  if (!trackId || index < 0) return;
-  const nextIndex = index + delta;
-  if (nextIndex < 0 || nextIndex >= previewScorePages.value.length) return;
-  openMusicScorePreview(previewScorePages.value[nextIndex], trackId);
+  const pages = previewScorePages.value;
+  if (!trackId || index < 0 || !pages.length) return;
+  const nextIndex = (index + delta + pages.length) % pages.length;
+  openMusicScorePreview(pages[nextIndex], trackId);
 }
 
 function openMusicScore() {
@@ -6653,7 +6410,7 @@ function positionPromptNearEvent(event: MouseEvent | PointerEvent | undefined, s
 function closeTapPromptsFromOutside(event: PointerEvent) {
   const target = event.target;
   if (!(target instanceof Element)) return;
-  if ((musicPlayerExpanded.value || musicPlaylistOpen.value) && !target.closest("[data-music-player]") && !target.closest("[data-music-playlist]")) {
+  if (musicPlayerExpanded.value && !target.closest("[data-music-player]")) {
     closeMusicSurface();
   }
   if (showMessageFontMenu.value && !target.closest("[data-message-font-menu]")) {
@@ -6701,17 +6458,17 @@ function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boole
   }));
 }
 
-async function toggleCurrentMusicFavorite() {
-  const track = currentMusicTrack.value;
-  if (!track) return;
-  const favorited = !track.favorited;
-  handleMusicFavoriteUpdated({ trackId: track.id, favorited });
+async function toggleCurrentMusicFavorite(track?: MusicTrackDTO | PointerEvent) {
+  const target = track && !(track instanceof PointerEvent) ? track : currentMusicTrack.value;
+  if (!target) return;
+  const favorited = !target.favorited;
+  handleMusicFavoriteUpdated({ trackId: target.id, favorited });
   try {
-    await api(`/api/music/tracks/${track.id}/favorite`, {
+    await api(`/api/music/tracks/${target.id}/favorite`, {
       method: "PUT",
       body: JSON.stringify({ favorited })
     });
-    if (!favorited && musicOnlyFavorites.value && currentMusicTrackId.value === track.id) {
+    if (!favorited && musicOnlyFavorites.value && currentMusicTrackId.value === target.id) {
       const next = favoriteMusicTracks.value[0];
       if (!next) {
         pauseMusic(true);
@@ -6721,13 +6478,12 @@ async function toggleCurrentMusicFavorite() {
       }
     }
   } catch (error) {
-    handleMusicFavoriteUpdated({ trackId: track.id, favorited: !favorited });
+    handleMusicFavoriteUpdated({ trackId: target.id, favorited: !favorited });
     alert(error instanceof Error ? error.message : "保存歌曲收藏失败");
   }
 }
 
 function selectMusicTrack(track: MusicTrackDTO) {
-  musicPlaylistOpen.value = false;
   selectMusicTrackCore(track);
 }
 
@@ -6764,282 +6520,16 @@ async function loadMusicPlaylists() {
   }
 }
 
-function selectMusicSource(kind: MusicPlaylistSourceKind, playlist?: MusicPlaylistDTO | null) {
-  musicSourceKind.value = kind;
-  selectedMusicPlaylistId.value = kind === "playlist" ? playlist?.id || null : null;
-  musicPlaylistView.value = "tracks";
-  musicPlaylistShareTargetId.value = null;
-  musicPlaylistShareDescription.value = "";
-  musicPlaylistShareStatus.value = "";
-  musicTrackSelectionMode.value = false;
-  selectedMusicTrackIds.value = new Set();
-  selectedMusicTrackTargetPlaylistId.value = null;
+function openMusicManager(focus?: MusicManagerFocus) {
+  musicManagerInitialFocus.value = focus || null;
+  musicManagerOpen.value = true;
+  showMessageFontMenu.value = false;
+  if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
 }
 
-function selectMusicLibraryTab(tab: "library" | "favorites" | "playlists") {
-  if (tab === "playlists") {
-    musicPlaylistView.value = "playlists";
-    musicPlaylistShareTargetId.value = null;
-    musicPlaylistShareDescription.value = "";
-    musicPlaylistShareStatus.value = "";
-    musicTrackSelectionMode.value = false;
-    selectedMusicTrackIds.value = new Set();
-    selectedMusicTrackTargetPlaylistId.value = null;
-    return;
-  }
-  selectMusicSource(tab);
-}
-
-async function createMusicPlaylist() {
-  if (musicPlaylistBusy.value) return;
-  musicPlaylistBusy.value = true;
-  try {
-    const result = await api<{ playlist: MusicPlaylistDTO }>("/api/music/playlists", { method: "POST", body: JSON.stringify({}) });
-    musicPlaylists.value = [result.playlist, ...musicPlaylists.value];
-    selectMusicSource("playlist", result.playlist);
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "创建歌单失败");
-  } finally {
-    musicPlaylistBusy.value = false;
-  }
-}
-
-function clearMusicPlaylistLongPress() {
-  if (musicPlaylistLongPressTimer) window.clearTimeout(musicPlaylistLongPressTimer);
-  musicPlaylistLongPressTimer = undefined;
-}
-
-function beginMusicPlaylistLongPress(playlist: MusicPlaylistDTO, event: PointerEvent) {
-  if (event.pointerType === "mouse" && event.button !== 0) return;
-  clearMusicPlaylistLongPress();
-  musicPlaylistLongPressStartedAt = { x: event.clientX, y: event.clientY };
-  musicPlaylistLongPressTimer = window.setTimeout(() => {
-    musicPlaylistActionTarget.value = playlist;
-    suppressNextTapUntil = Date.now() + 700;
-    navigator.vibrate?.(20);
-    clearMusicPlaylistLongPress();
-  }, longPressMs);
-}
-
-function moveMusicPlaylistLongPress(event: PointerEvent) {
-  if (
-    Math.abs(event.clientX - musicPlaylistLongPressStartedAt.x) > 10 ||
-    Math.abs(event.clientY - musicPlaylistLongPressStartedAt.y) > 10
-  ) clearMusicPlaylistLongPress();
-}
-
-function openMusicPlaylistFromTap(playlist: MusicPlaylistDTO) {
-  clearMusicPlaylistLongPress();
-  if (Date.now() < suppressNextTapUntil) return;
-  selectMusicSource("playlist", playlist);
-}
-
-function closeMusicPlaylistActions() {
-  musicPlaylistActionTarget.value = null;
-}
-
-async function shareMusicPlaylistAction() {
-  const playlist = musicPlaylistActionTarget.value;
-  closeMusicPlaylistActions();
-  if (!playlist) return;
-  await nextTick();
-  openMusicPlaylistShare(playlist);
-}
-
-async function beginMusicPlaylistRename() {
-  const playlist = musicPlaylistActionTarget.value;
-  if (!playlist?.isOwner) return;
-  closeMusicPlaylistActions();
-  await nextTick();
-  musicPlaylistRenameTarget.value = playlist;
-  musicPlaylistRenameDraft.value = playlist.name;
-  await nextTick();
-  musicPlaylistRenameInput.value?.focus();
-  musicPlaylistRenameInput.value?.select();
-}
-
-function closeMusicPlaylistRename() {
-  if (musicPlaylistRenameBusy.value) return;
-  musicPlaylistRenameTarget.value = null;
-  musicPlaylistRenameDraft.value = "";
-}
-
-async function saveMusicPlaylistRename() {
-  const playlist = musicPlaylistRenameTarget.value;
-  const name = musicPlaylistRenameDraft.value.trim();
-  if (!playlist?.isOwner || !name || musicPlaylistRenameBusy.value) return;
-  if (name === playlist.name) {
-    closeMusicPlaylistRename();
-    return;
-  }
-  musicPlaylistRenameBusy.value = true;
-  try {
-    const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({ name })
-    });
-    musicPlaylists.value = musicPlaylists.value.map((item) => item.id === playlist.id ? result.playlist : item);
-    musicPlaylistRenameTarget.value = null;
-    musicPlaylistRenameDraft.value = "";
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "歌单改名失败");
-  } finally {
-    musicPlaylistRenameBusy.value = false;
-  }
-}
-
-async function deleteMusicPlaylist(playlist: MusicPlaylistDTO | null) {
-  if (!playlist?.isOwner || !confirm(`删除歌单“${playlist.name}”？聊天室中分享过的卡片将显示为已删除。`)) return;
-  try {
-    await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
-    musicPlaylists.value = musicPlaylists.value.filter((item) => item.id !== playlist.id);
-    handleMusicPlaylistDeleted(playlist.id);
-    selectMusicSource("library");
-    musicPlaylistView.value = "playlists";
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "删除歌单失败");
-  }
-}
-
-function deleteMusicPlaylistAction() {
-  const playlist = musicPlaylistActionTarget.value;
-  closeMusicPlaylistActions();
-  void deleteMusicPlaylist(playlist);
-}
-
-function openMusicPlaylistPicker() {
-  const playlist = selectedMusicPlaylist.value;
-  if (!playlist?.isOwner) return;
-  musicPlaylistPickerIds.value = new Set(playlist.tracks.map((track) => track.id));
-  musicPlaylistView.value = "picker";
-}
-
-function toggleMusicPlaylistPickerTrack(trackId: number) {
-  const next = new Set(musicPlaylistPickerIds.value);
-  if (next.has(trackId)) next.delete(trackId);
-  else next.add(trackId);
-  musicPlaylistPickerIds.value = next;
-}
-
-async function saveMusicPlaylistTracks(playlist: MusicPlaylistDTO, trackIds: number[]) {
-  const result = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}/tracks`, {
-    method: "PUT",
-    body: JSON.stringify({ trackIds })
-  });
-  musicPlaylists.value = musicPlaylists.value.map((item) => item.id === playlist.id ? result.playlist : item);
-  return result.playlist;
-}
-
-async function saveMusicPlaylistPicker() {
-  const playlist = selectedMusicPlaylist.value;
-  if (!playlist?.isOwner || musicPlaylistBusy.value) return;
-  musicPlaylistBusy.value = true;
-  try {
-    await saveMusicPlaylistTracks(playlist, musicTracks.value.filter((track) => musicPlaylistPickerIds.value.has(track.id)).map((track) => track.id));
-    musicPlaylistView.value = "tracks";
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "保存歌单失败");
-  } finally {
-    musicPlaylistBusy.value = false;
-  }
-}
-
-function toggleMusicTrackSelectionMode() {
-  musicTrackSelectionMode.value = !musicTrackSelectionMode.value;
-  selectedMusicTrackIds.value = new Set();
-  selectedMusicTrackTargetPlaylistId.value = ownedMusicPlaylists.value[0]?.id || null;
-}
-
-function toggleSelectedMusicTrack(trackId: number) {
-  const next = new Set(selectedMusicTrackIds.value);
-  if (next.has(trackId)) next.delete(trackId);
-  else next.add(trackId);
-  selectedMusicTrackIds.value = next;
-}
-
-async function addSelectedMusicTracksToPlaylist() {
-  const playlist = ownedMusicPlaylists.value.find((item) => item.id === Number(selectedMusicTrackTargetPlaylistId.value));
-  if (!playlist || !selectedMusicTrackIds.value.size || musicTrackBatchBusy.value) return;
-  const existingIds = new Set(playlist.tracks.map((track) => track.id));
-  const selectedIds = visibleMusicTracks.value
-    .filter((track) => selectedMusicTrackIds.value.has(track.id) && !existingIds.has(track.id))
-    .map((track) => track.id);
-  if (!selectedIds.length) {
-    alert("所选歌曲已经在这个歌单中");
-    return;
-  }
-  musicTrackBatchBusy.value = true;
-  try {
-    await saveMusicPlaylistTracks(playlist, [...playlist.tracks.map((track) => track.id), ...selectedIds]);
-    selectedMusicTrackIds.value = new Set();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "加入歌单失败");
-  } finally {
-    musicTrackBatchBusy.value = false;
-  }
-}
-
-async function deleteSelectedMusicTracks() {
-  if (!canDeleteSelectedMusicTracks.value || musicTrackBatchBusy.value) return;
-  const trackIds = [...selectedMusicTrackIds.value];
-  const playlist = selectedMusicPlaylist.value;
-  const action = playlist?.isOwner ? `从“${playlist.name}”移出 ${trackIds.length} 首歌曲？` : `永久删除所选 ${trackIds.length} 首歌曲？此操作无法恢复。`;
-  if (!confirm(action)) return;
-  musicTrackBatchBusy.value = true;
-  try {
-    if (playlist?.isOwner) {
-      await saveMusicPlaylistTracks(playlist, playlist.tracks.filter((track) => !selectedMusicTrackIds.value.has(track.id)).map((track) => track.id));
-    } else {
-      for (const trackId of trackIds) await api(`/api/music/tracks/${trackId}`, { method: "DELETE" });
-      await loadMusicTracks();
-      await store.loadMessages();
-    }
-    selectedMusicTrackIds.value = new Set();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "批量处理歌曲失败");
-  } finally {
-    musicTrackBatchBusy.value = false;
-  }
-}
-
-function openMusicPlaylistShare(playlist: MusicPlaylistDTO) {
-  musicPlaylistShareTargetId.value = playlist.id;
-  musicPlaylistShareDescription.value = "";
-  musicPlaylistShareStatus.value = "";
-  const currentChannelId = currentChannel.value?.id;
-  musicPlaylistShareChannelId.value = currentChannelId && shareableMusicChannels.value.some((channel) => channel.id === currentChannelId)
-    ? currentChannelId
-    : null;
-}
-
-function closeMusicPlaylistShare() {
-  if (musicPlaylistShareBusy.value) return;
-  musicPlaylistShareTargetId.value = null;
-  musicPlaylistShareChannelId.value = null;
-  musicPlaylistShareDescription.value = "";
-  musicPlaylistShareStatus.value = "";
-}
-
-async function shareMusicPlaylist(playlist: MusicPlaylistDTO) {
-  const channelId = Number(musicPlaylistShareChannelId.value);
-  if (!playlist.isOwner || !channelId || musicPlaylistShareBusy.value) {
-    if (!channelId) musicPlaylistShareStatus.value = "请先选择接收频道";
-    return;
-  }
-  musicPlaylistShareBusy.value = true;
-  musicPlaylistShareStatus.value = "分享中…";
-  try {
-    await api(`/api/music/playlists/${playlist.id}/share`, {
-      method: "POST",
-      body: JSON.stringify({ channelId, description: musicPlaylistShareDescription.value })
-    });
-    const channelName = shareableMusicChannels.value.find((channel) => channel.id === channelId)?.name || "聊天室";
-    musicPlaylistShareStatus.value = `已分享到“${channelName}”`;
-  } catch (error) {
-    musicPlaylistShareStatus.value = error instanceof Error ? error.message : "分享歌单失败";
-  } finally {
-    musicPlaylistShareBusy.value = false;
-  }
+function toggleMusicManager() {
+  if (musicManagerOpen.value) musicManagerOpen.value = false;
+  else openMusicManager();
 }
 
 function sharedMusicPlaylistDescription(message: MessageDTO) {
@@ -7047,68 +6537,26 @@ function sharedMusicPlaylistDescription(message: MessageDTO) {
   return typeof description === "string" ? description.trim() : "";
 }
 
-function openSharedMusicPlaylist(message: MessageDTO) {
+async function openSharedMusicPlaylist(message: MessageDTO) {
   const playlist = message.musicPlaylist;
   if (!playlist) {
     alert("这个歌单已被删除");
     return;
   }
-  if (!musicPlaylists.value.some((item) => item.id === playlist.id)) musicPlaylists.value = [...musicPlaylists.value, playlist];
-  musicPlaylistOpen.value = true;
-  selectMusicSource("playlist", playlist);
+  if (!musicPlaylists.value.some((item) => item.id === playlist.id)) {
+    const fresh = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${playlist.id}`).catch(() => null);
+    musicPlaylists.value = [...musicPlaylists.value, fresh?.playlist || playlist];
+  }
+  openMusicManager({ kind: "playlist", id: playlist.id });
 }
 
 function openSharedMusicPlaylistFromTap(message: MessageDTO) {
   if (Date.now() < suppressNextTapUntil) return;
-  openSharedMusicPlaylist(message);
-}
-
-function toggleMusicPlaylist() {
-  musicPlaylistOpen.value = !musicPlaylistOpen.value;
-  if (musicPlaylistOpen.value) selectMusicLibraryTab("library");
-}
-
-async function moveMusicPlaylistTrack(track: MusicTrackDTO, delta: number) {
-  if (musicPlaylistReorderBusy.value || musicPlaylistSort.value !== "manual" || musicPlaylistQuery.value.trim()) return;
-  const personalPlaylist = musicSourceKind.value === "playlist" ? selectedMusicPlaylist.value : null;
-  if (personalPlaylist) {
-    if (!personalPlaylist.isOwner) return;
-    const fromIndex = personalPlaylist.tracks.findIndex((item) => item.id === track.id);
-    const reordered = moveMusicTrack(personalPlaylist.tracks, fromIndex, delta);
-    if (reordered[fromIndex]?.id === track.id) return;
-    musicPlaylistReorderBusy.value = true;
-    try {
-      await saveMusicPlaylistTracks(personalPlaylist, reordered.map((item) => item.id));
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "保存歌单排序失败");
-    } finally {
-      musicPlaylistReorderBusy.value = false;
-    }
-    return;
-  }
-  if (!canManageMusic.value) return;
-  const manualTracks = sortMusicTracks(musicTracks.value, "manual");
-  const fromIndex = manualTracks.findIndex((item) => item.id === track.id);
-  const reordered = moveMusicTrack(manualTracks, fromIndex, delta);
-  if (reordered[fromIndex]?.id === track.id) return;
-  const previous = musicTracks.value;
-  musicTracks.value = reordered.map((item, manualOrder) => ({ ...item, manualOrder }));
-  musicPlaylistReorderBusy.value = true;
-  try {
-    await api("/api/music/tracks/order", {
-      method: "PATCH",
-      body: JSON.stringify({ trackIds: reordered.map((item) => item.id) })
-    });
-  } catch (error) {
-    musicTracks.value = previous;
-    alert(error instanceof Error ? error.message : "保存歌曲排序失败");
-  } finally {
-    musicPlaylistReorderBusy.value = false;
-  }
+  void openSharedMusicPlaylist(message);
 }
 
 function closeMusicSurface() {
-  musicPlaylistOpen.value = false;
+  musicManagerOpen.value = false;
   musicPlayerExpanded.value = false;
 }
 
@@ -7236,9 +6684,6 @@ function loadMessageFontSizePreference(accountId?: number | null) {
 function toggleMessageSelectionMode() {
   messageSelectionMode.value = !messageSelectionMode.value;
   selectedMessageIds.value = new Set();
-  selectedMessagesPlaylistOpen.value = false;
-  selectedMessagesPlaylistTargetId.value = null;
-  selectedMessagesPlaylistStatus.value = "";
   pendingChain.value = null;
   pendingDownload.value = null;
   pendingRecall.value = null;
@@ -7263,41 +6708,6 @@ function toggleMessageSelected(message: MessageDTO) {
 
 function toggleVisibleMessageSelection() {
   selectedMessageIds.value = visibleMessagesSelected.value ? new Set() : new Set(selectableMessages.value.map((message) => message.id));
-}
-
-function openSelectedMessagesPlaylist() {
-  if (!selectedMessageMusicTracks.value.length) return;
-  selectedMessagesPlaylistTargetId.value = ownedMusicPlaylists.value[0]?.id || null;
-  selectedMessagesPlaylistStatus.value = ownedMusicPlaylists.value.length ? "" : "请先在“我的歌单”中创建个人歌单";
-  selectedMessagesPlaylistOpen.value = true;
-}
-
-function closeSelectedMessagesPlaylist() {
-  if (selectedMessagesPlaylistBusy.value) return;
-  selectedMessagesPlaylistOpen.value = false;
-  selectedMessagesPlaylistTargetId.value = null;
-  selectedMessagesPlaylistStatus.value = "";
-}
-
-async function addSelectedMessagesToPlaylist() {
-  const playlist = ownedMusicPlaylists.value.find((item) => item.id === Number(selectedMessagesPlaylistTargetId.value));
-  if (!playlist || !selectedMessageMusicTracks.value.length || selectedMessagesPlaylistBusy.value) return;
-  const existingIds = new Set(playlist.tracks.map((track) => track.id));
-  const addedIds = selectedMessageMusicTracks.value.filter((track) => !existingIds.has(track.id)).map((track) => track.id);
-  if (!addedIds.length) {
-    selectedMessagesPlaylistStatus.value = `所选音频已经全部在“${playlist.name}”中`;
-    return;
-  }
-  selectedMessagesPlaylistBusy.value = true;
-  selectedMessagesPlaylistStatus.value = "添加中…";
-  try {
-    await saveMusicPlaylistTracks(playlist, [...playlist.tracks.map((track) => track.id), ...addedIds]);
-    selectedMessagesPlaylistStatus.value = `已将 ${addedIds.length} 首音频添加到“${playlist.name}”`;
-  } catch (error) {
-    selectedMessagesPlaylistStatus.value = error instanceof Error ? error.message : "添加到歌单失败";
-  } finally {
-    selectedMessagesPlaylistBusy.value = false;
-  }
 }
 
 async function deleteSelectedMessages() {
@@ -9953,7 +9363,13 @@ async function toggleVirtual(character: any) {
                 @click="setMusicOnlyFavorites(!musicOnlyFavorites)"
                 aria-label="只播放收藏曲目"
               ><Heart :size="15" :fill="musicOnlyFavorites ? 'currentColor' : 'none'" /><span>只播放收藏</span></button>
-              <button class="icon-btn" type="button" :class="{ active: musicPlaylistOpen }" @click="toggleMusicPlaylist" aria-label="歌单"><Menu :size="20" /></button>
+              <button
+                class="music-mode-btn active"
+                type="button"
+                @click="cycleMusicPlaybackMode"
+                :aria-label="`当前${musicPlaybackModeLabel()}，点击切换播放模式`"
+              >{{ musicPlaybackModeLabel() }}</button>
+              <button class="icon-btn" type="button" :class="{ active: musicManagerOpen }" @click="toggleMusicManager" aria-label="音乐管理"><Menu :size="20" /></button>
             </div>
           </div>
         </div>
@@ -10083,7 +9499,6 @@ async function toggleVirtual(character: any) {
       <section v-if="!showingFavoriteSurface && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
         <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
-        <button v-if="isMusicChannel" class="mini-btn" :disabled="!selectedMessageMusicTracks.length" @click="openSelectedMessagesPlaylist"><Plus :size="15" />添加到歌单</button>
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
         <button v-if="isAdmin" class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
@@ -10213,118 +9628,40 @@ async function toggleVirtual(character: any) {
         v-else
         class="messages-viewport"
         :class="{
-          'music-playlist-open': musicPlaylistOpen,
           'music-score-open': musicScoreOpen,
           'music-score-closing': musicScoreClosing,
           'music-score-chat-cleared': musicScoreChatCleared
         }"
       >
-        <section v-if="musicPlaylistOpen" class="music-playlist-overlay" data-music-playlist @click.self="closeMusicSurface">
-          <div class="music-playlist-panel" @click.stop>
-            <header>
-              <div>
-                <button v-if="musicPlaylistView === 'picker'" class="music-playlist-back" type="button" @click="musicPlaylistView = 'tracks'" aria-label="返回当前歌单"><ChevronLeft :size="18" /></button>
-                <strong>{{ musicPlaylistView === 'picker' ? '选择歌曲' : '歌单' }}</strong>
-                <small>{{ musicPlaylistView === 'playlists' ? `${ownedMusicPlaylists.length} 个个人歌单` : `${visibleMusicTracks.length} 首` }}</small>
-              </div>
-              <button class="icon-btn" type="button" @click="closeMusicSurface" aria-label="关闭歌单"><X :size="19" /></button>
-            </header>
-
-            <nav v-if="musicPlaylistView !== 'picker'" class="music-library-tabs" role="tablist" aria-label="歌单分类">
-              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'tracks' && musicSourceKind === 'library' }" :aria-selected="musicPlaylistView === 'tracks' && musicSourceKind === 'library'" @click="selectMusicLibraryTab('library')"><Menu :size="18" /><span>全部歌曲</span><small>{{ musicTracks.length }}</small></button>
-              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'tracks' && musicSourceKind === 'favorites' }" :aria-selected="musicPlaylistView === 'tracks' && musicSourceKind === 'favorites'" @click="selectMusicLibraryTab('favorites')"><Heart class="music-library-favorite-icon" :size="18" fill="currentColor" /><span>我的收藏</span><small>{{ favoriteMusicTracks.length }}</small></button>
-              <button type="button" role="tab" :class="{ active: musicPlaylistView === 'playlists' || (musicPlaylistView === 'tracks' && musicSourceKind === 'playlist') }" :aria-selected="musicPlaylistView === 'playlists' || (musicPlaylistView === 'tracks' && musicSourceKind === 'playlist')" @click="selectMusicLibraryTab('playlists')"><AudioLines :size="18" /><span>我的歌单</span><small>{{ musicPlaylists.filter((item) => item.isOwner).length }}</small></button>
-            </nav>
-
-            <div v-if="musicPlaylistView === 'playlists'" class="music-library-home">
-              <div class="music-library-section-head"><strong>我的歌单</strong><button type="button" :disabled="musicPlaylistBusy" @click="createMusicPlaylist"><Plus :size="16" />创建歌单</button></div>
-              <div v-if="musicPlaylists.filter((item) => item.isOwner).length" class="music-library-cards">
-                <article v-for="playlist in musicPlaylists.filter((item) => item.isOwner)" :key="playlist.id" class="music-library-card">
-                  <button
-                    class="music-library-card-main"
-                    type="button"
-                    @pointerdown.stop="beginMusicPlaylistLongPress(playlist, $event)"
-                    @pointermove.stop="moveMusicPlaylistLongPress"
-                    @pointerup.stop="clearMusicPlaylistLongPress"
-                    @pointercancel.stop="clearMusicPlaylistLongPress"
-                    @pointerleave="clearMusicPlaylistLongPress"
-                    @contextmenu.prevent="musicPlaylistActionTarget = playlist"
-                    @click="openMusicPlaylistFromTap(playlist)"
-                  >
-                    <span class="music-library-card-icon"><AudioLines :size="22" /></span><span><strong>{{ playlist.name }}</strong><small>{{ playlist.trackCount }} 首 · {{ playlist.ownerName }}</small></span>
-                  </button>
-                  <button class="music-library-card-share" type="button" :aria-label="`分享歌单 ${playlist.name}`" @click.stop="openMusicPlaylistShare(playlist)"><Send :size="17" /></button>
-                  <ChevronRight class="music-library-card-chevron" :size="17" aria-hidden="true" />
-                </article>
-              </div>
-              <p v-else class="music-playlist-empty">还没有个人歌单，点击“创建歌单”开始整理歌曲。</p>
-            </div>
-
-            <div v-else-if="musicPlaylistView === 'picker'" class="music-playlist-picker">
-              <label v-for="track in musicTracks" :key="track.id">
-                <input type="checkbox" :checked="musicPlaylistPickerIds.has(track.id)" @change="toggleMusicPlaylistPickerTrack(track.id)" />
-                <span><strong>{{ track.title }}</strong><small>{{ compactBytes(track.fileSize) }}</small></span>
-              </label>
-              <div class="music-playlist-picker-actions"><button class="mini-btn secondary" type="button" @click="musicPlaylistView = 'tracks'">取消</button><button class="mini-btn" type="button" :disabled="musicPlaylistBusy" @click="saveMusicPlaylistPicker">保存 {{ musicPlaylistPickerIds.size }} 首</button></div>
-            </div>
-
-            <template v-else>
-            <div v-if="selectedMusicPlaylist?.isOwner" class="music-playlist-owner-tools">
-              <button type="button" @click="openMusicPlaylistPicker"><Plus :size="15" />添加歌曲</button>
-            </div>
-            <div class="music-playlist-tools">
-              <button class="music-track-selection-toggle" type="button" :class="{ active: musicTrackSelectionMode }" :aria-pressed="musicTrackSelectionMode" @click="toggleMusicTrackSelectionMode"><CheckCircle2 :size="17" />{{ musicTrackSelectionMode ? "取消选择" : "选择" }}</button>
-              <input v-model="musicPlaylistQuery" type="search" placeholder="搜索歌曲或文件名" aria-label="搜索歌单" />
-              <select v-model="musicPlaylistSort" aria-label="歌单排序">
-                <option value="manual">手动排序</option>
-                <option value="heat">按热度</option>
-                <option value="uploaded">按上传时间</option>
-                <option value="filename">按文件名</option>
-              </select>
-              <button
-                class="music-mode-btn active"
-                type="button"
-                @click="cycleMusicPlaybackMode"
-                :aria-label="`当前${musicPlaybackModeLabel()}，点击切换播放模式`"
-              >{{ musicPlaybackModeLabel() }}</button>
-            </div>
-            <div v-if="musicTrackSelectionMode" class="music-track-batch-actions">
-              <strong>已选 {{ selectedMusicTrackIds.size }} 首</strong>
-              <select v-if="ownedMusicPlaylists.length" v-model.number="selectedMusicTrackTargetPlaylistId" aria-label="添加所选歌曲到歌单">
-                <option :value="null">选择目标歌单</option>
-                <option v-for="playlist in ownedMusicPlaylists" :key="playlist.id" :value="playlist.id">{{ playlist.name }}</option>
-              </select>
-              <button v-if="ownedMusicPlaylists.length" type="button" :disabled="!selectedMusicTrackIds.size || !selectedMusicTrackTargetPlaylistId || musicTrackBatchBusy" @click="addSelectedMusicTracksToPlaylist"><Plus :size="15" />添加到歌单</button>
-              <button v-if="canDeleteSelectedMusicTracks" class="danger-action" type="button" :disabled="musicTrackBatchBusy" @click="deleteSelectedMusicTracks"><Trash2 :size="15" />{{ selectedMusicPlaylist?.isOwner ? "移出歌单" : "删除歌曲" }}</button>
-            </div>
-            <div v-if="filteredMusicTracks.length" class="music-track-list">
-              <div
-                v-for="(track, index) in filteredMusicTracks"
-                :key="track.id"
-                class="music-track-row"
-                :class="{ active: currentMusicTrack?.id === track.id, selected: selectedMusicTrackIds.has(track.id), 'selection-mode': musicTrackSelectionMode }"
-              >
-                <label v-if="musicTrackSelectionMode" class="music-track-checkbox" @click.stop>
-                  <input type="checkbox" :checked="selectedMusicTrackIds.has(track.id)" :aria-label="`选择歌曲 ${track.title}`" @change="toggleSelectedMusicTrack(track.id)" />
-                </label>
-                <button type="button" class="music-track-select" @click="musicTrackSelectionMode ? toggleSelectedMusicTrack(track.id) : selectMusicTrack(track)">
-                  <span class="music-track-index">{{ index + 1 }}</span>
-                  <span class="music-track-copy"><strong>{{ track.title }}</strong><small>热度 {{ track.heat }} · {{ compactBytes(track.fileSize) }}</small></span>
-                  <Heart v-if="track.favorited" class="music-track-favorite" :size="15" fill="currentColor" aria-label="已收藏" />
-                  <span v-if="currentMusicTrack?.id === track.id" class="music-track-status">{{ musicPlaying ? "播放中" : "当前" }}</span>
-                </button>
-                <span v-if="(selectedMusicPlaylist?.isOwner || (!selectedMusicPlaylist && canManageMusic)) && musicPlaylistSort === 'manual'" class="music-track-order-actions">
-                  <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === 0 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, -1)" aria-label="歌曲上移"><ArrowUp :size="15" /></button>
-                  <button type="button" :disabled="!!musicPlaylistQuery.trim() || index === filteredMusicTracks.length - 1 || musicPlaylistReorderBusy" @click.stop="moveMusicPlaylistTrack(track, 1)" aria-label="歌曲下移"><ArrowDown :size="15" /></button>
-                </span>
-              </div>
-            </div>
-            <p v-else class="music-playlist-empty">{{ visibleMusicTracks.length ? "没有找到匹配的歌曲" : "歌单还是空的" }}</p>
-            </template>
-          </div>
-        </section>
+        <MusicManager
+          v-if="isMusicChannel"
+          embedded
+          :tracks="musicTracks"
+          :playlists="musicPlaylists"
+          :current-track-id="currentMusicTrackId"
+          :playing="musicPlaying"
+          :can-manage-music="canManageMusic"
+          :active-channel-id="currentChannel?.id ?? null"
+          @play-track="selectMusicTrack"
+          @toggle-current="toggleMusicPlayback"
+          @toggle-favorite="toggleCurrentMusicFavorite"
+          @refresh-tracks="loadMusicTracks"
+          @refresh-playlists="loadMusicPlaylists"
+        />
         <section v-if="musicScoreStageVisible" class="music-score-stage" :class="{ closing: musicScoreStageClosing }" aria-label="当前歌曲歌谱">
           <button class="music-score-close" type="button" @click="closeMusicScore()" aria-label="关闭歌谱"><X :size="21" /></button>
+          <div v-if="currentMusicScores.length > 1" class="music-score-tabs" role="tablist" aria-label="选择歌谱">
+            <button
+              v-for="score in currentMusicScores"
+              :key="score.id"
+              type="button"
+              role="tab"
+              class="music-score-tab"
+              :class="{ active: score.id === currentMusicScore?.id }"
+              :aria-selected="score.id === currentMusicScore?.id"
+              @click="currentMusicScoreId = score.id"
+            >{{ score.title }}</button>
+          </div>
           <div class="music-score-pages">
             <button
               v-for="(page, pageIndex) in currentMusicScorePages"
@@ -10340,6 +9677,7 @@ async function toggleVirtual(character: any) {
           </div>
         </section>
         <div
+          v-if="!isMusicChannel"
           ref="scroller"
           class="messages-scroll"
           :class="{ 'timeline-scrolling': timelineScrollActive }"
@@ -10751,6 +10089,24 @@ async function toggleVirtual(character: any) {
                         </button>
                       </template>
                     </div>
+                    <button
+                      v-if="musicMentionBackground(row.message)"
+                      type="button"
+                      class="music-mention-background-toggle"
+                      :class="{ expanded: isMusicMentionBackgroundExpanded(row.message) }"
+                      :aria-expanded="isMusicMentionBackgroundExpanded(row.message)"
+                      aria-label="展开或收起写作背景"
+                      @click.stop="toggleMusicMentionBackground(row.message)"
+                      @pointerdown.stop
+                    >
+                      <BookOpen :size="13" />
+                      <span>写作背景</span>
+                      <ChevronDown :size="13" class="music-mention-background-chevron" />
+                    </button>
+                    <div
+                      v-if="isMusicMentionBackgroundExpanded(row.message) && musicMentionBackground(row.message)"
+                      class="music-mention-background"
+                    >{{ musicMentionBackground(row.message) }}</div>
                   </template>
                   <template v-else>
                     <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
@@ -10790,7 +10146,7 @@ async function toggleVirtual(character: any) {
                 aria-label="查看这首歌的歌谱"
                 @click.stop="openMusicScorePreview(musicScorePreviewPage(row.message)!, row.message.id)"
               >
-                <img :src="musicScorePageUrl(musicScorePreviewPage(row.message)!, row.message.id)" alt="" loading="lazy" />
+                <img :src="musicScorePageUrl(musicScorePreviewPage(row.message)!)" alt="" loading="lazy" />
                 <span aria-hidden="true">谱</span>
               </button>
               </div>
@@ -10830,19 +10186,11 @@ async function toggleVirtual(character: any) {
         </div>
       </div>
 
-      <button v-if="!showingFavoriteSurface && (awayFromNewest || hasUnreadMessages || store.hasNewerMessages)" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
+      <button v-if="!showingFavoriteSurface && !isMusicChannel && (awayFromNewest || hasUnreadMessages || store.hasNewerMessages)" type="button" class="new-message-jump" aria-label="跳到最新消息" @click="scrollToNewest()">
         <ArrowDown :size="18" />
       </button>
 
-      <footer v-if="!showingFavoriteSurface && isMusicChannel" class="composer music-channel-composer">
-        <button class="music-upload-button" type="button" @click="fileInput?.click()">
-          <FileUp :size="22" />
-          <span><strong>上传音乐</strong><small>仅支持 MP3、M4A，单个文件最大 80MB</small></span>
-        </button>
-        <input ref="fileInput" class="hidden" type="file" accept=".mp3,.m4a,audio/mpeg,audio/mp4,audio/x-m4a" multiple @change="handlePickedFiles" />
-      </footer>
-
-      <footer v-else-if="!showingFavoriteSurface" class="composer">
+      <footer v-if="!showingFavoriteSurface && !isMusicChannel" class="composer">
         <div v-if="replyTo" class="reply-bar">
           <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
           <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
@@ -11053,81 +10401,6 @@ async function toggleVirtual(character: any) {
 
     <div v-if="showChannels || showMembers" class="scrim" @click="showChannels = false; showMembers = false"></div>
 
-    <section v-if="musicPlaylistActionTarget" class="modal-shell music-playlist-action-shell" role="dialog" aria-modal="true" aria-label="歌单操作" @click.self="closeMusicPlaylistActions">
-      <div class="small-modal music-playlist-action-modal">
-        <header class="modal-head">
-          <div><strong>{{ musicPlaylistActionTarget.name }}</strong><small>选择歌单操作</small></div>
-          <button class="icon-btn" type="button" @click="closeMusicPlaylistActions" aria-label="关闭歌单操作"><X :size="20" /></button>
-        </header>
-        <div class="message-actions-list">
-          <button type="button" @click="shareMusicPlaylistAction"><Send :size="17" />分享</button>
-          <button type="button" @click="beginMusicPlaylistRename"><FileText :size="17" />重命名</button>
-          <button type="button" class="danger" @click="deleteMusicPlaylistAction"><Trash2 :size="17" />删除</button>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="musicPlaylistShareTarget" class="modal-shell" role="dialog" aria-modal="true" aria-label="分享歌单" @click.self="closeMusicPlaylistShare">
-      <form class="small-modal music-playlist-share-modal" @submit.prevent="shareMusicPlaylist(musicPlaylistShareTarget)">
-        <header class="modal-head">
-          <div><strong>分享“{{ musicPlaylistShareTarget.name }}”</strong><small>选择歌单要发送到哪里</small></div>
-          <button class="icon-btn" type="button" :disabled="musicPlaylistShareBusy" @click="closeMusicPlaylistShare" aria-label="关闭分享歌单"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form">
-          <label for="music-playlist-share-channel">分享到</label>
-          <select id="music-playlist-share-channel" v-model.number="musicPlaylistShareChannelId" aria-label="选择接收歌单的频道">
-            <option :value="null">请选择频道</option>
-            <option v-for="channel in shareableMusicChannels" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
-          </select>
-          <label for="music-playlist-share-description">歌单介绍（可选）</label>
-          <input id="music-playlist-share-description" v-model="musicPlaylistShareDescription" maxlength="500" placeholder="写一句介绍" />
-          <small v-if="musicPlaylistShareStatus" class="modal-status" role="status">{{ musicPlaylistShareStatus }}</small>
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" type="button" :disabled="musicPlaylistShareBusy" @click="closeMusicPlaylistShare">取消</button>
-            <button class="primary-btn" type="submit" :disabled="musicPlaylistShareBusy || !musicPlaylistShareChannelId"><Send :size="15" />{{ musicPlaylistShareBusy ? "分享中…" : "发送" }}</button>
-          </div>
-        </div>
-      </form>
-    </section>
-
-    <section v-if="musicPlaylistRenameTarget" class="modal-shell" role="dialog" aria-modal="true" aria-label="重命名歌单" @click.self="closeMusicPlaylistRename">
-      <form class="small-modal music-playlist-rename-modal" @submit.prevent="saveMusicPlaylistRename">
-        <header class="modal-head">
-          <strong>重命名歌单</strong>
-          <button class="icon-btn" type="button" :disabled="musicPlaylistRenameBusy" @click="closeMusicPlaylistRename" aria-label="关闭重命名"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form">
-          <label for="music-playlist-rename-input">歌单名称</label>
-          <input id="music-playlist-rename-input" ref="musicPlaylistRenameInput" v-model="musicPlaylistRenameDraft" maxlength="80" autocomplete="off" />
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" type="button" :disabled="musicPlaylistRenameBusy" @click="closeMusicPlaylistRename">取消</button>
-            <button class="primary-btn" type="submit" :disabled="musicPlaylistRenameBusy || !musicPlaylistRenameDraft.trim()">{{ musicPlaylistRenameBusy ? "保存中…" : "保存" }}</button>
-          </div>
-        </div>
-      </form>
-    </section>
-
-    <section v-if="selectedMessagesPlaylistOpen" class="modal-shell" role="dialog" aria-modal="true" aria-label="把所选音频添加到歌单" @click.self="closeSelectedMessagesPlaylist">
-      <form class="small-modal selected-messages-playlist-modal" @submit.prevent="addSelectedMessagesToPlaylist">
-        <header class="modal-head">
-          <div><strong>添加到歌单</strong><small>已选择 {{ selectedMessageMusicTracks.length }} 首音频</small></div>
-          <button class="icon-btn" type="button" :disabled="selectedMessagesPlaylistBusy" @click="closeSelectedMessagesPlaylist" aria-label="关闭添加到歌单"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form">
-          <label for="selected-messages-playlist-target">目标歌单</label>
-          <select v-if="ownedMusicPlaylists.length" id="selected-messages-playlist-target" v-model.number="selectedMessagesPlaylistTargetId">
-            <option v-for="playlist in ownedMusicPlaylists" :key="playlist.id" :value="playlist.id">{{ playlist.name }}</option>
-          </select>
-          <p v-else class="modal-help">还没有个人歌单，请先到“歌单 → 我的歌单”创建一个。</p>
-          <small v-if="selectedMessagesPlaylistStatus" class="modal-status" role="status">{{ selectedMessagesPlaylistStatus }}</small>
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" type="button" :disabled="selectedMessagesPlaylistBusy" @click="closeSelectedMessagesPlaylist">完成</button>
-            <button v-if="ownedMusicPlaylists.length" class="primary-btn" type="submit" :disabled="selectedMessagesPlaylistBusy || !selectedMessagesPlaylistTargetId">{{ selectedMessagesPlaylistBusy ? "添加中…" : "添加" }}</button>
-          </div>
-        </div>
-      </form>
-    </section>
-
     <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">
       <form class="small-modal" @submit.prevent="createChain">
         <header class="modal-head">
@@ -11204,16 +10477,6 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <input
-      ref="musicScoreInput"
-      class="hidden"
-      type="file"
-      multiple
-      accept=".png,.jpg,.jpeg,.webp,.heic,.heif,image/png,image/jpeg,image/webp,image/heic,image/heif"
-      @change="handleMusicScorePicked"
-    />
-    <input ref="musicLyricsInput" class="hidden" type="file" accept=".srt,.lrc,application/x-subrip,text/plain" @change="handleMusicLyricsPicked" />
-
     <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
       <div class="tap-popover-card">
         <div class="message-quick-reactions">
@@ -11229,12 +10492,7 @@ async function toggleVirtual(character: any) {
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
           <button v-if="isAudioMessage(pendingMessageActions)" type="button" @click="openForwardMessageDialog"><Send :size="15" />转发到其他群</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions) && musicScorePreviewPage(pendingMessageActions)" type="button" @click="openMusicScoreManagerAction"><ImageIcon :size="15" />管理歌谱页面</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicScoreUploadBusy" @click="requestMusicScoreUpload"><ImageIcon :size="15" />{{ musicScoreUploadBusy ? "正在上传歌谱" : musicScorePreviewPage(pendingMessageActions) ? "替换整套歌谱" : "上传歌谱" }}</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" :disabled="musicLyricsUploadBusy" @click="requestMusicLyricsUpload"><FileUp :size="15" />{{ musicLyricsUploadBusy ? "正在上传歌词" : musicLyricsForMessage(pendingMessageActions) ? "替换歌词" : "上传歌词" }}</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions) && musicLyricsForMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicLyricsAction"><Trash2 :size="15" />删除歌词</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="renameMusicTrackAction"><FileText :size="15" />重命名</button>
-          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="deleteMusicTrackAction"><Trash2 :size="15" />删除歌曲</button>
+          <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="openMusicTrackInManager"><AudioLines :size="15" />在音乐管理中打开</button>
           <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
         </div>
@@ -11423,27 +10681,23 @@ async function toggleVirtual(character: any) {
       </form>
     </section>
 
-    <section v-if="musicScoreManageTrack" class="modal-shell" @click.self="musicScoreManageTrackId = null">
-      <div class="settings-modal music-score-manager-modal">
-        <header class="modal-head">
-          <div><strong>管理歌谱</strong><small>{{ musicScoreManageTrack.title }} · {{ musicScoreManageTrack.scorePages.length }} 页</small></div>
-          <button class="icon-btn" type="button" @click="musicScoreManageTrackId = null" aria-label="关闭歌谱管理"><X :size="20" /></button>
-        </header>
-        <div class="music-score-manager-list">
-          <article v-for="(page, index) in musicScoreManageTrack.scorePages" :key="page.id" class="music-score-manager-row">
-            <button class="music-score-manager-thumb" type="button" @click="openMusicScorePreview(page, musicScoreManageTrack.id)">
-              <img :src="musicScorePageUrl(page, musicScoreManageTrack.id)" alt="" />
-            </button>
-            <span><strong>第 {{ index + 1 }} 页</strong><small>{{ page.fileName }} · {{ compactBytes(page.fileSize) }}</small></span>
-            <span class="music-score-manager-actions">
-              <button type="button" :disabled="index === 0 || musicScoreManageBusy" @click="moveMusicScorePage(index, -1)" aria-label="歌谱上移"><ArrowUp :size="16" /></button>
-              <button type="button" :disabled="index === musicScoreManageTrack.scorePages.length - 1 || musicScoreManageBusy" @click="moveMusicScorePage(index, 1)" aria-label="歌谱下移"><ArrowDown :size="16" /></button>
-              <button type="button" class="danger" :disabled="musicScoreManageBusy" @click="deleteMusicScorePage(page)" aria-label="删除这页歌谱"><Trash2 :size="16" /></button>
-            </span>
-          </article>
-        </div>
-      </div>
-    </section>
+    <MusicManager
+      v-if="musicManagerOpen"
+      ref="musicManagerRef"
+      :tracks="musicTracks"
+      :playlists="musicPlaylists"
+      :current-track-id="currentMusicTrackId"
+      :playing="musicPlaying"
+      :can-manage-music="canManageMusic"
+      :active-channel-id="currentChannel?.id ?? null"
+      :initial-focus="musicManagerInitialFocus"
+      @close="musicManagerOpen = false"
+      @play-track="selectMusicTrack"
+      @toggle-current="toggleMusicPlayback"
+      @toggle-favorite="toggleCurrentMusicFavorite"
+      @refresh-tracks="loadMusicTracks"
+      @refresh-playlists="loadMusicPlaylists"
+    />
 
     <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image', score: previewPinnedImage?.score }" @click.self="closePreviewMessage">
       <div class="media-preview-modal" :class="{ 'image-preview-modal': previewMessage.type === 'image', 'score-preview-modal': previewPinnedImage?.score }">
@@ -11452,10 +10706,13 @@ async function toggleVirtual(character: any) {
         </header>
         <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
         <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
-        <div v-if="previewPinnedImage?.score && previewScorePages.length > 1" class="score-preview-pager">
-          <button type="button" :disabled="previewScorePageIndex <= 0" @click.stop="shiftMusicScorePreview(-1)" aria-label="上一页歌谱"><ChevronLeft :size="23" /></button>
-          <span>{{ previewScorePageIndex + 1 }} / {{ previewScorePages.length }}</span>
-          <button type="button" :disabled="previewScorePageIndex >= previewScorePages.length - 1" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
+        <div v-if="previewPinnedImage?.score && (previewScorePages.length > 1 || (previewScoreTrack?.scores?.length || 0) > 1)" class="score-preview-pager">
+          <template v-if="previewScorePages.length > 1">
+            <button type="button" @click.stop="shiftMusicScorePreview(-1)" aria-label="上一页歌谱"><ChevronLeft :size="23" /></button>
+            <span>{{ previewScorePageIndex + 1 }} / {{ previewScorePages.length }}</span>
+            <button type="button" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
+          </template>
+          <span v-if="(previewScoreTrack?.scores?.length || 0) > 1" class="score-preview-score-name">{{ previewScoreEntry?.title }}</span>
         </div>
         <div
           class="media-preview-body"

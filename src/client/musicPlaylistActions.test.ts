@@ -3,23 +3,26 @@ import fs from "node:fs";
 import test from "node:test";
 
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
+const manager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
 const styles = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 test("playlist sharing always opens an explicit channel destination dialog", () => {
-  assert.match(app, /class="music-library-card-share"[\s\S]*?aria-label="`分享歌单 \$\{playlist\.name\}`"[\s\S]*?@click\.stop="openMusicPlaylistShare\(playlist\)"/);
-  assert.match(app, /v-if="musicPlaylistShareTarget"[\s\S]*?<label for="music-playlist-share-channel">分享到<\/label>[\s\S]*?aria-label="选择接收歌单的频道"/);
-  assert.match(app, /async function shareMusicPlaylistAction\(\)[\s\S]*?closeMusicPlaylistActions\(\);[\s\S]*?await nextTick\(\);[\s\S]*?openMusicPlaylistShare\(playlist\)/);
-  assert.match(styles, /\.music-library-card-share\s*\{[\s\S]*?border-radius: 50%/);
+  assert.match(manager, /aria-label="分享歌单" @click="openShare\(playlist\)"/);
+  assert.match(manager, /v-if="shareTarget"[\s\S]*?分享到[\s\S]*?aria-label="选择接收歌单的频道"/);
+  assert.match(manager, /function openShare\(playlist: MusicPlaylistDTO\)[\s\S]*?shareTargetId\.value = playlist\.id/);
+  assert.match(manager, /async function sharePlaylist\(\)[\s\S]*?\/api\/music\/playlists\/\$\{playlist\.id\}\/share[\s\S]*?description: shareDescription\.value/);
+  assert.match(styles, /\.music-manager-share-body\s*\{[\s\S]*?display: grid/);
 });
 
-test("playlist rename waits for the action dialog to close and focuses its input", () => {
-  assert.match(app, /async function beginMusicPlaylistRename\(\)[\s\S]*?closeMusicPlaylistActions\(\);[\s\S]*?await nextTick\(\);[\s\S]*?musicPlaylistRenameTarget\.value = playlist[\s\S]*?musicPlaylistRenameInput\.value\?\.focus\(\)/);
-  assert.match(app, /id="music-playlist-rename-input" ref="musicPlaylistRenameInput"/);
+test("playlist rename is inline in the manager and persists through the rename endpoint", () => {
+  assert.match(manager, /function beginPlaylistRename\(playlist: MusicPlaylistDTO\)[\s\S]*?playlistRenameDraft\.value = playlist\.name/);
+  assert.match(manager, /class="music-manager-rename-input"[\s\S]*?@keydown\.enter="savePlaylistRename\(activePlaylist\)"/);
+  assert.match(manager, /async function savePlaylistRename[\s\S]*?method: "PATCH", body: JSON\.stringify\(\{ name \}\)/);
 });
 
-test("selected music messages can be added to an owned playlist in one operation", () => {
-  assert.match(app, /const selectedMessageMusicTracks = computed\(\(\) => musicTracks\.value\.filter\(\(track\) => selectedMessageIds\.value\.has\(track\.id\)\)\)/);
-  assert.match(app, /v-if="isMusicChannel"[\s\S]*?@click="openSelectedMessagesPlaylist"[\s\S]*?添加到歌单/);
-  assert.match(app, /async function addSelectedMessagesToPlaylist\(\)[\s\S]*?await saveMusicPlaylistTracks\(playlist,[\s\S]*?\.\.\.addedIds/);
-  assert.match(app, /aria-label="把所选音频添加到歌单"[\s\S]*?目标歌单[\s\S]*?selectedMessagesPlaylistStatus/);
+test("selected tracks can be added to an owned playlist in one operation", () => {
+  assert.match(manager, /v-if="selectionMode" class="music-manager-bulk-bar"[\s\S]*?addSelectedToPlaylist/);
+  assert.match(manager, /async function addSelectedToPlaylist\(\)[\s\S]*?method: "PUT",[\s\S]*?mergeTrackIds\(existingIds, addedIds\)/);
+  assert.match(manager, /const selectedManageableIds = computed|selectedManageableIds/);
+  assert.match(app, /@refresh-playlists="loadMusicPlaylists"/);
 });
