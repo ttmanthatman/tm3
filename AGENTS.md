@@ -13,6 +13,7 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 5. Read `docs/development-index.md` before locating implementation code.
 6. Read `docs/model-task-routing.md` and apply its model and escalation rules.
 7. Check for a more specific `AGENTS.md` in the target directory.
+8. If `AGENTS.local.md` exists, read it and apply its private local guidance; never commit it.
 
 ## Scope Discipline
 
