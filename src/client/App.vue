@@ -121,6 +121,7 @@ import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import PdfViewer from "./components/PdfViewer.vue";
+import PdfScoreInline from "./components/PdfScoreInline.vue";
 import AdminAccountsPage from "./features/admin/AdminAccountsPage.vue";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
@@ -9677,17 +9678,12 @@ async function toggleVirtual(character: any) {
               v-for="(page, pageIndex) in currentMusicScorePages"
               :key="page.id"
               class="music-score-page"
-              :class="{ pdf: isPdfScorePage(page) }"
               type="button"
               :style="{ '--score-page-index': Math.min(pageIndex, 8) }"
               @click="openMusicScorePreview(page)"
               :aria-label="isPdfScorePage(page) ? `打开 PDF 歌谱 ${page.fileName}` : `放大第 ${pageIndex + 1} 页歌谱`"
             >
-              <div v-if="isPdfScorePage(page)" class="music-score-pdf-placeholder">
-                <FileText :size="36" />
-                <span class="music-score-pdf-name">{{ page.fileName }}</span>
-                <small>PDF 歌谱</small>
-              </div>
+              <PdfScoreInline v-if="isPdfScorePage(page)" :src="musicScorePageUrl(page)" />
               <img v-else :src="musicScorePageUrl(page)" :alt="`${currentMusicTrack?.title || '当前歌曲'}歌谱第 ${pageIndex + 1} 页`" draggable="false" />
             </button>
           </div>

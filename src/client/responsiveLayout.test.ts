@@ -430,6 +430,13 @@ test("music score view parts chat rows and reveals full-width pages with a trans
   assert.match(css, /\.music-score-chat-cleared \.score-exit-left,[\s\S]*?transition-timing-function:[\s\S]*?cubic-bezier\(0\.55, 0, 1, 0\.45\)/);
 });
 
+test("PDF score pages render inline in the score view instead of a gray placeholder", () => {
+  assert.match(app, /<PdfScoreInline v-if="isPdfScorePage\(page\)" :src="musicScorePageUrl\(page\)" \/>/);
+  assert.doesNotMatch(app, /music-score-pdf-placeholder/);
+  assert.doesNotMatch(css, /music-score-pdf-placeholder|\.music-score-page\.pdf/);
+  assert.match(css, /\.pdf-score-inline-canvas \{[\s\S]*?width: 100%;[\s\S]*?display: block;/);
+});
+
 test("long pressing an empty part of the chat opens the available music score", () => {
   assert.match(app, /class="messages-scroll"[\s\S]*?@pointerdown\.passive="handleMessagesPointerDown"[\s\S]*?@pointermove\.passive="moveBlankScoreLongPress"/);
   assert.match(app, /function beginBlankScoreLongPress\(event: PointerEvent\)[\s\S]*?!musicScoreTriggerVisible\.value \|\| musicScoreOpen\.value[\s\S]*?openMusicScore\(\);/);
