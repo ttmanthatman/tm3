@@ -1,10 +1,14 @@
-export const APP_VERSION = "1.6.0";
+export const APP_VERSION = "1.6.1";
 
 export const RELEASE_DATE = "2026-07-22";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复歌谱为 PDF 时歌谱视图先显示灰色“PDF 歌谱”占位卡片的问题：PDF 歌谱现在直接在歌谱视图中整份内联渲染，与图片歌谱一样即开即看，点击仍可打开全屏预览。"
+] as const;
+
+const RELEASE_1_6_0_NOTES = [
   "修复 PDF 歌谱/文件在桌面端预览只显示页面局部、后续页无法滚出的问题：PDF 预览改为整份连续滚动渲染，预览高度随窗口自适应，全程保持在聊天室内的应用内预览。",
   "修复 Service Worker 导致部署后页面仍为旧版本的问题：对 HTML 导航请求改用网络优先策略，确保部署后用户能立即拿到最新应用外壳。",
   "修复 PDF 歌谱预览时画布空白的问题：`PdfViewer` 在 PDF 文档加载完成后先让画布进入 DOM，再执行渲染，避免 `canvasRef` 为空导致渲染被跳过。",
@@ -15,7 +19,7 @@ export const RELEASE_NOTES = [
   "新增统一的“音乐管理”界面：聊天头部的歌单按钮与音乐频道现在都打开同一个管理器，集中管理歌曲上传/重命名/删除、歌词与歌谱绑定、待绑定资源和歌单（建单/改名/删除/分享/选曲）。",
   "音乐频道的消息流与专用上传栏由嵌入的音乐管理页替代；消息长按菜单中的歌曲管理项合并为“在音乐管理中打开”，歌单分享卡片点击后直接定位到对应歌单。",
   "歌谱页面地址改为按谱集编号访问（/api/music/scores/:scoreId/pages/:pageId），为一首歌多份谱做准备。"
-] as const;
+] as const
 
 const RELEASE_1_5_7_NOTES = [
   "管理员“用户与权限”改为可搜索的紧凑用户列表与详情编辑；手机端使用列表到详情的单栏流程，密码重置与删除操作也移入独立区域。",
@@ -660,9 +664,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.6.0",
+    version: "1.6.1",
     date: "2026-07-22",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.6.0",
+    date: "2026-07-22",
+    notes: RELEASE_1_6_0_NOTES
   },
   {
     version: "1.5.7",
