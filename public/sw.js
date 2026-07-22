@@ -128,6 +128,19 @@ async function appResponse(event) {
   const request = event.request;
   const cache = await caches.open(APP_CACHE);
   const cached = await cache.match(request);
+  // Navigation requests (HTML pages) should always try the network first so
+  // users get the latest app shell after a deployment. Static assets still use
+  // the cached version for instant loads.
+  if (request.mode === "navigate") {
+    try {
+      const response = await fetch(request);
+      if (response.ok) {
+        event.waitUntil(cache.put(request, response.clone()));
+        return response;
+      }
+    } catch {}
+    return cached || (await cache.match("/")) || Response.error();
+  }
   const refresh = fetch(request).then((response) => {
     if (response.ok) return cache.put(request, response.clone()).then(() => response);
     return response;
@@ -138,7 +151,6 @@ async function appResponse(event) {
   }
   const response = await refresh;
   if (response) return response;
-  if (request.mode === "navigate") return (await cache.match("/")) || Response.error();
   return Response.error();
 }
 

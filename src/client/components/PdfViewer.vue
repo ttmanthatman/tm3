@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight, X } from "lucide-vue-next";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import * as pdfjs from "pdfjs-dist";
 import PdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
@@ -15,73 +14,80 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const containerRef = ref<HTMLDivElement | null>(null);
-const canvasRef = ref<HTMLCanvasElement | null>(null);
+const scrollRef = ref<HTMLDivElement | null>(null);
 const loading = ref(true);
 const error = ref("");
-const pageNumber = ref(1);
 const pageCount = ref(0);
-const scale = ref(1.5);
 
 let loadingTask: pdfjs.PDFDocumentLoadingTask | null = null;
 let pdfDocument: pdfjs.PDFDocumentProxy | null = null;
 let renderTask: pdfjs.RenderTask | null = null;
+let loadToken = 0;
 
 async function loadPdf() {
+  const token = ++loadToken;
   if (!props.src) return;
   loading.value = true;
   error.value = "";
-  pageNumber.value = 1;
   pageCount.value = 0;
   try {
     loadingTask = pdfjs.getDocument({ url: props.src });
-    pdfDocument = await loadingTask.promise;
-    pageCount.value = pdfDocument.numPages;
-    await renderPage(1);
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : "PDF 加载失败";
-  } finally {
+    const task = loadingTask;
+    const doc = await task.promise;
+    if (token !== loadToken) {
+      void task.destroy();
+      return;
+    }
+    pdfDocument = doc;
+    pageCount.value = doc.numPages;
     loading.value = false;
+    await nextTick();
+    await renderAllPages(doc, token);
+  } catch (err) {
+    if (token !== loadToken) return;
+    if (!scrollRef.value?.childElementCount) {
+      error.value = err instanceof Error ? err.message : "PDF 加载失败";
+    }
+  } finally {
+    if (token === loadToken) loading.value = false;
   }
 }
 
-async function renderPage(num: number) {
-  if (!pdfDocument || !canvasRef.value) return;
-  if (renderTask) {
-    renderTask.cancel();
-    renderTask = null;
-  }
-  try {
-    const page = await pdfDocument.getPage(num);
-    const viewport = page.getViewport({ scale: scale.value });
-    const canvas = canvasRef.value;
+async function renderAllPages(doc: pdfjs.PDFDocumentProxy, token: number) {
+  const container = scrollRef.value;
+  if (!container) return;
+  container.replaceChildren();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const available = Math.max(container.clientWidth - 24, 160);
+  for (let num = 1; num <= doc.numPages; num += 1) {
+    if (token !== loadToken) return;
+    const page = await doc.getPage(num);
+    const base = page.getViewport({ scale: 1 });
+    const cssWidth = Math.floor(Math.min(available, base.width * 2));
+    const viewport = page.getViewport({ scale: (cssWidth / base.width) * dpr });
+    const canvas = document.createElement("canvas");
+    canvas.className = "pdf-viewer-canvas";
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    canvas.style.width = `${cssWidth}px`;
+    canvas.setAttribute("aria-label", `第 ${num} 页`);
     const context = canvas.getContext("2d");
     if (!context) throw new Error("无法创建 canvas 上下文");
-    canvas.height = viewport.height;
-    canvas.width = viewport.width;
-    renderTask = page.render({ canvas, canvasContext: context, viewport });
-    await renderTask.promise;
-    pageNumber.value = num;
-  } catch (err) {
-    if (err instanceof Error && err.name === "RenderingCancelledException") return;
-    error.value = err instanceof Error ? err.message : "PDF 渲染失败";
+    container.appendChild(canvas);
+    try {
+      renderTask = page.render({ canvas, canvasContext: context, viewport });
+      await renderTask.promise;
+    } catch (err) {
+      if (err instanceof Error && err.name === "RenderingCancelledException") return;
+      throw err;
+    } finally {
+      renderTask = null;
+    }
   }
-}
-
-function goToPage(delta: number) {
-  const next = pageNumber.value + delta;
-  if (next < 1 || next > pageCount.value) return;
-  void renderPage(next);
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    goToPage(-1);
-  } else if (event.key === "ArrowRight") {
-    event.preventDefault();
-    goToPage(1);
-  } else if (event.key === "Escape") {
+  if (event.key === "Escape") {
     emit("close");
   }
 }
@@ -99,6 +105,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  loadToken += 1;
   window.removeEventListener("keydown", handleKeydown);
   if (renderTask) {
     renderTask.cancel();
@@ -113,7 +120,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="containerRef" class="pdf-viewer">
+  <div class="pdf-viewer">
     <div v-if="loading" class="pdf-viewer-status">
       <span class="pdf-viewer-spinner" aria-hidden="true"></span>
       <span>正在加载 PDF...</span>
@@ -122,19 +129,6 @@ onBeforeUnmount(() => {
       <strong>PDF 加载失败</strong>
       <small>{{ error }}</small>
     </div>
-    <template v-else>
-      <div class="pdf-viewer-canvas-wrap">
-        <canvas ref="canvasRef" class="pdf-viewer-canvas"></canvas>
-      </div>
-      <div class="pdf-viewer-controls">
-        <button type="button" class="pdf-viewer-nav" :disabled="pageNumber <= 1" @click="goToPage(-1)" aria-label="上一页">
-          <ChevronLeft :size="22" />
-        </button>
-        <span class="pdf-viewer-page">{{ pageNumber }} / {{ pageCount }}</span>
-        <button type="button" class="pdf-viewer-nav" :disabled="pageNumber >= pageCount" @click="goToPage(1)" aria-label="下一页">
-          <ChevronRight :size="22" />
-        </button>
-      </div>
-    </template>
+    <div v-else ref="scrollRef" class="pdf-viewer-scroll" :aria-label="fileName || 'PDF 预览'"></div>
   </div>
 </template>

@@ -249,11 +249,20 @@ function xhrUpload<T>(method: string, url: string, form: FormData, onProgress?: 
 }
 
 const SCORE_IMAGE_PATTERN = /\.(png|jpe?g|webp|heic|heif)$/i;
+const SCORE_PDF_PATTERN = /\.pdf$/i;
 
-function validateScoreImages(files: File[]) {
-  if (!files.length) return "请选择歌谱图片";
+function validateScoreFiles(files: File[]) {
+  if (!files.length) return "请选择歌谱图片或 PDF";
+  const pdfCount = files.filter((file) => SCORE_PDF_PATTERN.test(file.name)).length;
+  if (pdfCount > 0) {
+    if (files.length > 1) return "PDF 歌谱只能单独上传，不能与其他文件混合";
+    if (files.some((file) => file.size > 20 * 1024 * 1024)) return "PDF 歌谱不能超过 20MB";
+    return "";
+  }
   if (files.length > 20) return "一份歌谱最多上传 20 页";
-  if (files.some((file) => !SCORE_IMAGE_PATTERN.test(file.name))) return "歌谱只支持 PNG、JPG、JPEG、WebP、HEIC 和 HEIF 图片";
+  if (files.some((file) => !SCORE_IMAGE_PATTERN.test(file.name))) {
+    return "歌谱只支持 PNG、JPG、JPEG、WebP、HEIC、HEIF 图片或单个 PDF 文件";
+  }
   if (files.some((file) => file.size > 20 * 1024 * 1024)) return "单页歌谱不能超过 20MB";
   return "";
 }
@@ -327,7 +336,7 @@ async function handleScorePoolPicked(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []);
   input.value = "";
-  const invalid = validateScoreImages(files);
+  const invalid = validateScoreFiles(files);
   if (!files.length) return;
   if (invalid) {
     showNotice(invalid);
@@ -409,8 +418,13 @@ async function runAiInfo(track: MusicTrackDTO, overwrite = false): Promise<void>
       body: JSON.stringify({ overwrite }),
       cache: "no-store"
     });
-    const payload = (await response.json().catch(() => ({}))) as { message?: string };
+    const payload = (await response.json().catch(() => ({}))) as { message?: string; track?: MusicTrackDTO };
     if (response.ok) {
+      const completed = payload.track;
+      if (completed) {
+        backgroundDraft.value = completed.background || "";
+        lyricsTextDraft.value = completed.lyricsText || "";
+      }
       emit("refresh-tracks");
       showNotice("AI 已补全资料，可继续手动编辑后保存");
       return;
@@ -470,7 +484,7 @@ async function handleTrackScorePicked(event: Event) {
   const files = Array.from(input.files || []);
   input.value = "";
   if (!files.length) return;
-  const invalid = validateScoreImages(files);
+  const invalid = validateScoreFiles(files);
   if (invalid) {
     showNotice(invalid);
     return;

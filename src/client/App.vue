@@ -6532,6 +6532,7 @@ async function loadMusicPlaylists() {
 function openMusicManager(focus?: MusicManagerFocus) {
   musicManagerInitialFocus.value = focus || null;
   musicManagerOpen.value = true;
+  musicPlayerExpanded.value = false;
   showMessageFontMenu.value = false;
   if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
 }
