@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canManageMusicAsset, canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreImageName, musicTrackInfo, musicTrackTitle } from "./music.js";
+import { canManageMusicAsset, canManageMusicRole, isMusicFileHeader, isMusicFileName, isMusicScoreFileName, isMusicScoreImageName, isMusicScorePdfName, musicTrackInfo, musicTrackTitle } from "./music.js";
 
 test("music management is limited to admins and treasury officers", () => {
   assert.equal(canManageMusicRole({ isAdmin: true, canPinMessages: false }), true);
@@ -30,6 +30,22 @@ test("music score pages accept safe browser and phone image formats", () => {
   for (const fileName of ["page.gif", "page.svg", "page.pdf", "page.heic.exe"]) {
     assert.equal(isMusicScoreImageName(fileName), false);
   }
+});
+
+test("music score files accept images and single PDF documents", () => {
+  for (const fileName of ["page.png", "page.JPG", "page.pdf", "page.PDF"]) {
+    assert.equal(isMusicScoreFileName(fileName), true);
+  }
+  for (const fileName of ["page.gif", "page.svg", "page.pdf.exe"]) {
+    assert.equal(isMusicScoreFileName(fileName), false);
+  }
+});
+
+test("music score PDF names are detected separately", () => {
+  assert.equal(isMusicScorePdfName("score.pdf"), true);
+  assert.equal(isMusicScorePdfName("score.PDF"), true);
+  assert.equal(isMusicScorePdfName("score.png"), false);
+  assert.equal(isMusicScorePdfName("score.pdf.exe"), false);
 });
 
 test("music signatures recognize MP3 and M4A containers", () => {

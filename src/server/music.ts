@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const MUSIC_EXTENSIONS = new Set([".mp3", ".m4a"]);
-export const MUSIC_SCORE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"]);
+export const MUSIC_SCORE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif"]);
+export const MUSIC_SCORE_EXTENSIONS = new Set([...MUSIC_SCORE_IMAGE_EXTENSIONS, ".pdf"]);
 
 export function canManageMusicRole(account: { isAdmin: boolean; canPinMessages: boolean }) {
   return account.isAdmin || account.canPinMessages;
@@ -20,7 +21,15 @@ export function isMusicFileName(name?: string | null) {
 }
 
 export function isMusicScoreImageName(name?: string | null) {
+  return MUSIC_SCORE_IMAGE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
+}
+
+export function isMusicScoreFileName(name?: string | null) {
   return MUSIC_SCORE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
+}
+
+export function isMusicScorePdfName(name?: string | null) {
+  return path.extname(name || "").toLowerCase() === ".pdf";
 }
 
 export function isMusicFileHeader(bytes: Buffer, extension: string) {

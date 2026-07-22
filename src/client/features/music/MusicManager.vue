@@ -35,6 +35,7 @@ import type {
   MusicTrackDTO
 } from "@shared/types";
 import { api, authHeaders, getToken } from "../../api";
+import PdfViewer from "../../components/PdfViewer.vue";
 import { compactBytes, formatSeparator } from "../../time";
 import { moveMusicTrack, type MusicPlaylistSort } from "../../musicPlayer";
 import {
@@ -539,10 +540,11 @@ function scorePageUrl(scoreId: number, pageId: number) {
   return `/api/music/scores/${scoreId}/pages/${pageId}?token=${encodeURIComponent(getToken())}`;
 }
 
-const previewImage = ref<{ url: string; label: string } | null>(null);
+const previewImage = ref<{ url: string; label: string; pdf?: boolean } | null>(null);
 
 function previewScorePage(score: MusicScoreDTO, page: MusicScorePageDTO) {
-  previewImage.value = { url: scorePageUrl(score.id, page.id), label: `${score.title} · 第 ${page.pageIndex + 1} 页` };
+  const isPdf = page.fileName.toLowerCase().endsWith(".pdf");
+  previewImage.value = { url: scorePageUrl(score.id, page.id), label: `${score.title} · ${isPdf ? "PDF" : `第 ${page.pageIndex + 1} 页`}`, pdf: isPdf };
 }
 
 // ---- 绑定选择器 ----
@@ -1072,8 +1074,9 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
               <section v-if="resources.scores.length" class="music-manager-resource-section">
                 <h3>歌谱（{{ resources.scores.length }}）</h3>
                 <article v-for="score in resources.scores" :key="score.id" class="music-manager-resource-row">
+                  <FileText v-if="score.kind === 'pdf'" :size="18" />
                   <img
-                    v-if="score.previewPageId"
+                    v-else-if="score.previewPageId"
                     class="music-manager-resource-thumb"
                     :src="scorePageUrl(score.id, score.previewPageId)"
                     alt=""
@@ -1189,7 +1192,17 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
                   </div>
                   <div class="music-manager-score-pages">
                     <figure v-for="(page, pageIndex) in score.pages" :key="page.id">
+                      <div
+                        v-if="page.fileName.toLowerCase().endsWith('.pdf')"
+                        class="music-manager-score-pdf"
+                        @click="previewScorePage(score, page)"
+                      >
+                        <FileText :size="28" />
+                        <span>{{ page.fileName }}</span>
+                        <small>PDF</small>
+                      </div>
                       <img
+                        v-else
                         :src="scorePageUrl(score.id, page.id)"
                         :alt="`${score.title} 第 ${pageIndex + 1} 页`"
                         loading="lazy"
@@ -1197,9 +1210,11 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
                       />
                       <figcaption>
                         <span>{{ pageIndex + 1 }}</span>
-                        <button aria-label="上移" :disabled="actionBusy || pageIndex === 0" @click="moveScorePage(score, pageIndex, -1)"><ChevronUp :size="13" /></button>
-                        <button aria-label="下移" :disabled="actionBusy || pageIndex === score.pages.length - 1" @click="moveScorePage(score, pageIndex, 1)"><ChevronDown :size="13" /></button>
-                        <button aria-label="删除这一页" :disabled="actionBusy" @click="removeScorePage(score, page)"><Trash2 :size="13" /></button>
+                        <template v-if="!page.fileName.toLowerCase().endsWith('.pdf')">
+                          <button aria-label="上移" :disabled="actionBusy || pageIndex === 0" @click="moveScorePage(score, pageIndex, -1)"><ChevronUp :size="13" /></button>
+                          <button aria-label="下移" :disabled="actionBusy || pageIndex === score.pages.length - 1" @click="moveScorePage(score, pageIndex, 1)"><ChevronDown :size="13" /></button>
+                          <button aria-label="删除这一页" :disabled="actionBusy" @click="removeScorePage(score, page)"><Trash2 :size="13" /></button>
+                        </template>
                       </figcaption>
                     </figure>
                   </div>
@@ -1224,9 +1239,9 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
       <!-- 隐藏文件输入 -->
       <input ref="songInput" type="file" accept=".mp3,.m4a" multiple hidden @change="handleSongPicked" />
       <input ref="lyricsPoolInput" type="file" accept=".lrc,.srt" hidden @change="handleLyricsPoolPicked" />
-      <input ref="scorePoolInput" type="file" accept=".png,.jpg,.jpeg,.webp,.heic,.heif" multiple hidden @change="handleScorePoolPicked" />
+      <input ref="scorePoolInput" type="file" accept=".png,.jpg,.jpeg,.webp,.heic,.heif,.pdf" multiple hidden @change="handleScorePoolPicked" />
       <input v-if="selectedTrack" ref="trackLyricsInput" type="file" accept=".lrc,.srt" hidden @change="handleTrackLyricsPicked" />
-      <input v-if="selectedTrack" ref="trackScoreInput" type="file" accept=".png,.jpg,.jpeg,.webp,.heic,.heif" multiple hidden @change="handleTrackScorePicked" />
+      <input v-if="selectedTrack" ref="trackScoreInput" type="file" accept=".png,.jpg,.jpeg,.webp,.heic,.heif,.pdf" multiple hidden @change="handleTrackScorePicked" />
 
       <!-- 绑定选择器 -->
       <section v-if="picker" class="music-manager-modal-shell" role="dialog" aria-modal="true" aria-label="选择绑定目标" @click.self="picker = null">
@@ -1318,7 +1333,8 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
           <span>{{ previewImage.label }}</span>
           <button class="music-manager-icon-btn" aria-label="关闭预览" @click="previewImage = null"><X :size="20" /></button>
         </header>
-        <img :src="previewImage.url" :alt="previewImage.label" />
+        <PdfViewer v-if="previewImage.pdf" :src="previewImage.url" :file-name="previewImage.label" @close="previewImage = null" />
+        <img v-else :src="previewImage.url" :alt="previewImage.label" />
       </section>
     </section>
   </div>

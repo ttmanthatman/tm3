@@ -167,13 +167,15 @@ export function registerMusicResourceRoutes(app: FastifyInstance, deps: MusicRes
   }
 
   function serializeScoreResource(
-    row: { id: number; title: string; uploadedByAccountId: number | null; createdAt: Date; pages: Array<{ id: number; pageIndex: number }> },
+    row: { id: number; title: string; uploadedByAccountId: number | null; createdAt: Date; pages: Array<{ id: number; pageIndex: number; fileName: string }> },
     uploaderNames: Map<number, string>
   ): MusicScoreResourceDTO {
     const ordered = [...row.pages].sort((a, b) => a.pageIndex - b.pageIndex);
+    const kind = ordered[0]?.fileName?.toLowerCase().endsWith(".pdf") ? "pdf" : "image";
     return {
       id: row.id,
       title: row.title,
+      kind,
       pageCount: row.pages.length,
       previewPageId: ordered[0]?.id ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -317,7 +319,7 @@ export function registerMusicResourceRoutes(app: FastifyInstance, deps: MusicRes
     try {
       score = await prisma.musicScore.create({
         data: { trackId: boundTrackId, title, uploadedByAccountId: auth.accountId, pages: { create: processed.pages } },
-        include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true } } }
+        include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true, fileName: true } } }
       });
     } catch (error) {
       request.log.warn({ error }, "music score resource create failed");
@@ -341,7 +343,7 @@ export function registerMusicResourceRoutes(app: FastifyInstance, deps: MusicRes
       prisma.musicScore.findMany({
         where: { trackId: null },
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-        include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true } } }
+        include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true, fileName: true } } }
       })
     ]);
     const uploaderNames = await loadUploaderNames([
@@ -425,7 +427,7 @@ export function registerMusicResourceRoutes(app: FastifyInstance, deps: MusicRes
     const scoreId = Number((request.params as { id: string }).id);
     const score = await prisma.musicScore.findUnique({
       where: { id: scoreId },
-      include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true } } }
+      include: { pages: { orderBy: { pageIndex: "asc" }, select: { id: true, pageIndex: true, fileName: true } } }
     });
     if (!score) return reply.code(404).send({ success: false, message: "歌谱不存在" });
     if (!(await canMutateResource(auth, score))) {

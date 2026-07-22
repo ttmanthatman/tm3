@@ -2847,6 +2847,44 @@ button {
   -webkit-user-drag: none;
 }
 
+.music-score-page.pdf {
+  background: #f5f5f4;
+  min-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.music-score-pdf-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 20px;
+  color: #44403c;
+  text-align: center;
+}
+
+.music-score-pdf-placeholder svg {
+  color: #78716c;
+}
+
+.music-score-pdf-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.music-score-pdf-placeholder small {
+  color: #a8a29e;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .music-score-close {
   position: sticky;
   top: 12px;
@@ -6149,6 +6187,106 @@ button {
   border: 0;
   border-radius: 6px;
   background: #fff;
+}
+
+.pdf-viewer {
+  width: 100%;
+  height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 108px);
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #2f3437;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.pdf-viewer-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: #e6e6e6;
+  font-size: 14px;
+}
+
+.pdf-viewer-status.error strong {
+  color: #ff8a80;
+}
+
+.pdf-viewer-status.error small {
+  color: #b0b0b0;
+  max-width: 320px;
+  text-align: center;
+}
+
+.pdf-viewer-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.22);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: pdfViewerSpin 0.9s linear infinite;
+}
+
+@keyframes pdfViewerSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.pdf-viewer-canvas-wrap {
+  flex: 1;
+  width: 100%;
+  overflow: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12px;
+}
+
+.pdf-viewer-canvas {
+  max-width: 100%;
+  height: auto;
+  box-shadow: 0 4px 22px rgba(0, 0, 0, 0.38);
+  background: #fff;
+}
+
+.pdf-viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px calc(var(--safe-bottom) + 10px);
+  background: rgba(22, 24, 26, 0.82);
+  backdrop-filter: blur(8px);
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
+.pdf-viewer-nav {
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff;
+  cursor: pointer;
+}
+
+.pdf-viewer-nav:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.pdf-viewer-page {
+  min-width: 56px;
+  text-align: center;
+  color: #fff;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
 .modal-form,
@@ -11117,6 +11255,43 @@ button.admin-object-row:focus-visible {
   cursor: zoom-in;
 }
 
+.music-manager-score-pdf {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--chat-bg);
+  cursor: zoom-in;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px;
+  color: var(--text);
+  text-align: center;
+}
+
+.music-manager-score-pdf svg {
+  color: var(--muted);
+}
+
+.music-manager-score-pdf span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.music-manager-score-pdf small {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .music-manager-score-pages figcaption { display: flex; align-items: center; justify-content: space-between; gap: 2px; }
 .music-manager-score-pages figcaption span { color: var(--muted); font-size: 11px; }
 
@@ -11237,6 +11412,16 @@ button.admin-object-row:focus-visible {
 .music-manager-preview header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #fff; }
 .music-manager-preview header .music-manager-icon-btn { color: #fff; background: rgba(255, 255, 255, 0.14); }
 .music-manager-preview img { min-height: 0; max-width: 100%; max-height: 100%; object-fit: contain; justify-self: center; align-self: center; }
+.music-manager-preview .pdf-viewer {
+  height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.music-manager-preview .pdf-viewer-canvas-wrap {
+  padding: 0;
+}
 
 @media (max-width: 760px) {
   .music-manager-shell { padding: 0; }

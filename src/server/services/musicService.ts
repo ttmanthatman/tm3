@@ -53,19 +53,23 @@ export function createMusicService(deps: {
       heat: message._count?.musicPlays || 0,
       manualOrder: message.musicOrder ?? fallbackOrder,
       ...(favorited === undefined ? {} : { favorited }),
-      scores: (message.musicScores || []).map((score) => ({
-        id: score.id,
-        title: score.title,
-        pages: score.pages.map((page) => ({
-          id: page.id,
-          scoreId: score.id,
-          pageIndex: page.pageIndex,
-          fileName: page.fileName,
-          fileSize: page.fileSize,
-          width: page.width,
-          height: page.height
-        }))
-      })),
+      scores: (message.musicScores || []).map((score) => {
+        const kind = score.pages[0]?.fileName?.toLowerCase().endsWith(".pdf") ? "pdf" : "image";
+        return {
+          id: score.id,
+          title: score.title,
+          kind,
+          pages: score.pages.map((page) => ({
+            id: page.id,
+            scoreId: score.id,
+            pageIndex: page.pageIndex,
+            fileName: page.fileName,
+            fileSize: page.fileSize,
+            width: page.width,
+            height: page.height
+          }))
+        };
+      }),
       lyrics: message.musicLyrics
         ? { id: message.musicLyrics.id, fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) }
         : null,

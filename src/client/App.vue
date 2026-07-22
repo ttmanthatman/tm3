@@ -120,6 +120,7 @@ import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
+import PdfViewer from "./components/PdfViewer.vue";
 import AdminAccountsPage from "./features/admin/AdminAccountsPage.vue";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
@@ -1029,9 +1030,11 @@ function reloadApplication() {
 
 function handleGlobalEscape(event: KeyboardEvent) {
   if (previewPinnedImage.value?.score && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-    event.preventDefault();
-    shiftMusicScorePreview(event.key === "ArrowLeft" ? -1 : 1);
-    return;
+    if (previewMessage.value?.type !== "file") {
+      event.preventDefault();
+      shiftMusicScorePreview(event.key === "ArrowLeft" ? -1 : 1);
+      return;
+    }
   }
   if (event.key !== "Escape") return;
   if (bibleOpen.value) {
@@ -5872,7 +5875,7 @@ async function preloadMusicScorePage(page: MusicScorePageDTO) {
 }
 
 async function preloadMusicScorePages(tracks: ReadonlyArray<{ scores?: MusicScoreDTO[] }>) {
-  const pages = tracks.flatMap((track) => (track.scores || []).flatMap((score) => score.pages));
+  const pages = tracks.flatMap((track) => (track.scores || []).flatMap((score) => score.pages)).filter((page) => !isPdfScorePage(page));
   let nextIndex = 0;
   const worker = async () => {
     while (nextIndex < pages.length) {
@@ -5888,9 +5891,14 @@ function musicScorePreviewPage(message: MessageDTO) {
   return message.scores?.[0]?.pages[0] || musicTracks.value.find((track) => track.id === message.id)?.scores[0]?.pages[0] || null;
 }
 
+function isPdfScorePage(page: MusicScorePageDTO) {
+  return page.fileName.toLowerCase().endsWith(".pdf");
+}
+
 async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentMusicTrack.value?.id) {
   if (!trackId) return;
-  const url = (await preloadMusicScorePage(page)) || musicScorePageUrl(page);
+  const isPdf = isPdfScorePage(page);
+  const url = isPdf ? musicScorePageUrl(page) : (await preloadMusicScorePage(page)) || musicScorePageUrl(page);
   if (!url) return;
   previewPinnedImage.value = { url, fileName: page.fileName, score: true, trackId, pageId: page.id };
   previewMessage.value = {
@@ -5898,7 +5906,7 @@ async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentM
     channelId: store.currentChannelId,
     sender: { id: 0, kind: "system", username: "score", displayName: "歌谱" },
     content: "",
-    type: "image",
+    type: isPdf ? "file" : "image",
     fileName: page.fileName,
     fileSize: page.fileSize,
     createdAt: new Date().toISOString()
@@ -9668,12 +9676,18 @@ async function toggleVirtual(character: any) {
               v-for="(page, pageIndex) in currentMusicScorePages"
               :key="page.id"
               class="music-score-page"
+              :class="{ pdf: isPdfScorePage(page) }"
               type="button"
               :style="{ '--score-page-index': Math.min(pageIndex, 8) }"
               @click="openMusicScorePreview(page)"
-              :aria-label="`放大第 ${pageIndex + 1} 页歌谱`"
+              :aria-label="isPdfScorePage(page) ? `打开 PDF 歌谱 ${page.fileName}` : `放大第 ${pageIndex + 1} 页歌谱`"
             >
-              <img :src="musicScorePageUrl(page)" :alt="`${currentMusicTrack?.title || '当前歌曲'}歌谱第 ${pageIndex + 1} 页`" draggable="false" />
+              <div v-if="isPdfScorePage(page)" class="music-score-pdf-placeholder">
+                <FileText :size="36" />
+                <span class="music-score-pdf-name">{{ page.fileName }}</span>
+                <small>PDF 歌谱</small>
+              </div>
+              <img v-else :src="musicScorePageUrl(page)" :alt="`${currentMusicTrack?.title || '当前歌曲'}歌谱第 ${pageIndex + 1} 页`" draggable="false" />
             </button>
           </div>
         </section>
@@ -10729,7 +10743,12 @@ async function toggleVirtual(character: any) {
         >
           <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="previewImageSrc()" alt="图片预览" draggable="false" />
           <video v-else-if="isVideoMessage(previewMessage)" class="media-preview-video" :src="fileUrl(previewMessage)" controls autoplay playsinline preload="metadata"></video>
-          <iframe v-else-if="isPdfMessage(previewMessage)" class="media-preview-frame" :src="fileUrl(previewMessage)" title="文档预览" sandbox=""></iframe>
+          <PdfViewer
+            v-else-if="isPdfMessage(previewMessage)"
+            :src="previewPinnedImage?.score ? previewPinnedImage.url : fileUrl(previewMessage)"
+            :file-name="previewMessage.fileName || undefined"
+            @close="closePreviewMessage"
+          />
         </div>
       </div>
     </section>

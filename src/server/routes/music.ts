@@ -114,9 +114,11 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
   }
 
   function serializeScore(score: { id: number; title: string; pages: MusicScorePage[] }): MusicScoreDTO {
+    const kind = score.pages[0]?.fileName?.toLowerCase().endsWith(".pdf") ? "pdf" : "image";
     return {
       id: score.id,
       title: score.title,
+      kind,
       pages: score.pages.map((page) => ({
         id: page.id,
         scoreId: score.id,

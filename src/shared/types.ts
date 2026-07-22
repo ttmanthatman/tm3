@@ -273,6 +273,7 @@ export interface MusicMentionPayload {
 export interface MusicScoreDTO {
   id: number;
   title: string;
+  kind: "image" | "pdf";
   pages: MusicScorePageDTO[];
 }
 
@@ -288,6 +289,7 @@ export interface MusicLyricsResourceDTO {
 export interface MusicScoreResourceDTO {
   id: number;
   title: string;
+  kind: "image" | "pdf";
   pageCount: number;
   previewPageId: number | null;
   createdAt: string;
