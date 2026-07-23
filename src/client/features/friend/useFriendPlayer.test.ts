@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { FriendProgramDTO } from "../../../shared/types.js";
+import type { FriendCategoryDTO, FriendPlaybackDTO, FriendProgramDTO } from "../../../shared/types.js";
 import { useFriendPlayer, type FriendPlayerRuntime } from "./useFriendPlayer.js";
 
 class FakeAudio extends EventTarget {
@@ -47,10 +47,14 @@ function program(id: string): FriendProgramDTO {
 
 function createHarness(options: {
   programs?: FriendProgramDTO[];
+  categories?: FriendCategoryDTO[];
+  seriesPrograms?: FriendProgramDTO[];
+  history?: FriendPlaybackDTO[];
   requestError?: boolean;
   onUserPlay?: () => void;
   onUserPause?: () => void;
   onEnded?: () => void;
+  onListeningChanged?: (program: FriendProgramDTO | null) => void;
 } = {}) {
   const audio = new FakeAudio();
   const timeouts = new Map<number, () => void>();
@@ -81,12 +85,27 @@ function createHarness(options: {
     request: async <T>(path: string) => {
       requests.push(path);
       if (options.requestError) throw new Error("network down");
+      if (path === "/api/friend/history") return { history: options.history ?? [] } as T;
+      if (path === "/api/friend/categories") {
+        return {
+          categories: options.categories ?? [{
+            id: "6",
+            title: "生活智慧",
+            series: [{ id: "2", alias: "bc", title: "书香园地", description: "陪你读好书" }]
+          }]
+        } as T;
+      }
+      if (path.startsWith("/api/friend/series/")) {
+        return { programs: options.seriesPrograms ?? [program("9")] } as T;
+      }
+      if (path.startsWith("/api/friend/playback/")) return { success: true } as T;
       return { programs: options.programs ?? [program("1"), program("2")] } as T;
     },
     streamUrl: (item) => `stream:${item.id}`,
     onUserPlay: options.onUserPlay,
     onUserPause: options.onUserPause,
-    onEnded: options.onEnded
+    onEnded: options.onEnded,
+    onListeningChanged: options.onListeningChanged
   });
 
   function advanceTime(ms: number) {
@@ -181,4 +200,109 @@ test("自然播完触发 onEnded，播放失败显示中文错误", async () => 
   await failing.player.controls.loadPrograms();
   await failing.player.controls.playProgram(failing.player.state.programs.value[0]);
   assert.equal(failing.player.state.error.value, "请再次点击播放");
+});
+
+test("loadCategories 拉取分类并处理失败", async () => {
+  const { player, requests } = createHarness();
+  await player.controls.loadCategories();
+  assert.deepEqual(requests, ["/api/friend/categories"]);
+  assert.equal(player.state.categories.value.length, 1);
+  assert.equal(player.state.categories.value[0].series[0].alias, "bc");
+  assert.equal(player.state.categoriesError.value, "");
+
+  const failing = createHarness({ requestError: true });
+  await failing.player.controls.loadCategories();
+  assert.equal(failing.player.state.categoriesError.value, "节目分类暂时无法获取，请稍后重试");
+});
+
+test("openSeries 加载系列节目，closeSeries 清空", async () => {
+  const { player, requests } = createHarness();
+  const series = { id: "2", alias: "bc", title: "书香园地" };
+  await player.controls.openSeries(series);
+  assert.deepEqual(requests, ["/api/friend/series/bc"]);
+  assert.equal(player.state.activeSeries.value?.alias, "bc");
+  assert.equal(player.state.seriesPrograms.value.length, 1);
+  assert.equal(player.state.seriesPrograms.value[0].id, "9");
+
+  player.controls.closeSeries();
+  assert.equal(player.state.activeSeries.value, null);
+  assert.equal(player.state.seriesPrograms.value.length, 0);
+});
+
+test("系列节目播放后 currentProgram 仍可解析并支持挂起续播", async () => {
+  const { player, audio, advanceTime } = createHarness();
+  await player.controls.openSeries({ id: "2", alias: "bc", title: "书香园地" });
+  const target = player.state.seriesPrograms.value[0];
+  await player.controls.playProgram(target);
+  assert.equal(player.state.currentProgram.value?.id, "9");
+  assert.equal(audio.src, "stream:9");
+
+  player.controls.duck();
+  advanceTime(1000);
+  assert.equal(audio.paused, true);
+  await player.controls.resumeWithFade();
+  assert.equal(player.state.playing.value, true);
+});
+
+test("playRandom 从今日节目随机播放，已在播放时不打断", async () => {
+  const { player, audio } = createHarness();
+  await player.controls.playRandom();
+  assert.equal(player.state.playing.value, true);
+  assert.ok(["stream:1", "stream:2"].includes(audio.src), `随机应从今日节目选择，实际 ${audio.src}`);
+  const firstPlayCalls = audio.playCalls;
+
+  await player.controls.playRandom();
+  assert.equal(audio.playCalls, firstPlayCalls, "播放中再次随机不应重新开始");
+});
+
+test("播放与暂停触发 onListeningChanged，播放中定时上报进度", async () => {
+  const events: Array<string | null> = [];
+  const { player, requests, advanceTime } = createHarness({
+    onListeningChanged: (program) => events.push(program ? program.id : null)
+  });
+  await player.controls.loadPrograms();
+  await player.controls.playProgram(player.state.programs.value[0]);
+  assert.deepEqual(events, ["1"]);
+  assert.ok(requests.includes("/api/friend/playback/1"), "开始播放应立即上报进度");
+
+  advanceTime(10_000);
+  assert.equal(requests.filter((path) => path === "/api/friend/playback/1").length >= 2, true, "播放中应定时续报进度");
+
+  player.controls.pause();
+  assert.deepEqual(events, ["1", null]);
+});
+
+test("有收听记录时从上次进度续播", async () => {
+  const history: FriendPlaybackDTO[] = [{
+    programId: "2",
+    seriesTitle: "系列2",
+    title: "节目2",
+    audioUrl: "/api/friend/media?u=x",
+    progressMs: 61_000,
+    durationMs: 120_000,
+    playedAt: "2026-07-22T01:00:00.000Z"
+  }];
+  const { player, audio } = createHarness({ history });
+  await player.controls.loadHistory();
+  assert.equal(player.state.history.value.length, 1);
+  await player.controls.loadPrograms();
+  await player.controls.playProgram(player.state.programs.value[1]);
+  assert.equal(audio.currentTime, 61, "应从历史进度续播");
+});
+
+test("resetHistory 清空收听记录", async () => {
+  const history: FriendPlaybackDTO[] = [{
+    programId: "1",
+    seriesTitle: "系列1",
+    title: "节目1",
+    audioUrl: "/api/friend/media?u=x",
+    progressMs: 1_000,
+    durationMs: 120_000,
+    playedAt: "2026-07-22T01:00:00.000Z"
+  }];
+  const { player } = createHarness({ history });
+  await player.controls.loadHistory();
+  assert.equal(player.state.history.value.length, 1);
+  player.controls.resetHistory();
+  assert.equal(player.state.history.value.length, 0);
 });

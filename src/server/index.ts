@@ -24,7 +24,7 @@ import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
-import { createFriendFeedService } from "./friendFeed.js";
+import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
 import type {
   AdminAttachmentDTO,
@@ -45,6 +45,7 @@ import type {
   BibleTextSearchDTO,
   ChainPayload,
   FlashEffectSettingsDTO,
+  FriendListenerDTO,
   MessageDTO,
   MessageEffect,
   MusicListenerDTO,
@@ -496,6 +497,7 @@ const accountSocketIds = new Map<number, Set<string>>();
 const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
 const bibleReaders = new Map<string, BibleReaderPresenceDTO & { updatedAt: number }>();
+const friendListeners = new Map<string, FriendListenerDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
 let pushReady = false;
 
@@ -2394,8 +2396,18 @@ function broadcastBibleReaders() {
   io.emit("bible:readers", readers);
 }
 
+function broadcastFriendListeners() {
+  const listeners = [...friendListeners.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .filter((listener, index, all) => all.findIndex((candidate) => candidate.accountId === listener.accountId) === index)
+    .map(({ updatedAt: _updatedAt, ...listener }) => listener);
+  io.emit("friend:listeners", listeners);
+}
+
 let musicListenerCleanupTimer: NodeJS.Timeout | undefined;
 let bibleReaderCleanupTimer: NodeJS.Timeout | undefined;
+let friendListenerCleanupTimer: NodeJS.Timeout | undefined;
+let friendFeedRefreshTimer: NodeJS.Timeout | undefined;
 
 function startCleanupTimers() {
   musicListenerCleanupTimer = setInterval(() => {
@@ -2421,6 +2433,30 @@ function startCleanupTimers() {
     if (changed) broadcastBibleReaders();
   }, 15_000);
   bibleReaderCleanupTimer.unref();
+
+  friendListenerCleanupTimer = setInterval(() => {
+    const staleBefore = Date.now() - 45_000;
+    let changed = false;
+    for (const [socketId, listener] of friendListeners) {
+      if (listener.updatedAt >= staleBefore) continue;
+      friendListeners.delete(socketId);
+      changed = true;
+    }
+    if (changed) broadcastFriendListeners();
+  }, 15_000);
+  friendListenerCleanupTimer.unref();
+
+  scheduleFriendFeedRefresh();
+}
+
+/** 节目单定时刷新：本地 7:00 / 19:00 各刷一次，失败留待下一次 */
+function scheduleFriendFeedRefresh() {
+  const delay = Math.max(1_000, nextFriendFeedRefreshAt(Date.now()) - Date.now());
+  friendFeedRefreshTimer = setTimeout(() => {
+    void friendFeedService.refreshAll().catch((error) => app.log.warn({ error }, "friend feed refresh failed"));
+    scheduleFriendFeedRefresh();
+  }, delay);
+  friendFeedRefreshTimer.unref();
 }
 
 function disconnectSessions(sessionIds: string[]) {
@@ -4430,10 +4466,13 @@ registerMusicRoutes(app, {
   displayWebpFileName,
   safeUnlinkMusicScore
 });
+const friendFeedService = createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") });
+
 registerFriendRoutes(app, {
   requireAuth,
   requireMediaAuth,
-  feedService: createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") })
+  feedService: friendFeedService,
+  prisma
 });
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
@@ -6738,6 +6777,8 @@ registerMusicResourceRoutes(app, {
 app.addHook("onClose", async () => {
   if (musicListenerCleanupTimer) clearInterval(musicListenerCleanupTimer);
   if (bibleReaderCleanupTimer) clearInterval(bibleReaderCleanupTimer);
+  if (friendListenerCleanupTimer) clearInterval(friendListenerCleanupTimer);
+  if (friendFeedRefreshTimer) clearTimeout(friendFeedRefreshTimer);
   multicharManager.stopAll();
   io.close();
   await prisma.$disconnect();
@@ -6787,6 +6828,7 @@ io.on("connection", async (socket: Socket) => {
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));
   await broadcastPresence();
   broadcastMusicListeners();
+  broadcastFriendListeners();
 
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
@@ -6902,10 +6944,38 @@ io.on("connection", async (socket: Socket) => {
     broadcastBibleReaders();
   });
 
+  socket.on("friend:listening", async (data: unknown) => {
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    const body = z.object({
+      programId: z.string().trim().min(1).max(32),
+      programTitle: z.string().trim().min(1).max(255)
+    }).nullable().safeParse(data);
+    if (!body.success || body.data === null) {
+      friendListeners.delete(socket.id);
+      broadcastFriendListeners();
+      return;
+    }
+    const existing = friendListeners.get(socket.id);
+    if (existing?.programId === body.data.programId) {
+      existing.updatedAt = Date.now();
+      return;
+    }
+    friendListeners.set(socket.id, {
+      accountId: currentAuth.accountId,
+      displayName: account.displayName,
+      programId: body.data.programId,
+      programTitle: body.data.programTitle,
+      updatedAt: Date.now()
+    });
+    broadcastFriendListeners();
+  });
+
   socket.on("disconnect", async () => {
     online.delete(socket.id);
     const musicListenerChanged = musicListeners.delete(socket.id);
     const bibleReaderChanged = bibleReaders.delete(socket.id);
+    const friendListenerChanged = friendListeners.delete(socket.id);
     const set = accountSocketIds.get(account.id);
     let isOffline = false;
     if (set) {
@@ -6926,6 +6996,7 @@ io.on("connection", async (socket: Socket) => {
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
     if (bibleReaderChanged) broadcastBibleReaders();
+    if (friendListenerChanged) broadcastFriendListeners();
   });
 });
 

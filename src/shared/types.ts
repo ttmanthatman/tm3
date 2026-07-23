@@ -654,6 +654,38 @@ export interface FriendProgramDTO {
   imageUrl?: string;
 }
 
+export interface FriendSeriesDTO {
+  id: string;
+  alias: string;
+  title: string;
+  description?: string;
+  imageUrl?: string;
+}
+
+export interface FriendCategoryDTO {
+  id: string;
+  title: string;
+  series: FriendSeriesDTO[];
+}
+
+export interface FriendListenerDTO {
+  accountId: number;
+  displayName: string;
+  programId: string;
+  programTitle: string;
+}
+
+export interface FriendPlaybackDTO {
+  programId: string;
+  seriesTitle: string;
+  title: string;
+  audioUrl: string;
+  imageUrl?: string;
+  progressMs: number;
+  durationMs: number;
+  playedAt: string;
+}
+
 export type EngineActionType =
   | "skip"
   | "typing_start"

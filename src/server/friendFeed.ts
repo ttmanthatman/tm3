@@ -2,13 +2,27 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { Readable } from "node:stream";
-import type { FriendProgramDTO } from "../shared/types.js";
+import type { FriendCategoryDTO, FriendProgramDTO } from "../shared/types.js";
 
-const FRIEND_FEED_URL_DEFAULT = "https://sw1.page/tabs/feed";
-const FRIEND_FEED_TTL_MS = 30 * 60 * 1000;
+const FRIEND_API_BASE_DEFAULT = "https://x.lydt.work/api";
+const FRIEND_FEED_REFRESH_HOURS = [7, 19] as const;
 const FRIEND_FETCH_TIMEOUT_MS = 10_000;
 const FRIEND_MEDIA_CACHE_MAX_BYTES_DEFAULT = 1024 * 1024 * 1024;
 const FRIEND_MEDIA_UA = "team-chat-friend-feed/1.0";
+const FRIEND_SERIES_ALIAS_PATTERN = /^[a-z0-9]{1,32}$/i;
+
+/** 下一次节目单刷新时刻（本地时间 7:00 或 19:00） */
+export function nextFriendFeedRefreshAt(afterMs: number): number {
+  for (const hour of FRIEND_FEED_REFRESH_HOURS) {
+    const candidate = new Date(afterMs);
+    candidate.setHours(hour, 0, 0, 0);
+    if (candidate.getTime() > afterMs) return candidate.getTime();
+  }
+  const nextDay = new Date(afterMs);
+  nextDay.setDate(nextDay.getDate() + 1);
+  nextDay.setHours(FRIEND_FEED_REFRESH_HOURS[0], 0, 0, 0);
+  return nextDay.getTime();
+}
 
 type FetchImpl = typeof fetch;
 
@@ -18,9 +32,21 @@ type RawFriendProgram = {
   seriesTitle: string;
   title: string;
   date: string;
-  notes?: string;
   audioUrl: string;
   imageUrl?: string;
+};
+
+type RawFriendSeries = {
+  id: string;
+  alias: string;
+  title: string;
+  description?: string;
+};
+
+type RawFriendCategory = {
+  id: string;
+  title: string;
+  series: RawFriendSeries[];
 };
 
 export type FriendMediaStream = {
@@ -39,7 +65,7 @@ export type FriendCachedMedia = {
 
 export type FriendFeedServiceOptions = {
   fetchImpl?: FetchImpl;
-  feedUrl?: string;
+  apiBase?: string;
   cacheDir: string;
   maxCacheBytes?: number;
   ttlMs?: number;
@@ -48,6 +74,9 @@ export type FriendFeedServiceOptions = {
 
 export type FriendFeedService = {
   getPrograms(): Promise<FriendProgramDTO[]>;
+  getCategories(): Promise<FriendCategoryDTO[]>;
+  getSeriesPrograms(alias: string): Promise<FriendProgramDTO[]>;
+  refreshAll(): Promise<void>;
   isAllowedMediaUrl(raw: string): boolean;
   fetchMediaStream(raw: string, range?: string | null): Promise<FriendMediaStream>;
   resolveCachedMedia(raw: string): FriendCachedMedia | null;
@@ -56,229 +85,84 @@ export type FriendFeedService = {
 };
 
 // ---------------------------------------------------------------------------
-// JS 字面量解析（sw1.page 的静态导出 chunk 内嵌 todayItems 数组）
+// 上游 JSON API 解析（x.lydt.work：today / categories / program/{alias}）
 // ---------------------------------------------------------------------------
-
-type JsCursor = { text: string; index: number };
-
-function skipJsWhitespace(cursor: JsCursor) {
-  while (cursor.index < cursor.text.length && /\s/.test(cursor.text[cursor.index])) cursor.index += 1;
-}
-
-function parseJsString(cursor: JsCursor): string {
-  const quote = cursor.text[cursor.index];
-  if (quote !== '"' && quote !== "'") throw new Error("unexpected string");
-  cursor.index += 1;
-  let out = "";
-  while (cursor.index < cursor.text.length) {
-    const ch = cursor.text[cursor.index];
-    if (ch === quote) {
-      cursor.index += 1;
-      return out;
-    }
-    if (ch === "\\") {
-      const next = cursor.text[cursor.index + 1];
-      if (next === "u") {
-        out += String.fromCodePoint(parseInt(cursor.text.slice(cursor.index + 2, cursor.index + 6), 16));
-        cursor.index += 6;
-      } else if (next === "x") {
-        out += String.fromCodePoint(parseInt(cursor.text.slice(cursor.index + 2, cursor.index + 4), 16));
-        cursor.index += 4;
-      } else {
-        const escapes: Record<string, string> = { n: "\n", r: "\r", t: "\t", b: "\b", f: "\f", v: "\v", "0": "\0" };
-        out += escapes[next] ?? next;
-        cursor.index += 2;
-      }
-      continue;
-    }
-    out += ch;
-    cursor.index += 1;
-  }
-  throw new Error("unterminated string");
-}
-
-function parseJsIdentifier(cursor: JsCursor): string {
-  const match = /^[A-Za-z_$][A-Za-z0-9_$]*/.exec(cursor.text.slice(cursor.index));
-  if (!match) throw new Error("unexpected identifier");
-  cursor.index += match[0].length;
-  return match[0];
-}
-
-function parseJsNumber(cursor: JsCursor): number {
-  const match = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(cursor.text.slice(cursor.index));
-  if (!match) throw new Error("unexpected number");
-  cursor.index += match[0].length;
-  return Number(match[0]);
-}
-
-function parseJsValue(cursor: JsCursor): unknown {
-  skipJsWhitespace(cursor);
-  const ch = cursor.text[cursor.index];
-  if (ch === '"' || ch === "'") return parseJsString(cursor);
-  if (ch === "[") return parseJsArray(cursor);
-  if (ch === "{") return parseJsObject(cursor);
-  if (ch === "-" || /\d/.test(ch)) return parseJsNumber(cursor);
-  const word = parseJsIdentifier(cursor);
-  if (word === "true") return true;
-  if (word === "false") return false;
-  if (word === "null") return null;
-  if (word === "undefined") return undefined;
-  throw new Error(`unsupported literal ${word}`);
-}
-
-function parseJsArray(cursor: JsCursor): unknown[] {
-  cursor.index += 1; // [
-  const out: unknown[] = [];
-  for (;;) {
-    skipJsWhitespace(cursor);
-    if (cursor.text[cursor.index] === "]") {
-      cursor.index += 1;
-      return out;
-    }
-    out.push(parseJsValue(cursor));
-    skipJsWhitespace(cursor);
-    if (cursor.text[cursor.index] === ",") {
-      cursor.index += 1;
-      continue;
-    }
-    if (cursor.text[cursor.index] === "]") {
-      cursor.index += 1;
-      return out;
-    }
-    throw new Error("unexpected array separator");
-  }
-}
-
-function parseJsObject(cursor: JsCursor): Record<string, unknown> {
-  cursor.index += 1; // {
-  const out: Record<string, unknown> = {};
-  for (;;) {
-    skipJsWhitespace(cursor);
-    if (cursor.text[cursor.index] === "}") {
-      cursor.index += 1;
-      return out;
-    }
-    const key = cursor.text[cursor.index] === '"' || cursor.text[cursor.index] === "'"
-      ? parseJsString(cursor)
-      : parseJsIdentifier(cursor);
-    skipJsWhitespace(cursor);
-    if (cursor.text[cursor.index] !== ":") throw new Error("unexpected object key");
-    cursor.index += 1;
-    out[key] = parseJsValue(cursor);
-    skipJsWhitespace(cursor);
-    if (cursor.text[cursor.index] === ",") {
-      cursor.index += 1;
-      continue;
-    }
-    if (cursor.text[cursor.index] === "}") {
-      cursor.index += 1;
-      return out;
-    }
-    throw new Error("unexpected object separator");
-  }
-}
-
-function extractJsArrayLiteral(text: string, marker: string): string | null {
-  const markerIndex = text.indexOf(marker);
-  if (markerIndex < 0) return null;
-  const start = text.indexOf("[", markerIndex + marker.length);
-  if (start < 0) return null;
-  let depth = 0;
-  let index = start;
-  while (index < text.length) {
-    const ch = text[index];
-    if (ch === '"' || ch === "'") {
-      const cursor = { text, index };
-      try {
-        parseJsString(cursor);
-      } catch {
-        return null;
-      }
-      index = cursor.index;
-      continue;
-    }
-    if (ch === "[") depth += 1;
-    else if (ch === "]") {
-      depth -= 1;
-      if (depth === 0) return text.slice(start, index + 1);
-    }
-    index += 1;
-  }
-  return null;
-}
-
-// ---------------------------------------------------------------------------
-// feed HTML / chunk 解析
-// ---------------------------------------------------------------------------
-
-export function extractFriendChunkUrls(html: string, baseUrl: string): string[] {
-  const urls: string[] = [];
-  for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"[^>]*>/gi)) {
-    try {
-      const url = new URL(match[1], baseUrl);
-      if (url.protocol === "https:" || url.protocol === "http:") urls.push(url.toString());
-    } catch {
-      // 忽略无效地址
-    }
-  }
-  return urls;
-}
-
-function stripFriendNotesHtml(value: unknown): string | undefined {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const text = value
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text || undefined;
-}
 
 function rawString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function parseFriendPrograms(jsText: string): RawFriendProgram[] {
-  const literal = extractJsArrayLiteral(jsText, "todayItems:");
-  if (!literal) return [];
-  let items: unknown[];
-  try {
-    items = parseJsArray({ text: literal, index: 0 });
-  } catch {
-    return [];
-  }
+function rawRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function rawArray(payload: unknown): unknown[] {
+  const data = rawRecord(payload).data;
+  return Array.isArray(data) ? data : [];
+}
+
+export function parseFriendApiTracks(payload: unknown): RawFriendProgram[] {
   const programs: RawFriendProgram[] = [];
-  for (const item of items) {
-    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
-    const record = item as Record<string, unknown>;
-    const id = rawString(record.sermon_id);
-    const audioUrl = rawString(record.url);
-    if (!id || !audioUrl) continue;
+  for (const item of rawArray(payload)) {
+    const record = rawRecord(item);
+    const id = rawString(record.id);
+    const mediaPath = rawString(record.path);
+    const series = rawRecord(record.program);
+    const code = rawString(series.code).toLowerCase();
+    if (!id || !mediaPath.startsWith("/ly/audio/")) continue;
+    const audioUrl = `https://${FRIEND_AUDIO_HOST}${mediaPath}`;
+    if (!isAllowedFriendMediaUrl(audioUrl)) continue;
     programs.push({
       id,
-      seriesId: rawString(record.series_id),
-      seriesTitle: rawString(record.series_title),
-      title: rawString(record.sermon_title) || rawString(record.series_title),
-      date: rawString(record.sermon_publish_up),
-      notes: stripFriendNotesHtml(record.sermon_notes),
+      seriesId: rawString(series.id),
+      seriesTitle: rawString(series.name),
+      title: rawString(record.description) || rawString(series.name),
+      date: rawString(record.play_at).slice(0, 10),
       audioUrl,
-      imageUrl: rawString(record.avatar_sq) || undefined
+      imageUrl: friendSeriesImageUrl(code)
     });
   }
   return programs;
+}
+
+export function parseFriendApiCategories(payload: unknown): RawFriendCategory[] {
+  const categories: RawFriendCategory[] = [];
+  for (const item of rawArray(payload)) {
+    const record = rawRecord(item);
+    const series: RawFriendSeries[] = [];
+    const rawPrograms = record.programs;
+    if (!Array.isArray(rawPrograms)) continue;
+    for (const rawSeries of rawPrograms) {
+      const seriesRecord = rawRecord(rawSeries);
+      const alias = rawString(seriesRecord.alias);
+      if (!alias || !FRIEND_SERIES_ALIAS_PATTERN.test(alias)) continue;
+      series.push({
+        id: rawString(seriesRecord.id),
+        alias,
+        title: rawString(seriesRecord.name),
+        description: rawString(seriesRecord.description) || undefined
+      });
+    }
+    if (!series.length) continue;
+    categories.push({
+      id: rawString(record.id),
+      title: rawString(record.name),
+      series
+    });
+  }
+  return categories;
 }
 
 // ---------------------------------------------------------------------------
 // 媒体地址白名单与缓存
 // ---------------------------------------------------------------------------
 
-const FRIEND_MEDIA_HOST = "txly2.net";
-const FRIEND_MEDIA_PATH_PREFIXES = ["/ly/audio/", "/images/"];
+const FRIEND_AUDIO_HOST = "txly2.net";
+const FRIEND_COVER_HOST = "d3ml8yyp1h3hy5.cloudfront.net";
+const FRIEND_MEDIA_ALLOWLIST: Array<{ host: string; pathPrefixes: string[] }> = [
+  { host: FRIEND_AUDIO_HOST, pathPrefixes: ["/ly/audio/", "/images/"] },
+  { host: FRIEND_COVER_HOST, pathPrefixes: ["/ly/image/cover/"] }
+];
 
 export function isAllowedFriendMediaUrl(raw: string): boolean {
   let parsed: URL;
@@ -288,9 +172,11 @@ export function isAllowedFriendMediaUrl(raw: string): boolean {
     return false;
   }
   if (parsed.protocol !== "https:") return false;
-  if (parsed.hostname.toLowerCase() !== FRIEND_MEDIA_HOST) return false;
   if (parsed.username || parsed.password) return false;
-  return FRIEND_MEDIA_PATH_PREFIXES.some((prefix) => parsed.pathname.startsWith(prefix));
+  const host = parsed.hostname.toLowerCase();
+  return FRIEND_MEDIA_ALLOWLIST.some((entry) =>
+    entry.host === host && entry.pathPrefixes.some((prefix) => parsed.pathname.startsWith(prefix))
+  );
 }
 
 function friendMediaCacheKey(raw: string) {
@@ -314,74 +200,135 @@ type FriendMediaCacheMeta = {
   cachedAt: number;
 };
 
-function proxyMediaPath(raw: string) {
+export function friendMediaProxyPath(raw: string) {
   return `/api/friend/media?u=${encodeURIComponent(raw)}`;
+}
+
+function friendSeriesImageUrl(code: string): string | undefined {
+  if (!FRIEND_SERIES_ALIAS_PATTERN.test(code)) return undefined;
+  return `https://${FRIEND_COVER_HOST}/ly/image/cover/${code.toLowerCase()}.jpg`;
+}
+
+function toProgramDTO(program: RawFriendProgram): FriendProgramDTO {
+  return {
+    id: program.id,
+    seriesId: program.seriesId,
+    seriesTitle: program.seriesTitle,
+    title: program.title,
+    date: program.date,
+    audioUrl: friendMediaProxyPath(program.audioUrl),
+    imageUrl: program.imageUrl ? friendMediaProxyPath(program.imageUrl) : undefined
+  };
 }
 
 export function createFriendFeedService(options: FriendFeedServiceOptions): FriendFeedService {
   const fetchImpl = options.fetchImpl || fetch;
-  const feedUrl = options.feedUrl || process.env.FRIEND_FEED_URL || FRIEND_FEED_URL_DEFAULT;
+  const apiBase = (options.apiBase || process.env.FRIEND_API_BASE || FRIEND_API_BASE_DEFAULT).replace(/\/+$/, "");
   const cacheDir = options.cacheDir;
   const maxCacheBytes = Math.max(0, options.maxCacheBytes ?? (Number(process.env.FRIEND_CACHE_MAX_BYTES) || FRIEND_MEDIA_CACHE_MAX_BYTES_DEFAULT));
-  const ttlMs = options.ttlMs ?? FRIEND_FEED_TTL_MS;
+  const ttlMs = options.ttlMs;
   const now = options.now || Date.now;
 
-  let cached: { at: number; programs: FriendProgramDTO[] } | null = null;
-  let refreshing: Promise<FriendProgramDTO[]> | null = null;
   const inflightDownloads = new Set<string>();
 
-  async function fetchText(url: string, accept: string) {
+  async function fetchJson(url: string): Promise<unknown> {
     const response = await fetchImpl(url, {
       signal: AbortSignal.timeout(FRIEND_FETCH_TIMEOUT_MS),
-      headers: { accept, "user-agent": FRIEND_MEDIA_UA }
+      headers: { accept: "application/json", "user-agent": FRIEND_MEDIA_UA }
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.text();
+    return response.json();
   }
 
-  async function loadPrograms(): Promise<FriendProgramDTO[]> {
-    const html = await fetchText(feedUrl, "text/html,application/xhtml+xml");
-    const chunkUrls = extractFriendChunkUrls(html, feedUrl);
-    for (const chunkUrl of [...chunkUrls].reverse()) {
-      const js = await fetchText(chunkUrl, "text/javascript,*/*").catch(() => "");
-      if (!js) continue;
-      const raw = parseFriendPrograms(js);
-      if (!raw.length) continue;
-      return raw.map((program) => ({
-        id: program.id,
-        seriesId: program.seriesId,
-        seriesTitle: program.seriesTitle,
-        title: program.title,
-        date: program.date,
-        notes: program.notes,
-        audioUrl: proxyMediaPath(program.audioUrl),
-        imageUrl: program.imageUrl ? proxyMediaPath(program.imageUrl) : undefined
-      }));
-    }
-    throw new Error("节目单抓取失败");
-  }
-
-  async function refreshPrograms(): Promise<FriendProgramDTO[]> {
-    if (refreshing) return refreshing;
-    refreshing = (async () => {
-      try {
-        const programs = await loadPrograms();
-        cached = { at: now(), programs };
-        return programs;
-      } finally {
-        refreshing = null;
+  function createCachedList<T>(load: () => Promise<T[]>, failureMessage: string) {
+    let cached: { expiresAt: number; items: T[] } | null = null;
+    let refreshing: Promise<T[]> | null = null;
+    async function refresh(): Promise<T[]> {
+      if (!refreshing) {
+        refreshing = (async () => {
+          try {
+            const items = await load();
+            const loadedAt = now();
+            cached = { expiresAt: ttlMs !== undefined ? loadedAt + ttlMs : nextFriendFeedRefreshAt(loadedAt), items };
+            return items;
+          } finally {
+            refreshing = null;
+          }
+        })();
       }
-    })();
-    return refreshing;
+      return refreshing;
+    }
+    async function get(): Promise<T[]> {
+      if (cached && now() < cached.expiresAt) return cached.items;
+      try {
+        return await refresh();
+      } catch (error) {
+        if (cached) return cached.items;
+        throw error instanceof Error ? error : new Error(failureMessage);
+      }
+    }
+    return { get, refresh };
   }
 
-  async function getPrograms(): Promise<FriendProgramDTO[]> {
-    if (cached && now() - cached.at < ttlMs) return cached.programs;
-    try {
-      return await refreshPrograms();
-    } catch (error) {
-      if (cached) return cached.programs;
-      throw error instanceof Error ? error : new Error("节目单抓取失败");
+  const todayList = createCachedList(
+    async () => {
+      const raw = parseFriendApiTracks(await fetchJson(`${apiBase}/today`));
+      if (!raw.length) throw new Error("节目单抓取失败");
+      return raw.map(toProgramDTO);
+    },
+    "节目单抓取失败"
+  );
+  const getPrograms = todayList.get;
+
+  const categoryList = createCachedList(
+    async (): Promise<FriendCategoryDTO[]> => {
+      const raw = parseFriendApiCategories(await fetchJson(`${apiBase}/categories`));
+      if (!raw.length) throw new Error("节目分类抓取失败");
+      return raw.map((category) => ({
+        id: category.id,
+        title: category.title,
+        series: category.series.map((series) => {
+          const imageUrl = friendSeriesImageUrl(series.alias);
+          return {
+            id: series.id,
+            alias: series.alias,
+            title: series.title,
+            description: series.description,
+            imageUrl: imageUrl ? friendMediaProxyPath(imageUrl) : undefined
+          };
+        })
+      }));
+    },
+    "节目分类抓取失败"
+  );
+  const getCategories = categoryList.get;
+
+  const seriesProgramsLoaders = new Map<string, ReturnType<typeof createCachedList<FriendProgramDTO>>>();
+
+  function getSeriesPrograms(alias: string): Promise<FriendProgramDTO[]> {
+    const normalized = alias.trim().toLowerCase();
+    if (!FRIEND_SERIES_ALIAS_PATTERN.test(normalized)) return Promise.reject(new Error("不支持的节目系列"));
+    let loader = seriesProgramsLoaders.get(normalized);
+    if (!loader) {
+      loader = createCachedList(
+        async () => {
+          const raw = parseFriendApiTracks(await fetchJson(`${apiBase}/program/${encodeURIComponent(normalized)}`));
+          if (!raw.length) throw new Error("节目列表抓取失败");
+          return raw.map(toProgramDTO);
+        },
+        "节目列表抓取失败"
+      );
+      seriesProgramsLoaders.set(normalized, loader);
+    }
+    return loader.get();
+  }
+
+  /** 定时刷新（本地 7:00 / 19:00）：强制重取今日节目与分类，并清空系列缓存 */
+  async function refreshAll(): Promise<void> {
+    seriesProgramsLoaders.clear();
+    const results = await Promise.allSettled([todayList.refresh(), categoryList.refresh()]);
+    for (const result of results) {
+      if (result.status === "rejected") console.error("[friend-feed] 定时刷新失败", result.reason);
     }
   }
 
@@ -519,6 +466,9 @@ export function createFriendFeedService(options: FriendFeedServiceOptions): Frie
 
   return {
     getPrograms,
+    getCategories,
+    getSeriesPrograms,
+    refreshAll,
     isAllowedMediaUrl: isAllowedFriendMediaUrl,
     fetchMediaStream,
     resolveCachedMedia,

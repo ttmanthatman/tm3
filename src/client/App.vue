@@ -84,6 +84,8 @@ import type {
   MessageReactionsDTO,
   DeviceSessionDTO,
   FlashEffectSettingsDTO,
+  FriendListenerDTO,
+  FriendProgramDTO,
   LinkPreviewDTO,
   MessageDTO,
   MessageEffect,
@@ -227,6 +229,8 @@ const showMessageFontMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
 const musicListeners = ref<MusicListenerDTO[]>([]);
 const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
+const friendListeners = ref<FriendListenerDTO[]>([]);
+const friendListeningProgram = ref<FriendProgramDTO | null>(null);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
@@ -1311,6 +1315,7 @@ onBeforeUnmount(() => {
   resetRecording();
   stopPublishingMusicListening();
   stopPublishingBibleReading();
+  stopPublishingFriendListening();
   store.socket?.off("music:updated", handleMusicUpdated);
   store.socket?.off("music:playlist-updated", handleMusicPlaylistUpdated);
   store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
@@ -1387,7 +1392,11 @@ const {
 const friendPlayer = useFriendPlayer({
   onUserPlay: () => exclusiveAudio.activate("friend"),
   onUserPause: () => exclusiveAudio.deactivate("friend"),
-  onEnded: () => exclusiveAudio.deactivate("friend", { resumeSuspended: true })
+  onEnded: () => exclusiveAudio.deactivate("friend", { resumeSuspended: true }),
+  onListeningChanged: (program) => {
+    friendListeningProgram.value = program;
+    publishFriendListening();
+  }
 });
 const { playing: friendPlaying } = friendPlayer.state;
 exclusiveAudio.register({ id: "music", resumable: true, suspend: () => pauseMusic(), resume: () => void playCurrentMusic({ fadeIn: true }) });
@@ -1399,6 +1408,7 @@ function toggleFriendPrograms() {
   if (friendProgramsOpen.value) {
     musicPlayerExpanded.value = false;
     showMessageFontMenu.value = false;
+    void friendPlayer.controls.playRandom();
   }
 }
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
@@ -1406,6 +1416,7 @@ const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.val
 const activityStatusItems = computed(() => activityTickerItems(
   bibleReaders.value,
   musicListeners.value,
+  friendListeners.value,
   Object.values(store.typing)
 ));
 const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
@@ -1455,6 +1466,7 @@ watch(
   (accountId) => {
     handleMusicAccountChange(accountId);
     friendPlayer.controls.pause();
+    friendPlayer.controls.resetHistory();
   },
   { immediate: true }
 );
@@ -6670,9 +6682,34 @@ function stopPublishingBibleReading() {
   store.socket?.emit("bible:reading", { active: false, bookName: null });
 }
 
+function handleFriendListeners(listeners: FriendListenerDTO[]) {
+  friendListeners.value = Array.isArray(listeners)
+    ? listeners.filter(
+        (listener) =>
+          Number.isFinite(listener?.accountId) &&
+          typeof listener?.displayName === "string" &&
+          typeof listener?.programId === "string" &&
+          typeof listener?.programTitle === "string"
+      )
+    : [];
+}
+
+function publishFriendListening() {
+  const program = friendListeningProgram.value;
+  store.socket?.emit(
+    "friend:listening",
+    program ? { programId: program.id, programTitle: `${program.seriesTitle}·${program.title}`.slice(0, 200) } : null
+  );
+}
+
+function stopPublishingFriendListening() {
+  store.socket?.emit("friend:listening", null);
+}
+
 function publishPresenceActivities() {
   publishMusicListening();
   publishBibleReading();
+  publishFriendListening();
 }
 
 function handleActivitySocketConnect() {
@@ -6695,6 +6732,8 @@ function attachMusicSocket() {
   store.socket?.on("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.on("bible:readers", handleBibleReaders);
+  store.socket?.off("friend:listeners", handleFriendListeners);
+  store.socket?.on("friend:listeners", handleFriendListeners);
   store.socket?.off("connect", handleActivitySocketConnect);
   store.socket?.on("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);

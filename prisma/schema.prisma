@@ -111,6 +111,7 @@ model Account {
   musicPlays              MusicPlay[]
   musicPlaylists          MusicPlaylist[]
   musicPlaybackState      MusicPlaybackState?
+  friendPlaybacks         FriendPlayback[]
   whyReads                WhyTopicRead[]
 
   @@map("accounts")
@@ -412,6 +413,23 @@ model MusicPlaybackState {
   @@index([playlistId])
   @@index([trackId])
   @@map("music_playback_states")
+}
+
+model FriendPlayback {
+  accountId   Int      @map("account_id")
+  programId   String   @map("program_id") @db.VarChar(32)
+  seriesTitle String   @map("series_title") @db.VarChar(190)
+  title       String   @db.VarChar(255)
+  audioUrl    String   @map("audio_url") @db.VarChar(512)
+  imageUrl    String?  @map("image_url") @db.VarChar(512)
+  progressMs  Int      @default(0) @map("progress_ms")
+  durationMs  Int      @default(0) @map("duration_ms")
+  playedAt    DateTime @updatedAt @map("played_at")
+  account     Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, programId])
+  @@index([accountId, playedAt])
+  @@map("friend_playbacks")
 }
 
 model MessageLike {
