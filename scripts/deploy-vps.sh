@@ -185,7 +185,7 @@ start_pm2() {
   if pm2 describe "$APP_NAME" >/dev/null 2>&1; then
     pm2 restart "$APP_NAME" --update-env
   else
-    pm2 start dist/server/server/index.js --name "$APP_NAME" --update-env
+    pm2 start dist/server/server/main.js --name "$APP_NAME" --update-env
   fi
   pm2 save
   if command -v systemctl >/dev/null 2>&1; then
