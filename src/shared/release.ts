@@ -1,12 +1,17 @@
-export const APP_VERSION = "1.6.1";
+export const APP_VERSION = "1.7.0";
 
-export const RELEASE_DATE = "2026-07-22";
+export const RELEASE_DATE = "2026-07-23";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复歌谱为 PDF 时歌谱视图先显示灰色“PDF 歌谱”占位卡片的问题：PDF 歌谱现在直接在歌谱视图中整份内联渲染，与图片歌谱一样即开即看，点击仍可打开全屏预览。"
+  "聊天头部“歌”右侧新增“友”按钮：打开良友节目列表即可点选播放，节目单由服务器抓取良友随身听 feed 动态更新，节目音频与封面全部经聊天室服务器转发；播放过的节目音频会在服务器端落盘缓存，重复播放不再回源。",
+  "聊天室内的音频播放全局互斥：开始播放任一音频（音乐、良友节目、语音消息）时，其他正在播放的音频先渐弱暂停；当前播放自然结束后，被暂停的音频自动渐强续播。"
 ] as const;
+
+const RELEASE_1_6_1_NOTES = [
+  "修复歌谱为 PDF 时歌谱视图先显示灰色“PDF 歌谱”占位卡片的问题：PDF 歌谱现在直接在歌谱视图中整份内联渲染，与图片歌谱一样即开即看，点击仍可打开全屏预览。"
+] as const
 
 const RELEASE_1_6_0_NOTES = [
   "修复 PDF 歌谱/文件在桌面端预览只显示页面局部、后续页无法滚出的问题：PDF 预览改为整份连续滚动渲染，预览高度随窗口自适应，全程保持在聊天室内的应用内预览。",
@@ -664,9 +669,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.7.0",
+    date: "2026-07-23",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.6.1",
     date: "2026-07-22",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_6_1_NOTES
   },
   {
     version: "1.6.0",
