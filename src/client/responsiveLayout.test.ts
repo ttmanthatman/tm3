@@ -53,7 +53,8 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
 
 test("Bible reader offers compact book, chapter, and verse jumps beside the resource link", () => {
   assert.match(bibleWorkspace, /aria-label="经文快速跳转"[\s\S]*?aria-label="选择圣经书卷"[\s\S]*?aria-label="选择章节"[\s\S]*?aria-label="选择经节"/);
-  assert.match(bibleWorkspace, /href="http:\/\/www\.https\.ng:1234\/"[\s\S]*?>资</);
+  assert.match(bibleWorkspace, /<span class="bible-resource-link" title="资料">资<\/span>/);
+  assert.doesNotMatch(bibleWorkspace, /bible-resource-link" href=/);
   assert.match(bibleWorkspace, /suppressReaderScrollUntil = Date\.now\(\) \+ 500/);
   assert.match(bibleWorkspace, /Date\.now\(\) < suppressReaderScrollUntil/);
 });
@@ -120,6 +121,15 @@ test("panning wallpaper stays visible while its dimensions load and retries tran
   assert.doesNotMatch(app, /const image = new Image\(\)/);
   assert.match(wallpaperPanCss, /object-fit: cover;/);
   assert.doesNotMatch(wallpaperPanCss, /opacity: 0;/);
+});
+
+test("panning wallpaper re-observes the chat pane whenever the pane element mounts", () => {
+  assert.match(app, /watch\(\s*chatPane,[\s\S]*?observeWallpaperPanViewport\(\);[\s\S]*?await resetWallpaperPan\(\)/);
+});
+
+test("appearance image picker previews uploaded backgrounds through the public route", () => {
+  assert.match(app, /v-for="image in backgroundAttachmentOptions"[\s\S]*?:src="wallpaperUrl\(image\.fileName\)"/);
+  assert.doesNotMatch(app, /v-for="image in backgroundAttachmentOptions"[\s\S]*?:src="image\.url"/);
 });
 
 test("new-message jump is a compact translucent arrow centered above the composer", () => {

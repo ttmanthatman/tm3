@@ -1607,6 +1607,18 @@ watch(
   { immediate: true }
 );
 
+// 表单登录后聊天面板才首次挂载（onMounted 时面板不存在），必须在面板元素出现时
+// 重新挂接尺寸观察器并重算平移边界，否则窗口/侧栏尺寸变化后壁纸覆盖不住聊天区。
+watch(
+  chatPane,
+  async (pane, previous) => {
+    if (!pane || pane === previous) return;
+    observeWallpaperPanViewport();
+    await resetWallpaperPan();
+  },
+  { flush: "post" }
+);
+
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
 const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && currentChannel.value.kind !== "music" && !currentChannel.value.isDefault && !currentChannel.value.directKey);
 const adminChannelRows = computed(() => adminChannels.value);
@@ -11787,7 +11799,7 @@ async function toggleVirtual(character: any) {
               :class="{ active: image.fileName === appearanceImagePickerSelection }"
               @click="selectAppearanceImage(image.fileName)"
             >
-              <img :src="image.url" alt="" />
+              <img :src="wallpaperUrl(image.fileName)" alt="" />
               <span>
                 <b>{{ image.label }}</b>
                 <small>{{ backgroundAttachmentLabel(image) }}</small>

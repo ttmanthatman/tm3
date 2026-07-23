@@ -7,7 +7,7 @@ import type { FriendCategoryDTO, FriendProgramDTO } from "../shared/types.js";
 const FRIEND_API_BASE_DEFAULT = "https://x.lydt.work/api";
 const FRIEND_FEED_REFRESH_HOURS = [7, 19] as const;
 const FRIEND_FETCH_TIMEOUT_MS = 10_000;
-const FRIEND_MEDIA_CACHE_MAX_BYTES_DEFAULT = 1024 * 1024 * 1024;
+const FRIEND_MEDIA_CACHE_MAX_BYTES_DEFAULT = 2 * 1024 * 1024 * 1024;
 const FRIEND_MEDIA_UA = "team-chat-friend-feed/1.0";
 const FRIEND_SERIES_ALIAS_PATTERN = /^[a-z0-9]{1,32}$/i;
 

@@ -927,7 +927,7 @@ function handleTouchEnd(event: TouchEvent) {
         </select>
       </nav>
       <div class="bible-topbar-actions">
-        <a class="bible-resource-link" href="http://www.https.ng:1234/" aria-label="打开资料网站" title="资料">资</a>
+        <span class="bible-resource-link" title="资料">资</span>
         <div class="bible-font-control" data-bible-font-menu>
           <button
             v-if="!showBibleFontMenu"
@@ -1137,7 +1137,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-jump-nav select:disabled { opacity: .5; cursor: wait; }
 .bible-font-control { flex: 0 0 auto; }
 .bible-resource-link, .bible-font-trigger { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
-.bible-resource-link { display: grid; place-items: center; text-decoration: none; }
+.bible-resource-link { display: grid; place-items: center; text-decoration: none; cursor: default; }
 .bible-resource-link:hover, .bible-font-trigger:hover { background: rgba(128, 97, 63, .16); }
 .bible-font-stepper { min-height: 36px; display: flex; align-items: center; gap: 4px; }
 .bible-font-stepper button, .bible-font-stepper span { min-width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; }

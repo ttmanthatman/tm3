@@ -80,6 +80,8 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
   let fadeTimer: number | undefined;
   let progressTimer: number | undefined;
   let disposed = false;
+  /** 当前节目是否由“打开面板随机播放”触发；自动播放不写入收听记录 */
+  let autoPlaySession = false;
 
   function notifyListening(program: FriendProgramDTO | null) {
     options.onListeningChanged?.(program);
@@ -100,6 +102,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
   }
 
   function savePlaybackProgress() {
+    if (autoPlaySession) return;
     const program = currentProgram.value;
     if (!program || !audio) return;
     const progressMs = Math.round((audio.currentTime || 0) * 1000);
@@ -237,7 +240,8 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     audio.addEventListener("timeupdate", handleTimeUpdate);
   }
 
-  async function startPlayback(program: FriendProgramDTO, fadeInVolume: boolean) {
+  async function startPlayback(program: FriendProgramDTO, fadeInVolume: boolean, auto = false) {
+    autoPlaySession = auto;
     initializeAudio();
     if (!audio) return;
     const targetAudio = audio;
@@ -295,7 +299,8 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     const pool = programs.value.filter((program) => program.id !== currentProgramId.value);
     if (!pool.length) return;
     const pick = pool[Math.floor(Math.random() * pool.length)];
-    await playProgram(pick);
+    options.onUserPlay?.();
+    await startPlayback(pick, false, true);
   }
 
   function toggleProgram(program: FriendProgramDTO) {
@@ -334,11 +339,11 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     notifyListening(null);
   }
 
-  /** 被协调器恢复：渐强续播 */
+  /** 被协调器恢复：渐强续播（保持当前会话的主动/自动属性） */
   async function resumeWithFade() {
     const program = currentProgram.value;
     if (!program || !audio || !audio.paused || audio.ended) return;
-    await startPlayback(program, true);
+    await startPlayback(program, true, autoPlaySession);
   }
 
   async function loadPrograms() {

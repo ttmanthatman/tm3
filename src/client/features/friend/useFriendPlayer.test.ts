@@ -255,6 +255,18 @@ test("playRandom 从今日节目随机播放，已在播放时不打断", async 
   assert.equal(audio.playCalls, firstPlayCalls, "播放中再次随机不应重新开始");
 });
 
+test("自动播放不写入收听记录，主动播放才上报进度", async () => {
+  const { player, requests, advanceTime } = createHarness();
+  await player.controls.playRandom();
+  assert.equal(player.state.playing.value, true);
+  advanceTime(20_000);
+  assert.equal(requests.some((path) => path.startsWith("/api/friend/playback/")), false, "自动播放不应上报收听记录");
+
+  await player.controls.loadPrograms();
+  await player.controls.playProgram(player.state.programs.value[0]);
+  assert.ok(requests.includes("/api/friend/playback/1"), "主动播放应立即上报进度");
+});
+
 test("播放与暂停触发 onListeningChanged，播放中定时上报进度", async () => {
   const events: Array<string | null> = [];
   const { player, requests, advanceTime } = createHarness({
