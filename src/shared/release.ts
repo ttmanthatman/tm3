@@ -1,10 +1,14 @@
-export const APP_VERSION = "1.7.2";
+export const APP_VERSION = "1.7.2.1";
 
 export const RELEASE_DATE = "2026-07-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "“友”的“最近收听”记录规则调整：打开节目单时的随机自动播放与主动点播都会记录收听，但只有实际播放满 10 秒的节目才写入收听记录，短暂试听不再出现在历史里。"
+] as const;
+
+const RELEASE_1_7_2_NOTES = [
   "修复“推拉摇移”壁纸在表单登录后移出聊天视口、露出大片灰色背景的问题：此前尺寸观察器只在应用挂载时挂接，表单登录后聊天面板才出现，窗口拉宽、收起侧栏、手机旋转或切换频道后壁纸边界不再更新；现在聊天面板每次挂载都会重新挂接观察器并重算平移边界。",
   "修复管理面板选择聊天室壁纸时已上传图片全部破损的问题：选择器缩略图改走公开的 `/backgrounds/` 地址，不再请求需要登录头、`<img>` 无法携带认证的管理员附件接口。",
   "“友”良友节目的服务器媒体缓存上限由 1GB 提高到 2GB，节目音频与系列封面落盘缓存后可服务更多节目。",
@@ -687,9 +691,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.7.2",
+    version: "1.7.2.1",
     date: "2026-07-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.7.2",
+    date: "2026-07-24",
+    notes: RELEASE_1_7_2_NOTES
   },
   {
     version: "1.7.1",
