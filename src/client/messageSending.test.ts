@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   composerDraftAfterSend,
   isComposerSendKey,
+  isTouchDevice,
   type MessageSendAck,
   type MessageSendResult,
   type MessageSendSocket,
@@ -117,4 +118,40 @@ test("Enter sends, Shift+Enter inserts a newline, and composition Enter is ignor
   assert.equal(isComposerSendKey({ key: "Enter", shiftKey: false, isComposing: false }), true);
   assert.equal(isComposerSendKey({ key: "Enter", shiftKey: true, isComposing: false }), false);
   assert.equal(isComposerSendKey({ key: "Enter", shiftKey: false, isComposing: true }), false);
+});
+
+test("isTouchDevice is false outside a browser", () => {
+  assert.equal(isTouchDevice(), false);
+});
+
+test("isTouchDevice is true when the primary pointer is coarse", () => {
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "window", {
+      value: { matchMedia: (query: string) => ({ matches: query === "(pointer: coarse)" }) },
+      configurable: true
+    });
+    Object.defineProperty(globalThis, "navigator", { value: { maxTouchPoints: 0 }, configurable: true });
+    assert.equal(isTouchDevice(), true);
+  } finally {
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+  }
+});
+
+test("isTouchDevice falls back to maxTouchPoints when pointer is fine", () => {
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const navigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  try {
+    Object.defineProperty(globalThis, "window", {
+      value: { matchMedia: () => ({ matches: false }) },
+      configurable: true
+    });
+    Object.defineProperty(globalThis, "navigator", { value: { maxTouchPoints: 2 }, configurable: true });
+    assert.equal(isTouchDevice(), true);
+  } finally {
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    if (navigatorDescriptor) Object.defineProperty(globalThis, "navigator", navigatorDescriptor);
+  }
 });

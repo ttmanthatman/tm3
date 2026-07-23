@@ -145,7 +145,7 @@ import {
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
-import { composerDraftAfterSend, isComposerSendKey, useMessageSender } from "./messageSending";
+import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
 import { likeNotificationToTopNotice } from "./likeNotification";
 import {
@@ -4617,7 +4617,7 @@ function onKeydown(event: KeyboardEvent) {
       return;
     }
   }
-  if (isComposerSendKey(event)) {
+  if (isComposerSendKey(event) && !isTouchDevice()) {
     event.preventDefault();
     void sendText();
   }

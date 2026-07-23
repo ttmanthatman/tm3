@@ -70,3 +70,9 @@ export function composerDraftAfterSend(result: MessageSendResult, submittedDraft
 export function isComposerSendKey(event: Pick<KeyboardEvent, "key" | "shiftKey" | "isComposing">) {
   return event.key === "Enter" && !event.shiftKey && !event.isComposing;
 }
+
+export function isTouchDevice(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+  if (window.matchMedia("(pointer: coarse)").matches) return true;
+  return "maxTouchPoints" in navigator && navigator.maxTouchPoints > 0;
+}
