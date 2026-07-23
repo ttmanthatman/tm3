@@ -6,6 +6,7 @@ import { musicFadeVolume } from "../../musicPlayer";
 const FRIEND_FADE_MS = 900;
 const FRIEND_PROGRESS_SAVE_MS = 10_000;
 const FRIEND_RESUME_MIN_MS = 5_000;
+const FRIEND_HISTORY_MIN_MS = 10_000;
 const FRIEND_HISTORY_LIMIT = 20;
 
 type FriendPlayerRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -80,8 +81,10 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
   let fadeTimer: number | undefined;
   let progressTimer: number | undefined;
   let disposed = false;
-  /** 当前节目是否由“打开面板随机播放”触发；自动播放不写入收听记录 */
-  let autoPlaySession = false;
+  /** 当前节目已累计的真实收听时长；自动与主动播放均在满 10 秒后才写入收听记录 */
+  let listenedMs = 0;
+  /** 上一次 timeupdate 的播放位置（秒），用于累计真实收听时长 */
+  let lastTimeUpdateSec: number | null = null;
 
   function notifyListening(program: FriendProgramDTO | null) {
     options.onListeningChanged?.(program);
@@ -102,7 +105,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
   }
 
   function savePlaybackProgress() {
-    if (autoPlaySession) return;
+    if (listenedMs < FRIEND_HISTORY_MIN_MS) return;
     const program = currentProgram.value;
     if (!program || !audio) return;
     const progressMs = Math.round((audio.currentTime || 0) * 1000);
@@ -220,6 +223,12 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
 
   function handleTimeUpdate() {
     if (disposed || !audio?.duration || !Number.isFinite(audio.duration)) return;
+    if (lastTimeUpdateSec !== null) {
+      const delta = audio.currentTime - lastTimeUpdateSec;
+      // 只累计自然播放的前进幅度；续播定位与拖动造成的跳变不计入收听时长
+      if (delta > 0 && delta < 5) listenedMs += delta * 1000;
+    }
+    lastTimeUpdateSec = audio.currentTime;
     progress.value = Math.min(1, Math.max(0, audio.currentTime / audio.duration));
   }
 
@@ -240,8 +249,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     audio.addEventListener("timeupdate", handleTimeUpdate);
   }
 
-  async function startPlayback(program: FriendProgramDTO, fadeInVolume: boolean, auto = false) {
-    autoPlaySession = auto;
+  async function startPlayback(program: FriendProgramDTO, fadeInVolume: boolean) {
     initializeAudio();
     if (!audio) return;
     const targetAudio = audio;
@@ -257,6 +265,8 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
         && (!saved.durationMs || saved.progressMs < saved.durationMs * 0.95)) {
         targetAudio.currentTime = saved.progressMs / 1000;
       }
+      listenedMs = 0;
+      lastTimeUpdateSec = targetAudio.currentTime;
     }
     currentProgramId.value = program.id;
     clearFade();
@@ -300,7 +310,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     if (!pool.length) return;
     const pick = pool[Math.floor(Math.random() * pool.length)];
     options.onUserPlay?.();
-    await startPlayback(pick, false, true);
+    await startPlayback(pick, false);
   }
 
   function toggleProgram(program: FriendProgramDTO) {
@@ -339,11 +349,11 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     notifyListening(null);
   }
 
-  /** 被协调器恢复：渐强续播（保持当前会话的主动/自动属性） */
+  /** 被协调器恢复：渐强续播（保留已累计的收听时长） */
   async function resumeWithFade() {
     const program = currentProgram.value;
     if (!program || !audio || !audio.paused || audio.ended) return;
-    await startPlayback(program, true, autoPlaySession);
+    await startPlayback(program, true);
   }
 
   async function loadPrograms() {

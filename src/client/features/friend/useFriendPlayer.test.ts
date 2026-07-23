@@ -123,6 +123,15 @@ function createHarness(options: {
   return { player, audio, requests, advanceTime };
 }
 
+/** 模拟自然收听：以小步前进触发 timeupdate，累计真实收听时长 */
+function simulateListen(audio: FakeAudio, seconds: number) {
+  const steps = Math.round(seconds / 0.5);
+  for (let index = 0; index < steps; index += 1) {
+    audio.currentTime += 0.5;
+    audio.dispatchEvent(new Event("timeupdate"));
+  }
+}
+
 test("loadPrograms 拉取节目列表并处理失败", async () => {
   const { player, requests } = createHarness();
   await player.controls.loadPrograms();
@@ -255,27 +264,51 @@ test("playRandom 从今日节目随机播放，已在播放时不打断", async 
   assert.equal(audio.playCalls, firstPlayCalls, "播放中再次随机不应重新开始");
 });
 
-test("自动播放不写入收听记录，主动播放才上报进度", async () => {
-  const { player, requests, advanceTime } = createHarness();
+test("收听满 10 秒才写入收听记录，自动播放同样记录", async () => {
+  const { player, audio, requests, advanceTime } = createHarness();
   await player.controls.playRandom();
   assert.equal(player.state.playing.value, true);
-  advanceTime(20_000);
-  assert.equal(requests.some((path) => path.startsWith("/api/friend/playback/")), false, "自动播放不应上报收听记录");
+  const currentId = player.state.currentProgramId.value;
 
+  simulateListen(audio, 6);
+  advanceTime(10_000);
+  assert.equal(requests.some((path) => path.startsWith("/api/friend/playback/")), false, "收听不足 10 秒不应上报");
+
+  simulateListen(audio, 5);
+  advanceTime(10_000);
+  assert.ok(requests.includes(`/api/friend/playback/${currentId}`), "自动播放累计满 10 秒也应写入收听记录");
+});
+
+test("主动点播不足 10 秒不记录，累计满 10 秒后上报", async () => {
+  const { player, audio, requests } = createHarness();
   await player.controls.loadPrograms();
-  await player.controls.playProgram(player.state.programs.value[0]);
-  assert.ok(requests.includes("/api/friend/playback/1"), "主动播放应立即上报进度");
+  const target = player.state.programs.value[0];
+  await player.controls.playProgram(target);
+
+  simulateListen(audio, 4);
+  player.controls.pause();
+  assert.equal(requests.some((path) => path.startsWith("/api/friend/playback/")), false, "点播不足 10 秒不应上报");
+
+  player.controls.toggleProgram(target);
+  await new Promise((resolve) => setImmediate(resolve));
+  simulateListen(audio, 7);
+  player.controls.pause();
+  assert.ok(requests.includes("/api/friend/playback/1"), "暂停续播累计满 10 秒应上报进度");
 });
 
 test("播放与暂停触发 onListeningChanged，播放中定时上报进度", async () => {
   const events: Array<string | null> = [];
-  const { player, requests, advanceTime } = createHarness({
+  const { player, audio, requests, advanceTime } = createHarness({
     onListeningChanged: (program) => events.push(program ? program.id : null)
   });
   await player.controls.loadPrograms();
   await player.controls.playProgram(player.state.programs.value[0]);
   assert.deepEqual(events, ["1"]);
-  assert.ok(requests.includes("/api/friend/playback/1"), "开始播放应立即上报进度");
+  assert.equal(requests.includes("/api/friend/playback/1"), false, "开始播放未满 10 秒不应上报");
+
+  simulateListen(audio, 11);
+  advanceTime(10_000);
+  assert.ok(requests.includes("/api/friend/playback/1"), "累计满 10 秒后应上报进度");
 
   advanceTime(10_000);
   assert.equal(requests.filter((path) => path === "/api/friend/playback/1").length >= 2, true, "播放中应定时续报进度");
