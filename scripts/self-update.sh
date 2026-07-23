@@ -195,7 +195,7 @@ log_resources
 run_node_logged 62 "构建前端" npm run build:client
 log_resources
 run_node_logged 70 "构建服务端" npm run build:server
-run_logged 78 "同步数据库结构" npm run prisma:push
+run_logged 78 "同步数据库结构" npm run prisma:migrate
 
 log_step 88 "同步应用文件"
 rsync -a --delete \

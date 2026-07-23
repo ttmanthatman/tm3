@@ -175,7 +175,7 @@ build_app() {
   chmod +x scripts/self-update.sh
   npm ci
   npm run prisma:generate
-  npm run prisma:push
+  npm run prisma:migrate
   npm run build
 }
 
