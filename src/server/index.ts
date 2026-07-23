@@ -20,9 +20,11 @@ import { createAiClient } from "./multichar/ai.js";
 import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
+import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
+import { createFriendFeedService } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
 import type {
   AdminAttachmentDTO,
@@ -4427,6 +4429,11 @@ registerMusicRoutes(app, {
   isAudioFileName,
   displayWebpFileName,
   safeUnlinkMusicScore
+});
+registerFriendRoutes(app, {
+  requireAuth,
+  requireMediaAuth,
+  feedService: createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") })
 });
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;

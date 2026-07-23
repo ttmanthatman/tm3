@@ -67,6 +67,8 @@ interface UseMusicPlayerOptions {
   onCurrentTrackChanged?: () => void;
   onListeningChanged?: () => void;
   onHeatChanged?: (trackId: number, heat: number) => void;
+  /** 每次实际发起播放（用户点选、切换、自动续播都会汇聚到 play()）时触发 */
+  onPlaybackStart?: () => void;
 }
 
 type MusicPlaySession = {
@@ -564,7 +566,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     beginPlaySession(track);
   }
 
-  async function play() {
+  async function play(playOptions?: { fadeIn?: boolean }) {
     const track = currentTrack.value;
     if (!track) {
       error.value = "歌单还是空的";
@@ -575,10 +577,11 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     const targetAudio = audio;
     const generation = accountGeneration;
     clearFade();
-    targetAudio.volume = 1;
+    targetAudio.volume = playOptions?.fadeIn ? 0 : 1;
     preparePlaySession();
     loading.value = true;
     error.value = "";
+    options.onPlaybackStart?.();
     try {
       await targetAudio.play();
       if (
@@ -592,6 +595,20 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       }
       playing.value = true;
       loading.value = false;
+      if (playOptions?.fadeIn) {
+        const startedAt = runtime.now();
+        const animate = (now: number) => {
+          if (targetAudio !== audio || disposed) return;
+          targetAudio.volume = 1 - musicFadeVolume((now - startedAt) / MUSIC_FADE_OUT_MS);
+          if (targetAudio.volume < 1) fadeFrame = runtime.requestAnimationFrame(animate);
+        };
+        fadeFrame = runtime.requestAnimationFrame(animate);
+        fadeTimer = runtime.setTimeout(() => {
+          if (targetAudio !== audio || disposed) return;
+          clearFade(false);
+          targetAudio.volume = 1;
+        }, MUSIC_FADE_OUT_MS);
+      }
     } catch (playError) {
       if (disposed || generation !== accountGeneration || targetAudio !== audio) return;
       loading.value = false;

@@ -55,6 +55,8 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, admin, settings, modals, composer, effects, and release UI.
 - `src/client/features/music/useMusicPlayer.ts`: music playback queue, current track, playback mode, audio element, progress restoration/reporting, Media Session, account-scoped playback persistence, and playback timer lifecycle.
 - `src/client/features/music/MusicManager.vue` and `useMusicLibrary.ts`: the unified music manager (tracks, lyrics/score binding, resource pool, playlists). Rendered as an overlay from the player bar and embedded full-page in the music channel; `App.vue` only mounts it and owns the underlying track/playlist collections.
+- `src/client/features/audio/exclusiveAudio.ts`: global exclusive-audio coordinator. Participants (music, friend programs, voice messages) register suspend/resume hooks; the user's latest playback choice ducks the others, and a naturally-ended player fades the most recently ducked participant back in.
+- `src/client/features/friend/useFriendPlayer.ts` and `FriendPrograms.vue`: the “友” (Liangyou) program list modal and its playback composable (own audio element, fade in/out, proxied stream URLs).
 - `src/client/messageSending.ts`: connection-aware text-message delivery, single in-flight send locking, Socket ACK timeout handling, and draft-preservation outcomes.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
@@ -65,6 +67,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/server/index.ts`: Fastify application construction, auth, channels, messages, admin endpoints, update endpoints, and attachment endpoints.
 - `src/server/routes/adminAccounts.ts`: authenticated administrator account listing, creation, update, deletion, and avatar route registration.
 - `src/server/routes/music.ts`: authenticated music library, personal playlist, playback state, lyrics, score, stream, and asset-management HTTP route registration.
+- `src/server/friendFeed.ts` and `src/server/routes/friend.ts`: the “友” program feed. The service fetches the configured Liangyou feed page (`FRIEND_FEED_URL`), parses the program list embedded in its static JS chunks, caches the list with a TTL, allowlists upstream media hosts, and streams media through `/api/friend/media`; fully played media files are cached on disk under `storage/friend-cache/` with a size-capped oldest-first eviction.
 - `src/server/services/accountDeletion.ts`: transactional account deletion rules that preserve historic Actors and return post-commit session/channel effects.
 - `src/server/services/musicService.ts`: shared music-track serialization, playlist aggregation and access, music-role lookup, and playback-state response mapping used by HTTP routes and message serialization.
 - `src/server/linkPreview.ts`: safe link preview fetcher. Keep URL normalization, DNS/private-address blocking, redirect limits, response byte limits, and HTML metadata extraction behind this interface.

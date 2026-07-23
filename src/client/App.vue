@@ -168,6 +168,9 @@ import {
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
 import MusicManager from "./features/music/MusicManager.vue";
 import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
+import FriendPrograms from "./features/friend/FriendPrograms.vue";
+import { useFriendPlayer } from "./features/friend/useFriendPlayer";
+import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
 
 const store = useChatStore();
 const {
@@ -1318,6 +1321,7 @@ onBeforeUnmount(() => {
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
   disposeMusicPlayer();
+  friendPlayer.controls.dispose();
 });
 
 const currentChannel = computed(() => store.currentChannel);
@@ -1335,6 +1339,7 @@ const forwardTargetChannels = computed(() =>
 );
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, "manual"));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
+const exclusiveAudio = createExclusiveAudio();
 const musicPlayer = useMusicPlayer({
   tracks: musicTracks,
   libraryTracks: sortedMusicTracks,
@@ -1345,6 +1350,7 @@ const musicPlayer = useMusicPlayer({
   scoreOpen: musicScoreOpen,
   onCurrentTrackChanged: reconcileOpenMusicScore,
   onListeningChanged: publishMusicListening,
+  onPlaybackStart: () => exclusiveAudio.activate("music"),
   onHeatChanged: (trackId, heat) => {
     musicTracks.value = musicTracks.value.map((track) => track.id === trackId ? { ...track, heat } : track);
   }
@@ -1378,6 +1384,23 @@ const {
   handlePlaylistDeleted: handleMusicPlaylistDeleted,
   currentPlaybackTimeMs: currentMusicPlaybackTimeMs
 } = musicPlayer.controls;
+const friendPlayer = useFriendPlayer({
+  onUserPlay: () => exclusiveAudio.activate("friend"),
+  onUserPause: () => exclusiveAudio.deactivate("friend"),
+  onEnded: () => exclusiveAudio.deactivate("friend", { resumeSuspended: true })
+});
+const { playing: friendPlaying } = friendPlayer.state;
+exclusiveAudio.register({ id: "music", resumable: true, suspend: () => pauseMusic(), resume: () => void playCurrentMusic({ fadeIn: true }) });
+exclusiveAudio.register({ id: "friend", resumable: true, suspend: () => friendPlayer.controls.duck(), resume: () => void friendPlayer.controls.resumeWithFade() });
+exclusiveAudio.register({ id: "voice", resumable: false, suspend: () => stopAllVoicePlayback(), resume: () => undefined });
+const friendProgramsOpen = ref(false);
+function toggleFriendPrograms() {
+  friendProgramsOpen.value = !friendProgramsOpen.value;
+  if (friendProgramsOpen.value) {
+    musicPlayerExpanded.value = false;
+    showMessageFontMenu.value = false;
+  }
+}
 const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
 const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
@@ -1429,7 +1452,10 @@ watch(currentMusicTrackId, () => {
 
 watch(
   () => store.account?.id,
-  (accountId) => handleMusicAccountChange(accountId),
+  (accountId) => {
+    handleMusicAccountChange(accountId);
+    friendPlayer.controls.pause();
+  },
   { immediate: true }
 );
 const canManageMusic = computed(() => !!store.account && (store.account.isAdmin || store.account.canPinMessages));
@@ -7239,9 +7265,11 @@ function getVoicePlayer(message: MessageDTO) {
   audio.addEventListener("ended", () => {
     setVoiceProgress(message.id, 1);
     if (playingVoiceId.value === message.id) playingVoiceId.value = null;
+    exclusiveAudio.deactivate("voice", { resumeSuspended: true });
   });
   audio.addEventListener("pause", () => {
     if (playingVoiceId.value === message.id && !audio?.ended) playingVoiceId.value = null;
+    if (!audio?.ended) exclusiveAudio.deactivate("voice");
   });
   voicePlayers.set(message.id, audio);
   return audio;
@@ -7270,6 +7298,7 @@ function toggleVoicePlayback(message: MessageDTO) {
     setVoiceProgress(message.id, 0);
   }
   playingVoiceId.value = message.id;
+  exclusiveAudio.activate("voice");
   const playAttempt = audio.play();
   void markVoiceListened(message);
   playAttempt.catch(() => {
@@ -9432,6 +9461,11 @@ async function toggleVirtual(character: any) {
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
         </div>
+        <div v-if="!showingFavoriteSurface" class="friend-player-control">
+          <button class="icon-btn friend-player-trigger" type="button" :class="{ active: friendProgramsOpen, spinning: friendPlaying }" @click.stop="toggleFriendPrograms" aria-label="打开良友节目">
+            <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
+          </button>
+        </div>
         <div v-if="!showingFavoriteSurface" class="message-font-control" data-message-font-menu>
           <button
             v-if="musicScoreTriggerVisible"
@@ -10413,8 +10447,9 @@ async function toggleVirtual(character: any) {
 
     <div v-if="showChannels || showMembers" class="scrim" @click="showChannels = false; showMembers = false"></div>
 
-    <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">
-      <form class="small-modal" @submit.prevent="createChain">
+    <FriendPrograms v-if="friendProgramsOpen" :player="friendPlayer" @close="friendProgramsOpen = false" />
+
+    <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">      <form class="small-modal" @submit.prevent="createChain">
         <header class="modal-head">
           <strong>发起接龙</strong>
           <button class="icon-btn" type="button" @click="showChainModal = false" aria-label="关闭接龙"><X :size="20" /></button>

@@ -643,6 +643,17 @@ export interface AppearanceDTO {
   customThemes: ThemeDTO[];
 }
 
+export interface FriendProgramDTO {
+  id: string;
+  seriesId: string;
+  seriesTitle: string;
+  title: string;
+  date: string;
+  notes?: string;
+  audioUrl: string;
+  imageUrl?: string;
+}
+
 export type EngineActionType =
   | "skip"
   | "typing_start"
