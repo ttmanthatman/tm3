@@ -1,12 +1,16 @@
-export const APP_VERSION = "1.7.3";
+export const APP_VERSION = "1.7.4";
 
 export const RELEASE_DATE = "2026-07-24";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复聊天室底部输入栏在手机端按回车换行时直接发送消息的问题：在触摸设备上回车键现在只插入换行，发送仍需点击发送按钮；桌面端保持回车发送、Shift+Enter 换行。"
+  "修复聊天室引用长消息时底部输入栏被撑宽、发送按钮被顶出屏幕的问题：引用预览条现在限制在屏幕宽度内，超长内容以省略号截断，文字与语音发送按钮始终可见。"
 ] as const;
+
+const RELEASE_1_7_3_NOTES = [
+  "修复聊天室底部输入栏在手机端按回车换行时直接发送消息的问题：在触摸设备上回车键现在只插入换行，发送仍需点击发送按钮；桌面端保持回车发送、Shift+Enter 换行。"
+] as const
 
 const RELEASE_1_7_2_1_NOTES = [
   "“友”的“最近收听”记录规则调整：打开节目单时的随机自动播放与主动点播都会记录收听，但只有实际播放满 10 秒的节目才写入收听记录，短暂试听不再出现在历史里。"
@@ -695,9 +699,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.7.3",
+    version: "1.7.4",
     date: "2026-07-24",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.7.3",
+    date: "2026-07-24",
+    notes: RELEASE_1_7_3_NOTES
   },
   {
     version: "1.7.2.1",
