@@ -5183,6 +5183,8 @@ button {
 }
 
 .reply-bar {
+  min-width: 0;
+  max-width: 100%;
   min-height: 34px;
   margin-bottom: 6px;
   padding: 4px 6px;
@@ -5193,6 +5195,7 @@ button {
   background: #ececec;
   color: #555;
   font-size: 13px;
+  overflow: hidden;
 }
 
 .reply-bar span {
@@ -5408,6 +5411,7 @@ button {
 }
 
 .composer-drawer {
+  min-width: 0;
   border-top: 1px solid var(--line);
   padding: 10px 6px var(--composer-drawer-bottom-gap);
 }
