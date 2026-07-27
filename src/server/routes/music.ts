@@ -3,12 +3,13 @@ import path from "node:path";
 import { Prisma, type Actor, type Message, type MusicScorePage, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
-import type { AdminLoginLogKind, MessageDTO, MusicPlaylistDTO, MusicScoreDTO, MusicTrackDTO } from "../../shared/types.js";
+import type { MessageDTO, MusicPlaylistDTO, MusicScoreDTO, MusicTrackDTO } from "../../shared/types.js";
 import { isQualifiedMusicPlay } from "../../shared/musicPlayback.js";
 import { canManageMusicAsset, canManageMusicRole, isMusicFileName } from "../music.js";
 import { canReadMusicScore } from "../musicScoreAccess.js";
 import { processScoreImageParts } from "../musicScoreUpload.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
+import { createMusicProgressTracker, type MusicProgressLogInput } from "../services/musicProgressSummary.js";
 import type { MusicService } from "../services/musicService.js";
 import { parseLyrics } from "../srt.js";
 
@@ -26,21 +27,6 @@ export type AuthedMusicRequest = FastifyRequest & { auth: MusicAuthContext };
 type SerializedMessageInput = Message & {
   sender: Actor;
   replyTo?: (Message & { sender: Actor }) | null;
-};
-
-type MusicProgressLogInput = {
-  kind: AdminLoginLogKind;
-  accountId: number;
-  sessionId?: string | null;
-  trackId?: number | null;
-  playbackId?: string | null;
-  appVersion?: string | null;
-  latestVersion?: string | null;
-  isLatestVersion?: boolean | null;
-  state?: string | null;
-  progressMs?: number | null;
-  listenedMs?: number | null;
-  durationMs?: number | null;
 };
 
 type MusicSocketEmitter = {
@@ -98,6 +84,8 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
     displayWebpFileName,
     safeUnlinkMusicScore
   } = deps;
+
+  const musicProgressTracker = createMusicProgressTracker({ write: writeActivityLog });
 
   const trackScoresInclude = {
     orderBy: { id: "asc" as const },
@@ -440,19 +428,18 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
       })
       .safeParse(request.body);
     if (!body.success) return reply.code(400).send({ success: false, message: "播放进度参数无效" });
-    await writeActivityLog({
-      kind: "music_progress",
+    musicProgressTracker.record({
       accountId: auth.accountId,
       sessionId: auth.sessionId,
       trackId,
       playbackId: body.data.playbackId,
-      appVersion: body.data.appVersion || null,
-      latestVersion: appVersion,
-      isLatestVersion: body.data.appVersion ? body.data.appVersion === appVersion : null,
       state: body.data.state,
       progressMs: Math.min(body.data.progressMs, body.data.durationMs),
       listenedMs: Math.min(body.data.listenedMs, body.data.durationMs),
-      durationMs: body.data.durationMs
+      durationMs: body.data.durationMs,
+      appVersion: body.data.appVersion || null,
+      latestVersion: appVersion,
+      isLatestVersion: body.data.appVersion ? body.data.appVersion === appVersion : null
     });
     return { success: true };
   });
@@ -837,4 +824,6 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
     await deleteMessages([message]);
     return { success: true };
   });
+
+  return musicProgressTracker;
 }

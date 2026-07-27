@@ -5,6 +5,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { MessageDTO, MusicPlaylistDTO, MusicTrackDTO } from "../../shared/types.js";
 import { musicTrackInfo } from "../music.js";
+import type { MusicProgressLogInput } from "../services/musicProgressSummary.js";
 import type { MusicService } from "../services/musicService.js";
 import {
   registerMusicRoutes,
@@ -128,6 +129,7 @@ async function createRouteApp() {
   ]);
   const events: EmittedEvent[] = [];
   const unlinkedScoreFiles: string[] = [];
+  const activityLogs: MusicProgressLogInput[] = [];
   const playlist: MusicPlaylistDTO = {
     id: 50,
     name: "私有歌单",
@@ -286,7 +288,9 @@ async function createRouteApp() {
     emitMessage: async () => undefined,
     sendMessagePush: async () => undefined,
     deleteMessages: async () => undefined,
-    writeActivityLog: async () => undefined,
+    writeActivityLog: async (input) => {
+      activityLogs.push(input);
+    },
     applyFileResponseHeaders: () => undefined,
     applyFileValidation: () => false,
     isAudioFileName: () => true,
@@ -303,7 +307,7 @@ async function createRouteApp() {
   });
   registerMusicRoutes(app, deps);
   await app.ready();
-  return { app, tracks, scores, pages, events, unlinkedScoreFiles };
+  return { app, tracks, scores, pages, events, unlinkedScoreFiles, activityLogs };
 }
 
 function authHeader(token: keyof typeof authByToken) {
@@ -634,4 +638,58 @@ test("track info validates input, preserves unrelated payload keys, and clears e
   });
   assert.equal(cleared.statusCode, 200);
   assert.deepEqual(tracks.get(1)?.payload, { playlistId: 7, lyricsText: "知识歌词" });
+});
+
+test("progress events are summarized into a single music_progress activity row per playback session", async (context) => {
+  const { app, activityLogs } = await createRouteApp();
+  context.after(() => app.close());
+
+  const playbackId = "4b8f7f1e-9d6b-4c3a-8f2e-1a2b3c4d5e6f";
+  const send = (payload: Record<string, unknown>) =>
+    app.inject({ method: "POST", url: "/api/music/tracks/1/progress", headers: authHeader("owner"), payload });
+
+  assert.equal((await send({ playbackId, state: "started", progressMs: 0, listenedMs: 0, durationMs: 180_000 })).statusCode, 200);
+  assert.equal((await send({ playbackId, state: "progress", progressMs: 5_000, listenedMs: 5_000, durationMs: 180_000 })).statusCode, 200);
+  assert.equal((await send({ playbackId, state: "progress", progressMs: 200_000, listenedMs: 10_000, durationMs: 180_000 })).statusCode, 200);
+  assert.equal(activityLogs.length, 0);
+
+  assert.equal((await send({ playbackId, state: "ended", progressMs: 180_000, listenedMs: 175_000, durationMs: 180_000, appVersion: "test" })).statusCode, 200);
+  assert.equal(activityLogs.length, 1);
+  assert.deepEqual(activityLogs[0], {
+    kind: "music_progress",
+    accountId: 10,
+    sessionId: "owner-session",
+    trackId: 1,
+    playbackId,
+    appVersion: "test",
+    latestVersion: "test",
+    isLatestVersion: true,
+    state: "ended",
+    progressMs: 180_000,
+    listenedMs: 175_000,
+    durationMs: 180_000
+  });
+
+  const invalid = await send({ playbackId, state: "progress", progressMs: -1, listenedMs: 0, durationMs: 180_000 });
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(activityLogs.length, 1);
+});
+
+test("interrupted progress sessions clamp values and flush once via track switch", async (context) => {
+  const { app, activityLogs } = await createRouteApp();
+  context.after(() => app.close());
+
+  const playbackId = "9c1a2b3c-4d5e-6f70-8123-456789abcdef";
+  const send = (payload: Record<string, unknown>) =>
+    app.inject({ method: "POST", url: "/api/music/tracks/2/progress", headers: authHeader("owner"), payload });
+
+  await send({ playbackId, state: "started", progressMs: 0, listenedMs: 0, durationMs: 100_000 });
+  await send({ playbackId, state: "progress", progressMs: 150_000, listenedMs: 120_000, durationMs: 100_000 });
+  assert.equal((await send({ playbackId, state: "changed", progressMs: 60_000, listenedMs: 30_000, durationMs: 100_000 })).statusCode, 200);
+
+  assert.equal(activityLogs.length, 1);
+  assert.equal(activityLogs[0].state, "paused");
+  assert.equal(activityLogs[0].progressMs, 60_000);
+  assert.equal(activityLogs[0].listenedMs, 100_000);
+  assert.equal(activityLogs[0].durationMs, 100_000);
 });

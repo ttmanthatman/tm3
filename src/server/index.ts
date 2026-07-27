@@ -398,6 +398,12 @@ function readLogTail(filePath: string, maxBytes: number) {
   }
 }
 
+const PERIODIC_REQUEST_LOG_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
+  { method: "POST", pattern: /^\/api\/music\/tracks\/\d+\/progress$/ },
+  { method: "PUT", pattern: /^\/api\/music\/playback-state$/ },
+  { method: "PUT", pattern: /^\/api\/friend\/playback\/\d+$/ }
+];
+
 const app = Fastify({
   logger: {
     serializers: {
@@ -411,6 +417,10 @@ const app = Fastify({
         };
       }
     }
+  },
+  disableRequestLogging: (request) => {
+    const path = request.url.split("?", 1)[0];
+    return PERIODIC_REQUEST_LOG_PATTERNS.some((entry) => entry.method === request.method && entry.pattern.test(path));
   },
   bodyLimit: 8 * 1024 * 1024,
   trustProxy: process.env.TRUST_PROXY === "true" ? true : ["127.0.0.1", "::1"]
@@ -4449,7 +4459,7 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
   return { success: true };
 });
 
-registerMusicRoutes(app, {
+const musicProgressTracker = registerMusicRoutes(app, {
   prisma,
   io,
   musicService,
@@ -6788,6 +6798,8 @@ app.addHook("onClose", async () => {
   if (friendFeedRefreshTimer) clearTimeout(friendFeedRefreshTimer);
   multicharManager.stopAll();
   io.close();
+  await musicProgressTracker.flushAll();
+  musicProgressTracker.dispose();
   await prisma.$disconnect();
 });
 
