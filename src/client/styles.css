@@ -2173,6 +2173,27 @@ button {
   box-shadow: 0 1px 4px rgba(83, 51, 0, 0.22);
 }
 
+.channel-unread-badge {
+  position: absolute;
+  z-index: 3;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #f04438;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
 .channel-icon.prayer-icon {
   width: 30px;
   height: 30px;

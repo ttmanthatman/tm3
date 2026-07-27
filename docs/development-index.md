@@ -59,6 +59,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/client/features/friend/useFriendPlayer.ts`, `FriendPrograms.vue`, and `FriendProgramList.vue`: the “友” (Liangyou) program modal (today/more/history tabs, category series, episode lists) and its playback composable (own audio element, fade in/out, proxied stream URLs, random autoplay on open that is never written to history, per-account progress resume, periodic progress reporting for user-initiated plays, listening-presence callbacks).
 - `src/client/messageSending.ts`: connection-aware text-message delivery, single in-flight send locking, Socket ACK timeout handling, and draft-preservation outcomes.
 - `src/client/store.ts`: Pinia store for account, channels, message windows, sockets, members, pinned state, and message cache.
+- `src/client/unread.ts`: per-account unread badge state. localStorage persistence (`team-chat-unread-{accountId}`) for read positions and capped counts, incoming-message and mark-read transitions, and first-run treat-as-read seed planning used by the store's badge actions.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
 - `src/client/api.ts`: auth token storage and fetch wrapper.
 - `src/shared/release.ts`: in-app version number, current notes, and release history.

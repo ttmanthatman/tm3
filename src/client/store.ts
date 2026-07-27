@@ -4,6 +4,7 @@ import { markRaw } from "vue";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
+import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, planChannelSeed, recordChannelRead, saveUnreadState } from "./unread";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -79,6 +80,10 @@ export const useChatStore = defineStore("chat", {
     online: [] as Array<{ accountId: number; actorId: number; displayName: string; avatarPath?: string | null }>,
     typing: {} as TypingState,
     lastIncomingMessage: null as MessageDTO | null,
+    unreadCounts: {} as Record<number, number>,
+    unreadLastRead: {} as Record<number, number>,
+    unreadAccountId: 0,
+    unreadSeeded: false,
     likeNotifications: [] as LikeNotificationDTO[],
     socket: null as Socket | null,
     connectionState: "offline" as "offline" | "connecting" | "connected",
@@ -196,8 +201,10 @@ export const useChatStore = defineStore("chat", {
         const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
         if (me.token) setToken(me.token);
         this.account = me.account;
+        this.initUnreadForAccount();
         await this.loadLikeNotifications();
         await this.loadChannels(channelId);
+        await this.seedUnreadCounts();
         return true;
       } catch {
         await this.logout(false);
@@ -206,8 +213,10 @@ export const useChatStore = defineStore("chat", {
     },
     async afterLogin(account: AccountDTO) {
       this.account = account;
+      this.initUnreadForAccount();
       await this.loadLikeNotifications();
       await this.loadChannels();
+      await this.seedUnreadCounts();
       this.connectSocket();
     },
     async logout(revoke = true) {
@@ -217,6 +226,10 @@ export const useChatStore = defineStore("chat", {
       this.connectionState = "offline";
       this.account = null;
       this.likeNotifications = [];
+      this.unreadCounts = {};
+      this.unreadLastRead = {};
+      this.unreadAccountId = 0;
+      this.unreadSeeded = false;
       this.resetMessageWindow();
       this.messageCache = {};
       this.messageCacheOrder = [];
@@ -228,6 +241,67 @@ export const useChatStore = defineStore("chat", {
     async loadLikeNotifications() {
       const result = await api<{ notifications: LikeNotificationDTO[] }>("/api/like-notifications").catch(() => ({ notifications: [] }));
       this.likeNotifications = result.notifications;
+    },
+    initUnreadForAccount() {
+      if (!this.account || this.unreadAccountId === this.account.id) return;
+      const state = loadUnreadState(this.account.id);
+      this.unreadAccountId = this.account.id;
+      this.unreadLastRead = state.lastRead;
+      this.unreadCounts = state.counts;
+      this.unreadSeeded = false;
+    },
+    persistUnreadState() {
+      if (!this.unreadAccountId) return;
+      saveUnreadState(this.unreadAccountId, { lastRead: this.unreadLastRead, counts: this.unreadCounts });
+    },
+    noteUnreadMessage(message: MessageDTO) {
+      const channel = this.channels.find((ch) => ch.id === message.channelId);
+      noteUnreadIncoming(
+        { lastRead: this.unreadLastRead, counts: this.unreadCounts },
+        {
+          channelId: message.channelId,
+          messageId: message.id,
+          own: isOwnMessage(message.sender, this.account),
+          current: message.channelId === this.currentChannelId && !this.prayerOnly,
+          chatCapable: channel ? channel.kind !== "music" : true
+        }
+      );
+      this.persistUnreadState();
+    },
+    markChannelRead(channelId?: number) {
+      const id = channelId ?? this.currentChannelId;
+      if (!id) return;
+      const channel = this.channels.find((ch) => ch.id === id);
+      const newestLoaded = id === this.currentChannelId ? this.messages.reduce((max, message) => Math.max(max, message.id), 0) : 0;
+      recordChannelRead({ lastRead: this.unreadLastRead, counts: this.unreadCounts }, id, Math.max(channel?.lastMessageId ?? 0, newestLoaded));
+      this.persistUnreadState();
+    },
+    async seedUnreadCounts() {
+      if (this.unreadSeeded || !this.account) return;
+      this.unreadSeeded = true;
+      let changed = false;
+      for (const channel of this.channels) {
+        if (channel.kind === "music") continue;
+        const plan = planChannelSeed(this.unreadLastRead[channel.id], channel.lastMessageId);
+        if (plan.action === "treat-as-read") {
+          this.unreadLastRead[channel.id] = plan.lastMessageId;
+          this.unreadCounts[channel.id] = 0;
+          changed = true;
+        } else if (plan.action === "recount") {
+          try {
+            const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channel.id, false, { after: plan.after, limit: 100 }));
+            const unread = result.messages.filter((message) => !isOwnMessage(message.sender, this.account)).length;
+            this.unreadCounts[channel.id] = Math.min(unread, UNREAD_COUNT_CAP);
+            changed = true;
+          } catch {
+            // Keep the persisted count when the recount request fails.
+          }
+        } else if (this.unreadCounts[channel.id]) {
+          this.unreadCounts[channel.id] = 0;
+          changed = true;
+        }
+      }
+      if (changed) this.persistUnreadState();
     },
     updateMessageReactions(messageId: number, reactions: Partial<MessageReactionsDTO>) {
       const message = this.messages.find((row) => row.id === messageId);
@@ -308,6 +382,7 @@ export const useChatStore = defineStore("chat", {
         this.updateMessageWindowFlagsFromRows(result.messages, "initial");
         this.cacheCurrentMessages();
         this.pinned = this.channels.find((ch) => ch.id === this.currentChannelId)?.pinned || null;
+        if (!prayerOnly) this.markChannelRead(channelId);
         void this.prefetchOlderMessages();
       } catch (error) {
         if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "消息加载失败";
@@ -453,6 +528,7 @@ export const useChatStore = defineStore("chat", {
       socket.on("message:new", (message: MessageDTO) => {
         this.lastIncomingMessage = message;
         this.appendLocalMessage(message);
+        this.noteUnreadMessage(message);
       });
       socket.on("message:updated", (message: MessageDTO) => {
         if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;

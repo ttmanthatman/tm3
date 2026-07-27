@@ -161,6 +161,7 @@ import {
   shouldRestoreNewestPosition,
   type SavedReadPosition
 } from "./readPosition";
+import { formatUnreadCount } from "./unread";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
@@ -2765,6 +2766,10 @@ function messagePreviewText(message: MessageDTO) {
 
 function channelName(channelId: number) {
   return store.channels.find((channel) => channel.id === channelId)?.name || "聊天室";
+}
+
+function unreadCountFor(channelId: number) {
+  return store.unreadCounts[channelId] ?? 0;
 }
 
 function queueMentionToast(message: MessageDTO) {
@@ -9318,6 +9323,7 @@ async function toggleVirtual(character: any) {
               <i v-if="channel.isPrivate" class="private-channel-badge" aria-label="私密频道" title="私密频道">
                 <LockKeyhole :size="11" :stroke-width="2.6" />
               </i>
+              <span v-if="channel.kind !== 'music' && unreadCountFor(channel.id) > 0" class="channel-unread-badge">{{ formatUnreadCount(unreadCountFor(channel.id)) }}</span>
             </span>
             <span class="channel-row-label">
               <b>{{ channel.name }}</b>

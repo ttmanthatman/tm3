@@ -2673,7 +2673,7 @@ async function ensureBootstrap() {
   }
 }
 
-async function channelDto(channelId: number, viewer?: Pick<AuthContext, "accountId" | "isAdmin" | "canPinMessages">) {
+async function channelDto(channelId: number, viewer?: Pick<AuthContext, "accountId" | "isAdmin" | "canPinMessages">, lastMessageIds?: Map<number, number>) {
   const channel = await prisma.channel.findUnique({
     where: { id: channelId },
     include: {
@@ -2718,6 +2718,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     hasPrayerItems: prayerCount > 0,
     memberCount: channel._count.members,
+    lastMessageId: lastMessageIds?.get(channelId) ?? null,
     pinned
   };
 }
@@ -3404,7 +3405,13 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
     ]
   };
   const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
-  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth))) };
+  const lastMessageRows = await prisma.message.groupBy({
+    by: ["channelId"],
+    where: { channelId: { in: channels.map((ch) => ch.id) } },
+    _max: { id: true }
+  });
+  const lastMessageIds = new Map(lastMessageRows.map((row) => [row.channelId, row._max.id ?? 0]));
+  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth, lastMessageIds))) };
 });
 
 app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => {

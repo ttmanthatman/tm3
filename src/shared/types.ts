@@ -189,6 +189,7 @@ export interface ChannelDTO {
   canPin?: boolean;
   hasPrayerItems?: boolean;
   memberCount: number;
+  lastMessageId: number | null;
   pinned?: PinnedDTO | null;
 }
 

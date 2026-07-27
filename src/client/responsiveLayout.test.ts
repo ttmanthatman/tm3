@@ -4,6 +4,7 @@ import test from "node:test";
 
 const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
+const store = fs.readFileSync(new URL("./store.ts", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
@@ -205,6 +206,22 @@ test("private locks and online dots sit above unclipped avatar artwork", () => {
   assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
   assert.match(css, /\.presence-avatar > img \{[\s\S]*?border-radius: inherit;/);
   assert.match(css, /\.online-dot \{[\s\S]*?right: -3px;[\s\S]*?bottom: -3px;/);
+});
+
+test("chat channel rows show a capped unread badge pinned to the channel icon", () => {
+  assert.match(app, /v-if="channel\.kind !== 'music' && unreadCountFor\(channel\.id\) > 0" class="channel-unread-badge"/);
+  assert.match(app, /class="channel-unread-badge">\{\{ formatUnreadCount\(unreadCountFor\(channel\.id\)\) \}\}<\/span>/);
+  assert.match(app, /function unreadCountFor\(channelId: number\) \{\s*return store\.unreadCounts\[channelId\] \?\? 0;/);
+  assert.match(css, /\.channel-icon \{[\s\S]*?position: relative;/);
+  assert.match(css, /\.channel-unread-badge \{[\s\S]*?position: absolute;[\s\S]*?top: -5px;[\s\S]*?right: -5px;[\s\S]*?border: 2px solid var\(--panel\);[\s\S]*?border-radius: 999px;[\s\S]*?background: #f04438;/);
+});
+
+test("unread badges increment from socket messages and clear when the channel opens", () => {
+  assert.match(store, /socket\.on\("message:new"[\s\S]*?this\.noteUnreadMessage\(message\)/);
+  assert.match(store, /if \(!prayerOnly\) this\.markChannelRead\(channelId\)/);
+  assert.match(store, /await this\.seedUnreadCounts\(\)/);
+  assert.match(server, /prisma\.message\.groupBy\(\{[\s\S]*?by: \["channelId"\][\s\S]*?_max: \{ id: true \}/);
+  assert.match(server, /lastMessageId: lastMessageIds\?\.get\(channelId\) \?\? null/);
 });
 
 test("like alerts use the header status line instead of a reading-area overlay", () => {
