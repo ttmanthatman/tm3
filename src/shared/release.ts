@@ -1,12 +1,20 @@
-export const APP_VERSION = "1.7.4";
+export const APP_VERSION = "1.7.5";
 
-export const RELEASE_DATE = "2026-07-24";
+export const RELEASE_DATE = "2026-07-28";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复聊天室引用长消息时底部输入栏被撑宽、发送按钮被顶出屏幕的问题：引用预览条现在限制在屏幕宽度内，超长内容以省略号截断，文字与语音发送按钮始终可见。"
+  "歌单搜索现在把“祢”视同“你”、“祂”视同“他”：输入任意一种写法都能搜到另一种写法的歌曲。",
+  "修复 iPhone 上音乐管理弹窗右上角关闭按钮太靠边、被刘海/状态栏遮挡点不中的问题：关闭按钮加大到 40px，弹窗顶部与右侧让开刘海安全区。",
+  "修复 iPhone 上右侧成员列表顶部被刘海/状态栏遮挡、关闭按钮点不中的问题：抽屉顶部让开安全区。",
+  "修复手机端顶部音乐播放条过挤、歌名只剩两三个字的问题：小屏下“只播放收藏”和播放模式按钮折叠为图标，歌名获得完整空间。",
+  "修复语音录音完成后“录音已完成”状态条与播放预览条重复堆叠的问题：录音完成后只保留带播放与发送按钮的预览条。"
 ] as const;
+
+const RELEASE_1_7_4_NOTES = [
+  "修复聊天室引用长消息时底部输入栏被撑宽、发送按钮被顶出屏幕的问题：引用预览条现在限制在屏幕宽度内，超长内容以省略号截断，文字与语音发送按钮始终可见。"
+] as const
 
 const RELEASE_1_7_3_NOTES = [
   "修复聊天室底部输入栏在手机端按回车换行时直接发送消息的问题：在触摸设备上回车键现在只插入换行，发送仍需点击发送按钮；桌面端保持回车发送、Shift+Enter 换行。"
@@ -699,9 +707,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.7.5",
+    date: "2026-07-28",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.7.4",
     date: "2026-07-24",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_7_4_NOTES
   },
   {
     version: "1.7.3",
