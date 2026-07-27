@@ -306,6 +306,22 @@ test("mobile expanded player reserves intrinsic width for transport and tool but
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content max-content;/);
 });
 
+test("mobile player tool buttons collapse to icons so the title keeps room", () => {
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-favorites-only-btn \{[\s\S]*?width: 32px;/);
+  assert.match(css, /\.music-favorites-only-btn span,\s*\.music-mode-label \{[\s\S]*?display: none;/);
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-mode-btn \{[\s\S]*?width: 32px;/);
+  assert.match(app, /class="music-mode-label">\{\{ musicPlaybackModeLabel\(\) \}\}<\/span>/);
+});
+
+test("mobile drawers and the music manager head respect the top safe area", () => {
+  assert.match(css, /\.member-pane \{[\s\S]*?padding-top: var\(--safe-top\);/);
+  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-manager-head \{[\s\S]*?padding-top: calc\(8px \+ var\(--safe-top\)\);/);
+});
+
+test("voice record strip hides once a preview is ready", () => {
+  assert.match(app, /<div v-if="!audioPreviewUrl" class="record-strip"/);
+});
+
 test("music manager opens from the player bar instead of taking header space", () => {
   const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
   const playerEnd = app.indexOf("</header>", playerStart);

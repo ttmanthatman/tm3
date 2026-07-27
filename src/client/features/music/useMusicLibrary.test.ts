@@ -80,6 +80,19 @@ test("query filter matches title and file name case-insensitively and trims inpu
   assert.deepEqual(filterMusicTracksByQuery(tracks, "不存在"), []);
 });
 
+test("query filter treats 祢/你 and 祂/他 as equivalent variants", () => {
+  const tracks = [
+    track(1, { title: "祢的爱不离弃", fileName: "祢的爱不离弃.mp3" }),
+    track(2, { title: "祂爱我", fileName: "祂爱我.mp3" }),
+    track(3, { title: "恩典之路", fileName: "grace.mp3" })
+  ];
+  assert.deepEqual(filterMusicTracksByQuery(tracks, "你的爱").map((t) => t.id), [1]);
+  assert.deepEqual(filterMusicTracksByQuery(tracks, "祢的爱").map((t) => t.id), [1]);
+  assert.deepEqual(filterMusicTracksByQuery(tracks, "他爱我").map((t) => t.id), [2]);
+  assert.deepEqual(filterMusicTracksByQuery(tracks, "祂爱我").map((t) => t.id), [2]);
+  assert.deepEqual(filterMusicTracksByQuery(tracks, "你").map((t) => t.id), [1]);
+});
+
 test("focus resolution maps kinds to nav, playlist and track selection", () => {
   assert.deepEqual(resolveMusicManagerFocus(null), { nav: "library", playlistId: null, trackId: null });
   assert.deepEqual(resolveMusicManagerFocus({ kind: "track", id: 7 }), { nav: "library", playlistId: null, trackId: 7 });

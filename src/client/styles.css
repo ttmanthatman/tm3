@@ -3,6 +3,8 @@
   --keyboard-offset: 0px;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
   --composer-bottom-gap: clamp(6px, calc(var(--safe-bottom) - 26px), 12px);
   --composer-drawer-bottom-gap: max(2px, calc(var(--composer-bottom-gap) - 4px));
   --accent: #1aad19;
@@ -1702,6 +1704,10 @@ button {
   flex: 0 0 auto;
   border-radius: 999px;
   padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   color: var(--muted);
   background: color-mix(in srgb, var(--panel) 78%, var(--accent) 22%);
   font-size: 12px;
@@ -9790,6 +9796,7 @@ button.admin-object-row:focus-visible {
     right: 0;
     bottom: 0;
     width: min(320px, 86vw);
+    padding-top: var(--safe-top);
     transform: translateX(102%);
     transition: transform 0.2s ease;
     z-index: 23;
@@ -9822,6 +9829,25 @@ button.admin-object-row:focus-visible {
 
   .music-player-bar {
     grid-template-columns: minmax(0, 1fr) max-content max-content;
+  }
+
+  .music-favorites-only-btn {
+    width: 32px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .music-favorites-only-btn span,
+  .music-mode-label {
+    display: none;
+  }
+
+  .music-mode-btn {
+    width: 32px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .music-lyrics-header {
@@ -10781,7 +10807,7 @@ button.admin-object-row:focus-visible {
 
 .music-manager-head {
   min-height: 58px;
-  padding: 8px 12px 8px 16px;
+  padding: 8px calc(12px + var(--safe-right)) 8px 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -10973,6 +10999,11 @@ button.admin-object-row:focus-visible {
 }
 
 .music-manager-icon-btn.danger { color: #b42318; }
+
+.music-manager-head .music-manager-icon-btn {
+  width: 40px;
+  height: 40px;
+}
 
 .music-manager-search {
   flex: 1;
@@ -11579,6 +11610,8 @@ button.admin-object-row:focus-visible {
   .music-manager-shell { padding: 0; }
 
   .music-manager { width: 100%; height: 100%; border: 0; border-radius: 0; }
+
+  .music-manager-head { padding-top: calc(8px + var(--safe-top)); }
 
   .music-manager-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 

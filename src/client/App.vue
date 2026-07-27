@@ -43,9 +43,12 @@ import {
   Plane,
   Play,
   Plus,
+  Repeat,
+  Repeat1,
   RotateCcw,
   Save,
   Send,
+  Shuffle,
   Sparkles,
   Smartphone,
   Settings,
@@ -1364,6 +1367,7 @@ const {
   currentTrackId: currentMusicTrackId,
   currentTrack: currentMusicTrack,
   playableTracks: playableMusicTracks,
+  playbackMode: musicPlaybackMode,
   onlyFavorites: musicOnlyFavorites,
   playing: musicPlaying,
   loading: musicLoading,
@@ -9459,7 +9463,7 @@ async function toggleVirtual(character: any) {
                 type="button"
                 @click="cycleMusicPlaybackMode"
                 :aria-label="`当前${musicPlaybackModeLabel()}，点击切换播放模式`"
-              >{{ musicPlaybackModeLabel() }}</button>
+              ><Repeat1 v-if="musicPlaybackMode === 'single'" :size="15" /><Shuffle v-else-if="musicPlaybackMode === 'shuffle'" :size="15" /><Repeat v-else :size="15" /><span class="music-mode-label">{{ musicPlaybackModeLabel() }}</span></button>
               <button class="icon-btn" type="button" :class="{ active: musicManagerOpen }" @click="toggleMusicManager" aria-label="音乐管理"><Menu :size="20" /></button>
             </div>
           </div>
@@ -10381,7 +10385,7 @@ async function toggleVirtual(character: any) {
           </div>
         </div>
         <div v-if="composerPanel === 'voice'" class="composer-drawer voice-drawer">
-          <div class="record-strip" :class="{ recording: isRecording }">
+          <div v-if="!audioPreviewUrl" class="record-strip" :class="{ recording: isRecording }">
             <span class="record-dot"></span>
             <strong>{{ recordingStatus || "点击麦克风开始录音" }}</strong>
             <small>{{ formatDuration(recordingDuration) }}</small>

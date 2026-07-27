@@ -20,13 +20,25 @@ export interface MusicResourceUploadAck {
   bindConflict?: string;
 }
 
+const SEARCH_VARIANT_MAP: Record<string, string> = {
+  祢: "你",
+  祂: "他"
+};
+
+export function normalizeChineseForSearch(text: string): string {
+  return text
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[祢祂]/g, (char) => SEARCH_VARIANT_MAP[char] || char);
+}
+
 export function filterMusicTracksByQuery<T extends Pick<MusicTrackDTO, "title" | "fileName">>(tracks: T[], query: string): T[] {
-  const normalized = query.trim().toLocaleLowerCase();
+  const normalized = normalizeChineseForSearch(query);
   if (!normalized) return [...tracks];
   return tracks.filter(
     (track) =>
-      track.title.toLocaleLowerCase().includes(normalized) ||
-      track.fileName.toLocaleLowerCase().includes(normalized)
+      normalizeChineseForSearch(track.title).includes(normalized) ||
+      normalizeChineseForSearch(track.fileName).includes(normalized)
   );
 }
 
