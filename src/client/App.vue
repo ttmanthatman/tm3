@@ -110,7 +110,8 @@ import type {
   UpdateStatusDTO,
   VersionDTO,
   ThemeDTO,
-  ThemePaletteDTO
+  ThemePaletteDTO,
+  ActorDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, login, register } from "./api";
 import { randomId } from "./randomId";
@@ -4263,6 +4264,23 @@ function openMemberActions(member: MemberActionTarget, event?: MouseEvent) {
   memberPromptPosition.value = positionPromptNearEvent(event, { width: 178, height: 52 });
   selectedMember.value = member;
   pendingChain.value = null;
+}
+
+function openSenderActions(sender: ActorDTO, event?: MouseEvent) {
+  const member = store.members.find((row) => row.kind === sender.kind && row.username === sender.username);
+  if (member) {
+    openMemberActions(member, event);
+    return;
+  }
+  const online = store.online.find((user) => user.actorId === sender.id);
+  openMemberActions({
+    id: sender.id,
+    accountId: sender.kind === "virtual" ? undefined : online?.accountId,
+    kind: sender.kind,
+    username: sender.username,
+    displayName: sender.displayName,
+    avatarPath: sender.avatarPath
+  }, event);
 }
 
 function mentionSelectedMember() {
@@ -9854,7 +9872,13 @@ async function toggleVirtual(character: any) {
             >
               <CheckCircle2 :size="18" />
             </button>
-            <div class="avatar presence-avatar" :class="{ bot: row.message.sender.kind === 'virtual' }">
+            <div
+              class="avatar presence-avatar avatar-clickable"
+              :class="{ bot: row.message.sender.kind === 'virtual' }"
+              role="button"
+              :aria-label="`${row.message.sender.displayName} 的操作`"
+              @click.stop="openSenderActions(row.message.sender, $event)"
+            >
               <img v-if="avatarUrl(row.message.sender.avatarPath)" :src="avatarUrl(row.message.sender.avatarPath)" alt="" />
               <span v-else>{{ avatarText(row.message.sender.displayName) }}</span>
               <i v-if="isActorOnline(row.message.sender.id)" class="online-dot" aria-label="在线"></i>

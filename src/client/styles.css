@@ -2255,6 +2255,10 @@ button {
   overflow: visible;
 }
 
+.avatar-clickable {
+  cursor: pointer;
+}
+
 .presence-avatar > img {
   border-radius: inherit;
 }
@@ -3181,6 +3185,8 @@ button {
 .messages-scroll.timeline-scrolling .message-timeline-slot {
   overflow: hidden;
   overflow: clip;
+  /* 允许在线绿点、提及角标等略微溢出头像的装饰元素在滚动裁剪时仍可见 */
+  overflow-clip-margin: 6px;
 }
 
 .message-load-banner {

@@ -261,6 +261,19 @@ function rebuildStaticBodies() {
     if (!bubbleBodies.has(bubble)) movedObstacles.push({ body: previousBody, motion: { x: 0, y: 40 } });
   }
   matter.Composite.add(engine.world, staticBodies);
+  // 视口高度变化（手机地址栏伸缩、键盘弹出）后地板可能上移，把已经掉到新地板之下的字拉回可视区
+  for (const active of activeMessages.values()) {
+    if (active.state !== "falling") continue;
+    for (const glyph of active.glyphs) {
+      if (glyph.body.position.y <= floorY) continue;
+      matter.Body.setPosition(glyph.body, {
+        x: Math.min(Math.max(glyph.body.position.x, 12), layerRect.width - 12),
+        y: floorY - 12 - Math.random() * 20
+      });
+      matter.Body.setVelocity(glyph.body, { x: glyph.body.velocity.x, y: Math.min(glyph.body.velocity.y, 0) });
+      glyph.body.isSleeping = false;
+    }
+  }
   if (movedObstacles.length) {
     for (const active of activeMessages.values()) {
       if (active.state !== "falling") continue;
@@ -506,6 +519,7 @@ function isActive(messageId: number) {
 
 onMounted(() => {
   window.addEventListener("resize", scheduleLayoutRefresh, { passive: true });
+  window.visualViewport?.addEventListener("resize", scheduleLayoutRefresh, { passive: true });
   nextTick(bindLayoutListeners);
 });
 
@@ -516,6 +530,7 @@ onBeforeUnmount(() => {
   boundScroller?.removeEventListener("scroll", scheduleLayoutRefresh);
   mutationObserver?.disconnect();
   window.removeEventListener("resize", scheduleLayoutRefresh);
+  window.visualViewport?.removeEventListener("resize", scheduleLayoutRefresh);
   if (matter && engine) matter.Events.off(engine, "collisionStart", handleCollisions);
 });
 
