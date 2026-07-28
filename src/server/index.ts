@@ -83,6 +83,11 @@ import {
   cleanWallpaperPanFocusX,
   cleanWallpaperPanSpeed
 } from "../shared/wallpaperPan.js";
+import {
+  MUSIC_PANEL_FONT_SIZE_MAX,
+  MUSIC_PANEL_FONT_SIZE_MIN,
+  cleanMusicPanelFontSize
+} from "../shared/musicPlayback.js";
 
 export type BuildAppOptions = {
   runStartupTasks?: boolean;
@@ -4550,6 +4555,7 @@ async function appearanceDto() {
           "loginBackgroundFit",
           "loginFormPosition",
           "registrationEnabled",
+          "musicPanelFontSize",
           "flashEffect",
           "customThemes"
         ]
@@ -4583,6 +4589,7 @@ async function appearanceDto() {
     loginBackgroundFit: LOGIN_BACKGROUND_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
     loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
     registrationEnabled: settings.get("registrationEnabled") === "true",
+    musicPanelFontSize: cleanMusicPanelFontSize(settings.get("musicPanelFontSize")),
     flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
     customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), []))
   };
@@ -5301,6 +5308,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       loginBackgroundFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
       loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
       registrationEnabled: z.boolean().optional(),
+      musicPanelFontSize: z.number().min(MUSIC_PANEL_FONT_SIZE_MIN).max(MUSIC_PANEL_FONT_SIZE_MAX).optional(),
       flashEffect: z.unknown().optional(),
       customThemes: z.array(z.unknown()).optional()
     })
@@ -5324,6 +5332,7 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundFit")) await setSetting("loginBackgroundFit", body.loginBackgroundFit || "cover");
   if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
   if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
+  if (Object.prototype.hasOwnProperty.call(body, "musicPanelFontSize")) await setSetting("musicPanelFontSize", String(cleanMusicPanelFontSize(body.musicPanelFontSize)));
   if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
   const appearance = await appearanceDto();

@@ -641,6 +641,7 @@ export interface AppearanceDTO {
   loginBackgroundFit: "cover" | "contain" | "stretch" | "repeat";
   loginFormPosition: "top" | "middle" | "bottom";
   registrationEnabled: boolean;
+  musicPanelFontSize: number;
   flashEffect: FlashEffectSettingsDTO;
   customThemes: ThemeDTO[];
 }

@@ -326,17 +326,17 @@ test("the mini panel floats centered over a plain dim backdrop instead of coveri
 });
 
 test("the mini panel drops the header row and keeps only a floating close button", () => {
-  assert.doesNotMatch(musicMiniPanel, /music-mini-panel-head|open-manager/);
+  assert.doesNotMatch(musicMiniPanel, /music-mini-panel-head/);
   assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-close"[\s\S]*?aria-label="关闭播放器"/);
   assert.match(css, /\.music-mini-panel-close \{[\s\S]*?position: absolute;[\s\S]*?top: 8px;[\s\S]*?right: 8px;/);
 });
 
-test("the mini panel defaults to the size for message font 20 and follows later changes", () => {
+test("the mini panel font size comes from the admin appearance setting", () => {
   assert.match(musicMiniPanel, /fontSize: number;/);
   assert.match(musicMiniPanel, /const panelStyle = computed\(\(\) => \(\{ fontSize: `\$\{props\.fontSize\}px` \}\)\)/);
   assert.match(musicMiniPanel, /:style="panelStyle"/);
   assert.match(app, /:font-size="musicPanelFontSize"/);
-  assert.match(app, /const musicPanelFontSize = computed\(\(\) => 20 \+ \(messageFontSize\.value - defaultMessageFontSize\)\)/);
+  assert.match(app, /const musicPanelFontSize = computed\(\(\) => cleanMusicPanelFontSize\(store\.appearance\.musicPanelFontSize\)\)/);
   assert.match(css, /\.music-mini-panel-mode \{[\s\S]*?font-size: 0\.85em;/);
   assert.match(css, /\.music-mini-panel-track \{[\s\S]*?font-size: 0\.9em;/);
 });
@@ -387,6 +387,13 @@ test("the queue section shows the current source name with a playlist switcher",
   assert.match(musicPlayer, /if \(playbackSourceKind\.value === "playlist"\) return playbackPlaylist\.value\?\.name \|\| "聊天室曲库"/);
 });
 
+test("the source name carries an expand button that opens the full music manager", () => {
+  assert.match(musicMiniPanel, /"open-manager": \[\]/);
+  assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-expand"[\s\S]*?aria-label="打开歌单管理"[\s\S]*?@click="emit\('open-manager'\)"/);
+  assert.match(app, /@open-manager="openMusicManagerFromMiniPanel"/);
+  assert.match(app, /function openMusicManagerFromMiniPanel\(\) \{[\s\S]*?openMusicManager\(\{ kind: "playlist", id: selectedMusicPlaylistId\.value \}\)/);
+});
+
 test("the sleep timer stops playback after custom minutes or track counts", () => {
   assert.match(app, /useMusicSleepTimer\(\{ currentTrackId: currentMusicTrackId, onStop: \(\) => pauseMusic\(true\) \}\)/);
   assert.match(musicMiniPanel, /sleepTimer\.controls\.startMinutes\(minutes\)/);
@@ -416,8 +423,9 @@ test("voice record strip hides once a preview is ready", () => {
   assert.match(app, /<div v-if="!audioPreviewUrl" class="record-strip"/);
 });
 
-test("the music manager stays available outside the mini panel", () => {
-  assert.doesNotMatch(musicMiniPanel, /open-manager|aria-label="音乐管理"/);
+test("the music manager opens from the mini panel expand button as a separate overlay", () => {
+  assert.doesNotMatch(musicMiniPanel, /<MusicManager/);
+  assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-expand"/);
   assert.match(app, /<MusicManager\s+v-if="musicManagerOpen"/);
 });
 

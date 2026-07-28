@@ -142,6 +142,7 @@ import {
   type WallpaperPanBounds,
   type WallpaperPanDirection
 } from "@shared/wallpaperPan";
+import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
@@ -477,7 +478,8 @@ const loginAppearanceEdit = ref({
   parallaxKit: "none",
   parallaxSpeed: 1,
   parallaxKits: cleanParallaxKits(DEFAULT_PARALLAX_KITS),
-  registrationEnabled: false
+  registrationEnabled: false,
+  musicPanelFontSize: 20
 });
 const flashEffectEdit = ref<FlashEffectSettingsDTO>({
   colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
@@ -1257,8 +1259,8 @@ watch(messageFontSize, (value) => {
   localStorage.setItem(messageFontSizeStorageKey(accountId), String(clamped));
 });
 
-// 音乐小窗默认按「字」= 20 的大小显示；用户调整「字」时在此基础上同步增减
-const musicPanelFontSize = computed(() => 20 + (messageFontSize.value - defaultMessageFontSize));
+// 音乐小窗字号由管理员在「聊天室外观」里统一设置，默认 20px
+const musicPanelFontSize = computed(() => cleanMusicPanelFontSize(store.appearance.musicPanelFontSize));
 
 watch(memberRemoveMode, () => {
   selectedMember.value = null;
@@ -1773,6 +1775,7 @@ const appearanceSavePayload = computed(() => ({
   parallaxSpeed: cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed),
   parallaxKits: cleanParallaxKits(loginAppearanceEdit.value.parallaxKits),
   registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
+  musicPanelFontSize: cleanMusicPanelFontSize(loginAppearanceEdit.value.musicPanelFontSize),
   flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
   customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } }))
 }));
@@ -1796,6 +1799,7 @@ const currentAppearancePayload = computed(() => ({
   parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
   parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
   registrationEnabled: !!store.appearance.registrationEnabled,
+  musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
   flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
   customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }))
 }));
@@ -6591,6 +6595,14 @@ function openMusicManager(focus?: MusicManagerFocus) {
   if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
 }
 
+function openMusicManagerFromMiniPanel() {
+  if (musicSourceKind.value === "playlist" && selectedMusicPlaylistId.value) {
+    openMusicManager({ kind: "playlist", id: selectedMusicPlaylistId.value });
+    return;
+  }
+  openMusicManager();
+}
+
 function sharedMusicPlaylistDescription(message: MessageDTO) {
   const description = messagePayloadRecord(message).description;
   return typeof description === "string" ? description.trim() : "";
@@ -8750,7 +8762,8 @@ function syncLoginAppearanceEdit() {
     parallaxKit: store.appearance.parallaxKit || "none",
     parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
     parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
-    registrationEnabled: !!store.appearance.registrationEnabled
+    registrationEnabled: !!store.appearance.registrationEnabled,
+    musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize)
   };
   flashEffectEdit.value = {
     colors: [...flashEffect.value.colors],
@@ -9470,6 +9483,7 @@ async function toggleVirtual(character: any) {
             :font-size="musicPanelFontSize"
             @close="musicPlayerExpanded = false"
             @toggle-favorite="toggleCurrentMusicFavorite"
+            @open-manager="openMusicManagerFromMiniPanel"
           />
         </div>
         <div v-if="!showingFavoriteSurface" class="friend-player-control">
@@ -11328,6 +11342,14 @@ async function toggleVirtual(character: any) {
                     </label>
                   </div>
                 </section>
+                <label>音乐小窗</label>
+                <div class="wallpaper-pan-controls">
+                  <label>
+                    <span><b>「歌」小窗字号</b><output>{{ cleanMusicPanelFontSize(loginAppearanceEdit.musicPanelFontSize) }}px</output></span>
+                    <input v-model.number="loginAppearanceEdit.musicPanelFontSize" type="range" :min="MUSIC_PANEL_FONT_SIZE_MIN" :max="MUSIC_PANEL_FONT_SIZE_MAX" step="1" />
+                    <small>调整点击「歌」弹出的播放小窗文字大小，对所有成员生效。</small>
+                  </label>
+                </div>
               </template>
 
               <template v-else-if="appearanceSection === 'parallax'">

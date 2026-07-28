@@ -1582,6 +1582,16 @@ button {
   justify-content: space-between;
 }
 
+.music-mini-panel-expand {
+  flex: 0 0 auto;
+  padding: 2px;
+  color: #8a76ab;
+}
+
+.music-mini-panel-source-head .music-source-switch {
+  margin-left: auto;
+}
+
 .music-mini-panel-source-name {
   min-width: 0;
   display: inline-flex;

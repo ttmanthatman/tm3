@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Heart,
   ListMusic,
+  Maximize2,
   Pause,
   Play,
   Repeat,
@@ -28,6 +29,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   "toggle-favorite": [track: MusicTrackDTO];
+  "open-manager": [];
 }>();
 
 const { currentTrack, currentTrackId, playableTracks, playbackMode, playbackSourceKind, playbackSourceName, playbackPlaylistId, playing, loading, error } = props.player.state;
@@ -191,6 +193,7 @@ function playTrack(track: MusicTrackDTO) {
       <div class="music-mini-panel-section">
         <h4 class="music-mini-panel-source-head">
           <span class="music-mini-panel-source-name"><ListMusic :size="13" />{{ playbackSourceName }}</span>
+          <button class="icon-btn music-mini-panel-expand" type="button" aria-label="打开歌单管理" title="打开歌单管理" @click="emit('open-manager')"><Maximize2 :size="13" /></button>
           <button class="music-source-switch" type="button" :aria-expanded="sourcePickerOpen" @click="sourcePickerOpen = !sourcePickerOpen">切换歌单</button>
         </h4>
         <p v-if="!queue.length" class="music-mini-panel-empty">播放队列是空的</p>
