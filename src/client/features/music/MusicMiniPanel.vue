@@ -39,11 +39,7 @@ const { kind: timerKind, label: timerLabel } = props.sleepTimer.state;
 const title = computed(() => currentTrack.value?.title || "歌单还是空的");
 const titleScrolling = computed(() => Array.from(title.value).length > 14);
 
-const queue = computed(() => {
-  const tracks = playableTracks.value;
-  const index = tracks.findIndex((track) => track.id === currentTrackId.value);
-  return index > 0 ? [...tracks.slice(index), ...tracks.slice(0, index)] : tracks;
-});
+const queue = computed(() => playableTracks.value);
 
 const modeIcons: Record<MusicPlaybackModeDTO, typeof Repeat> = {
   playlist: Repeat,
@@ -210,7 +206,7 @@ function playTrack(track: MusicTrackDTO) {
       </div>
 
       <div class="music-mini-panel-section music-mini-panel-timer">
-        <h4><Timer :size="13" />定时停止</h4>
+        <h4><Timer :size="13" />定时停止<small class="music-mini-panel-timer-hint">点击右边按钮开始计时</small></h4>
         <template v-if="timerKind === 'off'">
           <form class="music-mini-panel-timer-form" @submit.prevent="armMinutes">
             <input v-model="minutesInput" type="text" inputmode="numeric" placeholder="分钟" aria-label="几分钟后停止" />

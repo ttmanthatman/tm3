@@ -1806,6 +1806,12 @@ button {
   background: #ffd6ea;
 }
 
+.music-mini-panel-timer-hint {
+  font-size: 0.82em;
+  font-weight: 400;
+  color: #b3a4cf;
+}
+
 .music-mini-panel-timer-form {
   display: flex;
   gap: 6px;

@@ -375,8 +375,8 @@ test("mode button labels scroll when they overflow the button", () => {
   assert.match(css, /\.music-mini-panel-mode \.overflow-marquee \{[\s\S]*?flex: 1 1 auto;/);
 });
 
-test("the queue section shows the current source name with a playlist switcher", () => {
-  assert.match(musicMiniPanel, /const queue = computed[\s\S]*?playableTracks\.value[\s\S]*?tracks\.slice\(index\)/);
+test("the queue section shows all tracks of the current source in playlist order", () => {
+  assert.match(musicMiniPanel, /const queue = computed\(\(\) => playableTracks\.value\)/);
   assert.match(musicMiniPanel, /v-for="track in queue"/);
   assert.match(musicMiniPanel, /\{\{ playbackSourceName \}\}/);
   assert.match(musicMiniPanel, /class="music-source-switch"[\s\S]*?>切换歌单<\/button>/);
@@ -404,6 +404,7 @@ test("the sleep timer stops playback after custom minutes or track counts", () =
   assert.match(musicSleepTimer, /function startMinutes\(minutes: number\)[\s\S]*?fire\(\)/);
   assert.match(musicSleepTimer, /function startTracks\(count: number\)/);
   assert.match(css, /\.music-mini-panel-timer-form input \{[\s\S]*?width: 3\.6em;/);
+  assert.match(musicMiniPanel, /定时停止<small class="music-mini-panel-timer-hint">点击右边按钮开始计时<\/small>/);
 });
 
 test("an active sleep timer shows live seconds or remaining tracks with song progress", () => {
