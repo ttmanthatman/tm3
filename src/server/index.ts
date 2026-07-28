@@ -88,6 +88,17 @@ import {
   MUSIC_PANEL_FONT_SIZE_MIN,
   cleanMusicPanelFontSize
 } from "../shared/musicPlayback.js";
+import {
+  COMPOSER_PROMPT_ANIM_MAX,
+  COMPOSER_PROMPT_ANIM_MIN,
+  COMPOSER_PROMPT_GAP_MAX,
+  COMPOSER_PROMPT_GAP_MIN,
+  DEFAULT_COMPOSER_PROMPTS,
+  cleanComposerPromptAnimSeconds,
+  cleanComposerPromptGapSeconds,
+  cleanComposerPromptIntervalSeconds,
+  cleanComposerPrompts
+} from "../shared/composerPrompts.js";
 
 export type BuildAppOptions = {
   runStartupTasks?: boolean;
@@ -4557,7 +4568,11 @@ async function appearanceDto() {
           "registrationEnabled",
           "musicPanelFontSize",
           "flashEffect",
-          "customThemes"
+          "customThemes",
+          "composerPrompts",
+          "composerPromptIntervalSeconds",
+          "composerPromptAnimSeconds",
+          "composerPromptGapSeconds"
         ]
       }
     }
@@ -4591,7 +4606,13 @@ async function appearanceDto() {
     registrationEnabled: settings.get("registrationEnabled") === "true",
     musicPanelFontSize: cleanMusicPanelFontSize(settings.get("musicPanelFontSize")),
     flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
-    customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), []))
+    customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), [])),
+    composerPrompts: settings.has("composerPrompts")
+      ? cleanComposerPrompts(parseJsonField(settings.get("composerPrompts"), []))
+      : [...DEFAULT_COMPOSER_PROMPTS],
+    composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(settings.get("composerPromptIntervalSeconds")),
+    composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(settings.get("composerPromptAnimSeconds")),
+    composerPromptGapSeconds: cleanComposerPromptGapSeconds(settings.get("composerPromptGapSeconds"))
   };
 }
 
@@ -5310,7 +5331,11 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       registrationEnabled: z.boolean().optional(),
       musicPanelFontSize: z.number().min(MUSIC_PANEL_FONT_SIZE_MIN).max(MUSIC_PANEL_FONT_SIZE_MAX).optional(),
       flashEffect: z.unknown().optional(),
-      customThemes: z.array(z.unknown()).optional()
+      customThemes: z.array(z.unknown()).optional(),
+      composerPrompts: z.array(z.string().max(80)).max(50).optional(),
+      composerPromptIntervalSeconds: z.number().min(1).max(30).optional(),
+      composerPromptAnimSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
+      composerPromptGapSeconds: z.number().min(COMPOSER_PROMPT_GAP_MIN).max(COMPOSER_PROMPT_GAP_MAX).optional()
     })
     .parse(request.body);
   if (Object.prototype.hasOwnProperty.call(body, "appTitle")) await setSetting("appTitle", (body.appTitle || "").trim() || DEFAULT_APP_TITLE);
@@ -5335,6 +5360,10 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "musicPanelFontSize")) await setSetting("musicPanelFontSize", String(cleanMusicPanelFontSize(body.musicPanelFontSize)));
   if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPrompts")) await setSetting("composerPrompts", JSON.stringify(cleanComposerPrompts(body.composerPrompts)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPromptIntervalSeconds")) await setSetting("composerPromptIntervalSeconds", String(cleanComposerPromptIntervalSeconds(body.composerPromptIntervalSeconds)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPromptAnimSeconds")) await setSetting("composerPromptAnimSeconds", String(cleanComposerPromptAnimSeconds(body.composerPromptAnimSeconds)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPromptGapSeconds")) await setSetting("composerPromptGapSeconds", String(cleanComposerPromptGapSeconds(body.composerPromptGapSeconds)));
   const appearance = await appearanceDto();
   io.emit("appearance:updated", appearance);
   return { success: true, appearance };

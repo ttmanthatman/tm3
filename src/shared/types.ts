@@ -644,6 +644,10 @@ export interface AppearanceDTO {
   musicPanelFontSize: number;
   flashEffect: FlashEffectSettingsDTO;
   customThemes: ThemeDTO[];
+  composerPrompts: string[];
+  composerPromptIntervalSeconds: number;
+  composerPromptAnimSeconds: number;
+  composerPromptGapSeconds: number;
 }
 
 export interface FriendProgramDTO {

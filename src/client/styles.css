@@ -5490,10 +5490,92 @@ button {
   display: flex;
   align-items: flex-end;
   gap: 2px;
+  position: relative;
 }
 
 .composer-main.raised {
   align-items: center;
+}
+
+@property --composer-glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.composer textarea.composer-glow {
+  outline: none;
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    conic-gradient(
+      from var(--composer-glow-angle),
+      #22d3ee,
+      #a78bfa,
+      #f472b6,
+      #facc15,
+      #34d399,
+      #22d3ee
+    ) border-box;
+  animation: composerGlowSpin 3.2s linear infinite;
+}
+
+@keyframes composerGlowSpin {
+  to {
+    --composer-glow-angle: 360deg;
+  }
+}
+
+@supports not (background: conic-gradient(from var(--composer-glow-angle), red, blue)) {
+  .composer textarea.composer-glow {
+    background:
+      linear-gradient(#fff, #fff) padding-box,
+      linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15) border-box;
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer textarea.composer-glow {
+    animation: none;
+  }
+}
+
+.composer-prompt-overlay {
+  position: absolute;
+  left: 48px;
+  right: 48px;
+  bottom: 10px;
+  height: 22px;
+  line-height: 22px;
+  font-size: inherit;
+  color: #9aa3b2;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.composer-prompt-char {
+  opacity: 0;
+  transition-property: opacity, text-shadow;
+  transition-timing-function: ease-in-out;
+}
+
+.composer-prompt-overlay.phase-appear .composer-prompt-char,
+.composer-prompt-overlay.phase-hold .composer-prompt-char {
+  opacity: 1;
+  text-shadow: 0 0 8px rgba(122, 132, 152, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-prompt-char {
+    transition: none;
+  }
+}
+
+.composer-prompt-settings {
+  display: grid;
+  gap: 8px;
 }
 
 .composer-main .composer-edge-btn {
@@ -5537,11 +5619,15 @@ button {
   max-height: 280px;
   min-height: 38px;
   padding: 8px 10px;
-  border: 0;
+  border: 2px solid transparent;
   border-radius: 6px;
   resize: none;
-  background: #fff;
+  background: #fff padding-box;
   line-height: 22px;
+}
+
+.composer textarea:focus {
+  outline: none;
 }
 
 .composer-markdown-toggle {

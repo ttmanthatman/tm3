@@ -143,6 +143,16 @@ import {
   type WallpaperPanDirection
 } from "@shared/wallpaperPan";
 import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
+import {
+  DEFAULT_COMPOSER_PROMPT_ANIM,
+  DEFAULT_COMPOSER_PROMPT_GAP,
+  DEFAULT_COMPOSER_PROMPT_INTERVAL,
+  cleanComposerPromptAnimSeconds,
+  cleanComposerPromptGapSeconds,
+  cleanComposerPromptIntervalSeconds,
+  cleanComposerPrompts,
+  composerPromptCharTiming
+} from "@shared/composerPrompts";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
@@ -177,6 +187,7 @@ import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 import FriendPrograms from "./features/friend/FriendPrograms.vue";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
 import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
+import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
 
 const store = useChatStore();
 const {
@@ -200,6 +211,7 @@ const displayName = ref("");
 const authMode = ref<"login" | "register">("login");
 const loginError = ref("");
 const input = ref("");
+const composerFocused = ref(false);
 const selectedMusicMention = ref<MusicTrackDTO | null>(null);
 const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
@@ -486,6 +498,10 @@ const flashEffectEdit = ref<FlashEffectSettingsDTO>({
   intervalSeconds: 0.4,
   transitionMode: "smooth"
 });
+const composerPromptsText = ref("");
+const composerPromptIntervalEdit = ref(DEFAULT_COMPOSER_PROMPT_INTERVAL);
+const composerPromptAnimEdit = ref(DEFAULT_COMPOSER_PROMPT_ANIM);
+const composerPromptGapEdit = ref(DEFAULT_COMPOSER_PROMPT_GAP);
 const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
@@ -1308,6 +1324,7 @@ onBeforeUnmount(() => {
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
+  stopComposerPlaceholder();
   if (musicScoreTimer) window.clearTimeout(musicScoreTimer);
   clearMusicLyricsHeaderResumeTimer();
   clearMessageLongPress();
@@ -1777,7 +1794,11 @@ const appearanceSavePayload = computed(() => ({
   registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
   musicPanelFontSize: cleanMusicPanelFontSize(loginAppearanceEdit.value.musicPanelFontSize),
   flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
-  customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } }))
+  customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } })),
+  composerPrompts: cleanComposerPrompts(composerPromptsText.value.split("\n")),
+  composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(composerPromptIntervalEdit.value),
+  composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(composerPromptAnimEdit.value),
+  composerPromptGapSeconds: cleanComposerPromptGapSeconds(composerPromptGapEdit.value)
 }));
 const currentAppearancePayload = computed(() => ({
   appTitle: store.appearance.appTitle || "Team Chat",
@@ -1801,7 +1822,11 @@ const currentAppearancePayload = computed(() => ({
   registrationEnabled: !!store.appearance.registrationEnabled,
   musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
   flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
-  customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }))
+  customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } })),
+  composerPrompts: cleanComposerPrompts(store.appearance.composerPrompts || []),
+  composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
+  composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds),
+  composerPromptGapSeconds: cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
 }));
 const appearanceHasDraftChanges = computed(() => JSON.stringify(appearanceSavePayload.value) !== JSON.stringify(currentAppearancePayload.value));
 watch(
@@ -2811,6 +2836,44 @@ function acknowledgeMentionAlert(message: MessageDTO) {
   acknowledgedMentionIds.value = new Set([...acknowledgedMentionIds.value, message.id]);
   saveAcknowledgedMentionIds();
   return true;
+}
+
+function composerMentionNames() {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  const ordered = [...store.messages].sort((a, b) => b.id - a.id);
+  for (const message of ordered) {
+    if (!isMentionAlertActive(message)) continue;
+    const name = message.sender.displayName?.trim();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+    if (names.length >= 5) break;
+  }
+  return names;
+}
+
+const composerMentionNameList = computed(composerMentionNames);
+
+const { text: composerPromptText, phase: composerPromptPhase, stop: stopComposerPlaceholder } = useComposerPlaceholder({
+  getPrompts: () => store.appearance.composerPrompts || [],
+  mentionNames: composerMentionNameList,
+  getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
+  getAnimSeconds: () => cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds),
+  getGapSeconds: () => cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
+});
+
+const composerPromptChars = computed(() => [...composerPromptText.value].map((char) => (char === " " ? " " : char)));
+const composerPromptCharTimingValue = computed(() =>
+  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds))
+);
+
+function composerPromptCharStyle(index: number) {
+  const { stagger, duration } = composerPromptCharTimingValue.value;
+  return {
+    transitionDelay: `${(index * stagger).toFixed(3)}s`,
+    transitionDuration: `${duration.toFixed(3)}s`
+  };
 }
 
 function isNearMessageBottom(distance = 96) {
@@ -8771,6 +8834,10 @@ function syncLoginAppearanceEdit() {
     transitionMode: flashEffect.value.transitionMode
   };
   customThemesDraft.value = (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }));
+  composerPromptsText.value = cleanComposerPrompts(store.appearance.composerPrompts || []).join("\n");
+  composerPromptIntervalEdit.value = cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds);
+  composerPromptAnimEdit.value = cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds);
+  composerPromptGapEdit.value = cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds);
   if (customThemeEdit.value.id && !customThemesDraft.value.some((theme) => theme.id === customThemeEdit.value.id)) resetThemeEditor();
   if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
 }
@@ -10283,14 +10350,27 @@ async function toggleVirtual(character: any) {
               ref="composerInput"
               v-model="input"
               rows="1"
-              :placeholder="store.prayerOnly ? '输入代祷事项' : '输入消息'"
-              @focus="focusComposer(); syncComposerCaret()"
+              :class="{ 'composer-glow': composerFocused }"
+              :placeholder="composerPromptText ? '' : (store.prayerOnly ? '输入代祷事项' : '')"
+              @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
+              @blur="composerFocused = false"
               @input="onInput"
               @click="syncComposerCaret"
               @keyup="syncComposerCaret"
               @keydown="onKeydown"
               @paste="handleComposerPaste"
             ></textarea>
+            <span
+              v-if="!input.trim() && composerPromptText"
+              class="composer-prompt-overlay"
+              :class="`phase-${composerPromptPhase}`"
+              aria-hidden="true"
+            ><span
+                v-for="(char, index) in composerPromptChars"
+                :key="index"
+                class="composer-prompt-char"
+                :style="composerPromptCharStyle(index)"
+              >{{ char }}</span></span>
             <button
               v-if="canSendText"
               class="send-btn composer-edge-btn composer-send-btn"
@@ -11348,6 +11428,23 @@ async function toggleVirtual(character: any) {
                     <span><b>「歌」小窗字号</b><output>{{ cleanMusicPanelFontSize(loginAppearanceEdit.musicPanelFontSize) }}px</output></span>
                     <input v-model.number="loginAppearanceEdit.musicPanelFontSize" type="range" :min="MUSIC_PANEL_FONT_SIZE_MIN" :max="MUSIC_PANEL_FONT_SIZE_MAX" step="1" />
                     <small>调整点击「歌」弹出的播放小窗文字大小，对所有成员生效。</small>
+                  </label>
+                </div>
+                <label>输入框引导语</label>
+                <div class="composer-prompt-settings">
+                  <textarea v-model="composerPromptsText" rows="4" placeholder="一行一条，例如：分享下今天的恩典？"></textarea>
+                  <small>输入框空闲时轮播这些引导语，文字逐字照亮、逐字熄灭；有人 @ 成员时立即提醒「回应一下」。清空列表可关闭轮播。</small>
+                  <label class="flash-interval-row">
+                    <span>显示时长（秒）</span>
+                    <input v-model.number="composerPromptIntervalEdit" type="number" min="1" max="30" step="0.5" />
+                  </label>
+                  <label class="flash-interval-row">
+                    <span>逐字动画（秒）</span>
+                    <input v-model.number="composerPromptAnimEdit" type="number" min="0.3" max="5" step="0.1" />
+                  </label>
+                  <label class="flash-interval-row">
+                    <span>间隔时间（秒）</span>
+                    <input v-model.number="composerPromptGapEdit" type="number" min="1" max="60" step="1" />
                   </label>
                 </div>
               </template>

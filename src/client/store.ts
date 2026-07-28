@@ -4,6 +4,7 @@ import { markRaw } from "vue";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
+import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_ANIM, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, planChannelSeed, recordChannelRead, saveUnreadState } from "./unread";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
@@ -53,7 +54,11 @@ const defaultAppearance: AppearanceDTO = {
     intervalSeconds: 0.4,
     transitionMode: "smooth"
   },
-  customThemes: []
+  customThemes: [],
+  composerPrompts: [...DEFAULT_COMPOSER_PROMPTS],
+  composerPromptIntervalSeconds: DEFAULT_COMPOSER_PROMPT_INTERVAL,
+  composerPromptAnimSeconds: DEFAULT_COMPOSER_PROMPT_ANIM,
+  composerPromptGapSeconds: DEFAULT_COMPOSER_PROMPT_GAP
 };
 
 export const useChatStore = defineStore("chat", {
