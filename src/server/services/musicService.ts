@@ -6,7 +6,7 @@ import { parseLyrics } from "../srt.js";
 type MusicScorePageRecord = Pick<MusicScorePage, "id" | "pageIndex" | "fileName" | "fileSize" | "width" | "height">;
 
 type MusicTrackRecord = Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder" | "payload"> & {
-  sender?: { accountId: number | null };
+  sender?: { accountId: number | null; displayName?: string | null };
   musicScores?: Array<Pick<MusicScore, "id" | "title"> & { pages: MusicScorePageRecord[] }>;
   musicLyrics?: Pick<MusicLyrics, "id" | "fileName" | "content"> | null;
   _count?: { musicPlays: number };
@@ -47,6 +47,7 @@ export function createMusicService(deps: {
       id: message.id,
       canManage,
       title: musicTrackTitle(fileName),
+      uploadedByName: message.sender?.displayName ?? null,
       fileName,
       fileSize: message.fileSize || 0,
       createdAt: message.createdAt.toISOString(),
@@ -93,7 +94,7 @@ export function createMusicService(deps: {
           include: {
             track: {
               include: {
-                sender: { select: { accountId: true } },
+                sender: { select: { accountId: true, displayName: true } },
                 musicScores: { orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } },
                 musicLyrics: true,
                 _count: { select: { musicPlays: true } }

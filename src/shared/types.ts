@@ -197,6 +197,7 @@ export interface MusicTrackDTO {
   id: number;
   canManage: boolean;
   title: string;
+  uploadedByName: string | null;
   fileName: string;
   fileSize: number;
   createdAt: string;

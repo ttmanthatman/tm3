@@ -28,7 +28,6 @@ import {
   Info,
   LockKeyhole,
   LogOut,
-  Menu,
   MessageSquareQuote,
   MessageCircle,
   Mic,
@@ -43,12 +42,9 @@ import {
   Plane,
   Play,
   Plus,
-  Repeat,
-  Repeat1,
   RotateCcw,
   Save,
   Send,
-  Shuffle,
   Sparkles,
   Smartphone,
   Settings,
@@ -173,7 +169,9 @@ import {
   sortMusicTracks
 } from "./musicPlayer";
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
+import { useMusicSleepTimer } from "./features/music/useMusicSleepTimer";
 import MusicManager from "./features/music/MusicManager.vue";
+import MusicMiniPanel from "./features/music/MusicMiniPanel.vue";
 import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 import FriendPrograms from "./features/friend/FriendPrograms.vue";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
@@ -246,7 +244,6 @@ const musicManagerOpen = ref(false);
 const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
 const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
 const musicPlayerExpanded = ref(false);
-const musicPlayerAnchorX = ref<number | null>(null);
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
 const musicScoreChatCleared = ref(false);
@@ -1260,6 +1257,9 @@ watch(messageFontSize, (value) => {
   localStorage.setItem(messageFontSizeStorageKey(accountId), String(clamped));
 });
 
+// 音乐小窗默认按「字」= 20 的大小显示；用户调整「字」时在此基础上同步增减
+const musicPanelFontSize = computed(() => 20 + (messageFontSize.value - defaultMessageFontSize));
+
 watch(memberRemoveMode, () => {
   selectedMember.value = null;
 });
@@ -1369,10 +1369,8 @@ const {
   currentTrackId: currentMusicTrackId,
   currentTrack: currentMusicTrack,
   playableTracks: playableMusicTracks,
-  playbackMode: musicPlaybackMode,
   onlyFavorites: musicOnlyFavorites,
   playing: musicPlaying,
-  loading: musicLoading,
   error: musicError
 } = musicPlayer.state;
 const {
@@ -1381,20 +1379,17 @@ const {
   handleAccountChange: handleMusicAccountChange,
   activateAccount: activateMusicAccount,
   persistPlaybackState: persistMusicPlaybackState,
-  cyclePlaybackMode: cycleMusicPlaybackMode,
-  playbackModeLabel: musicPlaybackModeLabel,
-  setOnlyFavorites: setMusicOnlyFavoritesCore,
   play: playCurrentMusic,
   pause: pauseMusic,
   stop: stopMusic,
   togglePlayback: toggleMusicPlayback,
-  shiftTrack: shiftMusicTrack,
   selectTrack: selectMusicTrackCore,
   replaceCurrentTrack: replaceCurrentMusicTrack,
   reconcileTracks: reconcileMusicTracks,
   handlePlaylistDeleted: handleMusicPlaylistDeleted,
   currentPlaybackTimeMs: currentMusicPlaybackTimeMs
 } = musicPlayer.controls;
+const musicSleepTimer = useMusicSleepTimer({ currentTrackId: currentMusicTrackId, onStop: () => pauseMusic(true) });
 const friendPlayer = useFriendPlayer({
   onUserPlay: () => exclusiveAudio.activate("friend"),
   onUserPause: () => exclusiveAudio.deactivate("friend"),
@@ -1417,8 +1412,6 @@ function toggleFriendPrograms() {
     void friendPlayer.controls.playRandom();
   }
 }
-const currentMusicTrackTitle = computed(() => currentMusicTrack.value?.title || "歌单还是空的");
-const musicTitleScrolling = computed(() => Array.from(currentMusicTrackTitle.value).length > 14);
 const activityStatusItems = computed(() => activityTickerItems(
   bibleReaders.value,
   musicListeners.value,
@@ -1459,9 +1452,6 @@ const musicScoreTriggerVisible = computed(() =>
     pageCount: currentMusicScorePages.value.length
   })
 );
-const musicPlayerAnchorStyle = computed(() => ({
-  "--music-player-anchor-x": musicPlayerAnchorX.value === null ? "50%" : `${musicPlayerAnchorX.value}px`
-}));
 
 watch(currentMusicTrackId, () => {
   currentMusicScoreId.value = null;
@@ -6532,10 +6522,6 @@ function toggleMessageFontMenu() {
   showMessageFontMenu.value = !showMessageFontMenu.value;
 }
 
-function setMusicOnlyFavorites(onlyFavorites: boolean) {
-  setMusicOnlyFavoritesCore(onlyFavorites);
-}
-
 function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
   if (!Number.isFinite(event?.trackId) || typeof event?.favorited !== "boolean") return;
   musicTracks.value = musicTracks.value.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track);
@@ -6574,22 +6560,12 @@ function selectMusicTrack(track: MusicTrackDTO) {
   selectMusicTrackCore(track);
 }
 
-function openMusicPlayer(event?: MouseEvent) {
-  const trigger = event?.currentTarget;
-  const header = trigger instanceof HTMLElement ? trigger.closest<HTMLElement>(".chat-head") : null;
-  if (trigger instanceof HTMLElement && header) {
-    const triggerRect = trigger.getBoundingClientRect();
-    const headerRect = header.getBoundingClientRect();
-    const headerStyle = getComputedStyle(header);
-    const paddingLeft = Number.parseFloat(headerStyle.paddingLeft) || 0;
-    const paddingRight = Number.parseFloat(headerStyle.paddingRight) || 0;
-    const contentWidth = Math.max(0, headerRect.width - paddingLeft - paddingRight);
-    const relativeCenter = triggerRect.left + triggerRect.width / 2 - headerRect.left - paddingLeft;
-    musicPlayerAnchorX.value = Math.min(Math.max(relativeCenter, 64), Math.max(64, contentWidth - 64));
+function openMusicPlayer() {
+  musicPlayerExpanded.value = !musicPlayerExpanded.value;
+  if (musicPlayerExpanded.value) {
+    showMessageFontMenu.value = false;
+    if (!musicPlaying.value) void playCurrentMusic();
   }
-  musicPlayerExpanded.value = true;
-  showMessageFontMenu.value = false;
-  if (!musicPlaying.value) void playCurrentMusic();
 }
 
 async function loadMusicPlaylists() {
@@ -6613,11 +6589,6 @@ function openMusicManager(focus?: MusicManagerFocus) {
   musicPlayerExpanded.value = false;
   showMessageFontMenu.value = false;
   if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
-}
-
-function toggleMusicManager() {
-  if (musicManagerOpen.value) musicManagerOpen.value = false;
-  else openMusicManager();
 }
 
 function sharedMusicPlaylistDescription(message: MessageDTO) {
@@ -9443,56 +9414,7 @@ async function toggleVirtual(character: any) {
       <div v-if="store.connectionState !== 'connected'" class="connection-banner" role="status">
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
-      <header class="chat-head" :class="{ 'music-player-head': musicPlayerExpanded }" @pointerdown="handleChatHeaderInteraction">
-        <div v-if="musicPlayerExpanded" class="music-player-bar" data-music-player :style="musicPlayerAnchorStyle" @click.stop>
-          <div class="music-player-transport">
-            <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(-1)" aria-label="上一曲"><ChevronLeft :size="20" /></button>
-            <button class="icon-btn music-main-control" type="button" :disabled="!currentMusicTrack" @click="toggleMusicPlayback" :aria-label="musicPlaying ? '暂停' : '播放'">
-              <Pause v-if="musicPlaying" :size="21" />
-              <Play v-else :size="21" />
-            </button>
-            <button
-              class="icon-btn music-favorite-control"
-              type="button"
-              :class="{ active: !!currentMusicTrack?.favorited }"
-              :disabled="!currentMusicTrack"
-              @click="toggleCurrentMusicFavorite"
-              :aria-label="currentMusicTrack?.favorited ? '取消收藏当前歌曲' : '收藏当前歌曲'"
-            ><Heart :size="19" :fill="currentMusicTrack?.favorited ? 'currentColor' : 'none'" /></button>
-            <button class="icon-btn" type="button" :disabled="!musicTracks.length" @click="shiftMusicTrack(1)" aria-label="下一曲"><ChevronRight :size="20" /></button>
-          </div>
-          <div class="music-player-details">
-            <div class="music-player-title">
-              <strong class="music-title-viewport">
-                <span class="music-title-track" :class="{ 'scrolling': musicTitleScrolling }">
-                  <span>{{ currentMusicTrackTitle }}</span>
-                  <span v-if="musicTitleScrolling" aria-hidden="true">{{ currentMusicTrackTitle }}</span>
-                </span>
-              </strong>
-              <small v-if="musicError" class="music-player-error">{{ musicError }}</small>
-              <small v-else-if="musicLoading">正在缓冲…</small>
-              <small v-else-if="!musicPlaying">已暂停</small>
-            </div>
-            <div class="music-player-tools">
-              <button
-                class="music-favorites-only-btn"
-                type="button"
-                :class="{ active: musicOnlyFavorites }"
-                :disabled="!favoriteMusicTracks.length && !musicOnlyFavorites"
-                @click="setMusicOnlyFavorites(!musicOnlyFavorites)"
-                aria-label="只播放收藏曲目"
-              ><Heart :size="15" :fill="musicOnlyFavorites ? 'currentColor' : 'none'" /><span>只播放收藏</span></button>
-              <button
-                class="music-mode-btn active"
-                type="button"
-                @click="cycleMusicPlaybackMode"
-                :aria-label="`当前${musicPlaybackModeLabel()}，点击切换播放模式`"
-              ><Repeat1 v-if="musicPlaybackMode === 'single'" :size="15" /><Shuffle v-else-if="musicPlaybackMode === 'shuffle'" :size="15" /><Repeat v-else :size="15" /><span class="music-mode-label">{{ musicPlaybackModeLabel() }}</span></button>
-              <button class="icon-btn" type="button" :class="{ active: musicManagerOpen }" @click="toggleMusicManager" aria-label="音乐管理"><Menu :size="20" /></button>
-            </div>
-          </div>
-        </div>
-        <template v-else>
+      <header class="chat-head" @pointerdown="handleChatHeaderInteraction">
         <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
@@ -9536,9 +9458,19 @@ async function toggleVirtual(character: any) {
         </div>
         <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
-          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer($event)" aria-label="打开音乐播放器">
+          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer()" aria-label="打开音乐播放器">
             <span class="music-player-glyph" aria-hidden="true">歌</span>
           </button>
+          <MusicMiniPanel
+            v-if="musicPlayerExpanded"
+            :player="musicPlayer"
+            :favorite-tracks="favoriteMusicTracks"
+            :playlists="musicPlaylists"
+            :sleep-timer="musicSleepTimer"
+            :font-size="musicPanelFontSize"
+            @close="musicPlayerExpanded = false"
+            @toggle-favorite="toggleCurrentMusicFavorite"
+          />
         </div>
         <div v-if="!showingFavoriteSurface" class="friend-player-control">
           <button class="icon-btn friend-player-trigger" type="button" :class="{ active: friendProgramsOpen, spinning: friendPlaying }" @click.stop="toggleFriendPrograms" aria-label="打开良友节目">
@@ -9581,7 +9513,6 @@ async function toggleVirtual(character: any) {
         <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
         <button v-if="!showingFavoriteSurface && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
         <button v-if="!showingFavoriteSurface && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
-        </template>
       </header>
 
       <section

@@ -122,7 +122,7 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
   async function serializeTrackResponse(trackId: number): Promise<MusicTrackDTO> {
     const updated = await prisma.message.findUniqueOrThrow({
       where: { id: trackId },
-      include: { musicScores: trackScoresInclude, musicLyrics: true, _count: { select: { musicPlays: true } } }
+      include: { sender: true, musicScores: trackScoresInclude, musicLyrics: true, _count: { select: { musicPlays: true } } }
     });
     return musicService.serializeTrack(updated, 0, undefined, true);
   }
@@ -133,7 +133,7 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
       where: { channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
       orderBy: [{ musicOrder: "asc" }, { createdAt: "desc" }, { id: "desc" }],
       include: {
-        sender: { select: { accountId: true } },
+        sender: { select: { accountId: true, displayName: true } },
         musicScores: trackScoresInclude,
         musicLyrics: true,
         _count: { select: { musicPlays: true } }

@@ -274,6 +274,7 @@ async function createRouteApp(options: { ai?: AiBehavior } = {}) {
         id: track.id,
         canManage: !!canManage,
         title: musicTrackTitle(track.fileName),
+        uploadedByName: null,
         fileName: track.fileName,
         fileSize: track.fileSize,
         createdAt: track.createdAt.toISOString(),

@@ -880,7 +880,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
               </template>
             </template>
             <template v-else>
-              <button v-if="canManageMusic" class="music-manager-btn primary" :disabled="!!uploadStatus" @click="songInput?.click()">
+              <button class="music-manager-btn primary" :disabled="!!uploadStatus" @click="songInput?.click()">
                 <Upload :size="16" />上传歌曲
               </button>
               <button class="music-manager-btn" :disabled="actionBusy" @click="lyricsPoolInput?.click()">
@@ -986,7 +986,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
                 </button>
                 <button class="music-manager-track-main" @click="openTrackDetail(track.id)">
                   <strong>{{ track.title }}</strong>
-                  <small>{{ compactBytes(track.fileSize) }} · 热度 {{ track.heat }}</small>
+                  <small>{{ compactBytes(track.fileSize) }} · 热度 {{ track.heat }} · {{ track.uploadedByName || "未知上传者" }}</small>
                 </button>
                 <span class="music-manager-badges">
                   <span class="badge" :class="{ off: !track.lyrics }" :title="track.lyrics ? `歌词：${track.lyrics.fileName}` : '未绑定歌词'">词</span>
@@ -1116,7 +1116,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
           <header>
             <div>
               <strong>{{ selectedTrack.title }}</strong>
-              <small>{{ selectedTrack.fileName }} · {{ compactBytes(selectedTrack.fileSize) }} · {{ formatSeparator(selectedTrack.createdAt) }}</small>
+              <small>{{ selectedTrack.fileName }} · {{ compactBytes(selectedTrack.fileSize) }} · {{ formatSeparator(selectedTrack.createdAt) }} · {{ selectedTrack.uploadedByName || "未知上传者" }}</small>
             </div>
             <button class="music-manager-icon-btn" aria-label="关闭详情" @click="closeTrackDetail"><X :size="18" /></button>
           </header>

@@ -64,6 +64,7 @@ function trackDto(track: TrackRow, canManage = false): MusicTrackDTO {
     id: track.id,
     canManage,
     title: track.fileName.replace(/\.(mp3|m4a)$/i, ""),
+    uploadedByName: null,
     fileName: track.fileName,
     fileSize: track.fileSize,
     createdAt: track.createdAt.toISOString(),

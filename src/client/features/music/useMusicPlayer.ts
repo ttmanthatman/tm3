@@ -184,6 +184,11 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   const currentTrack = computed(() =>
     options.tracks.value.find((track) => track.id === currentTrackId.value) || null
   );
+  const playbackSourceName = computed(() => {
+    if (playbackSourceKind.value === "playlist") return playbackPlaylist.value?.name || "聊天室曲库";
+    if (playbackSourceKind.value === "favorites" || onlyFavorites.value) return "收藏的曲目";
+    return "聊天室曲库";
+  });
   const currentTrackIndex = computed(() =>
     playableTracks.value.findIndex((track) => track.id === currentTrack.value?.id)
   );
@@ -228,6 +233,11 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
 
   function currentPlaybackTimeMs() {
     return Math.max(0, Math.round((audio?.currentTime || 0) * 1000));
+  }
+
+  function currentPlaybackDurationMs() {
+    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return 0;
+    return Math.round(audio.duration * 1000);
   }
 
   function playbackStateSnapshot(accountId = activeAccountId): MusicPlaybackStateDTO | null {
@@ -767,6 +777,41 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     if (continuePlaying) void play();
   }
 
+  function setPlaybackSource(kind: MusicPlaylistSourceKind, playlistId: number | null = null) {
+    const continuePlaying = playing.value;
+    const previousTrackId = currentTrackId.value;
+    options.selectedSourceKind.value = kind;
+    playbackSourceKind.value = kind;
+    options.selectedPlaylistId.value = kind === "playlist" ? playlistId : null;
+    playbackPlaylistId.value = kind === "playlist" ? playlistId : null;
+    onlyFavorites.value = kind === "favorites";
+    if (activeAccountId) {
+      runtime.storage.setItem(
+        musicOnlyFavoritesStorageKey(activeAccountId),
+        onlyFavorites.value ? "1" : "0"
+      );
+    }
+
+    const availableTracks = playableTracks.value;
+    if (previousTrackId && availableTracks.some((track) => track.id === previousTrackId)) {
+      persistPlaybackState(true);
+      return;
+    }
+
+    const track = randomMusicTrack(availableTracks, undefined, runtime.random);
+    if (!track) {
+      setCurrentTrack(null);
+      pause(true);
+      persistPlaybackState(true);
+      return;
+    }
+    setCurrentTrack(track.id);
+    pendingRestoredProgressMs = 0;
+    setAudioTrack(track);
+    if (continuePlaying) void play();
+    persistPlaybackState(true);
+  }
+
   function setOnlyFavorites(nextOnlyFavorites: boolean) {
     const previousTrackId = currentTrackId.value;
     const continuePlaying = playing.value;
@@ -912,6 +957,9 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       currentTrack,
       playableTracks,
       playbackMode,
+      playbackSourceKind,
+      playbackSourceName,
+      playbackPlaylistId,
       onlyFavorites,
       playing,
       loading,
@@ -926,6 +974,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       setPlaybackMode,
       cyclePlaybackMode,
       playbackModeLabel,
+      setPlaybackSource,
       setOnlyFavorites,
       play,
       pause,
@@ -936,7 +985,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       replaceCurrentTrack,
       reconcileTracks,
       handlePlaylistDeleted,
-      currentPlaybackTimeMs
+      currentPlaybackTimeMs,
+      currentPlaybackDurationMs
     }
   };
 }
+
+export type MusicPlayer = ReturnType<typeof useMusicPlayer>;

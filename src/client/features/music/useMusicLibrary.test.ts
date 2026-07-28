@@ -17,6 +17,7 @@ function track(id: number, overrides: Partial<MusicTrackDTO> = {}): MusicTrackDT
     id,
     canManage: true,
     title: `歌曲${id}`,
+    uploadedByName: null,
     fileName: `track-${id}.mp3`,
     fileSize: 1_000,
     createdAt: "2026-01-01T00:00:00.000Z",

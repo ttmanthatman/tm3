@@ -12,6 +12,8 @@ const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccount
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
 const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
 const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
+const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.vue", import.meta.url), "utf8");
+const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
@@ -308,26 +310,101 @@ test("opening the music player starts or resumes playback without pausing an act
   assert.match(openPlayer, /if \(!musicPlaying\.value\) void playCurrentMusic\(\);/);
 });
 
-test("expanded player keeps its main control on the clicked song-button axis", () => {
-  assert.match(app, /@click\.stop="openMusicPlayer\(\$event\)"/);
-  assert.match(app, /:style="musicPlayerAnchorStyle"/);
-  assert.match(app, /class="music-player-transport"[\s\S]*?class="icon-btn music-main-control"/);
-  assert.match(css, /\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(72px, calc\(var\(--music-player-anchor-x\) - 84px\)\) 168px minmax\(0, 1fr\);/);
-  assert.match(css, /\.music-player-transport \{[\s\S]*?grid-column: 2;[\s\S]*?grid-row: 1;[\s\S]*?align-items: center;/);
-  assert.match(css, /\.music-player-title \{[\s\S]*?grid-column: 1;[\s\S]*?grid-row: 1;/);
-  assert.match(css, /\.music-player-tools \{[\s\S]*?grid-column: 3;[\s\S]*?grid-row: 1;/);
-  assert.doesNotMatch(css, /\.music-player-head \{[\s\S]*?min-height: calc\(96px/);
+test("the mini panel floats centered over a plain dim backdrop instead of covering the header", () => {
+  assert.match(app, /@click\.stop="openMusicPlayer\(\)"/);
+  assert.match(app, /<MusicMiniPanel[\s\S]*?v-if="musicPlayerExpanded"/);
+  assert.match(musicMiniPanel, /<Teleport to="body">/);
+  assert.match(musicMiniPanel, /class="music-mini-backdrop"[\s\S]*?@click="emit\('close'\)"/);
+  assert.match(css, /\.music-mini-backdrop \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;/);
+  assert.doesNotMatch(css, /\.music-mini-backdrop \{[^}]*backdrop-filter/);
+  assert.match(css, /\.music-mini-panel \{[\s\S]*?position: fixed;[\s\S]*?top: 50%;[\s\S]*?left: 50%;[\s\S]*?transform: translate\(-50%, -50%\);/);
+  assert.match(css, /\.music-mini-panel \{[\s\S]*?width: min\(480px, calc\(100vw - 24px\)\);/);
+  assert.doesNotMatch(css, /\.music-mini-panel \{[^}]*backdrop-filter/);
+  assert.match(css, /\.music-mini-panel \{[\s\S]*?background: linear-gradient\(165deg, #ffe9f4/);
+  assert.doesNotMatch(app, /music-player-bar|musicPlayerAnchorStyle/);
+  assert.doesNotMatch(css, /\.music-player-bar \{/);
 });
 
-test("mobile expanded player reserves intrinsic width for transport and tool buttons", () => {
-  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-player-bar \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) max-content max-content;/);
+test("the mini panel drops the header row and keeps only a floating close button", () => {
+  assert.doesNotMatch(musicMiniPanel, /music-mini-panel-head|open-manager/);
+  assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-close"[\s\S]*?aria-label="关闭播放器"/);
+  assert.match(css, /\.music-mini-panel-close \{[\s\S]*?position: absolute;[\s\S]*?top: 8px;[\s\S]*?right: 8px;/);
 });
 
-test("mobile player tool buttons collapse to icons so the title keeps room", () => {
-  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-favorites-only-btn \{[\s\S]*?width: 32px;/);
-  assert.match(css, /\.music-favorites-only-btn span,\s*\.music-mode-label \{[\s\S]*?display: none;/);
-  assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.music-mode-btn \{[\s\S]*?width: 32px;/);
-  assert.match(app, /class="music-mode-label">\{\{ musicPlaybackModeLabel\(\) \}\}<\/span>/);
+test("the mini panel defaults to the size for message font 20 and follows later changes", () => {
+  assert.match(musicMiniPanel, /fontSize: number;/);
+  assert.match(musicMiniPanel, /const panelStyle = computed\(\(\) => \(\{ fontSize: `\$\{props\.fontSize\}px` \}\)\)/);
+  assert.match(musicMiniPanel, /:style="panelStyle"/);
+  assert.match(app, /:font-size="musicPanelFontSize"/);
+  assert.match(app, /const musicPanelFontSize = computed\(\(\) => 20 \+ \(messageFontSize\.value - defaultMessageFontSize\)\)/);
+  assert.match(css, /\.music-mini-panel-mode \{[\s\S]*?font-size: 0\.85em;/);
+  assert.match(css, /\.music-mini-panel-track \{[\s\S]*?font-size: 0\.9em;/);
+});
+
+test("the mini panel stacks title, transport, modes, favorites, queue and timer in order", () => {
+  const anchors = [
+    "music-mini-panel-title",
+    "music-mini-panel-transport",
+    "music-mini-panel-modes",
+    "收藏的曲目</h4>",
+    "music-mini-panel-source-head",
+    "定时停止"
+  ];
+  let cursor = -1;
+  for (const anchor of anchors) {
+    const index = musicMiniPanel.indexOf(anchor);
+    assert.ok(index > cursor, `missing or out of order: ${anchor}`);
+    cursor = index;
+  }
+  assert.match(musicMiniPanel, /class="icon-btn music-main-control"/);
+});
+
+test("each playback mode has its own button and the heart sits beside play in the transport", () => {
+  assert.match(musicMiniPanel, /v-for="mode in modes"[\s\S]*?controls\.setPlaybackMode\(mode\)/);
+  assert.match(musicMiniPanel, /const modes: MusicPlaybackModeDTO\[\] = \["playlist", "shuffle", "single"\]/);
+  const mainControl = musicMiniPanel.indexOf("music-main-control");
+  const heart = musicMiniPanel.indexOf("music-mini-panel-heart");
+  const next = musicMiniPanel.indexOf('aria-label="下一曲"');
+  assert.ok(mainControl > -1 && heart > mainControl && next > heart, "heart must sit between play and next");
+  assert.doesNotMatch(musicMiniPanel, /收藏这首歌/);
+});
+
+test("mode button labels scroll when they overflow the button", () => {
+  assert.match(musicMiniPanel, /<OverflowMarquee :text="controls\.playbackModeLabel\(mode\)" \/>/);
+  assert.match(css, /\.music-mini-panel-mode \{[\s\S]*?overflow: hidden;/);
+  assert.match(css, /\.music-mini-panel-mode \.overflow-marquee \{[\s\S]*?flex: 1 1 auto;/);
+});
+
+test("the queue section shows the current source name with a playlist switcher", () => {
+  assert.match(musicMiniPanel, /const queue = computed[\s\S]*?playableTracks\.value[\s\S]*?tracks\.slice\(index\)/);
+  assert.match(musicMiniPanel, /v-for="track in queue"/);
+  assert.match(musicMiniPanel, /\{\{ playbackSourceName \}\}/);
+  assert.match(musicMiniPanel, /class="music-source-switch"[\s\S]*?>切换歌单<\/button>/);
+  assert.match(musicMiniPanel, /class="music-source-picker"[\s\S]*?v-for="option in sourceOptions"/);
+  assert.match(musicMiniPanel, /controls\.setPlaybackSource\(option\.kind, option\.playlistId\)/);
+  assert.match(musicMiniPanel, /name: "聊天室曲库"/);
+  assert.match(musicPlayer, /function setPlaybackSource\(kind: MusicPlaylistSourceKind, playlistId: number \| null = null\)/);
+  assert.match(musicPlayer, /if \(playbackSourceKind\.value === "playlist"\) return playbackPlaylist\.value\?\.name \|\| "聊天室曲库"/);
+});
+
+test("the sleep timer stops playback after custom minutes or track counts", () => {
+  assert.match(app, /useMusicSleepTimer\(\{ currentTrackId: currentMusicTrackId, onStop: \(\) => pauseMusic\(true\) \}\)/);
+  assert.match(musicMiniPanel, /sleepTimer\.controls\.startMinutes\(minutes\)/);
+  assert.match(musicMiniPanel, /sleepTimer\.controls\.startTracks\(count\)/);
+  assert.match(musicMiniPanel, /parsePositiveInt\(minutesInput\.value, 1, 720\)/);
+  assert.match(musicMiniPanel, /parsePositiveInt\(tracksInput\.value, 1, 99\)/);
+  assert.match(musicSleepTimer, /function fire\(\) \{[\s\S]*?options\.onStop\(\)/);
+  assert.match(musicSleepTimer, /function startMinutes\(minutes: number\)[\s\S]*?fire\(\)/);
+  assert.match(musicSleepTimer, /function startTracks\(count: number\)/);
+  assert.match(css, /\.music-mini-panel-timer-form input \{[\s\S]*?width: 3\.6em;/);
+});
+
+test("an active sleep timer shows live seconds or remaining tracks with song progress", () => {
+  assert.match(musicSleepTimer, /`\$\{minutes\} 分 \$\{seconds\} 秒后停止`/);
+  assert.match(musicSleepTimer, /`\$\{seconds\} 秒后停止`/);
+  assert.match(musicMiniPanel, /本首已播 \{\{ currentSongProgress \}\}%/);
+  assert.match(musicMiniPanel, /controls\.currentPlaybackDurationMs\(\)/);
+  assert.match(musicPlayer, /function currentPlaybackDurationMs\(\)[\s\S]*?audio\.duration/);
 });
 
 test("mobile drawers and the music manager head respect the top safe area", () => {
@@ -339,38 +416,28 @@ test("voice record strip hides once a preview is ready", () => {
   assert.match(app, /<div v-if="!audioPreviewUrl" class="record-strip"/);
 });
 
-test("music manager opens from the player bar instead of taking header space", () => {
-  const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
-  const playerEnd = app.indexOf("</header>", playerStart);
-  const player = app.slice(playerStart, playerEnd);
-
-  assert.match(player, /class="music-mode-btn active"[\s\S]*?@click="cycleMusicPlaybackMode"/);
-  assert.match(player, /aria-label="音乐管理"/);
-  assert.match(player, /@click="toggleMusicManager"/);
+test("the music manager stays available outside the mini panel", () => {
+  assert.doesNotMatch(musicMiniPanel, /open-manager|aria-label="音乐管理"/);
   assert.match(app, /<MusicManager\s+v-if="musicManagerOpen"/);
 });
 
 test("music favorites persist per account and can constrain the playback queue", () => {
-  assert.match(app, /class="icon-btn music-favorite-control"[\s\S]*?@click="toggleCurrentMusicFavorite"/);
-  assert.match(app, /class="music-favorites-only-btn"[\s\S]*?>只播放收藏</);
+  assert.match(musicMiniPanel, /music-mini-panel-heart[\s\S]*?emit\('toggle-favorite', currentTrack\)/);
+  assert.match(app, /@toggle-favorite="toggleCurrentMusicFavorite"/);
   assert.match(musicPlayer, /const playableTracks = computed[\s\S]*?playbackSourceKind\.value === "favorites"[\s\S]*?options\.favoriteTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
 
-test("expanded player omits the changing listener marquee", () => {
-  const playerStart = app.indexOf('<div v-if="musicPlayerExpanded" class="music-player-bar"');
-  const playerEnd = app.indexOf("</header>", playerStart);
-  const player = app.slice(playerStart, playerEnd);
-  assert.doesNotMatch(player, /currentMusicListenerStatus|music-player-listener-marquee/);
-  assert.doesNotMatch(player, /正在播放/);
-  assert.match(player, /<small v-else-if="!musicPlaying">已暂停<\/small>/);
+test("the mini panel omits the changing listener marquee", () => {
+  assert.doesNotMatch(musicMiniPanel, /currentMusicListenerStatus|music-player-listener-marquee/);
+  assert.doesNotMatch(musicMiniPanel, /正在播放/);
+  assert.match(musicMiniPanel, /<small v-else-if="!playing && currentTrack" class="music-mini-panel-status">已暂停<\/small>/);
 });
 
-test("long music titles scroll in the left side of the single-row player", () => {
-  assert.match(app, /class="music-title-track"[\s\S]*?'scrolling': musicTitleScrolling/);
-  assert.match(app, /v-if="musicTitleScrolling" aria-hidden="true"/);
-  assert.match(app, /class="music-player-tools"/);
-  assert.match(css, /\.music-player-title \{[\s\S]*?grid-column: 1;[\s\S]*?text-align: left;/);
+test("long music titles scroll inside the mini panel", () => {
+  assert.match(musicMiniPanel, /class="music-title-track" :class="\{ scrolling: titleScrolling \}"/);
+  assert.match(musicMiniPanel, /v-if="titleScrolling" aria-hidden="true"/);
+  assert.match(musicMiniPanel, /const titleScrolling = computed\(\(\) => Array\.from\(title\.value\)\.length > 14\)/);
   assert.match(css, /\.music-title-track\.scrolling \{[\s\S]*?animation: musicTitleMarquee/);
 });
 

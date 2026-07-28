@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { computed, ref } from "vue";
-import type { MusicPlaybackStateDTO, MusicTrackDTO } from "../../../shared/types.js";
+import type { MusicPlaybackStateDTO, MusicPlaylistDTO, MusicTrackDTO } from "../../../shared/types.js";
 import { useMusicPlayer, type MusicPlayerRuntime } from "./useMusicPlayer.js";
 
 class FakeAudio extends EventTarget {
@@ -41,6 +41,7 @@ function track(id: number, favorited = false): MusicTrackDTO {
     id,
     canManage: true,
     title: `Track ${id}`,
+    uploadedByName: null,
     fileName: `${id}.mp3`,
     fileSize: 1_000,
     createdAt: "2026-01-01T00:00:00.000Z",
@@ -70,12 +71,13 @@ function playbackState(
 
 function createHarness(input?: {
   tracks?: MusicTrackDTO[];
+  playlists?: MusicPlaylistDTO[];
   random?: number;
   playbackState?: MusicPlaybackStateDTO | null;
   request?: <T>(path: string, options?: RequestInit) => Promise<T>;
 }) {
   const tracks = ref(input?.tracks || [track(1), track(2), track(3)]);
-  const playlists = ref([]);
+  const playlists = ref(input?.playlists || []);
   const selectedSourceKind = ref<"library" | "favorites" | "playlist">("library");
   const selectedPlaylistId = ref<number | null>(null);
   const scoreOpen = ref(false);
@@ -194,6 +196,49 @@ async function activate(harness: ReturnType<typeof createHarness>, accountId = 1
   harness.player.controls.mount();
   await harness.player.controls.activateAccount(accountId);
 }
+
+test("switching playback source swaps the queue and updates the source name", async () => {
+  const playlist: MusicPlaylistDTO = {
+    id: 9,
+    name: "晨间赞美",
+    ownerAccountId: 1,
+    ownerName: "admin",
+    isOwner: true,
+    trackCount: 2,
+    tracks: [track(7), track(8)],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  };
+  const harness = createHarness({ tracks: [track(1), track(2), track(3), track(7), track(8)], playlists: [playlist], random: 0 });
+  await activate(harness);
+  harness.player.controls.selectTrack(harness.tracks.value[0]);
+  assert.equal(harness.player.state.playbackSourceName.value, "聊天室曲库");
+
+  harness.player.controls.setPlaybackSource("playlist", 9);
+
+  assert.equal(harness.player.state.playbackSourceKind.value, "playlist");
+  assert.equal(harness.player.state.playbackSourceName.value, "晨间赞美");
+  assert.deepEqual(harness.player.state.playableTracks.value.map((item) => item.id), [7, 8]);
+  assert.equal(harness.player.state.currentTrack.value?.id, 7);
+
+  harness.player.controls.setPlaybackSource("library");
+
+  assert.equal(harness.player.state.playbackSourceName.value, "聊天室曲库");
+  assert.equal(harness.player.state.currentTrack.value?.id, 7);
+  harness.player.controls.dispose();
+});
+
+test("switching playback source keeps the current track when it belongs to the new queue", async () => {
+  const harness = createHarness({ tracks: [track(1), track(2, true), track(3)] });
+  await activate(harness);
+  harness.player.controls.selectTrack(harness.tracks.value[1]);
+
+  harness.player.controls.setPlaybackSource("favorites");
+
+  assert.equal(harness.player.state.playbackSourceName.value, "收藏的曲目");
+  assert.equal(harness.player.state.currentTrack.value?.id, 2);
+  harness.player.controls.dispose();
+});
 
 test("next track follows the unchanged default shuffle rule", async () => {
   const harness = createHarness({ random: 0 });
