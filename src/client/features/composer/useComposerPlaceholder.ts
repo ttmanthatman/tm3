@@ -7,18 +7,20 @@ export type ComposerPlaceholderSources = {
   getPrompts: () => string[];
   mentionNames: Ref<string[]>;
   getHoldSeconds: () => number;
-  getAnimSeconds: () => number;
+  getAppearSeconds: () => number;
+  getDisappearSeconds: () => number;
   getGapSeconds: () => number;
 };
 
 /**
  * Rotates composer prompt overlays through appear → hold → disappear → gap.
  * The client renders `text` letter by letter: characters light up left to
- * right during "appear" and dim left to right during "disappear". A new
- * unacknowledged @mention interrupts any phase (including the gap) and shows
- * the mention prompt immediately; when mentions clear, the normal rotation
- * resumes after one gap. The timer pauses while the document is hidden and
- * must be stopped via stop() on unmount.
+ * right during "appear" and dim left to right during "disappear", each phase
+ * paced by its own configured duration. A new unacknowledged @mention
+ * interrupts any phase (including the gap) and shows the mention prompt
+ * immediately; when mentions clear, the normal rotation resumes after one
+ * gap. The timer pauses while the document is hidden and must be stopped via
+ * stop() on unmount.
  */
 export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
   const text = ref("");
@@ -51,7 +53,7 @@ export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
     }
     text.value = prompts[promptIndex % prompts.length] || "";
     phase.value = "appear";
-    schedule(beginHold, sources.getAnimSeconds());
+    schedule(beginHold, sources.getAppearSeconds());
   }
 
   function beginHold() {
@@ -61,7 +63,7 @@ export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
 
   function beginDisappear() {
     phase.value = "disappear";
-    schedule(beginGap, sources.getAnimSeconds());
+    schedule(beginGap, sources.getDisappearSeconds());
   }
 
   function beginGap() {

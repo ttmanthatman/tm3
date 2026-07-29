@@ -54,7 +54,8 @@ function createHarness(prompts: string[] = ["第一条", "第二条"], mentionNa
     getPrompts: () => prompts,
     mentionNames,
     getHoldSeconds: () => 3,
-    getAnimSeconds: () => 1,
+    getAppearSeconds: () => 1,
+    getDisappearSeconds: () => 2,
     getGapSeconds: () => 6
   });
   return { dom, placeholder, mentionNames };
@@ -78,6 +79,7 @@ test("rotates prompts through appear, hold, disappear, and gap phases", () => {
   dom.fire();
   assert.equal(placeholder.phase.value, "disappear");
   assert.equal(placeholder.text.value, "第一条");
+  assert.equal(dom.pendingDelay(), 2000);
 
   dom.fire();
   assert.equal(placeholder.phase.value, "idle");

@@ -9,7 +9,8 @@ export const DEFAULT_COMPOSER_PROMPT_INTERVAL = 3;
 
 export const COMPOSER_PROMPT_ANIM_MIN = 0.3;
 export const COMPOSER_PROMPT_ANIM_MAX = 5;
-export const DEFAULT_COMPOSER_PROMPT_ANIM = 1.2;
+export const DEFAULT_COMPOSER_PROMPT_APPEAR = 1.2;
+export const DEFAULT_COMPOSER_PROMPT_DISAPPEAR = 1.2;
 
 export const COMPOSER_PROMPT_GAP_MIN = 1;
 export const COMPOSER_PROMPT_GAP_MAX = 60;
@@ -34,11 +35,19 @@ export function cleanComposerPromptIntervalSeconds(value: unknown): number {
   return Math.round(clamped * 100) / 100;
 }
 
-export function cleanComposerPromptAnimSeconds(value: unknown): number {
+function cleanAnimSeconds(value: unknown, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
-  if (!Number.isFinite(parsed)) return DEFAULT_COMPOSER_PROMPT_ANIM;
+  if (!Number.isFinite(parsed)) return fallback;
   const clamped = Math.max(COMPOSER_PROMPT_ANIM_MIN, Math.min(COMPOSER_PROMPT_ANIM_MAX, parsed));
   return Math.round(clamped * 100) / 100;
+}
+
+export function cleanComposerPromptAppearSeconds(value: unknown): number {
+  return cleanAnimSeconds(value, DEFAULT_COMPOSER_PROMPT_APPEAR);
+}
+
+export function cleanComposerPromptDisappearSeconds(value: unknown): number {
+  return cleanAnimSeconds(value, DEFAULT_COMPOSER_PROMPT_DISAPPEAR);
 }
 
 export function cleanComposerPromptGapSeconds(value: unknown): number {
@@ -68,7 +77,7 @@ export function composerActivePrompts(prompts: string[], mentionNames: string[])
  */
 export function composerPromptCharTiming(textLength: number, animSeconds: number): { stagger: number; duration: number } {
   const length = Math.max(1, Math.floor(textLength));
-  const anim = cleanComposerPromptAnimSeconds(animSeconds);
+  const anim = cleanAnimSeconds(animSeconds, DEFAULT_COMPOSER_PROMPT_APPEAR);
   const stagger = anim / length;
   const duration = Math.min(0.5, Math.max(0.15, stagger * 1.2));
   return { stagger, duration };

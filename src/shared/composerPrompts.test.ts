@@ -7,10 +7,12 @@ import {
   COMPOSER_PROMPT_GAP_MIN,
   COMPOSER_PROMPT_INTERVAL_MAX,
   COMPOSER_PROMPT_INTERVAL_MIN,
-  DEFAULT_COMPOSER_PROMPT_ANIM,
+  DEFAULT_COMPOSER_PROMPT_APPEAR,
+  DEFAULT_COMPOSER_PROMPT_DISAPPEAR,
   DEFAULT_COMPOSER_PROMPT_GAP,
   DEFAULT_COMPOSER_PROMPT_INTERVAL,
-  cleanComposerPromptAnimSeconds,
+  cleanComposerPromptAppearSeconds,
+  cleanComposerPromptDisappearSeconds,
   cleanComposerPromptGapSeconds,
   cleanComposerPromptIntervalSeconds,
   cleanComposerPrompts,
@@ -35,12 +37,17 @@ test("cleans the composer prompt interval into the supported range", () => {
   assert.equal(cleanComposerPromptIntervalSeconds("4.5"), 4.5);
 });
 
-test("cleans the composer prompt animation time into the supported range", () => {
-  assert.equal(cleanComposerPromptAnimSeconds(undefined), DEFAULT_COMPOSER_PROMPT_ANIM);
-  assert.equal(cleanComposerPromptAnimSeconds("not-a-number"), DEFAULT_COMPOSER_PROMPT_ANIM);
-  assert.equal(cleanComposerPromptAnimSeconds(0.1), COMPOSER_PROMPT_ANIM_MIN);
-  assert.equal(cleanComposerPromptAnimSeconds(99), COMPOSER_PROMPT_ANIM_MAX);
-  assert.equal(cleanComposerPromptAnimSeconds("2.5"), 2.5);
+test("cleans the composer prompt appear and disappear times into the supported range", () => {
+  assert.equal(cleanComposerPromptAppearSeconds(undefined), DEFAULT_COMPOSER_PROMPT_APPEAR);
+  assert.equal(cleanComposerPromptAppearSeconds("not-a-number"), DEFAULT_COMPOSER_PROMPT_APPEAR);
+  assert.equal(cleanComposerPromptAppearSeconds(0.1), COMPOSER_PROMPT_ANIM_MIN);
+  assert.equal(cleanComposerPromptAppearSeconds(99), COMPOSER_PROMPT_ANIM_MAX);
+  assert.equal(cleanComposerPromptAppearSeconds("2.5"), 2.5);
+  assert.equal(cleanComposerPromptDisappearSeconds(undefined), DEFAULT_COMPOSER_PROMPT_DISAPPEAR);
+  assert.equal(cleanComposerPromptDisappearSeconds("not-a-number"), DEFAULT_COMPOSER_PROMPT_DISAPPEAR);
+  assert.equal(cleanComposerPromptDisappearSeconds(0.1), COMPOSER_PROMPT_ANIM_MIN);
+  assert.equal(cleanComposerPromptDisappearSeconds(99), COMPOSER_PROMPT_ANIM_MAX);
+  assert.equal(cleanComposerPromptDisappearSeconds("0.8"), 0.8);
 });
 
 test("cleans the composer prompt gap into the supported range", () => {

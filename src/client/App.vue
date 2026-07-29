@@ -144,10 +144,12 @@ import {
 } from "@shared/wallpaperPan";
 import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
 import {
-  DEFAULT_COMPOSER_PROMPT_ANIM,
+  DEFAULT_COMPOSER_PROMPT_APPEAR,
+  DEFAULT_COMPOSER_PROMPT_DISAPPEAR,
   DEFAULT_COMPOSER_PROMPT_GAP,
   DEFAULT_COMPOSER_PROMPT_INTERVAL,
-  cleanComposerPromptAnimSeconds,
+  cleanComposerPromptAppearSeconds,
+  cleanComposerPromptDisappearSeconds,
   cleanComposerPromptGapSeconds,
   cleanComposerPromptIntervalSeconds,
   cleanComposerPrompts,
@@ -500,7 +502,8 @@ const flashEffectEdit = ref<FlashEffectSettingsDTO>({
 });
 const composerPromptsText = ref("");
 const composerPromptIntervalEdit = ref(DEFAULT_COMPOSER_PROMPT_INTERVAL);
-const composerPromptAnimEdit = ref(DEFAULT_COMPOSER_PROMPT_ANIM);
+const composerPromptAppearEdit = ref(DEFAULT_COMPOSER_PROMPT_APPEAR);
+const composerPromptDisappearEdit = ref(DEFAULT_COMPOSER_PROMPT_DISAPPEAR);
 const composerPromptGapEdit = ref(DEFAULT_COMPOSER_PROMPT_GAP);
 const customThemesDraft = ref<ThemeDTO[]>([]);
 const flashEffectStep = ref(0);
@@ -1797,7 +1800,8 @@ const appearanceSavePayload = computed(() => ({
   customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } })),
   composerPrompts: cleanComposerPrompts(composerPromptsText.value.split("\n")),
   composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(composerPromptIntervalEdit.value),
-  composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(composerPromptAnimEdit.value),
+  composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(composerPromptAppearEdit.value),
+  composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(composerPromptDisappearEdit.value),
   composerPromptGapSeconds: cleanComposerPromptGapSeconds(composerPromptGapEdit.value)
 }));
 const currentAppearancePayload = computed(() => ({
@@ -1825,7 +1829,8 @@ const currentAppearancePayload = computed(() => ({
   customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } })),
   composerPrompts: cleanComposerPrompts(store.appearance.composerPrompts || []),
   composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
-  composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds),
+  composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
+  composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds),
   composerPromptGapSeconds: cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
 }));
 const appearanceHasDraftChanges = computed(() => JSON.stringify(appearanceSavePayload.value) !== JSON.stringify(currentAppearancePayload.value));
@@ -2859,20 +2864,27 @@ const { text: composerPromptText, phase: composerPromptPhase, stop: stopComposer
   getPrompts: () => store.appearance.composerPrompts || [],
   mentionNames: composerMentionNameList,
   getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
-  getAnimSeconds: () => cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds),
+  getAppearSeconds: () => cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
+  getDisappearSeconds: () => cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds),
   getGapSeconds: () => cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
 });
 
 const composerPromptChars = computed(() => [...composerPromptText.value].map((char) => (char === " " ? " " : char)));
-const composerPromptCharTimingValue = computed(() =>
-  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds))
+const composerPromptAppearTiming = computed(() =>
+  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds))
+);
+const composerPromptDisappearTiming = computed(() =>
+  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds))
 );
 
 function composerPromptCharStyle(index: number) {
-  const { stagger, duration } = composerPromptCharTimingValue.value;
+  const appear = composerPromptAppearTiming.value;
+  const disappear = composerPromptDisappearTiming.value;
   return {
-    transitionDelay: `${(index * stagger).toFixed(3)}s`,
-    transitionDuration: `${duration.toFixed(3)}s`
+    animationDelay: `${(index * appear.stagger).toFixed(3)}s`,
+    animationDuration: `${appear.duration.toFixed(3)}s`,
+    transitionDelay: `${(index * disappear.stagger).toFixed(3)}s`,
+    transitionDuration: `${disappear.duration.toFixed(3)}s`
   };
 }
 
@@ -8836,7 +8848,8 @@ function syncLoginAppearanceEdit() {
   customThemesDraft.value = (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }));
   composerPromptsText.value = cleanComposerPrompts(store.appearance.composerPrompts || []).join("\n");
   composerPromptIntervalEdit.value = cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds);
-  composerPromptAnimEdit.value = cleanComposerPromptAnimSeconds(store.appearance.composerPromptAnimSeconds);
+  composerPromptAppearEdit.value = cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds);
+  composerPromptDisappearEdit.value = cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds);
   composerPromptGapEdit.value = cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds);
   if (customThemeEdit.value.id && !customThemesDraft.value.some((theme) => theme.id === customThemeEdit.value.id)) resetThemeEditor();
   if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
@@ -11433,14 +11446,18 @@ async function toggleVirtual(character: any) {
                 <label>输入框引导语</label>
                 <div class="composer-prompt-settings">
                   <textarea v-model="composerPromptsText" rows="4" placeholder="一行一条，例如：分享下今天的恩典？"></textarea>
-                  <small>输入框空闲时轮播这些引导语，文字逐字照亮、逐字熄灭；有人 @ 成员时立即提醒「回应一下」。清空列表可关闭轮播。</small>
+                  <small>输入框空闲时轮播这些引导语，文字逐字显现、逐字熄灭；有人 @ 成员时立即提醒「回应一下」。清空列表可关闭轮播。</small>
                   <label class="flash-interval-row">
                     <span>显示时长（秒）</span>
                     <input v-model.number="composerPromptIntervalEdit" type="number" min="1" max="30" step="0.5" />
                   </label>
                   <label class="flash-interval-row">
-                    <span>逐字动画（秒）</span>
-                    <input v-model.number="composerPromptAnimEdit" type="number" min="0.3" max="5" step="0.1" />
+                    <span>出现动画（秒）</span>
+                    <input v-model.number="composerPromptAppearEdit" type="number" min="0.3" max="5" step="0.1" />
+                  </label>
+                  <label class="flash-interval-row">
+                    <span>消失动画（秒）</span>
+                    <input v-model.number="composerPromptDisappearEdit" type="number" min="0.3" max="5" step="0.1" />
                   </label>
                   <label class="flash-interval-row">
                     <span>间隔时间（秒）</span>

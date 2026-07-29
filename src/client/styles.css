@@ -5516,6 +5516,9 @@ button {
       #34d399,
       #22d3ee
     ) border-box;
+  box-shadow:
+    0 0 10px rgba(167, 139, 250, 0.45),
+    0 0 18px rgba(34, 211, 238, 0.28);
   animation: composerGlowSpin 3.2s linear infinite;
 }
 
@@ -5557,19 +5560,36 @@ button {
 
 .composer-prompt-char {
   opacity: 0;
-  transition-property: opacity, text-shadow;
+  transition-property: opacity;
   transition-timing-function: ease-in-out;
 }
 
 .composer-prompt-overlay.phase-appear .composer-prompt-char,
 .composer-prompt-overlay.phase-hold .composer-prompt-char {
   opacity: 1;
-  text-shadow: 0 0 8px rgba(122, 132, 152, 0.55);
+}
+
+/* Newly mounted spans cannot run a transition, so the appear phase uses an
+   animation; per-char delay and duration come from inline styles. */
+.composer-prompt-overlay.phase-appear .composer-prompt-char {
+  animation-name: composerPromptCharIn;
+  animation-fill-mode: both;
+  animation-timing-function: ease-in-out;
+}
+
+@keyframes composerPromptCharIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .composer-prompt-char {
     transition: none;
+    animation: none;
   }
 }
 

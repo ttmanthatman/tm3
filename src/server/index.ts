@@ -94,7 +94,8 @@ import {
   COMPOSER_PROMPT_GAP_MAX,
   COMPOSER_PROMPT_GAP_MIN,
   DEFAULT_COMPOSER_PROMPTS,
-  cleanComposerPromptAnimSeconds,
+  cleanComposerPromptAppearSeconds,
+  cleanComposerPromptDisappearSeconds,
   cleanComposerPromptGapSeconds,
   cleanComposerPromptIntervalSeconds,
   cleanComposerPrompts
@@ -4572,6 +4573,8 @@ async function appearanceDto() {
           "composerPrompts",
           "composerPromptIntervalSeconds",
           "composerPromptAnimSeconds",
+          "composerPromptAppearSeconds",
+          "composerPromptDisappearSeconds",
           "composerPromptGapSeconds"
         ]
       }
@@ -4611,7 +4614,10 @@ async function appearanceDto() {
       ? cleanComposerPrompts(parseJsonField(settings.get("composerPrompts"), []))
       : [...DEFAULT_COMPOSER_PROMPTS],
     composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(settings.get("composerPromptIntervalSeconds")),
-    composerPromptAnimSeconds: cleanComposerPromptAnimSeconds(settings.get("composerPromptAnimSeconds")),
+    composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(
+      settings.get("composerPromptAppearSeconds") ?? settings.get("composerPromptAnimSeconds")
+    ),
+    composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(settings.get("composerPromptDisappearSeconds")),
     composerPromptGapSeconds: cleanComposerPromptGapSeconds(settings.get("composerPromptGapSeconds"))
   };
 }
@@ -5334,7 +5340,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       customThemes: z.array(z.unknown()).optional(),
       composerPrompts: z.array(z.string().max(80)).max(50).optional(),
       composerPromptIntervalSeconds: z.number().min(1).max(30).optional(),
-      composerPromptAnimSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
+      composerPromptAppearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
+      composerPromptDisappearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
       composerPromptGapSeconds: z.number().min(COMPOSER_PROMPT_GAP_MIN).max(COMPOSER_PROMPT_GAP_MAX).optional()
     })
     .parse(request.body);
@@ -5362,7 +5369,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
   if (Object.prototype.hasOwnProperty.call(body, "composerPrompts")) await setSetting("composerPrompts", JSON.stringify(cleanComposerPrompts(body.composerPrompts)));
   if (Object.prototype.hasOwnProperty.call(body, "composerPromptIntervalSeconds")) await setSetting("composerPromptIntervalSeconds", String(cleanComposerPromptIntervalSeconds(body.composerPromptIntervalSeconds)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPromptAnimSeconds")) await setSetting("composerPromptAnimSeconds", String(cleanComposerPromptAnimSeconds(body.composerPromptAnimSeconds)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPromptAppearSeconds")) await setSetting("composerPromptAppearSeconds", String(cleanComposerPromptAppearSeconds(body.composerPromptAppearSeconds)));
+  if (Object.prototype.hasOwnProperty.call(body, "composerPromptDisappearSeconds")) await setSetting("composerPromptDisappearSeconds", String(cleanComposerPromptDisappearSeconds(body.composerPromptDisappearSeconds)));
   if (Object.prototype.hasOwnProperty.call(body, "composerPromptGapSeconds")) await setSetting("composerPromptGapSeconds", String(cleanComposerPromptGapSeconds(body.composerPromptGapSeconds)));
   const appearance = await appearanceDto();
   io.emit("appearance:updated", appearance);

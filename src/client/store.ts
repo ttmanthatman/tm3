@@ -4,7 +4,7 @@ import { markRaw } from "vue";
 import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
-import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_ANIM, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
+import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, planChannelSeed, recordChannelRead, saveUnreadState } from "./unread";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
@@ -57,7 +57,8 @@ const defaultAppearance: AppearanceDTO = {
   customThemes: [],
   composerPrompts: [...DEFAULT_COMPOSER_PROMPTS],
   composerPromptIntervalSeconds: DEFAULT_COMPOSER_PROMPT_INTERVAL,
-  composerPromptAnimSeconds: DEFAULT_COMPOSER_PROMPT_ANIM,
+  composerPromptAppearSeconds: DEFAULT_COMPOSER_PROMPT_APPEAR,
+  composerPromptDisappearSeconds: DEFAULT_COMPOSER_PROMPT_DISAPPEAR,
   composerPromptGapSeconds: DEFAULT_COMPOSER_PROMPT_GAP
 };
 

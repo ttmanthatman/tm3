@@ -646,7 +646,8 @@ export interface AppearanceDTO {
   customThemes: ThemeDTO[];
   composerPrompts: string[];
   composerPromptIntervalSeconds: number;
-  composerPromptAnimSeconds: number;
+  composerPromptAppearSeconds: number;
+  composerPromptDisappearSeconds: number;
   composerPromptGapSeconds: number;
 }
 
