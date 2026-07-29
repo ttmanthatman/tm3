@@ -713,8 +713,8 @@ test("music manager supports search, four sort modes, and manual movement contro
 test("music manager offers library navigation, playlists, multi-select, and compact shared cards", () => {
   assert.match(musicManager, />全部诗歌</);
   assert.match(musicManager, />我的收藏</);
-  assert.match(musicManager, />我的歌单</);
-  assert.match(musicManager, /aria-label="新建歌单" @click="createPlaylist"/);
+  assert.match(musicManager, />歌单列表</);
+  assert.match(musicManager, /创建歌单[\s\S]*?@click="createPlaylist"|@click="createPlaylist"[\s\S]*?创建歌单/);
   assert.match(musicManager, /toggleSelectionMode[\s\S]*?toggleTrackSelected/);
   assert.match(musicManager, /addSelectedToPlaylist[\s\S]*?deleteSelectedTracks/);
   assert.match(musicManager, /@click="openPlaylistPicker\(activePlaylist\)"/);

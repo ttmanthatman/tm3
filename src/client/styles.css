@@ -11181,6 +11181,8 @@ button.admin-object-row:focus-visible {
 .music-manager-head strong { font-size: 17px; }
 .music-manager-head small { color: var(--muted); font-size: 12px; }
 
+.music-manager-head > .music-manager-head-actions { flex: 0 0 auto; display: flex; flex-direction: row; align-items: center; gap: 8px; }
+
 .music-manager-notice {
   padding: 8px 16px;
   border-bottom: 1px solid var(--line);
@@ -11206,8 +11208,7 @@ button.admin-object-row:focus-visible {
   border-right: 1px solid var(--line);
 }
 
-.music-manager-nav > button,
-.music-manager-nav-group > button {
+.music-manager-nav > button {
   min-height: 38px;
   padding: 0 10px;
   border: 0;
@@ -11223,18 +11224,15 @@ button.admin-object-row:focus-visible {
   cursor: pointer;
 }
 
-.music-manager-nav > button:hover,
-.music-manager-nav-group > button:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.music-manager-nav > button:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 
-.music-manager-nav > button.active,
-.music-manager-nav-group > button.active {
+.music-manager-nav > button.active {
   color: var(--accent-dark);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   font-weight: 600;
 }
 
-.music-manager-nav > button span,
-.music-manager-nav-group > button span {
+.music-manager-nav > button span {
   min-width: 0;
   flex: 1;
   overflow: hidden;
@@ -11242,8 +11240,7 @@ button.admin-object-row:focus-visible {
   white-space: nowrap;
 }
 
-.music-manager-nav > button b,
-.music-manager-nav-group > button b {
+.music-manager-nav > button b {
   flex: 0 0 auto;
   min-width: 20px;
   padding: 1px 6px;
@@ -11255,38 +11252,7 @@ button.admin-object-row:focus-visible {
   text-align: center;
 }
 
-.music-manager-nav > button.active b,
-.music-manager-nav-group > button.active b { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 18%, transparent); }
-
-.music-manager-nav-group { display: grid; gap: 3px; }
-
-.music-manager-nav-title {
-  min-height: 32px;
-  margin-top: 8px;
-  padding: 0 10px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.music-manager-nav-title button {
-  width: 24px;
-  height: 24px;
-  border: 0;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  color: var(--muted);
-  background: transparent;
-  cursor: pointer;
-}
-
-.music-manager-nav-title button:hover { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-
-.music-manager-nav-empty { margin: 0; padding: 0 10px; color: var(--muted); font-size: 12px; }
+.music-manager-nav > button.active b { color: var(--accent-dark); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 
 .music-manager-main {
   min-width: 0;
@@ -11308,6 +11274,16 @@ button.admin-object-row:focus-visible {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
+
+.music-manager-toolbar-row {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.music-manager-toolbar > .music-manager-search { flex-basis: 100%; }
 
 .music-manager-btn {
   min-height: 34px;
@@ -11398,26 +11374,9 @@ button.admin-object-row:focus-visible {
   font-size: 13px;
 }
 
-.music-manager-view-switch { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
-
-.music-manager-view-switch button {
-  width: 36px;
-  height: 34px;
-  border: 0;
-  display: grid;
-  place-items: center;
-  color: var(--text);
-  background: var(--panel);
-  cursor: pointer;
-}
-
-.music-manager-view-switch button.active { color: #fff; background: var(--accent); }
-
 .music-manager-upload-status { margin: 0; padding: 8px 14px; color: var(--muted); font-size: 13px; }
 
 .music-manager-tracks { padding: 10px 12px; display: grid; gap: 7px; }
-
-.music-manager-tracks.view-grid { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 10px; }
 
 .music-manager-track {
   position: relative;
@@ -11437,10 +11396,6 @@ button.admin-object-row:focus-visible {
 .music-manager-track.current { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
 
 .music-manager-track.current .music-manager-play { color: #fff; background: var(--accent); }
-
-.music-manager-tracks.view-grid .music-manager-track { flex-wrap: wrap; align-content: start; }
-
-.music-manager-tracks.view-grid .music-manager-track-main { flex-basis: calc(100% - 46px); }
 
 .music-manager-check { display: grid; place-items: center; }
 .music-manager-check input { width: 16px; height: 16px; accent-color: var(--accent); }
@@ -11573,11 +11528,11 @@ button.admin-object-row:focus-visible {
 .music-manager-playlist-actions button.danger { color: #b42318; }
 
 .music-manager-playlist-head {
-  padding: 10px 14px;
+  flex-basis: 100%;
+  padding: 0 2px;
   display: flex;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid var(--line);
 }
 
 .music-manager-playlist-head strong { font-size: 16px; overflow-wrap: anywhere; }
@@ -11969,6 +11924,8 @@ button.admin-object-row:focus-visible {
 
   .music-manager-head { padding-top: calc(8px + var(--safe-top)); }
 
+  .music-manager-head small { display: none; }
+
   .music-manager-body { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 
   .music-manager-nav {
@@ -11982,30 +11939,10 @@ button.admin-object-row:focus-visible {
     border-bottom: 1px solid var(--line);
   }
 
-  .music-manager-nav > button,
-  .music-manager-nav-group > button { flex: 0 0 auto; }
-  .music-manager-nav > button b,
-  .music-manager-nav-group > button b { display: none; }
-
-  .music-manager-nav-group { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
-
-  .music-manager-nav-title {
-    margin-top: 0;
-    padding: 0;
-    min-height: 0;
-    border: 0;
-    flex: 0 0 auto;
-  }
-
-  .music-manager-nav-title span { white-space: nowrap; }
-
-  .music-manager-nav-title button { width: 30px; height: 30px; border: 1px solid var(--line); }
-  .music-manager-nav-empty { display: none; }
+  .music-manager-nav > button { flex: 0 0 auto; }
+  .music-manager-nav > button b { display: none; }
 
   .music-manager-toolbar { gap: 6px; }
-  .music-manager-search { order: 10; flex-basis: 100%; }
-
-  .music-manager-tracks.view-grid { grid-template-columns: minmax(0, 1fr); }
 
   .music-manager-detail { width: 100%; border-left: 0; }
 

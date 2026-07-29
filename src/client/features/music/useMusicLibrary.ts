@@ -97,7 +97,6 @@ export function useMusicLibrary(options: {
   const selectedTrackId = ref<number | null>(null);
   const query = ref("");
   const sort = ref<MusicPlaylistSort>("manual");
-  const viewMode = ref<"grid" | "list">("list");
   const selectionMode = ref(false);
   const selectedTrackIds = ref<Set<number>>(new Set());
   const resources = ref<MusicResourcePoolDTO>({ lyrics: [], scores: [] });
@@ -243,7 +242,6 @@ export function useMusicLibrary(options: {
     selectedTrack,
     query,
     sort,
-    viewMode,
     selectionMode,
     selectedTrackIds,
     selectedManageableIds,

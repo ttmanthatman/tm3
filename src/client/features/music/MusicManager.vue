@@ -1,15 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, toRef, watch } from "vue";
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronUp,
   FileText,
-  Grid3X3,
   Heart,
   Image as ImageIcon,
   Link,
-  List,
   ListChecks,
   ListMusic,
   Music,
@@ -77,7 +74,6 @@ const {
   selectedTrack,
   query,
   sort,
-  viewMode,
   selectionMode,
   selectedTrackIds,
   selectedManageableIds,
@@ -677,7 +673,7 @@ async function createPlaylist() {
       emit("refresh-playlists");
       selectNav("playlist", result.playlist.id);
     },
-    { done: "已创建歌单，可在右侧改名", fallback: "创建歌单失败" }
+    { done: "已创建歌单，可点击“重命名”修改名称", fallback: "创建歌单失败" }
   );
 }
 
@@ -708,7 +704,7 @@ async function removePlaylist(playlist: MusicPlaylistDTO) {
   await runAction(
     async () => {
       await api(`/api/music/playlists/${playlist.id}`, { method: "DELETE" });
-      selectNav("library");
+      selectNav("playlist", null);
     },
     { refreshPlaylists: true, done: "歌单已删除", fallback: "删除歌单失败" }
   );
@@ -738,9 +734,12 @@ async function removeFromPlaylist(playlist: MusicPlaylistDTO, trackId: number) {
 
 const pickerPlaylistId = ref<number | null>(null);
 const playlistPickerIds = ref<Set<number>>(new Set());
+const playlistPickerQuery = ref("");
+const playlistPickerTracks = computed(() => filterMusicTracksByQuery(props.tracks, playlistPickerQuery.value));
 
 function openPlaylistPicker(playlist: MusicPlaylistDTO) {
   pickerPlaylistId.value = playlist.id;
+  playlistPickerQuery.value = "";
   playlistPickerIds.value = new Set(playlist.tracks.map((track) => track.id));
 }
 
@@ -830,9 +829,14 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
           <strong>音乐管理</strong>
           <small>歌曲、歌词、歌谱与歌单的统一管理</small>
         </div>
-        <button v-if="!embedded" class="music-manager-icon-btn" aria-label="关闭音乐管理" @click="emit('close')">
-          <X :size="20" />
-        </button>
+        <div class="music-manager-head-actions">
+          <button class="music-manager-btn" :disabled="actionBusy" @click="createPlaylist">
+            <Plus :size="15" />创建歌单
+          </button>
+          <button v-if="!embedded" class="music-manager-icon-btn" aria-label="关闭音乐管理" @click="emit('close')">
+            <X :size="20" />
+          </button>
+        </div>
       </header>
 
       <div v-if="notice" class="music-manager-notice" role="status">{{ notice }}</div>
@@ -845,21 +849,9 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
           <button :class="{ active: nav === 'favorites' }" @click="selectNav('favorites')">
             <Heart :size="16" /><span>我的收藏</span><b>{{ favoriteCount }}</b>
           </button>
-          <div class="music-manager-nav-group">
-            <div class="music-manager-nav-title">
-              <span>我的歌单</span>
-              <button aria-label="新建歌单" @click="createPlaylist"><Plus :size="15" /></button>
-            </div>
-            <button
-              v-for="playlist in playlists"
-              :key="playlist.id"
-              :class="{ active: nav === 'playlist' && activePlaylistId === playlist.id }"
-              @click="selectNav('playlist', playlist.id)"
-            >
-              <ListMusic :size="16" /><span>{{ playlist.name }}</span><b>{{ playlist.trackCount }}</b>
-            </button>
-            <p v-if="!playlists.length" class="music-manager-nav-empty">还没有歌单</p>
-          </div>
+          <button :class="{ active: nav === 'playlist' }" @click="selectNav('playlist', null)">
+            <ListMusic :size="16" /><span>歌单列表</span><b>{{ playlists.length }}</b>
+          </button>
           <button :class="{ active: nav === 'resources' }" @click="selectNav('resources')">
             <Link :size="16" /><span>待绑定资源</span><b v-if="unboundResourceCount">{{ unboundResourceCount }}</b>
           </button>
@@ -868,42 +860,66 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
         <div class="music-manager-main">
           <!-- 曲库 / 收藏 / 歌单 曲目工具行 -->
           <div v-if="nav !== 'resources' && (nav !== 'playlist' || activePlaylist)" class="music-manager-toolbar">
-            <template v-if="nav === 'playlist' && activePlaylist">
-              <button class="music-manager-btn" @click="selectNav('playlist', null)"><ArrowLeft :size="16" />歌单列表</button>
-              <template v-if="activePlaylist.isOwner">
-                <button class="music-manager-btn" :disabled="actionBusy" @click="openPlaylistPicker(activePlaylist)">
-                  <Plus :size="16" />从曲库添加
+            <div class="music-manager-toolbar-row">
+              <template v-if="nav === 'playlist' && activePlaylist">
+                <template v-if="activePlaylist.isOwner">
+                  <button class="music-manager-btn" :disabled="actionBusy" @click="openPlaylistPicker(activePlaylist)">
+                    <Plus :size="16" />从曲库添加
+                  </button>
+                  <button class="music-manager-btn" :disabled="actionBusy" @click="openShare(activePlaylist)">
+                    <Share2 :size="16" />分享
+                  </button>
+                  <button class="music-manager-btn" :disabled="actionBusy || playlistEditingName" @click="beginPlaylistRename(activePlaylist)">
+                    <Pencil :size="16" />重命名
+                  </button>
+                  <button class="music-manager-btn danger" :disabled="actionBusy" @click="removePlaylist(activePlaylist)">
+                    <Trash2 :size="16" />删除
+                  </button>
+                </template>
+              </template>
+              <template v-else>
+                <button class="music-manager-btn primary" :disabled="!!uploadStatus" @click="songInput?.click()">
+                  <Upload :size="16" />上传歌曲
                 </button>
-                <button class="music-manager-btn" :disabled="actionBusy" @click="openShare(activePlaylist)">
-                  <Share2 :size="16" />分享
+                <button class="music-manager-btn" :disabled="actionBusy" @click="lyricsPoolInput?.click()">
+                  <FileText :size="16" />上传歌词
+                </button>
+                <button class="music-manager-btn" :disabled="actionBusy" @click="scorePoolInput?.click()">
+                  <ImageIcon :size="16" />上传歌谱
                 </button>
               </template>
-            </template>
-            <template v-else>
-              <button class="music-manager-btn primary" :disabled="!!uploadStatus" @click="songInput?.click()">
-                <Upload :size="16" />上传歌曲
+              <select v-model="sort" aria-label="排序方式">
+                <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+              </select>
+              <button v-if="nav !== 'playlist'" class="music-manager-btn" :class="{ active: selectionMode }" @click="toggleSelectionMode">
+                <ListChecks :size="16" />选择
               </button>
-              <button class="music-manager-btn" :disabled="actionBusy" @click="lyricsPoolInput?.click()">
-                <FileText :size="16" />上传歌词
-              </button>
-              <button class="music-manager-btn" :disabled="actionBusy" @click="scorePoolInput?.click()">
-                <ImageIcon :size="16" />上传歌谱
-              </button>
-            </template>
+            </div>
+
+            <!-- 歌单信息 / 重命名 -->
+            <div v-if="nav === 'playlist' && activePlaylist" class="music-manager-playlist-head">
+              <template v-if="playlistEditingName">
+                <input
+                  v-model="playlistRenameDraft"
+                  class="music-manager-rename-input"
+                  maxlength="60"
+                  aria-label="歌单名称"
+                  @keydown.enter="savePlaylistRename(activePlaylist)"
+                  @keydown.esc="playlistEditingName = false"
+                />
+                <button class="music-manager-btn primary" :disabled="actionBusy" @click="savePlaylistRename(activePlaylist)">保存</button>
+                <button class="music-manager-btn" :disabled="actionBusy" @click="playlistEditingName = false">取消</button>
+              </template>
+              <template v-else>
+                <strong>{{ activePlaylist.name }}</strong>
+                <small>{{ activePlaylist.trackCount }} 首 · 由 {{ activePlaylist.ownerName }} 创建</small>
+              </template>
+            </div>
+
             <label class="music-manager-search">
               <Search :size="16" />
               <input v-model="query" type="search" placeholder="搜索歌曲名或文件名" />
             </label>
-            <select v-model="sort" aria-label="排序方式">
-              <option v-for="option in SORT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <div class="music-manager-view-switch" aria-label="显示方式">
-              <button :class="{ active: viewMode === 'grid' }" aria-label="网格" @click="viewMode = 'grid'"><Grid3X3 :size="16" /></button>
-              <button :class="{ active: viewMode === 'list' }" aria-label="列表" @click="viewMode = 'list'"><List :size="16" /></button>
-            </div>
-            <button v-if="nav !== 'playlist'" class="music-manager-btn" :class="{ active: selectionMode }" @click="toggleSelectionMode">
-              <ListChecks :size="16" />选择
-            </button>
           </div>
 
           <p v-if="uploadStatus" class="music-manager-upload-status" role="status">{{ uploadStatus }}</p>
@@ -924,43 +940,8 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
             <div v-if="!playlists.length" class="music-manager-empty">
               <ListMusic :size="34" />
               <strong>还没有歌单</strong>
-              <small>点击左侧“我的歌单”旁的 + 新建一个歌单。</small>
+              <small>点击顶部的“创建歌单”按钮新建一个歌单。</small>
             </div>
-          </div>
-
-          <!-- 歌单详情头 -->
-          <div v-else-if="nav === 'playlist' && activePlaylist" class="music-manager-playlist-head">
-            <template v-if="playlistEditingName">
-              <input
-                v-model="playlistRenameDraft"
-                class="music-manager-rename-input"
-                maxlength="60"
-                aria-label="歌单名称"
-                @keydown.enter="savePlaylistRename(activePlaylist)"
-                @keydown.esc="playlistEditingName = false"
-              />
-              <button class="music-manager-btn primary" :disabled="actionBusy" @click="savePlaylistRename(activePlaylist)">保存</button>
-            </template>
-            <template v-else>
-              <strong>{{ activePlaylist.name }}</strong>
-              <small>{{ activePlaylist.trackCount }} 首 · 由 {{ activePlaylist.ownerName }} 创建</small>
-              <button
-                v-if="activePlaylist.isOwner"
-                class="music-manager-icon-btn"
-                aria-label="歌单改名"
-                @click="beginPlaylistRename(activePlaylist)"
-              >
-                <Pencil :size="15" />
-              </button>
-              <button
-                v-if="activePlaylist.isOwner"
-                class="music-manager-icon-btn danger"
-                aria-label="删除歌单"
-                @click="removePlaylist(activePlaylist)"
-              >
-                <Trash2 :size="15" />
-              </button>
-            </template>
           </div>
 
           <!-- 曲目列表 -->
@@ -970,7 +951,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
               <strong>{{ query ? "没有符合条件的歌曲" : "这里还没有歌曲" }}</strong>
               <small v-if="nav === 'favorites' && !query">点击歌曲右侧的爱心即可收藏。</small>
             </div>
-            <div v-else class="music-manager-tracks" :class="`view-${viewMode}`">
+            <div v-else class="music-manager-tracks">
               <article
                 v-for="track in visibleTracks"
                 :key="track.id"
@@ -1296,15 +1277,20 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
             <strong>从曲库添加歌曲</strong>
             <button class="music-manager-icon-btn" aria-label="关闭" @click="pickerPlaylistId = null"><X :size="18" /></button>
           </header>
+          <label class="music-manager-search">
+            <Search :size="16" />
+            <input v-model="playlistPickerQuery" type="search" placeholder="搜索歌曲名或文件名" />
+          </label>
           <div class="music-manager-modal-list">
-            <label v-for="track in tracks" :key="track.id" class="music-manager-modal-row">
+            <label v-for="track in playlistPickerTracks" :key="track.id" class="music-manager-modal-row">
               <input type="checkbox" :checked="playlistPickerIds.has(track.id)" @change="togglePlaylistPickerTrack(track.id)" />
               <span>{{ track.title }}</span>
               <small>{{ compactBytes(track.fileSize) }}</small>
             </label>
+            <p v-if="!playlistPickerTracks.length" class="music-manager-detail-hint">没有符合条件的歌曲。</p>
           </div>
           <footer>
-            <button class="music-manager-btn primary" :disabled="actionBusy" @click="savePlaylistPicker">保存</button>
+            <button class="music-manager-btn primary" :disabled="actionBusy" @click="savePlaylistPicker">完成</button>
             <button class="music-manager-btn" @click="pickerPlaylistId = null">取消</button>
           </footer>
         </div>
