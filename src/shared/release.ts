@@ -1,13 +1,17 @@
-export const APP_VERSION = "1.8.2";
+export const APP_VERSION = "1.8.3";
 
 export const RELEASE_DATE = "2026-07-29";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "输入框流光的光晕改为与彩条同色的渐变光辉：光晕颜色跟随彩条位置（金、青、粉、紫）并同步旋转，不再是一片灰色。"
+] as const;
+
+const RELEASE_1_8_2_NOTES = [
   "消息输入框新增引导语轮播：输入框空闲时引导语文字从左到右逐字显现、停留后从左到右逐字熄灭（默认引导语为“分享下今天的恩典？”），取代了原来的“输入消息”静态提示；有未读 @ 提醒时立即显示“xxx给你说话了，回应一下？”，即使正处于两条引导语的间隔期。管理员可在「管理面板 → 外观与体验 → 聊天室外观」批量编辑引导语（一行一条），并分别设置显示时长、出现动画时间、消失动画时间和两条引导语的间隔时间，对所有成员生效。",
   "输入框聚焦时四周显示旋转的彩色流光，流光外带柔和光晕。"
-] as const;
+] as const
 
 const RELEASE_1_8_1_NOTES = [
   "音乐小窗字号可单独设置：管理员在「管理面板 → 外观与体验 → 聊天室外观」里调整「歌」小窗的文字大小，对所有成员生效，不再跟随个人消息字号。",
@@ -733,9 +737,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.8.2",
+    version: "1.8.3",
     date: "2026-07-29",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.8.2",
+    date: "2026-07-29",
+    notes: RELEASE_1_8_2_NOTES
   },
   {
     version: "1.8.1",
