@@ -1,15 +1,20 @@
-export const APP_VERSION = "1.8.1";
+export const APP_VERSION = "1.8.2";
 
-export const RELEASE_DATE = "2026-07-28";
+export const RELEASE_DATE = "2026-07-29";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "消息输入框新增引导语轮播：输入框空闲时引导语文字从左到右逐字显现、停留后从左到右逐字熄灭（默认引导语为“分享下今天的恩典？”），取代了原来的“输入消息”静态提示；有未读 @ 提醒时立即显示“xxx给你说话了，回应一下？”，即使正处于两条引导语的间隔期。管理员可在「管理面板 → 外观与体验 → 聊天室外观」批量编辑引导语（一行一条），并分别设置显示时长、出现动画时间、消失动画时间和两条引导语的间隔时间，对所有成员生效。",
+  "输入框聚焦时四周显示旋转的彩色流光，流光外带柔和光晕。"
+] as const;
+
+const RELEASE_1_8_1_NOTES = [
   "音乐小窗字号可单独设置：管理员在「管理面板 → 外观与体验 → 聊天室外观」里调整「歌」小窗的文字大小，对所有成员生效，不再跟随个人消息字号。",
   "音乐小窗的所在歌单旁新增扩展按钮，点击直接打开完整的歌单管理窗口；正在播放歌单时会自动定位到该歌单。",
   "音乐小窗的「定时停止」标题旁新增「点击右边按钮开始计时」提示。",
   "音乐小窗的播放队列改为按歌单原始顺序完整显示所有曲目，不再只把当前曲目之后的歌排在前面。"
-] as const;
+] as const
 
 const RELEASE_1_8_0_NOTES = [
   "音乐小窗全新改版：去掉标题栏，改为居中的马卡龙配色小窗口，默认按「字」=20 的大小显示；背景不再模糊，面板不再半透明。",
@@ -728,9 +733,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.8.2",
+    date: "2026-07-29",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.8.1",
     date: "2026-07-28",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_8_1_NOTES
   },
   {
     version: "1.8.0",
