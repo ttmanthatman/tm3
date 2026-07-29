@@ -10359,20 +10359,22 @@ async function toggleVirtual(character: any) {
         <div class="composer-input-shell">
           <div class="composer-main" :class="{ raised: composerPanel }">
             <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
-            <textarea
-              ref="composerInput"
-              v-model="input"
-              rows="1"
-              :class="{ 'composer-glow': composerFocused }"
-              :placeholder="composerPromptText ? '' : (store.prayerOnly ? '输入代祷事项' : '')"
-              @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
-              @blur="composerFocused = false"
-              @input="onInput"
-              @click="syncComposerCaret"
-              @keyup="syncComposerCaret"
-              @keydown="onKeydown"
-              @paste="handleComposerPaste"
-            ></textarea>
+            <div class="composer-glow-shell" :class="{ on: composerFocused }">
+              <textarea
+                ref="composerInput"
+                v-model="input"
+                rows="1"
+                :class="{ 'composer-glow': composerFocused }"
+                :placeholder="composerPromptText ? '' : (store.prayerOnly ? '输入代祷事项' : '')"
+                @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
+                @blur="composerFocused = false"
+                @input="onInput"
+                @click="syncComposerCaret"
+                @keyup="syncComposerCaret"
+                @keydown="onKeydown"
+                @paste="handleComposerPaste"
+              ></textarea>
+            </div>
             <span
               v-if="!input.trim() && composerPromptText"
               class="composer-prompt-overlay"

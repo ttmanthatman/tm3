@@ -5503,6 +5503,45 @@ button {
   inherits: false;
 }
 
+.composer-glow-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* A blurred copy of the rotating gradient sits behind the textarea, so the
+   halo radiates the border's own colors instead of a flat single-color glow. */
+.composer-glow-shell::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 10px;
+  background: conic-gradient(
+    from var(--composer-glow-angle),
+    #22d3ee,
+    #a78bfa,
+    #f472b6,
+    #facc15,
+    #34d399,
+    #22d3ee
+  );
+  filter: blur(12px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.composer-glow-shell.on::before {
+  opacity: 0.8;
+  animation: composerGlowSpin 3.2s linear infinite;
+}
+
+.composer-glow-shell textarea {
+  position: relative;
+  z-index: 1;
+}
+
 .composer textarea.composer-glow {
   outline: none;
   background:
@@ -5516,9 +5555,6 @@ button {
       #34d399,
       #22d3ee
     ) border-box;
-  box-shadow:
-    0 0 10px rgba(167, 139, 250, 0.45),
-    0 0 18px rgba(34, 211, 238, 0.28);
   animation: composerGlowSpin 3.2s linear infinite;
 }
 
@@ -5535,10 +5571,16 @@ button {
       linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15) border-box;
     animation: none;
   }
+
+  .composer-glow-shell.on::before {
+    background: linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15);
+    animation: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .composer textarea.composer-glow {
+  .composer textarea.composer-glow,
+  .composer-glow-shell.on::before {
     animation: none;
   }
 }
