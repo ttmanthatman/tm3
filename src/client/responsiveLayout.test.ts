@@ -629,7 +629,7 @@ test("SRT and LRC lyrics upload from the music manager and render over the heade
 });
 
 test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
-  assert.match(app, /import MusicLyricsHeader from "\.\/components\/MusicLyricsHeader\.vue"/);
+  assert.match(app, /const MusicLyricsHeader = defineAsyncComponent\(\(\) => import\("\.\/components\/MusicLyricsHeader\.vue"\)\)/);
   assert.match(app, /<MusicLyricsHeader[\s\S]*?:get-current-time-ms="currentMusicPlaybackTimeMs"/);
   assert.doesNotMatch(app, /musicLyricsFrame|requestAnimationFrame\(tick\)|musicCurrentTimeMs/);
   assert.match(lyricsHeader, /window\.setTimeout\(runClock, MUSIC_LYRICS_TICK_MS\)/);

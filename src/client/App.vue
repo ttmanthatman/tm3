@@ -116,15 +116,10 @@ import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFa
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
-import MusicLyricsHeader from "./components/MusicLyricsHeader.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
-import BibleWorkspace from "./components/BibleWorkspace.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
-import PdfViewer from "./components/PdfViewer.vue";
-import PdfScoreInline from "./components/PdfScoreInline.vue";
-import AdminAccountsPage from "./features/admin/AdminAccountsPage.vue";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./features/voice/voiceRecording";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
@@ -185,10 +180,7 @@ import {
 } from "./musicPlayer";
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
 import { useMusicSleepTimer } from "./features/music/useMusicSleepTimer";
-import MusicManager from "./features/music/MusicManager.vue";
-import MusicMiniPanel from "./features/music/MusicMiniPanel.vue";
 import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
-import FriendPrograms from "./features/friend/FriendPrograms.vue";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
 import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
@@ -201,6 +193,17 @@ const {
   clearStatus: clearMessageSendStatus
 } = useMessageSender({ getSocket: () => store.socket });
 const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
+// Heavy or rarely-opened surfaces load on first use instead of inflating the
+// entry chunk (PdfViewer/PdfScoreInline pull in pdfjs-dist; the music manager
+// and Bible workspace are the largest feature components).
+const PdfViewer = defineAsyncComponent(() => import("./components/PdfViewer.vue"));
+const PdfScoreInline = defineAsyncComponent(() => import("./components/PdfScoreInline.vue"));
+const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWorkspace.vue"));
+const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicLyricsHeader.vue"));
+const MusicManager = defineAsyncComponent(() => import("./features/music/MusicManager.vue"));
+const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
+const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
+const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
