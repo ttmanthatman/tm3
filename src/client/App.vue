@@ -327,6 +327,14 @@ const resolvedMessageImageDimensions = ref<Record<number, { width: number; heigh
 const queuedMessageImagePreloads = new Set<number>();
 const messageImagePreloadQueue: MessageDTO[] = [];
 let activeMessageImagePreloads = 0;
+// Yield image-cache warming to idle time so it never competes with startup
+// or message-loading requests; Safari lacks requestIdleCallback. Declared
+// with the other preload state because the immediate messages watch below
+// can enqueue before later function bodies are evaluated.
+const scheduleImagePreload: (callback: () => void) => void =
+  typeof window !== "undefined" && typeof window.requestIdleCallback === "function"
+    ? (callback) => window.requestIdleCallback(callback)
+    : (callback) => window.setTimeout(callback, 1200);
 const measuredTimelineHeights = ref<Record<string, number>>({});
 let timelineResizeObserver: ResizeObserver | null = null;
 let timelineScrollFrame: number | undefined;
@@ -800,6 +808,12 @@ const previewProgress = ref(0);
 const pendingUploads = ref<Record<number, PendingUpload>>({});
 type LinkPreviewState = { status: "loading" | "ready" | "error"; preview?: LinkPreviewDTO; error?: string };
 const linkPreviewCache = ref<Record<string, LinkPreviewState>>({});
+// Preview requests queue here instead of firing all at once; declared beside
+// the cache because the immediate messages watch below runs before the later
+// function bodies are evaluated.
+const linkPreviewQueue: string[] = [];
+const linkPreviewQueued = new Set<string>();
+let activeLinkPreviews = 0;
 const voiceSending = ref(false);
 const playingVoiceId = ref<number | null>(null);
 const voiceProgress = ref<Record<number, number>>({});
@@ -2202,13 +2216,6 @@ function handleMessageImageLoad(message: MessageDTO, event: Event) {
   };
 }
 
-// Yield image-cache warming to idle time so it never competes with startup
-// or message-loading requests; Safari lacks requestIdleCallback.
-const scheduleImagePreload: (callback: () => void) => void =
-  typeof window !== "undefined" && typeof window.requestIdleCallback === "function"
-    ? (callback) => window.requestIdleCallback(callback)
-    : (callback) => window.setTimeout(callback, 1200);
-
 function pumpMessageImagePreloads() {
   while (activeMessageImagePreloads < 2 && messageImagePreloadQueue.length) {
     const message = messageImagePreloadQueue.shift();
@@ -2796,10 +2803,6 @@ function hostFromUrl(value: string) {
 function previewSiteName(preview?: LinkPreviewDTO | null) {
   return preview ? preview.siteName || hostFromUrl(preview.url) : "";
 }
-
-const linkPreviewQueue: string[] = [];
-const linkPreviewQueued = new Set<string>();
-let activeLinkPreviews = 0;
 
 function pumpLinkPreviews() {
   // Cold caches used to fire up to 40 preview requests at once; keep a small
