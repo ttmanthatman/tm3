@@ -74,7 +74,7 @@ test("文字消息刷新后仍然存在", async ({ page }) => {
   const message = "浏览器冒烟消息：刷新后仍然存在";
   await loginAsAdmin(page);
 
-  await page.getByPlaceholder("输入消息").fill(message);
+  await page.locator(".composer-main textarea").fill(message);
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
 
@@ -88,7 +88,7 @@ test("390px 手机端断线期间保留草稿并在重连后发送一次", async
   await page.setViewportSize({ width: 390, height: 844 });
   await loginAsAdmin(page);
 
-  const input = page.getByPlaceholder("输入消息");
+  const input = page.locator(".composer-main textarea");
   const send = page.getByRole("button", { name: "发送", exact: true });
   await input.fill(message);
   await setChatSocketConnection(page, false);
