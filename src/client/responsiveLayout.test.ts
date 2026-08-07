@@ -422,6 +422,15 @@ test("mobile drawers and the music manager head respect the top safe area", () =
 
 test("voice record strip hides once a preview is ready", () => {
   assert.match(app, /<div v-if="!audioPreviewUrl" class="record-strip"/);
+  assert.match(app, /v-if="recordingNotice" class="voice-recording-notice" role="alert"/);
+});
+
+test("mobile composer edge buttons stay square and align with the one-line input", () => {
+  const edgeButtonRules = [...css.matchAll(/\.composer-main \.composer-edge-btn \{([^}]*)\}/g)].map((match) => match[1]);
+  assert.ok(
+    edgeButtonRules.some((rule) => /width: 38px;/.test(rule) && /height: 38px;/.test(rule) && /flex(?:-basis)?: (?:0 0 )?38px;/.test(rule)),
+    "the mobile voice and trailing composer buttons should use a centered 38px square"
+  );
 });
 
 test("the music manager opens from the mini panel expand button as a separate overlay", () => {

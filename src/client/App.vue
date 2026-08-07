@@ -125,6 +125,7 @@ import ActivityTicker from "./components/ActivityTicker.vue";
 import PdfViewer from "./components/PdfViewer.vue";
 import PdfScoreInline from "./components/PdfScoreInline.vue";
 import AdminAccountsPage from "./features/admin/AdminAccountsPage.vue";
+import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./features/voice/voiceRecording";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
@@ -801,6 +802,7 @@ const voiceProgress = ref<Record<number, number>>({});
 const voiceDurations = ref<Record<number, number>>({});
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
+const recordingNotice = ref("");
 const serverVersion = ref<VersionDTO | null>(null);
 const versionUpdateNotice = ref("");
 const staleVersionVisible = ref(false);
@@ -817,6 +819,8 @@ const gooeyHighlights = ref<GooeyHighlight[]>([]);
 const hasUnreadMessages = ref(false);
 const awayFromNewest = ref(false);
 let recordingTimer: number | undefined;
+let activeVoiceRecordingSession: VoiceRecordingSession | null = null;
+const recordingWakeLock = createRecordingWakeLock(navigator);
 let versionCheckTimer: number | undefined;
 let updateStatusTimer: number | undefined;
 let rainAnimationFrame: number | undefined;
@@ -4803,11 +4807,17 @@ function handleDocumentVisibilityChange() {
   documentVisible.value = document.visibilityState === "visible";
   if (!documentVisible.value) {
     clearMusicLyricsHeaderResumeTimer();
+    if (isRecording.value) recordingStatus.value = "录音可能因锁屏或切换应用而中断";
     stopRainEffect();
     stopDripPhysics(true);
     stopGooeyDripPhysics(true);
     oopsPhysicsLayer.value?.reset();
   } else {
+    if (isRecording.value) {
+      void recordingWakeLock.acquire().then((held) => {
+        recordingStatus.value = held ? "正在录音" : "正在录音，请保持屏幕亮起";
+      });
+    }
     if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
     nextTick(() => {
       refreshMessageEffectObserver();
@@ -7174,19 +7184,24 @@ function clearRecordingTimer() {
 }
 
 function resetRecording() {
-  if (mediaRecorder.value && mediaRecorder.value.state !== "inactive") mediaRecorder.value.stop();
+  const recorder = mediaRecorder.value;
+  const session = activeVoiceRecordingSession;
+  if (recorder && session) session.stop(recorder, "discard");
+  else if (recorder && recorder.state !== "inactive") recorder.stop();
   previewAudioEl.value?.pause();
   mediaRecorder.value = null;
-  audioChunks.value = [];
+  activeVoiceRecordingSession = null;
   isRecording.value = false;
   recordingDuration.value = 0;
   recordingStatus.value = "";
+  recordingNotice.value = "";
   audioFile.value = null;
   audioPreviewWaveform.value = [];
   audioPreviewDurationMs.value = 0;
   previewPlaying.value = false;
   previewProgress.value = 0;
   clearRecordingTimer();
+  void recordingWakeLock.release();
   if (audioPreviewUrl.value) URL.revokeObjectURL(audioPreviewUrl.value);
   audioPreviewUrl.value = "";
 }
@@ -7213,18 +7228,32 @@ async function startRecording() {
     const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: 16000 };
     if (mimeType) recorderOptions.mimeType = mimeType;
     const recorder = new MediaRecorder(stream, recorderOptions);
+    const session = createVoiceRecordingSession();
+    const chunks: Blob[] = [];
+    const startedAt = Date.now();
     mediaRecorder.value = recorder;
+    activeVoiceRecordingSession = session;
     recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) audioChunks.value.push(event.data);
+      if (event.data.size > 0) chunks.push(event.data);
     };
     recorder.onstop = () => {
+      const outcome = session.consumeStop();
+      const isActiveSession = activeVoiceRecordingSession === session;
       activeStream.getTracks().forEach((track) => track.stop());
-      clearRecordingTimer();
-      isRecording.value = false;
+      if (isActiveSession) {
+        recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
+        clearRecordingTimer();
+        isRecording.value = false;
+        mediaRecorder.value = null;
+        activeVoiceRecordingSession = null;
+        void recordingWakeLock.release();
+      }
+      if (!outcome.keepPreview || !isActiveSession) return;
       const type = recorder.mimeType || mimeType || "audio/webm";
-      const blob = new Blob(audioChunks.value, { type });
+      const blob = new Blob(chunks, { type });
       if (!blob.size) {
         recordingStatus.value = "没有录到声音";
+        recordingNotice.value = outcome.reason === "interrupted" ? "录音被系统提前中断，而且没有保留下声音。请保持屏幕亮起并停留在聊天室后重录。" : "";
         return;
       }
       const ext = audioExtensionFromMime(type);
@@ -7237,14 +7266,24 @@ async function startRecording() {
         audioPreviewWaveform.value = result.waveform;
       });
       recordingStatus.value = "录音已完成";
+      recordingNotice.value = outcome.reason === "interrupted"
+        ? "录音被系统提前中断，下面只保留了中断前的部分。请保持屏幕亮起并停留在聊天室后重录。"
+        : "";
     };
-    recorder.start(1000);
+    recorder.onerror = () => {
+      if (activeVoiceRecordingSession === session) recordingStatus.value = "录音发生错误，正在保留已录部分";
+    };
+    session.start(recorder);
     isRecording.value = true;
     recordingStatus.value = "正在录音";
-    const startedAt = Date.now();
     recordingTimer = window.setInterval(() => {
       recordingDuration.value = Date.now() - startedAt;
     }, 250);
+    void recordingWakeLock.acquire().then((held) => {
+      if (!held && activeVoiceRecordingSession === session && isRecording.value) {
+        recordingStatus.value = "正在录音，请保持屏幕亮起";
+      }
+    });
   } catch {
     stream?.getTracks().forEach((track) => track.stop());
     recordingStatus.value = "";
@@ -7254,9 +7293,10 @@ async function startRecording() {
 }
 
 function stopRecording() {
-  if (mediaRecorder.value && mediaRecorder.value.state !== "inactive") {
-    mediaRecorder.value.stop();
-  }
+  const recorder = mediaRecorder.value;
+  if (!recorder || recorder.state === "inactive") return;
+  if (activeVoiceRecordingSession) activeVoiceRecordingSession.stop(recorder, "user");
+  else recorder.stop();
 }
 
 async function sendVoice() {
@@ -10455,6 +10495,7 @@ async function toggleVirtual(character: any) {
           </div>
         </div>
         <div v-if="composerPanel === 'voice'" class="composer-drawer voice-drawer">
+          <p v-if="recordingNotice" class="voice-recording-notice" role="alert">{{ recordingNotice }}</p>
           <div v-if="!audioPreviewUrl" class="record-strip" :class="{ recording: isRecording }">
             <span class="record-dot"></span>
             <strong>{{ recordingStatus || "点击麦克风开始录音" }}</strong>
