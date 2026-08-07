@@ -510,7 +510,9 @@ const loginAppearanceEdit = ref({
   parallaxSpeed: 1,
   parallaxKits: cleanParallaxKits(DEFAULT_PARALLAX_KITS),
   registrationEnabled: false,
-  musicPanelFontSize: 20
+  musicPanelFontSize: 20,
+  prayerBubbleMineColor: "#f0fbf1",
+  prayerBubbleOtherColor: "#fffaf0"
 });
 const flashEffectEdit = ref<FlashEffectSettingsDTO>({
   colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
@@ -582,6 +584,11 @@ const prayerUpdateTextarea = ref<HTMLTextAreaElement | null>(null);
 const prayerUpdateContent = ref("");
 const prayerUpdateBusy = ref(false);
 const prayerUpdateError = ref("");
+const prayerUpdatePhotoInput = ref<HTMLInputElement | null>(null);
+const prayerUpdatePhoto = ref<File | null>(null);
+const prayerUpdatePhotoPreview = ref("");
+const prayerComposerPhoto = ref<File | null>(null);
+const prayerComposerPhotoPreview = ref("");
 const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
 const expandedMusicBackgroundMessageIds = ref<Set<number>>(new Set());
 const aiSuggestionBusyIds = ref<Set<number>>(new Set());
@@ -711,6 +718,7 @@ async function openChannelFromList(channelId: number, prayerOnly = false) {
   if (!showingFavoriteSurface.value) saveReadPosition();
   showFavorites.value = false;
   showBibleFavorites.value = false;
+  clearPrayerComposerPhoto();
   await switchVisibleChannel(channelId, prayerOnly);
   showChannels.value = false;
 }
@@ -1635,6 +1643,8 @@ const wallpaperLabelShadow = computed(() => wallpaperLabelToneValue.value === "l
 const appearanceStyle = computed(() => ({
   ...themeStyle.value,
   "--message-content-font-size": `${messageFontSize.value}px`,
+  "--prayer-bubble-mine": store.appearance.prayerBubbleMineColor || "#f0fbf1",
+  "--prayer-bubble-other": store.appearance.prayerBubbleOtherColor || "#fffaf0",
   "--message-flash-bg": activeFlashColor.value,
   "--message-flash-text": readableTextColor(activeFlashColor.value),
   "--message-flash-interval": `${flashEffect.value.intervalSeconds}s`,
@@ -1850,6 +1860,8 @@ const appearanceSavePayload = computed(() => ({
   parallaxKits: cleanParallaxKits(loginAppearanceEdit.value.parallaxKits),
   registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
   musicPanelFontSize: cleanMusicPanelFontSize(loginAppearanceEdit.value.musicPanelFontSize),
+  prayerBubbleMineColor: loginAppearanceEdit.value.prayerBubbleMineColor,
+  prayerBubbleOtherColor: loginAppearanceEdit.value.prayerBubbleOtherColor,
   flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
   customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } })),
   composerPrompts: cleanComposerPrompts(composerPromptsText.value.split("\n")),
@@ -1879,6 +1891,8 @@ const currentAppearancePayload = computed(() => ({
   parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
   registrationEnabled: !!store.appearance.registrationEnabled,
   musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
+  prayerBubbleMineColor: store.appearance.prayerBubbleMineColor || "#f0fbf1",
+  prayerBubbleOtherColor: store.appearance.prayerBubbleOtherColor || "#fffaf0",
   flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
   customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } })),
   composerPrompts: cleanComposerPrompts(store.appearance.composerPrompts || []),
@@ -4366,11 +4380,21 @@ async function sendText() {
   const originalMusicMention = musicMention;
   const originalReply = replyTo.value;
   const messageType = musicMention ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
+  let prayerImageMessageId: number | null = null;
+  if (messageType === "prayer" && prayerComposerPhoto.value) {
+    try {
+      prayerImageMessageId = await uploadPrayerImage(prayerComposerPhoto.value, store.currentChannelId);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "照片上传失败");
+      return;
+    }
+  }
   const messagePayload = {
     ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
     ...(parsed.effect ? { effect: parsed.effect } : {}),
     ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
-    ...(musicMention ? { musicTrackId: musicMention.id } : {})
+    ...(musicMention ? { musicTrackId: musicMention.id } : {}),
+    ...(prayerImageMessageId ? { imageMessageId: prayerImageMessageId } : {})
   };
   const payload = {
     channelId: store.currentChannelId,
@@ -4389,6 +4413,7 @@ async function sendText() {
   if (!result.ok) return;
   selectedMusicMention.value = null;
   replyTo.value = null;
+  if (prayerImageMessageId) clearPrayerComposerPhoto();
 }
 
 function mentionMember(member: { displayName: string }) {
@@ -7125,10 +7150,25 @@ function handlePickedFile(event: Event) {
   input.value = "";
 }
 
+function clearPrayerComposerPhoto() {
+  if (prayerComposerPhotoPreview.value) URL.revokeObjectURL(prayerComposerPhotoPreview.value);
+  prayerComposerPhoto.value = null;
+  prayerComposerPhotoPreview.value = "";
+}
+
 async function handlePickedFiles(event: Event) {
   const input = event.target as HTMLInputElement;
   const files = Array.from(input.files || []);
   input.value = "";
+  if (store.prayerOnly) {
+    const image = files.find((file) => isImageFile(file));
+    if (image) {
+      clearPrayerComposerPhoto();
+      prayerComposerPhoto.value = image;
+      prayerComposerPhotoPreview.value = URL.createObjectURL(image);
+      return;
+    }
+  }
   let skipped = 0;
   for (const file of files) {
     const result = await uploadPickedFile(file);
@@ -7990,6 +8030,7 @@ function prayerPayload(message: MessageDTO): PrayerPayload {
     statusAt: raw.statusAt,
     statusBy: raw.statusBy,
     effect: raw.effect,
+    imageMessageId: Number(raw.imageMessageId || 0) > 0 ? Number(raw.imageMessageId) : null,
     updates: Array.isArray(raw.updates) ? raw.updates : [],
     prayerCount: Number(raw.prayerCount || 0),
     prayerActionCount: Number(raw.prayerActionCount || 0),
@@ -8020,6 +8061,15 @@ function prayerActionText(message: MessageDTO) {
 function prayerLatestTime(message: MessageDTO) {
   const latest = prayerPayload(message).prayedBy[0]?.latestPrayedAt;
   return latest ? adminDate(latest) : "";
+}
+
+function prayerImageUrl(imageMessageId: number) {
+  return `/api/files/${imageMessageId}?token=${encodeURIComponent(getToken())}`;
+}
+
+function openPrayerImage(message: MessageDTO, imageMessageId: number, event?: MouseEvent) {
+  if (event) event.stopPropagation();
+  openAttachmentFromTap({ id: imageMessageId, channelId: message.channelId, type: "image" } as MessageDTO, event);
 }
 
 function prayerAiSuggestions(message: MessageDTO) {
@@ -8260,32 +8310,27 @@ function canPublishPrayerUpdate(message: MessageDTO) {
   return message.type === "prayer" && (isMine(message) || !!store.account?.isAdmin);
 }
 
-function prayerUpdateMarkupToHtml(text: string) {
-  let html = "";
-  let cursor = 0;
-  for (const match of text.matchAll(/~~([\s\S]+?)~~/g)) {
-    const start = match.index ?? 0;
-    if (start > cursor) html += escapeHtmlText(text.slice(cursor, start));
-    html += `<s>${escapeHtmlText(match[1])}</s>`;
-    cursor = start + match[0].length;
-  }
-  if (cursor < text.length) html += escapeHtmlText(text.slice(cursor));
-  return html;
-}
-
 function buildPrayerUpdateHtml() {
-  return prayerUpdateMarkupToHtml(prayerUpdateContent.value.trim());
+  return escapeHtmlText(prayerUpdateContent.value.trim());
 }
 
 const prayerUpdateCanPublish = computed(() => {
-  return !!prayerUpdateContent.value.replace(/~~/g, "").trim();
+  return !!prayerUpdateContent.value.trim();
 });
+
+function clearPrayerUpdatePhoto() {
+  if (prayerUpdatePhotoPreview.value) URL.revokeObjectURL(prayerUpdatePhotoPreview.value);
+  prayerUpdatePhoto.value = null;
+  prayerUpdatePhotoPreview.value = "";
+  if (prayerUpdatePhotoInput.value) prayerUpdatePhotoInput.value.value = "";
+}
 
 function openPrayerUpdateEditor(message: MessageDTO) {
   pendingPrayerUpdate.value = message;
   prayerUpdateContent.value = "";
   prayerUpdateError.value = "";
   prayerUpdateBusy.value = false;
+  clearPrayerUpdatePhoto();
 }
 
 function closePrayerUpdateEditor() {
@@ -8293,27 +8338,26 @@ function closePrayerUpdateEditor() {
   pendingPrayerUpdate.value = null;
   prayerUpdateContent.value = "";
   prayerUpdateError.value = "";
+  clearPrayerUpdatePhoto();
 }
 
-async function strikeSelectedPrayerUpdateText() {
-  const textarea = prayerUpdateTextarea.value;
-  if (!textarea || prayerUpdateBusy.value) return;
-  const start = textarea.selectionStart;
-  const end = textarea.selectionEnd;
-  const value = prayerUpdateContent.value;
-  const selected = value.slice(start, end);
-  if (!selected) {
-    prayerUpdateError.value = "请先在代祷内容里选中要划去的文字";
-    await nextTick();
-    textarea.focus();
-    return;
-  }
+function handlePrayerUpdatePhotoPick(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  clearPrayerUpdatePhoto();
+  prayerUpdatePhoto.value = file;
+  prayerUpdatePhotoPreview.value = URL.createObjectURL(file);
   prayerUpdateError.value = "";
-  const replacement = selected.startsWith("~~") && selected.endsWith("~~") ? selected.slice(2, -2) : `~~${selected}~~`;
-  prayerUpdateContent.value = `${value.slice(0, start)}${replacement}${value.slice(end)}`;
-  await nextTick();
-  textarea.focus();
-  textarea.setSelectionRange(start, start + replacement.length);
+}
+
+async function uploadPrayerImage(file: File, channelId: number) {
+  const form = new FormData();
+  form.append("channelId", String(channelId));
+  form.append("file", file, file.name);
+  const result = await api<{ success: boolean; message?: MessageDTO }>("/api/files/upload", { method: "POST", body: form });
+  if (!result.message?.id) throw new Error("照片上传失败");
+  return result.message.id;
 }
 
 async function publishPrayerUpdate() {
@@ -8323,13 +8367,15 @@ async function publishPrayerUpdate() {
   prayerUpdateBusy.value = true;
   prayerUpdateError.value = "";
   try {
+    const imageMessageId = prayerUpdatePhoto.value ? await uploadPrayerImage(prayerUpdatePhoto.value, message.channelId) : null;
     const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, {
       method: "POST",
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, imageMessageId })
     });
     if (result.message) store.appendLocalMessage(result.message);
     pendingPrayerUpdate.value = null;
     prayerUpdateContent.value = "";
+    clearPrayerUpdatePhoto();
     await nextTick();
     scrollBottom(true);
   } catch (error) {
@@ -8956,7 +9002,9 @@ function syncLoginAppearanceEdit() {
     parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
     parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
     registrationEnabled: !!store.appearance.registrationEnabled,
-    musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize)
+    musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
+    prayerBubbleMineColor: store.appearance.prayerBubbleMineColor || "#f0fbf1",
+    prayerBubbleOtherColor: store.appearance.prayerBubbleOtherColor || "#fffaf0"
   };
   flashEffectEdit.value = {
     colors: [...flashEffect.value.colors],
@@ -10117,10 +10165,16 @@ async function toggleVirtual(character: any) {
                         </span>
                       </template>
                     </div>
+                    <button v-if="prayerPayload(row.message).imageMessageId" class="image-preview-button prayer-image" type="button" @click.stop="openPrayerImage(row.message, prayerPayload(row.message).imageMessageId!, $event)">
+                      <img class="chat-image" :src="prayerImageUrl(prayerPayload(row.message).imageMessageId!)" alt="代祷附带照片" loading="lazy" />
+                    </button>
                     <div v-if="prayerPayload(row.message).updates?.length" class="prayer-updates">
                       <div v-for="(update, idx) in prayerPayload(row.message).updates" :key="idx" class="prayer-update-entry">
                         <small>{{ adminDate(update.at) }}<template v-if="update.by"> · {{ update.by }}</template></small>
                         <div class="prayer-text bible-rich-text" v-html="update.content"></div>
+                        <button v-if="update.imageMessageId" class="image-preview-button prayer-image" type="button" @click.stop="openPrayerImage(row.message, update.imageMessageId, $event)">
+                          <img class="chat-image" :src="prayerImageUrl(update.imageMessageId)" alt="历史动态附带照片" loading="lazy" />
+                        </button>
                       </div>
                     </div>
                     <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
@@ -10480,6 +10534,11 @@ async function toggleVirtual(character: any) {
           <span><small>已提及歌曲</small><strong>{{ selectedMusicMention.title }}</strong></span>
           <button class="icon-btn" type="button" @click="removeMusicMention" aria-label="取消提及歌曲"><X :size="16" /></button>
         </div>
+        <div v-if="prayerComposerPhotoPreview" class="music-mention-chip prayer-photo-chip">
+          <img :src="prayerComposerPhotoPreview" alt="代祷附带照片预览" />
+          <span><small>已附照片</small><strong>随代祷一起发送</strong></span>
+          <button class="icon-btn" type="button" @click="clearPrayerComposerPhoto" aria-label="移除附带照片"><X :size="16" /></button>
+        </div>
         <div class="composer-input-shell">
           <div class="composer-main" :class="{ raised: composerPanel }">
             <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
@@ -10712,20 +10771,22 @@ async function toggleVirtual(character: any) {
       </form>
     </section>
 
-    <section v-if="pendingPrayerUpdate" class="modal-shell" @click.self="closePrayerUpdateEditor">
+    <section v-if="pendingPrayerUpdate" class="modal-shell" @mousedown.self="closePrayerUpdateEditor">
       <form class="small-modal prayer-update-modal" @submit.prevent="publishPrayerUpdate">
         <header class="modal-head">
           <strong>更新代祷最新动态</strong>
           <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form">
-          <p class="modal-help">写下这条代祷的最新动态；若某部分已经无需代祷或已蒙应允，选中文字后点“划去选中文字”。发布后新动态会显示在卡片顶部，原有内容自动下移保留，并作为最新消息推送给全员。</p>
-          <label>最新动态</label>
-          <div class="prayer-update-toolbar">
-            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="strikeSelectedPrayerUpdateText">划去选中文字</button>
-            <small>也可手动输入 ~~文字~~</small>
-          </div>
           <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="9" placeholder="写下最新动态…"></textarea>
+          <div class="prayer-update-attach">
+            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="prayerUpdatePhotoInput?.click()"><ImageIcon :size="15" />附上照片</button>
+            <span v-if="prayerUpdatePhotoPreview" class="prayer-update-photo-chip">
+              <img :src="prayerUpdatePhotoPreview" alt="已选照片预览" />
+              <button class="icon-btn" type="button" :disabled="prayerUpdateBusy" aria-label="移除照片" @click="clearPrayerUpdatePhoto"><X :size="14" /></button>
+            </span>
+          </div>
+          <input ref="prayerUpdatePhotoInput" class="hidden" type="file" accept="image/*" @change="handlePrayerUpdatePhotoPick" />
           <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
           <div class="confirm-actions">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>
@@ -11570,6 +11631,20 @@ async function toggleVirtual(character: any) {
                     <small>调整点击「歌」弹出的播放小窗文字大小，对所有成员生效。</small>
                   </label>
                 </div>
+                <label>代祷卡片</label>
+                <div class="color-grid">
+                  <label class="color-row">
+                    <span>自己的代祷卡片</span>
+                    <input v-model="loginAppearanceEdit.prayerBubbleMineColor" type="color" />
+                    <code>{{ loginAppearanceEdit.prayerBubbleMineColor }}</code>
+                  </label>
+                  <label class="color-row">
+                    <span>别人的代祷卡片</span>
+                    <input v-model="loginAppearanceEdit.prayerBubbleOtherColor" type="color" />
+                    <code>{{ loginAppearanceEdit.prayerBubbleOtherColor }}</code>
+                  </label>
+                </div>
+                <small>建议选择浅色，保存后对所有成员即时生效。</small>
                 <label>输入框引导语</label>
                 <div class="composer-prompt-settings">
                   <textarea v-model="composerPromptsText" rows="4" placeholder="一行一条，例如：分享下今天的恩典？"></textarea>

@@ -23,6 +23,26 @@ test("missing updater name is omitted", () => {
   assert.deepEqual(updates, [{ content: "原文内容", at: "2026-08-01T00:00:00.000Z" }]);
 });
 
+test("replaced photo rides into the history entry", () => {
+  const updates = prependPrayerUpdateHistory({}, "带图内容", "2026-08-01T00:00:00.000Z", "alice", 42);
+  assert.deepEqual(updates, [{ content: "带图内容", at: "2026-08-01T00:00:00.000Z", by: "alice", imageMessageId: 42 }]);
+});
+
+test("stored entries keep a valid imageMessageId and drop invalid ones", () => {
+  const raw = {
+    updates: [
+      { content: "有图", at: "2026-08-02T00:00:00.000Z", imageMessageId: 7 },
+      { content: "坏图", at: "2026-08-02T00:00:00.000Z", imageMessageId: -3 }
+    ]
+  };
+  const updates = prependPrayerUpdateHistory(raw, "新内容", "2026-08-03T00:00:00.000Z");
+  assert.deepEqual(updates, [
+    { content: "新内容", at: "2026-08-03T00:00:00.000Z" },
+    { content: "有图", at: "2026-08-02T00:00:00.000Z", imageMessageId: 7 },
+    { content: "坏图", at: "2026-08-02T00:00:00.000Z" }
+  ]);
+});
+
 test("malformed stored entries are dropped", () => {
   const raw = {
     updates: [

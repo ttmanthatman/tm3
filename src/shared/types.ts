@@ -40,7 +40,8 @@ export interface PrayerPayload extends MessageEffectPayload {
   sourcePrayerMessageId?: number | null;
   latestUpdateAt?: string;
   latestUpdateBy?: string;
-  updates?: Array<{ content: string; at: string; by?: string }>;
+  imageMessageId?: number | null;
+  updates?: Array<{ content: string; at: string; by?: string; imageMessageId?: number }>;
   prayerCount: number;
   prayerActionCount: number;
   currentUserPrayed: boolean;
@@ -643,6 +644,8 @@ export interface AppearanceDTO {
   loginFormPosition: "top" | "middle" | "bottom";
   registrationEnabled: boolean;
   musicPanelFontSize: number;
+  prayerBubbleMineColor: string;
+  prayerBubbleOtherColor: string;
   flashEffect: FlashEffectSettingsDTO;
   customThemes: ThemeDTO[];
   composerPrompts: string[];

@@ -77,6 +77,8 @@ const defaultAppearance: AppearanceDTO = {
   loginFormPosition: "middle",
   registrationEnabled: false,
   musicPanelFontSize: 20,
+  prayerBubbleMineColor: "#f0fbf1",
+  prayerBubbleOtherColor: "#fffaf0",
   flashEffect: {
     colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
     intervalSeconds: 0.4,

@@ -696,13 +696,23 @@ function cleanPrayerStatus(input: unknown): PrayerStatus {
 function cleanPrayerPayload(input: unknown) {
   const messagePayload = cleanMessagePayload(input);
   const status = input && typeof input === "object" && !Array.isArray(input) ? cleanPrayerStatus((input as { status?: unknown }).status) : "active";
+  const imageMessageId = Number(
+    input && typeof input === "object" && !Array.isArray(input) ? (input as { imageMessageId?: unknown }).imageMessageId || 0 : 0
+  );
   return {
     kind: "prayer",
     status,
     ...(status === "active" ? {} : { statusAt: new Date().toISOString() }),
     ...(messagePayload?.effect ? { effect: messagePayload.effect } : {}),
-    ...(messagePayload?.contentFormat ? { contentFormat: messagePayload.contentFormat } : {})
+    ...(messagePayload?.contentFormat ? { contentFormat: messagePayload.contentFormat } : {}),
+    ...(Number.isInteger(imageMessageId) && imageMessageId > 0 ? { imageMessageId } : {})
   };
+}
+
+async function isValidPrayerImageMessage(imageMessageId: number, channelId: number) {
+  if (!Number.isInteger(imageMessageId) || imageMessageId <= 0) return false;
+  const image = await prisma.message.findFirst({ where: { id: imageMessageId, channelId, type: "image" }, select: { id: true } });
+  return !!image;
 }
 
 function prayerPayloadRaw(input: unknown) {
@@ -4441,12 +4451,16 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
   const content = cleanText(body.content);
   if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "消息不能为空" });
   if (body.type === "prayer") {
+    const payload = cleanPrayerPayload(body.payload);
+    if (payload.imageMessageId && !(await isValidPrayerImageMessage(payload.imageMessageId, body.channelId))) {
+      return reply.code(400).send({ success: false, message: "附带照片无效" });
+    }
     const message = await createMessageFromActor({
       channelId: body.channelId,
       actorId: auth.actorId,
       content,
       type: "prayer",
-      payload: cleanPrayerPayload(body.payload),
+      payload,
       replyToId: body.replyToId || null,
       pushOrigin
     });
@@ -4625,7 +4639,7 @@ app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, 
   const auth = (request as AuthedRequest).auth;
   const pushOrigin = pushOriginFromHeaders(request.headers);
   const messageId = Number((request.params as { messageId: string }).messageId);
-  const body = z.object({ content: z.string().max(10000).optional() }).parse(request.body || {});
+  const body = z.object({ content: z.string().max(10000).optional(), imageMessageId: z.number().nullable().optional() }).parse(request.body || {});
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
   if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
@@ -4635,17 +4649,24 @@ app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, 
   const content = cleanText(body.content ?? source.content ?? "");
   if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "代祷内容不能为空" });
   const raw = prayerPayloadRaw(source.payload);
+  const newImageMessageId = body.imageMessageId ? Number(body.imageMessageId) : 0;
+  if (newImageMessageId && !(await isValidPrayerImageMessage(newImageMessageId, source.channelId))) {
+    return reply.code(400).send({ success: false, message: "附带照片无效" });
+  }
+  const previousImageMessageId = Number(raw.imageMessageId || 0);
   const updates = prependPrayerUpdateHistory(
     raw,
     source.content ?? "",
     typeof raw.latestUpdateAt === "string" ? raw.latestUpdateAt : source.createdAt.toISOString(),
-    typeof raw.latestUpdateBy === "string" ? raw.latestUpdateBy : sourceSender?.username
+    typeof raw.latestUpdateBy === "string" ? raw.latestUpdateBy : sourceSender?.username,
+    Number.isInteger(previousImageMessageId) && previousImageMessageId > 0 ? previousImageMessageId : undefined
   );
   const sourcePayload = {
     ...raw,
     kind: "prayer",
     latestUpdateAt: new Date().toISOString(),
     latestUpdateBy: auth.username,
+    imageMessageId: newImageMessageId > 0 ? newImageMessageId : null,
     updates
   };
   await prisma.message.update({
@@ -4811,6 +4832,8 @@ async function appearanceDto() {
           "loginFormPosition",
           "registrationEnabled",
           "musicPanelFontSize",
+          "prayerBubbleMineColor",
+          "prayerBubbleOtherColor",
           "flashEffect",
           "customThemes",
           "composerPrompts",
@@ -4851,6 +4874,8 @@ async function appearanceDto() {
     loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
     registrationEnabled: settings.get("registrationEnabled") === "true",
     musicPanelFontSize: cleanMusicPanelFontSize(settings.get("musicPanelFontSize")),
+    prayerBubbleMineColor: cleanHexColor(settings.get("prayerBubbleMineColor"), "#f0fbf1"),
+    prayerBubbleOtherColor: cleanHexColor(settings.get("prayerBubbleOtherColor"), "#fffaf0"),
     flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
     customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), [])),
     composerPrompts: settings.has("composerPrompts")
@@ -5579,6 +5604,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
       loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
       registrationEnabled: z.boolean().optional(),
       musicPanelFontSize: z.number().min(MUSIC_PANEL_FONT_SIZE_MIN).max(MUSIC_PANEL_FONT_SIZE_MAX).optional(),
+      prayerBubbleMineColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
+      prayerBubbleOtherColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
       flashEffect: z.unknown().optional(),
       customThemes: z.array(z.unknown()).optional(),
       composerPrompts: z.array(z.string().max(80)).max(50).optional(),
@@ -5608,6 +5635,8 @@ app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) 
   if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
   if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
   if (Object.prototype.hasOwnProperty.call(body, "musicPanelFontSize")) await setSetting("musicPanelFontSize", String(cleanMusicPanelFontSize(body.musicPanelFontSize)));
+  if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleMineColor")) await setSetting("prayerBubbleMineColor", cleanHexColor(body.prayerBubbleMineColor, "#f0fbf1"));
+  if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleOtherColor")) await setSetting("prayerBubbleOtherColor", cleanHexColor(body.prayerBubbleOtherColor, "#fffaf0"));
   if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
   if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
   if (Object.prototype.hasOwnProperty.call(body, "composerPrompts")) await setSetting("composerPrompts", JSON.stringify(cleanComposerPrompts(body.composerPrompts)));
@@ -7166,6 +7195,10 @@ io.on("connection", async (socket: Socket) => {
       const content = cleanText(body.content);
       if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
       const payload = body.type === "prayer" ? cleanPrayerPayload(body.payload) : await cleanTextMessagePayload(body.payload);
+      const prayerImageMessageId = body.type === "prayer" ? Number((payload as { imageMessageId?: unknown }).imageMessageId || 0) : 0;
+      if (prayerImageMessageId && !(await isValidPrayerImageMessage(prayerImageMessageId, body.channelId))) {
+        return ack?.({ success: false, message: "附带照片无效" });
+      }
       const message = await createMessageFromActor({
         channelId: body.channelId,
         actorId: currentAuth.actorId,

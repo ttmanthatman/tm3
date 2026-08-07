@@ -3941,16 +3941,17 @@ button {
 
 .prayer-bubble {
   width: min(430px, 72vw);
+  max-width: 100%;
   padding: 0;
   overflow: visible;
   color: #332518;
-  background: #fffaf0;
+  background: var(--prayer-bubble-other, #fffaf0);
   border: 1px solid #ead7b8;
   box-shadow: 0 4px 14px rgba(92, 58, 23, 0.08);
 }
 
 .message-row.mine .prayer-bubble {
-  background: #f0fbf1;
+  background: var(--prayer-bubble-mine, #f0fbf1);
   border-color: #cce7d1;
   color: #203a24;
 }
@@ -5236,7 +5237,7 @@ button {
   width: 24px;
   height: 24px;
   margin-left: -4px;
-  border: 2px solid #fffaf0;
+  border: 2px solid var(--prayer-bubble-other, #fffaf0);
   border-radius: 50%;
   display: grid;
   place-items: center;
@@ -5248,7 +5249,7 @@ button {
 }
 
 .message-row.mine .mini-avatar {
-  border-color: #f0fbf1;
+  border-color: var(--prayer-bubble-mine, #f0fbf1);
 }
 
 .mini-avatar:first-child {
@@ -6892,22 +6893,57 @@ button {
   overscroll-behavior: contain;
 }
 
-.prayer-update-toolbar {
+.prayer-update-attach {
   margin-top: -3px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
 
-.prayer-update-toolbar .mini-btn {
+.prayer-update-attach .mini-btn {
   min-height: 32px;
   padding: 0 10px;
 }
 
-.prayer-update-toolbar small {
-  color: var(--muted);
-  font-size: 12px;
+.prayer-update-photo-chip {
+  position: relative;
+  display: inline-flex;
+}
+
+.prayer-update-photo-chip img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid rgba(138, 74, 31, 0.22);
+}
+
+.prayer-update-photo-chip .icon-btn {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  background: rgba(51, 37, 24, 0.78);
+  color: #fff;
+}
+
+.prayer-image {
+  margin-top: 4px;
+  align-self: flex-start;
+  justify-self: start;
+}
+
+.prayer-photo-chip img {
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 8px;
 }
 
 .prayer-text s,
