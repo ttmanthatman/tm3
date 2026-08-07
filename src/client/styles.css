@@ -5182,6 +5182,33 @@ button {
   white-space: pre-wrap;
 }
 
+.prayer-updates {
+  border-top: 1px dashed rgba(138, 74, 31, 0.22);
+  padding-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.prayer-update-entry {
+  display: grid;
+  gap: 2px;
+}
+
+.prayer-update-entry + .prayer-update-entry {
+  border-top: 1px dashed rgba(138, 74, 31, 0.14);
+  padding-top: 8px;
+}
+
+.prayer-update-entry > small {
+  color: rgba(51, 37, 24, 0.68);
+  font-size: 12px;
+}
+
+.prayer-update-entry .prayer-text {
+  font-size: calc(var(--message-content-font-size) - 1px);
+  opacity: 0.85;
+}
+
 .prayer-stats {
   border-top: 1px solid rgba(138, 74, 31, 0.14);
   padding-top: 8px;

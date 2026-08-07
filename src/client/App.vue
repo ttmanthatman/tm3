@@ -2441,21 +2441,6 @@ function replyPreviewText(message: MessageDTO) {
   return text.slice(0, 140);
 }
 
-function prayerUpdateMarkdownFromHtml(value: string) {
-  const root = document.createElement("div");
-  root.innerHTML = value || "";
-  const walk = (node: Node): string => {
-    if (node.nodeType === Node.TEXT_NODE) return node.textContent || "";
-    if (node.nodeType !== Node.ELEMENT_NODE) return "";
-    const element = node as HTMLElement;
-    if (element.tagName === "BR") return "\n";
-    const body = Array.from(element.childNodes).map(walk).join("");
-    if (element.tagName === "S" || element.tagName === "DEL") return body ? `~~${body}~~` : "";
-    return body;
-  };
-  return Array.from(root.childNodes).map(walk).join("").replace(/\n{3,}/g, "\n\n").trim();
-}
-
 function trimUrlPunctuation(value: string) {
   let url = value;
   let suffix = "";
@@ -8005,6 +7990,7 @@ function prayerPayload(message: MessageDTO): PrayerPayload {
     statusAt: raw.statusAt,
     statusBy: raw.statusBy,
     effect: raw.effect,
+    updates: Array.isArray(raw.updates) ? raw.updates : [],
     prayerCount: Number(raw.prayerCount || 0),
     prayerActionCount: Number(raw.prayerActionCount || 0),
     currentUserPrayed: !!raw.currentUserPrayed,
@@ -8297,7 +8283,7 @@ const prayerUpdateCanPublish = computed(() => {
 
 function openPrayerUpdateEditor(message: MessageDTO) {
   pendingPrayerUpdate.value = message;
-  prayerUpdateContent.value = prayerUpdateMarkdownFromHtml(message.content);
+  prayerUpdateContent.value = "";
   prayerUpdateError.value = "";
   prayerUpdateBusy.value = false;
 }
@@ -10131,6 +10117,12 @@ async function toggleVirtual(character: any) {
                         </span>
                       </template>
                     </div>
+                    <div v-if="prayerPayload(row.message).updates?.length" class="prayer-updates">
+                      <div v-for="(update, idx) in prayerPayload(row.message).updates" :key="idx" class="prayer-update-entry">
+                        <small>{{ adminDate(update.at) }}<template v-if="update.by"> · {{ update.by }}</template></small>
+                        <div class="prayer-text bible-rich-text" v-html="update.content"></div>
+                      </div>
+                    </div>
                     <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
                       <span class="link-preview-copy">
                         <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
@@ -10727,13 +10719,13 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form">
-          <p class="modal-help">可直接修改代祷内容；若某部分已经无需代祷或已蒙应允，选中文字后点“划去选中文字”。发布后会更新原卡片，并作为最新消息推送给全员。</p>
-          <label>代祷内容</label>
+          <p class="modal-help">写下这条代祷的最新动态；若某部分已经无需代祷或已蒙应允，选中文字后点“划去选中文字”。发布后新动态会显示在卡片顶部，原有内容自动下移保留，并作为最新消息推送给全员。</p>
+          <label>最新动态</label>
           <div class="prayer-update-toolbar">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="strikeSelectedPrayerUpdateText">划去选中文字</button>
             <small>也可手动输入 ~~文字~~</small>
           </div>
-          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="9" placeholder="修改最新动态或补充代祷内容"></textarea>
+          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="9" placeholder="写下最新动态…"></textarea>
           <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
           <div class="confirm-actions">
             <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>

@@ -77,6 +77,7 @@ import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.j
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
 import { imageDimensionsFromPayload, mergeImageDimensionsPayload, orientedImageDimensions, type ImageDimensions } from "../shared/imageDimensions.js";
 import { recalledMessageData } from "./messageRecall.js";
+import { prependPrayerUpdateHistory } from "./prayerUpdates.js";
 import { fallbackDirectChatNames, isAutomaticDirectChatName, parseDirectChatNameSuggestions } from "./directChatNames.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
@@ -4634,11 +4635,18 @@ app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, 
   const content = cleanText(body.content ?? source.content ?? "");
   if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "代祷内容不能为空" });
   const raw = prayerPayloadRaw(source.payload);
+  const updates = prependPrayerUpdateHistory(
+    raw,
+    source.content ?? "",
+    typeof raw.latestUpdateAt === "string" ? raw.latestUpdateAt : source.createdAt.toISOString(),
+    typeof raw.latestUpdateBy === "string" ? raw.latestUpdateBy : sourceSender?.username
+  );
   const sourcePayload = {
     ...raw,
     kind: "prayer",
     latestUpdateAt: new Date().toISOString(),
-    latestUpdateBy: auth.username
+    latestUpdateBy: auth.username,
+    updates
   };
   await prisma.message.update({
     where: { id: source.id },

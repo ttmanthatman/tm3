@@ -40,6 +40,7 @@ export interface PrayerPayload extends MessageEffectPayload {
   sourcePrayerMessageId?: number | null;
   latestUpdateAt?: string;
   latestUpdateBy?: string;
+  updates?: Array<{ content: string; at: string; by?: string }>;
   prayerCount: number;
   prayerActionCount: number;
   currentUserPrayed: boolean;
