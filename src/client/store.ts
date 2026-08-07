@@ -6,6 +6,7 @@ import { api, clearToken, getToken, setToken } from "./api";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, planChannelSeed, recordChannelRead, saveUnreadState } from "./unread";
+import { clearPersistedWindows, lastMsgwinAccount, loadPersistedWindow, persistWindowThrottled, rememberMsgwinAccount } from "./messageWindowCache";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -28,6 +29,33 @@ type MessageWindowCache = {
 const MESSAGE_PAGE_SIZE = 80;
 const MESSAGE_WINDOW_LIMIT = 480;
 const MESSAGE_CACHE_KEY_LIMIT = 24;
+
+// Resolves when the post-identity channel data (channels, messages, members,
+// like-notifications) finishes loading in the background. bootstrap() only
+// waits for appearance + identity so the chat shell can render cached
+// messages after a single round trip; callers that need channels (deep links)
+// await this via whenChannelsReady().
+let channelsReadyPromise: Promise<void> | null = null;
+
+// First message page for the persisted channel, fired by bootstrap() in
+// parallel with the identity request — it needs only the token, not the
+// account. loadChannels() reuses it when the channel survived revalidation.
+let initialMessagesPromise: Promise<void> | null = null;
+
+function loadInitialPersistedWindow(): { accountId: number; messages: MessageDTO[]; hasOlder: boolean } | null {
+  try {
+    if (!getToken()) return null;
+    const accountId = lastMsgwinAccount();
+    const channelId = Number(localStorage.getItem("team-chat-current-channel") || 0);
+    if (!accountId || !channelId) return null;
+    const prayerOnly = localStorage.getItem("team-chat-message-view") === "prayers";
+    const persisted = loadPersistedWindow(accountId, `${channelId}:${prayerOnly ? "prayers" : "chat"}`);
+    if (!persisted?.messages.length) return null;
+    return { accountId, messages: persisted.messages, hasOlder: persisted.hasOlder };
+  } catch {
+    return null;
+  }
+}
 const defaultAppearance: AppearanceDTO = {
   appTitle: "Team Chat",
   appIconPath: null,
@@ -63,17 +91,19 @@ const defaultAppearance: AppearanceDTO = {
 };
 
 export const useChatStore = defineStore("chat", {
-  state: () => ({
+  state: () => {
+    const hydrated = loadInitialPersistedWindow();
+    return {
     account: null as AccountDTO | null,
     appearance: { ...defaultAppearance } as AppearanceDTO,
     channels: [] as ChannelDTO[],
     currentChannelId: Number(localStorage.getItem("team-chat-current-channel") || 0),
     prayerOnly: localStorage.getItem("team-chat-message-view") === "prayers",
     previousChannelId: 0,
-    messages: [] as MessageDTO[],
+    messages: (hydrated ? [...hydrated.messages] : []) as MessageDTO[],
     messageCache: {} as Record<string, MessageWindowCache>,
     messageCacheOrder: [] as string[],
-    hasOlderMessages: false,
+    hasOlderMessages: hydrated?.hasOlder ?? false,
     hasNewerMessages: false,
     prefetchedOlderMessages: [] as MessageDTO[],
     loadingInitialMessages: false,
@@ -94,8 +124,10 @@ export const useChatStore = defineStore("chat", {
     likeNotifications: [] as LikeNotificationDTO[],
     socket: null as Socket | null,
     connectionState: "offline" as "offline" | "connecting" | "connected",
-    loading: false
-  }),
+    loading: false,
+    hydratedPersistedAccountId: hydrated?.accountId ?? 0
+    };
+  },
   getters: {
     currentChannel(state) {
       return state.channels.find((ch) => ch.id === state.currentChannelId) || state.channels[0] || null;
@@ -115,10 +147,13 @@ export const useChatStore = defineStore("chat", {
     },
     restoreCachedMessages(channelId?: number, prayerOnly?: boolean) {
       const cached = this.messageCache[this.messageCacheKey(channelId, prayerOnly)];
-      this.messages = cached ? [...cached.messages] : [];
-      this.hasOlderMessages = cached?.hasOlder || false;
-      this.hasNewerMessages = cached?.hasNewer || false;
-      this.prefetchedOlderMessages = cached ? [...cached.prefetchedOlder] : [];
+      // Windows parked mid-history would flash stale content before the latest
+      // page replaces them; only restore windows anchored at the newest message.
+      const usable = cached && !cached.hasNewer ? cached : null;
+      this.messages = usable ? [...usable.messages] : [];
+      this.hasOlderMessages = usable?.hasOlder || false;
+      this.hasNewerMessages = false;
+      this.prefetchedOlderMessages = usable ? [...usable.prefetchedOlder] : [];
       this.loadingInitialMessages = false;
       this.loadingOlderMessages = false;
       this.loadingNewerMessages = false;
@@ -139,6 +174,7 @@ export const useChatStore = defineStore("chat", {
       for (const staleKey of Object.keys(this.messageCache)) {
         if (!this.messageCacheOrder.includes(staleKey)) delete this.messageCache[staleKey];
       }
+      if (this.account && !this.hasNewerMessages) persistWindowThrottled(this.account.id, key, this.messages, this.hasOlderMessages);
     },
     resetMessageWindow() {
       this.messages = [];
@@ -197,9 +233,18 @@ export const useChatStore = defineStore("chat", {
       return `/api/messages?${query.toString()}`;
     },
     async bootstrap() {
-      await this.loadAppearance();
-      if (!getToken()) return;
-      if (await this.refreshCurrentAccount()) this.connectSocket();
+      const tasks: Promise<unknown>[] = [this.loadAppearance()];
+      if (getToken()) {
+        // The first message page needs only the persisted channel and token,
+        // so it starts now instead of waiting for identity and channels.
+        // Failures already surface through messageLoadError.
+        if (this.currentChannelId) initialMessagesPromise = this.loadMessages().catch(() => undefined);
+        tasks.push(this.refreshCurrentAccount().then((ok) => { if (ok) this.connectSocket(); }));
+      }
+      await Promise.all(tasks);
+    },
+    whenChannelsReady() {
+      return channelsReadyPromise ?? Promise.resolve();
     },
     async refreshCurrentAccount(preferredChannelId?: number) {
       if (!getToken()) return false;
@@ -208,10 +253,25 @@ export const useChatStore = defineStore("chat", {
         const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
         if (me.token) setToken(me.token);
         this.account = me.account;
+        if (this.hydratedPersistedAccountId && this.hydratedPersistedAccountId !== me.account.id) {
+          this.resetMessageWindow();
+          // bootstrap() fired the first page before identity was known; if it
+          // already landed, the reset above wiped it, so fetch it again.
+          if (initialMessagesPromise) initialMessagesPromise = this.loadMessages().catch(() => undefined);
+        }
+        this.hydratedPersistedAccountId = 0;
+        rememberMsgwinAccount(me.account.id);
         this.initUnreadForAccount();
-        await this.loadLikeNotifications();
-        await this.loadChannels(channelId);
-        await this.seedUnreadCounts();
+        channelsReadyPromise = Promise.all([this.loadLikeNotifications(), this.loadChannels(channelId)])
+          .then(() => {
+            void this.seedUnreadCounts();
+          })
+          .catch((error: unknown) => {
+            // Channel data revalidates in the background after the identity
+            // phase; a failure here surfaces inline instead of replacing the
+            // already-rendered cached messages with a full-screen error.
+            this.messageLoadError = error instanceof Error ? error.message : "频道加载失败";
+          });
         return true;
       } catch {
         await this.logout(false);
@@ -220,14 +280,16 @@ export const useChatStore = defineStore("chat", {
     },
     async afterLogin(account: AccountDTO) {
       this.account = account;
+      rememberMsgwinAccount(account.id);
       this.initUnreadForAccount();
-      await this.loadLikeNotifications();
-      await this.loadChannels();
-      await this.seedUnreadCounts();
+      await Promise.all([this.loadLikeNotifications(), this.loadChannels()]);
+      void this.seedUnreadCounts();
       this.connectSocket();
     },
     async logout(revoke = true) {
       if (revoke && getToken()) await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }).catch(() => undefined);
+      clearPersistedWindows(this.account?.id || lastMsgwinAccount());
+      rememberMsgwinAccount(0);
       this.socket?.disconnect();
       this.socket = null;
       this.connectionState = "offline";
@@ -237,6 +299,8 @@ export const useChatStore = defineStore("chat", {
       this.unreadLastRead = {};
       this.unreadAccountId = 0;
       this.unreadSeeded = false;
+      this.hydratedPersistedAccountId = 0;
+      initialMessagesPromise = null;
       this.resetMessageWindow();
       this.messageCache = {};
       this.messageCacheOrder = [];
@@ -321,14 +385,20 @@ export const useChatStore = defineStore("chat", {
     async loadChannels(preferredChannelId = 0) {
       const result = await api<{ channels: ChannelDTO[] }>("/api/channels");
       this.channels = result.channels.filter(Boolean);
+      const restoredChannelId = this.currentChannelId;
       const candidates = [this.currentChannelId, preferredChannelId, this.previousChannelId];
       const nextChannelId = candidates.find((id) => id && this.channels.some((ch) => ch.id === id)) || this.channels[0]?.id || 0;
       this.currentChannelId = nextChannelId;
       if (this.currentChannelId) {
         localStorage.setItem("team-chat-current-channel", String(this.currentChannelId));
-        await this.loadMessages();
-        await this.loadMembers();
+        // bootstrap() may already have the first page in flight (or done) for
+        // the restored channel; reuse it instead of duplicating the request.
+        const earlyMessages = initialMessagesPromise;
+        initialMessagesPromise = null;
+        const messagesReady = earlyMessages && nextChannelId === restoredChannelId ? earlyMessages : this.loadMessages();
+        await Promise.all([messagesReady, this.loadMembers()]);
       } else {
+        initialMessagesPromise = null;
         localStorage.removeItem("team-chat-current-channel");
         this.resetMessageWindow();
         this.members = [];
@@ -346,8 +416,7 @@ export const useChatStore = defineStore("chat", {
       this.restoreCachedMessages(id, false);
       this.pinned = this.channels.find((ch) => ch.id === id)?.pinned || null;
       this.socket?.emit("channel:join", { channelId: id });
-      await this.loadMessages();
-      await this.loadMembers();
+      await Promise.all([this.loadMessages(), this.loadMembers()]);
     },
     async switchPrayerView(id: number) {
       this.cacheCurrentMessages();

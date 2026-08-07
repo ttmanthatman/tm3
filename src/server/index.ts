@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import bcrypt from "bcryptjs";
 import cors from "@fastify/cors";
+import compress from "@fastify/compress";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
@@ -467,11 +468,21 @@ app.addHook("onRequest", async (_request, reply) => {
 await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
 await app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
 await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
+// JSON APIs and text assets cross a high-latency link; only compressible
+// content types are transformed, so media streams and binaries pass through.
+await app.register(compress, { global: true, threshold: 1024 });
 
 if (fs.existsSync(DIST_CLIENT)) {
   await app.register(fastifyStatic, {
     root: DIST_CLIENT,
-    wildcard: false
+    wildcard: false,
+    cacheControl: false,
+    setHeaders(res, filePath) {
+      // Vite emits content-hashed filenames under assets/, which are safe to
+      // cache forever; everything else (index.html, sw.js, icons) revalidates.
+      const immutable = filePath.includes(`${path.sep}assets${path.sep}`);
+      res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "public, max-age=0");
+    }
   });
 }
 

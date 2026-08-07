@@ -172,6 +172,7 @@ import {
   type SavedReadPosition
 } from "./readPosition";
 import { formatUnreadCount } from "./unread";
+import { flushPendingPersists, lastMsgwinAccount } from "./messageWindowCache";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
@@ -363,6 +364,10 @@ let wallpaperPanRetryAttempt = 0;
 let wallpaperPanRetrySource = "";
 let pendingWallpaperPanDelta = 0;
 const pendingReadPositionRestore = ref(false);
+// Cold-start anchor guard: while true the message list stays hidden until it
+// has been scrolled to the newest message, so a restored cached window never
+// flashes its oldest rows before the bottom anchor lands.
+const initialChatAnchorPending = ref(store.messages.length > 0);
 let readPositionRestoreToken = 0;
 type ActiveReadAnchor =
   | { kind: "message"; messageId: number; offset: number; expiresAt: number; token: number }
@@ -784,7 +789,6 @@ async function removeFavorite(favorite: FavoriteMessageDTO) {
 }
 
 const mediaRecorder = ref<MediaRecorder | null>(null);
-const audioChunks = ref<Blob[]>([]);
 const isRecording = ref(false);
 const audioPreviewUrl = ref("");
 const audioFile = ref<File | null>(null);
@@ -1025,18 +1029,43 @@ onMounted(async () => {
   document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   window.addEventListener("resize", handleTimelineViewportResize, { passive: true });
+  window.addEventListener("pagehide", handlePageHideFlush);
+  if (initialChatAnchorPending.value) {
+    scrollBottom(false);
+    void nextTick(() => {
+      scrollBottom(false);
+      requestAnimationFrame(() => {
+        initialChatAnchorPending.value = false;
+      });
+    });
+  }
+  // Force the saved read position to "newest" before bootstrap can trigger a
+  // restore; cold starts always enter at the newest message (enterChatAtNewest
+  // does the same later), and this prevents a stale mid-history position from
+  // loading old pages first. Deep links keep their own navigation.
+  const linkedChannelId = Number(new URLSearchParams(window.location.search).get("channelId") || 0);
+  const persistedAccountId = lastMsgwinAccount();
+  if (!linkedChannelId && persistedAccountId) saveNewestReadPositionForAccount(persistedAccountId, store.currentChannelId, store.prayerOnly);
   try {
     await store.bootstrap();
   } catch (error) {
+    initialChatAnchorPending.value = false;
     appStartError.value = error instanceof Error ? error.message : "聊天室加载失败";
     return;
   } finally {
     appStarting.value = false;
   }
   if (store.account) {
-    await activateMusicAccount(store.account.id);
-    await loadMusicPlaylists();
-    await loadMusicTracks();
+    // Music data is not needed for the chat first paint. Restore playback
+    // state and load playlists in parallel, then tracks (which merges into
+    // playlists and reconciles the restored track) — all detached so chat
+    // scrolling and the version check no longer wait for the music chain.
+    const musicAccountId = store.account.id;
+    void Promise.all([activateMusicAccount(musicAccountId), loadMusicPlaylists()])
+      .then(() => loadMusicTracks())
+      .catch((error: unknown) => {
+        musicError.value = error instanceof Error ? error.message : "音乐加载失败";
+      });
     attachMusicSocket();
     void navigator.storage?.persist?.().catch(() => false);
   }
@@ -1048,6 +1077,9 @@ onMounted(async () => {
   if (isLogRoute.value && store.account?.isAdmin) await loadAdminLoginLogs();
   await checkServerVersion();
   versionCheckTimer = window.setInterval(() => void checkServerVersion(), 60_000);
+  // Channel data loads in the background after bootstrap's identity phase;
+  // only deep links need to wait for the channel list before navigating.
+  if (linkedChannelId) await store.whenChannelsReady();
   await switchToLinkedChannel();
   await enterChatAtNewest();
   await nextTick();
@@ -1310,6 +1342,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", closeTapPromptsFromOutside);
   document.removeEventListener("keydown", handleGlobalEscape);
   document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
+  window.removeEventListener("pagehide", handlePageHideFlush);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   window.removeEventListener("resize", handleTimelineViewportResize);
   timelineResizeObserver?.disconnect();
@@ -2169,6 +2202,13 @@ function handleMessageImageLoad(message: MessageDTO, event: Event) {
   };
 }
 
+// Yield image-cache warming to idle time so it never competes with startup
+// or message-loading requests; Safari lacks requestIdleCallback.
+const scheduleImagePreload: (callback: () => void) => void =
+  typeof window !== "undefined" && typeof window.requestIdleCallback === "function"
+    ? (callback) => window.requestIdleCallback(callback)
+    : (callback) => window.setTimeout(callback, 1200);
+
 function pumpMessageImagePreloads() {
   while (activeMessageImagePreloads < 2 && messageImagePreloadQueue.length) {
     const message = messageImagePreloadQueue.shift();
@@ -2189,12 +2229,15 @@ function pumpMessageImagePreloads() {
 
 function preloadMessageImages(messages: MessageDTO[]) {
   if (bibleOpen.value) return;
-  for (const message of messages) {
-    if (message.type !== "image" || message.id <= 0 || queuedMessageImagePreloads.has(message.id)) continue;
+  // Only warm the newest few images; older history loads on demand through
+  // the service worker cache when scrolled into view.
+  const images = messages.filter((message) => message.type === "image" && message.id > 0).slice(-30);
+  for (const message of images) {
+    if (queuedMessageImagePreloads.has(message.id)) continue;
     queuedMessageImagePreloads.add(message.id);
     messageImagePreloadQueue.push(message);
   }
-  pumpMessageImagePreloads();
+  if (messageImagePreloadQueue.length) scheduleImagePreload(() => pumpMessageImagePreloads());
 }
 
 function messageImagePresentationStyle(message: MessageDTO) {
@@ -2754,9 +2797,33 @@ function previewSiteName(preview?: LinkPreviewDTO | null) {
   return preview ? preview.siteName || hostFromUrl(preview.url) : "";
 }
 
-async function ensureVisibleLinkPreviews() {
+const linkPreviewQueue: string[] = [];
+const linkPreviewQueued = new Set<string>();
+let activeLinkPreviews = 0;
+
+function pumpLinkPreviews() {
+  // Cold caches used to fire up to 40 preview requests at once; keep a small
+  // worker pool so previews never crowd out message and channel traffic.
+  while (activeLinkPreviews < 3 && linkPreviewQueue.length) {
+    const url = linkPreviewQueue.shift();
+    if (!url) return;
+    activeLinkPreviews += 1;
+    void ensureLinkPreview(url).finally(() => {
+      linkPreviewQueued.delete(url);
+      activeLinkPreviews -= 1;
+      pumpLinkPreviews();
+    });
+  }
+}
+
+function ensureVisibleLinkPreviews() {
   const urls = [...new Set(store.messages.map(messagePreviewUrl).filter(Boolean))].slice(-40);
-  for (const url of urls) void ensureLinkPreview(url);
+  for (const url of urls) {
+    if (linkPreviewCache.value[url] || linkPreviewQueued.has(url)) continue;
+    linkPreviewQueued.add(url);
+    linkPreviewQueue.push(url);
+  }
+  pumpLinkPreviews();
 }
 
 async function ensureLinkPreview(url: string) {
@@ -2953,6 +3020,17 @@ function saveNewestReadPosition(channelId = store.currentChannelId, prayerOnly =
   localStorage.setItem(key, JSON.stringify(newestPositionForSessionEntry()));
 }
 
+// Cold-start variant usable before the account is known: builds the same key
+// format as readPositionStorageKey from an explicit account id.
+function saveNewestReadPositionForAccount(accountId: number, channelId: number, prayerOnly: boolean) {
+  if (!accountId || !channelId) return;
+  localStorage.setItem(`team-chat-read-position-${accountId}-${channelId}-${prayerOnly ? "prayers" : "chat"}`, JSON.stringify(newestPositionForSessionEntry()));
+}
+
+function handlePageHideFlush() {
+  flushPendingPersists();
+}
+
 async function enterChatAtNewest() {
   readPositionRestoreToken += 1;
   activeReadAnchor = null;
@@ -2988,7 +3066,8 @@ async function restoreSavedReadPosition() {
     return;
   }
   if (typeof position.messageId === "number" && position.messageId) {
-    await loadUntilMessageVisible(position.messageId);
+    await loadUntilMessageVisible(position.messageId, token);
+    if (token !== readPositionRestoreToken) return;
     await nextTick();
     const currentRoot = scroller.value;
     const target = currentRoot?.querySelector<HTMLElement>(`[data-message-id="${position.messageId}"]`);
@@ -6505,20 +6584,23 @@ async function ensureLoadedMessageRendered(id: number) {
   return !!root.querySelector(`[data-message-id="${id}"]`);
 }
 
-async function loadUntilMessageVisible(id: number) {
+async function loadUntilMessageVisible(id: number, token = 0) {
   for (let attempts = 0; attempts < 30; attempts += 1) {
+    if (token && token !== readPositionRestoreToken) return false;
     if (store.messages.some((message) => message.id === id)) return ensureLoadedMessageRendered(id);
     const positiveMessages = store.messages.filter((message) => message.id > 0);
     const oldest = positiveMessages[0]?.id || 0;
     const newest = positiveMessages[positiveMessages.length - 1]?.id || 0;
     if (oldest && id < oldest && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
       const loaded = await store.loadOlderMessages();
+      if (token && token !== readPositionRestoreToken) return false;
       await nextTick();
       if (!loaded) return false;
       continue;
     }
     if (newest && id > newest && store.hasNewerMessages) {
       const loaded = await store.loadNewerMessages();
+      if (token && token !== readPositionRestoreToken) return false;
       await nextTick();
       if (!loaded) return false;
       continue;
@@ -6730,7 +6812,11 @@ async function loadMusicTracks() {
       }),
       trackCount: playlist.tracks.filter((track) => byId.has(track.id)).length
     }));
-    void preloadMusicScorePages(result.tracks);
+    // Warming every score page of the whole library costs dozens of MB on
+    // startup; warm only the restored track's pages. The score viewer and
+    // inline previews load pages on demand.
+    const restoredTrackId = currentMusicTrack.value?.id;
+    void preloadMusicScorePages(restoredTrackId ? result.tracks.filter((track) => track.id === restoredTrackId) : []);
     reconcileMusicTracks();
   } catch (error) {
     musicError.value = error instanceof Error ? error.message : "歌单加载失败";
@@ -9870,7 +9956,7 @@ async function toggleVirtual(character: any) {
           v-if="!isMusicChannel"
           ref="scroller"
           class="messages-scroll"
-          :class="{ 'timeline-scrolling': timelineScrollActive }"
+          :class="{ 'timeline-scrolling': timelineScrollActive, 'messages-scroll--anchoring': initialChatAnchorPending }"
           @scroll.passive="handleMessagesScroll"
           @load.capture="reconcileReadPositionAfterLayout"
           @wheel.passive="handleTimelineScrollIntent"

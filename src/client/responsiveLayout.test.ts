@@ -221,7 +221,7 @@ test("chat channel rows show a capped unread badge pinned to the channel icon", 
 test("unread badges increment from socket messages and clear when the channel opens", () => {
   assert.match(store, /socket\.on\("message:new"[\s\S]*?this\.noteUnreadMessage\(message\)/);
   assert.match(store, /if \(!prayerOnly\) this\.markChannelRead\(channelId\)/);
-  assert.match(store, /await this\.seedUnreadCounts\(\)/);
+  assert.match(store, /void this\.seedUnreadCounts\(\)/);
   assert.match(server, /prisma\.message\.groupBy\(\{[\s\S]*?by: \["channelId"\][\s\S]*?_max: \{ id: true \}/);
   assert.match(server, /lastMessageId: lastMessageIds\?\.get\(channelId\) \?\? null/);
 });
@@ -612,7 +612,8 @@ test("music scores preload through authenticated blobs for reliable Safari rende
   assert.match(app, /fetch\(musicScoreRequestUrl\(page\), \{ headers: authHeaders\(\) \}\)/);
   assert.match(app, /\/api\/music\/scores\/\$\{page\.scoreId\}\/pages\/\$\{page\.id\}/);
   assert.match(app, /URL\.createObjectURL\(blob\)/);
-  assert.match(app, /void preloadMusicScorePages\(result\.tracks\)/);
+  // Only the restored track's pages warm at startup; other tracks load on demand.
+  assert.match(app, /preloadMusicScorePages\(restoredTrackId \? result\.tracks\.filter/);
   assert.match(app, /musicScoreCachedUrls\.value\[page\.id\]/);
   assert.match(server, /canReadMusicScore\(score\.track\.channel\.kind, canAccessSourceChannel\)/);
 });

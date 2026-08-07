@@ -3393,6 +3393,11 @@ button {
   flex: 1 0 0;
 }
 
+/* 冷启动锚定期间隐藏消息列表，避免缓存窗口先闪现较旧的消息再跳到底部 */
+.messages-scroll--anchoring {
+  visibility: hidden;
+}
+
 .message-virtual-spacer {
   width: 100%;
   min-height: 0;

@@ -45,6 +45,7 @@
     "verify:full": "npm run check:public-tree && npm run check:release && npm run check && npm run test:all && npm run build"
   },
   "dependencies": {
+    "@fastify/compress": "^9.1.1",
     "@fastify/cors": "^10.1.0",
     "@fastify/multipart": "^9.0.3",
     "@fastify/rate-limit": "^10.3.0",
