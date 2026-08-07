@@ -223,7 +223,7 @@ test("unread badges increment from socket messages and clear when the channel op
   assert.match(store, /if \(!prayerOnly\) this\.markChannelRead\(channelId\)/);
   assert.match(store, /void this\.seedUnreadCounts\(\)/);
   assert.match(server, /prisma\.message\.groupBy\(\{[\s\S]*?by: \["channelId"\][\s\S]*?_max: \{ id: true \}/);
-  assert.match(server, /lastMessageId: lastMessageIds\?\.get\(channelId\) \?\? null/);
+  assert.match(server, /lastMessageId: lastMessageIds\.get\(channel\.id\) \?\? null/);
 });
 
 test("like alerts use the header status line instead of a reading-area overlay", () => {

@@ -10,7 +10,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
-import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageType, type MusicLyrics, type MusicScore, type MusicScorePage, type PinnedItem } from "@prisma/client";
+import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageAiSuggestion, type MessageType, type MusicLyrics, type MusicScore, type MusicScorePage, type PinnedItem, type PrayerAction } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
 import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
@@ -70,7 +70,7 @@ import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
 import { githubPackageManifestUrl } from "./updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
-import { MUSIC_EXTENSIONS, isMusicFileName, isStoredMusicFile, musicTrackTitle } from "./music.js";
+import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { parseLyrics } from "./srt.js";
 import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.js";
@@ -1304,13 +1304,34 @@ async function canPinChannel(auth: Pick<AuthContext, "accountId" | "isAdmin" | "
   return !!auth.canPinMessages && channel.isDefault && (await canAccessChannel(auth.accountId, channelId));
 }
 
-async function serializeMessage(message: Message & { sender: Actor; replyTo?: (Message & { sender: Actor }) | null }, viewerAccountId?: number): Promise<MessageDTO> {
+// Optional prefetched context for list serialization. Endpoints that render a
+// page of messages build this once so per-type relations (voice listens,
+// prayer actions/AI suggestions, shared playlists) cost a constant number of
+// queries instead of scaling with the page size. Single-message callers
+// (socket emits, mutations) omit it and keep the per-message lookups.
+type MessageSerializeBatch = {
+  voiceListenedMessageIds?: Set<number>;
+  prayer?: {
+    aiSettings: Awaited<ReturnType<typeof loadAiSettings>>;
+    sourceMessages: Map<number, Message | null>;
+    actionsByMessageId: Map<number, Array<PrayerAction & { account: Pick<Account, "displayName" | "avatarPath"> }>>;
+    aiSuggestionsByMessageId: Map<number, Array<MessageAiSuggestion & { createdBy: Pick<Account, "displayName"> | null }>>;
+    aiSuggestionCountsByMessageId: Map<number, number>;
+  };
+  playlists?: Map<number, Awaited<ReturnType<typeof musicService.playlistDto>>>;
+};
+
+async function serializeMessage(message: Message & { sender: Actor; replyTo?: (Message & { sender: Actor }) | null }, viewerAccountId?: number, batch?: MessageSerializeBatch): Promise<MessageDTO> {
   let voiceListened: boolean | undefined;
   if (isVoiceMessage(message)) {
     voiceListened = message.sender.accountId === viewerAccountId;
     if (!voiceListened && viewerAccountId) {
-      const listened = await prisma.voiceListen.findUnique({ where: { messageId_accountId: { messageId: message.id, accountId: viewerAccountId } } });
-      voiceListened = !!listened;
+      if (batch?.voiceListenedMessageIds) {
+        voiceListened = batch.voiceListenedMessageIds.has(message.id);
+      } else {
+        const listened = await prisma.voiceListen.findUnique({ where: { messageId_accountId: { messageId: message.id, accountId: viewerAccountId } } });
+        voiceListened = !!listened;
+      }
     }
   }
   let payload: unknown = message.payload || undefined;
@@ -1349,28 +1370,38 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       ])
     : [[], null];
   if (message.type === "prayer") {
-    const aiSettings = await loadAiSettings();
+    const aiSettings = batch?.prayer ? batch.prayer.aiSettings : await loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
     const sourceId = sourcePrayerMessageId(message.payload, message.id);
     const sourceMessage =
-      sourceId !== message.id ? await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "prayer" } }) : null;
+      sourceId !== message.id
+        ? batch?.prayer
+          ? (batch.prayer.sourceMessages.get(sourceId) ?? null)
+          : await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "prayer" } })
+        : null;
     const actionMessageId = sourceMessage?.id || message.id;
     const sourceRaw = prayerPayloadRaw(sourceMessage?.payload);
     const displayRaw = sourceMessage ? { ...raw, ...sourceRaw, sourcePrayerMessageId: sourceMessage.id, latestUpdateAt: raw.latestUpdateAt, latestUpdateBy: raw.latestUpdateBy } : raw;
-    const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = await Promise.all([
-      prisma.prayerAction.findMany({
-        where: { messageId: actionMessageId },
-        include: { account: true },
-        orderBy: { prayedAt: "desc" }
-      }),
-      prisma.messageAiSuggestion.findMany({
-        where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
-        include: { createdBy: { select: { displayName: true } } },
-        orderBy: { createdAt: "desc" },
-        take: 3
-      }),
-      prisma.messageAiSuggestion.count({ where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } })
-    ]);
+    const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = batch?.prayer
+      ? [
+          batch.prayer.actionsByMessageId.get(actionMessageId) ?? [],
+          batch.prayer.aiSuggestionsByMessageId.get(actionMessageId) ?? [],
+          batch.prayer.aiSuggestionCountsByMessageId.get(actionMessageId) ?? 0
+        ]
+      : await Promise.all([
+          prisma.prayerAction.findMany({
+            where: { messageId: actionMessageId },
+            include: { account: { select: { displayName: true, avatarPath: true } } },
+            orderBy: { prayedAt: "desc" }
+          }),
+          prisma.messageAiSuggestion.findMany({
+            where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+            include: { createdBy: { select: { displayName: true } } },
+            orderBy: { createdAt: "desc" },
+            take: 3
+          }),
+          prisma.messageAiSuggestion.count({ where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } })
+        ]);
     const byAccount = new Map<number, { accountId: number; displayName: string; avatarPath?: string | null; latestPrayedAt: string; times: number }>();
     for (const action of actions) {
       const current = byAccount.get(action.accountId);
@@ -1402,7 +1433,11 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
   const playlistId = message.type === "music_playlist" && payload && typeof payload === "object"
     ? Number((payload as { playlistId?: unknown }).playlistId || 0)
     : 0;
-  const sharedMusicPlaylist = playlistId ? await musicService.playlistDto(playlistId, viewerAccountId || 0) : undefined;
+  const sharedMusicPlaylist = playlistId
+    ? batch?.playlists
+      ? (batch.playlists.get(playlistId) ?? null)
+      : await musicService.playlistDto(playlistId, viewerAccountId || 0)
+    : undefined;
   return {
     id: message.id,
     channelId: message.channelId,
@@ -3448,15 +3483,81 @@ app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, r
 
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const where = channelListWhere(auth.accountId);
-  const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
-  const lastMessageRows = await prisma.message.groupBy({
-    by: ["channelId"],
-    where: { channelId: { in: channels.map((ch) => ch.id) } },
-    _max: { id: true }
+  const channels = await prisma.channel.findMany({
+    where: channelListWhere(auth.accountId),
+    orderBy: [{ isDefault: "desc" }, { id: "asc" }],
+    include: {
+      _count: { select: { members: true } },
+      members: {
+        select: {
+          account: { select: { id: true, displayName: true, avatarPath: true } }
+        }
+      },
+      pinned: { where: { active: true }, orderBy: { updatedAt: "desc" }, take: 1 }
+    }
   });
+  const channelIds = channels.map((ch) => ch.id);
+  const [lastMessageRows, prayerRows, viewerMemberships] = await Promise.all([
+    prisma.message.groupBy({ by: ["channelId"], where: { channelId: { in: channelIds } }, _max: { id: true } }),
+    prisma.message.groupBy({ by: ["channelId"], where: { channelId: { in: channelIds }, type: "prayer" }, _count: { _all: true } }),
+    prisma.channelMember.findMany({ where: { accountId: auth.accountId, channelId: { in: channelIds } }, select: { channelId: true, role: true } })
+  ]);
   const lastMessageIds = new Map(lastMessageRows.map((row) => [row.channelId, row._max.id ?? 0]));
-  return { channels: await Promise.all(channels.map((ch) => channelDto(ch.id, auth, lastMessageIds))) };
+  const prayerCounts = new Map(prayerRows.map((row) => [row.channelId, row._count._all]));
+  const membershipRoles = new Map(viewerMemberships.map((member) => [member.channelId, member.role]));
+  // Pinned items are rare (at most one active pin per channel), so per-pin
+  // hydration stays on the shared serializer without reviving the per-channel
+  // query fan-out this endpoint used to have.
+  const pinnedEntries = await Promise.all(
+    channels.map(async (channel) => [channel.id, channel.pinned[0] ? await serializePinnedItem(channel.pinned[0], auth) : null] as const)
+  );
+  const pinnedByChannel = new Map(pinnedEntries);
+  const viewerCanManageMusic = canManageMusicRole({ isAdmin: auth.isAdmin, canPinMessages: auth.canPinMessages });
+  return {
+    channels: channels.map((channel) => {
+      const memberRole = membershipRoles.get(channel.id) ?? null;
+      const directPeer =
+        channel.kind === "direct" && channel.directKey && !channel.directKey.startsWith("virtual:") && channel._count.members === 2
+          ? channel.members.find((member) => member.account.id !== auth.accountId)?.account
+          : null;
+      const canAccess = channel.kind === "music" || !channelNeedsExplicitMembership(channel) || !!memberRole;
+      const canManage =
+        channel.kind === "aiLounge"
+          ? false
+          : channel.kind === "music"
+            ? viewerCanManageMusic
+            : auth.isAdmin || memberRole === "owner" || memberRole === "admin";
+      const canWrite =
+        channel.kind === "aiLounge"
+          ? false
+          : channel.kind === "music" || !channelNeedsExplicitMembership(channel) || (!!memberRole && memberRole !== "viewer");
+      const canPin =
+        channel.directKey || channel.kind !== "standard"
+          ? false
+          : auth.isAdmin || (!!auth.canPinMessages && channel.isDefault && canAccess);
+      return {
+        id: channel.id,
+        name: directPeer?.displayName || channel.name,
+        description: channel.description,
+        icon: directPeer?.avatarPath
+          ? directPeer.avatarPath.startsWith("/")
+            ? directPeer.avatarPath
+            : `/avatars/${directPeer.avatarPath}`
+          : cleanChannelIcon(channel.icon),
+        kind: channel.kind,
+        isPrivate: channel.isPrivate,
+        isDefault: channel.isDefault,
+        directKey: channel.directKey,
+        canManage,
+        canWrite,
+        canPin,
+        hasPrayerItems: (prayerCounts.get(channel.id) ?? 0) > 0,
+        memberCount: channel._count.members,
+        lastMessageId: lastMessageIds.get(channel.id) ?? null,
+        pinned: pinnedByChannel.get(channel.id) ?? null
+      };
+    })
+  };
 });
 
 app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => {
@@ -3894,6 +3995,114 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
   return { success: true, channel: dto, removed: accountId };
 });
 
+async function buildMessageSerializeBatch(rows: Array<Message & { sender: Actor }>, channelId: number, viewerAccountId: number): Promise<MessageSerializeBatch> {
+  const batch: MessageSerializeBatch = {};
+  const voiceIds = rows.filter((message) => isVoiceMessage(message) && message.sender.accountId !== viewerAccountId).map((message) => message.id);
+  const audioRows = rows.filter((message) => message.type === "file" && isAudioFileName(message.fileName));
+  const audioIds = audioRows.map((message) => message.id);
+  const prayerRows = rows.filter((message) => message.type === "prayer");
+  const playlistIds = [
+    ...new Set(
+      rows
+        .map((message) =>
+          message.type === "music_playlist" && message.payload && typeof message.payload === "object"
+            ? Number((message.payload as { playlistId?: unknown }).playlistId || 0)
+            : 0
+        )
+        .filter((id) => id > 0)
+    )
+  ];
+
+  const [listenedRows, scoreRows, lyricRows] = await Promise.all([
+    voiceIds.length
+      ? prisma.voiceListen.findMany({ where: { accountId: viewerAccountId, messageId: { in: voiceIds } }, select: { messageId: true } })
+      : Promise.resolve([]),
+    audioIds.length
+      ? prisma.musicScore.findMany({ where: { trackId: { in: audioIds } }, orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } })
+      : Promise.resolve([]),
+    audioIds.length ? prisma.musicLyrics.findMany({ where: { trackId: { in: audioIds } } }) : Promise.resolve([])
+  ]);
+  batch.voiceListenedMessageIds = new Set(listenedRows.map((row) => row.messageId));
+
+  // Attach audio relations so serializeMessage's preloaded-relation branches
+  // pick them up instead of querying per message.
+  const scoresByTrackId = new Map<number, Array<(typeof scoreRows)[number]>>();
+  for (const score of scoreRows) {
+    if (score.trackId === null) continue;
+    const list = scoresByTrackId.get(score.trackId) || [];
+    list.push(score);
+    scoresByTrackId.set(score.trackId, list);
+  }
+  const lyricsByTrackId = new Map(lyricRows.map((row) => [row.trackId, row]));
+  for (const message of audioRows) {
+    const loaded = message as typeof message & {
+      musicScores?: Array<MusicScore & { pages: MusicScorePage[] }>;
+      musicLyrics?: MusicLyrics | null;
+    };
+    loaded.musicScores = scoresByTrackId.get(message.id) ?? [];
+    loaded.musicLyrics = lyricsByTrackId.get(message.id) ?? null;
+  }
+
+  if (prayerRows.length) {
+    const aiSettings = await loadAiSettings();
+    const sourceIds = [
+      ...new Set(
+        prayerRows
+          .map((message) => ({ sourceId: sourcePrayerMessageId(message.payload, message.id), messageId: message.id }))
+          .filter((entry) => entry.sourceId !== entry.messageId)
+          .map((entry) => entry.sourceId)
+      )
+    ];
+    const sourceRows = sourceIds.length ? await prisma.message.findMany({ where: { id: { in: sourceIds }, channelId, type: "prayer" } }) : [];
+    const sourceMessages = new Map<number, Message | null>();
+    for (const sourceId of sourceIds) sourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
+    const actionMessageIds = [
+      ...new Set(
+        prayerRows.map((message) => {
+          const sourceId = sourcePrayerMessageId(message.payload, message.id);
+          return (sourceId !== message.id ? sourceMessages.get(sourceId)?.id : undefined) || message.id;
+        })
+      )
+    ];
+    const [actionRows, suggestionRows] = await Promise.all([
+      prisma.prayerAction.findMany({
+        where: { messageId: { in: actionMessageIds } },
+        include: { account: { select: { displayName: true, avatarPath: true } } },
+        orderBy: { prayedAt: "desc" }
+      }),
+      prisma.messageAiSuggestion.findMany({
+        where: { messageId: { in: actionMessageIds }, kind: AI_RELATED_VERSES_KIND, status: "success" },
+        include: { createdBy: { select: { displayName: true } } },
+        orderBy: { createdAt: "desc" }
+      })
+    ]);
+    const actionsByMessageId = new Map<number, typeof actionRows>();
+    for (const action of actionRows) {
+      const list = actionsByMessageId.get(action.messageId) || [];
+      list.push(action);
+      actionsByMessageId.set(action.messageId, list);
+    }
+    const suggestionsByMessageId = new Map<number, typeof suggestionRows>();
+    for (const suggestion of suggestionRows) {
+      const list = suggestionsByMessageId.get(suggestion.messageId) || [];
+      list.push(suggestion);
+      suggestionsByMessageId.set(suggestion.messageId, list);
+    }
+    const aiSuggestionsByMessageId = new Map<number, typeof suggestionRows>();
+    const aiSuggestionCountsByMessageId = new Map<number, number>();
+    for (const [messageId, list] of suggestionsByMessageId) {
+      aiSuggestionsByMessageId.set(messageId, list.slice(0, 3));
+      aiSuggestionCountsByMessageId.set(messageId, list.length);
+    }
+    batch.prayer = { aiSettings, sourceMessages, actionsByMessageId, aiSuggestionsByMessageId, aiSuggestionCountsByMessageId };
+  }
+
+  if (playlistIds.length) {
+    batch.playlists = new Map(await Promise.all(playlistIds.map(async (id) => [id, await musicService.playlistDto(id, viewerAccountId)] as const)));
+  }
+  return batch;
+}
+
 app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string; prayers?: string };
@@ -3919,7 +4128,9 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
     take: limit
   });
   const filteredRows = query.prayers === "1" ? rows.filter((message) => !isPrayerUpdateMessage(message)) : rows;
-  const messages = await Promise.all((after > 0 ? filteredRows : filteredRows.reverse()).map((message) => serializeMessage(message, auth.accountId)));
+  const orderedRows = after > 0 ? filteredRows : filteredRows.reverse();
+  const batch = await buildMessageSerializeBatch(orderedRows, channelId, auth.accountId);
+  const messages = await Promise.all(orderedRows.map((message) => serializeMessage(message, auth.accountId, batch)));
   return { messages };
 });
 
