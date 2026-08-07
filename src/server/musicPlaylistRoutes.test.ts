@@ -45,7 +45,8 @@ test("Bible favorites persist a validated colorful underline choice", () => {
 test("the music channel is visible and uploadable for every authenticated account", () => {
   assert.match(server, /async function canAccessChannel[\s\S]*?channel\.kind === "music"\) return true/);
   assert.match(server, /async function canWriteChannel[\s\S]*?channel\.kind === "music"\) return true/);
-  assert.match(server, /app\.get\("\/api\/channels"[\s\S]*?\{ kind: "music" as const \}/);
+  assert.match(server, /app\.get\("\/api\/channels"[\s\S]*?channelListWhere\(auth\.accountId\)/);
+  assert.match(server, /function channelListWhere[\s\S]*?\{ kind: "music" \}/);
   assert.match(server, /io\.on\("connection"[\s\S]*?\{ kind: "music" \}/);
   assert.doesNotMatch(server, /channel\?\.kind === "music" && \(!canManageMusic\(auth\)/);
 });

@@ -24,6 +24,7 @@ import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
+import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
@@ -191,6 +192,17 @@ const BIBLE_TOPIC_SEARCH_PROMPT = [
   "如果不确定出处是否存在，不要输出。"
 ].join("\n");
 const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
+
+// Channel visibility shared by the channel list and the unread-counts route:
+// music channels are open; standard/direct channels are public or member-only.
+function channelListWhere(accountId: number): Prisma.ChannelWhereInput {
+  return {
+    OR: [
+      { kind: "music" },
+      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId } } }] }
+    ]
+  };
+}
 const MUSIC_CHANNEL_NAME = "音乐频道";
 const MUSIC_CHANNEL_ICON = "歌";
 const DEFAULT_AI_PROMPT_COMMAND = [
@@ -3436,12 +3448,7 @@ app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, r
 
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const where = {
-    OR: [
-      { kind: "music" as const },
-      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId: auth.accountId } } }] }
-    ]
-  };
+  const where = channelListWhere(auth.accountId);
   const channels = await prisma.channel.findMany({ where, orderBy: [{ isDefault: "desc" }, { id: "asc" }] });
   const lastMessageRows = await prisma.message.groupBy({
     by: ["channelId"],
@@ -4518,6 +4525,12 @@ registerFriendRoutes(app, {
   requireMediaAuth,
   feedService: friendFeedService,
   prisma
+});
+
+registerUnreadCountsRoutes(app, {
+  requireAuth,
+  prisma,
+  channelListWhere
 });
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;

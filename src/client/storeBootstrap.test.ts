@@ -186,3 +186,55 @@ test("whenChannelsReady resolves immediately when no bootstrap ran", async () =>
   const store = useChatStore();
   await store.whenChannelsReady();
 });
+
+
+test("seedUnreadCounts batches per-channel recounts into one grouped request", async () => {
+  storage.clear();
+  storage.setItem("team-chat-token", "token-1");
+  storage.setItem("team-chat-current-channel", "1");
+  storage.setItem("team-chat-message-view", "chat");
+  storage.setItem("team-chat-unread-7", JSON.stringify({ lastRead: { "1": 10, "2": 5 }, counts: {} }));
+
+  const channel = (id: number, lastMessageId: number) => ({
+    id,
+    name: `Channel ${id}`,
+    kind: "standard",
+    description: "",
+    icon: "",
+    isPrivate: false,
+    isDefault: id === 1,
+    memberCount: 1,
+    lastMessageId
+  }) as ChannelDTO;
+  const unreadRequests: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/settings/appearance")) return jsonResponse({});
+    if (url.includes("/api/auth/me")) return jsonResponse({ account: account(7) });
+    if (url.includes("/api/like-notifications")) return jsonResponse({ notifications: [] });
+    if (url.includes("/api/channels/1/members")) return jsonResponse({ members: [] });
+    if (url.includes("/api/channels")) return jsonResponse({ channels: [channel(1, 42), channel(2, 20), channel(3, 7)] });
+    if (url.includes("/api/messages/unread-counts")) {
+      unreadRequests.push(url);
+      return jsonResponse({ counts: { "1": 3, "2": 150 } });
+    }
+    if (url.includes("/api/messages")) return jsonResponse({ messages: [] });
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+
+  setActivePinia(createPinia());
+  const store = useChatStore();
+  store.connectSocket = (() => undefined) as unknown as typeof store.connectSocket;
+
+  await store.bootstrap();
+  await store.whenChannelsReady();
+  // seedUnreadCounts runs detached after the channel data; give it a tick.
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(unreadRequests.length, 1);
+  const sent = JSON.parse(new URL(unreadRequests[0], "http://localhost").searchParams.get("lastRead") || "{}");
+  assert.deepEqual(sent, { "1": 10, "2": 5 });
+  assert.equal(store.unreadCounts[1], 3);
+  assert.equal(store.unreadCounts[2], 99); // capped at UNREAD_COUNT_CAP
+  assert.equal(store.unreadCounts[3], 0); // first-seen channel treated as read locally
+});

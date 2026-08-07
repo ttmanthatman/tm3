@@ -351,6 +351,7 @@ export const useChatStore = defineStore("chat", {
       if (this.unreadSeeded || !this.account) return;
       this.unreadSeeded = true;
       let changed = false;
+      const recountAfter: Record<number, number> = {};
       for (const channel of this.channels) {
         if (channel.kind === "music") continue;
         const plan = planChannelSeed(this.unreadLastRead[channel.id], channel.lastMessageId);
@@ -359,17 +360,25 @@ export const useChatStore = defineStore("chat", {
           this.unreadCounts[channel.id] = 0;
           changed = true;
         } else if (plan.action === "recount") {
-          try {
-            const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channel.id, false, { after: plan.after, limit: 100 }));
-            const unread = result.messages.filter((message) => !isOwnMessage(message.sender, this.account)).length;
-            this.unreadCounts[channel.id] = Math.min(unread, UNREAD_COUNT_CAP);
-            changed = true;
-          } catch {
-            // Keep the persisted count when the recount request fails.
-          }
+          recountAfter[channel.id] = plan.after;
         } else if (this.unreadCounts[channel.id]) {
           this.unreadCounts[channel.id] = 0;
           changed = true;
+        }
+      }
+      if (Object.keys(recountAfter).length) {
+        // One batched grouped count replaces the old per-channel serialized
+        // "fetch messages after lastRead" requests.
+        try {
+          const result = await api<{ counts: Record<string, number> }>(`/api/messages/unread-counts?lastRead=${encodeURIComponent(JSON.stringify(recountAfter))}`);
+          for (const [key, count] of Object.entries(result.counts)) {
+            const channelId = Number(key);
+            if (!(channelId in recountAfter)) continue;
+            this.unreadCounts[channelId] = Math.min(Math.max(0, Math.floor(count) || 0), UNREAD_COUNT_CAP);
+            changed = true;
+          }
+        } catch {
+          // Keep the persisted counts when the recount request fails.
         }
       }
       if (changed) this.persistUnreadState();
