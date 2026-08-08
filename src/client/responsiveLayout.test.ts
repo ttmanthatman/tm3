@@ -60,6 +60,7 @@ test("Bible reader offers compact book, chapter, and verse jumps beside the reso
   assert.doesNotMatch(bibleWorkspace, /bible-resource-link" href=/);
   assert.match(bibleWorkspace, /suppressReaderScrollUntil = Date\.now\(\) \+ 500/);
   assert.match(bibleWorkspace, /Date\.now\(\) < suppressReaderScrollUntil/);
+  assert.match(bibleWorkspace, /anchorAfter !== undefined[\s\S]*?scrollBehavior = "auto"[\s\S]*?preservedScrollTop\(scroller\.scrollTop, anchorBefore, anchorAfter\)/);
 });
 
 test("user administration uses a searchable master-detail layout with guarded destructive actions", () => {

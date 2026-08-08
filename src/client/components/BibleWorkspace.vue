@@ -604,7 +604,12 @@ async function loadChapter(chapter: number, prepend = false) {
     await nextTick();
     if (scroller && anchorChapter && anchorBefore !== undefined) {
       const anchorAfter = scroller.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top;
-      if (anchorAfter !== undefined) scroller.scrollTop = preservedScrollTop(scroller.scrollTop, anchorBefore, anchorAfter);
+      if (anchorAfter !== undefined) {
+        const previousScrollBehavior = scroller.style.scrollBehavior;
+        scroller.style.scrollBehavior = "auto";
+        scroller.scrollTop = preservedScrollTop(scroller.scrollTop, anchorBefore, anchorAfter);
+        scroller.style.scrollBehavior = previousScrollBehavior;
+      }
     }
   } catch (error) {
     if (readerBook.value?.code === book.code) readerError.value = error instanceof Error ? error.message : "章节加载失败";
