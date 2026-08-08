@@ -27,8 +27,7 @@ export function selectBibleVerseKeys(
   return next;
 }
 
-export function formatBibleVersesForCopy(verses: BibleVerseLineDTO[], translation: string) {
-  if (!verses.length) return "";
+export function groupContinuousBibleVerses(verses: BibleVerseLineDTO[]) {
   const groups: BibleVerseLineDTO[][] = [];
   for (const verse of verses) {
     const current = groups[groups.length - 1];
@@ -39,11 +38,20 @@ export function formatBibleVersesForCopy(verses: BibleVerseLineDTO[], translatio
       groups.push([verse]);
     }
   }
-  const passages = groups.map((group) => {
-    const first = group[0];
-    const last = group[group.length - 1];
-    const end = last.endVerse > first.verse ? `-${last.endVerse}` : "";
-    return `${first.book} ${first.chapter}:${first.verse}${end}\n${group.map((verse) => `${verse.verse} ${verse.text}`).join("\n")}`;
+  return groups;
+}
+
+export function bibleVerseGroupReference(group: BibleVerseLineDTO[]) {
+  const first = group[0];
+  const last = group[group.length - 1];
+  const end = last.endVerse > first.verse ? `-${last.endVerse}` : "";
+  return `${first.book} ${first.chapter}:${first.verse}${end}`;
+}
+
+export function formatBibleVersesForCopy(verses: BibleVerseLineDTO[], translation: string) {
+  if (!verses.length) return "";
+  const passages = groupContinuousBibleVerses(verses).map((group) => {
+    return `${bibleVerseGroupReference(group)}\n${group.map((verse) => `${verse.verse} ${verse.text}`).join("\n")}`;
   });
   return `${passages.join("\n\n")}\n\n—— ${translation}`;
 }

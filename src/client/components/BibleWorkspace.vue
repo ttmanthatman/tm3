@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ChevronLeft, ClipboardCopy, History, Home, Plus, Search, Send, Sparkles, Trash2, X } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, History, Home, Plus, Search, Send, Sparkles, Trash2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -30,9 +30,11 @@ import {
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
 import {
+  bibleVerseGroupReference,
   bibleVerseKey,
   formatBibleLookupsForCopy,
   formatBibleVersesForCopy,
+  groupContinuousBibleVerses,
   selectBibleVerseKeys
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
@@ -162,8 +164,16 @@ const favoriteVerseColors = computed(() => new Map(
 const allSelectedFavorited = computed(() => selectedVerses.value.length > 0 && readerBook.value
   ? selectedVerses.value.every((verse) => favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
   : false);
-const selectedVerseSummary = computed(() => selectedVerses.value.length === 1
-  ? selectedVerses.value[0].reference
+const selectedPassageLookups = computed<BibleLookupDTO[]>(() => {
+  const translation = catalog.value?.translation || "新标点和合本（简体）";
+  const sourceId = catalog.value?.sourceId || "cmn-cu89s";
+  return groupContinuousBibleVerses(selectedVerses.value).map((group) => {
+    const reference = group.length === 1 ? group[0].reference : bibleVerseGroupReference(group);
+    return { reference, normalizedReference: reference, translation, sourceId, verses: group };
+  });
+});
+const selectedVerseSummary = computed(() => selectedPassageLookups.value.length === 1
+  ? selectedPassageLookups.value[0].normalizedReference
   : `已选 ${selectedVerses.value.length} 节经文`);
 const textHasMore = computed(() => !!textResult.value && textResult.value.items.length < textResult.value.total);
 const textModeLabel = computed(() => textResult.value?.mode === "allTerms" ? "多关键词匹配" : "连续原文匹配");
@@ -875,6 +885,21 @@ async function sendLookup(lookup: BibleLookupDTO, key: string) {
   }
 }
 
+async function sendSelectedVerses() {
+  if (!props.canSend || sendBusyKey.value) return;
+  const lookups = selectedPassageLookups.value;
+  if (!lookups.length) return;
+  sendBusyKey.value = "selection";
+  try {
+    for (const lookup of lookups) await props.sendPassage(lookup);
+    showToast(`已发送到：${props.channelName}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "发送失败，请重试");
+  } finally {
+    sendBusyKey.value = "";
+  }
+}
+
 function showToast(message: string) {
   toast.value = message;
   if (toastTimer) window.clearTimeout(toastTimer);
@@ -914,7 +939,9 @@ function handleTouchEnd(event: TouchEvent) {
     @touchend.passive="handleTouchEnd"
   >
     <header class="bible-topbar">
-      <button type="button" class="bible-topbar-button" @click="emit('close')"><ChevronLeft :size="20" />聊天</button>
+      <div class="bible-topbar-leading">
+        <button v-if="view !== 'home'" type="button" class="bible-topbar-button home" @click="returnHome"><Home :size="19" />目录</button>
+      </div>
       <button v-if="view !== 'reader'" type="button" class="bible-topbar-title" disabled>
         <strong>小故事的书房</strong>
         <small><span>圣经</span><Sparkles :size="11" aria-hidden="true" /><span>{{ catalog?.translation || "新标点和合本（简体）" }}</span></small>
@@ -948,7 +975,7 @@ function handleTouchEnd(event: TouchEvent) {
             <button type="button" :disabled="bibleFontSize >= maxBibleFontSize" @click="adjustBibleFontSize(1)">大</button>
           </div>
         </div>
-        <button v-if="view !== 'home'" type="button" class="bible-topbar-button home" @click="returnHome"><Home :size="19" />目录</button>
+        <button type="button" class="bible-topbar-button chat" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
       </div>
     </header>
 
@@ -1104,7 +1131,7 @@ function handleTouchEnd(event: TouchEvent) {
       <div class="bible-verse-action-buttons">
         <button type="button" @click="copySelectedVerses"><ClipboardCopy :size="18" />复制</button>
         <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="18" /><Bookmark v-else :size="18" />{{ allSelectedFavorited ? "取消收藏" : "收藏" }}</button>
-        <button v-if="selectedVerses.length === 1" type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click="sendLookup(singleVerseLookup(selectedVerses[0]), selectedVerses[0].reference)"><Send :size="18" />发送</button>
+        <button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click="sendSelectedVerses"><Send :size="18" />发送</button>
         <button type="button" class="secondary" aria-label="清除选择" title="清除选择" @click="clearVerseSelection"><X :size="18" /></button>
       </div>
     </footer>
@@ -1130,7 +1157,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-workspace.open { transform: translateX(0); pointer-events: auto; visibility: visible; }
 .bible-topbar { position: relative; min-height: calc(58px + var(--safe-top)); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: minmax(78px, 1fr) minmax(0, 2fr) minmax(112px, 1fr); align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); }
 .bible-topbar-button { border: 0; background: transparent; color: #725537; display: inline-flex; align-items: center; gap: 3px; font: inherit; font-weight: 700; padding: 10px 0; cursor: pointer; }
-.bible-topbar-button.home { justify-self: end; }
+.bible-topbar-leading { justify-self: start; display: flex; align-items: center; }
 .bible-topbar-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
 .bible-topbar-title { min-width: 0; border: 0; padding: 5px 8px; display: grid; justify-items: center; color: inherit; background: transparent; font: inherit; line-height: 1.2; }
 .bible-topbar-title strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Songti SC", "STSong", serif; font-size: 18px; }
@@ -1251,7 +1278,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-reader-verse sup { margin-right: 2px; color: #9b7a58; font-size: .55em; font-weight: 700; vertical-align: super; }
 .bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
 .bible-reader-verse.favorite { box-shadow: inset 0 -0.24em color-mix(in srgb, var(--bible-favorite-color, #f28b82) 72%, transparent); }
-.bible-reader-verse.selected { outline: 1px solid rgba(150, 104, 52, .55); background: rgba(221, 180, 92, .28); }
+.bible-reader-verse.selected { border-radius: 0; background: rgba(221, 180, 92, .3); }
 .bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-verse-action { position: fixed; left: 50%; bottom: calc(14px + var(--safe-bottom)); z-index: 3; width: min(700px, calc(100vw - 24px)); transform: translateX(-50%); padding: 10px 11px 10px 14px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 14px; background: rgba(255, 252, 245, .97); box-shadow: 0 13px 36px rgba(58, 39, 20, .2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .bible-verse-action div { min-width: 0; display: grid; gap: 2px; }

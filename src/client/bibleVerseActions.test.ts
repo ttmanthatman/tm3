@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BibleVerseLineDTO } from "@shared/types";
-import { bibleVerseKey, formatBibleVersesForCopy, selectBibleVerseKeys } from "./bibleVerseActions";
+import { bibleVerseGroupReference, bibleVerseKey, formatBibleVersesForCopy, groupContinuousBibleVerses, selectBibleVerseKeys } from "./bibleVerseActions";
 
 const verse = (chapter: number, number: number, text: string): BibleVerseLineDTO => ({
   book: "约翰福音",
@@ -30,4 +30,18 @@ test("copy output groups contiguous verses and separates chapters", () => {
   assert.match(text, /约翰福音 1:1-2\n1 太初有道。\n2 这道太初与神同在。/);
   assert.match(text, /约翰福音 2:1\n1 第三日/);
   assert.match(text, /—— 新标点和合本（简体）$/);
+});
+
+test("groupContinuousBibleVerses merges adjacent verses and splits gaps and chapters", () => {
+  const groups = groupContinuousBibleVerses([
+    verse(1, 1, "甲"), verse(1, 2, "乙"), verse(1, 3, "丙"),
+    verse(1, 8, "丁"),
+    verse(2, 1, "戊"), verse(2, 2, "己")
+  ]);
+  assert.deepEqual(groups.map((group) => group.map((item) => item.verse)), [[1, 2, 3], [8], [1, 2]]);
+});
+
+test("bibleVerseGroupReference collapses a continuous range into one reference", () => {
+  assert.equal(bibleVerseGroupReference([verse(1, 1, "甲")]), "约翰福音 1:1");
+  assert.equal(bibleVerseGroupReference([verse(1, 1, "甲"), verse(1, 2, "乙"), verse(1, 3, "丙")]), "约翰福音 1:1-3");
 });
