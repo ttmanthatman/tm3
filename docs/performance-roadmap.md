@@ -31,7 +31,7 @@
 ### 0.1 全栈扫描发现、尚未做的项（2026-08-10 扫描）
 
 - **图片缩略图体系**（高）：全代码库无 `.resize()`——气泡显示 ≤260px 却传全尺寸 webp，头像 36px 也传全尺寸。做法：上传时生成 ~480px 缩略图变体 + 头像 256px 缩放 + 壁纸长边 cap 2560px；`compressImageFile` 加 maxDimension 参数一处改三处用。涉及上传管线与 DTO，单独一轮做。
-- **MessageRow 子组件/行级 memo**（高）：消息行内联在 App.vue 巨型组件里，任何响应式变化（语音播放 4Hz 进度、特效 tick）触发整个渲染窗口重渲染，每行重跑 marked + DOMPurify + DOM 解析。做法：抽 MessageRow 组件或先给 `messageRichTextSegments`/`markdownMessageHtml`/`linkPreviewFor` 按 (id, content) 加 Map 缓存。
+- **MessageRow 子组件/行级 memo**（高）：消息行内联在 App.vue 巨型组件里，任何响应式变化（语音播放 4Hz 进度、特效 tick）触发整个渲染窗口重渲染，每行重跑 marked + DOMPurify + DOM 解析。✅ 2026-08-10 小改动版完成：`src/client/memoize.ts`（WeakMap 按消息对象记忆）接入 markdownMessageHtml/messageRichTextSegments/prayerRichTextSegments/chainTopicRichTextSegments/messagePreviewUrl/waveformForMessage。彻底版（抽 MessageRow 组件 + v-memo）仍未做，属 roadmap 第 5 项架构改造的一部分。
 - **messages:refresh 扇出**（中）：✅ 2026-08-10 完成——prayed/prayer-status/AI 经文/撤回改发 `message:updated` 增量（广播点统一复用 hydrate 的 DTO，零额外查询）；客户端合并时保留本视角字段（`src/client/messageUpdates.ts`）。撤回路径冗余双发已去掉。批量删除/导入等真多消息场景保留 refresh。
 - **channel:updated 客户端忽略 payload**（中）：✅ 2026-08-10 完成——已存在的频道做增量合并（保留本视角权限位/lastMessageId/pinned），新频道/删除/无 payload 事件回退 loadChannels。
 - **socket 发消息双重 hydrateMessage**（中）：✅ 2026-08-10 部分完成——未做 DTO 复用，改为给 `hydrateMessage` 补 likes/favorites/musicScores/musicLyrics/voiceListens 预载（serializeMessage 走既有预载分支），每次 hydrate 从 3-5 条查询降为 1 条，同时覆盖 roadmap 项 4。

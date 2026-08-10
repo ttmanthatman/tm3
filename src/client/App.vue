@@ -115,6 +115,7 @@ import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
 import { useChatStore } from "./store";
+import { memoizeMessage } from "./memoize";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
@@ -825,6 +826,12 @@ const linkPreviewCache = ref<Record<string, LinkPreviewState>>({});
 const linkPreviewQueue: string[] = [];
 const linkPreviewQueued = new Set<string>();
 let activeLinkPreviews = 0;
+// Memoized on the message object; declared beside the queue state because the
+// immediate messages watch below reaches it before later consts are evaluated.
+const messagePreviewUrl = memoizeMessage((message: MessageDTO) => {
+  if (message.type !== "text" && message.type !== "prayer") return "";
+  return extractMessageUrls(message.content)[0] || "";
+});
 const voiceSending = ref(false);
 const playingVoiceId = ref<number | null>(null);
 const voiceProgress = ref<Record<number, number>>({});
@@ -2682,9 +2689,7 @@ function renderMarkdownToHtml(md: string): string {
   });
 }
 
-function markdownMessageHtml(message: MessageDTO) {
-  return linkifyMessageHtml(renderMarkdownToHtml(message.content || ""));
-}
+const markdownMessageHtml = memoizeMessage((message: MessageDTO) => linkifyMessageHtml(renderMarkdownToHtml(message.content || "")));
 
 function aiMessageHtml(message: MessageDTO) {
   return markdownMessageHtml(message);
@@ -2755,17 +2760,14 @@ function bibleRichTextSegmentsFromText(text: string, keyPrefix: string) {
   return splitBibleTextNode(text || "", keyPrefix);
 }
 
-function messageRichTextSegments(message: MessageDTO) {
-  return bibleRichTextSegmentsFromHtml(message.content, `message-${message.id}`);
-}
+// Message rows re-render whenever any reactive input changes (voice progress,
+// effect ticks), so the heavy per-row derivations are memoized on the message
+// object itself: identical rows return instantly from the WeakMap.
+const messageRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `message-${message.id}`));
 
-function prayerRichTextSegments(message: MessageDTO) {
-  return bibleRichTextSegmentsFromHtml(message.content, `prayer-${message.id}`);
-}
+const prayerRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `prayer-${message.id}`));
 
-function chainTopicRichTextSegments(message: MessageDTO) {
-  return bibleRichTextSegmentsFromText(chainPayload(message).topic || "", `chain-${message.id}`);
-}
+const chainTopicRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromText(chainPayload(message).topic || "", `chain-${message.id}`));
 
 function bibleReferencesFromHtml(html: string) {
   return extractBibleReferencesFromText(plainTextFromHtml(html));
@@ -2781,11 +2783,6 @@ function chainBibleReferences(message: MessageDTO) {
 
 function messageBibleReferenceScope(message: MessageDTO, area: "content" | "chain") {
   return `${area}:${message.id}`;
-}
-
-function messagePreviewUrl(message: MessageDTO) {
-  if (message.type !== "text" && message.type !== "prayer") return "";
-  return extractMessageUrls(message.content)[0] || "";
 }
 
 function linkPreviewFor(message: MessageDTO) {
@@ -7508,9 +7505,7 @@ async function analyzeAudioBlob(blob: Blob, bars = 48) {
   }
 }
 
-function waveformForMessage(message: MessageDTO) {
-  return resolveMessageWaveform(audioPayload(message).waveform, message.id);
-}
+const waveformForMessage = memoizeMessage((message: MessageDTO) => resolveMessageWaveform(audioPayload(message).waveform, message.id));
 
 function voiceDurationMs(message: MessageDTO) {
   return voiceDurations.value[message.id] || audioPayload(message).durationMs || 0;
