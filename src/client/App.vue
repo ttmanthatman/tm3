@@ -2238,7 +2238,7 @@ function pumpMessageImagePreloads() {
     const message = messageImagePreloadQueue.shift();
     if (!message) return;
     activeMessageImagePreloads += 1;
-    void fetch(fileUrl(message), { cache: "force-cache", credentials: "same-origin" })
+    void fetch(fileThumbUrl(message), { cache: "force-cache", credentials: "same-origin" })
       .then((response) => {
         if (!response.ok) throw new Error(`image preload failed: ${response.status}`);
         return response.blob();
@@ -8019,6 +8019,12 @@ function fileUrl(message: MessageDTO) {
   return `/api/files/${message.id}?token=${encodeURIComponent(getToken())}`;
 }
 
+// Bubble rendering and preload warming use the small variant; the server
+// falls back to the original for uploads that predate thumbnails.
+function fileThumbUrl(message: MessageDTO) {
+  return `${fileUrl(message)}&thumb=1`;
+}
+
 function pinnedFileUrl(block: PinnedMediaBlock) {
   return `/api/channels/${store.currentChannelId}/pinned/files/${encodeURIComponent(block.filePath)}?token=${encodeURIComponent(getToken())}`;
 }
@@ -10309,7 +10315,7 @@ async function toggleVirtual(character: any) {
                   >
                     <img
                       class="chat-image"
-                      :src="fileUrl(row.message)"
+                      :src="fileThumbUrl(row.message)"
                       :width="messageImageDimensions(row.message)?.width"
                       :height="messageImageDimensions(row.message)?.height"
                       loading="lazy"

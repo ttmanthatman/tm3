@@ -20,6 +20,30 @@
 
 ## 剩余优化项（按建议优先级）
 
+### 0. 2026-08-10 快赢包（已完成，commit `24c1d22` + `066e82f`）
+
+- ✅ 生产构建 NODE_ENV=production（首屏再减 ~15%）
+- ✅ typing 客户端 3s 节流 + 服务端 2s 去抖 + 连接期身份复用
+- ✅ presence/听众心跳仅变更时广播；新连接改单发快照
+- ✅ UUID 内容寻址媒体路由 immutable 一年缓存
+- ✅ link-preview 进程内缓存（30min 成功 / 60s 负缓存 / 500 条上限）
+
+### 0.1 全栈扫描发现、尚未做的项（2026-08-10 扫描）
+
+- **图片缩略图体系**（高）：全代码库无 `.resize()`——气泡显示 ≤260px 却传全尺寸 webp，头像 36px 也传全尺寸。做法：上传时生成 ~480px 缩略图变体 + 头像 256px 缩放 + 壁纸长边 cap 2560px；`compressImageFile` 加 maxDimension 参数一处改三处用。涉及上传管线与 DTO，单独一轮做。
+- **MessageRow 子组件/行级 memo**（高）：消息行内联在 App.vue 巨型组件里，任何响应式变化（语音播放 4Hz 进度、特效 tick）触发整个渲染窗口重渲染，每行重跑 marked + DOMPurify + DOM 解析。做法：抽 MessageRow 组件或先给 `messageRichTextSegments`/`markdownMessageHtml`/`linkPreviewFor` 按 (id, content) 加 Map 缓存。
+- **messages:refresh 扇出**（中）：代祷打卡/撤回等事件让全房间客户端整窗重拉；多数路径服务端已有 DTO，改发增量 `message:updated`（撤回路径还有冗余双发）。注意与「hydrateMessage 预载」项协同。
+- **channel:updated 客户端忽略 payload**（中）：`store.ts` 收到事件直接 loadChannels 三连重拉；事件里已带 DTO，做增量更新、无 payload 才回退。
+- **socket 发消息双重 hydrateMessage**（中）：emitMessage 已 hydrate + 广播，ack 又 hydrate 一次；新消息的 reactions/voiceListened 必为空，可复用第一份 DTO。
+- **索引**（中，需迁移，Sol 域）：prayer 计数需 `@@index([type, channelId])`；音乐曲目列表查询全表扫 messages（缓存音乐频道 id 后走 `[channelId, id]`）。
+- **/api/channels members include**（低）：全部频道拉全部成员 account 行，只有 direct 双成员频道用得到 directPeer。
+- **vendor 分包**（中低）：marked/dompurify/socket.io-client/lucide 钉成稳定 vendor chunk，发版后老用户少重下 ~26KB br。
+- **RELEASE_HISTORY 移出首屏**（中低）：`src/shared/release.ts` 历史更新日志 ~7KB br，更新日志弹窗首次打开时再 import。
+- **socket.io 动态 import**（低）：~11KB br，代价是 WS 握手晚一轮，需权衡。
+- **滚动路径减重**（中）：`saveReadPosition` 每滚动帧强制布局 + 同步 localStorage 写 → 复用 idle timer 节流；虚拟滚动观察器全量重建改增量 + forward overscan 320px 偏小。
+- **缓存剪枝**（低-中）：`voicePlayers`/`voiceProgress`/`resolvedMessageImageDimensions` 等按消息 id 累积且全量 spread 写入，切频道不清理；BibleWorkspace `chapterCache` 无上限（~20 章 LRU）。
+- **小项**：parallax 图层强制无损 PNG（改 webp）；歌谱 webp q92 偏高（85 即可）；styles.css 约十余个死 CSS 家族；`switchPrayerView` 串行 await 改 Promise.all；unread-counts 的 actor join 可用 `senderActorId != auth.actorId` 省掉；friend media 无 ETag 且不在 SW 缓存白名单。
+
 ### 1. `/api/music/tracks` 与歌单接口的负载裁剪（服务端，中等收益）
 
 - 位置：`src/server/routes/music.ts:130-161`、`src/server/services/musicService.ts`（`serializeTrack`、`playlistDto`）。

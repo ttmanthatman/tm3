@@ -1017,13 +1017,16 @@ function displayWebpFileName(name: string) {
   return `${base}.webp`;
 }
 
-async function compressImageFile(inputPath: string, outputDir: string, options: { shortName?: boolean } = {}) {
+async function compressImageFile(inputPath: string, outputDir: string, options: { shortName?: boolean; maxDimension?: number } = {}) {
   const originalStat = fs.statSync(inputPath);
   const outputName = compressedImageFileName(options.shortName);
   const outputPath = path.join(outputDir, outputName);
   try {
-    await sharp(inputPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 })
-      .rotate()
+    let pipeline = sharp(inputPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 }).rotate();
+    if (options.maxDimension) {
+      pipeline = pipeline.resize({ width: options.maxDimension, height: options.maxDimension, fit: "inside", withoutEnlargement: true });
+    }
+    await pipeline
       .webp({ quality: IMAGE_WEBP_QUALITY, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
       .toFile(outputPath);
     const outputStat = fs.statSync(outputPath);
@@ -1051,6 +1054,39 @@ async function validateStoredImage(filePath: string) {
     return !!metadata.format && !!metadata.width && !!metadata.height && metadata.width <= 20_000 && metadata.height <= 20_000;
   } catch {
     return false;
+  }
+}
+
+const IMAGE_THUMB_MAX_DIMENSION = 480;
+
+// Chat bubbles render at ~260px but used to transfer the full-size image;
+// keep a small webp variant next to the stored file for bubble rendering and
+// preload warming. Served through /api/files/:id?thumb=1 with a server-side
+// fallback to the original when no thumbnail exists (older uploads).
+export async function writeImageThumbnail(storedPath: string) {
+  const thumbPath = `${storedPath}.thumb.webp`;
+  if (fs.existsSync(thumbPath)) return;
+  try {
+    const source = sharp(storedPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 });
+    const metadata = await source.metadata();
+    if (!metadata.width || !metadata.height || Math.max(metadata.width, metadata.height) <= IMAGE_THUMB_MAX_DIMENSION) return;
+    await sharp(storedPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({ width: IMAGE_THUMB_MAX_DIMENSION, height: IMAGE_THUMB_MAX_DIMENSION, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 78, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
+      .toFile(thumbPath);
+  } catch (error) {
+    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+    app.log.warn({ error, storedPath }, "image thumbnail failed");
+  }
+}
+
+// Older uploads predate thumbnails; generate missing variants once in the
+// background after boot. Already-covered files skip on an existsSync check.
+async function backfillImageThumbnails() {
+  for (const name of fs.readdirSync(UPLOAD_DIR)) {
+    if (name.endsWith(".thumb.webp") || !isImageFileName(name)) continue;
+    await writeImageThumbnail(path.join(UPLOAD_DIR, name));
   }
 }
 
@@ -1234,7 +1270,7 @@ async function updateAccountAvatarFromUpload(accountId: number, request: Fastify
     return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
   }
   let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  const compressed = await compressImageFile(outPath, AVATAR_DIR, { maxDimension: 256 });
   if (compressed) {
     fs.unlinkSync(outPath);
     avatarPath = compressed.fileName;
@@ -4596,6 +4632,7 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
   storedFileName = deduplicated.storedFileName;
   stat = fs.statSync(path.join(UPLOAD_DIR, storedFileName));
   const imageDimensions = isImageUpload ? await storedImageDimensions(path.join(UPLOAD_DIR, storedFileName)) : undefined;
+  if (isImageUpload) await writeImageThumbnail(path.join(UPLOAD_DIR, storedFileName));
   if (channel?.kind === "music" && deduplicated.duplicate) {
     const existingTrack = await prisma.message.findFirst({
       where: { channel: { kind: "music" }, type: "file", filePath: storedFileName },
@@ -4816,17 +4853,21 @@ registerUnreadCountsRoutes(app, {
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
-  const query = request.query as { download?: string };
+  const query = request.query as { download?: string; thumb?: string };
   const message = await prisma.message.findUnique({ where: { id: messageId } });
   if (!message?.filePath) return reply.code(404).send({ success: false, message: "文件不存在" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
-  const filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
+  let filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
+  // Bubble rendering asks for the thumbnail variant; fall back to the
+  // original for older uploads that predate thumbnail generation.
+  const servingThumb = query.thumb === "1" && fs.existsSync(`${filePath}.thumb.webp`);
+  if (servingThumb) filePath = `${filePath}.thumb.webp`;
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
   const fileName = message.fileName || message.filePath;
   reply.header("Accept-Ranges", "bytes");
-  applyFileResponseHeaders(reply, fileName, query.download === "1");
+  applyFileResponseHeaders(reply, servingThumb ? displayWebpFileName(fileName) : fileName, query.download === "1");
   if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
@@ -5213,7 +5254,7 @@ app.post("/api/admin/ai-roles/:username/avatar", { preHandler: requireAdmin }, a
     return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
   }
   let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  const compressed = await compressImageFile(outPath, AVATAR_DIR, { maxDimension: 256 });
   if (compressed) {
     fs.unlinkSync(outPath);
     avatarPath = compressed.fileName;
@@ -5532,7 +5573,7 @@ async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, mis
     reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
     return "";
   }
-  const compressed = await compressImageFile(outPath, BG_DIR, { shortName });
+  const compressed = await compressImageFile(outPath, BG_DIR, { shortName, maxDimension: 2560 });
   if (compressed) {
     fs.unlinkSync(outPath);
     return compressed.fileName;
@@ -6974,7 +7015,7 @@ app.post("/api/virtual-characters/:id/avatar", { preHandler: requireAdmin }, asy
     return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
   }
   let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR);
+  const compressed = await compressImageFile(outPath, AVATAR_DIR, { maxDimension: 256 });
   if (compressed) {
     fs.unlinkSync(outPath);
     avatarPath = compressed.fileName;
@@ -7402,6 +7443,7 @@ app.setNotFoundHandler((request, reply) => {
 app.addHook("onListen", async () => {
   void backfillImageMessageDimensions().catch((error) => app.log.warn({ error }, "image dimensions backfill failed"));
   void backfillAudioMessageWaveforms().catch((error) => app.log.warn({ error }, "audio waveform backfill failed"));
+  void backfillImageThumbnails().catch((error) => app.log.warn({ error }, "image thumbnail backfill failed"));
 });
 
 let appBuilt = false;
