@@ -28,17 +28,23 @@
 - ✅ UUID 内容寻址媒体路由 immutable 一年缓存
 - ✅ link-preview 进程内缓存（30min 成功 / 60s 负缓存 / 500 条上限）
 
-### 0.1 全栈扫描发现、尚未做的项（2026-08-10 扫描）
+### 0.2 构建收尾 + 会话缓存（已完成，2026-08-10）
 
-- **图片缩略图体系**（高）：全代码库无 `.resize()`——气泡显示 ≤260px 却传全尺寸 webp，头像 36px 也传全尺寸。做法：上传时生成 ~480px 缩略图变体 + 头像 256px 缩放 + 壁纸长边 cap 2560px；`compressImageFile` 加 maxDimension 参数一处改三处用。涉及上传管线与 DTO，单独一轮做。
+- ✅ vendor 分包：`vite.config.ts` 的 `advancedChunks` 把 marked/dompurify/socket.io 家族/lucide/vue 钉进稳定 vendor chunk（188KB，配合 immutable 跨版本复用）
+- ✅ RELEASE_HISTORY 移出首屏：新增 `/api/version/history`，「关于」页与管理更新页打开时才拉取（entry 491→415KB min）
+- ✅ 认证会话 TTL 缓存（roadmap 项 2 完成）：`verifyJwtToken` 正向结果 30s 缓存（上限 1000、负结果不缓存），失效统一挂在 `disconnectSessions`（logout/改密码/管理员改删号/账号删除/新登录顶替全部覆盖）
+
+### 0.1 全栈扫描发现项（2026-08-10 扫描，已标注完成状态）
+
+- **图片缩略图体系**（高）：✅ 2026-08-10 完成（commit `d8fb064`）——上传生成 480px 缩略图 + `/api/files/:id?thumb=1` 变体 + 启动回填；头像 256px、壁纸 2560px cap。demo 实测历史图 23MB→779KB。
 - **MessageRow 子组件/行级 memo**（高）：消息行内联在 App.vue 巨型组件里，任何响应式变化（语音播放 4Hz 进度、特效 tick）触发整个渲染窗口重渲染，每行重跑 marked + DOMPurify + DOM 解析。✅ 2026-08-10 小改动版完成：`src/client/memoize.ts`（WeakMap 按消息对象记忆）接入 markdownMessageHtml/messageRichTextSegments/prayerRichTextSegments/chainTopicRichTextSegments/messagePreviewUrl/waveformForMessage。彻底版（抽 MessageRow 组件 + v-memo）仍未做，属 roadmap 第 5 项架构改造的一部分。
 - **messages:refresh 扇出**（中）：✅ 2026-08-10 完成——prayed/prayer-status/AI 经文/撤回改发 `message:updated` 增量（广播点统一复用 hydrate 的 DTO，零额外查询）；客户端合并时保留本视角字段（`src/client/messageUpdates.ts`）。撤回路径冗余双发已去掉。批量删除/导入等真多消息场景保留 refresh。
 - **channel:updated 客户端忽略 payload**（中）：✅ 2026-08-10 完成——已存在的频道做增量合并（保留本视角权限位/lastMessageId/pinned），新频道/删除/无 payload 事件回退 loadChannels。
 - **socket 发消息双重 hydrateMessage**（中）：✅ 2026-08-10 部分完成——未做 DTO 复用，改为给 `hydrateMessage` 补 likes/favorites/musicScores/musicLyrics/voiceListens 预载（serializeMessage 走既有预载分支），每次 hydrate 从 3-5 条查询降为 1 条，同时覆盖 roadmap 项 4。
 - **索引**（中，需迁移，Sol 域）：prayer 计数需 `@@index([type, channelId])`；音乐曲目列表查询全表扫 messages（缓存音乐频道 id 后走 `[channelId, id]`）。
 - **/api/channels members include**（低）：全部频道拉全部成员 account 行，只有 direct 双成员频道用得到 directPeer。
-- **vendor 分包**（中低）：marked/dompurify/socket.io-client/lucide 钉成稳定 vendor chunk，发版后老用户少重下 ~26KB br。
-- **RELEASE_HISTORY 移出首屏**（中低）：`src/shared/release.ts` 历史更新日志 ~7KB br，更新日志弹窗首次打开时再 import。
+- **vendor 分包**（中低）：✅ 已并入 0.2 节完成项。
+- **RELEASE_HISTORY 移出首屏**（中低）：✅ 已并入 0.2 节完成项（改用 `/api/version/history` 端点方案，未动 release 工具链）。
 - **socket.io 动态 import**（低）：~11KB br，代价是 WS 握手晚一轮，需权衡。
 - **滚动路径减重**（中）：`saveReadPosition` 每滚动帧强制布局 + 同步 localStorage 写 → 复用 idle timer 节流；虚拟滚动观察器全量重建改增量 + forward overscan 320px 偏小。
 - **缓存剪枝**（低-中）：`voicePlayers`/`voiceProgress`/`resolvedMessageImageDimensions` 等按消息 id 累积且全量 spread 写入，切频道不清理；BibleWorkspace `chapterCache` 无上限（~20 章 LRU）。

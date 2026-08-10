@@ -171,7 +171,7 @@ import { formatUnreadCount } from "./unread";
 import { flushPendingPersists, lastMsgwinAccount } from "./messageWindowCache";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "@shared/release";
+import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "@shared/release";
 import { friendlyDeviceName, type ActivityLogCategory } from "@shared/activityLog";
 import {
   musicMentionTokenAtCursor,
@@ -1790,7 +1790,22 @@ const pinnedTickerBody = computed(() =>
     .filter(Boolean)
     .join("　")
 );
-const releaseHistory = computed(() => RELEASE_HISTORY.filter((release) => release.version !== APP_VERSION));
+const releaseHistory = ref<Array<{ version: string; date: string; notes: readonly string[] }>>([]);
+let releaseHistoryLoading = false;
+// Historical notes come from the server on demand so the entry chunk does
+// not carry the full release log.
+async function ensureReleaseHistory() {
+  if (releaseHistory.value.length || releaseHistoryLoading) return;
+  releaseHistoryLoading = true;
+  try {
+    const result = await api<{ history: Array<{ version: string; date: string; notes: readonly string[] }> }>("/api/version/history");
+    releaseHistory.value = result.history.filter((release) => release.version !== APP_VERSION);
+  } catch {
+    // The panels still show the current version's notes without history.
+  } finally {
+    releaseHistoryLoading = false;
+  }
+}
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
 const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.exists && item.url));
 const activeAppearanceSection = computed(() => appearanceSections.find((section) => section.id === appearanceSection.value) || appearanceSections[0]);
@@ -3250,7 +3265,7 @@ async function selectSettingsTab(tab: typeof settingsTab.value) {
     if (tab === "account") syncAccountSettings();
     if (tab === "devices") await loadDevices();
     if (tab === "notifications") await loadNotificationSettings();
-    if (tab === "release") await checkServerVersion();
+    if (tab === "release") await Promise.all([checkServerVersion(), ensureReleaseHistory()]);
   } catch (error) {
     settingsLoadError.value = error instanceof Error ? error.message : "设置加载失败";
   }
@@ -8508,7 +8523,7 @@ async function openAdminPage(page: AdminPage) {
     if (page === "channels") await loadAdminChannels();
     if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
     if (page === "backups") await loadAdminBackups();
-    if (page === "release") await checkForUpdates();
+    if (page === "release") await Promise.all([checkForUpdates(), ensureReleaseHistory()]);
   } catch (error) {
     adminPageError.value = error instanceof Error ? error.message : "页面加载失败，请稍后重试";
   } finally {

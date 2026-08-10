@@ -17,6 +17,18 @@ export default defineConfig({
     emptyOutDir: true,
     rollupOptions: {
       input: "index.html"
+    },
+    rolldownOptions: {
+      output: {
+        advancedChunks: {
+          groups: [
+            // Stable libraries change far less often than app code; pinning
+            // them into their own chunk keeps their content hash (and the
+            // year-long immutable cache hit) across most releases.
+            { name: "vendor", test: /node_modules[\\/](marked|dompurify|socket\.io-client|socket\.io-parser|engine\.io-client|engine\.io-parser|lucide-vue-next|debug|ms)[\\/]/ }
+          ]
+        }
+      }
     }
   },
   server: {

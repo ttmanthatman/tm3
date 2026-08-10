@@ -57,7 +57,7 @@ import type {
   ThemeDTO,
   ThemePaletteDTO
 } from "../shared/types.js";
-import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
+import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "../shared/release.js";
 import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../shared/bibleFavoriteColors.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
@@ -599,10 +599,26 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
   if (!token) throw new Error("missing token");
   const decoded = jwt.verify(token, JWT_SECRET) as AuthContext & { loginAt?: string };
   if (!decoded.sessionId) throw new Error("missing session");
-  const [account, session] = await Promise.all([
-    prisma.account.findUnique({ where: { id: decoded.accountId }, include: { actor: true } }),
-    prisma.accountSession.findUnique({ where: { id: decoded.sessionId } })
-  ]);
+  const cacheKey = `${decoded.accountId}:${decoded.sessionId}`;
+  const cached = authSessionCache.get(cacheKey);
+  let account: AccountWithActor | null;
+  let session: AccountSession | null;
+  if (cached && cached.expiresAt > Date.now()) {
+    account = cached.account;
+    session = cached.session;
+  } else {
+    [account, session] = await Promise.all([
+      prisma.account.findUnique({ where: { id: decoded.accountId }, include: { actor: true } }),
+      prisma.accountSession.findUnique({ where: { id: decoded.sessionId } })
+    ]);
+    if (account && session) {
+      authSessionCache.set(cacheKey, { account, session, expiresAt: Date.now() + AUTH_SESSION_CACHE_TTL_MS });
+      if (authSessionCache.size > AUTH_SESSION_CACHE_LIMIT) {
+        const oldest = authSessionCache.keys().next().value;
+        if (oldest !== undefined) authSessionCache.delete(oldest);
+      }
+    }
+  }
   if (!account || !account.actor) throw new Error("account not found");
   if (!session || session.accountId !== account.id || session.revokedAt || session.expiresAt <= new Date()) throw new Error("session expired");
   const touchBefore = new Date(Date.now() - 5 * 60 * 1000);
@@ -2619,9 +2635,26 @@ function scheduleFriendFeedRefresh() {
 function disconnectSessions(sessionIds: string[]) {
   const targets = new Set(sessionIds);
   if (!targets.size) return;
+  invalidateAuthSessionCacheBySessionIds([...targets]);
   for (const socket of io.sockets.sockets.values()) {
     const auth = socket.data.auth as AuthContext | undefined;
     if (auth?.sessionId && targets.has(auth.sessionId)) socket.disconnect(true);
+  }
+}
+
+const AUTH_SESSION_CACHE_TTL_MS = 30_000;
+const AUTH_SESSION_CACHE_LIMIT = 1000;
+
+// Positive identity/session lookups cached briefly per session; negative
+// results always re-check. Every session-revoking path funnels through
+// disconnectSessions (or createAuthSession below), which drops the cache.
+const authSessionCache = new Map<string, { account: AccountWithActor; session: AccountSession; expiresAt: number }>();
+
+function invalidateAuthSessionCacheBySessionIds(sessionIds: string[]) {
+  if (!sessionIds.length) return;
+  const targets = new Set(sessionIds);
+  for (const [key] of authSessionCache) {
+    if (targets.has(key.slice(key.indexOf(":") + 1))) authSessionCache.delete(key);
   }
 }
 
@@ -2947,6 +2980,10 @@ app.get("/api/version", async () => ({
     pm2App: UPDATE_PM2_APP
   }
 }));
+
+// Past-version notes are only needed when someone opens the release modal,
+// keeping the full history out of the client entry chunk.
+app.get("/api/version/history", async () => ({ history: RELEASE_HISTORY }));
 
 app.get("/api/admin/update/check", { preHandler: requireAdmin }, async (request) => {
   const { repo, branches } = await githubBranches();
