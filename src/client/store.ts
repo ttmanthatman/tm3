@@ -7,6 +7,7 @@ import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, planChannelSeed, recordChannelRead, saveUnreadState } from "./unread";
 import { clearPersistedWindows, lastMsgwinAccount, loadPersistedWindow, persistWindowThrottled, rememberMsgwinAccount } from "./messageWindowCache";
+import { mergeChannelUpdate, mergeMessageUpdate } from "./messageUpdates";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -619,7 +620,8 @@ export const useChatStore = defineStore("chat", {
       });
       socket.on("message:updated", (message: MessageDTO) => {
         if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer")) return;
-        this.replaceMessage(message);
+        const existing = this.messages.find((row) => row.id === message.id);
+        this.replaceMessage(mergeMessageUpdate(existing, message));
       });
       socket.on("message:reaction", (event: { messageId: number; channelId: number; reactions: Partial<MessageReactionsDTO> }) => {
         if (event.channelId === this.currentChannelId) this.updateMessageReactions(event.messageId, event.reactions);
@@ -652,7 +654,16 @@ export const useChatStore = defineStore("chat", {
       socket.on("messages:refresh", (event: { channelId: number }) => {
         if (event.channelId === this.currentChannelId) this.loadMessages();
       });
-      socket.on("channel:updated", () => this.loadChannels());
+      socket.on("channel:updated", (event?: { action?: string; channel?: ChannelDTO; channelId?: number }) => {
+        const incoming = event?.channel;
+        const existing = incoming ? this.channels.find((ch) => ch.id === incoming.id) : null;
+        if (incoming && existing) {
+          mergeChannelUpdate(existing, incoming);
+          return;
+        }
+        // New channels, deletions, and payload-less events still reload.
+        void this.loadChannels();
+      });
       socket.on("account:updated", (account: AccountDTO) => {
         if (account.id === this.account?.id) this.account = account;
       });

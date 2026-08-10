@@ -1376,8 +1376,11 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
   if (isVoiceMessage(message)) {
     voiceListened = message.sender.accountId === viewerAccountId;
     if (!voiceListened && viewerAccountId) {
+      const attachedListens = (message as typeof message & { voiceListens?: Array<{ id: number }> }).voiceListens;
       if (batch?.voiceListenedMessageIds) {
         voiceListened = batch.voiceListenedMessageIds.has(message.id);
+      } else if (attachedListens) {
+        voiceListened = attachedListens.length > 0;
       } else {
         const listened = await prisma.voiceListen.findUnique({ where: { messageId_accountId: { messageId: message.id, accountId: viewerAccountId } } });
         voiceListened = !!listened;
@@ -1551,7 +1554,17 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
 async function hydrateMessage(id: number, viewerAccountId?: number) {
   const message = await prisma.message.findUnique({
     where: { id },
-    include: { sender: true, replyTo: { include: { sender: true } } }
+    include: {
+      sender: true,
+      replyTo: { include: { sender: true } },
+      // Preloaded relations are picked up by serializeMessage's preloaded
+      // branches, keeping single-message hydration to one round of queries.
+      likes: { include: { account: { select: { displayName: true, avatarPath: true } } }, orderBy: { createdAt: "asc" } },
+      favorites: { select: { accountId: true } },
+      musicScores: { orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } },
+      musicLyrics: true,
+      ...(viewerAccountId ? { voiceListens: { where: { accountId: viewerAccountId }, select: { id: true } } } : {})
+    }
   });
   return message ? serializeMessage(message, viewerAccountId) : null;
 }
@@ -4687,8 +4700,9 @@ app.post("/api/messages/:messageId/prayed", { preHandler: requireAuth }, async (
   const raw = prayerPayloadRaw(target.payload);
   if (cleanPrayerStatus(raw.status) !== "active") return reply.code(409).send({ success: false, message: "此代祷已结束" });
   await prisma.prayerAction.create({ data: { messageId: target.id, accountId: auth.accountId } });
-  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
-  return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+  const dto = await hydrateMessage(messageId, auth.accountId);
+  if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
+  return { success: true, message: dto };
 });
 
 app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth }, async (request, reply) => {
@@ -4709,8 +4723,9 @@ app.patch("/api/messages/:messageId/prayer-status", { preHandler: requireAuth },
     statusBy: auth.username
   };
   await prisma.message.update({ where: { id: target.id }, data: { payload: payload as Prisma.InputJsonObject } });
-  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
-  return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+  const dto = await hydrateMessage(messageId, auth.accountId);
+  if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
+  return { success: true, message: dto };
 });
 
 app.post("/api/messages/:messageId/prayer-update", { preHandler: requireAuth }, async (request, reply) => {
@@ -4808,7 +4823,6 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
   if (message.filePath) safeUnlink("upload", message.filePath);
   const recalled = await hydrateMessage(messageId, auth.accountId);
   if (recalled) io.to(`ch:${message.channelId}`).emit("message:updated", recalled);
-  io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
   return { success: true };
 });
 
@@ -5328,8 +5342,9 @@ app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler:
         createdByAccountId: auth.accountId
       }
     });
-    io.to(`ch:${message.channelId}`).emit("messages:refresh", { channelId: message.channelId });
-    return { success: true, message: await hydrateMessage(messageId, auth.accountId) };
+    const dto = await hydrateMessage(messageId, auth.accountId);
+    if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
+    return { success: true, message: dto };
   } catch (error) {
     await prisma.messageAiSuggestion.create({
       data: {
