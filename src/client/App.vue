@@ -4784,11 +4784,17 @@ async function toggleVoicePanel() {
   }
 }
 
+let lastTypingEmitAt = 0;
+
 function onInput() {
   syncComposerCaret();
   composerSuggestionIndex.value = 0;
   composerSuggestionSuppressed.value = false;
   if (!store.currentChannelId) return;
+  // Throttle typing signals to one per window; the server also debounces.
+  const now = Date.now();
+  if (now - lastTypingEmitAt < 3000) return;
+  lastTypingEmitAt = now;
   store.socket?.emit("message:typing", { channelId: store.currentChannelId, state: "start" });
 }
 

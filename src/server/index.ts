@@ -979,7 +979,10 @@ function applyFileValidation(request: FastifyRequest, reply: FastifyReply, stat:
   const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
   reply.header("ETag", etag);
   reply.header("Last-Modified", stat.mtime.toUTCString());
-  reply.header("Cache-Control", "private, no-cache");
+  // Served files are content-addressed (UUID filenames, one upload per name),
+  // so long-lived immutable caching is safe and avoids a revalidation round
+  // trip per avatar/image on every page view.
+  reply.header("Cache-Control", "private, max-age=31536000, immutable");
   const noneMatch = String(request.headers["if-none-match"] || "");
   const modifiedSince = Date.parse(String(request.headers["if-modified-since"] || ""));
   return noneMatch === etag || (!noneMatch && Number.isFinite(modifiedSince) && stat.mtimeMs <= modifiedSince + 999);
@@ -2476,28 +2479,37 @@ async function broadcastPresence() {
   io.emit("presence:updated", unique);
 }
 
-function broadcastMusicListeners() {
-  const listeners = [...musicListeners.values()]
+function musicListenersSnapshot() {
+  return [...musicListeners.values()]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .filter((listener, index, all) => all.findIndex((candidate) => candidate.accountId === listener.accountId) === index)
     .map(({ updatedAt: _updatedAt, ...listener }) => listener);
-  io.emit("music:listeners", listeners);
 }
 
-function broadcastBibleReaders() {
-  const readers = [...bibleReaders.values()]
+function broadcastMusicListeners() {
+  io.emit("music:listeners", musicListenersSnapshot());
+}
+
+function bibleReadersSnapshot() {
+  return [...bibleReaders.values()]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .filter((reader, index, all) => all.findIndex((candidate) => candidate.accountId === reader.accountId) === index)
     .map(({ updatedAt: _updatedAt, ...reader }) => reader);
-  io.emit("bible:readers", readers);
 }
 
-function broadcastFriendListeners() {
-  const listeners = [...friendListeners.values()]
+function broadcastBibleReaders() {
+  io.emit("bible:readers", bibleReadersSnapshot());
+}
+
+function friendListenersSnapshot() {
+  return [...friendListeners.values()]
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .filter((listener, index, all) => all.findIndex((candidate) => candidate.accountId === listener.accountId) === index)
     .map(({ updatedAt: _updatedAt, ...listener }) => listener);
-  io.emit("friend:listeners", listeners);
+}
+
+function broadcastFriendListeners() {
+  io.emit("friend:listeners", friendListenersSnapshot());
 }
 
 let musicListenerCleanupTimer: NodeJS.Timeout | undefined;
@@ -4385,12 +4397,41 @@ app.patch("/api/like-notifications/:id/dismiss", { preHandler: requireAuth }, as
   return { success: true };
 });
 
+// Process-level cache for link previews: without it every client refetches
+// the same outbound URL on each cold start. Successes live 30 minutes,
+// failures get a short negative TTL; the map is capped with oldest-first
+// eviction (insertion order).
+const LINK_PREVIEW_CACHE_TTL_MS = 30 * 60 * 1000;
+const LINK_PREVIEW_ERROR_TTL_MS = 60 * 1000;
+const LINK_PREVIEW_CACHE_LIMIT = 500;
+const linkPreviewServerCache = new Map<string, { expiresAt: number; payload?: unknown; error?: string }>();
+
+function rememberLinkPreview(url: string, entry: { expiresAt: number; payload?: unknown; error?: string }) {
+  linkPreviewServerCache.delete(url);
+  linkPreviewServerCache.set(url, entry);
+  while (linkPreviewServerCache.size > LINK_PREVIEW_CACHE_LIMIT) {
+    const oldest = linkPreviewServerCache.keys().next().value;
+    if (oldest === undefined) break;
+    linkPreviewServerCache.delete(oldest);
+  }
+}
+
 app.get("/api/link-preview", { preHandler: requireAuth }, async (request, reply) => {
   const query = request.query as { url?: string };
+  const url = String(query.url || "");
+  const cached = linkPreviewServerCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.error) return reply.code(400).send({ success: false, message: cached.error });
+    return cached.payload;
+  }
   try {
-    return await fetchLinkPreview(String(query.url || ""));
+    const payload = await fetchLinkPreview(url);
+    rememberLinkPreview(url, { expiresAt: Date.now() + LINK_PREVIEW_CACHE_TTL_MS, payload });
+    return payload;
   } catch (error) {
-    return reply.code(400).send({ success: false, message: error instanceof Error ? error.message : "无法生成网页预览" });
+    const message = error instanceof Error ? error.message : "无法生成网页预览";
+    rememberLinkPreview(url, { expiresAt: Date.now() + LINK_PREVIEW_ERROR_TTL_MS, error: message });
+    return reply.code(400).send({ success: false, message });
   }
 });
 
@@ -7164,8 +7205,10 @@ io.on("connection", async (socket: Socket) => {
   });
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));
   await broadcastPresence();
-  broadcastMusicListeners();
-  broadcastFriendListeners();
+  // Listener lists did not change on connect: send the snapshots only to the
+  // new socket instead of broadcasting them to everyone.
+  socket.emit("music:listeners", musicListenersSnapshot());
+  socket.emit("friend:listeners", friendListenersSnapshot());
 
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
@@ -7221,14 +7264,24 @@ io.on("connection", async (socket: Socket) => {
     }
   });
 
+  // Per-socket debounce for typing signals: identical states inside the
+  // window skip auth and DB work entirely. The client throttles sends too.
+  const typingSeenAt = new Map<string, number>();
+
   socket.on("message:typing", async (data: { channelId: number; state: "start" | "stop" }) => {
+    const channelId = Number(data.channelId);
+    const typingKey = `${channelId}:${data.state}`;
+    const now = Date.now();
+    if (now - (typingSeenAt.get(typingKey) ?? 0) < 2000) return;
+    typingSeenAt.set(typingKey, now);
     const currentAuth = await refreshSocketAuth(socket);
-    if (!currentAuth || !(await canAccessChannel(currentAuth.accountId, Number(data.channelId)))) return;
-    const actor = await prisma.actor.findUnique({ where: { id: currentAuth.actorId } });
-    if (!actor) return;
-    socket.to(`ch:${Number(data.channelId)}`).emit("message:typing", {
-      channelId: Number(data.channelId),
-      actor: { id: actor.id, username: actor.username, displayName: actor.displayName, kind: "human" },
+    if (!currentAuth || !(await canAccessChannel(currentAuth.accountId, channelId))) return;
+    // The profile was resolved at connect time; no per-event actor lookup.
+    const profile = online.get(socket.id);
+    if (!profile) return;
+    socket.to(`ch:${channelId}`).emit("message:typing", {
+      channelId,
+      actor: { id: profile.actorId, username: profile.username, displayName: profile.displayName, kind: "human" },
       state: data.state
     });
   });
@@ -7238,8 +7291,8 @@ io.on("connection", async (socket: Socket) => {
     if (!currentAuth) return;
     const body = z.object({ trackId: z.number().int().positive().nullable() }).safeParse(data);
     if (!body.success || body.data.trackId === null) {
+      // Only broadcast when the listener entry actually existed.
       if (musicListeners.delete(socket.id)) broadcastMusicListeners();
-      else broadcastMusicListeners();
       return;
     }
     const existing = musicListeners.get(socket.id);
@@ -7267,8 +7320,7 @@ io.on("connection", async (socket: Socket) => {
     if (!currentAuth) return;
     const body = z.object({ active: z.boolean(), bookName: z.string().trim().min(1).max(40).nullable() }).safeParse(data);
     if (!body.success || !body.data.active) {
-      bibleReaders.delete(socket.id);
-      broadcastBibleReaders();
+      if (bibleReaders.delete(socket.id)) broadcastBibleReaders();
       return;
     }
     const existing = bibleReaders.get(socket.id);
@@ -7293,8 +7345,7 @@ io.on("connection", async (socket: Socket) => {
       programTitle: z.string().trim().min(1).max(255)
     }).nullable().safeParse(data);
     if (!body.success || body.data === null) {
-      friendListeners.delete(socket.id);
-      broadcastFriendListeners();
+      if (friendListeners.delete(socket.id)) broadcastFriendListeners();
       return;
     }
     const existing = friendListeners.get(socket.id);
