@@ -393,6 +393,9 @@ export interface VersionDTO {
   date: string;
   developer: string;
   notes: readonly string[];
+  demo?: {
+    available: true;
+  };
   update?: {
     repoUrl: string;
     branch: string;

@@ -79,6 +79,7 @@ import { imageDimensionsFromPayload, mergeImageDimensionsPayload, orientedImageD
 import { recalledMessageData } from "./messageRecall.js";
 import { prependPrayerUpdateHistory } from "./prayerUpdates.js";
 import { fallbackDirectChatNames, isAutomaticDirectChatName, parseDirectChatNameSuggestions } from "./directChatNames.js";
+import { demoCacheDir, demoManifestUrl, demoModeAvailable, demoStatePath } from "./demo/config.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -137,6 +138,9 @@ const UPDATE_BRANCH_CONFIG_PATH = process.env.UPDATE_BRANCH_CONFIG_PATH || path.
 const UPDATE_RUNNING_TIMEOUT_MS = Number(process.env.UPDATE_RUNNING_TIMEOUT_MS || 30 * 60 * 1000);
 const UPDATE_LOG_TAIL_BYTES = Math.max(64 * 1024, Number(process.env.UPDATE_LOG_TAIL_BYTES || 256 * 1024) || 256 * 1024);
 const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
+const DEMO_MODE_AVAILABLE = demoModeAvailable();
+const DEMO_MANIFEST_URL = DEMO_MODE_AVAILABLE ? demoManifestUrl(UPDATE_REPO_URL) : "";
+const demoResetGate = { busy: false };
 const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -477,6 +481,15 @@ app.addHook("onRequest", async (_request, reply) => {
     CONTENT_SECURITY_POLICY
   );
 });
+
+if (DEMO_MODE_AVAILABLE) {
+  app.addHook("onRequest", async (request, reply) => {
+    if (!demoResetGate.busy) return;
+    const requestPath = request.url.split("?", 1)[0];
+    if (requestPath.startsWith("/api/admin/demo/") || requestPath === "/api/health" || requestPath === "/api/version") return;
+    if (requestPath.startsWith("/api/")) return reply.code(503).send({ success: false, message: "演示数据正在复位，请稍后重新载入" });
+  });
+}
 
 await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
 await app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
@@ -2973,6 +2986,7 @@ app.get("/api/version", async () => ({
   date: RELEASE_DATE,
   developer: RELEASE_DISPLAY_DEVELOPER,
   notes: RELEASE_NOTES,
+  ...(DEMO_MODE_AVAILABLE ? { demo: { available: true as const } } : {}),
   update: {
     repoUrl: UPDATE_REPO_URL,
     branch: configuredUpdateBranch(),
@@ -6015,7 +6029,7 @@ function collectExternalDatabaseEntry(existingEntries: Array<{ name: string }>) 
   return [{ name, data: fs.readFileSync(dbPath), date: stat.mtime }];
 }
 
-async function createFullBackup(auth: AuthContext) {
+async function createFullBackup(auth: Pick<AuthContext, "username">) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   const createdAt = new Date();
   const stamp = createdAt.toISOString().replace(/[:.]/g, "-");
@@ -7508,6 +7522,41 @@ export async function buildApp(options: BuildAppOptions = {}) {
   }
   startCleanupTimers();
   try {
+    if (DEMO_MODE_AVAILABLE) {
+      const [{ createDemoModeService }, { registerDemoModeRoutes }] = await Promise.all([
+        import("./demo/service.js"),
+        import("./routes/demoMode.js")
+      ]);
+      const service = createDemoModeService({
+        prisma,
+        manifestUrl: DEMO_MANIFEST_URL,
+        statePath: demoStatePath(STORAGE_ROOT),
+        cacheDir: demoCacheDir(STORAGE_ROOT),
+        storageDirs: {
+          upload: UPLOAD_DIR,
+          avatar: AVATAR_DIR,
+          background: BG_DIR,
+          parallax: PARALLAX_DIR,
+          "music-score": MUSIC_SCORE_DIR
+        },
+        gate: demoResetGate,
+        createBackup: async (operator) => {
+          await createFullBackup(operator);
+        },
+        afterReset: async (operatorAccountId, datasetVersion) => {
+          resetAiSettingsCache();
+          authSessionCache.clear();
+          io.emit("appearance:updated", await appearanceDto());
+          io.emit("demo:reset", { datasetVersion });
+          for (const socket of io.sockets.sockets.values()) {
+            const auth = socket.data.auth as AuthContext | undefined;
+            if (auth?.accountId !== operatorAccountId) socket.disconnect(true);
+          }
+        },
+        log: (message, details) => app.log.error({ details }, message)
+      });
+      registerDemoModeRoutes(app, { requireAdmin, service });
+    }
     if (options.runStartupTasks !== false) {
       await ensureBootstrap();
       await ensureWebPush();

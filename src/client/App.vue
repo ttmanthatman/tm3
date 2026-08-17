@@ -205,6 +205,7 @@ const MusicManager = defineAsyncComponent(() => import("./features/music/MusicMa
 const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
+const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
@@ -406,6 +407,7 @@ type AdminPage =
   | "backups"
   | "messages"
   | "resources"
+  | "demo"
   | "release";
 const adminPage = ref<AdminPage>("home");
 const adminPageLoading = ref(false);
@@ -1731,6 +1733,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
   messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
   resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
+  demo: { title: "演示模式", description: "从 GitHub 载入或复位标准演示数据" },
   release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
 };
 const activeAdminPageMeta = computed(() => {
@@ -8545,7 +8548,7 @@ function returnFromAdminPage() {
     void openAdminPage("appearance");
     return;
   }
-  if (["backups", "messages", "resources"].includes(adminPage.value)) {
+  if (["backups", "messages", "resources", "demo"].includes(adminPage.value)) {
     void openAdminPage("data");
     return;
   }
@@ -11443,6 +11446,7 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('backups')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>备份与迁移</b><small>完整备份及数据导入导出</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('messages')"><span class="admin-entry-icon"><MessageSquareQuote :size="20" /></span><span><b>聊天记录</b><small>选择消息或按频道清理</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('resources')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>资源管理</b><small>查看、压缩和删除附件</small></span><ChevronRight :size="19" /></button>
+              <button v-if="serverVersion?.demo?.available" class="admin-entry-row" @click="openAdminPage('demo')"><span class="admin-entry-icon"><RotateCcw :size="20" /></span><span><b>演示模式</b><small>从 GitHub 载入或复位标准演示数据</small></span><ChevronRight :size="19" /></button>
             </div>
           </section>
 
@@ -12035,6 +12039,8 @@ async function toggleVirtual(character: any) {
               @delete-all="deleteAllAdminAttachments"
             />
           </section>
+
+          <DemoModePanel v-else-if="adminPage === 'demo'" />
 
           <section v-else-if="adminPage === 'release'" class="release-panel admin-page-section">
             <div class="release-head">

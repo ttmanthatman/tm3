@@ -18,6 +18,7 @@ DB_PASSWORD="${DB_PASSWORD:-}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-admin}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 SERVER_IP="${SERVER_IP:-}"
+DEMO_MODE="${DEMO_MODE:-0}"
 
 info() {
   printf '\033[1;34m==>\033[0m %s\n' "$*"
@@ -165,6 +166,7 @@ APP_RELEASE_DEVELOPER="${APP_RELEASE_DEVELOPER}"
 UPDATE_REPO_URL="${UPDATE_REPO_URL}"
 UPDATE_BRANCH="${UPDATE_BRANCH}"
 UPDATE_PM2_APP="${APP_NAME}"
+DEMO_MODE="${DEMO_MODE}"
 EOF_ENV
   chmod 600 "$APP_DIR/.env"
 }
@@ -265,6 +267,8 @@ App directory: ${APP_DIR}
 PM2 app: ${APP_NAME}
 
 Save the admin password now. It is only printed at install time.
+
+Demo mode: ${DEMO_MODE}
 
 Useful commands:
   pm2 status ${APP_NAME}
