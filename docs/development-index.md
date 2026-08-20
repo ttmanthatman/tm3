@@ -75,6 +75,9 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/server/services/musicService.ts`: shared music-track serialization, playlist aggregation and access, music-role lookup, and playback-state response mapping used by HTTP routes and message serialization.
 - `src/server/linkPreview.ts`: safe link preview fetcher. Keep URL normalization, DNS/private-address blocking, redirect limits, response byte limits, and HTML metadata extraction behind this interface.
 - `src/server/multichar/`: autonomous virtual-role engine modules.
+- `src/server/demo/` and `src/server/routes/demoMode.ts`: opt-in demo manifest validation, download/cache, destructive reset service, and admin-only routes. See [demo mode maintenance](demo-mode.md) before changing bundle compatibility or reset behavior.
+- `src/client/features/admin/DemoModePanel.vue`: asynchronously loaded administrator surface for checking and resetting demo data; it must remain absent from ordinary startup requests.
+- `src/scripts/export-demo-snapshot.ts` and `configure-demo-mode.ts`: demo bundle export plus the server-side enable/disable commands.
 - `src/server/bible/` and `src/client/bibleReferences.ts`: Bible lookup and reference parsing.
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
@@ -124,6 +127,7 @@ Complete this checklist whenever a message effect, ambient animation, lyric disp
 ## Release Checklist
 
 - Feature pull requests add user-visible notes only to `CHANGELOG.md` under `## Unreleased`; they do not change release versions or dates.
+- Refresh demo data only when a release changes a showcase feature or bundle compatibility; follow the short trigger table in [demo mode maintenance](demo-mode.md). Ordinary fixes and refactors require no demo work.
 - Run `npm run check:release` to verify package metadata, shared release metadata, the latest formal changelog entry, the README badge, the license, and the shared Service Worker cache-version source.
 - Preview a release with `npm run release:prepare -- <version> --dry-run`.
 - From a clean worktree, run `npm run release:prepare -- <version>` to update the package files through npm, archive `Unreleased` under the new version and date, update `APP_VERSION`, `RELEASE_DATE`, `RELEASE_NOTES`, and `RELEASE_HISTORY`, and run the consistency check.

@@ -200,7 +200,7 @@ sudo env DOMAIN=demo.example.com EMAIL=you@example.com DEMO_MODE=1 bash deploy-v
 npm run demo:enable
 ```
 
-启用后，管理员可在“数据与系统 → 演示模式”中检查 GitHub 演示数据、首次载入或一键复位。演示包按需下载，包含演示账号、频道、消息、互动、媒体、聊天壁纸、卷轴素材和登录背景；数据库密码、JWT、推送密钥与 AI API Key 不会从 GitHub 导入。关闭入口可运行 `npm run demo:disable`。
+启用后，管理员可在“数据与系统 → 演示模式”中检查 GitHub 演示数据、首次载入或一键复位。演示包按需下载，包含演示账号、频道、消息、互动、媒体、聊天壁纸、卷轴素材和登录背景；数据库密码、JWT、推送密钥与 AI API Key 不会从 GitHub 导入。关闭入口可运行 `npm run demo:disable`。制作演示包、发布和维护触发条件见 [演示模式维护文档](docs/demo-mode.md)。
 
 ## 手动安装与开发
 
