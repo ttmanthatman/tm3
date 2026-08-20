@@ -1,13 +1,17 @@
-export const APP_VERSION = "1.9.5";
+export const APP_VERSION = "1.10.0";
 
-export const RELEASE_DATE = "2026-08-17";
+export const RELEASE_DATE = "2026-08-20";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "补充演示模式使用、复位安全边界、演示包发布和维护触发规则，后续版本只在展示功能或演示包兼容性变化时更新演示数据。"
+] as const;
+
+const RELEASE_1_9_5_NOTES = [
   "新增服务器端演示模式：管理员可在「数据与系统 → 演示模式」中按需从 GitHub 检查、载入或一键复位标准演示数据；演示模式未启用时不加载相关服务和管理界面，不影响普通聊天室性能。",
   "演示包可携带账号、频道、消息、互动、音乐、头像、聊天壁纸、卷轴素材和登录背景，并在下载和解包时校验版本、来源、大小、文件路径与 SHA-256；复位会保留运维管理员、数据库密码、DeepSeek 密钥和推送密钥。"
-] as const;
+] as const
 
 const RELEASE_1_9_4_NOTES = [
   "这三版进行了大量优化，极大加快了加载速度。如果使用过程中出现问题，请大家及时反馈，千万不要对聊天室有半点容忍！",
@@ -790,9 +794,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.10.0",
+    date: "2026-08-20",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.9.5",
     date: "2026-08-17",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_9_5_NOTES
   },
   {
     version: "1.9.4",
