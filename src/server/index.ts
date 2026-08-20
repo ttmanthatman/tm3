@@ -25,9 +25,11 @@ import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
+import { registerReceptionRoutes } from "./routes/reception.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
+import { createReceptionService } from "./services/receptionService.js";
 import type {
   AdminAttachmentDTO,
   AdminBackupDTO,
@@ -200,11 +202,15 @@ const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
 
 // Channel visibility shared by the channel list and the unread-counts route:
 // music channels are open; standard/direct channels are public or member-only.
-function channelListWhere(accountId: number): Prisma.ChannelWhereInput {
+function channelListWhere(accountId: number, isGuest = false): Prisma.ChannelWhereInput {
+  if (isGuest) {
+    return { kind: "reception", members: { some: { accountId } } };
+  }
   return {
     OR: [
       { kind: "music" },
-      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId } } }] }
+      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId } } }] },
+      { kind: "reception", members: { some: { accountId } } }
     ]
   };
 }
@@ -522,6 +528,8 @@ type AuthContext = {
   actorId: number;
   username: string;
   isAdmin: boolean;
+  isGuest: boolean;
+  guestExpiresAt: Date | null;
   canPinMessages: boolean;
   sessionId: string;
 };
@@ -556,7 +564,7 @@ type ActivityLogInput = {
   createdAt?: Date;
 };
 
-const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null }>();
+const online = new Map<string, { actorId: number; accountId: number; username: string; displayName: string; avatarPath?: string | null; isGuest: boolean }>();
 const accountSocketIds = new Map<number, Set<string>>();
 const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
@@ -600,6 +608,7 @@ function signToken(account: AccountWithActor, session: Pick<AccountSession, "id"
       actorId: account.actor.id,
       username: account.username,
       isAdmin: account.role === "admin",
+      isGuest: account.isGuest,
       canPinMessages: account.canPinMessages,
       sessionId: session.id
     },
@@ -634,6 +643,7 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
   }
   if (!account || !account.actor) throw new Error("account not found");
   if (!session || session.accountId !== account.id || session.revokedAt || session.expiresAt <= new Date()) throw new Error("session expired");
+  if (account.isGuest && (!account.guestExpiresAt || account.guestExpiresAt <= new Date())) throw new Error("guest session expired");
   const touchBefore = new Date(Date.now() - 5 * 60 * 1000);
   await prisma.accountSession.updateMany({ where: { id: session.id, lastSeenAt: { lt: touchBefore } }, data: { lastSeenAt: new Date() } }).catch(() => undefined);
   return {
@@ -641,6 +651,8 @@ async function verifyJwtToken(token?: string): Promise<AuthContext> {
     actorId: account.actor.id,
     username: account.username,
     isAdmin: account.role === "admin",
+    isGuest: account.isGuest,
+    guestExpiresAt: account.guestExpiresAt,
     canPinMessages: account.canPinMessages,
     sessionId: session.id
   };
@@ -1269,6 +1281,8 @@ function authDto(account: AccountWithActor) {
     displayName: account.displayName,
     avatarPath: account.avatarPath,
     isAdmin: account.role === "admin",
+    isGuest: account.isGuest,
+    guestExpiresAt: account.guestExpiresAt?.toISOString() || null,
     canPinMessages: account.canPinMessages,
     actorId: account.actor.id,
     theme: account.theme || "wechat",
@@ -1334,8 +1348,16 @@ function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
 }
 
 async function canAccessChannel(accountId: number, channelId: number) {
-  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
-  if (!channel) return false;
+  const [channel, account] = await Promise.all([
+    prisma.channel.findUnique({ where: { id: channelId } }),
+    prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true, guestExpiresAt: true } })
+  ]);
+  if (!channel || !account) return false;
+  if (account.isGuest) {
+    if (!account.guestExpiresAt || account.guestExpiresAt <= new Date() || channel.kind !== "reception" || !channel.receptionExpiresAt || channel.receptionExpiresAt <= new Date()) return false;
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member;
+  }
   if (channel.kind === "aiLounge") return false;
   if (channel.kind === "music") return true;
   if (!channelNeedsExplicitMembership(channel)) return true;
@@ -1344,8 +1366,16 @@ async function canAccessChannel(accountId: number, channelId: number) {
 }
 
 async function canWriteChannel(accountId: number, channelId: number) {
-  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
-  if (!channel) return false;
+  const [channel, account] = await Promise.all([
+    prisma.channel.findUnique({ where: { id: channelId } }),
+    prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true, guestExpiresAt: true } })
+  ]);
+  if (!channel || !account) return false;
+  if (account.isGuest) {
+    if (!account.guestExpiresAt || account.guestExpiresAt <= new Date() || channel.kind !== "reception" || !channel.receptionExpiresAt || channel.receptionExpiresAt <= new Date()) return false;
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member && member.role !== "viewer";
+  }
   if (channel.kind === "aiLounge") return false;
   if (channel.kind === "music") return true;
   if (!channelNeedsExplicitMembership(channel)) return true;
@@ -1358,6 +1388,10 @@ async function canManageChannel(accountId: number, channelId: number) {
   if (!channel) return false;
   if (channel?.kind === "aiLounge") return false;
   if (channel.kind === "music") return musicService.canManageAccount(accountId);
+  if (channel.kind === "reception") {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return member?.role === "owner" || member?.role === "admin";
+  }
   const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } });
   if (account?.role === "admin") return true;
   if (channel?.kind === "why") {
@@ -2477,7 +2511,7 @@ async function sendPushToAccounts(accountIds: number[], payload: { title: string
 async function sendMessagePush(messageId: number, origin: string) {
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
   if (!message) return;
-  if (message.type === "why_topic_card" || message.channel.kind === "why") return;
+  if (message.type === "why_topic_card" || message.channel.kind === "why" || message.channel.kind === "reception") return;
   const accountIds = await notificationRecipientIds(message.channelId, message.sender.accountId, false);
   await sendPushToAccounts(accountIds, {
     title: message.channel.name,
@@ -2489,8 +2523,8 @@ async function sendMessagePush(messageId: number, origin: string) {
 }
 
 async function sendLikePush(accountId: number, channelId: number, messageId: number, likerName: string, origin: string) {
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true } });
-  if (!channel) return;
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { name: true, kind: true } });
+  if (!channel || channel.kind === "reception") return;
   await sendPushToAccounts([accountId], {
     title: "消息被点赞",
     body: `${likerName}点赞了你在「${channel.name}」中的消息`,
@@ -2528,7 +2562,7 @@ async function sendPinnedPush(channelId: number, pinned: { title?: string | null
 
 async function sendPrayerUpdatePush(messageId: number, origin: string) {
   const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true, channel: true } });
-  if (!message || message.type !== "prayer") return;
+  if (!message || message.type !== "prayer" || message.channel.kind === "reception") return;
   const accountIds = await notificationRecipientIds(message.channelId, null, true);
   await sendPushToAccounts(accountIds, {
     title: `代祷最新动态 · ${message.channel.name}`,
@@ -2553,7 +2587,8 @@ async function createEngineEvent(kind: "message_created" | "idle_tick" | "manual
 }
 
 async function broadcastPresence() {
-  const unique = [...new Map([...online.values()].map((u) => [u.accountId, u])).values()];
+  const unique = [...new Map([...online.values()].filter((u) => !u.isGuest).map((u) => [u.accountId, u])).values()]
+    .map(({ isGuest: _isGuest, ...user }) => user);
   io.emit("presence:updated", unique);
 }
 
@@ -2594,8 +2629,10 @@ let musicListenerCleanupTimer: NodeJS.Timeout | undefined;
 let bibleReaderCleanupTimer: NodeJS.Timeout | undefined;
 let friendListenerCleanupTimer: NodeJS.Timeout | undefined;
 let friendFeedRefreshTimer: NodeJS.Timeout | undefined;
+let stopReceptionCleanup: (() => void) | undefined;
 
 function startCleanupTimers() {
+  stopReceptionCleanup = receptionService.startCleanupTimer();
   musicListenerCleanupTimer = setInterval(() => {
     const staleBefore = Date.now() - 45_000;
     let changed = false;
@@ -2668,6 +2705,22 @@ function invalidateAuthSessionCacheBySessionIds(sessionIds: string[]) {
   const targets = new Set(sessionIds);
   for (const [key] of authSessionCache) {
     if (targets.has(key.slice(key.indexOf(":") + 1))) authSessionCache.delete(key);
+  }
+}
+
+function invalidateAuthSessionCacheByAccountIds(accountIds: number[]) {
+  if (!accountIds.length) return;
+  const targets = new Set(accountIds.map(String));
+  for (const [key] of authSessionCache) {
+    if (targets.has(key.slice(0, key.indexOf(":")))) authSessionCache.delete(key);
+  }
+}
+
+function disconnectAccounts(accountIds: number[]) {
+  const targets = new Set(accountIds);
+  for (const socket of io.sockets.sockets.values()) {
+    const auth = socket.data.auth as AuthContext | undefined;
+    if (auth?.accountId && targets.has(auth.accountId)) socket.disconnect(true);
   }
 }
 
@@ -2790,6 +2843,7 @@ async function createAuthSession(accountId: number, request: FastifyRequest, dev
   const now = new Date();
   const deviceKind = detectDeviceKind(String(request.headers["user-agent"] || ""));
   const deviceName = deviceNameFromRequest(request, deviceNameOverride);
+  const accountState = await prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true } });
   const replacedSessions = await prisma.accountSession.findMany({
     where: { accountId, deviceKind, revokedAt: null },
     select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
@@ -2814,10 +2868,12 @@ async function createAuthSession(accountId: number, request: FastifyRequest, dev
     });
   });
   disconnectSessions(replacedSessions.map((row) => row.id));
-  await Promise.all([
-    writeLoginLog("auth_login", accountId, session, now, { appVersion }),
-    ...replacedSessions.map((row) => writeLoginLog("session_replaced", accountId, row, now))
-  ]);
+  if (!accountState?.isGuest) {
+    await Promise.all([
+      writeLoginLog("auth_login", accountId, session, now, { appVersion }),
+      ...replacedSessions.map((row) => writeLoginLog("session_replaced", accountId, row, now))
+    ]);
+  }
   return session;
 }
 
@@ -2916,6 +2972,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     isPrivate: channel.isPrivate,
     isDefault: channel.isDefault,
     directKey: channel.directKey,
+    receptionExpiresAt: channel.receptionExpiresAt?.toISOString() || null,
     canManage: viewer ? await canManageChannel(viewer.accountId, channelId) : undefined,
     canWrite: viewer ? await canWriteChannel(viewer.accountId, channelId) : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
@@ -2965,14 +3022,16 @@ async function createMessageFromActor(input: {
       fileName: input.fileName || null,
       filePath: input.filePath || null,
       fileSize: input.fileSize || null
-    }
+    },
+    include: { channel: { select: { kind: true } } }
   });
+  const isolatedReception = message.channel.kind === "reception";
   await emitMessage(message.id);
-  if (!input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
-  if (!input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
+  if (!isolatedReception && !input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
+  if (!isolatedReception && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
-  if (!input.skipQuestionAssistant && (input.type || "text") === "text") {
+  if (!isolatedReception && !input.skipQuestionAssistant && (input.type || "text") === "text") {
     void maybeTriggerWhyDirectAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "why direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
@@ -3083,7 +3142,7 @@ app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 min
   const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional(), appVersion: z.string().max(32).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
   const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
-  if (!account || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
+  if (!account || account.isGuest || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
     return reply.code(401).send({ success: false, message: "用户名或密码错误" });
   }
   const session = await createAuthSession(account.id, request, body.data.deviceName, body.data.appVersion);
@@ -3188,6 +3247,11 @@ app.delete("/api/me/account", { preHandler: requireAuth }, async (request, reply
     const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: account.id } } });
     if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
   }
+  const ownedReceptionRooms = await prisma.channel.findMany({
+    where: { kind: "reception", receptionOwnerAccountId: account.id },
+    select: { id: true }
+  });
+  for (const room of ownedReceptionRooms) await receptionService.deleteRoom(room.id);
   const sessions = await prisma.accountSession.findMany({ where: { accountId: account.id }, select: { id: true } });
   await prisma.$transaction(async (tx) => {
     if (account.actor) {
@@ -3323,6 +3387,8 @@ async function adminActivityLogs(request: FastifyRequest, reply: FastifyReply) {
     LEFT JOIN accounts account ON account.id = log.account_id
     LEFT JOIN channels channel ON channel.id = log.channel_id
     LEFT JOIN messages track ON track.id = log.track_id
+    WHERE (account.is_guest = FALSE OR account.is_guest IS NULL)
+      AND (channel.kind <> 'reception' OR channel.kind IS NULL)
     ORDER BY log.created_at DESC, log.id DESC
     LIMIT ${sourceLimit}
   `;
@@ -3355,6 +3421,7 @@ async function adminActivityLogs(request: FastifyRequest, reply: FastifyReply) {
       log.created_at AS createdAt
     FROM account_login_logs log
     LEFT JOIN accounts account ON account.id = log.account_id
+    WHERE account.is_guest = FALSE OR account.is_guest IS NULL
     ORDER BY log.created_at DESC, log.id DESC
     LIMIT ${sourceLimit}
   `;
@@ -3607,7 +3674,7 @@ app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, r
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
   const channels = await prisma.channel.findMany({
-    where: channelListWhere(auth.accountId),
+    where: channelListWhere(auth.accountId, auth.isGuest),
     orderBy: [{ isDefault: "desc" }, { id: "asc" }],
     include: {
       _count: { select: { members: true } },
@@ -3671,6 +3738,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
         isPrivate: channel.isPrivate,
         isDefault: channel.isDefault,
         directKey: channel.directKey,
+        receptionExpiresAt: channel.receptionExpiresAt?.toISOString() || null,
         canManage,
         canWrite,
         canPin,
@@ -3740,8 +3808,9 @@ app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => 
   };
 });
 
-app.post("/api/channels", { preHandler: requireAuth }, async (request) => {
+app.post("/api/channels", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能创建频道" });
   const body = z.object({ name: z.string().min(1).max(80), description: z.string().max(255).optional(), icon: z.string().max(16).optional(), isPrivate: z.boolean().optional() }).parse(request.body);
   const channel = await prisma.channel.create({
     data: {
@@ -3847,6 +3916,33 @@ async function deleteChannelWithAttachments(channelId: number) {
   io.emit("channel:updated", { action: "deleted", channelId });
 }
 
+const receptionService = createReceptionService({
+  prisma,
+  deleteChannelWithAttachments,
+  disconnectAccounts,
+  invalidateAccounts: invalidateAuthSessionCacheByAccountIds,
+  notifyRoomClosing: (channelId) => io.to(`ch:${channelId}`).emit("reception:closed", { channelId }),
+  onError: (error, channelId) => app.log.error({ error, channelId }, "Failed to collect reception room")
+});
+
+registerReceptionRoutes(app, {
+  prisma,
+  tokenSecret: JWT_SECRET,
+  requireAuth,
+  requireAdmin,
+  authFor: (request) => (request as AuthedRequest).auth,
+  createAuthSession,
+  signToken,
+  authDto,
+  channelDto,
+  joinAccountChannel,
+  emitRoomUpdated: async (channelId, action) => {
+    await emitChannelMembersChanged(channelId, action);
+    return undefined;
+  },
+  deleteRoom: receptionService.deleteRoom
+});
+
 app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
@@ -3854,6 +3950,11 @@ app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, rep
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (channel.isDefault) return reply.code(400).send({ success: false, message: "默认频道不能删除" });
   if (channel.kind === "music") return reply.code(400).send({ success: false, message: "音乐频道为系统频道，不能删除" });
+  if (channel.kind === "reception") {
+    if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权回收此会客厅" });
+    await receptionService.deleteRoom(channelId);
+    return { success: true };
+  }
   if (channel.directKey) return reply.code(400).send({ success: false, message: "私聊请使用关闭私聊" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权删除此频道" });
 
@@ -3874,13 +3975,14 @@ app.delete("/api/admin/direct-conversations/:id", { preHandler: requireAdmin }, 
 
 app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能发起私聊" });
   const body = z.object({ accountId: z.number().int().positive() }).parse(request.body);
   if (body.accountId === auth.accountId) return reply.code(400).send({ success: false, message: "不能和自己发起私聊" });
   const [me, peer] = await Promise.all([
     prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } }),
     prisma.account.findUnique({ where: { id: body.accountId }, include: { actor: true } })
   ]);
-  if (!me?.actor || !peer?.actor) return reply.code(404).send({ success: false, message: "用户不存在" });
+  if (!me?.actor || !peer?.actor || me.isGuest || peer.isGuest) return reply.code(404).send({ success: false, message: "用户不存在" });
   const key = directChannelKey(auth.accountId, body.accountId);
   const channel = await prisma.channel.upsert({
     where: { directKey: key },
@@ -3916,6 +4018,7 @@ app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, re
 
 app.post("/api/direct-virtual-channels", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
+  if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能发起私聊" });
   const body = z.object({ username: z.string().min(1).max(80) }).parse(request.body);
   if (body.username !== WHY_ASSISTANT_USERNAME) return reply.code(400).send({ success: false, message: "暂时只能和为什么助手私聊" });
   const [me, assistant] = await Promise.all([
@@ -3965,17 +4068,23 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
   if (!(await canAccessChannel(auth.accountId, channelId)) && !(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, isPrivate: true, kind: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
+  const explicitMemberWhere: Prisma.AccountWhereInput = {
+    memberships: { some: { channelId } },
+    ...(channel.kind === "reception" ? { OR: [{ isGuest: false }, { guestExpiresAt: { gt: new Date() } }] } : {})
+  };
   const accounts = await prisma.account.findMany({
     where: channel?.kind === "music"
-      ? { OR: [{ role: "admin" }, { canPinMessages: true }] }
+      ? { isGuest: false, OR: [{ role: "admin" }, { canPinMessages: true }] }
       : channel && channelNeedsExplicitMembership(channel)
-        ? { memberships: { some: { channelId } } }
-        : {},
+        ? explicitMemberWhere
+        : { isGuest: false },
     include: { actor: true, memberships: { where: { channelId } } },
     orderBy: { displayName: "asc" }
   });
-  const virtuals = (await prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } }))
-    .filter((character) => virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }));
+  const virtuals = channel.kind === "reception"
+    ? []
+    : (await prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } }))
+        .filter((character) => virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }));
   return {
     members: [
       ...accounts.map((a) => ({
@@ -4015,13 +4124,13 @@ app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, asyn
   if (!channel.isPrivate) return { accounts: [], virtuals: [] };
   const [accounts, virtualCharacters] = await Promise.all([
     prisma.account.findMany({
-      where: { memberships: { none: { channelId } } },
+      where: { isGuest: false, memberships: { none: { channelId } } },
       include: { actor: true },
       orderBy: { displayName: "asc" }
     }),
     prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } })
   ]);
-  const virtuals = virtualCharacters
+  const virtuals = channel.kind === "reception" ? [] : virtualCharacters
     .filter((character) => AI_ROLE_USERNAMES.has(character.actor.username))
     .filter((character) => !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }))
     .map((character) => ({
@@ -4053,8 +4162,11 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
   const requestedIds = [...new Set([...(body.accountIds || []), ...(body.accountId ? [body.accountId] : [])])];
   const requestedVirtualIds = [...new Set(body.virtualCharacterIds || [])];
   if (!requestedIds.length && !requestedVirtualIds.length) return reply.code(400).send({ success: false, message: "请选择要添加的人" });
+  if (channel.kind === "reception" && requestedVirtualIds.length) {
+    return reply.code(400).send({ success: false, message: "会客厅不能邀请 AI 角色" });
+  }
   const [accounts, virtualCharacters] = await Promise.all([
-    prisma.account.findMany({ where: { id: { in: requestedIds } }, select: { id: true } }),
+    prisma.account.findMany({ where: { id: { in: requestedIds }, isGuest: false }, select: { id: true } }),
     prisma.virtualCharacter.findMany({ where: { id: { in: requestedVirtualIds }, enabled: true }, include: { actor: true } })
   ]);
   if (accounts.length !== requestedIds.length) return reply.code(404).send({ success: false, message: "用户不存在" });
@@ -4111,6 +4223,20 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   if (!member) return reply.code(404).send({ success: false, message: "此用户不在频道中" });
   if (member.role === "owner") return reply.code(400).send({ success: false, message: "不能移除频道创建者" });
+  const targetAccount = await prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true } });
+  if (channel.kind === "reception" && targetAccount?.isGuest) {
+    const revokedAt = new Date();
+    await prisma.$transaction([
+      prisma.account.update({ where: { id: accountId }, data: { guestExpiresAt: new Date(0) } }),
+      prisma.accountSession.updateMany({ where: { accountId, revokedAt: null }, data: { revokedAt } })
+    ]);
+    invalidateAuthSessionCacheByAccountIds([accountId]);
+    disconnectAccounts([accountId]);
+    leaveAccountChannel(accountId, channelId);
+    await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
+    const dto = await channelDto(channelId, auth);
+    return { success: true, channel: dto, removed: accountId };
+  }
   await prisma.channelMember.delete({ where: { channelId_accountId: { channelId, accountId } } });
   leaveAccountChannel(accountId, channelId);
   await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
@@ -5994,8 +6120,12 @@ function collectDirectoryBackupEntries(rootDir: string, zipPrefix: string, skipE
   return entries;
 }
 
-function collectBackupProgramEntries(rootDir = ROOT) {
-  return collectDirectoryBackupEntries(rootDir, "program", shouldSkipBackupEntry);
+function collectBackupProgramEntries(rootDir = ROOT, hiddenReceptionUploads = new Set<string>()) {
+  return collectDirectoryBackupEntries(rootDir, "program", (relativePath, isDirectory) => {
+    if (shouldSkipBackupEntry(relativePath, isDirectory)) return true;
+    const parts = relativePath.split(path.sep).filter(Boolean);
+    return !isDirectory && parts[0] === "storage" && parts[1] === "uploads" && hiddenReceptionUploads.has(parts[2] || "");
+  });
 }
 
 function isPathInside(childPath: string, parentPath: string) {
@@ -6003,11 +6133,12 @@ function isPathInside(childPath: string, parentPath: string) {
   return !relative || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-function collectExternalStorageEntries() {
+function collectExternalStorageEntries(hiddenReceptionUploads = new Set<string>()) {
   if (STORAGE_ROOT === path.join(ROOT, "storage") || isPathInside(STORAGE_ROOT, ROOT)) return [];
   return collectDirectoryBackupEntries(STORAGE_ROOT, "storage", (relativePath, isDirectory) => {
     const parts = relativePath.split(path.sep).filter(Boolean);
     if (parts[0] === "backups") return true;
+    if (!isDirectory && parts[0] === "uploads" && hiddenReceptionUploads.has(parts[1] || "")) return true;
     return isDirectory ? false : relativePath.endsWith(".tmp") || relativePath.endsWith(".log");
   });
 }
@@ -6035,8 +6166,15 @@ async function createFullBackup(auth: Pick<AuthContext, "username">) {
   const stamp = createdAt.toISOString().replace(/[:.]/g, "-");
   const fileName = `liao-full-backup-${stamp}.zip`;
   const filePath = path.join(BACKUP_DIR, fileName);
-  const [chatData, userData, appearance, attachments] = await Promise.all([chatExportPayload(), usersExportPayload(), appearanceDto(), adminAttachmentList()]);
-  const entries = [...collectBackupProgramEntries(), ...collectExternalStorageEntries()];
+  const [chatData, userData, appearance, attachments, receptionFiles] = await Promise.all([
+    chatExportPayload(),
+    usersExportPayload(),
+    appearanceDto(),
+    adminAttachmentList(),
+    prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } })
+  ]);
+  const hiddenReceptionUploads = new Set(receptionFiles.map((message) => path.basename(message.filePath || "")).filter(Boolean));
+  const entries = [...collectBackupProgramEntries(ROOT, hiddenReceptionUploads), ...collectExternalStorageEntries(hiddenReceptionUploads)];
   entries.push(...collectExternalDatabaseEntry(entries));
   const manifest = {
     kind: "liao-full-backup",
@@ -6176,20 +6314,23 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
 }
 
 async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
-  const [messages, accounts, channels, pinnedItems, appearance] = await Promise.all([
+  const [messages, receptionMessages, accounts, channels, pinnedItems, appearance] = await Promise.all([
     prisma.message.findMany({
-      where: { filePath: { not: null } },
+      where: { filePath: { not: null }, channel: { kind: { not: "reception" } } },
       include: { channel: true, sender: true },
       orderBy: { id: "desc" }
     }),
-    prisma.account.findMany({ select: { displayName: true, avatarPath: true } }),
-    prisma.channel.findMany({ select: { name: true, icon: true } }),
-    prisma.pinnedItem.findMany({ where: { active: true }, include: { channel: true }, orderBy: { id: "desc" } }),
+    prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } }),
+    prisma.account.findMany({ where: { isGuest: false }, select: { displayName: true, avatarPath: true } }),
+    prisma.channel.findMany({ where: { kind: { not: "reception" } }, select: { name: true, icon: true } }),
+    prisma.pinnedItem.findMany({ where: { active: true, channel: { kind: { not: "reception" } } }, include: { channel: true }, orderBy: { id: "desc" } }),
     appearanceDto()
   ]);
 
   const rows = new Map<string, AdminAttachmentDTO>();
+  const hiddenReceptionUploads = new Set(receptionMessages.map((message) => path.basename(message.filePath || "")).filter(Boolean));
   for (const file of listStorageFiles(UPLOAD_DIR)) {
+    if (hiddenReceptionUploads.has(file.name)) continue;
     rows.set(attachmentId("upload", file.name), {
       id: attachmentId("upload", file.name),
       kind: "upload",
@@ -6291,6 +6432,12 @@ async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
   return [...rows.values()].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
 }
 
+async function isReceptionUpload(fileName: string) {
+  const target = path.basename(fileName);
+  if (!target) return false;
+  return (await prisma.message.count({ where: { filePath: target, channel: { kind: "reception" } } })) > 0;
+}
+
 async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>) {
   let deleted = 0;
   const refreshChannels = new Set<number>();
@@ -6298,6 +6445,7 @@ async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO
   let channelsChanged = false;
   for (const target of targets) {
     const fileName = path.basename(target.fileName);
+    if (target.kind === "upload" && (await isReceptionUpload(fileName))) continue;
     const filePath = storageFilePath(target.kind, fileName);
     const existed = fs.existsSync(filePath);
     const keepForPinned = target.kind === "upload" && (await activePinnedUsesUpload(fileName));
@@ -6419,6 +6567,9 @@ async function replaceBackgroundAttachmentReferences(oldFileName: string, newFil
 
 async function compressAttachmentTarget(target: { kind: AdminAttachmentDTO["kind"]; fileName: string }) {
   const fileName = path.basename(target.fileName);
+  if (target.kind === "upload" && (await isReceptionUpload(fileName))) {
+    return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "会客厅内容不向管理员开放" };
+  }
   if (!isImageFileName(fileName)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "不是图片文件" };
   const filePath = storageFilePath(target.kind, fileName);
   if (!fs.existsSync(filePath)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "文件不存在" };
@@ -6445,14 +6596,15 @@ async function compressAttachmentTarget(target: { kind: AdminAttachmentDTO["kind
 }
 
 async function chatExportPayload() {
-  const [channels, channelMembers, messages, pinnedItems, voiceListens, prayerActions, messageAiSuggestions] = await Promise.all([
-    prisma.channel.findMany({ orderBy: { id: "asc" } }),
-    prisma.channelMember.findMany({ orderBy: { id: "asc" } }),
-    prisma.message.findMany({ orderBy: { id: "asc" } }),
-    prisma.pinnedItem.findMany({ orderBy: { id: "asc" } }),
-    prisma.voiceListen.findMany({ orderBy: { id: "asc" } }),
-    prisma.prayerAction.findMany({ orderBy: { id: "asc" } }),
-    prisma.messageAiSuggestion.findMany({ orderBy: { id: "asc" } })
+  const channels = await prisma.channel.findMany({ where: { kind: { not: "reception" } }, orderBy: { id: "asc" } });
+  const channelIds = channels.map((channel) => channel.id);
+  const [channelMembers, messages, pinnedItems, voiceListens, prayerActions, messageAiSuggestions] = await Promise.all([
+    prisma.channelMember.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
+    prisma.message.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
+    prisma.pinnedItem.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
+    prisma.voiceListen.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } }),
+    prisma.prayerAction.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } }),
+    prisma.messageAiSuggestion.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } })
   ]);
   return {
     version: 1,
@@ -6468,7 +6620,7 @@ async function chatExportPayload() {
 }
 
 async function usersExportPayload() {
-  const accounts = await prisma.account.findMany({ include: { actor: true }, orderBy: { id: "asc" } });
+  const accounts = await prisma.account.findMany({ where: { isGuest: false }, include: { actor: true }, orderBy: { id: "asc" } });
   return {
     version: 1,
     exportedAt: new Date().toISOString(),
@@ -6574,14 +6726,20 @@ registerAdminAccountRoutes(app, {
   writeLoginLog,
   disconnectSessions,
   refreshAccountConnections,
-  deleteAccount: (input) =>
-    deleteAccountService(
+  deleteAccount: async (input) => {
+    const ownedRooms = await prisma.channel.findMany({
+      where: { kind: "reception", receptionOwnerAccountId: input.targetAccountId },
+      select: { id: true }
+    });
+    for (const room of ownedRooms) await receptionService.deleteRoom(room.id);
+    return deleteAccountService(
       {
         runTransaction: (operation) =>
           prisma.$transaction((tx) => operation(tx))
       },
       input
-    ),
+    );
+  },
   emitAccountDeleted: (payload) => {
     io.emit("channel:updated", payload);
   }
@@ -6777,6 +6935,7 @@ app.get("/api/admin/messages", { preHandler: requireAdmin }, async (request) => 
   const q = String(query.q || "").trim();
   const limit = Math.min(Math.max(Number(query.limit || 80), 1), 200);
   const where: Prisma.MessageWhereInput = {
+    channel: { kind: { not: "reception" } },
     ...(channelId ? { channelId } : {}),
     ...(q
       ? {
@@ -6814,7 +6973,7 @@ app.get("/api/admin/messages", { preHandler: requireAdmin }, async (request) => 
 
 app.delete("/api/admin/messages/:id", { preHandler: requireAdmin }, async (request, reply) => {
   const id = Number((request.params as { id: string }).id);
-  const message = await prisma.message.findUnique({ where: { id }, select: { id: true, channelId: true, filePath: true } });
+  const message = await prisma.message.findFirst({ where: { id, channel: { kind: { not: "reception" } } }, select: { id: true, channelId: true, filePath: true } });
   if (!message) return reply.code(404).send({ success: false, message: "消息不存在" });
   const deleted = await deleteMessages([message]);
   return { success: true, deleted };
@@ -6831,7 +6990,7 @@ app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request, 
   const ids = parsedBody.success ? parsedBody.data.ids || [] : [];
   if (ids.length) {
     const messages = await prisma.message.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: ids }, channel: { kind: { not: "reception" } } },
       select: { id: true, channelId: true, filePath: true }
     });
     const deleted = await deleteMessages(messages);
@@ -6839,7 +6998,7 @@ app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request, 
   }
   const channelId = Number(query.channelId || 0);
   const messages = await prisma.message.findMany({
-    where: channelId ? { channelId } : {},
+    where: channelId ? { channelId, channel: { kind: { not: "reception" } } } : { channel: { kind: { not: "reception" } } },
     select: { id: true, channelId: true, filePath: true }
   });
   const deleted = await deleteMessages(messages);
@@ -6855,6 +7014,7 @@ app.get("/api/admin/attachments/file/:kind/:file", { preHandler: requireAdmin },
   const query = request.query as { download?: string };
   if (kind !== "upload" && kind !== "avatar" && kind !== "background") return reply.code(404).send("Not found");
   const fileName = path.basename(file);
+  if (kind === "upload" && (await isReceptionUpload(fileName))) return reply.code(404).send("Not found");
   const filePath = storageFilePath(kind, fileName);
   if (!fileName || !fs.existsSync(filePath)) return reply.code(404).send("Not found");
   const stat = fs.statSync(filePath);
@@ -7262,6 +7422,7 @@ app.addHook("onClose", async () => {
   if (bibleReaderCleanupTimer) clearInterval(bibleReaderCleanupTimer);
   if (friendListenerCleanupTimer) clearInterval(friendListenerCleanupTimer);
   if (friendFeedRefreshTimer) clearTimeout(friendFeedRefreshTimer);
+  stopReceptionCleanup?.();
   multicharManager.stopAll();
   io.close();
   await musicProgressTracker.flushAll();
@@ -7294,20 +7455,14 @@ io.on("connection", async (socket: Socket) => {
   ids.add(socket.id);
   accountSocketIds.set(account.id, ids);
   socket.join(`acct:${account.id}`);
-  online.set(socket.id, { actorId: account.actor.id, accountId: account.id, username: account.username, displayName: account.displayName, avatarPath: account.avatarPath });
-  if (wasOffline) {
+  online.set(socket.id, { actorId: account.actor.id, accountId: account.id, username: account.username, displayName: account.displayName, avatarPath: account.avatarPath, isGuest: account.isGuest });
+  if (wasOffline && !account.isGuest) {
     const joinedAt = new Date();
     accountPresenceStartedAt.set(account.id, joinedAt);
     await writeLoginLog("presence_join", account.id, session, joinedAt);
   }
   const channels = await prisma.channel.findMany({
-    where: {
-      OR: [
-        { kind: "music" },
-        { kind: { in: PUBLIC_CHANNEL_KINDS }, isPrivate: false },
-        { kind: { in: PUBLIC_CHANNEL_KINDS }, members: { some: { accountId: auth.accountId } } }
-      ]
-    },
+    where: channelListWhere(auth.accountId, auth.isGuest),
     select: { id: true }
   });
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));
@@ -7323,7 +7478,7 @@ io.on("connection", async (socket: Socket) => {
     const channelId = Number(data.channelId);
     if (await canAccessChannel(currentAuth.accountId, channelId)) {
       socket.join(`ch:${channelId}`);
-      void writeActivityLog({ kind: "channel_view", accountId: currentAuth.accountId, sessionId: currentAuth.sessionId, channelId });
+      if (!currentAuth.isGuest) void writeActivityLog({ kind: "channel_view", accountId: currentAuth.accountId, sessionId: currentAuth.sessionId, channelId });
     }
   });
 
@@ -7358,13 +7513,15 @@ io.on("connection", async (socket: Socket) => {
         replyToId: body.replyToId || null,
         pushOrigin
       });
-      void writeActivityLog({
-        kind: "message_sent",
-        accountId: currentAuth.accountId,
-        sessionId: currentAuth.sessionId,
-        channelId: body.channelId,
-        state: body.type
-      });
+      if (!currentAuth.isGuest) {
+        void writeActivityLog({
+          kind: "message_sent",
+          accountId: currentAuth.accountId,
+          sessionId: currentAuth.sessionId,
+          channelId: body.channelId,
+          state: body.type
+        });
+      }
       ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });
     } catch (error) {
       ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
@@ -7396,6 +7553,10 @@ io.on("connection", async (socket: Socket) => {
   socket.on("music:listening", async (data: unknown) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
+    if (currentAuth.isGuest) {
+      if (musicListeners.delete(socket.id)) broadcastMusicListeners();
+      return;
+    }
     const body = z.object({ trackId: z.number().int().positive().nullable() }).safeParse(data);
     if (!body.success || body.data.trackId === null) {
       // Only broadcast when the listener entry actually existed.
@@ -7425,6 +7586,10 @@ io.on("connection", async (socket: Socket) => {
   socket.on("bible:reading", async (data: unknown) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
+    if (currentAuth.isGuest) {
+      if (bibleReaders.delete(socket.id)) broadcastBibleReaders();
+      return;
+    }
     const body = z.object({ active: z.boolean(), bookName: z.string().trim().min(1).max(40).nullable() }).safeParse(data);
     if (!body.success || !body.data.active) {
       if (bibleReaders.delete(socket.id)) broadcastBibleReaders();
@@ -7447,6 +7612,10 @@ io.on("connection", async (socket: Socket) => {
   socket.on("friend:listening", async (data: unknown) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
+    if (currentAuth.isGuest) {
+      if (friendListeners.delete(socket.id)) broadcastFriendListeners();
+      return;
+    }
     const body = z.object({
       programId: z.string().trim().min(1).max(32),
       programTitle: z.string().trim().min(1).max(255)
@@ -7484,7 +7653,7 @@ io.on("connection", async (socket: Socket) => {
         isOffline = true;
       }
     }
-    if (isOffline) {
+    if (isOffline && !account.isGuest) {
       const leftAt = new Date();
       const joinedAt = accountPresenceStartedAt.get(account.id);
       accountPresenceStartedAt.delete(account.id);

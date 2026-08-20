@@ -28,6 +28,7 @@ enum ChannelRole {
 enum ChannelKind {
   standard
   direct
+  reception
   why
   aiLounge
   music
@@ -88,6 +89,8 @@ model Account {
   displayName             String                          @map("display_name") @db.VarChar(80)
   avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
   role                    AccountRole                     @default(user)
+  isGuest                 Boolean                         @default(false) @map("is_guest")
+  guestExpiresAt          DateTime?                       @map("guest_expires_at")
   theme                   String                          @default("wechat") @db.VarChar(32)
   biblePreferences        Json?                           @map("bible_preferences")
   canPinMessages          Boolean                         @default(false) @map("can_pin_messages")
@@ -207,6 +210,9 @@ model Channel {
   isPrivate               Boolean                         @default(false) @map("is_private")
   isDefault               Boolean                         @default(false) @map("is_default")
   directKey               String?                         @unique @map("direct_key") @db.VarChar(120)
+  receptionOwnerAccountId Int?                            @map("reception_owner_account_id")
+  receptionTokenHash      String?                         @unique @map("reception_token_hash") @db.Char(64)
+  receptionExpiresAt      DateTime?                       @map("reception_expires_at")
   createdAt               DateTime                        @default(now()) @map("created_at")
   updatedAt               DateTime                        @updatedAt @map("updated_at")
   members                 ChannelMember[]

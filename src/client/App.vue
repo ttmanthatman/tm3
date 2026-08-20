@@ -18,6 +18,7 @@ import {
   CloudRain,
   Droplet,
   Download,
+  DoorOpen,
   FileText,
   FileUp,
   CheckCircle2,
@@ -30,6 +31,7 @@ import {
   LogOut,
   MessageSquareQuote,
   MessageCircle,
+  Menu,
   Mic,
   Monitor,
   Pause,
@@ -109,7 +111,7 @@ import type {
   ThemePaletteDTO,
   ActorDTO
 } from "@shared/types";
-import { api, authHeaders, getToken, login, register } from "./api";
+import { api, authHeaders, getToken, joinReception, login, register } from "./api";
 import { randomId } from "./randomId";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
@@ -205,7 +207,9 @@ const MusicManager = defineAsyncComponent(() => import("./features/music/MusicMa
 const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
+const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/AdminReceptionPage.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
+const ReceptionManager = defineAsyncComponent(() => import("./features/reception/ReceptionManager.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
@@ -217,7 +221,7 @@ type PendingUpload = {
 const username = ref("");
 const password = ref("");
 const displayName = ref("");
-const authMode = ref<"login" | "register">("login");
+const authMode = ref<"login" | "register" | "reception">("login");
 const loginError = ref("");
 const input = ref("");
 const composerFocused = ref(false);
@@ -237,6 +241,7 @@ const bibleFavoritesError = ref("");
 const showingFavoriteSurface = computed(() => showFavorites.value || showBibleFavorites.value);
 const bibleFavoritePassages = computed(() => groupBibleFavoritePassages(bibleFavorites.value));
 const showMembers = ref(false);
+const showReceptionManager = ref(false);
 const channelsCollapsed = ref(false);
 const membersCollapsed = ref(false);
 const minMessageFontSize = 14;
@@ -395,6 +400,7 @@ type AdminPage =
   | "pin"
   | "users"
   | "channels"
+  | "reception"
   | "channelDetail"
   | "appearance"
   | "appearanceBrand"
@@ -1064,6 +1070,7 @@ onMounted(async () => {
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   window.addEventListener("resize", handleTimelineViewportResize, { passive: true });
   window.addEventListener("pagehide", handlePageHideFlush);
+  window.addEventListener("reception-closed", handleReceptionClosed);
   if (initialChatAnchorPending.value) {
     scrollBottom(false);
     void nextTick(() => {
@@ -1377,6 +1384,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("keydown", handleGlobalEscape);
   document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.removeEventListener("pagehide", handlePageHideFlush);
+  window.removeEventListener("reception-closed", handleReceptionClosed);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   window.removeEventListener("resize", handleTimelineViewportResize);
   timelineResizeObserver?.disconnect();
@@ -1721,6 +1729,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
   users: { title: "用户与权限", description: "新增用户、修改资料与管理权限" },
   channels: { title: "频道与私聊历史", description: "正式频道和历史会话分别管理" },
+  reception: { title: "会客厅", description: "查看创建者、期限和用量，不读取聊天内容" },
   channelDetail: { title: "频道详情", description: "修改频道资料、成员和访问权限" },
   appearance: { title: "外观与体验", description: "每项外观配置都在独立页面完成" },
   appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
@@ -3187,8 +3196,9 @@ async function openTopNotice(notice: TopNotice) {
 async function doLogin() {
   loginError.value = "";
   try {
-    const account =
-      authMode.value === "register"
+    const account = authMode.value === "reception"
+      ? await joinReception(username.value.trim(), displayName.value.trim())
+      : authMode.value === "register"
         ? await register(username.value.trim(), displayName.value.trim(), password.value)
         : await login(username.value.trim(), password.value);
     await store.afterLogin(account);
@@ -3211,8 +3221,22 @@ async function doLogin() {
     await switchToLinkedChannel();
     await enterChatAtNewest();
   } catch (error) {
-    loginError.value = error instanceof Error ? error.message : authMode.value === "register" ? "注册失败" : "登录失败";
+    loginError.value = error instanceof Error ? error.message : authMode.value === "reception" ? "无法进入会客厅" : authMode.value === "register" ? "注册失败" : "登录失败";
   }
+}
+
+async function refreshReceptionRooms(preferredChannelId?: number) {
+  await store.loadChannels();
+  if (preferredChannelId) await store.switchChannel(preferredChannelId);
+}
+
+async function selectReceptionRoom(channelId: number) {
+  showReceptionManager.value = false;
+  await store.switchChannel(channelId);
+}
+
+function handleReceptionClosed() {
+  loginError.value = "会客厅已经结束，相关内容已自动清除。";
 }
 
 async function logoutApp(revoke = true) {
@@ -9500,12 +9524,15 @@ async function toggleVirtual(character: any) {
       <h1>{{ loginBrand.title }}</h1>
       <p v-if="loginBrand.showSubtitle && loginBrand.subtitle">{{ loginBrand.subtitle }}</p>
       <form @submit.prevent="doLogin">
-        <input v-model="username" autocomplete="username" placeholder="用户名" />
-        <input v-if="authMode === 'register'" v-model="displayName" autocomplete="name" placeholder="显示名" />
-        <input v-model="password" :autocomplete="authMode === 'register' ? 'new-password' : 'current-password'" :minlength="authMode === 'register' ? 10 : 1" maxlength="128" placeholder="密码" type="password" />
-        <button class="primary-btn" type="submit">{{ authMode === "register" ? "注册并登录" : "登录" }}</button>
+        <input v-model="username" :autocomplete="authMode === 'reception' ? 'one-time-code' : 'username'" :placeholder="authMode === 'reception' ? '来访口令' : '用户名'" />
+        <input v-if="authMode === 'register' || authMode === 'reception'" v-model="displayName" autocomplete="name" :placeholder="authMode === 'reception' ? '你的称呼' : '显示名'" />
+        <input v-if="authMode !== 'reception'" v-model="password" :autocomplete="authMode === 'register' ? 'new-password' : 'current-password'" :minlength="authMode === 'register' ? 10 : 1" maxlength="128" placeholder="密码" type="password" />
+        <button class="primary-btn" type="submit">{{ authMode === "reception" ? "进入会客厅" : authMode === "register" ? "注册并登录" : "登录" }}</button>
       </form>
-      <button v-if="store.appearance.registrationEnabled" class="text-btn login-mode-btn" @click="authMode = authMode === 'register' ? 'login' : 'register'; loginError = ''">
+      <button class="text-btn login-mode-btn" @click="authMode = authMode === 'reception' ? 'login' : 'reception'; loginError = ''">
+        {{ authMode === "reception" ? "正式成员登录" : "持来访口令进入" }}
+      </button>
+      <button v-if="store.appearance.registrationEnabled && authMode !== 'reception'" class="text-btn login-mode-btn" @click="authMode = authMode === 'register' ? 'login' : 'register'; loginError = ''">
         {{ authMode === "register" ? "已有账号，返回登录" : "没有账号？注册" }}
       </button>
       <div v-if="loginError" class="form-error">{{ loginError }}</div>
@@ -9554,7 +9581,8 @@ async function toggleVirtual(character: any) {
     <aside v-if="!bibleOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
-        <button class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
+        <button v-if="!store.account?.isGuest" class="icon-btn" @click="showReceptionManager = true" aria-label="会客厅" title="会客厅"><DoorOpen :size="20" /></button>
+        <button v-if="!store.account?.isGuest" class="icon-btn" @click="openCreateChannelEditor" aria-label="创建频道" title="创建频道"><Plus :size="20" /></button>
         <button class="icon-btn desktop-only" @click="channelsCollapsed = true" aria-label="收起频道"><PanelLeftClose :size="20" /></button>
         <button class="icon-btn mobile-only" @click="showChannels = false" aria-label="关闭频道"><X :size="20" /></button>
       </header>
@@ -10783,6 +10811,14 @@ async function toggleVirtual(character: any) {
 
     <FriendPrograms v-if="friendProgramsOpen" :player="friendPlayer" @close="friendProgramsOpen = false" />
 
+    <ReceptionManager
+      :open="showReceptionManager"
+      :channels="store.channels"
+      @close="showReceptionManager = false"
+      @changed="refreshReceptionRooms"
+      @select="selectReceptionRoom"
+    />
+
     <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">      <form class="small-modal" @submit.prevent="createChain">
         <header class="modal-head">
           <strong>发起接龙</strong>
@@ -11421,6 +11457,7 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('pin')"><span class="admin-entry-icon"><Pin :size="20" /></span><span><b>置顶公告</b><small>管理当前频道的顶部公告</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('users')"><span class="admin-entry-icon"><Users :size="20" /></span><span><b>用户与权限</b><small>账号、头像、密码和管理权限</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('reception')"><span class="admin-entry-icon"><DoorOpen :size="20" /></span><span><b>会客厅</b><small>创建者、期限、人数和用量</small></span><ChevronRight :size="19" /></button>
             </div>
             <div class="admin-hub-group">
               <label>外观与数据</label>
@@ -11457,6 +11494,8 @@ async function toggleVirtual(character: any) {
           </section>
 
           <AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = $event" />
+
+          <AdminReceptionPage v-else-if="adminPage === 'reception'" />
 
           <section v-else-if="adminPage === 'channels'" class="admin-page-section channel-history-page">
             <div class="admin-section-heading">

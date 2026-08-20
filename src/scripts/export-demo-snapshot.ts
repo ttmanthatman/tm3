@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "@prisma/client";
-import type { DemoAssetKind, DemoAssetRecord, DemoSnapshot } from "../shared/demoMode.js";
+import type { DemoAssetKind, DemoAssetRecord, DemoChannelRecord, DemoSnapshot } from "../shared/demoMode.js";
 import { DEMO_BUNDLE_FORMAT_VERSION } from "../shared/demoMode.js";
 import { DEMO_SAFE_SETTING_KEYS, assertDemoSnapshot } from "../server/demo/bundle.js";
 
@@ -104,17 +104,17 @@ try {
   if (!operator?.actor || operator.role !== "admin") throw new Error(`没有找到运维管理员账号：${operatorUsername}`);
 
   const [accounts, channels, virtualCharacters, standaloneActorCandidates, messages, pinnedItems, messageLikes, messageFavorites, voiceListens, prayerActions, messageAiSuggestions, musicScores, musicLyrics, settingsRows] = await Promise.all([
-    prisma.account.findMany({ where: { id: { not: operator.id } }, include: { actor: true }, orderBy: { id: "asc" } }),
-    prisma.channel.findMany({ include: { members: true }, orderBy: { id: "asc" } }),
+    prisma.account.findMany({ where: { id: { not: operator.id }, isGuest: false }, include: { actor: true }, orderBy: { id: "asc" } }),
+    prisma.channel.findMany({ where: { kind: { not: "reception" } }, include: { members: true }, orderBy: { id: "asc" } }),
     prisma.virtualCharacter.findMany({ include: { actor: true }, orderBy: { id: "asc" } }),
     prisma.actor.findMany({ where: { accountId: null }, orderBy: { id: "asc" } }),
-    prisma.message.findMany({ orderBy: { id: "asc" } }),
-    prisma.pinnedItem.findMany({ orderBy: { id: "asc" } }),
-    prisma.messageLike.findMany({ orderBy: { id: "asc" } }),
-    prisma.messageFavorite.findMany({ orderBy: { id: "asc" } }),
-    prisma.voiceListen.findMany({ orderBy: { id: "asc" } }),
-    prisma.prayerAction.findMany({ orderBy: { id: "asc" } }),
-    prisma.messageAiSuggestion.findMany({ orderBy: { id: "asc" } }),
+    prisma.message.findMany({ where: { channel: { kind: { not: "reception" } } }, orderBy: { id: "asc" } }),
+    prisma.pinnedItem.findMany({ where: { channel: { kind: { not: "reception" } } }, orderBy: { id: "asc" } }),
+    prisma.messageLike.findMany({ where: { account: { isGuest: false }, message: { channel: { kind: { not: "reception" } } } }, orderBy: { id: "asc" } }),
+    prisma.messageFavorite.findMany({ where: { account: { isGuest: false }, message: { channel: { kind: { not: "reception" } } } }, orderBy: { id: "asc" } }),
+    prisma.voiceListen.findMany({ where: { account: { isGuest: false }, message: { channel: { kind: { not: "reception" } } } }, orderBy: { id: "asc" } }),
+    prisma.prayerAction.findMany({ where: { account: { isGuest: false }, message: { channel: { kind: { not: "reception" } } } }, orderBy: { id: "asc" } }),
+    prisma.messageAiSuggestion.findMany({ where: { OR: [{ createdByAccountId: null }, { createdBy: { isGuest: false } }], message: { channel: { kind: { not: "reception" } } } }, orderBy: { id: "asc" } }),
     prisma.musicScore.findMany({ include: { pages: { orderBy: { pageIndex: "asc" } } }, orderBy: { id: "asc" } }),
     prisma.musicLyrics.findMany({ orderBy: { id: "asc" } }),
     prisma.setting.findMany({ where: { key: { in: [...DEMO_SAFE_SETTING_KEYS] } } })
@@ -205,7 +205,7 @@ try {
       : undefined;
     return {
       key: channelKeys.get(channel.id)!,
-      kind: channel.kind,
+      kind: channel.kind as DemoChannelRecord["kind"],
       name: channel.name,
       description: channel.description,
       icon: imageIcon ? path.basename(channel.icon) : channel.icon,

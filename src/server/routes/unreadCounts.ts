@@ -7,6 +7,7 @@ export type UnreadCountsAuthContext = {
   actorId: number;
   username: string;
   isAdmin: boolean;
+  isGuest: boolean;
   canPinMessages: boolean;
   sessionId: string;
 };
@@ -14,7 +15,7 @@ export type UnreadCountsAuthContext = {
 export type UnreadCountsRouteDependencies = {
   requireAuth: preHandlerHookHandler;
   prisma: PrismaClient;
-  channelListWhere: (accountId: number) => Prisma.ChannelWhereInput;
+  channelListWhere: (accountId: number, isGuest?: boolean) => Prisma.ChannelWhereInput;
 };
 
 const MAX_LAST_READ_ENTRIES = 200;
@@ -50,7 +51,7 @@ export function registerUnreadCountsRoutes(app: FastifyInstance, deps: UnreadCou
     if (!requestedIds.length) return { counts: {} as Record<number, number> };
 
     const accessible = await deps.prisma.channel.findMany({
-      where: { AND: [{ id: { in: requestedIds } }, deps.channelListWhere(auth.accountId)] },
+      where: { AND: [{ id: { in: requestedIds } }, deps.channelListWhere(auth.accountId, auth.isGuest)] },
       select: { id: true }
     });
     const conditions = accessible.map((channel) => ({ channelId: channel.id, id: { gt: lastRead[channel.id] } }));

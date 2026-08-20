@@ -182,10 +182,11 @@ export interface ChannelDTO {
   name: string;
   description: string;
   icon: string;
-  kind: "standard" | "direct" | "why" | "aiLounge" | "music";
+  kind: "standard" | "direct" | "reception" | "why" | "aiLounge" | "music";
   isPrivate: boolean;
   isDefault: boolean;
   directKey?: string | null;
+  receptionExpiresAt?: string | null;
   canManage?: boolean;
   canWrite?: boolean;
   canPin?: boolean;
@@ -328,10 +329,26 @@ export interface AccountDTO {
   displayName: string;
   avatarPath?: string | null;
   isAdmin: boolean;
+  isGuest?: boolean;
+  guestExpiresAt?: string | null;
   canPinMessages: boolean;
   actorId: number;
   theme: string;
   biblePreferences: BiblePreferencesDTO;
+}
+
+export interface AdminReceptionRoomDTO {
+  id: number;
+  name: string;
+  ownerAccountId: number;
+  ownerName: string;
+  createdAt: string;
+  expiresAt: string;
+  memberCount: number;
+  guestCount: number;
+  messageCount: number;
+  attachmentBytes: number;
+  lastMessageAt?: string | null;
 }
 
 export interface AuthResponse {

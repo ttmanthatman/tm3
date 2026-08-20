@@ -667,6 +667,10 @@ export const useChatStore = defineStore("chat", {
       socket.on("account:updated", (account: AccountDTO) => {
         if (account.id === this.account?.id) this.account = account;
       });
+      socket.on("reception:closed", () => {
+        window.dispatchEvent(new Event("reception-closed"));
+        void this.logout(false);
+      });
       socket.on("appearance:updated", (appearance: AppearanceDTO) => (this.appearance = appearance));
     }
   }

@@ -42,12 +42,12 @@ test("Bible favorites persist a validated colorful underline choice", () => {
   assert.match(server, /listBibleFavorites[\s\S]*?color: normalizeBibleFavoriteColor\(row\.color\)/);
 });
 
-test("the music channel is visible and uploadable for every authenticated account", () => {
+test("the music channel remains visible and uploadable for formal accounts", () => {
   assert.match(server, /async function canAccessChannel[\s\S]*?channel\.kind === "music"\) return true/);
   assert.match(server, /async function canWriteChannel[\s\S]*?channel\.kind === "music"\) return true/);
-  assert.match(server, /app\.get\("\/api\/channels"[\s\S]*?channelListWhere\(auth\.accountId\)/);
+  assert.match(server, /app\.get\("\/api\/channels"[\s\S]*?channelListWhere\(auth\.accountId, auth\.isGuest\)/);
   assert.match(server, /function channelListWhere[\s\S]*?\{ kind: "music" \}/);
-  assert.match(server, /io\.on\("connection"[\s\S]*?\{ kind: "music" \}/);
+  assert.match(server, /io\.on\("connection"[\s\S]*?channelListWhere\(auth\.accountId, auth\.isGuest\)/);
   assert.doesNotMatch(server, /channel\?\.kind === "music" && \(!canManageMusic\(auth\)/);
 });
 

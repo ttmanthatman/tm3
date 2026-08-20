@@ -103,6 +103,7 @@ export function registerAdminAccountRoutes(
     { preHandler: deps.requireAdmin },
     async () => {
       const accounts = await deps.prisma.account.findMany({
+        where: { isGuest: false },
         include: { actor: true },
         orderBy: { id: "asc" }
       });

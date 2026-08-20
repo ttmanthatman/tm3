@@ -70,6 +70,50 @@ test("管理员登录并进入默认频道", async ({ page }) => {
   await expect(page.getByRole("button", { name: "退出", exact: true })).toBeVisible();
 });
 
+test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
+  test.setTimeout(60_000);
+  const roomName = "浏览器验收会客厅";
+  const code = "平安测试";
+  const message = "来访者的会客厅消息";
+  await loginAsAdmin(page);
+
+  await page.getByRole("button", { name: "会客厅", exact: true }).click();
+  const manager = page.getByRole("dialog", { name: "会客厅管理" });
+  await expect(manager).toBeVisible();
+  await manager.getByLabel("名称").fill(roomName);
+  await manager.getByLabel("来访口令").fill(code);
+  await manager.getByLabel("有效期").selectOption("1");
+  await manager.getByRole("button", { name: "创建会客厅", exact: true }).click();
+  await expect(manager.getByText(roomName, { exact: true })).toBeVisible();
+  await manager.getByRole("button", { name: "关闭", exact: true }).click();
+
+  await page.getByRole("button", { name: "退出", exact: true }).click();
+  await page.getByRole("button", { name: "持来访口令进入", exact: true }).click();
+  await page.getByPlaceholder("来访口令").fill(code);
+  await page.getByPlaceholder("你的称呼").fill("浏览器来访者");
+  await page.getByRole("button", { name: "进入会客厅", exact: true }).click();
+
+  await expect(page.getByTestId("active-channel-name")).toHaveText(roomName);
+  await expect(page.locator(".channel-list").getByText(roomName, { exact: true })).toBeVisible();
+  await expect(page.locator(".channel-list").getByText(E2E_CHANNELS.default, { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "打开圣经" })).toBeVisible();
+  await page.locator(".composer-main textarea").fill(message);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
+
+  await page.getByRole("button", { name: "退出", exact: true }).click();
+  await page.getByRole("button", { name: "正式成员登录", exact: true }).click();
+  await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
+  await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(roomName);
+  await page.getByRole("button", { name: "会客厅", exact: true }).click();
+  const roomCard = page.locator(".room-card").filter({ hasText: roomName });
+  page.once("dialog", (dialog) => dialog.accept());
+  await roomCard.getByRole("button", { name: "回收", exact: true }).click();
+  await expect(roomCard).toHaveCount(0);
+});
+
 test("文字消息刷新后仍然存在", async ({ page }) => {
   const message = "浏览器冒烟消息：刷新后仍然存在";
   await loginAsAdmin(page);
