@@ -78,21 +78,20 @@ export class X11WeChatDriver implements WeChatDriver {
     });
   }
 
-  private writeClipboard(content: string) {
-    return new Promise<void>((resolve, reject) => {
-      const child = spawn("xclip", ["-selection", "clipboard"], {
+  private async writeClipboard(content: string) {
+    const child = spawn("xclip", ["-selection", "clipboard"], {
         env: this.environment,
         stdio: ["pipe", "ignore", "pipe"]
       });
-      const errors: Buffer[] = [];
-      child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`xclip failed: ${Buffer.concat(errors).toString("utf8").trim() || `exit ${code}`}`));
-      });
-      child.stdin.end(content, "utf8");
+    await new Promise<void>((resolve, reject) => {
+      child.once("spawn", resolve);
+      child.once("error", reject);
     });
+    child.on("error", () => undefined);
+    child.stdin.on("error", () => undefined);
+    child.stdin.end(content, "utf8");
+    await delay(100);
+    return child;
   }
 
   private async findWindow() {
@@ -185,15 +184,19 @@ export class X11WeChatDriver implements WeChatDriver {
     const before = this.temporaryImage("before");
     const after = this.temporaryImage("after");
     let sendKeyPressed = false;
+    let clipboard: ReturnType<typeof spawn> | null = null;
     try {
       await this.screenshot(messageRegion, before);
-      await this.writeClipboard(item.formattedText);
+      clipboard = await this.writeClipboard(item.formattedText);
       await this.execute("xdotool", [
         "mousemove", "--window", window.id,
         String(this.config.inputPoint.x), String(this.config.inputPoint.y),
         "click", "1"
       ]);
       await this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"]);
+      await delay(100);
+      clipboard.kill("SIGTERM");
+      clipboard = null;
       await delay(this.config.pasteWaitMs);
       sendKeyPressed = true;
       await this.execute("xdotool", ["key", "--window", window.id, "Return"]);
@@ -214,6 +217,7 @@ export class X11WeChatDriver implements WeChatDriver {
       }
       throw error;
     } finally {
+      clipboard?.kill("SIGTERM");
       fs.rmSync(before, { force: true });
       fs.rmSync(after, { force: true });
     }
