@@ -1,12 +1,16 @@
-export const APP_VERSION = "1.12.0";
+export const APP_VERSION = "1.12.1";
 
 export const RELEASE_DATE = "2026-08-21";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "新增可选的 NAS 微信通知转发工具：使用专用聊天室账号监听一个频道，通过可靠队列和可见的官方 Linux 微信客户端发送到固定群；断线可补漏、重复消息会去重，目标群界面不匹配或发送结果无法确认时自动停止。"
+  "微信通知转发新增管理员入口：可选择来源频道、查看 NAS 在线与队列状态、绑定当前微信群、发送测试消息并启停转发；NAS 改用独立设备令牌主动连接，不再保存聊天室用户密码或开放入站端口。"
 ] as const;
+
+const RELEASE_1_12_0_NOTES = [
+  "新增可选的 NAS 微信通知转发工具：使用专用聊天室账号监听一个频道，通过可靠队列和可见的官方 Linux 微信客户端发送到固定群；断线可补漏、重复消息会去重，目标群界面不匹配或发送结果无法确认时自动停止。"
+] as const
 
 const RELEASE_1_11_2_NOTES = [
   "临时会客厅创建后自动写入系统欢迎消息，说明有效时长、加密传输、令牌失效和到期销毁规则；创建者可复制与房间期限和当前口令绑定的加密邀请链接，访客打开后只看到专用称呼入口，不会出现主聊天室登录入口。",
@@ -814,9 +818,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.0",
+    version: "1.12.1",
     date: "2026-08-21",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.0",
+    date: "2026-08-21",
+    notes: RELEASE_1_12_0_NOTES
   },
   {
     version: "1.11.2",
