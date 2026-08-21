@@ -1,12 +1,16 @@
-export const APP_VERSION = "1.12.2";
+export const APP_VERSION = "1.12.3";
 
 export const RELEASE_DATE = "2026-08-21";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复历史 `@我` 提醒只出现在消息输入框、无法定位原消息的问题：提醒统一移到聊天室顶部现有置顶、听歌读经动态和卡拉 OK 字幕下方，点击可跳转并高亮对应消息；输入框恢复只轮播管理员配置的引导语。"
+  "微信通知转发允许管理员在管理页面生成、设置、轮换或移除 NAS 发送设备令牌，服务器只保存单向校验值；新增 NAS 官方微信访问入口，并提示虚拟机必须登录负责转发的微信账号；通知文案可按普通发言、@ 提醒、代祷发布、代祷更新、附件和其他动态分别编辑并自动轮换，默认只发送口语化提醒，不再携带消息正文、编号或时间。"
 ] as const;
+
+const RELEASE_1_12_2_NOTES = [
+  "修复历史 `@我` 提醒只出现在消息输入框、无法定位原消息的问题：提醒统一移到聊天室顶部现有置顶、听歌读经动态和卡拉 OK 字幕下方，点击可跳转并高亮对应消息；输入框恢复只轮播管理员配置的引导语。"
+] as const
 
 const RELEASE_1_12_1_NOTES = [
   "微信通知转发新增管理员入口：可选择来源频道、查看 NAS 在线与队列状态、绑定当前微信群、发送测试消息并启停转发；NAS 改用独立设备令牌主动连接，不再保存聊天室用户密码或开放入站端口。"
@@ -822,9 +826,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.2",
+    version: "1.12.3",
     date: "2026-08-21",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.2",
+    date: "2026-08-21",
+    notes: RELEASE_1_12_2_NOTES
   },
   {
     version: "1.12.1",
