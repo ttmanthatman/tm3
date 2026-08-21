@@ -28,15 +28,15 @@ export type ReceptionRouteDeps = {
   deleteRoom: (channelId: number) => Promise<boolean>;
 };
 
-const roomSchema = z.object({
+export const roomSchema = z.object({
   name: z.string().trim().min(1, "请输入会客厅名称").max(80),
-  code: z.string().trim().min(4).max(32),
+  code: z.string().trim().min(1, "请输入来访口令").max(32),
   durationHours: z.number().int().min(1).max(24 * 30)
 });
 
-const roomUpdateSchema = z.object({
+export const roomUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
-  code: z.string().trim().min(4).max(32).optional(),
+  code: z.string().trim().min(1, "请输入来访口令").max(32).optional(),
   durationHours: z.number().int().min(1).max(24 * 30).optional()
 }).refine((body) => body.name !== undefined || body.code !== undefined || body.durationHours !== undefined, "没有要更新的内容");
 

@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeReceptionCode, receptionCodeHash } from "./reception.js";
+import { normalizeReceptionCode, receptionCodeHash, roomSchema, roomUpdateSchema } from "./reception.js";
 
 test("reception codes accept simple words and six digit numbers", () => {
   assert.equal(normalizeReceptionCode(" Grace "), "grace");
   assert.equal(normalizeReceptionCode("平安"), "平安");
   assert.equal(normalizeReceptionCode("123456"), "123456");
+});
+
+test("reception room create and update inputs accept two-character Chinese codes", () => {
+  assert.equal(roomSchema.parse({ name: "在家教育", code: "鹧鸪", durationHours: 24 }).code, "鹧鸪");
+  assert.equal(roomUpdateSchema.parse({ code: "鹧鸪" }).code, "鹧鸪");
 });
 
 test("reception codes reject short or ambiguous input", () => {
