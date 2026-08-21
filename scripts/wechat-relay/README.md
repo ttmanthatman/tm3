@@ -1,0 +1,41 @@
+# WeChat relay deployment
+
+This optional tool watches one Team Chat channel and sends its messages to one fixed WeChat group through the visible official Linux WeChat client. It does not use unofficial WeChat protocols, process injection, hooks, hidden APIs, or detection-evasion behavior.
+
+## VM baseline
+
+- Ubuntu 22.04 LTS with an XFCE X11 desktop at 1280x720.
+- One dedicated desktop user named `wechat-relay` with automatic desktop login.
+- Official x86_64 Linux WeChat client.
+- Node.js 22, `xdotool`, `xclip`, and `scrot`.
+- No public inbound service port is required.
+
+Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and replace every example credential and source value. Never commit that file.
+
+`RELAY_MESSAGE_URL_TEMPLATE` is optional. Leave it empty unless the deployed Team Chat instance has a supported message deep-link format; `{channelId}` and `{messageId}` are replaced when configured.
+
+Copy `wechat-relay.desktop` to `/home/wechat-relay/.config/autostart/`. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view.
+
+## Calibration
+
+1. Log in to the official client manually and open the one target group.
+2. Keep the WeChat window unobscured and do not open another chat.
+3. Stop the relay service.
+4. Run `node dist/server/scripts/wechat-relay/main.js calibrate` as the desktop user with the same environment file.
+5. Run the `doctor` command and confirm the target-group image difference passes.
+6. Start with `RELAY_DRIVER=dry-run`; inspect the formatted output before enabling `x11`.
+
+Dry-run uses the normal delivery bookkeeping and marks previewed messages as sent. Use a disposable `RELAY_DATABASE_PATH` for rehearsal so that the live relay can perform its own initial catch-up.
+
+The image anchor is a fail-closed target check. If WeChat changes its layout, the relay stops sending until the target group is manually reopened and calibrated again.
+
+## Operations
+
+Use `status` to inspect the source cursor, queue counts, and the source IDs of items needing attention. If a crash or visual verification failure happens after the send key was pressed, the affected message enters `uncertain` state and all further delivery pauses. Inspect the target group, then resolve it explicitly:
+
+```bash
+node dist/server/scripts/wechat-relay/main.js resolve 12345 sent
+node dist/server/scripts/wechat-relay/main.js resolve 12345 retry
+```
+
+The first command records that the message is already visible in WeChat. The second returns it to the queue. This manual boundary prevents an automatic restart from silently duplicating a possibly delivered notification.

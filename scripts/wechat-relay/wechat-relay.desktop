@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=WeChat
+Comment=Start the official WeChat client for the notification relay
+Exec=wechat
+Terminal=false
+X-GNOME-Autostart-enabled=true

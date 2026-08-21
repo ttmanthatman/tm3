@@ -1,0 +1,23 @@
+[Unit]
+Description=Visible official-WeChat notification relay
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wechat-relay
+Group=wechat-relay
+WorkingDirectory=/opt/team-chat
+EnvironmentFile=/etc/wechat-relay.env
+Environment=XAUTHORITY=/home/wechat-relay/.Xauthority
+ExecStart=/usr/bin/node /opt/team-chat/dist/server/scripts/wechat-relay/main.js run
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/wechat-relay
+
+[Install]
+WantedBy=graphical.target
