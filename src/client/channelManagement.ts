@@ -2,6 +2,8 @@ export type ChannelDraft = {
   name: string;
   description: string;
   isPrivate: boolean;
+  listColor: string;
+  useListColor: boolean;
 };
 
 export type EditableChannelLike = {
@@ -11,7 +13,7 @@ export type EditableChannelLike = {
 };
 
 export function createChannelDraft(): ChannelDraft {
-  return { name: "", description: "", isPrivate: true };
+  return { name: "", description: "", isPrivate: true, listColor: "#e8f4ec", useListColor: false };
 }
 
 export function canEditChannel(channel?: EditableChannelLike | null) {
@@ -26,7 +28,8 @@ export function normalizeChannelDraft(draft: ChannelDraft) {
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
-    isPrivate: !!draft.isPrivate
+    isPrivate: !!draft.isPrivate,
+    listColor: draft.useListColor && /^#[0-9a-f]{6}$/i.test(draft.listColor) ? draft.listColor.toLowerCase() : null
   };
 }
 

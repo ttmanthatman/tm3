@@ -107,11 +107,11 @@ export async function register(username: string, displayName: string, password: 
   return result.account;
 }
 
-export async function joinReception(code: string, displayName: string) {
+export async function joinReception(code: string, displayName: string, inviteToken?: string) {
   const result = await api<{ success: boolean } & AuthResponse>("/api/reception/join", {
     method: "POST",
     body: JSON.stringify({
-      code,
+      ...(inviteToken ? { inviteToken } : { code }),
       displayName,
       deviceName: friendlyDeviceName(navigator.platform, navigator.userAgent, navigator.maxTouchPoints),
       appVersion: APP_VERSION

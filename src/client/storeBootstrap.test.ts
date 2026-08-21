@@ -96,6 +96,7 @@ test("bootstrap resolves after the identity phase while channel data loads in th
     if (url.includes("/api/like-notifications")) return jsonResponse({ notifications: [] });
     if (url.includes("/api/channels/1/members")) return jsonResponse({ members: [] });
     if (url.includes("/api/channels")) return channelsGate.promise;
+    if (url.includes("/api/messages/unread-counts")) return jsonResponse({ counts: {}, lastRead: {} });
     if (url.includes("/api/messages")) {
       if (!url.includes("after=") && !url.includes("before=")) initialMessageRequests += 1;
       return jsonResponse({ messages: [] });
@@ -176,6 +177,7 @@ test("re-login after a failed bootstrap fetches messages instead of reusing the 
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/settings/appearance")) return jsonResponse({});
+    if (url.includes("/api/messages/unread-counts")) return jsonResponse({ counts: {}, lastRead: {} });
     if (url.includes("/api/messages")) {
       initialMessageRequests += 1;
       if (!getTokenOk()) return jsonError(401, "认证失败");
@@ -244,10 +246,11 @@ test("seedUnreadCounts batches per-channel recounts into one grouped request", a
     if (url.includes("/api/auth/me")) return jsonResponse({ account: account(7) });
     if (url.includes("/api/like-notifications")) return jsonResponse({ notifications: [] });
     if (url.includes("/api/channels/1/members")) return jsonResponse({ members: [] });
+    if (url.includes("/api/channels/1/read")) return jsonResponse({ channelId: 1, lastReadMessageId: 42, unreadCount: 0 });
     if (url.includes("/api/channels")) return jsonResponse({ channels: [channel(1, 42), channel(2, 20), channel(3, 7)] });
     if (url.includes("/api/messages/unread-counts")) {
       unreadRequests.push(url);
-      return jsonResponse({ counts: { "1": 3, "2": 150 } });
+      return jsonResponse({ counts: { "1": 3, "2": 150, "3": 0 }, lastRead: { "1": 10, "2": 5, "3": 7 } });
     }
     if (url.includes("/api/messages")) return jsonResponse({ messages: [] });
     throw new Error(`unexpected fetch ${url}`);

@@ -182,6 +182,7 @@ export interface ChannelDTO {
   name: string;
   description: string;
   icon: string;
+  listColor?: string | null;
   kind: "standard" | "direct" | "reception" | "why" | "aiLounge" | "music";
   isPrivate: boolean;
   isDefault: boolean;

@@ -2299,6 +2299,14 @@ button {
   border-bottom: 0;
 }
 
+.channel-row-wrap.has-list-color > .channel-row {
+  background: var(--channel-list-color);
+}
+
+.channel-row-wrap.has-list-color.active > .channel-row {
+  background: color-mix(in srgb, var(--channel-list-color) 72%, #dcdcdc);
+}
+
 .channel-row-wrap.active {
   background: #dcdcdc;
 }
@@ -2311,6 +2319,18 @@ button {
   min-width: 0;
   display: grid;
   gap: 2px;
+}
+
+.channel-list-color-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.channel-list-color-field input[type="color"] {
+  width: 48px;
+  height: 36px;
+  padding: 2px;
 }
 
 .channel-row-action {

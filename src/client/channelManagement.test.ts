@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
 
-test("createChannelDraft starts new channels as private", () => {
-  assert.deepEqual(createChannelDraft(), { name: "", description: "", isPrivate: true });
+test("createChannelDraft starts new channels as private without a custom list color", () => {
+  assert.deepEqual(createChannelDraft(), { name: "", description: "", isPrivate: true, listColor: "#e8f4ec", useListColor: false });
 });
 
 test("canEditChannel excludes protected system channels", () => {
@@ -31,14 +31,17 @@ test("normalizeChannelDraft trims submitted fields but keeps privacy choice", ()
     normalizeChannelDraft({
       name: "  小组交通  ",
       description: "  周中安排  ",
-      isPrivate: false
+      isPrivate: false,
+      listColor: "#AABBCC",
+      useListColor: true
     }),
-    { name: "小组交通", description: "周中安排", isPrivate: false }
+    { name: "小组交通", description: "周中安排", isPrivate: false, listColor: "#aabbcc" }
   );
 });
 
 test("canSubmitChannelDraft requires a non-empty name and idle editor", () => {
-  assert.equal(canSubmitChannelDraft({ name: "  ", description: "", isPrivate: true }), false);
-  assert.equal(canSubmitChannelDraft({ name: "交通", description: "", isPrivate: true }, true), false);
-  assert.equal(canSubmitChannelDraft({ name: "交通", description: "", isPrivate: true }), true);
+  const draft = { name: "交通", description: "", isPrivate: true, listColor: "#e8f4ec", useListColor: false };
+  assert.equal(canSubmitChannelDraft({ ...draft, name: "  " }), false);
+  assert.equal(canSubmitChannelDraft(draft, true), false);
+  assert.equal(canSubmitChannelDraft(draft), true);
 });

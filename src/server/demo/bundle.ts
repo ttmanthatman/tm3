@@ -125,6 +125,7 @@ const channelSchema = z.object({
   name: z.string().min(1).max(80),
   description: z.string().max(255).optional(),
   icon: z.string().max(16).optional(),
+  listColor: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().optional(),
   isPrivate: z.boolean().optional(),
   isDefault: z.boolean().optional(),
   directKey: z.string().max(120).nullable().optional()

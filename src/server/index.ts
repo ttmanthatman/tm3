@@ -121,6 +121,7 @@ const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
 const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");
 const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
+const RECEPTION_INVITE_ORIGIN = process.env.RECEPTION_INVITE_ORIGIN?.trim() || undefined;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SECRET.length < 32)) {
   throw new Error("JWT_SECRET must be set to at least 32 characters in production");
@@ -2962,6 +2963,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     id: channel.id,
     name: directPeer?.displayName || channel.name,
     description: channel.description,
+    listColor: channel.listColor,
     icon: directPeer?.avatarPath
       ? directPeer.avatarPath.startsWith("/")
         ? directPeer.avatarPath
@@ -3702,8 +3704,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
   );
   const pinnedByChannel = new Map(pinnedEntries);
   const viewerCanManageMusic = canManageMusicRole({ isAdmin: auth.isAdmin, canPinMessages: auth.canPinMessages });
-  return {
-    channels: channels.map((channel) => {
+  const serializedChannels = channels.map((channel) => {
       const memberRole = membershipRoles.get(channel.id) ?? null;
       const directPeer =
         channel.kind === "direct" && channel.directKey && !channel.directKey.startsWith("virtual:") && channel._count.members === 2
@@ -3728,6 +3729,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
         id: channel.id,
         name: directPeer?.displayName || channel.name,
         description: channel.description,
+        listColor: channel.listColor,
         icon: directPeer?.avatarPath
           ? directPeer.avatarPath.startsWith("/")
             ? directPeer.avatarPath
@@ -3746,8 +3748,12 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
         lastMessageId: lastMessageIds.get(channel.id) ?? null,
         pinned: pinnedByChannel.get(channel.id) ?? null
       };
-    })
-  };
+    });
+  serializedChannels.sort((left, right) => {
+    if (left.isDefault !== right.isDefault) return left.isDefault ? -1 : 1;
+    return ((right.lastMessageId ?? 0) - (left.lastMessageId ?? 0)) || left.id - right.id;
+  });
+  return { channels: serializedChannels };
 });
 
 app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => {
@@ -3785,6 +3791,7 @@ app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => 
     id: channel.id,
     name: channel.name,
     description: channel.description,
+    listColor: channel.listColor,
     icon: cleanChannelIcon(channel.icon),
     kind: channel.kind,
     isPrivate: channel.isPrivate,
@@ -3810,12 +3817,19 @@ app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => 
 app.post("/api/channels", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能创建频道" });
-  const body = z.object({ name: z.string().min(1).max(80), description: z.string().max(255).optional(), icon: z.string().max(16).optional(), isPrivate: z.boolean().optional() }).parse(request.body);
+  const body = z.object({
+    name: z.string().min(1).max(80),
+    description: z.string().max(255).optional(),
+    icon: z.string().max(16).optional(),
+    listColor: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().optional(),
+    isPrivate: z.boolean().optional()
+  }).parse(request.body);
   const channel = await prisma.channel.create({
     data: {
       name: body.name,
       description: body.description || "",
       icon: cleanChannelIcon(body.icon),
+      listColor: body.listColor?.toLowerCase() || null,
       isPrivate: !!body.isPrivate,
       members: { create: { accountId: auth.accountId, role: "owner" } }
     }
@@ -3844,21 +3858,25 @@ app.patch("/api/channels/:id", { preHandler: requireAuth }, async (request, repl
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
   const protectedChannel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true } });
-  if (protectedChannel?.kind === "music") return reply.code(400).send({ success: false, message: "音乐频道为系统频道，不能修改" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
   const body = z
     .object({
       name: z.string().min(1).max(80).optional(),
       description: z.string().max(255).optional(),
-      icon: z.string().max(16).optional()
+      icon: z.string().max(16).optional(),
+      listColor: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().optional()
     })
     .parse(request.body);
+  if (protectedChannel?.kind === "music" && (body.name !== undefined || body.description !== undefined || body.icon !== undefined)) {
+    return reply.code(400).send({ success: false, message: "音乐频道只能修改列表底色" });
+  }
   await prisma.channel.update({
     where: { id: channelId },
     data: {
       name: body.name,
       description: body.description,
-      icon: body.icon === undefined ? undefined : cleanChannelIcon(body.icon)
+      icon: body.icon === undefined ? undefined : cleanChannelIcon(body.icon),
+      listColor: body.listColor === undefined ? undefined : body.listColor?.toLowerCase() || null
     }
   });
   const dto = await channelDto(channelId, auth);
@@ -3939,7 +3957,8 @@ registerReceptionRoutes(app, {
     await emitChannelMembersChanged(channelId, action);
     return undefined;
   },
-  deleteRoom: receptionService.deleteRoom
+  deleteRoom: receptionService.deleteRoom,
+  inviteOrigin: RECEPTION_INVITE_ORIGIN
 });
 
 app.delete("/api/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
@@ -5038,7 +5057,8 @@ registerFriendRoutes(app, {
 registerUnreadCountsRoutes(app, {
   requireAuth,
   prisma,
-  channelListWhere
+  channelListWhere,
+  emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
 });
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
@@ -7669,6 +7689,11 @@ io.on("connection", async (socket: Socket) => {
 
 app.setNotFoundHandler((request, reply) => {
   if (request.url.startsWith("/api/")) return reply.code(404).send({ success: false, message: "Not found" });
+  if (request.url.startsWith("/visit/")) {
+    reply.header("Cache-Control", "no-store");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("X-Robots-Tag", "noindex, nofollow");
+  }
   const indexPath = path.join(DIST_CLIENT, "index.html");
   if (fs.existsSync(indexPath)) return reply.type("text/html").send(fs.createReadStream(indexPath));
   return reply.code(404).send("Client build not found");
@@ -7688,7 +7713,6 @@ export async function buildApp(options: BuildAppOptions = {}) {
   for (const dir of [STORAGE_ROOT, UPLOAD_DIR, MUSIC_SCORE_DIR, AVATAR_DIR, BG_DIR, PARALLAX_DIR, BACKUP_DIR]) {
     fs.mkdirSync(dir, { recursive: true });
   }
-  startCleanupTimers();
   try {
     if (DEMO_MODE_AVAILABLE) {
       const [{ createDemoModeService }, { registerDemoModeRoutes }] = await Promise.all([
@@ -7726,6 +7750,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       registerDemoModeRoutes(app, { requireAdmin, service });
     }
     if (options.runStartupTasks !== false) {
+      startCleanupTimers();
       await ensureBootstrap();
       await ensureWebPush();
     }

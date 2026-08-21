@@ -209,6 +209,7 @@ try {
       name: channel.name,
       description: channel.description,
       icon: imageIcon ? path.basename(channel.icon) : channel.icon,
+      listColor: channel.listColor,
       isPrivate: channel.isPrivate,
       isDefault: channel.isDefault,
       directKey: channel.directKey

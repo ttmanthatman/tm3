@@ -221,7 +221,10 @@ type PendingUpload = {
 const username = ref("");
 const password = ref("");
 const displayName = ref("");
-const authMode = ref<"login" | "register" | "reception">("login");
+const receptionInviteRouteMatch = window.location.pathname.match(/^\/visit\/([A-Za-z0-9_-]{40,512})\/?$/);
+const isReceptionInviteRoute = window.location.pathname === "/visit" || window.location.pathname.startsWith("/visit/");
+const receptionInviteToken = receptionInviteRouteMatch?.[1] || "";
+const authMode = ref<"login" | "register" | "reception">(isReceptionInviteRoute ? "reception" : "login");
 const loginError = ref("");
 const input = ref("");
 const composerFocused = ref(false);
@@ -467,7 +470,7 @@ const adminDirectPage = ref(1);
 const adminDirectPageSize = 30;
 const adminDirectQuery = ref("");
 const adminSelectedChannelId = ref<number | null>(null);
-const channelEdits = ref<Record<number, { name: string; description: string }>>({});
+const channelEdits = ref<Record<number, { name: string; description: string; listColor: string; useListColor: boolean }>>({});
 type WallpaperFit = AppearanceDTO["wallpaperFit"];
 type LoginBackgroundFit = AppearanceDTO["loginBackgroundFit"];
 type LoginFormPosition = AppearanceDTO["loginFormPosition"];
@@ -3197,10 +3200,11 @@ async function doLogin() {
   loginError.value = "";
   try {
     const account = authMode.value === "reception"
-      ? await joinReception(username.value.trim(), displayName.value.trim())
+      ? await joinReception(username.value.trim(), displayName.value.trim(), receptionInviteToken || undefined)
       : authMode.value === "register"
         ? await register(username.value.trim(), displayName.value.trim(), password.value)
         : await login(username.value.trim(), password.value);
+    if (isReceptionInviteRoute) window.history.replaceState({}, "", "/");
     await store.afterLogin(account);
     await activateMusicAccount(account.id);
     await loadMusicPlaylists();
@@ -4569,7 +4573,9 @@ function openEditChannelEditor(channel: ChannelDTO) {
   channelEditorDraft.value = {
     name: channel.name,
     description: channel.description || "",
-    isPrivate: channel.isPrivate
+    isPrivate: channel.isPrivate,
+    listColor: channel.listColor || "#e8f4ec",
+    useListColor: !!channel.listColor
   };
   channelEditorMsg.value = "";
   channelNameSuggestions.value = [];
@@ -4621,7 +4627,8 @@ async function saveChannelEditor() {
         body: JSON.stringify({
           name: draft.name,
           description: draft.description,
-          isPrivate: draft.isPrivate
+          isPrivate: draft.isPrivate,
+          listColor: draft.listColor
         })
       });
       replaceChannelSnapshot(result.channel, { addToStore: true, addToAdmin: isAdmin.value });
@@ -4640,7 +4647,8 @@ async function saveChannelEditor() {
       method: "PATCH",
       body: JSON.stringify({
         name: draft.name,
-        description: draft.description
+        description: draft.description,
+        listColor: draft.listColor
       })
     });
     replaceChannelSnapshot(result.channel);
@@ -8845,7 +8853,9 @@ function syncChannelEdits() {
       channel.id,
       {
         name: channel.name,
-        description: channel.description || ""
+        description: channel.description || "",
+        listColor: channel.listColor || "#e8f4ec",
+        useListColor: !!channel.listColor
       }
     ])
   );
@@ -9157,10 +9167,9 @@ async function updateChannel(channel: ChannelDTO) {
   if (!edit) return;
   const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}`, {
     method: "PATCH",
-    body: JSON.stringify({
-      name: edit.name,
-      description: edit.description
-    })
+    body: JSON.stringify(channel.kind === "music"
+      ? { listColor: edit.useListColor ? edit.listColor : null }
+      : { name: edit.name, description: edit.description, listColor: edit.useListColor ? edit.listColor : null })
   });
   replaceChannelSnapshot(result.channel);
   syncChannelEdits();
@@ -9537,18 +9546,20 @@ async function toggleVirtual(character: any) {
       <div v-if="loginBrand.showIcon" class="login-mark">
         <img :src="wallpaperUrl(loginBrand.iconPath)" alt="" />
       </div>
-      <h1>{{ loginBrand.title }}</h1>
-      <p v-if="loginBrand.showSubtitle && loginBrand.subtitle">{{ loginBrand.subtitle }}</p>
+      <h1>{{ isReceptionInviteRoute ? "临时会客厅" : loginBrand.title }}</h1>
+      <p v-if="isReceptionInviteRoute">这是一条临时邀请。请输入你的称呼进入。</p>
+      <p v-else-if="loginBrand.showSubtitle && loginBrand.subtitle">{{ loginBrand.subtitle }}</p>
       <form @submit.prevent="doLogin">
-        <input v-model="username" :autocomplete="authMode === 'reception' ? 'one-time-code' : 'username'" :placeholder="authMode === 'reception' ? '来访口令' : '用户名'" />
+        <input v-if="!isReceptionInviteRoute" v-model="username" :autocomplete="authMode === 'reception' ? 'one-time-code' : 'username'" :placeholder="authMode === 'reception' ? '来访口令' : '用户名'" />
         <input v-if="authMode === 'register' || authMode === 'reception'" v-model="displayName" autocomplete="name" :placeholder="authMode === 'reception' ? '你的称呼' : '显示名'" />
         <input v-if="authMode !== 'reception'" v-model="password" :autocomplete="authMode === 'register' ? 'new-password' : 'current-password'" :minlength="authMode === 'register' ? 10 : 1" maxlength="128" placeholder="密码" type="password" />
         <button class="primary-btn" type="submit">{{ authMode === "reception" ? "进入会客厅" : authMode === "register" ? "注册并登录" : "登录" }}</button>
       </form>
-      <button class="text-btn login-mode-btn" @click="authMode = authMode === 'reception' ? 'login' : 'reception'; loginError = ''">
+      <p v-if="isReceptionInviteRoute" class="reception-invite-note">邀请会随房间到期或回收而失效；此页面不会显示正式成员登录入口。</p>
+      <button v-if="!isReceptionInviteRoute" class="text-btn login-mode-btn" @click="authMode = authMode === 'reception' ? 'login' : 'reception'; loginError = ''">
         {{ authMode === "reception" ? "正式成员登录" : "持来访口令进入" }}
       </button>
-      <button v-if="store.appearance.registrationEnabled && authMode !== 'reception'" class="text-btn login-mode-btn" @click="authMode = authMode === 'register' ? 'login' : 'register'; loginError = ''">
+      <button v-if="!isReceptionInviteRoute && store.appearance.registrationEnabled && authMode !== 'reception'" class="text-btn login-mode-btn" @click="authMode = authMode === 'register' ? 'login' : 'register'; loginError = ''">
         {{ authMode === "register" ? "已有账号，返回登录" : "没有账号？注册" }}
       </button>
       <div v-if="loginError" class="form-error">{{ loginError }}</div>
@@ -9604,7 +9615,11 @@ async function toggleVirtual(character: any) {
       </header>
       <div class="channel-list">
       <template v-for="channel in store.channels" :key="channel.id">
-        <div class="channel-row-wrap" :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel) }">
+        <div
+          class="channel-row-wrap"
+          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel), 'has-list-color': !!channel.listColor }"
+          :style="channel.listColor ? { '--channel-list-color': channel.listColor } : undefined"
+        >
           <button
             class="channel-row"
             :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
@@ -11059,6 +11074,15 @@ async function toggleVirtual(character: any) {
             <input v-model="channelEditorDraft.isPrivate" type="checkbox" />
             <span>私密频道</span>
           </label>
+          <label class="check-row check-row-inline">
+            <input v-model="channelEditorDraft.useListColor" type="checkbox" />
+            <span>自定义频道列表底色</span>
+          </label>
+          <label v-if="channelEditorDraft.useListColor" class="channel-list-color-field">
+            <span>列表底色</span>
+            <input v-model="channelEditorDraft.listColor" type="color" aria-label="频道列表底色" />
+            <code>{{ channelEditorDraft.listColor }}</code>
+          </label>
           <p v-if="channelEditorMsg" class="form-error">{{ channelEditorMsg }}</p>
           <div class="confirm-actions channel-editor-actions">
             <button
@@ -11071,7 +11095,7 @@ async function toggleVirtual(character: any) {
               <Users :size="15" />成员
             </button>
             <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">取消</button>
-            <button v-if="!isTwoPersonDirectEditor" class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
+            <button class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
               {{ channelEditorBusy ? "保存中..." : channelEditorMode === "create" ? "创建" : "保存" }}
             </button>
           </div>
@@ -11569,17 +11593,26 @@ async function toggleVirtual(character: any) {
             <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" :disabled="adminSelectedChannel.kind === 'music'" />
             <label for="admin-channel-description">频道描述</label>
             <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3" :disabled="adminSelectedChannel.kind === 'music'"></textarea>
+            <label class="check-row check-row-inline">
+              <input v-model="channelEdits[adminSelectedChannel.id].useListColor" type="checkbox" />
+              <span>自定义频道列表底色</span>
+            </label>
+            <label v-if="channelEdits[adminSelectedChannel.id].useListColor" class="channel-list-color-field">
+              <span>列表底色</span>
+              <input v-model="channelEdits[adminSelectedChannel.id].listColor" type="color" aria-label="频道列表底色" />
+              <code>{{ channelEdits[adminSelectedChannel.id].listColor }}</code>
+            </label>
             <div class="channel-detail-summary">
               <span>{{ adminSelectedChannel.isPrivate ? '私密频道' : '公开频道' }}</span>
               <span>{{ adminSelectedChannel.memberCount }} 位成员</span>
               <span>{{ adminSelectedChannel.messageCount }} 条消息</span>
             </div>
-            <div v-if="adminSelectedChannel.kind !== 'music'" class="channel-detail-actions">
+            <div class="channel-detail-actions">
               <button class="primary-btn" @click="updateChannel(adminSelectedChannel)"><Save :size="15" />保存修改</button>
-              <button class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
-              <button v-if="!adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
+              <button v-if="adminSelectedChannel.kind !== 'music'" class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
+              <button v-if="adminSelectedChannel.kind !== 'music' && !adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
             </div>
-            <p v-else class="settings-note">音乐频道由系统维护。请在频道内上传、重命名或删除歌曲。</p>
+            <p v-if="adminSelectedChannel.kind === 'music'" class="settings-note">音乐频道的名称和图标由系统维护；列表底色仍可自定义。</p>
           </section>
 
           <section v-else-if="adminAppearancePages.has(adminPage)" class="appearance-admin-layout">

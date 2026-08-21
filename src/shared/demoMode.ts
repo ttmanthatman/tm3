@@ -77,6 +77,7 @@ export interface DemoChannelRecord {
   name: string;
   description?: string;
   icon?: string;
+  listColor?: string | null;
   isPrivate?: boolean;
   isDefault?: boolean;
   directKey?: string | null;

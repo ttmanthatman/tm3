@@ -338,6 +338,7 @@ async function rebuildDemoDatabase(prisma: PrismaClient, snapshot: DemoSnapshot,
           name: channel.name,
           description: channel.description || "",
           icon: channel.icon || "#",
+          listColor: channel.listColor || null,
           isPrivate: channel.isPrivate === true,
           isDefault: channel.isDefault === true,
           directKey: channel.directKey || null

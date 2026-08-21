@@ -1,9 +1,16 @@
 import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
-import { Prisma, type Account, type AccountSession, type Actor, type PrismaClient } from "@prisma/client";
+import { Prisma, type Account, type AccountSession, type Actor, type Channel, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AccountDTO, AdminReceptionRoomDTO, ChannelDTO } from "../../shared/types.js";
+import {
+  createReceptionInviteToken,
+  readReceptionInviteToken,
+  receptionInviteMatchesRoom,
+  receptionInviteUrl,
+  receptionWelcomeMessage
+} from "../receptionInvites.js";
 
 type ReceptionAuth = {
   accountId: number;
@@ -26,26 +33,30 @@ export type ReceptionRouteDeps = {
   joinAccountChannel: (accountId: number, channelId: number) => void;
   emitRoomUpdated: (channelId: number, action: string) => Promise<void>;
   deleteRoom: (channelId: number) => Promise<boolean>;
+  inviteOrigin?: string;
 };
 
 export const roomSchema = z.object({
   name: z.string().trim().min(1, "请输入会客厅名称").max(80),
   code: z.string().trim().min(1, "请输入来访口令").max(32),
-  durationHours: z.number().int().min(1).max(24 * 30)
+  durationHours: z.number().int().min(1).max(24 * 30),
+  listColor: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().optional()
 });
 
 export const roomUpdateSchema = z.object({
   name: z.string().trim().min(1).max(80).optional(),
   code: z.string().trim().min(1, "请输入来访口令").max(32).optional(),
-  durationHours: z.number().int().min(1).max(24 * 30).optional()
-}).refine((body) => body.name !== undefined || body.code !== undefined || body.durationHours !== undefined, "没有要更新的内容");
+  durationHours: z.number().int().min(1).max(24 * 30).optional(),
+  listColor: z.string().regex(/^#[0-9a-f]{6}$/i).nullable().optional()
+}).refine((body) => body.name !== undefined || body.code !== undefined || body.durationHours !== undefined || body.listColor !== undefined, "没有要更新的内容");
 
 const joinSchema = z.object({
-  code: z.string().trim().min(1).max(32),
+  code: z.string().trim().min(1).max(32).optional(),
+  inviteToken: z.string().trim().min(40).max(512).optional(),
   displayName: z.string().trim().min(1).max(80),
   deviceName: z.string().max(120).optional(),
   appVersion: z.string().max(32).optional()
-});
+}).refine((body) => Number(!!body.code) + Number(!!body.inviteToken) === 1, "请提供来访口令或邀请链接");
 
 export function normalizeReceptionCode(input: string) {
   const code = input.trim().normalize("NFC").toLowerCase();
@@ -94,17 +105,27 @@ export function registerReceptionRoutes(app: FastifyInstance, deps: ReceptionRou
       }
       const expiresAt = expiresAfterHours(parsed.data.durationHours);
       try {
+        const ownerActor = await deps.prisma.actor.findUnique({ where: { accountId: auth.accountId }, select: { id: true } });
+        if (!ownerActor) return reply.code(409).send({ success: false, message: "创建者账号资料不完整，无法创建会客厅" });
         const channel = await deps.prisma.channel.create({
           data: {
             kind: "reception",
             name: parsed.data.name,
             description: "邀请制会客厅",
             icon: "",
+            listColor: parsed.data.listColor?.toLowerCase() || null,
             isPrivate: true,
             receptionOwnerAccountId: auth.accountId,
             receptionTokenHash: tokenHash,
             receptionExpiresAt: expiresAt,
-            members: { create: [{ accountId: auth.accountId, role: "owner" }] }
+            members: { create: [{ accountId: auth.accountId, role: "owner" }] },
+            messages: {
+              create: [{
+                senderActorId: ownerActor.id,
+                type: "system",
+                content: receptionWelcomeMessage(parsed.data.durationHours)
+              }]
+            }
           }
         });
         deps.joinAccountChannel(auth.accountId, channel.id);
@@ -133,6 +154,7 @@ export function registerReceptionRoutes(app: FastifyInstance, deps: ReceptionRou
       if (!parsed.success) return reply.code(400).send({ success: false, message: parsed.error.issues[0]?.message || "会客厅资料无效" });
       const data: Prisma.ChannelUpdateInput = {};
       if (parsed.data.name !== undefined) data.name = parsed.data.name;
+      if (parsed.data.listColor !== undefined) data.listColor = parsed.data.listColor?.toLowerCase() || null;
       if (parsed.data.durationHours !== undefined) data.receptionExpiresAt = expiresAfterHours(parsed.data.durationHours);
       if (parsed.data.code !== undefined) {
         try {
@@ -182,19 +204,68 @@ export function registerReceptionRoutes(app: FastifyInstance, deps: ReceptionRou
   );
 
   app.post(
+    "/api/reception/rooms/:id/invitation",
+    { preHandler: deps.requireAuth },
+    async (request, reply) => {
+      const auth = deps.authFor(request);
+      const channelId = Number((request.params as { id: string }).id);
+      if (!Number.isInteger(channelId) || channelId <= 0) return reply.code(400).send({ success: false, message: "会客厅编号无效" });
+      if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能生成邀请链接" });
+      const room = await ownedRoom(deps, channelId, auth.accountId);
+      if (!room) return reply.code(403).send({ success: false, message: "只有创建者可以生成邀请链接" });
+      if (!room.receptionExpiresAt || !room.receptionTokenHash || room.receptionExpiresAt <= new Date()) {
+        void deps.deleteRoom(room.id).catch((error) => request.log.warn({ error, channelId: room.id }, "Failed to collect expired reception room"));
+        return reply.code(410).send({ success: false, message: "这个会客厅已经过期并开始回收" });
+      }
+      const inviteToken = createReceptionInviteToken({
+        roomId: room.id,
+        expiresAt: room.receptionExpiresAt.getTime(),
+        tokenHash: room.receptionTokenHash
+      }, deps.tokenSecret);
+      const invitePath = `/visit/${inviteToken}`;
+      return {
+        success: true,
+        invitePath,
+        inviteUrl: receptionInviteUrl(invitePath, deps.inviteOrigin),
+        expiresAt: room.receptionExpiresAt.toISOString()
+      };
+    }
+  );
+
+  app.post(
     "/api/reception/join",
     { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
     async (request, reply) => {
       const parsed = joinSchema.safeParse(request.body);
-      if (!parsed.success) return reply.code(400).send({ success: false, message: "请输入来访口令和昵称" });
-      let tokenHash: string;
-      try {
-        tokenHash = receptionCodeHash(parsed.data.code, deps.tokenSecret);
-      } catch {
-        return reply.code(400).send({ success: false, message: "来访口令无效" });
+      if (!parsed.success) return reply.code(400).send({ success: false, message: "请输入有效的来访凭证和昵称" });
+      let room: Channel | null;
+      if (parsed.data.inviteToken) {
+        let invite;
+        try {
+          invite = readReceptionInviteToken(parsed.data.inviteToken, deps.tokenSecret);
+        } catch {
+          return reply.code(404).send({ success: false, message: "会客厅邀请链接无效或已经失效" });
+        }
+        room = await deps.prisma.channel.findFirst({ where: { id: invite.roomId, kind: "reception" } });
+        if (!room) return reply.code(404).send({ success: false, message: "会客厅不存在或已经回收" });
+        if (!room.receptionExpiresAt || room.receptionExpiresAt <= new Date()) {
+          const roomId = room.id;
+          void deps.deleteRoom(roomId).catch((error) => request.log.warn({ error, channelId: roomId }, "Failed to collect expired reception room"));
+          return reply.code(410).send({ success: false, message: "这个会客厅已经过期并开始回收" });
+        }
+        if (!receptionInviteMatchesRoom(invite, room)) {
+          return reply.code(invite.expiresAt <= Date.now() ? 410 : 404).send({ success: false, message: "会客厅邀请链接无效或已经失效" });
+        }
+      } else {
+        let tokenHash: string;
+        try {
+          tokenHash = receptionCodeHash(parsed.data.code || "", deps.tokenSecret);
+        } catch {
+          return reply.code(400).send({ success: false, message: "来访口令无效" });
+        }
+        room = await deps.prisma.channel.findUnique({ where: { receptionTokenHash: tokenHash } });
+        if (!room || room.kind !== "reception") return reply.code(404).send({ success: false, message: "会客厅不存在或口令无效" });
       }
-      const room = await deps.prisma.channel.findUnique({ where: { receptionTokenHash: tokenHash } });
-      if (!room || room.kind !== "reception") return reply.code(404).send({ success: false, message: "会客厅不存在或口令无效" });
       if (!room.receptionExpiresAt || room.receptionExpiresAt <= new Date()) {
         void deps.deleteRoom(room.id).catch((error) => request.log.warn({ error, channelId: room.id }, "Failed to collect expired reception room"));
         return reply.code(410).send({ success: false, message: "这个会客厅已经过期并开始回收" });

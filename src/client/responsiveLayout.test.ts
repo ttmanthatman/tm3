@@ -34,6 +34,15 @@ test("reception management stays off the chat startup path and keeps readable co
   assert.match(store, /socket\.on\("reception:closed", \(\) => \{\s*if \(!this\.account\?\.isGuest\)/);
 });
 
+test("reception invitations use a dedicated visitor-only route", () => {
+  assert.match(receptionManager, /\/api\/reception\/rooms\/\$\{room\.id\}\/invitation/);
+  assert.match(receptionManager, /复制邀请链接/);
+  assert.match(app, /window\.location\.pathname\.match\(\/\^\\\/visit\\\//);
+  assert.match(app, /v-if="!isReceptionInviteRoute"[\s\S]*?持来访口令进入/);
+  assert.match(app, /receptionInviteToken \|\| undefined/);
+  assert.match(app, /window\.history\.replaceState\(\{\}, "", "\/"\)/);
+});
+
 test("the message viewport and composer occupy separate chat grid rows", () => {
   const chatPaneRule = css.match(/\.chat-pane \{([^}]*)\}/)?.[1] ?? "";
   const messagesRule = css.match(/\.messages-viewport \{([^}]*)\}/)?.[1] ?? "";
