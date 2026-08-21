@@ -57,19 +57,6 @@ export function cleanComposerPromptGapSeconds(value: unknown): number {
   return Math.round(clamped * 100) / 100;
 }
 
-export function mentionPromptText(name: string): string {
-  return `${name}给你说话了，回应一下？`;
-}
-
-/**
- * Unacknowledged @mention names take priority over the admin prompt list.
- */
-export function composerActivePrompts(prompts: string[], mentionNames: string[]): string[] {
-  const names = mentionNames.map((name) => name.trim()).filter(Boolean);
-  if (names.length > 0) return names.map(mentionPromptText);
-  return prompts;
-}
-
 /**
  * Per-character timing for the letter-by-letter light-up animation: every
  * character fades with `duration` seconds and starts `index * stagger`

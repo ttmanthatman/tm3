@@ -16,9 +16,7 @@ import {
   cleanComposerPromptGapSeconds,
   cleanComposerPromptIntervalSeconds,
   cleanComposerPrompts,
-  composerActivePrompts,
-  composerPromptCharTiming,
-  mentionPromptText
+  composerPromptCharTiming
 } from "./composerPrompts.js";
 
 test("cleans composer prompts by trimming, dropping blanks, and capping size", () => {
@@ -56,15 +54,6 @@ test("cleans the composer prompt gap into the supported range", () => {
   assert.equal(cleanComposerPromptGapSeconds(0.2), COMPOSER_PROMPT_GAP_MIN);
   assert.equal(cleanComposerPromptGapSeconds(999), COMPOSER_PROMPT_GAP_MAX);
   assert.equal(cleanComposerPromptGapSeconds("12"), 12);
-});
-
-test("builds the mention reply prompt text", () => {
-  assert.equal(mentionPromptText("小明"), "小明给你说话了，回应一下？");
-});
-
-test("mentions take priority over the admin prompt list", () => {
-  assert.deepEqual(composerActivePrompts(["第一条"], []), ["第一条"]);
-  assert.deepEqual(composerActivePrompts(["第一条"], [" 小明 ", "", "小红"]), ["小明给你说话了，回应一下？", "小红给你说话了，回应一下？"]);
 });
 
 test("char timing spreads the light-up across the animation budget", () => {

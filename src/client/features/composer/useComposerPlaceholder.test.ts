@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { nextTick, ref } from "vue";
 import { useComposerPlaceholder } from "./useComposerPlaceholder.js";
 
 type PendingTimer = { fn: () => void; delay: number };
@@ -48,17 +47,16 @@ function installDomStubs() {
   };
 }
 
-function createHarness(prompts: string[] = ["第一条", "第二条"], mentionNames = ref<string[]>([])) {
+function createHarness(prompts: string[] = ["第一条", "第二条"]) {
   const dom = installDomStubs();
   const placeholder = useComposerPlaceholder({
     getPrompts: () => prompts,
-    mentionNames,
     getHoldSeconds: () => 3,
     getAppearSeconds: () => 1,
     getDisappearSeconds: () => 2,
     getGapSeconds: () => 6
   });
-  return { dom, placeholder, mentionNames };
+  return { dom, placeholder };
 }
 
 test("rotates prompts through appear, hold, disappear, and gap phases", () => {
@@ -94,36 +92,7 @@ test("rotates prompts through appear, hold, disappear, and gap phases", () => {
   dom.restore();
 });
 
-test("a new @mention interrupts the idle gap and shows the mention prompt immediately", async () => {
-  const { dom, placeholder, mentionNames } = createHarness();
-  dom.fire(); // appear 第一条
-  dom.fire(); // hold
-  dom.fire(); // disappear
-  dom.fire(); // gap, idle
-  assert.equal(placeholder.phase.value, "idle");
-  assert.equal(placeholder.text.value, "");
-
-  mentionNames.value = ["小明"];
-  await nextTick();
-  assert.equal(placeholder.text.value, "小明给你说话了，回应一下？");
-  assert.equal(placeholder.phase.value, "appear");
-  assert.equal(dom.pendingDelay(), 1000);
-
-  mentionNames.value = [];
-  await nextTick();
-  assert.equal(placeholder.text.value, "");
-  assert.equal(placeholder.phase.value, "idle");
-  assert.equal(dom.pendingDelay(), 6000);
-
-  dom.fire();
-  assert.equal(placeholder.text.value, "第二条");
-  assert.equal(placeholder.phase.value, "appear");
-
-  placeholder.stop();
-  dom.restore();
-});
-
-test("stays idle when there are no prompts and no mentions", () => {
+test("stays idle when there are no configured prompts", () => {
   const { dom, placeholder } = createHarness([]);
   dom.fire();
   assert.equal(placeholder.text.value, "");

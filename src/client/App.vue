@@ -1304,17 +1304,17 @@ watch(
 );
 
 watch(
-  () => `${store.likeNotifications.map((item) => item.id).join(",")}|${mentionToasts.value.map((item) => item.id).join(",")}`,
+  () => store.likeNotifications.map((item) => item.id).join(","),
   () => {
     topNoticeIndex.value = 0;
     if (topNoticeTimer) {
       window.clearInterval(topNoticeTimer);
       topNoticeTimer = undefined;
     }
-    const noticeCount = store.likeNotifications.length + mentionToasts.value.length;
+    const noticeCount = store.likeNotifications.length;
     if (noticeCount > 1) {
       topNoticeTimer = window.setInterval(() => {
-        topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, topNoticeItems.value.length);
+        topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, likeNoticeItems.value.length);
       }, 3600);
     }
   },
@@ -1608,23 +1608,41 @@ watch(
     if (trackId !== previousTrackId || lyricsFile !== previousLyricsFile) musicLyricsHeaderSuppressed.value = false;
   }
 );
-const mentionNoticeItems = computed<TopNotice[]>(() =>
-  mentionToasts.value.map((toast) => ({
-    id: `mention-${toast.id}`,
-    kind: "mention",
-    title: `${toast.senderName} @了你`,
-    body: `${toast.channelName} · ${toast.text}`,
-    channelId: toast.channelId,
-    messageId: toast.id
-  }))
+const loadedMentionToasts = computed<MentionToast[]>(() =>
+  store.messages
+    .filter(isMentionAlertActive)
+    .map((message) => ({
+      id: message.id,
+      channelId: message.channelId,
+      channelName: channelName(message.channelId),
+      senderName: message.sender.displayName,
+      text: messagePreviewText(message)
+    }))
 );
+const mentionNoticeItems = computed<TopNotice[]>(() => {
+  const byMessageId = new Map<number, MentionToast>();
+  for (const toast of [...mentionToasts.value, ...loadedMentionToasts.value]) {
+    if (!acknowledgedMentionIds.value.has(toast.id)) byMessageId.set(toast.id, toast);
+  }
+  return [...byMessageId.values()]
+    .sort((a, b) => b.id - a.id)
+    .map((toast) => ({
+      id: `mention-${toast.id}`,
+      kind: "mention",
+      title: `${toast.senderName} @了你`,
+      body: `${toast.channelName} · ${toast.text}`,
+      channelId: toast.channelId,
+      messageId: toast.id
+    }));
+});
 const likeNoticeItems = computed<TopNotice[]>(() =>
   store.likeNotifications.map((notification) =>
     likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name)
   )
 );
-const topNoticeItems = computed<TopNotice[]>(() => [...likeNoticeItems.value, ...mentionNoticeItems.value]);
-const activeTopNotice = computed(() => topNoticeItems.value[topNoticeIndex.value % Math.max(1, topNoticeItems.value.length)] || null);
+const activeTopNotice = computed(() => likeNoticeItems.value[topNoticeIndex.value % Math.max(1, likeNoticeItems.value.length)] || null);
+const activeMentionNotice = computed(() => mentionNoticeItems.value[0] || null);
+const mentionNoticeCount = computed(() => mentionNoticeItems.value.length);
 const chatSubtitleText = computed(() => {
   if (showFavorites.value) return "集中查看所有收藏，长按消息可跳转到聊天上下文";
   if (showBibleFavorites.value) return "经文正文只展开一次，避免出处与正文重复嵌套";
@@ -2944,31 +2962,18 @@ function isMentionAlertActive(message: MessageDTO) {
 
 function acknowledgeMentionAlert(message: MessageDTO) {
   if (!isMentionAlertActive(message)) return false;
-  acknowledgedMentionIds.value = new Set([...acknowledgedMentionIds.value, message.id]);
-  saveAcknowledgedMentionIds();
+  acknowledgeMentionId(message.id);
   return true;
 }
 
-function composerMentionNames() {
-  const names: string[] = [];
-  const seen = new Set<string>();
-  const ordered = [...store.messages].sort((a, b) => b.id - a.id);
-  for (const message of ordered) {
-    if (!isMentionAlertActive(message)) continue;
-    const name = message.sender.displayName?.trim();
-    if (!name || seen.has(name)) continue;
-    seen.add(name);
-    names.push(name);
-    if (names.length >= 5) break;
-  }
-  return names;
+function acknowledgeMentionId(messageId: number) {
+  if (acknowledgedMentionIds.value.has(messageId)) return;
+  acknowledgedMentionIds.value = new Set([...acknowledgedMentionIds.value, messageId]);
+  saveAcknowledgedMentionIds();
 }
-
-const composerMentionNameList = computed(composerMentionNames);
 
 const { text: composerPromptText, phase: composerPromptPhase, stop: stopComposerPlaceholder } = useComposerPlaceholder({
   getPrompts: () => store.appearance.composerPrompts || [],
-  mentionNames: composerMentionNameList,
   getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
   getAppearSeconds: () => cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
   getDisappearSeconds: () => cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds),
@@ -3196,6 +3201,7 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
 async function openTopNotice(notice: TopNotice) {
   if (!notice.channelId || !notice.messageId || (notice.kind !== "mention" && notice.kind !== "like")) return;
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
+  if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
   if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
 }
 
@@ -9897,6 +9903,27 @@ async function toggleVirtual(character: any) {
           @hide="hideMusicLyricsHeader"
         />
       </Transition>
+
+      <section
+        v-if="!showingFavoriteSurface && activeMentionNotice"
+        class="mention-notice-bar"
+        :class="{ 'below-music-lyrics': musicLyricsHeaderVisible }"
+        aria-live="polite"
+      >
+        <button
+          type="button"
+          :aria-label="`${activeMentionNotice.title}，${activeMentionNotice.body}，点击查看`"
+          @click="openTopNotice(activeMentionNotice)"
+        >
+          <span class="mention-notice-icon" aria-hidden="true"><AtSign :size="15" /></span>
+          <span class="mention-notice-copy">
+            <strong>{{ activeMentionNotice.title }}</strong>
+            <small>{{ activeMentionNotice.body }}</small>
+          </span>
+          <span v-if="mentionNoticeCount > 1" class="mention-notice-count">{{ mentionNoticeCount }} 条</span>
+          <ChevronRight :size="16" aria-hidden="true" />
+        </button>
+      </section>
 
       <section v-if="!showingFavoriteSurface && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>

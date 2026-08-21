@@ -45,12 +45,14 @@ test("reception invitations use a dedicated visitor-only route", () => {
 
 test("the message viewport and composer occupy separate chat grid rows", () => {
   const chatPaneRule = css.match(/\.chat-pane \{([^}]*)\}/)?.[1] ?? "";
+  const mentionNoticeRule = css.match(/\.mention-notice-bar \{([^}]*)\}/)?.[1] ?? "";
   const messagesRule = css.match(/\.messages-viewport \{([^}]*)\}/)?.[1] ?? "";
   const composerRule = css.match(/\.composer \{([^}]*)\}/)?.[1] ?? "";
 
-  assert.match(chatPaneRule, /grid-template-rows: auto auto auto auto minmax\(0, 1fr\) auto;/);
-  assert.match(messagesRule, /grid-row: 5;/);
-  assert.match(composerRule, /grid-row: 6;/);
+  assert.match(chatPaneRule, /grid-template-rows: auto auto auto auto auto minmax\(0, 1fr\) auto;/);
+  assert.match(mentionNoticeRule, /grid-row: 5;/);
+  assert.match(messagesRule, /grid-row: 6;/);
+  assert.match(composerRule, /grid-row: 7;/);
 });
 
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
@@ -532,6 +534,23 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(css, /\.notification-nudge \{[\s\S]*?background: #facc15;[\s\S]*?animation: none;/);
   assert.match(app, /<em v-if="row\.message\.sender\.kind === 'virtual'">诶哎<\/em>/);
   assert.match(css, /\.sender-line em \{[\s\S]*?color: #38bdf8;[\s\S]*?text-shadow: none;/);
+});
+
+test("persistent mention notices sit below every existing top surface and stay out of the composer", () => {
+  const noticeStack = app.indexOf('class="chat-notice-stack"');
+  const lyricsHeader = app.indexOf("<MusicLyricsHeader", noticeStack);
+  const mentionNotice = app.indexOf('class="mention-notice-bar"', lyricsHeader);
+  const messagesViewport = app.indexOf('class="messages-viewport"', mentionNotice);
+
+  assert.ok(noticeStack >= 0, "the pinned and activity stack should exist");
+  assert.ok(lyricsHeader > noticeStack, "karaoke lyrics should follow pinned and activity notices");
+  assert.ok(mentionNotice > lyricsHeader, "mention notices should follow karaoke lyrics");
+  assert.ok(messagesViewport > mentionNotice, "mention notices should stay above the message timeline");
+  assert.match(app, /const loadedMentionToasts = computed[\s\S]*?store\.messages[\s\S]*?isMentionAlertActive/);
+  assert.match(app, /class="mention-notice-bar"[\s\S]*?activeMentionNotice[\s\S]*?@click="openTopNotice\(activeMentionNotice\)"/);
+  assert.match(app, /'below-music-lyrics': musicLyricsHeaderVisible/);
+  assert.doesNotMatch(app, /composerMentionNameList|mentionNames: composerMentionNameList/);
+  assert.doesNotMatch(app, /给你说话了，回应一下？/);
 });
 
 test("version changes add one clickable timeline-style update notice", () => {
