@@ -41,10 +41,7 @@ export class WeChatRelay {
   }
 
   private ingest(messages: readonly MessageDTO[], advanceCursor: boolean) {
-    const result = this.queue.ingest(messages, (message) => formatRelayMessage(message, {
-      maxContentLength: this.config.maxContentLength,
-      messageUrlTemplate: this.config.messageUrlTemplate
-    }), { advanceCursor });
+    const result = this.queue.ingest(messages, (message) => formatRelayMessage(message), { advanceCursor });
     if (result.inserted) this.logger.info(`queued ${result.inserted} message(s), cursor=${result.cursor}`);
   }
 

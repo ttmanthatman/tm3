@@ -35,8 +35,6 @@ export interface RelayConfig {
   channelId: number;
   targetGroup: string;
   databasePath: string;
-  messageUrlTemplate: string;
-  maxContentLength: number;
   pollIntervalMs: number;
   idleIntervalMs: number;
   minSendIntervalMs: number;
@@ -55,8 +53,6 @@ const envSchema = z.object({
   RELAY_CHANNEL_ID: z.coerce.number().int().nonnegative().default(0),
   RELAY_TARGET_GROUP: z.string().default(""),
   RELAY_DATABASE_PATH: z.string().default("storage/wechat-relay/relay.sqlite"),
-  RELAY_MESSAGE_URL_TEMPLATE: z.string().default(""),
-  RELAY_MAX_CONTENT_LENGTH: z.coerce.number().int().min(100).max(5000).default(1500),
   RELAY_POLL_INTERVAL_MS: z.coerce.number().int().min(5000).max(300000).default(30000),
   RELAY_IDLE_INTERVAL_MS: z.coerce.number().int().min(100).max(10000).default(500),
   RELAY_MIN_SEND_INTERVAL_MS: z.coerce.number().int().min(1000).max(300000).default(5000),
@@ -124,8 +120,6 @@ export function loadRelayConfig(input: NodeJS.ProcessEnv = process.env): RelayCo
     channelId: env.RELAY_CHANNEL_ID,
     targetGroup: env.RELAY_TARGET_GROUP,
     databasePath: absolutePath(env.RELAY_DATABASE_PATH),
-    messageUrlTemplate: env.RELAY_MESSAGE_URL_TEMPLATE,
-    maxContentLength: env.RELAY_MAX_CONTENT_LENGTH,
     pollIntervalMs: env.RELAY_POLL_INTERVAL_MS,
     idleIntervalMs: env.RELAY_IDLE_INTERVAL_MS,
     minSendIntervalMs: env.RELAY_MIN_SEND_INTERVAL_MS,

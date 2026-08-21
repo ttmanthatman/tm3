@@ -313,6 +313,7 @@ npm run release:prepare -- 1.5.7
 | `DEFAULT_ADMIN_PASSWORD` | 首次初始化管理员密码 |
 | `STORAGE_ROOT` | 上传、头像、歌谱和外观资源的存储目录 |
 | `CORS_ORIGINS` | 允许访问 API 的站点来源 |
+| `WECHAT_RELAY_NAS_ACCESS_URL` | 可选的 NAS 微信虚拟机访问页；只在管理员微信转发页面显示，用于检查和操作官方微信 |
 | `PUSH_NOTIFICATIONS_ENABLED` | 是否允许发送 Web Push |
 | `VAPID_SUBJECT` / `VAPID_*_KEY` | 浏览器推送配置 |
 | `AI_SETTINGS_SECRET` | 可选 AI 配置的加密密钥 |

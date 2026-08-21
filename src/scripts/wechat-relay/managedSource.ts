@@ -13,7 +13,8 @@ const messageSchema = z.object({
   }).passthrough(),
   content: z.string(),
   type: z.string(),
-  createdAt: z.string()
+  createdAt: z.string(),
+  relayText: z.string().trim().min(1).max(1000).optional()
 }).passthrough();
 
 const actionSchema = z.discriminatedUnion("type", [
@@ -27,7 +28,8 @@ const controlSchema = z.object({
     channelId: z.number().int().positive().nullable(),
     targetGroup: z.string(),
     startAfterId: z.number().int().nonnegative(),
-    pendingAction: actionSchema.nullable()
+    pendingAction: actionSchema.nullable(),
+    templates: z.record(z.string(), z.array(z.string())).optional()
   })
 });
 

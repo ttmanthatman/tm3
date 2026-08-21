@@ -2,8 +2,20 @@ import crypto from "node:crypto";
 import type { Actor, Message, PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import {
+  DEFAULT_WECHAT_RELAY_TEMPLATES,
+  renderWeChatRelayNotification,
+  type WeChatRelayTemplates
+} from "../../shared/wechatRelayNotifications.js";
+import {
+  generateWeChatRelayToken,
+  hashWeChatRelayToken,
+  parseWeChatRelayCredential,
+  verifyWeChatRelayToken
+} from "../services/wechatRelayCredential.js";
 
 const SETTING_KEY = "wechatRelayConfig";
+const CREDENTIAL_SETTING_KEY = "wechatRelayAgentCredential";
 const ONLINE_WINDOW_MS = 30_000;
 
 const actionSchema = z.discriminatedUnion("type", [
@@ -11,19 +23,38 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ id: z.string().uuid(), type: z.literal("test"), targetGroup: z.string().trim().min(1).max(80), text: z.string().trim().min(1).max(2000), createdAt: z.string() })
 ]);
 
+const templateLineSchema = z.string().trim().min(1).max(100).refine((value) => !/[\r\n]/.test(value));
+const templateListSchema = z.array(templateLineSchema).min(1).max(8);
+const templatesSchema = z.object({
+  message: templateListSchema,
+  mention: templateListSchema,
+  prayer: templateListSchema,
+  prayerUpdate: templateListSchema,
+  attachment: templateListSchema,
+  other: templateListSchema
+}).strict();
+
 const storedConfigSchema = z.object({
   enabled: z.boolean().default(false),
   channelId: z.number().int().positive().nullable().default(null),
   targetGroup: z.string().trim().max(80).default(""),
   startAfterId: z.number().int().nonnegative().default(0),
-  pendingAction: actionSchema.nullable().default(null)
+  pendingAction: actionSchema.nullable().default(null),
+  templates: templatesSchema.default(DEFAULT_WECHAT_RELAY_TEMPLATES)
 });
 
 const updateConfigSchema = z.object({
   enabled: z.boolean(),
   channelId: z.number().int().positive().nullable(),
-  targetGroup: z.string().trim().max(80)
+  targetGroup: z.string().trim().max(80),
+  templates: templatesSchema
 }).strict();
+
+const tokenSchema = z.string()
+  .trim()
+  .min(24)
+  .max(256)
+  .regex(/^[A-Za-z0-9._~+/=-]+$/);
 
 const heartbeatSchema = z.object({
   deviceName: z.string().trim().min(1).max(80),
@@ -52,14 +83,31 @@ export type WeChatRelayRouteDependencies = {
   prisma: RelayPrisma;
   requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void>;
   agentToken: string;
+  nasAccessUrl: string | null;
 };
+
+export function normalizeWeChatRelayNasAccessUrl(value: string | undefined) {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new Error("WECHAT_RELAY_NAS_ACCESS_URL must be a valid HTTP(S) URL");
+  }
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("WECHAT_RELAY_NAS_ACCESS_URL must be an HTTP(S) URL without embedded credentials");
+  }
+  return url.toString();
+}
 
 const defaultConfig = (): StoredConfig => ({
   enabled: false,
   channelId: null,
   targetGroup: "",
   startAfterId: 0,
-  pendingAction: null
+  pendingAction: null,
+  templates: DEFAULT_WECHAT_RELAY_TEMPLATES
 });
 
 function safeTokenEqual(actual: string, expected: string) {
@@ -85,6 +133,29 @@ function publicStatus(status: AgentStatus | null) {
 export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRelayRouteDependencies) {
   let status: AgentStatus | null = null;
 
+  async function loadCredential() {
+    const row = await deps.prisma.setting.findUnique({ where: { key: CREDENTIAL_SETTING_KEY } });
+    return row ? parseWeChatRelayCredential(row.value) : null;
+  }
+
+  async function saveCredential(token: string) {
+    const value = JSON.stringify(hashWeChatRelayToken(token));
+    await deps.prisma.setting.upsert({
+      where: { key: CREDENTIAL_SETTING_KEY },
+      update: { value },
+      create: { key: CREDENTIAL_SETTING_KEY, value }
+    });
+    status = null;
+  }
+
+  async function credentialState() {
+    const stored = await loadCredential();
+    return {
+      configured: Boolean(stored || deps.agentToken),
+      tokenSource: stored ? "admin" as const : deps.agentToken ? "environment" as const : "none" as const
+    };
+  }
+
   async function loadConfig(): Promise<StoredConfig> {
     const row = await deps.prisma.setting.findUnique({ where: { key: SETTING_KEY } });
     if (!row) return defaultConfig();
@@ -105,19 +176,42 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
   }
 
   async function requireAgent(request: FastifyRequest, reply: FastifyReply) {
-    if (!deps.agentToken) {
+    const stored = await loadCredential();
+    if (!stored && !deps.agentToken) {
       return reply.code(503).send({ success: false, message: "微信转发代理尚未配置" });
     }
-    if (!safeTokenEqual(agentToken(request), deps.agentToken)) {
+    const actual = agentToken(request);
+    const valid = stored ? verifyWeChatRelayToken(actual, stored) : safeTokenEqual(actual, deps.agentToken);
+    if (!valid) {
       return reply.code(401).send({ success: false, message: "转发代理认证失败" });
     }
   }
 
   app.get("/api/admin/wechat-relay", { preHandler: deps.requireAdmin }, async () => ({
-    configured: Boolean(deps.agentToken),
+    ...(await credentialState()),
+    nasAccessUrl: deps.nasAccessUrl,
     config: await loadConfig(),
     agent: publicStatus(status)
   }));
+
+  app.put("/api/admin/wechat-relay/token", { preHandler: deps.requireAdmin }, async (request, reply) => {
+    const parsed = z.object({ token: tokenSchema }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, message: "设备令牌至少 24 位，且不能包含空格" });
+    await saveCredential(parsed.data.token);
+    return { success: true, ...(await credentialState()) };
+  });
+
+  app.post("/api/admin/wechat-relay/token", { preHandler: deps.requireAdmin }, async () => {
+    const token = generateWeChatRelayToken();
+    await saveCredential(token);
+    return { success: true, token, ...(await credentialState()) };
+  });
+
+  app.delete("/api/admin/wechat-relay/token", { preHandler: deps.requireAdmin }, async () => {
+    await deps.prisma.setting.deleteMany({ where: { key: CREDENTIAL_SETTING_KEY } });
+    status = null;
+    return { success: true, ...(await credentialState()) };
+  });
 
   app.put("/api/admin/wechat-relay", { preHandler: deps.requireAdmin }, async (request, reply) => {
     const parsed = updateConfigSchema.safeParse(request.body);
@@ -143,7 +237,8 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
       channelId: body.channelId,
       targetGroup: body.targetGroup,
       startAfterId,
-      pendingAction: previous.pendingAction
+      pendingAction: previous.pendingAction,
+      templates: body.templates
     };
     await saveConfig(config);
     return { success: true, config, agent: publicStatus(status) };
@@ -167,7 +262,7 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
           id,
           type: "test",
           targetGroup: config.targetGroup,
-          text: `【聊天室微信转发实测】\n目标群：${config.targetGroup}\n时间：${new Date().toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}\n这是一条由聊天室管理入口发出的测试消息。`,
+          text: "测试消息到了，微信通知连接正常",
           createdAt
         };
     await saveConfig(config);
@@ -205,7 +300,19 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
         payload: message.payload || undefined,
         fileName: message.fileName,
         fileSize: message.fileSize,
-        createdAt: message.createdAt.toISOString()
+        createdAt: message.createdAt.toISOString(),
+        relayText: renderWeChatRelayNotification({
+          id: message.id,
+          type: message.type,
+          content: message.content || "",
+          payload: message.payload || undefined,
+          sender: {
+            id: message.sender.id,
+            kind: message.sender.kind,
+            username: message.sender.username,
+            displayName: message.sender.displayName
+          }
+        }, config.templates as WeChatRelayTemplates)
       }))
     };
   });

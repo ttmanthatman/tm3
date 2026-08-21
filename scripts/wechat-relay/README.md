@@ -10,11 +10,11 @@ This optional tool watches one Team Chat channel and sends its messages to one f
 - Node.js 22, `xdotool`, `xclip`, and `scrot`.
 - No public inbound service port is required.
 
-Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and set `RELAY_BASE_URL` plus a random `RELAY_AGENT_TOKEN` that matches the server's `WECHAT_RELAY_AGENT_TOKEN`. Never commit either value. The agent token is device-scoped and replaces a normal Team Chat username and password.
+Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and set `RELAY_BASE_URL`. In **管理中心 → 微信通知转发**, generate a device token (or enter an existing random token), then place the same value in `RELAY_AGENT_TOKEN`. Never commit either value. The server stores only a salted one-way verifier for an administrator-managed token. The legacy server environment variable `WECHAT_RELAY_AGENT_TOKEN` remains supported when no administrator token is present.
 
-Administrators choose the source channel, target-group label, binding, test send, and enablement from **管理中心 → 微信通知转发**. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
+Administrators choose the source channel, target-group label, binding, test send, enablement, and reminder wording from **管理中心 → 微信通知转发**. Reminder variants are one per line and may use `{name}` plus `{kind}` for attachments. The server chooses a stable variant for each message and sends only the conversational reminder—never the message body, source ID, or timestamp. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
 
-`RELAY_MESSAGE_URL_TEMPLATE` is optional. Leave it empty unless the deployed Team Chat instance has a supported message deep-link format; `{channelId}` and `{messageId}` are replaced when configured.
+Set `WECHAT_RELAY_NAS_ACCESS_URL` on the Team Chat server to the administrator-only browser page used to operate the NAS VM desktop (for example, its existing VM console or noVNC gateway). The admin panel links to that page and reminds the operator that official WeChat must be logged in with the account responsible for forwarding notifications. This link does not replace `RELAY_BASE_URL` or `RELAY_AGENT_TOKEN`, and it must not contain embedded credentials.
 
 Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` directory. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view.
 

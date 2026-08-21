@@ -57,21 +57,18 @@ test("configuration parses coordinates and protects source transport", () => {
   assert.equal(managed.channelId, 0);
 });
 
-test("formatter emits readable text, attachment labels, links, and source ids", () => {
-  const formatted = formatRelayMessage(message(42), {
-    maxContentLength: 1000,
-    messageUrlTemplate: "https://chat.example.com/ch/{channelId}/message/{messageId}"
-  });
-  assert.match(formatted, /【通知 #42】/);
-  assert.match(formatted, /发送者：发送者/);
-  assert.match(formatted, /第 42 条\n通知/);
-  assert.doesNotMatch(formatted, /<p>|<br>/);
-  assert.match(formatted, /\/ch\/7\/message\/42/);
+test("formatter emits only conversational reminders and prefers server-selected wording", () => {
+  const formatted = formatRelayMessage(message(42));
+  assert.match(formatted, /发送者/);
+  assert.doesNotMatch(formatted, /通知 #42|第 42 条|2026|<p>|<br>|查看原消息/);
 
-  const attachment = formatRelayMessage(message(43, { type: "image", content: "", fileName: "photo.jpg" }), {
-    maxContentLength: 1000
-  });
-  assert.match(attachment, /【图片】photo\.jpg/);
+  const attachment = formatRelayMessage(message(43, { type: "image", content: "", fileName: "photo.jpg" }));
+  assert.match(attachment, /发送者/);
+  assert.doesNotMatch(attachment, /photo\.jpg/);
+
+  const managed = message(44) as MessageDTO & { relayText: string };
+  managed.relayText = "发送者刚刚说话了";
+  assert.equal(formatRelayMessage(managed), "发送者刚刚说话了");
 });
 
 test("queue ingests atomically, deduplicates, retries, and advances its cursor", () => {
@@ -201,14 +198,16 @@ test("managed source authenticates with its device token and reports control sta
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
     requests.push({ path: `${url.pathname}${url.search}`, authorization: new Headers(init?.headers).get("authorization"), method: init?.method || "GET" });
     if (url.pathname.endsWith("/config")) {
-      return Response.json({ config: { enabled: true, channelId: 7, targetGroup: "XGS", startAfterId: 10, pendingAction: null } });
+      return Response.json({ config: { enabled: true, channelId: 7, targetGroup: "XGS", startAfterId: 10, pendingAction: null, templates: {} } });
     }
-    if (url.pathname.endsWith("/messages")) return Response.json({ messages: [message(11)] });
+    if (url.pathname.endsWith("/messages")) return Response.json({ messages: [{ ...message(11), relayText: "发送者说话了" }] });
     return Response.json({ success: true });
   };
   const source = new ManagedTeamChatSource("https://chat.example.com", "managed-token", fakeFetch);
   assert.equal((await source.control()).targetGroup, "XGS");
-  assert.deepEqual((await source.fetchAfter(10)).map((item) => item.id), [11]);
+  const received = await source.fetchAfter(10) as Array<MessageDTO & { relayText?: string }>;
+  assert.deepEqual(received.map((item) => item.id), [11]);
+  assert.equal(received[0]?.relayText, "发送者说话了");
   await source.heartbeat({ deviceName: "NAS 微信虚拟机", driverReady: true, calibratedTarget: "XGS", queue: {}, attention: 0 });
   assert.ok(requests.every((request) => request.authorization === "Bearer managed-token"));
   assert.deepEqual(requests.map((request) => request.method), ["GET", "GET", "POST"]);
