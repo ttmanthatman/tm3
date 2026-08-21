@@ -3225,9 +3225,25 @@ async function doLogin() {
   }
 }
 
-async function refreshReceptionRooms(preferredChannelId?: number) {
-  await store.loadChannels();
-  if (preferredChannelId) await store.switchChannel(preferredChannelId);
+function upsertReceptionRoom(channel: ChannelDTO) {
+  const existing = store.channels.find((row) => row.id === channel.id);
+  if (existing) Object.assign(existing, channel);
+  else store.channels.push(channel);
+}
+
+async function handleReceptionCreated(channel: ChannelDTO) {
+  upsertReceptionRoom(channel);
+  await store.switchChannel(channel.id);
+}
+
+function handleReceptionUpdated(channel: ChannelDTO) {
+  upsertReceptionRoom(channel);
+}
+
+async function handleReceptionDeleted(channelId: number) {
+  const wasCurrent = store.currentChannelId === channelId;
+  store.channels = store.channels.filter((row) => row.id !== channelId);
+  if (wasCurrent) await store.loadChannels();
 }
 
 async function selectReceptionRoom(channelId: number) {
@@ -10812,10 +10828,13 @@ async function toggleVirtual(character: any) {
     <FriendPrograms v-if="friendProgramsOpen" :player="friendPlayer" @close="friendProgramsOpen = false" />
 
     <ReceptionManager
+      v-if="showReceptionManager"
       :open="showReceptionManager"
       :channels="store.channels"
       @close="showReceptionManager = false"
-      @changed="refreshReceptionRooms"
+      @created="handleReceptionCreated"
+      @updated="handleReceptionUpdated"
+      @deleted="handleReceptionDeleted"
       @select="selectReceptionRoom"
     />
 

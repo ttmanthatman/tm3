@@ -135,6 +135,37 @@ test("bootstrap resolves after the identity phase while channel data loads in th
   assert.equal(initialMessageRequests, 1);
 });
 
+test("concurrent channel refreshes share one weak-network request", async () => {
+  storage.clear();
+  storage.setItem("team-chat-token", "token-1");
+  storage.setItem("team-chat-current-channel", "1");
+  const channelsGate = deferred<Response>();
+  let channelRequests = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/channels/1/members")) return jsonResponse({ members: [] });
+    if (url.includes("/api/channels")) {
+      channelRequests += 1;
+      return channelsGate.promise;
+    }
+    if (url.includes("/api/messages")) return jsonResponse({ messages: [] });
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+
+  setActivePinia(createPinia());
+  const store = useChatStore();
+  store.currentChannelId = 1;
+  const refreshes = [store.loadChannels(), store.loadChannels(), store.loadChannels()];
+  await Promise.resolve();
+  const observedChannelRequests = channelRequests;
+
+  channelsGate.resolve(jsonResponse({
+    channels: [{ id: 1, name: "General", kind: "standard", description: "", icon: "", isPrivate: false, isDefault: true, memberCount: 1, lastMessageId: 0 }]
+  }));
+  await Promise.all(refreshes);
+  assert.equal(observedChannelRequests, 1);
+});
+
 test("re-login after a failed bootstrap fetches messages instead of reusing the stale early request", async () => {
   storage.clear();
   storage.setItem("team-chat-token", "expired-token");

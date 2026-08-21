@@ -7,7 +7,9 @@ import { api } from "../../api";
 const props = defineProps<{ open: boolean; channels: ChannelDTO[] }>();
 const emit = defineEmits<{
   close: [];
-  changed: [preferredChannelId?: number];
+  created: [channel: ChannelDTO];
+  updated: [channel: ChannelDTO];
+  deleted: [channelId: number];
   select: [channelId: number];
 }>();
 
@@ -44,7 +46,7 @@ async function createRoom() {
       body: JSON.stringify({ name: roomName.value.trim(), code: code.value.trim(), durationHours: durationHours.value })
     });
     code.value = "";
-    emit("changed", result.channel.id);
+    emit("created", result.channel);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "会客厅创建失败";
   } finally {
@@ -57,7 +59,7 @@ async function updateRoom(room: ChannelDTO) {
   busy.value = true;
   try {
     const nextCode = editCode.value[room.id]?.trim();
-    await api(`/api/reception/rooms/${room.id}`, {
+    const result = await api<{ success: boolean; channel: ChannelDTO }>(`/api/reception/rooms/${room.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         durationHours: editDuration.value[room.id] || 24,
@@ -65,7 +67,7 @@ async function updateRoom(room: ChannelDTO) {
       })
     });
     editCode.value[room.id] = "";
-    emit("changed", room.id);
+    emit("updated", result.channel);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "会客厅设置失败";
   } finally {
@@ -79,7 +81,7 @@ async function deleteRoom(room: ChannelDTO) {
   busy.value = true;
   try {
     await api(`/api/reception/rooms/${room.id}`, { method: "DELETE" });
-    emit("changed");
+    emit("deleted", room.id);
   } catch (reason) {
     error.value = reason instanceof Error ? reason.message : "会客厅回收失败";
   } finally {
@@ -108,14 +110,14 @@ onBeforeUnmount(() => {
         <form class="create-card" @submit.prevent="createRoom">
           <div class="section-title"><Plus :size="18" /><strong>开一个会客厅</strong></div>
           <label>名称<input v-model="roomName" maxlength="80" required /></label>
-          <label>来访口令<input v-model="code" autocapitalize="none" autocomplete="off" maxlength="32" placeholder="一个词，或至少 6 位数字" required /></label>
+          <label>来访口令<input v-model="code" autocapitalize="none" autocomplete="off" maxlength="32" placeholder="可用中文、字母，或至少 6 位数字" required /></label>
           <label>有效期
             <select v-model.number="durationHours">
               <option :value="1">1 小时</option><option :value="6">6 小时</option><option :value="24">1 天</option>
               <option :value="72">3 天</option><option :value="168">7 天</option><option :value="720">30 天</option>
             </select>
           </label>
-          <p>到期后，来访账号、消息和附件会自动清除。口令只保存为校验值，管理员无法查看。</p>
+          <p>中文或字母口令至少 2 个字，纯数字至少 6 位。到期后，来访账号、消息和附件会自动清除。口令只保存为校验值，管理员无法查看。</p>
           <button class="primary" :disabled="busy || !roomName.trim() || !code.trim()" type="submit">创建会客厅</button>
         </form>
 
@@ -146,5 +148,5 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.reception-shell{position:fixed;inset:0;z-index:120;background:rgba(10,18,25,.48);display:grid;place-items:center;padding:16px}.reception-panel{width:min(620px,100%);max-height:min(820px,92vh);background:var(--panel,#fff);color:var(--text,#17212b);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.28);overflow:hidden}.reception-panel>header{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}header div{display:grid;gap:2px;flex:1}header small,.room-main small{opacity:.66}.title-icon{width:40px;height:40px;border-radius:14px;display:grid;place-items:center;background:#e8f4ec;color:#2c7d4f}.icon-button{border:0;background:transparent;padding:8px;border-radius:10px;color:inherit}.scroll-area{padding:18px;overflow:auto;max-height:calc(92vh - 77px);display:grid;gap:18px}.create-card,.room-card{border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:16px;padding:16px;background:color-mix(in srgb,var(--panel,#fff) 94%,#4f9d6f 6%)}.create-card{display:grid;grid-template-columns:1fr 1fr;gap:12px}.section-title{display:flex;align-items:center;gap:8px;grid-column:1/-1}.create-card label{display:grid;gap:6px;font-size:13px}.create-card label:first-of-type{grid-column:1/-1}.create-card input,.create-card select,.room-settings input,.room-settings select{min-width:0;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:10px;background:var(--panel,#fff);color:inherit;padding:10px 11px}.create-card p{grid-column:1/-1;margin:0;font-size:12px;line-height:1.55;opacity:.68}.primary{grid-column:1/-1;border:0;border-radius:11px;padding:11px 16px;background:#2f8656;color:#fff;font-weight:700}.room-list{display:grid;gap:10px}.room-card{padding:8px}.room-main{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;border:0;background:transparent;color:inherit;padding:8px}.room-main span:first-child{display:grid;gap:5px}.room-main small{display:flex;align-items:center;gap:5px}.enter{color:#2f8656;font-weight:700}.room-settings{display:grid;grid-template-columns:minmax(120px,1fr) 120px auto auto;gap:8px;padding:8px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent)}.room-settings button{display:flex;align-items:center;justify-content:center;gap:5px;border:1px solid color-mix(in srgb,currentColor 16%,transparent);background:var(--panel,#fff);color:inherit;border-radius:9px;padding:8px}.room-settings .danger{color:#b43838}.empty,.privacy-note,.error{margin:0;padding:12px;border-radius:12px;font-size:13px;line-height:1.55}.empty,.privacy-note{background:color-mix(in srgb,currentColor 6%,transparent)}.error{background:#fff0f0;color:#a32626}@media(max-width:600px){.create-card{grid-template-columns:1fr}.room-settings{grid-template-columns:1fr 1fr}.room-settings input{grid-column:1/-1}}
+.reception-shell{position:fixed;inset:0;z-index:120;background:rgba(10,18,25,.48);display:grid;place-items:center;padding:16px}.reception-panel{width:min(620px,100%);max-height:min(820px,92vh);background:var(--panel,#fff);color:var(--text,#17212b);border-radius:20px;box-shadow:0 24px 80px rgba(0,0,0,.28);overflow:hidden}.reception-panel>header{display:flex;align-items:center;gap:12px;padding:18px 20px;border-bottom:1px solid color-mix(in srgb,currentColor 12%,transparent)}header div{display:grid;gap:2px;flex:1}header small,.room-main small{opacity:.66}.title-icon{width:40px;height:40px;border-radius:14px;display:grid;place-items:center;background:#e8f4ec;color:#2c7d4f}.icon-button{border:0;background:transparent;padding:8px;border-radius:10px;color:inherit}.scroll-area{padding:18px;overflow:auto;max-height:calc(92vh - 77px);display:grid;gap:18px}.create-card,.room-card{border:1px solid color-mix(in srgb,currentColor 13%,transparent);border-radius:16px;padding:16px;background:color-mix(in srgb,var(--panel,#fff) 94%,#4f9d6f 6%)}.create-card{display:grid;grid-template-columns:1fr 1fr;gap:12px}.section-title{display:flex;align-items:center;gap:8px;grid-column:1/-1}.create-card label{display:grid;gap:6px;font-size:13px}.create-card label:first-of-type{grid-column:1/-1}.create-card input,.create-card select,.room-settings input,.room-settings select{min-width:0;border:1px solid color-mix(in srgb,currentColor 18%,transparent);border-radius:10px;background:var(--panel,#fff);color:inherit;padding:10px 11px;font-family:inherit;font-size:16px;line-height:1.4}.create-card p{grid-column:1/-1;margin:0;font-size:12px;line-height:1.55;opacity:.68}.primary{grid-column:1/-1;border:0;border-radius:11px;padding:11px 16px;background:#2f8656;color:#fff;font-weight:700}.room-list{display:grid;gap:10px}.room-card{padding:8px}.room-main{width:100%;display:flex;align-items:center;justify-content:space-between;text-align:left;border:0;background:transparent;color:inherit;padding:8px}.room-main span:first-child{display:grid;gap:5px}.room-main small{display:flex;align-items:center;gap:5px}.enter{color:#2f8656;font-weight:700}.room-settings{display:grid;grid-template-columns:minmax(120px,1fr) 120px auto auto;gap:8px;padding:8px;border-top:1px solid color-mix(in srgb,currentColor 10%,transparent)}.room-settings button{display:flex;align-items:center;justify-content:center;gap:5px;border:1px solid color-mix(in srgb,currentColor 16%,transparent);background:var(--panel,#fff);color:inherit;border-radius:9px;padding:8px}.room-settings .danger{color:#b43838}.empty,.privacy-note,.error{margin:0;padding:12px;border-radius:12px;font-size:13px;line-height:1.55}.empty,.privacy-note{background:color-mix(in srgb,currentColor 6%,transparent)}.error{background:#fff0f0;color:#a32626}@media(max-width:600px){.create-card{grid-template-columns:1fr}.room-settings{grid-template-columns:1fr 1fr}.room-settings input{grid-column:1/-1}}
 </style>

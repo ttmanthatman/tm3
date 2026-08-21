@@ -112,6 +112,8 @@ test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   page.once("dialog", (dialog) => dialog.accept());
   await roomCard.getByRole("button", { name: "回收", exact: true }).click();
   await expect(roomCard).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "退出", exact: true })).toBeVisible();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 });
 
 test("文字消息刷新后仍然存在", async ({ page }) => {

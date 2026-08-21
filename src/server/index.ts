@@ -2893,8 +2893,7 @@ async function emitChannelMembersChanged(channelId: number, action: string, affe
   const dto = await channelDto(channelId);
   const memberRows = await prisma.channelMember.findMany({ where: { channelId }, select: { accountId: true } });
   const recipients = new Set([...memberRows.map((row) => row.accountId), ...affectedAccountIds]);
-  io.to(`ch:${channelId}`).emit("channel:updated", { action, channel: dto });
-  for (const accountId of recipients) io.to(`acct:${accountId}`).emit("channel:updated", { action, channel: dto });
+  io.to([`ch:${channelId}`, ...[...recipients].map((accountId) => `acct:${accountId}`)]).emit("channel:updated", { action, channel: dto });
   return dto;
 }
 

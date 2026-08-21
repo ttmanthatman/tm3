@@ -38,6 +38,11 @@ const MESSAGE_CACHE_KEY_LIMIT = 24;
 // await this via whenChannelsReady().
 let channelsReadyPromise: Promise<void> | null = null;
 
+// Realtime channel events and the matching HTTP mutation response can arrive
+// together. Share their revalidation so weak connections do not fetch the
+// same channel list and current message window several times in parallel.
+let channelLoadPromise: Promise<void> | null = null;
+
 // First message page for the persisted channel, fired by bootstrap() in
 // parallel with the identity request — it needs only the token, not the
 // account. loadChannels() reuses it when the channel survived revalidation.
@@ -395,26 +400,35 @@ export const useChatStore = defineStore("chat", {
       this.cacheCurrentMessages();
     },
     async loadChannels(preferredChannelId = 0) {
-      const result = await api<{ channels: ChannelDTO[] }>("/api/channels");
-      this.channels = result.channels.filter(Boolean);
-      const restoredChannelId = this.currentChannelId;
-      const candidates = [this.currentChannelId, preferredChannelId, this.previousChannelId];
-      const nextChannelId = candidates.find((id) => id && this.channels.some((ch) => ch.id === id)) || this.channels[0]?.id || 0;
-      this.currentChannelId = nextChannelId;
-      if (this.currentChannelId) {
-        localStorage.setItem("team-chat-current-channel", String(this.currentChannelId));
-        // bootstrap() may already have the first page in flight (or done) for
-        // the restored channel; reuse it instead of duplicating the request.
-        const earlyMessages = initialMessagesPromise;
-        initialMessagesPromise = null;
-        const messagesReady = earlyMessages && nextChannelId === restoredChannelId ? earlyMessages : this.loadMessages();
-        await Promise.all([messagesReady, this.loadMembers()]);
-      } else {
-        initialMessagesPromise = null;
-        localStorage.removeItem("team-chat-current-channel");
-        this.resetMessageWindow();
-        this.members = [];
-        this.pinned = null;
+      if (channelLoadPromise) return channelLoadPromise;
+      const currentLoad = (async () => {
+        const result = await api<{ channels: ChannelDTO[] }>("/api/channels");
+        this.channels = result.channels.filter(Boolean);
+        const restoredChannelId = this.currentChannelId;
+        const candidates = [this.currentChannelId, preferredChannelId, this.previousChannelId];
+        const nextChannelId = candidates.find((id) => id && this.channels.some((ch) => ch.id === id)) || this.channels[0]?.id || 0;
+        this.currentChannelId = nextChannelId;
+        if (this.currentChannelId) {
+          localStorage.setItem("team-chat-current-channel", String(this.currentChannelId));
+          // bootstrap() may already have the first page in flight (or done) for
+          // the restored channel; reuse it instead of duplicating the request.
+          const earlyMessages = initialMessagesPromise;
+          initialMessagesPromise = null;
+          const messagesReady = earlyMessages && nextChannelId === restoredChannelId ? earlyMessages : this.loadMessages();
+          await Promise.all([messagesReady, this.loadMembers()]);
+        } else {
+          initialMessagesPromise = null;
+          localStorage.removeItem("team-chat-current-channel");
+          this.resetMessageWindow();
+          this.members = [];
+          this.pinned = null;
+        }
+      })();
+      channelLoadPromise = currentLoad;
+      try {
+        await currentLoad;
+      } finally {
+        if (channelLoadPromise === currentLoad) channelLoadPromise = null;
       }
     },
     async switchChannel(id: number) {
@@ -661,6 +675,10 @@ export const useChatStore = defineStore("chat", {
           mergeChannelUpdate(existing, incoming);
           return;
         }
+        if (incoming && event?.action === "reception-created") {
+          this.channels.push(incoming);
+          return;
+        }
         // New channels, deletions, and payload-less events still reload.
         void this.loadChannels();
       });
@@ -668,6 +686,10 @@ export const useChatStore = defineStore("chat", {
         if (account.id === this.account?.id) this.account = account;
       });
       socket.on("reception:closed", () => {
+        if (!this.account?.isGuest) {
+          void this.loadChannels();
+          return;
+        }
         window.dispatchEvent(new Event("reception-closed"));
         void this.logout(false);
       });

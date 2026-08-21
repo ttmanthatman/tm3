@@ -14,6 +14,7 @@ const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts"
 const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
 const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.vue", import.meta.url), "utf8");
 const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
+const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
@@ -22,6 +23,15 @@ const server = [
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.app-shell \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+});
+
+test("reception management stays off the chat startup path and keeps readable controls", () => {
+  assert.match(app, /<ReceptionManager\s+v-if="showReceptionManager"/);
+  assert.match(receptionManager, /placeholder="可用中文、字母，或至少 6 位数字"/);
+  assert.match(receptionManager, /\.create-card input,\.create-card select,\.room-settings input,\.room-settings select\{[^}]*font-size:16px;/);
+  assert.match(receptionManager, /emit\("created", result\.channel\)/);
+  assert.match(app, /@created="handleReceptionCreated"[\s\S]*?@updated="handleReceptionUpdated"[\s\S]*?@deleted="handleReceptionDeleted"/);
+  assert.match(store, /socket\.on\("reception:closed", \(\) => \{\s*if \(!this\.account\?\.isGuest\)/);
 });
 
 test("the message viewport and composer occupy separate chat grid rows", () => {
