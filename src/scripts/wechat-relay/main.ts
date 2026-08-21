@@ -1,7 +1,9 @@
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadRelayConfig } from "./config.js";
 import { DryRunDriver, type WeChatDriver } from "./driver.js";
+import { ManagedTeamChatSource, type ManagedRelayAction } from "./managedSource.js";
 import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { WeChatRelay } from "./relay.js";
@@ -19,6 +21,106 @@ function usage() {
 
 function createDriver(config: ReturnType<typeof loadRelayConfig>): WeChatDriver {
   return config.driver === "x11" ? new X11WeChatDriver(config.x11) : new DryRunDriver();
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runManagedControl(
+  source: ManagedTeamChatSource,
+  driver: WeChatDriver,
+  queue: RelayQueue,
+  intervalMs: number,
+  calibratedTargetPath: string
+) {
+  let driverReady = false;
+  let calibratedTarget: string | null = null;
+  let lastError: string | null = null;
+  const completed = new Map<string, { success: boolean; message: string }>();
+
+  try {
+    await driver.doctor();
+    driverReady = true;
+    calibratedTarget = fs.existsSync(calibratedTargetPath)
+      ? fs.readFileSync(calibratedTargetPath, "utf8").trim() || null
+      : null;
+  } catch (error) {
+    lastError = errorMessage(error);
+  }
+
+  while (!source.isStopped()) {
+    try {
+      const control = await source.control();
+      const action = control.pendingAction;
+      if (action) {
+        let result = completed.get(action.id);
+        if (!result) {
+          try {
+            if (action.type === "calibrate") {
+              if (!(driver instanceof X11WeChatDriver)) throw new Error("Only the X11 driver can bind a WeChat group");
+              await driver.calibrate();
+              await driver.doctor();
+              fs.writeFileSync(calibratedTargetPath, `${action.targetGroup}\n`, { mode: 0o600 });
+              driverReady = true;
+              calibratedTarget = action.targetGroup;
+              result = { success: true, message: `已绑定微信群 ${action.targetGroup}` };
+            } else {
+              if (!driverReady || calibratedTarget !== action.targetGroup) {
+                throw new Error("The visible WeChat group is not the bound target; bind it again before testing");
+              }
+              const evidence = await driver.send(testQueueItem(action));
+              result = { success: true, message: `测试消息已发送（${evidence.summary}）` };
+            }
+          } catch (error) {
+            result = { success: false, message: errorMessage(error) };
+            lastError = result.message;
+          }
+          completed.set(action.id, result);
+        }
+        await source.reportAction(action.id, result.success, result.message);
+        if (result.success) lastError = null;
+      }
+      await source.heartbeat({
+        deviceName: "NAS 微信虚拟机",
+        driverReady,
+        calibratedTarget,
+        queue: queue.counts() as Record<string, number>,
+        attention: queue.attention().length,
+        lastError
+      });
+    } catch (error) {
+      lastError = errorMessage(error);
+      console.error(`managed relay control failed: ${lastError}`);
+    }
+    if (!source.isStopped()) await delay(Math.max(5000, intervalMs));
+  }
+}
+
+function testQueueItem(action: Extract<ManagedRelayAction, { type: "test" }>) {
+  const now = new Date().toISOString();
+  return {
+    sourceId: 1,
+    channelId: 1,
+    message: {
+      id: 1,
+      channelId: 1,
+      sender: { id: 1, kind: "system" as const, username: "wechat_relay", displayName: "微信转发" },
+      content: action.text,
+      type: "system" as const,
+      createdAt: now
+    },
+    formattedText: action.text,
+    state: "processing" as const,
+    attemptCount: 1,
+    nextAttemptAt: 0,
+    lastError: null,
+    sourceCreatedAt: Date.now()
+  };
 }
 
 async function main() {
@@ -81,12 +183,19 @@ async function main() {
     const lock = new RelayProcessLock(config.databasePath);
     lock.acquire();
     queue.recoverInterruptedDelivery();
-    const source = new TeamChatSource(config);
+    const source = config.agentToken
+      ? new ManagedTeamChatSource(config.baseUrl, config.agentToken)
+      : new TeamChatSource(config);
     const relay = new WeChatRelay(config, queue, source, driver);
     try {
       process.once("SIGINT", () => relay.stop());
       process.once("SIGTERM", () => relay.stop());
-      await relay.run();
+      await Promise.all([
+        relay.run(),
+        source instanceof ManagedTeamChatSource
+          ? runManagedControl(source, driver, queue, config.pollIntervalMs, `${config.x11.anchorPath}.target`)
+          : Promise.resolve()
+      ]);
       return 0;
     } finally {
       lock.release();

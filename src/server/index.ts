@@ -26,6 +26,7 @@ import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
 import { registerReceptionRoutes } from "./routes/reception.js";
+import { registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
@@ -127,6 +128,7 @@ if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SE
   throw new Error("JWT_SECRET must be set to at least 32 characters in production");
 }
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
+const WECHAT_RELAY_AGENT_TOKEN = process.env.WECHAT_RELAY_AGENT_TOKEN || "";
 const PUSH_NOTIFICATIONS_ENABLED = envFlagEnabled(process.env.PUSH_NOTIFICATIONS_ENABLED);
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
 const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
@@ -6762,6 +6764,12 @@ registerAdminAccountRoutes(app, {
   emitAccountDeleted: (payload) => {
     io.emit("channel:updated", payload);
   }
+});
+
+registerWeChatRelayRoutes(app, {
+  prisma,
+  requireAdmin,
+  agentToken: WECHAT_RELAY_AGENT_TOKEN
 });
 
 app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {

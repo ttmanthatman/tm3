@@ -208,6 +208,7 @@ const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/Music
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
 const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/AdminReceptionPage.vue"));
+const WeChatRelayPanel = defineAsyncComponent(() => import("./features/admin/WeChatRelayPanel.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
 const ReceptionManager = defineAsyncComponent(() => import("./features/reception/ReceptionManager.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
@@ -416,6 +417,7 @@ type AdminPage =
   | "backups"
   | "messages"
   | "resources"
+  | "wechatRelay"
   | "demo"
   | "release";
 const adminPage = ref<AdminPage>("home");
@@ -1745,6 +1747,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
   messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
   resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
+  wechatRelay: { title: "微信通知转发", description: "连接 NAS 微信、选择来源频道并测试发送" },
   demo: { title: "演示模式", description: "从 GitHub 载入或复位标准演示数据" },
   release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
 };
@@ -11503,6 +11506,10 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('reception')"><span class="admin-entry-icon"><DoorOpen :size="20" /></span><span><b>会客厅</b><small>创建者、期限、人数和用量</small></span><ChevronRight :size="19" /></button>
             </div>
             <div class="admin-hub-group">
+              <label>通知与连接</label>
+              <button class="admin-entry-row" @click="openAdminPage('wechatRelay')"><span class="admin-entry-icon"><Bell :size="20" /></span><span><b>微信通知转发</b><small>连接 NAS 微信并向指定群发送频道通知</small></span><ChevronRight :size="19" /></button>
+            </div>
+            <div class="admin-hub-group">
               <label>外观与数据</label>
               <button class="admin-entry-row" @click="openAdminPage('appearance')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>外观与体验</b><small>品牌、登录页、聊天室和主题</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息和资源管理</small></span><ChevronRight :size="19" /></button>
@@ -12130,6 +12137,8 @@ async function toggleVirtual(character: any) {
               @delete-all="deleteAllAdminAttachments"
             />
           </section>
+
+          <WeChatRelayPanel v-else-if="adminPage === 'wechatRelay'" />
 
           <DemoModePanel v-else-if="adminPage === 'demo'" />
 

@@ -10,7 +10,9 @@ This optional tool watches one Team Chat channel and sends its messages to one f
 - Node.js 22, `xdotool`, `xclip`, and `scrot`.
 - No public inbound service port is required.
 
-Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and replace every example credential and source value. Never commit that file.
+Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and set `RELAY_BASE_URL` plus a random `RELAY_AGENT_TOKEN` that matches the server's `WECHAT_RELAY_AGENT_TOKEN`. Never commit either value. The agent token is device-scoped and replaces a normal Team Chat username and password.
+
+Administrators choose the source channel, target-group label, binding, test send, and enablement from **管理中心 → 微信通知转发**. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
 
 `RELAY_MESSAGE_URL_TEMPLATE` is optional. Leave it empty unless the deployed Team Chat instance has a supported message deep-link format; `{channelId}` and `{messageId}` are replaced when configured.
 
@@ -20,10 +22,11 @@ Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` dire
 
 1. Log in to the official client manually and open the one target group.
 2. Keep the WeChat window unobscured and do not open another chat.
-3. Stop the relay service.
-4. Run `node dist/server/scripts/wechat-relay/main.js calibrate` as the desktop user with the same environment file.
-5. Run the `doctor` command and confirm the target-group image difference passes.
-6. Start with `RELAY_DRIVER=dry-run`; inspect the formatted output before enabling `x11`.
+3. In **管理中心 → 微信通知转发**, enter the exact group label and click **绑定当前群**.
+4. Wait for the page to report the bound group, then use **发送测试消息**.
+5. Enable forwarding only after the test is visibly present in the intended group.
+
+The `calibrate` and `doctor` CLI commands remain available for local diagnosis.
 
 Dry-run uses the normal delivery bookkeeping and marks previewed messages as sent. Use a disposable `RELAY_DATABASE_PATH` for rehearsal so that the live relay can perform its own initial catch-up.
 

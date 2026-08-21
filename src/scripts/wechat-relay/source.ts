@@ -9,6 +9,12 @@ export interface TeamChatSourceConfig {
   channelId: number;
 }
 
+export interface RelaySource {
+  close(): void;
+  catchUp(after: number, onBatch: (messages: MessageDTO[]) => void | Promise<void>): Promise<{ cursor: number; total: number }>;
+  ensureSubscription(onMessage: (message: MessageDTO) => void): Promise<void>;
+}
+
 const messageSchema = z.object({
   id: z.number().int().positive(),
   channelId: z.number().int().positive(),
@@ -26,7 +32,7 @@ const messageSchema = z.object({
 const loginSchema = z.object({ token: z.string().min(1) });
 const messagesSchema = z.object({ messages: z.array(messageSchema) });
 
-export class TeamChatSource {
+export class TeamChatSource implements RelaySource {
   private token = "";
   private socket: Socket | null = null;
   private onMessage: ((message: MessageDTO) => void) | null = null;

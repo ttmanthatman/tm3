@@ -5,7 +5,7 @@ import type { WeChatDriver } from "./driver.js";
 import { AmbiguousDeliveryError, SafeRelayError } from "./errors.js";
 import { formatRelayMessage } from "./formatter.js";
 import { RelayQueue } from "./queue.js";
-import { TeamChatSource } from "./source.js";
+import type { RelaySource } from "./source.js";
 
 export interface RelayLogger {
   info(message: string): void;
@@ -30,7 +30,7 @@ export class WeChatRelay {
   constructor(
     private readonly config: RelayConfig,
     private readonly queue: RelayQueue,
-    private readonly source: TeamChatSource,
+    private readonly source: RelaySource,
     private readonly driver: WeChatDriver,
     private readonly logger: RelayLogger = defaultLogger
   ) {}

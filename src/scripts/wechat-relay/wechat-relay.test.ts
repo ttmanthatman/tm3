@@ -8,6 +8,7 @@ import { loadRelayConfig, parsePoint, parseRectangle } from "./config.js";
 import { formatRelayMessage } from "./formatter.js";
 import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
+import { ManagedTeamChatSource } from "./managedSource.js";
 import { TeamChatSource } from "./source.js";
 import { parseWindowGeometry } from "./x11Driver.js";
 
@@ -51,6 +52,9 @@ test("configuration parses coordinates and protects source transport", () => {
   assert.equal(config.baseUrl, "https://chat.example.com");
   assert.equal(config.driver, "dry-run");
   assert.equal(config.channelId, 7);
+  const managed = loadRelayConfig({ RELAY_BASE_URL: "https://chat.example.com", RELAY_AGENT_TOKEN: "managed-token" });
+  assert.equal(managed.agentToken, "managed-token");
+  assert.equal(managed.channelId, 0);
 });
 
 test("formatter emits readable text, attachment labels, links, and source ids", () => {
@@ -189,6 +193,25 @@ test("source login and catch-up page through more than 200 messages", async () =
   } finally {
     source.close();
   }
+});
+
+test("managed source authenticates with its device token and reports control state", async () => {
+  const requests: Array<{ path: string; authorization: string | null; method: string }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+    requests.push({ path: `${url.pathname}${url.search}`, authorization: new Headers(init?.headers).get("authorization"), method: init?.method || "GET" });
+    if (url.pathname.endsWith("/config")) {
+      return Response.json({ config: { enabled: true, channelId: 7, targetGroup: "XGS", startAfterId: 10, pendingAction: null } });
+    }
+    if (url.pathname.endsWith("/messages")) return Response.json({ messages: [message(11)] });
+    return Response.json({ success: true });
+  };
+  const source = new ManagedTeamChatSource("https://chat.example.com", "managed-token", fakeFetch);
+  assert.equal((await source.control()).targetGroup, "XGS");
+  assert.deepEqual((await source.fetchAfter(10)).map((item) => item.id), [11]);
+  await source.heartbeat({ deviceName: "NAS 微信虚拟机", driverReady: true, calibratedTarget: "XGS", queue: {}, attention: 0 });
+  assert.ok(requests.every((request) => request.authorization === "Bearer managed-token"));
+  assert.deepEqual(requests.map((request) => request.method), ["GET", "GET", "POST"]);
 });
 
 test("X11 geometry parser rejects incomplete window data", () => {

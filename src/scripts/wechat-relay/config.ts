@@ -29,6 +29,7 @@ export interface X11DriverConfig {
 
 export interface RelayConfig {
   baseUrl: string;
+  agentToken: string;
   username: string;
   password: string;
   channelId: number;
@@ -48,10 +49,11 @@ export interface RelayConfig {
 
 const envSchema = z.object({
   RELAY_BASE_URL: z.string().url(),
-  RELAY_USERNAME: z.string().min(1),
-  RELAY_PASSWORD: z.string().min(1),
-  RELAY_CHANNEL_ID: z.coerce.number().int().positive(),
-  RELAY_TARGET_GROUP: z.string().min(1),
+  RELAY_AGENT_TOKEN: z.string().default(""),
+  RELAY_USERNAME: z.string().default(""),
+  RELAY_PASSWORD: z.string().default(""),
+  RELAY_CHANNEL_ID: z.coerce.number().int().nonnegative().default(0),
+  RELAY_TARGET_GROUP: z.string().default(""),
   RELAY_DATABASE_PATH: z.string().default("storage/wechat-relay/relay.sqlite"),
   RELAY_MESSAGE_URL_TEMPLATE: z.string().default(""),
   RELAY_MAX_CONTENT_LENGTH: z.coerce.number().int().min(100).max(5000).default(1500),
@@ -103,6 +105,9 @@ export function parseRectangle(value: string, name = "rectangle"): Rectangle {
 
 export function loadRelayConfig(input: NodeJS.ProcessEnv = process.env): RelayConfig {
   const env = envSchema.parse(input);
+  if (!env.RELAY_AGENT_TOKEN && (!env.RELAY_USERNAME || !env.RELAY_PASSWORD || !env.RELAY_CHANNEL_ID)) {
+    throw new Error("Set RELAY_AGENT_TOKEN or the legacy relay account and channel settings");
+  }
   const baseUrl = new URL(env.RELAY_BASE_URL);
   if (baseUrl.protocol !== "https:" && env.RELAY_ALLOW_HTTP_SOURCE !== "1") {
     throw new Error("RELAY_BASE_URL must use HTTPS unless RELAY_ALLOW_HTTP_SOURCE=1");
@@ -113,6 +118,7 @@ export function loadRelayConfig(input: NodeJS.ProcessEnv = process.env): RelayCo
 
   return {
     baseUrl: baseUrl.toString().replace(/\/$/, ""),
+    agentToken: env.RELAY_AGENT_TOKEN,
     username: env.RELAY_USERNAME,
     password: env.RELAY_PASSWORD,
     channelId: env.RELAY_CHANNEL_ID,
