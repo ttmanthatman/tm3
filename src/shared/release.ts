@@ -1,14 +1,18 @@
-export const APP_VERSION = "1.11.0";
+export const APP_VERSION = "1.11.1";
 
 export const RELEASE_DATE = "2026-08-21";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "会客厅口令提示明确支持中文，表单控件统一为主体字号；管理界面改为点击后才加载，并合并实时事件引起的重复频道请求，改善弱网体验，同时避免正式成员回收当前会客厅时被误退出。"
+] as const;
+
+const RELEASE_1_11_0_NOTES = [
   "新增邀请制「会客厅」：正式成员可用一个词或至少 6 位数字设置来访口令和有效期，来访者以口令与称呼进入，只能看到所在会客厅；创建者可邀请其他正式成员、移除来访者、更新口令与期限或立即回收。",
   "来访者在会客厅内可正常发送文字、附件、消息特效与代祷卡，也可听音乐、收听良友电台、读圣经和调整字号；来访者不能进入综合频道、其他频道、私聊或 AI 角色会话，其听歌、读经和收听状态也不会向全站广播。",
   "会客厅到期后自动回收房间、消息、附件、临时账号、会话及活动记录；会客厅内容不进入 AI/自动助理、管理端聊天记录、资源管理、数据导出或演示快照。管理员只能查看会客厅编号、创建者、期限、人数与用量，并可执行回收。"
-] as const;
+] as const
 
 const RELEASE_1_10_0_NOTES = [
   "补充演示模式使用、复位安全边界、演示包发布和维护触发规则，后续版本只在展示功能或演示包兼容性变化时更新演示数据。"
@@ -800,9 +804,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.11.0",
+    version: "1.11.1",
     date: "2026-08-21",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.11.0",
+    date: "2026-08-21",
+    notes: RELEASE_1_11_0_NOTES
   },
   {
     version: "1.10.0",
