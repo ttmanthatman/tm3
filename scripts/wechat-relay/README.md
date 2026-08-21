@@ -14,7 +14,7 @@ Build the repository with `npm ci` and `npm run build:server`. Copy `config.exam
 
 `RELAY_MESSAGE_URL_TEMPLATE` is optional. Leave it empty unless the deployed Team Chat instance has a supported message deep-link format; `{channelId}` and `{messageId}` are replaced when configured.
 
-Copy `wechat-relay.desktop` to `/home/wechat-relay/.config/autostart/`. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view.
+Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` directory. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view.
 
 ## Calibration
 

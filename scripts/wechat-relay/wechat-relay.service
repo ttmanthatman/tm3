@@ -9,7 +9,7 @@ User=wechat-relay
 Group=wechat-relay
 WorkingDirectory=/opt/team-chat
 EnvironmentFile=/etc/wechat-relay.env
-Environment=XAUTHORITY=/home/wechat-relay/.Xauthority
+Environment=XAUTHORITY=%h/.Xauthority
 ExecStart=/usr/bin/node /opt/team-chat/dist/server/scripts/wechat-relay/main.js run
 Restart=on-failure
 RestartSec=10
