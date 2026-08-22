@@ -75,6 +75,8 @@ export interface MessageDTO {
   createdAt: string;
   reactions?: MessageReactionsDTO;
   musicPlaylist?: MusicPlaylistDTO | null;
+  relayText?: string;
+  relayMentions?: string[];
 }
 
 export interface MessageReactionsDTO {

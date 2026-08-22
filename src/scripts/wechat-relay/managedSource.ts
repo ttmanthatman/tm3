@@ -7,14 +7,17 @@ const messageSchema = z.object({
   channelId: z.number().int().positive(),
   sender: z.object({
     id: z.number().int().positive(),
-    kind: z.string(),
+    kind: z.enum(["human", "virtual", "system"]),
     username: z.string(),
     displayName: z.string()
   }).passthrough(),
   content: z.string(),
-  type: z.string(),
+  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "why_topic_card", "system"]),
   createdAt: z.string(),
-  relayText: z.string().trim().min(1).max(1000).optional()
+  fileName: z.string().nullable().optional(),
+  fileSize: z.number().int().nonnegative().nullable().optional(),
+  relayText: z.string().trim().min(1).max(2000).optional(),
+  relayMentions: z.array(z.string().trim().min(1).max(80)).max(20).optional()
 }).passthrough();
 
 const actionSchema = z.discriminatedUnion("type", [
@@ -29,12 +32,18 @@ const controlSchema = z.object({
     targetGroup: z.string(),
     startAfterId: z.number().int().nonnegative(),
     pendingAction: actionSchema.nullable(),
-    templates: z.record(z.string(), z.array(z.string())).optional()
+    templates: z.record(z.string(), z.array(z.string())).optional(),
+    systemEvents: z.array(z.object({
+      slot: z.string().trim().min(1).max(120),
+      key: z.string().trim().min(1).max(240),
+      message: messageSchema.nullable()
+    })).max(20).default([])
   })
 });
 
 export type ManagedRelayAction = z.infer<typeof actionSchema>;
 export type ManagedRelayControl = z.infer<typeof controlSchema>["config"];
+export type ManagedRelaySystemEvent = ManagedRelayControl["systemEvents"][number];
 
 export class ManagedTeamChatSource implements RelaySource {
   private stopped = false;

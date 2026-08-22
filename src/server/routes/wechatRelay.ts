@@ -5,8 +5,12 @@ import { z } from "zod";
 import {
   DEFAULT_WECHAT_RELAY_TEMPLATES,
   renderWeChatRelayNotification,
+  WECHAT_RELAY_TEMPLATE_KEYS,
+  WECHAT_RELAY_TEMPLATE_VARIABLE_KEYS,
+  type WeChatRelayMentionTarget,
   type WeChatRelayTemplates
 } from "../../shared/wechatRelayNotifications.js";
+import { APP_VERSION } from "../../shared/release.js";
 import {
   generateWeChatRelayToken,
   hashWeChatRelayToken,
@@ -23,16 +27,41 @@ const actionSchema = z.discriminatedUnion("type", [
   z.object({ id: z.string().uuid(), type: z.literal("test"), targetGroup: z.string().trim().min(1).max(80), text: z.string().trim().min(1).max(2000), createdAt: z.string() })
 ]);
 
-const templateLineSchema = z.string().trim().min(1).max(100).refine((value) => !/[\r\n]/.test(value));
+const templateLineSchema = z.string().trim().min(1).max(200)
+  .refine((value) => !/[\r\n]/.test(value))
+  .refine((value) => [...value.matchAll(/\{([A-Za-z][A-Za-z0-9]*)\}/g)]
+    .every((match) => WECHAT_RELAY_TEMPLATE_VARIABLE_KEYS.has(match[1])), "通知说法包含不支持的参数");
 const templateListSchema = z.array(templateLineSchema).min(1).max(8);
-const templatesSchema = z.object({
-  message: templateListSchema,
-  mention: templateListSchema,
-  prayer: templateListSchema,
-  prayerUpdate: templateListSchema,
-  attachment: templateListSchema,
-  other: templateListSchema
-}).strict();
+const templateShape = Object.fromEntries(
+  WECHAT_RELAY_TEMPLATE_KEYS.map((key) => [key, templateListSchema])
+) as Record<(typeof WECHAT_RELAY_TEMPLATE_KEYS)[number], typeof templateListSchema>;
+const templatesSchema = z.object(templateShape).strict();
+
+function storedTemplates(value: unknown): WeChatRelayTemplates {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const legacyAttachment = templateListSchema.safeParse(record.attachment);
+  return Object.fromEntries(WECHAT_RELAY_TEMPLATE_KEYS.map((key) => {
+    const parsed = templateListSchema.safeParse(record[key]);
+    if (parsed.success) return [key, parsed.data];
+    if (["image", "file", "voice", "musicPlaylist"].includes(key) && legacyAttachment.success) return [key, legacyAttachment.data];
+    return [key, DEFAULT_WECHAT_RELAY_TEMPLATES[key]];
+  })) as WeChatRelayTemplates;
+}
+
+const userMappingsSchema = z.array(z.object({
+  accountId: z.number().int().positive(),
+  wechatName: z.string().trim().min(1).max(80).refine((value) => !/[\r\n]/.test(value))
+}).strict()).max(200).superRefine((rows, context) => {
+  const accountIds = new Set<number>();
+  const wechatNames = new Set<string>();
+  rows.forEach((row, index) => {
+    const normalizedName = row.wechatName.toLocaleLowerCase("zh-CN");
+    if (accountIds.has(row.accountId)) context.addIssue({ code: "custom", path: [index, "accountId"], message: "聊天室用户不能重复映射" });
+    if (wechatNames.has(normalizedName)) context.addIssue({ code: "custom", path: [index, "wechatName"], message: "微信名必须一一对应，不能重复" });
+    accountIds.add(row.accountId);
+    wechatNames.add(normalizedName);
+  });
+});
 
 const storedConfigSchema = z.object({
   enabled: z.boolean().default(false),
@@ -40,14 +69,18 @@ const storedConfigSchema = z.object({
   targetGroup: z.string().trim().max(80).default(""),
   startAfterId: z.number().int().nonnegative().default(0),
   pendingAction: actionSchema.nullable().default(null),
-  templates: templatesSchema.default(DEFAULT_WECHAT_RELAY_TEMPLATES)
+  templates: z.unknown().transform(storedTemplates).default(DEFAULT_WECHAT_RELAY_TEMPLATES),
+  systemPrefix: z.string().trim().min(1).max(40).default("系统消息"),
+  userMappings: userMappingsSchema.default([])
 });
 
 const updateConfigSchema = z.object({
   enabled: z.boolean(),
   channelId: z.number().int().positive().nullable(),
   targetGroup: z.string().trim().max(80),
-  templates: templatesSchema
+  templates: templatesSchema,
+  systemPrefix: z.string().trim().min(1).max(40).optional(),
+  userMappings: userMappingsSchema.optional()
 }).strict();
 
 const tokenSchema = z.string()
@@ -77,7 +110,7 @@ type AgentStatus = z.infer<typeof heartbeatSchema> & {
   lastAction?: { type: "calibrate" | "test"; success: boolean; message: string; completedAt: string };
 };
 
-type RelayPrisma = Pick<PrismaClient, "setting" | "channel" | "message">;
+type RelayPrisma = Pick<PrismaClient, "setting" | "channel" | "message" | "account" | "pinnedItem">;
 
 export type WeChatRelayRouteDependencies = {
   prisma: RelayPrisma;
@@ -107,7 +140,9 @@ const defaultConfig = (): StoredConfig => ({
   targetGroup: "",
   startAfterId: 0,
   pendingAction: null,
-  templates: DEFAULT_WECHAT_RELAY_TEMPLATES
+  templates: DEFAULT_WECHAT_RELAY_TEMPLATES,
+  systemPrefix: "系统消息",
+  userMappings: []
 });
 
 function safeTokenEqual(actual: string, expected: string) {
@@ -132,6 +167,124 @@ function publicStatus(status: AgentStatus | null) {
 
 export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRelayRouteDependencies) {
   let status: AgentStatus | null = null;
+
+  async function relayUsers() {
+    const accounts = await deps.prisma.account.findMany({
+      where: { isGuest: false },
+      include: { actor: true },
+      orderBy: { id: "asc" }
+    });
+    return accounts.flatMap((account) => account.actor ? [{
+      accountId: account.id,
+      username: account.username,
+      displayName: account.displayName,
+      actor: account.actor
+    }] : []);
+  }
+
+  async function mentionProfiles(config: StoredConfig) {
+    const users = await relayUsers();
+    const mappings = new Map(config.userMappings.map((mapping) => [mapping.accountId, mapping.wechatName]));
+    return users.map((user) => ({ ...user, wechatName: mappings.get(user.accountId) }));
+  }
+
+  function escapeRegExp(value: string) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function mentionedProfiles(content: string, profiles: Awaited<ReturnType<typeof mentionProfiles>>) {
+    const text = content.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]*>/g, " ");
+    return profiles.flatMap((profile) => {
+      const names = [profile.displayName, profile.username].map((name) => name.trim()).filter(Boolean);
+      const mentioned = names.some((name) => new RegExp(
+        `(^|[\\s，。！？、,.!?:;；：])@${escapeRegExp(name)}(?=$|[\\s，。！？、,.!?:;；：])`, "u"
+      ).test(text));
+      return mentioned ? [{
+        accountId: profile.accountId,
+        displayName: profile.displayName,
+        username: profile.username,
+        wechatName: profile.wechatName
+      } satisfies WeChatRelayMentionTarget] : [];
+    });
+  }
+
+  function systemMessage(input: {
+    id: number;
+    channelId: number;
+    content: string;
+    createdAt: string;
+    systemKind: "pinned" | "versionUpdate";
+    title?: string;
+    version?: string;
+  }) {
+    return {
+      id: input.id,
+      channelId: input.channelId,
+      sender: { id: 1, kind: "system" as const, username: "system", displayName: "系统" },
+      content: input.content,
+      type: "system" as const,
+      payload: { systemKind: input.systemKind, title: input.title, version: input.version },
+      createdAt: input.createdAt
+    };
+  }
+
+  async function managedSystemEvents(config: StoredConfig) {
+    if (!config.channelId) return [];
+    const [channel, pinned] = await Promise.all([
+      deps.prisma.channel.findUnique({ where: { id: config.channelId }, select: { name: true } }),
+      deps.prisma.pinnedItem.findFirst({
+        where: { channelId: config.channelId, active: true },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true, version: true, title: true, content: true, updatedAt: true }
+      })
+    ]);
+    if (!channel) return [];
+    const now = new Date().toISOString();
+    const versionMessage = systemMessage({
+      id: 1,
+      channelId: config.channelId,
+      content: "",
+      createdAt: now,
+      systemKind: "versionUpdate",
+      version: APP_VERSION
+    });
+    const versionEvent = {
+      slot: "version",
+      key: `version:${APP_VERSION}`,
+      message: {
+        ...versionMessage,
+        relayText: renderWeChatRelayNotification(versionMessage, config.templates, {
+          channel: channel.name,
+          group: config.targetGroup,
+          systemPrefix: config.systemPrefix,
+          version: APP_VERSION
+        })
+      }
+    };
+    const pinnedSlot = `pinned:${config.channelId}`;
+    if (!pinned) return [versionEvent, { slot: pinnedSlot, key: "none", message: null }];
+    const pinnedMessage = systemMessage({
+      id: pinned.id,
+      channelId: config.channelId,
+      content: pinned.content || "",
+      createdAt: pinned.updatedAt.toISOString(),
+      systemKind: "pinned",
+      title: pinned.title || "新的置顶消息"
+    });
+    return [versionEvent, {
+      slot: pinnedSlot,
+      key: `pinned:${pinned.id}:${pinned.version}:${pinned.updatedAt.getTime()}`,
+      message: {
+        ...pinnedMessage,
+        relayText: renderWeChatRelayNotification(pinnedMessage, config.templates, {
+          channel: channel.name,
+          group: config.targetGroup,
+          systemPrefix: config.systemPrefix,
+          title: pinned.title || "新的置顶消息"
+        })
+      }
+    }];
+  }
 
   async function loadCredential() {
     const row = await deps.prisma.setting.findUnique({ where: { key: CREDENTIAL_SETTING_KEY } });
@@ -187,12 +340,16 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
     }
   }
 
-  app.get("/api/admin/wechat-relay", { preHandler: deps.requireAdmin }, async () => ({
-    ...(await credentialState()),
-    nasAccessUrl: deps.nasAccessUrl,
-    config: await loadConfig(),
-    agent: publicStatus(status)
-  }));
+  app.get("/api/admin/wechat-relay", { preHandler: deps.requireAdmin }, async () => {
+    const [credential, config, users] = await Promise.all([credentialState(), loadConfig(), relayUsers()]);
+    return {
+      ...credential,
+      nasAccessUrl: deps.nasAccessUrl,
+      config,
+      users: users.map(({ actor: _actor, ...user }) => user),
+      agent: publicStatus(status)
+    };
+  });
 
   app.put("/api/admin/wechat-relay/token", { preHandler: deps.requireAdmin }, async (request, reply) => {
     const parsed = z.object({ token: tokenSchema }).strict().safeParse(request.body);
@@ -226,6 +383,15 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
         return reply.code(400).send({ success: false, message: "只能选择正式聊天频道作为通知来源" });
       }
     }
+    if (body.userMappings?.length) {
+      const accounts = await deps.prisma.account.findMany({
+        where: { id: { in: body.userMappings.map((mapping) => mapping.accountId) }, isGuest: false },
+        select: { id: true }
+      });
+      if (accounts.length !== body.userMappings.length) {
+        return reply.code(400).send({ success: false, message: "用户映射中包含不存在或不可转发的聊天室账号" });
+      }
+    }
     const previous = await loadConfig();
     let startAfterId = previous.startAfterId;
     if (body.channelId && (previous.channelId !== body.channelId || (!previous.enabled && body.enabled))) {
@@ -238,7 +404,9 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
       targetGroup: body.targetGroup,
       startAfterId,
       pendingAction: previous.pendingAction,
-      templates: body.templates
+      templates: body.templates,
+      systemPrefix: body.systemPrefix ?? previous.systemPrefix,
+      userMappings: body.userMappings ?? previous.userMappings
     };
     await saveConfig(config);
     return { success: true, config, agent: publicStatus(status) };
@@ -269,7 +437,10 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
     return { success: true, action: config.pendingAction };
   });
 
-  app.get("/api/wechat-relay/agent/config", { preHandler: requireAgent }, async () => ({ config: await loadConfig() }));
+  app.get("/api/wechat-relay/agent/config", { preHandler: requireAgent }, async () => {
+    const config = await loadConfig();
+    return { config: { ...config, systemEvents: await managedSystemEvents(config) } };
+  });
 
   app.get("/api/wechat-relay/agent/messages", { preHandler: requireAgent }, async (request) => {
     const query = z.object({
@@ -279,41 +450,48 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
     const config = await loadConfig();
     if (!config.enabled || !config.channelId) return { messages: [] };
     const after = Math.max(query.after, config.startAfterId);
-    const messages = await deps.prisma.message.findMany({
-      where: { channelId: config.channelId, id: { gt: after } },
-      include: { sender: true },
-      orderBy: { id: "asc" },
-      take: query.limit
-    }) as Array<Message & { sender: Actor }>;
+    const [messages, channel, profiles] = await Promise.all([
+      deps.prisma.message.findMany({
+        where: { channelId: config.channelId, id: { gt: after } },
+        include: { sender: true },
+        orderBy: { id: "asc" },
+        take: query.limit
+      }) as Promise<Array<Message & { sender: Actor }>>,
+      deps.prisma.channel.findUnique({ where: { id: config.channelId }, select: { name: true } }),
+      mentionProfiles(config)
+    ]);
+    const mappingByAccountId = new Map(profiles.map((profile) => [profile.accountId, profile]));
     return {
-      messages: messages.map((message) => ({
-        id: message.id,
-        channelId: message.channelId,
-        sender: {
-          id: message.sender.id,
-          kind: message.sender.kind,
-          username: message.sender.username,
-          displayName: message.sender.displayName
-        },
-        content: message.content || "",
-        type: message.type,
-        payload: message.payload || undefined,
-        fileName: message.fileName,
-        fileSize: message.fileSize,
-        createdAt: message.createdAt.toISOString(),
-        relayText: renderWeChatRelayNotification({
+      messages: messages.map((message) => {
+        const mentions = mentionedProfiles(message.content || "", profiles);
+        const relayMessage = {
           id: message.id,
           type: message.type,
           content: message.content || "",
           payload: message.payload || undefined,
+          fileName: message.fileName,
+          fileSize: message.fileSize,
+          createdAt: message.createdAt.toISOString(),
           sender: {
             id: message.sender.id,
             kind: message.sender.kind,
             username: message.sender.username,
             displayName: message.sender.displayName
           }
-        }, config.templates as WeChatRelayTemplates)
-      }))
+        };
+        return {
+          ...relayMessage,
+          channelId: message.channelId,
+          relayText: renderWeChatRelayNotification(relayMessage, config.templates as WeChatRelayTemplates, {
+            channel: channel?.name || "聊天室",
+            group: config.targetGroup,
+            systemPrefix: config.systemPrefix,
+            senderWechatName: message.sender.accountId ? mappingByAccountId.get(message.sender.accountId)?.wechatName : undefined,
+            mentions
+          }),
+          relayMentions: mentions.flatMap((mention) => mention.wechatName ? [mention.wechatName] : [])
+        };
+      })
     };
   });
 

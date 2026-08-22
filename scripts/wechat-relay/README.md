@@ -26,7 +26,7 @@ To connect or switch sites, open **微信转发连接设置** on the VM desktop.
 
 The setup page listens on a random `127.0.0.1` port and closes automatically. It is intentionally unavailable from the NAS LAN address. The operator still needs to keep the official WeChat client logged in inside the VM; the setup app does not automate WeChat login.
 
-Administrators choose the source channel, target-group label, binding, test send, enablement, and reminder wording from **管理中心 → 微信通知转发**. Reminder variants are one per line and may use `{name}` plus `{kind}` for attachments. The server chooses a stable variant for each message and sends only the conversational reminder—never the message body, source ID, or timestamp. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
+Administrators choose the source channel, target-group label, binding, test send, enablement, chat-account/WeChat-member mappings, system prefix, and per-category reminder wording from **管理中心 → 微信通知转发**. Reminder variants are one per line. The page lists all supported variables, including sender names, channel/group, category, bounded message summary, attachment metadata, mapped mentions, system title/version, message ID, and Asia/Shanghai date/time. A variable is sent only when an administrator places it in a template; `{content}` is capped at 200 visible characters. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
 
 Set `WECHAT_RELAY_NAS_ACCESS_URL` on the Team Chat server to the administrator-only browser page used to operate the NAS VM desktop (for example, its existing VM console or noVNC gateway). The admin panel links to that page and reminds the operator that official WeChat must be logged in with the account responsible for forwarding notifications. This link does not replace `RELAY_BASE_URL` or `RELAY_AGENT_TOKEN`, and it must not contain embedded credentials.
 
@@ -39,6 +39,10 @@ Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` dire
 3. In **管理中心 → 微信通知转发**, enter the exact group label and click **绑定当前群**.
 4. Wait for the page to report the bound group, then use **发送测试消息**.
 5. Enable forwarding only after the test is visibly present in the intended group.
+
+For targeted group mentions, enter each member's exact WeChat group remark or nickname in the administrator page. The driver types `@`, pastes that name, and selects the visible official-client candidate before inserting the reminder. `RELAY_X11_MENTION_REGION` must cover the member-candidate popup at the VM's fixed resolution; tune `RELAY_X11_MENTION_MIN_DIFFERENCE` and `RELAY_X11_MENTION_WAIT_MS` only on the VM if the official client layout or rendering speed differs. If the candidate popup does not visibly appear and then dismiss, the driver clears the composer and defers the item instead of sending an unverified mention. Test at least one mapped member in the real target group before enabling forwarding.
+
+Version and active-pin state are treated as managed system snapshots. The first observation establishes a baseline without announcing old state. Later version or pin changes use their own templates and enter the same durable local queue; changes observed while forwarding is disabled are acknowledged without later backfill.
 
 The `calibrate` and `doctor` CLI commands remain available for local diagnosis.
 

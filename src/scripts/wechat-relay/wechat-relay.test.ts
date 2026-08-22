@@ -129,6 +129,27 @@ test("an interrupted in-flight delivery becomes uncertain instead of being resen
   }
 });
 
+test("managed system events are observed once and queued only after a real change", () => {
+  const temporary = temporaryDatabase();
+  const queue = new RelayQueue(temporary.databasePath);
+  try {
+    const current = { slot: "version", key: "version:1.12.3", message: message(1, { type: "system", relayText: "current" }) };
+    assert.deepEqual(queue.syncManagedEvent(current, true, formatRelayMessage), { changed: true, inserted: 0 });
+    assert.deepEqual(queue.syncManagedEvent(current, true, formatRelayMessage), { changed: false, inserted: 0 });
+    const next = { slot: "version", key: "version:1.13.0", message: message(2, { type: "system", relayText: "upgraded" }) };
+    assert.deepEqual(queue.syncManagedEvent(next, false, formatRelayMessage), { changed: true, inserted: 0 });
+    const later = { slot: "version", key: "version:1.13.1", message: message(3, { type: "system", relayText: "upgraded again" }) };
+    assert.deepEqual(queue.syncManagedEvent(later, true, formatRelayMessage), { changed: true, inserted: 1 });
+    const queued = queue.claimNext();
+    assert.ok(queued && queued.sourceId > 4_000_000_000_000_000);
+    assert.equal(queued.formattedText, "upgraded again");
+    assert.equal(queue.cursor(), 0);
+  } finally {
+    queue.close();
+    fs.rmSync(temporary.directory, { recursive: true, force: true });
+  }
+});
+
 test("process lock refuses a concurrent relay and can be reacquired after release", () => {
   const temporary = temporaryDatabase();
   const first = new RelayProcessLock(temporary.databasePath);

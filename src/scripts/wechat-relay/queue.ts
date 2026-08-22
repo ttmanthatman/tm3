@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import Database from "better-sqlite3";
 import type { MessageDTO } from "../../shared/types.js";
 
@@ -15,6 +16,12 @@ export interface QueueItem {
   nextAttemptAt: number;
   lastError: string | null;
   sourceCreatedAt: number;
+}
+
+export interface ManagedQueueEvent {
+  slot: string;
+  key: string;
+  message: MessageDTO | null;
 }
 
 interface QueueRow {
@@ -93,6 +100,33 @@ export class RelayQueue {
   cursor() {
     const row = this.database.prepare("SELECT value FROM relay_meta WHERE key = 'source_cursor'").get() as { value: string } | undefined;
     return Number(row?.value || 0);
+  }
+
+  private metaValue(key: string) {
+    const row = this.database.prepare("SELECT value FROM relay_meta WHERE key = ?").get(key) as { value: string } | undefined;
+    return row?.value;
+  }
+
+  private setMetaValue(key: string, value: string) {
+    this.database.prepare(`
+      INSERT INTO relay_meta (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  }
+
+  syncManagedEvent(event: ManagedQueueEvent, enabled: boolean, format: (message: MessageDTO) => string) {
+    const metaKey = `managed_event:${event.slot}`;
+    const previous = this.metaValue(metaKey);
+    if (previous === event.key) return { changed: false, inserted: 0 };
+    let inserted = 0;
+    if (previous !== undefined && enabled && event.message) {
+      const digest = crypto.createHash("sha256").update(`${event.slot}\0${event.key}`).digest("hex").slice(0, 12);
+      const sourceId = 4_000_000_000_000_000 + Number.parseInt(digest, 16);
+      const result = this.ingest([{ ...event.message, id: sourceId }], format, { advanceCursor: false });
+      inserted = result.inserted;
+    }
+    this.setMetaValue(metaKey, event.key);
+    return { changed: true, inserted };
   }
 
   ingest(

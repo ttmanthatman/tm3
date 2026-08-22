@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { BellRing, CheckCircle2, CircleOff, Copy, ExternalLink, KeyRound, Link2, LogIn, RefreshCw, Send, Server } from "lucide-vue-next";
+import { BellRing, CheckCircle2, CircleOff, Copy, ExternalLink, Info, KeyRound, Link2, LogIn, RefreshCw, Send, Server, Users } from "lucide-vue-next";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import {
   DEFAULT_WECHAT_RELAY_TEMPLATES,
+  WECHAT_RELAY_TEMPLATE_VARIABLES,
   type WeChatRelayTemplateKey,
-  type WeChatRelayTemplates
+  type WeChatRelayTemplates,
+  type WeChatRelayUserMapping
 } from "../../../shared/wechatRelayNotifications";
 
 type RelayConfig = {
@@ -16,7 +18,11 @@ type RelayConfig = {
   startAfterId: number;
   pendingAction: { id: string; type: "calibrate" | "test"; createdAt: string } | null;
   templates: WeChatRelayTemplates;
+  systemPrefix: string;
+  userMappings: WeChatRelayUserMapping[];
 };
+
+type RelayUser = { accountId: number; username: string; displayName: string };
 
 type RelayAgent = {
   online: boolean;
@@ -35,6 +41,7 @@ type RelayResponse = {
   tokenSource: "admin" | "environment" | "none";
   nasAccessUrl: string | null;
   config: RelayConfig;
+  users: RelayUser[];
   agent: RelayAgent;
 };
 
@@ -43,7 +50,15 @@ const templateSections: Array<{ key: WeChatRelayTemplateKey; title: string; hint
   { key: "mention", title: "@ 提到别人", hint: "例如：{name}给你说话了" },
   { key: "prayer", title: "新代祷事项", hint: "例如：{name}发送了代祷事项" },
   { key: "prayerUpdate", title: "代祷更新", hint: "例如：代祷信息更新了" },
-  { key: "attachment", title: "图片、文件与分享", hint: "可使用 {kind}，例如“一张图片”" },
+  { key: "image", title: "图片", hint: "例如：{name}分享了一张图片" },
+  { key: "file", title: "普通文件", hint: "可使用 {fileName} 和 {fileSize}" },
+  { key: "voice", title: "语音", hint: "例如：{name}发来了一条语音" },
+  { key: "musicPlaylist", title: "歌单分享", hint: "例如：{name}分享了一个歌单" },
+  { key: "chain", title: "接龙", hint: "可使用 {content} 显示接龙主题" },
+  { key: "whyTopic", title: "‘为什么’话题卡", hint: "例如：{name}分享了一个新话题" },
+  { key: "pinned", title: "置顶消息", hint: "建议保留 {systemPrefix}、{channel}、{title}" },
+  { key: "versionUpdate", title: "系统版本升级", hint: "可使用 {systemPrefix} 和 {version}" },
+  { key: "system", title: "其他系统消息", hint: "建议保留 {systemPrefix}" },
   { key: "other", title: "其他动态", hint: "未归入以上类型时使用" }
 ];
 
@@ -67,9 +82,13 @@ const config = ref<RelayConfig>({
   targetGroup: "",
   startAfterId: 0,
   pendingAction: null,
-  templates: DEFAULT_WECHAT_RELAY_TEMPLATES
+  templates: DEFAULT_WECHAT_RELAY_TEMPLATES,
+  systemPrefix: "系统消息",
+  userMappings: []
 });
 const templateDraft = ref(templateText(DEFAULT_WECHAT_RELAY_TEMPLATES));
+const users = ref<RelayUser[]>([]);
+const mappingDraft = ref<Record<number, string>>({});
 const agent = ref<RelayAgent>({ online: false, lastSeenAt: null });
 let refreshTimer: number | undefined;
 
@@ -86,9 +105,11 @@ function applyResponse(result: RelayResponse, refreshForm = true) {
   configured.value = result.configured;
   tokenSource.value = result.tokenSource;
   nasAccessUrl.value = result.nasAccessUrl;
+  users.value = result.users;
   if (refreshForm) {
     config.value = result.config;
     templateDraft.value = templateText(result.config.templates);
+    mappingDraft.value = Object.fromEntries(result.config.userMappings.map((mapping) => [mapping.accountId, mapping.wechatName]));
   } else {
     config.value.startAfterId = result.config.startAfterId;
     config.value.pendingAction = result.config.pendingAction;
@@ -115,6 +136,13 @@ function parsedTemplates(): WeChatRelayTemplates {
   ])) as WeChatRelayTemplates;
 }
 
+function parsedMappings() {
+  return users.value.flatMap((user) => {
+    const wechatName = mappingDraft.value[user.accountId]?.trim();
+    return wechatName ? [{ accountId: user.accountId, wechatName }] : [];
+  });
+}
+
 async function save(showConfirmation = true) {
   busy.value = true;
   message.value = "";
@@ -126,7 +154,9 @@ async function save(showConfirmation = true) {
         enabled: config.value.enabled,
         channelId: config.value.channelId,
         targetGroup: config.value.targetGroup.trim(),
-        templates: parsedTemplates()
+        templates: parsedTemplates(),
+        systemPrefix: config.value.systemPrefix.trim(),
+        userMappings: parsedMappings()
       })
     });
     config.value = result.config;
@@ -196,7 +226,7 @@ async function copyNasConfig() {
   if (!nasConfigText.value) return;
   try {
     await navigator.clipboard.writeText(nasConfigText.value);
-    message.value = "生产站的 NAS 配置已复制，请粘贴到 /etc/wechat-relay.env 并重启转发服务";
+    message.value = "生产站的 NAS 配置已复制，请粘贴到 NAS 虚拟机桌面的“微信转发连接设置”并点击“验证并连接”";
   } catch {
     error.value = "无法自动复制 NAS 配置，请分别复制生产站地址和设备令牌";
   }
@@ -222,7 +252,13 @@ async function removeToken() {
 
 function templatePreview(key: WeChatRelayTemplateKey) {
   const first = templateDraft.value[key].split(/\r?\n/).map((line) => line.trim()).find(Boolean) || "请至少填写一条提醒";
-  return first.replaceAll("{name}", "小夏").replaceAll("{kind}", "一张图片");
+  const examples: Record<string, string> = Object.fromEntries(WECHAT_RELAY_TEMPLATE_VARIABLES.map((variable) => [variable.key, variable.example]));
+  examples.systemPrefix = config.value.systemPrefix.trim() || "系统消息";
+  return first.replace(/\{([A-Za-z][A-Za-z0-9]*)\}/g, (match, name: string) => examples[name] || match);
+}
+
+function templateVariableLabel(key: string) {
+  return `{${key}}`;
 }
 
 async function requestAction(type: "calibrate" | "test") {
@@ -334,6 +370,23 @@ onBeforeUnmount(() => {
         </label>
       </div>
 
+      <section class="relay-section-card">
+        <div class="relay-section-heading">
+          <span class="relay-bind-icon"><Users :size="20" /></span>
+          <span>
+            <strong>聊天室用户与微信用户一一对应</strong>
+            <small>填写目标微信群里的准确昵称或群备注。聊天室消息明确 @ 到已映射用户时，NAS 会在微信候选列表出现并通过画面校验后，选择该成员形成真正的群 @。</small>
+          </span>
+        </div>
+        <div class="relay-mapping-list">
+          <label v-for="user in users" :key="user.accountId" class="relay-mapping-row">
+            <span><strong>{{ user.displayName }}</strong><small>@{{ user.username }}</small></span>
+            <input v-model="mappingDraft[user.accountId]" maxlength="80" :placeholder="`微信昵称或群备注（${user.displayName}）`" :disabled="busy" />
+          </label>
+        </div>
+        <small class="relay-help">微信名不能重复；留空表示该聊天室用户不做定向微信 @。如果微信候选列表没有出现或没有收起，NAS 会清空输入并暂停该条发送，不会盲选成员。</small>
+      </section>
+
       <div class="relay-bind-card">
         <div>
           <span class="relay-bind-icon"><Link2 :size="20" /></span>
@@ -353,9 +406,24 @@ onBeforeUnmount(() => {
           <span class="relay-bind-icon"><BellRing :size="20" /></span>
           <span>
             <strong>通知说法</strong>
-            <small>每行一种说法，同类提醒会自动轮换。只支持 <code>{name}</code> 和附件中的 <code>{kind}</code>，不会发送消息正文、编号或时间。</small>
+            <small>每行一种说法，同类提醒会自动轮换。普通发言、@、各类附件、接龙、置顶、版本升级和其他系统消息都可单独指定。</small>
           </span>
         </div>
+        <label class="relay-prefix-row">
+          <span><strong>系统消息前缀</strong><small>置顶、版本升级和其他系统消息可通过 <code>{systemPrefix}</code> 使用。</small></span>
+          <input v-model="config.systemPrefix" maxlength="40" placeholder="系统消息" :disabled="busy" />
+        </label>
+        <details class="relay-variable-help">
+          <summary><Info :size="16" />查看通知内容可用参数</summary>
+          <div class="relay-variable-grid">
+            <div v-for="variable in WECHAT_RELAY_TEMPLATE_VARIABLES" :key="variable.key">
+              <code>{{ templateVariableLabel(variable.key) }}</code>
+              <span>{{ variable.label }}</span>
+              <small>例如：{{ variable.example }}</small>
+            </div>
+          </div>
+          <p><code>{content}</code> 会发送去除 HTML 后最多 200 个字符的正文摘要；不需要正文时不要在模板中加入它。<code>{mentions}</code> 是聊天室昵称，<code>{wechatMentions}</code> 是映射后的微信名；真正的微信群 @ 会由 NAS 另行插入，不依赖模板里的文字。</p>
+        </details>
         <div class="relay-template-grid">
           <label v-for="section in templateSections" :key="section.key">
             <span><strong>{{ section.title }}</strong><small>{{ section.hint }}</small></span>
@@ -363,7 +431,7 @@ onBeforeUnmount(() => {
             <small class="relay-preview">预览：{{ templatePreview(section.key) }}</small>
           </label>
         </div>
-        <small class="relay-help">修改后的说法只影响之后进入发送队列的新提醒；已经排队的提醒保持原样，重试时也不会换文案。</small>
+        <small class="relay-help">不支持的参数会被服务器拒绝。修改后的说法只影响之后进入发送队列的新提醒；已经排队的提醒保持原样，重试时也不会换文案。</small>
       </section>
 
       <label class="relay-enable-row">
@@ -372,7 +440,7 @@ onBeforeUnmount(() => {
       </label>
 
       <div class="relay-actions">
-        <button class="primary-btn" :disabled="busy || !configured" @click="save()">保存频道、群与通知说法</button>
+        <button class="primary-btn" :disabled="busy || !configured" @click="save()">保存频道、用户映射与通知说法</button>
         <button class="mini-btn secondary" :disabled="busy || !readyForTest" @click="requestAction('test')"><Send :size="15" />发送测试消息</button>
       </div>
 
@@ -420,6 +488,10 @@ onBeforeUnmount(() => {
 .relay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .relay-grid label { display: grid; gap: 7px; }
 .relay-grid select, .relay-grid input { width: 100%; }
+.relay-mapping-list { display: grid; gap: 9px; }
+.relay-mapping-row { display: grid; grid-template-columns: minmax(150px, .7fr) minmax(220px, 1.3fr); align-items: center; gap: 12px; }
+.relay-mapping-row > span, .relay-prefix-row > span { display: grid; gap: 2px; }
+.relay-mapping-row input, .relay-prefix-row input { width: 100%; }
 .relay-bind-card { justify-content: space-between; }
 .relay-bind-card > div { display: flex; align-items: center; gap: 12px; flex: 1; }
 .relay-bind-card small { display: flex; align-items: center; gap: 5px; }
@@ -427,6 +499,14 @@ onBeforeUnmount(() => {
 .relay-enable-row input { margin-top: 3px; }
 .relay-enable-row span { display: grid; gap: 3px; }
 .relay-template-heading code { color: var(--text); }
+.relay-prefix-row { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(220px, 1.3fr); align-items: center; gap: 12px; padding: 11px; border-radius: 10px; background: var(--bg); }
+.relay-variable-help { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.relay-variable-help summary { display: flex; align-items: center; gap: 7px; cursor: pointer; font-weight: 650; }
+.relay-variable-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.relay-variable-grid > div { display: grid; gap: 2px; min-width: 0; padding: 8px; border-radius: 8px; background: var(--bg); }
+.relay-variable-grid code { color: var(--accent-dark); overflow-wrap: anywhere; }
+.relay-variable-grid small, .relay-variable-help p { color: var(--muted); line-height: 1.5; }
+.relay-variable-help p { margin: 10px 0 0; font-size: 13px; }
 .relay-template-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .relay-template-grid label { display: grid; gap: 6px; min-width: 0; }
 .relay-template-grid label > span { display: grid; gap: 2px; }
@@ -438,7 +518,7 @@ onBeforeUnmount(() => {
 .danger, .relay-message.error, .relay-last-action.error { color: #b42318; }
 .relay-message.error, .relay-last-action.error { background: color-mix(in srgb, #ef4444 10%, var(--panel)); }
 @media (max-width: 680px) {
-  .relay-grid, .relay-template-grid { grid-template-columns: 1fr; }
+  .relay-grid, .relay-template-grid, .relay-variable-grid, .relay-mapping-row, .relay-prefix-row { grid-template-columns: 1fr; }
   .relay-bind-card { align-items: stretch; flex-direction: column; }
   .relay-bind-card button { width: 100%; justify-content: center; }
   .relay-token-row { grid-template-columns: 1fr; }

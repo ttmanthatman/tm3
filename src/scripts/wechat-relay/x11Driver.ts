@@ -148,6 +148,45 @@ export class X11WeChatDriver implements WeChatDriver {
     }
   }
 
+  private async clearComposer(windowId: string) {
+    await this.execute("xdotool", ["key", "--window", windowId, "ctrl+a", "BackSpace"]);
+  }
+
+  private async insertMention(window: WindowGeometry, name: string) {
+    const region = this.absoluteRegion(window, this.config.mentionRegion);
+    const before = this.temporaryImage("mention-before");
+    const popup = this.temporaryImage("mention-popup");
+    const settled = this.temporaryImage("mention-settled");
+    let clipboard: ReturnType<typeof spawn> | null = null;
+    try {
+      await this.screenshot(region, before);
+      await this.execute("xdotool", ["type", "--window", window.id, "--clearmodifiers", "--delay", "30", "@"]);
+      clipboard = await this.writeClipboard(name);
+      await this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"]);
+      await delay(100);
+      clipboard.kill("SIGTERM");
+      clipboard = null;
+      await delay(this.config.mentionWaitMs);
+      await this.screenshot(region, popup);
+      const appeared = await imageDifference(before, popup);
+      if (appeared < this.config.mentionMinDifference) {
+        throw new SafeRelayError(`WeChat did not show a member candidate for ${name}; check the one-to-one mapping`);
+      }
+      await this.execute("xdotool", ["key", "--window", window.id, "Return"]);
+      await delay(300);
+      await this.screenshot(region, settled);
+      const dismissed = await imageDifference(popup, settled);
+      if (dismissed < this.config.mentionMinDifference) {
+        throw new SafeRelayError(`WeChat did not accept the member candidate for ${name}; check the one-to-one mapping`);
+      }
+    } finally {
+      clipboard?.kill("SIGTERM");
+      fs.rmSync(before, { force: true });
+      fs.rmSync(popup, { force: true });
+      fs.rmSync(settled, { force: true });
+    }
+  }
+
   async doctor() {
     const findings: string[] = [];
     for (const command of ["xdotool", "xclip", "scrot"]) {
@@ -187,12 +226,22 @@ export class X11WeChatDriver implements WeChatDriver {
     let clipboard: ReturnType<typeof spawn> | null = null;
     try {
       await this.screenshot(messageRegion, before);
-      clipboard = await this.writeClipboard(item.formattedText);
       await this.execute("xdotool", [
         "mousemove", "--window", window.id,
         String(this.config.inputPoint.x), String(this.config.inputPoint.y),
         "click", "1"
       ]);
+      const mentions = [...new Set(item.message.relayMentions || [])].slice(0, 20);
+      if (mentions.length) {
+        await this.clearComposer(window.id);
+        try {
+          for (const mention of mentions) await this.insertMention(window, mention);
+        } catch (error) {
+          await this.clearComposer(window.id).catch(() => undefined);
+          throw error;
+        }
+      }
+      clipboard = await this.writeClipboard(item.formattedText);
       await this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"]);
       await delay(100);
       clipboard.kill("SIGTERM");

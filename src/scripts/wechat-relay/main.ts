@@ -8,6 +8,7 @@ import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { WeChatRelay } from "./relay.js";
 import { runRelaySetupApp } from "./setupApp.js";
+import { formatRelayMessage } from "./formatter.js";
 import { TeamChatSource } from "./source.js";
 import { X11WeChatDriver } from "./x11Driver.js";
 
@@ -58,6 +59,10 @@ async function runManagedControl(
   while (!source.isStopped()) {
     try {
       const control = await source.control();
+      for (const event of control.systemEvents) {
+        const synced = queue.syncManagedEvent(event, control.enabled, formatRelayMessage);
+        if (synced.inserted) console.log(`queued managed system event ${event.slot}`);
+      }
       const action = control.pendingAction;
       if (action) {
         let result = completed.get(action.id);

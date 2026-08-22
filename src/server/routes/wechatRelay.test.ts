@@ -23,9 +23,10 @@ function createHarness(environmentToken = "agent-test-token", allowAdmin = true,
       chainVersion: null,
       musicOrder: null,
       createdAt: new Date("2026-08-21T00:00:00Z"),
-      sender: { id: 3, kind: "human", username: "sender", displayName: "发送者" }
+      sender: { id: 3, kind: "human", accountId: 3, username: "sender", displayName: "发送者" }
     }
   ];
+  const pinnedRows: Array<{ id: number; version: number; title: string; content: string; updatedAt: Date }> = [];
   const prisma = {
     setting: {
       findUnique: async ({ where }: { where: { key: string } }) => settings.has(where.key)
@@ -41,8 +42,25 @@ function createHarness(environmentToken = "agent-test-token", allowAdmin = true,
       }
     },
     channel: {
-      findUnique: async ({ where }: { where: { id: number } }) => where.id === 7 ? { id: 7, kind: "standard" } : null
+      findUnique: async ({ where }: { where: { id: number } }) => where.id === 7 ? { id: 7, kind: "standard", name: "综合频道" } : null
     },
+    account: {
+      findMany: async (input?: { where?: { id?: { in?: number[] } }; select?: { id?: boolean } }) => [{
+        id: 3,
+        username: "sender",
+        displayName: "发送者",
+        isGuest: false,
+        actor: { id: 3, accountId: 3, kind: "human", username: "sender", displayName: "发送者" }
+      }, {
+        id: 9,
+        username: "ming",
+        displayName: "小明",
+        isGuest: false,
+        actor: { id: 9, accountId: 9, kind: "human", username: "ming", displayName: "小明" }
+      }].filter((account) => !input?.where?.id?.in || input.where.id.in.includes(account.id))
+        .map((account) => input?.select ? { id: account.id } : account)
+    },
+    pinnedItem: { findFirst: async () => pinnedRows[0] || null },
     message: {
       aggregate: async () => ({ _max: { id: 10 } }),
       findMany: async ({ where }: { where: { channelId: number; id: { gt: number } } }) =>
@@ -58,7 +76,7 @@ function createHarness(environmentToken = "agent-test-token", allowAdmin = true,
     agentToken: environmentToken,
     nasAccessUrl
   });
-  return { app, settings };
+  return { app, settings, rows, pinnedRows };
 }
 
 test("admin configuration starts after existing messages and agent actions round-trip", async () => {
@@ -134,6 +152,129 @@ test("invalid channels and incomplete enabled settings fail closed", async () =>
       payload: { enabled: false, channelId: 7, targetGroup: "XGS", templates: { ...DEFAULT_WECHAT_RELAY_TEMPLATES, message: [] } }
     });
     assert.equal(emptyTemplates.statusCode, 400);
+    const unsupportedVariable = await app.inject({
+      method: "PUT",
+      url: "/api/admin/wechat-relay",
+      payload: {
+        enabled: false,
+        channelId: 7,
+        targetGroup: "XGS",
+        templates: { ...DEFAULT_WECHAT_RELAY_TEMPLATES, message: ["{name} {password}"] }
+      }
+    });
+    assert.equal(unsupportedVariable.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
+test("legacy attachment wording migrates to separate attachment categories", async () => {
+  const { app, settings } = createHarness();
+  settings.set("wechatRelayConfig", JSON.stringify({
+    enabled: false,
+    channelId: 7,
+    targetGroup: "XGS",
+    startAfterId: 10,
+    pendingAction: null,
+    templates: {
+      message: ["旧普通通知"],
+      mention: ["旧 @ 通知"],
+      prayer: ["旧代祷通知"],
+      prayerUpdate: ["旧代祷更新"],
+      attachment: ["{name}分享了{kind}"],
+      other: ["旧其他通知"]
+    }
+  }));
+  await app.ready();
+  try {
+    const state = await app.inject({ method: "GET", url: "/api/admin/wechat-relay" });
+    assert.equal(state.statusCode, 200);
+    for (const key of ["image", "file", "voice", "musicPlaylist"]) {
+      assert.deepEqual(state.json().config.templates[key], ["{name}分享了{kind}"]);
+    }
+    assert.deepEqual(state.json().config.templates.chain, DEFAULT_WECHAT_RELAY_TEMPLATES.chain);
+    assert.equal(state.json().config.systemPrefix, "系统消息");
+  } finally {
+    await app.close();
+  }
+});
+
+test("pin snapshots use the independently configured system template", async () => {
+  const { app, pinnedRows } = createHarness();
+  pinnedRows.push({
+    id: 21,
+    version: 2,
+    title: "本周安排",
+    content: "周五晚上见",
+    updatedAt: new Date("2026-08-22T12:00:00Z")
+  });
+  await app.ready();
+  try {
+    const saved = await app.inject({
+      method: "PUT",
+      url: "/api/admin/wechat-relay",
+      payload: {
+        enabled: true,
+        channelId: 7,
+        targetGroup: "XGS",
+        systemPrefix: "重要系统消息",
+        userMappings: [],
+        templates: { ...DEFAULT_WECHAT_RELAY_TEMPLATES, pinned: ["【{systemPrefix}】{channel}：{title}"] }
+      }
+    });
+    assert.equal(saved.statusCode, 200);
+    const control = await app.inject({
+      method: "GET",
+      url: "/api/wechat-relay/agent/config",
+      headers: { authorization: "Bearer agent-test-token" }
+    });
+    const pin = control.json().config.systemEvents.find((event: { slot: string }) => event.slot === "pinned:7");
+    assert.equal(pin.message.relayText, "【重要系统消息】综合频道：本周安排");
+    assert.match(pin.key, /^pinned:21:2:/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("mapped chat mentions become targeted WeChat mentions and mappings stay one-to-one", async () => {
+  const { app, rows } = createHarness();
+  rows[0].content = "@小明 @发送者 请看一下";
+  await app.ready();
+  try {
+    const saved = await app.inject({
+      method: "PUT",
+      url: "/api/admin/wechat-relay",
+      payload: {
+        enabled: true,
+        channelId: 7,
+        targetGroup: "XGS",
+        systemPrefix: "系统消息",
+        userMappings: [{ accountId: 9, wechatName: "明明" }],
+        templates: { ...DEFAULT_WECHAT_RELAY_TEMPLATES, mention: ["{name}在{channel}@了{mentions}"] }
+      }
+    });
+    assert.equal(saved.statusCode, 200);
+    const headers = { authorization: "Bearer agent-test-token" };
+    const messages = await app.inject({ method: "GET", url: "/api/wechat-relay/agent/messages?after=0", headers });
+    assert.deepEqual(messages.json().messages[0].relayMentions, ["明明"]);
+    assert.equal(messages.json().messages[0].relayText, "发送者在综合频道@了发送者、小明");
+
+    const control = await app.inject({ method: "GET", url: "/api/wechat-relay/agent/config", headers });
+    assert.ok(control.json().config.systemEvents.some((event: { slot: string }) => event.slot === "version"));
+
+    const duplicate = await app.inject({
+      method: "PUT",
+      url: "/api/admin/wechat-relay",
+      payload: {
+        enabled: false,
+        channelId: 7,
+        targetGroup: "XGS",
+        systemPrefix: "系统消息",
+        userMappings: [{ accountId: 3, wechatName: "同名" }, { accountId: 9, wechatName: "同名" }],
+        templates: DEFAULT_WECHAT_RELAY_TEMPLATES
+      }
+    });
+    assert.equal(duplicate.statusCode, 400);
   } finally {
     await app.close();
   }
