@@ -9,12 +9,17 @@ import {
   type RelaySetupConnection,
   type RelaySetupInput
 } from "./setupConfig.js";
+import {
+  applyUserRelayConnection,
+  resolveRelaySetupEnvironmentPath,
+  SYSTEM_RELAY_ENVIRONMENT_PATH
+} from "./setupUserService.js";
 
-const ENVIRONMENT_PATH = "/etc/wechat-relay.env";
 const MAX_REQUEST_BYTES = 16_384;
 
 export interface RelaySetupServerDependencies {
   existingEnvironment?: string;
+  environmentPath?: string;
   validateConnection?: (connection: RelaySetupConnection) => Promise<void>;
   applyConnection?: (connection: RelaySetupConnection) => Promise<void>;
   onConnected?: (connection: RelaySetupConnection) => void;
@@ -33,9 +38,9 @@ function escapeHtml(value: string) {
   })[character] || character);
 }
 
-function readExistingEnvironment() {
+function readExistingEnvironment(environmentPath: string) {
   try {
-    return fs.readFileSync(ENVIRONMENT_PATH, "utf8");
+    return fs.readFileSync(environmentPath, "utf8");
   } catch {
     return "";
   }
@@ -237,10 +242,13 @@ export function applyRelayConnectionWithPkexec(connection: RelaySetupConnection)
 export function createRelaySetupServer(dependencies: RelaySetupServerDependencies = {}) {
   const secret = crypto.randomBytes(24).toString("base64url");
   const nonce = crypto.randomBytes(18).toString("base64");
-  const existingEnvironment = dependencies.existingEnvironment ?? readExistingEnvironment();
+  const environmentPath = dependencies.environmentPath ?? resolveRelaySetupEnvironmentPath();
+  const existingEnvironment = dependencies.existingEnvironment ?? readExistingEnvironment(environmentPath);
   const currentBaseUrl = parseRelayEnvironment(existingEnvironment).get("RELAY_BASE_URL") || "";
   const validateConnection = dependencies.validateConnection || validateRelayConnection;
-  const applyConnection = dependencies.applyConnection || applyRelayConnectionWithPkexec;
+  const applyConnection = dependencies.applyConnection || (environmentPath === SYSTEM_RELAY_ENVIRONMENT_PATH
+    ? applyRelayConnectionWithPkexec
+    : async (connection) => applyUserRelayConnection(connection, environmentPath));
 
   const server = http.createServer(async (request, response) => {
     const address = server.address();

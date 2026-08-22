@@ -10,7 +10,7 @@ This optional tool watches one Team Chat channel and sends its messages to one f
 - Node.js 22, `xdotool`, `xclip`, `scrot`, and `xdg-utils`.
 - No public inbound service port is required.
 
-Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env` and set permissions to `0600`. The initial file must exist before using the setup app. Never commit it or a device token. The server stores only a salted one-way verifier for an administrator-managed token. The legacy server environment variable `WECHAT_RELAY_AGENT_TOKEN` remains supported when no administrator token is present.
+Build the repository with `npm ci` and `npm run build:server`. A system service uses `/etc/wechat-relay.env`; an existing per-user service may use `~/.config/wechat-relay.env`. Set the active file's permissions to `0600`. The initial file must exist before using the setup app. Never commit it or a device token. The setup app updates the detected system configuration through `pkexec`, or an existing current-user-owned configuration directly, and restarts the matching service with rollback on failure. The server stores only a salted one-way verifier for an administrator-managed token. The legacy server environment variable `WECHAT_RELAY_AGENT_TOKEN` remains supported when no administrator token is present.
 
 Install `policykit-1` so the desktop session has `pkexec`, then copy `wechat-relay-setup.desktop` to both the relay user's desktop and application menu:
 
