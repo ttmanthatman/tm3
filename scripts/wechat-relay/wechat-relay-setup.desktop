@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=微信转发连接设置
+Name[en]=WeChat Relay Connection Setup
+Comment=粘贴聊天室生成的 NAS 配置并连接微信转发服务
+Comment[en]=Connect the relay with configuration copied from Team Chat
+Exec=/usr/bin/node /opt/team-chat/dist/server/scripts/wechat-relay/main.js setup
+Icon=preferences-system-network
+Terminal=false
+Categories=Settings;Network;

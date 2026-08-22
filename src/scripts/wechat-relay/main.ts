@@ -7,6 +7,7 @@ import { ManagedTeamChatSource, type ManagedRelayAction } from "./managedSource.
 import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { WeChatRelay } from "./relay.js";
+import { runRelaySetupApp } from "./setupApp.js";
 import { TeamChatSource } from "./source.js";
 import { X11WeChatDriver } from "./x11Driver.js";
 
@@ -15,6 +16,7 @@ function usage() {
   wechat-relay run
   wechat-relay doctor
   wechat-relay calibrate
+  wechat-relay setup
   wechat-relay status
   wechat-relay resolve <source-id> <sent|retry>`);
 }
@@ -129,6 +131,7 @@ async function main() {
     usage();
     return 0;
   }
+  if (command === "setup") return runRelaySetupApp();
   const config = loadRelayConfig();
   const driver = createDriver(config);
   if (command === "doctor") {

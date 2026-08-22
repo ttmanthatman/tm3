@@ -7,16 +7,30 @@ This optional tool watches one Team Chat channel and sends its messages to one f
 - Ubuntu 22.04 LTS with an XFCE X11 desktop at 1280x720.
 - One dedicated desktop user named `wechat-relay` with automatic desktop login.
 - Official x86_64 Linux WeChat client.
-- Node.js 22, `xdotool`, `xclip`, and `scrot`.
+- Node.js 22, `xdotool`, `xclip`, `scrot`, and `xdg-utils`.
 - No public inbound service port is required.
 
-Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env`, set permissions to `0600`, and set `RELAY_BASE_URL`. In **管理中心 → 微信通知转发**, generate a device token (or enter an existing random token), then place the same value in `RELAY_AGENT_TOKEN`. Never commit either value. The server stores only a salted one-way verifier for an administrator-managed token. The legacy server environment variable `WECHAT_RELAY_AGENT_TOKEN` remains supported when no administrator token is present.
+Build the repository with `npm ci` and `npm run build:server`. Copy `config.example.env` to `/etc/wechat-relay.env` and set permissions to `0600`. The initial file must exist before using the setup app. Never commit it or a device token. The server stores only a salted one-way verifier for an administrator-managed token. The legacy server environment variable `WECHAT_RELAY_AGENT_TOKEN` remains supported when no administrator token is present.
+
+Install `policykit-1` so the desktop session has `pkexec`, then copy `wechat-relay-setup.desktop` to both the relay user's desktop and application menu:
+
+```bash
+relay_user_home="$(getent passwd wechat-relay | cut -d: -f6)"
+test -n "$relay_user_home"
+install -d -m755 -o wechat-relay -g wechat-relay "$relay_user_home/Desktop" "$relay_user_home/.local/share/applications"
+install -m755 -o wechat-relay -g wechat-relay scripts/wechat-relay/wechat-relay-setup.desktop "$relay_user_home/Desktop/wechat-relay-setup.desktop"
+install -m755 -o wechat-relay -g wechat-relay scripts/wechat-relay/wechat-relay-setup.desktop "$relay_user_home/.local/share/applications/wechat-relay-setup.desktop"
+```
+
+To connect or switch sites, open **微信转发连接设置** on the VM desktop. In **管理中心 → 微信通知转发**, generate or enter a device token, click **复制 NAS 配置**, paste the two lines into the setup app, and click **验证并连接**. After the production site accepts the token, the desktop asks once for the VM administrator password, updates `/etc/wechat-relay.env`, selects a site-specific queue database, and restarts `wechat-relay.service`. If restart fails, it restores the previous configuration. The token is sent to the helper through standard input, never a process argument.
+
+The setup page listens on a random `127.0.0.1` port and closes automatically. It is intentionally unavailable from the NAS LAN address. The operator still needs to keep the official WeChat client logged in inside the VM; the setup app does not automate WeChat login.
 
 Administrators choose the source channel, target-group label, binding, test send, enablement, and reminder wording from **管理中心 → 微信通知转发**. Reminder variants are one per line and may use `{name}` plus `{kind}` for attachments. The server chooses a stable variant for each message and sends only the conversational reminder—never the message body, source ID, or timestamp. The NAS reports its heartbeat, local queue counts, binding result, and last error to that page. It makes outbound HTTPS requests only; no NAS inbound port is required.
 
 Set `WECHAT_RELAY_NAS_ACCESS_URL` on the Team Chat server to the administrator-only browser page used to operate the NAS VM desktop (for example, its existing VM console or noVNC gateway). The admin panel links to that page and reminds the operator that official WeChat must be logged in with the account responsible for forwarding notifications. This link does not replace `RELAY_BASE_URL` or `RELAY_AGENT_TOKEN`, and it must not contain embedded credentials.
 
-Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` directory. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view.
+Copy `wechat-relay.desktop` to the desktop account's `~/.config/autostart/` directory. Copy `wechat-relay.service` to `/etc/systemd/system/`, then reload systemd. The service deliberately uses a writable `/var/lib/wechat-relay` directory and otherwise has a restricted filesystem view. Each normalized site URL receives a different SQLite path under `/var/lib/wechat-relay`, so a cursor recorded against a demo site cannot skip production messages.
 
 ## Calibration
 
