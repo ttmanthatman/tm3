@@ -1,13 +1,18 @@
-export const APP_VERSION = "1.12.4";
+export const APP_VERSION = "1.12.5";
 
-export const RELEASE_DATE = "2026-08-22";
+export const RELEASE_DATE = "2026-08-26";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复 NAS 官方微信转发偶尔只触发界面变化、实际没有粘贴和发送通知的问题：转发程序会等待微信真正读取剪贴板后才按下发送键，未读取时保留队列并明确报错；每次发送前也会清空残留输入，避免多条通知粘连。",
+  "NAS 微信连接设置程序兼容现有用户级转发服务和非系统 Node.js 安装路径，并继续在配置或重启失败时自动恢复原设置。"
+] as const;
+
+const RELEASE_1_12_4_NOTES = [
   "微信通知转发新增聊天室账号与微信群成员的一一映射：聊天室明确 `@` 已映射用户时，NAS 会在官方微信候选列表中校验并选择对应成员，无法确认则停止该条发送；普通发言、各类附件、接龙、“为什么”话题、置顶、版本升级及其他系统通知均可独立配置说法和系统前缀，管理页同时列出正文、附件、频道、成员、时间等可用模板参数。",
   "NAS 微信虚拟机新增桌面连接设置程序：可直接粘贴管理页复制出的站点地址和设备令牌，验证成功后经本机管理员授权安全更新配置并重启转发服务；演示站与生产站自动使用不同队列，失败会恢复原配置，令牌不会暴露在局域网端口或进程参数中。"
-] as const;
+] as const
 
 const RELEASE_1_12_3_NOTES = [
   "微信通知转发允许管理员在管理页面生成、设置、轮换或移除 NAS 发送设备令牌，服务器只保存单向校验值；新增 NAS 官方微信访问入口，并提示虚拟机必须登录负责转发的微信账号；通知文案可按普通发言、@ 提醒、代祷发布、代祷更新、附件和其他动态分别编辑并自动轮换，默认只发送口语化提醒，不再携带消息正文、编号或时间。"
@@ -831,9 +836,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.12.5",
+    date: "2026-08-26",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.12.4",
     date: "2026-08-22",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_12_4_NOTES
   },
   {
     version: "1.12.3",
