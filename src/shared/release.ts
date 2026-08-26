@@ -1,13 +1,17 @@
-export const APP_VERSION = "1.12.5";
+export const APP_VERSION = "1.12.6";
 
 export const RELEASE_DATE = "2026-08-26";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复一条消息中经文引用最多只能展开 8 条的问题：现在消息里出现的所有经文引用都会显示为可点击展开的引用，不再设数量上限。"
+] as const;
+
+const RELEASE_1_12_5_NOTES = [
   "修复 NAS 官方微信转发偶尔只触发界面变化、实际没有粘贴和发送通知的问题：转发程序会等待微信真正读取剪贴板后才按下发送键，未读取时保留队列并明确报错；每次发送前也会清空残留输入，避免多条通知粘连。",
   "NAS 微信连接设置程序兼容现有用户级转发服务和非系统 Node.js 安装路径，并继续在配置或重启失败时自动恢复原设置。"
-] as const;
+] as const
 
 const RELEASE_1_12_4_NOTES = [
   "微信通知转发新增聊天室账号与微信群成员的一一映射：聊天室明确 `@` 已映射用户时，NAS 会在官方微信候选列表中校验并选择对应成员，无法确认则停止该条发送；普通发言、各类附件、接龙、“为什么”话题、置顶、版本升级及其他系统通知均可独立配置说法和系统前缀，管理页同时列出正文、附件、频道、成员、时间等可用模板参数。",
@@ -836,9 +840,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.5",
+    version: "1.12.6",
     date: "2026-08-26",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.5",
+    date: "2026-08-26",
+    notes: RELEASE_1_12_5_NOTES
   },
   {
     version: "1.12.4",
