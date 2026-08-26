@@ -1,12 +1,16 @@
-export const APP_VERSION = "1.12.6";
+export const APP_VERSION = "1.12.7";
 
 export const RELEASE_DATE = "2026-08-26";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复一条消息中经文引用最多只能展开 8 条的问题：现在消息里出现的所有经文引用都会显示为可点击展开的引用，不再设数量上限。"
+  "修复官方微信重启或切换窗口后，转发程序可能选中已失效的临时窗口并停止队列的问题：现在会优先选择最大的有效微信窗口，窗口在识别过程中消失时自动尝试下一个候选窗口。"
 ] as const;
+
+const RELEASE_1_12_6_NOTES = [
+  "修复一条消息中经文引用最多只能展开 8 条的问题：现在消息里出现的所有经文引用都会显示为可点击展开的引用，不再设数量上限。"
+] as const
 
 const RELEASE_1_12_5_NOTES = [
   "修复 NAS 官方微信转发偶尔只触发界面变化、实际没有粘贴和发送通知的问题：转发程序会等待微信真正读取剪贴板后才按下发送键，未读取时保留队列并明确报错；每次发送前也会清空残留输入，避免多条通知粘连。",
@@ -840,9 +844,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.6",
+    version: "1.12.7",
     date: "2026-08-26",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.6",
+    date: "2026-08-26",
+    notes: RELEASE_1_12_6_NOTES
   },
   {
     version: "1.12.5",
