@@ -350,7 +350,7 @@ export type BibleReferenceMatch = {
   end: number;
 };
 
-export function extractBibleReferencesFromText(text: string, max = 8) {
+export function extractBibleReferencesFromText(text: string, max = Infinity) {
   const references: string[] = [];
   const seen = new Set<string>();
   for (const match of extractBibleReferenceMatches(text, max)) {
@@ -364,7 +364,7 @@ export function extractBibleReferencesFromText(text: string, max = 8) {
   return references;
 }
 
-export function extractBibleReferenceMatches(text: string, max = 8): BibleReferenceMatch[] {
+export function extractBibleReferenceMatches(text: string, max = Infinity): BibleReferenceMatch[] {
   const matches: BibleReferenceMatch[] = [];
   const seen = new Set<string>();
   for (const match of text.matchAll(referencePattern)) {
