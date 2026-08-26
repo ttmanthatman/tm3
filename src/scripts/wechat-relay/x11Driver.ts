@@ -21,6 +21,71 @@ function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
+interface ClipboardTransferOptions {
+  spawnClipboard?: typeof spawn;
+  readyWaitMs?: number;
+  requestTimeoutMs?: number;
+}
+
+export async function pasteClipboardText(
+  content: string,
+  environment: NodeJS.ProcessEnv,
+  requestPaste: () => Promise<unknown>,
+  options: ClipboardTransferOptions = {}
+) {
+  const spawnClipboard = options.spawnClipboard || spawn;
+  const readyWaitMs = options.readyWaitMs ?? 100;
+  const requestTimeoutMs = options.requestTimeoutMs ?? 5000;
+  const child = spawnClipboard(
+    "xclip",
+    ["-selection", "clipboard", "-loops", "1", "-silent"],
+    { env: environment, stdio: ["pipe", "ignore", "pipe"] }
+  );
+  const errors: Buffer[] = [];
+  let closed = false;
+  let timeout: NodeJS.Timeout | undefined;
+  child.stderr.on("data", (chunk: Buffer) => errors.push(chunk));
+  child.stderr.on("error", () => undefined);
+  child.stdin.on("error", () => undefined);
+  const spawned = new Promise<void>((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  });
+  const completed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+    child.once("close", (code, signal) => {
+      closed = true;
+      resolve({ code, signal });
+    });
+  });
+  try {
+    await spawned;
+    child.on("error", () => undefined);
+    child.stdin.end(content, "utf8");
+    await delay(readyWaitMs);
+    await requestPaste();
+    const outcome = await Promise.race([
+      completed,
+      new Promise<"timeout">((resolve) => {
+        timeout = setTimeout(() => resolve("timeout"), requestTimeoutMs);
+      })
+    ]);
+    if (outcome === "timeout") {
+      throw new SafeRelayError("WeChat did not request the clipboard contents; the message was not sent");
+    }
+    if (outcome.code !== 0) {
+      const detail = errors.length
+        ? Buffer.concat(errors).toString("utf8").trim()
+        : outcome.signal
+          ? `signal ${outcome.signal}`
+          : `exit ${outcome.code}`;
+      throw new SafeRelayError(`xclip failed while handing text to WeChat: ${detail}`);
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (!closed) child.kill("SIGTERM");
+  }
+}
+
 export function parseWindowGeometry(output: string, id: string): WindowGeometry {
   const values = Object.fromEntries(
     output.split(/\r?\n/)
@@ -76,22 +141,6 @@ export class X11WeChatDriver implements WeChatDriver {
         resolve(stdout.trim());
       });
     });
-  }
-
-  private async writeClipboard(content: string) {
-    const child = spawn("xclip", ["-selection", "clipboard"], {
-        env: this.environment,
-        stdio: ["pipe", "ignore", "pipe"]
-      });
-    await new Promise<void>((resolve, reject) => {
-      child.once("spawn", resolve);
-      child.once("error", reject);
-    });
-    child.on("error", () => undefined);
-    child.stdin.on("error", () => undefined);
-    child.stdin.end(content, "utf8");
-    await delay(100);
-    return child;
   }
 
   private async findWindow() {
@@ -157,15 +206,12 @@ export class X11WeChatDriver implements WeChatDriver {
     const before = this.temporaryImage("mention-before");
     const popup = this.temporaryImage("mention-popup");
     const settled = this.temporaryImage("mention-settled");
-    let clipboard: ReturnType<typeof spawn> | null = null;
     try {
       await this.screenshot(region, before);
       await this.execute("xdotool", ["type", "--window", window.id, "--clearmodifiers", "--delay", "30", "@"]);
-      clipboard = await this.writeClipboard(name);
-      await this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"]);
-      await delay(100);
-      clipboard.kill("SIGTERM");
-      clipboard = null;
+      await pasteClipboardText(name, this.environment, () => (
+        this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"])
+      ));
       await delay(this.config.mentionWaitMs);
       await this.screenshot(region, popup);
       const appeared = await imageDifference(before, popup);
@@ -180,7 +226,6 @@ export class X11WeChatDriver implements WeChatDriver {
         throw new SafeRelayError(`WeChat did not accept the member candidate for ${name}; check the one-to-one mapping`);
       }
     } finally {
-      clipboard?.kill("SIGTERM");
       fs.rmSync(before, { force: true });
       fs.rmSync(popup, { force: true });
       fs.rmSync(settled, { force: true });
@@ -223,7 +268,6 @@ export class X11WeChatDriver implements WeChatDriver {
     const before = this.temporaryImage("before");
     const after = this.temporaryImage("after");
     let sendKeyPressed = false;
-    let clipboard: ReturnType<typeof spawn> | null = null;
     try {
       await this.screenshot(messageRegion, before);
       await this.execute("xdotool", [
@@ -231,9 +275,9 @@ export class X11WeChatDriver implements WeChatDriver {
         String(this.config.inputPoint.x), String(this.config.inputPoint.y),
         "click", "1"
       ]);
+      await this.clearComposer(window.id);
       const mentions = [...new Set(item.message.relayMentions || [])].slice(0, 20);
       if (mentions.length) {
-        await this.clearComposer(window.id);
         try {
           for (const mention of mentions) await this.insertMention(window, mention);
         } catch (error) {
@@ -241,11 +285,9 @@ export class X11WeChatDriver implements WeChatDriver {
           throw error;
         }
       }
-      clipboard = await this.writeClipboard(item.formattedText);
-      await this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"]);
-      await delay(100);
-      clipboard.kill("SIGTERM");
-      clipboard = null;
+      await pasteClipboardText(item.formattedText, this.environment, () => (
+        this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"])
+      ));
       await delay(this.config.pasteWaitMs);
       sendKeyPressed = true;
       await this.execute("xdotool", ["key", "--window", window.id, "Return"]);
@@ -266,7 +308,6 @@ export class X11WeChatDriver implements WeChatDriver {
       }
       throw error;
     } finally {
-      clipboard?.kill("SIGTERM");
       fs.rmSync(before, { force: true });
       fs.rmSync(after, { force: true });
     }

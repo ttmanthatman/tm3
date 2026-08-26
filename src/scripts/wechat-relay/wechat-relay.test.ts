@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 import type { MessageDTO } from "../../shared/types.js";
 import { loadRelayConfig, parsePoint, parseRectangle } from "./config.js";
@@ -10,7 +12,7 @@ import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { ManagedTeamChatSource } from "./managedSource.js";
 import { TeamChatSource } from "./source.js";
-import { parseWindowGeometry } from "./x11Driver.js";
+import { pasteClipboardText, parseWindowGeometry } from "./x11Driver.js";
 
 function message(id: number, overrides: Partial<MessageDTO> = {}): MessageDTO {
   return {
@@ -240,4 +242,63 @@ test("X11 geometry parser rejects incomplete window data", () => {
     { id: "123", x: 10, y: 20, width: 1280, height: 720 }
   );
   assert.throws(() => parseWindowGeometry("X=10\nY=20\n", "123"), /geometry/);
+});
+
+test("X11 clipboard stays owned until the target requests the paste", async () => {
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stderr: PassThrough;
+    kill: (signal?: NodeJS.Signals | number) => boolean;
+  };
+  child.stdin = new PassThrough();
+  child.stderr = new PassThrough();
+  let killed = false;
+  child.kill = () => {
+    killed = true;
+    return true;
+  };
+  let spawnArgs: string[] = [];
+  const spawnClipboard = ((_: string, args: readonly string[]) => {
+    spawnArgs = [...args];
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  }) as unknown as typeof import("node:child_process").spawn;
+
+  await pasteClipboardText("relay text", { DISPLAY: ":0" }, async () => {
+    assert.equal(killed, false);
+    queueMicrotask(() => child.emit("close", 0, null));
+  }, { spawnClipboard, readyWaitMs: 0, requestTimeoutMs: 50 });
+
+  assert.deepEqual(spawnArgs, ["-selection", "clipboard", "-loops", "1", "-silent"]);
+  assert.equal(killed, false);
+});
+
+test("X11 clipboard rejects an unconsumed paste instead of reporting delivery", async () => {
+  const child = new EventEmitter() as EventEmitter & {
+    stdin: PassThrough;
+    stderr: PassThrough;
+    kill: (signal?: NodeJS.Signals | number) => boolean;
+  };
+  child.stdin = new PassThrough();
+  child.stderr = new PassThrough();
+  let killed = false;
+  child.kill = () => {
+    killed = true;
+    queueMicrotask(() => child.emit("close", null, "SIGTERM"));
+    return true;
+  };
+  const spawnClipboard = (() => {
+    queueMicrotask(() => child.emit("spawn"));
+    return child;
+  }) as unknown as typeof import("node:child_process").spawn;
+
+  await assert.rejects(
+    pasteClipboardText("relay text", { DISPLAY: ":0" }, async () => undefined, {
+      spawnClipboard,
+      readyWaitMs: 0,
+      requestTimeoutMs: 5
+    }),
+    /did not request the clipboard contents/
+  );
+  assert.equal(killed, true);
 });
