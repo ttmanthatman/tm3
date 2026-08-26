@@ -17,6 +17,12 @@ interface WindowGeometry {
   height: number;
 }
 
+interface WindowCandidate {
+  id: string;
+  title: string;
+  geometry: WindowGeometry;
+}
+
 function delay(milliseconds: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
@@ -106,6 +112,36 @@ export function parseWindowGeometry(output: string, id: string): WindowGeometry 
   return geometry;
 }
 
+export async function selectUsableWindow(
+  ids: readonly string[],
+  expectedTitle: string,
+  inspect: (id: string) => Promise<WindowCandidate>,
+  activate: (candidate: WindowCandidate) => Promise<WindowGeometry>
+) {
+  const candidates: WindowCandidate[] = [];
+  let lastError: unknown;
+  for (const id of ids) {
+    try {
+      const candidate = await inspect(id);
+      if (candidate.title.includes(expectedTitle)) candidates.push(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  candidates.sort((left, right) => (
+    right.geometry.width * right.geometry.height - left.geometry.width * left.geometry.height
+  ));
+  for (const candidate of candidates) {
+    try {
+      return await activate(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  if (lastError) throw lastError;
+  return null;
+}
+
 async function imageDifference(leftPath: string, rightPath: string) {
   const left = await sharp(leftPath).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
   const right = await sharp(rightPath).removeAlpha().greyscale().raw().toBuffer({ resolveWithObject: true });
@@ -151,16 +187,33 @@ export class X11WeChatDriver implements WeChatDriver {
       throw new SafeRelayError("The official WeChat window is not visible; login may be required", { cause: error });
     }
     const ids = output.split(/\s+/).filter((id) => /^\d+$/.test(id));
-    const id = ids.at(-1);
-    if (!id) throw new SafeRelayError("The official WeChat window is not visible; login may be required");
-    const title = await this.execute("xdotool", ["getwindowname", id]);
-    if (!title.includes(this.config.windowTitle)) {
-      throw new SafeRelayError(`Unexpected window title: ${title || "(empty)"}`);
+    if (!ids.length) throw new SafeRelayError("The official WeChat window is not visible; login may be required");
+    try {
+      const window = await selectUsableWindow(
+        ids,
+        this.config.windowTitle,
+        async (id) => {
+          const title = await this.execute("xdotool", ["getwindowname", id]);
+          const geometry = parseWindowGeometry(
+            await this.execute("xdotool", ["getwindowgeometry", "--shell", id]),
+            id
+          );
+          return { id, title, geometry };
+        },
+        async ({ id }) => {
+          await this.execute("xdotool", ["windowsize", "--sync", id, String(this.config.windowWidth), String(this.config.windowHeight)]);
+          await this.execute("xdotool", ["windowactivate", "--sync", id]);
+          return parseWindowGeometry(
+            await this.execute("xdotool", ["getwindowgeometry", "--shell", id]),
+            id
+          );
+        }
+      );
+      if (window) return window;
+    } catch (error) {
+      throw new SafeRelayError("The official WeChat window changed while it was being selected; retry the message", { cause: error });
     }
-    await this.execute("xdotool", ["windowsize", "--sync", id, String(this.config.windowWidth), String(this.config.windowHeight)]);
-    await this.execute("xdotool", ["windowactivate", "--sync", id]);
-    const geometry = await this.execute("xdotool", ["getwindowgeometry", "--shell", id]);
-    return parseWindowGeometry(geometry, id);
+    throw new SafeRelayError("The official WeChat window is not visible; login may be required");
   }
 
   private absoluteRegion(window: WindowGeometry, region: Rectangle): Rectangle {

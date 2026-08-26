@@ -12,7 +12,7 @@ import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { ManagedTeamChatSource } from "./managedSource.js";
 import { TeamChatSource } from "./source.js";
-import { pasteClipboardText, parseWindowGeometry } from "./x11Driver.js";
+import { pasteClipboardText, parseWindowGeometry, selectUsableWindow } from "./x11Driver.js";
 
 function message(id: number, overrides: Partial<MessageDTO> = {}): MessageDTO {
   return {
@@ -242,6 +242,33 @@ test("X11 geometry parser rejects incomplete window data", () => {
     { id: "123", x: 10, y: 20, width: 1280, height: 720 }
   );
   assert.throws(() => parseWindowGeometry("X=10\nY=20\n", "123"), /geometry/);
+});
+
+test("X11 window selection skips a stale larger window", async () => {
+  const activated: string[] = [];
+  const selected = await selectUsableWindow(
+    ["stable", "stale"],
+    "WeChat",
+    async (id) => ({
+      id,
+      title: "WeChat",
+      geometry: {
+        id,
+        x: 0,
+        y: 0,
+        width: id === "stale" ? 1200 : 980,
+        height: id === "stale" ? 800 : 693
+      }
+    }),
+    async (candidate) => {
+      activated.push(candidate.id);
+      if (candidate.id === "stale") throw new Error("BadWindow");
+      return candidate.geometry;
+    }
+  );
+
+  assert.equal(selected?.id, "stable");
+  assert.deepEqual(activated, ["stale", "stable"]);
 });
 
 test("X11 clipboard stays owned until the target requests the paste", async () => {
