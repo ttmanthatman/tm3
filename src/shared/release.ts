@@ -1,12 +1,17 @@
-export const APP_VERSION = "1.12.8";
+export const APP_VERSION = "1.12.9";
 
 export const RELEASE_DATE = "2026-08-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "圣经书房首页改为“经卷目录 / 经文检索 / 经文收藏”三个并列标签；每次进入圣经时优先显示经卷目录，检索与收藏内容改为按需切换。"
+  "修复 iPhone 音乐库歌曲详情页标题和右上角关闭按钮进入状态栏的问题；竖屏让开刘海、灵动岛、时间和电量区域，横屏详情与歌谱预览同时避开左右安全区。",
+  "修复 iPad 上播放等纯图标按钮受浏览器原生内边距影响而向右错位的问题；音乐、语音、关闭、收藏、下载与翻页等固定尺寸图标按钮现在保持居中。"
 ] as const;
+
+const RELEASE_1_12_8_NOTES = [
+  "圣经书房首页改为“经卷目录 / 经文检索 / 经文收藏”三个并列标签；每次进入圣经时优先显示经卷目录，检索与收藏内容改为按需切换。"
+] as const
 
 const RELEASE_1_12_7_NOTES = [
   "修复官方微信重启或切换窗口后，转发程序可能选中已失效的临时窗口并停止队列的问题：现在会优先选择最大的有效微信窗口，窗口在识别过程中消失时自动尝试下一个候选窗口。"
@@ -848,9 +853,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.8",
+    version: "1.12.9",
     date: "2026-08-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.8",
+    date: "2026-08-27",
+    notes: RELEASE_1_12_8_NOTES
   },
   {
     version: "1.12.7",
