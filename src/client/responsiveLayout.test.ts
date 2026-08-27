@@ -787,6 +787,61 @@ test("music manager offers library navigation, playlists, multi-select, and comp
   assert.match(css, /\.music-playlist-message-card \{[\s\S]*?width: min\(320px,/);
 });
 
+test("fixed-size icon buttons remove native padding so iPad WebKit centers their SVGs", () => {
+  const cssWithoutComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const selectorsWithZeroPadding = new Set(
+    [...cssWithoutComments.matchAll(/([^{}]+)\{([^{}]*\bpadding:\s*0;[^{}]*)\}/g)].flatMap((match) =>
+      match[1]
+        .split(",")
+        .map((selector) => selector.trim())
+        .filter(Boolean)
+    )
+  );
+
+  for (const selector of [
+    ".icon-btn",
+    ".notification-nudge",
+    ".favorite-remove",
+    ".channel-row-action",
+    ".pin-toggle",
+    ".message-select-btn",
+    ".inline-audio-actions button",
+    ".inline-audio-play",
+    ".voice-play",
+    ".preview-play",
+    ".mini-icon-btn",
+    ".preview-control",
+    ".score-preview-pager button",
+    ".admin-account-avatar-action",
+    ".music-manager-icon-btn",
+    ".music-manager-play",
+    ".music-manager-heart",
+    ".music-manager-playlist-actions button",
+    ".music-manager-score-pages figcaption button"
+  ]) {
+    assert.ok(selectorsWithZeroPadding.has(selector), `${selector} must reset native button padding`);
+  }
+});
+
+test("music track detail and previews keep controls outside iPhone safe areas", () => {
+  assert.match(
+    css,
+    /\.music-manager-detail > header \{[\s\S]*?padding: 8px calc\(10px \+ var\(--safe-right\)\) 8px 14px;/
+  );
+  assert.match(
+    css,
+    /\.music-manager-detail-body \{[\s\S]*?padding: 12px calc\(14px \+ var\(--safe-right\)\) calc\(16px \+ var\(--safe-bottom\)\) calc\(14px \+ var\(--safe-left\)\);/
+  );
+  assert.match(
+    css,
+    /\.music-manager-preview \{[\s\S]*?padding: calc\(var\(--safe-top\) \+ 8px\) calc\(var\(--safe-right\) \+ 10px\) calc\(var\(--safe-bottom\) \+ 10px\) calc\(var\(--safe-left\) \+ 10px\);/
+  );
+  assert.match(
+    css,
+    /@media \(max-width: 760px\) \{[\s\S]*?\.music-manager-detail > header \{[\s\S]*?min-height: calc\(56px \+ var\(--safe-top\)\);[\s\S]*?padding-top: calc\(8px \+ var\(--safe-top\)\);[\s\S]*?padding-left: calc\(14px \+ var\(--safe-left\)\);/
+  );
+});
+
 test("the photo picker uploads every selected image", () => {
   assert.match(app, /ref="photoInput"[^>]*accept="image\/\*"[^>]*multiple[^>]*@change="handlePickedFiles"/);
   assert.match(app, /async function handlePickedFiles[\s\S]*?Array\.from\(input\.files \|\| \[\]\)[\s\S]*?for \(const file of files\)/);

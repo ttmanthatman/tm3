@@ -599,6 +599,29 @@ button {
   color: inherit;
 }
 
+/* Older iPad WebKit can add native button padding to the grid alignment area. */
+.icon-btn,
+.notification-nudge,
+.favorite-remove,
+.channel-row-action,
+.pin-toggle,
+.message-select-btn,
+.inline-audio-actions button,
+.inline-audio-play,
+.voice-play,
+.preview-play,
+.mini-icon-btn,
+.preview-control,
+.score-preview-pager button,
+.admin-account-avatar-action,
+.music-manager-icon-btn,
+.music-manager-play,
+.music-manager-heart,
+.music-manager-playlist-actions button,
+.music-manager-score-pages figcaption button {
+  padding: 0;
+}
+
 .hidden {
   display: none;
 }
@@ -11834,7 +11857,7 @@ button.admin-object-row:focus-visible {
 
 .music-manager-detail > header {
   min-height: 56px;
-  padding: 8px 10px 8px 14px;
+  padding: 8px calc(10px + var(--safe-right)) 8px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -11863,7 +11886,7 @@ button.admin-object-row:focus-visible {
 .music-manager-detail-body {
   flex: 1;
   min-height: 0;
-  padding: 12px 14px calc(16px + var(--safe-bottom));
+  padding: 12px calc(14px + var(--safe-right)) calc(16px + var(--safe-bottom)) calc(14px + var(--safe-left));
   display: grid;
   align-content: start;
   gap: 16px;
@@ -12083,7 +12106,7 @@ button.admin-object-row:focus-visible {
   position: fixed;
   inset: 0;
   z-index: 70;
-  padding: calc(var(--safe-top) + 8px) 10px calc(var(--safe-bottom) + 10px);
+  padding: calc(var(--safe-top) + 8px) calc(var(--safe-right) + 10px) calc(var(--safe-bottom) + 10px) calc(var(--safe-left) + 10px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   gap: 8px;
@@ -12132,6 +12155,12 @@ button.admin-object-row:focus-visible {
   .music-manager-toolbar { gap: 6px; }
 
   .music-manager-detail { width: 100%; border-left: 0; }
+
+  .music-manager-detail > header {
+    min-height: calc(56px + var(--safe-top));
+    padding-top: calc(8px + var(--safe-top));
+    padding-left: calc(14px + var(--safe-left));
+  }
 
   .music-manager-resources-head { flex-direction: column; }
 }
