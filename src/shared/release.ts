@@ -1,12 +1,16 @@
-export const APP_VERSION = "1.12.7";
+export const APP_VERSION = "1.12.8";
 
-export const RELEASE_DATE = "2026-08-26";
+export const RELEASE_DATE = "2026-08-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "修复官方微信重启或切换窗口后，转发程序可能选中已失效的临时窗口并停止队列的问题：现在会优先选择最大的有效微信窗口，窗口在识别过程中消失时自动尝试下一个候选窗口。"
+  "圣经书房首页改为“经卷目录 / 经文检索 / 经文收藏”三个并列标签；每次进入圣经时优先显示经卷目录，检索与收藏内容改为按需切换。"
 ] as const;
+
+const RELEASE_1_12_7_NOTES = [
+  "修复官方微信重启或切换窗口后，转发程序可能选中已失效的临时窗口并停止队列的问题：现在会优先选择最大的有效微信窗口，窗口在识别过程中消失时自动尝试下一个候选窗口。"
+] as const
 
 const RELEASE_1_12_6_NOTES = [
   "修复一条消息中经文引用最多只能展开 8 条的问题：现在消息里出现的所有经文引用都会显示为可点击展开的引用，不再设数量上限。"
@@ -844,9 +848,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
+    version: "1.12.8",
+    date: "2026-08-27",
+    notes: RELEASE_NOTES
+  },
+  {
     version: "1.12.7",
     date: "2026-08-26",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_12_7_NOTES
   },
   {
     version: "1.12.6",
