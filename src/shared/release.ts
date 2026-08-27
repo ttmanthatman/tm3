@@ -1,13 +1,17 @@
-export const APP_VERSION = "1.12.9";
+export const APP_VERSION = "1.12.10";
 
 export const RELEASE_DATE = "2026-08-27";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "修复《新标点和合本》中“有古卷加”的编号经节无法展开引用的问题：补齐全部 11 处编号脚注经节，连续范围引用不再因缺号整体失败，并在正文前明确显示“有古卷加”注释。"
+] as const;
+
+const RELEASE_1_12_9_NOTES = [
   "修复 iPhone 音乐库歌曲详情页标题和右上角关闭按钮进入状态栏的问题；竖屏让开刘海、灵动岛、时间和电量区域，横屏详情与歌谱预览同时避开左右安全区。",
   "修复 iPad 上播放等纯图标按钮受浏览器原生内边距影响而向右错位的问题；音乐、语音、关闭、收藏、下载与翻页等固定尺寸图标按钮现在保持居中。"
-] as const;
+] as const
 
 const RELEASE_1_12_8_NOTES = [
   "圣经书房首页改为“经卷目录 / 经文检索 / 经文收藏”三个并列标签；每次进入圣经时优先显示经卷目录，检索与收藏内容改为按需切换。"
@@ -853,9 +857,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.9",
+    version: "1.12.10",
     date: "2026-08-27",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.9",
+    date: "2026-08-27",
+    notes: RELEASE_1_12_9_NOTES
   },
   {
     version: "1.12.8",
