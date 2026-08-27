@@ -68,7 +68,7 @@ const catalog = ref<BibleCatalogDTO | null>(null);
 const catalogBusy = ref(false);
 const catalogError = ref("");
 const view = ref<BibleWorkspaceView>("home");
-const homeSection = ref<"search" | "favorites">("search");
+const homeSection = ref<"catalog" | "search" | "favorites">("catalog");
 const searchMode = ref<BibleWorkspaceSearchMode>("topic");
 const topicQuery = ref("");
 const textQuery = ref("");
@@ -194,6 +194,10 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
+      view.value = "home";
+      homeSection.value = "catalog";
+      selectedBook.value = null;
+      clearVerseSelection();
       void ensureCatalog();
     }
   },
@@ -275,6 +279,7 @@ function resetWorkspaceState() {
   readerGeneration += 1;
   if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   view.value = "home";
+  homeSection.value = "catalog";
   searchMode.value = "topic";
   topicQuery.value = "";
   textQuery.value = "";
@@ -347,6 +352,7 @@ async function ensureCatalog() {
 
 function returnHome() {
   view.value = "home";
+  homeSection.value = "catalog";
   selectedBook.value = null;
   clearVerseSelection();
 }
@@ -984,11 +990,18 @@ function handleTouchEnd(event: TouchEvent) {
 
     <main v-else-if="view === 'home'" class="bible-home">
       <nav class="bible-home-tabs" role="tablist" aria-label="书房功能">
+        <button type="button" role="tab" :aria-selected="homeSection === 'catalog'" :class="{ active: homeSection === 'catalog' }" @click="homeSection = 'catalog'"><BookOpen :size="18" />经卷目录</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'search'" :class="{ active: homeSection === 'search' }" @click="homeSection = 'search'"><Search :size="18" />经文检索</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'favorites'" :class="{ active: homeSection === 'favorites' }" @click="homeSection = 'favorites'"><Bookmark :size="18" />经文收藏<span>{{ favorites.length }}</span></button>
       </nav>
 
-      <section v-if="homeSection === 'search'" class="bible-search-panel">
+      <section v-if="homeSection === 'catalog' && catalog" class="bible-catalog">
+        <header><BookOpen :size="24" /><div><h2>经卷目录</h2><p>旧约39卷 · 新约27卷</p></div></header>
+        <section><h3>旧约</h3><div class="bible-book-grid"><button v-for="book in catalog.oldTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
+        <section><h3>新约</h3><div class="bible-book-grid"><button v-for="book in catalog.newTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
+      </section>
+
+      <section v-else-if="homeSection === 'search'" class="bible-search-panel">
         <div class="bible-search-tabs" role="tablist" aria-label="经文检索方式">
           <button type="button" :class="{ active: searchMode === 'topic' }" @click="searchMode = 'topic'">主题检索</button>
           <button type="button" :class="{ active: searchMode === 'text' }" @click="searchMode = 'text'">文本检索</button>
@@ -1044,7 +1057,7 @@ function handleTouchEnd(event: TouchEvent) {
         </section>
       </section>
 
-      <section v-else class="bible-favorites" aria-label="经文收藏夹">
+      <section v-else-if="homeSection === 'favorites'" class="bible-favorites" aria-label="经文收藏夹">
         <header>
           <Bookmark :size="24" />
           <div><h2>经文收藏夹</h2><p>连续收藏的经文会自动合并，便于阅读和复制</p></div>
@@ -1061,11 +1074,6 @@ function handleTouchEnd(event: TouchEvent) {
         </div>
       </section>
 
-      <section v-if="catalog" class="bible-catalog">
-        <header><BookOpen :size="24" /><div><h2>经卷目录</h2><p>旧约39卷 · 新约27卷</p></div></header>
-        <section><h3>旧约</h3><div class="bible-book-grid"><button v-for="book in catalog.oldTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
-        <section><h3>新约</h3><div class="bible-book-grid"><button v-for="book in catalog.newTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
-      </section>
     </main>
 
     <main v-else-if="view === 'chapters' && selectedBook" class="bible-chapter-picker">
@@ -1178,7 +1186,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-font-stepper span { border: 1px solid rgba(128, 97, 63, .28); color: #4f3b29; background: #fffaf1; font-size: 13px; font-weight: 800; }
 .bible-home, .bible-chapter-picker, .bible-reader { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bible-home { padding: 26px max(16px, calc((100vw - 1120px) / 2)) calc(44px + var(--safe-bottom)); }
-.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: 1fr 1fr; gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
+.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
 .bible-home-tabs button { min-height: 46px; border: 0; border-radius: 10px; color: #765b40; background: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: inherit; font-weight: 800; cursor: pointer; }
 .bible-home-tabs button.active { color: #fffaf1; background: #80613f; box-shadow: 0 4px 12px rgba(87, 60, 31, .18); }
 .bible-home-tabs button span { min-width: 22px; padding: 2px 6px; border-radius: 999px; color: inherit; background: rgba(255, 255, 255, .2); font-size: 11px; }
@@ -1307,6 +1315,9 @@ function handleTouchEnd(event: TouchEvent) {
   .bible-topbar-title small { gap: 3px; font-size: 10px; }
   .bible-home { padding: 15px 12px calc(34px + var(--safe-bottom)); }
   .bible-home-tabs { margin-bottom: 9px; }
+  .bible-home-tabs button { gap: 4px; font-size: 14px; }
+  .bible-home-tabs button svg { display: none; }
+  .bible-home-tabs button span { min-width: 18px; padding: 2px 4px; }
   .bible-search-panel { padding: 13px; border-radius: 14px; }
   .bible-results > header { flex-wrap: wrap; gap: 8px; }
   .bible-search-form > div { grid-template-columns: minmax(0, 1fr); }

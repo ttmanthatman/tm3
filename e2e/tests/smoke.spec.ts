@@ -174,6 +174,25 @@ test("390px 手机视口打开频道列表并切换频道", async ({ page }) => 
 test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => {
   await loginAsAdmin(page);
   await page.getByRole("button", { name: "打开圣经" }).click();
+
+  const homeTabs = page.getByRole("tablist", { name: "书房功能" });
+  const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });
+  const searchTab = homeTabs.getByRole("tab", { name: "经文检索", exact: true });
+  const favoritesTab = homeTabs.getByRole("tab", { name: /^经文收藏/ });
+  await expect(homeTabs.getByRole("tab")).toHaveCount(3);
+  await expect(catalogTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "经卷目录", exact: true })).toBeVisible();
+
+  for (const width of [390, 360, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await homeTabs.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+
+  await searchTab.click();
+  await expect(page.getByText("想查看关于什么的经文？", { exact: true })).toBeVisible();
+  await favoritesTab.click();
+  await expect(page.getByRole("heading", { name: "经文收藏夹", exact: true })).toBeVisible();
+  await catalogTab.click();
   await page.getByRole("button", { name: /^创世记/ }).click();
   await page.getByRole("button", { name: "1", exact: true }).click();
 

@@ -566,9 +566,12 @@ test("chat images correct EXIF dimensions, cache privately, and preload offscree
   assert.match(server, /function applyFileValidation[\s\S]*?Cache-Control", "private, no-cache"/);
 });
 
-test("Bible workspace promotes grouped favorites beside search", () => {
-  assert.match(bibleWorkspace, /const homeSection = ref<"search" \| "favorites">\("search"\)/);
-  assert.match(bibleWorkspace, /aria-label="书房功能"[\s\S]*?>经文检索<[\s\S]*?>经文收藏</);
+test("Bible workspace promotes catalog and grouped favorites beside search", () => {
+  assert.match(bibleWorkspace, /const homeSection = ref<"catalog" \| "search" \| "favorites">\("catalog"\)/);
+  assert.match(bibleWorkspace, /aria-label="书房功能"[\s\S]*?>经卷目录<[\s\S]*?>经文检索<[\s\S]*?>经文收藏</);
+  assert.match(bibleWorkspace, /homeSection\.value = "catalog";[\s\S]*?void ensureCatalog\(\)/);
+  assert.match(bibleWorkspace, /v-if="homeSection === 'catalog' && catalog" class="bible-catalog"/);
+  assert.match(bibleWorkspace, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
   assert.match(bibleWorkspace, /groupBibleFavoritePassages\(props\.favorites\)/);
   assert.match(bibleWorkspace, /v-for="passage in favoritePassages"[\s\S]*?passage\.lookup\.normalizedReference/);
   assert.match(bibleWorkspace, /removeBibleFavoritePassage\(passage\)/);
