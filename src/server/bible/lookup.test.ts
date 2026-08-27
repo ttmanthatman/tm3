@@ -36,6 +36,60 @@ test("cross-chapter lookups preserve canonical chapter and verse order", () => {
   assert.deepEqual(lookup.verses.map((verse) => verse.reference), ["创世记 1:31", "创世记 2:1", "创世记 2:2"]);
 });
 
+test("numbered footnote verses remain directly referenceable", () => {
+  const expected = new Map([
+    ["马太福音 18:11", "（有古卷加：人子来，为要拯救失丧的人。）"],
+    ["马太福音 23:14", "（有古卷加：你们这假冒为善的文士和法利赛人有祸了！因为你们侵吞寡妇的家产，假意做很长的祷告，所以要受更重的刑罚。）"],
+    ["马可福音 7:16", "（有古卷加：有耳可听的，就应当听！）"],
+    ["马可福音 15:28", "（有古卷加：这就应了经上的话说：他被列在罪犯之中。）"],
+    ["路加福音 17:36", "（有古卷加：两个人在田里，要取去一个，撇下一个。）"],
+    ["路加福音 23:17", "（有古卷加：每逢这节期，巡抚必须释放一个囚犯给他们。）"],
+    ["约翰福音 5:4", "（有古卷加：因为有天使按时下池子搅动那水，水动之后，谁先下去，无论害什么病就痊愈了。）"],
+    ["使徒行传 8:37", "（有古卷加：腓利说：「你若是一心相信，就可以。」他回答说：「我信耶稣基督是神的儿子。」）"],
+    ["使徒行传 15:34", "（有古卷加：惟有西拉定意仍住在那里。）"],
+    ["使徒行传 24:7", "（有古卷加：不料，千夫长吕西亚前来，甚是强横，从我们手中把他夺去，吩咐告他的人到你这里来。）"],
+    ["使徒行传 28:29", "（有古卷加：保罗说了这话，犹太人议论纷纷地就走了。）"]
+  ]);
+
+  for (const [reference, text] of expected) {
+    const lookup = lookupBibleReference(reference);
+    assert.deepEqual(lookup.verses.map((verse) => ({ reference: verse.reference, text: verse.text })), [{ reference, text }]);
+  }
+
+  assert.deepEqual(
+    lookupBibleReference("马太福音 23:13-15").verses.map((verse) => verse.reference),
+    ["马太福音 23:13", "马太福音 23:14", "马太福音 23:15"]
+  );
+});
+
+test("Bible chapters expose every numbered verse in text and layout order", () => {
+  const catalog = bibleCatalog();
+  for (const book of [...catalog.oldTestament, ...catalog.newTestament]) {
+    for (let chapterNumber = 1; chapterNumber <= book.chapterCount; chapterNumber += 1) {
+      const chapter = lookupBibleChapter(book.code, chapterNumber);
+      const coveredVerseNumbers = new Set<number>();
+      for (const verse of chapter.verses) {
+        for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) coveredVerseNumbers.add(verseNumber);
+      }
+      const lastVerseNumber = Math.max(...coveredVerseNumbers);
+      assert.deepEqual(
+        [...coveredVerseNumbers].sort((left, right) => left - right),
+        Array.from({ length: lastVerseNumber }, (_, index) => index + 1),
+        `${book.name} ${chapterNumber} has a missing verse number`
+      );
+
+      const renderedVerseNumbers = new Set(
+        chapter.blocks.flatMap((block) => block.type === "paragraph" ? block.fragments.map((fragment) => fragment.verse.verse) : [])
+      );
+      assert.deepEqual(
+        chapter.verses.map((verse) => verse.verse).filter((verseNumber) => !renderedVerseNumbers.has(verseNumber)),
+        [],
+        `${book.name} ${chapterNumber} has a verse missing from its structured layout`
+      );
+    }
+  }
+});
+
 test("legacy Bible lookups keep the chat-facing verse shape unchanged", () => {
   assert.deepEqual(lookupBibleReference("约翰福音 1:1"), {
     reference: "约翰福音 1:1",

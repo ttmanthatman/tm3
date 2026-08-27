@@ -1,5 +1,6 @@
 import biblePayload from "./cmn-cu89s.json" with { type: "json" };
 import bibleLayoutPayload from "./cmn-cu89s-layout.json" with { type: "json" };
+import bibleFootnoteVersePayload from "./cmn-cu89s-footnote-verses.json" with { type: "json" };
 import type {
   BibleCatalogDTO,
   BibleChapterBlockDTO,
@@ -22,6 +23,7 @@ type BibleVerse = {
   chapter: number;
   verse: number;
   endVerse: number;
+  note?: string;
   text: string;
   order: number;
 };
@@ -30,6 +32,16 @@ type BiblePayload = {
   id: string;
   displayName: string;
   verses: BibleVerse[];
+};
+
+type BibleFootnoteVerse = BibleVerse & {
+  anchorVerse: number;
+  note: string;
+};
+
+type BibleFootnoteVersePayload = {
+  id: string;
+  verses: BibleFootnoteVerse[];
 };
 
 type BibleLayoutFragment = [verse: number, start: number, end: number];
@@ -128,9 +140,31 @@ const BOOKS: BibleBook[] = [
   { code: "REV", chineseName: "启示录", aliases: ["启示录", "启", "Revelation", "Revelations", "Rev", "Re"] }
 ];
 
-const payload = biblePayload as BiblePayload;
+const basePayload = biblePayload as BiblePayload;
+const footnoteVersePayload = bibleFootnoteVersePayload as BibleFootnoteVersePayload;
 const layoutPayload = bibleLayoutPayload as unknown as BibleLayoutPayload;
-if (layoutPayload.id !== payload.id) throw new Error("Bible text and layout source IDs do not match");
+if (layoutPayload.id !== basePayload.id || footnoteVersePayload.id !== basePayload.id) {
+  throw new Error("Bible text, footnote verse, and layout source IDs do not match");
+}
+const baseVerseKeys = new Set<string>();
+for (const verse of basePayload.verses) {
+  for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) {
+    baseVerseKeys.add(verseKey(verse.book, verse.chapter, verseNumber));
+  }
+}
+const footnoteVerseKeys = new Set<string>();
+for (const verse of footnoteVersePayload.verses) {
+  const key = verseKey(verse.book, verse.chapter, verse.verse);
+  const anchorKey = verseKey(verse.book, verse.chapter, verse.anchorVerse);
+  if (verse.verse !== verse.endVerse || baseVerseKeys.has(key) || footnoteVerseKeys.has(key) || !baseVerseKeys.has(anchorKey)) {
+    throw new Error(`Invalid numbered Bible footnote verse: ${key}`);
+  }
+  footnoteVerseKeys.add(key);
+}
+const payload: BiblePayload = {
+  ...basePayload,
+  verses: [...basePayload.verses, ...footnoteVersePayload.verses]
+};
 const bookByCode = new Map(BOOKS.map((book) => [book.code, book]));
 const bookOrder = new Map(BOOKS.map((book, index) => [book.code, index]));
 const startAliases = BOOKS.flatMap((book) => [book.chineseName, book.code, ...book.aliases].map((alias) => ({ alias: normalizeBook(alias), book })))
@@ -223,8 +257,9 @@ export function lookupBibleChapter(bookCode: string, chapter: number): BibleChap
   const book = bookByCode.get(bookCode.toUpperCase());
   if (!book || !Number.isInteger(chapter) || chapter < 1) throw new Error("invalid chapter");
   const verses = versesForWholeChapter(book, chapter);
-  const rawBlocks = layoutPayload.chapters[`${book.code}.${chapter}`];
-  if (!rawBlocks) throw new Error("chapter layout not found");
+  const sourceBlocks = layoutPayload.chapters[`${book.code}.${chapter}`];
+  if (!sourceBlocks) throw new Error("chapter layout not found");
+  const rawBlocks = insertFootnoteVerseBlocks(sourceBlocks, book.code, chapter);
 
   const serializedVerses = verses.map(serializeVerse);
   const serializedByStartVerse = new Map(serializedVerses.map((verse) => [verse.verse, verse]));
@@ -271,6 +306,29 @@ export function lookupBibleChapter(bookCode: string, chapter: number): BibleChap
     verses: serializedVerses,
     blocks
   };
+}
+
+function insertFootnoteVerseBlocks(sourceBlocks: BibleLayoutBlock[], book: string, chapter: number) {
+  const additionsByBlock = new Map<number, BibleFootnoteVerse[]>();
+  for (const verse of footnoteVersePayload.verses) {
+    if (verse.book !== book || verse.chapter !== chapter) continue;
+    let anchorBlockIndex = -1;
+    for (let index = 0; index < sourceBlocks.length; index += 1) {
+      const block = sourceBlocks[index];
+      if ((block[0] === "p" || block[0] === "q") && block[1].some(([verseNumber]) => verseNumber === verse.anchorVerse)) {
+        anchorBlockIndex = index;
+      }
+    }
+    if (anchorBlockIndex < 0) throw new Error(`Bible footnote verse anchor not found: ${book} ${chapter}:${verse.anchorVerse}`);
+    additionsByBlock.set(anchorBlockIndex, [...(additionsByBlock.get(anchorBlockIndex) || []), verse]);
+  }
+
+  return sourceBlocks.flatMap((block, index) => [
+    block,
+    ...(additionsByBlock.get(index) || [])
+      .sort((left, right) => left.verse - right.verse)
+      .map((verse): BibleLayoutBlock => ["p", [[verse.verse, 0, displayVerseText(verse).length]]])
+  ]);
 }
 
 function parseReference(rawReference: string): ParsedReference {
@@ -479,8 +537,13 @@ function serializeVerse(verse: BibleVerse): BibleVerseLineDTO {
     verse: verse.verse,
     endVerse: verse.endVerse,
     reference: `${bookName} ${verse.chapter}:${verse.verse === verse.endVerse ? verse.verse : `${verse.verse}-${verse.endVerse}`}`,
-    text: cleanVerseText(verse.text)
+    text: displayVerseText(verse)
   };
+}
+
+function displayVerseText(verse: BibleVerse) {
+  const text = cleanVerseText(verse.text);
+  return verse.note ? `（${verse.note}：${text}）` : text;
 }
 
 function displayParsedReference(parsedReference: ParsedReference) {

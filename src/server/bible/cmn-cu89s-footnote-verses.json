@@ -1,0 +1,121 @@
+{
+  "id": "cmn-cu89s",
+  "source": {
+    "url": "https://ebible.org/Scriptures/cmn-cu89s_usfx.zip",
+    "format": "eBible USFX numbered footnotes",
+    "sourceFile": "cmn-cu89s_usfx.xml",
+    "sha256": "60d711b9914178e4f7492a2ee66a2a3601ecf31d5f402979d29161b479575833"
+  },
+  "verses": [
+    {
+      "book": "MAT",
+      "chapter": 18,
+      "verse": 11,
+      "endVerse": 11,
+      "anchorVerse": 10,
+      "note": "有古卷加",
+      "text": "人子来，为要拯救失丧的人。",
+      "order": 70
+    },
+    {
+      "book": "MAT",
+      "chapter": 23,
+      "verse": 14,
+      "endVerse": 14,
+      "anchorVerse": 13,
+      "note": "有古卷加",
+      "text": "你们这假冒为善的文士和法利赛人有祸了！因为你们侵吞寡妇的家产，假意做很长的祷告，所以要受更重的刑罚。",
+      "order": 70
+    },
+    {
+      "book": "MRK",
+      "chapter": 7,
+      "verse": 16,
+      "endVerse": 16,
+      "anchorVerse": 15,
+      "note": "有古卷加",
+      "text": "有耳可听的，就应当听！",
+      "order": 71
+    },
+    {
+      "book": "MRK",
+      "chapter": 15,
+      "verse": 28,
+      "endVerse": 28,
+      "anchorVerse": 27,
+      "note": "有古卷加",
+      "text": "这就应了经上的话说：他被列在罪犯之中。",
+      "order": 71
+    },
+    {
+      "book": "LUK",
+      "chapter": 17,
+      "verse": 36,
+      "endVerse": 36,
+      "anchorVerse": 35,
+      "note": "有古卷加",
+      "text": "两个人在田里，要取去一个，撇下一个。",
+      "order": 72
+    },
+    {
+      "book": "LUK",
+      "chapter": 23,
+      "verse": 17,
+      "endVerse": 17,
+      "anchorVerse": 16,
+      "note": "有古卷加",
+      "text": "每逢这节期，巡抚必须释放一个囚犯给他们。",
+      "order": 72
+    },
+    {
+      "book": "JHN",
+      "chapter": 5,
+      "verse": 4,
+      "endVerse": 4,
+      "anchorVerse": 3,
+      "note": "有古卷加",
+      "text": "因为有天使按时下池子搅动那水，水动之后，谁先下去，无论害什么病就痊愈了。",
+      "order": 73
+    },
+    {
+      "book": "ACT",
+      "chapter": 8,
+      "verse": 37,
+      "endVerse": 37,
+      "anchorVerse": 36,
+      "note": "有古卷加",
+      "text": "腓利说：「你若是一心相信，就可以。」他回答说：「我信耶稣基督是　神的儿子。」",
+      "order": 74
+    },
+    {
+      "book": "ACT",
+      "chapter": 15,
+      "verse": 34,
+      "endVerse": 34,
+      "anchorVerse": 33,
+      "note": "有古卷加",
+      "text": "惟有西拉定意仍住在那里。",
+      "order": 74
+    },
+    {
+      "book": "ACT",
+      "chapter": 24,
+      "verse": 7,
+      "endVerse": 7,
+      "anchorVerse": 6,
+      "note": "有古卷加",
+      "text": "不料，千夫长吕西亚前来，甚是强横，从我们手中把他夺去，吩咐告他的人到你这里来。",
+      "order": 74
+    },
+    {
+      "book": "ACT",
+      "chapter": 28,
+      "verse": 29,
+      "endVerse": 29,
+      "anchorVerse": 28,
+      "note": "有古卷加",
+      "text": "保罗说了这话，犹太人议论纷纷地就走了。",
+      "order": 74
+    }
+  ]
+}
