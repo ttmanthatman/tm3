@@ -86,6 +86,7 @@ import { recalledMessageData } from "./messageRecall.js";
 import { prependPrayerUpdateHistory } from "./prayerUpdates.js";
 import { fallbackDirectChatNames, isAutomaticDirectChatName, parseDirectChatNameSuggestions } from "./directChatNames.js";
 import { demoCacheDir, demoManifestUrl, demoModeAvailable, demoStatePath } from "./demo/config.js";
+import { isZipArchive, unzipArchive, zipArchive, type ZipArchiveEntry } from "./zipArchive.js";
 import {
   WALLPAPER_PAN_SPEED_MAX,
   WALLPAPER_PAN_SPEED_MIN,
@@ -281,6 +282,8 @@ const bibleTopicSearchWindows = new Map<number, number[]>();
 const IMAGE_WEBP_QUALITY = 82;
 const IMAGE_WEBP_EFFORT = 5;
 const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
+// 导入的 ZIP 包含消息附件和头像，放宽单文件上限（全局 multipart 默认 80MB）。
+const IMPORT_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
 
 const allowedOrigins = new Set(CONFIGURED_CORS_ORIGINS.map((origin) => normalizeOrigin(origin)).filter(Boolean));
 
@@ -6016,106 +6019,65 @@ app.post("/api/admin/appearance/app-icon", { preHandler: requireAdmin }, async (
   return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
 });
 
-function jsonDownload(reply: FastifyReply, fileName: string, data: unknown) {
-  reply.header("Content-Type", "application/json; charset=utf-8");
+function zipDownload(reply: FastifyReply, fileName: string, entries: ZipArchiveEntry[]) {
+  reply.header("Content-Type", "application/zip");
   reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-  return reply.send(JSON.stringify(data, null, 2));
+  return reply.send(zipArchive(entries));
 }
 
-async function readJsonUpload(request: FastifyRequest) {
-  const file = await request.file();
-  if (!file) {
-    const error = new Error("缺少导入文件") as Error & { statusCode?: number };
-    error.statusCode = 400;
-    throw error;
-  }
+function badImportRequest(message: string): never {
+  const error = new Error(message) as Error & { statusCode?: number };
+  error.statusCode = 400;
+  throw error;
+}
+
+// 导入兼容旧版纯 JSON 导出和当前 ZIP 导出包；ZIP 内按文件名定位数据 JSON。
+async function readDataImportUpload(request: FastifyRequest, jsonFileName: string): Promise<{ payload: any; entries: ZipArchiveEntry[] }> {
+  const file = await request.file({ limits: { fileSize: IMPORT_ARCHIVE_MAX_BYTES, files: 1 } });
+  if (!file) badImportRequest("缺少导入文件");
   const chunks: Buffer[] = [];
   for await (const chunk of file.file) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  try {
-    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as any;
-  } catch {
-    const error = new Error("导入文件不是有效 JSON") as Error & { statusCode?: number };
-    error.statusCode = 400;
-    throw error;
+  if (file.file.truncated) badImportRequest("导入文件超过大小限制");
+  const buffer = Buffer.concat(chunks);
+  if (!isZipArchive(buffer)) {
+    try {
+      return { payload: JSON.parse(buffer.toString("utf8")) as any, entries: [] };
+    } catch {
+      badImportRequest("导入文件不是有效 JSON 或 ZIP");
+    }
   }
+  let entries: ZipArchiveEntry[];
+  try {
+    entries = unzipArchive(buffer);
+  } catch {
+    badImportRequest("导入文件不是有效的 ZIP 包");
+  }
+  const jsonEntry = entries.find((entry) => entry.name.split("/").pop() === jsonFileName);
+  if (!jsonEntry) badImportRequest(`导入包中缺少 ${jsonFileName}`);
+  try {
+    return { payload: JSON.parse(jsonEntry.data.toString("utf8")) as any, entries };
+  } catch {
+    badImportRequest(`导入包中的 ${jsonFileName} 不是有效 JSON`);
+  }
+}
+
+// 把导出包中指定前缀（uploads/、avatars/）的文件还原到对应存储目录。
+function restoreExportFiles(entries: ZipArchiveEntry[], prefix: string, targetDir: string) {
+  let restored = 0;
+  for (const entry of entries) {
+    if (!entry.name.startsWith(prefix)) continue;
+    const fileName = path.basename(entry.name);
+    if (!fileName) continue;
+    fs.mkdirSync(targetDir, { recursive: true });
+    fs.writeFileSync(path.join(targetDir, fileName), entry.data);
+    restored += 1;
+  }
+  return restored;
 }
 
 function parseDate(value: unknown, fallback = new Date()) {
   const date = value ? new Date(String(value)) : fallback;
   return Number.isNaN(date.getTime()) ? fallback : date;
-}
-
-function crc32(buffer: Buffer) {
-  let crc = -1;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-  }
-  return (crc ^ -1) >>> 0;
-}
-
-function dosTime(date = new Date()) {
-  const year = Math.max(1980, date.getFullYear());
-  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
-  const day = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
-  return { time, day };
-}
-
-function zipArchive(entries: Array<{ name: string; data: Buffer; date?: Date }>) {
-  const localParts: Buffer[] = [];
-  const centralParts: Buffer[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name.replace(/^\/+/, ""), "utf8");
-    const data = entry.data;
-    const crc = crc32(data);
-    const { time, day } = dosTime(entry.date);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(0x0800, 6);
-    local.writeUInt16LE(0, 8);
-    local.writeUInt16LE(time, 10);
-    local.writeUInt16LE(day, 12);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(data.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    local.writeUInt16LE(0, 28);
-    localParts.push(local, name, data);
-
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt16LE(0x0800, 8);
-    central.writeUInt16LE(0, 10);
-    central.writeUInt16LE(time, 12);
-    central.writeUInt16LE(day, 14);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(data.length, 20);
-    central.writeUInt32LE(data.length, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt16LE(0, 30);
-    central.writeUInt16LE(0, 32);
-    central.writeUInt16LE(0, 34);
-    central.writeUInt16LE(0, 36);
-    central.writeUInt32LE(0, 38);
-    central.writeUInt32LE(offset, 42);
-    centralParts.push(central, name);
-    offset += local.length + name.length + data.length;
-  }
-  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(0, 4);
-  end.writeUInt16LE(0, 6);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(centralSize, 12);
-  end.writeUInt32LE(offset, 16);
-  end.writeUInt16LE(0, 20);
-  return Buffer.concat([...localParts, ...centralParts, end]);
 }
 
 function zipSafeName(name: string) {
@@ -6710,6 +6672,40 @@ async function usersExportPayload() {
   };
 }
 
+// 聊天导出包：chat.json + 消息与置顶内容引用的附件文件。
+async function chatExportZipEntries() {
+  const payload = await chatExportPayload();
+  const entries: ZipArchiveEntry[] = [{ name: "chat.json", data: Buffer.from(JSON.stringify(payload, null, 2), "utf8") }];
+  const fileNames = new Set<string>();
+  for (const message of payload.messages) {
+    if (message.filePath) fileNames.add(path.basename(message.filePath));
+  }
+  for (const pin of payload.pinnedItems) {
+    for (const fileName of pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content))) fileNames.add(fileName);
+  }
+  for (const fileName of fileNames) {
+    const filePath = path.join(UPLOAD_DIR, fileName);
+    if (fs.existsSync(filePath)) entries.push({ name: `uploads/${fileName}`, data: fs.readFileSync(filePath) });
+  }
+  return entries;
+}
+
+// 用户导出包：users.json + 账号和角色引用的头像文件。
+async function usersExportZipEntries() {
+  const payload = await usersExportPayload();
+  const entries: ZipArchiveEntry[] = [{ name: "users.json", data: Buffer.from(JSON.stringify(payload, null, 2), "utf8") }];
+  const avatarNames = new Set<string>();
+  for (const account of payload.accounts) {
+    if (account.avatarPath) avatarNames.add(path.basename(account.avatarPath));
+    if (account.actor?.avatarPath) avatarNames.add(path.basename(account.actor.avatarPath));
+  }
+  for (const fileName of avatarNames) {
+    const filePath = path.join(AVATAR_DIR, fileName);
+    if (fs.existsSync(filePath)) entries.push({ name: `avatars/${fileName}`, data: fs.readFileSync(filePath) });
+  }
+  return entries;
+}
+
 app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const pushOrigin = pushOriginFromHeaders(request.headers);
@@ -6822,11 +6818,11 @@ registerWeChatRelayRoutes(app, {
 });
 
 app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {
-  return jsonDownload(reply, `team-chat-data-${new Date().toISOString().slice(0, 10)}.json`, await chatExportPayload());
+  return zipDownload(reply, `team-chat-data-${new Date().toISOString().slice(0, 10)}.zip`, await chatExportZipEntries());
 });
 
 app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request, reply) => {
-  const payload = await readJsonUpload(request);
+  const { payload, entries } = await readDataImportUpload(request, "chat.json");
   const channels = Array.isArray(payload.channels) ? payload.channels : [];
   const channelMembers = Array.isArray(payload.channelMembers) ? payload.channelMembers : [];
   const messages = Array.isArray(payload.messages) ? payload.messages : [];
@@ -6969,11 +6965,12 @@ app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request,
       }
     }
   });
-  return { success: true, imported: { channels: channels.length, messages: messages.length } };
+  const attachments = restoreExportFiles(entries, "uploads/", UPLOAD_DIR);
+  return { success: true, imported: { channels: channels.length, messages: messages.length, attachments } };
 });
 
 app.get("/api/admin/export/users", { preHandler: requireAdmin }, async (_request, reply) => {
-  return jsonDownload(reply, `liao-users-${new Date().toISOString().slice(0, 10)}.json`, await usersExportPayload());
+  return zipDownload(reply, `liao-users-${new Date().toISOString().slice(0, 10)}.zip`, await usersExportZipEntries());
 });
 
 app.get("/api/admin/backups", { preHandler: requireAdmin }, async () => {
@@ -7145,7 +7142,7 @@ app.post("/api/admin/attachments/compress", { preHandler: requireAdmin }, async 
 
 app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const payload = await readJsonUpload(request);
+  const { payload, entries } = await readDataImportUpload(request, "users.json");
   const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
   const changedAccountIds = new Set<number>();
   for (const item of accounts) {
@@ -7210,7 +7207,8 @@ app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request
     ? await prisma.account.findMany({ where: { id: { in: [...changedAccountIds] } }, include: { actor: true } })
     : [];
   changedAccounts.forEach(refreshAccountConnections);
-  return { success: true, imported: { accounts: accounts.length } };
+  const avatars = restoreExportFiles(entries, "avatars/", AVATAR_DIR);
+  return { success: true, imported: { accounts: accounts.length, avatars } };
 });
 
 app.get("/api/admin/accounts/:id/attachments/export", { preHandler: requireAdmin }, async (request, reply) => {

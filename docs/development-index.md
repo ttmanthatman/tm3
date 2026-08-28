@@ -76,6 +76,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/server/services/accountDeletion.ts`: transactional account deletion rules that preserve historic Actors and return post-commit session/channel effects.
 - `src/server/services/musicService.ts`: shared music-track serialization, playlist aggregation and access, music-role lookup, and playback-state response mapping used by HTTP routes and message serialization.
 - `src/server/linkPreview.ts`: safe link preview fetcher. Keep URL normalization, DNS/private-address blocking, redirect limits, response byte limits, and HTML metadata extraction behind this interface.
+- `src/server/zipArchive.ts`: dependency-free ZIP writer (stored entries) and reader (stored + deflate) with entry-count and total-size caps. The admin chat/user exports are ZIP packages (`chat.json` + `uploads/`, `users.json` + `avatars/`); imports accept either those ZIPs or the legacy plain JSON exports and restore bundled files into the storage directories.
 - `src/server/multichar/`: autonomous virtual-role engine modules.
 - `src/server/demo/` and `src/server/routes/demoMode.ts`: opt-in demo manifest validation, download/cache, destructive reset service, and admin-only routes. See [demo mode maintenance](demo-mode.md) before changing bundle compatibility or reset behavior.
 - `src/client/features/admin/DemoModePanel.vue`: asynchronously loaded administrator surface for checking and resetting demo data; it must remain absent from ordinary startup requests.

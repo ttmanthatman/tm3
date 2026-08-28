@@ -12193,18 +12193,18 @@ async function toggleVirtual(character: any) {
             </div>
             <label>聊天数据</label>
             <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.json')"><Download :size="16" />导出聊天</button>
+              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.zip')"><Download :size="16" />导出聊天</button>
               <label class="mini-btn secondary">
                 <Upload :size="16" />导入聊天
-                <input class="hidden" type="file" accept="application/json,.json" @change="importAdminFile('/api/admin/import/chat', $event)" />
+                <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/chat', $event)" />
               </label>
             </div>
             <label>用户数据</label>
             <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/users', 'liao-users.json')"><Download :size="16" />导出用户</button>
+              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/users', 'liao-users.zip')"><Download :size="16" />导出用户</button>
               <label class="mini-btn secondary">
                 <Upload :size="16" />导入用户
-                <input class="hidden" type="file" accept="application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
+                <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
               </label>
             </div>
           </section>
