@@ -107,7 +107,7 @@ function createHarness(options: FakeSocketOptions & { state?: SermonSharedState 
       if (path === "/api/sermon/directory") {
         return [summary(9)] as T;
       }
-      return { canPresent: true, until: "2026-09-01T00:00:00.000Z" } as T;
+      return { canPresent: true, until: "2026-09-01T00:00:00.000Z", isAdmin: true } as T;
     }
   });
   return { sermon, socket, emissions, requests };
@@ -409,5 +409,6 @@ test("refreshPresenterStatus 拉取并缓存权限状态", async () => {
   const status = await sermon.refreshPresenterStatus();
   assert.deepEqual(requests, ["/api/sermon/presenter-status"]);
   assert.equal((status as SermonPresenterStatusDTO).canPresent, true);
+  assert.equal((status as SermonPresenterStatusDTO).isAdmin, true);
   assert.equal(sermon.presenterStatus.value?.until, "2026-09-01T00:00:00.000Z");
 });

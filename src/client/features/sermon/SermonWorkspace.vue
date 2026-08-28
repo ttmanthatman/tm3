@@ -5,6 +5,7 @@ import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPres
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
+import { sermonPreviewScale } from "./sermonPreview";
 import { verseHasAnnotation } from "./sermonText";
 import { parseSermonInput } from "./sermonInput";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
@@ -44,23 +45,43 @@ const shortcutHint = computed(() => (isMac ? "⌘+Enter 加入队列" : "Ctrl+En
 
 // 桌面端双预览（投影 1280×720、手机 390×845 基准尺寸）：按容器宽度等比缩放真实舞台。
 const PREVIEW_PROJECTOR_BASE_WIDTH = 1280;
+const PREVIEW_PROJECTOR_BASE_HEIGHT = 720;
 const PREVIEW_PHONE_BASE_WIDTH = 390;
+const PREVIEW_PHONE_BASE_HEIGHT = 845;
 const projectorFrame = ref<HTMLElement | null>(null);
 const phoneFrame = ref<HTMLElement | null>(null);
 const projectorScale = ref(0.3);
 const phoneScale = ref(0.3);
 let previewObserver: ResizeObserver | null = null;
 
-onMounted(() => {
-  previewObserver = new ResizeObserver(() => {
-    const projectorWidth = projectorFrame.value?.clientWidth ?? 0;
-    if (projectorWidth > 0) projectorScale.value = projectorWidth / PREVIEW_PROJECTOR_BASE_WIDTH;
-    const phoneWidth = phoneFrame.value?.clientWidth ?? 0;
-    if (phoneWidth > 0) phoneScale.value = phoneWidth / PREVIEW_PHONE_BASE_WIDTH;
-  });
+function updatePreviewScales() {
+  const projector = projectorFrame.value;
+  if (projector) {
+    const next = sermonPreviewScale(projector.clientWidth, projector.clientHeight, PREVIEW_PROJECTOR_BASE_WIDTH, PREVIEW_PROJECTOR_BASE_HEIGHT);
+    if (next > 0) projectorScale.value = next;
+  }
+  const phone = phoneFrame.value;
+  if (phone) {
+    const next = sermonPreviewScale(phone.clientWidth, phone.clientHeight, PREVIEW_PHONE_BASE_WIDTH, PREVIEW_PHONE_BASE_HEIGHT);
+    if (next > 0) phoneScale.value = next;
+  }
+}
+
+function reconnectPreviewObserver() {
+  if (!previewObserver) return;
+  previewObserver.disconnect();
   if (projectorFrame.value) previewObserver.observe(projectorFrame.value);
   if (phoneFrame.value) previewObserver.observe(phoneFrame.value);
+  updatePreviewScales();
+}
+
+onMounted(() => {
+  previewObserver = new ResizeObserver(updatePreviewScales);
+  reconnectPreviewObserver();
 });
+
+// 预览只在演示创建后挂载；监听 template refs，避免 onMounted 时为空而永远停在 0.3×。
+watch([projectorFrame, phoneFrame], reconnectPreviewObserver, { flush: "post" });
 
 onBeforeUnmount(() => previewObserver?.disconnect());
 
@@ -68,6 +89,7 @@ const presenterUntilText = computed(() => {
   const status = presenterStatus.value;
   if (!status) return "";
   if (!status.canPresent) return "当前没有讲道权限";
+  if (status.isAdmin) return "管理员可直接发起全体演示";
   return status.until ? `讲道权限有效期至 ${new Date(status.until).toLocaleString("zh-CN", { hour12: false })}` : "讲道权限长期有效";
 });
 
@@ -541,30 +563,32 @@ function annotateSelection() {
       </div>
 
       <aside class="sermon-preview-column">
-        <section class="sermon-preview-block">
-          <h3>投影预览</h3>
-          <div ref="projectorFrame" class="sermon-preview-frame projector">
-            <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
-              <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
-                <div class="sermon-overlay-card">
-                  <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+        <div class="sermon-preview-grid">
+          <section class="sermon-preview-block projector-preview">
+            <h3>投影预览</h3>
+            <div ref="projectorFrame" class="sermon-preview-frame projector">
+              <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
+                <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
+                  <div class="sermon-overlay-card">
+                    <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
-        <section class="sermon-preview-block">
-          <h3>手机预览</h3>
-          <div ref="phoneFrame" class="sermon-preview-frame phone">
-            <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
-              <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
-                <div class="sermon-overlay-card">
-                  <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+          </section>
+          <section class="sermon-preview-block phone-preview">
+            <h3>手机预览</h3>
+            <div ref="phoneFrame" class="sermon-preview-frame phone">
+              <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
+                <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
+                  <div class="sermon-overlay-card">
+                    <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
+        </div>
       </aside>
     </main>
 
@@ -579,11 +603,13 @@ function annotateSelection() {
               <small>邀请特定账号观看，任何成员都可发起</small>
             </span>
           </label>
-          <label class="sermon-scope-option" :class="{ active: startScope === 'assembly', disabled: !presenterStatus?.canPresent }">
-            <input v-model="startScope" type="radio" value="assembly" :disabled="!presenterStatus?.canPresent" />
+          <label class="sermon-scope-option" :class="{ active: startScope === 'assembly', disabled: presenterStatus !== null && !presenterStatus.canPresent }">
+            <input v-model="startScope" type="radio" value="assembly" :disabled="presenterStatus !== null && !presenterStatus.canPresent" />
             <span>
-              <strong>集会演示</strong>
-              <small>{{ presenterStatus?.canPresent ? "全站成员均可观看" : "需申请讲道授权后可用" }}</small>
+              <strong>全体演示</strong>
+              <small v-if="presenterStatus === null">正在确认账号权限…</small>
+              <small v-else-if="presenterStatus.isAdmin">管理员可直接发起，全站成员均可观看</small>
+              <small v-else>{{ presenterStatus.canPresent ? "全站成员均可观看" : "需申请讲道授权后可用" }}</small>
             </span>
           </label>
         </div>

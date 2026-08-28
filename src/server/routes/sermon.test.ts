@@ -139,7 +139,7 @@ test("GET presenter-status：管理员恒可讲", async () => {
   try {
     const response = await app.inject({ method: "GET", url: "/api/sermon/presenter-status" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { canPresent: true, until: null });
+    assert.deepEqual(response.json(), { canPresent: true, until: null, isAdmin: true });
   } finally {
     await app.close();
   }
@@ -157,15 +157,15 @@ test("GET presenter-status：有效期内/过期/永久", async () => {
 
     applicant.sermonPresenterUntil = new Date(Date.now() - 60_000);
     const expired = await app.inject({ method: "GET", url: "/api/sermon/presenter-status" });
-    assert.deepEqual(expired.json(), { canPresent: false, until: expired.json().until });
+    assert.deepEqual(expired.json(), { canPresent: false, until: expired.json().until, isAdmin: false });
 
     applicant.sermonPresenterUntil = null;
     const never = await app.inject({ method: "GET", url: "/api/sermon/presenter-status" });
-    assert.deepEqual(never.json(), { canPresent: false, until: null });
+    assert.deepEqual(never.json(), { canPresent: false, until: null, isAdmin: false });
 
     applicant.sermonPresenterUntil = SERMON_PERMANENT_UNTIL;
     const permanent = await app.inject({ method: "GET", url: "/api/sermon/presenter-status" });
-    assert.deepEqual(permanent.json(), { canPresent: true, until: null });
+    assert.deepEqual(permanent.json(), { canPresent: true, until: null, isAdmin: false });
   } finally {
     await app.close();
   }

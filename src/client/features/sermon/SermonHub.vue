@@ -164,7 +164,7 @@ onBeforeUnmount(() => {
           <div class="sermon-hub-row-info">
             <strong>{{ entry.summary.presenterName }}</strong>
             <small>
-              {{ entry.summary.scope === "assembly" ? "集会演示" : "小组演示" }}
+              {{ entry.summary.scope === "assembly" ? "全体演示" : "小组演示" }}
               · {{ entry.summary.active ? "进行中" : "未开始展示" }}
             </small>
           </div>

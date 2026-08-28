@@ -263,13 +263,13 @@ test("applyDisplay 更新倍率并夹取/取整；非法与相同值视为无操
   assert.equal(applyDisplay(state, { fontScale: Number.NaN }, ctx()), state, "非有限数值不变更");
 });
 
-test("applyDisplay 按字段合并：字体族、边距与背景", () => {
+test("applyDisplay 按字段合并：字体族、边距、背景与文字颜色", () => {
   const state = emptySermonState();
-  const patched = applyDisplay(state, { fontFamily: "songti", marginPct: 12, background: "sepia" }, ctx());
-  assert.deepEqual(patched.display, { fontFamily: "songti", fontScale: 1, marginPct: 12, background: "sepia" });
+  const patched = applyDisplay(state, { fontFamily: "songti", marginPct: 12, background: "sepia", textColor: "#3f3222" }, ctx());
+  assert.deepEqual(patched.display, { fontFamily: "songti", fontScale: 1, marginPct: 12, background: "sepia", textColor: "#3f3222" });
 
   const merged = applyDisplay(patched, { fontScale: 1.3 }, ctx());
-  assert.deepEqual(merged.display, { fontFamily: "songti", fontScale: 1.3, marginPct: 12, background: "sepia" }, "未提供的字段保持不变");
+  assert.deepEqual(merged.display, { fontFamily: "songti", fontScale: 1.3, marginPct: 12, background: "sepia", textColor: "#3f3222" }, "未提供的字段保持不变");
 
   assert.equal(applyDisplay(state, { marginPct: 1 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MIN, "边距低于下限夹到 2");
   assert.equal(applyDisplay(state, { marginPct: 99 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MAX, "边距高于上限夹到 20");
@@ -282,6 +282,7 @@ test("applyDisplay 非法字体族/背景被忽略，其余字段照常合并", 
   assert.equal(applyDisplay(state, { fontFamily: "serif" as never }, ctx()), state, "非法字体族不变更");
   assert.equal(applyDisplay(state, { background: "red" }, ctx()), state, "非法背景不变更");
   assert.equal(applyDisplay(state, { background: "#fff" }, ctx()), state, "非 6 位 hex 不变更");
+  assert.equal(applyDisplay(state, { textColor: "white" }, ctx()), state, "非法文字颜色不变更");
 
   const partial = applyDisplay(state, { fontFamily: "serif" as never, background: "#123456" }, ctx());
   assert.equal(partial.display.background, "#123456", "同批合法字段仍生效");

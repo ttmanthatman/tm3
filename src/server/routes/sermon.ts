@@ -65,7 +65,8 @@ export function registerSermonRoutes(app: FastifyInstance, deps: SermonRouteDepe
         isAdmin: account.role === "admin",
         sermonPresenterUntil: account.sermonPresenterUntil
       }),
-      until: presenterUntilDto(account.sermonPresenterUntil)
+      until: presenterUntilDto(account.sermonPresenterUntil),
+      isAdmin: account.role === "admin"
     };
     return status;
   });

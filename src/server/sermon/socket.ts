@@ -10,6 +10,7 @@ import {
   SERMON_MARGIN_PCT_MAX,
   SERMON_MARGIN_PCT_MIN,
   SERMON_QUEUE_LIMIT,
+  SERMON_TEXT_COLOR_HEX_RE,
   isValidSermonBackground,
   resolveSermonSlide,
   resolveSermonSlides,
@@ -88,7 +89,8 @@ const displaySchema = z
     fontFamily: z.enum(SERMON_FONT_FAMILIES).optional(),
     fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).optional(),
     marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).optional(),
-    background: z.string().refine(isValidSermonBackground).optional()
+    background: z.string().refine(isValidSermonBackground).optional(),
+    textColor: z.string().regex(SERMON_TEXT_COLOR_HEX_RE).optional()
   })
   .strict()
   .refine((patch) => Object.keys(patch).length > 0);

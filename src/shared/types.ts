@@ -559,8 +559,10 @@ export interface SermonDisplayDTO {
   fontScale: number;
   /** 横向边距占视口宽度的百分比（2–20 整数），默认 4 */
   marginPct: number;
-  /** 背景预设键（gradient/dark/light/sepia/midnight）或 #rrggbb 自定义色 */
+  /** 背景预设键或 #rrggbb 自定义色 */
   background: string;
+  /** 经文与出处文字颜色；旧状态可缺省，由客户端按背景选择兼容色 */
+  textColor?: string;
 }
 
 /** 演示范围：小组（发起人邀请特定账号）或集会（全站可见，需讲道授权） */
@@ -635,6 +637,8 @@ export interface SermonRequestPayloadDTO {
 export interface SermonPresenterStatusDTO {
   canPresent: boolean;
   until: string | null;
+  /** 站点管理员无需申请讲道授权。 */
+  isAdmin: boolean;
 }
 
 export interface BibleChapterVerseFragmentDTO {

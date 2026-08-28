@@ -20,14 +20,17 @@ export const SERMON_FONT_SCALE_MAX = 1.6;
 export const SERMON_MARGIN_PCT_MIN = 2;
 export const SERMON_MARGIN_PCT_MAX = 20;
 export const SERMON_FONT_FAMILIES = ["songti", "pingfang", "heiti", "kaiti"] as const;
-export const SERMON_BACKGROUND_PRESETS = ["gradient", "dark", "light", "sepia", "midnight"] as const;
+export const SERMON_BACKGROUND_PRESETS = ["gradient", "aurora", "sunset", "forest", "dawn", "dark", "light", "sepia", "midnight"] as const;
 export const SERMON_BACKGROUND_HEX_RE = /^#[0-9a-fA-F]{6}$/;
+export const SERMON_TEXT_COLOR_HEX_RE = SERMON_BACKGROUND_HEX_RE;
+export const DEFAULT_SERMON_TEXT_COLOR = "#f8f4e8";
 
 export const DEFAULT_SERMON_DISPLAY: SermonDisplayDTO = {
   fontFamily: "songti",
   fontScale: 1,
   marginPct: 4,
-  background: "gradient"
+  background: "gradient",
+  textColor: DEFAULT_SERMON_TEXT_COLOR
 };
 
 export function isValidSermonBackground(value: string): boolean {
@@ -269,6 +272,10 @@ export function applyDisplay(state: SermonStateDTO, patch: Partial<SermonDisplay
     next.background = patch.background;
     changed = true;
   }
+  if (patch.textColor !== undefined && SERMON_TEXT_COLOR_HEX_RE.test(patch.textColor) && patch.textColor !== next.textColor) {
+    next.textColor = patch.textColor;
+    changed = true;
+  }
   if (!changed) return state;
   return touch({ ...state, display: next }, ctx);
 }
@@ -392,7 +399,8 @@ const displaySchema = z.object({
   fontFamily: z.enum(SERMON_FONT_FAMILIES).catch(DEFAULT_SERMON_DISPLAY.fontFamily),
   fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).default(DEFAULT_SERMON_DISPLAY.fontScale),
   marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).default(DEFAULT_SERMON_DISPLAY.marginPct),
-  background: z.string().refine(isValidSermonBackground).default(DEFAULT_SERMON_DISPLAY.background)
+  background: z.string().refine(isValidSermonBackground).default(DEFAULT_SERMON_DISPLAY.background),
+  textColor: z.string().regex(SERMON_TEXT_COLOR_HEX_RE).default(DEFAULT_SERMON_TEXT_COLOR)
 });
 
 const stateSchema = z.object({
