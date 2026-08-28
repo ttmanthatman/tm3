@@ -1,8 +1,9 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import { markRaw } from "vue";
-import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO } from "@shared/types";
+import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonStateDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
+import { applySermonRequestDecision, applySermonState, resetSermonState } from "./features/sermon/useSermon";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, recordChannelRead, saveUnreadState } from "./unread";
@@ -304,6 +305,7 @@ export const useChatStore = defineStore("chat", {
       this.socket = null;
       this.connectionState = "offline";
       this.account = null;
+      resetSermonState();
       this.likeNotifications = [];
       this.unreadCounts = {};
       this.unreadLastRead = {};
@@ -689,6 +691,9 @@ export const useChatStore = defineStore("chat", {
         this.typing[key] = { displayName: event.actor.displayName, timer };
       });
       socket.on("presence:updated", (users) => (this.online = users));
+      // 讲道经文：服务端全量推送；非激活时 applySermonState 清空本地状态。
+      socket.on("sermon:state", (state: SermonStateDTO) => applySermonState(state));
+      socket.on("sermon:request:decided", (event: { messageId: number; approve: boolean; until: string | null }) => applySermonRequestDecision(event));
       socket.on("pinned:updated", (pinned: PinnedDTO | null) => {
         this.pinned = pinned;
         const ch = this.channels.find((c) => c.id === this.currentChannelId);

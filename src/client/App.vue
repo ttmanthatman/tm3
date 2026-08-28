@@ -187,6 +187,7 @@ import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
 import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
+import { useSermon } from "./features/sermon/useSermon";
 
 const store = useChatStore();
 const {
@@ -211,6 +212,10 @@ const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/A
 const WeChatRelayPanel = defineAsyncComponent(() => import("./features/admin/WeChatRelayPanel.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
 const ReceptionManager = defineAsyncComponent(() => import("./features/reception/ReceptionManager.vue"));
+// 讲道经文相关界面全部独立分包：观众端覆盖层仅在展示激活时挂载，讲道台负一屏仅有权限者打开，申请卡仅在消息列表渲染到时下载。
+const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/SermonOverlay.vue"));
+const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
+const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
@@ -274,6 +279,17 @@ const selectedMusicPlaylistId = ref<number | null>(null);
 const musicManagerOpen = ref(false);
 const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
 const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
+const {
+  sermonState: sermonOverlayState,
+  presenterStatus: sermonPresenterStatus,
+  latestRequestDecision: sermonRequestDecision,
+  refreshPresenterStatus: refreshSermonPresenterStatus
+} = useSermon({ getSocket: () => store.socket });
+const sermonWorkspaceOpen = ref(false);
+// 首次打开后才挂载讲道台 chunk（懒加载），之后保持挂载以保留滑入滑出过渡。
+const sermonWorkspaceMounted = ref(false);
+const sermonDecisionNotice = ref("");
+let sermonDecisionTimer: number | undefined;
 const musicPlayerExpanded = ref(false);
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
@@ -1053,9 +1069,11 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/哎呀", effect: "oops", label: "哎呀", hint: "点一下，文字会随机掉下来", icon: ArrowDown }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
+const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
 type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
+  | { kind: "sermonRequest"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "format"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
@@ -1152,6 +1170,10 @@ function handleGlobalEscape(event: KeyboardEvent) {
   if (event.key !== "Escape") return;
   if (bibleOpen.value) {
     bibleOpen.value = false;
+    return;
+  }
+  if (sermonWorkspaceOpen.value) {
+    sermonWorkspaceOpen.value = false;
     return;
   }
   if (previewMessage.value) {
@@ -1271,7 +1293,7 @@ watch(
         currentChannelId: store.currentChannelId,
         prayerOnly: store.prayerOnly,
         messageType: incoming.type,
-        activeView: !showingFavoriteSurface.value && !bibleOpen.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
+        activeView: !showingFavoriteSurface.value && !bibleOpen.value && !sermonWorkspaceOpen.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
         messageVisible: isNearMessageBottom(220),
         documentVisible: documentVisible.value
       })) triggerOneShotMessageEffects(incoming);
@@ -1283,9 +1305,9 @@ watch(
 );
 
 watch(
-  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, bibleOpen.value] as const,
+  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, bibleOpen.value || sermonWorkspaceOpen.value] as const,
   () => {
-    if (bibleOpen.value) {
+    if (bibleOpen.value || sermonWorkspaceOpen.value) {
       messageEffectObserver?.disconnect();
       stopRainEffect();
       stopDripPhysics(true);
@@ -1408,6 +1430,7 @@ onBeforeUnmount(() => {
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
   if (topNoticeTimer) window.clearInterval(topNoticeTimer);
+  if (sermonDecisionTimer !== undefined) window.clearTimeout(sermonDecisionTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
   if (flashEffectTimer) window.clearInterval(flashEffectTimer);
@@ -2019,6 +2042,7 @@ const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
   return [
     { ...markdownCommand, kind: "format" as const },
     { ...prayerCommand, kind: "prayer" as const },
+    { ...sermonRequestCommand, kind: "sermonRequest" as const },
     ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
   ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
 });
@@ -2268,6 +2292,7 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.kind === "time" || row.kind === "version") return 52;
   if (row.message.type === "image") return estimatedImageTimelineRowHeight(row.message, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
+  if (row.message.type === "sermon_request") return 200;
   if (row.message.type === "chain") return 190;
   if (isAudioMessage(row.message)) return 112;
   if (row.message.type === "file") return 126;
@@ -4189,7 +4214,7 @@ async function startServerUpdate() {
   }
 }
 
-type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer"; contentFormat?: "markdown" };
+type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "sermon_request"; contentFormat?: "markdown" };
 
 function consumeLeadingCommand(value: string, command: string) {
   if (value === command) return "";
@@ -4200,7 +4225,7 @@ function consumeLeadingCommand(value: string, command: string) {
 function parseComposerText(value: string): ComposerParseResult {
   let content = value.trim();
   let effect: MessageEffect | undefined;
-  let type: "text" | "prayer" | undefined;
+  let type: "text" | "prayer" | "sermon_request" | undefined;
   let contentFormat: "markdown" | undefined;
   let consumed = true;
 
@@ -4217,6 +4242,13 @@ function parseComposerText(value: string): ComposerParseResult {
     if (prayerContent !== null) {
       type = "prayer";
       content = prayerContent;
+      consumed = true;
+      continue;
+    }
+    const sermonRequestContent = consumeLeadingCommand(content, sermonRequestCommand.command);
+    if (sermonRequestContent !== null) {
+      type = "sermon_request";
+      content = sermonRequestContent;
       consumed = true;
       continue;
     }
@@ -4363,6 +4395,7 @@ function openBibleWorkspace() {
   if (!bibleOpen.value) saveReadPosition();
   showChannels.value = false;
   showMembers.value = false;
+  sermonWorkspaceOpen.value = false;
   bibleTargetChannelId.value = currentChannel.value?.id || null;
   bibleOpen.value = true;
 }
@@ -4371,7 +4404,8 @@ function closeBibleWorkspace() {
   bibleOpen.value = false;
 }
 
-watch(bibleOpen, async (open) => {
+// 圣经负一屏与讲道台负一屏共用同一套“打开时暂停聊天区动效、关闭时恢复”的生命周期。
+watch(() => bibleOpen.value || sermonWorkspaceOpen.value, async (open) => {
   if (open) {
     if (parallaxFrame) window.cancelAnimationFrame(parallaxFrame);
     parallaxFrame = 0;
@@ -4401,7 +4435,7 @@ function handleBibleReadingChange(activity: { active: boolean; bookName: string 
 }
 
 function handleBibleSwipeStart(event: TouchEvent) {
-  if (bibleOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
+  if (bibleOpen.value || sermonWorkspaceOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
   const touch = event.touches[0];
   const target = event.target as HTMLElement | null;
   if (!touch || touch.clientX <= 20 || target?.closest("button, input, textarea, select, a, video, audio, [contenteditable='true'], [role='button'], [data-no-bible-swipe]")) {
@@ -4459,6 +4493,7 @@ async function sendText() {
   }
   const messagePayload = {
     ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
+    ...(messageType === "sermon_request" ? { note: content } : {}),
     ...(parsed.effect ? { effect: parsed.effect } : {}),
     ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
     ...(musicMention ? { musicTrackId: musicMention.id } : {}),
@@ -4839,7 +4874,31 @@ async function closePendingChannel() {
 function toggleMorePanel() {
   if (isRecording.value) return;
   composerPanel.value = composerPanel.value === "more" ? null : "more";
+  // 讲道台入口显隐依赖权限状态；仅在用户主动打开面板时拉取，不进 bootstrap。
+  if (composerPanel.value === "more") void refreshSermonPresenterStatus().catch(() => undefined);
 }
+
+function openSermonWorkspace() {
+  sermonWorkspaceMounted.value = true;
+  showChannels.value = false;
+  showMembers.value = false;
+  bibleOpen.value = false;
+  sermonWorkspaceOpen.value = true;
+  composerPanel.value = null;
+}
+
+watch(sermonRequestDecision, (event) => {
+  if (!event) return;
+  sermonDecisionNotice.value = event.approve
+    ? `你的讲道权限申请已批准${event.until ? `，有效期至 ${adminDateTime(event.until)}` : "（长期有效）"}`
+    : "你的讲道权限申请未通过";
+  if (event.approve) void refreshSermonPresenterStatus().catch(() => undefined);
+  if (sermonDecisionTimer !== undefined) window.clearTimeout(sermonDecisionTimer);
+  sermonDecisionTimer = window.setTimeout(() => {
+    sermonDecisionNotice.value = "";
+    sermonDecisionTimer = undefined;
+  }, 8000);
+});
 
 async function toggleVoicePanel() {
   if (isRecording.value) {
@@ -9593,7 +9652,7 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="appearanceStyle">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="appearanceStyle">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
@@ -9614,7 +9673,13 @@ async function toggleVirtual(character: any) {
       @reading-change="handleBibleReadingChange"
     />
 
-    <aside v-if="!bibleOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
+    <SermonWorkspace
+      v-if="sermonWorkspaceMounted && sermonPresenterStatus?.canPresent"
+      :open="sermonWorkspaceOpen"
+      @close="sermonWorkspaceOpen = false"
+    />
+
+    <aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
         <button v-if="!store.account?.isGuest" class="icon-btn" @click="showReceptionManager = true" aria-label="会客厅" title="会客厅"><DoorOpen :size="20" /></button>
@@ -9699,7 +9764,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section v-if="!bibleOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
+    <section v-if="!bibleOpen && !sermonWorkspaceOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -10365,6 +10430,9 @@ async function toggleVirtual(character: any) {
                     </div>
                   </div>
                 </template>
+                <template v-else-if="row.message.type === 'sermon_request'">
+                  <SermonRequestCard :message="row.message" />
+                </template>
                 <template v-else-if="pendingUploadFor(row.message)">
                   <div class="upload-card" :class="{ failed: pendingUploadFor(row.message)?.status === 'failed' }" @click.stop>
                     <span class="upload-card-icon">
@@ -10815,11 +10883,15 @@ async function toggleVirtual(character: any) {
             <span><HeartHandshake :size="25" /></span>
             <small>代祷</small>
           </button>
+          <button v-if="sermonPresenterStatus?.canPresent" class="tool-tile" @click="openSermonWorkspace">
+            <span><Monitor :size="25" /></span>
+            <small>讲道台</small>
+          </button>
         </div>
       </footer>
     </section>
 
-    <aside v-if="!bibleOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
+    <aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
@@ -11190,6 +11262,9 @@ async function toggleVirtual(character: any) {
       @refresh-tracks="loadMusicTracks"
       @refresh-playlists="loadMusicPlaylists"
     />
+
+    <SermonOverlay v-if="sermonOverlayState?.active" />
+    <div v-if="sermonDecisionNotice" class="sermon-decision-toast" role="status">{{ sermonDecisionNotice }}</div>
 
     <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image', score: previewPinnedImage?.score }" @click.self="closePreviewMessage">
       <div class="media-preview-modal" :class="{ 'image-preview-modal': previewMessage.type === 'image', 'score-preview-modal': previewPinnedImage?.score }">

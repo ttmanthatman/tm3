@@ -313,9 +313,9 @@ test("avatar and channel images are pinned to their square masks without clippin
 });
 
 test("opening the Bible unmounts every chat pane instead of only hiding it", () => {
-  assert.match(app, /<aside v-if="!bibleOpen" class="channel-pane"/);
-  assert.match(app, /<section v-if="!bibleOpen" ref="chatPane" class="chat-pane"/);
-  assert.match(app, /<aside v-if="!bibleOpen" class="member-pane"/);
+  assert.match(app, /<aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="channel-pane"/);
+  assert.match(app, /<section v-if="!bibleOpen && !sermonWorkspaceOpen" ref="chatPane" class="chat-pane"/);
+  assert.match(app, /<aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="member-pane"/);
 });
 
 test("explicit context jumps win over saved read-position restoration", () => {

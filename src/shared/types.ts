@@ -1,5 +1,5 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "why_topic_card" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -495,6 +495,51 @@ export interface BibleLookupDTO {
   translation: string;
   sourceId: string;
   verses: BibleVerseLineDTO[];
+}
+
+export type SermonAnnotationKind = "highlight" | "underline";
+
+export interface SermonAnnotation {
+  verseIndex: number;
+  kind: SermonAnnotationKind;
+  /** 节内纯文本字符偏移；缺省表示整节 */
+  start?: number;
+  end?: number;
+}
+
+export interface SermonQueueItem {
+  id: string;
+  reference: string;
+  normalizedReference: string;
+  verses: BibleVerseLineDTO[];
+  annotations: SermonAnnotation[];
+}
+
+export interface SermonStateDTO {
+  active: boolean;
+  queue: SermonQueueItem[];
+  currentItemId: string | null;
+  presenterId: string;
+  presenterName: string;
+  /** 观众端与讲道者演示视图共用的字体倍率，默认 1 */
+  fontScale: number;
+  updatedAt: string;
+}
+
+export type SermonRequestStatus = "pending" | "approved" | "rejected";
+
+export interface SermonRequestPayloadDTO {
+  note: string;
+  status: SermonRequestStatus;
+  decidedById?: number | null;
+  decidedByName?: string | null;
+  decidedAt?: string | null;
+  grantedUntil?: string | null;
+}
+
+export interface SermonPresenterStatusDTO {
+  canPresent: boolean;
+  until: string | null;
 }
 
 export interface BibleChapterVerseFragmentDTO {

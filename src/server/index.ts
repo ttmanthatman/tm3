@@ -27,6 +27,9 @@ import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
 import { registerReceptionRoutes } from "./routes/reception.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
+import { registerSermonRoutes } from "./routes/sermon.js";
+import { createSermonStateStore } from "./sermon/state.js";
+import { registerSermonSocket } from "./sermon/socket.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
@@ -128,6 +131,8 @@ if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SE
   throw new Error("JWT_SECRET must be set to at least 32 characters in production");
 }
 const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
+// 登录限流阈值可用环境变量放宽（e2e 多账号并发登录），默认保持 10 次/分钟。
+const AUTH_LOGIN_RATE_LIMIT_MAX = Math.max(1, Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || 10) || 10);
 const WECHAT_RELAY_AGENT_TOKEN = process.env.WECHAT_RELAY_AGENT_TOKEN || "";
 const WECHAT_RELAY_NAS_ACCESS_URL = normalizeWeChatRelayNasAccessUrl(process.env.WECHAT_RELAY_NAS_ACCESS_URL);
 const PUSH_NOTIFICATIONS_ENABLED = envFlagEnabled(process.env.PUSH_NOTIFICATIONS_ENABLED);
@@ -502,7 +507,8 @@ if (DEMO_MODE_AVAILABLE) {
 }
 
 await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
-await app.register(rateLimit, { max: 240, timeWindow: "1 minute" });
+// 全局限流阈值可用环境变量放宽（e2e 短时间内请求密度远超生产），默认保持 240 次/分钟。
+await app.register(rateLimit, { max: Math.max(1, Number(process.env.API_RATE_LIMIT_MAX || 240) || 240), timeWindow: "1 minute" });
 await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
 // JSON APIs and text assets cross a high-latency link; only compressible
 // content types are transformed, so media streams and binaries pass through.
@@ -758,6 +764,16 @@ async function isValidPrayerImageMessage(imageMessageId: number, channelId: numb
   if (!Number.isInteger(imageMessageId) || imageMessageId <= 0) return false;
   const image = await prisma.message.findFirst({ where: { id: imageMessageId, channelId, type: "image" }, select: { id: true } });
   return !!image;
+}
+
+// 讲道权限申请卡：留言裁剪到 500 字，status 恒为 pending，客户端无法伪造审批结果。
+function cleanSermonRequestPayload(input: unknown) {
+  const note = input && typeof input === "object" && !Array.isArray(input) ? (input as { note?: unknown }).note : undefined;
+  return {
+    kind: "sermon_request",
+    status: "pending" as const,
+    note: plainTextFromHtml(typeof note === "string" ? note : "", 500)
+  };
 }
 
 function prayerPayloadRaw(input: unknown) {
@@ -2432,6 +2448,7 @@ function stripPushText(input?: string | null) {
 function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "chain") return `${message.sender.displayName} 发起了接龙：${stripPushText(message.content) || "接龙"}`;
   if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
+  if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
   if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
   if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
   if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
@@ -3142,7 +3159,7 @@ app.get("/backgrounds/:file", async (request, reply) => {
   return reply.send(fs.createReadStream(filePath));
 });
 
-app.post("/api/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
+app.post("/api/auth/login", { config: { rateLimit: { max: AUTH_LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (request, reply) => {
   const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional(), appVersion: z.string().max(32).optional() }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
   const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
@@ -4690,7 +4707,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       channelId: z.number(),
       content: z.string().optional(),
       replyToId: z.number().nullable().optional(),
-      type: z.enum(["text", "chain", "prayer"]).default("text"),
+      type: z.enum(["text", "chain", "prayer", "sermon_request"]).default("text"),
       payload: z.unknown().optional(),
       chainTopic: z.string().optional(),
       chainText: z.string().optional(),
@@ -4749,6 +4766,18 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       content,
       type: "prayer",
       payload,
+      replyToId: body.replyToId || null,
+      pushOrigin
+    });
+    return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
+  }
+  if (body.type === "sermon_request") {
+    const message = await createMessageFromActor({
+      channelId: body.channelId,
+      actorId: auth.actorId,
+      content,
+      type: "sermon_request",
+      payload: cleanSermonRequestPayload(body.payload),
       replyToId: body.replyToId || null,
       pushOrigin
     });
@@ -5063,6 +5092,24 @@ registerUnreadCountsRoutes(app, {
   channelListWhere,
   emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
 });
+
+// 讲道经文展示：内存状态 + Setting 表持久化（key=sermon.presentation），
+// 服务启动时恢复，变更时全量广播 sermon:state。
+const sermonStore = createSermonStateStore({
+  persistence: {
+    load: async () =>
+      (await prisma.setting.findUnique({ where: { key: "sermon.presentation" }, select: { value: true } }))?.value ?? null,
+    save: async (value) => {
+      await prisma.setting.upsert({
+        where: { key: "sermon.presentation" },
+        update: { value },
+        create: { key: "sermon.presentation", value }
+      });
+    }
+  }
+});
+
+registerSermonRoutes(app, { prisma, io, requireAuth, requireAdmin, hydrateMessage });
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
@@ -6283,7 +6330,7 @@ function listStorageFiles(dir: string) {
 }
 
 function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
-  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
+  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
   return stripMarkdownSyntax(raw.replace(/<[^>]*>/g, " ")).slice(0, 120);
 }
 
@@ -7470,6 +7517,20 @@ io.use(async (socket, next) => {
   }
 });
 
+const sermonSocketDeps = {
+  refreshAuth: (socket: Socket) => refreshSocketAuth(socket),
+  presenterAccount: async (accountId: number) => {
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { role: true, displayName: true, sermonPresenterUntil: true }
+    });
+    return account
+      ? { isAdmin: account.role === "admin", displayName: account.displayName, sermonPresenterUntil: account.sermonPresenterUntil }
+      : null;
+  },
+  store: sermonStore
+};
+
 io.on("connection", async (socket: Socket) => {
   const auth = socket.data.auth as AuthContext;
   const pushOrigin = pushOriginFromHeaders(socket.handshake.headers);
@@ -7500,6 +7561,7 @@ io.on("connection", async (socket: Socket) => {
   // new socket instead of broadcasting them to everyone.
   socket.emit("music:listeners", musicListenersSnapshot());
   socket.emit("friend:listeners", friendListenersSnapshot());
+  registerSermonSocket(io, socket, sermonSocketDeps);
 
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
@@ -7519,7 +7581,7 @@ io.on("connection", async (socket: Socket) => {
         .object({
           channelId: z.number(),
           content: z.string(),
-          type: z.enum(["text", "prayer"]).default("text"),
+          type: z.enum(["text", "prayer", "sermon_request"]).default("text"),
           payload: z.unknown().optional(),
           replyToId: z.number().nullable().optional()
         })
@@ -7528,7 +7590,12 @@ io.on("connection", async (socket: Socket) => {
       if (await isMusicChannel(body.channelId)) return ack?.({ success: false, message: "音乐频道只能上传 MP3 和 M4A 文件" });
       const content = cleanText(body.content);
       if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
-      const payload = body.type === "prayer" ? cleanPrayerPayload(body.payload) : await cleanTextMessagePayload(body.payload);
+      const payload =
+        body.type === "prayer"
+          ? cleanPrayerPayload(body.payload)
+          : body.type === "sermon_request"
+            ? cleanSermonRequestPayload(body.payload)
+            : await cleanTextMessagePayload(body.payload);
       const prayerImageMessageId = body.type === "prayer" ? Number((payload as { imageMessageId?: unknown }).imageMessageId || 0) : 0;
       if (prayerImageMessageId && !(await isValidPrayerImageMessage(prayerImageMessageId, body.channelId))) {
         return ack?.({ success: false, message: "附带照片无效" });
@@ -7763,6 +7830,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       startCleanupTimers();
       await ensureBootstrap();
       await ensureWebPush();
+      await sermonStore.load();
     }
     return app;
   } catch (error) {

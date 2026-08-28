@@ -14,6 +14,9 @@ export STORAGE_ROOT="${E2E_STORAGE_ROOT:-$PWD/output/e2e/storage}"
 export CORS_ORIGINS="http://127.0.0.1:4173"
 export PUSH_NOTIFICATIONS_ENABLED=false
 export TRUST_PROXY=false
+# 整套 e2e 在一分钟内登录次数远超生产限流阈值，仅测试环境放宽。
+export AUTH_LOGIN_RATE_LIMIT_MAX=1000
+export API_RATE_LIMIT_MAX=100000
 export PORT=3003
 
 npm run e2e:prepare

@@ -47,6 +47,7 @@ enum MessageType {
   music_playlist
   chain
   prayer
+  sermon_request
   why_topic_card
   system
 }
@@ -94,6 +95,7 @@ model Account {
   theme                   String                          @default("wechat") @db.VarChar(32)
   biblePreferences        Json?                           @map("bible_preferences")
   canPinMessages          Boolean                         @default(false) @map("can_pin_messages")
+  sermonPresenterUntil    DateTime?                       @map("sermon_presenter_until")
   lastLoginAt             DateTime?                       @map("last_login_at")
   createdAt               DateTime                        @default(now()) @map("created_at")
   updatedAt               DateTime                        @updatedAt @map("updated_at")
