@@ -1,5 +1,5 @@
 import { ref, shallowRef, type ShallowRef } from "vue";
-import type { SermonAnnotation, SermonAnnotationKind, SermonPresenterStatusDTO, SermonStateDTO } from "@shared/types";
+import type { SermonAnnotation, SermonAnnotationKind, SermonDisplayDTO, SermonPresenterStatusDTO, SermonStateDTO, SermonTextInput } from "@shared/types";
 import { api } from "../../api";
 
 export type SermonRequestDecisionEvent = {
@@ -113,10 +113,11 @@ export function useSermon(options: {
   }
 
   const add = (references: string[]) => emit("sermon:add", { references });
+  const addTexts = (texts: SermonTextInput[]) => emit("sermon:add-text", { texts });
   const reorder = (order: string[]) => emit("sermon:reorder", { order });
   const remove = (id: string) => emit("sermon:remove", { id });
   const present = (id: string | null) => emit("sermon:present", { id });
-  const setFontScale = (scale: number) => emit("sermon:font-scale", { scale });
+  const setDisplay = (patch: Partial<SermonDisplayDTO>) => emit("sermon:display", patch);
   const annotate = (itemId: string, annotation: SermonAnnotation) => emit("sermon:annotate", { itemId, annotation });
   const clearAnnotations = (itemId: string, verseIndex?: number, kind?: SermonAnnotationKind) =>
     emit("sermon:annotate:clear", { itemId, ...(verseIndex === undefined ? {} : { verseIndex }), ...(kind ? { kind } : {}) });
@@ -134,10 +135,11 @@ export function useSermon(options: {
     pending,
     statusMessage,
     add,
+    addTexts,
     reorder,
     remove,
     present,
-    setFontScale,
+    setDisplay,
     annotate,
     clearAnnotations,
     clearPresentation,

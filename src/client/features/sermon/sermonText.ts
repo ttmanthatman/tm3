@@ -67,3 +67,11 @@ export function splitSermonReferences(input: string): string[] {
   }
   return references;
 }
+
+/** 自由文字条目正文：按空行拆成段落（段内保留单换行），空段落忽略。 */
+export function splitSermonTextParagraphs(content: string): string[] {
+  return content
+    .split(/\n[ \t]*\n+/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+}

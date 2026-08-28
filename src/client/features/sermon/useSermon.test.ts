@@ -17,6 +17,7 @@ function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
     queue: [
       {
         id: "item-1",
+        kind: "bible" as const,
         reference: "约3:16",
         normalizedReference: "约翰福音 3:16",
         verses: [{ book: "约翰福音", chapter: 3, verse: 16, endVerse: 16, reference: "约翰福音 3:16", text: "神爱世人" }],
@@ -26,7 +27,7 @@ function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
     currentItemId,
     presenterId: "7",
     presenterName: "张三",
-    fontScale: 1,
+    display: { fontFamily: "puhuiti", fontScale: 1, marginPct: 4, background: "gradient" },
     updatedAt: "2026-08-27T00:00:00.000Z"
   };
 }
@@ -134,11 +135,18 @@ test("annotate/clearAnnotations 载荷形状符合契约", async () => {
   assert.deepEqual(emissions[2], { event: "sermon:annotate:clear", payload: { itemId: "item-1" } });
 });
 
-test("setFontScale 发送 sermon:font-scale 事件", async () => {
+test("setDisplay 发送 sermon:display 事件", async () => {
   const { sermon, emissions } = createHarness();
-  const result = await sermon.setFontScale(1.2);
+  const result = await sermon.setDisplay({ fontScale: 1.2, background: "midnight" });
   assert.equal(result.ok, true);
-  assert.deepEqual(emissions, [{ event: "sermon:font-scale", payload: { scale: 1.2 } }]);
+  assert.deepEqual(emissions, [{ event: "sermon:display", payload: { fontScale: 1.2, background: "midnight" } }]);
+});
+
+test("addTexts 发送 sermon:add-text 事件", async () => {
+  const { sermon, emissions } = createHarness();
+  const result = await sermon.addTexts([{ title: "大纲", content: "一、引言" }]);
+  assert.equal(result.ok, true);
+  assert.deepEqual(emissions, [{ event: "sermon:add-text", payload: { texts: [{ title: "大纲", content: "一、引言" }] } }]);
 });
 
 test("refreshPresenterStatus 拉取并缓存权限状态", async () => {

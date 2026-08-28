@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
-import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Minus, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
-import type { BibleLookupDTO, SermonAnnotationKind, SermonQueueItem } from "@shared/types";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
+import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonQueueItem } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
+import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
 import { splitSermonReferences, verseHasAnnotation } from "./sermonText";
+import SermonDisplayControls from "./SermonDisplayControls.vue";
 import SermonStage from "./SermonStage.vue";
 import { useSermon, type SermonEmitResult } from "./useSermon";
 
@@ -14,9 +16,6 @@ const emit = defineEmits<{ close: [] }>();
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
 const { sermonState, presenterStatus } = sermon;
-
-const SERMON_FONT_SCALE_MIN = 0.7;
-const SERMON_FONT_SCALE_MAX = 1.6;
 
 type ReferencePreview =
   | { reference: string; status: "loading" }
@@ -29,12 +28,37 @@ const previews = ref<ReferencePreview[]>([]);
 const previewing = ref(false);
 const adding = ref(false);
 const actionError = ref("");
+const addKind = ref<"bible" | "text">("bible");
+const textTitleInput = ref("");
+const textContentInput = ref("");
 
 const queue = computed(() => sermonState.value?.queue || []);
 const currentItemId = computed(() => sermonState.value?.currentItemId || null);
 const currentItem = computed<SermonQueueItem | null>(() => queue.value.find((item) => item.id === currentItemId.value) || null);
 const currentIndex = computed(() => queue.value.findIndex((item) => item.id === currentItemId.value));
-const fontScale = computed(() => sermonState.value?.fontScale ?? 1);
+const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
+
+// 桌面端双预览（投影 1280×720、手机 390×845 基准尺寸）：按容器宽度等比缩放真实舞台。
+const PREVIEW_PROJECTOR_BASE_WIDTH = 1280;
+const PREVIEW_PHONE_BASE_WIDTH = 390;
+const projectorFrame = ref<HTMLElement | null>(null);
+const phoneFrame = ref<HTMLElement | null>(null);
+const projectorScale = ref(0.3);
+const phoneScale = ref(0.3);
+let previewObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  previewObserver = new ResizeObserver(() => {
+    const projectorWidth = projectorFrame.value?.clientWidth ?? 0;
+    if (projectorWidth > 0) projectorScale.value = projectorWidth / PREVIEW_PROJECTOR_BASE_WIDTH;
+    const phoneWidth = phoneFrame.value?.clientWidth ?? 0;
+    if (phoneWidth > 0) phoneScale.value = phoneWidth / PREVIEW_PHONE_BASE_WIDTH;
+  });
+  if (projectorFrame.value) previewObserver.observe(projectorFrame.value);
+  if (phoneFrame.value) previewObserver.observe(phoneFrame.value);
+});
+
+onBeforeUnmount(() => previewObserver?.disconnect());
 
 const presenterUntilText = computed(() => {
   const status = presenterStatus.value;
@@ -122,10 +146,22 @@ function presentRelative(direction: -1 | 1) {
   if (target) void report(sermon.present(target.id));
 }
 
-function adjustFont(direction: -1 | 1) {
-  const next = Math.round((fontScale.value + direction * 0.1) * 10) / 10;
-  if (next < SERMON_FONT_SCALE_MIN - 1e-9 || next > SERMON_FONT_SCALE_MAX + 1e-9) return;
-  void report(sermon.setFontScale(next));
+function updateDisplay(patch: Partial<SermonDisplayDTO>) {
+  void report(sermon.setDisplay(patch));
+}
+
+async function addTextToQueue() {
+  const content = textContentInput.value.trim();
+  if (!content || adding.value) return;
+  adding.value = true;
+  const result = await sermon.addTexts([{ title: textTitleInput.value.trim() || undefined, content }]);
+  adding.value = false;
+  if (!result.ok) {
+    actionError.value = result.message;
+    return;
+  }
+  textTitleInput.value = "";
+  textContentInput.value = "";
 }
 
 async function endPresentation() {
@@ -226,71 +262,135 @@ function annotateSelection() {
       <button class="sermon-topbar-button" type="button" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
     </header>
 
-    <main v-if="view === 'queue'" class="sermon-workspace-body sermon-queue-view">
-      <section class="sermon-block">
-        <h3>添加经文</h3>
-        <textarea
-          v-model="referenceInput"
-          class="sermon-reference-input"
-          rows="2"
-          placeholder="输入经文出处，多个用逗号、分号或换行分隔，如：约3:16，诗篇23"
-        ></textarea>
-        <div class="sermon-block-actions">
-          <button class="mini-btn secondary" type="button" :disabled="previewing || !splitSermonReferences(referenceInput).length" @click="previewReferences">
-            {{ previewing ? "正在查询…" : "预览" }}
-          </button>
-          <button class="primary-btn" type="button" :disabled="adding || !confirmedPreviews.length" @click="addToQueue">
-            <Plus :size="15" />{{ adding ? "正在加入…" : `加入队列${confirmedPreviews.length ? `（${confirmedPreviews.length}）` : ""}` }}
-          </button>
-        </div>
-        <div v-if="previews.length" class="sermon-previews">
-          <div v-for="preview in previews" :key="preview.reference" class="sermon-preview" :class="preview.status">
-            <template v-if="preview.status === 'ok'">
-              <strong>{{ preview.lookup.normalizedReference }}</strong>
-              <small>{{ preview.lookup.verses.length }} 节 · {{ preview.lookup.verses[0]?.text || "" }}</small>
-            </template>
-            <template v-else-if="preview.status === 'error'">
-              <strong>{{ preview.reference }}</strong>
-              <small>{{ preview.message }}</small>
-            </template>
-            <small v-else>正在查询 {{ preview.reference }}…</small>
+    <main class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
+      <div class="sermon-queue-column">
+        <section class="sermon-block">
+          <h3>添加内容</h3>
+          <div class="sermon-font-picker sermon-add-kind" role="group" aria-label="添加类型">
+            <button type="button" :class="{ active: addKind === 'bible' }" :aria-pressed="addKind === 'bible'" @click="addKind = 'bible'">经文</button>
+            <button type="button" :class="{ active: addKind === 'text' }" :aria-pressed="addKind === 'text'" @click="addKind = 'text'">文字</button>
           </div>
-        </div>
-        <p v-if="previewErrors.length" class="sermon-hint">有 {{ previewErrors.length }} 条无法识别，确认加入时只会包含可识别的出处。</p>
-      </section>
+          <template v-if="addKind === 'bible'">
+            <textarea
+              v-model="referenceInput"
+              class="sermon-reference-input"
+              rows="2"
+              placeholder="输入经文出处，多个用逗号、分号或换行分隔，如：约3:16，诗篇23"
+            ></textarea>
+            <div class="sermon-block-actions">
+              <button class="mini-btn secondary" type="button" :disabled="previewing || !splitSermonReferences(referenceInput).length" @click="previewReferences">
+                {{ previewing ? "正在查询…" : "预览" }}
+              </button>
+              <button class="primary-btn" type="button" :disabled="adding || !confirmedPreviews.length" @click="addToQueue">
+                <Plus :size="15" />{{ adding ? "正在加入…" : `加入队列${confirmedPreviews.length ? `（${confirmedPreviews.length}）` : ""}` }}
+              </button>
+            </div>
+            <div v-if="previews.length" class="sermon-previews">
+              <div v-for="preview in previews" :key="preview.reference" class="sermon-preview" :class="preview.status">
+                <template v-if="preview.status === 'ok'">
+                  <strong>{{ preview.lookup.normalizedReference }}</strong>
+                  <small>{{ preview.lookup.verses.length }} 节 · {{ preview.lookup.verses[0]?.text || "" }}</small>
+                </template>
+                <template v-else-if="preview.status === 'error'">
+                  <strong>{{ preview.reference }}</strong>
+                  <small>{{ preview.message }}</small>
+                </template>
+                <small v-else>正在查询 {{ preview.reference }}…</small>
+              </div>
+            </div>
+            <p v-if="previewErrors.length" class="sermon-hint">有 {{ previewErrors.length }} 条无法识别，确认加入时只会包含可识别的出处。</p>
+          </template>
+          <template v-else>
+            <input v-model="textTitleInput" class="sermon-reference-input sermon-text-title-input" type="text" maxlength="100" placeholder="标题（可选）" />
+            <textarea
+              v-model="textContentInput"
+              class="sermon-reference-input"
+              rows="4"
+              maxlength="4000"
+              placeholder="输入文字内容，空行分段，如大纲、引言或引文"
+            ></textarea>
+            <div class="sermon-block-actions">
+              <button class="primary-btn" type="button" :disabled="adding || !textContentInput.trim()" @click="addTextToQueue">
+                <Plus :size="15" />{{ adding ? "正在加入…" : "加入队列" }}
+              </button>
+            </div>
+          </template>
+        </section>
 
-      <section class="sermon-block">
-        <h3>讲道队列<small v-if="queue.length">（{{ queue.length }}）</small></h3>
-        <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文后，点击条目进入演示并推送给所有在线成员。</p>
-        <div v-for="(item, index) in queue" :key="item.id" class="sermon-queue-item" :class="{ current: item.id === currentItemId }">
-          <button class="sermon-queue-main" type="button" @click="enterPresent(item)">
-            <span class="sermon-queue-title">
-              <em v-if="item.id === currentItemId" class="sermon-live">展示中</em>
-              <strong>{{ item.normalizedReference }}</strong>
-            </span>
-            <small>{{ item.verses.length }} 节<template v-if="item.annotations.length"> · {{ item.annotations.length }} 处标注</template></small>
-          </button>
-          <div class="sermon-queue-actions">
-            <button class="mini-icon-btn" type="button" :disabled="index === 0" aria-label="上移" @click="moveItem(item.id, -1)"><ArrowUp :size="15" /></button>
-            <button class="mini-icon-btn" type="button" :disabled="index === queue.length - 1" aria-label="下移" @click="moveItem(item.id, 1)"><ArrowDown :size="15" /></button>
-            <button class="mini-icon-btn" type="button" aria-label="删除" @click="report(sermon.remove(item.id))"><Trash2 :size="15" /></button>
+        <section class="sermon-block">
+          <h3>讲道队列<small v-if="queue.length">（{{ queue.length }}）</small></h3>
+          <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文或文字后，点击条目进入演示并推送给所有在线成员。</p>
+          <div v-for="(item, index) in queue" :key="item.id" class="sermon-queue-item" :class="{ current: item.id === currentItemId }">
+            <button class="sermon-queue-main" type="button" @click="enterPresent(item)">
+              <span class="sermon-queue-title">
+                <em v-if="item.id === currentItemId" class="sermon-live">展示中</em>
+                <strong>{{ item.normalizedReference }}</strong>
+              </span>
+              <small>{{ item.kind === "text" ? "文字" : `${item.verses.length} 节` }}<template v-if="item.annotations.length"> · {{ item.annotations.length }} 处标注</template></small>
+            </button>
+            <div class="sermon-queue-actions">
+              <button class="mini-icon-btn" type="button" :disabled="index === 0" aria-label="上移" @click="moveItem(item.id, -1)"><ArrowUp :size="15" /></button>
+              <button class="mini-icon-btn" type="button" :disabled="index === queue.length - 1" aria-label="下移" @click="moveItem(item.id, 1)"><ArrowDown :size="15" /></button>
+              <button class="mini-icon-btn" type="button" aria-label="删除" @click="report(sermon.remove(item.id))"><Trash2 :size="15" /></button>
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <footer class="sermon-queue-foot">
-        <p v-if="actionError || sermon.statusMessage.value" class="sermon-error" role="alert">{{ actionError || sermon.statusMessage.value }}</p>
-        <button v-if="queue.length" class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">结束展示</button>
-      </footer>
+        <section class="sermon-block sermon-queue-controls">
+          <h3>演示控制</h3>
+          <div class="sermon-present-controls-row">
+            <button class="mini-btn secondary" type="button" :disabled="currentIndex <= 0" @click="presentRelative(-1)"><SkipBack :size="15" />上一条</button>
+            <button class="mini-btn secondary" type="button" :disabled="currentIndex < 0 || currentIndex >= queue.length - 1" @click="presentRelative(1)">下一条<SkipForward :size="15" /></button>
+          </div>
+          <SermonDisplayControls :display="display" @update="updateDisplay" />
+        </section>
+
+        <footer class="sermon-queue-foot">
+          <p v-if="actionError || sermon.statusMessage.value" class="sermon-error" role="alert">{{ actionError || sermon.statusMessage.value }}</p>
+          <button v-if="queue.length" class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">结束展示</button>
+        </footer>
+      </div>
+
+      <aside class="sermon-preview-column">
+        <section class="sermon-preview-block">
+          <h3>投影预览</h3>
+          <div ref="projectorFrame" class="sermon-preview-frame projector">
+            <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
+              <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
+                <div class="sermon-overlay-card">
+                  <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+        <section class="sermon-preview-block">
+          <h3>手机预览</h3>
+          <div ref="phoneFrame" class="sermon-preview-frame phone">
+            <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
+              <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
+                <div class="sermon-overlay-card">
+                  <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </aside>
     </main>
 
-    <main v-else class="sermon-present-view">
-      <div v-if="currentItem" class="sermon-overlay sermon-present-stage" @mouseup="handleSelectionMouseup">
+    <main v-if="view === 'present'" class="sermon-present-view">
+      <div
+        v-if="currentItem"
+        class="sermon-overlay sermon-present-stage"
+        :style="sermonDisplayStyle(display)"
+        v-bind="sermonDisplayAttrs(display)"
+        @mouseup="handleSelectionMouseup"
+      >
         <div class="sermon-overlay-card">
           <SermonStage
             :item="currentItem"
             :presenter-name="sermonState?.presenterName || ''"
-            :font-scale="fontScale"
             @verse-click="handleVerseClick"
           />
         </div>
@@ -322,14 +422,10 @@ function annotateSelection() {
       </div>
 
       <footer class="sermon-present-controls">
+        <SermonDisplayControls :display="display" @update="updateDisplay" />
         <div class="sermon-present-controls-row">
           <button class="mini-btn secondary" type="button" :disabled="currentIndex <= 0" @click="presentRelative(-1)"><SkipBack :size="15" />上一条</button>
           <button class="mini-btn secondary" type="button" :disabled="currentIndex < 0 || currentIndex >= queue.length - 1" @click="presentRelative(1)">下一条<SkipForward :size="15" /></button>
-          <div class="sermon-font-stepper" role="group" :aria-label="`经文字体倍率，当前 ${fontScale.toFixed(1)} 倍`">
-            <button type="button" :disabled="fontScale <= SERMON_FONT_SCALE_MIN" aria-label="减小字体" @click="adjustFont(-1)"><Minus :size="15" /></button>
-            <span aria-live="polite">{{ fontScale.toFixed(1) }}×</span>
-            <button type="button" :disabled="fontScale >= SERMON_FONT_SCALE_MAX" aria-label="增大字体" @click="adjustFont(1)"><Plus :size="15" /></button>
-          </div>
         </div>
         <div class="sermon-present-controls-row">
           <button class="mini-btn secondary" type="button" @click="view = 'queue'">返回演示队列</button>

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { SermonAnnotation } from "../../../shared/types.js";
-import { annotationsForVerse, splitSermonReferences, verseAnnotationSegments, verseHasAnnotation } from "./sermonText.js";
+import { annotationsForVerse, splitSermonReferences, splitSermonTextParagraphs, verseAnnotationSegments, verseHasAnnotation } from "./sermonText.js";
 
 test("无标注时整节为单个无标注片段", () => {
   assert.deepEqual(verseAnnotationSegments("神爱世人", []), [{ text: "神爱世人", kinds: [] }]);
@@ -61,4 +61,10 @@ test("verseHasAnnotation 与 annotationsForVerse 按节与类型过滤", () => {
 test("splitSermonReferences 支持逗号/分号/顿号/换行并去重去空", () => {
   assert.deepEqual(splitSermonReferences("约3:16，诗篇23; 约3:16\n\n  罗8:28 ；"), ["约3:16", "诗篇23", "罗8:28"]);
   assert.deepEqual(splitSermonReferences("  \n "), []);
+});
+
+test("splitSermonTextParagraphs 按空行分段并忽略空段", () => {
+  assert.deepEqual(splitSermonTextParagraphs("第一段\n\n第二段\n\n\n第三段"), ["第一段", "第二段", "第三段"]);
+  assert.deepEqual(splitSermonTextParagraphs("段内\n换行保留"), ["段内\n换行保留"]);
+  assert.deepEqual(splitSermonTextParagraphs(" \n\n "), []);
 });

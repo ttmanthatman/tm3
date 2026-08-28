@@ -139,10 +139,11 @@ test("无权限与认证失败均被拒绝且不广播", async () => {
   const denied = createHarness({ profile: { isAdmin: false, displayName: "甲", sermonPresenterUntil: null } });
   for (const [event, data] of [
     ["sermon:add", { references: ["约3:16"] }],
+    ["sermon:add-text", { texts: [{ content: "大纲" }] }],
     ["sermon:reorder", { order: [] }],
     ["sermon:remove", { id: "id-1" }],
     ["sermon:present", { id: null }],
-    ["sermon:font-scale", { scale: 1.2 }],
+    ["sermon:display", { fontScale: 1.2 }],
     ["sermon:annotate", { itemId: "id-1", annotation: { verseIndex: 0, kind: "highlight" } }],
     ["sermon:annotate:clear", { itemId: "id-1" }],
     ["sermon:clear", {}]
@@ -190,6 +191,29 @@ test("sermon:add 非法 payload 被拒绝", async () => {
   assert.equal(broadcasted.length, 0);
 });
 
+test("sermon:add-text 校验载荷、剔除控制字符、成功后广播并持久化", async () => {
+  const { invoke, store, broadcasted, getSaved } = createHarness();
+
+  assert.equal((await invoke("sermon:add-text", {})).ok, false, "缺 texts 拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [] })).ok, false, "空数组拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "" }] })).ok, false, "空正文拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "   " }] })).ok, false, "纯空白正文拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "a".repeat(4001) }] })).ok, false, "超长正文拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [{ title: "t".repeat(101), content: "正文" }] })).ok, false, "超长标题拒绝");
+  assert.equal((await invoke("sermon:add-text", { texts: [{ content: 42 }] })).ok, false, "非字符串正文拒绝");
+  assert.equal(broadcasted.length, 0);
+
+  const ack = await invoke("sermon:add-text", { texts: [{ title: "大纲\u000B", content: "一、引言\n\n二、正文" }] });
+  assert.equal(ack.ok, true);
+  assert.equal(ack.added, 1);
+  const item = store.getState().queue[0];
+  assert.equal(item.kind, "text");
+  assert.equal(item.title, "大纲", "标题控制字符被剔除并 trim");
+  assert.equal(item.content, "一、引言\n\n二、正文", "正文保留换行");
+  assert.equal(broadcasted.length, 1);
+  assert.ok(getSaved(), "成功后应持久化");
+});
+
 test("队列操作：present / reorder / annotate / annotate:clear / remove / clear", async () => {
   const { invoke, store, broadcasted } = createHarness();
   await invoke("sermon:add", { references: ["约3:16", "诗篇23"] });
@@ -228,24 +252,39 @@ test("队列操作：present / reorder / annotate / annotate:clear / remove / cl
   assert.equal(broadcasted.length, 7);
 });
 
-test("sermon:font-scale 校验范围、持久化并广播", async () => {
+test("sermon:display 校验载荷、合并显示设置、持久化并广播", async () => {
   const { invoke, store, broadcasted, getSaved } = createHarness();
-  assert.equal(store.getState().fontScale, 1);
+  assert.equal(store.getState().display.fontScale, 1);
 
-  assert.equal((await invoke("sermon:font-scale", {})).ok, false, "缺 scale 拒绝");
-  assert.equal((await invoke("sermon:font-scale", { scale: 2 })).ok, false, "超出上限拒绝");
-  assert.equal((await invoke("sermon:font-scale", { scale: 0.5 })).ok, false, "低于下限拒绝");
+  assert.equal((await invoke("sermon:display", {})).ok, false, "空补丁拒绝");
+  assert.equal((await invoke("sermon:display", { fontScale: 2 })).ok, false, "倍率超出上限拒绝");
+  assert.equal((await invoke("sermon:display", { fontScale: 0.5 })).ok, false, "倍率低于下限拒绝");
+  assert.equal((await invoke("sermon:display", { marginPct: 1 })).ok, false, "边距低于下限拒绝");
+  assert.equal((await invoke("sermon:display", { marginPct: 21 })).ok, false, "边距高于上限拒绝");
+  assert.equal((await invoke("sermon:display", { fontFamily: "serif" })).ok, false, "非法字体族拒绝");
+  assert.equal((await invoke("sermon:display", { background: "red" })).ok, false, "非法背景拒绝");
+  assert.equal((await invoke("sermon:display", { background: "#fff" })).ok, false, "非 6 位 hex 拒绝");
+  assert.equal((await invoke("sermon:display", { fontScale: 1.2, zoom: 2 })).ok, false, "未知键拒绝");
   assert.equal(broadcasted.length, 0);
 
-  const ack = await invoke("sermon:font-scale", { scale: 1.2 });
+  const ack = await invoke("sermon:display", { fontScale: 1.2, fontFamily: "songti", marginPct: 8, background: "#123456" });
   assert.equal(ack.ok, true);
-  assert.equal(store.getState().fontScale, 1.2);
+  assert.deepEqual(store.getState().display, { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "#123456" });
   assert.equal(broadcasted.length, 1);
-  assert.equal(broadcasted[0].fontScale, 1.2);
+  assert.equal(broadcasted[0].display.fontScale, 1.2);
   assert.ok(getSaved(), "成功后应持久化");
+
+  const merged = await invoke("sermon:display", { background: "midnight" });
+  assert.equal(merged.ok, true);
+  assert.deepEqual(store.getState().display, { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "midnight" }, "部分补丁合并");
+  assert.equal(broadcasted.length, 2);
 
   const reload = createSermonStateStore({
     persistence: { load: async () => getSaved(), save: async () => undefined }
   });
-  assert.equal((await reload.load()).fontScale, 1.2, "重新加载后保留倍率");
+  assert.deepEqual(
+    (await reload.load()).display,
+    { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "midnight" },
+    "重新加载后保留显示设置"
+  );
 });

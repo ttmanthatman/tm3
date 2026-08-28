@@ -3,7 +3,18 @@ import type { Socket } from "socket.io";
 import type { SermonAnnotation, SermonStateDTO } from "../../shared/types.js";
 import { lookupBibleReference } from "../bible/lookup.js";
 import { canPresentSermon } from "./permissions.js";
-import { SERMON_FONT_SCALE_MAX, SERMON_FONT_SCALE_MIN, SERMON_QUEUE_LIMIT, type SermonActor, type SermonResolvedEntry, type SermonStateStore } from "./state.js";
+import {
+  SERMON_FONT_FAMILIES,
+  SERMON_FONT_SCALE_MAX,
+  SERMON_FONT_SCALE_MIN,
+  SERMON_MARGIN_PCT_MAX,
+  SERMON_MARGIN_PCT_MIN,
+  SERMON_QUEUE_LIMIT,
+  isValidSermonBackground,
+  type SermonActor,
+  type SermonResolvedEntry,
+  type SermonStateStore
+} from "./state.js";
 
 type SermonSocketEmitter = {
   emit(event: string, payload: unknown): unknown;
@@ -30,12 +41,33 @@ type SermonAck = ((payload: unknown) => void) | undefined;
 const addSchema = z.object({
   references: z.array(z.string().trim().min(1).max(200)).min(1).max(20)
 });
+// 自由文字条目：剔除控制字符（保留换行/制表）后再校验长度与非空。
+const stripControlChars = (value: string) => value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+const addTextSchema = z.object({
+  texts: z
+    .array(
+      z.object({
+        title: z.string().transform(stripControlChars).pipe(z.string().trim().max(100)).optional(),
+        content: z.string().transform(stripControlChars).pipe(z.string().trim().min(1).max(4000))
+      })
+    )
+    .min(1)
+    .max(20)
+});
 const reorderSchema = z.object({
   order: z.array(z.string().min(1).max(64)).max(SERMON_QUEUE_LIMIT * 2)
 });
 const removeSchema = z.object({ id: z.string().min(1).max(64) });
 const presentSchema = z.object({ id: z.string().min(1).max(64).nullable() });
-const fontScaleSchema = z.object({ scale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX) });
+const displaySchema = z
+  .object({
+    fontFamily: z.enum(SERMON_FONT_FAMILIES).optional(),
+    fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).optional(),
+    marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).optional(),
+    background: z.string().refine(isValidSermonBackground).optional()
+  })
+  .strict()
+  .refine((patch) => Object.keys(patch).length > 0);
 const annotateSchema = z.object({
   itemId: z.string().min(1).max(64),
   annotation: z.object({
@@ -123,6 +155,17 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     await commit(ack, () => deps.store.add(actor, entries), () => ({ added: entries.length, errors }));
   });
 
+  socket.on("sermon:add-text", async (data: unknown, ack?: SermonAck) => {
+    const actor = await authorizedPresenter(ack);
+    if (!actor) return;
+    const parsed = addTextSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    await commit(ack, () => deps.store.addTexts(actor, parsed.data.texts), () => ({ added: parsed.data.texts.length }));
+  });
+
   socket.on("sermon:reorder", async (data: unknown, ack?: SermonAck) => {
     const actor = await authorizedPresenter(ack);
     if (!actor) return;
@@ -150,15 +193,15 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     await commit(ack, () => deps.store.present(actor, parsed.data.id));
   });
 
-  socket.on("sermon:font-scale", async (data: unknown, ack?: SermonAck) => {
+  socket.on("sermon:display", async (data: unknown, ack?: SermonAck) => {
     const actor = await authorizedPresenter(ack);
     if (!actor) return;
-    const parsed = fontScaleSchema.safeParse(data);
+    const parsed = displaySchema.safeParse(data);
     if (!parsed.success) {
       ack?.({ ok: false, message: "参数无效" });
       return;
     }
-    await commit(ack, () => deps.store.fontScale(actor, parsed.data.scale));
+    await commit(ack, () => deps.store.display(actor, parsed.data));
   });
 
   socket.on("sermon:annotate", async (data: unknown, ack?: SermonAck) => {

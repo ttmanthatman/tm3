@@ -77,9 +77,10 @@ test.afterAll(async ({ request }) => {
   }
 });
 
-test("讲道经文负一屏演示、标注与字体倍率同步（双端）", async ({ browser }) => {
+test("讲道经文负一屏演示、标注与显示设置同步（双端）", async ({ browser }) => {
   test.setTimeout(120_000);
-  const adminContext = await browser.newContext();
+  // 讲道者端先走移动端单栏流程（演示视图含标注交互），桌面双栏布局在后段单独检查。
+  const adminContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const viewerContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const admin = await adminContext.newPage();
   const viewer = await viewerContext.newPage();
@@ -192,9 +193,65 @@ test("讲道经文负一屏演示、标注与字体倍率同步（双端）", as
     await presentView.getByRole("button", { name: "增大字体" }).click();
     await expect(presentView.locator(".sermon-font-stepper")).toContainText("1.2×");
     await expect
-      .poll(() => overlay.locator(".sermon-passage").evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-font-scale")))
+      .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-font-scale")))
       .toBe("1.2");
-    await viewer.screenshot({ path: "output/e2e/sermon/overlay-fontscale-390.png" });
+
+    // 显示设置（字体族/背景/边距）经 sermon:display 同步到观众端舞台根元素。
+    await presentView.getByRole("button", { name: "宋体", exact: true }).click();
+    await expect(overlay).toHaveAttribute("data-sermon-font", "songti");
+    await expect(admin.locator(".sermon-present-stage")).toHaveAttribute("data-sermon-font", "songti");
+    await presentView.getByRole("button", { name: "纯黑", exact: true }).click();
+    await expect(overlay).toHaveAttribute("data-sermon-bg", "midnight");
+    await expect(overlay).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    await presentView.locator('.sermon-margin-slider input[type="range"]').fill("10");
+    await expect
+      .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-margin-pct")))
+      .toBe("10");
+    // 边距机制：卡片内正文容器按卡片宽度的百分比内缩（桌面端卡片封顶后同样生效）。
+    await expect
+      .poll(async () =>
+        overlay.locator(".sermon-overlay-body").evaluate((el) => {
+          const card = el.closest(".sermon-overlay-card");
+          if (!card) return -1;
+          return parseFloat(getComputedStyle(el).paddingLeft) / card.getBoundingClientRect().width;
+        })
+      )
+      .toBeCloseTo(0.1, 1);
+    await viewer.screenshot({ path: "output/e2e/sermon/overlay-display-390.png" });
+
+    // 桌面端（≥1024px）双栏布局：左列队列与演示控制，右列投影/手机双预览实时同步。
+    await admin.setViewportSize({ width: 1440, height: 900 });
+    await expect(presentView).toBeHidden();
+    await expect(workspace.locator(".sermon-queue-column")).toBeVisible();
+    await expect(workspace.locator(".sermon-queue-controls")).toBeVisible();
+    const projectorPreview = workspace.locator(".sermon-preview-stage.projector");
+    const phonePreview = workspace.locator(".sermon-preview-stage.phone");
+    await expect(projectorPreview).toBeVisible();
+    await expect(phonePreview).toBeVisible();
+    await expect(projectorPreview).toContainText("神爱世人");
+    await expect(phonePreview).toContainText("神爱世人");
+    await expect(projectorPreview).toHaveAttribute("data-sermon-font", "songti");
+    await expect(projectorPreview).toHaveAttribute("data-sermon-bg", "midnight");
+    await expect(phonePreview).toHaveAttribute("data-sermon-font", "songti");
+    await admin.screenshot({ path: "output/e2e/sermon/presenter-desktop-1440.png" });
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await expect(presentView).toBeVisible();
+
+    // 自由文字条目：不解析经文，直接入队并推送给观众。
+    await presentView.getByRole("button", { name: "返回演示队列", exact: true }).click();
+    await workspace.locator(".sermon-add-kind").getByRole("button", { name: "文字", exact: true }).click();
+    await workspace.locator(".sermon-text-title-input").fill("证道大纲");
+    await workspace.locator('.sermon-block textarea[placeholder*="空行分段"]').fill("一、神的爱\n\n二、人的回应");
+    await workspace.locator(".sermon-block").getByRole("button", { name: "加入队列", exact: true }).click();
+    await expect(workspace.locator(".sermon-queue-item")).toHaveCount(3);
+    const textItem = workspace.locator(".sermon-queue-item").filter({ hasText: "证道大纲" });
+    await expect(textItem).toContainText("文字");
+    await textItem.locator(".sermon-queue-main").click();
+    await expect(overlay.locator(".sermon-overlay-badge")).toHaveText("证道大纲");
+    await expect(overlay.locator(".sermon-text-title")).toHaveText("证道大纲");
+    await expect(overlay).toContainText("一、神的爱");
+    await expect(overlay).toContainText("二、人的回应");
+    await viewer.screenshot({ path: "output/e2e/sermon/overlay-text-390.png" });
 
     // 移动端 390px：演示视图控制栏全宽不溢出。
     await admin.setViewportSize({ width: 390, height: 844 });

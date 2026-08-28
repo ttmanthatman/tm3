@@ -507,12 +507,39 @@ export interface SermonAnnotation {
   end?: number;
 }
 
+export type SermonQueueItemKind = "bible" | "text";
+
+/** 讲道台添加自由文字条目的输入（标题可选，正文非空） */
+export interface SermonTextInput {
+  title?: string;
+  content: string;
+}
+
 export interface SermonQueueItem {
   id: string;
+  /** 条目类型：经文或自由文字；旧持久化数据缺省按 bible 迁移 */
+  kind: SermonQueueItemKind;
   reference: string;
   normalizedReference: string;
   verses: BibleVerseLineDTO[];
   annotations: SermonAnnotation[];
+  /** 文字条目标题（可选，仅 kind = "text"） */
+  title?: string;
+  /** 文字条目正文（仅 kind = "text"，空行分段） */
+  content?: string;
+}
+
+/** 讲道演示字体族：阿里巴巴普惠体 / 宋体 / 系统黑体 */
+export type SermonFontFamily = "puhuiti" | "songti" | "system";
+
+export interface SermonDisplayDTO {
+  fontFamily: SermonFontFamily;
+  /** 观众端与讲道者演示视图共用的字体倍率（0.7–1.6），默认 1 */
+  fontScale: number;
+  /** 横向边距占视口宽度的百分比（2–20 整数），默认 4 */
+  marginPct: number;
+  /** 背景预设键（gradient/dark/light/sepia/midnight）或 #rrggbb 自定义色 */
+  background: string;
 }
 
 export interface SermonStateDTO {
@@ -521,8 +548,8 @@ export interface SermonStateDTO {
   currentItemId: string | null;
   presenterId: string;
   presenterName: string;
-  /** 观众端与讲道者演示视图共用的字体倍率，默认 1 */
-  fontScale: number;
+  /** 全端同步的展示排版设置 */
+  display: SermonDisplayDTO;
   updatedAt: string;
 }
 
