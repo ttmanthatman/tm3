@@ -28,7 +28,7 @@ import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
 import { registerReceptionRoutes } from "./routes/reception.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
 import { registerSermonRoutes } from "./routes/sermon.js";
-import { createSermonStateStore } from "./sermon/state.js";
+import { createSermonPresentationService } from "./sermon/presentations.js";
 import { registerSermonSocket } from "./sermon/socket.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
@@ -5096,23 +5096,45 @@ registerUnreadCountsRoutes(app, {
   emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
 });
 
-// 讲道经文展示：内存状态 + Setting 表持久化（key=sermon.presentation），
-// 服务启动时恢复，变更时全量广播 sermon:state。
-const sermonStore = createSermonStateStore({
-  persistence: {
-    load: async () =>
-      (await prisma.setting.findUnique({ where: { key: "sermon.presentation" }, select: { value: true } }))?.value ?? null,
-    save: async (value) => {
-      await prisma.setting.upsert({
-        where: { key: "sermon.presentation" },
-        update: { value },
-        create: { key: "sermon.presentation", value }
-      });
-    }
-  }
+// 讲道演示（二期）：按讲道者并发的多演示服务，状态按 sermon.presentation.{accountId} 键持久化到
+// Setting 表；一期全局行 sermon.presentation 启动时迁移；变更经 sermon:{presenterAccountId} 房间定向广播。
+const loadSermonPresenterAccount = async (accountId: number) => {
+  const account = await prisma.account.findUnique({
+    where: { id: accountId },
+    select: { role: true, displayName: true, sermonPresenterUntil: true }
+  });
+  return account
+    ? { isAdmin: account.role === "admin", displayName: account.displayName, sermonPresenterUntil: account.sermonPresenterUntil }
+    : null;
+};
+
+const sermonService = createSermonPresentationService({
+  loadSetting: async (key) =>
+    (await prisma.setting.findUnique({ where: { key }, select: { value: true } }))?.value ?? null,
+  saveSetting: async (key, value) => {
+    await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
+  },
+  deleteSetting: async (key) => {
+    await prisma.setting.deleteMany({ where: { key } });
+  },
+  listSettingKeys: async (prefix) =>
+    (await prisma.setting.findMany({ where: { key: { startsWith: prefix } }, select: { key: true } })).map((row) => row.key),
+  presenterAccount: loadSermonPresenterAccount,
+  accountExists: async (accountId) =>
+    (await prisma.account.findUnique({ where: { id: accountId }, select: { id: true } })) !== null
 });
 
-registerSermonRoutes(app, { prisma, io, requireAuth, requireAdmin, hydrateMessage });
+registerSermonRoutes(app, {
+  prisma,
+  io,
+  requireAuth,
+  requireAdmin,
+  hydrateMessage,
+  service: sermonService,
+  listWatchAccounts: () =>
+    prisma.account.findMany({ select: { id: true, displayName: true, avatarPath: true, isGuest: true } }),
+  isOnline: (accountId) => (accountSocketIds.get(accountId)?.size ?? 0) > 0
+});
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
@@ -7517,16 +7539,11 @@ io.use(async (socket, next) => {
 
 const sermonSocketDeps = {
   refreshAuth: (socket: Socket) => refreshSocketAuth(socket),
-  presenterAccount: async (accountId: number) => {
-    const account = await prisma.account.findUnique({
-      where: { id: accountId },
-      select: { role: true, displayName: true, sermonPresenterUntil: true }
-    });
-    return account
-      ? { isAdmin: account.role === "admin", displayName: account.displayName, sermonPresenterUntil: account.sermonPresenterUntil }
-      : null;
-  },
-  store: sermonStore
+  presenterAccount: loadSermonPresenterAccount,
+  service: sermonService,
+  socketsLeave: (accountId: number, room: string) => {
+    io.in(`acct:${accountId}`).socketsLeave(room);
+  }
 };
 
 io.on("connection", async (socket: Socket) => {
@@ -7755,6 +7772,11 @@ io.on("connection", async (socket: Socket) => {
         durationMs: joinedAt ? Math.max(0, leftAt.getTime() - joinedAt.getTime()) : undefined
       });
     }
+    if (isOffline) {
+      // 观众关系易失：最后一个 socket 断开即释放席位（主持人的演示不结束）。
+      const released = sermonService.releaseSeats(account.id);
+      if (released !== null) io.emit("sermon:directory", sermonService.directory());
+    }
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
     if (bibleReaderChanged) broadcastBibleReaders();
@@ -7828,7 +7850,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       startCleanupTimers();
       await ensureBootstrap();
       await ensureWebPush();
-      await sermonStore.load();
+      await sermonService.migrateLegacy();
+      await sermonService.restoreAll();
     }
     return app;
   } catch (error) {

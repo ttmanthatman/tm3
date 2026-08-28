@@ -563,15 +563,62 @@ export interface SermonDisplayDTO {
   background: string;
 }
 
+/** 演示范围：小组（发起人邀请特定账号）或集会（全站可见，需讲道授权） */
+export type SermonPresentationScope = "group" | "assembly";
+
 export interface SermonStateDTO {
   active: boolean;
   queue: SermonQueueItem[];
   currentItemId: string | null;
+  /** 讲道者账号 ID 的字符串形式；讲道者本人即演示的属主 */
   presenterId: string;
   presenterName: string;
+  /** 演示范围（二期起；旧持久化数据迁移时按集会处理） */
+  scope: SermonPresentationScope;
   /** 全端同步的展示排版设置 */
   display: SermonDisplayDTO;
   updatedAt: string;
+}
+
+/** 演示目录条目：供观众端发现可观看的进行中演示 */
+export interface SermonPresentationSummaryDTO {
+  presenterId: number;
+  presenterName: string;
+  scope: SermonPresentationScope;
+  active: boolean;
+  audienceCount: number;
+  /** 小组演示的受邀账号（集会演示为空数组） */
+  invitedAccountIds: number[];
+}
+
+/** 邀请事件（定向推给受邀账号） */
+export interface SermonInvitedEvent {
+  presenterId: number;
+  presenterName: string;
+  scope: SermonPresentationScope;
+}
+
+/** 被主持人移出演示（定向推给被移出账号） */
+export interface SermonRemovedEvent {
+  presenterId: number;
+  presenterName: string;
+}
+
+/** 演示结束通知（推给曾在场的账号） */
+export interface SermonEndedEvent {
+  presenterId: number;
+  presenterName: string;
+}
+
+/** 主持人观众选择器中的账号条目 */
+export interface SermonWatchAccountDTO {
+  id: number;
+  displayName: string;
+  avatarPath: string | null;
+  /** 当前是否有在线连接 */
+  online: boolean;
+  /** 已入座的演示讲道者账号；null 表示未观看任何演示 */
+  seatedPresentation: number | null;
 }
 
 export type SermonRequestStatus = "pending" | "approved" | "rejected";

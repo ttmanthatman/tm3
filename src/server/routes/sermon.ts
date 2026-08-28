@@ -5,13 +5,15 @@ import { z } from "zod";
 import type {
   MessageDTO,
   SermonPresenterStatusDTO,
-  SermonRequestPayloadDTO
+  SermonRequestPayloadDTO,
+  SermonWatchAccountDTO
 } from "../../shared/types.js";
 import {
   canPresentSermon,
   isPermanentSermonUntil,
   sermonUntilForDuration
 } from "../sermon/permissions.js";
+import type { SermonPresentationService } from "../sermon/presentations.js";
 
 type SermonSocketEmitter = {
   to(room: string): { emit(event: string, payload: unknown): unknown };
@@ -23,6 +25,10 @@ export type SermonRouteDependencies = {
   requireAuth: preHandlerHookHandler;
   requireAdmin: preHandlerHookHandler;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
+  service: SermonPresentationService;
+  /** 观众选择器候选：全部注册账号（路由侧过滤访客）。 */
+  listWatchAccounts(): Promise<Array<{ id: number; displayName: string; avatarPath: string | null; isGuest: boolean }>>;
+  isOnline(accountId: number): boolean;
 };
 
 type SermonRouteAuth = {
@@ -62,6 +68,31 @@ export function registerSermonRoutes(app: FastifyInstance, deps: SermonRouteDepe
       until: presenterUntilDto(account.sermonPresenterUntil)
     };
     return status;
+  });
+
+  app.get("/api/sermon/directory", { preHandler: deps.requireAuth }, async () => deps.service.directory());
+
+  app.get("/api/sermon/accounts", { preHandler: deps.requireAuth }, async (request, reply) => {
+    const auth = (request as SermonAuthedRequest).auth;
+    const account = await deps.prisma.account.findUnique({
+      where: { id: auth.accountId },
+      select: { role: true, sermonPresenterUntil: true }
+    });
+    if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
+    if (!canPresentSermon({ isAdmin: account.role === "admin", sermonPresenterUntil: account.sermonPresenterUntil })) {
+      return reply.code(403).send({ success: false, message: "无讲道权限" });
+    }
+    const rows = await deps.listWatchAccounts();
+    const accounts: SermonWatchAccountDTO[] = rows
+      .filter((row) => !row.isGuest)
+      .map((row) => ({
+        id: row.id,
+        displayName: row.displayName,
+        avatarPath: row.avatarPath,
+        online: deps.isOnline(row.id),
+        seatedPresentation: deps.service.seatOf(row.id)
+      }));
+    return accounts;
   });
 
   app.post(

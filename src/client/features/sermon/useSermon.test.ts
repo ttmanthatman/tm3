@@ -1,15 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { SermonPresenterStatusDTO, SermonStateDTO } from "../../../shared/types.js";
+import type {
+  SermonPresentationSummaryDTO,
+  SermonPresenterStatusDTO,
+  SermonStateDTO,
+  SermonWatchAccountDTO
+} from "../../../shared/types.js";
 import {
+  applySermonDirectory,
+  applySermonEnded,
+  applySermonInvited,
+  applySermonRemoved,
   applySermonRequestDecision,
   applySermonState,
   createSermonState,
+  isSermonPresenterMuted,
+  loadSermonMutedIds,
+  muteSermonPresenter,
+  refreshSermonDirectory,
+  releaseSermonAudienceSeat,
   resetSermonState,
+  setSermonOwnAccountId,
   useSermon,
   type SermonAck,
+  type SermonSharedState,
   type SermonSocket
 } from "./useSermon.js";
+
+// Node 测试环境没有 localStorage；静音持久化用最小内存桩验证。
+const localStorageStore = new Map<string, string>();
+Object.defineProperty(globalThis, "localStorage", {
+  value: {
+    getItem: (key: string) => (localStorageStore.has(key) ? localStorageStore.get(key)! : null),
+    setItem: (key: string, value: string) => void localStorageStore.set(key, String(value)),
+    removeItem: (key: string) => void localStorageStore.delete(key),
+    clear: () => localStorageStore.clear()
+  },
+  configurable: true
+});
 
 function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
   return {
@@ -27,8 +55,21 @@ function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
     currentItemId,
     presenterId: "7",
     presenterName: "张三",
+    scope: "group" as const,
     display: { fontFamily: "songti", fontScale: 1, marginPct: 4, background: "gradient" },
     updatedAt: "2026-08-27T00:00:00.000Z"
+  };
+}
+
+function summary(presenterId: number, overrides: Partial<SermonPresentationSummaryDTO> = {}): SermonPresentationSummaryDTO {
+  return {
+    presenterId,
+    presenterName: `讲道者${presenterId}`,
+    scope: "group",
+    active: true,
+    audienceCount: 0,
+    invitedAccountIds: [],
+    ...overrides
   };
 }
 
@@ -38,8 +79,7 @@ type FakeSocketOptions = {
   ackError?: Error | null;
 };
 
-function createHarness(options: FakeSocketOptions = {}) {
-  const shared = createSermonState();
+function createHarness(options: FakeSocketOptions & { state?: SermonSharedState } = {}) {
   const emissions: Array<{ event: string; payload: unknown }> = [];
   const socket: SermonSocket = {
     connected: options.connected ?? true,
@@ -55,27 +95,232 @@ function createHarness(options: FakeSocketOptions = {}) {
   const requests: string[] = [];
   const sermon = useSermon({
     getSocket: () => socket,
-    state: shared,
+    // 默认操作模块级单例，便于与 apply* 订阅入口互相验证；需要隔离时传 state。
+    ...(options.state ? { state: options.state } : {}),
     request: async <T>(path: string) => {
       requests.push(path);
+      if (path === "/api/sermon/accounts") {
+        return [
+          { id: 2, displayName: "李四", avatarPath: null, online: true, seatedPresentation: 7 }
+        ] as T;
+      }
+      if (path === "/api/sermon/directory") {
+        return [summary(9)] as T;
+      }
       return { canPresent: true, until: "2026-09-01T00:00:00.000Z" } as T;
     }
   });
-  return { sermon, shared, socket, emissions, requests };
+  return { sermon, socket, emissions, requests };
 }
 
-test("applySermonState：全量保留服务端状态，激活与否由 active 字段表达", () => {
+/** 读取模块级共享状态的便捷视图（不传 state 时 useSermon 使用模块单例）。 */
+function sharedView() {
+  return useSermon({ getSocket: () => null });
+}
+
+test("applySermonState 仅应用本人主持或已入座的演示", () => {
+  setSermonOwnAccountId(7);
   applySermonState(activeState());
-  const view = useSermon({ getSocket: () => null });
+  const view = sharedView();
   assert.equal(view.sermonState.value?.currentItemId, "item-1");
+  // 他人演示的推送：未入座时忽略。
+  applySermonState({ ...activeState(), presenterId: "9", presenterName: "李四" });
+  assert.equal(view.sermonState.value?.presenterId, "7", "他人演示的推送不应覆盖本地状态");
+  // 激活状态由 active 字段表达，未激活仍保留队列。
   applySermonState({ ...activeState(null), active: false });
-  assert.equal(view.sermonState.value?.active, false, "未激活时仍保留队列，否则讲道台看不到待展示条目");
+  assert.equal(view.sermonState.value?.active, false);
   assert.equal(view.sermonState.value?.queue.length, 1);
+  resetSermonState();
+  setSermonOwnAccountId(null);
+});
+
+/** 可控制 ack 的共享状态操作器（默认操作模块级单例）。 */
+function createOperator(ack: SermonAck = { ok: true }) {
+  return useSermon({
+    getSocket: () => ({
+      connected: true,
+      timeout() {
+        return this;
+      },
+      emit(_event: string, _payload: unknown, cb: (error: Error | null, response?: SermonAck) => void) {
+        cb(null, ack);
+      }
+    })
+  });
+}
+
+test("applySermonState 在入座后应用所坐演示的推送", async () => {
+  const view = sharedView();
+  const operator = createOperator();
+  const result = await operator.join(9);
+  assert.equal(result.ok, true);
+  assert.equal(view.joinedPresentationId.value, 9);
+  applySermonState({ ...activeState(), presenterId: "9", presenterName: "李四" });
+  assert.equal(view.sermonState.value?.presenterId, "9", "入座后应应用所坐演示的推送");
+  applySermonState({ ...activeState(), presenterId: "7", presenterName: "张三" });
+  assert.equal(view.sermonState.value?.presenterId, "9", "未入座的他人演示推送仍被忽略");
+  await operator.leave();
+  resetSermonState();
+});
+
+test("applySermonDirectory 全量替换目录并 prune 失效邀请", () => {
+  applySermonInvited({ presenterId: 3, presenterName: "王五", scope: "group" });
+  applySermonInvited({ presenterId: 4, presenterName: "赵六", scope: "assembly" });
+  applySermonDirectory([summary(3)]);
+  const view = sharedView();
+  assert.deepEqual(view.directory.value.map((entry) => entry.presenterId), [3]);
+  assert.deepEqual(view.invites.value.map((invite) => invite.presenterId), [3], "目录中不存在的演示其邀请应被 prune");
+  applySermonDirectory(null);
+  assert.deepEqual(view.directory.value, []);
+  assert.deepEqual(view.invites.value, [], "目录清空时邀请全部失效");
+  resetSermonState();
+});
+
+test("applySermonInvited 按讲道者去重叠加", () => {
+  applySermonInvited({ presenterId: 3, presenterName: "王五", scope: "group" });
+  applySermonInvited({ presenterId: 4, presenterName: "赵六", scope: "assembly" });
+  applySermonInvited({ presenterId: 3, presenterName: "王五", scope: "assembly" });
+  const view = sharedView();
+  assert.deepEqual(
+    [...view.invites.value.map((invite) => `${invite.presenterId}:${invite.scope}`)].sort(),
+    ["3:assembly", "4:assembly"],
+    "同一讲道者的重复邀请应替换而非叠加"
+  );
+  resetSermonState();
+});
+
+test("applySermonRemoved 释放匹配席位、清除邀请并给出轻提示", async () => {
+  const operator = createOperator();
+  await operator.join(9);
+  applySermonState({ ...activeState(), presenterId: "9", presenterName: "李四" });
+  applySermonInvited({ presenterId: 9, presenterName: "李四", scope: "group" });
+  applySermonRemoved({ presenterId: 9, presenterName: "李四" });
+  const view = sharedView();
+  assert.equal(view.joinedPresentationId.value, null, "被移出应释放入座");
+  assert.equal(view.sermonState.value, null, "被移出应清空本地演示状态");
+  assert.deepEqual(view.invites.value, []);
+  assert.deepEqual(view.notice.value, { kind: "removed", presenterName: "李四" });
+  // 不匹配当前入座的移除事件只影响提示与邀请。
+  applySermonRemoved({ presenterId: 5, presenterName: "钱七" });
+  assert.equal(view.notice.value?.presenterName, "钱七");
+  resetSermonState();
+});
+
+test("applySermonEnded 释放席位并给出轻提示", async () => {
+  const operator = createOperator();
+  await operator.join(9);
+  applySermonEnded({ presenterId: 9, presenterName: "李四" });
+  const view = sharedView();
+  assert.equal(view.joinedPresentationId.value, null);
+  assert.deepEqual(view.notice.value, { kind: "ended", presenterName: "李四" });
+  resetSermonState();
+});
+
+test("断线时 releaseSermonAudienceSeat 仅释放非本人主持的入座", async () => {
+  setSermonOwnAccountId(7);
+  const operator = createOperator();
+  await operator.join(9);
+  releaseSermonAudienceSeat();
+  const view = sharedView();
+  assert.equal(view.joinedPresentationId.value, null, "观众断线应释放入座");
+  await operator.start("group");
+  assert.equal(view.joinedPresentationId.value, 7, "start 成功后将本人标记为入座自己的演示");
+  releaseSermonAudienceSeat();
+  assert.equal(view.joinedPresentationId.value, 7, "主持人断线演示继续，不释放自己的演示");
+  resetSermonState();
+  setSermonOwnAccountId(null);
+});
+
+test("join 成功入座并移除对应邀请；seated-elsewhere 时回滚并透出 code", async () => {
+  applySermonInvited({ presenterId: 9, presenterName: "李四", scope: "group" });
+  const reject = createHarness({ ack: { ok: false, message: "你正在观看其他演示", code: "seated-elsewhere" } });
+  const rejected = await reject.sermon.join(9);
+  assert.equal(rejected.ok, false);
+  if (!rejected.ok) {
+    assert.equal(rejected.reason, "rejected");
+    assert.equal(rejected.code, "seated-elsewhere");
+    assert.equal(rejected.message, "你正在观看其他演示");
+  }
+  assert.equal(sharedView().joinedPresentationId.value, null, "拒绝后应回滚乐观入座");
+  const ok = createHarness();
+  const joined = await ok.sermon.join(9);
+  assert.equal(joined.ok, true);
+  assert.equal(sharedView().joinedPresentationId.value, 9);
+  assert.deepEqual(ok.emissions, [{ event: "sermon:join", payload: { presenterId: 9 } }]);
+  assert.deepEqual(sharedView().invites.value, [], "加入后对应邀请应被清除");
+  resetSermonState();
+});
+
+test("start/leave/invite/removeViewer/end 事件载荷符合契约", async () => {
+  setSermonOwnAccountId(7);
+  const { sermon, emissions } = createHarness();
+  const started = await sermon.start("group", [2, 3]);
+  assert.equal(started.ok, true);
+  assert.equal(sharedView().joinedPresentationId.value, 7, "start 成功后将本人标记为入座自己的演示");
+  await sermon.invite([4, 5]);
+  await sermon.removeViewer(2);
+  await sermon.end();
+  assert.deepEqual(emissions, [
+    { event: "sermon:start", payload: { scope: "group", invitedAccountIds: [2, 3] } },
+    { event: "sermon:invite", payload: { accountIds: [4, 5] } },
+    { event: "sermon:remove-viewer", payload: { accountId: 2 } },
+    { event: "sermon:end", payload: {} }
+  ]);
+  const left = await sermon.leave();
+  assert.equal(left.ok, true);
+  assert.equal(sharedView().joinedPresentationId.value, null, "leave 成功后释放入座");
+  assert.deepEqual(emissions[4], { event: "sermon:leave", payload: {} });
+  // 管理员强制结束他人演示。
+  await sermon.end(9);
+  assert.deepEqual(emissions[5], { event: "sermon:end", payload: { presenterId: 9 } });
+  resetSermonState();
+  setSermonOwnAccountId(null);
+});
+
+test("start 被拒绝时回滚乐观入座", async () => {
+  setSermonOwnAccountId(7);
+  const { sermon } = createHarness({ ack: { ok: false, message: "请先开始演示" } });
+  const result = await sermon.start("assembly");
+  assert.equal(result.ok, false);
+  assert.equal(sharedView().joinedPresentationId.value, null);
+  resetSermonState();
+  setSermonOwnAccountId(null);
+});
+
+test("静音集合按账号持久化到 localStorage", () => {
+  localStorageStore.clear();
+  assert.equal(isSermonPresenterMuted(42, 3), false);
+  muteSermonPresenter(42, 3);
+  muteSermonPresenter(42, 3);
+  assert.equal(isSermonPresenterMuted(42, 3), true);
+  assert.deepEqual(loadSermonMutedIds(42), new Set([3]));
+  assert.equal(localStorageStore.get("team-chat-sermon-muted:42"), "[3]", "静音集合应写入按账号命名空间的键");
+  assert.equal(isSermonPresenterMuted(43, 3), false, "其他账号的静音集合互不影响");
+  resetSermonState();
+});
+
+test("refreshSermonDirectory 走 HTTP 并应用目录", async () => {
+  const requests: string[] = [];
+  await refreshSermonDirectory(async <T>(path: string) => {
+    requests.push(path);
+    return [summary(9)] as T;
+  });
+  assert.deepEqual(requests, ["/api/sermon/directory"]);
+  assert.deepEqual(sharedView().directory.value.map((entry) => entry.presenterId), [9]);
+  resetSermonState();
+});
+
+test("refreshWatchAccounts 拉取观众选择器数据", async () => {
+  const { sermon, requests } = createHarness();
+  const accounts = await sermon.refreshWatchAccounts();
+  assert.deepEqual(requests, ["/api/sermon/accounts"]);
+  assert.equal((accounts as SermonWatchAccountDTO[])[0].seatedPresentation, 7);
+  assert.equal(sharedView().watchAccounts.value.length, 1);
   resetSermonState();
 });
 
 test("applySermonRequestDecision 记录最近一次审批结果", () => {
-  const view = useSermon({ getSocket: () => null });
+  const view = sharedView();
   applySermonRequestDecision({ messageId: 12, approve: true, until: "2026-09-03T00:00:00.000Z" });
   assert.deepEqual(view.latestRequestDecision.value, { messageId: 12, approve: true, until: "2026-09-03T00:00:00.000Z" });
   applySermonRequestDecision({ messageId: Number.NaN, approve: false, until: null });

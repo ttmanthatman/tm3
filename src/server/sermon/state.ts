@@ -8,6 +8,7 @@ import type {
   SermonDisplayDTO,
   SermonQueueItem,
   SermonSlideBlock,
+  SermonPresentationScope,
   SermonSlideInput,
   SermonStateDTO,
   SermonTextInput
@@ -69,6 +70,8 @@ export function emptySermonState(now = new Date().toISOString()): SermonStateDTO
     currentItemId: null,
     presenterId: "",
     presenterName: "",
+    // 新演示默认小组范围；持久化数据缺该字段时按集会迁移（见 stateSchema）。
+    scope: "group",
     display: { ...DEFAULT_SERMON_DISPLAY },
     updatedAt: now
   };
@@ -321,6 +324,12 @@ export function applyClear(state: SermonStateDTO, ctx: SermonMutationContext): S
   return touch({ ...state, active: false, queue: [], currentItemId: null }, ctx);
 }
 
+// 二期：演示范围在发起时确定并持久化；同时写入讲道者信息。
+export function applySetScope(state: SermonStateDTO, scope: SermonPresentationScope, ctx: SermonMutationContext): SermonStateDTO {
+  if (state.scope === scope) return touch(state, ctx);
+  return touch({ ...state, scope }, ctx);
+}
+
 const verseSchema = z.object({
   book: z.string(),
   chapter: z.number().int(),
@@ -392,6 +401,8 @@ const stateSchema = z.object({
   currentItemId: z.string().nullable(),
   presenterId: z.string(),
   presenterName: z.string(),
+  // 旧持久化数据（一期全局演示）没有 scope 字段，按集会迁移。
+  scope: z.enum(["group", "assembly"]).catch("assembly"),
   display: displaySchema.optional(),
   // 旧持久化数据没有 display 字段、只有扁平 fontScale（更旧的数据连 fontScale 也没有），
   // 反序列化时迁移到 display，其余字段按默认值兼容。
@@ -462,7 +473,8 @@ export function createSermonStateStore(deps: {
       mutate(actor, (current, ctx) => applyAnnotate(current, itemId, annotation, ctx)),
     annotateClear: (actor: SermonActor, itemId: string, filter: SermonAnnotationClearFilter) =>
       mutate(actor, (current, ctx) => applyAnnotateClear(current, itemId, filter, ctx)),
-    clear: (actor: SermonActor) => mutate(actor, (current, ctx) => applyClear(current, ctx))
+    clear: (actor: SermonActor) => mutate(actor, (current, ctx) => applyClear(current, ctx)),
+    setScope: (actor: SermonActor, scope: SermonPresentationScope) => mutate(actor, (current, ctx) => applySetScope(current, scope, ctx))
   };
 }
 

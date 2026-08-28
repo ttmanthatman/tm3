@@ -4,12 +4,15 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import type { MessageDTO } from "../../shared/types.js";
 import { SERMON_PERMANENT_UNTIL } from "../sermon/permissions.js";
+import { createSermonPresentationService, type SermonPresentationService } from "../sermon/presentations.js";
 import { registerSermonRoutes } from "./sermon.js";
 
 type AccountStub = {
   id: number;
   role: string;
   displayName: string;
+  avatarPath: string | null;
+  isGuest: boolean;
   sermonPresenterUntil: Date | null;
 };
 
@@ -26,8 +29,8 @@ function createHarness(options: { isAdmin?: boolean; authed?: boolean } = {}) {
   const authed = options.authed ?? true;
   const authAccountId = isAdmin ? 1 : 3;
   const accounts = new Map<number, AccountStub>([
-    [1, { id: 1, role: "admin", displayName: "管理员", sermonPresenterUntil: null }],
-    [3, { id: 3, role: "user", displayName: "申请人", sermonPresenterUntil: null }]
+    [1, { id: 1, role: "admin", displayName: "管理员", avatarPath: null, isGuest: false, sermonPresenterUntil: null }],
+    [3, { id: 3, role: "user", displayName: "申请人", avatarPath: "avatars/3.webp", isGuest: false, sermonPresenterUntil: null }]
   ]);
   const message: MessageStub = {
     id: 42,
@@ -67,6 +70,28 @@ function createHarness(options: { isAdmin?: boolean; authed?: boolean } = {}) {
     })
   };
 
+  const settings = new Map<string, string>();
+  const online = new Set<number>();
+  const service: SermonPresentationService = createSermonPresentationService({
+    loadSetting: async (key) => settings.get(key) ?? null,
+    saveSetting: async (key, value) => {
+      settings.set(key, value);
+    },
+    deleteSetting: async (key) => {
+      settings.delete(key);
+    },
+    listSettingKeys: async (prefix) => [...settings.keys()].filter((key) => key.startsWith(prefix)),
+    presenterAccount: async (accountId) => {
+      const account = accounts.get(accountId);
+      return account
+        ? { isAdmin: account.role === "admin", displayName: account.displayName, sermonPresenterUntil: account.sermonPresenterUntil }
+        : null;
+    },
+    accountExists: async (accountId) => accounts.has(accountId),
+    createId: () => `sermon-${settings.size}`,
+    now: () => new Date("2026-08-27T12:00:00.000Z")
+  });
+
   const setAuth = (request: FastifyRequest) => {
     (request as FastifyRequest & { auth: { accountId: number } }).auth = { accountId: authAccountId };
   };
@@ -95,9 +120,17 @@ function createHarness(options: { isAdmin?: boolean; authed?: boolean } = {}) {
     io,
     requireAuth,
     requireAdmin,
-    hydrateMessage: async (id) => ({ id, channelId: 7 }) as MessageDTO
+    hydrateMessage: async (id) => ({ id, channelId: 7 }) as MessageDTO,
+    service,
+    listWatchAccounts: async () => [...accounts.values()].map((account) => ({
+      id: account.id,
+      displayName: account.displayName,
+      avatarPath: account.avatarPath,
+      isGuest: account.isGuest
+    })),
+    isOnline: (accountId) => online.has(accountId)
   });
-  return { app, accounts, message, accountUpdates, emissions };
+  return { app, accounts, message, accountUpdates, emissions, service, online };
 }
 
 test("GET presenter-status：管理员恒可讲", async () => {
@@ -309,6 +342,101 @@ test("decide 非管理员 403", async () => {
       payload: { approve: true }
     });
     assert.equal(response.statusCode, 403);
+  } finally {
+    await app.close();
+  }
+});
+
+test("GET directory：登录返回演示摘要数组，未登录 401", async () => {
+  const { app, service } = createHarness();
+  await service.start({ accountId: 1, displayName: "管理员" }, "assembly");
+  await service.start({ accountId: 3, displayName: "申请人" }, "group", [1]);
+  service.join(1, 3);
+
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/sermon/directory" });
+    assert.equal(response.statusCode, 200);
+    const directory = response.json() as Array<Record<string, unknown>>;
+    assert.equal(directory.length, 2);
+    assert.deepEqual(directory[0], {
+      presenterId: 1,
+      presenterName: "管理员",
+      scope: "assembly",
+      active: false,
+      audienceCount: 0,
+      invitedAccountIds: []
+    });
+    assert.deepEqual(directory[1], {
+      presenterId: 3,
+      presenterName: "申请人",
+      scope: "group",
+      active: false,
+      audienceCount: 1,
+      invitedAccountIds: [1]
+    });
+  } finally {
+    await app.close();
+  }
+
+  const unauthenticated = createHarness({ authed: false });
+  await unauthenticated.app.ready();
+  try {
+    const response = await unauthenticated.app.inject({ method: "GET", url: "/api/sermon/directory" });
+    assert.equal(response.statusCode, 401);
+  } finally {
+    await unauthenticated.app.close();
+  }
+});
+
+test("GET accounts：有讲道权限返回选择器名单（含在线与入座状态），无权限 403，未登录 401", async () => {
+  const { app, service, online } = createHarness();
+  await service.start({ accountId: 3, displayName: "申请人" }, "group", [1]);
+  service.join(1, 3);
+  online.add(3);
+
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/sermon/accounts" });
+    assert.equal(response.statusCode, 200);
+    const accounts = response.json() as Array<Record<string, unknown>>;
+    assert.deepEqual(accounts, [
+      { id: 1, displayName: "管理员", avatarPath: null, online: false, seatedPresentation: 3 },
+      { id: 3, displayName: "申请人", avatarPath: "avatars/3.webp", online: true, seatedPresentation: null }
+    ]);
+  } finally {
+    await app.close();
+  }
+
+  const forbidden = createHarness({ isAdmin: false });
+  await forbidden.app.ready();
+  try {
+    const response = await forbidden.app.inject({ method: "GET", url: "/api/sermon/accounts" });
+    assert.equal(response.statusCode, 403);
+    assert.deepEqual(response.json(), { success: false, message: "无讲道权限" });
+  } finally {
+    await forbidden.app.close();
+  }
+
+  const unauthenticated = createHarness({ authed: false });
+  await unauthenticated.app.ready();
+  try {
+    const response = await unauthenticated.app.inject({ method: "GET", url: "/api/sermon/accounts" });
+    assert.equal(response.statusCode, 401);
+  } finally {
+    await unauthenticated.app.close();
+  }
+});
+
+test("GET accounts：有效期内授权的非管理员可用", async () => {
+  const { app, accounts } = createHarness({ isAdmin: false });
+  const applicant = accounts.get(3) as AccountStub;
+  applicant.sermonPresenterUntil = new Date(Date.now() + 60_000);
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/sermon/accounts" });
+    assert.equal(response.statusCode, 200);
+    assert.equal((response.json() as Array<Record<string, unknown>>).length, 2);
   } finally {
     await app.close();
   }

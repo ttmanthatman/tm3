@@ -18,6 +18,7 @@ import {
   applyRemove,
   applyReorder,
   applyScroll,
+  applySetScope,
   applyUpdate,
   createSermonStateStore,
   deserializeSermonState,
@@ -509,4 +510,50 @@ test("blocks/source/scrollLines 序列化往返；旧数据无这些字段照常
   };
   corrupt.queue[0].blocks[1].verseCount = 99;
   assert.equal(deserializeSermonState(JSON.stringify(corrupt)).queue.length, 0);
+});
+
+test("scope：新状态默认小组，缺 scope 的旧持久化数据按集会迁移，往返保留", () => {
+  assert.equal(emptySermonState().scope, "group", "新演示默认小组范围");
+
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  const state = applyAdd(emptySermonState(), [slide("约3:16")], context);
+  assert.equal(deserializeSermonState(serializeSermonState(state)).scope, "group", "序列化往返保留 scope");
+
+  // 一期持久化数据没有 scope 字段：按集会处理（旧全局演示全员可观看）
+  const legacy = JSON.parse(serializeSermonState(state)) as Record<string, unknown>;
+  delete legacy.scope;
+  const restored = deserializeSermonState(JSON.stringify(legacy));
+  assert.equal(restored.scope, "assembly", "旧数据迁移为集会");
+  assert.equal(restored.queue.length, 1, "迁移不丢队列");
+
+  // 损坏的 scope 值同样回退为集会而不是整体清空
+  const badScope = deserializeSermonState(JSON.stringify({ ...state, scope: "public" }));
+  assert.equal(badScope.scope, "assembly");
+  assert.equal(badScope.queue.length, 1);
+});
+
+test("applySetScope 与 store.setScope：设置范围、写入讲道者信息并持久化", async () => {
+  const scoped = applySetScope(emptySermonState(), "assembly", ctx());
+  assert.equal(scoped.scope, "assembly");
+  assert.equal(scoped.presenterId, "7");
+  assert.equal(scoped.updatedAt, NOW);
+  assert.equal(applySetScope(scoped, "assembly", ctx()).scope, "assembly", "重复设置同一范围保持有效");
+
+  let saved: string | null = null;
+  const store = createSermonStateStore({
+    persistence: {
+      load: async () => saved,
+      save: async (value: string) => {
+        saved = value;
+      }
+    },
+    createId: () => "id-1",
+    now: () => new Date(NOW)
+  });
+  await store.load();
+  await store.setScope({ id: "7", name: "讲道者" }, "group");
+  assert.ok(saved, "setScope 持久化");
+  assert.equal(deserializeSermonState(saved).scope, "group");
+  assert.equal(deserializeSermonState(saved).presenterId, "7");
 });

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Pencil, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
-import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonQueueItem, SermonSlideInput } from "@shared/types";
+import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
@@ -16,7 +16,12 @@ const emit = defineEmits<{ close: [] }>();
 
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
-const { sermonState, presenterStatus } = sermon;
+const { sermonState, presenterStatus, directory, watchAccounts } = sermon;
+
+const accountId = computed(() => store.account?.id ?? null);
+/** 本人是否持有进行中的演示（目录以 presenterId=账号 ID 区分并发演示）。 */
+const ownSummary = computed(() => directory.value.find((entry) => entry.presenterId === accountId.value) || null);
+const hasOwnPresentation = computed(() => ownSummary.value !== null);
 
 const view = ref<"queue" | "present">("queue");
 const contentInput = ref("");
@@ -75,9 +80,86 @@ watch(
       verseMenu.value = null;
       selectionOffer.value = null;
       editing.value = false;
+      return;
+    }
+    // 打开时按需拉取：开始屏需要权限状态与观众列表；演示中需要观众名单。
+    void loadAudienceData();
+  }
+);
+
+// 演示被结束后回到队列屏，由开始屏接管。
+watch(hasOwnPresentation, (has) => {
+  if (!has) {
+    view.value = "queue";
+    verseMenu.value = null;
+    selectionOffer.value = null;
+    editing.value = false;
+  }
+});
+
+// —— 开始屏：范围选择 + 观众选择器 + 开始演示 ——
+
+const startScope = ref<SermonPresentationScope>("group");
+const selectedInviteIds = ref<number[]>([]);
+const selectedMoreInviteIds = ref<number[]>([]);
+const startError = ref("");
+const accountsError = ref("");
+
+/** 观众选择器条目：在线优先、按名称排序，排除本人。 */
+const selectableAccounts = computed(() =>
+  watchAccounts.value
+    .filter((account) => account.id !== accountId.value)
+    .slice()
+    .sort((a, b) => Number(b.online) - Number(a.online) || a.displayName.localeCompare(b.displayName, "zh-CN"))
+);
+
+/** 演示中的当前观众（以本人演示入座者）。 */
+const currentViewers = computed(() => watchAccounts.value.filter((account) => account.seatedPresentation === accountId.value));
+
+/** 可继续邀请的账号（未入座任何演示）。 */
+const inviteCandidates = computed(() => selectableAccounts.value.filter((account) => account.seatedPresentation === null));
+
+async function loadAudienceData() {
+  accountsError.value = "";
+  try {
+    await sermon.refreshPresenterStatus();
+    // 观众列表接口需要讲道授权；无授权账号以小组模式演示，不展示观众管理。
+    if (presenterStatus.value?.canPresent) await sermon.refreshWatchAccounts();
+    else watchAccounts.value = [];
+  } catch (error) {
+    accountsError.value = error instanceof Error ? error.message : "观众列表加载失败";
+  }
+}
+
+// 观众人数随目录推送变化，打开工作区时联动刷新观众名单。
+watch(
+  () => ownSummary.value?.audienceCount,
+  () => {
+    if (props.open && hasOwnPresentation.value && presenterStatus.value?.canPresent) {
+      void sermon.refreshWatchAccounts().catch((error: unknown) => {
+        accountsError.value = error instanceof Error ? error.message : "观众列表加载失败";
+      });
     }
   }
 );
+
+async function startPresentation() {
+  startError.value = "";
+  const result = await sermon.start(startScope.value, selectedInviteIds.value);
+  if (!result.ok) {
+    startError.value = result.message;
+    return;
+  }
+  selectedInviteIds.value = [];
+  void loadAudienceData();
+}
+
+async function inviteMore() {
+  if (!selectedMoreInviteIds.value.length) return;
+  const result = await sermon.invite(selectedMoreInviteIds.value);
+  actionError.value = result.ok ? "邀请已发送" : result.message;
+  if (result.ok) selectedMoreInviteIds.value = [];
+}
 
 async function report(result: Promise<SermonEmitResult>) {
   const outcome = await result;
@@ -204,8 +286,8 @@ function updateDisplay(patch: Partial<SermonDisplayDTO>) {
 }
 
 async function endPresentation() {
-  if (!window.confirm("结束展示并清空讲道队列？")) return;
-  await report(sermon.clearPresentation());
+  if (!window.confirm("结束演示并清空讲道队列？")) return;
+  await report(sermon.end());
   view.value = "queue";
 }
 
@@ -366,7 +448,7 @@ function annotateSelection() {
       <button class="sermon-topbar-button" type="button" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
     </header>
 
-    <main class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
+    <main v-if="hasOwnPresentation" class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
       <div class="sermon-queue-column">
         <section class="sermon-block">
           <h3>添加内容</h3>
@@ -404,7 +486,7 @@ function annotateSelection() {
 
         <section class="sermon-block">
           <h3>讲道队列<small v-if="queue.length">（{{ queue.length }}）</small></h3>
-          <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文或文字后，点击条目进入演示并推送给所有在线成员。</p>
+          <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文或文字后，点击条目进入演示并推送给已入座的观众。</p>
           <div v-for="(item, index) in queue" :key="item.id" class="sermon-queue-item" :class="{ current: item.id === currentItemId }">
             <button class="sermon-queue-main" type="button" @click="enterPresent(item)">
               <span class="sermon-queue-title">
@@ -419,6 +501,28 @@ function annotateSelection() {
               <button class="mini-icon-btn" type="button" aria-label="删除" @click="report(sermon.remove(item.id))"><Trash2 :size="15" /></button>
             </div>
           </div>
+        </section>
+
+        <section v-if="presenterStatus?.canPresent" class="sermon-block">
+          <h3>观众<small v-if="currentViewers.length">（{{ currentViewers.length }}）</small></h3>
+          <p v-if="accountsError" class="sermon-error" role="alert">{{ accountsError }}</p>
+          <template v-else>
+            <p v-if="!currentViewers.length" class="sermon-hint">暂无观众入座。</p>
+            <div v-for="viewer in currentViewers" :key="viewer.id" class="sermon-viewer-row">
+              <i class="sermon-online-dot" :class="{ online: viewer.online }" aria-hidden="true"></i>
+              <span class="sermon-audience-name">{{ viewer.displayName }}</span>
+              <button class="mini-btn secondary" type="button" @click="report(sermon.removeViewer(viewer.id))">移除</button>
+            </div>
+            <details v-if="inviteCandidates.length" class="sermon-invite-more">
+              <summary>邀请更多观众</summary>
+              <label v-for="account in inviteCandidates" :key="account.id" class="sermon-audience-row">
+                <input v-model="selectedMoreInviteIds" type="checkbox" :value="account.id" />
+                <i class="sermon-online-dot" :class="{ online: account.online }" aria-hidden="true"></i>
+                <span class="sermon-audience-name">{{ account.displayName }}</span>
+              </label>
+              <button class="mini-btn secondary" type="button" :disabled="!selectedMoreInviteIds.length" @click="inviteMore">发出邀请</button>
+            </details>
+          </template>
         </section>
 
         <section class="sermon-block sermon-queue-controls">
@@ -464,7 +568,54 @@ function annotateSelection() {
       </aside>
     </main>
 
-    <main v-if="view === 'present'" class="sermon-present-view">
+    <main v-else class="sermon-workspace-body sermon-start-view">
+      <section class="sermon-block sermon-start-block">
+        <h3>开始讲道演示</h3>
+        <div class="sermon-scope-options" role="radiogroup" aria-label="演示范围">
+          <label class="sermon-scope-option" :class="{ active: startScope === 'group' }">
+            <input v-model="startScope" type="radio" value="group" />
+            <span>
+              <strong>小组演示</strong>
+              <small>邀请特定账号观看，任何成员都可发起</small>
+            </span>
+          </label>
+          <label class="sermon-scope-option" :class="{ active: startScope === 'assembly', disabled: !presenterStatus?.canPresent }">
+            <input v-model="startScope" type="radio" value="assembly" :disabled="!presenterStatus?.canPresent" />
+            <span>
+              <strong>集会演示</strong>
+              <small>{{ presenterStatus?.canPresent ? "全站成员均可观看" : "需申请讲道授权后可用" }}</small>
+            </span>
+          </label>
+        </div>
+        <template v-if="presenterStatus?.canPresent">
+          <h4 class="sermon-audience-title">邀请观众（可选）</h4>
+          <p v-if="accountsError" class="sermon-error" role="alert">{{ accountsError }}</p>
+          <div v-else class="sermon-audience-list">
+            <label
+              v-for="account in selectableAccounts"
+              :key="account.id"
+              class="sermon-audience-row"
+              :class="{ disabled: account.seatedPresentation !== null }"
+            >
+              <input v-model="selectedInviteIds" type="checkbox" :value="account.id" :disabled="account.seatedPresentation !== null" />
+              <i class="sermon-online-dot" :class="{ online: account.online }" aria-hidden="true"></i>
+              <span class="sermon-audience-name">{{ account.displayName }}</span>
+              <small v-if="account.seatedPresentation !== null" class="sermon-audience-note">观看其他演示中</small>
+              <small v-else-if="!account.online" class="sermon-audience-note">离线</small>
+            </label>
+            <p v-if="!selectableAccounts.length" class="sermon-hint">暂无其他成员可选。</p>
+          </div>
+        </template>
+        <div class="sermon-start-actions">
+          <button class="primary-btn" type="button" :disabled="sermon.pending.value" @click="startPresentation">
+            {{ sermon.pending.value ? "正在开始…" : "开始演示" }}
+          </button>
+          <p v-if="startError" class="sermon-error" role="alert">{{ startError }}</p>
+        </div>
+      </section>
+    </main>
+
+    <main v-if="hasOwnPresentation && view === 'present'" class="sermon-present-view">
       <div
         v-if="currentItem"
         class="sermon-overlay sermon-present-stage"
@@ -537,3 +688,134 @@ function annotateSelection() {
     </main>
   </section>
 </template>
+
+<style scoped>
+.sermon-start-view {
+  align-content: center;
+}
+
+.sermon-start-block {
+  width: min(560px, 100%);
+  margin: 0 auto;
+}
+
+.sermon-scope-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sermon-scope-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.sermon-scope-option.active {
+  border-color: var(--accent);
+}
+
+.sermon-scope-option.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sermon-scope-option > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.sermon-scope-option small {
+  color: var(--muted);
+}
+
+.sermon-audience-title {
+  margin: 16px 0 8px;
+  font-size: 14px;
+}
+
+.sermon-audience-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.sermon-audience-row,
+.sermon-viewer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+
+.sermon-audience-row {
+  cursor: pointer;
+}
+
+.sermon-audience-row.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.sermon-audience-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sermon-audience-note {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sermon-online-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+}
+
+.sermon-online-dot.online {
+  background: var(--accent);
+}
+
+.sermon-viewer-row .mini-btn {
+  flex: none;
+}
+
+.sermon-invite-more {
+  margin-top: 10px;
+}
+
+.sermon-invite-more summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.sermon-invite-more .sermon-audience-row {
+  margin-top: 6px;
+}
+
+.sermon-invite-more .mini-btn {
+  margin-top: 8px;
+}
+
+.sermon-start-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+</style>

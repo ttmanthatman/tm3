@@ -1,159 +1,303 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Socket } from "socket.io";
-import type { SermonStateDTO } from "../../shared/types.js";
-import { createSermonStateStore, type SermonStateStore } from "./state.js";
-import { registerSermonSocket, type SermonPresenterProfile } from "./socket.js";
+import type { SermonEndedEvent, SermonInvitedEvent, SermonPresentationSummaryDTO, SermonRemovedEvent, SermonStateDTO } from "../../shared/types.js";
+import { createSermonPresentationService } from "./presentations.js";
+import { registerSermonSocket } from "./socket.js";
 
 type Ack = (payload: unknown) => void;
 type Handler = (data: unknown, ack?: Ack) => Promise<void>;
 
-function createHarness(options: {
-  auth?: { accountId: number } | null;
-  profile?: SermonPresenterProfile | null;
-} = {}) {
-  const auth = options.auth === undefined ? { accountId: 7 } : options.auth;
-  const profile =
-    options.profile === undefined
-      ? { isAdmin: false, displayName: "讲道者", sermonPresenterUntil: new Date(Date.now() + 60_000) }
-      : options.profile;
-  let saved: string | null = null;
+function flush() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function createHarness(options: { grantIds?: number[] } = {}) {
+  const grants = new Set(options.grantIds ?? []);
+  const settings = new Map<string, string>();
   let counter = 0;
-  const store = createSermonStateStore({
-    persistence: {
-      load: async () => saved,
-      save: async (value: string) => {
-        saved = value;
-      }
+  // 1 为管理员；2—99 为普通注册用户（grants 内有集会授权）；其余账号不存在。
+  const profileFor = (accountId: number) => {
+    if (accountId === 1) return { isAdmin: true, displayName: "管理员", sermonPresenterUntil: null };
+    if (accountId >= 2 && accountId < 100) {
+      return {
+        isAdmin: false,
+        displayName: `用户${accountId}`,
+        sermonPresenterUntil: grants.has(accountId) ? new Date("9999-12-31T23:59:59.999Z") : null
+      };
+    }
+    return null;
+  };
+  const service = createSermonPresentationService({
+    loadSetting: async (key) => settings.get(key) ?? null,
+    saveSetting: async (key, value) => {
+      settings.set(key, value);
     },
+    deleteSetting: async (key) => {
+      settings.delete(key);
+    },
+    listSettingKeys: async (prefix) => [...settings.keys()].filter((key) => key.startsWith(prefix)),
+    presenterAccount: async (accountId) => profileFor(accountId),
+    accountExists: async (accountId) => accountId >= 1 && accountId < 100,
     createId: () => `id-${++counter}`,
     now: () => new Date("2026-08-27T12:00:00.000Z")
   });
 
-  const handlers = new Map<string, Handler>();
-  const socketEmitted: Array<{ event: string; payload: unknown }> = [];
-  const socket = {
-    on: (event: string, handler: Handler) => {
-      handlers.set(event, handler);
-    },
-    emit: (event: string, payload: unknown) => {
-      socketEmitted.push({ event, payload });
-    },
-    data: {}
-  } as unknown as Socket;
-
-  const broadcasted: SermonStateDTO[] = [];
+  const roomEmissions: Array<{ room: string; event: string; payload: unknown }> = [];
+  const globalEmissions: Array<{ event: string; payload: unknown }> = [];
+  const forcedLeaves: Array<{ accountId: number; room: string }> = [];
   const io = {
-    emit: (_event: string, payload: unknown) => {
-      broadcasted.push(payload as SermonStateDTO);
+    to: (room: string) => ({
+      emit: (event: string, payload: unknown) => {
+        roomEmissions.push({ room, event, payload });
+      }
+    }),
+    emit: (event: string, payload: unknown) => {
+      globalEmissions.push({ event, payload });
     }
   };
 
-  registerSermonSocket(io, socket, {
-    refreshAuth: async () => auth,
-    presenterAccount: async () => profile,
-    store
-  });
-
-  async function invoke(event: string, data: unknown) {
-    const handler = handlers.get(event);
-    assert.ok(handler, `handler ${event} 未注册`);
-    let ackPayload: unknown;
-    await handler(data, (payload: unknown) => {
-      ackPayload = payload;
-    });
-    return ackPayload as Record<string, unknown>;
-  }
-
-  return { invoke, store, broadcasted, socketEmitted, getSaved: () => saved };
-}
-
-const presenter = { id: "7", name: "讲道者" };
-
-test("连接时仅在展示激活时补发快照", async () => {
-  const idle = createHarness();
-  assert.equal(idle.socketEmitted.length, 0);
-
-  const store = createSermonStateStore({
-    persistence: { load: async () => null, save: async () => undefined },
-    createId: () => "id-1"
-  });
-  await store.add(presenter, [
-    {
-      blocks: [{ type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 0 }],
-      verses: [],
-      source: "约3:16"
-    }
-  ]);
-  await store.present(presenter, "id-1");
-
-  const handlers = new Map<string, Handler>();
-  const socketEmitted: Array<{ event: string; payload: unknown }> = [];
-  const socket = {
-    on: (event: string, handler: Handler) => {
-      handlers.set(event, handler);
-    },
-    emit: (event: string, payload: unknown) => {
-      socketEmitted.push({ event, payload });
-    },
-    data: {}
-  } as unknown as Socket;
-  registerSermonSocket({ emit: () => undefined }, socket, {
-    refreshAuth: async () => ({ accountId: 7 }),
-    presenterAccount: async () => null,
-    store
-  });
-  assert.equal(socketEmitted.length, 1);
-  assert.equal(socketEmitted[0].event, "sermon:state");
-  assert.equal((socketEmitted[0].payload as SermonStateDTO).currentItemId, "id-1");
-});
-
-test("队列未激活时快照只补发给有讲道权限的连接", async () => {
-  const store = createSermonStateStore({
-    persistence: { load: async () => null, save: async () => undefined },
-    createId: () => "id-1"
-  });
-  await store.add(presenter, [
-    {
-      blocks: [{ type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 0 }],
-      verses: [],
-      source: "约3:16"
-    }
-  ]);
-
-  function connect(profile: SermonPresenterProfile | null) {
+  function connect(accountId: number) {
+    const handlers = new Map<string, Handler>();
     const socketEmitted: Array<{ event: string; payload: unknown }> = [];
+    const joined: string[] = [];
+    const left: string[] = [];
     const socket = {
-      on: () => undefined,
+      on: (event: string, handler: Handler) => {
+        handlers.set(event, handler);
+      },
       emit: (event: string, payload: unknown) => {
         socketEmitted.push({ event, payload });
+      },
+      join: (room: string) => {
+        joined.push(room);
+      },
+      leave: (room: string) => {
+        left.push(room);
       },
       data: {},
       connected: true
     } as unknown as Socket;
-    registerSermonSocket({ emit: () => undefined }, socket, {
-      refreshAuth: async () => ({ accountId: 7 }),
-      presenterAccount: async () => profile,
-      store
+    registerSermonSocket(io, socket, {
+      refreshAuth: async () => ({ accountId }),
+      presenterAccount: async (id) => profileFor(id),
+      service,
+      socketsLeave: (id, room) => {
+        forcedLeaves.push({ accountId: id, room });
+      }
     });
-    return socketEmitted;
+    async function invoke(event: string, data: unknown) {
+      const handler = handlers.get(event);
+      assert.ok(handler, `handler ${event} 未注册`);
+      let ackPayload: unknown;
+      await handler(data, (payload: unknown) => {
+        ackPayload = payload;
+      });
+      return ackPayload as Record<string, unknown>;
+    }
+    return { invoke, socketEmitted, joined, left };
   }
 
-  const viewerEmitted = connect({ isAdmin: false, displayName: "观众", sermonPresenterUntil: null });
-  const presenterEmitted = connect({ isAdmin: true, displayName: "讲道者", sermonPresenterUntil: null });
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(viewerEmitted.length, 0, "观众端不补发未激活的队列");
-  assert.equal(presenterEmitted.length, 1, "讲道者重连应收到未激活的队列快照");
-  assert.equal((presenterEmitted[0].payload as SermonStateDTO).queue.length, 1);
+  return { service, connect, roomEmissions, globalEmissions, forcedLeaves };
+}
+
+test("sermon:start 小组：ack、入房、房间状态广播、目录全局广播、受邀者定向通知", async () => {
+  const { connect, roomEmissions, globalEmissions } = createHarness();
+  const socket = connect(7);
+
+  assert.equal((await socket.invoke("sermon:start", { scope: "group", invitedAccountIds: [9, 10] })).ok, true);
+  assert.deepEqual(socket.joined, ["sermon:7"], "发起后加入自己的演示房间");
+
+  const stateEmit = roomEmissions.find((entry) => entry.room === "sermon:7" && entry.event === "sermon:state");
+  assert.ok(stateEmit);
+  assert.equal((stateEmit.payload as SermonStateDTO).scope, "group");
+  assert.equal((stateEmit.payload as SermonStateDTO).presenterId, "7");
+
+  const invited = roomEmissions.filter((entry) => entry.event === "sermon:invited");
+  assert.deepEqual(
+    invited.map((entry) => entry.room).sort(),
+    ["acct:10", "acct:9"],
+    "邀请定向推送到受邀账号房间"
+  );
+  assert.deepEqual(invited[0].payload as SermonInvitedEvent, { presenterId: 7, presenterName: "用户7", scope: "group" });
+
+  const directory = globalEmissions.filter((entry) => entry.event === "sermon:directory");
+  assert.equal(directory.length, 1);
+  assert.deepEqual((directory[0].payload as SermonPresentationSummaryDTO[]).map((entry) => entry.presenterId), [7]);
+  assert.equal(roomEmissions.some((entry) => entry.event === "sermon:directory"), false, "目录走全局 emit 而非房间");
 });
 
-test("无权限与认证失败均被拒绝且不广播", async () => {
-  const denied = createHarness({ profile: { isAdmin: false, displayName: "甲", sermonPresenterUntil: null } });
-  for (const [event, data] of [
+test("sermon:start 集会：无授权拒绝；有授权通过；参数非法拒绝", async () => {
+  const denied = createHarness();
+  const deniedAck = await denied.connect(7).invoke("sermon:start", { scope: "assembly" });
+  assert.equal(deniedAck.ok, false);
+  assert.equal(deniedAck.message, "无集会讲道授权，仅可发起小组演示");
+  assert.equal(denied.globalEmissions.length, 0, "拒绝后无广播");
+
+  const allowed = createHarness({ grantIds: [8] });
+  assert.equal((await allowed.connect(8).invoke("sermon:start", { scope: "assembly" })).ok, true);
+  assert.equal(allowed.service.get(8)?.scope, "assembly");
+
+  const bad = createHarness();
+  assert.equal((await bad.connect(7).invoke("sermon:start", { scope: "public" })).ok, false, "非法 scope 拒绝");
+  assert.equal((await bad.connect(7).invoke("sermon:start", {})).ok, false, "缺 scope 拒绝");
+  assert.equal(bad.globalEmissions.length, 0);
+});
+
+test("sermon:start 幂等：重复发起返回已有演示", async () => {
+  const { connect, service } = createHarness();
+  const socket = connect(7);
+  await socket.invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  const again = await socket.invoke("sermon:start", { scope: "assembly" });
+  assert.equal(again.ok, true);
+  assert.equal(service.get(7)?.scope, "group", "范围不被重复发起覆盖");
+});
+
+test("sermon:join：小组需受邀、集会全员可加入、激活后收到快照", async () => {
+  const { connect, service } = createHarness({ grantIds: [8] });
+  const presenter = connect(7);
+  await presenter.invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  await presenter.invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
+  const itemId = service.get(7)?.store.getState().queue[0]?.id;
+  await presenter.invoke("sermon:present", { id: itemId });
+
+  const stranger = connect(10);
+  const denied = await stranger.invoke("sermon:join", { presenterId: 7 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.message, "该演示仅受邀账号可加入");
+
+  const viewer = connect(9);
+  const joined = await viewer.invoke("sermon:join", { presenterId: 7 });
+  assert.equal(joined.ok, true);
+  assert.deepEqual(viewer.joined, ["sermon:7"]);
+  const snapshot = viewer.socketEmitted.find((entry) => entry.event === "sermon:state");
+  assert.ok(snapshot, "入座后收到激活快照");
+  assert.equal((snapshot.payload as SermonStateDTO).active, true);
+
+  // 集会演示：未受邀账号也可加入
+  const assemblyPresenter = connect(8);
+  await assemblyPresenter.invoke("sermon:start", { scope: "assembly" });
+  assert.equal((await connect(10).invoke("sermon:join", { presenterId: 8 })).ok, true, "集会全员可加入");
+
+  assert.equal((await connect(9).invoke("sermon:join", { presenterId: 404 })).ok, false, "演示不存在拒绝");
+  assert.equal((await connect(9).invoke("sermon:join", {})).ok, false, "参数非法拒绝");
+});
+
+test("sermon:join 互斥：seated-elsewhere 拒绝码；leave + join 一键换席", async () => {
+  const { connect, service } = createHarness();
+  await connect(7).invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  await connect(8).invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+
+  const viewer = connect(9);
+  assert.equal((await viewer.invoke("sermon:join", { presenterId: 7 })).ok, true);
+  assert.equal(service.seatOf(9), 7);
+
+  const conflict = await viewer.invoke("sermon:join", { presenterId: 8 });
+  assert.equal(conflict.ok, false);
+  assert.equal(conflict.code, "seated-elsewhere");
+  assert.equal(conflict.message, "你已在观看其他演示，请先离开再加入");
+  assert.equal(service.seatOf(9), 7, "拒绝后仍在原席");
+
+  assert.equal((await viewer.invoke("sermon:leave", {})).ok, true);
+  assert.deepEqual(viewer.left, ["sermon:7"], "leave 离开原演示房间");
+  assert.equal((await viewer.invoke("sermon:join", { presenterId: 8 })).ok, true, "换席成功");
+  assert.equal(service.seatOf(9), 8);
+});
+
+test("sermon:invite：仅主持人、校验账号存在与未入座他席、定向通知与目录更新", async () => {
+  const { connect, roomEmissions, globalEmissions } = createHarness();
+  const nobody = connect(7);
+  const noPresentation = await nobody.invoke("sermon:invite", { accountIds: [9] });
+  assert.equal(noPresentation.ok, false);
+  assert.equal(noPresentation.message, "请先开始演示");
+
+  await nobody.invoke("sermon:start", { scope: "group" });
+  assert.equal((await nobody.invoke("sermon:invite", { accountIds: [999] })).ok, false, "账号不存在拒绝");
+  assert.equal((await nobody.invoke("sermon:invite", { accountIds: [] })).ok, false, "空名单拒绝");
+
+  await connect(8).invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  await connect(9).invoke("sermon:join", { presenterId: 8 });
+  const seatedElsewhere = await nobody.invoke("sermon:invite", { accountIds: [9] });
+  assert.equal(seatedElsewhere.ok, false);
+  assert.equal(seatedElsewhere.message, "所选账号已在观看其他演示");
+
+  const ack = await nobody.invoke("sermon:invite", { accountIds: [10, 11] });
+  assert.equal(ack.ok, true);
+  assert.equal(ack.added, 2);
+  const invited = roomEmissions.filter((entry) => entry.event === "sermon:invited" && entry.room !== "acct:9");
+  assert.deepEqual(invited.map((entry) => entry.room).sort(), ["acct:10", "acct:11"]);
+  const directory = globalEmissions[globalEmissions.length - 1];
+  assert.equal(directory.event, "sermon:directory");
+  assert.deepEqual((directory.payload as SermonPresentationSummaryDTO[])[0].invitedAccountIds, [10, 11]);
+});
+
+test("sermon:remove-viewer：主持人移除观众、定向通知、强制离房", async () => {
+  const { connect, roomEmissions, forcedLeaves } = createHarness();
+  await connect(7).invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  await connect(9).invoke("sermon:join", { presenterId: 7 });
+
+  const notSeated = await connect(7).invoke("sermon:remove-viewer", { accountId: 66 });
+  assert.equal(notSeated.ok, false);
+  assert.equal(notSeated.message, "该账号不在观众席中");
+
+  const ack = await connect(7).invoke("sermon:remove-viewer", { accountId: 9 });
+  assert.equal(ack.ok, true);
+  const removed = roomEmissions.find((entry) => entry.event === "sermon:removed");
+  assert.equal(removed?.room, "acct:9");
+  assert.deepEqual(removed?.payload as SermonRemovedEvent, { presenterId: 7, presenterName: "用户7" });
+  assert.deepEqual(forcedLeaves, [{ accountId: 9, room: "sermon:7" }], "被移除者全部 socket 离房");
+});
+
+test("sermon:end：房间内广播最终状态、通知观众与受邀者、全员离房、目录清空", async () => {
+  const { connect, service, roomEmissions, globalEmissions, forcedLeaves } = createHarness();
+  await connect(7).invoke("sermon:start", { scope: "group", invitedAccountIds: [9, 10] });
+  await connect(9).invoke("sermon:join", { presenterId: 7 });
+
+  const presenterSocket = connect(7);
+  const ack = await presenterSocket.invoke("sermon:end", {});
+  assert.equal(ack.ok, true);
+
+  const finalState = roomEmissions.filter((entry) => entry.room === "sermon:7" && entry.event === "sermon:state");
+  assert.ok(finalState.length > 0, "房间内广播最终状态");
+  assert.equal((finalState[finalState.length - 1].payload as SermonStateDTO).active, false);
+
+  const ended = roomEmissions.filter((entry) => entry.event === "sermon:ended");
+  assert.deepEqual(ended.map((entry) => entry.room).sort(), ["acct:10", "acct:9"], "观众与受邀者都收到结束通知");
+  assert.deepEqual(ended[0].payload as SermonEndedEvent, { presenterId: 7, presenterName: "用户7" });
+
+  assert.ok(forcedLeaves.some((entry) => entry.accountId === 9 && entry.room === "sermon:7"), "观众离房");
+  assert.ok(forcedLeaves.some((entry) => entry.accountId === 7 && entry.room === "sermon:7"), "主持人账号离房");
+  assert.deepEqual(presenterSocket.left, ["sermon:7"]);
+  assert.equal(service.get(7), undefined);
+  assert.deepEqual((globalEmissions[globalEmissions.length - 1].payload as SermonPresentationSummaryDTO[]), [], "目录清空");
+
+  // 结束后变更事件不再可用
+  const afterEnd = await presenterSocket.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "x" }] }] });
+  assert.equal(afterEnd.ok, false);
+  assert.equal(afterEnd.message, "请先开始演示");
+});
+
+test("sermon:end 强制结束：管理员可结束他人演示，非管理员拒绝", async () => {
+  const { connect } = createHarness();
+  await connect(7).invoke("sermon:start", { scope: "group" });
+
+  const denied = await connect(8).invoke("sermon:end", { presenterId: 7 });
+  assert.equal(denied.ok, false);
+  assert.equal(denied.message, "需要管理员权限才能结束他人的演示");
+
+  const byAdmin = await connect(1).invoke("sermon:end", { presenterId: 7 });
+  assert.equal(byAdmin.ok, true);
+});
+
+test("变更事件操作自己的演示：无演示拒绝、广播仅到房间、ack 形状保持", async () => {
+  const { connect, roomEmissions, globalEmissions } = createHarness();
+  const socket = connect(7);
+
+  const events: Array<[string, unknown]> = [
     ["sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] }],
     ["sermon:update", { id: "id-1", slide: { blocks: [{ type: "text", content: "大纲" }] } }],
     ["sermon:scroll", { id: "id-1", lines: 1 }],
-    ["sermon:add-text", { texts: [{ content: "大纲" }] }],
+    ["sermon:add-text", { texts: [{ content: "引言" }] }],
     ["sermon:reorder", { order: [] }],
     ["sermon:remove", { id: "id-1" }],
     ["sermon:present", { id: null }],
@@ -161,218 +305,129 @@ test("无权限与认证失败均被拒绝且不广播", async () => {
     ["sermon:annotate", { itemId: "id-1", annotation: { verseIndex: 0, kind: "highlight" } }],
     ["sermon:annotate:clear", { itemId: "id-1" }],
     ["sermon:clear", {}]
-  ] as Array<[string, unknown]>) {
-    const ack = await denied.invoke(event, data);
-    assert.equal(ack.ok, false, event);
+  ];
+  for (const [event, data] of events) {
+    const ack = await socket.invoke(event, data);
+    assert.equal(ack.ok, false, `${event} 无演示时应拒绝`);
+    assert.equal(ack.message, "请先开始演示");
   }
-  assert.equal(denied.broadcasted.length, 0);
-  assert.equal(denied.store.getState().queue.length, 0);
+  assert.equal(roomEmissions.length, 0);
+  assert.equal(globalEmissions.length, 0);
 
-  const unauthenticated = createHarness({ auth: null });
-  const ack = await unauthenticated.invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
-  assert.equal(ack.ok, false);
-  assert.equal(ack.message, "认证失败");
-  assert.equal(unauthenticated.broadcasted.length, 0);
+  await socket.invoke("sermon:start", { scope: "group" });
+  const addAck = await socket.invoke("sermon:add", {
+    slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }, { blocks: [{ type: "text", content: "大纲" }] }]
+  });
+  assert.equal(addAck.ok, true);
+  assert.equal(addAck.added, 2);
+  const stateEmits = roomEmissions.filter((entry) => entry.event === "sermon:state");
+  assert.equal(stateEmits.length, 2, "start 与 add 各广播一次状态");
+  assert.ok(stateEmits.every((entry) => entry.room === "sermon:7"), "状态只发到自己的演示房间");
+  assert.equal(globalEmissions.filter((entry) => entry.event === "sermon:state").length, 0, "状态不做全局广播");
+  assert.equal(globalEmissions.filter((entry) => entry.event === "sermon:directory").length, 1, "仅 start 触发目录广播");
 });
 
-test("sermon:add 解析屏内容：识别经文、失败出处降级为文字并提示、成功后广播并持久化", async () => {
-  const { invoke, store, broadcasted, getSaved } = createHarness();
-  const ack = await invoke("sermon:add", {
-    slides: [
-      { blocks: [{ type: "reference", reference: "约3:16" }] },
-      { blocks: [{ type: "reference", reference: "不存在的书 1:1" }] },
-      { blocks: [{ type: "text", content: "大纲引言" }] }
-    ]
-  });
-  assert.equal(ack.ok, true);
-  assert.equal(ack.added, 3, "降级出处仍作为文字屏加入，不丢内容");
-  const errors = ack.errors as Array<{ reference: string; message: string }>;
-  assert.equal(errors.length, 1);
-  assert.equal(errors[0].reference, "不存在的书 1:1");
-  assert.match(errors[0].message, /已作为文字加入/);
+test("两个讲道者并发：互不可见对方队列与广播", async () => {
+  const { connect, service, roomEmissions } = createHarness();
+  const first = connect(7);
+  const second = connect(8);
+  await first.invoke("sermon:start", { scope: "group" });
+  await second.invoke("sermon:start", { scope: "group" });
+  roomEmissions.length = 0;
 
-  const state = store.getState();
-  assert.equal(state.queue.length, 3);
-  assert.equal(state.queue[0].normalizedReference, "约翰福音 3:16");
-  assert.ok(state.queue[0].verses.length > 0);
-  assert.deepEqual(state.queue[1].blocks, [{ type: "text", content: "不存在的书 1:1" }], "降级块原文保留");
-  assert.equal(state.queue[1].kind, "text");
-  assert.equal(state.queue[2].kind, "text");
-  assert.equal(state.presenterId, "7");
-  assert.equal(state.presenterName, "讲道者");
-  assert.equal(broadcasted.length, 1);
-  assert.equal(broadcasted[0].queue.length, 3);
-  assert.ok(getSaved());
+  await first.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "甲的屏" }] }] });
+  await second.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "乙的屏" }] }] });
 
-  const mixed = await invoke("sermon:add", {
-    slides: [{ blocks: [{ type: "reference", reference: "诗篇23:1" }, { type: "text", content: "说明" }] }]
-  });
-  assert.equal(mixed.ok, true);
-  const mixedItem = store.getState().queue[3];
-  assert.equal(mixedItem.normalizedReference, "诗篇 23:1");
-  assert.deepEqual(
-    mixedItem.blocks?.map((block) => (block.type === "passage" ? [block.type, block.verseStart, block.verseCount] : block.type)),
-    [["passage", 0, 1], "text"]
-  );
+  const firstState = roomEmissions.filter((entry) => entry.room === "sermon:7" && entry.event === "sermon:state");
+  const secondState = roomEmissions.filter((entry) => entry.room === "sermon:8" && entry.event === "sermon:state");
+  assert.equal(firstState.length, 1);
+  assert.equal(secondState.length, 1);
+  assert.deepEqual((firstState[0].payload as SermonStateDTO).queue.map((item) => item.source), ["甲的屏"]);
+  assert.deepEqual((secondState[0].payload as SermonStateDTO).queue.map((item) => item.source), ["乙的屏"]);
+  assert.deepEqual(service.directory().map((entry) => entry.presenterId), [7, 8]);
 });
 
-test("sermon:add 非法 payload 被拒绝", async () => {
-  const { invoke, broadcasted } = createHarness();
-  assert.equal((await invoke("sermon:add", {})).ok, false);
-  assert.equal((await invoke("sermon:add", { slides: [] })).ok, false);
-  assert.equal((await invoke("sermon:add", { slides: [{ blocks: [] }] })).ok, false, "空块拒绝");
-  assert.equal((await invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "  " }] }] })).ok, false, "纯空白块拒绝");
-  assert.equal(
-    (await invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "x".repeat(4001) }] }] })).ok,
-    false,
-    "超长文本块拒绝"
-  );
-  const tooManyRefs = {
-    slides: [
-      {
-        blocks: Array.from({ length: 21 }, (_, index) => ({ type: "reference" as const, reference: `约3:${index + 1}` }))
+test("连接快照：主持人补发完整状态（含未激活队列），已入座观众补发激活状态，无关连接无快照", async () => {
+  const { connect, service } = createHarness();
+  const presenter = connect(7);
+  await presenter.invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
+  await presenter.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "大纲" }] }] });
+
+  // 主持人另一个 socket 重连：拿到未激活队列
+  const presenterReconnect = connect(7);
+  await flush();
+  assert.deepEqual(presenterReconnect.joined, ["sermon:7"]);
+  const ownSnapshot = presenterReconnect.socketEmitted.find((entry) => entry.event === "sermon:state");
+  assert.ok(ownSnapshot, "主持人重连补发队列");
+  assert.equal((ownSnapshot.payload as SermonStateDTO).queue.length, 1);
+  assert.equal((ownSnapshot.payload as SermonStateDTO).active, false);
+
+  // 观众未入座：无快照
+  const outsider = connect(10);
+  await flush();
+  assert.equal(outsider.socketEmitted.length, 0, "无关连接不补发");
+  assert.deepEqual(outsider.joined, []);
+
+  // 观众入座且演示激活：另一个 socket 重连补发激活状态
+  await presenter.invoke("sermon:present", { id: service.get(7)?.store.getState().queue[0]?.id ?? null });
+  await connect(9).invoke("sermon:join", { presenterId: 7 });
+  const viewerReconnect = connect(9);
+  await flush();
+  assert.deepEqual(viewerReconnect.joined, ["sermon:7"], "入座观众重连自动回房");
+  const viewerSnapshot = viewerReconnect.socketEmitted.find((entry) => entry.event === "sermon:state");
+  assert.ok(viewerSnapshot);
+  assert.equal((viewerSnapshot.payload as SermonStateDTO).active, true);
+});
+
+test("认证失败：所有事件拒绝且不广播", async () => {
+  const settings = new Map<string, string>();
+  let counter = 0;
+  const service = createSermonPresentationService({
+    loadSetting: async (key) => settings.get(key) ?? null,
+    saveSetting: async (key, value) => {
+      settings.set(key, value);
+    },
+    deleteSetting: async () => undefined,
+    listSettingKeys: async () => [],
+    presenterAccount: async () => null,
+    accountExists: async () => true,
+    createId: () => `id-${++counter}`,
+    now: () => new Date("2026-08-27T12:00:00.000Z")
+  });
+  const handlers = new Map<string, Handler>();
+  const ioEmissions: string[] = [];
+  const socket = {
+    on: (event: string, handler: Handler) => {
+      handlers.set(event, handler);
+    },
+    emit: () => undefined,
+    join: () => undefined,
+    leave: () => undefined,
+    data: {}
+  } as unknown as Socket;
+  registerSermonSocket(
+    {
+      to: () => ({ emit: () => undefined }),
+      emit: (event: string) => {
+        ioEmissions.push(event);
       }
-    ]
-  };
-  assert.equal((await invoke("sermon:add", tooManyRefs)).ok, false, "出处总数超限拒绝");
-  assert.equal(broadcasted.length, 0);
-});
-
-test("sermon:update 热编辑：重解析当前屏、标注重置、未知条目拒绝", async () => {
-  const { invoke, store, broadcasted } = createHarness();
-  await invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
-  const id = store.getState().queue[0].id;
-  await invoke("sermon:present", { id });
-  await invoke("sermon:annotate", { itemId: id, annotation: { verseIndex: 0, kind: "highlight" } });
-
-  assert.equal((await invoke("sermon:update", { id: "missing", slide: { blocks: [{ type: "text", content: "x" }] } })).ok, false);
-  assert.equal((await invoke("sermon:update", { id, slide: { blocks: [{ type: "text", content: "  " }] } })).ok, false, "空屏拒绝");
-  assert.equal(broadcasted.length, 3, "add/present/annotate 各广播一次，两次拒绝不广播");
-
-  const ack = await invoke("sermon:update", { id, slide: { blocks: [{ type: "reference", reference: "诗篇23:1" }] } });
-  assert.equal(ack.ok, true);
-  const item = store.getState().queue[0];
-  assert.equal(item.id, id, "id 不变，观众停留在同一屏");
-  assert.equal(item.normalizedReference, "诗篇 23:1");
-  assert.deepEqual(item.annotations, [], "经节变化，标注重置");
-  assert.equal(item.scrollLines, 0);
-  assert.equal(store.getState().currentItemId, id);
-  assert.equal(broadcasted.length, 4, "热编辑保存后广播");
-});
-
-test("sermon:scroll 同步屏内滚动：夹取行数并广播，非法值与未知条目拒绝", async () => {
-  const { invoke, store, broadcasted } = createHarness();
-  await invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
-  const id = store.getState().queue[0].id;
-
-  assert.equal((await invoke("sermon:scroll", { id: "missing", lines: 1 })).ok, false);
-  assert.equal((await invoke("sermon:scroll", { id, lines: -1 })).ok, false, "负值拒绝");
-  assert.equal((await invoke("sermon:scroll", { id, lines: 1.5 })).ok, false, "非整数拒绝");
-  assert.equal(broadcasted.length, 1, "add 广播一次，拒绝不广播");
-
-  const ack = await invoke("sermon:scroll", { id, lines: 3 });
-  assert.equal(ack.ok, true);
-  assert.equal(store.getState().queue[0].scrollLines, 3);
-  assert.equal(broadcasted.length, 2);
-  assert.equal(broadcasted[1].queue[0].scrollLines, 3, "广播带最新滚动位置");
-});
-
-test("sermon:add-text 校验载荷、剔除控制字符、成功后广播并持久化", async () => {
-  const { invoke, store, broadcasted, getSaved } = createHarness();
-
-  assert.equal((await invoke("sermon:add-text", {})).ok, false, "缺 texts 拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [] })).ok, false, "空数组拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "" }] })).ok, false, "空正文拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "   " }] })).ok, false, "纯空白正文拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [{ content: "a".repeat(4001) }] })).ok, false, "超长正文拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [{ title: "t".repeat(101), content: "正文" }] })).ok, false, "超长标题拒绝");
-  assert.equal((await invoke("sermon:add-text", { texts: [{ content: 42 }] })).ok, false, "非字符串正文拒绝");
-  assert.equal(broadcasted.length, 0);
-
-  const ack = await invoke("sermon:add-text", { texts: [{ title: "大纲\u000B", content: "一、引言\n\n二、正文" }] });
-  assert.equal(ack.ok, true);
-  assert.equal(ack.added, 1);
-  const item = store.getState().queue[0];
-  assert.equal(item.kind, "text");
-  assert.equal(item.title, "大纲", "标题控制字符被剔除并 trim");
-  assert.equal(item.content, "一、引言\n\n二、正文", "正文保留换行");
-  assert.equal(broadcasted.length, 1);
-  assert.ok(getSaved(), "成功后应持久化");
-});
-
-test("队列操作：present / reorder / annotate / annotate:clear / remove / clear", async () => {
-  const { invoke, store, broadcasted } = createHarness();
-  await invoke("sermon:add", {
-    slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }, { blocks: [{ type: "reference", reference: "诗篇23" }] }]
-  });
-  const [first, second] = store.getState().queue;
-
-  assert.equal((await invoke("sermon:present", { id: "missing" })).ok, false);
-  const presented = await invoke("sermon:present", { id: first.id });
-  assert.equal(presented.ok, true);
-  assert.equal(store.getState().active, true);
-  assert.equal(store.getState().currentItemId, first.id);
-
-  const annotated = await invoke("sermon:annotate", {
-    itemId: first.id,
-    annotation: { verseIndex: 0, kind: "highlight" }
-  });
-  assert.equal(annotated.ok, true);
-  assert.equal(store.getState().queue[0].annotations.length, 1);
-
-  const clearedAnnotation = await invoke("sermon:annotate:clear", { itemId: first.id, kind: "highlight" });
-  assert.equal(clearedAnnotation.ok, true);
-  assert.equal(store.getState().queue[0].annotations.length, 0);
-
-  const reordered = await invoke("sermon:reorder", { order: [second.id, first.id] });
-  assert.equal(reordered.ok, true);
-  assert.deepEqual(store.getState().queue.map((item) => item.id), [second.id, first.id]);
-
-  const removed = await invoke("sermon:remove", { id: first.id });
-  assert.equal(removed.ok, true);
-  assert.equal(store.getState().currentItemId, null);
-  assert.equal(store.getState().active, false);
-
-  const cleared = await invoke("sermon:clear", {});
-  assert.equal(cleared.ok, true);
-  assert.equal(store.getState().queue.length, 0);
-  // add + present + annotate + annotate:clear + reorder + remove + clear
-  assert.equal(broadcasted.length, 7);
-});
-
-test("sermon:display 校验载荷、合并显示设置、持久化并广播", async () => {
-  const { invoke, store, broadcasted, getSaved } = createHarness();
-  assert.equal(store.getState().display.fontScale, 1);
-
-  assert.equal((await invoke("sermon:display", {})).ok, false, "空补丁拒绝");
-  assert.equal((await invoke("sermon:display", { fontScale: 2 })).ok, false, "倍率超出上限拒绝");
-  assert.equal((await invoke("sermon:display", { fontScale: 0.5 })).ok, false, "倍率低于下限拒绝");
-  assert.equal((await invoke("sermon:display", { marginPct: 1 })).ok, false, "边距低于下限拒绝");
-  assert.equal((await invoke("sermon:display", { marginPct: 21 })).ok, false, "边距高于上限拒绝");
-  assert.equal((await invoke("sermon:display", { fontFamily: "serif" })).ok, false, "非法字体族拒绝");
-  assert.equal((await invoke("sermon:display", { background: "red" })).ok, false, "非法背景拒绝");
-  assert.equal((await invoke("sermon:display", { background: "#fff" })).ok, false, "非 6 位 hex 拒绝");
-  assert.equal((await invoke("sermon:display", { fontScale: 1.2, zoom: 2 })).ok, false, "未知键拒绝");
-  assert.equal(broadcasted.length, 0);
-
-  const ack = await invoke("sermon:display", { fontScale: 1.2, fontFamily: "songti", marginPct: 8, background: "#123456" });
-  assert.equal(ack.ok, true);
-  assert.deepEqual(store.getState().display, { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "#123456" });
-  assert.equal(broadcasted.length, 1);
-  assert.equal(broadcasted[0].display.fontScale, 1.2);
-  assert.ok(getSaved(), "成功后应持久化");
-
-  const merged = await invoke("sermon:display", { background: "midnight" });
-  assert.equal(merged.ok, true);
-  assert.deepEqual(store.getState().display, { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "midnight" }, "部分补丁合并");
-  assert.equal(broadcasted.length, 2);
-
-  const reload = createSermonStateStore({
-    persistence: { load: async () => getSaved(), save: async () => undefined }
-  });
-  assert.deepEqual(
-    (await reload.load()).display,
-    { fontFamily: "songti", fontScale: 1.2, marginPct: 8, background: "midnight" },
-    "重新加载后保留显示设置"
+    },
+    socket,
+    {
+      refreshAuth: async () => null,
+      presenterAccount: async () => null,
+      service,
+      socketsLeave: () => undefined
+    }
   );
+  for (const event of ["sermon:start", "sermon:join", "sermon:invite", "sermon:end", "sermon:add", "sermon:clear"]) {
+    const handler = handlers.get(event);
+    assert.ok(handler);
+    let ackPayload: unknown;
+    await handler({}, (payload: unknown) => {
+      ackPayload = payload;
+    });
+    assert.deepEqual(ackPayload, { ok: false, message: "认证失败" }, event);
+  }
+  assert.equal(ioEmissions.length, 0);
 });

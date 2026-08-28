@@ -1,9 +1,20 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import { markRaw } from "vue";
-import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonStateDTO } from "@shared/types";
+import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonEndedEvent, SermonInvitedEvent, SermonRemovedEvent, SermonStateDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
-import { applySermonRequestDecision, applySermonState, resetSermonState } from "./features/sermon/useSermon";
+import {
+  applySermonDirectory,
+  applySermonEnded,
+  applySermonInvited,
+  applySermonRemoved,
+  applySermonRequestDecision,
+  applySermonState,
+  refreshSermonDirectory,
+  releaseSermonAudienceSeat,
+  resetSermonState,
+  setSermonOwnAccountId
+} from "./features/sermon/useSermon";
 import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, recordChannelRead, saveUnreadState } from "./unread";
@@ -642,6 +653,8 @@ export const useChatStore = defineStore("chat", {
         connectedOnce = true;
         this.connectionState = "connected";
         if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
+        // 演示目录兜底：连接建立即拉取一次，socket 断档期间的生命周期变化由此补齐。
+        void refreshSermonDirectory().catch(() => undefined);
         if (reconnecting) {
           this.unreadSeeded = false;
           void this.seedUnreadCounts();
@@ -655,6 +668,8 @@ export const useChatStore = defineStore("chat", {
       socket.on("disconnect", (reason) => {
         if (this.socket !== socket) return;
         this.connectionState = "offline";
+        // 观众断线服务端即释席：本地同步释放非本人主持的入座，覆盖层随之卸载。
+        releaseSermonAudienceSeat();
         if (reason !== "io server disconnect") return;
         this.socket = null;
         if (!getToken()) return;
@@ -691,9 +706,14 @@ export const useChatStore = defineStore("chat", {
         this.typing[key] = { displayName: event.actor.displayName, timer };
       });
       socket.on("presence:updated", (users) => (this.online = users));
-      // 讲道经文：服务端全量推送；非激活时 applySermonState 清空本地状态。
+      // 讲道经文：state 只推房间内成员，applySermonState 按本人主持的/入座的演示定向应用。
+      setSermonOwnAccountId(this.account?.id ?? null);
       socket.on("sermon:state", (state: SermonStateDTO) => applySermonState(state));
       socket.on("sermon:request:decided", (event: { messageId: number; approve: boolean; until: string | null }) => applySermonRequestDecision(event));
+      socket.on("sermon:directory", (list: Parameters<typeof applySermonDirectory>[0]) => applySermonDirectory(list));
+      socket.on("sermon:invited", (event: SermonInvitedEvent) => applySermonInvited(event));
+      socket.on("sermon:removed", (event: SermonRemovedEvent) => applySermonRemoved(event));
+      socket.on("sermon:ended", (event: SermonEndedEvent) => applySermonEnded(event));
       socket.on("pinned:updated", (pinned: PinnedDTO | null) => {
         this.pinned = pinned;
         const ch = this.channels.find((c) => c.id === this.currentChannelId);

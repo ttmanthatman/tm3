@@ -1,7 +1,7 @@
 # Sermon Presentation Plan
 
 Design decisions for the 讲道台 (sermon pulpit) feature, split into two independent phases.
-Decided 2026-08-28 through a grill-me session. Phase 2 is not implemented yet; this document is the contract for both.
+Decided 2026-08-28 through a grill-me session. Both phases are implemented; this document is the contract for both, with Phase 2 implementation amendments recorded at the end of its section.
 
 ## Phase 1 — Typography upgrade (presenter-controlled display settings)
 
@@ -33,7 +33,7 @@ All display settings are **presenter-controlled and broadcast to every viewer** 
 - **Margin mechanism**: `marginPct` is applied as percentage `padding-inline` on the card's body container (percentages resolve against the card width), not vw padding on the overlay — the slider visibly changes text width on desktop too, past the 880px card cap.
 - **Desktop workspace layout (≥1024px)**: two columns — left holds queue + display controls (`SermonDisplayControls.vue`, shared with the mobile present footer), right holds read-only scaled live previews (投影预览 16:9 at 1280×720 base, 手机预览 390×845 base) rendered from the same `SermonStage`. Mobile keeps the queue/present two-screen flow. Note: verse-annotation interaction currently lives in the mobile present view only; the desktop previews are read-only by design.
 
-## Phase 2 — Multiple concurrent presentations with audience mutual exclusion (not implemented)
+## Phase 2 — Multiple concurrent presentations with audience mutual exclusion
 
 ### Scope and permission
 
@@ -64,3 +64,16 @@ All display settings are **presenter-controlled and broadcast to every viewer** 
 ### Tests to rewrite in phase 2
 
 `src/server/sermon/state.test.ts`, `src/server/sermon/socket.test.ts`, and `e2e/tests/sermon.spec.ts` currently pin the single-global-store semantics; they need new cases for per-presenter keying, mutual exclusion, concurrent presentations, and disconnect seat release.
+
+### Phase 2 implementation amendments (2026-08-28, implemented)
+
+Details and deviations between the contract above and the shipped implementation:
+
+- **Persistence without schema migration**: each presenter gets a `SermonStateStore` persisted to a `Setting` key-value row `sermon.presentation.{accountId}`; there is no Prisma schema change. Startup restores presentations by prefix-scanning those keys (audience/invites always start empty), and rows left in a cleared (empty, inactive) state are deleted on restore.
+- **Legacy global row migration**: the phase-1 row `sermon.presentation` is read once at startup, its serialized state moved to the `sermon.presentation.{presenterId}` key when the stored `presenterId` parses to a positive integer (skipped if the target key already exists), and then the legacy row is deleted. Rows without a `scope` field deserialize as `assembly` (phase 1 was implicitly a whole-site presentation), so the migrated presentation keeps an assembly-wide audience.
+- **Audience reconnect never auto-reseats**: seats are volatile and released the moment the account's last socket disconnects (server-side, in the existing disconnect handler); a refresh or reconnect therefore finds no seat and must join again. The server only re-joins the socket to `sermon:{presenterId}` and pushes a snapshot while a seat is still held (e.g. another device of the same account is still connected) — for the presenter it also re-joins and pushes the full queue snapshot. The client mirrors this by dropping its audience seat locally on disconnect.
+- **Presenter disconnect does not end the presentation**; admins can force-end any presentation via `sermon:end { presenterId }`. Ending keeps the persistence row in a cleared state rather than deleting it (consistent with `sermon:clear` semantics), so an empty row may survive until the next startup restore cleans it.
+- **Muting is client-side and per-account**: muted presenter IDs are stored in the browser's localStorage under `team-chat-sermon-muted:{accountId}`; muting only suppresses the invite banner, not the invitation itself or the watchable list entry.
+- **Audience picker data source**: the presenter-gated `GET /api/sermon/accounts` (guests filtered out) supplies id/displayName/avatar/online/`seatedPresentation` for the audience picker and the presenter viewer list; the client degrades silently when the account lacks the sermon grant (403) — group-mode presenters then manage no audience list.
+- **Directory privacy**: assembly entries in `GET /api/sermon/directory` and the global `sermon:directory` broadcast never expose `invitedAccountIds`; only group entries do.
+- **Group presenters need no grant**: every mutation event operates on the caller's own presentation, so a group-mode presenter without `canPresentSermon` can run a full presentation; only starting an `assembly` scope re-checks the grant server-side with a fresh account read, and only group presentations require an invite to join.

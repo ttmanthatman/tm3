@@ -212,10 +212,12 @@ const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/A
 const WeChatRelayPanel = defineAsyncComponent(() => import("./features/admin/WeChatRelayPanel.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
 const ReceptionManager = defineAsyncComponent(() => import("./features/reception/ReceptionManager.vue"));
-// 讲道经文相关界面全部独立分包：观众端覆盖层仅在展示激活时挂载，讲道台负一屏仅有权限者打开，申请卡仅在消息列表渲染到时下载。
+// 讲道经文相关界面全部独立分包：观众端覆盖层仅在展示激活时挂载，讲道台负一屏打开时再下载，申请卡仅在消息列表渲染到时下载。
 const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/SermonOverlay.vue"));
 const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
+// 入口按钮 + 邀请横幅常驻头部，体积小且时效敏感，不进异步分包。
+import SermonHub from "./features/sermon/SermonHub.vue";
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
   file: File;
@@ -281,8 +283,8 @@ const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
 const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
 const {
   sermonState: sermonOverlayState,
-  presenterStatus: sermonPresenterStatus,
   latestRequestDecision: sermonRequestDecision,
+  joinedPresentationId: sermonJoinedPresentationId,
   refreshPresenterStatus: refreshSermonPresenterStatus
 } = useSermon({ getSocket: () => store.socket });
 const sermonWorkspaceOpen = ref(false);
@@ -4874,8 +4876,6 @@ async function closePendingChannel() {
 function toggleMorePanel() {
   if (isRecording.value) return;
   composerPanel.value = composerPanel.value === "more" ? null : "more";
-  // 讲道台入口显隐依赖权限状态；仅在用户主动打开面板时拉取，不进 bootstrap。
-  if (composerPanel.value === "more") void refreshSermonPresenterStatus().catch(() => undefined);
 }
 
 function openSermonWorkspace() {
@@ -9674,7 +9674,7 @@ async function toggleVirtual(character: any) {
     />
 
     <SermonWorkspace
-      v-if="sermonWorkspaceMounted && sermonPresenterStatus?.canPresent"
+      v-if="sermonWorkspaceMounted"
       :open="sermonWorkspaceOpen"
       @close="sermonWorkspaceOpen = false"
     />
@@ -9874,6 +9874,7 @@ async function toggleVirtual(character: any) {
           <OverflowMarquee v-else-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
         <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
+        <SermonHub v-if="!showingFavoriteSurface" />
         <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
           <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer()" aria-label="打开音乐播放器">
             <span class="music-player-glyph" aria-hidden="true">歌</span>
@@ -10883,7 +10884,7 @@ async function toggleVirtual(character: any) {
             <span><HeartHandshake :size="25" /></span>
             <small>代祷</small>
           </button>
-          <button v-if="sermonPresenterStatus?.canPresent" class="tool-tile" @click="openSermonWorkspace">
+          <button class="tool-tile" @click="openSermonWorkspace">
             <span><Monitor :size="25" /></span>
             <small>讲道台</small>
           </button>
@@ -11263,7 +11264,7 @@ async function toggleVirtual(character: any) {
       @refresh-playlists="loadMusicPlaylists"
     />
 
-    <SermonOverlay v-if="sermonOverlayState?.active" />
+    <SermonOverlay v-if="sermonJoinedPresentationId !== null && sermonOverlayState?.active" />
     <div v-if="sermonDecisionNotice" class="sermon-decision-toast" role="status">{{ sermonDecisionNotice }}</div>
 
     <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image', score: previewPinnedImage?.score }" @click.self="closePreviewMessage">
