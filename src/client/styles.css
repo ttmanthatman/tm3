@@ -12168,23 +12168,6 @@ button.admin-object-row:focus-visible {
   .music-manager-resources-head { flex-direction: column; }
 }
 
-/* 讲道经文舞台专用字体：阿里巴巴普惠体（子集化 woff2，同源托管） */
-@font-face {
-  font-family: "Alibaba PuHuiTi";
-  src: url("/fonts/AlibabaPuHuiTi-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Alibaba PuHuiTi";
-  src: url("/fonts/AlibabaPuHuiTi-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
 /* 讲道经文展示（sermon）：观众端覆盖层、讲道台、申请卡、审批提示 */
 .sermon-overlay {
   background: var(--sermon-bg, linear-gradient(160deg, rgba(9, 14, 30, 0.96) 0%, rgba(24, 32, 58, 0.94) 55%, rgba(42, 30, 58, 0.95) 100%));
@@ -12202,16 +12185,21 @@ button.admin-object-row:focus-visible {
 .sermon-overlay[data-sermon-bg="sepia"] { --sermon-bg: #f3ead7; --sermon-fg: #3f3222; }
 .sermon-overlay[data-sermon-bg="midnight"] { --sermon-bg: #000000; --sermon-fg: #e5e5e5; }
 
-.sermon-overlay[data-sermon-font="puhuiti"] {
-  --sermon-font-family: "Alibaba PuHuiTi", -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-}
-
+/* 字体族全部为系统自带字体：英文经 Times New Roman 等常见字体回退 */
 .sermon-overlay[data-sermon-font="songti"] {
-  --sermon-font-family: "Songti SC", "Noto Serif SC", "SimSun", serif;
+  --sermon-font-family: "Times New Roman", "Songti SC", "SimSun", serif;
 }
 
-.sermon-overlay[data-sermon-font="system"] {
+.sermon-overlay[data-sermon-font="pingfang"] {
   --sermon-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.sermon-overlay[data-sermon-font="heiti"] {
+  --sermon-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Heiti SC", "SimHei", "Microsoft YaHei", sans-serif;
+}
+
+.sermon-overlay[data-sermon-font="kaiti"] {
+  --sermon-font-family: "Times New Roman", "Kaiti SC", "STKaiti", "KaiTi", serif;
 }
 
 .sermon-overlay-card {
@@ -12225,8 +12213,11 @@ button.admin-object-row:focus-visible {
 .sermon-overlay-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
   padding-bottom: 14px;
+  /* 与正文同一版心：出处徽标随边距设置内缩 */
+  padding-inline: calc(var(--sermon-margin-pct, 4) * 1%);
 }
 
 .sermon-overlay-badge {
@@ -12238,13 +12229,17 @@ button.admin-object-row:focus-visible {
   border: 1px solid color-mix(in srgb, var(--sermon-fg, #f5f1e6) 22%, transparent);
 }
 
-.sermon-overlay-head small {
-  flex: 1;
-  min-width: 0;
-  color: color-mix(in srgb, var(--sermon-fg, #f5f1e6) 60%, transparent);
+/* “某某正在分享”固定在舞台右下角（相对 .sermon-overlay 定位，含安全区） */
+.sermon-overlay-share {
+  position: absolute;
+  right: calc(16px + var(--safe-right));
+  bottom: calc(16px + var(--safe-bottom));
+  max-width: min(60%, 320px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
+  color: color-mix(in srgb, var(--sermon-fg, #f5f1e6) 55%, transparent);
 }
 
 .sermon-overlay-minimize {
@@ -12634,25 +12629,28 @@ button.admin-object-row:focus-visible {
   flex-wrap: wrap;
 }
 
-.sermon-font-picker {
+.sermon-font-row {
   display: inline-flex;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  overflow: hidden;
+  align-items: center;
+  gap: 8px;
 }
 
-.sermon-font-picker button {
-  padding: 7px 10px;
+.sermon-font-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.sermon-font-select select {
+  padding: 6px 8px;
   font-size: 13px;
   color: var(--text);
   background: var(--bg, #fff);
-  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   cursor: pointer;
-}
-
-.sermon-font-picker button.active {
-  color: var(--button-text, #fff);
-  background: var(--accent);
 }
 
 .sermon-margin-slider {

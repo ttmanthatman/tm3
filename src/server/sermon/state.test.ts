@@ -284,7 +284,7 @@ test("applyDisplay 非法字体族/背景被忽略，其余字段照常合并", 
 
   const partial = applyDisplay(state, { fontFamily: "serif" as never, background: "#123456" }, ctx());
   assert.equal(partial.display.background, "#123456", "同批合法字段仍生效");
-  assert.equal(partial.display.fontFamily, "puhuiti");
+  assert.equal(partial.display.fontFamily, "songti");
 
   const upperHex = applyDisplay(state, { background: "#A1B2C3" }, ctx());
   assert.equal(upperHex.display.background, "#A1B2C3", "大写 hex 合法");
@@ -323,6 +323,19 @@ test("deserialize 旧持久化数据迁移：扁平 fontScale 进入 display，�
     deserializeSermonState(JSON.stringify({ ...state, display: { ...state.display, background: "red" } })).queue.length,
     0
   );
+});
+
+test("deserialize 已下架字体族（puhuiti/system）回退为默认字体，队列其余状态保留", () => {
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  const state = applyAdd(emptySermonState(), [slide("约3:16")], context);
+  for (const legacyFont of ["puhuiti", "system"]) {
+    const restored = deserializeSermonState(
+      JSON.stringify({ ...state, display: { ...state.display, fontFamily: legacyFont as never } })
+    );
+    assert.equal(restored.display.fontFamily, DEFAULT_SERMON_DISPLAY.fontFamily, `${legacyFont} 回退为默认字体`);
+    assert.equal(restored.queue.length, 1, "队列保留");
+  }
 });
 
 test("serialize/deserialize JSON 往返，损坏数据回退为空状态", () => {

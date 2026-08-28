@@ -25,9 +25,9 @@ test("sermonDisplayStyle：自定义 hex 背景按亮度挑选前景色", () => 
 });
 
 test("sermonDisplayAttrs：预设背景进 data-sermon-bg，自定义 hex 置空", () => {
-  assert.deepEqual(sermonDisplayAttrs(SERMON_DISPLAY_FALLBACK), { "data-sermon-font": "puhuiti", "data-sermon-bg": "gradient" });
-  assert.deepEqual(sermonDisplayAttrs({ ...SERMON_DISPLAY_FALLBACK, fontFamily: "songti", background: "#123456" }), {
-    "data-sermon-font": "songti",
+  assert.deepEqual(sermonDisplayAttrs(SERMON_DISPLAY_FALLBACK), { "data-sermon-font": "songti", "data-sermon-bg": "gradient" });
+  assert.deepEqual(sermonDisplayAttrs({ ...SERMON_DISPLAY_FALLBACK, fontFamily: "kaiti", background: "#123456" }), {
+    "data-sermon-font": "kaiti",
     "data-sermon-bg": null
   });
 });

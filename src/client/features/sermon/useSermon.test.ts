@@ -27,7 +27,7 @@ function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
     currentItemId,
     presenterId: "7",
     presenterName: "张三",
-    display: { fontFamily: "puhuiti", fontScale: 1, marginPct: 4, background: "gradient" },
+    display: { fontFamily: "songti", fontScale: 1, marginPct: 4, background: "gradient" },
     updatedAt: "2026-08-27T00:00:00.000Z"
   };
 }

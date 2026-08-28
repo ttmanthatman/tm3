@@ -18,12 +18,12 @@ export const SERMON_FONT_SCALE_MIN = 0.7;
 export const SERMON_FONT_SCALE_MAX = 1.6;
 export const SERMON_MARGIN_PCT_MIN = 2;
 export const SERMON_MARGIN_PCT_MAX = 20;
-export const SERMON_FONT_FAMILIES = ["puhuiti", "songti", "system"] as const;
+export const SERMON_FONT_FAMILIES = ["songti", "pingfang", "heiti", "kaiti"] as const;
 export const SERMON_BACKGROUND_PRESETS = ["gradient", "dark", "light", "sepia", "midnight"] as const;
 export const SERMON_BACKGROUND_HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export const DEFAULT_SERMON_DISPLAY: SermonDisplayDTO = {
-  fontFamily: "puhuiti",
+  fontFamily: "songti",
   fontScale: 1,
   marginPct: 4,
   background: "gradient"
@@ -378,7 +378,9 @@ const queueItemSchema = z
   });
 
 const displaySchema = z.object({
-  fontFamily: z.enum(SERMON_FONT_FAMILIES).default(DEFAULT_SERMON_DISPLAY.fontFamily),
+  // 历史持久化数据可能含已下架的 puhuiti/system，catch 到默认字体族，
+  // 避免单个字段失效导致整个队列状态回退为空。
+  fontFamily: z.enum(SERMON_FONT_FAMILIES).catch(DEFAULT_SERMON_DISPLAY.fontFamily),
   fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).default(DEFAULT_SERMON_DISPLAY.fontScale),
   marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).default(DEFAULT_SERMON_DISPLAY.marginPct),
   background: z.string().refine(isValidSermonBackground).default(DEFAULT_SERMON_DISPLAY.background)

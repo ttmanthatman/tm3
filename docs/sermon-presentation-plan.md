@@ -12,15 +12,13 @@ All display settings are **presenter-controlled and broadcast to every viewer** 
 `SermonStateDTO` gains a `display` object alongside (and replacing the transport role of) the flat `fontScale`:
 
 - `display.fontScale`: existing 0.7–1.6 semantics, unchanged.
-- `display.fontFamily`: one of `puhuiti` (default), `songti` (current serif stack), `system` (system sans).
+- `display.fontFamily`: one of `songti` (default), `pingfang`, `heiti`, `kaiti` — all system-bundled font stacks, no webfonts.
 - `display.marginPct`: horizontal padding as a percentage of viewport width (2–20, slider-mapped). Relative units keep the same setting usable across phones and projectors; the existing `min(880px, 100%)` width cap stays and margins apply on top of it.
 - `display.background`: background preset key or custom hex color. The current dark gradient remains the default preset so existing presentations look unchanged.
 
 ### Font hosting
 
-- Alibaba PuHuiTi 2.0 is **self-hosted**: subsetted woff2 files under `public/fonts/` (Regular + Medium, ~3.5 MB each), served same-origin with long cache headers. The subset covers the full GBK repertoire plus the Bible corpus (`src/server/bible/cmn-cu89s*.json`) plus sermon UI labels — GBK coverage is required because the queue accepts free-text items, not just Bible passages. Caveats: characters outside GBK (emoji, rare extensions) fall back to the system font per-glyph; U+2D8D (`ⶍ`, used in two CUV verses) has no glyph in PuHuiTi at all and always falls back. Regeneration: pyftsubset with charset = GBK + Bible corpus + UI labels.
-- `@font-face` uses `font-display: swap`; while the webfont loads, text falls back to the system sans stack (not Songti) to avoid a jarring serif→sans swap.
-- The font CSS is only needed when the sermon overlay/workspace is open; loading must not block first paint of the chat UI.
+- Sermon fonts are **system-bundled stacks only** (Songti SC/SimSun, PingFang SC/Microsoft YaHei, Heiti SC/SimHei, Kaiti SC/STKaiti/KaiTi; Latin text renders via Times New Roman and other common system fonts). No webfonts are downloaded, so there is no hosting, subsetting, or loading-latency concern. Persisted `puhuiti`/`system` values from earlier versions deserialize to the default `songti` family.
 
 ### Client
 

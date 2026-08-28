@@ -2,7 +2,7 @@ import type { SermonDisplayDTO } from "@shared/types";
 
 /** 服务端快照到达前的兜底显示设置（与服务端 DEFAULT_SERMON_DISPLAY 保持一致）。 */
 export const SERMON_DISPLAY_FALLBACK: SermonDisplayDTO = {
-  fontFamily: "puhuiti",
+  fontFamily: "songti",
   fontScale: 1,
   marginPct: 4,
   background: "gradient"

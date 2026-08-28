@@ -105,8 +105,9 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(workspace.locator(".sermon-queue-view")).toBeVisible();
 
     await workspace.locator(".sermon-reference-input").fill("约3:16；诗篇23:1");
-    await workspace.getByRole("button", { name: "预览", exact: true }).click();
-    const addButton = workspace.getByRole("button", { name: "加入队列（2）", exact: true });
+    // 统一输入框默认整段一屏；勾选「每处经文一屏」让两处出处各自独立成屏。
+    await workspace.getByRole("checkbox", { name: "每处经文一屏" }).check();
+    const addButton = workspace.getByRole("button", { name: "加入队列", exact: true });
     await expect(addButton).toBeEnabled();
     await addButton.click();
     await expect(workspace.locator(".sermon-queue-item")).toHaveCount(2);
@@ -197,7 +198,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
       .toBe("1.2");
 
     // 显示设置（字体族/背景/边距）经 sermon:display 同步到观众端舞台根元素。
-    await presentView.getByRole("button", { name: "宋体", exact: true }).click();
+    await presentView.getByRole("combobox", { name: "经文字体" }).selectOption("songti");
     await expect(overlay).toHaveAttribute("data-sermon-font", "songti");
     await expect(admin.locator(".sermon-present-stage")).toHaveAttribute("data-sermon-font", "songti");
     await presentView.getByRole("button", { name: "纯黑", exact: true }).click();
@@ -237,18 +238,18 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await admin.setViewportSize({ width: 390, height: 844 });
     await expect(presentView).toBeVisible();
 
-    // 自由文字条目：不解析经文，直接入队并推送给观众。
+    // 自由文字条目：统一输入框不解析经文，整段文字原样入屏并推送给观众。
     await presentView.getByRole("button", { name: "返回演示队列", exact: true }).click();
-    await workspace.locator(".sermon-add-kind").getByRole("button", { name: "文字", exact: true }).click();
-    await workspace.locator(".sermon-text-title-input").fill("证道大纲");
-    await workspace.locator('.sermon-block textarea[placeholder*="空行分段"]').fill("一、神的爱\n\n二、人的回应");
-    await workspace.locator(".sermon-block").getByRole("button", { name: "加入队列", exact: true }).click();
+    await workspace.locator(".sermon-reference-input").fill("证道大纲\n一、神的爱\n\n二、人的回应");
+    const textAddButton = workspace.getByRole("button", { name: "加入队列", exact: true });
+    await expect(textAddButton).toBeEnabled();
+    await textAddButton.click();
     await expect(workspace.locator(".sermon-queue-item")).toHaveCount(3);
-    const textItem = workspace.locator(".sermon-queue-item").filter({ hasText: "证道大纲" });
+    const textItem = workspace.locator(".sermon-queue-item").filter({ hasText: "文字分享" });
     await expect(textItem).toContainText("文字");
     await textItem.locator(".sermon-queue-main").click();
-    await expect(overlay.locator(".sermon-overlay-badge")).toHaveText("证道大纲");
-    await expect(overlay.locator(".sermon-text-title")).toHaveText("证道大纲");
+    await expect(overlay.locator(".sermon-overlay-badge")).toHaveText("文字分享");
+    await expect(overlay).toContainText("证道大纲");
     await expect(overlay).toContainText("一、神的爱");
     await expect(overlay).toContainText("二、人的回应");
     await viewer.screenshot({ path: "output/e2e/sermon/overlay-text-390.png" });

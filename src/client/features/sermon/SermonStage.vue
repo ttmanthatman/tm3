@@ -64,7 +64,6 @@ watch(
 <template>
   <header class="sermon-overlay-head">
     <span class="sermon-overlay-badge">{{ props.item?.normalizedReference || "讲道经文" }}</span>
-    <small v-if="props.presenterName">{{ props.presenterName }} 正在分享</small>
     <slot name="head-actions" />
   </header>
   <div ref="bodyEl" class="sermon-overlay-body">
@@ -124,4 +123,5 @@ watch(
       <div v-else key="empty" class="sermon-passage sermon-passage-empty">{{ props.emptyText }}</div>
     </Transition>
   </div>
+  <small v-if="props.presenterName" class="sermon-overlay-share">{{ props.presenterName }} 正在分享</small>
 </template>

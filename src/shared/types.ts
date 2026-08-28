@@ -550,8 +550,8 @@ export interface SermonQueueItem {
   scrollLines?: number;
 }
 
-/** 讲道演示字体族：阿里巴巴普惠体 / 宋体 / 系统黑体 */
-export type SermonFontFamily = "puhuiti" | "songti" | "system";
+/** 讲道演示字体族：宋体 / 苹方 / 黑体 / 楷体（均为系统自带字体） */
+export type SermonFontFamily = "songti" | "pingfang" | "heiti" | "kaiti";
 
 export interface SermonDisplayDTO {
   fontFamily: SermonFontFamily;

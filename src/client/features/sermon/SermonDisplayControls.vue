@@ -14,9 +14,10 @@ const SERMON_MARGIN_MIN = 2;
 const SERMON_MARGIN_MAX = 20;
 
 const SERMON_FONT_OPTIONS: Array<{ value: SermonFontFamily; label: string }> = [
-  { value: "puhuiti", label: "阿里巴巴普惠体" },
   { value: "songti", label: "宋体" },
-  { value: "system", label: "系统黑体" }
+  { value: "pingfang", label: "苹方" },
+  { value: "heiti", label: "黑体" },
+  { value: "kaiti", label: "楷体" }
 ];
 
 const SERMON_BG_PRESETS: Array<{ value: string; label: string; chip: string }> = [
@@ -58,20 +59,22 @@ function onCustomBackground(event: Event) {
 
 <template>
   <div class="sermon-display-settings">
-    <div class="sermon-font-picker" role="group" aria-label="经文字体">
-      <button
-        v-for="option in SERMON_FONT_OPTIONS"
-        :key="option.value"
-        type="button"
-        :class="{ active: display.fontFamily === option.value }"
-        :aria-pressed="display.fontFamily === option.value"
-        @click="emit('update', { fontFamily: option.value })"
-      >{{ option.label }}</button>
-    </div>
-    <div class="sermon-font-stepper" role="group" :aria-label="`经文字体倍率，当前 ${fontScale.toFixed(1)} 倍`">
-      <button type="button" :disabled="fontScale <= SERMON_FONT_SCALE_MIN" aria-label="减小字体" @click="adjustFont(-1)"><Minus :size="15" /></button>
-      <span aria-live="polite">{{ fontScale.toFixed(1) }}×</span>
-      <button type="button" :disabled="fontScale >= SERMON_FONT_SCALE_MAX" aria-label="增大字体" @click="adjustFont(1)"><Plus :size="15" /></button>
+    <div class="sermon-font-row">
+      <label class="sermon-font-select">
+        <span>字体</span>
+        <select
+          :value="display.fontFamily"
+          aria-label="经文字体"
+          @change="emit('update', { fontFamily: ($event.target as HTMLSelectElement).value as SermonFontFamily })"
+        >
+          <option v-for="option in SERMON_FONT_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
+        </select>
+      </label>
+      <div class="sermon-font-stepper" role="group" :aria-label="`经文字体倍率，当前 ${fontScale.toFixed(1)} 倍`">
+        <button type="button" :disabled="fontScale <= SERMON_FONT_SCALE_MIN" aria-label="减小字体" @click="adjustFont(-1)"><Minus :size="15" /></button>
+        <span aria-live="polite">{{ fontScale.toFixed(1) }}×</span>
+        <button type="button" :disabled="fontScale >= SERMON_FONT_SCALE_MAX" aria-label="增大字体" @click="adjustFont(1)"><Plus :size="15" /></button>
+      </div>
     </div>
     <label class="sermon-margin-slider">
       <span>边距</span>
