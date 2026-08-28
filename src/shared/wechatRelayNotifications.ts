@@ -28,6 +28,7 @@ export interface WeChatRelayRenderContext {
   mentions?: WeChatRelayMentionTarget[];
   title?: string;
   version?: string;
+  changelog?: string;
 }
 
 export const WECHAT_RELAY_TEMPLATE_VARIABLES = [
@@ -47,6 +48,7 @@ export const WECHAT_RELAY_TEMPLATE_VARIABLES = [
   { key: "wechatMentionCount", label: "可定向微信 @ 人数", example: "2" },
   { key: "title", label: "系统消息标题", example: "本周聚会安排" },
   { key: "version", label: "系统版本", example: "1.13.0" },
+  { key: "changelog", label: "本次更新说明", example: "修复已知问题\n新增提醒功能" },
   { key: "systemPrefix", label: "系统消息前缀", example: "系统消息" },
   { key: "messageId", label: "聊天室消息编号", example: "123" },
   { key: "date", label: "日期", example: "2026/8/22" },
@@ -70,7 +72,7 @@ export const DEFAULT_WECHAT_RELAY_TEMPLATES: WeChatRelayTemplates = {
   chain: ["{name}发起了接龙：{content}", "{name}更新了接龙"],
   whyTopic: ["{name}分享了一个‘为什么’话题", "聊天室里有{name}分享的新话题"],
   pinned: ["【{systemPrefix}】{channel}更新了置顶消息：{title}"],
-  versionUpdate: ["【{systemPrefix}】聊天室已升级到 v{version}"],
+  versionUpdate: ["【{systemPrefix}】聊天室已升级到 v{version}，更新内容：{changelog}"],
   system: ["【{systemPrefix}】{content}"],
   other: ["{name}在聊天室有新动态", "聊天室有新动静了", "{name}带来了新消息"]
 };
@@ -185,6 +187,7 @@ export function weChatRelayTemplateVariables(
     wechatMentionCount: String(mentions.filter((target) => target.wechatName).length),
     title: context.title?.trim() || String(payload.title || "").trim(),
     version: context.version?.trim() || String(payload.version || "").trim(),
+    changelog: context.changelog?.trim() || String(payload.changelog || "").trim(),
     systemPrefix: context.systemPrefix?.trim() || "系统消息",
     messageId: String(message.id),
     date,

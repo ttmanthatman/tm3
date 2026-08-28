@@ -3,6 +3,7 @@ import test from "node:test";
 import Fastify from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { DEFAULT_WECHAT_RELAY_TEMPLATES } from "../../shared/wechatRelayNotifications.js";
+import { APP_VERSION, RELEASE_NOTES } from "../../shared/release.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./wechatRelay.js";
 
 function createHarness(environmentToken = "agent-test-token", allowAdmin = true, nasAccessUrl: string | null = "https://nas.example.com/wechat/") {
@@ -231,6 +232,8 @@ test("pin snapshots use the independently configured system template", async () 
     const pin = control.json().config.systemEvents.find((event: { slot: string }) => event.slot === "pinned:7");
     assert.equal(pin.message.relayText, "【重要系统消息】综合频道：本周安排");
     assert.match(pin.key, /^pinned:21:2:/);
+    const version = control.json().config.systemEvents.find((event: { slot: string }) => event.slot === "version");
+    assert.equal(version.message.relayText, `【重要系统消息】聊天室已升级到 v${APP_VERSION}，更新内容：${RELEASE_NOTES.join("\n")}`);
   } finally {
     await app.close();
   }

@@ -64,4 +64,15 @@ test("renders mapped mentions, content metadata, and configurable system prefixe
     content: "",
     payload: { systemKind: "versionUpdate", version: "1.13.0" }
   }), systemTemplates, { systemPrefix: "站务", version: "1.13.0" }), "【站务】升级到 1.13.0");
+  const changelogTemplates = { ...DEFAULT_WECHAT_RELAY_TEMPLATES, versionUpdate: ["【{systemPrefix}】升级到 v{version}，更新内容：{changelog}"] };
+  assert.equal(renderWeChatRelayNotification(message(12, {
+    type: "system",
+    content: "",
+    payload: { systemKind: "versionUpdate", version: "1.13.0", changelog: "修复已知问题\n新增提醒功能" }
+  }), changelogTemplates, { systemPrefix: "站务" }), "【站务】升级到 v1.13.0，更新内容：修复已知问题\n新增提醒功能");
+  assert.equal(renderWeChatRelayNotification(message(13, {
+    type: "system",
+    content: "",
+    payload: { systemKind: "versionUpdate", version: "1.13.0" }
+  }), changelogTemplates, { systemPrefix: "站务", changelog: "修复已知问题" }), "【站务】升级到 v1.13.0，更新内容：修复已知问题");
 });

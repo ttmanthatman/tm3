@@ -10,7 +10,7 @@ import {
   type WeChatRelayMentionTarget,
   type WeChatRelayTemplates
 } from "../../shared/wechatRelayNotifications.js";
-import { APP_VERSION } from "../../shared/release.js";
+import { APP_VERSION, RELEASE_NOTES } from "../../shared/release.js";
 import {
   generateWeChatRelayToken,
   hashWeChatRelayToken,
@@ -216,6 +216,7 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
     systemKind: "pinned" | "versionUpdate";
     title?: string;
     version?: string;
+    changelog?: string;
   }) {
     return {
       id: input.id,
@@ -223,7 +224,7 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
       sender: { id: 1, kind: "system" as const, username: "system", displayName: "系统" },
       content: input.content,
       type: "system" as const,
-      payload: { systemKind: input.systemKind, title: input.title, version: input.version },
+      payload: { systemKind: input.systemKind, title: input.title, version: input.version, changelog: input.changelog },
       createdAt: input.createdAt
     };
   }
@@ -240,13 +241,15 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
     ]);
     if (!channel) return [];
     const now = new Date().toISOString();
+    const changelog = RELEASE_NOTES.join("\n");
     const versionMessage = systemMessage({
       id: 1,
       channelId: config.channelId,
       content: "",
       createdAt: now,
       systemKind: "versionUpdate",
-      version: APP_VERSION
+      version: APP_VERSION,
+      changelog
     });
     const versionEvent = {
       slot: "version",
@@ -257,7 +260,8 @@ export function registerWeChatRelayRoutes(app: FastifyInstance, deps: WeChatRela
           channel: channel.name,
           group: config.targetGroup,
           systemPrefix: config.systemPrefix,
-          version: APP_VERSION
+          version: APP_VERSION,
+          changelog
         })
       }
     };

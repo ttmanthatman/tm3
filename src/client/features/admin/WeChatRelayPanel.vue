@@ -57,7 +57,7 @@ const templateSections: Array<{ key: WeChatRelayTemplateKey; title: string; hint
   { key: "chain", title: "接龙", hint: "可使用 {content} 显示接龙主题" },
   { key: "whyTopic", title: "‘为什么’话题卡", hint: "例如：{name}分享了一个新话题" },
   { key: "pinned", title: "置顶消息", hint: "建议保留 {systemPrefix}、{channel}、{title}" },
-  { key: "versionUpdate", title: "系统版本升级", hint: "可使用 {systemPrefix} 和 {version}" },
+  { key: "versionUpdate", title: "系统版本升级", hint: "可使用 {systemPrefix}、{version} 和 {changelog}" },
   { key: "system", title: "其他系统消息", hint: "建议保留 {systemPrefix}" },
   { key: "other", title: "其他动态", hint: "未归入以上类型时使用" }
 ];
