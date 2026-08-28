@@ -522,11 +522,11 @@ if (fs.existsSync(DIST_CLIENT)) {
     root: DIST_CLIENT,
     wildcard: false,
     cacheControl: false,
-    setHeaders(res, filePath) {
+    setHeaders(reply, filePath) {
       // Vite emits content-hashed filenames under assets/, which are safe to
       // cache forever; everything else (index.html, sw.js, icons) revalidates.
       const immutable = filePath.includes(`${path.sep}assets${path.sep}`);
-      res.setHeader("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "public, max-age=0");
+      reply.header("Cache-Control", immutable ? "public, max-age=31536000, immutable" : "public, max-age=0");
     }
   });
 }
