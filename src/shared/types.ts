@@ -515,6 +515,21 @@ export interface SermonTextInput {
   content: string;
 }
 
+/** 屏内内容块：一处经文段落或一段自由文字，按序渲染（讲道台统一输入的混排单位） */
+export type SermonSlideBlock =
+  | { type: "passage"; reference: string; normalizedReference: string; verseStart: number; verseCount: number }
+  | { type: "text"; content: string };
+
+/** 客户端解析后的屏内块：经文块带原始出处（服务端解析经文），文字块原样保留 */
+export type SermonSlideInputBlock =
+  | { type: "reference"; reference: string }
+  | { type: "text"; content: string };
+
+/** 讲道台一次提交的一屏内容 */
+export interface SermonSlideInput {
+  blocks: SermonSlideInputBlock[];
+}
+
 export interface SermonQueueItem {
   id: string;
   /** 条目类型：经文或自由文字；旧持久化数据缺省按 bible 迁移 */
@@ -527,6 +542,12 @@ export interface SermonQueueItem {
   title?: string;
   /** 文字条目正文（仅 kind = "text"，空行分段） */
   content?: string;
+  /** 屏内有序内容（多段经文/文字混排）；旧持久化数据缺省时按 verses/content 渲染 */
+  blocks?: SermonSlideBlock[];
+  /** 创建/热编辑时的原始输入，供讲道者按原文重编辑 */
+  source?: string;
+  /** 屏内同步滚动行数（非负整数，缺省 0；Shift+↑/↓ 步进） */
+  scrollLines?: number;
 }
 
 /** 讲道演示字体族：阿里巴巴普惠体 / 宋体 / 系统黑体 */

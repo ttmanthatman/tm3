@@ -55,19 +55,6 @@ export function annotationsForVerse(annotations: SermonAnnotation[], verseIndex:
   return annotations.filter((annotation) => annotation.verseIndex === verseIndex);
 }
 
-/** 讲道台输入的一串出处：按逗号/分号/换行（含全角）拆分并去重。 */
-export function splitSermonReferences(input: string): string[] {
-  const seen = new Set<string>();
-  const references: string[] = [];
-  for (const piece of input.split(/[,，;；、\n\r]+/)) {
-    const reference = piece.trim();
-    if (!reference || seen.has(reference)) continue;
-    seen.add(reference);
-    references.push(reference);
-  }
-  return references;
-}
-
 /** 自由文字条目正文：按空行拆成段落（段内保留单换行），空段落忽略。 */
 export function splitSermonTextParagraphs(content: string): string[] {
   return content

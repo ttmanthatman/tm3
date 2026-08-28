@@ -1,11 +1,14 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import type {
+  BibleLookupDTO,
   BibleVerseLineDTO,
   SermonAnnotation,
   SermonAnnotationKind,
   SermonDisplayDTO,
   SermonQueueItem,
+  SermonSlideBlock,
+  SermonSlideInput,
   SermonStateDTO,
   SermonTextInput
 } from "../../shared/types.js";
@@ -35,10 +38,17 @@ export type SermonActor = {
   name: string;
 };
 
-export type SermonResolvedEntry = {
-  reference: string;
-  normalizedReference: string;
+/** 一屏内容的解析结果：有序块 + 扁平经文数组 + 供热编辑的原文重建。 */
+export type SermonResolvedSlide = {
+  blocks: SermonSlideBlock[];
   verses: BibleVerseLineDTO[];
+  source: string;
+};
+
+export type SermonSlidesResolution = {
+  resolved: SermonResolvedSlide[];
+  /** 识别失败降级为文字的出处（原文保留，提示讲道者）。 */
+  fallbacks: string[];
 };
 
 export type SermonMutationContext = {
@@ -72,18 +82,98 @@ function replaceQueueItem(state: SermonStateDTO, item: SermonQueueItem): SermonS
   return { ...state, queue: state.queue.map((entry) => (entry.id === item.id ? item : entry)) };
 }
 
-export function applyAdd(state: SermonStateDTO, entries: SermonResolvedEntry[], ctx: SermonMutationContext): SermonStateDTO {
+/**
+ * 把客户端解析后的屏解析成可入库的结构：reference 块经文查询，失败降级为文字块（原文保留）；
+ * 整屏无内容返回 null。verses 为全屏经文扁平数组，passage 块用 verseStart/verseCount 引用切片。
+ */
+export function resolveSermonSlide(
+  slide: SermonSlideInput,
+  resolve: (reference: string) => BibleLookupDTO
+): { resolved: SermonResolvedSlide; fallbacks: string[] } | null {
+  const blocks: SermonSlideBlock[] = [];
+  const verses: BibleVerseLineDTO[] = [];
+  const fallbacks: string[] = [];
+  for (const block of slide.blocks) {
+    if (block.type === "text") {
+      const content = block.content.trim();
+      if (content) blocks.push({ type: "text", content });
+      continue;
+    }
+    try {
+      const lookup = resolve(block.reference);
+      if (!lookup.verses.length) throw new Error("empty lookup");
+      blocks.push({
+        type: "passage",
+        reference: block.reference,
+        normalizedReference: lookup.normalizedReference,
+        verseStart: verses.length,
+        verseCount: lookup.verses.length
+      });
+      verses.push(...lookup.verses);
+    } catch {
+      fallbacks.push(block.reference);
+      blocks.push({ type: "text", content: block.reference });
+    }
+  }
+  if (!blocks.length) return null;
+  const source = blocks
+    .map((block) => (block.type === "passage" ? block.reference : block.content))
+    .join("\n");
+  return { resolved: { blocks, verses, source }, fallbacks };
+}
+
+export function resolveSermonSlides(
+  slides: SermonSlideInput[],
+  resolve: (reference: string) => BibleLookupDTO
+): SermonSlidesResolution {
+  const resolved: SermonResolvedSlide[] = [];
+  const fallbacks: string[] = [];
+  for (const slide of slides) {
+    const outcome = resolveSermonSlide(slide, resolve);
+    if (!outcome) continue;
+    resolved.push(outcome.resolved);
+    fallbacks.push(...outcome.fallbacks);
+  }
+  return { resolved, fallbacks };
+}
+
+function buildSlideItem(id: string, slide: SermonResolvedSlide): SermonQueueItem {
+  const passages = slide.blocks.filter((block): block is Extract<SermonSlideBlock, { type: "passage" }> => block.type === "passage");
+  const reference = passages.map((passage) => passage.reference).join("；");
+  return {
+    id,
+    kind: passages.length ? "bible" : "text",
+    reference: reference || "文字分享",
+    normalizedReference: passages.map((passage) => passage.normalizedReference).join("；") || "文字分享",
+    verses: slide.verses,
+    annotations: [],
+    blocks: slide.blocks,
+    source: slide.source,
+    scrollLines: 0
+  };
+}
+
+export function applyAdd(state: SermonStateDTO, slides: SermonResolvedSlide[], ctx: SermonMutationContext): SermonStateDTO {
   const capacity = SERMON_QUEUE_LIMIT - state.queue.length;
-  if (capacity <= 0 || !entries.length) return state;
-  const items: SermonQueueItem[] = entries.slice(0, capacity).map((entry) => ({
-    id: ctx.createId(),
-    kind: "bible",
-    reference: entry.reference,
-    normalizedReference: entry.normalizedReference,
-    verses: entry.verses,
-    annotations: []
-  }));
+  if (capacity <= 0 || !slides.length) return state;
+  const items: SermonQueueItem[] = slides.slice(0, capacity).map((slide) => buildSlideItem(ctx.createId(), slide));
   return touch({ ...state, queue: [...state.queue, ...items] }, ctx);
+}
+
+// 热编辑：按原文重编辑一屏，经文重查、文字保留；经文可能变化，标注与滚动位置重置，id 不变。
+export function applyUpdate(state: SermonStateDTO, id: string, slide: SermonResolvedSlide, ctx: SermonMutationContext): SermonStateDTO {
+  const item = state.queue.find((entry) => entry.id === id);
+  if (!item) return state;
+  return touch(replaceQueueItem(state, buildSlideItem(id, slide)), ctx);
+}
+
+// 屏内滚动同步（Shift+↑/↓ 一行步进）：行数夹到非负整数。
+export function applyScroll(state: SermonStateDTO, id: string, lines: number, ctx: SermonMutationContext): SermonStateDTO {
+  const item = state.queue.find((entry) => entry.id === id);
+  if (!item) return state;
+  const next = Math.max(0, Math.floor(lines));
+  if (next === (item.scrollLines ?? 0)) return state;
+  return touch(replaceQueueItem(state, { ...item, scrollLines: next }), ctx);
 }
 
 // 自由文字条目：不经过经文解析，正文为空的条目直接忽略；标题缺省时徽标显示“文字分享”。
@@ -144,7 +234,9 @@ export function applyPresent(state: SermonStateDTO, id: string | null, ctx: Serm
     return touch({ ...state, active: false, currentItemId: null }, ctx);
   }
   if (!state.queue.some((item) => item.id === id)) return state;
-  return touch({ ...state, active: true, currentItemId: id }, ctx);
+  // 切换到该屏时屏内滚动归零（条目可能带上次展示遗留的 scrollLines）。
+  const queue = state.queue.map((item) => (item.id === id && (item.scrollLines ?? 0) > 0 ? { ...item, scrollLines: 0 } : item));
+  return touch({ ...state, queue, active: true, currentItemId: id }, ctx);
 }
 
 // 显示设置按字段合并：单字段非法只忽略该字段；字体倍率按 0.1 步进取整并夹在允许区间内，
@@ -245,6 +337,17 @@ const annotationSchema = z.object({
   end: z.number().int().min(0).optional()
 });
 
+const slideBlockSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("passage"),
+    reference: z.string(),
+    normalizedReference: z.string(),
+    verseStart: z.number().int().min(0),
+    verseCount: z.number().int().min(0)
+  }),
+  z.object({ type: z.literal("text"), content: z.string().max(4000) })
+]);
+
 const queueItemSchema = z
   .object({
     id: z.string().min(1),
@@ -255,11 +358,22 @@ const queueItemSchema = z
     verses: z.array(verseSchema),
     annotations: z.array(annotationSchema),
     title: z.string().max(100).optional(),
-    content: z.string().max(4000).optional()
+    content: z.string().max(4000).optional(),
+    // 统一输入后的屏内有序内容；旧数据无此字段时按 verses/content 渲染。
+    blocks: z.array(slideBlockSchema).optional(),
+    source: z.string().max(8000).optional(),
+    scrollLines: z.number().int().min(0).optional()
   })
   .superRefine((item, context) => {
-    if (item.kind === "text" && !item.content?.trim()) {
+    if (item.kind === "text" && !item.content?.trim() && !item.blocks?.some((block) => block.type === "text" && block.content.trim())) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "text item requires content" });
+    }
+    if (item.blocks) {
+      for (const block of item.blocks) {
+        if (block.type === "passage" && block.verseStart + block.verseCount > item.verses.length) {
+          context.addIssue({ code: z.ZodIssueCode.custom, message: "passage block exceeds verses" });
+        }
+      }
     }
   });
 
@@ -334,8 +448,10 @@ export function createSermonStateStore(deps: {
     getState(): SermonStateDTO {
       return state;
     },
-    add: (actor: SermonActor, entries: SermonResolvedEntry[]) => mutate(actor, (current, ctx) => applyAdd(current, entries, ctx)),
+    add: (actor: SermonActor, slides: SermonResolvedSlide[]) => mutate(actor, (current, ctx) => applyAdd(current, slides, ctx)),
     addTexts: (actor: SermonActor, texts: SermonTextInput[]) => mutate(actor, (current, ctx) => applyAddTexts(current, texts, ctx)),
+    update: (actor: SermonActor, id: string, slide: SermonResolvedSlide) => mutate(actor, (current, ctx) => applyUpdate(current, id, slide, ctx)),
+    scroll: (actor: SermonActor, id: string, lines: number) => mutate(actor, (current, ctx) => applyScroll(current, id, lines, ctx)),
     reorder: (actor: SermonActor, order: string[]) => mutate(actor, (current, ctx) => applyReorder(current, order, ctx)),
     remove: (actor: SermonActor, id: string) => mutate(actor, (current, ctx) => applyRemove(current, id, ctx)),
     present: (actor: SermonActor, id: string | null) => mutate(actor, (current, ctx) => applyPresent(current, id, ctx)),

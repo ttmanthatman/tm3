@@ -94,10 +94,14 @@ test("断线时 emit 直接拒绝且不发包", async () => {
 
 test("ack ok 时透传 added/errors，事件与载荷正确", async () => {
   const { sermon, emissions } = createHarness({
-    ack: { ok: true, added: 2, errors: [{ reference: "无效", message: "无法识别该经文出处" }] }
+    ack: { ok: true, added: 2, errors: [{ reference: "无效", message: "无法识别该经文出处，已作为文字加入" }] }
   });
-  const result = await sermon.add(["约3:16", "诗篇23"]);
-  assert.deepEqual(emissions, [{ event: "sermon:add", payload: { references: ["约3:16", "诗篇23"] } }]);
+  const slides = [
+    { blocks: [{ type: "reference" as const, reference: "约3:16" }] },
+    { blocks: [{ type: "reference" as const, reference: "诗篇23" }] }
+  ];
+  const result = await sermon.add(slides);
+  assert.deepEqual(emissions, [{ event: "sermon:add", payload: { slides } }]);
   assert.equal(result.ok, true);
   if (result.ok) {
     assert.equal(result.added, 2);
@@ -142,11 +146,17 @@ test("setDisplay 发送 sermon:display 事件", async () => {
   assert.deepEqual(emissions, [{ event: "sermon:display", payload: { fontScale: 1.2, background: "midnight" } }]);
 });
 
-test("addTexts 发送 sermon:add-text 事件", async () => {
+test("update/scroll 发送热编辑与屏内滚动事件", async () => {
   const { sermon, emissions } = createHarness();
-  const result = await sermon.addTexts([{ title: "大纲", content: "一、引言" }]);
-  assert.equal(result.ok, true);
-  assert.deepEqual(emissions, [{ event: "sermon:add-text", payload: { texts: [{ title: "大纲", content: "一、引言" }] } }]);
+  const slide = { blocks: [{ type: "text" as const, content: "改后的文字" }] };
+  const updateResult = await sermon.update("item-1", slide);
+  assert.equal(updateResult.ok, true);
+  const scrollResult = await sermon.scroll("item-1", 3);
+  assert.equal(scrollResult.ok, true);
+  assert.deepEqual(emissions, [
+    { event: "sermon:update", payload: { id: "item-1", slide } },
+    { event: "sermon:scroll", payload: { id: "item-1", lines: 3 } }
+  ]);
 });
 
 test("refreshPresenterStatus 拉取并缓存权限状态", async () => {

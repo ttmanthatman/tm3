@@ -78,7 +78,13 @@ test("连接时仅在展示激活时补发快照", async () => {
     persistence: { load: async () => null, save: async () => undefined },
     createId: () => "id-1"
   });
-  await store.add(presenter, [{ reference: "约3:16", normalizedReference: "约翰福音 3:16", verses: [] }]);
+  await store.add(presenter, [
+    {
+      blocks: [{ type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 0 }],
+      verses: [],
+      source: "约3:16"
+    }
+  ]);
   await store.present(presenter, "id-1");
 
   const handlers = new Map<string, Handler>();
@@ -107,7 +113,13 @@ test("队列未激活时快照只补发给有讲道权限的连接", async () =>
     persistence: { load: async () => null, save: async () => undefined },
     createId: () => "id-1"
   });
-  await store.add(presenter, [{ reference: "约3:16", normalizedReference: "约翰福音 3:16", verses: [] }]);
+  await store.add(presenter, [
+    {
+      blocks: [{ type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 0 }],
+      verses: [],
+      source: "约3:16"
+    }
+  ]);
 
   function connect(profile: SermonPresenterProfile | null) {
     const socketEmitted: Array<{ event: string; payload: unknown }> = [];
@@ -138,7 +150,9 @@ test("队列未激活时快照只补发给有讲道权限的连接", async () =>
 test("无权限与认证失败均被拒绝且不广播", async () => {
   const denied = createHarness({ profile: { isAdmin: false, displayName: "甲", sermonPresenterUntil: null } });
   for (const [event, data] of [
-    ["sermon:add", { references: ["约3:16"] }],
+    ["sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] }],
+    ["sermon:update", { id: "id-1", slide: { blocks: [{ type: "text", content: "大纲" }] } }],
+    ["sermon:scroll", { id: "id-1", lines: 1 }],
     ["sermon:add-text", { texts: [{ content: "大纲" }] }],
     ["sermon:reorder", { order: [] }],
     ["sermon:remove", { id: "id-1" }],
@@ -155,40 +169,112 @@ test("无权限与认证失败均被拒绝且不广播", async () => {
   assert.equal(denied.store.getState().queue.length, 0);
 
   const unauthenticated = createHarness({ auth: null });
-  const ack = await unauthenticated.invoke("sermon:add", { references: ["约3:16"] });
+  const ack = await unauthenticated.invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
   assert.equal(ack.ok, false);
   assert.equal(ack.message, "认证失败");
   assert.equal(unauthenticated.broadcasted.length, 0);
 });
 
-test("sermon:add 解析经文、收集失败项、成功后广播并持久化", async () => {
+test("sermon:add 解析屏内容：识别经文、失败出处降级为文字并提示、成功后广播并持久化", async () => {
   const { invoke, store, broadcasted, getSaved } = createHarness();
-  const ack = await invoke("sermon:add", { references: ["约3:16", "不存在的书 1:1", "诗篇23"] });
+  const ack = await invoke("sermon:add", {
+    slides: [
+      { blocks: [{ type: "reference", reference: "约3:16" }] },
+      { blocks: [{ type: "reference", reference: "不存在的书 1:1" }] },
+      { blocks: [{ type: "text", content: "大纲引言" }] }
+    ]
+  });
   assert.equal(ack.ok, true);
-  assert.equal(ack.added, 2);
-  assert.equal((ack.errors as unknown[]).length, 1);
+  assert.equal(ack.added, 3, "降级出处仍作为文字屏加入，不丢内容");
+  const errors = ack.errors as Array<{ reference: string; message: string }>;
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].reference, "不存在的书 1:1");
+  assert.match(errors[0].message, /已作为文字加入/);
 
   const state = store.getState();
-  assert.equal(state.queue.length, 2);
+  assert.equal(state.queue.length, 3);
   assert.equal(state.queue[0].normalizedReference, "约翰福音 3:16");
   assert.ok(state.queue[0].verses.length > 0);
+  assert.deepEqual(state.queue[1].blocks, [{ type: "text", content: "不存在的书 1:1" }], "降级块原文保留");
+  assert.equal(state.queue[1].kind, "text");
+  assert.equal(state.queue[2].kind, "text");
   assert.equal(state.presenterId, "7");
   assert.equal(state.presenterName, "讲道者");
   assert.equal(broadcasted.length, 1);
-  assert.equal(broadcasted[0].queue.length, 2);
+  assert.equal(broadcasted[0].queue.length, 3);
   assert.ok(getSaved());
 
-  const allFailed = await invoke("sermon:add", { references: ["火星书 1:1"] });
-  assert.equal(allFailed.ok, false);
-  assert.equal(broadcasted.length, 1);
+  const mixed = await invoke("sermon:add", {
+    slides: [{ blocks: [{ type: "reference", reference: "诗篇23:1" }, { type: "text", content: "说明" }] }]
+  });
+  assert.equal(mixed.ok, true);
+  const mixedItem = store.getState().queue[3];
+  assert.equal(mixedItem.normalizedReference, "诗篇 23:1");
+  assert.deepEqual(
+    mixedItem.blocks?.map((block) => (block.type === "passage" ? [block.type, block.verseStart, block.verseCount] : block.type)),
+    [["passage", 0, 1], "text"]
+  );
 });
 
 test("sermon:add 非法 payload 被拒绝", async () => {
   const { invoke, broadcasted } = createHarness();
   assert.equal((await invoke("sermon:add", {})).ok, false);
-  assert.equal((await invoke("sermon:add", { references: [] })).ok, false);
-  assert.equal((await invoke("sermon:add", { references: ["", "   "] })).ok, false);
+  assert.equal((await invoke("sermon:add", { slides: [] })).ok, false);
+  assert.equal((await invoke("sermon:add", { slides: [{ blocks: [] }] })).ok, false, "空块拒绝");
+  assert.equal((await invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "  " }] }] })).ok, false, "纯空白块拒绝");
+  assert.equal(
+    (await invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "x".repeat(4001) }] }] })).ok,
+    false,
+    "超长文本块拒绝"
+  );
+  const tooManyRefs = {
+    slides: [
+      {
+        blocks: Array.from({ length: 21 }, (_, index) => ({ type: "reference" as const, reference: `约3:${index + 1}` }))
+      }
+    ]
+  };
+  assert.equal((await invoke("sermon:add", tooManyRefs)).ok, false, "出处总数超限拒绝");
   assert.equal(broadcasted.length, 0);
+});
+
+test("sermon:update 热编辑：重解析当前屏、标注重置、未知条目拒绝", async () => {
+  const { invoke, store, broadcasted } = createHarness();
+  await invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
+  const id = store.getState().queue[0].id;
+  await invoke("sermon:present", { id });
+  await invoke("sermon:annotate", { itemId: id, annotation: { verseIndex: 0, kind: "highlight" } });
+
+  assert.equal((await invoke("sermon:update", { id: "missing", slide: { blocks: [{ type: "text", content: "x" }] } })).ok, false);
+  assert.equal((await invoke("sermon:update", { id, slide: { blocks: [{ type: "text", content: "  " }] } })).ok, false, "空屏拒绝");
+  assert.equal(broadcasted.length, 3, "add/present/annotate 各广播一次，两次拒绝不广播");
+
+  const ack = await invoke("sermon:update", { id, slide: { blocks: [{ type: "reference", reference: "诗篇23:1" }] } });
+  assert.equal(ack.ok, true);
+  const item = store.getState().queue[0];
+  assert.equal(item.id, id, "id 不变，观众停留在同一屏");
+  assert.equal(item.normalizedReference, "诗篇 23:1");
+  assert.deepEqual(item.annotations, [], "经节变化，标注重置");
+  assert.equal(item.scrollLines, 0);
+  assert.equal(store.getState().currentItemId, id);
+  assert.equal(broadcasted.length, 4, "热编辑保存后广播");
+});
+
+test("sermon:scroll 同步屏内滚动：夹取行数并广播，非法值与未知条目拒绝", async () => {
+  const { invoke, store, broadcasted } = createHarness();
+  await invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
+  const id = store.getState().queue[0].id;
+
+  assert.equal((await invoke("sermon:scroll", { id: "missing", lines: 1 })).ok, false);
+  assert.equal((await invoke("sermon:scroll", { id, lines: -1 })).ok, false, "负值拒绝");
+  assert.equal((await invoke("sermon:scroll", { id, lines: 1.5 })).ok, false, "非整数拒绝");
+  assert.equal(broadcasted.length, 1, "add 广播一次，拒绝不广播");
+
+  const ack = await invoke("sermon:scroll", { id, lines: 3 });
+  assert.equal(ack.ok, true);
+  assert.equal(store.getState().queue[0].scrollLines, 3);
+  assert.equal(broadcasted.length, 2);
+  assert.equal(broadcasted[1].queue[0].scrollLines, 3, "广播带最新滚动位置");
 });
 
 test("sermon:add-text 校验载荷、剔除控制字符、成功后广播并持久化", async () => {
@@ -216,7 +302,9 @@ test("sermon:add-text 校验载荷、剔除控制字符、成功后广播并持�
 
 test("队列操作：present / reorder / annotate / annotate:clear / remove / clear", async () => {
   const { invoke, store, broadcasted } = createHarness();
-  await invoke("sermon:add", { references: ["约3:16", "诗篇23"] });
+  await invoke("sermon:add", {
+    slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }, { blocks: [{ type: "reference", reference: "诗篇23" }] }]
+  });
   const [first, second] = store.getState().queue;
 
   assert.equal((await invoke("sermon:present", { id: "missing" })).ok, false);

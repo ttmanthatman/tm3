@@ -12411,12 +12411,26 @@ button.admin-object-row:focus-visible {
   margin: 0 auto;
 }
 
-.sermon-add-kind {
-  margin-bottom: 10px;
+.sermon-input-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
 }
 
-.sermon-text-title-input {
-  margin-bottom: 10px;
+.sermon-one-per-slide {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.sermon-shortcut-hint {
+  font-size: 12px;
 }
 
 .sermon-queue-foot {
@@ -12781,6 +12795,47 @@ button.admin-object-row:focus-visible {
 .sermon-preview small { color: var(--muted); }
 .sermon-preview.error { border-color: #e8a0a0; }
 .sermon-preview.error small { color: #c0392b; }
+
+.sermon-preview-warn { color: #c0392b; }
+
+.sermon-preview-text {
+  overflow-wrap: anywhere;
+}
+
+.sermon-preview-index {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--muted);
+}
+
+.sermon-preview { position: relative; }
+
+.sermon-passage-ref {
+  margin: 0.7em 0 0.3em;
+  font-size: 0.62em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--sermon-fg, #f5f1e6) 62%, transparent);
+}
+
+.sermon-passage-blocks > .sermon-passage-ref:first-child { margin-top: 0; }
+
+.sermon-edit-panel {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg, #fff);
+}
+
+.sermon-edit-panel .sermon-block-actions {
+  justify-content: flex-end;
+  margin-top: 0;
+}
 
 .sermon-hint {
   margin: 8px 0 0;

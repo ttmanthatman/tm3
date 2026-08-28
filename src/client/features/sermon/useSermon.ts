@@ -1,5 +1,12 @@
 import { ref, shallowRef, type ShallowRef } from "vue";
-import type { SermonAnnotation, SermonAnnotationKind, SermonDisplayDTO, SermonPresenterStatusDTO, SermonStateDTO, SermonTextInput } from "@shared/types";
+import type {
+  SermonAnnotation,
+  SermonAnnotationKind,
+  SermonDisplayDTO,
+  SermonPresenterStatusDTO,
+  SermonSlideInput,
+  SermonStateDTO
+} from "@shared/types";
 import { api } from "../../api";
 
 export type SermonRequestDecisionEvent = {
@@ -112,8 +119,9 @@ export function useSermon(options: {
     });
   }
 
-  const add = (references: string[]) => emit("sermon:add", { references });
-  const addTexts = (texts: SermonTextInput[]) => emit("sermon:add-text", { texts });
+  const add = (slides: SermonSlideInput[]) => emit("sermon:add", { slides });
+  const update = (id: string, slide: SermonSlideInput) => emit("sermon:update", { id, slide });
+  const scroll = (id: string, lines: number) => emit("sermon:scroll", { id, lines });
   const reorder = (order: string[]) => emit("sermon:reorder", { order });
   const remove = (id: string) => emit("sermon:remove", { id });
   const present = (id: string | null) => emit("sermon:present", { id });
@@ -135,7 +143,8 @@ export function useSermon(options: {
     pending,
     statusMessage,
     add,
-    addTexts,
+    update,
+    scroll,
     reorder,
     remove,
     present,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { BibleVerseLineDTO, SermonStateDTO } from "../../shared/types.js";
+import type { BibleVerseLineDTO, SermonSlideInput, SermonStateDTO } from "../../shared/types.js";
 import {
   DEFAULT_SERMON_DISPLAY,
   SERMON_FONT_SCALE_MAX,
@@ -17,11 +17,15 @@ import {
   applyPresent,
   applyRemove,
   applyReorder,
+  applyScroll,
+  applyUpdate,
   createSermonStateStore,
   deserializeSermonState,
   emptySermonState,
+  resolveSermonSlide,
   serializeSermonState,
-  type SermonMutationContext
+  type SermonMutationContext,
+  type SermonResolvedSlide
 } from "./state.js";
 
 const NOW = "2026-08-27T12:00:00.000Z";
@@ -47,16 +51,27 @@ function ctx(overrides: Partial<SermonMutationContext> = {}): SermonMutationCont
   };
 }
 
-function entry(reference: string, verseCount = 2) {
+/** 构造一屏解析结果：单段经文（可指定节数）或纯文字。 */
+function slide(reference: string, verseCount = 2): SermonResolvedSlide {
   return {
-    reference,
-    normalizedReference: reference,
-    verses: Array.from({ length: verseCount }, (_, i) => verse(i + 1))
+    blocks: [{ type: "passage", reference, normalizedReference: reference, verseStart: 0, verseCount }],
+    verses: Array.from({ length: verseCount }, (_, i) => verse(i + 1)),
+    source: reference
   };
 }
 
+function textSlide(content: string): SermonResolvedSlide {
+  return { blocks: [{ type: "text", content }], verses: [], source: content };
+}
+
+/** 测试用经文查询：含「不存在」的出处抛错，其余返回固定两节。 */
+function fakeResolve(reference: string) {
+  if (reference.includes("不存在")) throw new Error("unrecognized reference");
+  return { reference, normalizedReference: reference, translation: "译本", sourceId: "test", verses: [verse(1), verse(2)] };
+}
+
 test("applyAdd 追加条目并生成 id，更新 presenter 信息", () => {
-  const state = applyAdd(emptySermonState(), [entry("约3:16"), entry("诗篇23")], ctx());
+  const state = applyAdd(emptySermonState(), [slide("约3:16"), slide("诗篇23")], ctx());
   assert.equal(state.queue.length, 2);
   assert.deepEqual(state.queue.map((item) => item.id), ["id-1", "id-2"]);
   assert.equal(state.queue[0].normalizedReference, "约3:16");
@@ -72,9 +87,9 @@ test("applyAdd 受队列上限约束", () => {
   let state = emptySermonState();
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  state = applyAdd(state, Array.from({ length: SERMON_QUEUE_LIMIT }, (_, i) => entry(`条目${i}`)), context);
+  state = applyAdd(state, Array.from({ length: SERMON_QUEUE_LIMIT }, (_, i) => slide(`条目${i}`)), context);
   assert.equal(state.queue.length, SERMON_QUEUE_LIMIT);
-  const full = applyAdd(state, [entry("溢出")], context);
+  const full = applyAdd(state, [slide("溢出")], context);
   assert.equal(full.queue.length, SERMON_QUEUE_LIMIT);
   assert.equal(full, state);
 });
@@ -128,7 +143,7 @@ test("文字条目序列化往返；缺正文的持久化文字条目整体回�
 test("applyReorder 按给定顺序重排，未知 id 忽略，缺失 id 保持相对顺序排尾", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  const state = applyAdd(emptySermonState(), [entry("A"), entry("B"), entry("C")], context);
+  const state = applyAdd(emptySermonState(), [slide("A"), slide("B"), slide("C")], context);
   const reordered = applyReorder(state, ["id-3", "missing", "id-1"], ctx());
   assert.deepEqual(reordered.queue.map((item) => item.id), ["id-3", "id-1", "id-2"]);
 });
@@ -136,7 +151,7 @@ test("applyReorder 按给定顺序重排，未知 id 忽略，缺失 id 保持�
 test("applyRemove 删除条目；删除当前展示条目时结束展示", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  let state = applyAdd(emptySermonState(), [entry("A"), entry("B")], context);
+  let state = applyAdd(emptySermonState(), [slide("A"), slide("B")], context);
   state = applyPresent(state, "id-1", ctx());
   assert.equal(state.active, true);
 
@@ -155,7 +170,7 @@ test("applyRemove 删除条目；删除当前展示条目时结束展示", () =>
 test("applyPresent 切换与结束展示；未知 id 不变更", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  const state = applyAdd(emptySermonState(), [entry("A")], context);
+  const state = applyAdd(emptySermonState(), [slide("A")], context);
   const presented = applyPresent(state, "id-1", ctx());
   assert.equal(presented.active, true);
   assert.equal(presented.currentItemId, "id-1");
@@ -170,7 +185,7 @@ test("applyPresent 切换与结束展示；未知 id 不变更", () => {
 test("applyAnnotate 追加标注，重复提交相同标注时取消", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  const state = applyAdd(emptySermonState(), [entry("A")], context);
+  const state = applyAdd(emptySermonState(), [slide("A")], context);
   const annotated = applyAnnotate(state, "id-1", { verseIndex: 0, kind: "highlight" }, ctx());
   assert.deepEqual(annotated.queue[0].annotations, [{ verseIndex: 0, kind: "highlight" }]);
   const toggledOff = applyAnnotate(annotated, "id-1", { verseIndex: 0, kind: "highlight" }, ctx());
@@ -182,7 +197,7 @@ test("applyAnnotate 追加标注，重复提交相同标注时取消", () => {
 test("applyAnnotate 拒绝越界 verseIndex 与非法偏移", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  const state = applyAdd(emptySermonState(), [entry("A")], context);
+  const state = applyAdd(emptySermonState(), [slide("A")], context);
   assert.equal(applyAnnotate(state, "id-1", { verseIndex: 5, kind: "highlight" }, ctx()), state);
   assert.equal(applyAnnotate(state, "missing", { verseIndex: 0, kind: "highlight" }, ctx()), state);
   assert.equal(applyAnnotate(state, "id-1", { verseIndex: 0, kind: "underline", start: 3, end: 3 }, ctx()), state);
@@ -194,7 +209,7 @@ test("applyAnnotate 拒绝越界 verseIndex 与非法偏移", () => {
 test("applyAnnotateClear 按节、按类型或全部清除", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  let state = applyAdd(emptySermonState(), [entry("A")], context);
+  let state = applyAdd(emptySermonState(), [slide("A")], context);
   state = applyAnnotate(state, "id-1", { verseIndex: 0, kind: "highlight" }, ctx());
   state = applyAnnotate(state, "id-1", { verseIndex: 0, kind: "underline" }, ctx());
   state = applyAnnotate(state, "id-1", { verseIndex: 1, kind: "highlight" }, ctx());
@@ -221,7 +236,7 @@ test("applyAnnotateClear 按节、按类型或全部清除", () => {
 test("applyClear 清空队列并结束展示", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  let state = applyAdd(emptySermonState(), [entry("A")], context);
+  let state = applyAdd(emptySermonState(), [slide("A")], context);
   state = applyPresent(state, "id-1", ctx());
   const cleared = applyClear(state, ctx());
   assert.deepEqual(cleared.queue, []);
@@ -278,7 +293,7 @@ test("applyDisplay 非法字体族/背景被忽略，其余字段照常合并", 
 test("deserialize 旧持久化数据迁移：扁平 fontScale 进入 display，其余字段按默认", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  const state = applyAdd(emptySermonState(), [entry("约3:16")], context);
+  const state = applyAdd(emptySermonState(), [slide("约3:16")], context);
   const legacy = { ...state, updatedAt: NOW } as Record<string, unknown>;
   delete legacy.display;
   // 旧持久化队列条目也没有 kind 字段，反序列化按 bible 兼容
@@ -313,7 +328,7 @@ test("deserialize 旧持久化数据迁移：扁平 fontScale 进入 display，�
 test("serialize/deserialize JSON 往返，损坏数据回退为空状态", () => {
   let counter = 0;
   const context = ctx({ createId: () => `id-${++counter}` });
-  let state = applyAdd(emptySermonState(), [entry("约3:16")], context);
+  let state = applyAdd(emptySermonState(), [slide("约3:16")], context);
   state = applyAnnotate(state, "id-1", { verseIndex: 0, kind: "highlight" }, ctx());
   state = applyPresent(state, "id-1", ctx());
 
@@ -342,7 +357,7 @@ test("store 变更后持久化并可重新加载", async () => {
   await store.load();
   assert.equal(store.getState().active, false);
 
-  await store.add({ id: "7", name: "讲道者" }, [entry("约3:16")]);
+  await store.add({ id: "7", name: "讲道者" }, [slide("约3:16")]);
   assert.ok(saved);
   await store.present({ id: "7", name: "讲道者" }, "id-1");
   assert.equal(store.getState().active, true);
@@ -357,4 +372,128 @@ test("store 变更后持久化并可重新加载", async () => {
   const cleared = deserializeSermonState(saved);
   assert.equal(cleared.queue.length, 0);
   assert.equal(cleared.active, false);
+});
+
+test("resolveSermonSlide：多处经文与文字混排，扁平经文与块切片对齐", () => {
+  const input: SermonSlideInput = {
+    blocks: [
+      { type: "text", content: "引言" },
+      { type: "reference", reference: "约3:16" },
+      { type: "reference", reference: "诗篇23:1" }
+    ]
+  };
+  const outcome = resolveSermonSlide(input, fakeResolve);
+  assert.ok(outcome);
+  const { blocks, verses, source } = outcome.resolved;
+  assert.equal(verses.length, 4, "两段经文各两节，扁平拼接");
+  assert.deepEqual(
+    blocks.map((block) => (block.type === "passage" ? [block.type, block.verseStart, block.verseCount] : [block.type, block.content])),
+    [["text", "引言"], ["passage", 0, 2], ["passage", 2, 2]]
+  );
+  assert.deepEqual(outcome.fallbacks, []);
+  assert.equal(source, "引言\n约3:16\n诗篇23:1", "source 重建供热编辑预填");
+
+  const state = applyAdd(emptySermonState(), [outcome.resolved], ctx());
+  const item = state.queue[0];
+  assert.equal(item.kind, "bible");
+  assert.equal(item.normalizedReference, "约3:16；诗篇23:1");
+  assert.equal(item.scrollLines, 0);
+});
+
+test("resolveSermonSlide：查不到的出处降级为文字块并记录提示", () => {
+  const outcome = resolveSermonSlide(
+    { blocks: [{ type: "reference", reference: "不存在的书 1:1" }] },
+    fakeResolve
+  );
+  assert.ok(outcome, "降级后仍有内容，整屏不丢弃");
+  assert.deepEqual(outcome.resolved.blocks, [{ type: "text", content: "不存在的书 1:1" }]);
+  assert.deepEqual(outcome.fallbacks, ["不存在的书 1:1"]);
+  assert.equal(outcome.resolved.verses.length, 0);
+
+  const empty = resolveSermonSlide({ blocks: [{ type: "text", content: "   " }] }, fakeResolve);
+  assert.equal(empty, null, "整屏无内容返回 null");
+});
+
+test("applyUpdate 热编辑：保留 id、重算内容、标注与滚动清零", () => {
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  let state = applyAdd(
+    emptySermonState(),
+    [
+      {
+        blocks: [{ type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 2 }],
+        verses: [verse(1), verse(2)],
+        source: "约3:16"
+      }
+    ],
+    context
+  );
+  state = applyPresent(state, "id-1", ctx());
+  state = applyAnnotate(state, "id-1", { verseIndex: 0, kind: "highlight" }, ctx());
+  state = applyScroll(state, "id-1", 3, ctx());
+  assert.equal(state.queue[0].scrollLines, 3);
+
+  const updated = applyUpdate(state, "id-1", textSlide("改后的文字"), ctx());
+  assert.equal(updated.queue[0].id, "id-1", "id 不变，观众停留在同一屏");
+  assert.equal(updated.queue[0].kind, "text");
+  assert.equal(updated.queue[0].content, undefined, "屏内容由 blocks 承载");
+  assert.deepEqual(updated.queue[0].blocks, [{ type: "text", content: "改后的文字" }]);
+  assert.deepEqual(updated.queue[0].annotations, [], "经节可能变化，标注重置");
+  assert.equal(updated.queue[0].scrollLines, 0, "滚动位置重置");
+  assert.equal(applyUpdate(state, "missing", textSlide("x"), ctx()), state);
+});
+
+test("applyScroll 夹取非负整数，无变化视为无操作", () => {
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  const state = applyAdd(emptySermonState(), [slide("A")], context);
+  assert.equal(applyScroll(state, "id-1", 2.9, ctx()).queue[0].scrollLines, 2, "向下取整");
+  assert.equal(applyScroll(state, "id-1", -1, ctx()).queue[0].scrollLines, 0, "负值夹到 0");
+  assert.equal(applyScroll(state, "id-1", 0, ctx()), state, "缺省 0 视为无操作");
+  assert.equal(applyScroll(state, "missing", 1, ctx()), state);
+});
+
+test("applyPresent 切换到带滚动遗留的条目时滚动归零", () => {
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  let state = applyAdd(emptySermonState(), [slide("A"), slide("B")], context);
+  state = applyPresent(state, "id-1", ctx());
+  state = applyScroll(state, "id-1", 4, ctx());
+  state = applyPresent(state, "id-2", ctx());
+  assert.equal(state.queue[0].scrollLines, 4, "切走后保留原值，切回时由 present 归零");
+  assert.equal(state.queue[1].scrollLines, 0);
+  const backToFirst = applyPresent(state, "id-1", ctx());
+  assert.equal(backToFirst.queue[0].scrollLines, 0);
+});
+
+test("blocks/source/scrollLines 序列化往返；旧数据无这些字段照常解析", () => {
+  let counter = 0;
+  const context = ctx({ createId: () => `id-${++counter}` });
+  const mixed: SermonResolvedSlide = {
+    blocks: [
+      { type: "text", content: "引言" },
+      { type: "passage", reference: "约3:16", normalizedReference: "约翰福音 3:16", verseStart: 0, verseCount: 2 }
+    ],
+    verses: [verse(1), verse(2)],
+    source: "引言\n约3:16"
+  };
+  let state = applyAdd(emptySermonState(), [mixed], context);
+  state = applyPresent(state, "id-1", context);
+  state = applyScroll(state, "id-1", 2, context);
+  const restored = deserializeSermonState(serializeSermonState(state));
+  assert.deepEqual(restored.queue[0], state.queue[0]);
+
+  // 旧持久化条目没有 blocks/source/scrollLines：正常解析且渲染回退路径不受影响
+  const legacy = JSON.parse(serializeSermonState(state)) as { queue: Array<Record<string, unknown>> };
+  for (const key of ["blocks", "source", "scrollLines"]) delete legacy.queue[0][key];
+  const restoredLegacy = deserializeSermonState(JSON.stringify(legacy));
+  assert.equal(restoredLegacy.queue.length, 1);
+  assert.equal(restoredLegacy.queue[0].blocks, undefined);
+
+  // passage 块切片越界的持久化数据整体回退为空状态
+  const corrupt = JSON.parse(serializeSermonState(state)) as {
+    queue: Array<{ blocks: Array<{ verseStart: number; verseCount: number }> }>;
+  };
+  corrupt.queue[0].blocks[1].verseCount = 99;
+  assert.equal(deserializeSermonState(JSON.stringify(corrupt)).queue.length, 0);
 });

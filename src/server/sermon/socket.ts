@@ -11,8 +11,9 @@ import {
   SERMON_MARGIN_PCT_MIN,
   SERMON_QUEUE_LIMIT,
   isValidSermonBackground,
+  resolveSermonSlide,
+  resolveSermonSlides,
   type SermonActor,
-  type SermonResolvedEntry,
   type SermonStateStore
 } from "./state.js";
 
@@ -38,11 +39,31 @@ export type SermonSocketDeps = {
 
 type SermonAck = ((payload: unknown) => void) | undefined;
 
-const addSchema = z.object({
-  references: z.array(z.string().trim().min(1).max(200)).min(1).max(20)
-});
-// 自由文字条目：剔除控制字符（保留换行/制表）后再校验长度与非空。
+// 剔除控制字符（保留换行/制表）后再校验长度与非空。
 const stripControlChars = (value: string) => value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+
+const slideBlockInputSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("reference"),
+    reference: z.string().transform(stripControlChars).pipe(z.string().trim().min(1).max(200))
+  }),
+  z.object({
+    type: z.literal("text"),
+    content: z.string().transform(stripControlChars).pipe(z.string().trim().min(1).max(4000))
+  })
+]);
+const slideInputSchema = z.object({ blocks: z.array(slideBlockInputSchema).min(1).max(40) });
+const SERMON_MAX_REFERENCES = 20;
+const addSchema = z
+  .object({ slides: z.array(slideInputSchema).min(1).max(20) })
+  .refine(
+    (payload) =>
+      payload.slides.reduce((sum, slide) => sum + slide.blocks.filter((block) => block.type === "reference").length, 0) <= SERMON_MAX_REFERENCES,
+    { message: "too many references" }
+  );
+const updateSchema = z.object({ id: z.string().min(1).max(64), slide: slideInputSchema });
+const scrollSchema = z.object({ id: z.string().min(1).max(64), lines: z.number().int().min(0).max(10000) });
+// 自由文字条目：剔除控制字符（保留换行/制表）后再校验长度与非空。
 const addTextSchema = z.object({
   texts: z
     .array(
@@ -130,6 +151,11 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     return false;
   }
 
+  // 识别失败降级为文字的出处：原文保留进屏内，ack 里提示讲道者。
+  function fallbackNotice(fallbacks: string[]) {
+    return fallbacks.map((reference) => ({ reference, message: "无法识别该经文出处，已作为文字加入" }));
+  }
+
   socket.on("sermon:add", async (data: unknown, ack?: SermonAck) => {
     const actor = await authorizedPresenter(ack);
     if (!actor) return;
@@ -138,21 +164,41 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
       ack?.({ ok: false, message: "参数无效" });
       return;
     }
-    const entries: SermonResolvedEntry[] = [];
-    const errors: Array<{ reference: string; message: string }> = [];
-    for (const reference of parsed.data.references) {
-      try {
-        const lookup = lookupBibleReference(reference);
-        entries.push({ reference, normalizedReference: lookup.normalizedReference, verses: lookup.verses });
-      } catch {
-        errors.push({ reference, message: "无法识别该经文出处" });
-      }
-    }
-    if (!entries.length) {
-      ack?.({ ok: false, message: "没有可识别的经文出处", errors });
+    const { resolved, fallbacks } = resolveSermonSlides(parsed.data.slides, lookupBibleReference);
+    if (!resolved.length) {
+      ack?.({ ok: false, message: "没有可加入的内容", errors: fallbackNotice(fallbacks) });
       return;
     }
-    await commit(ack, () => deps.store.add(actor, entries), () => ({ added: entries.length, errors }));
+    await commit(ack, () => deps.store.add(actor, resolved), () => ({ added: resolved.length, errors: fallbackNotice(fallbacks) }));
+  });
+
+  socket.on("sermon:update", async (data: unknown, ack?: SermonAck) => {
+    const actor = await authorizedPresenter(ack);
+    if (!actor) return;
+    const parsed = updateSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    if (!knownItem(parsed.data.id, ack)) return;
+    const outcome = resolveSermonSlide(parsed.data.slide, lookupBibleReference);
+    if (!outcome) {
+      ack?.({ ok: false, message: "内容为空" });
+      return;
+    }
+    await commit(ack, () => deps.store.update(actor, parsed.data.id, outcome.resolved), () => ({ errors: fallbackNotice(outcome.fallbacks) }));
+  });
+
+  socket.on("sermon:scroll", async (data: unknown, ack?: SermonAck) => {
+    const actor = await authorizedPresenter(ack);
+    if (!actor) return;
+    const parsed = scrollSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    if (!knownItem(parsed.data.id, ack)) return;
+    await commit(ack, () => deps.store.scroll(actor, parsed.data.id, parsed.data.lines));
   });
 
   socket.on("sermon:add-text", async (data: unknown, ack?: SermonAck) => {

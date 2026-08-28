@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
-import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonQueueItem } from "@shared/types";
+import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Pencil, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
+import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonQueueItem, SermonSlideInput } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
-import { splitSermonReferences, verseHasAnnotation } from "./sermonText";
+import { verseHasAnnotation } from "./sermonText";
+import { parseSermonInput } from "./sermonInput";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
 import SermonStage from "./SermonStage.vue";
 import { useSermon, type SermonEmitResult } from "./useSermon";
@@ -17,26 +18,24 @@ const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
 const { sermonState, presenterStatus } = sermon;
 
-type ReferencePreview =
-  | { reference: string; status: "loading" }
-  | { reference: string; status: "ok"; lookup: BibleLookupDTO }
-  | { reference: string; status: "error"; message: string };
-
 const view = ref<"queue" | "present">("queue");
-const referenceInput = ref("");
-const previews = ref<ReferencePreview[]>([]);
-const previewing = ref(false);
+const contentInput = ref("");
+const onePerSlide = ref(false);
+const parsedSlides = ref<SermonSlideInput[]>([]);
 const adding = ref(false);
 const actionError = ref("");
-const addKind = ref<"bible" | "text">("bible");
-const textTitleInput = ref("");
-const textContentInput = ref("");
+
+type RefDetail = { status: "loading" | "ok" | "error"; normalizedReference?: string; verseCount?: number };
+const refDetails = ref(new Map<string, RefDetail>());
 
 const queue = computed(() => sermonState.value?.queue || []);
 const currentItemId = computed(() => sermonState.value?.currentItemId || null);
 const currentItem = computed<SermonQueueItem | null>(() => queue.value.find((item) => item.id === currentItemId.value) || null);
 const currentIndex = computed(() => queue.value.findIndex((item) => item.id === currentItemId.value));
 const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
+
+const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
+const shortcutHint = computed(() => (isMac ? "⌘+Enter 加入队列" : "Ctrl+Enter 加入队列"));
 
 // 桌面端双预览（投影 1280×720、手机 390×845 基准尺寸）：按容器宽度等比缩放真实舞台。
 const PREVIEW_PROJECTOR_BASE_WIDTH = 1280;
@@ -75,6 +74,7 @@ watch(
       view.value = "queue";
       verseMenu.value = null;
       selectionOffer.value = null;
+      editing.value = false;
     }
   }
 );
@@ -84,44 +84,96 @@ async function report(result: Promise<SermonEmitResult>) {
   actionError.value = outcome.ok ? "" : outcome.message || "操作失败";
 }
 
-async function previewReferences() {
-  const references = splitSermonReferences(referenceInput.value);
-  if (!references.length || previewing.value) return;
-  previewing.value = true;
-  actionError.value = "";
-  previews.value = references.map((reference) => ({ reference, status: "loading" }));
-  for (let index = 0; index < references.length; index++) {
-    const reference = references[index];
-    try {
-      const result = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(
-        `/api/bible/lookup?reference=${encodeURIComponent(reference)}`
-      );
-      previews.value[index] = result.success && result.result
-        ? { reference, status: "ok", lookup: result.result }
-        : { reference, status: "error", message: result.message || "无法识别该经文出处" };
-    } catch (error) {
-      previews.value[index] = { reference, status: "error", message: error instanceof Error ? error.message : "查询失败" };
-    }
-  }
-  previewing.value = false;
+function formatErrors(result: SermonEmitResult) {
+  return result.ok && result.errors?.length ? result.errors.map((entry) => `${entry.reference}：${entry.message}`).join("；") : "";
 }
 
-const confirmedPreviews = computed(() => previews.value.filter((preview): preview is Extract<ReferencePreview, { status: "ok" }> => preview.status === "ok"));
-const previewErrors = computed(() => previews.value.filter((preview): preview is Extract<ReferencePreview, { status: "error" }> => preview.status === "error"));
+// —— 统一输入：本地解析 + 防抖经文查询 ——
+
+let parseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setRefDetail(reference: string, detail: RefDetail) {
+  const next = new Map(refDetails.value);
+  next.set(reference, detail);
+  refDetails.value = next;
+}
+
+async function lookupReference(reference: string) {
+  try {
+    const result = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(
+      `/api/bible/lookup?reference=${encodeURIComponent(reference)}`
+    );
+    setRefDetail(
+      reference,
+      result.success && result.result
+        ? { status: "ok", normalizedReference: result.result.normalizedReference, verseCount: result.result.verses.length }
+        : { status: "error" }
+    );
+  } catch {
+    setRefDetail(reference, { status: "error" });
+  }
+}
+
+function refreshParse() {
+  const slides = parseSermonInput(contentInput.value, onePerSlide.value);
+  parsedSlides.value = slides;
+  const references = [...new Set(slides.flatMap((slide) => slide.blocks.filter((block) => block.type === "reference").map((block) => block.reference)))];
+  for (const reference of references) {
+    if (refDetails.value.has(reference)) continue;
+    setRefDetail(reference, { status: "loading" });
+    void lookupReference(reference);
+  }
+}
+
+watch([contentInput, onePerSlide], () => {
+  if (parseTimer) clearTimeout(parseTimer);
+  parseTimer = setTimeout(() => {
+    parseTimer = null;
+    refreshParse();
+  }, 200);
+});
+
+onBeforeUnmount(() => {
+  if (parseTimer) clearTimeout(parseTimer);
+});
+
+function refLabel(reference: string) {
+  const detail = refDetails.value.get(reference);
+  return detail?.status === "ok" ? (detail.normalizedReference ?? reference) : reference;
+}
+
+function refStatusText(reference: string) {
+  const detail = refDetails.value.get(reference);
+  if (!detail || detail.status === "loading") return "正在查询…";
+  if (detail.status === "error") return "无法识别，将作为文字加入";
+  return `${detail.verseCount ?? 0} 节`;
+}
+
+function textSnippet(content: string) {
+  const flat = content.replace(/\n+/g, " ").trim();
+  return flat.length > 40 ? `${flat.slice(0, 40)}…` : flat;
+}
 
 async function addToQueue() {
-  const references = confirmedPreviews.value.map((preview) => preview.reference);
-  if (!references.length || adding.value) return;
+  const slides = parsedSlides.value;
+  if (!slides.length || adding.value) return;
   adding.value = true;
-  const result = await sermon.add(references);
+  const result = await sermon.add(slides);
   adding.value = false;
   if (!result.ok) {
     actionError.value = result.message;
     return;
   }
-  referenceInput.value = "";
-  previews.value = [];
-  if (result.errors?.length) actionError.value = result.errors.map((entry) => `${entry.reference}：${entry.message}`).join("；");
+  contentInput.value = "";
+  parsedSlides.value = [];
+  actionError.value = formatErrors(result);
+}
+
+function handleInputKeydown(event: KeyboardEvent) {
+  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+    event.preventDefault();
+    void addToQueue();
+  }
 }
 
 function moveItem(itemId: string, direction: -1 | 1) {
@@ -138,6 +190,7 @@ function enterPresent(item: SermonQueueItem) {
   view.value = "present";
   verseMenu.value = null;
   selectionOffer.value = null;
+  editing.value = false;
   if (item.id !== currentItemId.value) void report(sermon.present(item.id));
 }
 
@@ -150,24 +203,75 @@ function updateDisplay(patch: Partial<SermonDisplayDTO>) {
   void report(sermon.setDisplay(patch));
 }
 
-async function addTextToQueue() {
-  const content = textContentInput.value.trim();
-  if (!content || adding.value) return;
-  adding.value = true;
-  const result = await sermon.addTexts([{ title: textTitleInput.value.trim() || undefined, content }]);
-  adding.value = false;
-  if (!result.ok) {
-    actionError.value = result.message;
-    return;
-  }
-  textTitleInput.value = "";
-  textContentInput.value = "";
-}
-
 async function endPresentation() {
   if (!window.confirm("结束展示并清空讲道队列？")) return;
   await report(sermon.clearPresentation());
   view.value = "queue";
+}
+
+// —— 演示视图内屏内滚动（Shift+↑/↓ 一行步进，位置同步给观众端） ——
+
+function presentMaxScrollLines(): number {
+  const body = document.querySelector<HTMLElement>(".sermon-present-stage .sermon-overlay-body");
+  const passage = body?.querySelector<HTMLElement>(".sermon-passage");
+  if (!body || !passage) return 0;
+  const lineHeight = Number.parseFloat(getComputedStyle(passage).lineHeight) || passage.getBoundingClientRect().height;
+  if (!lineHeight) return 0;
+  return Math.floor((body.scrollHeight - body.clientHeight) / lineHeight);
+}
+
+function handlePresentKeydown(event: KeyboardEvent) {
+  if (view.value !== "present" || !event.shiftKey) return;
+  if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+  const target = event.target as HTMLElement | null;
+  if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)) return;
+  const item = currentItem.value;
+  const maxLines = presentMaxScrollLines();
+  if (!item || maxLines <= 0) return;
+  event.preventDefault();
+  const current = item.scrollLines ?? 0;
+  const next = Math.min(maxLines, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
+  if (next !== current) void report(sermon.scroll(item.id, next));
+}
+
+onMounted(() => window.addEventListener("keydown", handlePresentKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", handlePresentKeydown));
+
+// —— 演示视图内热编辑（按原文重编辑当前屏，保存后重解析并推送） ——
+
+const editing = ref(false);
+const editSource = ref("");
+
+function rebuildSource(item: SermonQueueItem): string {
+  if (item.source?.trim()) return item.source;
+  const fromBlocks = (item.blocks ?? []).map((block) => (block.type === "passage" ? block.reference : block.content)).join("\n");
+  return fromBlocks || item.content || item.reference;
+}
+
+function openEditor() {
+  const item = currentItem.value;
+  if (!item) return;
+  verseMenu.value = null;
+  selectionOffer.value = null;
+  editSource.value = rebuildSource(item);
+  editing.value = true;
+}
+
+async function saveEdit() {
+  const item = currentItem.value;
+  if (!item) return;
+  const slides = parseSermonInput(editSource.value, false);
+  if (!slides.length) {
+    actionError.value = "内容为空";
+    return;
+  }
+  const result = await sermon.update(item.id, slides[0]);
+  if (!result.ok) {
+    actionError.value = result.message;
+    return;
+  }
+  editing.value = false;
+  actionError.value = formatErrors(result);
 }
 
 // —— 演示视图内标注 ——
@@ -266,55 +370,36 @@ function annotateSelection() {
       <div class="sermon-queue-column">
         <section class="sermon-block">
           <h3>添加内容</h3>
-          <div class="sermon-font-picker sermon-add-kind" role="group" aria-label="添加类型">
-            <button type="button" :class="{ active: addKind === 'bible' }" :aria-pressed="addKind === 'bible'" @click="addKind = 'bible'">经文</button>
-            <button type="button" :class="{ active: addKind === 'text' }" :aria-pressed="addKind === 'text'" @click="addKind = 'text'">文字</button>
+          <textarea
+            v-model="contentInput"
+            class="sermon-reference-input"
+            rows="4"
+            maxlength="8000"
+            placeholder="输入经文出处或文字，如：&#10;约3:16&#10;诗篇 23:1&#10;大纲、引文等文字原样保留…"
+            @keydown="handleInputKeydown"
+          ></textarea>
+          <div class="sermon-input-options">
+            <label class="sermon-one-per-slide">
+              <input v-model="onePerSlide" type="checkbox" />
+              <span>每处经文一屏</span>
+            </label>
+            <button class="primary-btn" type="button" :disabled="adding || !parsedSlides.length" @click="addToQueue">
+              <Plus :size="15" />{{ adding ? "正在加入…" : "加入队列" }}
+            </button>
           </div>
-          <template v-if="addKind === 'bible'">
-            <textarea
-              v-model="referenceInput"
-              class="sermon-reference-input"
-              rows="2"
-              placeholder="输入经文出处，多个用逗号、分号或换行分隔，如：约3:16，诗篇23"
-            ></textarea>
-            <div class="sermon-block-actions">
-              <button class="mini-btn secondary" type="button" :disabled="previewing || !splitSermonReferences(referenceInput).length" @click="previewReferences">
-                {{ previewing ? "正在查询…" : "预览" }}
-              </button>
-              <button class="primary-btn" type="button" :disabled="adding || !confirmedPreviews.length" @click="addToQueue">
-                <Plus :size="15" />{{ adding ? "正在加入…" : `加入队列${confirmedPreviews.length ? `（${confirmedPreviews.length}）` : ""}` }}
-              </button>
-            </div>
-            <div v-if="previews.length" class="sermon-previews">
-              <div v-for="preview in previews" :key="preview.reference" class="sermon-preview" :class="preview.status">
-                <template v-if="preview.status === 'ok'">
-                  <strong>{{ preview.lookup.normalizedReference }}</strong>
-                  <small>{{ preview.lookup.verses.length }} 节 · {{ preview.lookup.verses[0]?.text || "" }}</small>
+          <div v-if="parsedSlides.length" class="sermon-previews">
+            <div v-for="(slide, slideIndex) in parsedSlides" :key="slideIndex" class="sermon-preview ok">
+              <template v-for="(block, blockIndex) in slide.blocks" :key="blockIndex">
+                <template v-if="block.type === 'reference'">
+                  <strong>{{ refLabel(block.reference) }}</strong>
+                  <small :class="{ 'sermon-preview-warn': refDetails.get(block.reference)?.status === 'error' }">{{ refStatusText(block.reference) }}</small>
                 </template>
-                <template v-else-if="preview.status === 'error'">
-                  <strong>{{ preview.reference }}</strong>
-                  <small>{{ preview.message }}</small>
-                </template>
-                <small v-else>正在查询 {{ preview.reference }}…</small>
-              </div>
+                <small v-else class="sermon-preview-text">{{ textSnippet(block.content) }}</small>
+              </template>
+              <em v-if="parsedSlides.length > 1" class="sermon-preview-index">第 {{ slideIndex + 1 }} 屏</em>
             </div>
-            <p v-if="previewErrors.length" class="sermon-hint">有 {{ previewErrors.length }} 条无法识别，确认加入时只会包含可识别的出处。</p>
-          </template>
-          <template v-else>
-            <input v-model="textTitleInput" class="sermon-reference-input sermon-text-title-input" type="text" maxlength="100" placeholder="标题（可选）" />
-            <textarea
-              v-model="textContentInput"
-              class="sermon-reference-input"
-              rows="4"
-              maxlength="4000"
-              placeholder="输入文字内容，空行分段，如大纲、引言或引文"
-            ></textarea>
-            <div class="sermon-block-actions">
-              <button class="primary-btn" type="button" :disabled="adding || !textContentInput.trim()" @click="addTextToQueue">
-                <Plus :size="15" />{{ adding ? "正在加入…" : "加入队列" }}
-              </button>
-            </div>
-          </template>
+          </div>
+          <p class="sermon-hint sermon-shortcut-hint">{{ shortcutHint }}（提交当前输入）· Enter 换行（同一屏）· 演示时 Shift+↑/↓ 滚动一行</p>
         </section>
 
         <section class="sermon-block">
@@ -422,15 +507,31 @@ function annotateSelection() {
       </div>
 
       <footer class="sermon-present-controls">
+        <div v-if="editing" class="sermon-edit-panel">
+          <textarea
+            v-model="editSource"
+            class="sermon-reference-input"
+            rows="4"
+            maxlength="8000"
+            placeholder="按原文编辑本屏：经文出处重新查询，文字原样保留"
+            @keydown.esc="editing = false"
+          ></textarea>
+          <div class="sermon-block-actions">
+            <button class="mini-btn secondary" type="button" @click="editing = false">取消</button>
+            <button class="primary-btn" type="button" :disabled="sermon.pending.value || !editSource.trim()" @click="saveEdit">保存并推送</button>
+          </div>
+        </div>
         <SermonDisplayControls :display="display" @update="updateDisplay" />
         <div class="sermon-present-controls-row">
           <button class="mini-btn secondary" type="button" :disabled="currentIndex <= 0" @click="presentRelative(-1)"><SkipBack :size="15" />上一条</button>
           <button class="mini-btn secondary" type="button" :disabled="currentIndex < 0 || currentIndex >= queue.length - 1" @click="presentRelative(1)">下一条<SkipForward :size="15" /></button>
         </div>
         <div class="sermon-present-controls-row">
+          <button class="mini-btn secondary" type="button" @click="openEditor"><Pencil :size="14" />编辑本屏</button>
           <button class="mini-btn secondary" type="button" @click="view = 'queue'">返回演示队列</button>
           <button class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">结束展示</button>
         </div>
+        <p class="sermon-hint">Shift+↑/↓ 屏内滚动一行（观众端同步）</p>
         <p v-if="actionError || sermon.statusMessage.value" class="sermon-error" role="alert">{{ actionError || sermon.statusMessage.value }}</p>
       </footer>
     </main>
