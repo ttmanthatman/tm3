@@ -1,13 +1,18 @@
-export const APP_VERSION = "1.12.13";
+export const APP_VERSION = "1.13.0";
 
 export const RELEASE_DATE = "2026-08-28";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
+  "讲道演示字体改为纯系统字体：移除阿里巴巴普惠体及自托管字体文件，字体选项改为宋体/苹方/黑体/楷体下拉选择，与字号设置同排；苹方在无相应字体的系统上回退微软雅黑，英文经 Times New Roman 等系统常见字体渲染。",
+  "讲道演示的版心边距现在同时作用于左上角经文出处徽标与正文；“某某正在分享”提示从顶部移到屏幕右下角。"
+] as const;
+
+const RELEASE_1_12_13_NOTES = [
   "讲道台合并经文/文字输入为统一输入框：输入内容自动识别经文出处、其余文字原样保留，可混排进同一屏；`Enter` 换行（同一屏），`Cmd/Ctrl+Enter` 或「加入队列」提交；勾选「每处经文一屏」时一次提交中的每处经文各自成为独立幻灯片；识别失败的出处降级为文字保留并明确提示。",
   "讲道幻灯片支持一屏多处经文与超长滚动：单屏内容超过一屏时，演示视图按 `Shift+↑/↓` 一次滚动一行，滚动位置实时同步给所有观众端；展示过程中可「编辑本屏」按原文重编辑并即时推送（标注重置）。"
-] as const;
+] as const
 
 const RELEASE_1_12_12_NOTES = [
   "讲道台新增演示排版设置：讲道者可切换字体（阿里巴巴普惠体/宋体/系统黑体，普惠体为自托管网页字体）、调整字体倍率、用滑块调整页边距（按正文宽度百分比，桌面端与手机端同步生效）、更换背景（五种预设或自定义颜色，浅色背景自动切换深色文字）；全部设置实时同步到观众端。",
@@ -874,9 +879,14 @@ const RELEASE_0_5_2_NOTES = [
 
 export const RELEASE_HISTORY = [
   {
-    version: "1.12.13",
+    version: "1.13.0",
     date: "2026-08-28",
     notes: RELEASE_NOTES
+  },
+  {
+    version: "1.12.13",
+    date: "2026-08-28",
+    notes: RELEASE_1_12_13_NOTES
   },
   {
     version: "1.12.12",
