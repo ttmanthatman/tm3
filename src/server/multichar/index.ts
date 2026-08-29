@@ -1,11 +1,26 @@
-import type { MulticharDeps } from "./types.js";
-import { createStage } from "./stage.js";
+import type { MulticharDeps, CharacterConfig, EngineStatus } from "./types.js";
+import { createStage, multicharPayloadFilter } from "./stage.js";
 import { createAiClient } from "./ai.js";
 import { createMemory } from "./memory.js";
 import { createImpressionManager } from "./impression.js";
 import { createEmotionManager } from "./emotion.js";
 import { createUrgeEvaluator } from "./urge.js";
 import { createCharacterEngine, type CharacterEngine } from "./engine.js";
+
+/**
+ * virtual_characters.config 列里与本模块相关的松散 JSON 结构；
+ * 字段类型从 CharacterConfig 派生，越界数据由读取处的兜底逻辑处理。
+ */
+interface StoredCharacterConfig {
+  channels?: unknown;
+  manualMemory?: CharacterConfig["manualMemory"];
+  generation?: { thinkingEnabled?: boolean };
+  multichar?: {
+    bio?: CharacterConfig["bio"];
+    emotionBaseline?: string;
+    modelHints?: CharacterConfig["modelHints"];
+  };
+}
 
 export function createMulticharManager(deps: MulticharDeps) {
   const stage = createStage(deps.prisma);
@@ -32,13 +47,15 @@ export function createMulticharManager(deps: MulticharDeps) {
     if (!vc || !vc.enabled || vc.actor.status !== "active") return null;
     if (!characterAllowsChannel(vc.config, channelId)) return null;
 
-    const config = {
-      bio: ((vc.config as any)?.multichar?.bio) ?? null,
-      emotionBaseline: ((vc.config as any)?.multichar?.emotionBaseline) ?? "平静中性",
-      channels: Array.isArray((vc.config as any)?.channels) ? (vc.config as any).channels.map(Number).filter(Number.isFinite) : [],
-      manualMemory: ((vc.config as any)?.manualMemory) ?? {},
-      thinkingEnabled: Boolean((vc.config as any)?.generation?.thinkingEnabled),
-      modelHints: ((vc.config as any)?.multichar?.modelHints) ?? undefined,
+    const stored = vc.config as StoredCharacterConfig;
+    const mc = stored.multichar ?? {};
+    const config: CharacterConfig = {
+      bio: mc.bio ?? null,
+      emotionBaseline: mc.emotionBaseline ?? "平静中性",
+      channels: Array.isArray(stored.channels) ? stored.channels.map(Number).filter(Number.isFinite) : [],
+      manualMemory: stored.manualMemory ?? {},
+      thinkingEnabled: Boolean(stored.generation?.thinkingEnabled),
+      modelHints: mc.modelHints ?? undefined,
     };
 
     return {
@@ -91,7 +108,7 @@ export function createMulticharManager(deps: MulticharDeps) {
   }
 
   async function getSessionStatus(channelId: number) {
-    const characters: any[] = [];
+    const characters: EngineStatus[] = [];
     for (const engine of engines.values()) {
       const status = engine.getStatus();
       if (status.channelId === channelId) characters.push(status);
@@ -100,7 +117,7 @@ export function createMulticharManager(deps: MulticharDeps) {
       where: {
         channelId,
         type: "text",
-        payload: { path: ["multichar"], not: null } as any,
+        payload: multicharPayloadFilter(["multichar"]),
       },
     });
     return {

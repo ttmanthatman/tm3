@@ -1,5 +1,14 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { StageSnapshot, SnapshotMessage } from "./types.js";
+
+/**
+ * Prisma 生成的 JsonNullableFilter 把 path 标为 string、且不接受 null，
+ * 但 MySQL JSON 过滤在运行时按文档使用 string[]，not: null 保留现有
+ * "payload 中 multichar 字段非 JSON null"的查询语义。这里在类型边界做一次收窄。
+ */
+export function multicharPayloadFilter(path: string[]): Prisma.JsonNullableFilter {
+  return { path, not: null } as unknown as Prisma.JsonNullableFilter;
+}
 
 export function createStage(prisma: PrismaClient) {
 
@@ -74,7 +83,7 @@ export function createStage(prisma: PrismaClient) {
         turnIndex,
         ...extraMeta,
       },
-    } as any;
+    };
     const msg = await deps.createMessageFromActor({
       channelId,
       actorId: speakerActorId,
@@ -92,7 +101,7 @@ export function createStage(prisma: PrismaClient) {
       where: {
         channelId,
         type: { in: ["text", "chain"] },
-        payload: { path: ["multichar", "turnIndex"], not: null } as any,
+        payload: multicharPayloadFilter(["multichar", "turnIndex"]),
       },
       orderBy: { id: "desc" },
       take: 1,

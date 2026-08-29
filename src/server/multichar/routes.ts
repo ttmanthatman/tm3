@@ -1,13 +1,14 @@
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import type { MulticharManager } from "./index.js";
-import type { MulticharDeps } from "./types.js";
+import type { MemoryType, MulticharDeps } from "./types.js";
 
 export function registerMulticharRoutes(
   app: FastifyInstance,
   deps: MulticharDeps,
   manager: MulticharManager,
-  requireAdmin: (request: FastifyRequest, reply: any) => Promise<void>
+  requireAdmin: (request: FastifyRequest, reply: FastifyReply) => Promise<void>
 ) {
 
   app.get("/api/admin/multichar/status", { preHandler: requireAdmin }, async (request) => {
@@ -69,17 +70,17 @@ export function registerMulticharRoutes(
     const vc = await deps.prisma.virtualCharacter.findUnique({ where: { id } });
     if (!vc) return reply.code(404).send({ success: false, message: "角色不存在" });
 
-    const existingConfig = (vc.config as Record<string, unknown>) ?? {};
-    const existingMc = (existingConfig.multichar as Record<string, unknown>) ?? {};
+    const existingConfig = (vc.config ?? {}) as Prisma.InputJsonObject;
+    const existingMc = (existingConfig.multichar ?? {}) as Record<string, Prisma.InputJsonValue>;
 
-    const newMc: Record<string, unknown> = { ...existingMc };
-    if (body.bio !== undefined) newMc.bio = body.bio;
+    const newMc: Record<string, Prisma.InputJsonValue> = { ...existingMc };
+    if (body.bio !== undefined) newMc.bio = body.bio as Prisma.InputJsonValue;
     if (body.emotionBaseline !== undefined) newMc.emotionBaseline = body.emotionBaseline;
     if (body.modelHints !== undefined) newMc.modelHints = body.modelHints;
 
     const updated = await deps.prisma.virtualCharacter.update({
       where: { id },
-      data: { config: { ...existingConfig, multichar: newMc } as any },
+      data: { config: { ...existingConfig, multichar: newMc } },
       include: { actor: true },
     });
 
@@ -91,11 +92,11 @@ export function registerMulticharRoutes(
     const type = (request.query as { type?: string }).type;
     const { MEMORY_TYPES } = await import("./types.js");
     const validTypes = Object.values(MEMORY_TYPES);
-    const memType = type && validTypes.includes(type as any) ? (type as any) : undefined;
+    const memType = type && (validTypes as string[]).includes(type) ? (type as MemoryType) : undefined;
 
     const where = memType
       ? { characterId: id, subjectType: memType }
-      : { characterId: id, subjectType: { in: validTypes as string[] } };
+      : { characterId: id, subjectType: { in: validTypes } };
 
     const memories = await deps.prisma.characterMemory.findMany({
       where,

@@ -61,12 +61,12 @@ export function createCharacterEngine(
       where: { enabled: true },
       include: { actor: true },
     });
-    const active = characters.filter((c: any) => c.actor.status === "active" && characterAllowsChannel(c.config, chId));
+    const active = characters.filter((c) => c.actor.status === "active" && characterAllowsChannel(c.config, chId));
     return {
       actorId: runtime.actorId,
       characterId: runtime.characterId,
       name: runtime.name,
-      actorIds: active.map((c: any) => c.actorId),
+      actorIds: active.map((c) => c.actorId),
     };
   }
 
@@ -257,9 +257,9 @@ ${recentText}
         where: { enabled: true },
         include: { actor: true },
       });
-      const listenerIds = allChars.filter((c: any) => c.id !== runtime.characterId && c.actor.status === "active" && characterAllowsChannel(c.config, chId)).map((c: any) => c.id);
+      const listenerIds = allChars.filter((c) => c.id !== runtime.characterId && c.actor.status === "active" && characterAllowsChannel(c.config, chId)).map((c) => c.id);
       const listenerNames = new Map<number, string>();
-      for (const c of allChars as any[]) listenerNames.set(c.id, c.actor.displayName);
+      for (const c of allChars) listenerNames.set(c.id, c.actor.displayName);
 
       void impression.updateForSpeaker(
         runtime.characterId,

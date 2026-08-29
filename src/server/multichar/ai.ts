@@ -1,5 +1,12 @@
 import type { MulticharDeps } from "./types.js";
 
+/** OpenAI 兼容 /chat/completions 响应中我们用到的字段；其余字段忽略。 */
+interface ChatCompletionPayload {
+  error?: { message?: unknown } | null;
+  message?: unknown;
+  choices?: { message?: { content?: unknown } }[];
+}
+
 export function createAiClient(deps: MulticharDeps) {
   async function callLlm(
     messages: { role: "system" | "user" | "assistant"; content: string }[],
@@ -31,7 +38,7 @@ export function createAiClient(deps: MulticharDeps) {
         }),
         signal: controller.signal,
       });
-      const payload = (await response.json().catch(() => ({}))) as any;
+      const payload = (await response.json().catch(() => ({}))) as ChatCompletionPayload;
       if (!response.ok) {
         const msg = payload?.error?.message || payload?.message || `AI HTTP ${response.status}`;
         throw new Error(String(msg));
