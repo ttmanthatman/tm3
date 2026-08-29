@@ -291,7 +291,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await viewer.screenshot({ path: "output/e2e/sermon/live-preview-390.png" });
     await joinFromLiveNotification(viewer, E2E_ADMIN.displayName);
 
-    const overlay = viewer.locator(".sermon-overlay");
+    const overlay = viewer.locator("section.modal-shell.sermon-overlay");
     await expect(overlay).toBeVisible();
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/约翰福音\s*3:16/);
     await expect(overlay).toContainText("神爱世人");
@@ -553,7 +553,7 @@ test("小组通知流：预览加入、全屏同步与刷新释席", async ({ br
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
 
     // 成员点击进入后，全屏覆盖层同步。
-    const overlay = member.locator(".sermon-overlay");
+    const overlay = member.locator("section.modal-shell.sermon-overlay");
     await expect(overlay).toBeVisible();
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/约翰福音\s*3:16/);
 
@@ -613,7 +613,7 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     await expect(otherWorkspace).toContainText("只能观看");
     await entryDialog.getByRole("button", { name: "关闭", exact: true }).click();
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
-    const overlay = member.locator(".sermon-overlay");
+    const overlay = member.locator("section.modal-shell.sermon-overlay");
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/诗篇\s*23:1/);
 
     // B 先准备内容：创世 1:1 + 马太 6:9（每处一屏），展示创世 1:1。
@@ -626,7 +626,7 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     await genesisItem.locator(".sermon-queue-main").click();
     await expect(workspaceB.locator(".sermon-present-view")).toBeVisible();
     const noticeB = member.locator(".sermon-live-card", { hasText: `${E2E_ADMIN2.displayName} 正在讲道` });
-    await expect(noticeB).toContainText("起初神创造天地");
+    await expect(noticeB).toContainText("起初，神创造天地");
 
     // 成员从 B 的预览换席：客户端先离开 A，服务端再许可加入 B。
     await noticeB.getByRole("button", { name: "点击进入观看", exact: true }).click();
@@ -668,10 +668,11 @@ test("主持人移除观众与结束演示通知", async ({ browser }) => {
     await startGroupPresentation(workspace, E2E_MEMBER.displayName);
     await addToQueueAndPresent(workspace, "约3:16");
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
-    const overlay = member.locator(".sermon-overlay");
+    const overlay = member.locator("section.modal-shell.sermon-overlay");
     await expect(overlay).toBeVisible();
 
     // 观众管理区移除成员：成员端收到轻提示且覆盖层关闭。
+    await workspace.getByRole("button", { name: "返回演示队列", exact: true }).click();
     const viewerRow = workspace.locator(".sermon-viewer-row", { hasText: E2E_MEMBER.displayName });
     await expect(viewerRow).toBeVisible();
     await viewerRow.getByRole("button", { name: "移除", exact: true }).click();
@@ -685,6 +686,8 @@ test("主持人移除观众与结束演示通知", async ({ browser }) => {
     await expect(overlay).toBeVisible();
 
     // 结束演示：观众覆盖层关闭并收到结束通知，主持人回到开始屏。
+    await workspace.locator(".sermon-queue-item").first().locator(".sermon-queue-main").click();
+    await expect(workspace.locator(".sermon-present-view")).toBeVisible();
     admin.once("dialog", (dialog) => dialog.accept());
     await workspace.getByRole("button", { name: "结束展示", exact: true }).click();
     await expect(overlay).toHaveCount(0);
@@ -746,7 +749,7 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     await expect(liveCard).toContainText("全体演示");
     await expect(liveCard).toContainText("神爱世人");
     await liveCard.getByRole("button", { name: "点击进入观看", exact: true }).click();
-    const overlay = admin2.locator(".sermon-overlay");
+    const overlay = admin2.locator("section.modal-shell.sermon-overlay");
     await expect(overlay).toBeVisible();
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/约翰福音\s*3:16/);
     await expect(overlay).toContainText("神爱世人");
