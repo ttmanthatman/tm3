@@ -12172,7 +12172,8 @@ button.admin-object-row:focus-visible {
 .sermon-overlay {
   background: var(--sermon-bg, linear-gradient(160deg, rgba(9, 14, 30, 0.96) 0%, rgba(24, 32, 58, 0.94) 55%, rgba(42, 30, 58, 0.95) 100%));
   color: var(--sermon-fg, #f5f1e6);
-  padding: max(16px, calc(var(--safe-top) + 16px)) 16px max(16px, calc(var(--safe-bottom) + 16px));
+  padding-block: max(16px, calc(var(--safe-top) + 16px)) max(16px, calc(var(--safe-bottom) + 16px));
+  padding-inline: 0;
 }
 
 .sermon-overlay[data-sermon-bg="gradient"] {
@@ -12280,7 +12281,100 @@ button.admin-object-row:focus-visible {
   text-align: center;
 }
 
-.sermon-verse { margin: 0 0 0.4em; }
+.sermon-verse {
+  margin: 0 0 0.4em;
+  touch-action: pan-y;
+}
+
+.sermon-overlay-card > .sermon-context-panel {
+  grid-row: 1 / -1;
+}
+
+.sermon-context-panel {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  color: var(--sermon-fg, var(--text, #111827));
+  font-family: var(--sermon-font-family, "Songti SC", "Noto Serif SC", "SimSun", serif);
+}
+
+.sermon-context-panel > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+.sermon-context-panel > header > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.sermon-context-panel > header small,
+.sermon-context-help,
+.sermon-context-status {
+  color: color-mix(in srgb, var(--sermon-fg, var(--text, #111827)) 62%, transparent);
+}
+
+.sermon-context-close {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 50%;
+  color: inherit;
+  background: color-mix(in srgb, currentColor 10%, transparent);
+  cursor: pointer;
+}
+
+.sermon-context-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.sermon-context-verse {
+  margin: 0;
+  padding: 0.3em 0.45em;
+  border-left: 4px solid transparent;
+  border-radius: 7px;
+  color: color-mix(in srgb, var(--sermon-fg, var(--text, #111827)) 62%, transparent);
+  font-size: calc(clamp(19px, 4vw, 28px) * var(--sermon-font-scale, 1));
+  line-height: 1.75;
+}
+
+.sermon-context-verse sup {
+  margin-right: 0.38em;
+  font-size: 0.55em;
+}
+
+.sermon-context-current {
+  border-left-color: #22c55e;
+  background: rgba(250, 204, 21, 0.78);
+  color: #14532d;
+  font-weight: 700;
+}
+
+.sermon-context-help {
+  padding-top: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 12px;
+}
+
+.sermon-context-panel.compact {
+  height: min(360px, 42vh);
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel, #fff);
+  color: var(--text, #111827);
+}
 
 .sermon-text-title {
   margin: 0 0 0.6em;

@@ -557,7 +557,7 @@ export interface SermonDisplayDTO {
   fontFamily: SermonFontFamily;
   /** 观众端与讲道者演示视图共用的字体倍率（0.7–1.6），默认 1 */
   fontScale: number;
-  /** 横向边距占视口宽度的百分比（2–20 整数），默认 4 */
+  /** 横向边距占视口宽度的百分比（0–20 整数），默认 4 */
   marginPct: number;
   /** 背景预设键或 #rrggbb 自定义色 */
   background: string;

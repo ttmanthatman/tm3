@@ -271,7 +271,8 @@ test("applyDisplay 按字段合并：字体族、边距、背景与文字颜色"
   const merged = applyDisplay(patched, { fontScale: 1.3 }, ctx());
   assert.deepEqual(merged.display, { fontFamily: "songti", fontScale: 1.3, marginPct: 12, background: "sepia", textColor: "#3f3222" }, "未提供的字段保持不变");
 
-  assert.equal(applyDisplay(state, { marginPct: 1 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MIN, "边距低于下限夹到 2");
+  assert.equal(applyDisplay(state, { marginPct: -1 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MIN, "边距低于下限夹到 0");
+  assert.equal(applyDisplay(state, { marginPct: 0 }, ctx()).display.marginPct, 0, "边距可以完全归零");
   assert.equal(applyDisplay(state, { marginPct: 99 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MAX, "边距高于上限夹到 20");
   assert.equal(applyDisplay(state, { marginPct: 8.6 }, ctx()).display.marginPct, 9, "边距取整");
   assert.equal(applyDisplay(state, { marginPct: Number.NaN }, ctx()), state, "非有限边距不变更");

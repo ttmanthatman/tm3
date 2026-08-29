@@ -17,7 +17,7 @@ import type {
 export const SERMON_QUEUE_LIMIT = 50;
 export const SERMON_FONT_SCALE_MIN = 0.7;
 export const SERMON_FONT_SCALE_MAX = 1.6;
-export const SERMON_MARGIN_PCT_MIN = 2;
+export const SERMON_MARGIN_PCT_MIN = 0;
 export const SERMON_MARGIN_PCT_MAX = 20;
 export const SERMON_FONT_FAMILIES = ["songti", "pingfang", "heiti", "kaiti"] as const;
 export const SERMON_BACKGROUND_PRESETS = ["gradient", "aurora", "sunset", "forest", "dawn", "dark", "light", "sepia", "midnight"] as const;

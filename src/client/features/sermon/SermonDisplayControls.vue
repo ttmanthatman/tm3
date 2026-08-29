@@ -12,7 +12,7 @@ const emit = defineEmits<{ update: [patch: Partial<SermonDisplayDTO>] }>();
 
 const SERMON_FONT_SCALE_MIN = 0.7;
 const SERMON_FONT_SCALE_MAX = 1.6;
-const SERMON_MARGIN_MIN = 2;
+const SERMON_MARGIN_MIN = 0;
 const SERMON_MARGIN_MAX = 20;
 
 const SERMON_FONT_OPTIONS: Array<{ value: SermonFontFamily; label: string }> = [

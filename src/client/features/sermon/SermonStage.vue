@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
-import type { SermonQueueItem, SermonSlideBlock } from "@shared/types";
+import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import type { BibleVerseLineDTO, SermonQueueItem, SermonSlideBlock } from "@shared/types";
 import { annotationsForVerse, splitSermonTextParagraphs, verseAnnotationSegments } from "./sermonText";
 
 // 观众端覆盖层与讲道者演示视图共用的经文舞台：出处徽标、“某某正在分享”标识、
@@ -13,11 +13,69 @@ const props = withDefaults(
     item: SermonQueueItem | null;
     presenterName?: string;
     emptyText?: string;
+    enableVerseHold?: boolean;
   }>(),
-  { presenterName: "", emptyText: "讲道者正在准备经文…" }
+  { presenterName: "", emptyText: "讲道者正在准备经文…", enableVerseHold: false }
 );
 
-const emit = defineEmits<{ "verse-click": [verseIndex: number, event: MouseEvent] }>();
+const emit = defineEmits<{
+  "verse-click": [verseIndex: number, event: MouseEvent];
+  "verse-hold": [verse: BibleVerseLineDTO];
+}>();
+
+let holdTimer: ReturnType<typeof setTimeout> | null = null;
+let suppressClickTimer: ReturnType<typeof setTimeout> | null = null;
+let holdStart: { x: number; y: number } | null = null;
+let suppressNextClick = false;
+
+function cancelVerseHold() {
+  if (holdTimer) clearTimeout(holdTimer);
+  holdTimer = null;
+  holdStart = null;
+}
+
+function startVerseHold(verse: BibleVerseLineDTO, event: PointerEvent) {
+  if (!props.enableVerseHold) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  cancelVerseHold();
+  holdStart = { x: event.clientX, y: event.clientY };
+  holdTimer = setTimeout(() => {
+    holdTimer = null;
+    holdStart = null;
+    suppressNextClick = true;
+    if (suppressClickTimer) clearTimeout(suppressClickTimer);
+    suppressClickTimer = setTimeout(() => {
+      suppressNextClick = false;
+      suppressClickTimer = null;
+    }, 800);
+    emit("verse-hold", verse);
+  }, 520);
+}
+
+function handleVerseContextMenu(event: MouseEvent) {
+  if (props.enableVerseHold) event.preventDefault();
+}
+
+function moveVerseHold(event: PointerEvent) {
+  if (!holdStart) return;
+  if (Math.hypot(event.clientX - holdStart.x, event.clientY - holdStart.y) > 12) cancelVerseHold();
+}
+
+function handleVerseClick(verseIndex: number, event: MouseEvent) {
+  if (suppressNextClick) {
+    suppressNextClick = false;
+    if (suppressClickTimer) clearTimeout(suppressClickTimer);
+    suppressClickTimer = null;
+    event.preventDefault();
+    return;
+  }
+  emit("verse-click", verseIndex, event);
+}
+
+onBeforeUnmount(() => {
+  cancelVerseHold();
+  if (suppressClickTimer) clearTimeout(suppressClickTimer);
+});
 
 function verseSegments(item: SermonQueueItem, verseIndex: number, text: string) {
   return verseAnnotationSegments(text, annotationsForVerse(item.annotations, verseIndex));
@@ -76,7 +134,12 @@ watch(
               v-for="(verse, localIndex) in passageVerses(block)"
               :key="`${blockIndex}-${verse.book}-${verse.chapter}-${verse.verse}`"
               class="sermon-verse"
-              @click="emit('verse-click', block.verseStart + localIndex, $event)"
+              @pointerdown="startVerseHold(verse, $event)"
+              @pointermove="moveVerseHold"
+              @pointerup="cancelVerseHold"
+              @pointercancel="cancelVerseHold"
+              @contextmenu="handleVerseContextMenu"
+              @click="handleVerseClick(block.verseStart + localIndex, $event)"
             >
               <sup class="sermon-verse-no">{{ verse.verse }}</sup>
               <span class="sermon-verse-text" :data-verse-index="block.verseStart + localIndex">
@@ -106,7 +169,12 @@ watch(
             v-for="(verse, verseIndex) in props.item.verses"
             :key="`${verse.book}-${verse.chapter}-${verse.verse}`"
             class="sermon-verse"
-            @click="emit('verse-click', verseIndex, $event)"
+            @pointerdown="startVerseHold(verse, $event)"
+            @pointermove="moveVerseHold"
+            @pointerup="cancelVerseHold"
+            @pointercancel="cancelVerseHold"
+            @contextmenu="handleVerseContextMenu"
+            @click="handleVerseClick(verseIndex, $event)"
           >
             <sup class="sermon-verse-no">{{ verse.verse }}</sup>
             <span class="sermon-verse-text" :data-verse-index="verseIndex">

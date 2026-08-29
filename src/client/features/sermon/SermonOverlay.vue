@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { Minus, MonitorPlay } from "lucide-vue-next";
-import type { SermonQueueItem } from "@shared/types";
+import type { BibleVerseLineDTO, SermonQueueItem } from "@shared/types";
+import SermonContextPanel from "./SermonContextPanel.vue";
 import SermonStage from "./SermonStage.vue";
 import SermonFloatingButton from "./SermonFloatingButton.vue";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
@@ -12,6 +13,7 @@ const store = useChatStore();
 const { watchedState: sermonState } = useSermon({ getSocket: () => store.socket });
 
 const minimized = ref(false);
+const contextVerses = ref<BibleVerseLineDTO[]>([]);
 
 const currentItem = computed<SermonQueueItem | null>(() => {
   const state = sermonState.value;
@@ -20,6 +22,14 @@ const currentItem = computed<SermonQueueItem | null>(() => {
 });
 
 const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
+
+watch(() => currentItem.value?.id ?? null, () => {
+  contextVerses.value = [];
+});
+
+function showContext(verse: BibleVerseLineDTO) {
+  contextVerses.value = [verse];
+}
 
 const floatingStorageKey = computed(() =>
   `team-chat-sermon-float:${store.account?.id ?? "guest"}:${sermonState.value?.presenterId ?? "watching"}`
@@ -42,9 +52,22 @@ const floatingStorageKey = computed(() =>
     aria-label="讲道经文展示"
     :style="sermonDisplayStyle(display)"
     v-bind="sermonDisplayAttrs(display)"
+    @click.self="contextVerses = []"
   >
     <div class="sermon-overlay-card">
-      <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''">
+      <SermonContextPanel
+        v-if="contextVerses.length"
+        :verses="contextVerses"
+        closeable
+        @close="contextVerses = []"
+      />
+      <SermonStage
+        v-else
+        :item="currentItem"
+        :presenter-name="sermonState?.presenterName || ''"
+        enable-verse-hold
+        @verse-hold="showContext"
+      >
         <template #head-actions>
           <button class="sermon-overlay-minimize" type="button" aria-label="最小化讲道经文" @click="minimized = true"><Minus :size="20" /></button>
         </template>

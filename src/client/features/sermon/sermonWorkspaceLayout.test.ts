@@ -6,6 +6,8 @@ const workspace = readFileSync(new URL("./SermonWorkspace.vue", import.meta.url)
 const hub = readFileSync(new URL("./SermonHub.vue", import.meta.url), "utf8");
 const entryDialog = readFileSync(new URL("./SermonEntryDialog.vue", import.meta.url), "utf8");
 const overlay = readFileSync(new URL("./SermonOverlay.vue", import.meta.url), "utf8");
+const stage = readFileSync(new URL("./SermonStage.vue", import.meta.url), "utf8");
+const contextPanel = readFileSync(new URL("./SermonContextPanel.vue", import.meta.url), "utf8");
 const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
 
 test("late-mounted preview refs reconnect to ResizeObserver", () => {
@@ -33,6 +35,7 @@ test("one shared card inset moves both reference and body", () => {
   assert.match(css, /\.sermon-overlay-card \{[\s\S]*?padding-inline: calc\(var\(--sermon-margin-pct, 4\) \* 1%\)/);
   assert.doesNotMatch(css, /\.sermon-overlay-head \{[^}]*padding-inline/);
   assert.doesNotMatch(css, /\.sermon-overlay-body \{[^}]*padding-inline/);
+  assert.match(css, /\.sermon-overlay \{[\s\S]*?padding-inline: 0/);
 });
 
 test("unknown presenter status is not mislabeled as an application requirement", () => {
@@ -88,6 +91,18 @@ test("workspace explains split scriptures, exposes invite scope and previews the
   assert.match(workspace, />全选（\{\{ inviteCandidates\.length \}\} 人）</);
   assert.match(workspace, /<h3>下一页<\/h3>/);
   assert.match(workspace, /<SermonStage :item="nextItem"/);
+  assert.match(workspace, /startScope === 'group' && presenterStatus\?\.canPresent/);
+  assert.match(workspace, /startScope\.value === "group" \? selectedInviteIds\.value : \[\]/);
+  assert.match(workspace, />退出并重新选择模式<\/button>/);
+});
+
+test("presenter preview and audience long press expose local scripture context", () => {
+  assert.match(workspace, /sermon-context-preview[\s\S]*?<SermonContextPanel :verses="currentItem\?\.verses \|\| \[\]" compact/);
+  assert.match(stage, /setTimeout\(\(\) => \{[\s\S]*?emit\("verse-hold", verse\)[\s\S]*?\}, 520\)/);
+  assert.match(overlay, /@click\.self="contextVerses = \[\]"[\s\S]*?enable-verse-hold[\s\S]*?@verse-hold="showContext"/);
+  assert.match(contextPanel, /\/api\/bible\/lookup\?reference=/);
+  assert.match(contextPanel, /sermon-context-current/);
+  assert.match(css, /\.sermon-context-current \{[\s\S]*?border-left-color: #22c55e[\s\S]*?background: rgba\(250, 204, 21, 0\.78\)/);
 });
 
 test("mobile presentation controls remain scrollable without covering the scripture stage", () => {

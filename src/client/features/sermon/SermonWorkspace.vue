@@ -11,6 +11,7 @@ import { verseHasAnnotation } from "./sermonText";
 import { sermonBackgroundPaint } from "./sermonThemes";
 import { parseSermonInput } from "./sermonInput";
 import { allSermonCandidatesSelected, matchingSermonPlan, nextSermonQueueItem } from "./sermonWorkspaceState";
+import SermonContextPanel from "./SermonContextPanel.vue";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
 import SermonStage from "./SermonStage.vue";
 import { useSermon, type SermonEmitResult } from "./useSermon";
@@ -188,7 +189,8 @@ watch(
 
 async function startPresentation() {
   startError.value = "";
-  const result = await sermon.start(startScope.value, selectedInviteIds.value);
+  const invitedAccountIds = startScope.value === "group" ? selectedInviteIds.value : [];
+  const result = await sermon.start(startScope.value, invitedAccountIds);
   if (!result.ok) {
     startError.value = result.message;
     return;
@@ -385,7 +387,7 @@ function updateDisplay(patch: Partial<SermonDisplayDTO>) {
 }
 
 async function endPresentation() {
-  if (!window.confirm("结束演示并清空当前讲道队列？已保存的讲道方案不会删除。")) return;
+  if (!window.confirm("退出当前讲道台并清空当前队列？已保存的讲道方案不会删除。")) return;
   await report(sermon.end());
   view.value = "queue";
 }
@@ -719,7 +721,7 @@ function annotateSelection() {
 
         <footer class="sermon-queue-foot">
           <p v-if="actionError || sermon.statusMessage.value" class="sermon-error" role="alert">{{ actionError || sermon.statusMessage.value }}</p>
-          <button v-if="queue.length" class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">结束展示</button>
+          <button class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">退出并重新选择模式</button>
         </footer>
       </div>
 
@@ -768,6 +770,9 @@ function annotateSelection() {
           </div>
           <p v-else class="sermon-next-empty">已经是最后一页</p>
         </section>
+        <section class="sermon-preview-block sermon-context-preview">
+          <SermonContextPanel :verses="currentItem?.verses || []" compact />
+        </section>
       </aside>
     </main>
 
@@ -793,7 +798,7 @@ function annotateSelection() {
             </span>
           </label>
         </div>
-        <template v-if="presenterStatus?.canPresent">
+        <template v-if="startScope === 'group' && presenterStatus?.canPresent">
           <h4 class="sermon-audience-title">邀请观众（可选）</h4>
           <p v-if="accountsError" class="sermon-error" role="alert">{{ accountsError }}</p>
           <div v-else class="sermon-audience-list">
@@ -1098,6 +1103,10 @@ function annotateSelection() {
 }
 
 .sermon-next-preview {
+  margin-top: 18px;
+}
+
+.sermon-context-preview {
   margin-top: 18px;
 }
 

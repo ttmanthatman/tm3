@@ -394,7 +394,9 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await presentView.getByRole("combobox", { name: "经文字体" }).selectOption("songti");
     await expect(overlay).toHaveAttribute("data-sermon-font", "songti");
     await expect(admin.locator(".sermon-present-stage")).toHaveAttribute("data-sermon-font", "songti");
-    await presentView.getByRole("button", { name: "纯黑", exact: true }).click();
+    const midnightTheme = presentView.getByRole("button", { name: "纯黑", exact: true });
+    await midnightTheme.scrollIntoViewIfNeeded();
+    await midnightTheme.click();
     await expect(overlay).toHaveAttribute("data-sermon-bg", "midnight");
     await expect(overlay).toHaveCSS("background-color", "rgb(0, 0, 0)");
     await presentView.locator('.sermon-margin-slider input[type="range"]').fill("10");
@@ -733,6 +735,7 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     const reopened = await openSermonWorkspace(member2);
     await expect(assemblyRadio).toBeEnabled();
     await assemblyRadio.check();
+    await expect(reopened.getByText("邀请观众（可选）", { exact: true })).toHaveCount(0);
     await expect(reopened.getByRole("button", { name: "进入自己的讲道台", exact: true })).toBeEnabled();
     await reopened.getByRole("button", { name: "进入自己的讲道台", exact: true }).click();
     await expect(reopened.locator(".sermon-queue-view")).toBeVisible();
