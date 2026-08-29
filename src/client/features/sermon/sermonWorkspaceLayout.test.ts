@@ -125,10 +125,18 @@ test("presenter preview and audience long press expose local scripture context",
   assert.match(workspace, /sermon-context-preview[\s\S]*?<SermonContextPanel :verses="previewItem\?\.verses \|\| \[\]" compact/);
   assert.match(stage, /setTimeout\(\(\) => \{[\s\S]*?emit\("verse-hold", verse\)[\s\S]*?\}, 520\)/);
   assert.match(overlay, /@click\.self="contextVerses = \[\]"[\s\S]*?enable-verse-hold[\s\S]*?@verse-hold="showContext"/);
-  assert.match(contextPanel, /\/api\/bible\/lookup\?reference=/);
+  assert.match(contextPanel, /\/api\/bible\/catalog/);
+  assert.match(contextPanel, /\/api\/bible\/chapter\?book=/);
+  assert.match(contextPanel, /@scroll\.passive="handleContextScroll"/);
+  assert.match(contextPanel, /<strong>上下文<\/strong>/);
+  assert.match(contextPanel, /class="sermon-context-reset"/);
+  assert.match(contextPanel, />复位<\/button>/);
   assert.match(contextPanel, /sermon-context-current/);
   assert.match(contextPanel, /class="sermon-context-paragraph"/);
-  assert.doesNotMatch(contextPanel, /<p\s+v-for="verse in chapter\?\.verses/);
+  assert.match(contextPanel, /v-for="chapter in loadedChapters"/);
+  assert.doesNotMatch(contextPanel, /\/api\/bible\/lookup\?reference=/);
+  assert.match(css, /\.sermon-context-panel \{[\s\S]*?font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif/);
+  assert.match(css, /\.sermon-context-paragraph \{[\s\S]*?font-size: 15px;[\s\S]*?line-height: 1\.65/);
   assert.match(css, /\.sermon-context-current \{[\s\S]*?border-bottom-color: #22c55e[\s\S]*?background: rgba\(250, 204, 21, 0\.78\)/);
 });
 
