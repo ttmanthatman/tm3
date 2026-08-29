@@ -63,7 +63,8 @@ import type {
   ThemeDTO,
   ThemePaletteDTO
 } from "../shared/types.js";
-import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_HISTORY, RELEASE_NOTES } from "../shared/release.js";
+import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
+import { RELEASE_HISTORY } from "../shared/releaseHistory.js";
 import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../shared/bibleFavoriteColors.js";
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";

@@ -14,6 +14,7 @@ const MANAGED_FILES = [
   "package.json",
   "package-lock.json",
   "src/shared/release.ts",
+  "src/shared/releaseHistory.ts",
   "CHANGELOG.md"
 ] as const;
 
@@ -127,28 +128,41 @@ function updateReleaseSource(source: string, targetVersion: string, date: string
   if (!notesMatch) throw new Error("src/shared/release.ts: could not isolate RELEASE_NOTES");
 
   const archivedName = `RELEASE_${current.version.replace(/[^0-9a-zA-Z]+/g, "_")}_NOTES`;
-  if (source.includes(`const ${archivedName} =`)) {
-    throw new Error(`src/shared/release.ts: ${archivedName} already exists`);
-  }
-
-  let updated = source
+  const updated = source
     .replace(
       /^export const APP_VERSION = "[^"]+";$/m,
       `export const APP_VERSION = ${JSON.stringify(targetVersion)};`
     )
     .replace(/^export const RELEASE_DATE = "[^"]+";$/m, `export const RELEASE_DATE = ${JSON.stringify(date)};`)
-    .replace(
-      notesMatch[0],
-      `export const RELEASE_NOTES = ${formattedNotes(notes)}\n\nconst ${archivedName} = ${notesMatch[1]}`
-    );
+    .replace(notesMatch[0], `export const RELEASE_NOTES = ${formattedNotes(notes)}`);
+  return { source: updated, archivedName, archivedBody: notesMatch[1] };
+}
+
+function updateReleaseHistory(
+  source: string,
+  targetVersion: string,
+  date: string,
+  archivedName: string,
+  archivedBody: string,
+  currentVersion: string,
+  currentDate: string
+) {
+  if (source.includes(`const ${archivedName} =`)) {
+    throw new Error(`src/shared/releaseHistory.ts: ${archivedName} already exists`);
+  }
 
   const firstHistoryEntry =
     /export const RELEASE_HISTORY = \[\n  \{\n    version: "([^"]+)",\n    date: "([^"]+)",\n    notes: RELEASE_NOTES\n  \},/;
-  const historyMatch = firstHistoryEntry.exec(updated);
-  if (!historyMatch || historyMatch[1] !== current.version || historyMatch[2] !== current.date) {
-    throw new Error("src/shared/release.ts: latest RELEASE_HISTORY entry is not the current release");
+  const historyMatch = firstHistoryEntry.exec(source);
+  if (!historyMatch || historyMatch[1] !== currentVersion || historyMatch[2] !== currentDate) {
+    throw new Error("src/shared/releaseHistory.ts: latest RELEASE_HISTORY entry is not the current release");
   }
-  updated = updated.replace(
+
+  const withArchivedConst = source.replace(
+    "export const RELEASE_HISTORY = [",
+    `const ${archivedName} = ${archivedBody}\n\nexport const RELEASE_HISTORY = [`
+  );
+  return withArchivedConst.replace(
     firstHistoryEntry,
     `export const RELEASE_HISTORY = [
   {
@@ -157,12 +171,11 @@ function updateReleaseSource(source: string, targetVersion: string, date: string
     notes: RELEASE_NOTES
   },
   {
-    version: ${JSON.stringify(current.version)},
-    date: ${JSON.stringify(current.date)},
+    version: ${JSON.stringify(currentVersion)},
+    date: ${JSON.stringify(currentDate)},
     notes: ${archivedName}
   },`
   );
-  return updated;
 }
 
 function updateChangelog(source: string, targetVersion: string, date: string) {
@@ -207,13 +220,23 @@ export function prepareRelease(targetVersion: string, options: PrepareReleaseOpt
     originals["package-lock.json"],
     targetVersion
   );
+  const updatedRelease = updateReleaseSource(
+    originals["src/shared/release.ts"],
+    targetVersion,
+    date,
+    unreleased.notes
+  );
   const previews: ReleaseFileOverrides = {
     ...packagePreviews,
-    "src/shared/release.ts": updateReleaseSource(
-      originals["src/shared/release.ts"],
+    "src/shared/release.ts": updatedRelease.source,
+    "src/shared/releaseHistory.ts": updateReleaseHistory(
+      originals["src/shared/releaseHistory.ts"],
       targetVersion,
       date,
-      unreleased.notes
+      updatedRelease.archivedName,
+      updatedRelease.archivedBody,
+      current.version,
+      current.date
     ),
     "CHANGELOG.md": updateChangelog(originals["CHANGELOG.md"], targetVersion, date)
   };
@@ -235,6 +258,7 @@ export function prepareRelease(targetVersion: string, options: PrepareReleaseOpt
       { cwd: root, stdio: "pipe" }
     );
     fs.writeFileSync(path.join(root, "src/shared/release.ts"), previews["src/shared/release.ts"]);
+    fs.writeFileSync(path.join(root, "src/shared/releaseHistory.ts"), previews["src/shared/releaseHistory.ts"]);
     fs.writeFileSync(path.join(root, "CHANGELOG.md"), previews["CHANGELOG.md"]);
     assertConsistent(root);
     if (options.runCheckRelease !== false) {

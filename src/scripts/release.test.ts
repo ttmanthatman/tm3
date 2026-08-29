@@ -26,8 +26,11 @@ export const RELEASE_DEVELOPER = "Team Chat";
 export const RELEASE_NOTES = [
   "Current release note."
 ] as const;
+`;
+}
 
-const RELEASE_1_5_5_NOTES = [
+function releaseHistorySource() {
+  return `const RELEASE_1_5_5_NOTES = [
   "Previous release note."
 ] as const;
 
@@ -90,6 +93,7 @@ function makeFixture(t: test.TestContext, unreleased?: string) {
   write(root, "package.json", `${JSON.stringify(packageJson, null, 2)}\n`);
   write(root, "package-lock.json", `${JSON.stringify(packageLock, null, 2)}\n`);
   write(root, "src/shared/release.ts", releaseSource());
+  write(root, "src/shared/releaseHistory.ts", releaseHistorySource());
   write(root, "CHANGELOG.md", changelogSource(unreleased));
   write(
     root,
@@ -122,7 +126,7 @@ const APP_CACHE = \`\${APP_CACHE_PREFIX}\${APP_VERSION}\`;
 }
 
 function snapshot(root: string) {
-  return ["package.json", "package-lock.json", "src/shared/release.ts", "CHANGELOG.md"].map((file) =>
+  return ["package.json", "package-lock.json", "src/shared/release.ts", "src/shared/releaseHistory.ts", "CHANGELOG.md"].map((file) =>
     fs.readFileSync(path.join(root, file), "utf8")
   );
 }
@@ -173,6 +177,7 @@ test("release preparation updates all release files without committing or taggin
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const packageLock = JSON.parse(fs.readFileSync(path.join(root, "package-lock.json"), "utf8"));
   const release = fs.readFileSync(path.join(root, "src/shared/release.ts"), "utf8");
+  const releaseHistory = fs.readFileSync(path.join(root, "src/shared/releaseHistory.ts"), "utf8");
   const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
   const metadata = parseReleaseMetadata(release);
 
@@ -182,8 +187,8 @@ test("release preparation updates all release files without committing or taggin
   assert.equal(metadata.version, "1.5.7");
   assert.equal(metadata.date, "2026-07-18");
   assert.deepEqual(metadata.notes, ["A visible new feature.", "A visible bug fix."]);
-  assert.match(release, /const RELEASE_1_5_6_NOTES = \[/);
-  assert.match(release, /version: "1\.5\.6",\n    date: "2026-07-17",\n    notes: RELEASE_1_5_6_NOTES/);
+  assert.match(releaseHistory, /const RELEASE_1_5_6_NOTES = \[/);
+  assert.match(releaseHistory, /version: "1\.5\.6",\n    date: "2026-07-17",\n    notes: RELEASE_1_5_6_NOTES/);
   assert.match(changelog, /^## Unreleased\n\n## 1\.5\.7 - 2026-07-18$/m);
   assert.deepEqual(checkReleaseConsistency(root), []);
   assert.equal(execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(), commitBefore);

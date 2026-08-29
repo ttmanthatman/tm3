@@ -53,7 +53,8 @@ const RELEASE_FILES = new Set([
   "README.md",
   "public/sw.js",
   "src/client/main.ts",
-  "src/shared/release.ts"
+  "src/shared/release.ts",
+  "src/shared/releaseHistory.ts"
 ]);
 
 const FULL_CONFIGURATION_PATTERNS = [
@@ -101,7 +102,7 @@ export function classifyChangedFile(file: string): FileClassification {
     || normalized === "src/scripts/service-worker.test.ts"
   ) {
     add("service-worker");
-  } else if (normalized === "src/shared/release.ts") {
+  } else if (normalized === "src/shared/release.ts" || normalized === "src/shared/releaseHistory.ts") {
     add("shared");
     add("documentation/release");
   } else if (normalized === "src/client/main.ts") {

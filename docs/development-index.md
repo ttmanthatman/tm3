@@ -48,7 +48,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - AI and virtual roles: admin settings, role enablement, duplicated role lists, and prompt/API-key state are easy to desynchronize.
 - Message rendering: Markdown, sanitized HTML, Bible references, link previews, quoted previews, and notification text all need separate checks.
 - Attachments and media: upload, preview, download fallback, admin preview URLs, compression, deletion, and pinned references share file assumptions.
-- Version/update flow: `package.json`, `package-lock.json`, `src/shared/release.ts`, `CHANGELOG.md`, service worker cache, and self-update scripts must agree.
+- Version/update flow: `package.json`, `package-lock.json`, `src/shared/release.ts`, `src/shared/releaseHistory.ts`, `CHANGELOG.md`, service worker cache, and self-update scripts must agree.
 
 ## Module Map
 
@@ -63,7 +63,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/client/unread.ts`: per-account unread badge transitions and local offline fallback (`team-chat-unread-{accountId}`). The store merges local positions into the server-backed account state, persists reads through `/api/channels/:id/read`, and receives sibling-device updates over `channel:read`.
 - `src/client/styles.css`: global layout and responsive CSS. Check mobile media rules when changing modals, panels, composer, or admin rows.
 - `src/client/api.ts`: auth token storage and fetch wrapper.
-- `src/shared/release.ts`: in-app version number, current notes, and release history.
+- `src/shared/release.ts` and `src/shared/releaseHistory.ts`: in-app version number and current notes (`release.ts`), archived per-release notes and `RELEASE_HISTORY` (`releaseHistory.ts`). Both are managed by `npm run release:prepare` and checked by `npm run check:release`; the server serves history through `/api/version/history`.
 - `src/shared/types.ts`: DTO interfaces shared by client and server.
 - `src/server/main.ts`: server process entry point for runtime configuration, listening, signals, and graceful shutdown.
 - `src/server/index.ts`: Fastify application construction, auth, channels, messages, admin endpoints, update endpoints, and attachment endpoints. `/api/channels` uses a batched list path (one channel query with includes plus grouped lastMessage/prayer counts and a single membership lookup; per-channel `channelDto` remains for single-channel mutations). `/api/messages` prefetches per-type relations into a `MessageSerializeBatch` (voice listens, audio scores/lyrics attached onto rows, prayer sources/actions/AI suggestions, shared playlists) so page serialization is constant-query; `serializeMessage` without a batch keeps the per-message lookups used by socket emits and single-message routes.

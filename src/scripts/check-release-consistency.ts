@@ -13,9 +13,12 @@ export interface ReleaseMetadata {
   version: string;
   date: string;
   notes: string[];
-  historyVersion: string;
-  historyDate: string;
-  historyNotesReference: string;
+}
+
+export interface ReleaseHistoryEntry {
+  version: string;
+  date: string;
+  notesReference: string;
 }
 
 export interface ChangelogRelease {
@@ -55,19 +58,20 @@ export function parseReleaseMetadata(source: string): ReleaseMetadata {
     /^export const RELEASE_NOTES = \[\n([\s\S]*?)\n\] as const;$/m,
     "RELEASE_NOTES"
   );
-  const history = /export const RELEASE_HISTORY = \[\s*\{\s*version: "([^"]+)",\s*date: "([^"]+)",\s*notes: ([A-Z0-9_]+)/m.exec(
-    source
-  );
-  if (!history) throw new Error("could not find the latest RELEASE_HISTORY entry");
 
   return {
     version,
     date,
-    notes: parseStringArray(notesBody, "RELEASE_NOTES"),
-    historyVersion: history[1],
-    historyDate: history[2],
-    historyNotesReference: history[3]
+    notes: parseStringArray(notesBody, "RELEASE_NOTES")
   };
+}
+
+export function parseReleaseHistory(source: string): ReleaseHistoryEntry {
+  const history = /export const RELEASE_HISTORY = \[\s*\{\s*version: "([^"]+)",\s*date: "([^"]+)",\s*notes: ([A-Z0-9_]+)/m.exec(
+    source
+  );
+  if (!history) throw new Error("could not find the latest RELEASE_HISTORY entry");
+  return { version: history[1], date: history[2], notesReference: history[3] };
 }
 
 function sectionBody(source: string, headingStart: number, headingEnd: number) {
@@ -136,8 +140,10 @@ export function checkReleaseConsistency(
     packages?: Record<string, { version?: string; license?: string }>;
   };
   let release: ReleaseMetadata;
+  let history: ReleaseHistoryEntry;
   let changelog: ChangelogRelease;
   let releaseSource: string;
+  let releaseHistorySource: string;
   let changelogSource: string;
   let readme: string;
   let serviceWorker: string;
@@ -147,11 +153,13 @@ export function checkReleaseConsistency(
     packageJson = JSON.parse(readFile(root, "package.json", overrides));
     packageLock = JSON.parse(readFile(root, "package-lock.json", overrides));
     releaseSource = readFile(root, "src/shared/release.ts", overrides);
+    releaseHistorySource = readFile(root, "src/shared/releaseHistory.ts", overrides);
     changelogSource = readFile(root, "CHANGELOG.md", overrides);
     readme = readFile(root, "README.md", overrides);
     serviceWorker = readFile(root, "public/sw.js", overrides);
     clientMain = readFile(root, "src/client/main.ts", overrides);
     release = parseReleaseMetadata(releaseSource);
+    history = parseReleaseHistory(releaseHistorySource);
     changelog = parseLatestChangelogRelease(changelogSource);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -199,12 +207,12 @@ export function checkReleaseConsistency(
     add(["CHANGELOG.md", "src/shared/release.ts"], "latest formal changelog notes do not match RELEASE_NOTES");
   }
   if (
-    release.historyVersion !== release.version
-    || release.historyDate !== release.date
-    || release.historyNotesReference !== "RELEASE_NOTES"
+    history.version !== release.version
+    || history.date !== release.date
+    || history.notesReference !== "RELEASE_NOTES"
   ) {
     add(
-      ["src/shared/release.ts"],
+      ["src/shared/release.ts", "src/shared/releaseHistory.ts"],
       `latest RELEASE_HISTORY entry must use version ${release.version}, date ${release.date}, and RELEASE_NOTES`
     );
   }
