@@ -394,7 +394,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await presentView.getByRole("combobox", { name: "经文字体" }).selectOption("songti");
     await expect(overlay).toHaveAttribute("data-sermon-font", "songti");
     await expect(admin.locator(".sermon-present-stage")).toHaveAttribute("data-sermon-font", "songti");
-    const midnightTheme = presentView.getByRole("button", { name: "纯黑", exact: true });
+    const midnightTheme = presentView.getByRole("button", { name: /纯黑$/ });
     await midnightTheme.scrollIntoViewIfNeeded();
     await midnightTheme.click();
     await expect(overlay).toHaveAttribute("data-sermon-bg", "midnight");
