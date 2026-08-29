@@ -28,7 +28,12 @@ export function computeWatchablePresentations(options: {
   const invitedIds = new Set(visibleSermonInvites(invites, mutedIds).map((invite) => invite.presenterId));
   return directory
     .filter((summary) => summary.presenterId !== ownAccountId)
-    .filter((summary) => (summary.scope === "assembly" ? summary.active : invitedIds.has(summary.presenterId)))
+    .filter((summary) =>
+      summary.scope === "assembly"
+        ? summary.active
+        : !mutedIds.has(summary.presenterId) &&
+          (invitedIds.has(summary.presenterId) || (ownAccountId !== null && summary.invitedAccountIds.includes(ownAccountId)))
+    )
     .map((summary) => ({
       summary,
       watching: summary.presenterId === joinedPresentationId,

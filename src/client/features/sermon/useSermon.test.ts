@@ -10,6 +10,7 @@ import {
   applySermonDirectory,
   applySermonEnded,
   applySermonInvited,
+  applySermonPreview,
   applySermonRemoved,
   applySermonRequestDecision,
   applySermonState,
@@ -69,6 +70,7 @@ function summary(presenterId: number, overrides: Partial<SermonPresentationSumma
     active: true,
     audienceCount: 0,
     invitedAccountIds: [],
+    preview: null,
     ...overrides
   };
 }
@@ -122,14 +124,15 @@ test("applySermonState 仅应用本人主持或已入座的演示", () => {
   setSermonOwnAccountId(7);
   applySermonState(activeState());
   const view = sharedView();
-  assert.equal(view.sermonState.value?.currentItemId, "item-1");
+  assert.equal(view.ownedState.value?.currentItemId, "item-1");
   // 他人演示的推送：未入座时忽略。
   applySermonState({ ...activeState(), presenterId: "9", presenterName: "李四" });
-  assert.equal(view.sermonState.value?.presenterId, "7", "他人演示的推送不应覆盖本地状态");
+  assert.equal(view.ownedState.value?.presenterId, "7", "他人演示的推送不应覆盖本人讲道台状态");
+  assert.equal(view.watchedState.value, null);
   // 激活状态由 active 字段表达，未激活仍保留队列。
   applySermonState({ ...activeState(null), active: false });
-  assert.equal(view.sermonState.value?.active, false);
-  assert.equal(view.sermonState.value?.queue.length, 1);
+  assert.equal(view.ownedState.value?.active, false);
+  assert.equal(view.ownedState.value?.queue.length, 1);
   resetSermonState();
   setSermonOwnAccountId(null);
 });
@@ -150,17 +153,20 @@ function createOperator(ack: SermonAck = { ok: true }) {
 }
 
 test("applySermonState 在入座后应用所坐演示的推送", async () => {
+  setSermonOwnAccountId(7);
   const view = sharedView();
   const operator = createOperator();
   const result = await operator.join(9);
   assert.equal(result.ok, true);
   assert.equal(view.joinedPresentationId.value, 9);
   applySermonState({ ...activeState(), presenterId: "9", presenterName: "李四" });
-  assert.equal(view.sermonState.value?.presenterId, "9", "入座后应应用所坐演示的推送");
+  assert.equal(view.watchedState.value?.presenterId, "9", "入座后应应用所坐演示的推送");
   applySermonState({ ...activeState(), presenterId: "7", presenterName: "张三" });
-  assert.equal(view.sermonState.value?.presenterId, "9", "未入座的他人演示推送仍被忽略");
+  assert.equal(view.watchedState.value?.presenterId, "9", "本人讲道台推送不能覆盖正在观看的画面");
+  assert.equal(view.ownedState.value?.presenterId, "7", "本人主持状态独立保存");
   await operator.leave();
   resetSermonState();
+  setSermonOwnAccountId(null);
 });
 
 test("applySermonDirectory 全量替换目录并 prune 失效邀请", () => {
@@ -173,6 +179,21 @@ test("applySermonDirectory 全量替换目录并 prune 失效邀请", () => {
   applySermonDirectory(null);
   assert.deepEqual(view.directory.value, []);
   assert.deepEqual(view.invites.value, [], "目录清空时邀请全部失效");
+  resetSermonState();
+});
+
+test("小组讲道预览由定向事件缓存，目录刷新时保留并在停播后清理", () => {
+  applySermonDirectory([summary(3, { active: true })]);
+  applySermonPreview({
+    presenterId: 3,
+    preview: { item: activeState().queue[0], display: activeState().display }
+  });
+  const view = sharedView();
+  assert.equal(view.previews.value[3]?.item?.id, "item-1");
+  applySermonDirectory([summary(3, { active: true, preview: null })]);
+  assert.equal(view.previews.value[3]?.item?.id, "item-1", "全局目录不携带小组预览时保留定向快照");
+  applySermonDirectory([summary(3, { active: false })]);
+  assert.equal(view.previews.value[3], undefined, "演示停止后移除预览");
   resetSermonState();
 });
 
@@ -197,7 +218,7 @@ test("applySermonRemoved 释放匹配席位、清除邀请并给出轻提示", a
   applySermonRemoved({ presenterId: 9, presenterName: "李四" });
   const view = sharedView();
   assert.equal(view.joinedPresentationId.value, null, "被移出应释放入座");
-  assert.equal(view.sermonState.value, null, "被移出应清空本地演示状态");
+  assert.equal(view.watchedState.value, null, "被移出应清空观看中的演示状态");
   assert.deepEqual(view.invites.value, []);
   assert.deepEqual(view.notice.value, { kind: "removed", presenterName: "李四" });
   // 不匹配当前入座的移除事件只影响提示与邀请。
@@ -224,9 +245,9 @@ test("断线时 releaseSermonAudienceSeat 仅释放非本人主持的入座", as
   const view = sharedView();
   assert.equal(view.joinedPresentationId.value, null, "观众断线应释放入座");
   await operator.start("group");
-  assert.equal(view.joinedPresentationId.value, 7, "start 成功后将本人标记为入座自己的演示");
+  assert.equal(view.joinedPresentationId.value, null, "主持自己的讲道台不占用观众席");
   releaseSermonAudienceSeat();
-  assert.equal(view.joinedPresentationId.value, 7, "主持人断线演示继续，不释放自己的演示");
+  assert.equal(view.joinedPresentationId.value, null, "主持状态与观看席位保持分离");
   resetSermonState();
   setSermonOwnAccountId(null);
 });
@@ -256,7 +277,7 @@ test("start/leave/invite/removeViewer/end 事件载荷符合契约", async () =>
   const { sermon, emissions } = createHarness();
   const started = await sermon.start("group", [2, 3]);
   assert.equal(started.ok, true);
-  assert.equal(sharedView().joinedPresentationId.value, 7, "start 成功后将本人标记为入座自己的演示");
+  assert.equal(sharedView().joinedPresentationId.value, null, "start 不应把主持人标记为观众");
   await sermon.invite([4, 5]);
   await sermon.removeViewer(2);
   await sermon.end();
@@ -275,6 +296,31 @@ test("start/leave/invite/removeViewer/end 事件载荷符合契约", async () =>
   assert.deepEqual(emissions[5], { event: "sermon:end", payload: { presenterId: 9 } });
   resetSermonState();
   setSermonOwnAccountId(null);
+});
+
+test("命名方案操作发送正确事件并缓存服务端返回列表", async () => {
+  const plan = {
+    id: "plan-1",
+    title: "8月30日分享",
+    queue: activeState().queue,
+    display: activeState().display,
+    updatedAt: "2026-08-29T00:00:00.000Z"
+  };
+  const { sermon, emissions } = createHarness({ ack: { ok: true, plans: [plan] } });
+  await sermon.refreshPlans();
+  await sermon.savePlan("8月30日分享");
+  await sermon.savePlan("8月30日分享", "plan-1");
+  await sermon.loadPlan("plan-1");
+  await sermon.deletePlan("plan-1");
+  assert.deepEqual(emissions, [
+    { event: "sermon:plans", payload: {} },
+    { event: "sermon:plan-save", payload: { title: "8月30日分享" } },
+    { event: "sermon:plan-save", payload: { title: "8月30日分享", id: "plan-1" } },
+    { event: "sermon:plan-load", payload: { id: "plan-1" } },
+    { event: "sermon:plan-delete", payload: { id: "plan-1" } }
+  ]);
+  assert.equal(sermon.plans.value[0].title, "8月30日分享");
+  resetSermonState();
 });
 
 test("start 被拒绝时回滚乐观入座", async () => {

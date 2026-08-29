@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Socket } from "socket.io";
-import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonRemovedEvent, SermonStateDTO } from "../../shared/types.js";
+import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonStateDTO } from "../../shared/types.js";
 import { lookupBibleReference } from "../bible/lookup.js";
-import { SermonPresentationError, SermonSeatConflictError, type SermonPresentationService } from "./presentations.js";
+import { SermonPresentationError, SermonSeatConflictError, type PresentationRecord, type SermonPresentationService } from "./presentations.js";
 import {
   SERMON_FONT_FAMILIES,
   SERMON_FONT_SCALE_MAX,
@@ -118,6 +118,11 @@ const joinSchema = z.object({ presenterId: z.number().int().positive() });
 const inviteSchema = z.object({ accountIds: z.array(z.number().int().positive()).min(1).max(SERMON_MAX_INVITES) });
 const removeViewerSchema = z.object({ accountId: z.number().int().positive() });
 const endSchema = z.object({ presenterId: z.number().int().positive().optional() });
+const planIdSchema = z.object({ id: z.string().trim().min(1).max(64) });
+const planSaveSchema = z.object({
+  id: z.string().trim().min(1).max(64).optional(),
+  title: z.string().transform(stripControlChars).pipe(z.string().trim().min(1).max(80))
+});
 
 export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, deps: SermonSocketDeps) {
   const service = deps.service;
@@ -125,6 +130,17 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
 
   function broadcastDirectory() {
     io.emit("sermon:directory", service.directory());
+  }
+
+  /** 全体演示可全局预览；小组演示的画面只定向发给受邀账号。 */
+  function broadcastPreview(record: PresentationRecord) {
+    const summary = service.directory(record.presenterAccountId).find((entry) => entry.presenterId === record.presenterAccountId);
+    const event: SermonPresentationPreviewEvent = { presenterId: record.presenterAccountId, preview: summary?.preview ?? null };
+    if (record.scope === "assembly") {
+      io.emit("sermon:preview", event);
+      return;
+    }
+    for (const accountId of record.invited) io.to(`acct:${accountId}`).emit("sermon:preview", event);
   }
 
   function failureMessage(error: unknown): string {
@@ -152,7 +168,6 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
       if (own) {
         socket.join(roomOf(auth.accountId));
         socket.emit("sermon:state", own.store.getState());
-        return;
       }
       const seated = service.seatOf(auth.accountId);
       if (seated === null) return;
@@ -194,11 +209,17 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     ack: SermonAck,
     presenterAccountId: number,
     run: () => Promise<SermonStateDTO>,
-    ok?: (state: SermonStateDTO) => Record<string, unknown>
+    ok?: (state: SermonStateDTO) => Record<string, unknown>,
+    refreshDirectory = false
   ) {
     try {
       const state = await run();
       io.to(roomOf(presenterAccountId)).emit("sermon:state", state);
+      if (refreshDirectory) {
+        broadcastDirectory();
+        const record = service.get(presenterAccountId);
+        if (record) broadcastPreview(record);
+      }
       ack?.({ ok: true, ...(ok ? ok(state) : {}) });
     } catch (error) {
       ack?.({ ok: false, message: failureMessage(error) });
@@ -239,6 +260,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
       };
       for (const accountId of invited) io.to(`acct:${accountId}`).emit("sermon:invited", notice);
       broadcastDirectory();
+      broadcastPreview(record);
       ack?.({ ok: true });
     } catch (error) {
       ackFailure(ack, error);
@@ -293,7 +315,68 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
       };
       for (const accountId of added) io.to(`acct:${accountId}`).emit("sermon:invited", notice);
       broadcastDirectory();
+      broadcastPreview(owned.record);
       ack?.({ ok: true, added: added.length });
+    } catch (error) {
+      ackFailure(ack, error);
+    }
+  });
+
+  socket.on("sermon:plans", async (_data: unknown, ack?: SermonAck) => {
+    const session = await authenticated(ack);
+    if (!session) return;
+    try {
+      ack?.({ ok: true, plans: await service.plans(session.accountId) });
+    } catch (error) {
+      ackFailure(ack, error);
+    }
+  });
+
+  socket.on("sermon:plan-save", async (data: unknown, ack?: SermonAck) => {
+    const owned = await ownedPresentation(ack);
+    if (!owned) return;
+    const parsed = planSaveSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "方案名称无效" });
+      return;
+    }
+    try {
+      const plans = await service.savePlan(owned.accountId, parsed.data.title, parsed.data.id);
+      ack?.({ ok: true, plans });
+    } catch (error) {
+      ackFailure(ack, error);
+    }
+  });
+
+  socket.on("sermon:plan-load", async (data: unknown, ack?: SermonAck) => {
+    const owned = await ownedPresentation(ack);
+    if (!owned) return;
+    const parsed = planIdSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    try {
+      const outcome = await service.loadPlan(owned.accountId, owned.actor, parsed.data.id);
+      io.to(roomOf(owned.accountId)).emit("sermon:state", outcome.state);
+      broadcastDirectory();
+      broadcastPreview(owned.record);
+      ack?.({ ok: true, plans: outcome.plans });
+    } catch (error) {
+      ackFailure(ack, error);
+    }
+  });
+
+  socket.on("sermon:plan-delete", async (data: unknown, ack?: SermonAck) => {
+    const session = await authenticated(ack);
+    if (!session) return;
+    const parsed = planIdSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    try {
+      ack?.({ ok: true, plans: await service.deletePlan(session.accountId, parsed.data.id) });
     } catch (error) {
       ackFailure(ack, error);
     }
@@ -383,7 +466,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     }
     await commit(ack, owned.accountId, () => owned.record.store.update(owned.actor, parsed.data.id, outcome.resolved), () => ({
       errors: fallbackNotice(outcome.fallbacks)
-    }));
+    }), true);
   });
 
   socket.on("sermon:scroll", async (data: unknown, ack?: SermonAck) => {
@@ -427,7 +510,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     if (!owned) return;
     const parsed = removeSchema.safeParse(data);
     if (!parsed.success || !knownItem(owned.record.store.getState().queue, parsed.data.id, ack)) return;
-    await commit(ack, owned.accountId, () => owned.record.store.remove(owned.actor, parsed.data.id));
+    await commit(ack, owned.accountId, () => owned.record.store.remove(owned.actor, parsed.data.id), undefined, true);
   });
 
   socket.on("sermon:present", async (data: unknown, ack?: SermonAck) => {
@@ -435,7 +518,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     if (!owned) return;
     const parsed = presentSchema.safeParse(data);
     if (!parsed.success || (parsed.data.id !== null && !knownItem(owned.record.store.getState().queue, parsed.data.id, ack))) return;
-    await commit(ack, owned.accountId, () => owned.record.store.present(owned.actor, parsed.data.id));
+    await commit(ack, owned.accountId, () => owned.record.store.present(owned.actor, parsed.data.id), undefined, true);
   });
 
   socket.on("sermon:display", async (data: unknown, ack?: SermonAck) => {
@@ -446,7 +529,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
       ack?.({ ok: false, message: "参数无效" });
       return;
     }
-    await commit(ack, owned.accountId, () => owned.record.store.display(owned.actor, parsed.data));
+    await commit(ack, owned.accountId, () => owned.record.store.display(owned.actor, parsed.data), undefined, true);
   });
 
   socket.on("sermon:annotate", async (data: unknown, ack?: SermonAck) => {
@@ -455,7 +538,7 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     const parsed = annotateSchema.safeParse(data);
     if (!parsed.success || !knownItem(owned.record.store.getState().queue, parsed.data.itemId, ack)) return;
     const annotation: SermonAnnotation = parsed.data.annotation;
-    await commit(ack, owned.accountId, () => owned.record.store.annotate(owned.actor, parsed.data.itemId, annotation));
+    await commit(ack, owned.accountId, () => owned.record.store.annotate(owned.actor, parsed.data.itemId, annotation), undefined, true);
   });
 
   socket.on("sermon:annotate:clear", async (data: unknown, ack?: SermonAck) => {
@@ -463,14 +546,18 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     if (!owned) return;
     const parsed = annotateClearSchema.safeParse(data);
     if (!parsed.success || !knownItem(owned.record.store.getState().queue, parsed.data.itemId, ack)) return;
-    await commit(ack, owned.accountId, () =>
-      owned.record.store.annotateClear(owned.actor, parsed.data.itemId, { verseIndex: parsed.data.verseIndex, kind: parsed.data.kind })
+    await commit(
+      ack,
+      owned.accountId,
+      () => owned.record.store.annotateClear(owned.actor, parsed.data.itemId, { verseIndex: parsed.data.verseIndex, kind: parsed.data.kind }),
+      undefined,
+      true
     );
   });
 
   socket.on("sermon:clear", async (_data: unknown, ack?: SermonAck) => {
     const owned = await ownedPresentation(ack);
     if (!owned) return;
-    await commit(ack, owned.accountId, () => owned.record.store.clear(owned.actor));
+    await commit(ack, owned.accountId, () => owned.record.store.clear(owned.actor), undefined, true);
   });
 }

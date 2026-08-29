@@ -11,6 +11,7 @@ function summary(presenterId: number, overrides: Partial<SermonPresentationSumma
     active: true,
     audienceCount: 0,
     invitedAccountIds: [],
+    preview: null,
     ...overrides
   };
 }
@@ -56,6 +57,15 @@ test("已静音的受邀小组演示不列入可观看列表", () => {
     result.map((entry) => entry.summary.presenterId),
     [4]
   );
+});
+
+test("刷新后可用目录中的服务端观看许可恢复小组通知", () => {
+  const result = computeWatchablePresentations({
+    ...NO_SEAT,
+    directory: [summary(3, { invitedAccountIds: [7] })],
+    ownAccountId: 7
+  });
+  assert.deepEqual(result.map((entry) => entry.summary.presenterId), [3]);
 });
 
 test("本人自己的演示不列入可观看列表", () => {

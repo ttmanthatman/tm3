@@ -71,7 +71,10 @@ export function registerSermonRoutes(app: FastifyInstance, deps: SermonRouteDepe
     return status;
   });
 
-  app.get("/api/sermon/directory", { preHandler: deps.requireAuth }, async () => deps.service.directory());
+  app.get("/api/sermon/directory", { preHandler: deps.requireAuth }, async (request) => {
+    const auth = (request as SermonAuthedRequest).auth;
+    return deps.service.directory(auth.accountId);
+  });
 
   app.get("/api/sermon/accounts", { preHandler: deps.requireAuth }, async (request, reply) => {
     const auth = (request as SermonAuthedRequest).auth;

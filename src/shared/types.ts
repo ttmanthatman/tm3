@@ -582,6 +582,26 @@ export interface SermonStateDTO {
   updatedAt: string;
 }
 
+/** 讲道者保存的一套可重复载入的讲道队列。 */
+export interface SermonPlanDTO {
+  id: string;
+  title: string;
+  queue: SermonQueueItem[];
+  display: SermonDisplayDTO;
+  updatedAt: string;
+}
+
+/** 进行中演示用于通知卡片的只读画面快照。 */
+export interface SermonPresentationPreviewDTO {
+  item: SermonQueueItem | null;
+  display: SermonDisplayDTO;
+}
+
+export interface SermonPresentationPreviewEvent {
+  presenterId: number;
+  preview: SermonPresentationPreviewDTO | null;
+}
+
 /** 演示目录条目：供观众端发现可观看的进行中演示 */
 export interface SermonPresentationSummaryDTO {
   presenterId: number;
@@ -591,6 +611,8 @@ export interface SermonPresentationSummaryDTO {
   audienceCount: number;
   /** 小组演示的受邀账号（集会演示为空数组） */
   invitedAccountIds: number[];
+  /** 仅演示激活时提供，供获准观看者在进入前预览当前画面。 */
+  preview: SermonPresentationPreviewDTO | null;
 }
 
 /** 邀请事件（定向推给受邀账号） */

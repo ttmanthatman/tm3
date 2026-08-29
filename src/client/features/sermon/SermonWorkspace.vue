@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowDown, ArrowUp, ChevronLeft, Eraser, Highlighter, Pencil, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
 import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
@@ -19,7 +19,7 @@ const emit = defineEmits<{ close: [] }>();
 
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
-const { sermonState, presenterStatus, directory, watchAccounts } = sermon;
+const { ownedState: sermonState, presenterStatus, directory, watchAccounts, plans } = sermon;
 
 const accountId = computed(() => store.account?.id ?? null);
 /** 本人是否持有进行中的演示（目录以 presenterId=账号 ID 区分并发演示）。 */
@@ -108,7 +108,9 @@ watch(
     }
     // 打开时按需拉取：开始屏需要权限状态与观众列表；演示中需要观众名单。
     void loadAudienceData();
-  }
+    void sermon.refreshPlans().catch(() => undefined);
+  },
+  { immediate: true }
 );
 
 // 演示被结束后回到队列屏，由开始屏接管。
@@ -176,6 +178,55 @@ async function startPresentation() {
   }
   selectedInviteIds.value = [];
   void loadAudienceData();
+}
+
+// —— 可复用的命名讲道方案 ——
+
+const planTitle = ref("");
+const planBusyId = ref<string | null>(null);
+
+async function saveNewPlan() {
+  const title = planTitle.value.trim();
+  if (!title) {
+    actionError.value = "请输入方案名称";
+    return;
+  }
+  planBusyId.value = "new";
+  const result = await sermon.savePlan(title);
+  planBusyId.value = null;
+  actionError.value = result.ok ? `已保存“${title}”` : result.message;
+  if (result.ok) planTitle.value = "";
+}
+
+async function overwritePlan(id: string, title: string) {
+  if (!window.confirm(`用当前队列覆盖“${title}”？`)) return;
+  planBusyId.value = id;
+  const result = await sermon.savePlan(title, id);
+  planBusyId.value = null;
+  actionError.value = result.ok ? `已更新“${title}”` : result.message;
+}
+
+async function loadSavedPlan(id: string, title: string) {
+  if (sermonState.value?.active && !window.confirm(`当前正在展示。载入“${title}”会停止当前画面并替换队列，继续吗？`)) return;
+  if (!sermonState.value?.active && queue.value.length && !window.confirm(`载入“${title}”会替换当前队列，继续吗？`)) return;
+  planBusyId.value = id;
+  const result = await sermon.loadPlan(id);
+  planBusyId.value = null;
+  actionError.value = result.ok ? `已载入“${title}”` : result.message;
+  if (result.ok) view.value = "queue";
+}
+
+async function deleteSavedPlan(id: string, title: string) {
+  if (!window.confirm(`删除已保存的“${title}”？当前队列不受影响。`)) return;
+  planBusyId.value = id;
+  const result = await sermon.deletePlan(id);
+  planBusyId.value = null;
+  actionError.value = result.ok ? "已删除保存方案" : result.message;
+}
+
+function formatPlanTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", { hour12: false });
 }
 
 async function inviteMore() {
@@ -311,7 +362,7 @@ function updateDisplay(patch: Partial<SermonDisplayDTO>) {
 }
 
 async function endPresentation() {
-  if (!window.confirm("结束演示并清空讲道队列？")) return;
+  if (!window.confirm("结束演示并清空当前讲道队列？已保存的讲道方案不会删除。")) return;
   await report(sermon.end());
   view.value = "queue";
 }
@@ -516,6 +567,30 @@ function annotateSelection() {
     <main v-if="hasOwnPresentation" class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
       <div class="sermon-queue-column">
         <section class="sermon-block">
+          <h3>保存讲道方案</h3>
+          <div class="sermon-plan-save-row">
+            <input v-model="planTitle" maxlength="80" placeholder="例如：8月30日分享" @keydown.enter.prevent="saveNewPlan" />
+            <button class="primary-btn" type="button" :disabled="!queue.length || planBusyId !== null" @click="saveNewPlan">
+              <Save :size="15" />保存当前队列
+            </button>
+          </div>
+          <p v-if="!plans.length" class="sermon-hint">保存后可随时载入，提前准备的经文、文字、顺序、标注和显示样式都会保留。</p>
+          <div v-else class="sermon-plan-list">
+            <article v-for="plan in plans" :key="plan.id" class="sermon-plan-row">
+              <span>
+                <strong>{{ plan.title }}</strong>
+                <small>{{ plan.queue.length }} 屏<template v-if="formatPlanTime(plan.updatedAt)"> · {{ formatPlanTime(plan.updatedAt) }}</template></small>
+              </span>
+              <div>
+                <button class="mini-btn secondary" type="button" :disabled="planBusyId !== null" @click="loadSavedPlan(plan.id, plan.title)"><FolderOpen :size="14" />载入</button>
+                <button class="mini-btn secondary" type="button" :disabled="!queue.length || planBusyId !== null" @click="overwritePlan(plan.id, plan.title)">覆盖</button>
+                <button class="mini-icon-btn" type="button" :disabled="planBusyId !== null" aria-label="删除保存方案" @click="deleteSavedPlan(plan.id, plan.title)"><Trash2 :size="14" /></button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="sermon-block">
           <h3>添加内容</h3>
           <textarea
             v-model="contentInput"
@@ -637,7 +712,8 @@ function annotateSelection() {
 
     <main v-else class="sermon-workspace-body sermon-start-view">
       <section class="sermon-block sermon-start-block">
-        <h3>开始讲道演示</h3>
+        <h3>进入自己的讲道台</h3>
+        <p class="sermon-hint">可先进入并准备、保存讲道内容；只有开始展示某一屏后，获准的观众才会看到正在讲道通知。</p>
         <div class="sermon-scope-options" role="radiogroup" aria-label="演示范围">
           <label class="sermon-scope-option" :class="{ active: startScope === 'group' }">
             <input v-model="startScope" type="radio" value="group" />
@@ -677,7 +753,7 @@ function annotateSelection() {
         </template>
         <div class="sermon-start-actions">
           <button class="primary-btn" type="button" :disabled="sermon.pending.value" @click="startPresentation">
-            {{ sermon.pending.value ? "正在开始…" : "开始演示" }}
+            {{ sermon.pending.value ? "正在进入…" : "进入自己的讲道台" }}
           </button>
           <p v-if="startError" class="sermon-error" role="alert">{{ startError }}</p>
         </div>
@@ -886,5 +962,45 @@ function annotateSelection() {
   flex-direction: column;
   gap: 8px;
   align-items: flex-start;
+}
+
+.sermon-plan-save-row,
+.sermon-plan-row,
+.sermon-plan-row > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sermon-plan-save-row input,
+.sermon-plan-row > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.sermon-plan-row {
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+
+.sermon-plan-row > span {
+  display: flex;
+  flex-direction: column;
+}
+
+.sermon-plan-row small {
+  color: var(--muted);
+}
+
+@media (max-width: 560px) {
+  .sermon-plan-save-row,
+  .sermon-plan-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sermon-plan-row > div {
+    flex-wrap: wrap;
+  }
 }
 </style>

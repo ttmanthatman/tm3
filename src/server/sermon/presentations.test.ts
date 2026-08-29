@@ -6,6 +6,7 @@ import {
   SermonPresentationError,
   SermonSeatConflictError,
   createSermonPresentationService,
+  sermonPlanSettingKeyFor,
   sermonSettingKeyFor,
   type SermonPresentationServiceDeps
 } from "./presentations.js";
@@ -78,7 +79,8 @@ test("start 小组演示：创建记录、目录可见、按讲道者键持久�
     scope: "group",
     active: false,
     audienceCount: 0,
-    invitedAccountIds: [9]
+    invitedAccountIds: [9],
+    preview: null
   });
 
   const key = sermonSettingKeyFor(7);
@@ -205,6 +207,7 @@ test("removeViewer：主持人移除观众并释放其席位", async () => {
   assert.equal(service.removeViewer(7, 9), true);
   assert.equal(service.seatOf(9), null);
   assert.equal(service.get(7)?.audience.size, 0);
+  assert.deepEqual(service.directory().find((entry) => entry.presenterId === 7)?.invitedAccountIds, [], "移出小组观众时同时撤销观看许可");
 });
 
 test("end：全员释席、清空受邀、持久化清空状态、目录移除", async () => {
@@ -269,6 +272,46 @@ test("directory：多演示并存，按讲道者排序，集会不暴露受邀�
   assert.deepEqual(directory[0].invitedAccountIds, []);
   assert.equal(directory[1].audienceCount, 1);
   assert.deepEqual(directory[1].invitedAccountIds, [9]);
+});
+
+test("directory：激活演示提供当前画面预览，未激活时不提供", async () => {
+  const { service } = createHarness();
+  const { record } = await service.start({ accountId: 7, displayName: "用户7" }, "group", [9]);
+  const actor = { id: "7", name: "用户7" };
+  await record.store.add(actor, [{ blocks: [{ type: "text", content: "分享主题" }], verses: [], source: "分享主题" }]);
+  assert.equal(service.directory()[0].preview, null);
+  const item = record.store.getState().queue[0];
+  await record.store.present(actor, item.id);
+  assert.equal(service.directory()[0].preview, null, "全局目录不泄露小组讲道内容");
+  assert.equal(service.directory(10)[0].preview, null, "未受邀账号看不到小组预览");
+  const preview = service.directory(9)[0].preview;
+  assert.equal(preview?.item?.source, "分享主题");
+  assert.equal(preview?.display.fontFamily, "songti");
+});
+
+test("命名方案：保存、覆盖、载入与删除均按账号独立持久化", async () => {
+  const { service, settings } = createHarness();
+  const { record } = await service.start({ accountId: 7, displayName: "用户7" }, "group");
+  const actor = { id: "7", name: "用户7" };
+  await record.store.add(actor, [{ blocks: [{ type: "text", content: "第一版" }], verses: [], source: "第一版" }]);
+
+  const saved = await service.savePlan(7, "8月30日分享");
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].title, "8月30日分享");
+  assert.ok(settings.has(sermonPlanSettingKeyFor(7, saved[0].id)));
+  assert.deepEqual(await service.plans(8), [], "其他账号看不到该方案");
+
+  await record.store.clear(actor);
+  const loaded = await service.loadPlan(7, actor, saved[0].id);
+  assert.equal(loaded.state.active, false);
+  assert.equal(loaded.state.queue[0].source, "第一版");
+
+  await record.store.add(actor, [{ blocks: [{ type: "text", content: "第二屏" }], verses: [], source: "第二屏" }]);
+  const overwritten = await service.savePlan(7, "8月30日分享", saved[0].id);
+  assert.equal(overwritten[0].queue.length, 2, "覆盖保存当前完整队列");
+
+  assert.deepEqual(await service.deletePlan(7, saved[0].id), []);
+  assert.equal(settings.has(sermonPlanSettingKeyFor(7, saved[0].id)), false, "删除方案时清理对应 Setting 行");
 });
 
 test("migrateLegacy：旧全局行迁移到 per-presenter 键后删除；目标键已存在则保留", async () => {

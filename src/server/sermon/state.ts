@@ -331,6 +331,30 @@ export function applyClear(state: SermonStateDTO, ctx: SermonMutationContext): S
   return touch({ ...state, active: false, queue: [], currentItemId: null }, ctx);
 }
 
+/** 载入已保存方案时替换整套队列与显示设置，并退出当前全屏展示。 */
+export function applyLoadPlan(
+  state: SermonStateDTO,
+  plan: Pick<SermonStateDTO, "queue" | "display">,
+  ctx: SermonMutationContext
+): SermonStateDTO {
+  return touch(
+    {
+      ...state,
+      active: false,
+      currentItemId: null,
+      queue: plan.queue.map((item) => ({
+        ...item,
+        verses: item.verses.map((verse) => ({ ...verse })),
+        annotations: item.annotations.map((annotation) => ({ ...annotation })),
+        blocks: item.blocks?.map((block) => ({ ...block })),
+        scrollLines: 0
+      })),
+      display: { ...plan.display }
+    },
+    ctx
+  );
+}
+
 // 二期：演示范围在发起时确定并持久化；同时写入讲道者信息。
 export function applySetScope(state: SermonStateDTO, scope: SermonPresentationScope, ctx: SermonMutationContext): SermonStateDTO {
   if (state.scope === scope) return touch(state, ctx);
@@ -482,6 +506,8 @@ export function createSermonStateStore(deps: {
     annotateClear: (actor: SermonActor, itemId: string, filter: SermonAnnotationClearFilter) =>
       mutate(actor, (current, ctx) => applyAnnotateClear(current, itemId, filter, ctx)),
     clear: (actor: SermonActor) => mutate(actor, (current, ctx) => applyClear(current, ctx)),
+    loadPlan: (actor: SermonActor, plan: Pick<SermonStateDTO, "queue" | "display">) =>
+      mutate(actor, (current, ctx) => applyLoadPlan(current, plan, ctx)),
     setScope: (actor: SermonActor, scope: SermonPresentationScope) => mutate(actor, (current, ctx) => applySetScope(current, scope, ctx))
   };
 }

@@ -3,6 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const workspace = readFileSync(new URL("./SermonWorkspace.vue", import.meta.url), "utf8");
+const hub = readFileSync(new URL("./SermonHub.vue", import.meta.url), "utf8");
+const entryDialog = readFileSync(new URL("./SermonEntryDialog.vue", import.meta.url), "utf8");
+const overlay = readFileSync(new URL("./SermonOverlay.vue", import.meta.url), "utf8");
 const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
 
 test("late-mounted preview refs reconnect to ResizeObserver", () => {
@@ -36,4 +39,32 @@ test("unknown presenter status is not mislabeled as an application requirement",
   assert.match(workspace, /presenterStatus === null">正在确认账号权限…/);
   assert.match(workspace, /presenterStatus\.isAdmin">管理员可直接发起，全站成员均可观看/);
   assert.match(workspace, /<strong>全体演示<\/strong>/);
+});
+
+test("sermon entry separates own workspace from permitted read-only viewing", () => {
+  assert.match(entryDialog, /选择要进入的讲道台/);
+  assert.match(entryDialog, /进入自己的讲道台/);
+  assert.match(entryDialog, /已获准观看的讲道台/);
+  assert.match(entryDialog, /只能观看/);
+});
+
+test("live sermon notification uses a stage preview and no longer renders a top icon", () => {
+  assert.doesNotMatch(hub, /sermon-hub-trigger/);
+  assert.match(hub, /class="sermon-overlay sermon-live-preview"/);
+  assert.match(hub, /忽略并最小化/);
+  assert.match(hub, /点击进入观看/);
+});
+
+test("both ignored notifications and minimized full-screen viewing use draggable floating buttons", () => {
+  assert.match(hub, /<SermonFloatingButton/);
+  assert.match(overlay, /<SermonFloatingButton/);
+  assert.doesNotMatch(css, /\.sermon-mini-bar/);
+});
+
+test("workspace can name, save, load, overwrite and delete prepared queues", () => {
+  assert.match(workspace, /placeholder="例如：8月30日分享"/);
+  assert.match(workspace, /saveNewPlan/);
+  assert.match(workspace, /loadSavedPlan/);
+  assert.match(workspace, /overwritePlan/);
+  assert.match(workspace, /deleteSavedPlan/);
 });

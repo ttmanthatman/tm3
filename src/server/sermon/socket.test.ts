@@ -154,12 +154,17 @@ test("sermon:start 幂等：重复发起返回已有演示", async () => {
 });
 
 test("sermon:join：小组需受邀、集会全员可加入、激活后收到快照", async () => {
-  const { connect, service } = createHarness({ grantIds: [8] });
+  const { connect, service, roomEmissions } = createHarness({ grantIds: [8] });
   const presenter = connect(7);
   await presenter.invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
   await presenter.invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
   const itemId = service.get(7)?.store.getState().queue[0]?.id;
   await presenter.invoke("sermon:present", { id: itemId });
+  const previews = roomEmissions.filter(
+    (entry) => entry.event === "sermon:preview" && (entry.payload as { preview: unknown }).preview !== null
+  );
+  assert.deepEqual(previews.map((entry) => entry.room), ["acct:9"], "小组预览只定向推送给受邀账号");
+  assert.equal((previews[0].payload as { preview: { item: { id: string } | null } }).preview.item?.id, itemId);
 
   const stranger = connect(10);
   const denied = await stranger.invoke("sermon:join", { presenterId: 7 });
@@ -229,6 +234,31 @@ test("sermon:invite：仅主持人、校验账号存在与未入座他席、定�
   const directory = globalEmissions[globalEmissions.length - 1];
   assert.equal(directory.event, "sermon:directory");
   assert.deepEqual((directory.payload as SermonPresentationSummaryDTO[])[0].invitedAccountIds, [10, 11]);
+});
+
+test("sermon:plans：保存、列出、载入与删除命名队列方案", async () => {
+  const { connect, service, roomEmissions } = createHarness();
+  const presenter = connect(7);
+  await presenter.invoke("sermon:start", { scope: "group" });
+  await presenter.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "预备内容" }] }] });
+
+  const saved = await presenter.invoke("sermon:plan-save", { title: "8月30日分享" });
+  assert.equal(saved.ok, true);
+  const plans = saved.plans as Array<{ id: string; title: string; queue: unknown[] }>;
+  assert.equal(plans[0].title, "8月30日分享");
+  assert.equal(plans[0].queue.length, 1);
+
+  const listed = await presenter.invoke("sermon:plans", {});
+  assert.deepEqual(listed.plans, saved.plans);
+  await presenter.invoke("sermon:clear", {});
+  const loaded = await presenter.invoke("sermon:plan-load", { id: plans[0].id });
+  assert.equal(loaded.ok, true);
+  assert.equal(service.get(7)?.store.getState().queue[0].source, "预备内容");
+  assert.ok(roomEmissions.some((entry) => entry.room === "sermon:7" && entry.event === "sermon:state"), "载入后同步本人所有连接");
+
+  const deleted = await presenter.invoke("sermon:plan-delete", { id: plans[0].id });
+  assert.deepEqual(deleted.plans, []);
+  assert.equal((await presenter.invoke("sermon:plan-save", { title: "" })).ok, false, "空标题拒绝");
 });
 
 test("sermon:remove-viewer：主持人移除观众、定向通知、强制离房", async () => {
@@ -379,6 +409,28 @@ test("连接快照：主持人补发完整状态（含未激活队列），已�
   assert.equal((viewerSnapshot.payload as SermonStateDTO).active, true);
 });
 
+test("连接快照：账号同时主持自己的讲道台并观看他人时，两份状态分别补发", async () => {
+  const { connect, service } = createHarness();
+  const own = connect(7);
+  await own.invoke("sermon:start", { scope: "group" });
+  await own.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "自己的预备" }] }] });
+
+  const other = connect(8);
+  await other.invoke("sermon:start", { scope: "group", invitedAccountIds: [7] });
+  await other.invoke("sermon:add", { slides: [{ blocks: [{ type: "text", content: "他人的直播" }] }] });
+  await other.invoke("sermon:present", { id: service.get(8)?.store.getState().queue[0].id });
+  await own.invoke("sermon:join", { presenterId: 8 });
+
+  const reconnect = connect(7);
+  await flush();
+  assert.deepEqual(reconnect.joined.sort(), ["sermon:7", "sermon:8"]);
+  const presenters = reconnect.socketEmitted
+    .filter((entry) => entry.event === "sermon:state")
+    .map((entry) => (entry.payload as SermonStateDTO).presenterId)
+    .sort();
+  assert.deepEqual(presenters, ["7", "8"]);
+});
+
 test("认证失败：所有事件拒绝且不广播", async () => {
   const settings = new Map<string, string>();
   let counter = 0;
@@ -420,7 +472,7 @@ test("认证失败：所有事件拒绝且不广播", async () => {
       socketsLeave: () => undefined
     }
   );
-  for (const event of ["sermon:start", "sermon:join", "sermon:invite", "sermon:end", "sermon:add", "sermon:clear"]) {
+  for (const event of ["sermon:start", "sermon:join", "sermon:invite", "sermon:end", "sermon:add", "sermon:clear", "sermon:plans", "sermon:plan-delete"]) {
     const handler = handlers.get(event);
     assert.ok(handler);
     let ackPayload: unknown;

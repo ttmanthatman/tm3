@@ -1,12 +1,13 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import { markRaw } from "vue";
-import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonEndedEvent, SermonInvitedEvent, SermonRemovedEvent, SermonStateDTO } from "@shared/types";
+import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonStateDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import {
   applySermonDirectory,
   applySermonEnded,
   applySermonInvited,
+  applySermonPreview,
   applySermonRemoved,
   applySermonRequestDecision,
   applySermonState,
@@ -711,6 +712,7 @@ export const useChatStore = defineStore("chat", {
       socket.on("sermon:state", (state: SermonStateDTO) => applySermonState(state));
       socket.on("sermon:request:decided", (event: { messageId: number; approve: boolean; until: string | null }) => applySermonRequestDecision(event));
       socket.on("sermon:directory", (list: Parameters<typeof applySermonDirectory>[0]) => applySermonDirectory(list));
+      socket.on("sermon:preview", (event: SermonPresentationPreviewEvent) => applySermonPreview(event));
       socket.on("sermon:invited", (event: SermonInvitedEvent) => applySermonInvited(event));
       socket.on("sermon:removed", (event: SermonRemovedEvent) => applySermonRemoved(event));
       socket.on("sermon:ended", (event: SermonEndedEvent) => applySermonEnded(event));

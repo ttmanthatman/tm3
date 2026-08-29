@@ -5,6 +5,9 @@ import type {
   SermonDisplayDTO,
   SermonEndedEvent,
   SermonInvitedEvent,
+  SermonPlanDTO,
+  SermonPresentationPreviewDTO,
+  SermonPresentationPreviewEvent,
   SermonPresentationScope,
   SermonPresentationSummaryDTO,
   SermonPresenterStatusDTO,
@@ -30,6 +33,7 @@ export type SermonAck = {
   code?: string;
   added?: number;
   errors?: SermonAddError[];
+  plans?: SermonPlanDTO[];
 };
 
 export interface SermonSocket {
@@ -39,39 +43,48 @@ export interface SermonSocket {
 }
 
 export type SermonEmitResult =
-  | { ok: true; added?: number; errors?: SermonAddError[] }
+  | { ok: true; added?: number; errors?: SermonAddError[]; plans?: SermonPlanDTO[] }
   | { ok: false; reason: "disconnected" | "timeout" | "rejected" | "transport"; message: string; code?: string };
 
 /** 被移出/演示结束轻提示（SermonHub 渲染为底部 toast，数秒自动消失）。 */
 export type SermonNotice = { kind: "removed" | "ended"; presenterName: string };
 
 export type SermonSharedState = {
-  /** 最近一次服务端全量推送；仅当推送方是本人主持的演示或本人入座的演示时应用。 */
-  sermonState: ShallowRef<SermonStateDTO | null>;
+  /** 本人主持的讲道台状态；与观看中的他人演示严格隔离。 */
+  ownedState: ShallowRef<SermonStateDTO | null>;
+  /** 本人当前获准观看的他人演示状态。 */
+  watchedState: ShallowRef<SermonStateDTO | null>;
   presenterStatus: ShallowRef<SermonPresenterStatusDTO | null>;
   latestRequestDecision: ShallowRef<SermonRequestDecisionEvent | null>;
   /** 全部进行中/未清空的演示目录（sermon:directory 推送 + HTTP 兜底）。 */
   directory: ShallowRef<SermonPresentationSummaryDTO[]>;
   /** 当前有效的观看邀请（演示存活期间有效；目录刷新时自动 prune）。 */
   invites: ShallowRef<SermonInvitedEvent[]>;
-  /** 本人当前入座的演示（主持人 = 自己的账号 ID）；null 表示未入座/未主持。 */
+  /** 本人当前作为观众入座的他人演示；主持自己的讲道台不占此席位。 */
   joinedPresentationId: ShallowRef<number | null>;
   /** 被移出或演示结束的轻提示。 */
   notice: ShallowRef<SermonNotice | null>;
   /** 主持人观众选择器数据（/api/sermon/accounts）。 */
   watchAccounts: ShallowRef<SermonWatchAccountDTO[]>;
+  /** 本人保存的命名讲道队列方案。 */
+  plans: ShallowRef<SermonPlanDTO[]>;
+  /** 获准看到的进行中演示预览；小组画面仅由服务端定向推送。 */
+  previews: ShallowRef<Record<number, SermonPresentationPreviewDTO>>;
 };
 
 export function createSermonState(): SermonSharedState {
   return {
-    sermonState: shallowRef<SermonStateDTO | null>(null),
+    ownedState: shallowRef<SermonStateDTO | null>(null),
+    watchedState: shallowRef<SermonStateDTO | null>(null),
     presenterStatus: shallowRef<SermonPresenterStatusDTO | null>(null),
     latestRequestDecision: shallowRef<SermonRequestDecisionEvent | null>(null),
     directory: shallowRef<SermonPresentationSummaryDTO[]>([]),
     invites: shallowRef<SermonInvitedEvent[]>([]),
     joinedPresentationId: shallowRef<number | null>(null),
     notice: shallowRef<SermonNotice | null>(null),
-    watchAccounts: shallowRef<SermonWatchAccountDTO[]>([])
+    watchAccounts: shallowRef<SermonWatchAccountDTO[]>([]),
+    plans: shallowRef<SermonPlanDTO[]>([]),
+    previews: shallowRef<Record<number, SermonPresentationPreviewDTO>>({})
   };
 }
 
@@ -94,13 +107,17 @@ export function getSermonOwnAccountId() {
  */
 export function applySermonState(state: SermonStateDTO) {
   if (!state || typeof state.active !== "boolean") {
-    sharedSermonState.sermonState.value = null;
     return;
   }
   const presenterId = Number(state.presenterId);
   const isOwnPresentation = ownAccountId !== null && presenterId === ownAccountId;
-  if (!isOwnPresentation && presenterId !== sharedSermonState.joinedPresentationId.value) return;
-  sharedSermonState.sermonState.value = state;
+  if (isOwnPresentation) {
+    sharedSermonState.ownedState.value = state;
+    return;
+  }
+  if (presenterId === sharedSermonState.joinedPresentationId.value) {
+    sharedSermonState.watchedState.value = state;
+  }
 }
 
 export function applySermonRequestDecision(event: SermonRequestDecisionEvent) {
@@ -116,9 +133,27 @@ export function applySermonRequestDecision(event: SermonRequestDecisionEvent) {
 export function applySermonDirectory(list: SermonPresentationSummaryDTO[] | null | undefined) {
   sharedSermonState.directory.value = Array.isArray(list) ? list : [];
   const aliveIds = new Set(sharedSermonState.directory.value.map((entry) => entry.presenterId));
+  const previews = { ...sharedSermonState.previews.value };
+  for (const key of Object.keys(previews)) {
+    const presenterId = Number(key);
+    const summary = sharedSermonState.directory.value.find((entry) => entry.presenterId === presenterId);
+    if (!aliveIds.has(presenterId) || !summary?.active) delete previews[presenterId];
+  }
+  for (const entry of sharedSermonState.directory.value) {
+    if (entry.active && entry.preview) previews[entry.presenterId] = entry.preview;
+  }
+  sharedSermonState.previews.value = previews;
   if (sharedSermonState.invites.value.some((invite) => !aliveIds.has(invite.presenterId))) {
     sharedSermonState.invites.value = sharedSermonState.invites.value.filter((invite) => aliveIds.has(invite.presenterId));
   }
+}
+
+export function applySermonPreview(event: SermonPresentationPreviewEvent) {
+  if (!event || !Number.isInteger(event.presenterId)) return;
+  const previews = { ...sharedSermonState.previews.value };
+  if (event.preview) previews[event.presenterId] = event.preview;
+  else delete previews[event.presenterId];
+  sharedSermonState.previews.value = previews;
 }
 
 /** store 订阅 sermon:invited（定向）：邀请在演示存活期间有效。 */
@@ -150,9 +185,12 @@ export function applySermonEnded(event: SermonEndedEvent) {
 function releaseSeat(presenterId: number) {
   if (sharedSermonState.joinedPresentationId.value === presenterId) {
     sharedSermonState.joinedPresentationId.value = null;
-    sharedSermonState.sermonState.value = null;
+    sharedSermonState.watchedState.value = null;
   }
   sharedSermonState.invites.value = sharedSermonState.invites.value.filter((invite) => invite.presenterId !== presenterId);
+  const previews = { ...sharedSermonState.previews.value };
+  delete previews[presenterId];
+  sharedSermonState.previews.value = previews;
 }
 
 export function clearSermonNotice() {
@@ -168,12 +206,13 @@ export function releaseSermonAudienceSeat() {
   const joined = sharedSermonState.joinedPresentationId.value;
   if (joined === null || joined === ownAccountId) return;
   sharedSermonState.joinedPresentationId.value = null;
-  sharedSermonState.sermonState.value = null;
+  sharedSermonState.watchedState.value = null;
 }
 
 /** 登出/换号时清掉会话内的 sermon 数据。 */
 export function resetSermonState() {
-  sharedSermonState.sermonState.value = null;
+  sharedSermonState.ownedState.value = null;
+  sharedSermonState.watchedState.value = null;
   sharedSermonState.presenterStatus.value = null;
   sharedSermonState.latestRequestDecision.value = null;
   sharedSermonState.directory.value = [];
@@ -181,6 +220,8 @@ export function resetSermonState() {
   sharedSermonState.joinedPresentationId.value = null;
   sharedSermonState.notice.value = null;
   sharedSermonState.watchAccounts.value = [];
+  sharedSermonState.plans.value = [];
+  sharedSermonState.previews.value = {};
 }
 
 // —— 按账号命名空间的邀请静音集合（localStorage，仿 team-chat-last-noticed-version 模式） ——
@@ -283,7 +324,8 @@ export function useSermon(options: {
             });
             return;
           }
-          finish({ ok: true, added: ack.added, errors: ack.errors });
+          if (Array.isArray(ack.plans)) state.plans.value = ack.plans;
+          finish({ ok: true, added: ack.added, errors: ack.errors, plans: ack.plans });
         });
       } catch {
         finish({ ok: false, reason: "transport", message: "操作发送失败，请重试" });
@@ -305,25 +347,22 @@ export function useSermon(options: {
 
   // —— 二期：多并发演示与观众互斥 ——
 
-  /**
-   * 开始演示：乐观设置入座（服务端的快照推送可能先于 ack 到达），失败回滚。
-   */
+  /** 开始本人演示；主持状态与观众席分离，不再把本人误标为正在观看。 */
   async function start(scope: SermonPresentationScope, invitedAccountIds: number[] = []) {
-    const previous = state.joinedPresentationId.value;
-    if (ownAccountId !== null) state.joinedPresentationId.value = ownAccountId;
     const result = await emit("sermon:start", { scope, invitedAccountIds });
-    if (!result.ok) state.joinedPresentationId.value = previous;
     return result;
   }
 
   /** 入座观看：乐观设置入座，失败（如 seated-elsewhere）回滚并透出 code。 */
   async function join(presenterId: number) {
     const previous = state.joinedPresentationId.value;
+    const previousState = state.watchedState.value;
     state.joinedPresentationId.value = presenterId;
-    state.sermonState.value = null;
+    state.watchedState.value = null;
     const result = await emit("sermon:join", { presenterId });
     if (!result.ok) {
       state.joinedPresentationId.value = previous;
+      state.watchedState.value = previousState;
     } else {
       state.invites.value = state.invites.value.filter((invite) => invite.presenterId !== presenterId);
     }
@@ -338,7 +377,7 @@ export function useSermon(options: {
     if (!result.ok) {
       state.joinedPresentationId.value = previous;
     } else {
-      state.sermonState.value = null;
+      state.watchedState.value = null;
     }
     return result;
   }
@@ -347,6 +386,10 @@ export function useSermon(options: {
   const removeViewer = (accountId: number) => emit("sermon:remove-viewer", { accountId });
   const end = (presenterId?: number) =>
     emit("sermon:end", presenterId === undefined ? {} : { presenterId });
+  const refreshPlans = () => emit("sermon:plans", {});
+  const savePlan = (title: string, id?: string) => emit("sermon:plan-save", { title, ...(id ? { id } : {}) });
+  const loadPlan = (id: string) => emit("sermon:plan-load", { id });
+  const deletePlan = (id: string) => emit("sermon:plan-delete", { id });
 
   async function refreshPresenterStatus() {
     state.presenterStatus.value = await request<SermonPresenterStatusDTO>("/api/sermon/presenter-status");
@@ -360,7 +403,8 @@ export function useSermon(options: {
   }
 
   return {
-    sermonState: state.sermonState,
+    ownedState: state.ownedState,
+    watchedState: state.watchedState,
     presenterStatus: state.presenterStatus,
     latestRequestDecision: state.latestRequestDecision,
     directory: state.directory,
@@ -368,6 +412,8 @@ export function useSermon(options: {
     joinedPresentationId: state.joinedPresentationId,
     notice: state.notice,
     watchAccounts: state.watchAccounts,
+    plans: state.plans,
+    previews: state.previews,
     pending,
     statusMessage,
     add,
@@ -386,6 +432,10 @@ export function useSermon(options: {
     invite,
     removeViewer,
     end,
+    refreshPlans,
+    savePlan,
+    loadPlan,
+    deletePlan,
     refreshPresenterStatus,
     refreshWatchAccounts
   };

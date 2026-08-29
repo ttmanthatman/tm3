@@ -1,13 +1,22 @@
-import type { SermonPresentationScope, SermonPresentationSummaryDTO, SermonStateDTO } from "../../shared/types.js";
+import crypto from "node:crypto";
+import type { SermonPlanDTO, SermonPresentationScope, SermonPresentationSummaryDTO, SermonStateDTO } from "../../shared/types.js";
 import { canPresentSermon, type SermonPresenterAccount } from "./permissions.js";
-import { createSermonStateStore, deserializeSermonState, type SermonStateStore } from "./state.js";
+import { createSermonStateStore, deserializeSermonState, emptySermonState, type SermonActor, type SermonStateStore } from "./state.js";
 
 /** 一期全局演示的持久化键；启动时迁移到 per-presenter 键后删除。 */
 export const SERMON_LEGACY_SETTING_KEY = "sermon.presentation";
 export const SERMON_SETTING_KEY_PREFIX = "sermon.presentation.";
+export const SERMON_PLAN_SETTING_KEY_PREFIX = "sermon.plan.";
+export const SERMON_PLAN_LIMIT = 30;
+export const SERMON_PLAN_MAX_BYTES = 60_000;
 
 export function sermonSettingKeyFor(accountId: number): string {
   return `${SERMON_SETTING_KEY_PREFIX}${accountId}`;
+}
+
+export function sermonPlanSettingKeyFor(accountId: number, planId?: string): string {
+  const prefix = `${SERMON_PLAN_SETTING_KEY_PREFIX}${accountId}.`;
+  return planId ? `${prefix}${planId}` : prefix;
 }
 
 /** 业务规则错误：message 为 public-safe 中文，可直接回给客户端。 */
@@ -74,6 +83,40 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
       createId: deps.createId,
       now: deps.now
     });
+  }
+
+  function clonePlan(plan: SermonPlanDTO): SermonPlanDTO {
+    return structuredClone(plan);
+  }
+
+  function deserializePlan(raw: string | null): SermonPlanDTO | null {
+    if (!raw) return null;
+    try {
+      const candidate = JSON.parse(raw) as Partial<SermonPlanDTO>;
+      const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+      const title = typeof candidate.title === "string" ? candidate.title.trim() : "";
+      if (!id || id.length > 64 || !title || title.length > 80 || !Array.isArray(candidate.queue)) return null;
+      const fallback = emptySermonState(typeof candidate.updatedAt === "string" ? candidate.updatedAt : undefined);
+      const state = deserializeSermonState(JSON.stringify({
+        ...fallback,
+        queue: candidate.queue,
+        display: candidate.display,
+        updatedAt: typeof candidate.updatedAt === "string" ? candidate.updatedAt : fallback.updatedAt
+      }));
+      if (!state.queue.length && candidate.queue.length) return null;
+      return { id, title, queue: state.queue, display: state.display, updatedAt: state.updatedAt };
+    } catch {
+      return null;
+    }
+  }
+
+  async function readPlans(accountId: number): Promise<SermonPlanDTO[]> {
+    const prefix = sermonPlanSettingKeyFor(accountId);
+    const keys = (await deps.listSettingKeys(prefix)).slice(0, SERMON_PLAN_LIMIT);
+    const plans = (await Promise.all(keys.map(async (key) => deserializePlan(await deps.loadSetting(key)))))
+      .filter((plan): plan is SermonPlanDTO => plan !== null)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return plans;
   }
 
   // 邀请名单校验：去重、排除主持人自己、账号存在且未入座他席。
@@ -167,6 +210,7 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
       const record = presentations.get(presenterAccountId);
       if (!record || !record.audience.has(accountId)) return false;
       record.audience.delete(accountId);
+      if (record.scope === "group") record.invited.delete(accountId);
       if (seats.get(accountId) === presenterAccountId) seats.delete(accountId);
       return true;
     },
@@ -209,17 +253,75 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
     },
 
     /** 演示目录：集会演示不暴露受邀名单。 */
-    directory(): SermonPresentationSummaryDTO[] {
+    directory(viewerAccountId?: number): SermonPresentationSummaryDTO[] {
       return [...presentations.values()]
         .sort((a, b) => a.presenterAccountId - b.presenterAccountId)
-        .map((record) => ({
-          presenterId: record.presenterAccountId,
-          presenterName: record.presenterName,
-          scope: record.scope,
-          active: record.store.getState().active,
-          audienceCount: record.audience.size,
-          invitedAccountIds: record.scope === "group" ? [...record.invited].sort((a, b) => a - b) : []
-        }));
+        .map((record) => {
+          const state = record.store.getState();
+          return {
+            presenterId: record.presenterAccountId,
+            presenterName: record.presenterName,
+            scope: record.scope,
+            active: state.active,
+            audienceCount: record.audience.size,
+            invitedAccountIds: record.scope === "group" ? [...record.invited].sort((a, b) => a - b) : [],
+            preview: state.active && (record.scope === "assembly" || viewerAccountId === record.presenterAccountId || (viewerAccountId !== undefined && record.invited.has(viewerAccountId)))
+              ? { item: state.queue.find((item) => item.id === state.currentItemId) ?? null, display: state.display }
+              : null
+          };
+        });
+    },
+
+    /** 读取本人保存的队列方案；方案不进入演示目录，也不会广播给观众。 */
+    async plans(accountId: number): Promise<SermonPlanDTO[]> {
+      return (await readPlans(accountId)).map(clonePlan);
+    },
+
+    /** 把本人当前队列保存为命名方案；同一 planId 表示覆盖更新。 */
+    async savePlan(accountId: number, title: string, planId?: string): Promise<SermonPlanDTO[]> {
+      const record = presentations.get(accountId);
+      if (!record) throw new SermonPresentationError("请先进入自己的讲道台");
+      const normalizedTitle = title.trim();
+      if (!normalizedTitle) throw new SermonPresentationError("请输入方案名称");
+      if (!record.store.getState().queue.length) throw new SermonPresentationError("讲道队列为空，无法保存");
+      const plans = await readPlans(accountId);
+      const existingIndex = planId ? plans.findIndex((plan) => plan.id === planId) : -1;
+      if (planId && existingIndex < 0) throw new SermonPresentationError("保存的讲道方案不存在");
+      if (existingIndex < 0 && plans.length >= SERMON_PLAN_LIMIT) {
+        throw new SermonPresentationError(`最多保存 ${SERMON_PLAN_LIMIT} 个讲道方案`);
+      }
+      const state = record.store.getState();
+      const saved: SermonPlanDTO = {
+        id: existingIndex >= 0 ? plans[existingIndex].id : (deps.createId?.() ?? crypto.randomUUID()),
+        title: normalizedTitle.slice(0, 80),
+        queue: structuredClone(state.queue),
+        display: { ...state.display },
+        updatedAt: (deps.now?.() ?? new Date()).toISOString()
+      };
+      const serialized = JSON.stringify(saved);
+      if (Buffer.byteLength(serialized, "utf8") > SERMON_PLAN_MAX_BYTES) {
+        throw new SermonPresentationError("当前讲道方案内容过大，请精简后再保存");
+      }
+      await deps.saveSetting(sermonPlanSettingKeyFor(accountId, saved.id), serialized);
+      return (await readPlans(accountId)).map(clonePlan);
+    },
+
+    /** 用保存方案替换本人当前队列；载入时自动停止当前展示，保留演示范围与观众。 */
+    async loadPlan(accountId: number, actor: SermonActor, planId: string): Promise<{ state: SermonStateDTO; plans: SermonPlanDTO[] }> {
+      const record = presentations.get(accountId);
+      if (!record) throw new SermonPresentationError("请先进入自己的讲道台");
+      const plans = await readPlans(accountId);
+      const plan = plans.find((entry) => entry.id === planId);
+      if (!plan) throw new SermonPresentationError("保存的讲道方案不存在");
+      const state = await record.store.loadPlan(actor, plan);
+      return { state, plans: plans.map(clonePlan) };
+    },
+
+    async deletePlan(accountId: number, planId: string): Promise<SermonPlanDTO[]> {
+      const plans = await readPlans(accountId);
+      if (!plans.some((plan) => plan.id === planId)) throw new SermonPresentationError("保存的讲道方案不存在");
+      await deps.deleteSetting(sermonPlanSettingKeyFor(accountId, planId));
+      return (await readPlans(accountId)).map(clonePlan);
     },
 
     /** 旧全局行迁移：按 presenterId 写入 per-presenter 键（已存在则跳过），随后删除旧行。 */

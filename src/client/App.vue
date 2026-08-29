@@ -215,8 +215,9 @@ const ReceptionManager = defineAsyncComponent(() => import("./features/reception
 // 讲道经文相关界面全部独立分包：观众端覆盖层仅在展示激活时挂载，讲道台负一屏打开时再下载，申请卡仅在消息列表渲染到时下载。
 const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/SermonOverlay.vue"));
 const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
+const SermonEntryDialog = defineAsyncComponent(() => import("./features/sermon/SermonEntryDialog.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
-// 入口按钮 + 邀请横幅常驻头部，体积小且时效敏感，不进异步分包。
+// 正在讲道的预览通知常驻，体积小且时效敏感，不进异步分包。
 import SermonHub from "./features/sermon/SermonHub.vue";
 type UploadStatus = "uploading" | "processing" | "failed";
 type PendingUpload = {
@@ -282,12 +283,13 @@ const musicManagerOpen = ref(false);
 const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
 const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
 const {
-  sermonState: sermonOverlayState,
+  watchedState: sermonOverlayState,
   latestRequestDecision: sermonRequestDecision,
   joinedPresentationId: sermonJoinedPresentationId,
   refreshPresenterStatus: refreshSermonPresenterStatus
 } = useSermon({ getSocket: () => store.socket });
 const sermonWorkspaceOpen = ref(false);
+const sermonEntryOpen = ref(false);
 // 首次打开后才挂载讲道台 chunk（懒加载），之后保持挂载以保留滑入滑出过渡。
 const sermonWorkspaceMounted = ref(false);
 const sermonDecisionNotice = ref("");
@@ -4879,6 +4881,12 @@ function toggleMorePanel() {
 }
 
 function openSermonWorkspace() {
+  sermonEntryOpen.value = true;
+  composerPanel.value = null;
+}
+
+function openOwnSermonWorkspace() {
+  sermonEntryOpen.value = false;
   sermonWorkspaceMounted.value = true;
   showChannels.value = false;
   showMembers.value = false;
@@ -9677,6 +9685,12 @@ async function toggleVirtual(character: any) {
       v-if="sermonWorkspaceMounted"
       :open="sermonWorkspaceOpen"
       @close="sermonWorkspaceOpen = false"
+    />
+    <SermonEntryDialog
+      v-if="sermonEntryOpen"
+      :open="true"
+      @close="sermonEntryOpen = false"
+      @own="openOwnSermonWorkspace"
     />
 
     <aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">

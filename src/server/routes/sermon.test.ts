@@ -365,7 +365,8 @@ test("GET directory：登录返回演示摘要数组，未登录 401", async () 
       scope: "assembly",
       active: false,
       audienceCount: 0,
-      invitedAccountIds: []
+      invitedAccountIds: [],
+      preview: null
     });
     assert.deepEqual(directory[1], {
       presenterId: 3,
@@ -373,7 +374,8 @@ test("GET directory：登录返回演示摘要数组，未登录 401", async () 
       scope: "group",
       active: false,
       audienceCount: 1,
-      invitedAccountIds: [1]
+      invitedAccountIds: [1],
+      preview: null
     });
   } finally {
     await app.close();
