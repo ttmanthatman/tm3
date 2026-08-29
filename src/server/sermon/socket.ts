@@ -159,7 +159,8 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     ack?.({ ok: false, message: "操作失败" });
   }
 
-  // 连接快照：主持人补发自己演示的完整状态（含未激活队列）；已入座观众补发所坐演示的激活状态。
+  // 连接快照只恢复主持人自己的讲道台。观众席是连接期状态，刷新/重连后必须重新加入，
+  // 避免旧 socket 尚未完成 disconnect 清理时，新 socket 因竞态收到已释放席位的演示快照。
   void (async () => {
     try {
       const auth = await deps.refreshAuth(socket);
@@ -169,11 +170,6 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
         socket.join(roomOf(auth.accountId));
         socket.emit("sermon:state", own.store.getState());
       }
-      const seated = service.seatOf(auth.accountId);
-      if (seated === null) return;
-      const record = service.get(seated);
-      socket.join(roomOf(seated));
-      if (record && record.store.getState().active) socket.emit("sermon:state", record.store.getState());
     } catch {
       // 快照补发失败不影响连接本身。
     }

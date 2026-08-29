@@ -403,13 +403,11 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect
       .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-margin-pct")))
       .toBe("10");
-    // 边距机制：卡片内正文容器按卡片宽度的百分比内缩（桌面端卡片封顶后同样生效）。
+    // 边距机制：整张卡片按自身宽度的百分比内缩，0% 时出处与正文都可贴边。
     await expect
       .poll(async () =>
-        overlay.locator(".sermon-overlay-body").evaluate((el) => {
-          const card = el.closest(".sermon-overlay-card");
-          if (!card) return -1;
-          return parseFloat(getComputedStyle(el).paddingLeft) / card.getBoundingClientRect().width;
+        overlay.locator(".sermon-overlay-card").evaluate((card) => {
+          return parseFloat(getComputedStyle(card).paddingLeft) / card.getBoundingClientRect().width;
         })
       )
       .toBeCloseTo(0.1, 1);
@@ -619,7 +617,7 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/诗篇\s*23:1/);
 
     // B 先准备内容：创世 1:1 + 马太 6:9（每处一屏），展示创世 1:1。
-    await workspaceB.locator(".sermon-reference-input").fill("创世1:1；马太6:9");
+    await workspaceB.locator(".sermon-reference-input").fill("创世记1:1；马太福音6:9");
     await workspaceB.getByRole("checkbox", { name: "每处经文一屏" }).check();
     const addButtonB = workspaceB.getByRole("button", { name: "加入队列", exact: true });
     await expect(addButtonB).toBeEnabled();

@@ -377,7 +377,7 @@ test("两个讲道者并发：互不可见对方队列与广播", async () => {
   assert.deepEqual(service.directory().map((entry) => entry.presenterId), [7, 8]);
 });
 
-test("连接快照：主持人补发完整状态（含未激活队列），已入座观众补发激活状态，无关连接无快照", async () => {
+test("连接快照：只为主持人补发完整状态，观众刷新后必须重新加入", async () => {
   const { connect, service } = createHarness();
   const presenter = connect(7);
   await presenter.invoke("sermon:start", { scope: "group", invitedAccountIds: [9] });
@@ -398,18 +398,16 @@ test("连接快照：主持人补发完整状态（含未激活队列），已�
   assert.equal(outsider.socketEmitted.length, 0, "无关连接不补发");
   assert.deepEqual(outsider.joined, []);
 
-  // 观众入座且演示激活：另一个 socket 重连补发激活状态
+  // 观众入座且演示激活：另一个 socket 重连也不补发，避免刷新竞态恢复易失席位。
   await presenter.invoke("sermon:present", { id: service.get(7)?.store.getState().queue[0]?.id ?? null });
   await connect(9).invoke("sermon:join", { presenterId: 7 });
   const viewerReconnect = connect(9);
   await flush();
-  assert.deepEqual(viewerReconnect.joined, ["sermon:7"], "入座观众重连自动回房");
-  const viewerSnapshot = viewerReconnect.socketEmitted.find((entry) => entry.event === "sermon:state");
-  assert.ok(viewerSnapshot);
-  assert.equal((viewerSnapshot.payload as SermonStateDTO).active, true);
+  assert.deepEqual(viewerReconnect.joined, [], "入座观众重连不自动回房");
+  assert.equal(viewerReconnect.socketEmitted.some((entry) => entry.event === "sermon:state"), false);
 });
 
-test("连接快照：账号同时主持自己的讲道台并观看他人时，两份状态分别补发", async () => {
+test("连接快照：账号同时主持自己的讲道台并观看他人时，只补发自己的主持状态", async () => {
   const { connect, service } = createHarness();
   const own = connect(7);
   await own.invoke("sermon:start", { scope: "group" });
@@ -423,12 +421,12 @@ test("连接快照：账号同时主持自己的讲道台并观看他人时，�
 
   const reconnect = connect(7);
   await flush();
-  assert.deepEqual(reconnect.joined.sort(), ["sermon:7", "sermon:8"]);
+  assert.deepEqual(reconnect.joined, ["sermon:7"]);
   const presenters = reconnect.socketEmitted
     .filter((entry) => entry.event === "sermon:state")
     .map((entry) => (entry.payload as SermonStateDTO).presenterId)
     .sort();
-  assert.deepEqual(presenters, ["7", "8"]);
+  assert.deepEqual(presenters, ["7"]);
 });
 
 test("认证失败：所有事件拒绝且不广播", async () => {
