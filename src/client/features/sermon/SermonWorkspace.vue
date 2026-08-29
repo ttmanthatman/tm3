@@ -95,24 +95,6 @@ const presenterUntilText = computed(() => {
   return status.until ? `讲道权限有效期至 ${new Date(status.until).toLocaleString("zh-CN", { hour12: false })}` : "讲道权限长期有效";
 });
 
-// 关闭工作区后回到队列屏，下次打开始终是队列入口。
-watch(
-  () => props.open,
-  (open) => {
-    if (!open) {
-      view.value = "queue";
-      verseMenu.value = null;
-      selectionOffer.value = null;
-      editing.value = false;
-      return;
-    }
-    // 打开时按需拉取：开始屏需要权限状态与观众列表；演示中需要观众名单。
-    void loadAudienceData();
-    void sermon.refreshPlans().catch(() => undefined);
-  },
-  { immediate: true }
-);
-
 // 演示被结束后回到队列屏，由开始屏接管。
 watch(hasOwnPresentation, (has) => {
   if (!has) {
@@ -156,6 +138,23 @@ async function loadAudienceData() {
     accountsError.value = error instanceof Error ? error.message : "观众列表加载失败";
   }
 }
+
+// 关闭工作区后回到队列屏；首次挂载为 open=true 时也必须在状态声明完成后加载数据。
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) {
+      view.value = "queue";
+      verseMenu.value = null;
+      selectionOffer.value = null;
+      editing.value = false;
+      return;
+    }
+    void loadAudienceData();
+    void sermon.refreshPlans().catch(() => undefined);
+  },
+  { immediate: true }
+);
 
 // 观众人数随目录推送变化，打开工作区时联动刷新观众名单。
 watch(

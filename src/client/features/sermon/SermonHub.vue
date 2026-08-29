@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import { MonitorPlay } from "lucide-vue-next";
 import { useChatStore } from "../../store";
 import { clearSermonNotice, useSermon } from "./useSermon";
 import { computeWatchablePresentations } from "./sermonHub";
 import { sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
 import SermonFloatingButton from "./SermonFloatingButton.vue";
-import SermonStage from "./SermonStage.vue";
+
+const SermonStage = defineAsyncComponent(() => import("./SermonStage.vue"));
 
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });

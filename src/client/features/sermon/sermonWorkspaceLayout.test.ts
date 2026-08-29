@@ -41,6 +41,13 @@ test("unknown presenter status is not mislabeled as an application requirement",
   assert.match(workspace, /<strong>全体演示<\/strong>/);
 });
 
+test("initial workspace data load runs after its reactive state is declared", () => {
+  const stateDeclaration = workspace.indexOf('const accountsError = ref("")');
+  const openWatcher = workspace.indexOf("// 关闭工作区后回到队列屏");
+  assert.ok(stateDeclaration >= 0 && openWatcher > stateDeclaration);
+  assert.match(workspace.slice(openWatcher), /\{ immediate: true \}/);
+});
+
 test("sermon entry separates own workspace from permitted read-only viewing", () => {
   assert.match(entryDialog, /选择要进入的讲道台/);
   assert.match(entryDialog, /进入自己的讲道台/);
@@ -50,6 +57,7 @@ test("sermon entry separates own workspace from permitted read-only viewing", ()
 
 test("live sermon notification uses a stage preview and no longer renders a top icon", () => {
   assert.doesNotMatch(hub, /sermon-hub-trigger/);
+  assert.match(hub, /defineAsyncComponent\(\(\) => import\("\.\/SermonStage\.vue"\)\)/);
   assert.match(hub, /class="sermon-overlay sermon-live-preview"/);
   assert.match(hub, /忽略并最小化/);
   assert.match(hub, /点击进入观看/);
