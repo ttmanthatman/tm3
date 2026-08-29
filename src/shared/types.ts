@@ -530,6 +530,14 @@ export interface SermonSlideInput {
   blocks: SermonSlideInputBlock[];
 }
 
+/** 单张讲道幻灯片的排版；缺省值由内容类型决定。 */
+export interface SermonSlideLayoutDTO {
+  /** 经文连续成段；false 时每节独占一行。 */
+  paragraph: boolean;
+  /** 正文居中；纯文字幻灯片默认 true，经文默认 false。 */
+  centered: boolean;
+}
+
 export interface SermonQueueItem {
   id: string;
   /** 条目类型：经文或自由文字；旧持久化数据缺省按 bible 迁移 */
@@ -548,6 +556,8 @@ export interface SermonQueueItem {
   source?: string;
   /** 屏内同步滚动行数（非负整数，缺省 0；Shift+↑/↓ 步进） */
   scrollLines?: number;
+  /** 本页独立排版；旧持久化数据缺省时按内容类型使用兼容默认值。 */
+  layout?: SermonSlideLayoutDTO;
 }
 
 /** 讲道演示字体族：宋体 / 苹方 / 黑体 / 楷体（均为系统自带字体） */
@@ -557,6 +567,8 @@ export interface SermonDisplayDTO {
   fontFamily: SermonFontFamily;
   /** 观众端与讲道者演示视图共用的字体倍率（0.7–1.6），默认 1 */
   fontScale: number;
+  /** 正文行距倍率（1.1–2.2），默认 1.6。 */
+  lineHeight: number;
   /** 横向边距占视口宽度的百分比（0–20 整数），默认 4 */
   marginPct: number;
   /** 背景预设键或 #rrggbb 自定义色 */

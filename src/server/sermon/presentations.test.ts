@@ -294,10 +294,15 @@ test("命名方案：保存、覆盖、载入与删除均按账号独立持久�
   const { record } = await service.start({ accountId: 7, displayName: "用户7" }, "group");
   const actor = { id: "7", name: "用户7" };
   await record.store.add(actor, [{ blocks: [{ type: "text", content: "第一版" }], verses: [], source: "第一版" }]);
+  const firstItemId = record.store.getState().queue[0].id;
+  await record.store.layout(actor, firstItemId, { paragraph: false, centered: false });
+  await record.store.display(actor, { lineHeight: 1.3 });
 
   const saved = await service.savePlan(7, "8月30日分享");
   assert.equal(saved.length, 1);
   assert.equal(saved[0].title, "8月30日分享");
+  assert.deepEqual(saved[0].queue[0].layout, { paragraph: false, centered: false });
+  assert.equal(saved[0].display.lineHeight, 1.3);
   assert.ok(settings.has(sermonPlanSettingKeyFor(7, saved[0].id)));
   assert.deepEqual(await service.plans(8), [], "其他账号看不到该方案");
 
@@ -305,6 +310,8 @@ test("命名方案：保存、覆盖、载入与删除均按账号独立持久�
   const loaded = await service.loadPlan(7, actor, saved[0].id);
   assert.equal(loaded.state.active, false);
   assert.equal(loaded.state.queue[0].source, "第一版");
+  assert.deepEqual(loaded.state.queue[0].layout, { paragraph: false, centered: false });
+  assert.equal(loaded.state.display.lineHeight, 1.3);
 
   await record.store.add(actor, [{ blocks: [{ type: "text", content: "第二屏" }], verses: [], source: "第二屏" }]);
   const overwritten = await service.savePlan(7, "8月30日分享", saved[0].id);

@@ -57,7 +57,7 @@ function activeState(currentItemId: string | null = "item-1"): SermonStateDTO {
     presenterId: "7",
     presenterName: "张三",
     scope: "group" as const,
-    display: { fontFamily: "songti", fontScale: 1, marginPct: 4, background: "gradient" },
+    display: { fontFamily: "songti", fontScale: 1, lineHeight: 1.6, marginPct: 4, background: "gradient" },
     updatedAt: "2026-08-27T00:00:00.000Z"
   };
 }
@@ -432,21 +432,24 @@ test("annotate/clearAnnotations 载荷形状符合契约", async () => {
 
 test("setDisplay 发送 sermon:display 事件", async () => {
   const { sermon, emissions } = createHarness();
-  const result = await sermon.setDisplay({ fontScale: 1.2, background: "midnight" });
+  const result = await sermon.setDisplay({ fontScale: 1.2, lineHeight: 1.4, background: "midnight" });
   assert.equal(result.ok, true);
-  assert.deepEqual(emissions, [{ event: "sermon:display", payload: { fontScale: 1.2, background: "midnight" } }]);
+  assert.deepEqual(emissions, [{ event: "sermon:display", payload: { fontScale: 1.2, lineHeight: 1.4, background: "midnight" } }]);
 });
 
-test("update/scroll 发送热编辑与屏内滚动事件", async () => {
+test("update/scroll/setLayout 发送热编辑、滚动与逐页排版事件", async () => {
   const { sermon, emissions } = createHarness();
   const slide = { blocks: [{ type: "text" as const, content: "改后的文字" }] };
   const updateResult = await sermon.update("item-1", slide);
   assert.equal(updateResult.ok, true);
   const scrollResult = await sermon.scroll("item-1", 3);
   assert.equal(scrollResult.ok, true);
+  const layoutResult = await sermon.setLayout("item-1", { paragraph: false, centered: true });
+  assert.equal(layoutResult.ok, true);
   assert.deepEqual(emissions, [
     { event: "sermon:update", payload: { id: "item-1", slide } },
-    { event: "sermon:scroll", payload: { id: "item-1", lines: 3 } }
+    { event: "sermon:scroll", payload: { id: "item-1", lines: 3 } },
+    { event: "sermon:layout", payload: { id: "item-1", paragraph: false, centered: true } }
   ]);
 });
 

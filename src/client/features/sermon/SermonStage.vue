@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, useSlots, watch } from "vue";
 import type { BibleVerseLineDTO, SermonQueueItem, SermonSlideBlock } from "@shared/types";
+import { resolveSermonSlideLayout } from "@shared/sermonSlideLayout";
 import { annotationsForVerse, splitSermonTextParagraphs, verseAnnotationSegments } from "./sermonText";
 
 // 观众端覆盖层与讲道者演示视图共用的经文舞台：出处徽标、“某某正在分享”标识、
@@ -22,6 +23,13 @@ const emit = defineEmits<{
   "verse-click": [verseIndex: number, event: MouseEvent];
   "verse-hold": [verse: BibleVerseLineDTO];
 }>();
+const slots = useSlots();
+
+const layout = computed(() => props.item ? resolveSermonSlideLayout(props.item) : { paragraph: true, centered: false });
+const hasReferenceBadge = computed(() => Boolean(props.item && props.item.kind !== "text" && props.item.normalizedReference));
+const referenceAfterBody = computed(() => hasReferenceBadge.value && layout.value.centered);
+const referenceInHeader = computed(() => hasReferenceBadge.value && !referenceAfterBody.value);
+const showStageHeader = computed(() => referenceInHeader.value || Boolean(slots["head-actions"]));
 
 let holdTimer: ReturnType<typeof setTimeout> | null = null;
 let suppressClickTimer: ReturnType<typeof setTimeout> | null = null;
@@ -120,13 +128,18 @@ watch(
 </script>
 
 <template>
-  <header class="sermon-overlay-head">
-    <span class="sermon-overlay-badge">{{ props.item?.normalizedReference || "讲道经文" }}</span>
+  <header v-if="showStageHeader" class="sermon-overlay-head" :class="{ 'sermon-overlay-head-actions-only': !referenceInHeader }">
+    <span v-if="referenceInHeader" class="sermon-overlay-badge">{{ props.item?.normalizedReference }}</span>
     <slot name="head-actions" />
   </header>
   <div ref="bodyEl" class="sermon-overlay-body">
     <Transition name="sermon-fade" mode="out-in">
-      <div v-if="props.item?.blocks?.length" :key="props.item.id" class="sermon-passage sermon-passage-blocks">
+      <div
+        v-if="props.item?.blocks?.length"
+        :key="props.item.id"
+        class="sermon-passage sermon-passage-blocks"
+        :class="{ 'sermon-layout-paragraph': layout.paragraph, 'sermon-layout-centered': layout.centered }"
+      >
         <template v-for="(block, blockIndex) in props.item.blocks" :key="blockIndex">
           <template v-if="block.type === 'passage'">
             <h3 v-if="showPassageRefs(props.item)" class="sermon-passage-ref">{{ block.normalizedReference }}</h3>
@@ -155,7 +168,12 @@ watch(
           <p v-else class="sermon-text-paragraph">{{ block.content }}</p>
         </template>
       </div>
-      <div v-else-if="props.item" :key="props.item.id" class="sermon-passage">
+      <div
+        v-else-if="props.item"
+        :key="props.item.id"
+        class="sermon-passage"
+        :class="{ 'sermon-layout-paragraph': layout.paragraph, 'sermon-layout-centered': layout.centered }"
+      >
         <template v-if="props.item.kind === 'text'">
           <h2 v-if="props.item.title" class="sermon-text-title">{{ props.item.title }}</h2>
           <p
@@ -190,6 +208,7 @@ watch(
       </div>
       <div v-else key="empty" class="sermon-passage sermon-passage-empty">{{ props.emptyText }}</div>
     </Transition>
+    <span v-if="referenceAfterBody" class="sermon-overlay-badge sermon-centered-reference">{{ props.item?.normalizedReference }}</span>
   </div>
   <small v-if="props.presenterName" class="sermon-overlay-share">{{ props.presenterName }} 正在分享</small>
 </template>

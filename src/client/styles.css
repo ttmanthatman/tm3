@@ -12227,6 +12227,10 @@ button.admin-object-row:focus-visible {
   padding-bottom: 14px;
 }
 
+.sermon-overlay-head-actions-only {
+  justify-content: flex-end;
+}
+
 .sermon-overlay-badge {
   font-size: 14px;
   letter-spacing: 0.08em;
@@ -12272,8 +12276,28 @@ button.admin-object-row:focus-visible {
 .sermon-passage {
   font-family: var(--sermon-font-family, "Songti SC", "Noto Serif SC", "SimSun", serif);
   font-size: calc(clamp(22px, 4.6vw, 34px) * var(--sermon-font-scale, 1));
-  line-height: 1.9;
+  line-height: var(--sermon-line-height, 1.6);
   text-align: justify;
+}
+
+.sermon-layout-centered {
+  text-align: center;
+}
+
+.sermon-layout-paragraph .sermon-verse {
+  display: inline;
+  margin: 0;
+}
+
+.sermon-layout-paragraph .sermon-verse:not(:last-child)::after {
+  content: " ";
+}
+
+.sermon-centered-reference {
+  display: block;
+  width: fit-content;
+  margin: 0.75em auto 0;
+  text-align: center;
 }
 
 .sermon-passage-empty {
@@ -12339,14 +12363,17 @@ button.admin-object-row:focus-visible {
   -webkit-overflow-scrolling: touch;
 }
 
-.sermon-context-verse {
+.sermon-context-paragraph {
   margin: 0;
-  padding: 0.3em 0.45em;
-  border-left: 4px solid transparent;
-  border-radius: 7px;
   color: color-mix(in srgb, var(--sermon-fg, var(--text, #111827)) 62%, transparent);
   font-size: calc(clamp(19px, 4vw, 28px) * var(--sermon-font-scale, 1));
-  line-height: 1.75;
+  line-height: 1.65;
+  text-align: justify;
+}
+
+.sermon-context-verse {
+  border-bottom: 2px solid transparent;
+  border-radius: 5px;
 }
 
 .sermon-context-verse sup {
@@ -12355,7 +12382,7 @@ button.admin-object-row:focus-visible {
 }
 
 .sermon-context-current {
-  border-left-color: #22c55e;
+  border-bottom-color: #22c55e;
   background: rgba(250, 204, 21, 0.78);
   color: #14532d;
   font-weight: 700;
@@ -12807,6 +12834,10 @@ button.admin-object-row:focus-visible {
   color: var(--muted);
 }
 
+.sermon-line-height-slider {
+  margin-top: 12px;
+}
+
 .sermon-margin-slider input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
@@ -13037,13 +13068,61 @@ button.admin-object-row:focus-visible {
 }
 
 .sermon-queue-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 6px 8px 6px 12px;
   margin-bottom: 8px;
+}
+
+.sermon-queue-item.selected:not(.current) {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.sermon-queue-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.sermon-queue-heading h3 {
+  margin: 0;
+}
+
+.sermon-queue-presentation-actions,
+.sermon-queue-layout-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sermon-queue-presentation-actions .primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--button-text, #fff);
+}
+
+.sermon-queue-layout-options {
+  grid-column: 1 / -1;
+  padding-top: 5px;
+  border-top: 1px dashed color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.sermon-queue-layout-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
 }
 
 .sermon-queue-item.current {

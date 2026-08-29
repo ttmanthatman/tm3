@@ -12,6 +12,8 @@ const emit = defineEmits<{ update: [patch: Partial<SermonDisplayDTO>] }>();
 
 const SERMON_FONT_SCALE_MIN = 0.7;
 const SERMON_FONT_SCALE_MAX = 1.6;
+const SERMON_LINE_HEIGHT_MIN = 1.1;
+const SERMON_LINE_HEIGHT_MAX = 2.2;
 const SERMON_MARGIN_MIN = 0;
 const SERMON_MARGIN_MAX = 20;
 
@@ -26,6 +28,8 @@ const fontScale = computed(() => props.display.fontScale);
 // 边距滑块拖动中先在本地显示实时百分比，松手（change）后才提交。
 const marginDraft = ref<number | null>(null);
 const marginShown = computed(() => marginDraft.value ?? props.display.marginPct);
+const lineHeightDraft = ref<number | null>(null);
+const lineHeightShown = computed(() => lineHeightDraft.value ?? props.display.lineHeight ?? 1.6);
 const customBackground = computed(() => (props.display.background.startsWith("#") ? props.display.background : "#0f172a"));
 
 function adjustFont(direction: -1 | 1) {
@@ -43,6 +47,17 @@ function onMarginChange(event: Event) {
   const value = Number((event.target as HTMLInputElement).value);
   marginDraft.value = null;
   if (Number.isFinite(value) && value !== props.display.marginPct) emit("update", { marginPct: value });
+}
+
+function onLineHeightInput(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
+  if (Number.isFinite(value)) lineHeightDraft.value = value;
+}
+
+function onLineHeightChange(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
+  lineHeightDraft.value = null;
+  if (Number.isFinite(value) && value !== props.display.lineHeight) emit("update", { lineHeight: value });
 }
 
 function onCustomBackground(event: Event) {
@@ -79,6 +94,20 @@ function onCustomTextColor(event: Event) {
           <button type="button" :disabled="fontScale >= SERMON_FONT_SCALE_MAX" aria-label="增大字体" @click="adjustFont(1)"><Plus :size="15" /></button>
         </div>
       </div>
+      <label class="sermon-margin-slider sermon-line-height-slider">
+        <span>行距</span>
+        <input
+          type="range"
+          :min="SERMON_LINE_HEIGHT_MIN"
+          :max="SERMON_LINE_HEIGHT_MAX"
+          step="0.1"
+          :value="lineHeightShown"
+          aria-label="经文行距"
+          @input="onLineHeightInput"
+          @change="onLineHeightChange"
+        />
+        <strong aria-live="polite">{{ lineHeightShown.toFixed(1) }}×</strong>
+      </label>
       <label class="sermon-margin-slider">
         <span>版心边距</span>
         <input

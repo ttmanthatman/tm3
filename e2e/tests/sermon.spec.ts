@@ -132,16 +132,20 @@ async function startGroupPresentation(workspace: Locator, inviteDisplayName?: st
   await expect(workspace.locator(".sermon-queue-view")).toBeVisible();
 }
 
-/** 队列添加内容并点击最后一条进入演示视图。 */
+/** 队列添加内容、选择最后一条预览，再明确开始演示。 */
 async function addToQueueAndPresent(workspace: Locator, input: string, options?: { onePerSlide?: boolean }) {
+  const queueItems = workspace.locator(".sermon-queue-item");
+  const initialCount = await queueItems.count();
   await workspace.locator(".sermon-reference-input").fill(input);
   if (options?.onePerSlide) await workspace.getByRole("checkbox", { name: "每处经文一屏" }).check();
   const addButton = workspace.getByRole("button", { name: "加入队列", exact: true });
   await expect(addButton).toBeEnabled();
   await addButton.click();
-  const item = workspace.locator(".sermon-queue-item").last();
+  await expect(queueItems).toHaveCount(initialCount + 1);
+  const item = queueItems.last();
   await expect(item).toBeVisible();
   await item.locator(".sermon-queue-main").click();
+  await workspace.getByRole("button", { name: "开始演示", exact: true }).click();
   const presentView = workspace.locator(".sermon-present-view");
   await expect(presentView).toBeVisible();
   return presentView;
@@ -281,9 +285,13 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(savedPlan).toContainText("2 屏");
     await admin.screenshot({ path: "output/e2e/sermon/presenter-queue.png" });
 
-    // 队列屏点击条目：进入演示视图并推送给观众。
+    // 队列屏点击条目只切换预览；明确点击“开始演示”后才推送给观众。
     const firstItem = workspace.locator(".sermon-queue-item").filter({ hasText: "约翰福音 3:16" });
     await firstItem.locator(".sermon-queue-main").click();
+    await expect(firstItem.getByRole("checkbox", { name: "段落显示" })).toBeChecked();
+    await expect(firstItem.getByRole("checkbox", { name: "居中显示" })).not.toBeChecked();
+    await expect(viewer.locator(".sermon-live-card", { hasText: `${E2E_ADMIN.displayName} 正在讲道` })).toHaveCount(0);
+    await workspace.getByRole("button", { name: "开始演示", exact: true }).click();
     const presentView = workspace.locator(".sermon-present-view");
     await expect(presentView).toBeVisible();
     const liveCard = viewer.locator(".sermon-live-card", { hasText: `${E2E_ADMIN.displayName} 正在讲道` });
@@ -301,6 +309,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     // 讲道者演示视图与观众端经文渲染逐字一致（共用 SermonStage）。
     const stagePassage = presentView.locator(".sermon-passage");
     await expect(stagePassage).toBeVisible();
+    await expect(stagePassage).toHaveClass(/sermon-layout-paragraph/);
     const overlayText = await overlay.locator(".sermon-passage").innerText();
     await expect(stagePassage).toHaveText(overlayText);
 
@@ -390,16 +399,20 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
       .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-font-scale")))
       .toBe("1.2");
 
-    // 显示设置（字体族/背景/边距）经 sermon:display 同步到观众端舞台根元素。
+    // 显示设置（字体族/行距/背景/边距）经 sermon:display 同步到观众端舞台根元素。
     await presentView.getByRole("combobox", { name: "经文字体" }).selectOption("songti");
     await expect(overlay).toHaveAttribute("data-sermon-font", "songti");
     await expect(admin.locator(".sermon-present-stage")).toHaveAttribute("data-sermon-font", "songti");
+    await presentView.locator('.sermon-line-height-slider input[type="range"]').fill("1.3");
+    await expect
+      .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-line-height")))
+      .toBe("1.3");
     const midnightTheme = presentView.getByRole("button", { name: /纯黑$/ });
     await midnightTheme.scrollIntoViewIfNeeded();
     await midnightTheme.click();
     await expect(overlay).toHaveAttribute("data-sermon-bg", "midnight");
     await expect(overlay).toHaveCSS("background-color", "rgb(0, 0, 0)");
-    await presentView.locator('.sermon-margin-slider input[type="range"]').fill("10");
+    await presentView.getByRole("slider", { name: "版心边距", exact: true }).fill("10");
     await expect
       .poll(() => overlay.evaluate((el) => (el as HTMLElement).style.getPropertyValue("--sermon-margin-pct")))
       .toBe("10");
@@ -420,7 +433,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(workspace.locator(".sermon-queue-controls")).toBeVisible();
     const projectorPreview = workspace.locator(".projector-preview .sermon-preview-stage.projector");
     const phonePreview = workspace.locator(".sermon-preview-stage.phone");
-    const nextPreview = workspace.locator(".sermon-next-preview .sermon-preview-stage.projector");
+    const nextPreview = workspace.locator(".sermon-next-preview .sermon-plain-preview");
     await expect(projectorPreview).toBeVisible();
     await expect(phonePreview).toBeVisible();
     await expect(projectorPreview).toContainText("神爱世人");
@@ -431,15 +444,27 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(phonePreview).toHaveAttribute("data-sermon-font", "songti");
     await expect(workspace.locator(".projector-preview .sermon-preview-frame.projector")).toHaveCSS("background-color", "rgb(0, 0, 0)");
     await expect(workspace.locator(".sermon-preview-frame.phone")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    const paragraphToggle = firstItem.getByRole("checkbox", { name: "段落显示" });
+    await paragraphToggle.uncheck();
+    await expect(overlay.locator(".sermon-passage")).not.toHaveClass(/sermon-layout-paragraph/);
+    await paragraphToggle.check();
+    await expect(overlay.locator(".sermon-passage")).toHaveClass(/sermon-layout-paragraph/);
+    const centeredToggle = firstItem.getByRole("checkbox", { name: "居中显示" });
+    await centeredToggle.check();
+    await expect(overlay.locator(".sermon-centered-reference")).toHaveText(/约翰福音\s*3:16/);
+    await expect(overlay.locator(".sermon-overlay-head .sermon-overlay-badge")).toHaveCount(0);
+    await centeredToggle.uncheck();
+    await expect(overlay.locator(".sermon-overlay-head .sermon-overlay-badge")).toHaveText(/约翰福音\s*3:16/);
     const chatBox = await workspace.getByRole("button", { name: "聊天", exact: true }).boundingBox();
     const titleBox = await workspace.locator(".sermon-workspace-title").boundingBox();
     expect(chatBox && titleBox && chatBox.x < titleBox.x).toBeTruthy();
 
     // 桌面队列页用可见投影预览计算可滚动行数；键盘与悬停滚轮都同步当前屏。
-    await workspace.locator(".sermon-reference-input").fill("马太3:3-10");
+    await workspace.locator(".sermon-reference-input").fill("马太5:1-20");
     await workspace.getByRole("button", { name: "加入队列", exact: true }).click();
-    const longItem = workspace.locator(".sermon-queue-item").filter({ hasText: "马太福音 3:3-10" });
+    const longItem = workspace.locator(".sermon-queue-item").filter({ hasText: "马太福音 5:1-20" });
     await longItem.locator(".sermon-queue-main").click();
+    await workspace.getByRole("button", { name: "开始演示", exact: true }).click();
     const projectorBody = projectorPreview.locator(".sermon-overlay-body");
     await expect.poll(() => projectorBody.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
     const initialScroll = await projectorBody.evaluate((el) => el.scrollTop);
@@ -464,22 +489,29 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     const textItem = workspace.locator(".sermon-queue-item").filter({ hasText: "文字分享" });
     await expect(textItem).toContainText("文字");
     await textItem.locator(".sermon-queue-main").click();
-    await expect(overlay.locator(".sermon-overlay-badge")).toHaveText("文字分享");
+    await expect(textItem.getByRole("checkbox", { name: "居中显示" })).toBeChecked();
+    await expect(overlay).not.toContainText("证道大纲");
+    await workspace.getByRole("button", { name: "开始演示", exact: true }).click();
+    await expect(overlay.locator(".sermon-overlay-badge")).toHaveCount(0);
     await expect(overlay).toContainText("证道大纲");
+    await expect(overlay.locator(".sermon-passage", { hasText: "证道大纲" })).toHaveClass(/sermon-layout-centered/);
     await expect(overlay).toContainText("一、神的爱");
     await expect(overlay).toContainText("二、人的回应");
     await viewer.screenshot({ path: "output/e2e/sermon/overlay-text-390.png" });
 
     // 移动端 390px：演示视图控制栏全宽不溢出。
     await admin.setViewportSize({ width: 390, height: 844 });
-    await expect(presentView.getByRole("button", { name: "结束展示", exact: true })).toBeVisible();
+    await expect(presentView.getByRole("button", { name: "结束演示", exact: true })).toBeVisible();
     await admin.screenshot({ path: "output/e2e/sermon/presenter-stage-390.png" });
 
-    // 结束演示（sermon:end）后观众端覆盖层消失并收到结束通知，讲道者回到开始屏。
-    admin.once("dialog", (dialog) => dialog.accept());
-    await presentView.getByRole("button", { name: "结束展示", exact: true }).click();
+    // “结束演示”只停止投影并保留队列；退出讲道台才结束整场会话。
+    await presentView.getByRole("button", { name: "结束演示", exact: true }).click();
     await expect(overlay).toHaveCount(0);
     await expect(viewer.locator(".sermon-floating-button")).toHaveCount(0);
+    await expect(workspace.locator(".sermon-queue-view")).toBeVisible();
+    await expect(workspace.locator(".sermon-queue-item")).toHaveCount(4);
+    admin.once("dialog", (dialog) => dialog.accept());
+    await workspace.getByRole("button", { name: "退出并重新选择模式", exact: true }).click();
     await expect(viewer.locator(".sermon-hub-toast")).toContainText("演示已结束");
     await expect(workspace.locator(".sermon-start-view")).toBeVisible();
   } finally {
@@ -624,6 +656,7 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     await addButtonB.click();
     const genesisItem = workspaceB.locator(".sermon-queue-item").filter({ hasText: "创世记 1:1" });
     await genesisItem.locator(".sermon-queue-main").click();
+    await workspaceB.getByRole("button", { name: "开始演示", exact: true }).click();
     await expect(workspaceB.locator(".sermon-present-view")).toBeVisible();
     const noticeB = member.locator(".sermon-live-card", { hasText: `${E2E_ADMIN2.displayName} 正在讲道` });
     await expect(noticeB).toContainText("起初，神创造天地");
@@ -687,11 +720,9 @@ test("主持人移除观众与结束演示通知", async ({ browser }) => {
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
     await expect(overlay).toBeVisible();
 
-    // 结束演示：观众覆盖层关闭并收到结束通知，主持人回到开始屏。
-    await workspace.locator(".sermon-queue-item").first().locator(".sermon-queue-main").click();
-    await expect(workspace.locator(".sermon-present-view")).toBeVisible();
+    // 退出讲道台：观众覆盖层关闭并收到结束通知，主持人回到开始屏。
     admin.once("dialog", (dialog) => dialog.accept());
-    await workspace.getByRole("button", { name: "结束展示", exact: true }).click();
+    await workspace.getByRole("button", { name: "退出并重新选择模式", exact: true }).click();
     await expect(overlay).toHaveCount(0);
     await expect(member.locator(".sermon-hub-toast")).toContainText("演示已结束");
     await expect(workspace.locator(".sermon-start-view")).toBeVisible();
@@ -758,8 +789,9 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     await admin2.screenshot({ path: "output/e2e/sermon/assembly-overlay.png" });
 
     // 清理：主持人结束集会演示。
+    await reopened.getByRole("button", { name: "返回演示队列", exact: true }).click();
     member2.once("dialog", (dialog) => dialog.accept());
-    await reopened.getByRole("button", { name: "结束展示", exact: true }).click();
+    await reopened.getByRole("button", { name: "退出并重新选择模式", exact: true }).click();
     await expect(overlay).toHaveCount(0);
     await expect(admin2.locator(".sermon-hub-toast")).toContainText("演示已结束");
   } finally {

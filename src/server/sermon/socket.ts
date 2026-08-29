@@ -1,12 +1,14 @@
 import { z } from "zod";
 import type { Socket } from "socket.io";
-import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonStateDTO } from "../../shared/types.js";
+import type { SermonAnnotation, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonSlideLayoutDTO, SermonStateDTO } from "../../shared/types.js";
 import { lookupBibleReference } from "../bible/lookup.js";
 import { SermonPresentationError, SermonSeatConflictError, type PresentationRecord, type SermonPresentationService } from "./presentations.js";
 import {
   SERMON_FONT_FAMILIES,
   SERMON_FONT_SCALE_MAX,
   SERMON_FONT_SCALE_MIN,
+  SERMON_LINE_HEIGHT_MAX,
+  SERMON_LINE_HEIGHT_MIN,
   SERMON_MARGIN_PCT_MAX,
   SERMON_MARGIN_PCT_MIN,
   SERMON_QUEUE_LIMIT,
@@ -67,6 +69,14 @@ const addSchema = z
   );
 const updateSchema = z.object({ id: z.string().min(1).max(64), slide: slideInputSchema });
 const scrollSchema = z.object({ id: z.string().min(1).max(64), lines: z.number().int().min(0).max(10000) });
+const layoutSchema = z
+  .object({
+    id: z.string().min(1).max(64),
+    paragraph: z.boolean().optional(),
+    centered: z.boolean().optional()
+  })
+  .strict()
+  .refine((patch) => patch.paragraph !== undefined || patch.centered !== undefined);
 // 自由文字条目：剔除控制字符（保留换行/制表）后再校验长度与非空。
 const addTextSchema = z.object({
   texts: z
@@ -88,6 +98,7 @@ const displaySchema = z
   .object({
     fontFamily: z.enum(SERMON_FONT_FAMILIES).optional(),
     fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).optional(),
+    lineHeight: z.number().min(SERMON_LINE_HEIGHT_MIN).max(SERMON_LINE_HEIGHT_MAX).optional(),
     marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).optional(),
     background: z.string().refine(isValidSermonBackground).optional(),
     textColor: z.string().regex(SERMON_TEXT_COLOR_HEX_RE).optional()
@@ -479,6 +490,25 @@ export function registerSermonSocket(io: SermonSocketEmitter, socket: Socket, de
     }
     if (!knownItem(owned.record.store.getState().queue, parsed.data.id, ack)) return;
     await commit(ack, owned.accountId, () => owned.record.store.scroll(owned.actor, parsed.data.id, parsed.data.lines));
+  });
+
+  socket.on("sermon:layout", async (data: unknown, ack?: SermonAck) => {
+    const owned = await ownedPresentation(ack);
+    if (!owned) return;
+    const parsed = layoutSchema.safeParse(data);
+    if (!parsed.success) {
+      ack?.({ ok: false, message: "参数无效" });
+      return;
+    }
+    if (!knownItem(owned.record.store.getState().queue, parsed.data.id, ack)) return;
+    const { id, ...patch } = parsed.data;
+    await commit(
+      ack,
+      owned.accountId,
+      () => owned.record.store.layout(owned.actor, id, patch as Partial<SermonSlideLayoutDTO>),
+      undefined,
+      true
+    );
   });
 
   socket.on("sermon:add-text", async (data: unknown, ack?: SermonAck) => {

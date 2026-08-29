@@ -13,6 +13,7 @@ import type {
   SermonPresenterStatusDTO,
   SermonRemovedEvent,
   SermonSlideInput,
+  SermonSlideLayoutDTO,
   SermonStateDTO,
   SermonWatchAccountDTO
 } from "@shared/types";
@@ -336,6 +337,7 @@ export function useSermon(options: {
   const add = (slides: SermonSlideInput[]) => emit("sermon:add", { slides });
   const update = (id: string, slide: SermonSlideInput) => emit("sermon:update", { id, slide });
   const scroll = (id: string, lines: number) => emit("sermon:scroll", { id, lines });
+  const setLayout = (id: string, patch: Partial<SermonSlideLayoutDTO>) => emit("sermon:layout", { id, ...patch });
   const reorder = (order: string[]) => emit("sermon:reorder", { order });
   const remove = (id: string) => emit("sermon:remove", { id });
   const present = (id: string | null) => emit("sermon:present", { id });
@@ -419,6 +421,7 @@ export function useSermon(options: {
     add,
     update,
     scroll,
+    setLayout,
     reorder,
     remove,
     present,

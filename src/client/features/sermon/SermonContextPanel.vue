@@ -95,8 +95,8 @@ function handlePanelClick(event: MouseEvent) {
       <p v-if="!target" class="sermon-context-status">投影经文后，这里会显示所在章节的上下文。</p>
       <p v-else-if="loading" class="sermon-context-status">正在载入上下文…</p>
       <p v-else-if="error" class="sermon-context-status sermon-error" role="alert">{{ error }}</p>
-      <template v-else>
-        <p
+      <p v-else class="sermon-context-paragraph">
+        <span
           v-for="verse in chapter?.verses || []"
           :key="`${verse.book}-${verse.chapter}-${verse.verse}`"
           class="sermon-context-verse"
@@ -104,8 +104,8 @@ function handlePanelClick(event: MouseEvent) {
         >
           <sup>{{ verse.verse }}</sup>
           <span>{{ verse.text }}</span>
-        </p>
-      </template>
+        </span>
+      </p>
     </div>
     <small v-if="props.closeable" class="sermon-context-help">上下滚动查看；点按高亮经文以外的位置退出上下文。</small>
   </section>

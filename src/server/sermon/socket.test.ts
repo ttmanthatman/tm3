@@ -327,6 +327,7 @@ test("变更事件操作自己的演示：无演示拒绝、广播仅到房间�
     ["sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] }],
     ["sermon:update", { id: "id-1", slide: { blocks: [{ type: "text", content: "大纲" }] } }],
     ["sermon:scroll", { id: "id-1", lines: 1 }],
+    ["sermon:layout", { id: "id-1", paragraph: false }],
     ["sermon:add-text", { texts: [{ content: "引言" }] }],
     ["sermon:reorder", { order: [] }],
     ["sermon:remove", { id: "id-1" }],
@@ -355,6 +356,20 @@ test("变更事件操作自己的演示：无演示拒绝、广播仅到房间�
   assert.ok(stateEmits.every((entry) => entry.room === "sermon:7"), "状态只发到自己的演示房间");
   assert.equal(globalEmissions.filter((entry) => entry.event === "sermon:state").length, 0, "状态不做全局广播");
   assert.equal(globalEmissions.filter((entry) => entry.event === "sermon:directory").length, 1, "仅 start 触发目录广播");
+});
+
+test("sermon:layout 只更新指定幻灯片并校验非空补丁", async () => {
+  const { connect, service } = createHarness();
+  const presenter = connect(7);
+  await presenter.invoke("sermon:start", { scope: "group" });
+  await presenter.invoke("sermon:add", { slides: [{ blocks: [{ type: "reference", reference: "约3:16" }] }] });
+  const id = service.get(7)?.store.getState().queue[0].id;
+  assert.ok(id);
+
+  assert.equal((await presenter.invoke("sermon:layout", { id, paragraph: false, centered: true })).ok, true);
+  assert.deepEqual(service.get(7)?.store.getState().queue[0].layout, { paragraph: false, centered: true });
+  assert.equal((await presenter.invoke("sermon:layout", { id })).ok, false, "空补丁拒绝");
+  assert.equal((await presenter.invoke("sermon:layout", { id: "missing", centered: false })).ok, false, "未知页面拒绝");
 });
 
 test("两个讲道者并发：互不可见对方队列与广播", async () => {

@@ -7,16 +7,20 @@ import type {
   SermonAnnotationKind,
   SermonDisplayDTO,
   SermonQueueItem,
+  SermonSlideLayoutDTO,
   SermonSlideBlock,
   SermonPresentationScope,
   SermonSlideInput,
   SermonStateDTO,
   SermonTextInput
 } from "../../shared/types.js";
+import { defaultSermonSlideLayout, resolveSermonSlideLayout } from "../../shared/sermonSlideLayout.js";
 
 export const SERMON_QUEUE_LIMIT = 50;
 export const SERMON_FONT_SCALE_MIN = 0.7;
 export const SERMON_FONT_SCALE_MAX = 1.6;
+export const SERMON_LINE_HEIGHT_MIN = 1.1;
+export const SERMON_LINE_HEIGHT_MAX = 2.2;
 export const SERMON_MARGIN_PCT_MIN = 0;
 export const SERMON_MARGIN_PCT_MAX = 20;
 export const SERMON_FONT_FAMILIES = ["songti", "pingfang", "heiti", "kaiti"] as const;
@@ -28,6 +32,7 @@ export const DEFAULT_SERMON_TEXT_COLOR = "#f8f4e8";
 export const DEFAULT_SERMON_DISPLAY: SermonDisplayDTO = {
   fontFamily: "songti",
   fontScale: 1,
+  lineHeight: 1.6,
   marginPct: 4,
   background: "gradient",
   textColor: DEFAULT_SERMON_TEXT_COLOR
@@ -143,19 +148,21 @@ export function resolveSermonSlides(
   return { resolved, fallbacks };
 }
 
-function buildSlideItem(id: string, slide: SermonResolvedSlide): SermonQueueItem {
+function buildSlideItem(id: string, slide: SermonResolvedSlide, layout?: SermonSlideLayoutDTO): SermonQueueItem {
   const passages = slide.blocks.filter((block): block is Extract<SermonSlideBlock, { type: "passage" }> => block.type === "passage");
   const reference = passages.map((passage) => passage.reference).join("；");
+  const kind = passages.length ? "bible" : "text";
   return {
     id,
-    kind: passages.length ? "bible" : "text",
+    kind,
     reference: reference || "文字分享",
     normalizedReference: passages.map((passage) => passage.normalizedReference).join("；") || "文字分享",
     verses: slide.verses,
     annotations: [],
     blocks: slide.blocks,
     source: slide.source,
-    scrollLines: 0
+    scrollLines: 0,
+    layout: layout ?? defaultSermonSlideLayout(kind)
   };
 }
 
@@ -170,7 +177,7 @@ export function applyAdd(state: SermonStateDTO, slides: SermonResolvedSlide[], c
 export function applyUpdate(state: SermonStateDTO, id: string, slide: SermonResolvedSlide, ctx: SermonMutationContext): SermonStateDTO {
   const item = state.queue.find((entry) => entry.id === id);
   if (!item) return state;
-  return touch(replaceQueueItem(state, buildSlideItem(id, slide)), ctx);
+  return touch(replaceQueueItem(state, buildSlideItem(id, slide, resolveSermonSlideLayout(item))), ctx);
 }
 
 // 屏内滚动同步（Shift+↑/↓ 一行步进）：行数夹到非负整数。
@@ -180,6 +187,24 @@ export function applyScroll(state: SermonStateDTO, id: string, lines: number, ct
   const next = Math.max(0, Math.floor(lines));
   if (next === (item.scrollLines ?? 0)) return state;
   return touch(replaceQueueItem(state, { ...item, scrollLines: next }), ctx);
+}
+
+/** 逐页排版只更新明确提供的字段，兼容旧条目并保留队列内容。 */
+export function applyLayout(
+  state: SermonStateDTO,
+  id: string,
+  patch: Partial<SermonSlideLayoutDTO>,
+  ctx: SermonMutationContext
+): SermonStateDTO {
+  const item = state.queue.find((entry) => entry.id === id);
+  if (!item) return state;
+  const current = resolveSermonSlideLayout(item);
+  const layout = {
+    paragraph: patch.paragraph ?? current.paragraph,
+    centered: patch.centered ?? current.centered
+  };
+  if (layout.paragraph === current.paragraph && layout.centered === current.centered) return state;
+  return touch(replaceQueueItem(state, { ...item, layout }), ctx);
 }
 
 // 自由文字条目：不经过经文解析，正文为空的条目直接忽略；标题缺省时徽标显示“文字分享”。
@@ -197,7 +222,8 @@ export function applyAddTexts(state: SermonStateDTO, texts: SermonTextInput[], c
       verses: [],
       annotations: [],
       title,
-      content: entry.content
+      content: entry.content,
+      layout: defaultSermonSlideLayout("text")
     };
   });
   return touch({ ...state, queue: [...state.queue, ...items] }, ctx);
@@ -258,6 +284,13 @@ export function applyDisplay(state: SermonStateDTO, patch: Partial<SermonDisplay
     const clamped = Math.min(SERMON_FONT_SCALE_MAX, Math.max(SERMON_FONT_SCALE_MIN, Math.round(patch.fontScale * 10) / 10));
     if (clamped !== next.fontScale) {
       next.fontScale = clamped;
+      changed = true;
+    }
+  }
+  if (patch.lineHeight !== undefined && Number.isFinite(patch.lineHeight)) {
+    const clamped = Math.min(SERMON_LINE_HEIGHT_MAX, Math.max(SERMON_LINE_HEIGHT_MIN, Math.round(patch.lineHeight * 10) / 10));
+    if (clamped !== next.lineHeight) {
+      next.lineHeight = clamped;
       changed = true;
     }
   }
@@ -402,7 +435,8 @@ const queueItemSchema = z
     // 统一输入后的屏内有序内容；旧数据无此字段时按 verses/content 渲染。
     blocks: z.array(slideBlockSchema).optional(),
     source: z.string().max(8000).optional(),
-    scrollLines: z.number().int().min(0).optional()
+    scrollLines: z.number().int().min(0).optional(),
+    layout: z.object({ paragraph: z.boolean(), centered: z.boolean() }).optional()
   })
   .superRefine((item, context) => {
     if (item.kind === "text" && !item.content?.trim() && !item.blocks?.some((block) => block.type === "text" && block.content.trim())) {
@@ -422,6 +456,7 @@ const displaySchema = z.object({
   // 避免单个字段失效导致整个队列状态回退为空。
   fontFamily: z.enum(SERMON_FONT_FAMILIES).catch(DEFAULT_SERMON_DISPLAY.fontFamily),
   fontScale: z.number().min(SERMON_FONT_SCALE_MIN).max(SERMON_FONT_SCALE_MAX).default(DEFAULT_SERMON_DISPLAY.fontScale),
+  lineHeight: z.number().min(SERMON_LINE_HEIGHT_MIN).max(SERMON_LINE_HEIGHT_MAX).default(DEFAULT_SERMON_DISPLAY.lineHeight),
   marginPct: z.number().int().min(SERMON_MARGIN_PCT_MIN).max(SERMON_MARGIN_PCT_MAX).default(DEFAULT_SERMON_DISPLAY.marginPct),
   background: z.string().refine(isValidSermonBackground).default(DEFAULT_SERMON_DISPLAY.background),
   textColor: z.string().regex(SERMON_TEXT_COLOR_HEX_RE).default(DEFAULT_SERMON_TEXT_COLOR)
@@ -497,6 +532,8 @@ export function createSermonStateStore(deps: {
     addTexts: (actor: SermonActor, texts: SermonTextInput[]) => mutate(actor, (current, ctx) => applyAddTexts(current, texts, ctx)),
     update: (actor: SermonActor, id: string, slide: SermonResolvedSlide) => mutate(actor, (current, ctx) => applyUpdate(current, id, slide, ctx)),
     scroll: (actor: SermonActor, id: string, lines: number) => mutate(actor, (current, ctx) => applyScroll(current, id, lines, ctx)),
+    layout: (actor: SermonActor, id: string, patch: Partial<SermonSlideLayoutDTO>) =>
+      mutate(actor, (current, ctx) => applyLayout(current, id, patch, ctx)),
     reorder: (actor: SermonActor, order: string[]) => mutate(actor, (current, ctx) => applyReorder(current, order, ctx)),
     remove: (actor: SermonActor, id: string) => mutate(actor, (current, ctx) => applyRemove(current, id, ctx)),
     present: (actor: SermonActor, id: string | null) => mutate(actor, (current, ctx) => applyPresent(current, id, ctx)),

@@ -11,7 +11,7 @@ const contextPanel = readFileSync(new URL("./SermonContextPanel.vue", import.met
 const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
 
 test("late-mounted preview refs reconnect to ResizeObserver", () => {
-  assert.match(workspace, /watch\(\[projectorFrame, phoneFrame, nextFrame\], reconnectPreviewObserver, \{ flush: "post" \}\)/);
+  assert.match(workspace, /watch\(\[projectorFrame, phoneFrame\], reconnectPreviewObserver, \{ flush: "post" \}\)/);
   assert.match(workspace, /sermonPreviewScale\(projector\.clientWidth, projector\.clientHeight/);
 });
 
@@ -90,19 +90,46 @@ test("workspace explains split scriptures, exposes invite scope and previews the
   assert.match(workspace, /"全员集会" : "小组演示"/);
   assert.match(workspace, />全选（\{\{ inviteCandidates\.length \}\} 人）</);
   assert.match(workspace, /<h3>下一页<\/h3>/);
-  assert.match(workspace, /<SermonStage :item="nextItem"/);
+  assert.match(workspace, /<SermonPlainPreview v-if="nextItem" :item="nextItem"/);
+  assert.doesNotMatch(workspace, /<SermonStage :item="nextItem"/);
   assert.match(workspace, /startScope === 'group' && presenterStatus\?\.canPresent/);
   assert.match(workspace, /startScope\.value === "group" \? selectedInviteIds\.value : \[\]/);
   assert.match(workspace, />退出并重新选择模式<\/button>/);
 });
 
+test("queue selection rehearses locally and explicit controls start or stop audience presentation", () => {
+  assert.match(workspace, /function selectPreview\(item: SermonQueueItem\)/);
+  assert.match(workspace, /function startSelectedPresentation\(\)/);
+  assert.match(workspace, /function stopPresentation\(\)/);
+  assert.match(workspace, />开始演示<\/button>/);
+  assert.match(workspace, />结束演示<\/button>/);
+  assert.match(workspace, /@click="selectPreview\(item\)"/);
+  assert.doesNotMatch(workspace, /@click="enterPresent\(item\)"/);
+});
+
+test("every queue slide exposes its applicable layout options", () => {
+  assert.match(workspace, />段落显示<\/span>/);
+  assert.match(workspace, />居中显示<\/span>/);
+  assert.match(workspace, /sermon\.setLayout\(item\.id, patch\)/);
+});
+
+test("stage hides text badges and puts centered scripture references after the body", () => {
+  assert.match(stage, /props\.item\.kind !== "text"/);
+  assert.match(stage, /referenceAfterBody/);
+  assert.match(stage, /sermon-centered-reference/);
+  assert.match(stage, /sermon-layout-paragraph/);
+  assert.match(stage, /sermon-layout-centered/);
+});
+
 test("presenter preview and audience long press expose local scripture context", () => {
-  assert.match(workspace, /sermon-context-preview[\s\S]*?<SermonContextPanel :verses="currentItem\?\.verses \|\| \[\]" compact/);
+  assert.match(workspace, /sermon-context-preview[\s\S]*?<SermonContextPanel :verses="previewItem\?\.verses \|\| \[\]" compact/);
   assert.match(stage, /setTimeout\(\(\) => \{[\s\S]*?emit\("verse-hold", verse\)[\s\S]*?\}, 520\)/);
   assert.match(overlay, /@click\.self="contextVerses = \[\]"[\s\S]*?enable-verse-hold[\s\S]*?@verse-hold="showContext"/);
   assert.match(contextPanel, /\/api\/bible\/lookup\?reference=/);
   assert.match(contextPanel, /sermon-context-current/);
-  assert.match(css, /\.sermon-context-current \{[\s\S]*?border-left-color: #22c55e[\s\S]*?background: rgba\(250, 204, 21, 0\.78\)/);
+  assert.match(contextPanel, /class="sermon-context-paragraph"/);
+  assert.doesNotMatch(contextPanel, /<p\s+v-for="verse in chapter\?\.verses/);
+  assert.match(css, /\.sermon-context-current \{[\s\S]*?border-bottom-color: #22c55e[\s\S]*?background: rgba\(250, 204, 21, 0\.78\)/);
 });
 
 test("mobile presentation controls remain scrollable without covering the scripture stage", () => {

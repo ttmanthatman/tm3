@@ -11,6 +11,7 @@ import {
 const display: SermonDisplayDTO = {
   fontFamily: "songti",
   fontScale: 1,
+  lineHeight: 1.6,
   marginPct: 4,
   background: "gradient"
 };

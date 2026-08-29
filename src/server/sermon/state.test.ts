@@ -7,6 +7,8 @@ import {
   SERMON_FONT_SCALE_MIN,
   SERMON_MARGIN_PCT_MAX,
   SERMON_MARGIN_PCT_MIN,
+  SERMON_LINE_HEIGHT_MAX,
+  SERMON_LINE_HEIGHT_MIN,
   SERMON_QUEUE_LIMIT,
   applyAdd,
   applyAddTexts,
@@ -14,6 +16,7 @@ import {
   applyAnnotateClear,
   applyClear,
   applyDisplay,
+  applyLayout,
   applyPresent,
   applyRemove,
   applyReorder,
@@ -82,6 +85,7 @@ test("applyAdd 追加条目并生成 id，更新 presenter 信息", () => {
   assert.equal(state.updatedAt, NOW);
   assert.equal(state.active, false);
   assert.equal(state.currentItemId, null);
+  assert.deepEqual(state.queue[0].layout, { paragraph: true, centered: false }, "经文默认段落显示且不居中");
 });
 
 test("applyAdd 受队列上限约束", () => {
@@ -114,6 +118,7 @@ test("applyAddTexts 添加文字条目：不解析经文、标题可选、空正
   assert.deepEqual(state.queue[0].annotations, []);
   assert.equal(state.queue[1].title, undefined);
   assert.equal(state.queue[1].normalizedReference, "文字分享");
+  assert.deepEqual(state.queue[0].layout, { paragraph: true, centered: true }, "文字幻灯片默认居中");
   assert.equal(state.presenterId, "7");
   assert.equal(applyAddTexts(state, [], ctx()), state, "空列表无操作");
 });
@@ -263,13 +268,34 @@ test("applyDisplay 更新倍率并夹取/取整；非法与相同值视为无操
   assert.equal(applyDisplay(state, { fontScale: Number.NaN }, ctx()), state, "非有限数值不变更");
 });
 
+test("applyDisplay 更新行距并按 0.1 步进夹取", () => {
+  const state = emptySermonState();
+  assert.equal(state.display.lineHeight, 1.6);
+  assert.equal(applyDisplay(state, { lineHeight: 1.3 }, ctx()).display.lineHeight, 1.3);
+  assert.equal(applyDisplay(state, { lineHeight: 0.5 }, ctx()).display.lineHeight, SERMON_LINE_HEIGHT_MIN);
+  assert.equal(applyDisplay(state, { lineHeight: 3 }, ctx()).display.lineHeight, SERMON_LINE_HEIGHT_MAX);
+  assert.equal(applyDisplay(state, { lineHeight: 1.34 }, ctx()).display.lineHeight, 1.3);
+});
+
+test("applyLayout 逐页更新段落与居中选项，并保留到热编辑后的同一页", () => {
+  const context = ctx();
+  const state = applyAdd(emptySermonState(), [slide("约3:16")], context);
+  const laidOut = applyLayout(state, "id-1", { paragraph: false, centered: true }, ctx());
+  assert.deepEqual(laidOut.queue[0].layout, { paragraph: false, centered: true });
+  assert.equal(applyLayout(laidOut, "missing", { centered: false }, ctx()), laidOut);
+  assert.equal(applyLayout(laidOut, "id-1", { centered: true }, ctx()), laidOut, "相同值不重复写入");
+
+  const edited = applyUpdate(laidOut, "id-1", textSlide("改为文字"), ctx());
+  assert.deepEqual(edited.queue[0].layout, { paragraph: false, centered: true }, "热编辑保留该页排版");
+});
+
 test("applyDisplay 按字段合并：字体族、边距、背景与文字颜色", () => {
   const state = emptySermonState();
   const patched = applyDisplay(state, { fontFamily: "songti", marginPct: 12, background: "sepia", textColor: "#3f3222" }, ctx());
-  assert.deepEqual(patched.display, { fontFamily: "songti", fontScale: 1, marginPct: 12, background: "sepia", textColor: "#3f3222" });
+  assert.deepEqual(patched.display, { fontFamily: "songti", fontScale: 1, lineHeight: 1.6, marginPct: 12, background: "sepia", textColor: "#3f3222" });
 
   const merged = applyDisplay(patched, { fontScale: 1.3 }, ctx());
-  assert.deepEqual(merged.display, { fontFamily: "songti", fontScale: 1.3, marginPct: 12, background: "sepia", textColor: "#3f3222" }, "未提供的字段保持不变");
+  assert.deepEqual(merged.display, { fontFamily: "songti", fontScale: 1.3, lineHeight: 1.6, marginPct: 12, background: "sepia", textColor: "#3f3222" }, "未提供的字段保持不变");
 
   assert.equal(applyDisplay(state, { marginPct: -1 }, ctx()).display.marginPct, SERMON_MARGIN_PCT_MIN, "边距低于下限夹到 0");
   assert.equal(applyDisplay(state, { marginPct: 0 }, ctx()).display.marginPct, 0, "边距可以完全归零");

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
-import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput } from "@shared/types";
+import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput, SermonSlideLayoutDTO } from "@shared/types";
+import { resolveSermonSlideLayout } from "@shared/sermonSlideLayout";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
@@ -13,6 +14,7 @@ import { parseSermonInput } from "./sermonInput";
 import { allSermonCandidatesSelected, matchingSermonPlan, nextSermonQueueItem } from "./sermonWorkspaceState";
 import SermonContextPanel from "./SermonContextPanel.vue";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
+import SermonPlainPreview from "./SermonPlainPreview.vue";
 import SermonStage from "./SermonStage.vue";
 import { useSermon, type SermonEmitResult } from "./useSermon";
 
@@ -42,8 +44,28 @@ const queue = computed(() => sermonState.value?.queue || []);
 const currentItemId = computed(() => sermonState.value?.currentItemId || null);
 const currentItem = computed<SermonQueueItem | null>(() => queue.value.find((item) => item.id === currentItemId.value) || null);
 const currentIndex = computed(() => queue.value.findIndex((item) => item.id === currentItemId.value));
-const nextItem = computed(() => nextSermonQueueItem(queue.value, currentItemId.value));
+const selectedItemId = ref<string | null>(null);
+const previewItem = computed<SermonQueueItem | null>(() =>
+  queue.value.find((item) => item.id === selectedItemId.value)
+  || currentItem.value
+  || queue.value[0]
+  || null
+);
+const nextItem = computed(() => nextSermonQueueItem(queue.value, previewItem.value?.id ?? null));
+const previewPresenterName = computed(() =>
+  previewItem.value?.id === currentItemId.value && sermonState.value?.active
+    ? sermonState.value.presenterName
+    : ""
+);
 const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
+
+watch(currentItemId, (id) => {
+  if (id) selectedItemId.value = id;
+}, { immediate: true });
+
+watch(queue, (items) => {
+  if (selectedItemId.value && !items.some((item) => item.id === selectedItemId.value)) selectedItemId.value = null;
+});
 
 const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
 const shortcutHint = computed(() => (isMac ? "⌘+Enter 加入队列" : "Ctrl+Enter 加入队列"));
@@ -55,10 +77,8 @@ const PREVIEW_PHONE_BASE_WIDTH = 390;
 const PREVIEW_PHONE_BASE_HEIGHT = 845;
 const projectorFrame = ref<HTMLElement | null>(null);
 const phoneFrame = ref<HTMLElement | null>(null);
-const nextFrame = ref<HTMLElement | null>(null);
 const projectorScale = ref(0.3);
 const phoneScale = ref(0.3);
-const nextScale = ref(0.3);
 let previewObserver: ResizeObserver | null = null;
 
 function updatePreviewScales() {
@@ -72,11 +92,6 @@ function updatePreviewScales() {
     const next = sermonPreviewScale(phone.clientWidth, phone.clientHeight, PREVIEW_PHONE_BASE_WIDTH, PREVIEW_PHONE_BASE_HEIGHT);
     if (next > 0) phoneScale.value = next;
   }
-  const following = nextFrame.value;
-  if (following) {
-    const next = sermonPreviewScale(following.clientWidth, following.clientHeight, PREVIEW_PROJECTOR_BASE_WIDTH, PREVIEW_PROJECTOR_BASE_HEIGHT);
-    if (next > 0) nextScale.value = next;
-  }
 }
 
 function reconnectPreviewObserver() {
@@ -84,7 +99,6 @@ function reconnectPreviewObserver() {
   previewObserver.disconnect();
   if (projectorFrame.value) previewObserver.observe(projectorFrame.value);
   if (phoneFrame.value) previewObserver.observe(phoneFrame.value);
-  if (nextFrame.value) previewObserver.observe(nextFrame.value);
   updatePreviewScales();
 }
 
@@ -94,7 +108,7 @@ onMounted(() => {
 });
 
 // 预览只在演示创建后挂载；监听 template refs，避免 onMounted 时为空而永远停在 0.3×。
-watch([projectorFrame, phoneFrame, nextFrame], reconnectPreviewObserver, { flush: "post" });
+watch([projectorFrame, phoneFrame], reconnectPreviewObserver, { flush: "post" });
 
 onBeforeUnmount(() => previewObserver?.disconnect());
 
@@ -368,18 +382,36 @@ function moveItem(itemId: string, direction: -1 | 1) {
   void report(sermon.reorder(order));
 }
 
-/** 队列屏点击条目：推送给观众并进入演示视图（已展示的条目直接进入）。 */
-function enterPresent(item: SermonQueueItem) {
-  view.value = "present";
+/** 队列点击只选择本地预览，不会向观众广播。 */
+function selectPreview(item: SermonQueueItem) {
+  selectedItemId.value = item.id;
   verseMenu.value = null;
   selectionOffer.value = null;
   editing.value = false;
-  if (item.id !== currentItemId.value) void report(sermon.present(item.id));
+}
+
+async function startSelectedPresentation() {
+  const item = previewItem.value;
+  if (!item) return;
+  const outcome = await report(sermon.present(item.id));
+  if (outcome.ok && window.matchMedia("(max-width: 1023.98px)").matches) view.value = "present";
+}
+
+async function stopPresentation() {
+  const outcome = await report(sermon.present(null));
+  if (outcome.ok) view.value = "queue";
+}
+
+function updateItemLayout(item: SermonQueueItem, patch: Partial<SermonSlideLayoutDTO>) {
+  void report(sermon.setLayout(item.id, patch));
 }
 
 function presentRelative(direction: -1 | 1) {
   const target = queue.value[currentIndex.value + direction];
-  if (target) void report(sermon.present(target.id));
+  if (target) {
+    selectedItemId.value = target.id;
+    void report(sermon.present(target.id));
+  }
 }
 
 function updateDisplay(patch: Partial<SermonDisplayDTO>) {
@@ -430,6 +462,8 @@ async function flushPendingScroll() {
 
 function requestScroll(direction: SermonScrollDirection, delay = 0): boolean {
   const item = currentItem.value;
+  // 队列里选中另一页排练时，不应误滚动仍在向观众展示的页面。
+  if (view.value === "queue" && previewItem.value?.id !== item?.id) return false;
   const maxLines = presentMaxScrollLines();
   if (!item || maxLines <= 0) return false;
   const current = requestedScroll?.itemId === item.id ? requestedScroll.lines : (item.scrollLines ?? 0);
@@ -657,10 +691,31 @@ function annotateSelection() {
         </section>
 
         <section class="sermon-block">
-          <h3>讲道队列<small v-if="queue.length">（{{ queue.length }}）</small></h3>
-          <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文或文字后，点击条目进入演示并推送给已入座的观众。</p>
-          <div v-for="(item, index) in queue" :key="item.id" class="sermon-queue-item" :class="{ current: item.id === currentItemId }">
-            <button class="sermon-queue-main" type="button" @click="enterPresent(item)">
+          <div class="sermon-queue-heading">
+            <h3>讲道队列<small v-if="queue.length">（{{ queue.length }}）</small></h3>
+            <div class="sermon-queue-presentation-actions">
+              <button
+                class="mini-btn primary"
+                type="button"
+                :disabled="!previewItem || sermon.pending.value || (sermonState?.active && previewItem.id === currentItemId)"
+                @click="startSelectedPresentation"
+              >开始演示</button>
+              <button
+                class="mini-btn danger-soft"
+                type="button"
+                :disabled="!sermonState?.active || sermon.pending.value"
+                @click="stopPresentation"
+              >结束演示</button>
+            </div>
+          </div>
+          <p v-if="!queue.length" class="sermon-hint">队列为空。添加经文或文字后可先选择条目预览，确认后再开始演示。</p>
+          <div
+            v-for="(item, index) in queue"
+            :key="item.id"
+            class="sermon-queue-item"
+            :class="{ current: item.id === currentItemId, selected: item.id === previewItem?.id }"
+          >
+            <button class="sermon-queue-main" type="button" @click="selectPreview(item)">
               <span class="sermon-queue-title">
                 <em v-if="item.id === currentItemId" class="sermon-live">展示中</em>
                 <strong>{{ item.normalizedReference }}</strong>
@@ -671,6 +726,24 @@ function annotateSelection() {
               <button class="mini-icon-btn" type="button" :disabled="index === 0" aria-label="上移" @click="moveItem(item.id, -1)"><ArrowUp :size="15" /></button>
               <button class="mini-icon-btn" type="button" :disabled="index === queue.length - 1" aria-label="下移" @click="moveItem(item.id, 1)"><ArrowDown :size="15" /></button>
               <button class="mini-icon-btn" type="button" aria-label="删除" @click="report(sermon.remove(item.id))"><Trash2 :size="15" /></button>
+            </div>
+            <div class="sermon-queue-layout-options" @click.stop>
+              <label v-if="item.verses.length">
+                <input
+                  type="checkbox"
+                  :checked="resolveSermonSlideLayout(item).paragraph"
+                  @change="updateItemLayout(item, { paragraph: ($event.target as HTMLInputElement).checked })"
+                />
+                <span>段落显示</span>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  :checked="resolveSermonSlideLayout(item).centered"
+                  @change="updateItemLayout(item, { centered: ($event.target as HTMLInputElement).checked })"
+                />
+                <span>居中显示</span>
+              </label>
             </div>
           </div>
         </section>
@@ -733,7 +806,7 @@ function annotateSelection() {
               <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
                 <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">
-                    <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" />
                   </div>
                 </div>
               </div>
@@ -745,7 +818,7 @@ function annotateSelection() {
               <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
                 <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">
-                    <SermonStage :item="currentItem" :presenter-name="sermonState?.presenterName || ''" />
+                    <SermonStage :item="previewItem" :presenter-name="previewPresenterName" />
                   </div>
                 </div>
               </div>
@@ -754,24 +827,11 @@ function annotateSelection() {
         </div>
         <section class="sermon-preview-block sermon-next-preview">
           <h3>下一页</h3>
-          <div
-            v-if="nextItem"
-            ref="nextFrame"
-            class="sermon-preview-frame projector"
-            :style="{ background: sermonBackgroundPaint(display.background) }"
-          >
-            <div class="sermon-preview-scale projector" :style="{ transform: `scale(${nextScale})` }">
-              <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
-                <div class="sermon-overlay-card">
-                  <SermonStage :item="nextItem" :presenter-name="sermonState?.presenterName || ''" />
-                </div>
-              </div>
-            </div>
-          </div>
+          <SermonPlainPreview v-if="nextItem" :item="nextItem" />
           <p v-else class="sermon-next-empty">已经是最后一页</p>
         </section>
         <section class="sermon-preview-block sermon-context-preview">
-          <SermonContextPanel :verses="currentItem?.verses || []" compact />
+          <SermonContextPanel :verses="previewItem?.verses || []" compact />
         </section>
       </aside>
     </main>
@@ -891,7 +951,7 @@ function annotateSelection() {
         <div class="sermon-present-controls-row">
           <button class="mini-btn secondary" type="button" @click="openEditor"><Pencil :size="14" />编辑本屏</button>
           <button class="mini-btn secondary" type="button" @click="view = 'queue'">返回演示队列</button>
-          <button class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="endPresentation">结束展示</button>
+          <button class="mini-btn danger-soft" type="button" :disabled="sermon.pending.value" @click="stopPresentation">结束演示</button>
         </div>
         <p class="sermon-hint">Shift+↑/↓ 屏内滚动一行（观众端同步）</p>
         <p v-if="actionError || sermon.statusMessage.value" class="sermon-error" role="alert">{{ actionError || sermon.statusMessage.value }}</p>
@@ -1120,6 +1180,11 @@ function annotateSelection() {
 }
 
 @media (max-width: 560px) {
+  .sermon-queue-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
   .sermon-input-options {
     align-items: stretch;
     flex-direction: column;

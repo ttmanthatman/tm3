@@ -4,6 +4,7 @@ import type { SermonDisplayDTO } from "@shared/types";
 export const SERMON_DISPLAY_FALLBACK: SermonDisplayDTO = {
   fontFamily: "songti",
   fontScale: 1,
+  lineHeight: 1.6,
   marginPct: 4,
   background: "gradient",
   textColor: "#f8f4e8"
@@ -26,6 +27,7 @@ export function sermonDisplayStyle(display: SermonDisplayDTO): Record<string, st
   const textColor = display.textColor ?? (display.background.startsWith("#") && isLightSermonBackground(display.background) ? "#1f2937" : "#f8f4e8");
   const style: Record<string, string> = {
     "--sermon-font-scale": String(display.fontScale),
+    "--sermon-line-height": String(display.lineHeight ?? SERMON_DISPLAY_FALLBACK.lineHeight),
     "--sermon-margin-pct": String(display.marginPct),
     "--sermon-fg": textColor
   };
