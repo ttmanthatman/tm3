@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowDown, ArrowUp, ChevronRight, Eraser, Highlighter, Pencil, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, ChevronLeft, Eraser, Highlighter, Pencil, Plus, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
 import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { SERMON_DISPLAY_FALLBACK, sermonDisplayAttrs, sermonDisplayStyle } from "./sermonDisplay";
 import { sermonPreviewScale } from "./sermonPreview";
+import { nextSermonScrollLine, sermonWheelDirection, type SermonScrollDirection } from "./sermonScroll";
 import { verseHasAnnotation } from "./sermonText";
+import { sermonBackgroundPaint } from "./sermonThemes";
 import { parseSermonInput } from "./sermonInput";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
 import SermonStage from "./SermonStage.vue";
@@ -186,6 +188,7 @@ async function inviteMore() {
 async function report(result: Promise<SermonEmitResult>) {
   const outcome = await result;
   actionError.value = outcome.ok ? "" : outcome.message || "操作失败";
+  return outcome;
 }
 
 function formatErrors(result: SermonEmitResult) {
@@ -313,33 +316,73 @@ async function endPresentation() {
   view.value = "queue";
 }
 
-// —— 演示视图内屏内滚动（Shift+↑/↓ 一行步进，位置同步给观众端） ——
+// —— 当前屏屏内滚动（桌面预览与移动演示视图共用，位置同步给观众端） ——
 
 function presentMaxScrollLines(): number {
-  const body = document.querySelector<HTMLElement>(".sermon-present-stage .sermon-overlay-body");
+  // 桌面端的演示视图会被 CSS 隐藏，应以实际可见的投影预览计算；移动端则回退到演示舞台。
+  const previewBody = projectorFrame.value?.querySelector<HTMLElement>(".sermon-overlay-body");
+  const body = previewBody && projectorFrame.value?.clientHeight ? previewBody : document.querySelector<HTMLElement>(".sermon-present-stage .sermon-overlay-body");
   const passage = body?.querySelector<HTMLElement>(".sermon-passage");
   if (!body || !passage) return 0;
   const lineHeight = Number.parseFloat(getComputedStyle(passage).lineHeight) || passage.getBoundingClientRect().height;
   if (!lineHeight) return 0;
-  return Math.floor((body.scrollHeight - body.clientHeight) / lineHeight);
+  return Math.ceil((body.scrollHeight - body.clientHeight) / lineHeight);
+}
+
+let pendingScroll: { itemId: string; lines: number } | null = null;
+let requestedScroll: { itemId: string; lines: number } | null = null;
+let scrollTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function flushPendingScroll() {
+  scrollTimer = null;
+  const target = pendingScroll;
+  pendingScroll = null;
+  if (!target) return;
+  const outcome = await report(sermon.scroll(target.itemId, target.lines));
+  if (!outcome.ok && requestedScroll?.itemId === target.itemId) {
+    requestedScroll = null;
+    pendingScroll = null;
+    return;
+  }
+  if (pendingScroll && !scrollTimer) {
+    scrollTimer = setTimeout(flushPendingScroll, 0);
+  } else {
+    const item = currentItem.value;
+    requestedScroll = item ? { itemId: item.id, lines: item.scrollLines === target.lines ? item.scrollLines : target.lines } : null;
+  }
+}
+
+function requestScroll(direction: SermonScrollDirection, delay = 0): boolean {
+  const item = currentItem.value;
+  const maxLines = presentMaxScrollLines();
+  if (!item || maxLines <= 0) return false;
+  const current = requestedScroll?.itemId === item.id ? requestedScroll.lines : (item.scrollLines ?? 0);
+  const next = nextSermonScrollLine(current, maxLines, direction);
+  if (next === current) return false;
+  requestedScroll = pendingScroll = { itemId: item.id, lines: next };
+  if (scrollTimer) clearTimeout(scrollTimer);
+  scrollTimer = setTimeout(flushPendingScroll, delay);
+  return true;
 }
 
 function handlePresentKeydown(event: KeyboardEvent) {
-  if (view.value !== "present" || !event.shiftKey) return;
+  if (!hasOwnPresentation.value || !event.shiftKey) return;
   if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
   const target = event.target as HTMLElement | null;
   if (target && (target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)) return;
-  const item = currentItem.value;
-  const maxLines = presentMaxScrollLines();
-  if (!item || maxLines <= 0) return;
-  event.preventDefault();
-  const current = item.scrollLines ?? 0;
-  const next = Math.min(maxLines, Math.max(0, current + (event.key === "ArrowDown" ? 1 : -1)));
-  if (next !== current) void report(sermon.scroll(item.id, next));
+  if (requestScroll(event.key === "ArrowDown" ? 1 : -1)) event.preventDefault();
+}
+
+function handlePreviewWheel(event: WheelEvent) {
+  const direction = sermonWheelDirection(event.deltaY);
+  if (direction && requestScroll(direction, 60)) event.preventDefault();
 }
 
 onMounted(() => window.addEventListener("keydown", handlePresentKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", handlePresentKeydown));
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", handlePresentKeydown);
+  if (scrollTimer) clearTimeout(scrollTimer);
+});
 
 // —— 演示视图内热编辑（按原文重编辑当前屏，保存后重解析并推送） ——
 
@@ -463,11 +506,11 @@ function annotateSelection() {
 <template>
   <section class="sermon-workspace" :class="{ open: props.open }" :aria-hidden="!props.open" :inert="!props.open">
     <header class="sermon-workspace-topbar">
+      <button class="sermon-topbar-button" type="button" @click="emit('close')"><ChevronLeft :size="20" />聊天</button>
       <div class="sermon-workspace-title">
         <strong>讲道台</strong>
         <small v-if="presenterUntilText">{{ presenterUntilText }}</small>
       </div>
-      <button class="sermon-topbar-button" type="button" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
     </header>
 
     <main v-if="hasOwnPresentation" class="sermon-workspace-body sermon-queue-view" :class="{ 'mobile-hidden': view !== 'queue' }">
@@ -566,7 +609,7 @@ function annotateSelection() {
         <div class="sermon-preview-grid">
           <section class="sermon-preview-block projector-preview">
             <h3>投影预览</h3>
-            <div ref="projectorFrame" class="sermon-preview-frame projector">
+            <div ref="projectorFrame" class="sermon-preview-frame projector" :style="{ background: sermonBackgroundPaint(display.background) }" @wheel="handlePreviewWheel">
               <div class="sermon-preview-scale projector" :style="{ transform: `scale(${projectorScale})` }">
                 <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">
@@ -578,7 +621,7 @@ function annotateSelection() {
           </section>
           <section class="sermon-preview-block phone-preview">
             <h3>手机预览</h3>
-            <div ref="phoneFrame" class="sermon-preview-frame phone">
+            <div ref="phoneFrame" class="sermon-preview-frame phone" :style="{ background: sermonBackgroundPaint(display.background) }" @wheel="handlePreviewWheel">
               <div class="sermon-preview-scale phone" :style="{ transform: `scale(${phoneScale})` }">
                 <div class="sermon-overlay sermon-preview-stage phone" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
                   <div class="sermon-overlay-card">

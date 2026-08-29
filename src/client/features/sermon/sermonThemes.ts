@@ -28,3 +28,8 @@ export function sermonThemePatch(preset: SermonBackgroundPreset): Pick<SermonDis
 export function pairedSermonTextColor(background: string): string {
   return SERMON_BG_PRESETS.find((preset) => preset.value === background)?.textColor ?? "#f8f4e8";
 }
+
+/** 预览框缩放取整时可能露出不足一像素的底色，外框应使用与舞台一致的背景。 */
+export function sermonBackgroundPaint(background: string): string {
+  return SERMON_BG_PRESETS.find((preset) => preset.value === background)?.chip ?? background;
+}

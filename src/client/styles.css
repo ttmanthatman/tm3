@@ -12207,7 +12207,8 @@ button.admin-object-row:focus-visible {
 }
 
 .sermon-overlay-card {
-  width: min(880px, 100%);
+  width: 100%;
+  min-height: 0;
   max-height: 100%;
   box-sizing: border-box;
   display: grid;
@@ -12466,7 +12467,7 @@ button.admin-object-row:focus-visible {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #0f172a;
+  background: var(--panel, #fff);
 }
 
 .sermon-preview-frame.projector { aspect-ratio: 16 / 9; }
@@ -12492,6 +12493,16 @@ button.admin-object-row:focus-visible {
   display: grid;
   place-items: center;
   overflow: hidden;
+}
+
+/* 预览由键盘/悬停滚轮驱动，保留滚动能力但不显示额外滚动条。 */
+.sermon-preview-stage .sermon-overlay-body {
+  scrollbar-width: none;
+}
+
+.sermon-preview-stage .sermon-overlay-body::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* 预览按基准宽度排字：投影 1280px 命中 34px 上限，手机 390px 对应 6vw = 23.4px。 */

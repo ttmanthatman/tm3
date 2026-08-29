@@ -315,6 +315,17 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     // 观众端 1280px 桌面宽度检查。
     await viewer.setViewportSize({ width: 1280, height: 844 });
     await expect(overlay).toBeVisible();
+    // 桌面版心按完整舞台宽度计算；旧的 880px 卡片上限会让此比例只有约 70%。
+    await expect
+      .poll(() =>
+        overlay.evaluate((el) => {
+          const card = el.querySelector<HTMLElement>(".sermon-overlay-card");
+          const style = getComputedStyle(el);
+          const contentWidth = el.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return card ? card.getBoundingClientRect().width / contentWidth : 0;
+        })
+      )
+      .toBeGreaterThan(0.98);
     await viewer.screenshot({ path: "output/e2e/sermon/overlay-1280.png" });
     await viewer.setViewportSize({ width: 390, height: 844 });
 
@@ -379,6 +390,27 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(projectorPreview).toHaveAttribute("data-sermon-font", "songti");
     await expect(projectorPreview).toHaveAttribute("data-sermon-bg", "midnight");
     await expect(phonePreview).toHaveAttribute("data-sermon-font", "songti");
+    await expect(workspace.locator(".sermon-preview-frame.projector")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    await expect(workspace.locator(".sermon-preview-frame.phone")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    const chatBox = await workspace.getByRole("button", { name: "聊天", exact: true }).boundingBox();
+    const titleBox = await workspace.locator(".sermon-workspace-title").boundingBox();
+    expect(chatBox && titleBox && chatBox.x < titleBox.x).toBeTruthy();
+
+    // 桌面队列页用可见投影预览计算可滚动行数；键盘与悬停滚轮都同步当前屏。
+    await workspace.locator(".sermon-reference-input").fill("马太3:3-10");
+    await workspace.getByRole("button", { name: "加入队列", exact: true }).click();
+    const longItem = workspace.locator(".sermon-queue-item").filter({ hasText: "马太福音 3:3-10" });
+    await longItem.locator(".sermon-queue-main").click();
+    const projectorBody = projectorPreview.locator(".sermon-overlay-body");
+    await expect.poll(() => projectorBody.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+    const initialScroll = await projectorBody.evaluate((el) => el.scrollTop);
+    await admin.keyboard.press("Shift+ArrowDown");
+    await expect.poll(() => projectorBody.evaluate((el) => el.scrollTop)).toBeGreaterThan(initialScroll);
+    const keyboardScroll = await projectorBody.evaluate((el) => el.scrollTop);
+    await workspace.locator(".sermon-preview-frame.projector").hover();
+    await admin.mouse.wheel(0, 120);
+    await expect.poll(() => projectorBody.evaluate((el) => el.scrollTop)).toBeGreaterThan(keyboardScroll);
+    await expect(workspace.locator(".sermon-preview-frame.projector")).toHaveCSS("overflow", "hidden");
     await admin.screenshot({ path: "output/e2e/sermon/presenter-desktop-1440.png" });
     await admin.setViewportSize({ width: 390, height: 844 });
     await expect(presentView).toBeVisible();
@@ -389,7 +421,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     const textAddButton = workspace.getByRole("button", { name: "加入队列", exact: true });
     await expect(textAddButton).toBeEnabled();
     await textAddButton.click();
-    await expect(workspace.locator(".sermon-queue-item")).toHaveCount(3);
+    await expect(workspace.locator(".sermon-queue-item")).toHaveCount(4);
     const textItem = workspace.locator(".sermon-queue-item").filter({ hasText: "文字分享" });
     await expect(textItem).toContainText("文字");
     await textItem.locator(".sermon-queue-main").click();
