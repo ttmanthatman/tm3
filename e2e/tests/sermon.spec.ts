@@ -117,7 +117,7 @@ async function deleteAccount(request: APIRequestContext, token: string, username
 
 // —— 二期流程 helpers ——
 
-/** 开始屏 → 勾选受邀观众（可选）→ 开始演示，进入队列屏。 */
+/** 开始屏 → 勾选受邀观众（可选）→ 进入自己的讲道台，进入队列屏。 */
 async function startGroupPresentation(workspace: Locator, inviteDisplayName?: string) {
   await expect(workspace.locator(".sermon-start-view")).toBeVisible();
   await expect(workspace.getByRole("radio", { name: /小组演示/ })).toBeChecked();
@@ -126,7 +126,9 @@ async function startGroupPresentation(workspace: Locator, inviteDisplayName?: st
     await expect(row).toBeVisible();
     await row.locator('input[type="checkbox"]').check();
   }
-  await workspace.getByRole("button", { name: "开始演示", exact: true }).click();
+  const enterOwnButton = workspace.getByRole("button", { name: "进入自己的讲道台", exact: true });
+  await expect(enterOwnButton).toBeEnabled();
+  await enterOwnButton.click();
   await expect(workspace.locator(".sermon-queue-view")).toBeVisible();
 }
 
@@ -714,7 +716,7 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
 
     // 无授权成员：开始屏集会选项禁用，仅可发起小组演示。
     const workspace = await openSermonWorkspace(member2);
-    const assemblyRadio = workspace.getByRole("radio", { name: /集会演示/ });
+    const assemblyRadio = workspace.getByRole("radio", { name: /全体演示/ });
     await expect(assemblyRadio).toBeDisabled();
 
     // 申请演讲 → 管理员批准 → 集会选项可用。
@@ -731,8 +733,8 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     const reopened = await openSermonWorkspace(member2);
     await expect(assemblyRadio).toBeEnabled();
     await assemblyRadio.check();
-    await expect(reopened.getByRole("button", { name: "开始演示", exact: true })).toBeEnabled();
-    await reopened.getByRole("button", { name: "开始演示", exact: true }).click();
+    await expect(reopened.getByRole("button", { name: "进入自己的讲道台", exact: true })).toBeEnabled();
+    await reopened.getByRole("button", { name: "进入自己的讲道台", exact: true }).click();
     await expect(reopened.locator(".sermon-queue-view")).toBeVisible();
     await expect(reopened.locator(".sermon-scope-status")).toHaveText("当前：全员集会");
     await expect(reopened.getByText("当前为全员集会，所有成员都可直接观看，无需逐个邀请。")).toBeVisible();
