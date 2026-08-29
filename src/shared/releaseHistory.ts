@@ -889,11 +889,20 @@ const RELEASE_1_13_2_NOTES = [
   "优化讲道台桌面工作区：聊天返回入口移到左侧、讲道台标题移到右侧；投影与手机预览按所选主题补齐缩放取整产生的边线，2% 版心边距按完整桌面舞台宽度生效；`Shift+↑/↓` 可在桌面队列页滚动当前屏，鼠标悬停预览时也可直接滚轮滚动且不显示额外滚动条。"
 ] as const
 
+const RELEASE_1_13_3_NOTES = [
+  "优化讲道台准备与主持流程：没有其他可观看讲道台时直接进入本人讲道台；命名方案支持空队列和多条保存并显示当前保存状态；邀请区新增全选及小组/全员集会状态；补充“每处经文一屏”说明，并在桌面预览下方显示下一页内容。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.13.4",
+    date: "2026-08-30",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.13.3",
     date: "2026-08-29",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_13_3_NOTES
   },
   {
     version: "1.13.2",
