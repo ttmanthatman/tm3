@@ -89,3 +89,9 @@ test("workspace explains split scriptures, exposes invite scope and previews the
   assert.match(workspace, /<h3>下一页<\/h3>/);
   assert.match(workspace, /<SermonStage :item="nextItem"/);
 });
+
+test("mobile presentation controls remain scrollable without covering the scripture stage", () => {
+  assert.match(css, /\.sermon-present-controls \{[\s\S]*?max-height: min\(48dvh, 460px\)/);
+  assert.match(css, /\.sermon-present-controls \{[\s\S]*?overflow-y: auto/);
+  assert.match(css, /\.sermon-present-view \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\) auto/);
+});

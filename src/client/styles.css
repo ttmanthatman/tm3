@@ -12585,6 +12585,9 @@ button.admin-object-row:focus-visible {
 
 .sermon-present-controls {
   position: relative;
+  max-height: min(48dvh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   display: grid;
   gap: 8px;
   padding: 10px 12px calc(10px + var(--safe-bottom));

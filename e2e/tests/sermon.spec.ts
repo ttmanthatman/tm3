@@ -510,7 +510,7 @@ test("讲道权限申请卡：发送、批准与获批提示", async ({ browser 
     await expect(memberCard).toContainText("待审批");
     await expect(memberCard).toContainText("想带领查经");
 
-    const adminCard = admin.locator(".sermon-request-card");
+    const adminCard = admin.locator(".sermon-request-card", { hasText: E2E_MEMBER.displayName });
     await expect(adminCard).toBeVisible();
     await expect(adminCard).toContainText("待审批");
     await adminCard.screenshot({ path: "output/e2e/sermon/request-card.png" });
@@ -723,7 +723,7 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     await closeSermonWorkspace(member2, workspace);
     await member2.locator(".composer-main textarea").fill("/申请演讲 想主持集会演示");
     await member2.getByRole("button", { name: "发送", exact: true }).click();
-    const adminCard = admin.locator(".sermon-request-card");
+    const adminCard = admin.locator(".sermon-request-card", { hasText: E2E_MEMBER2.displayName });
     await expect(adminCard).toBeVisible();
     await adminCard.getByRole("button", { name: "批准", exact: true }).click();
     await adminCard.getByRole("button", { name: "7 天", exact: true }).click();
