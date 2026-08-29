@@ -628,7 +628,9 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
     const noticeB = member.locator(".sermon-live-card", { hasText: `${E2E_ADMIN2.displayName} 正在讲道` });
     await expect(noticeB).toContainText("起初，神创造天地");
 
-    // 成员从 B 的预览换席：客户端先离开 A，服务端再许可加入 B。
+    // 成员先最小化 A，再从 B 的预览换席：客户端先离开 A，服务端再许可加入 B。
+    await overlay.getByRole("button", { name: "最小化讲道经文", exact: true }).click();
+    await expect(overlay).toHaveCount(0);
     await noticeB.getByRole("button", { name: "点击进入观看", exact: true }).click();
     await expect(overlay).toBeVisible();
     await expect(overlay.locator(".sermon-overlay-badge")).toHaveText(/创世记\s*1:1/);
