@@ -283,7 +283,6 @@ export function createSermonPresentationService(deps: SermonPresentationServiceD
       if (!record) throw new SermonPresentationError("请先进入自己的讲道台");
       const normalizedTitle = title.trim();
       if (!normalizedTitle) throw new SermonPresentationError("请输入方案名称");
-      if (!record.store.getState().queue.length) throw new SermonPresentationError("讲道队列为空，无法保存");
       const plans = await readPlans(accountId);
       const existingIndex = planId ? plans.findIndex((plan) => plan.id === planId) : -1;
       if (planId && existingIndex < 0) throw new SermonPresentationError("保存的讲道方案不存在");

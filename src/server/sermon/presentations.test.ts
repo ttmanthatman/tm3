@@ -314,6 +314,19 @@ test("命名方案：保存、覆盖、载入与删除均按账号独立持久�
   assert.equal(settings.has(sermonPlanSettingKeyFor(7, saved[0].id)), false, "删除方案时清理对应 Setting 行");
 });
 
+test("命名方案：空队列可保存且可并列保存多条方案", async () => {
+  const { service } = createHarness();
+  await service.start({ accountId: 7, displayName: "用户7" }, "group");
+
+  const first = await service.savePlan(7, "空白讲道方案");
+  assert.equal(first.length, 1);
+  assert.deepEqual(first[0].queue, []);
+
+  const second = await service.savePlan(7, "另一条空白方案");
+  assert.equal(second.length, 2);
+  assert.deepEqual(second.map((plan) => plan.title).sort(), ["另一条空白方案", "空白讲道方案"]);
+});
+
 test("migrateLegacy：旧全局行迁移到 per-presenter 键后删除；目标键已存在则保留", async () => {
   const { service, settings, deletions } = createHarness();
   await service.migrateLegacy();

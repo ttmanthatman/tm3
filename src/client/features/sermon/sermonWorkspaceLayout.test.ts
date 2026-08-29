@@ -9,7 +9,7 @@ const overlay = readFileSync(new URL("./SermonOverlay.vue", import.meta.url), "u
 const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
 
 test("late-mounted preview refs reconnect to ResizeObserver", () => {
-  assert.match(workspace, /watch\(\[projectorFrame, phoneFrame\], reconnectPreviewObserver, \{ flush: "post" \}\)/);
+  assert.match(workspace, /watch\(\[projectorFrame, phoneFrame, nextFrame\], reconnectPreviewObserver, \{ flush: "post" \}\)/);
   assert.match(workspace, /sermonPreviewScale\(projector\.clientWidth, projector\.clientHeight/);
 });
 
@@ -53,6 +53,7 @@ test("sermon entry separates own workspace from permitted read-only viewing", ()
   assert.match(entryDialog, /进入自己的讲道台/);
   assert.match(entryDialog, /已获准观看的讲道台/);
   assert.match(entryDialog, /只能观看/);
+  assert.match(entryDialog, /permittedPresentations\.value\.length === 0/);
 });
 
 test("live sermon notification uses a stage preview and no longer renders a top icon", () => {
@@ -75,4 +76,16 @@ test("workspace can name, save, load, overwrite and delete prepared queues", () 
   assert.match(workspace, /loadSavedPlan/);
   assert.match(workspace, /overwritePlan/);
   assert.match(workspace, /deleteSavedPlan/);
+  assert.doesNotMatch(workspace, /:disabled="!queue\.length \|\| planBusyId !== null"/);
+  assert.match(workspace, /当前队列已保存为/);
+  assert.match(workspace, /另存当前队列/);
+});
+
+test("workspace explains split scriptures, exposes invite scope and previews the next slide", () => {
+  assert.match(workspace, /自动把内容中的经文分割到队列，每处经文作为一页幻灯片展示。/);
+  assert.match(workspace, /当前：\{\{ currentScopeLabel \}\}/);
+  assert.match(workspace, /"全员集会" : "小组演示"/);
+  assert.match(workspace, />全选（\{\{ inviteCandidates\.length \}\} 人）</);
+  assert.match(workspace, /<h3>下一页<\/h3>/);
+  assert.match(workspace, /<SermonStage :item="nextItem"/);
 });

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { MonitorPlay, Presentation, X } from "lucide-vue-next";
 import { useChatStore } from "../../store";
+import { permittedSermonPresentations } from "./sermonWorkspaceState";
 import { useSermon } from "./useSermon";
 
 const props = defineProps<{ open: boolean }>();
@@ -10,19 +11,28 @@ const emit = defineEmits<{ close: []; own: [] }>();
 const store = useChatStore();
 const sermon = useSermon({ getSocket: () => store.socket });
 const error = ref("");
+const directEntering = ref(false);
 const accountId = computed(() => store.account?.id ?? null);
 const permittedPresentations = computed(() =>
-  sermon.directory.value.filter(
-    (entry) =>
-      entry.presenterId !== accountId.value &&
-      entry.active &&
-      (entry.scope === "assembly" || (accountId.value !== null && entry.invitedAccountIds.includes(accountId.value)))
-  )
+  permittedSermonPresentations(sermon.directory.value, accountId.value)
 );
 
-watch(() => props.open, (open) => {
-  if (open) error.value = "";
-});
+watch(
+  [() => props.open, permittedPresentations],
+  async ([open]) => {
+    if (!open) {
+      directEntering.value = false;
+      return;
+    }
+    error.value = "";
+    if (permittedPresentations.value.length === 0 && !directEntering.value) {
+      directEntering.value = true;
+      await enterOwn();
+      if (error.value) directEntering.value = false;
+    }
+  },
+  { immediate: true }
+);
 
 function handleKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") emit("close");
@@ -62,7 +72,7 @@ async function watchPresentation(presenterId: number) {
 
 <template>
   <section
-    v-if="props.open"
+    v-if="props.open && (permittedPresentations.length || error)"
     class="modal-shell sermon-entry-dialog"
     role="dialog"
     aria-modal="true"
@@ -102,7 +112,6 @@ async function watchPresentation(presenterId: number) {
           </span>
         </button>
       </div>
-      <p v-else class="sermon-entry-empty">目前没有你获准进入的他人讲道台。</p>
     </div>
   </section>
 </template>

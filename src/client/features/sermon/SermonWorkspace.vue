@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowDown, ArrowUp, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
+import { ArrowDown, ArrowUp, CheckCircle2, ChevronLeft, Eraser, FolderOpen, Highlighter, Pencil, Plus, Save, SkipBack, SkipForward, Trash2, Underline, X } from "lucide-vue-next";
 import type { BibleLookupDTO, SermonAnnotationKind, SermonDisplayDTO, SermonPresentationScope, SermonQueueItem, SermonSlideInput } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
@@ -10,6 +10,7 @@ import { nextSermonScrollLine, sermonWheelDirection, type SermonScrollDirection 
 import { verseHasAnnotation } from "./sermonText";
 import { sermonBackgroundPaint } from "./sermonThemes";
 import { parseSermonInput } from "./sermonInput";
+import { allSermonCandidatesSelected, matchingSermonPlan, nextSermonQueueItem } from "./sermonWorkspaceState";
 import SermonDisplayControls from "./SermonDisplayControls.vue";
 import SermonStage from "./SermonStage.vue";
 import { useSermon, type SermonEmitResult } from "./useSermon";
@@ -40,6 +41,7 @@ const queue = computed(() => sermonState.value?.queue || []);
 const currentItemId = computed(() => sermonState.value?.currentItemId || null);
 const currentItem = computed<SermonQueueItem | null>(() => queue.value.find((item) => item.id === currentItemId.value) || null);
 const currentIndex = computed(() => queue.value.findIndex((item) => item.id === currentItemId.value));
+const nextItem = computed(() => nextSermonQueueItem(queue.value, currentItemId.value));
 const display = computed(() => sermonState.value?.display ?? SERMON_DISPLAY_FALLBACK);
 
 const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
@@ -52,8 +54,10 @@ const PREVIEW_PHONE_BASE_WIDTH = 390;
 const PREVIEW_PHONE_BASE_HEIGHT = 845;
 const projectorFrame = ref<HTMLElement | null>(null);
 const phoneFrame = ref<HTMLElement | null>(null);
+const nextFrame = ref<HTMLElement | null>(null);
 const projectorScale = ref(0.3);
 const phoneScale = ref(0.3);
+const nextScale = ref(0.3);
 let previewObserver: ResizeObserver | null = null;
 
 function updatePreviewScales() {
@@ -67,6 +71,11 @@ function updatePreviewScales() {
     const next = sermonPreviewScale(phone.clientWidth, phone.clientHeight, PREVIEW_PHONE_BASE_WIDTH, PREVIEW_PHONE_BASE_HEIGHT);
     if (next > 0) phoneScale.value = next;
   }
+  const following = nextFrame.value;
+  if (following) {
+    const next = sermonPreviewScale(following.clientWidth, following.clientHeight, PREVIEW_PROJECTOR_BASE_WIDTH, PREVIEW_PROJECTOR_BASE_HEIGHT);
+    if (next > 0) nextScale.value = next;
+  }
 }
 
 function reconnectPreviewObserver() {
@@ -74,6 +83,7 @@ function reconnectPreviewObserver() {
   previewObserver.disconnect();
   if (projectorFrame.value) previewObserver.observe(projectorFrame.value);
   if (phoneFrame.value) previewObserver.observe(phoneFrame.value);
+  if (nextFrame.value) previewObserver.observe(nextFrame.value);
   updatePreviewScales();
 }
 
@@ -83,7 +93,7 @@ onMounted(() => {
 });
 
 // 预览只在演示创建后挂载；监听 template refs，避免 onMounted 时为空而永远停在 0.3×。
-watch([projectorFrame, phoneFrame], reconnectPreviewObserver, { flush: "post" });
+watch([projectorFrame, phoneFrame, nextFrame], reconnectPreviewObserver, { flush: "post" });
 
 onBeforeUnmount(() => previewObserver?.disconnect());
 
@@ -126,6 +136,14 @@ const currentViewers = computed(() => watchAccounts.value.filter((account) => ac
 
 /** 可继续邀请的账号（未入座任何演示）。 */
 const inviteCandidates = computed(() => selectableAccounts.value.filter((account) => account.seatedPresentation === null));
+const inviteCandidateIds = computed(() => inviteCandidates.value.map((account) => account.id));
+const allInviteCandidatesChecked = computed(() =>
+  allSermonCandidatesSelected(inviteCandidateIds.value, selectedMoreInviteIds.value)
+);
+const someInviteCandidatesChecked = computed(() =>
+  selectedMoreInviteIds.value.some((id) => inviteCandidateIds.value.includes(id)) && !allInviteCandidatesChecked.value
+);
+const currentScopeLabel = computed(() => sermonState.value?.scope === "assembly" ? "全员集会" : "小组演示");
 
 async function loadAudienceData() {
   accountsError.value = "";
@@ -183,6 +201,7 @@ async function startPresentation() {
 
 const planTitle = ref("");
 const planBusyId = ref<string | null>(null);
+const matchingPlan = computed(() => matchingSermonPlan(plans.value, queue.value, display.value));
 
 async function saveNewPlan() {
   const title = planTitle.value.trim();
@@ -233,6 +252,11 @@ async function inviteMore() {
   const result = await sermon.invite(selectedMoreInviteIds.value);
   actionError.value = result.ok ? "邀请已发送" : result.message;
   if (result.ok) selectedMoreInviteIds.value = [];
+}
+
+function toggleAllInviteCandidates(event: Event) {
+  const checked = (event.target as HTMLInputElement).checked;
+  selectedMoreInviteIds.value = checked ? inviteCandidateIds.value.slice() : [];
 }
 
 async function report(result: Promise<SermonEmitResult>) {
@@ -569,10 +593,14 @@ function annotateSelection() {
           <h3>保存讲道方案</h3>
           <div class="sermon-plan-save-row">
             <input v-model="planTitle" maxlength="80" placeholder="例如：8月30日分享" @keydown.enter.prevent="saveNewPlan" />
-            <button class="primary-btn" type="button" :disabled="!queue.length || planBusyId !== null" @click="saveNewPlan">
-              <Save :size="15" />保存当前队列
+            <button class="primary-btn" type="button" :disabled="planBusyId !== null" @click="saveNewPlan">
+              <Save :size="15" />{{ matchingPlan ? "另存当前队列" : "保存当前队列" }}
             </button>
           </div>
+          <p v-if="matchingPlan" class="sermon-plan-status saved" role="status">
+            <CheckCircle2 :size="15" />当前队列已保存为“{{ matchingPlan.title }}”<template v-if="formatPlanTime(matchingPlan.updatedAt)"> · {{ formatPlanTime(matchingPlan.updatedAt) }}</template>
+          </p>
+          <p v-else-if="plans.length" class="sermon-plan-status">当前队列尚未保存，或已有未保存更改。</p>
           <p v-if="!plans.length" class="sermon-hint">保存后可随时载入，提前准备的经文、文字、顺序、标注和显示样式都会保留。</p>
           <div v-else class="sermon-plan-list">
             <article v-for="plan in plans" :key="plan.id" class="sermon-plan-row">
@@ -582,7 +610,7 @@ function annotateSelection() {
               </span>
               <div>
                 <button class="mini-btn secondary" type="button" :disabled="planBusyId !== null" @click="loadSavedPlan(plan.id, plan.title)"><FolderOpen :size="14" />载入</button>
-                <button class="mini-btn secondary" type="button" :disabled="!queue.length || planBusyId !== null" @click="overwritePlan(plan.id, plan.title)">覆盖</button>
+                <button class="mini-btn secondary" type="button" :disabled="planBusyId !== null" @click="overwritePlan(plan.id, plan.title)">覆盖</button>
                 <button class="mini-icon-btn" type="button" :disabled="planBusyId !== null" aria-label="删除保存方案" @click="deleteSavedPlan(plan.id, plan.title)"><Trash2 :size="14" /></button>
               </div>
             </article>
@@ -602,7 +630,10 @@ function annotateSelection() {
           <div class="sermon-input-options">
             <label class="sermon-one-per-slide">
               <input v-model="onePerSlide" type="checkbox" />
-              <span>每处经文一屏</span>
+              <span>
+                每处经文一屏
+                <small>自动把内容中的经文分割到队列，每处经文作为一页幻灯片展示。</small>
+              </span>
             </label>
             <button class="primary-btn" type="button" :disabled="adding || !parsedSlides.length" @click="addToQueue">
               <Plus :size="15" />{{ adding ? "正在加入…" : "加入队列" }}
@@ -643,7 +674,10 @@ function annotateSelection() {
         </section>
 
         <section v-if="presenterStatus?.canPresent" class="sermon-block">
-          <h3>观众<small v-if="currentViewers.length">（{{ currentViewers.length }}）</small></h3>
+          <h3 class="sermon-audience-heading">
+            <span>观众<small v-if="currentViewers.length">（{{ currentViewers.length }}）</small></span>
+            <small class="sermon-scope-status">当前：{{ currentScopeLabel }}</small>
+          </h3>
           <p v-if="accountsError" class="sermon-error" role="alert">{{ accountsError }}</p>
           <template v-else>
             <p v-if="!currentViewers.length" class="sermon-hint">暂无观众入座。</p>
@@ -652,8 +686,18 @@ function annotateSelection() {
               <span class="sermon-audience-name">{{ viewer.displayName }}</span>
               <button class="mini-btn secondary" type="button" @click="report(sermon.removeViewer(viewer.id))">移除</button>
             </div>
-            <details v-if="inviteCandidates.length" class="sermon-invite-more">
+            <p v-if="sermonState?.scope === 'assembly'" class="sermon-hint">当前为全员集会，所有成员都可直接观看，无需逐个邀请。</p>
+            <details v-else-if="inviteCandidates.length" class="sermon-invite-more">
               <summary>邀请更多观众</summary>
+              <label class="sermon-audience-row sermon-audience-select-all">
+                <input
+                  type="checkbox"
+                  :checked="allInviteCandidatesChecked"
+                  :indeterminate="someInviteCandidatesChecked"
+                  @change="toggleAllInviteCandidates"
+                />
+                <strong>全选（{{ inviteCandidates.length }} 人）</strong>
+              </label>
               <label v-for="account in inviteCandidates" :key="account.id" class="sermon-audience-row">
                 <input v-model="selectedMoreInviteIds" type="checkbox" :value="account.id" />
                 <i class="sermon-online-dot" :class="{ online: account.online }" aria-hidden="true"></i>
@@ -706,6 +750,24 @@ function annotateSelection() {
             </div>
           </section>
         </div>
+        <section class="sermon-preview-block sermon-next-preview">
+          <h3>下一页</h3>
+          <div
+            v-if="nextItem"
+            ref="nextFrame"
+            class="sermon-preview-frame projector"
+            :style="{ background: sermonBackgroundPaint(display.background) }"
+          >
+            <div class="sermon-preview-scale projector" :style="{ transform: `scale(${nextScale})` }">
+              <div class="sermon-overlay sermon-preview-stage projector" :style="sermonDisplayStyle(display)" v-bind="sermonDisplayAttrs(display)">
+                <div class="sermon-overlay-card">
+                  <SermonStage :item="nextItem" :presenter-name="sermonState?.presenterName || ''" />
+                </div>
+              </div>
+            </div>
+          </div>
+          <p v-else class="sermon-next-empty">已经是最后一页</p>
+        </section>
       </aside>
     </main>
 
@@ -882,6 +944,21 @@ function annotateSelection() {
   font-size: 14px;
 }
 
+.sermon-audience-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sermon-scope-status {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .sermon-audience-list {
   display: flex;
   flex-direction: column;
@@ -951,6 +1028,11 @@ function annotateSelection() {
   margin-top: 6px;
 }
 
+.sermon-audience-select-all {
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+
 .sermon-invite-more .mini-btn {
   margin-top: 8px;
 }
@@ -991,7 +1073,53 @@ function annotateSelection() {
   color: var(--muted);
 }
 
+.sermon-plan-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sermon-plan-status.saved {
+  color: var(--accent);
+}
+
+.sermon-one-per-slide > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sermon-one-per-slide small {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.sermon-next-preview {
+  margin-top: 18px;
+}
+
+.sermon-next-empty {
+  margin: 0;
+  padding: 22px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  text-align: center;
+}
+
 @media (max-width: 560px) {
+  .sermon-input-options {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sermon-input-options .primary-btn {
+    align-self: flex-end;
+  }
+
   .sermon-plan-save-row,
   .sermon-plan-row {
     align-items: stretch;

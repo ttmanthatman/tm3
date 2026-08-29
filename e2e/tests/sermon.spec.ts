@@ -60,9 +60,12 @@ async function openSermonWorkspaceOnce(page: Page) {
   await expect(tile).toBeVisible();
   await tile.click();
   const entry = page.getByRole("dialog", { name: "选择讲道台" });
-  await expect(entry).toBeVisible();
-  await entry.getByRole("button", { name: /进入自己的讲道台/ }).click();
   const workspace = page.locator(".sermon-workspace.open");
+  await Promise.race([
+    workspace.waitFor({ state: "visible" }),
+    entry.waitFor({ state: "visible" })
+  ]);
+  if (await entry.isVisible()) await entry.getByRole("button", { name: /进入自己的讲道台/ }).click();
   await expect(workspace).toBeVisible();
   return workspace;
 }
@@ -237,13 +240,34 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
 
     // 从“更多”抽屉进入负一屏讲道台，频道/聊天面板被工作区顶替。
     const workspace = await openSermonWorkspace(admin);
+    await expect(admin.getByRole("dialog", { name: "选择讲道台" })).toHaveCount(0);
     await expect(admin.locator(".chat-pane")).toHaveCount(0);
 
     // 管理员开始小组演示并勾选成员；实际展示后，成员从置顶预览进入。
     await startGroupPresentation(workspace, E2E_MEMBER.displayName);
+    await expect(workspace.locator(".sermon-scope-status")).toHaveText("当前：小组演示");
+    const inviteMore = workspace.locator("details.sermon-invite-more");
+    await inviteMore.locator("summary").click();
+    const selectAll = inviteMore.getByRole("checkbox", { name: /全选/ });
+    await selectAll.check();
+    await expect
+      .poll(() =>
+        inviteMore
+          .locator(".sermon-audience-row:not(.sermon-audience-select-all) input[type='checkbox']")
+          .evaluateAll((inputs) => inputs.length > 0 && inputs.every((input) => (input as HTMLInputElement).checked))
+      )
+      .toBe(true);
+    await selectAll.uncheck();
+
+    // 空队列也可保存为一条独立方案，保存后立即显示“已保存”状态。
+    await workspace.getByPlaceholder("例如：8月30日分享").fill("空白方案");
+    await workspace.getByRole("button", { name: "保存当前队列", exact: true }).click();
+    await expect(workspace.locator(".sermon-plan-status.saved")).toContainText("当前队列已保存为“空白方案”");
+    await expect(workspace.locator(".sermon-plan-row", { hasText: "空白方案" })).toContainText("0 屏");
 
     await workspace.locator(".sermon-reference-input").fill("约3:16；诗篇23:1");
     // 统一输入框默认整段一屏；勾选「每处经文一屏」让两处出处各自独立成屏。
+    await expect(workspace.getByText("自动把内容中的经文分割到队列，每处经文作为一页幻灯片展示。")).toBeVisible();
     await workspace.getByRole("checkbox", { name: "每处经文一屏" }).check();
     const addButton = workspace.getByRole("button", { name: "加入队列", exact: true });
     await expect(addButton).toBeEnabled();
@@ -392,16 +416,18 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(presentView).toBeHidden();
     await expect(workspace.locator(".sermon-queue-column")).toBeVisible();
     await expect(workspace.locator(".sermon-queue-controls")).toBeVisible();
-    const projectorPreview = workspace.locator(".sermon-preview-stage.projector");
+    const projectorPreview = workspace.locator(".projector-preview .sermon-preview-stage.projector");
     const phonePreview = workspace.locator(".sermon-preview-stage.phone");
+    const nextPreview = workspace.locator(".sermon-next-preview .sermon-preview-stage.projector");
     await expect(projectorPreview).toBeVisible();
     await expect(phonePreview).toBeVisible();
     await expect(projectorPreview).toContainText("神爱世人");
     await expect(phonePreview).toContainText("神爱世人");
+    await expect(nextPreview).toContainText("耶和华是我的牧者");
     await expect(projectorPreview).toHaveAttribute("data-sermon-font", "songti");
     await expect(projectorPreview).toHaveAttribute("data-sermon-bg", "midnight");
     await expect(phonePreview).toHaveAttribute("data-sermon-font", "songti");
-    await expect(workspace.locator(".sermon-preview-frame.projector")).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    await expect(workspace.locator(".projector-preview .sermon-preview-frame.projector")).toHaveCSS("background-color", "rgb(0, 0, 0)");
     await expect(workspace.locator(".sermon-preview-frame.phone")).toHaveCSS("background-color", "rgb(0, 0, 0)");
     const chatBox = await workspace.getByRole("button", { name: "聊天", exact: true }).boundingBox();
     const titleBox = await workspace.locator(".sermon-workspace-title").boundingBox();
@@ -418,10 +444,10 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await admin.keyboard.press("Shift+ArrowDown");
     await expect.poll(() => projectorBody.evaluate((el) => el.scrollTop)).toBeGreaterThan(initialScroll);
     const keyboardScroll = await projectorBody.evaluate((el) => el.scrollTop);
-    await workspace.locator(".sermon-preview-frame.projector").hover();
+    await workspace.locator(".projector-preview .sermon-preview-frame.projector").hover();
     await admin.mouse.wheel(0, 120);
     await expect.poll(() => projectorBody.evaluate((el) => el.scrollTop)).toBeGreaterThan(keyboardScroll);
-    await expect(workspace.locator(".sermon-preview-frame.projector")).toHaveCSS("overflow", "hidden");
+    await expect(workspace.locator(".projector-preview .sermon-preview-frame.projector")).toHaveCSS("overflow", "hidden");
     await admin.screenshot({ path: "output/e2e/sermon/presenter-desktop-1440.png" });
     await admin.setViewportSize({ width: 390, height: 844 });
     await expect(presentView).toBeVisible();
@@ -708,6 +734,8 @@ test("集会授权：申请获批后可发起集会演示，全员可加入", as
     await expect(reopened.getByRole("button", { name: "开始演示", exact: true })).toBeEnabled();
     await reopened.getByRole("button", { name: "开始演示", exact: true }).click();
     await expect(reopened.locator(".sermon-queue-view")).toBeVisible();
+    await expect(reopened.locator(".sermon-scope-status")).toHaveText("当前：全员集会");
+    await expect(reopened.getByText("当前为全员集会，所有成员都可直接观看，无需逐个邀请。")).toBeVisible();
 
     // 集会演示开始展示后，未受邀的其他账号可直接从置顶预览进入。
     await addToQueueAndPresent(reopened, "约3:16");
