@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted (2026-08-10)
+Accepted (2026-08-10); not yet implemented. `MessageType` in
+`src/shared/types.ts` has no `handwriting` variant as of v1.13.2 — the decision
+is recorded here ahead of the implementation.
 
 ## Context
 
