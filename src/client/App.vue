@@ -169,6 +169,13 @@ import {
   shouldRestoreNewestPosition,
   type SavedReadPosition
 } from "./readPosition";
+import {
+  createChatScrollIntentTracker,
+  isChatViewportAtNewest,
+  newestChatReadAnchor,
+  shouldApplyChatReadAnchor,
+  type ChatReadAnchor
+} from "./chatScrollStability";
 import { formatUnreadCount } from "./unread";
 import { flushPendingPersists, lastMsgwinAccount } from "./messageWindowCache";
 import { marked } from "marked";
@@ -411,10 +418,8 @@ const pendingReadPositionRestore = ref(false);
 // flashes its oldest rows before the bottom anchor lands.
 const initialChatAnchorPending = ref(store.messages.length > 0);
 let readPositionRestoreToken = 0;
-type ActiveReadAnchor =
-  | { kind: "message"; messageId: number; offset: number; expiresAt: number; token: number }
-  | { kind: "newest"; token: number };
-let activeReadAnchor: ActiveReadAnchor | null = null;
+let activeReadAnchor: ChatReadAnchor | null = null;
+const chatScrollIntentTracker = createChatScrollIntentTracker();
 let pendingMessageJumpId: number | null = null;
 const rainCanvas = ref<HTMLCanvasElement | null>(null);
 const dripLayer = ref<HTMLCanvasElement | null>(null);
@@ -1096,6 +1101,8 @@ onMounted(async () => {
   document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   window.addEventListener("resize", handleTimelineViewportResize, { passive: true });
+  window.visualViewport?.addEventListener("resize", handleTimelineViewportResize, { passive: true });
+  window.visualViewport?.addEventListener("scroll", handleTimelineViewportResize, { passive: true });
   window.addEventListener("pagehide", handlePageHideFlush);
   window.addEventListener("reception-closed", handleReceptionClosed);
   if (initialChatAnchorPending.value) {
@@ -1202,6 +1209,9 @@ function handleGlobalEscape(event: KeyboardEvent) {
 watch(
   () => [store.currentChannelId, store.prayerOnly] as const,
   async () => {
+    readPositionRestoreToken += 1;
+    activeReadAnchor = null;
+    chatScrollIntentTracker.reset();
     stopAllVoicePlayback();
     selectedMember.value = null;
     memberPaneChannelOverride.value = null;
@@ -1418,6 +1428,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("reception-closed", handleReceptionClosed);
   window.removeEventListener("deviceorientation", handleDeviceOrientation);
   window.removeEventListener("resize", handleTimelineViewportResize);
+  window.visualViewport?.removeEventListener("resize", handleTimelineViewportResize);
+  window.visualViewport?.removeEventListener("scroll", handleTimelineViewportResize);
   timelineResizeObserver?.disconnect();
   timelineResizeObserver = null;
   wallpaperPanResizeObserver?.disconnect();
@@ -2414,6 +2426,7 @@ function scheduleVirtualTimelineViewport(root = scroller.value) {
 
 function handleTimelineViewportResize() {
   syncVirtualTimelineViewport();
+  reconcileReadPositionAfterLayout();
 }
 
 function measuredTimelineRowHeight(element: HTMLElement) {
@@ -2448,7 +2461,7 @@ async function flushPendingTimelineMeasurements() {
   if (!changed) return;
   measuredTimelineHeights.value = next;
   await nextTick();
-  if (root && anchor?.key && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
+  if (root && anchor?.key && !activeReadAnchor && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
     const element = root.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchor.key)}"]`);
     if (element) {
       const delta = element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
@@ -2481,7 +2494,9 @@ function refreshTimelineMeasurements() {
   timelineResizeObserver?.disconnect();
   if (typeof ResizeObserver === "undefined") return;
   if (!timelineResizeObserver) timelineResizeObserver = new ResizeObserver(handleTimelineResize);
-  for (const row of scroller.value?.querySelectorAll<HTMLElement>("[data-timeline-key]") || []) timelineResizeObserver.observe(row);
+  for (const row of scroller.value?.querySelectorAll<HTMLElement>("[data-timeline-key]") || []) {
+    timelineResizeObserver.observe(row, { box: "border-box" });
+  }
 }
 
 watch(
@@ -3039,6 +3054,19 @@ function messageBottomDistance(root = scroller.value) {
   return Math.max(0, root.scrollHeight - root.scrollTop - root.clientHeight);
 }
 
+function currentNewestViewportState(root = scroller.value) {
+  return {
+    distanceFromBottom: messageBottomDistance(root),
+    hasNewerMessages: store.hasNewerMessages
+  };
+}
+
+function syncNewestIndicators(root = scroller.value) {
+  if (!root) return;
+  awayFromNewest.value = !isChatViewportAtNewest(currentNewestViewportState(root), 120);
+  if (!awayFromNewest.value) hasUnreadMessages.value = false;
+}
+
 function readPositionStorageKey(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
   if (!store.account || !channelId) return "";
   return `team-chat-read-position-${store.account.id}-${channelId}-${prayerOnly ? "prayers" : "chat"}`;
@@ -3062,13 +3090,15 @@ function saveReadPosition() {
   const firstVisible = visibleMessageElements()[0];
   const messageId = Number(firstVisible?.dataset.messageId || 0);
   const rootTop = root.getBoundingClientRect().top;
-  const position: SavedReadPosition = {
-    messageId,
-    offset: firstVisible ? firstVisible.getBoundingClientRect().top - rootTop : 0,
-    atBottom: isNearMessageBottom(NEWEST_POSITION_THRESHOLD),
-    scrollTop: root.scrollTop,
-    savedAt: Date.now()
-  };
+  const position: SavedReadPosition = isChatViewportAtNewest(currentNewestViewportState(root))
+    ? newestPositionForSessionEntry()
+    : {
+      messageId,
+      offset: firstVisible ? firstVisible.getBoundingClientRect().top - rootTop : 0,
+      atBottom: false,
+      scrollTop: root.scrollTop,
+      savedAt: Date.now()
+    };
   localStorage.setItem(key, JSON.stringify(position));
   return position;
 }
@@ -3103,6 +3133,7 @@ function handlePageHideFlush() {
 async function enterChatAtNewest() {
   readPositionRestoreToken += 1;
   activeReadAnchor = null;
+  chatScrollIntentTracker.reset();
   saveNewestReadPosition();
   pendingReadPositionRestore.value = true;
   await restoreSavedReadPosition();
@@ -3164,23 +3195,37 @@ async function restoreSavedReadPosition() {
 
 function reconcileReadPositionAfterLayout() {
   const anchor = activeReadAnchor;
-  if (!anchor || anchor.token !== readPositionRestoreToken || (anchor.kind === "message" && anchor.expiresAt < Date.now())) {
-    activeReadAnchor = null;
+  if (!anchor) {
+    syncNewestIndicators();
+    return;
+  }
+  if (!shouldApplyChatReadAnchor(anchor, activeReadAnchor, readPositionRestoreToken)) {
+    if (activeReadAnchor === anchor) activeReadAnchor = null;
+    syncNewestIndicators();
     return;
   }
   requestAnimationFrame(() => {
     const root = scroller.value;
-    if (!root || anchor.token !== readPositionRestoreToken) return;
+    if (!root || !shouldApplyChatReadAnchor(anchor, activeReadAnchor, readPositionRestoreToken)) {
+      syncNewestIndicators(root);
+      return;
+    }
     if (anchor.kind === "newest") {
       root.scrollTop = root.scrollHeight + 1000;
+      syncVirtualTimelineViewport(root);
       hasUnreadMessages.value = false;
       awayFromNewest.value = false;
       return;
     }
     const target = root.querySelector<HTMLElement>(`[data-message-id="${anchor.messageId}"]`);
-    if (!target) return;
+    if (!target) {
+      syncNewestIndicators(root);
+      return;
+    }
     const delta = target.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
     if (Math.abs(delta) > 0.5) root.scrollTop += delta;
+    syncVirtualTimelineViewport(root);
+    syncNewestIndicators(root);
   });
 }
 
@@ -3190,12 +3235,16 @@ function stopFollowingNewest() {
 }
 
 function handleTimelineScrollIntent() {
+  chatScrollIntentTracker.begin(currentNewestViewportState());
   stopFollowingNewest();
   markTimelineScrolling();
 }
 
 function handleMessagesPointerDown(event: PointerEvent) {
-  if (event.target === scroller.value) stopFollowingNewest();
+  if (event.target === scroller.value) {
+    chatScrollIntentTracker.begin(currentNewestViewportState());
+    stopFollowingNewest();
+  }
   beginBlankScoreLongPress(event);
 }
 
@@ -3210,6 +3259,7 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
   pendingMessageJumpId = messageId;
   readPositionRestoreToken += 1;
   activeReadAnchor = null;
+  chatScrollIntentTracker.reset();
   pendingReadPositionRestore.value = false;
   try {
     if (store.currentChannelId !== channelId) {
@@ -7783,7 +7833,8 @@ function endPreviewPlayback() {
 function scrollBottom(smooth = true) {
   const el = scroller.value;
   if (!el) return;
-  activeReadAnchor = { kind: "newest", token: readPositionRestoreToken };
+  activeReadAnchor = newestChatReadAnchor(readPositionRestoreToken);
+  chatScrollIntentTracker.reset();
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
   if (!smooth) syncVirtualTimelineViewport(el);
   hasUnreadMessages.value = false;
@@ -7958,7 +8009,7 @@ async function loadTimelineEdgesAfterScroll() {
     const rootTop = el.getBoundingClientRect().top;
     const anchorElement = visibleMessageElements()[0];
     const anchorMessageId = Number(anchorElement?.dataset.messageId || 0);
-    const edgeAnchor: ActiveReadAnchor | null = anchorElement && anchorMessageId
+    const edgeAnchor: ChatReadAnchor | null = anchorElement && anchorMessageId
       ? {
         kind: "message",
         messageId: anchorMessageId,
@@ -7997,7 +8048,13 @@ function markTimelineScrolling() {
   timelineScrollIdleTimer = window.setTimeout(async () => {
     timelineScrollIdleTimer = undefined;
     timelineScrollActive.value = false;
+    if (chatScrollIntentTracker.shouldFollowNewestAfterIdle()) {
+      activeReadAnchor = newestChatReadAnchor(readPositionRestoreToken);
+      hasUnreadMessages.value = false;
+      awayFromNewest.value = false;
+    }
     await flushPendingTimelineMeasurements();
+    reconcileReadPositionAfterLayout();
     await loadTimelineEdgesAfterScroll();
   }, TIMELINE_SCROLL_IDLE_MS);
 }
@@ -8010,8 +8067,8 @@ function handleMessagesScroll() {
   clearBlankScoreLongPress();
   updateParallaxFromScroll(el);
   saveReadPosition();
-  awayFromNewest.value = !isNearMessageBottom(120) || store.hasNewerMessages;
-  if (!awayFromNewest.value) hasUnreadMessages.value = false;
+  chatScrollIntentTracker.noteScroll(currentNewestViewportState(el));
+  syncNewestIndicators(el);
 }
 
 async function retryMessageLoad() {
