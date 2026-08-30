@@ -38,6 +38,7 @@ import {
   selectBibleVerseKeys
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
+import { bibleBookSection } from "../bibleBookSections";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import {
   BIBLE_FAVORITE_COLOR_PRESETS,
@@ -387,6 +388,15 @@ function chooseBook(book: BibleBookCatalogDTO) {
   }
   selectedBook.value = book;
   view.value = "chapters";
+}
+
+function bibleBookSectionLabel(bookCode: string) {
+  return bibleBookSection(bookCode)?.label || "经卷";
+}
+
+function bibleBookSectionStyle(bookCode: string) {
+  const section = bibleBookSection(bookCode);
+  return section ? { "--bible-book-section-color": section.color } : undefined;
 }
 
 async function searchTopic(append = false) {
@@ -996,9 +1006,39 @@ function handleTouchEnd(event: TouchEvent) {
       </nav>
 
       <section v-if="homeSection === 'catalog' && catalog" class="bible-catalog">
-        <header><BookOpen :size="24" /><div><h2>经卷目录</h2><p>旧约39卷 · 新约27卷</p></div></header>
-        <section><h3>旧约</h3><div class="bible-book-grid"><button v-for="book in catalog.oldTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
-        <section><h3>新约</h3><div class="bible-book-grid"><button v-for="book in catalog.newTestament" :key="book.code" type="button" @click="chooseBook(book)"><strong>{{ book.name }}</strong><small>{{ book.chapterCount }}章</small></button></div></section>
+        <header><BookOpen :size="24" /><div><h2>经卷目录</h2><p>旧约39卷 · 新约27卷 · 按目录分部标色</p></div></header>
+        <section>
+          <h3>旧约</h3>
+          <div class="bible-book-grid">
+            <button
+              v-for="book in catalog.oldTestament"
+              :key="book.code"
+              type="button"
+              :style="bibleBookSectionStyle(book.code)"
+              :aria-label="`${book.name}，${bibleBookSectionLabel(book.code)}，${book.chapterCount}章`"
+              @click="chooseBook(book)"
+            >
+              <strong>{{ book.name }}</strong>
+              <small><span>{{ bibleBookSectionLabel(book.code) }}</span><span>{{ book.chapterCount }}章</span></small>
+            </button>
+          </div>
+        </section>
+        <section>
+          <h3>新约</h3>
+          <div class="bible-book-grid">
+            <button
+              v-for="book in catalog.newTestament"
+              :key="book.code"
+              type="button"
+              :style="bibleBookSectionStyle(book.code)"
+              :aria-label="`${book.name}，${bibleBookSectionLabel(book.code)}，${book.chapterCount}章`"
+              @click="chooseBook(book)"
+            >
+              <strong>{{ book.name }}</strong>
+              <small><span>{{ bibleBookSectionLabel(book.code) }}</span><span>{{ book.chapterCount }}章</span></small>
+            </button>
+          </div>
+        </section>
       </section>
 
       <section v-else-if="homeSection === 'search'" class="bible-search-panel">
@@ -1254,10 +1294,12 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-catalog > section + section { margin-top: 30px; }
 .bible-catalog > section > h3 { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(112, 78, 44, .18); font-size: 22px; }
 .bible-book-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-.bible-book-grid button { min-height: 76px; padding: 10px 8px; border: 1px solid rgba(116, 82, 46, .16); border-radius: 11px; color: #4f3b29; background: rgba(255, 252, 245, .85); display: grid; align-content: center; gap: 4px; font: inherit; cursor: pointer; }
-.bible-book-grid button:hover { border-color: #ab8963; background: #fffdf8; transform: translateY(-1px); }
+.bible-book-grid button { --bible-book-section-color: #80613f; min-height: 76px; padding: 12px 8px 10px; border: 1px solid color-mix(in srgb, var(--bible-book-section-color) 34%, transparent); border-radius: 11px; color: #4f3b29; background: color-mix(in srgb, var(--bible-book-section-color) 9%, #fffaf2); box-shadow: inset 0 4px 0 var(--bible-book-section-color); display: grid; align-content: center; gap: 5px; font: inherit; cursor: pointer; }
+.bible-book-grid button:hover { border-color: color-mix(in srgb, var(--bible-book-section-color) 58%, transparent); background: color-mix(in srgb, var(--bible-book-section-color) 14%, #fffaf2); transform: translateY(-1px); }
 .bible-book-grid strong { font-family: "Songti SC", "STSong", serif; font-size: 16px; }
-.bible-book-grid small { color: #92775b; }
+.bible-book-grid small { display: flex; align-items: center; justify-content: center; gap: 6px; color: #92775b; }
+.bible-book-grid small span:first-child { color: var(--bible-book-section-color); font-weight: 800; }
+.bible-book-grid small span + span::before { content: "·"; margin-right: 6px; color: #aa947c; }
 .bible-chapter-picker { padding: 48px max(18px, calc((100vw - 760px) / 2)) calc(48px + var(--safe-bottom)); }
 .bible-paper-heading { text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-paper-heading span, .bible-paper-heading p { color: #957a5d; }
