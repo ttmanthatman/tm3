@@ -25,6 +25,7 @@ import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
+import { registerChannelOwnershipRoutes } from "./routes/channelOwnership.js";
 import { registerReceptionRoutes } from "./routes/reception.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
 import { registerSermonRoutes } from "./routes/sermon.js";
@@ -70,8 +71,14 @@ import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
 import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
 import { fetchLinkPreview } from "./linkPreview.js";
-import { channelNeedsExplicitMembership, virtualCharacterConfigForChannel, virtualCharacterVisibleInChannel } from "./channelMembership.js";
+import {
+  channelNeedsExplicitMembership,
+  channelNotificationAudienceWhere,
+  virtualCharacterConfigForChannel,
+  virtualCharacterVisibleInChannel
+} from "./channelMembership.js";
 import { fileResponsePolicy } from "./filePolicy.js";
+import { leaveAccountSocketsFromChannel } from "./channelSocketMembership.js";
 import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
 import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
@@ -2494,7 +2501,7 @@ async function ensureWebPush() {
 async function notificationRecipientIds(channelId: number, senderAccountId?: number | null, force = false) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, name: true, isPrivate: true, directKey: true, kind: true } });
   if (!channel) return [];
-  const where = channelNeedsExplicitMembership(channel) ? { memberships: { some: { channelId } } } : {};
+  const where = channelNotificationAudienceWhere(channelId, channel);
   const accounts = await prisma.account.findMany({ where, select: { id: true } });
   let ids = accounts.map((account) => account.id).filter((id) => id !== senderAccountId);
   if (!force && ids.length) {
@@ -2909,9 +2916,7 @@ function joinAccountChannel(accountId: number, channelId: number) {
 }
 
 function leaveAccountChannel(accountId: number, channelId: number) {
-  for (const socketId of accountSocketIds.get(accountId) || []) {
-    io.sockets.sockets.get(socketId)?.leave(`ch:${channelId}`);
-  }
+  leaveAccountSocketsFromChannel(accountSocketIds.get(accountId), (socketId) => io.sockets.sockets.get(socketId), channelId);
 }
 
 async function emitChannelMembersChanged(channelId: number, action: string, affectedAccountIds: number[] = []) {
@@ -4189,7 +4194,7 @@ app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, asyn
 app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { kind: true, isPrivate: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, directKey: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
@@ -4207,31 +4212,59 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
   if (channel.kind === "reception" && requestedVirtualIds.length) {
     return reply.code(400).send({ success: false, message: "会客厅不能邀请 AI 角色" });
   }
-  const [accounts, virtualCharacters] = await Promise.all([
-    prisma.account.findMany({ where: { id: { in: requestedIds }, isGuest: false }, select: { id: true } }),
-    prisma.virtualCharacter.findMany({ where: { id: { in: requestedVirtualIds }, enabled: true }, include: { actor: true } })
+  const [accounts, virtualCharacters, existingMemberships] = await Promise.all([
+    prisma.account.findMany({ where: { id: { in: requestedIds }, isGuest: false }, select: { id: true, displayName: true } }),
+    prisma.virtualCharacter.findMany({ where: { id: { in: requestedVirtualIds }, enabled: true }, include: { actor: true } }),
+    requestedIds.length
+      ? prisma.channelMember.findMany({ where: { channelId, accountId: { in: requestedIds } }, select: { accountId: true } })
+      : Promise.resolve([])
   ]);
   if (accounts.length !== requestedIds.length) return reply.code(404).send({ success: false, message: "用户不存在" });
   if (virtualCharacters.length !== requestedVirtualIds.length || virtualCharacters.some((character) => !AI_ROLE_USERNAMES.has(character.actor.username))) {
     return reply.code(404).send({ success: false, message: "AI 角色不存在" });
   }
-  await prisma.channelMember.createMany({
-    data: accounts.map((account) => ({ channelId, accountId: account.id, role: "member" as const })),
-    skipDuplicates: true
-  });
-  await Promise.all(
-    virtualCharacters.map((character) =>
-      prisma.virtualCharacter.update({
-        where: { id: character.id },
-        data: { config: virtualCharacterConfigForChannel(character.config, channelId, true) as Prisma.InputJsonObject }
-      })
-    )
+  const existingAccountIds = new Set(existingMemberships.map((membership) => membership.accountId));
+  const addedAccounts = accounts.filter((account) => !existingAccountIds.has(account.id));
+  const addedVirtualCharacters = virtualCharacters.filter(
+    (character) => !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config })
   );
-  for (const account of accounts) joinAccountChannel(account.id, channelId);
+  const addedNames = [...addedAccounts.map((account) => account.displayName), ...addedVirtualCharacters.map((character) => character.actor.displayName)];
+  const noticeId = await prisma.$transaction(async (transaction) => {
+    await transaction.channelMember.createMany({
+      data: addedAccounts.map((account) => ({ channelId, accountId: account.id, role: "member" as const }))
+    });
+    await Promise.all(
+      addedVirtualCharacters.map((character) =>
+        transaction.virtualCharacter.update({
+          where: { id: character.id },
+          data: { config: virtualCharacterConfigForChannel(character.config, channelId, true) as Prisma.InputJsonObject }
+        })
+      )
+    );
+    if (!addedNames.length) return null;
+    const notice = await transaction.message.create({
+      data: {
+        channelId,
+        senderActorId: auth.actorId,
+        type: "system",
+        content: `${addedNames.join("、")} 加入了频道`,
+        payload: {
+          systemKind: "channel-membership",
+          action: "joined",
+          accountIds: addedAccounts.map((account) => account.id),
+          virtualCharacterIds: addedVirtualCharacters.map((character) => character.id)
+        }
+      },
+      select: { id: true }
+    });
+    return notice.id;
+  });
+  for (const account of addedAccounts) joinAccountChannel(account.id, channelId);
   await ensureDirectGroupDefaultName(channelId);
-  await emitChannelMembersChanged(channelId, "members-added", accounts.map((account) => account.id));
+  if (noticeId) await emitMessage(noticeId);
+  await emitChannelMembersChanged(channelId, "members-added", addedAccounts.map((account) => account.id));
   const dto = await channelDto(channelId, auth);
-  return { success: true, channel: dto, added: accounts.length + virtualCharacters.length };
+  return { success: true, channel: dto, added: addedAccounts.length + addedVirtualCharacters.length };
 });
 
 app.delete("/api/channels/:id/virtual-members/:characterId", { preHandler: requireAuth }, async (request, reply) => {
@@ -4248,6 +4281,17 @@ app.delete("/api/channels/:id/virtual-members/:characterId", { preHandler: requi
     where: { id: character.id },
     data: { config: virtualCharacterConfigForChannel(character.config, channelId, false) as Prisma.InputJsonObject }
   });
+  const notice = await prisma.message.create({
+    data: {
+      channelId,
+      senderActorId: auth.actorId,
+      type: "system",
+      content: `${character.actor.displayName} 退出了频道`,
+      payload: { systemKind: "channel-membership", action: "left", virtualCharacterId: character.id }
+    },
+    select: { id: true }
+  });
+  await emitMessage(notice.id);
   await emitChannelMembersChanged(channelId, "members-removed");
   const dto = await channelDto(channelId, auth);
   return { success: true, channel: dto, removed: characterId };
@@ -4265,7 +4309,8 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
   const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
   if (!member) return reply.code(404).send({ success: false, message: "此用户不在频道中" });
   if (member.role === "owner") return reply.code(400).send({ success: false, message: "不能移除频道创建者" });
-  const targetAccount = await prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true } });
+  const targetAccount = await prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true, displayName: true } });
+  if (!targetAccount) return reply.code(404).send({ success: false, message: "用户不存在" });
   if (channel.kind === "reception" && targetAccount?.isGuest) {
     const revokedAt = new Date();
     await prisma.$transaction([
@@ -4275,12 +4320,36 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
     invalidateAuthSessionCacheByAccountIds([accountId]);
     disconnectAccounts([accountId]);
     leaveAccountChannel(accountId, channelId);
+    const notice = await prisma.message.create({
+      data: {
+        channelId,
+        senderActorId: auth.actorId,
+        type: "system",
+        content: `${targetAccount.displayName} 退出了频道`,
+        payload: { systemKind: "channel-membership", action: "left", accountId }
+      },
+      select: { id: true }
+    });
+    await emitMessage(notice.id);
     await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
     const dto = await channelDto(channelId, auth);
     return { success: true, channel: dto, removed: accountId };
   }
-  await prisma.channelMember.delete({ where: { channelId_accountId: { channelId, accountId } } });
+  const [, notice] = await prisma.$transaction([
+    prisma.channelMember.delete({ where: { channelId_accountId: { channelId, accountId } } }),
+    prisma.message.create({
+      data: {
+        channelId,
+        senderActorId: auth.actorId,
+        type: "system",
+        content: `${targetAccount.displayName} 退出了频道`,
+        payload: { systemKind: "channel-membership", action: "left", accountId }
+      },
+      select: { id: true }
+    })
+  ]);
   leaveAccountChannel(accountId, channelId);
+  await emitMessage(notice.id);
   await emitChannelMembersChanged(channelId, "members-removed", [accountId]);
   const dto = await channelDto(channelId, auth);
   return { success: true, channel: dto, removed: accountId };
@@ -5095,6 +5164,24 @@ registerUnreadCountsRoutes(app, {
   prisma,
   channelListWhere,
   emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
+});
+
+registerChannelOwnershipRoutes(app, {
+  requireAuth,
+  prisma,
+  authFor: (request) => (request as AuthedRequest).auth,
+  leaveAccountChannel,
+  emitMemberLeft: async (channelId, previousOwnerId, successorAccountId) => {
+    await emitChannelMembersChanged(
+      channelId,
+      successorAccountId ? "ownership-transferred" : "member-left",
+      successorAccountId ? [previousOwnerId, successorAccountId] : [previousOwnerId]
+    );
+    io.to(`acct:${previousOwnerId}`).emit("channel:updated", { action: "left", channelId });
+  },
+  emitSystemMessage: async (messageId) => {
+    await emitMessage(messageId);
+  }
 });
 
 // 讲道演示（二期）：按讲道者并发的多演示服务，状态按 sermon.presentation.{accountId} 键持久化到

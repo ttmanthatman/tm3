@@ -8,9 +8,26 @@ export type ChannelMemberLike = {
 
 export function memberRoleLabel(member: ChannelMemberLike) {
   if (member.kind === "virtual") return "角色";
-  if (member.role === "owner") return "创建者";
+  if ((member.membershipRole ?? member.role) === "owner") return "创建者";
   if (member.role === "admin") return "管理员";
   return "";
+}
+
+export function isCurrentAccountChannelOwner(members: ChannelMemberLike[], currentAccountId?: number | null) {
+  if (!currentAccountId) return false;
+  return members.some((member) =>
+    member.kind !== "virtual" &&
+    member.accountId === currentAccountId &&
+    (member.membershipRole ?? member.role) === "owner"
+  );
+}
+
+export function channelOwnershipSuccessors<T extends ChannelMemberLike>(members: T[], currentAccountId?: number | null): T[] {
+  return members.filter((member) =>
+    member.kind !== "virtual" &&
+    Boolean(member.accountId) &&
+    member.accountId !== currentAccountId
+  );
 }
 
 export function canRemoveChannelMember(member: ChannelMemberLike, options: { canManage: boolean; currentAccountId?: number | null }) {

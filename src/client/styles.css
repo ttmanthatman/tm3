@@ -9794,6 +9794,24 @@ button.admin-object-row:focus-visible {
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
+.owner-transfer-note {
+  margin: 0;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.owner-transfer-error {
+  margin: 0;
+  padding: 0 14px 10px;
+}
+
+.owner-transfer-submit {
+  background: #b42318;
+}
+
 .forward-message-modal {
   width: min(430px, 100%);
   max-height: min(680px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 24px));

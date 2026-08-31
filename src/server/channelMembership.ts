@@ -13,6 +13,13 @@ export function channelNeedsExplicitMembership(channel: Pick<ChannelMembershipSc
   return channel.isPrivate || Boolean(channel.directKey);
 }
 
+export function channelNotificationAudienceWhere(
+  channelId: number,
+  channel: Pick<ChannelMembershipScope, "isPrivate" | "directKey">
+) {
+  return channelNeedsExplicitMembership(channel) ? { memberships: { some: { channelId } } } : {};
+}
+
 function configuredChannelIds(rawConfig: unknown) {
   if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) return [];
   const channels = (rawConfig as { channels?: unknown }).channels;

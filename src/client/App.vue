@@ -154,8 +154,21 @@ import {
   cleanComposerPrompts,
   composerPromptCharTiming
 } from "@shared/composerPrompts";
-import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
-import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
+import {
+  canEditChannel,
+  canLeaveChannel,
+  canManageChannelMembers,
+  canOpenChannelSettings,
+  canSubmitChannelDraft,
+  createChannelDraft,
+  normalizeChannelDraft
+} from "./channelManagement";
+import {
+  canRemoveChannelMember,
+  channelOwnershipSuccessors,
+  isCurrentAccountChannelOwner,
+  memberRoleLabel
+} from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
@@ -703,6 +716,11 @@ const memberPickerCandidates = ref<MemberPickerCandidate[]>([]);
 const memberPickerSelectedIds = ref<string[]>([]);
 const memberPickerBusy = ref(false);
 const memberManageMsg = ref("");
+const ownerTransferOpen = ref(false);
+const ownerTransferChannel = ref<ChannelDTO | null>(null);
+const ownerTransferSuccessorId = ref<number | null>(null);
+const ownerTransferBusy = ref(false);
+const ownerTransferMsg = ref("");
 const showChannelEditor = ref(false);
 const channelEditorMode = ref<"create" | "edit">("create");
 const channelEditorChannel = ref<ChannelDTO | null>(null);
@@ -745,6 +763,9 @@ const forwardBusy = ref(false);
 const forwardError = ref("");
 const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
+const pendingLeaveChannel = ref<ChannelDTO | null>(null);
+const channelLeaveBusy = ref(false);
+const channelLeaveMsg = ref("");
 const composerPanel = ref<"voice" | "more" | null>(null);
 
 async function switchVisibleChannel(channelId: number, prayerOnly = false) {
@@ -1219,6 +1240,7 @@ watch(
     memberRemoveMode.value = false;
     memberManageMsg.value = "";
     pendingCloseChannel.value = null;
+    pendingLeaveChannel.value = null;
     pendingChain.value = null;
     pendingDownload.value = null;
     pendingRecall.value = null;
@@ -1820,6 +1842,7 @@ const canManageActiveMembers = computed(() => {
   const channel = activeMemberPaneChannel.value;
   return channel?.kind !== "music" && canManageChannelMembers(channel);
 });
+const ownerTransferCandidates = computed(() => channelOwnershipSuccessors(activeMemberPaneMembers.value, store.account?.id));
 const memberPaneTitle = computed(() => (memberPaneChannelOverride.value ? "成员管理" : "成员"));
 const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name || "");
 const memberPickerTitle = computed(() => (memberPickerChannel.value ? `添加到 ${memberPickerChannel.value.name}` : "添加成员"));
@@ -4665,7 +4688,7 @@ function openCreateChannelEditor() {
 }
 
 function openEditChannelEditor(channel: ChannelDTO) {
-  if (!canEditChannel(channel)) return;
+  if (!canOpenChannelSettings(channel)) return;
   channelEditorMode.value = "edit";
   channelEditorChannel.value = channel;
   channelEditorDraft.value = {
@@ -4711,6 +4734,7 @@ async function openChannelEditorMembers() {
 }
 
 async function saveChannelEditor() {
+  if (channelEditorMode.value === "edit" && !canEditChannel(channelEditorChannel.value)) return;
   const draft = normalizeChannelDraft(channelEditorDraft.value);
   if (!canSubmitChannelDraft(channelEditorDraft.value, channelEditorBusy.value)) {
     channelEditorMsg.value = "请输入频道名";
@@ -4906,6 +4930,103 @@ async function removeMemberFromActive(member: MemberActionTarget) {
     if (!activeMemberPaneMembers.value.some(canRemoveMemberFromActive)) memberRemoveMode.value = false;
   } catch (error) {
     memberManageMsg.value = error instanceof Error ? error.message : "移除成员失败";
+  }
+}
+
+function openOwnerTransfer(channel = activeMemberPaneChannel.value) {
+  if (!channel || !canLeaveChannel(channel) || !isCurrentAccountChannelOwner(activeMemberPaneMembers.value, store.account?.id)) return;
+  selectedMember.value = null;
+  ownerTransferChannel.value = channel;
+  ownerTransferSuccessorId.value = null;
+  ownerTransferMsg.value = "";
+  ownerTransferOpen.value = true;
+}
+
+function closeOwnerTransfer() {
+  if (ownerTransferBusy.value) return;
+  ownerTransferOpen.value = false;
+  ownerTransferChannel.value = null;
+  ownerTransferSuccessorId.value = null;
+  ownerTransferMsg.value = "";
+  if (!showMembers.value) {
+    memberPaneChannelOverride.value = null;
+    managedMembers.value = [];
+  }
+}
+
+async function transferOwnedChannelAndLeave() {
+  const channel = ownerTransferChannel.value;
+  const successorAccountId = ownerTransferSuccessorId.value;
+  if (!channel || !successorAccountId || ownerTransferBusy.value) return;
+  const leavingCurrentChannel = store.currentChannelId === channel.id;
+  const fallbackChannelId = leavingCurrentChannel ? store.previousChannelId : store.currentChannelId;
+  ownerTransferBusy.value = true;
+  ownerTransferMsg.value = "";
+  try {
+    await api(`/api/channels/${channel.id}/leave`, {
+      method: "POST",
+      body: JSON.stringify({ successorAccountId })
+    });
+    ownerTransferOpen.value = false;
+    ownerTransferChannel.value = null;
+    ownerTransferSuccessorId.value = null;
+    memberRemoveMode.value = false;
+    memberPaneChannelOverride.value = null;
+    managedMembers.value = [];
+    showMembers.value = false;
+    await store.loadChannels(fallbackChannelId);
+    if (leavingCurrentChannel) {
+      await nextTick();
+      scrollBottom(false);
+    }
+  } catch (error) {
+    ownerTransferMsg.value = error instanceof Error ? error.message : "频道移交失败";
+  } finally {
+    ownerTransferBusy.value = false;
+  }
+}
+
+async function requestLeaveChannel(channel = channelEditorChannel.value) {
+  if (!channel || !canLeaveChannel(channel) || channelLeaveBusy.value) return;
+  channelLeaveBusy.value = true;
+  channelLeaveMsg.value = "";
+  try {
+    const members = await store.loadMembers(channel.id);
+    showChannelEditor.value = false;
+    if (isCurrentAccountChannelOwner(members, store.account?.id)) {
+      memberPaneChannelOverride.value = channel;
+      managedMembers.value = members;
+      openOwnerTransfer(channel);
+      return;
+    }
+    pendingLeaveChannel.value = channel;
+  } catch (error) {
+    channelEditorMsg.value = error instanceof Error ? error.message : "频道成员加载失败";
+    showChannelEditor.value = true;
+  } finally {
+    channelLeaveBusy.value = false;
+  }
+}
+
+async function leavePendingChannel() {
+  const channel = pendingLeaveChannel.value;
+  if (!channel || channelLeaveBusy.value) return;
+  const leavingCurrentChannel = store.currentChannelId === channel.id;
+  const fallbackChannelId = leavingCurrentChannel ? store.previousChannelId : store.currentChannelId;
+  channelLeaveBusy.value = true;
+  channelLeaveMsg.value = "";
+  try {
+    await api(`/api/channels/${channel.id}/leave`, { method: "POST", body: JSON.stringify({}) });
+    pendingLeaveChannel.value = null;
+    await store.loadChannels(fallbackChannelId);
+    if (leavingCurrentChannel) {
+      await nextTick();
+      scrollBottom(false);
+    }
+  } catch (error) {
+    channelLeaveMsg.value = error instanceof Error ? error.message : "退出频道失败";
+  } finally {
+    channelLeaveBusy.value = false;
   }
 }
 
@@ -6070,7 +6191,7 @@ function clearFavoriteLongPress() {
 }
 
 function beginChannelLongPress(channel: ChannelDTO, event: PointerEvent) {
-  if (!canEditChannel(channel) || event.button !== 0) return;
+  if (!canOpenChannelSettings(channel) || event.button !== 0) return;
   const target = event.target;
   if (target instanceof Element && target.closest("input, label, a")) return;
   channelLongPressStartedAt = { x: event.clientX, y: event.clientY };
@@ -6094,7 +6215,7 @@ function clearChannelLongPress() {
 }
 
 function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
-  if (!canEditChannel(channel)) return;
+  if (!canOpenChannelSettings(channel)) return;
   event.preventDefault();
   suppressNextTapUntil = Date.now() + 650;
   openEditChannelEditor(channel);
@@ -9762,7 +9883,7 @@ async function toggleVirtual(character: any) {
       <template v-for="channel in store.channels" :key="channel.id">
         <div
           class="channel-row-wrap"
-          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canEditChannel(channel), 'has-list-color': !!channel.listColor }"
+          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canOpenChannelSettings(channel), 'has-list-color': !!channel.listColor }"
           :style="channel.listColor ? { '--channel-list-color': channel.listColor } : undefined"
         >
           <button
@@ -9789,7 +9910,7 @@ async function toggleVirtual(character: any) {
             </span>
           </button>
           <button
-            v-if="canEditChannel(channel)"
+            v-if="canOpenChannelSettings(channel)"
             class="channel-row-action"
             @click.stop="openEditChannelEditor(channel)"
             @pointerdown.stop
@@ -11199,14 +11320,14 @@ async function toggleVirtual(character: any) {
           <button class="icon-btn" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor" aria-label="关闭频道设置"><X :size="20" /></button>
         </header>
         <div class="form-grid modal-form channel-editor-form">
-          <div v-if="isTwoPersonDirectEditor" class="direct-chat-follow-note">
+          <div v-if="isTwoPersonDirectEditor && canEditChannel(channelEditorChannel)" class="direct-chat-follow-note">
             <span class="direct-chat-follow-icon"><LockKeyhole :size="18" /></span>
             <span>
               <strong>显示对方的资料</strong>
               <small>双人私聊的名称和图标会自动跟随对方的昵称与头像。</small>
             </span>
           </div>
-          <template v-if="channelEditorMode === 'edit' && channelEditorChannel && !isTwoPersonDirectEditor">
+          <template v-if="channelEditorMode === 'edit' && channelEditorChannel && !isTwoPersonDirectEditor && canEditChannel(channelEditorChannel)">
             <label>频道图标</label>
             <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
               <span v-if="channelEditorChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
@@ -11215,7 +11336,7 @@ async function toggleVirtual(character: any) {
               <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
             </label>
           </template>
-          <template v-if="!isTwoPersonDirectEditor">
+          <template v-if="!isTwoPersonDirectEditor && (channelEditorMode === 'create' || canEditChannel(channelEditorChannel))">
             <label class="channel-name-label">
               <span>频道名称</span>
               <button
@@ -11248,16 +11369,26 @@ async function toggleVirtual(character: any) {
             <input v-model="channelEditorDraft.isPrivate" type="checkbox" />
             <span>私密频道</span>
           </label>
-          <label class="check-row check-row-inline">
+          <label v-if="channelEditorMode === 'create' || canEditChannel(channelEditorChannel)" class="check-row check-row-inline">
             <input v-model="channelEditorDraft.useListColor" type="checkbox" />
             <span>自定义频道列表底色</span>
           </label>
-          <label v-if="channelEditorDraft.useListColor" class="channel-list-color-field">
+          <label v-if="channelEditorDraft.useListColor && (channelEditorMode === 'create' || canEditChannel(channelEditorChannel))" class="channel-list-color-field">
             <span>列表底色</span>
             <input v-model="channelEditorDraft.listColor" type="color" aria-label="频道列表底色" />
             <code>{{ channelEditorDraft.listColor }}</code>
           </label>
           <p v-if="channelEditorMsg" class="form-error">{{ channelEditorMsg }}</p>
+          <div
+            v-if="channelEditorMode === 'edit' && channelEditorChannel && !canEditChannel(channelEditorChannel)"
+            class="direct-chat-follow-note"
+          >
+            <span class="direct-chat-follow-icon"><LockKeyhole :size="18" /></span>
+            <span>
+              <strong>{{ channelEditorChannel.name }}</strong>
+              <small>{{ channelEditorChannel.description || "私密频道" }}</small>
+            </span>
+          </div>
           <div class="confirm-actions channel-editor-actions">
             <button
               v-if="channelEditorMode === 'edit' && canEditChannel(channelEditorChannel)"
@@ -11268,8 +11399,24 @@ async function toggleVirtual(character: any) {
             >
               <Users :size="15" />成员
             </button>
-            <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">取消</button>
-            <button class="primary-btn" type="submit" :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)">
+            <button
+              v-if="channelEditorMode === 'edit' && canLeaveChannel(channelEditorChannel)"
+              class="mini-btn danger-action"
+              type="button"
+              :disabled="channelEditorBusy || channelLeaveBusy"
+              @click="requestLeaveChannel()"
+            >
+              <LogOut :size="15" />退出频道
+            </button>
+            <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">
+              {{ channelEditorMode === "edit" && !canEditChannel(channelEditorChannel) ? "关闭" : "取消" }}
+            </button>
+            <button
+              v-if="channelEditorMode === 'create' || canEditChannel(channelEditorChannel)"
+              class="primary-btn"
+              type="submit"
+              :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)"
+            >
               {{ channelEditorBusy ? "保存中..." : channelEditorMode === "create" ? "创建" : "保存" }}
             </button>
           </div>
@@ -11312,6 +11459,51 @@ async function toggleVirtual(character: any) {
           <button class="mini-btn secondary" type="button" :disabled="memberPickerBusy" @click="closeMemberPicker">取消</button>
           <button class="primary-btn" type="submit" :disabled="memberPickerBusy || !memberPickerSelectedIds.length">
             {{ memberPickerBusy ? "添加中..." : `添加 ${memberPickerSelectedIds.length || ""}` }}
+          </button>
+        </div>
+      </form>
+    </section>
+
+    <section v-if="ownerTransferOpen" class="modal-shell" @click.self="closeOwnerTransfer">
+      <form class="small-modal member-picker-modal" @submit.prevent="transferOwnedChannelAndLeave">
+        <header class="modal-head">
+          <div>
+            <strong>移交负责人并退出</strong>
+            <small>{{ ownerTransferChannel?.name }}</small>
+          </div>
+          <button class="icon-btn" type="button" :disabled="ownerTransferBusy" @click="closeOwnerTransfer" aria-label="关闭负责人移交"><X :size="20" /></button>
+        </header>
+        <p class="owner-transfer-note">选择一位现有成员作为新的频道负责人。确认后，你会立即退出这个频道。</p>
+        <div class="member-picker-body">
+          <div v-if="ownerTransferCandidates.length" class="member-picker-list">
+            <button
+              v-for="candidate in ownerTransferCandidates"
+              :key="candidate.accountId"
+              type="button"
+              class="member-picker-row"
+              :class="{ selected: ownerTransferSuccessorId === candidate.accountId }"
+              :disabled="ownerTransferBusy"
+              @click="ownerTransferSuccessorId = candidate.accountId || null"
+            >
+              <div class="avatar presence-avatar">
+                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" />
+                <span v-else>{{ avatarText(candidate.displayName) }}</span>
+                <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
+              </div>
+              <span>
+                <strong>{{ candidate.displayName }}</strong>
+                <small>@{{ candidate.username }}</small>
+              </span>
+              <CheckCircle2 v-if="ownerTransferSuccessorId === candidate.accountId" :size="18" />
+            </button>
+          </div>
+          <div v-else class="member-picker-empty">还没有可接任的成员，请先添加成员。</div>
+        </div>
+        <p v-if="ownerTransferMsg" class="form-error owner-transfer-error">{{ ownerTransferMsg }}</p>
+        <div class="confirm-actions member-picker-actions">
+          <button class="mini-btn secondary" type="button" :disabled="ownerTransferBusy" @click="closeOwnerTransfer">取消</button>
+          <button class="primary-btn owner-transfer-submit" type="submit" :disabled="ownerTransferBusy || !ownerTransferSuccessorId">
+            {{ ownerTransferBusy ? "正在移交..." : "指定并退出" }}
           </button>
         </div>
       </form>
@@ -11411,6 +11603,26 @@ async function toggleVirtual(character: any) {
             <button class="mini-btn danger-action" @click="clearPinned">撤下置顶</button>
             <button class="mini-btn secondary" @click="showPinnedEditor = false">取消</button>
             <button class="primary-btn" @click="savePinnedEditor"><Save :size="16" />保存</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section v-if="pendingLeaveChannel" class="modal-shell" @click.self="!channelLeaveBusy && (pendingLeaveChannel = null)">
+      <div class="small-modal">
+        <header class="modal-head">
+          <strong>退出频道</strong>
+          <button class="icon-btn" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null" aria-label="取消退出频道"><X :size="20" /></button>
+        </header>
+        <div class="confirm-body">
+          <p>退出后，这个频道会从你的列表中移除，你也不会再收到它的新消息或通知。</p>
+          <strong>{{ pendingLeaveChannel.name }}</strong>
+          <p v-if="channelLeaveMsg" class="form-error">{{ channelLeaveMsg }}</p>
+          <div class="confirm-actions">
+            <button class="mini-btn secondary" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null">取消</button>
+            <button class="primary-btn" :disabled="channelLeaveBusy" @click="leavePendingChannel">
+              {{ channelLeaveBusy ? "正在退出..." : "确认退出" }}
+            </button>
           </div>
         </div>
       </div>

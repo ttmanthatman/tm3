@@ -2,7 +2,15 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canEditChannel, canManageChannelMembers, canSubmitChannelDraft, createChannelDraft, normalizeChannelDraft } from "./channelManagement";
+import {
+  canEditChannel,
+  canLeaveChannel,
+  canManageChannelMembers,
+  canOpenChannelSettings,
+  canSubmitChannelDraft,
+  createChannelDraft,
+  normalizeChannelDraft
+} from "./channelManagement";
 
 test("createChannelDraft starts new channels as private without a custom list color", () => {
   assert.deepEqual(createChannelDraft(), { name: "", description: "", isPrivate: true, listColor: "#e8f4ec", useListColor: false });
@@ -24,6 +32,27 @@ test("canManageChannelMembers only allows private manageable channels", () => {
   assert.equal(canManageChannelMembers({ canManage: false, kind: "standard", isPrivate: true }), false);
   assert.equal(canManageChannelMembers({ canManage: true, kind: "aiLounge", isPrivate: true }), false);
   assert.equal(canManageChannelMembers({ canManage: true, kind: "music", isPrivate: true }), false);
+});
+
+test("every member can open settings and leave an ordinary private channel", () => {
+  const memberChannel = {
+    canManage: false,
+    kind: "standard",
+    isPrivate: true,
+    isDefault: false,
+    directKey: null
+  };
+  assert.equal(canEditChannel(memberChannel), false);
+  assert.equal(canLeaveChannel(memberChannel), true);
+  assert.equal(canOpenChannelSettings(memberChannel), true);
+});
+
+test("protected, public, default, and direct channels do not expose the membership leave action", () => {
+  assert.equal(canLeaveChannel({ kind: "standard", isPrivate: false, isDefault: false, directKey: null }), false);
+  assert.equal(canLeaveChannel({ kind: "standard", isPrivate: true, isDefault: true, directKey: null }), false);
+  assert.equal(canLeaveChannel({ kind: "standard", isPrivate: true, isDefault: false, directKey: "1:2" }), false);
+  assert.equal(canLeaveChannel({ kind: "aiLounge", isPrivate: true, isDefault: false, directKey: null }), false);
+  assert.equal(canLeaveChannel({ kind: "music", isPrivate: true, isDefault: false, directKey: null }), false);
 });
 
 test("normalizeChannelDraft trims submitted fields but keeps privacy choice", () => {

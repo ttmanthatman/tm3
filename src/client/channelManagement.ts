@@ -10,6 +10,8 @@ export type EditableChannelLike = {
   canManage?: boolean;
   kind?: string;
   isPrivate?: boolean;
+  isDefault?: boolean;
+  directKey?: string | null;
 };
 
 export function createChannelDraft(): ChannelDraft {
@@ -22,6 +24,19 @@ export function canEditChannel(channel?: EditableChannelLike | null) {
 
 export function canManageChannelMembers(channel?: EditableChannelLike | null) {
   return canEditChannel(channel) && !!channel?.isPrivate;
+}
+
+export function canLeaveChannel(channel?: EditableChannelLike | null) {
+  return (
+    channel?.kind === "standard" &&
+    !!channel.isPrivate &&
+    !channel.isDefault &&
+    !channel.directKey
+  );
+}
+
+export function canOpenChannelSettings(channel?: EditableChannelLike | null) {
+  return canEditChannel(channel) || canLeaveChannel(channel);
 }
 
 export function normalizeChannelDraft(draft: ChannelDraft) {

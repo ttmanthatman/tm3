@@ -2,7 +2,12 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { canRemoveChannelMember, memberRoleLabel } from "./memberManagement";
+import {
+  canRemoveChannelMember,
+  channelOwnershipSuccessors,
+  isCurrentAccountChannelOwner,
+  memberRoleLabel
+} from "./memberManagement";
 
 test("canRemoveChannelMember allows managers to remove regular human members", () => {
   assert.equal(canRemoveChannelMember({ kind: "human", accountId: 2, role: "member" }, { canManage: true, currentAccountId: 1 }), true);
@@ -25,7 +30,28 @@ test("canRemoveChannelMember requires channel management permission", () => {
 
 test("memberRoleLabel keeps member grid role labels stable", () => {
   assert.equal(memberRoleLabel({ kind: "human", role: "owner" }), "创建者");
+  assert.equal(memberRoleLabel({ kind: "human", role: "admin", membershipRole: "owner" }), "创建者");
   assert.equal(memberRoleLabel({ kind: "human", role: "admin" }), "管理员");
   assert.equal(memberRoleLabel({ kind: "virtual", role: "virtual" }), "角色");
   assert.equal(memberRoleLabel({ kind: "human", role: "member" }), "");
+});
+
+test("ownership transfer is offered only to the current membership owner", () => {
+  const members = [
+    { kind: "human", accountId: 1, role: "admin", membershipRole: "owner" },
+    { kind: "human", accountId: 2, role: "member", membershipRole: "member" }
+  ];
+  assert.equal(isCurrentAccountChannelOwner(members, 1), true);
+  assert.equal(isCurrentAccountChannelOwner(members, 2), false);
+});
+
+test("ownership successors are existing human members other than the owner", () => {
+  const members = [
+    { kind: "human", accountId: 1, role: "owner" },
+    { kind: "human", accountId: 2, role: "member" },
+    { kind: "human", accountId: 3, role: "admin", membershipRole: "member" },
+    { kind: "virtual", characterId: 7, role: "virtual" },
+    { kind: "human", role: "member" }
+  ];
+  assert.deepEqual(channelOwnershipSuccessors(members, 1).map((member) => member.accountId), [2, 3]);
 });

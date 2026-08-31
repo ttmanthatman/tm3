@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { channelNeedsExplicitMembership, virtualCharacterConfigForChannel, virtualCharacterVisibleInChannel } from "./channelMembership.js";
+import {
+  channelNeedsExplicitMembership,
+  channelNotificationAudienceWhere,
+  virtualCharacterConfigForChannel,
+  virtualCharacterVisibleInChannel
+} from "./channelMembership.js";
 
 test("private and direct channels require an explicit human membership", () => {
   assert.equal(channelNeedsExplicitMembership({ isPrivate: true, directKey: null }), true);
   assert.equal(channelNeedsExplicitMembership({ isPrivate: false, directKey: "1:2" }), true);
   assert.equal(channelNeedsExplicitMembership({ isPrivate: false, directKey: null }), false);
+});
+
+test("private channel notifications are restricted to current memberships", () => {
+  assert.deepEqual(channelNotificationAudienceWhere(7, { isPrivate: true, directKey: null }), {
+    memberships: { some: { channelId: 7 } }
+  });
+  assert.deepEqual(channelNotificationAudienceWhere(7, { isPrivate: false, directKey: null }), {});
 });
 
 test("virtual characters stay out of private channels unless configured there", () => {

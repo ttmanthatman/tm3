@@ -38,7 +38,7 @@ import {
   selectBibleVerseKeys
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
-import { bibleBookSection } from "../bibleBookSections";
+import { BIBLE_BOOK_SECTIONS, bibleBookSection } from "../bibleBookSections";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import {
   BIBLE_FAVORITE_COLOR_PRESETS,
@@ -397,6 +397,10 @@ function bibleBookSectionLabel(bookCode: string) {
 function bibleBookSectionStyle(bookCode: string) {
   const section = bibleBookSection(bookCode);
   return section ? { "--bible-book-section-color": section.color } : undefined;
+}
+
+function bibleBookSectionColorStyle(color: string) {
+  return { "--bible-book-section-color": color };
 }
 
 async function searchTopic(append = false) {
@@ -1006,7 +1010,18 @@ function handleTouchEnd(event: TouchEvent) {
       </nav>
 
       <section v-if="homeSection === 'catalog' && catalog" class="bible-catalog">
-        <header><BookOpen :size="24" /><div><h2>经卷目录</h2><p>旧约39卷 · 新约27卷 · 按目录分部标色</p></div></header>
+        <header>
+          <BookOpen :size="24" />
+          <div>
+            <h2>经卷目录</h2>
+            <p>旧约39卷 · 新约27卷 · 按目录分部标色</p>
+            <div class="bible-section-legend" aria-label="经卷文体颜色索引">
+              <span v-for="section in BIBLE_BOOK_SECTIONS" :key="section.key" :style="bibleBookSectionColorStyle(section.color)">
+                <i aria-hidden="true"></i>{{ section.label }}
+              </span>
+            </div>
+          </div>
+        </header>
         <section>
           <h3>旧约</h3>
           <div class="bible-book-grid">
@@ -1019,7 +1034,7 @@ function handleTouchEnd(event: TouchEvent) {
               @click="chooseBook(book)"
             >
               <strong>{{ book.name }}</strong>
-              <small><span>{{ bibleBookSectionLabel(book.code) }}</span><span>{{ book.chapterCount }}章</span></small>
+              <small>{{ book.chapterCount }}章</small>
             </button>
           </div>
         </section>
@@ -1035,7 +1050,7 @@ function handleTouchEnd(event: TouchEvent) {
               @click="chooseBook(book)"
             >
               <strong>{{ book.name }}</strong>
-              <small><span>{{ bibleBookSectionLabel(book.code) }}</span><span>{{ book.chapterCount }}章</span></small>
+              <small>{{ book.chapterCount }}章</small>
             </button>
           </div>
         </section>
@@ -1287,19 +1302,22 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-favorite-grid button { min-height: 34px; border: 1px solid #cbb797; border-radius: 8px; padding: 0 9px; color: #6d5135; background: #faf4e8; display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 13px; cursor: pointer; }
 .bible-favorite-grid button:disabled { opacity: .45; }
 .bible-catalog { max-width: 1120px; margin: 0 auto; }
-.bible-catalog > header { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; color: #6d5135; }
+.bible-catalog > header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 22px; color: #6d5135; }
+.bible-catalog > header > svg { margin-top: 2px; flex: 0 0 auto; }
+.bible-catalog > header > div { min-width: 0; }
 .bible-catalog h2, .bible-catalog h3, .bible-catalog p { margin: 0; }
 .bible-catalog h2, .bible-catalog h3 { font-family: "Songti SC", "STSong", serif; }
 .bible-catalog p { margin-top: 3px; color: #8b7259; }
+.bible-section-legend { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px 8px; }
+.bible-section-legend span { --bible-book-section-color: #80613f; min-height: 25px; padding: 3px 8px 3px 6px; border: 1px solid color-mix(in srgb, var(--bible-book-section-color) 26%, transparent); border-radius: 8px; color: #6f5b47; background: color-mix(in srgb, var(--bible-book-section-color) 7%, #fffaf2); display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1; white-space: nowrap; }
+.bible-section-legend i { width: 9px; height: 9px; border-radius: 3px; background: var(--bible-book-section-color); }
 .bible-catalog > section + section { margin-top: 30px; }
 .bible-catalog > section > h3 { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid rgba(112, 78, 44, .18); font-size: 22px; }
 .bible-book-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-.bible-book-grid button { --bible-book-section-color: #80613f; min-height: 76px; padding: 12px 8px 10px; border: 1px solid color-mix(in srgb, var(--bible-book-section-color) 34%, transparent); border-radius: 11px; color: #4f3b29; background: color-mix(in srgb, var(--bible-book-section-color) 9%, #fffaf2); box-shadow: inset 0 4px 0 var(--bible-book-section-color); display: grid; align-content: center; gap: 5px; font: inherit; cursor: pointer; }
-.bible-book-grid button:hover { border-color: color-mix(in srgb, var(--bible-book-section-color) 58%, transparent); background: color-mix(in srgb, var(--bible-book-section-color) 14%, #fffaf2); transform: translateY(-1px); }
+.bible-book-grid button { --bible-book-section-color: #80613f; min-height: 76px; padding: 12px 8px 10px; border: 1px solid color-mix(in srgb, var(--bible-book-section-color) 28%, transparent); border-radius: 11px; color: #4f3b29; background: color-mix(in srgb, var(--bible-book-section-color) 7%, #fffaf2); display: grid; align-content: center; gap: 5px; font: inherit; cursor: pointer; }
+.bible-book-grid button:hover { border-color: color-mix(in srgb, var(--bible-book-section-color) 44%, transparent); background: color-mix(in srgb, var(--bible-book-section-color) 11%, #fffaf2); }
 .bible-book-grid strong { font-family: "Songti SC", "STSong", serif; font-size: 16px; }
-.bible-book-grid small { display: flex; align-items: center; justify-content: center; gap: 6px; color: #92775b; }
-.bible-book-grid small span:first-child { color: var(--bible-book-section-color); font-weight: 800; }
-.bible-book-grid small span + span::before { content: "·"; margin-right: 6px; color: #aa947c; }
+.bible-book-grid small { color: #92775b; }
 .bible-chapter-picker { padding: 48px max(18px, calc((100vw - 760px) / 2)) calc(48px + var(--safe-bottom)); }
 .bible-paper-heading { text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-paper-heading span, .bible-paper-heading p { color: #957a5d; }
