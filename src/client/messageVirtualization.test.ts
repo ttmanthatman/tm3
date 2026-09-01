@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization.js";
+import {
+  calculateVirtualWindow,
+  estimatedImageTimelineHeight,
+  scrollTopForVirtualAnchor,
+  virtualItemOffset,
+  type VirtualTimelineItem
+} from "./messageVirtualization.js";
 
 const items: VirtualTimelineItem[] = Array.from({ length: 500 }, (_, index) => ({
   key: `message:${index + 1}`,
@@ -54,6 +60,25 @@ test("measured dynamic heights update offsets and total spacer height", () => {
   assert.equal(window.totalHeight, 520);
   assert.equal(window.start, 0);
   assert.equal(window.end, 2);
+});
+
+test("settled measurements preserve a virtual row anchor without querying its DOM node", () => {
+  const anchor = { key: "message:4", offset: -20, scrollTop: 260, virtualOffset: 240 };
+  const settledScrollTop = scrollTopForVirtualAnchor(items, {
+    "message:1": 120,
+    "message:2": 200
+  }, anchor);
+
+  assert.equal(settledScrollTop, 420);
+});
+
+test("prepending history preserves the same virtual row viewport offset", () => {
+  const before = items.slice(9, 15);
+  const after = items.slice(3, 15);
+  const anchor = { key: "message:11", offset: 36, scrollTop: 44, virtualOffset: 80 };
+
+  assert.equal(scrollTopForVirtualAnchor(before, {}, anchor), 44);
+  assert.equal(scrollTopForVirtualAnchor(after, {}, anchor), 524);
 });
 
 test("small timelines can be rendered without spacer bookkeeping", () => {

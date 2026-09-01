@@ -3515,6 +3515,7 @@ button {
   background: transparent;
   overflow-y: auto;
   overflow-x: hidden;
+  overflow-anchor: none;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
   scroll-padding-bottom: calc(80px + var(--keyboard-offset));
@@ -3526,7 +3527,7 @@ button {
   flex: 1 0 0;
 }
 
-/* 冷启动锚定期间隐藏消息列表，避免缓存窗口先闪现较旧的消息再跳到底部 */
+/* 冷启动锚定期间隐藏消息列表，避免缓存窗口在阅读位置恢复前闪动 */
 .messages-scroll--anchoring {
   visibility: hidden;
 }

@@ -62,6 +62,10 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
   assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);
   assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
+  assert.doesNotMatch(bibleWorkspace, /bibleBookSection/);
+  assert.match(bibleWorkspace, /<p>旧约39卷 · 新约27卷<\/p>/);
+  assert.doesNotMatch(bibleWorkspace, /按目录分部标色/);
+  assert.match(bibleWorkspace, /<strong>\{\{ book\.name \}\}<\/strong>\s*<small>\{\{ book\.chapterCount \}\}章<\/small>/);
   assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);
   assert.match(bibleWorkspace, /scrollTop < 220[\s\S]*?loadChapter\(first - 1, true\)[\s\S]*?loadChapter\(last \+ 1\)/);
   assert.match(bibleWorkspace, /loadBibleWorkspaceState[\s\S]*?saveBibleWorkspaceState/);
@@ -736,7 +740,7 @@ test("karaoke clock sleeps across iOS page hiding and component exit", () => {
   assert.match(lyricsHeader, /window\.addEventListener\("pagehide", handlePageHide\)/);
   assert.match(lyricsHeader, /window\.addEventListener\("pageshow", handlePageShow\)/);
   assert.match(lyricsHeader, /onBeforeUnmount\([\s\S]*?clearClock\(\)/);
-  assert.match(app, /if \(!documentVisible\.value\) \{\s*clearMusicLyricsHeaderResumeTimer\(\)/);
+  assert.match(app, /if \(!documentVisible\.value\) \{[\s\S]*?clearMusicLyricsHeaderResumeTimer\(\)/);
 });
 
 test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
@@ -750,9 +754,20 @@ test("karaoke lyrics stay above chat content and retain refined enter and leave 
   assert.match(css, /\.music-lyrics-panel-leave-active[\s\S]*?musicLyricsRetract/);
 });
 
-test("fresh browser and login entry force the chat to the newest semantic position", () => {
-  assert.match(app, /onMounted\([\s\S]*?await enterChatAtNewest\(\)/);
-  assert.match(app, /async function doLogin\([\s\S]*?await enterChatAtNewest\(\)/);
+test("browser and login entry restore the last saved reading position", () => {
+  assert.doesNotMatch(app, /saveNewestReadPositionForAccount/);
+  assert.doesNotMatch(app, /async function enterChatAtNewest/);
+  assert.match(app, /onMounted\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\)/);
+  assert.match(app, /async function doLogin\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\)/);
+  assert.match(app, /function handlePageHideFlush\(\) \{\s*saveReadPosition\(\);\s*flushPendingPersists\(\);\s*\}/);
+  assert.match(app, /'messages-scroll--anchoring': initialChatAnchorPending \|\| pendingReadPositionRestore/);
+  assert.match(css, /\.messages-scroll \{[\s\S]*?overflow-anchor: none;/);
+});
+
+test("timeline measurements consume the anchor captured on the last active scroll frame", () => {
+  assert.match(app, /if \(timelineScrollActive\.value\) \{[\s\S]*?pendingTimelineAnchor = visibleTimelineAnchor\(root\)/);
+  assert.match(app, /const anchor = root \? pendingTimelineAnchor \|\| visibleTimelineAnchor\(root\) : null;/);
+  assert.match(app, /activeReadAnchor = newestChatReadAnchor\(readPositionRestoreToken\);\s*pendingTimelineAnchor = null;/);
 });
 
 test("music manager supports search, four sort modes, and manual movement controls", () => {

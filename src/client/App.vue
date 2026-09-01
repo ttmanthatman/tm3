@@ -126,7 +126,14 @@ import ActivityTicker from "./components/ActivityTicker.vue";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./features/voice/voiceRecording";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
-import { calculateVirtualWindow, estimatedImageTimelineHeight, virtualItemOffset, type VirtualTimelineItem } from "./messageVirtualization";
+import {
+  calculateVirtualWindow,
+  estimatedImageTimelineHeight,
+  scrollTopForVirtualAnchor,
+  virtualItemOffset,
+  type VirtualTimelineAnchor,
+  type VirtualTimelineItem
+} from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
 import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
@@ -190,7 +197,7 @@ import {
   type ChatReadAnchor
 } from "./chatScrollStability";
 import { formatUnreadCount } from "./unread";
-import { flushPendingPersists, lastMsgwinAccount } from "./messageWindowCache";
+import { flushPendingPersists } from "./messageWindowCache";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "@shared/release";
@@ -396,6 +403,7 @@ let timelineMeasurementFrame: number | undefined;
 let timelineScrollIdleTimer: number | undefined;
 const timelineScrollActive = ref(false);
 const pendingTimelineHeights = new Map<string, number>();
+let pendingTimelineAnchor: VirtualTimelineAnchor | null = null;
 type OopsPhysicsLayerHandle = {
   start: (messageId: number, bubble: HTMLElement, textRoot: HTMLElement) => Promise<boolean>;
   restore: (messageId: number) => void;
@@ -426,9 +434,8 @@ let wallpaperPanRetryAttempt = 0;
 let wallpaperPanRetrySource = "";
 let pendingWallpaperPanDelta = 0;
 const pendingReadPositionRestore = ref(false);
-// Cold-start anchor guard: while true the message list stays hidden until it
-// has been scrolled to the newest message, so a restored cached window never
-// flashes its oldest rows before the bottom anchor lands.
+// Cold-start anchor guard: keep a cached message window hidden until its saved
+// semantic reading anchor has been restored.
 const initialChatAnchorPending = ref(store.messages.length > 0);
 let readPositionRestoreToken = 0;
 let activeReadAnchor: ChatReadAnchor | null = null;
@@ -1126,22 +1133,7 @@ onMounted(async () => {
   window.visualViewport?.addEventListener("scroll", handleTimelineViewportResize, { passive: true });
   window.addEventListener("pagehide", handlePageHideFlush);
   window.addEventListener("reception-closed", handleReceptionClosed);
-  if (initialChatAnchorPending.value) {
-    scrollBottom(false);
-    void nextTick(() => {
-      scrollBottom(false);
-      requestAnimationFrame(() => {
-        initialChatAnchorPending.value = false;
-      });
-    });
-  }
-  // Force the saved read position to "newest" before bootstrap can trigger a
-  // restore; cold starts always enter at the newest message (enterChatAtNewest
-  // does the same later), and this prevents a stale mid-history position from
-  // loading old pages first. Deep links keep their own navigation.
   const linkedChannelId = Number(new URLSearchParams(window.location.search).get("channelId") || 0);
-  const persistedAccountId = lastMsgwinAccount();
-  if (!linkedChannelId && persistedAccountId) saveNewestReadPositionForAccount(persistedAccountId, store.currentChannelId, store.prayerOnly);
   try {
     await store.bootstrap();
   } catch (error) {
@@ -1177,7 +1169,8 @@ onMounted(async () => {
   // only deep links need to wait for the channel list before navigating.
   if (linkedChannelId) await store.whenChannelsReady();
   await switchToLinkedChannel();
-  await enterChatAtNewest();
+  pendingReadPositionRestore.value = true;
+  await restoreSavedReadPosition();
   await nextTick();
   observeWallpaperPanViewport();
   await resetWallpaperPan();
@@ -1232,6 +1225,7 @@ watch(
   async () => {
     readPositionRestoreToken += 1;
     activeReadAnchor = null;
+    pendingTimelineAnchor = null;
     chatScrollIntentTracker.reset();
     stopAllVoicePlayback();
     selectedMember.value = null;
@@ -2444,6 +2438,11 @@ function scheduleVirtualTimelineViewport(root = scroller.value) {
   timelineScrollFrame = window.requestAnimationFrame(() => {
     timelineScrollFrame = undefined;
     syncVirtualTimelineViewport(root);
+    if (timelineScrollActive.value) {
+      void nextTick(() => {
+        if (timelineScrollActive.value && scroller.value === root) pendingTimelineAnchor = visibleTimelineAnchor(root);
+      });
+    }
   });
 }
 
@@ -2459,19 +2458,28 @@ function measuredTimelineRowHeight(element: HTMLElement) {
   return Math.max(1, element.getBoundingClientRect().height + marginTop + marginBottom);
 }
 
-function visibleTimelineAnchor(root: HTMLElement) {
+function visibleTimelineAnchor(root: HTMLElement): VirtualTimelineAnchor | null {
   const rootTop = root.getBoundingClientRect().top;
   const element = Array.from(root.querySelectorAll<HTMLElement>("[data-timeline-key]")).find((candidate) => candidate.getBoundingClientRect().bottom >= rootTop);
-  return element ? { key: element.dataset.timelineKey || "", offset: element.getBoundingClientRect().top - rootTop } : null;
+  const key = element?.dataset.timelineKey || "";
+  const virtualOffset = key ? virtualItemOffset(virtualTimelineItems.value, measuredTimelineHeights.value, key) : null;
+  return element && key && virtualOffset !== null
+    ? { key, offset: element.getBoundingClientRect().top - rootTop, scrollTop: root.scrollTop, virtualOffset }
+    : null;
 }
 
 async function flushPendingTimelineMeasurements() {
-  if (timelineScrollActive.value || !pendingTimelineHeights.size) return;
+  if (timelineScrollActive.value) return;
+  if (!pendingTimelineHeights.size) {
+    pendingTimelineAnchor = null;
+    return;
+  }
   const root = scroller.value;
   const current = measuredTimelineHeights.value;
   const next = { ...current };
   let changed = false;
-  const anchor = root ? visibleTimelineAnchor(root) : null;
+  const anchor = root ? pendingTimelineAnchor || visibleTimelineAnchor(root) : null;
+  pendingTimelineAnchor = null;
   for (const [key, height] of pendingTimelineHeights) {
     const item = virtualTimelineItems.value.find((candidate) => candidate.key === key);
     if (!item) continue;
@@ -2482,14 +2490,13 @@ async function flushPendingTimelineMeasurements() {
   }
   pendingTimelineHeights.clear();
   if (!changed) return;
+  const anchoredScrollTop = root && anchor?.key && activeReadAnchor?.kind !== "newest" && !pendingReadPositionRestore.value
+    ? scrollTopForVirtualAnchor(virtualTimelineItems.value, next, anchor)
+    : null;
   measuredTimelineHeights.value = next;
   await nextTick();
-  if (root && anchor?.key && !activeReadAnchor && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
-    const element = root.querySelector<HTMLElement>(`[data-timeline-key="${CSS.escape(anchor.key)}"]`);
-    if (element) {
-      const delta = element.getBoundingClientRect().top - root.getBoundingClientRect().top - anchor.offset;
-      if (Math.abs(delta) > 0.5) root.scrollTop += delta;
-    }
+  if (root && anchoredScrollTop !== null && activeReadAnchor?.kind !== "newest" && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
+    root.scrollTop = anchoredScrollTop;
   }
   syncVirtualTimelineViewport(root);
   reconcileReadPositionAfterLayout();
@@ -3136,47 +3143,36 @@ function loadSavedReadPosition(): SavedReadPosition | null {
   }
 }
 
-function saveNewestReadPosition(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
-  const key = readPositionStorageKey(channelId, prayerOnly);
-  if (!key) return;
-  localStorage.setItem(key, JSON.stringify(newestPositionForSessionEntry()));
-}
-
-// Cold-start variant usable before the account is known: builds the same key
-// format as readPositionStorageKey from an explicit account id.
-function saveNewestReadPositionForAccount(accountId: number, channelId: number, prayerOnly: boolean) {
-  if (!accountId || !channelId) return;
-  localStorage.setItem(`team-chat-read-position-${accountId}-${channelId}-${prayerOnly ? "prayers" : "chat"}`, JSON.stringify(newestPositionForSessionEntry()));
-}
-
 function handlePageHideFlush() {
+  saveReadPosition();
   flushPendingPersists();
 }
 
-async function enterChatAtNewest() {
-  readPositionRestoreToken += 1;
-  activeReadAnchor = null;
-  chatScrollIntentTracker.reset();
-  saveNewestReadPosition();
-  pendingReadPositionRestore.value = true;
-  await restoreSavedReadPosition();
+function finishReadPositionRestore(token: number) {
+  if (token !== readPositionRestoreToken) return;
+  pendingReadPositionRestore.value = false;
+  initialChatAnchorPending.value = false;
 }
 
 async function restoreSavedReadPosition() {
   const token = ++readPositionRestoreToken;
+  pendingTimelineAnchor = null;
   await nextTick();
   if (token !== readPositionRestoreToken || store.loadingInitialMessages) return;
   const root = scroller.value;
-  if (!root) return;
+  if (!root) {
+    finishReadPositionRestore(token);
+    return;
+  }
   const position = loadSavedReadPosition();
   if (!position) {
     scrollBottom(false);
-    pendingReadPositionRestore.value = false;
+    finishReadPositionRestore(token);
     return;
   }
   if (String(position.messageId) === newestReadPositionKey) {
     await scrollToNewest(false);
-    pendingReadPositionRestore.value = false;
+    finishReadPositionRestore(token);
     return;
   }
   if (shouldRestoreNewestPosition({
@@ -3185,7 +3181,7 @@ async function restoreSavedReadPosition() {
     distanceFromBottom: Number.POSITIVE_INFINITY
   })) {
     scrollBottom(false);
-    pendingReadPositionRestore.value = false;
+    finishReadPositionRestore(token);
     return;
   }
   if (typeof position.messageId === "number" && position.messageId) {
@@ -3207,13 +3203,13 @@ async function restoreSavedReadPosition() {
         activeReadAnchor = { kind: "message", messageId: position.messageId, offset: position.offset, expiresAt: Date.now() + 2500, token };
       }
       hasUnreadMessages.value = false;
-      pendingReadPositionRestore.value = false;
+      finishReadPositionRestore(token);
       return;
     }
   }
   root.scrollTop = position.scrollTop;
   hasUnreadMessages.value = false;
-  pendingReadPositionRestore.value = false;
+  finishReadPositionRestore(token);
 }
 
 function reconcileReadPositionAfterLayout() {
@@ -3258,6 +3254,7 @@ function stopFollowingNewest() {
 }
 
 function handleTimelineScrollIntent() {
+  if (scroller.value) pendingTimelineAnchor = visibleTimelineAnchor(scroller.value);
   chatScrollIntentTracker.begin(currentNewestViewportState());
   stopFollowingNewest();
   markTimelineScrolling();
@@ -3334,7 +3331,8 @@ async function doLogin() {
       return;
     }
     await switchToLinkedChannel();
-    await enterChatAtNewest();
+    pendingReadPositionRestore.value = true;
+    await restoreSavedReadPosition();
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : authMode.value === "reception" ? "无法进入会客厅" : authMode.value === "register" ? "注册失败" : "登录失败";
   }
@@ -5217,6 +5215,7 @@ function refreshMessageEffectObserver() {
 function handleDocumentVisibilityChange() {
   documentVisible.value = document.visibilityState === "visible";
   if (!documentVisible.value) {
+    saveReadPosition();
     clearMusicLyricsHeaderResumeTimer();
     if (isRecording.value) recordingStatus.value = "录音可能因锁屏或切换应用而中断";
     stopRainEffect();
@@ -7954,6 +7953,7 @@ function endPreviewPlayback() {
 function scrollBottom(smooth = true) {
   const el = scroller.value;
   if (!el) return;
+  pendingTimelineAnchor = null;
   activeReadAnchor = newestChatReadAnchor(readPositionRestoreToken);
   chatScrollIntentTracker.reset();
   el.scrollTo({ top: el.scrollHeight + 1000, behavior: smooth ? "smooth" : "auto" });
@@ -8125,26 +8125,15 @@ async function loadTimelineEdgesAfterScroll() {
   if (!el) return;
   if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
     loadingHistoryFromScroll = true;
-    const beforeHeight = el.scrollHeight;
-    const beforeTop = el.scrollTop;
-    const rootTop = el.getBoundingClientRect().top;
-    const anchorElement = visibleMessageElements()[0];
-    const anchorMessageId = Number(anchorElement?.dataset.messageId || 0);
-    const edgeAnchor: ChatReadAnchor | null = anchorElement && anchorMessageId
-      ? {
-        kind: "message",
-        messageId: anchorMessageId,
-        offset: anchorElement.getBoundingClientRect().top - rootTop,
-        expiresAt: Date.now() + 2500,
-        token: readPositionRestoreToken
-      }
-      : null;
+    const edgeAnchor = visibleTimelineAnchor(el);
     const loaded = await store.loadOlderMessages();
-    if (loaded && edgeAnchor) activeReadAnchor = edgeAnchor;
     await nextTick();
     if (loaded && scroller.value === el) {
-      el.scrollTop = el.scrollHeight - beforeHeight + beforeTop;
-      reconcileReadPositionAfterLayout();
+      const anchoredScrollTop = edgeAnchor
+        ? scrollTopForVirtualAnchor(virtualTimelineItems.value, measuredTimelineHeights.value, edgeAnchor)
+        : null;
+      if (anchoredScrollTop !== null) el.scrollTop = anchoredScrollTop;
+      syncVirtualTimelineViewport(el);
       saveReadPosition();
     }
     loadingHistoryFromScroll = false;
@@ -8171,6 +8160,7 @@ function markTimelineScrolling() {
     timelineScrollActive.value = false;
     if (chatScrollIntentTracker.shouldFollowNewestAfterIdle()) {
       activeReadAnchor = newestChatReadAnchor(readPositionRestoreToken);
+      pendingTimelineAnchor = null;
       hasUnreadMessages.value = false;
       awayFromNewest.value = false;
     }
@@ -10368,7 +10358,7 @@ async function toggleVirtual(character: any) {
           v-if="!isMusicChannel"
           ref="scroller"
           class="messages-scroll"
-          :class="{ 'timeline-scrolling': timelineScrollActive, 'messages-scroll--anchoring': initialChatAnchorPending }"
+          :class="{ 'timeline-scrolling': timelineScrollActive, 'messages-scroll--anchoring': initialChatAnchorPending || pendingReadPositionRestore }"
           @scroll.passive="handleMessagesScroll"
           @load.capture="reconcileReadPositionAfterLayout"
           @wheel.passive="handleTimelineScrollIntent"

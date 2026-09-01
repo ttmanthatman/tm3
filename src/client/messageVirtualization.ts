@@ -12,6 +12,13 @@ export type VirtualTimelineWindow = {
   totalHeight: number;
 };
 
+export type VirtualTimelineAnchor = {
+  key: string;
+  offset: number;
+  scrollTop: number;
+  virtualOffset: number;
+};
+
 type ImageDimensions = { width: number; height: number };
 
 export function estimatedImageTimelineHeight(dimensions: ImageDimensions | undefined, viewportWidth: number) {
@@ -79,4 +86,13 @@ export function virtualItemOffset(items: VirtualTimelineItem[], measuredHeights:
   const index = items.findIndex((item) => item.key === key);
   if (index < 0) return null;
   return virtualTimelineOffsets(items, measuredHeights)[index];
+}
+
+export function scrollTopForVirtualAnchor(
+  items: VirtualTimelineItem[],
+  measuredHeights: Record<string, number>,
+  anchor: VirtualTimelineAnchor
+) {
+  const offset = virtualItemOffset(items, measuredHeights, anchor.key);
+  return offset === null ? null : Math.max(0, anchor.scrollTop + offset - anchor.virtualOffset);
 }
