@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, History, Home, Plus, Search, Send, Sparkles, Trash2, X } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, Columns2, History, Home, PanelsTopLeft, Plus, Rows2, Search, Send, Sparkles, Trash2 } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
-  BibleChapterDTO,
-  BibleChapterVerseFragmentDTO,
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
@@ -24,26 +22,27 @@ import {
   saveBibleWorkspaceState,
   upsertBibleSearchHistory,
   type BibleReaderTarget,
+  type BiblePaneLocationState,
+  type BiblePaneState,
   type BibleSearchHistoryEntry,
   type BibleWorkspaceSearchMode,
   type BibleWorkspaceState,
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
+import BibleReaderPane from "./BibleReaderPane.vue";
 import {
-  bibleVerseGroupReference,
-  bibleVerseKey,
+  MAX_BIBLE_PANES,
+  biblePaneLabel,
+  equalBiblePaneSizes,
+  resolveBibleLinkTargetPaneId,
+  resizeBiblePanePair,
+  type BibleSplitOrientation
+} from "../bibleSplitLayout";
+import {
   formatBibleLookupsForCopy,
-  formatBibleVersesForCopy,
-  groupContinuousBibleVerses,
-  selectBibleVerseKeys
+  formatBibleVersesForCopy
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
-import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
-import {
-  BIBLE_FAVORITE_COLOR_PRESETS,
-  DEFAULT_BIBLE_FAVORITE_COLOR,
-  normalizeBibleFavoriteColor
-} from "@shared/bibleFavoriteColors";
 
 const props = defineProps<{
   open: boolean;
@@ -62,6 +61,12 @@ const emit = defineEmits<{
   "reading-change": [activity: { active: boolean; bookName: string | null }];
 }>();
 
+type BibleReaderPaneExpose = {
+  openLookup: (lookup: BibleLookupDTO, pushCurrent?: boolean) => Promise<void>;
+  openLocation: (location: BiblePaneLocationState, pushCurrent?: boolean) => Promise<void>;
+  snapshot: () => BiblePaneState;
+};
+
 type TextSegment = { text: string; highlighted: boolean };
 
 const catalog = ref<BibleCatalogDTO | null>(null);
@@ -79,18 +84,16 @@ const textBusy = ref(false);
 const topicError = ref("");
 const textError = ref("");
 const selectedBook = ref<BibleBookCatalogDTO | null>(null);
-const readerBook = ref<BibleBookCatalogDTO | null>(null);
-const readerChapters = ref<Record<number, BibleChapterDTO>>({});
-const readerBusyChapters = ref<Set<number>>(new Set());
-const readerError = ref("");
-const readerScroll = ref<HTMLElement | null>(null);
-const visibleChapter = ref(1);
-const jumpVerse = ref<number | "">("");
-const targetVerse = ref<BibleReaderTarget | null>(null);
-const linkedTargetVerseKeys = ref<Set<string>>(new Set());
-const selectedVerseKeys = ref<Set<string>>(new Set());
-const selectionAnchorKey = ref<string | null>(null);
-const selectedFavoriteColor = ref<string>(DEFAULT_BIBLE_FAVORITE_COLOR);
+const panes = ref<BiblePaneState[]>([]);
+const activePaneId = ref<string | null>(null);
+const receivingPaneId = ref<string | null>(null);
+const splitOrientation = ref<BibleSplitOrientation | null>(null);
+const paneSizes = ref<number[]>([100]);
+const viewportWidth = ref(typeof window === "undefined" ? 1280 : window.innerWidth);
+const paneRefs = new Map<string, BibleReaderPaneExpose>();
+const splitContainer = ref<HTMLElement | null>(null);
+let paneSequence = 0;
+let separatorDrag: { index: number; start: number; sizes: number[]; extent: number } | null = null;
 const minBibleFontSize = 16;
 const maxBibleFontSize = 40;
 const defaultBibleFontSize = 20;
@@ -102,15 +105,10 @@ const toast = ref("");
 let toastTimer = 0;
 let persistTimer = 0;
 let catalogLoadPromise: Promise<void> | null = null;
-const chapterCache = new Map<string, BibleChapterDTO>();
-const chapterLoadPromises = new Map<string, Promise<BibleChapterDTO>>();
 let componentMounted = false;
 let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
-let readerGeneration = 0;
-let nearbyPreloadTimer = 0;
 let catalogPreloadTimer = 0;
-let suppressReaderScrollUntil = 0;
 
 function clampBibleFontSize(value: number) {
   if (!Number.isFinite(value)) return defaultBibleFontSize;
@@ -141,47 +139,21 @@ watch(bibleFontSize, (value) => {
 });
 
 const allBooks = computed(() => [...(catalog.value?.oldTestament || []), ...(catalog.value?.newTestament || [])]);
-const loadedChapters = computed(() => Object.keys(readerChapters.value).map(Number).sort((left, right) => left - right));
-const loadedVerses = computed(() => loadedChapters.value.flatMap((chapter) => readerChapters.value[chapter]?.verses || []));
-const visibleChapterVerseNumbers = computed(() => {
-  const numbers = new Set<number>();
-  for (const verse of readerChapters.value[visibleChapter.value]?.verses || []) {
-    for (let number = verse.verse; number <= verse.endVerse; number += 1) numbers.add(number);
-  }
-  return [...numbers].sort((left, right) => left - right);
-});
-const orderedLoadedVerseKeys = computed(() => readerBook.value
-  ? loadedVerses.value.map((verse) => bibleVerseKey(readerBook.value!.code, verse))
-  : []);
-const selectedVerses = computed(() => readerBook.value
-  ? loadedVerses.value.filter((verse) => selectedVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
-  : []);
 const favoritePassages = computed(() => groupBibleFavoritePassages(props.favorites));
-const favoriteVerseKeys = computed(() => new Set(props.favorites.map((favorite) => bibleVerseKey(favorite.bookCode, favorite.verseLine))));
-const favoriteVerseColors = computed(() => new Map(
-  props.favorites.map((favorite) => [bibleVerseKey(favorite.bookCode, favorite.verseLine), normalizeBibleFavoriteColor(favorite.color)])
-));
-const allSelectedFavorited = computed(() => selectedVerses.value.length > 0 && readerBook.value
-  ? selectedVerses.value.every((verse) => favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value!.code, verse)))
-  : false);
-const selectedPassageLookups = computed<BibleLookupDTO[]>(() => {
-  const translation = catalog.value?.translation || "新标点和合本（简体）";
-  const sourceId = catalog.value?.sourceId || "cmn-cu89s";
-  return groupContinuousBibleVerses(selectedVerses.value).map((group) => {
-    const reference = group.length === 1 ? group[0].reference : bibleVerseGroupReference(group);
-    return { reference, normalizedReference: reference, translation, sourceId, verses: group };
-  });
-});
-const selectedVerseSummary = computed(() => selectedPassageLookups.value.length === 1
-  ? selectedPassageLookups.value[0].normalizedReference
-  : `已选 ${selectedVerses.value.length} 节经文`);
 const textHasMore = computed(() => !!textResult.value && textResult.value.items.length < textResult.value.total);
 const textModeLabel = computed(() => textResult.value?.mode === "allTerms" ? "多关键词匹配" : "连续原文匹配");
 const matchingTopicHistory = computed(() => findBibleTopicHistory(searchHistory.value, topicQuery.value));
 const readingBookName = computed(() => {
-  if (view.value === "reader") return readerBook.value?.name || null;
+  if (view.value === "reader") return panes.value.find((pane) => pane.id === activePaneId.value)?.book.name || panes.value[0]?.book.name || null;
   if (view.value === "chapters") return selectedBook.value?.name || null;
   return null;
+});
+const effectiveSplitOrientation = computed<BibleSplitOrientation>(() => splitOrientation.value || (viewportWidth.value <= 700 ? "rows" : "columns"));
+const splitGridStyle = computed(() => {
+  const tracks = paneSizes.value.map((size) => `minmax(0, ${size}fr)`).join(" 8px ");
+  return effectiveSplitOrientation.value === "columns"
+    ? { gridTemplateColumns: tracks, gridTemplateRows: "minmax(0, 1fr)" }
+    : { gridTemplateRows: tracks, gridTemplateColumns: "minmax(0, 1fr)" };
 });
 
 watch(
@@ -197,7 +169,6 @@ watch(
       view.value = "home";
       homeSection.value = "catalog";
       selectedBook.value = null;
-      clearVerseSelection();
       void ensureCatalog();
     }
   },
@@ -214,7 +185,7 @@ watch(
 );
 
 watch(
-  [view, searchMode, topicQuery, textQuery, topicResult, textResult, selectedBook, readerBook, visibleChapter, targetVerse, selectedVerseKeys, selectionAnchorKey, searchHistory],
+  [view, searchMode, topicQuery, textQuery, topicResult, textResult, selectedBook, panes, activePaneId, receivingPaneId, splitOrientation, paneSizes, searchHistory],
   scheduleWorkspacePersistence,
   { deep: true }
 );
@@ -230,6 +201,7 @@ onMounted(() => {
   componentMounted = true;
   window.addEventListener("pagehide", persistWorkspaceState);
   document.addEventListener("pointerdown", handleWorkspacePointerDown);
+  window.addEventListener("resize", handleViewportResize);
   void restoreWorkspaceState();
   catalogPreloadTimer = window.setTimeout(() => void ensureCatalog(), 500);
 });
@@ -237,10 +209,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("pagehide", persistWorkspaceState);
   document.removeEventListener("pointerdown", handleWorkspacePointerDown);
+  window.removeEventListener("resize", handleViewportResize);
   persistWorkspaceState();
   if (toastTimer) window.clearTimeout(toastTimer);
   if (persistTimer) window.clearTimeout(persistTimer);
-  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   if (catalogPreloadTimer) window.clearTimeout(catalogPreloadTimer);
 });
 
@@ -259,25 +231,20 @@ async function restoreWorkspaceState() {
   textResult.value = saved.textResult || null;
   selectedBook.value = saved.selectedBook || null;
   searchHistory.value = saved.history || [];
-  visibleChapter.value = Math.max(1, saved.visibleChapter || 1);
-
-  if (saved.view === "reader" && saved.readerBook) {
-    const target = saved.targetVerse?.chapter === visibleChapter.value ? saved.targetVerse : null;
-    await openReader(saved.readerBook, visibleChapter.value, target);
-    const prefix = `${saved.readerBook.code.toUpperCase()}:`;
-    selectedVerseKeys.value = new Set((saved.selectedVerseKeys || []).filter((key) => key.startsWith(prefix)));
-    selectionAnchorKey.value = saved.selectionAnchorKey?.startsWith(prefix) ? saved.selectionAnchorKey : null;
-  } else {
-    readerBook.value = saved.readerBook || null;
-    targetVerse.value = saved.targetVerse || null;
-    view.value = saved.view === "chapters" && saved.selectedBook ? "chapters" : "home";
-  }
+  panes.value = saved.panes;
+  activePaneId.value = saved.activePaneId;
+  receivingPaneId.value = saved.receivingPaneId;
+  splitOrientation.value = saved.orientation;
+  paneSizes.value = saved.paneSizes;
+  paneSequence = saved.panes.reduce((highest, pane) => Math.max(highest, Number(pane.id.match(/(\d+)$/)?.[1] || 0)), 0);
+  if (saved.view === "reader" && saved.panes.length) {
+    await ensureCatalog();
+    view.value = "reader";
+  } else view.value = saved.view === "chapters" && saved.selectedBook ? "chapters" : "home";
   stateRestored = true;
 }
 
 function resetWorkspaceState() {
-  readerGeneration += 1;
-  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   view.value = "home";
   homeSection.value = "catalog";
   searchMode.value = "topic";
@@ -286,13 +253,11 @@ function resetWorkspaceState() {
   topicResult.value = null;
   textResult.value = null;
   selectedBook.value = null;
-  readerBook.value = null;
-  readerChapters.value = {};
-  visibleChapter.value = 1;
-  jumpVerse.value = "";
-  targetVerse.value = null;
-  linkedTargetVerseKeys.value = new Set();
-  clearVerseSelection();
+  panes.value = [];
+  activePaneId.value = null;
+  receivingPaneId.value = null;
+  splitOrientation.value = null;
+  paneSizes.value = [100];
   searchHistory.value = [];
 }
 
@@ -304,8 +269,9 @@ function scheduleWorkspacePersistence() {
 
 function persistWorkspaceState() {
   if (!stateRestored || !props.accountId) return;
+  const currentPanes = panes.value.map((pane) => paneRefs.get(pane.id)?.snapshot() || pane);
   const state: BibleWorkspaceState = {
-    version: 1,
+    version: 2,
     view: view.value,
     searchMode: searchMode.value,
     topicQuery: topicQuery.value,
@@ -313,12 +279,11 @@ function persistWorkspaceState() {
     topicResult: topicResult.value,
     textResult: textResult.value,
     selectedBook: selectedBook.value,
-    readerBook: readerBook.value,
-    visibleChapter: visibleChapter.value,
-    targetVerse: targetVerse.value,
-    selectedVerseReference: null,
-    selectedVerseKeys: [...selectedVerseKeys.value],
-    selectionAnchorKey: selectionAnchorKey.value,
+    panes: currentPanes,
+    activePaneId: activePaneId.value,
+    receivingPaneId: receivingPaneId.value,
+    orientation: splitOrientation.value,
+    paneSizes: paneSizes.value,
     history: searchHistory.value
   };
   try {
@@ -354,35 +319,11 @@ function returnHome() {
   view.value = "home";
   homeSection.value = "catalog";
   selectedBook.value = null;
-  clearVerseSelection();
-}
-
-function jumpToBook(event: Event) {
-  const bookCode = (event.target as HTMLSelectElement).value;
-  const book = allBooks.value.find((candidate) => candidate.code === bookCode);
-  if (book) void openReader(book, 1);
-}
-
-function jumpToChapter(event: Event) {
-  const chapter = Number((event.target as HTMLSelectElement).value);
-  if (readerBook.value && Number.isInteger(chapter)) void openReader(readerBook.value, chapter);
-}
-
-function jumpToVerse(event: Event) {
-  const verse = Number((event.target as HTMLSelectElement).value);
-  if (!readerBook.value || !Number.isInteger(verse) || verse < 1) return;
-  jumpVerse.value = verse;
-  void openReader(readerBook.value, visibleChapter.value, {
-    chapter: visibleChapter.value,
-    verse,
-    endVerse: verse,
-    matches: []
-  });
 }
 
 function chooseBook(book: BibleBookCatalogDTO) {
   if (book.chapterCount === 1) {
-    void openReader(book, 1);
+    void openBookInActivePane(book, 1);
     return;
   }
   selectedBook.value = book;
@@ -480,66 +421,168 @@ function bookForVerse(verse: BibleVerseLineDTO) {
 }
 
 function openTextResult(item: BibleTextSearchItemDTO) {
-  const book = bookForVerse(item.verse);
-  if (!book) return;
-  void openReader(book, item.verse.chapter, {
-    chapter: item.verse.chapter,
-    verse: item.verse.verse,
-    endVerse: item.verse.endVerse,
-    matches: item.matches
-  });
+  void routeLookup(singleVerseLookup(item.verse), activePaneId.value, item.matches);
 }
 
 function openTopicResult(lookup: BibleLookupDTO) {
-  const first = lookup.verses[0];
-  if (!first) return;
-  const book = bookForVerse(first);
-  if (!book) return;
-  void openReader(book, first.chapter, {
-    chapter: first.chapter,
-    verse: first.verse,
-    endVerse: first.endVerse,
-    matches: []
-  });
+  void routeLookup(lookup, activePaneId.value);
 }
 
-async function openReader(
-  book: BibleBookCatalogDTO,
-  chapter: number,
-  target: BibleReaderTarget | null = null,
-  linkedTargets: ReadonlySet<string> | null = null
-) {
-  const generation = ++readerGeneration;
-  suppressReaderScrollUntil = Date.now() + 500;
-  if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
-  readerBook.value = book;
-  readerChapters.value = {};
-  readerBusyChapters.value = new Set();
-  readerError.value = "";
-  targetVerse.value = target;
-  linkedTargetVerseKeys.value = new Set(linkedTargets || []);
-  clearVerseSelection();
-  visibleChapter.value = chapter;
-  jumpVerse.value = target?.verse || "";
-  view.value = "reader";
-  await loadChapter(chapter);
-  if (generation !== readerGeneration || readerBook.value?.code !== book.code) return;
-  await nextTick();
-  const selector = target
-    ? `[data-verse-key="${book.code}-${chapter}-${target.verse}"]`
-    : `[data-reader-chapter="${chapter}"]`;
-  const scroller = readerScroll.value;
-  const element = scroller?.querySelector<HTMLElement>(selector);
-  if (scroller && element) {
-    const previousScrollBehavior = scroller.style.scrollBehavior;
-    scroller.style.scrollBehavior = "auto";
-    element.scrollIntoView({ block: target ? "center" : "start", behavior: "auto" });
-    scroller.style.scrollBehavior = previousScrollBehavior;
+function handleViewportResize() {
+  viewportWidth.value = window.innerWidth;
+}
+
+function nextPaneId() {
+  paneSequence += 1;
+  return `bible-pane-${paneSequence}`;
+}
+
+function createPaneState(book: BibleBookCatalogDTO, chapter: number, target: BibleReaderTarget | null = null): BiblePaneState {
+  return {
+    id: nextPaneId(),
+    book,
+    visibleChapter: chapter,
+    targetVerse: target,
+    scrollAnchor: null,
+    selectedVerseKeys: [],
+    selectionAnchorKey: null,
+    backStack: []
+  };
+}
+
+function setPaneRef(paneId: string, element: unknown) {
+  if (element) paneRefs.set(paneId, element as BibleReaderPaneExpose);
+  else paneRefs.delete(paneId);
+}
+
+function updatePaneState(paneId: string, state: BiblePaneState) {
+  const index = panes.value.findIndex((pane) => pane.id === paneId);
+  if (index < 0) return;
+  const next = [...panes.value];
+  next[index] = { ...state, id: paneId };
+  panes.value = next;
+}
+
+async function openBookInActivePane(book: BibleBookCatalogDTO, chapter: number) {
+  await ensureCatalog();
+  let paneId = activePaneId.value;
+  if (!paneId || !panes.value.some((pane) => pane.id === paneId)) {
+    const pane = createPaneState(book, chapter);
+    panes.value = [pane];
+    paneSizes.value = [100];
+    activePaneId.value = pane.id;
+    paneId = pane.id;
   }
-  scheduleNearbyChapterPreloads(book, chapter, generation);
+  view.value = "reader";
+  await nextTick();
+  await paneRefs.get(paneId)?.openLocation({ book, visibleChapter: chapter, targetVerse: null, scrollAnchor: null });
 }
 
-async function openLookupContext(lookup: BibleLookupDTO) {
+async function addBiblePane() {
+  if (panes.value.length >= MAX_BIBLE_PANES) return;
+  await ensureCatalog();
+  const active = activePaneId.value ? paneRefs.get(activePaneId.value)?.snapshot() : null;
+  const source = active || panes.value.find((pane) => pane.id === activePaneId.value) || panes.value[0];
+  if (!source) {
+    const firstBook = allBooks.value[0];
+    if (!firstBook) return;
+    const firstPane = createPaneState(firstBook, 1);
+    const secondPane = createPaneState(firstBook, 1);
+    panes.value = [firstPane, secondPane];
+    paneSizes.value = equalBiblePaneSizes(2);
+    activePaneId.value = secondPane.id;
+    view.value = "reader";
+    return;
+  }
+  const pane: BiblePaneState = {
+    ...source,
+    id: nextPaneId(),
+    selectedVerseKeys: [],
+    selectionAnchorKey: null,
+    backStack: []
+  };
+  panes.value = [...panes.value, pane];
+  paneSizes.value = equalBiblePaneSizes(panes.value.length);
+  activePaneId.value = pane.id;
+  view.value = "reader";
+}
+
+function closeBiblePane(paneId: string) {
+  if (panes.value.length <= 1) return;
+  const index = panes.value.findIndex((pane) => pane.id === paneId);
+  if (index < 0) return;
+  const remaining = panes.value.filter((pane) => pane.id !== paneId);
+  panes.value = remaining;
+  paneSizes.value = equalBiblePaneSizes(remaining.length);
+  if (receivingPaneId.value === paneId) receivingPaneId.value = null;
+  if (activePaneId.value === paneId) activePaneId.value = remaining[Math.min(index, remaining.length - 1)]?.id || remaining[0]?.id || null;
+}
+
+function toggleReceivingPane(paneId: string) {
+  receivingPaneId.value = receivingPaneId.value === paneId ? null : paneId;
+  activePaneId.value = paneId;
+}
+
+function toggleSplitOrientation() {
+  splitOrientation.value = effectiveSplitOrientation.value === "columns" ? "rows" : "columns";
+}
+
+function beginSeparatorDrag(index: number, event: PointerEvent) {
+  const container = splitContainer.value;
+  const separator = event.currentTarget as HTMLElement | null;
+  if (!container || !separator) return;
+  event.preventDefault();
+  separator.setPointerCapture(event.pointerId);
+  const rect = container.getBoundingClientRect();
+  separatorDrag = {
+    index,
+    start: effectiveSplitOrientation.value === "columns" ? event.clientX : event.clientY,
+    sizes: [...paneSizes.value],
+    extent: Math.max(1, effectiveSplitOrientation.value === "columns" ? rect.width : rect.height)
+  };
+}
+
+function moveSeparator(event: PointerEvent) {
+  if (!separatorDrag) return;
+  const position = effectiveSplitOrientation.value === "columns" ? event.clientX : event.clientY;
+  paneSizes.value = resizeBiblePanePair(
+    separatorDrag.sizes,
+    separatorDrag.index,
+    (position - separatorDrag.start) / separatorDrag.extent * 100
+  );
+}
+
+function finishSeparatorDrag(event: PointerEvent) {
+  const separator = event.currentTarget as HTMLElement | null;
+  if (separator?.hasPointerCapture(event.pointerId)) separator.releasePointerCapture(event.pointerId);
+  separatorDrag = null;
+}
+
+function handleSeparatorKey(index: number, event: KeyboardEvent) {
+  const negativeKey = effectiveSplitOrientation.value === "columns" ? "ArrowLeft" : "ArrowUp";
+  const positiveKey = effectiveSplitOrientation.value === "columns" ? "ArrowRight" : "ArrowDown";
+  if (event.key === negativeKey || event.key === positiveKey) {
+    event.preventDefault();
+    paneSizes.value = resizeBiblePanePair(paneSizes.value, index, event.key === positiveKey ? 2 : -2);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    paneSizes.value = equalBiblePaneSizes(panes.value.length);
+  }
+}
+
+async function handlePaneReference(sourcePaneId: string, reference: string) {
+  try {
+    const response = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(
+      `/api/bible/lookup?reference=${encodeURIComponent(reference)}`
+    );
+    if (!response.success || !response.result) throw new Error(response.message || "无法识别这处经文");
+    await routeLookup(response.result, sourcePaneId);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "经文跳转失败");
+  }
+}
+
+async function routeLookup(lookup: BibleLookupDTO, sourcePaneId: string | null, matches: BibleTextMatchRangeDTO[] = []) {
   const first = lookup.verses[0];
   if (!first) return;
   await ensureCatalog();
@@ -548,195 +591,45 @@ async function openLookupContext(lookup: BibleLookupDTO) {
     showToast("暂时无法定位这处经文");
     return;
   }
-  const targetKeys = new Set<string>();
-  for (const verse of lookup.verses) {
-    if (verse.book !== first.book) continue;
-    for (let number = verse.verse; number <= verse.endVerse; number += 1) {
-      targetKeys.add(bibleVerseKey(book.code, { chapter: verse.chapter, verse: number }));
-    }
+  if (!panes.value.length) {
+    const pane = createPaneState(book, first.chapter, {
+      chapter: first.chapter,
+      verse: first.verse,
+      endVerse: first.endVerse,
+      matches
+    });
+    panes.value = [pane];
+    activePaneId.value = pane.id;
+    paneSizes.value = [100];
+    view.value = "reader";
+    await nextTick();
+    if (matches.length) {
+      await paneRefs.get(pane.id)?.openLocation({ book, visibleChapter: first.chapter, targetVerse: pane.targetVerse, scrollAnchor: null }, false);
+    } else await paneRefs.get(pane.id)?.openLookup(lookup, false);
+    return;
   }
-  await openReader(book, first.chapter, {
-    chapter: first.chapter,
-    verse: first.verse,
-    endVerse: first.endVerse,
-    matches: []
-  }, targetKeys);
-  const extraChapters = [...new Set(lookup.verses.filter((verse) => verse.book === first.book).map((verse) => verse.chapter))]
-    .filter((chapter) => chapter !== first.chapter);
-  await Promise.all(extraChapters.map((chapter) => loadChapter(chapter)));
+  const ids = panes.value.map((pane) => pane.id);
+  const source = sourcePaneId && ids.includes(sourcePaneId) ? sourcePaneId : activePaneId.value || ids[0];
+  const targetId = resolveBibleLinkTargetPaneId(ids, source, receivingPaneId.value);
+  if (!targetId) return;
+  activePaneId.value = targetId;
+  view.value = "reader";
+  await nextTick();
+  if (matches.length) {
+    await paneRefs.get(targetId)?.openLocation({
+      book,
+      visibleChapter: first.chapter,
+      targetVerse: { chapter: first.chapter, verse: first.verse, endVerse: first.endVerse, matches },
+      scrollAnchor: null
+    }, true);
+  } else await paneRefs.get(targetId)?.openLookup(lookup, true);
+}
+
+async function openLookupContext(lookup: BibleLookupDTO) {
+  await routeLookup(lookup, activePaneId.value);
 }
 
 defineExpose({ openLookupContext });
-
-function chapterCacheKey(bookCode: string, chapter: number) {
-  return `${bookCode.toUpperCase()}:${chapter}`;
-}
-
-async function fetchChapter(book: BibleBookCatalogDTO, chapter: number) {
-  const key = chapterCacheKey(book.code, chapter);
-  const cached = chapterCache.get(key);
-  if (cached) return cached;
-  const pending = chapterLoadPromises.get(key);
-  if (pending) return pending;
-  const promise = api<{ success: boolean; result?: BibleChapterDTO; message?: string }>(
-    `/api/bible/chapter?book=${encodeURIComponent(book.code)}&chapter=${chapter}`
-  ).then((response) => {
-    if (!response.success || !response.result) throw new Error(response.message || "章节加载失败");
-    chapterCache.set(key, response.result);
-    return response.result;
-  }).finally(() => chapterLoadPromises.delete(key));
-  chapterLoadPromises.set(key, promise);
-  return promise;
-}
-
-function scheduleNearbyChapterPreloads(book: BibleBookCatalogDTO, chapter: number, generation: number) {
-  const queue = nearbyBibleChapterPreloadOrder(chapter, book.chapterCount, 5).slice(1);
-  const pump = () => {
-    if (generation !== readerGeneration || readerBook.value?.code !== book.code) return;
-    const nextChapter = queue.shift();
-    if (!nextChapter) return;
-    void fetchChapter(book, nextChapter).catch(() => undefined).finally(() => {
-      nearbyPreloadTimer = window.setTimeout(pump, 420);
-    });
-  };
-  nearbyPreloadTimer = window.setTimeout(pump, 280);
-}
-
-async function loadChapter(chapter: number, prepend = false) {
-  const book = readerBook.value;
-  if (!book || chapter < 1 || chapter > book.chapterCount || readerChapters.value[chapter] || readerBusyChapters.value.has(chapter)) return;
-  const busy = new Set(readerBusyChapters.value);
-  busy.add(chapter);
-  readerBusyChapters.value = busy;
-  const scroller = readerScroll.value;
-  const anchorChapter = prepend ? loadedChapters.value[0] : undefined;
-  const anchorBefore = anchorChapter
-    ? scroller?.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top
-    : undefined;
-  try {
-    const result = await fetchChapter(book, chapter);
-    if (readerBook.value?.code !== book.code) return;
-    readerChapters.value = { ...readerChapters.value, [chapter]: result };
-    await nextTick();
-    if (scroller && anchorChapter && anchorBefore !== undefined) {
-      const anchorAfter = scroller.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top;
-      if (anchorAfter !== undefined) {
-        const previousScrollBehavior = scroller.style.scrollBehavior;
-        scroller.style.scrollBehavior = "auto";
-        scroller.scrollTop = preservedScrollTop(scroller.scrollTop, anchorBefore, anchorAfter);
-        scroller.style.scrollBehavior = previousScrollBehavior;
-      }
-    }
-  } catch (error) {
-    if (readerBook.value?.code === book.code) readerError.value = error instanceof Error ? error.message : "章节加载失败";
-  } finally {
-    if (readerBook.value?.code === book.code) {
-      const next = new Set(readerBusyChapters.value);
-      next.delete(chapter);
-      readerBusyChapters.value = next;
-    }
-  }
-}
-
-function handleReaderScroll() {
-  const scroller = readerScroll.value;
-  const book = readerBook.value;
-  if (!scroller || !book || !loadedChapters.value.length || Date.now() < suppressReaderScrollUntil) return;
-  const chapters = Array.from(scroller.querySelectorAll<HTMLElement>("[data-reader-chapter]"));
-  let closest = visibleChapter.value;
-  let distance = Number.POSITIVE_INFINITY;
-  for (const element of chapters) {
-    const nextDistance = Math.abs(element.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 72);
-    if (nextDistance < distance) {
-      distance = nextDistance;
-      closest = Number(element.dataset.readerChapter || closest);
-    }
-  }
-  if (visibleChapter.value !== closest) {
-    visibleChapter.value = closest;
-    jumpVerse.value = "";
-  }
-  const first = loadedChapters.value[0];
-  const last = loadedChapters.value[loadedChapters.value.length - 1];
-  if (scroller.scrollTop < 220 && first > 1) void loadChapter(first - 1, true);
-  if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 320 && last < book.chapterCount) void loadChapter(last + 1);
-}
-
-function targetMatches(verse: BibleVerseLineDTO) {
-  const target = targetVerse.value;
-  return target && target.chapter === verse.chapter && target.verse === verse.verse ? target.matches : [];
-}
-
-function fragmentMatches(fragment: BibleChapterVerseFragmentDTO) {
-  return targetMatches(fragment.verse).flatMap((range) => {
-    const start = Math.max(fragment.start, range.start);
-    const end = Math.min(fragment.end, range.end);
-    return end > start ? [{ start: start - fragment.start, end: end - fragment.start }] : [];
-  });
-}
-
-function isTargetVerse(verse: BibleVerseLineDTO) {
-  if (readerBook.value && linkedTargetVerseKeys.value.size) {
-    for (let number = verse.verse; number <= verse.endVerse; number += 1) {
-      if (linkedTargetVerseKeys.value.has(bibleVerseKey(readerBook.value.code, { chapter: verse.chapter, verse: number }))) return true;
-    }
-    return false;
-  }
-  const target = targetVerse.value;
-  return !!target && target.chapter === verse.chapter && verse.verse <= target.endVerse && verse.endVerse >= target.verse;
-}
-
-function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
-  const book = readerBook.value;
-  if (!book) return;
-  const clickedKey = bibleVerseKey(book.code, verse);
-  selectedVerseKeys.value = selectBibleVerseKeys(
-    orderedLoadedVerseKeys.value,
-    selectedVerseKeys.value,
-    clickedKey,
-    selectionAnchorKey.value,
-    shiftKey
-  );
-  if (!shiftKey || !selectionAnchorKey.value) selectionAnchorKey.value = clickedKey;
-}
-
-function clearVerseSelection() {
-  selectedVerseKeys.value = new Set();
-  selectionAnchorKey.value = null;
-}
-
-function isSelectedVerse(verse: BibleVerseLineDTO) {
-  return !!readerBook.value && selectedVerseKeys.value.has(bibleVerseKey(readerBook.value.code, verse));
-}
-
-function isFavoriteVerse(verse: BibleVerseLineDTO) {
-  return !!readerBook.value && favoriteVerseKeys.value.has(bibleVerseKey(readerBook.value.code, verse));
-}
-
-function favoriteColorForVerse(verse: BibleVerseLineDTO) {
-  if (!readerBook.value) return DEFAULT_BIBLE_FAVORITE_COLOR;
-  return favoriteVerseColors.value.get(bibleVerseKey(readerBook.value.code, verse)) || DEFAULT_BIBLE_FAVORITE_COLOR;
-}
-
-function favoriteVerseStyle(verse: BibleVerseLineDTO) {
-  return isFavoriteVerse(verse) ? { "--bible-favorite-color": favoriteColorForVerse(verse) } : undefined;
-}
-
-function verseSegments(text: string, ranges: BibleTextMatchRangeDTO[]): TextSegment[] {
-  const safeRanges = ranges
-    .map((range) => ({ start: Math.max(0, Math.min(text.length, range.start)), end: Math.max(0, Math.min(text.length, range.end)) }))
-    .filter((range) => range.end > range.start)
-    .sort((left, right) => left.start - right.start);
-  const segments: TextSegment[] = [];
-  let cursor = 0;
-  for (const range of safeRanges) {
-    if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start), highlighted: false });
-    if (range.end > cursor) segments.push({ text: text.slice(Math.max(cursor, range.start), range.end), highlighted: true });
-    cursor = Math.max(cursor, range.end);
-  }
-  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlighted: false });
-  return segments.length ? segments : [{ text, highlighted: false }];
-}
 
 function singleVerseLookup(verse: BibleVerseLineDTO): BibleLookupDTO {
   return {
@@ -791,6 +684,22 @@ function copyTextItem(item: BibleTextSearchItemDTO) {
   );
 }
 
+function verseSegments(text: string, ranges: BibleTextMatchRangeDTO[]): TextSegment[] {
+  const safeRanges = ranges.map((range) => ({
+    start: Math.max(0, Math.min(text.length, range.start)),
+    end: Math.max(0, Math.min(text.length, range.end))
+  })).filter((range) => range.end > range.start).sort((left, right) => left.start - right.start);
+  const segments: TextSegment[] = [];
+  let cursor = 0;
+  for (const range of safeRanges) {
+    if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start), highlighted: false });
+    if (range.end > cursor) segments.push({ text: text.slice(Math.max(cursor, range.start), range.end), highlighted: true });
+    cursor = Math.max(cursor, range.end);
+  }
+  if (cursor < text.length) segments.push({ text: text.slice(cursor), highlighted: false });
+  return segments.length ? segments : [{ text, highlighted: false }];
+}
+
 async function copyAllTextResults() {
   const query = textResult.value?.query;
   if (!query || textBusy.value) return;
@@ -807,34 +716,6 @@ async function copyAllTextResults() {
     showToast(error instanceof Error ? error.message : "复制全部结果失败");
   } finally {
     textBusy.value = false;
-  }
-}
-
-function copySelectedVerses() {
-  return writeClipboard(
-    formatBibleVersesForCopy(selectedVerses.value, catalog.value?.translation || "新标点和合本（简体）"),
-    `已复制 ${selectedVerses.value.length} 节经文`
-  );
-}
-
-function favoriteKey(verse: BibleVerseLineDTO): BibleFavoriteKeyDTO | null {
-  if (!readerBook.value) return null;
-  return { bookCode: readerBook.value.code, chapter: verse.chapter, verse: verse.verse };
-}
-
-async function updateSelectedFavorites(remove: boolean) {
-  const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
-  if (!verses.length || props.favoritesBusy) return;
-  try {
-    await props.updateFavorites(verses, !remove, remove ? undefined : selectedFavoriteColor.value);
-    showToast(remove ? `已取消收藏 ${verses.length} 节经文` : `已收藏 ${verses.length} 节经文`);
-    if (remove) {
-      clearVerseSelection();
-      targetVerse.value = null;
-      linkedTargetVerseKeys.value = new Set();
-    }
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "经文收藏更新失败");
   }
 }
 
@@ -856,24 +737,6 @@ async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
   }
 }
 
-async function chooseFavoriteColor(color: string) {
-  selectedFavoriteColor.value = normalizeBibleFavoriteColor(color);
-  if (!allSelectedFavorited.value || props.favoritesBusy) return;
-  const verses = selectedVerses.value.map(favoriteKey).filter((verse): verse is BibleFavoriteKeyDTO => !!verse);
-  if (!verses.length) return;
-  try {
-    await props.updateFavorites(verses, true, selectedFavoriteColor.value);
-    showToast("已更新收藏标线颜色");
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "标线颜色更新失败");
-  }
-}
-
-watch([selectedVerseKeys, () => props.favorites], () => {
-  const first = selectedVerses.value[0];
-  if (first && isFavoriteVerse(first)) selectedFavoriteColor.value = favoriteColorForVerse(first);
-});
-
 function openBibleFavoritePassage(passage: BibleFavoritePassage) {
   void openLookupContext(passage.lookup);
 }
@@ -883,21 +746,6 @@ async function sendLookup(lookup: BibleLookupDTO, key: string) {
   sendBusyKey.value = key;
   try {
     await props.sendPassage(lookup);
-    showToast(`已发送到：${props.channelName}`);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "发送失败，请重试");
-  } finally {
-    sendBusyKey.value = "";
-  }
-}
-
-async function sendSelectedVerses() {
-  if (!props.canSend || sendBusyKey.value) return;
-  const lookups = selectedPassageLookups.value;
-  if (!lookups.length) return;
-  sendBusyKey.value = "selection";
-  try {
-    for (const lookup of lookups) await props.sendPassage(lookup);
     showToast(`已发送到：${props.channelName}`);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "发送失败，请重试");
@@ -948,24 +796,27 @@ function handleTouchEnd(event: TouchEvent) {
       <div class="bible-topbar-leading">
         <button v-if="view !== 'home'" type="button" class="bible-topbar-button home" @click="returnHome"><Home :size="19" />目录</button>
       </div>
-      <button v-if="view !== 'reader'" type="button" class="bible-topbar-title" disabled>
-        <strong>小故事的书房</strong>
+      <button type="button" class="bible-topbar-title" disabled>
+        <strong>{{ view === 'reader' ? `${panes.length} 窗格阅读` : '小故事的书房' }}</strong>
         <small><span>圣经</span><Sparkles :size="11" aria-hidden="true" /><span>{{ catalog?.translation || "新标点和合本（简体）" }}</span></small>
       </button>
-      <nav v-else-if="readerBook" class="bible-jump-nav" aria-label="经文快速跳转">
-        <select :value="readerBook.code" aria-label="选择圣经书卷" @change="jumpToBook">
-          <option v-for="book in allBooks" :key="book.code" :value="book.code">{{ book.name }}</option>
-        </select>
-        <select :value="visibleChapter" aria-label="选择章节" @change="jumpToChapter">
-          <option v-for="chapter in readerBook.chapterCount" :key="chapter" :value="chapter">{{ chapter }}章</option>
-        </select>
-        <select :value="jumpVerse" :disabled="!visibleChapterVerseNumbers.length" aria-label="选择经节" @change="jumpToVerse">
-          <option value="">节</option>
-          <option v-for="verse in visibleChapterVerseNumbers" :key="verse" :value="verse">{{ verse }}节</option>
-        </select>
-      </nav>
       <div class="bible-topbar-actions">
-        <span class="bible-resource-link" title="资料">资</span>
+        <button
+          type="button"
+          class="bible-resource-link"
+          :disabled="panes.length >= MAX_BIBLE_PANES"
+          :aria-label="panes.length >= MAX_BIBLE_PANES ? '已达到四窗格上限' : '添加圣经阅读窗格'"
+          :title="panes.length >= MAX_BIBLE_PANES ? '最多四个窗格' : '添加阅读窗格'"
+          @click="addBiblePane"
+        ><PanelsTopLeft :size="19" /></button>
+        <button
+          v-if="view === 'reader' && panes.length > 1"
+          type="button"
+          class="bible-resource-link"
+          :aria-label="effectiveSplitOrientation === 'columns' ? '改为上下分屏' : '改为左右分屏'"
+          :title="effectiveSplitOrientation === 'columns' ? '上下分屏' : '左右分屏'"
+          @click="toggleSplitOrientation"
+        ><Rows2 v-if="effectiveSplitOrientation === 'columns'" :size="19" /><Columns2 v-else :size="19" /></button>
         <div class="bible-font-control" data-bible-font-menu>
           <button
             v-if="!showBibleFontMenu"
@@ -1078,71 +929,58 @@ function handleTouchEnd(event: TouchEvent) {
 
     <main v-else-if="view === 'chapters' && selectedBook" class="bible-chapter-picker">
       <div class="bible-paper-heading"><span>选择章节</span><h1>{{ selectedBook.name }}</h1><p>共 {{ selectedBook.chapterCount }} 章</p></div>
-      <div class="bible-chapter-grid"><button v-for="chapter in selectedBook.chapterCount" :key="chapter" type="button" @click="openReader(selectedBook, chapter)">{{ chapter }}</button></div>
+      <div class="bible-chapter-grid"><button v-for="chapter in selectedBook.chapterCount" :key="chapter" type="button" @click="openBookInActivePane(selectedBook, chapter)">{{ chapter }}</button></div>
     </main>
 
-    <main v-else-if="view === 'reader' && readerBook" ref="readerScroll" class="bible-reader" @scroll.passive="handleReaderScroll">
-      <div v-if="loadedChapters[0] === 1" class="bible-book-boundary">本卷开始</div>
-      <section v-for="chapter in loadedChapters" :key="chapter" class="bible-reader-chapter" :data-reader-chapter="chapter">
-        <header><span>{{ readerBook.name }}</span><h1>第{{ chapter }}章</h1></header>
-        <div class="bible-chapter-text">
-          <template v-for="(block, blockIndex) in readerChapters[chapter]?.blocks || []" :key="`${chapter}-${blockIndex}`">
-            <h2 v-if="block.type === 'heading'" class="bible-structure-heading" :class="`level-${block.level}`">{{ block.text }}</h2>
-            <p v-else-if="block.type === 'parallel'" class="bible-structure-parallel">{{ block.text }}</p>
-            <p v-else-if="block.type === 'description'" class="bible-structure-description">{{ block.text }}</p>
-            <p v-else-if="block.type === 'speaker'" class="bible-structure-speaker">{{ block.text }}</p>
-            <div v-else-if="block.type === 'spacing'" class="bible-structure-spacing" aria-hidden="true"></div>
-            <p v-else-if="block.type === 'paragraph'" class="bible-structure-paragraph" :class="block.style">
-              <span
-                v-for="fragment in block.fragments"
-                :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"
-                class="bible-reader-verse"
-                :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse) }"
-                :style="favoriteVerseStyle(fragment.verse)"
-                :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
-                role="button"
-                tabindex="0"
-                :aria-pressed="isSelectedVerse(fragment.verse)"
-                :title="isFavoriteVerse(fragment.verse) ? '已收藏；按住 Shift 可跨章范围选择' : '点选经文；按住 Shift 可跨章范围选择'"
-                @click="selectVerse(fragment.verse, $event.shiftKey)"
-                @keydown.enter.prevent="selectVerse(fragment.verse, $event.shiftKey)"
-              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
-            </p>
-          </template>
-        </div>
-      </section>
-      <div v-if="readerError" class="bible-state error">{{ readerError }}</div>
-      <div v-if="loadedChapters[loadedChapters.length - 1] === readerBook.chapterCount" class="bible-book-boundary">本卷结束</div>
-      <div v-else class="bible-reader-loading">继续向下阅读下一章</div>
-    </main>
-
-    <footer v-if="view === 'reader' && selectedVerses.length" class="bible-verse-action">
-      <div>
-        <strong>{{ selectedVerseSummary }}</strong>
-        <small>{{ selectedVerses.length === 1 ? selectedVerses[0].text : '按住 Shift 点选另一节，可连续选择并跨章节' }}</small>
-        <span class="bible-favorite-color-picker" aria-label="收藏标线颜色">
-          <em>标线</em>
-          <button
-            v-for="preset in BIBLE_FAVORITE_COLOR_PRESETS"
-            :key="preset.color"
-            type="button"
-            class="bible-favorite-color-swatch"
-            :class="{ active: selectedFavoriteColor === preset.color }"
-            :style="{ '--swatch-color': preset.color }"
-            :aria-label="`${preset.name}标线`"
-            :title="preset.name"
-            :disabled="favoritesBusy"
-            @click="chooseFavoriteColor(preset.color)"
-          ></button>
-        </span>
-      </div>
-      <div class="bible-verse-action-buttons">
-        <button type="button" @click="copySelectedVerses"><ClipboardCopy :size="18" />复制</button>
-        <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="18" /><Bookmark v-else :size="18" />{{ allSelectedFavorited ? "取消收藏" : "收藏" }}</button>
-        <button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click="sendSelectedVerses"><Send :size="18" />发送</button>
-        <button type="button" class="secondary" aria-label="清除选择" title="清除选择" @click="clearVerseSelection"><X :size="18" /></button>
-      </div>
-    </footer>
+    <section
+      v-else-if="view === 'reader' && catalog && panes.length"
+      ref="splitContainer"
+      class="bible-split-reader"
+      :class="effectiveSplitOrientation"
+      :style="splitGridStyle"
+    >
+      <template v-for="(pane, index) in panes" :key="pane.id">
+        <BibleReaderPane
+          :ref="(element) => setPaneRef(pane.id, element)"
+          :pane-id="pane.id"
+          :label="biblePaneLabel(index)"
+          :initial-state="pane"
+          :catalog="catalog"
+          :font-size="bibleFontSize"
+          :active="activePaneId === pane.id"
+          :receiving="receivingPaneId === pane.id"
+          :can-close="panes.length > 1"
+          :channel-name="channelName"
+          :can-send="canSend"
+          :send-unavailable-reason="sendUnavailableReason"
+          :send-passage="sendPassage"
+          :favorites="favorites"
+          :favorites-busy="favoritesBusy"
+          :update-favorites="updateFavorites"
+          @activate="activePaneId = $event"
+          @close="closeBiblePane"
+          @toggle-receiver="toggleReceivingPane"
+          @open-reference="handlePaneReference"
+          @state-change="updatePaneState"
+          @toast="showToast"
+        />
+        <div
+          v-if="index < panes.length - 1"
+          class="bible-pane-separator"
+          role="separator"
+          tabindex="0"
+          :aria-orientation="effectiveSplitOrientation === 'columns' ? 'vertical' : 'horizontal'"
+          :aria-label="`调整 ${biblePaneLabel(index)} 与 ${biblePaneLabel(index + 1)} 窗格大小`"
+          :aria-valuenow="Math.round(paneSizes[index] || 0)"
+          @pointerdown="beginSeparatorDrag(index, $event)"
+          @pointermove="moveSeparator"
+          @pointerup="finishSeparatorDrag"
+          @pointercancel="finishSeparatorDrag"
+          @keydown="handleSeparatorKey(index, $event)"
+          @dblclick="paneSizes = equalBiblePaneSizes(panes.length)"
+        ><span aria-hidden="true"></span></div>
+      </template>
+    </section>
     <div v-if="toast" class="bible-toast" role="status">{{ toast }}</div>
   </section>
 </template>
@@ -1171,20 +1009,25 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-topbar-title strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Songti SC", "STSong", serif; font-size: 18px; }
 .bible-topbar-title small { margin-top: 3px; color: #92775b; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
 .bible-topbar-title small svg { color: #ad875a; }
-.bible-jump-nav { min-width: 0; width: min(100%, 360px); justify-self: center; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(50px, .72fr) minmax(46px, .66fr); gap: 5px; }
-.bible-jump-nav select { min-width: 0; height: 34px; border: 1px solid rgba(128, 97, 63, .25); border-radius: 8px; padding: 0 6px; color: #5e452f; background: #fffaf1; font: inherit; font-size: 13px; font-weight: 700; outline: none; cursor: pointer; }
-.bible-jump-nav select:focus { border-color: #967046; box-shadow: 0 0 0 2px rgba(150, 112, 70, .14); }
-.bible-jump-nav select:disabled { opacity: .5; cursor: wait; }
 .bible-font-control { flex: 0 0 auto; }
 .bible-resource-link, .bible-font-trigger { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
-.bible-resource-link { display: grid; place-items: center; text-decoration: none; cursor: default; }
+.bible-resource-link { display: grid; place-items: center; padding: 0; text-decoration: none; cursor: pointer; }
+.bible-resource-link:disabled { opacity: .36; cursor: not-allowed; }
 .bible-resource-link:hover, .bible-font-trigger:hover { background: rgba(128, 97, 63, .16); }
 .bible-font-stepper { min-height: 36px; display: flex; align-items: center; gap: 4px; }
 .bible-font-stepper button, .bible-font-stepper span { min-width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; }
 .bible-font-stepper button { border: 0; padding: 0 7px; color: #654a31; background: rgba(128, 97, 63, .12); font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; }
 .bible-font-stepper button:disabled { opacity: .4; cursor: not-allowed; }
 .bible-font-stepper span { border: 1px solid rgba(128, 97, 63, .28); color: #4f3b29; background: #fffaf1; font-size: 13px; font-weight: 800; }
-.bible-home, .bible-chapter-picker, .bible-reader { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bible-home, .bible-chapter-picker { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bible-split-reader { min-width: 0; min-height: 0; display: grid; overflow: hidden; background: #d9cbb8; }
+.bible-pane-separator { position: relative; z-index: 4; min-width: 0; min-height: 0; display: grid; place-items: center; touch-action: none; outline: none; background: rgba(112, 77, 42, .12); }
+.bible-pane-separator::before { content: ""; position: absolute; inset: 0; background: transparent; transition: background-color 140ms ease; }
+.bible-pane-separator:hover::before, .bible-pane-separator:focus-visible::before { background: rgba(218, 124, 30, .2); }
+.bible-pane-separator span { position: relative; width: 3px; height: 34px; border-radius: 999px; background: rgba(112, 77, 42, .42); }
+.bible-split-reader.columns .bible-pane-separator { cursor: col-resize; }
+.bible-split-reader.rows .bible-pane-separator { cursor: row-resize; }
+.bible-split-reader.rows .bible-pane-separator span { width: 34px; height: 3px; }
 .bible-home { padding: 26px max(16px, calc((100vw - 1120px) / 2)) calc(44px + var(--safe-bottom)); }
 .bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
 .bible-home-tabs button { min-height: 46px; border: 0; border-radius: 10px; color: #765b40; background: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: inherit; font-weight: 800; cursor: pointer; }
@@ -1266,38 +1109,6 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-chapter-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; margin-top: 32px; }
 .bible-chapter-grid button { aspect-ratio: 1; min-width: 0; border: 1px solid #cbb89b; border-radius: 50%; color: #5c432d; background: rgba(255, 252, 245, .9); font: 700 16px/1 "Songti SC", "STSong", serif; cursor: pointer; }
 .bible-chapter-grid button:hover { color: white; border-color: #80613f; background: #80613f; }
-.bible-reader { padding: 34px max(20px, calc((100vw - 760px) / 2)) calc(100px + var(--safe-bottom)); scroll-behavior: smooth; }
-.bible-reader-chapter { scroll-margin-top: 80px; padding: 12px 0 42px; }
-.bible-reader-chapter > header { margin-bottom: 22px; text-align: center; font-family: "Songti SC", "STSong", serif; }
-.bible-reader-chapter > header span { color: #947657; letter-spacing: .18em; }
-.bible-reader-chapter > header h1 { margin: 8px 0 0; font-size: 32px; }
-.bible-chapter-text { font-family: "Songti SC", "STSong", "Noto Serif CJK SC", serif; font-size: var(--bible-font-size); line-height: 1.95; }
-.bible-structure-heading { margin: 2.1em 0 .75em; color: #684728; text-align: center; font-size: 1.25em; line-height: 1.4; }
-.bible-structure-heading:first-child { margin-top: 0; }
-.bible-structure-heading.level-2 { font-size: 1.08em; }
-.bible-structure-parallel { margin: -.45em 0 1.2em; color: #9a7d60; text-align: center; font-size: .72em; line-height: 1.55; }
-.bible-structure-description { margin: 0 0 1em; color: #775b3f; text-align: center; font-size: .88em; font-style: italic; line-height: 1.65; }
-.bible-structure-speaker { margin: 1em 0 .25em; color: #8a6847; font-size: .82em; font-weight: 700; }
-.bible-structure-spacing { height: .9em; }
-.bible-structure-paragraph { margin: 0 0 1em; text-align: justify; }
-.bible-structure-paragraph.poetry { margin: 0; padding-left: 1.75em; text-indent: -1.75em; text-align: left; }
-.bible-reader-verse { border-radius: 4px; padding: 2px 1px; cursor: pointer; transition: background-color 160ms ease; }
-.bible-reader-verse::after { content: " "; }
-.bible-reader-verse sup { margin-right: 2px; color: #9b7a58; font-size: .55em; font-weight: 700; vertical-align: super; }
-.bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
-.bible-reader-verse.favorite { box-shadow: inset 0 -0.24em color-mix(in srgb, var(--bible-favorite-color, #f28b82) 72%, transparent); }
-.bible-reader-verse.selected { border-radius: 0; background: rgba(221, 180, 92, .3); }
-.bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
-.bible-verse-action { position: fixed; left: 50%; bottom: calc(14px + var(--safe-bottom)); z-index: 3; width: min(700px, calc(100vw - 24px)); transform: translateX(-50%); padding: 10px 11px 10px 14px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 14px; background: rgba(255, 252, 245, .97); box-shadow: 0 13px 36px rgba(58, 39, 20, .2); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; }
-.bible-verse-action div { min-width: 0; display: grid; gap: 2px; }
-.bible-verse-action small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #816a53; }
-.bible-verse-action button { min-height: 42px; border: 0; border-radius: 10px; padding: 0 14px; color: white; background: #80613f; display: inline-flex; align-items: center; gap: 6px; font: inherit; font-weight: 700; cursor: pointer; }
-.bible-verse-action .bible-verse-action-buttons { display: flex; align-items: center; gap: 7px; }
-.bible-favorite-color-picker { min-height: 24px; margin-top: 5px; display: flex; align-items: center; gap: 7px; }
-.bible-favorite-color-picker em { color: #816a53; font-size: 11px; font-style: normal; font-weight: 700; }
-.bible-verse-action .bible-favorite-color-swatch { width: 21px; height: 21px; min-height: 21px; border: 2px solid rgba(255, 255, 255, .94); border-radius: 999px; padding: 0; display: block; background: var(--swatch-color); box-shadow: 0 0 0 1px rgba(84, 57, 31, .2); }
-.bible-verse-action .bible-favorite-color-swatch.active { outline: 2px solid #6f5133; outline-offset: 2px; }
-.bible-verse-action button.secondary { padding: 0 11px; color: #74583b; background: #eee3d2; }
 .bible-state { display: grid; place-items: center; align-content: center; gap: 12px; min-height: 220px; color: #80674e; }
 .bible-state.error { color: #a33d30; }
 .bible-state button { border: 0; border-radius: 9px; padding: 9px 14px; color: white; background: #80613f; }
@@ -1306,8 +1117,6 @@ function handleTouchEnd(event: TouchEvent) {
 @media (max-width: 600px) {
   .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: 62px minmax(0, 1fr) auto; }
   .bible-topbar-actions { gap: 5px; }
-  .bible-jump-nav { gap: 3px; grid-template-columns: minmax(0, 1.2fr) minmax(48px, .72fr) minmax(44px, .65fr); }
-  .bible-jump-nav select { padding: 0 3px; font-size: 12px; }
   .bible-topbar-button.home { font-size: 0; }
   .bible-topbar-button.home svg { width: 20px; height: 20px; }
   .bible-font-stepper { position: absolute; right: 10px; top: calc(var(--safe-top) + 10px); z-index: 2; padding: 3px; border-radius: 10px; background: rgba(250, 246, 237, .98); box-shadow: 0 8px 24px rgba(74, 52, 29, .18); }
@@ -1330,10 +1139,6 @@ function handleTouchEnd(event: TouchEvent) {
   .bible-book-grid button { min-height: 66px; }
   .bible-chapter-picker { padding-top: 32px; }
   .bible-chapter-grid { grid-template-columns: repeat(5, 1fr); gap: 9px; }
-  .bible-reader { padding-top: 24px; }
-  .bible-verse-action { grid-template-columns: minmax(0, 1fr); }
-  .bible-verse-action .bible-verse-action-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
-  .bible-verse-action button { justify-content: center; padding: 0 9px; }
 }
-@media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } .bible-reader { scroll-behavior: auto; } }
+@media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } }
 </style>

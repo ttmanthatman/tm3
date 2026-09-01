@@ -7,6 +7,7 @@ const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const store = fs.readFileSync(new URL("./store.ts", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
+const bibleReaderPane = fs.readFileSync(new URL("./components/BibleReaderPane.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
@@ -67,25 +68,26 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.doesNotMatch(bibleWorkspace, /按目录分部标色/);
   assert.match(bibleWorkspace, /<strong>\{\{ book\.name \}\}<\/strong>\s*<small>\{\{ book\.chapterCount \}\}章<\/small>/);
   assert.match(bibleWorkspace, /verseSegments\(item\.verse\.text, item\.matches\)[\s\S]*?<mark v-if="segment\.highlighted">/);
-  assert.match(bibleWorkspace, /scrollTop < 220[\s\S]*?loadChapter\(first - 1, true\)[\s\S]*?loadChapter\(last \+ 1\)/);
+  assert.match(bibleReaderPane, /scrollTop < 220[\s\S]*?loadChapter\(first - 1, true\)[\s\S]*?loadChapter\(last \+ 1\)/);
   assert.match(bibleWorkspace, /loadBibleWorkspaceState[\s\S]*?saveBibleWorkspaceState/);
   assert.match(bibleWorkspace, />搜索历史<[\s\S]*?>清空</);
   assert.match(bibleWorkspace, /matchingTopicHistory[\s\S]*?查看历史[\s\S]*?追加生成/);
   assert.match(app, /<BibleWorkspace[\s\S]*?:account-id="store\.account\?\.id \|\| 0"/);
   assert.match(app, /class="inline-bible-reader-link"[\s\S]*?openBibleReferenceInWorkspace/);
   assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext \}\)/);
-  assert.match(bibleWorkspace, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
+  assert.match(bibleReaderPane, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
   assert.match(bibleWorkspace, /let catalogLoadPromise: Promise<void> \| null = null/);
   assert.match(bibleWorkspace, /if \(catalogLoadPromise\) \{[\s\S]*?await catalogLoadPromise;[\s\S]*?return;/);
 });
 
-test("Bible reader offers compact book, chapter, and verse jumps beside the resource link", () => {
-  assert.match(bibleWorkspace, /aria-label="经文快速跳转"[\s\S]*?aria-label="选择圣经书卷"[\s\S]*?aria-label="选择章节"[\s\S]*?aria-label="选择经节"/);
-  assert.match(bibleWorkspace, /<span class="bible-resource-link" title="资料">资<\/span>/);
-  assert.doesNotMatch(bibleWorkspace, /bible-resource-link" href=/);
-  assert.match(bibleWorkspace, /suppressReaderScrollUntil = Date\.now\(\) \+ 500/);
-  assert.match(bibleWorkspace, /Date\.now\(\) < suppressReaderScrollUntil/);
-  assert.match(bibleWorkspace, /anchorAfter !== undefined[\s\S]*?scrollBehavior = "auto"[\s\S]*?preservedScrollTop\(scroller\.scrollTop, anchorBefore, anchorAfter\)/);
+test("Bible reader offers per-pane jumps and replaces the resource glyph with split controls", () => {
+  assert.match(bibleReaderPane, /aria-label="选择圣经书卷"[\s\S]*?aria-label="选择章节"[\s\S]*?aria-label="选择经节"/);
+  assert.match(bibleWorkspace, /aria-label="panes\.length >= MAX_BIBLE_PANES[\s\S]*?<PanelsTopLeft/);
+  assert.doesNotMatch(bibleWorkspace, />资</);
+  assert.match(bibleWorkspace, /MAX_BIBLE_PANES[\s\S]*?BibleReaderPane[\s\S]*?bible-pane-separator/);
+  assert.match(bibleReaderPane, /suppressReaderScrollUntil = Date\.now\(\) \+ 500/);
+  assert.match(bibleReaderPane, /Date\.now\(\) < suppressReaderScrollUntil/);
+  assert.match(bibleReaderPane, /anchorAfter !== undefined[\s\S]*?preservedScrollTop\(scroller\.scrollTop, anchorBefore, anchorAfter\)/);
 });
 
 test("user administration uses a searchable master-detail layout with guarded destructive actions", () => {
@@ -304,9 +306,9 @@ test("Bible favorites share one source and render each passage body exactly once
   assert.match(surface, /bibleFavoritePassages[\s\S]*?formatBibleFavoriteBody\(passage\.lookup\)/);
   assert.doesNotMatch(surface, /toggleBibleReference/);
   assert.match(app, /async function removeBibleFavoritePassage[\s\S]*?window\.confirm/);
-  assert.match(bibleWorkspace, /BIBLE_FAVORITE_COLOR_PRESETS/);
-  assert.match(bibleWorkspace, /class="bible-favorite-color-picker"[\s\S]*?收藏标线颜色/);
-  assert.match(bibleWorkspace, /updateSelectedFavorites[\s\S]*?if \(remove\) \{[\s\S]*?clearVerseSelection\(\);[\s\S]*?targetVerse\.value = null;[\s\S]*?linkedTargetVerseKeys\.value = new Set\(\)/);
+  assert.match(bibleReaderPane, /BIBLE_FAVORITE_COLOR_PRESETS/);
+  assert.match(bibleReaderPane, /class="bible-favorite-color-picker"[\s\S]*?收藏标线颜色/);
+  assert.match(bibleReaderPane, /updateSelectedFavorites[\s\S]*?if \(remove\) \{[\s\S]*?clearVerseSelection\(\);[\s\S]*?targetVerse\.value = null;[\s\S]*?linkedTargetVerseKeys\.value = new Set\(\)/);
   assert.match(bibleWorkspace, /removeBibleFavoritePassage[\s\S]*?window\.confirm/);
 });
 
@@ -583,11 +585,11 @@ test("Bible workspace promotes catalog and grouped favorites beside search", () 
 });
 
 test("Bible workspace keeps its study title and offers a persistent font stepper", () => {
-  assert.match(bibleWorkspace, /<strong>小故事的书房<\/strong>/);
+  assert.match(bibleWorkspace, /view === 'reader' \? `\$\{panes\.length\} 窗格阅读` : '小故事的书房'/);
   assert.match(bibleWorkspace, /<span>圣经<\/span><Sparkles[\s\S]*?新标点和合本（简体）/);
   assert.match(bibleWorkspace, /team-chat-bible-font-size/);
   assert.match(bibleWorkspace, /adjustBibleFontSize\(-1\)[\s\S]*?adjustBibleFontSize\(1\)/);
-  assert.match(bibleWorkspace, /font-size: var\(--bible-font-size\)/);
+  assert.match(bibleReaderPane, /font-size: var\(--bible-font-size\)/);
 });
 
 test("music score view parts chat rows and reveals full-width pages with a translucent close control", () => {

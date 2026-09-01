@@ -86,7 +86,92 @@ test("Bible workspace round-trips the active reader and search state", () => {
   });
   const restored = loadBibleWorkspaceState(storage, 12);
   assert.equal(restored?.view, "reader");
-  assert.equal(restored?.readerBook?.code, "PHP");
-  assert.equal(restored?.visibleChapter, 4);
+  assert.equal(restored?.panes[0]?.book.code, "PHP");
+  assert.equal(restored?.panes[0]?.visibleChapter, 4);
   assert.equal(restored?.history[0]?.query, "焦虑");
+});
+
+test("legacy single-reader state migrates to a four-pane-capable workspace", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) || null,
+    setItem: (key: string, value: string) => values.set(key, value)
+  };
+  storage.setItem(bibleWorkspaceStorageKey(21), JSON.stringify({
+    version: 1,
+    view: "reader",
+    searchMode: "topic",
+    topicQuery: "",
+    textQuery: "",
+    topicResult: null,
+    textResult: null,
+    selectedBook: null,
+    readerBook: { code: "MAT", name: "马太福音", chapterCount: 28 },
+    visibleChapter: 21,
+    targetVerse: null,
+    selectedVerseReference: null,
+    history: []
+  }));
+
+  const restored = loadBibleWorkspaceState(storage, 21);
+  assert.equal(restored?.version, 2);
+  assert.equal(restored?.panes.length, 1);
+  assert.equal(restored?.panes[0]?.book?.code, "MAT");
+  assert.equal(restored?.panes[0]?.visibleChapter, 21);
+  assert.equal(restored?.orientation, null);
+  assert.equal(restored?.receivingPaneId, null);
+});
+
+test("split pane state preserves the receiver, orientation, sizes, anchors, and back stack", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) || null,
+    setItem: (key: string, value: string) => values.set(key, value)
+  };
+  const book = { code: "MAT", name: "马太福音", chapterCount: 28 };
+  saveBibleWorkspaceState(storage, 34, {
+    version: 2,
+    view: "reader",
+    searchMode: "text",
+    topicQuery: "",
+    textQuery: "葡萄园",
+    topicResult: null,
+    textResult: null,
+    selectedBook: null,
+    panes: [
+      {
+        id: "pane-a",
+        book,
+        visibleChapter: 21,
+        targetVerse: null,
+        scrollAnchor: { chapter: 21, verse: 33, offset: 72.5 },
+        selectedVerseKeys: [],
+        selectionAnchorKey: null,
+        backStack: []
+      },
+      {
+        id: "pane-b",
+        book,
+        visibleChapter: 22,
+        targetVerse: { chapter: 22, verse: 15, endVerse: 22, matches: [] },
+        scrollAnchor: null,
+        selectedVerseKeys: [],
+        selectionAnchorKey: null,
+        backStack: [{ book, visibleChapter: 21, targetVerse: null, scrollAnchor: { chapter: 21, verse: 33, offset: 72.5 } }]
+      }
+    ],
+    activePaneId: "pane-b",
+    receivingPaneId: "pane-a",
+    orientation: "columns",
+    paneSizes: [62, 38],
+    history: []
+  });
+
+  const restored = loadBibleWorkspaceState(storage, 34);
+  assert.equal(restored?.activePaneId, "pane-b");
+  assert.equal(restored?.receivingPaneId, "pane-a");
+  assert.equal(restored?.orientation, "columns");
+  assert.deepEqual(restored?.paneSizes, [62, 38]);
+  assert.deepEqual(restored?.panes[0]?.scrollAnchor, { chapter: 21, verse: 33, offset: 72.5 });
+  assert.equal(restored?.panes[1]?.backStack[0]?.visibleChapter, 21);
 });
