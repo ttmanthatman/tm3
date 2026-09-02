@@ -24,23 +24,31 @@ async function loginAsAdmin(page: Page) {
 async function expectPopoverNearAnchor(page: Page, anchor: Locator, popover: Locator) {
   await expect(anchor).toBeVisible();
   await expect(popover).toBeVisible();
-  const anchorRect = await anchor.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
-  });
-  const popoverRect = await popover.evaluate((element) => {
-    const rect = element.getBoundingClientRect();
-    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
-  });
   const viewport = page.viewportSize();
   if (!viewport) throw new Error("浏览器视口不可用");
-  expect(popoverRect.left).toBeGreaterThanOrEqual(11);
-  expect(popoverRect.top).toBeGreaterThanOrEqual(11);
-  expect(popoverRect.right).toBeLessThanOrEqual(viewport.width - 11);
-  expect(popoverRect.bottom).toBeLessThanOrEqual(viewport.height - 11);
-  const horizontalGap = Math.max(anchorRect.left - popoverRect.right, popoverRect.left - anchorRect.right, 0);
-  const verticalGap = Math.max(anchorRect.top - popoverRect.bottom, popoverRect.top - anchorRect.bottom, 0);
-  expect(Math.hypot(horizontalGap, verticalGap)).toBeLessThanOrEqual(12);
+  // 弹层在视口变化后经 requestAnimationFrame 异步重新定位，几何断言必须轮询等待其稳定，
+  // 否则会读到上一帧的旧坐标（曾经因此稳定复现 481px 的假错位）。
+  await expect
+    .poll(async () => {
+      const anchorRect = await anchor.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      });
+      const popoverRect = await popover.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      });
+      if (
+        popoverRect.left < 11 ||
+        popoverRect.top < 11 ||
+        popoverRect.right > viewport.width - 11 ||
+        popoverRect.bottom > viewport.height - 11
+      ) return 1e9;
+      const horizontalGap = Math.max(anchorRect.left - popoverRect.right, popoverRect.left - anchorRect.right, 0);
+      const verticalGap = Math.max(anchorRect.top - popoverRect.bottom, popoverRect.top - anchorRect.bottom, 0);
+      return Math.hypot(horizontalGap, verticalGap);
+    }, { timeout: 3000 })
+    .toBeLessThanOrEqual(12);
 }
 
 async function readChatSocket(page: Page) {
