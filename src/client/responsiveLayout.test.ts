@@ -246,6 +246,12 @@ test("chat channel rows show a capped unread badge pinned to the channel icon", 
   assert.match(css, /\.channel-unread-badge \{[\s\S]*?position: absolute;[\s\S]*?top: -5px;[\s\S]*?right: -5px;[\s\S]*?border: 2px solid var\(--panel\);[\s\S]*?border-radius: 999px;[\s\S]*?background: #f04438;/);
 });
 
+test("the mobile channel trigger replaces its chevron with all other-channel unread messages", () => {
+  assert.match(app, /const otherChannelUnreadCount = computed\(\(\) => store\.channels\.reduce[\s\S]*?channel\.id === store\.currentChannelId \|\| channel\.kind === "music"[\s\S]*?unreadCountFor\(channel\.id\)/);
+  assert.match(app, /class="icon-btn mobile-only channel-mobile-trigger"[\s\S]*?v-if="otherChannelUnreadCount > 0" class="channel-mobile-unread"[\s\S]*?formatUnreadCount\(otherChannelUnreadCount\)[\s\S]*?<ChevronLeft v-else/);
+  assert.match(css, /\.channel-mobile-unread \{[\s\S]*?border-radius: 999px;[\s\S]*?color: #fff;[\s\S]*?background: #f04438;/);
+});
+
 test("unread badges increment from socket messages and clear when the channel opens", () => {
   assert.match(store, /socket\.on\("message:new"[\s\S]*?this\.noteUnreadMessage\(message\)/);
   assert.match(store, /if \(!prayerOnly\) this\.markChannelRead\(channelId\)/);
@@ -493,18 +499,32 @@ test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn \? 0 : 1;/);
 });
 
-test("song control stays to the left of the font or score control", () => {
+test("song control stays to the left of the score and consolidated chat tools", () => {
   const headerStart = app.indexOf('<header class="chat-head"');
   const headerEnd = app.indexOf("</header>", headerStart);
   const header = app.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
-  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="message-font-control"'));
-  assert.match(header, /v-if="musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
+  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="chat-tools-control"'));
+  assert.match(header, /v-if="[^"]*musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
   assert.match(header, /'page-turning': musicPlaying/);
   assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);
   assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
   assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);
   assert.doesNotMatch(css, /musicScorePageTurn/);
+});
+
+test("the three-dot chat menu consolidates font, members, message selection, and system settings", () => {
+  const headerStart = app.indexOf('<header class="chat-head"');
+  const headerEnd = app.indexOf("</header>", headerStart);
+  const header = app.slice(headerStart, headerEnd);
+  assert.match(header, /class="chat-tools-control" data-chat-tools-menu[\s\S]*?aria-label="更多管理功能"[\s\S]*?<Ellipsis/);
+  assert.match(header, /class="chat-tools-menu" role="menu"[\s\S]*?class="chat-tools-font-row"[\s\S]*?adjustMessageFontSize\(-1\)[\s\S]*?adjustMessageFontSize\(1\)/);
+  assert.match(header, /role="menuitem"[\s\S]*?toggleCurrentMemberPane[\s\S]*?成员列表/);
+  assert.match(header, /v-if="isAdmin \|\| canPinCurrentChannel"[\s\S]*?toggleMessageSelectionMode[\s\S]*?消息多选/);
+  assert.match(header, /v-if="isAdmin"[\s\S]*?loadAdmin[\s\S]*?系统设置/);
+  assert.doesNotMatch(header, /class="message-font-control"/);
+  assert.match(app, /if \(showChatToolsMenu\.value && !target\.closest\("\[data-chat-tools-menu\]"\)\) \{\s*showChatToolsMenu\.value = false;/);
+  assert.match(css, /\.chat-tools-menu \{[\s\S]*?position: absolute;[\s\S]*?right: 0;[\s\S]*?z-index: 44;/);
 });
 
 test("pinned content and live activity share one ordered notice stack", () => {
@@ -537,7 +557,7 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
   assert.match(header, /aria-label="请打开通知"[\s\S]*?notificationNudgeCharacters/);
-  assert.match(css, /\.notification-nudge \{[\s\S]*?background: #facc15;[\s\S]*?animation: none;/);
+  assert.match(css, /\.notification-nudge \{[\s\S]*?width: 22px;[\s\S]*?height: 22px;[\s\S]*?background: #facc15;[\s\S]*?font-size: 12px;[\s\S]*?animation: none;/);
   assert.match(app, /<em v-if="row\.message\.sender\.kind === 'virtual'">诶哎<\/em>/);
   assert.match(css, /\.sender-line em \{[\s\S]*?color: #38bdf8;[\s\S]*?text-shadow: none;/);
 });
@@ -948,6 +968,11 @@ test("composer swaps one compact trailing action between more and a connection-a
   assert.match(css, /\.composer-main \{[\s\S]*?gap: 2px;/);
   assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 34px;[\s\S]*?flex: 0 0 34px;[\s\S]*?padding: 0;/);
   assert.match(css, /\.composer-main \.composer-send-btn:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity: 0\.48;/);
+});
+
+test("clicking the message display closes an open more-tools drawer", () => {
+  assert.match(app, /class="messages-scroll"[\s\S]*?@click\.capture="closeComposerMorePanel"/);
+  assert.match(app, /function closeComposerMorePanel\(\) \{\s*if \(composerPanel\.value === "more"\) composerPanel\.value = null;\s*\}/);
 });
 
 test("original image selection is a small unchecked control on the photo tile", () => {

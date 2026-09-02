@@ -77,7 +77,8 @@ async function setChatSocketConnection(page: Page, connected: boolean) {
 }
 
 async function openAccountsAdmin(page: Page) {
-  await page.getByRole("button", { name: "管理", exact: true }).click();
+  await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
+  await page.getByRole("menuitem", { name: "系统设置", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "管理面板" })).toBeVisible();
   await page.getByRole("button", { name: /用户与权限/ }).click();
   await expect(page.getByText("新增用户", { exact: true })).toBeVisible();
@@ -90,6 +91,16 @@ test.beforeEach(async ({ page }) => {
 test("管理员登录并进入默认频道", async ({ page }) => {
   await loginAsAdmin(page);
   await expect(page.getByRole("button", { name: "退出", exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
+  const chatTools = page.getByRole("menu", { name: "聊天管理功能" });
+  await expect(chatTools).toBeVisible();
+  await expect(chatTools.getByRole("group", { name: /消息字体大小/ })).toBeVisible();
+  await expect(chatTools.getByRole("menuitem", { name: "成员列表", exact: true })).toBeVisible();
+  await expect(chatTools.getByRole("menuitem", { name: "消息多选", exact: true })).toBeVisible();
+  await expect(chatTools.getByRole("menuitem", { name: "系统设置", exact: true })).toBeVisible();
+  await page.locator(".messages-scroll").click({ position: { x: 8, y: 8 } });
+  await expect(chatTools).toBeHidden();
 });
 
 test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
@@ -245,8 +256,23 @@ test("390px 手机视口打开频道列表并切换频道", async ({ page }) => 
   await page.setViewportSize({ width: 390, height: 844 });
   await loginAsAdmin(page);
 
-  await page.getByRole("button", { name: "频道", exact: true }).click();
-  await page.getByRole("button", { name: E2E_CHANNELS.secondary, exact: true }).click();
+  await page.evaluate((secondaryChannelName) => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as
+      | { _s?: Map<string, { channels?: Array<{ id: number; name: string }>; unreadCounts?: Record<number, number> }> }
+      | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => Array.isArray(candidate.channels) && candidate.unreadCounts);
+    const secondary = store?.channels?.find((channel) => channel.name === secondaryChannelName);
+    if (!store?.unreadCounts || !secondary) throw new Error("secondary channel was not found");
+    store.unreadCounts[secondary.id] = 7;
+  }, E2E_CHANNELS.secondary);
+
+  const channelTrigger = page.getByRole("button", { name: "频道，其他频道有 7 条未读消息", exact: true });
+  await expect(channelTrigger.locator(".channel-mobile-unread")).toHaveText("7");
+  await expect(channelTrigger.locator("svg")).toHaveCount(0);
+  await channelTrigger.click();
+  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
 
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
 });

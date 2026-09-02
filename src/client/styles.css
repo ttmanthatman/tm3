@@ -1255,17 +1255,17 @@ button {
 
 .notification-nudge {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 22px;
+  height: 22px;
   flex: 0 0 auto;
-  border-radius: 8px;
+  border-radius: 5px;
   display: grid;
   place-items: center;
   overflow: hidden;
   color: #713f12;
   background: #facc15;
-  box-shadow: inset 0 0 0 1px rgba(113, 63, 18, 0.12), 0 3px 10px rgba(202, 138, 4, 0.22);
-  font-size: 14px;
+  box-shadow: inset 0 0 0 1px rgba(113, 63, 18, 0.12), 0 2px 6px rgba(202, 138, 4, 0.18);
+  font-size: 12px;
   font-weight: 850;
   line-height: 1;
   animation: none;
@@ -1308,9 +1308,96 @@ button {
   color: #333;
 }
 
-.message-font-control {
+.chat-tools-control {
   position: relative;
   flex: 0 0 auto;
+}
+
+.chat-tools-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 44;
+  width: 196px;
+  box-sizing: border-box;
+  padding: 6px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 96%, transparent);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(14px) saturate(135%);
+}
+
+.chat-tools-menu > button {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text);
+  text-align: left;
+}
+
+.chat-tools-menu > button:active,
+.chat-tools-menu > button.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.chat-tools-font-row {
+  min-height: 42px;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px 30px 30px;
+  align-items: center;
+  gap: 3px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+}
+
+.chat-tools-font-label {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-tools-font-label > span {
+  font-size: 17px;
+  font-weight: 850;
+}
+
+.chat-tools-font-row > button,
+.chat-tools-font-row > output {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-tools-font-row > output {
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--panel);
+}
+
+.chat-tools-font-row > button:disabled {
+  opacity: 0.4;
+}
+
+.chat-tools-font-row > button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .music-player-control {
@@ -1954,48 +2041,6 @@ button {
   line-height: 1;
 }
 
-.message-font-stepper {
-  min-height: 36px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.message-font-step-btn {
-  min-width: 34px;
-  height: 34px;
-  padding: 0 7px;
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  background: color-mix(in srgb, var(--accent) 13%, transparent);
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 800;
-}
-
-.message-font-step-btn:disabled {
-  opacity: 0.45;
-}
-
-.message-font-step-btn:active:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-}
-
-.message-font-current {
-  min-width: 34px;
-  height: 34px;
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-radius: 6px;
-  display: grid;
-  place-items: center;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-}
-
 .icon-btn:active,
 .channel-row:active,
 .member-row:active {
@@ -2440,6 +2485,23 @@ button {
   background: #f04438;
   font-size: 10px;
   font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.channel-mobile-unread {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #f04438;
+  box-shadow: 0 1px 5px rgba(176, 28, 22, 0.34);
+  font-size: 10px;
+  font-weight: 800;
   line-height: 1;
   pointer-events: none;
 }

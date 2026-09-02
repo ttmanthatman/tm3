@@ -19,6 +19,7 @@ import {
   Droplet,
   Download,
   DoorOpen,
+  Ellipsis,
   FileText,
   FileUp,
   CheckCircle2,
@@ -39,7 +40,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
-  PanelRightOpen,
   Pin,
   Plane,
   Play,
@@ -297,7 +297,7 @@ const legacyMessageFontSizes: Record<string, number> = {
   extra: 19
 };
 const messageFontSize = ref(defaultMessageFontSize);
-const showMessageFontMenu = ref(false);
+const showChatToolsMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
 const musicListeners = ref<MusicListenerDTO[]>([]);
 const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
@@ -1217,6 +1217,10 @@ function handleGlobalEscape(event: KeyboardEvent) {
     }
   }
   if (event.key !== "Escape") return;
+  if (showChatToolsMenu.value) {
+    showChatToolsMenu.value = false;
+    return;
+  }
   if (bibleOpen.value) {
     bibleOpen.value = false;
     return;
@@ -1601,7 +1605,7 @@ function toggleFriendPrograms() {
   friendProgramsOpen.value = !friendProgramsOpen.value;
   if (friendProgramsOpen.value) {
     musicPlayerExpanded.value = false;
-    showMessageFontMenu.value = false;
+    showChatToolsMenu.value = false;
     void friendPlayer.controls.playRandom();
   }
 }
@@ -3021,6 +3025,11 @@ function channelName(channelId: number) {
 function unreadCountFor(channelId: number) {
   return store.unreadCounts[channelId] ?? 0;
 }
+
+const otherChannelUnreadCount = computed(() => store.channels.reduce((total, channel) => {
+  if (channel.id === store.currentChannelId || channel.kind === "music") return total;
+  return total + unreadCountFor(channel.id);
+}, 0));
 
 function queueMentionToast(message: MessageDTO) {
   if (!messageMentionsCurrentUser(message) || mentionToasts.value.some((toast) => toast.id === message.id)) return;
@@ -4838,6 +4847,7 @@ async function uploadChannelEditorIcon(event: Event) {
 }
 
 function toggleCurrentMemberPane() {
+  showChatToolsMenu.value = false;
   selectedMember.value = null;
   if (memberPaneChannelOverride.value) {
     memberPaneChannelOverride.value = null;
@@ -5075,6 +5085,10 @@ async function closePendingChannel() {
 function toggleMorePanel() {
   if (isRecording.value) return;
   composerPanel.value = composerPanel.value === "more" ? null : "more";
+}
+
+function closeComposerMorePanel() {
+  if (composerPanel.value === "more") composerPanel.value = null;
 }
 
 function openSermonWorkspace() {
@@ -6529,7 +6543,7 @@ function openMusicScore() {
   musicScoreOpen.value = true;
   prepareMusicScoreExitSequence();
   musicScoreChatCleared.value = true;
-  showMessageFontMenu.value = false;
+  showChatToolsMenu.value = false;
   closeMusicSurface();
   if (!reduceMotion) {
     setMusicScoreTimer(MUSIC_SCORE_CHAT_DURATION_MS, () => {
@@ -6997,8 +7011,8 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
   if (musicPlayerExpanded.value && !target.closest("[data-music-player]")) {
     closeMusicSurface();
   }
-  if (showMessageFontMenu.value && !target.closest("[data-message-font-menu]")) {
-    showMessageFontMenu.value = false;
+  if (showChatToolsMenu.value && !target.closest("[data-chat-tools-menu]")) {
+    showChatToolsMenu.value = false;
   }
   if (pendingChain.value && !target.closest("[data-chain-popover]") && !target.closest("[data-chain-bubble]")) {
     closeChainJoin();
@@ -7025,8 +7039,9 @@ function clampMessageFontSize(value: number) {
   return Math.min(maxMessageFontSize, Math.max(minMessageFontSize, Math.round(value)));
 }
 
-function toggleMessageFontMenu() {
-  showMessageFontMenu.value = !showMessageFontMenu.value;
+function toggleChatToolsMenu() {
+  showChatToolsMenu.value = !showChatToolsMenu.value;
+  if (showChatToolsMenu.value) musicPlayerExpanded.value = false;
 }
 
 function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
@@ -7070,7 +7085,7 @@ function selectMusicTrack(track: MusicTrackDTO) {
 function openMusicPlayer() {
   musicPlayerExpanded.value = !musicPlayerExpanded.value;
   if (musicPlayerExpanded.value) {
-    showMessageFontMenu.value = false;
+    showChatToolsMenu.value = false;
     if (!musicPlaying.value) void playCurrentMusic();
   }
 }
@@ -7094,7 +7109,7 @@ function openMusicManager(focus?: MusicManagerFocus) {
   musicManagerInitialFocus.value = focus || null;
   musicManagerOpen.value = true;
   musicPlayerExpanded.value = false;
-  showMessageFontMenu.value = false;
+  showChatToolsMenu.value = false;
   if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
 }
 
@@ -7287,6 +7302,7 @@ function loadMessageFontSizePreference(accountId?: number | null) {
 }
 
 function toggleMessageSelectionMode() {
+  showChatToolsMenu.value = false;
   messageSelectionMode.value = !messageSelectionMode.value;
   selectedMessageIds.value = new Set();
   pendingChain.value = null;
@@ -8752,6 +8768,7 @@ async function saveNotice() {
 }
 
 async function loadAdmin() {
+  showChatToolsMenu.value = false;
   saveReadPosition();
   showAdmin.value = true;
   adminPage.value = "home";
@@ -10001,7 +10018,14 @@ async function toggleVirtual(character: any) {
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
       <header class="chat-head" @pointerdown="handleChatHeaderInteraction">
-        <button class="icon-btn mobile-only" @click="showChannels = true" aria-label="频道"><ChevronLeft :size="22" /></button>
+        <button
+          class="icon-btn mobile-only channel-mobile-trigger"
+          @click="showChannels = true"
+          :aria-label="otherChannelUnreadCount > 0 ? `频道，其他频道有 ${otherChannelUnreadCount} 条未读消息` : '频道'"
+        >
+          <span v-if="otherChannelUnreadCount > 0" class="channel-mobile-unread">{{ formatUnreadCount(otherChannelUnreadCount) }}</span>
+          <ChevronLeft v-else :size="22" />
+        </button>
         <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
         <div class="chat-title">
           <div class="chat-title-line">
@@ -10065,42 +10089,40 @@ async function toggleVirtual(character: any) {
             <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
           </button>
         </div>
-        <div v-if="!showingFavoriteSurface" class="message-font-control" data-message-font-menu>
-          <button
-            v-if="musicScoreTriggerVisible"
-            class="icon-btn message-font-trigger music-score-trigger"
-            :class="{ active: musicScoreOpen, 'page-turning': musicPlaying }"
-            type="button"
-            aria-label="打开或关闭歌谱"
-            :aria-expanded="musicScoreOpen"
-            @click.stop="toggleMusicScore"
-          >
-            <span class="message-font-glyph music-score-page-glyph" aria-hidden="true">谱</span>
-          </button>
-          <button
-            v-else-if="!showMessageFontMenu"
-            class="icon-btn message-font-trigger"
-            type="button"
-            :aria-label="`消息字体大小，当前 ${messageFontSize} 号`"
-            aria-expanded="false"
-            @click.stop="toggleMessageFontMenu"
-          >
-            <span class="message-font-glyph" aria-hidden="true">字</span>
-          </button>
-          <div v-else class="message-font-stepper" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`" @click.stop>
-            <button class="message-font-step-btn" type="button" :disabled="messageFontSize <= minMessageFontSize" @click="adjustMessageFontSize(-1)">小</button>
-            <span class="message-font-current" aria-live="polite">{{ messageFontSize }}</span>
-            <button class="message-font-step-btn" type="button" :disabled="messageFontSize >= maxMessageFontSize" @click="adjustMessageFontSize(1)">大</button>
-          </div>
-        </div>
-        <button v-if="!showingFavoriteSurface" class="icon-btn" @click="toggleCurrentMemberPane" aria-label="成员">
-          <PanelRightOpen v-if="membersCollapsed" :size="20" />
-          <Users v-else :size="20" />
+        <button
+          v-if="!showingFavoriteSurface && musicScoreTriggerVisible"
+          class="icon-btn message-font-trigger music-score-trigger"
+          :class="{ active: musicScoreOpen, 'page-turning': musicPlaying }"
+          type="button"
+          aria-label="打开或关闭歌谱"
+          :aria-expanded="musicScoreOpen"
+          @click.stop="toggleMusicScore"
+        >
+          <span class="message-font-glyph music-score-page-glyph" aria-hidden="true">谱</span>
         </button>
         <button v-if="!showingFavoriteSurface && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
         <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
-        <button v-if="!showingFavoriteSurface && (isAdmin || canPinCurrentChannel)" class="icon-btn" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode" aria-label="多选聊天记录"><CheckCircle2 :size="20" /></button>
-        <button v-if="!showingFavoriteSurface && isAdmin" class="icon-btn" @click="loadAdmin" aria-label="管理"><Settings :size="20" /></button>
+        <div v-if="!showingFavoriteSurface" class="chat-tools-control" data-chat-tools-menu>
+          <button
+            class="icon-btn chat-tools-trigger"
+            type="button"
+            :class="{ active: showChatToolsMenu }"
+            aria-label="更多管理功能"
+            :aria-expanded="showChatToolsMenu"
+            @click.stop="toggleChatToolsMenu"
+          ><Ellipsis :size="22" /></button>
+          <div v-if="showChatToolsMenu" class="chat-tools-menu" role="menu" aria-label="聊天管理功能" @click.stop>
+            <div class="chat-tools-font-row" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`">
+              <span class="chat-tools-font-label"><span aria-hidden="true">字</span>字体</span>
+              <button type="button" :disabled="messageFontSize <= minMessageFontSize" aria-label="减小消息字体" @click="adjustMessageFontSize(-1)">小</button>
+              <output aria-live="polite">{{ messageFontSize }}</output>
+              <button type="button" :disabled="messageFontSize >= maxMessageFontSize" aria-label="增大消息字体" @click="adjustMessageFontSize(1)">大</button>
+            </div>
+            <button type="button" role="menuitem" @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></button>
+            <button v-if="isAdmin || canPinCurrentChannel" type="button" role="menuitem" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></button>
+            <button v-if="isAdmin" type="button" role="menuitem" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></button>
+          </div>
+        </div>
       </header>
 
       <section
@@ -10350,6 +10372,7 @@ async function toggleVirtual(character: any) {
           @load.capture="reconcileReadPositionAfterLayout"
           @wheel.passive="handleTimelineScrollIntent"
           @touchmove.passive="handleTimelineScrollIntent"
+          @click.capture="closeComposerMorePanel"
           @pointerdown.passive="handleMessagesPointerDown"
           @pointermove.passive="moveBlankScoreLongPress"
           @pointerup="clearBlankScoreLongPress"
