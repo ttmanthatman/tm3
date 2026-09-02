@@ -35,6 +35,14 @@ import { deleteAccount as deleteAccountService } from "./services/accountDeletio
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
 import { createReceptionService } from "./services/receptionService.js";
+import {
+  appendChainParticipant,
+  CHAIN_CUSTOM_TEXT_LIMIT,
+  CHAIN_OPTION_LABEL_LIMIT,
+  CHAIN_OPTION_LIMIT,
+  createChainPayload,
+  normalizeChainOptionLabels
+} from "./services/chainService.js";
 import type {
   AdminAttachmentDTO,
   AdminBackupDTO,
@@ -4775,6 +4783,20 @@ app.get("/api/link-preview", { preHandler: requireAuth }, async (request, reply)
 app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const pushOrigin = pushOriginFromHeaders(request.headers);
+  const chainConfigSchema = z
+    .object({
+      requiredSelection: z.literal(true),
+      options: z.array(z.string().trim().min(1).max(CHAIN_OPTION_LABEL_LIMIT)).min(1).max(CHAIN_OPTION_LIMIT)
+    })
+    .superRefine((value, context) => {
+      if (normalizeChainOptionLabels(value.options).length !== value.options.length) {
+        context.addIssue({ code: "custom", path: ["options"], message: "接龙项目不能重复，也不能使用“其他”" });
+      }
+    });
+  const chainSelectionSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("option"), optionId: z.string().min(1).max(40) }),
+    z.object({ kind: z.literal("custom"), text: z.string().trim().min(1).max(CHAIN_CUSTOM_TEXT_LIMIT) })
+  ]);
   const body = z
     .object({
       channelId: z.number(),
@@ -4784,7 +4806,9 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       payload: z.unknown().optional(),
       chainTopic: z.string().optional(),
       chainText: z.string().optional(),
-      chainRootId: z.number().optional()
+      chainRootId: z.number().optional(),
+      chainConfig: chainConfigSchema.optional(),
+      chainSelection: chainSelectionSchema.optional()
     })
     .parse(request.body);
   if (!(await canWriteChannel(auth.accountId, body.channelId))) return reply.code(403).send({ success: false, message: "无权在此频道发言" });
@@ -4805,13 +4829,13 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       payload = (latest?.payload as unknown as ChainPayload) || { topic: "接龙", participants: [] };
       version = (latest?.chainVersion || 1) + 1;
     } else {
-      payload = { topic: body.chainTopic || "接龙", participants: [] };
+      payload = createChainPayload(body.chainTopic || "接龙", body.chainConfig);
     }
-    payload.participants = Array.isArray(payload.participants) ? payload.participants : [];
-    if (payload.participants.some((p) => p.actorId === actor.id)) {
-      return reply.code(409).send({ success: false, message: "你已经参与过这个接龙" });
-    }
-    payload.participants.push({ actorId: actor.id, name: actor.displayName, text: body.chainText || "", at: new Date().toISOString() });
+    const appended = body.chainRootId
+      ? appendChainParticipant(payload, actor, body.chainSelection, new Date().toISOString(), body.chainText || "")
+      : { success: true as const, payload };
+    if (!appended.success) return reply.code(appended.status).send({ success: false, message: appended.message });
+    payload = appended.payload;
     const created = await createMessageFromActor({
       channelId: body.channelId,
       actorId: actor.id,

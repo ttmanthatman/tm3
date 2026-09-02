@@ -20,13 +20,38 @@ export interface ReplyPreviewDTO {
 
 export interface ChainPayload {
   topic: string;
+  schemaVersion?: 2;
+  participation?: {
+    mode: "required_single_choice";
+    options: ChainChoiceOption[];
+    allowCustom: true;
+  };
   participants: Array<{
     actorId: number;
     name: string;
     text: string;
     at: string;
+    selection?: ChainParticipantSelection;
   }>;
 }
+
+export interface ChainChoiceOption {
+  id: string;
+  label: string;
+}
+
+export type ChainParticipantSelection =
+  | { kind: "option"; optionId: string; label: string }
+  | { kind: "custom"; label: string };
+
+export interface ChainCreateConfigInput {
+  requiredSelection: true;
+  options: string[];
+}
+
+export type ChainSelectionInput =
+  | { kind: "option"; optionId: string }
+  | { kind: "custom"; text: string };
 
 export interface MessageEffectPayload {
   effect?: MessageEffect;

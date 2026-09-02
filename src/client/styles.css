@@ -5250,6 +5250,14 @@ button {
   font-size: calc(var(--message-content-font-size) + 1px);
 }
 
+.chain-option-summary {
+  margin: 0 0 9px;
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .prayer-card {
   display: grid;
   gap: 9px;
@@ -5566,7 +5574,7 @@ button {
 }
 
 .chain-card small {
-  color: #586069;
+  color: var(--muted);
 }
 
 .typing-line {

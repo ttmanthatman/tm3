@@ -79,7 +79,6 @@ import type {
   BibleReferenceLabelMode,
   BibleCombinedPassageMode,
   BibleQuotationStyle,
-  ChainPayload,
   ChannelDTO,
   FavoriteMessageDTO,
   MessageReactionsDTO,
@@ -214,6 +213,10 @@ import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
 import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
+import ChainCreateDialog from "./features/chain/ChainCreateDialog.vue";
+import ChainJoinPopover from "./features/chain/ChainJoinPopover.vue";
+import { chainParticipantProject, chainPayload, chainRequiresSelection } from "./features/chain/chain";
+import { useChain } from "./features/chain/useChain";
 import { useSermon } from "./features/sermon/useSermon";
 
 const store = useChatStore();
@@ -632,9 +635,6 @@ const showPinnedEditor = ref(false);
 const pinnedEditTitle = ref("");
 const pinnedEditBlocks = ref<PinnedContentBlockDTO[]>([]);
 const pinnedEditMsg = ref("");
-const showChainModal = ref(false);
-const chainTopic = ref("");
-const pendingChain = ref<MessageDTO | null>(null);
 const pendingDownload = ref<MessageDTO | null>(null);
 const pendingRecall = ref<MessageDTO | null>(null);
 const pendingPrayer = ref<MessageDTO | null>(null);
@@ -774,6 +774,27 @@ const pendingLeaveChannel = ref<ChannelDTO | null>(null);
 const channelLeaveBusy = ref(false);
 const channelLeaveMsg = ref("");
 const composerPanel = ref<"voice" | "more" | null>(null);
+const currentChainChannelId = computed(() => store.currentChannelId);
+const {
+  showCreateDialog: showChainModal,
+  createBusy: chainCreateBusy,
+  createError: chainCreateError,
+  pendingChain,
+  joinBusy: chainJoinBusy,
+  joinError: chainJoinError,
+  openCreateDialog: openChainModal,
+  closeCreateDialog: closeChainModal,
+  createChain,
+  openJoin: openChainJoin,
+  closeJoin: closeChainJoin,
+  joinPendingChain,
+  closeChainSurfaces
+} = useChain({
+  currentChannelId: currentChainChannelId,
+  getReplyToId: () => replyTo.value?.id || null,
+  onOpenCreate: () => { composerPanel.value = null; },
+  onCreated: () => { composerPanel.value = null; }
+});
 
 async function switchVisibleChannel(channelId: number, prayerOnly = false) {
   if (prayerOnly) await store.switchPrayerView(channelId);
@@ -1213,6 +1234,14 @@ function handleGlobalEscape(event: KeyboardEvent) {
     closeAppearanceImagePicker();
     return;
   }
+  if (pendingChain.value) {
+    closeChainJoin();
+    return;
+  }
+  if (showChainModal.value) {
+    closeChainModal();
+    return;
+  }
   if (showSettings.value) {
     void closeSettingsPanel();
     return;
@@ -1235,7 +1264,7 @@ watch(
     memberManageMsg.value = "";
     pendingCloseChannel.value = null;
     pendingLeaveChannel.value = null;
-    pendingChain.value = null;
+    closeChainSurfaces();
     pendingDownload.value = null;
     pendingRecall.value = null;
     pendingPrayer.value = null;
@@ -6941,32 +6970,9 @@ async function loadUntilMessageVisible(id: number, token = 0) {
   return false;
 }
 
-async function createChain() {
-  if (!store.currentChannelId) return;
-  const topic = chainTopic.value.trim();
-  if (!topic) return;
-  try {
-    await api("/api/messages", {
-      method: "POST",
-      body: JSON.stringify({ channelId: store.currentChannelId, type: "chain", chainTopic: topic, replyToId: replyTo.value?.id || null })
-    });
-    chainTopic.value = "";
-    showChainModal.value = false;
-    composerPanel.value = null;
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "接龙发布失败");
-  }
-}
-
-function openChainModal() {
-  chainTopic.value = "";
-  showChainModal.value = true;
-  composerPanel.value = null;
-}
-
 function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
-  chainPromptPosition.value = positionPromptNearEvent(event, { width: 164, height: 82 });
-  pendingChain.value = message;
+  chainPromptPosition.value = positionPromptNearEvent(event, { width: 320, height: 360 });
+  openChainJoin(message);
   pendingRecall.value = null;
   pendingPrayer.value = null;
   pendingMessageActions.value = null;
@@ -6996,7 +7002,7 @@ function closeTapPromptsFromOutside(event: PointerEvent) {
     showMessageFontMenu.value = false;
   }
   if (pendingChain.value && !target.closest("[data-chain-popover]") && !target.closest("[data-chain-bubble]")) {
-    pendingChain.value = null;
+    closeChainJoin();
   }
   if (pendingDownload.value && !target.closest("[data-download-popover]") && !target.closest("[data-file-card]")) {
     pendingDownload.value = null;
@@ -7424,20 +7430,6 @@ async function clearPinned() {
   const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
   if (ch) ch.pinned = null;
   showPinnedEditor.value = false;
-}
-
-async function joinPendingChain() {
-  const message = pendingChain.value;
-  if (!message) return;
-  try {
-    await api("/api/messages", {
-      method: "POST",
-      body: JSON.stringify({ channelId: message.channelId, type: "chain", chainRootId: message.chainRootId || message.id })
-    });
-    pendingChain.value = null;
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "参与接龙失败");
-  }
 }
 
 function isImageFile(file: File) {
@@ -8334,10 +8326,6 @@ function pinnedFileUrl(block: PinnedMediaBlock) {
   return `/api/channels/${store.currentChannelId}/pinned/files/${encodeURIComponent(block.filePath)}?token=${encodeURIComponent(getToken())}`;
 }
 
-function chainPayload(message: MessageDTO): ChainPayload {
-  return (message.payload as ChainPayload) || { topic: message.content || "接龙", participants: [] };
-}
-
 function prayerPayload(message: MessageDTO): PrayerPayload {
   const raw = (message.payload || {}) as Partial<PrayerPayload>;
   const status = raw.status === "closed" || raw.status === "answered" ? raw.status : "active";
@@ -8728,7 +8716,7 @@ function recallRemainingText(message: MessageDTO) {
 function openRecallPrompt(message: MessageDTO, event?: MouseEvent) {
   recallPromptPosition.value = positionPromptNearEvent(event, { width: 210, height: 104 });
   pendingRecall.value = message;
-  pendingChain.value = null;
+  closeChainJoin();
   pendingDownload.value = null;
   pendingMessageActions.value = null;
   pendingPrayer.value = null;
@@ -10456,7 +10444,7 @@ async function toggleVirtual(character: any) {
               >
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'chain-bubble': row.message.type === 'chain', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
                 :data-message-effect="messageEffect(row.message) || null"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
@@ -10492,10 +10480,13 @@ async function toggleVirtual(character: any) {
                         </span>
                       </template>
                     </h3>
+                    <small v-if="chainRequiresSelection(row.message)" class="chain-option-summary">
+                      参与时需选择：{{ chainPayload(row.message).participation?.options.map((option) => option.label).join('、') }}、其他
+                    </small>
                     <ol>
                       <li v-for="(p, idx) in chainPayload(row.message).participants" :key="idx">
                         <span>{{ idx + 1 }}. {{ p.name }}</span>
-                        <small v-if="p.text">{{ p.text }}</small>
+                        <small v-if="chainParticipantProject(p)">{{ chainParticipantProject(p) }}</small>
                       </li>
                     </ol>
                     <button class="mini-btn" @click.stop="confirmJoinChain(row.message, $event)">参与接龙</button>
@@ -11138,18 +11129,13 @@ async function toggleVirtual(character: any) {
       @select="selectReceptionRoom"
     />
 
-    <section v-if="showChainModal" class="modal-shell" @click.self="showChainModal = false">      <form class="small-modal" @submit.prevent="createChain">
-        <header class="modal-head">
-          <strong>发起接龙</strong>
-          <button class="icon-btn" type="button" @click="showChainModal = false" aria-label="关闭接龙"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form">
-          <label>接龙信息</label>
-          <input v-model="chainTopic" autocomplete="off" placeholder="例如：周六聚餐报名" />
-          <button class="primary-btn" type="submit" :disabled="!chainTopic.trim()">发布接龙</button>
-        </div>
-      </form>
-    </section>
+    <ChainCreateDialog
+      :open="showChainModal"
+      :busy="chainCreateBusy"
+      :error="chainCreateError"
+      @close="closeChainModal"
+      @submit="createChain"
+    />
 
     <section v-if="pendingPrayerUpdate" class="modal-shell" @mousedown.self="closePrayerUpdateEditor">
       <form class="small-modal prayer-update-modal" @submit.prevent="publishPrayerUpdate">
@@ -11178,17 +11164,15 @@ async function toggleVirtual(character: any) {
       </form>
     </section>
 
-    <section v-if="pendingChain" class="tap-popover chain-join-popover" :style="chainPromptStyle" data-chain-popover>
-      <div class="tap-popover-card">
-        <div class="compact-confirm">
-          <span>确认接龙？</span>
-          <div class="compact-actions">
-            <button class="mini-btn secondary" @click="pendingChain = null">否</button>
-            <button class="mini-btn" @click="joinPendingChain">是</button>
-          </div>
-        </div>
-      </div>
-    </section>
+    <ChainJoinPopover
+      v-if="pendingChain"
+      :message="pendingChain"
+      :position-style="chainPromptStyle"
+      :busy="chainJoinBusy"
+      :error="chainJoinError"
+      @close="closeChainJoin"
+      @join="joinPendingChain"
+    />
 
     <section v-if="pendingDownload" class="tap-popover download-popover" :style="downloadPromptStyle" data-download-popover>
       <div class="tap-popover-card">

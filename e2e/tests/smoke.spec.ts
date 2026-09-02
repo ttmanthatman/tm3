@@ -133,6 +133,55 @@ test("文字消息刷新后仍然存在", async ({ page }) => {
   await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
 });
 
+test("发起人要求具体项目后，参与者必须选择或填写其他", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await loginAsAdmin(page);
+
+  async function openRequiredChain(topic: string, option: string) {
+    await page.getByRole("button", { name: "更多功能" }).click();
+    await page.getByRole("button", { name: "接龙", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "发起接龙" });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel("接龙信息").fill(topic);
+    await dialog.getByLabel("参与者必须选择具体项目").check();
+    await dialog.getByLabel("参与项目").fill(option);
+    await dialog.getByRole("button", { name: "添加", exact: true }).click();
+    await dialog.getByRole("button", { name: "发布接龙", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    return page.locator("[data-message-id]").filter({ hasText: topic }).last();
+  }
+
+  const presetTopic = "浏览器项目接龙：预设项";
+  const presetChain = await openRequiredChain(presetTopic, "跑步");
+  await expect(presetChain.getByText("参与时需选择：跑步、其他", { exact: true })).toBeVisible();
+  await presetChain.getByRole("button", { name: "参与接龙", exact: true }).click();
+  const presetPopover = page.locator(".chain-join-popover");
+  await presetPopover.getByRole("button", { name: "是", exact: true }).click();
+  await presetPopover.getByRole("button", { name: "跑步", exact: true }).click();
+  const updatedPresetChain = page.locator("[data-message-id]").filter({ hasText: presetTopic }).last();
+  const presetParticipant = updatedPresetChain.locator(".chain-card li").filter({ hasText: E2E_ADMIN.displayName });
+  await expect(presetParticipant).toContainText("跑步");
+
+  const customTopic = "浏览器项目接龙：自定义项";
+  const customChain = await openRequiredChain(customTopic, "游泳");
+  await customChain.getByRole("button", { name: "参与接龙", exact: true }).click();
+  const customPopover = page.locator(".chain-join-popover");
+  await customPopover.getByRole("button", { name: "是", exact: true }).click();
+  await customPopover.getByRole("button", { name: "其他", exact: true }).click();
+  await customPopover.getByPlaceholder("填写具体项目").fill("骑行 30 分钟");
+  await customPopover.getByRole("button", { name: "参与接龙", exact: true }).click();
+  const updatedCustomChain = page.locator("[data-message-id]").filter({ hasText: customTopic }).last();
+  const customParticipant = updatedCustomChain.locator(".chain-card li").filter({ hasText: E2E_ADMIN.displayName });
+  await expect(customParticipant).toContainText("其他：骑行 30 分钟");
+
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: width < 500 ? 844 : 800 });
+    await expect(updatedCustomChain.locator(".chain-card")).toBeVisible();
+    expect(await updatedCustomChain.locator(".chain-card").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+});
+
 test("390px 手机端断线期间保留草稿并在重连后发送一次", async ({ page }) => {
   const message = "浏览器断线恢复消息：草稿不会丢失";
   await page.setViewportSize({ width: 390, height: 844 });
