@@ -3,6 +3,9 @@ import test from "node:test";
 import type { BibleLookupDTO, BibleRelatedSearchDTO } from "@shared/types";
 import {
   BIBLE_SEARCH_HISTORY_LIMIT,
+  bibleWorkspaceSnapshot,
+  bibleWorkspaceStateFromSnapshot,
+  bibleWorkspaceStateNewer,
   bibleWorkspaceStorageKey,
   findBibleTopicHistory,
   loadBibleWorkspaceState,
@@ -10,7 +13,8 @@ import {
   normalizeBibleSearchQuery,
   saveBibleWorkspaceState,
   upsertBibleSearchHistory,
-  type BibleSearchHistoryEntry
+  type BibleSearchHistoryEntry,
+  type BibleWorkspaceState
 } from "./bibleWorkspaceState";
 
 function lookup(reference: string): BibleLookupDTO {
@@ -174,4 +178,79 @@ test("split pane state preserves the receiver, orientation, sizes, anchors, and 
   assert.deepEqual(restored?.paneSizes, [62, 38]);
   assert.deepEqual(restored?.panes[0]?.scrollAnchor, { chapter: 21, verse: 33, offset: 72.5 });
   assert.equal(restored?.panes[1]?.backStack[0]?.visibleChapter, 21);
+});
+
+function readerState(updatedAt: string): BibleWorkspaceState {
+  return {
+    version: 2,
+    view: "reader",
+    searchMode: "text",
+    topicQuery: "",
+    textQuery: "葡萄园",
+    topicResult: null,
+    textResult: null,
+    selectedBook: null,
+    panes: [
+      {
+        id: "pane-a",
+        book: { code: "MAT", name: "马太福音", chapterCount: 28 },
+        visibleChapter: 3,
+        targetVerse: { chapter: 3, verse: 13, endVerse: 17, matches: [] },
+        scrollAnchor: null,
+        selectedVerseKeys: ["MAT:3:13"],
+        selectionAnchorKey: "MAT:3:13",
+        backStack: []
+      },
+      {
+        id: "pane-b",
+        book: { code: "MRK", name: "马可福音", chapterCount: 16 },
+        visibleChapter: 1,
+        targetVerse: null,
+        scrollAnchor: null,
+        selectedVerseKeys: [],
+        selectionAnchorKey: null,
+        backStack: [{ book: { code: "MAT", name: "马太福音", chapterCount: 28 }, visibleChapter: 3, targetVerse: null, scrollAnchor: null }]
+      }
+    ],
+    activePaneId: "pane-b",
+    receivingPaneId: "pane-b",
+    orientation: "columns",
+    paneSizes: [50, 50],
+    history: [topicEntry("信心", ["希伯来书 11:1"])],
+    updatedAt
+  };
+}
+
+test("workspace snapshot keeps the pane layout and restores with device-local search fields", () => {
+  const state = readerState("2026-09-02T10:00:00.000Z");
+  const snapshot = bibleWorkspaceSnapshot(state, "2026-09-02T10:00:00.000Z");
+  assert.equal(snapshot.view, "reader");
+  assert.equal(snapshot.panes.length, 2);
+  assert.equal(snapshot.panes[1]?.book.code, "MRK");
+  assert.equal(snapshot.panes[1]?.backStack.length, 1);
+  assert.equal(snapshot.receivingPaneId, "pane-b");
+  assert.equal(snapshot.updatedAt, "2026-09-02T10:00:00.000Z");
+
+  const restored = bibleWorkspaceStateFromSnapshot(snapshot, state);
+  assert.equal(restored.view, "reader");
+  assert.equal(restored.panes[1]?.book.code, "MRK");
+  assert.equal(restored.receivingPaneId, "pane-b");
+  assert.deepEqual(restored.paneSizes, [50, 50]);
+  // 快照不含选中等瞬时状态，搜索历史保留设备本地版本
+  assert.deepEqual(restored.panes[0]?.selectedVerseKeys, []);
+  assert.equal(restored.textQuery, "葡萄园");
+  assert.equal(restored.history[0]?.query, "信心");
+});
+
+test("bibleWorkspaceStateNewer prefers the state with the latest updatedAt", () => {
+  const older = readerState("2026-09-02T09:00:00.000Z");
+  const newer = readerState("2026-09-02T11:00:00.000Z");
+  assert.equal(bibleWorkspaceStateNewer(older, newer), newer);
+  assert.equal(bibleWorkspaceStateNewer(newer, older), newer);
+  assert.equal(bibleWorkspaceStateNewer(older, null), older);
+  assert.equal(bibleWorkspaceStateNewer(null, newer), newer);
+  assert.equal(bibleWorkspaceStateNewer(null, null), null);
+  const withoutTimestamp = { ...older };
+  delete withoutTimestamp.updatedAt;
+  assert.equal(bibleWorkspaceStateNewer(withoutTimestamp, newer), newer);
 });

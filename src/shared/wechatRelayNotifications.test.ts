@@ -30,6 +30,22 @@ test("classifies conversational relay events", () => {
   assert.equal(weChatRelayTemplateKey(message(8, { type: "system", payload: { systemKind: "pinned" } })), "pinned");
   assert.equal(weChatRelayTemplateKey(message(9, { type: "system", payload: { systemKind: "versionUpdate" } })), "versionUpdate");
   assert.equal(weChatRelayTemplateKey(message(10, { type: "why_topic_card" })), "whyTopic");
+  assert.equal(weChatRelayTemplateKey(message(14, { type: "bible_session" })), "bibleSession");
+});
+
+test("bible session relay copy avoids book-of-origin wording", () => {
+  const rendered = [1, 2, 3].map((id) =>
+    renderWeChatRelayNotification(message(id, {
+      type: "bible_session",
+      content: "打开了 2 个圣经窗格：A.马太福音3章 B.马可福音1章",
+      payload: { kind: "bible_session" }
+    }))
+  );
+  for (const text of rendered) {
+    assert.match(text, /小夏/);
+    assert.doesNotMatch(text, /圣经|bible|马太福音|马可福音/i);
+  }
+  assert.ok(rendered.some((text) => text.includes("打开了一本书") || text.includes("书桌旁") || text.includes("翻开了一本书")));
 });
 
 test("renders deterministic varied reminders without message content, ids, or timestamps", () => {

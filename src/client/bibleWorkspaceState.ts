@@ -2,7 +2,8 @@ import type {
   BibleBookCatalogDTO,
   BibleRelatedSearchDTO,
   BibleTextMatchRangeDTO,
-  BibleTextSearchDTO
+  BibleTextSearchDTO,
+  BibleWorkspaceSnapshotDTO
 } from "@shared/types";
 import { MAX_BIBLE_PANES, normalizeBiblePaneSizes, type BibleSplitOrientation } from "./bibleSplitLayout";
 
@@ -85,6 +86,8 @@ export type BibleWorkspaceState = {
   orientation: BibleSplitOrientation | null;
   paneSizes: number[];
   history: BibleSearchHistoryEntry[];
+  /** 最近一次保存时间（ISO）；账号级同步据此比较新旧 */
+  updatedAt?: string;
 };
 
 export const BIBLE_SEARCH_HISTORY_LIMIT = 20;
@@ -207,7 +210,8 @@ function sanitizeWorkspaceState(state: BibleWorkspaceState): BibleWorkspaceState
     receivingPaneId: state.receivingPaneId && ids.has(state.receivingPaneId) ? state.receivingPaneId : null,
     orientation: state.orientation === "columns" || state.orientation === "rows" ? state.orientation : null,
     paneSizes: normalizeBiblePaneSizes(state.paneSizes || [], panes.length || 1),
-    history: Array.isArray(state.history) ? state.history : []
+    history: Array.isArray(state.history) ? state.history : [],
+    ...(typeof state.updatedAt === "string" ? { updatedAt: state.updatedAt } : {})
   };
 }
 
@@ -218,4 +222,60 @@ function compactHistoryEntry(entry: BibleSearchHistoryEntry): BibleSearchHistory
 
 function compactTextResult(result: BibleTextSearchDTO): BibleTextSearchDTO {
   return { ...result, items: result.items.slice(0, BIBLE_TEXT_HISTORY_ITEM_LIMIT) };
+}
+
+/** 提取账号级同步用的紧凑快照：只含窗格布局，不含设备本地的搜索历史与检索结果 */
+export function bibleWorkspaceSnapshot(state: BibleWorkspaceState, updatedAt = new Date().toISOString()): BibleWorkspaceSnapshotDTO {
+  return {
+    version: 2,
+    view: state.view,
+    panes: state.panes.slice(0, MAX_BIBLE_PANES).map((pane) => ({
+      id: pane.id,
+      book: pane.book,
+      visibleChapter: pane.visibleChapter,
+      targetVerse: pane.targetVerse,
+      scrollAnchor: pane.scrollAnchor,
+      backStack: pane.backStack.slice(-20)
+    })),
+    activePaneId: state.activePaneId,
+    receivingPaneId: state.receivingPaneId,
+    orientation: state.orientation,
+    paneSizes: state.paneSizes,
+    updatedAt
+  };
+}
+
+/** 把账号级快照还原为完整工作台状态；搜索历史等设备本地字段取自 base */
+export function bibleWorkspaceStateFromSnapshot(snapshot: BibleWorkspaceSnapshotDTO, base: BibleWorkspaceState | null): BibleWorkspaceState {
+  const panes: BiblePaneState[] = snapshot.panes.map((pane) => ({
+    ...pane,
+    selectedVerseKeys: [],
+    selectionAnchorKey: null
+  }));
+  return sanitizeWorkspaceState({
+    version: 2,
+    view: snapshot.view,
+    searchMode: base?.searchMode || "topic",
+    topicQuery: base?.topicQuery || "",
+    textQuery: base?.textQuery || "",
+    topicResult: base?.topicResult || null,
+    textResult: base?.textResult || null,
+    selectedBook: base?.selectedBook || null,
+    panes,
+    activePaneId: snapshot.activePaneId,
+    receivingPaneId: snapshot.receivingPaneId,
+    orientation: snapshot.orientation,
+    paneSizes: snapshot.paneSizes,
+    history: base?.history || [],
+    updatedAt: snapshot.updatedAt
+  });
+}
+
+/** 比较两份状态的新旧；缺失 updatedAt 的视为最旧 */
+export function bibleWorkspaceStateNewer(left: BibleWorkspaceState | null, right: BibleWorkspaceState | null): BibleWorkspaceState | null {
+  if (!left) return right;
+  if (!right) return left;
+  const leftTime = Date.parse(left.updatedAt || "") || 0;
+  const rightTime = Date.parse(right.updatedAt || "") || 0;
+  return rightTime > leftTime ? right : left;
 }

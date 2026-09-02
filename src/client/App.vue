@@ -79,6 +79,7 @@ import type {
   BibleReferenceLabelMode,
   BibleCombinedPassageMode,
   BibleQuotationStyle,
+  BibleSessionPayloadDTO,
   ChannelDTO,
   FavoriteMessageDTO,
   MessageReactionsDTO,
@@ -112,6 +113,7 @@ import type {
 } from "@shared/types";
 import { api, authHeaders, getToken, joinReception, login, register } from "./api";
 import { randomId } from "./randomId";
+import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
@@ -249,6 +251,7 @@ const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/Sermo
 const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
 const SermonEntryDialog = defineAsyncComponent(() => import("./features/sermon/SermonEntryDialog.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
+const BibleSessionCard = defineAsyncComponent(() => import("./features/bible/BibleSessionCard.vue"));
 // 正在讲道的预览通知常驻，体积小且时效敏感，不进异步分包。
 import SermonHub from "./features/sermon/SermonHub.vue";
 type UploadStatus = "uploading" | "processing" | "failed";
@@ -659,7 +662,10 @@ const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
 const bibleOpen = ref(false);
 const bibleTargetChannelId = ref<number | null>(null);
-type BibleWorkspaceHandle = { openLookupContext: (lookup: BibleLookupDTO) => Promise<void> };
+type BibleWorkspaceHandle = {
+  openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
+  openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
+};
 const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
 const bibleReadingActivity = ref<{ active: boolean; bookName: string | null }>({ active: false, bookName: null });
 let bibleSwipeStart: { x: number; y: number } | null = null;
@@ -1527,6 +1533,10 @@ const bibleSendUnavailableReason = computed(() => {
 const forwardTargetChannels = computed(() =>
   store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
 );
+// “打开的圣经”可分享到的频道：公开/私密聊天频道与私聊，且当前账号可发言
+const bibleShareChannels = computed(() =>
+  store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false)
+);
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, "manual"));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
 const exclusiveAudio = createExclusiveAudio();
@@ -2355,6 +2365,7 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.message.type === "image") return estimatedImageTimelineRowHeight(row.message, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "sermon_request") return 200;
+  if (row.message.type === "bible_session") return 200;
   if (row.message.type === "chain") return 190;
   if (isAudioMessage(row.message)) return 112;
   if (row.message.type === "file") return 126;
@@ -4536,6 +4547,19 @@ function openBibleWorkspace() {
 
 function closeBibleWorkspace() {
   bibleOpen.value = false;
+}
+
+// 打开聊天室里分享的“打开的圣经”：各自在本地按相同窗格布局一起阅读
+async function openBibleSessionFromMessage(message: MessageDTO) {
+  if (Date.now() < suppressNextTapUntil) return;
+  const payload = parseBibleSessionPayload(message.payload);
+  if (!payload) {
+    alert("这条圣经分享内容已失效");
+    return;
+  }
+  openBibleWorkspace();
+  await nextTick();
+  await bibleWorkspace.value?.openSession(payload);
 }
 
 // 圣经负一屏与讲道台负一屏共用同一套“打开时暂停聊天区动效、关闭时恢复”的生命周期。
@@ -9871,6 +9895,9 @@ async function toggleVirtual(character: any) {
       :favorites="bibleFavorites"
       :favorites-busy="bibleFavoritesLoading"
       :update-favorites="updateBibleFavorites"
+      :server-workspace="store.account?.biblePreferences?.workspace || null"
+      :share-channels="bibleShareChannels"
+      :active-channel-id="bibleTargetChannelId"
       @close="closeBibleWorkspace"
       @reading-change="handleBibleReadingChange"
     />
@@ -10637,6 +10664,9 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else-if="row.message.type === 'sermon_request'">
                   <SermonRequestCard :message="row.message" />
+                </template>
+                <template v-else-if="row.message.type === 'bible_session'">
+                  <BibleSessionCard :message="row.message" @open="openBibleSessionFromMessage" />
                 </template>
                 <template v-else-if="pendingUploadFor(row.message)">
                   <div class="upload-card" :class="{ failed: pendingUploadFor(row.message)?.status === 'failed' }" @click.stop>

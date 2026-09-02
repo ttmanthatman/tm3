@@ -49,6 +49,7 @@ enum MessageType {
   prayer
   sermon_request
   why_topic_card
+  bible_session
   system
 }
 

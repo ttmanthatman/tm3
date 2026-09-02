@@ -76,7 +76,7 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(bibleWorkspace, /matchingTopicHistory[\s\S]*?查看历史[\s\S]*?追加生成/);
   assert.match(app, /<BibleWorkspace[\s\S]*?:account-id="store\.account\?\.id \|\| 0"/);
   assert.match(app, /class="inline-bible-reader-link"[\s\S]*?openBibleReferenceInWorkspace/);
-  assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext \}\)/);
+  assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext, openSession \}\)/);
   assert.match(bibleReaderPane, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
   assert.match(bibleWorkspace, /let catalogLoadPromise: Promise<void> \| null = null/);
   assert.match(bibleWorkspace, /if \(catalogLoadPromise\) \{[\s\S]*?await catalogLoadPromise;[\s\S]*?return;/);
@@ -610,7 +610,9 @@ test("chat images correct EXIF dimensions, cache privately, and preload offscree
 test("Bible workspace promotes catalog and grouped favorites beside search", () => {
   assert.match(bibleWorkspace, /const homeSection = ref<"catalog" \| "search" \| "favorites">\("catalog"\)/);
   assert.match(bibleWorkspace, /aria-label="书房功能"[\s\S]*?>经卷目录<[\s\S]*?>经文检索<[\s\S]*?>经文收藏</);
-  assert.match(bibleWorkspace, /homeSection\.value = "catalog";[\s\S]*?void ensureCatalog\(\)/);
+  // 进入时保留已恢复的窗格状态（直接回到上次阅读视图），退出时保存并同步账号级状态
+  assert.match(bibleWorkspace, /\(open\) => \{[\s\S]*?void ensureCatalog\(\);[\s\S]*?persistWorkspaceState\(\);[\s\S]*?flushWorkspaceServerSync\(\)/);
+  assert.match(bibleWorkspace, /function returnHome\(\) \{[\s\S]*?homeSection\.value = "catalog";/);
   assert.match(bibleWorkspace, /v-if="homeSection === 'catalog' && catalog" class="bible-catalog"/);
   assert.match(bibleWorkspace, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\)/);
   assert.match(bibleWorkspace, /groupBibleFavoritePassages\(props\.favorites\)/);

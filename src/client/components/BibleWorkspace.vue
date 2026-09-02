@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, Columns2, History, Home, PanelsTopLeft, Plus, Rows2, Search, Send, Sparkles, Trash2 } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, Columns2, History, Home, PanelsTopLeft, Plus, Rows2, Search, Send, Share2, Sparkles, Trash2 } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -8,13 +8,19 @@ import type {
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
   BibleRelatedSearchDTO,
+  BibleSessionPayloadDTO,
   BibleTextMatchRangeDTO,
   BibleTextSearchDTO,
   BibleTextSearchItemDTO,
-  BibleVerseLineDTO
+  BibleVerseLineDTO,
+  BibleWorkspaceSnapshotDTO,
+  ChannelDTO
 } from "@shared/types";
 import { api } from "../api";
 import {
+  bibleWorkspaceSnapshot,
+  bibleWorkspaceStateFromSnapshot,
+  bibleWorkspaceStateNewer,
   findBibleTopicHistory,
   loadBibleWorkspaceState,
   mergeBibleTopicResults,
@@ -43,6 +49,7 @@ import {
   formatBibleVersesForCopy
 } from "../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../bibleFavorites";
+import { buildBibleSessionSharePayload } from "../bibleSessionShare";
 
 const props = defineProps<{
   open: boolean;
@@ -54,6 +61,12 @@ const props = defineProps<{
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
+  /** 账号级保存的阅读窗格快照（来自服务器），用于跨设备恢复 */
+  serverWorkspace?: BibleWorkspaceSnapshotDTO | null;
+  /** 可分享到聊天室的频道列表 */
+  shareChannels?: ChannelDTO[];
+  /** 打开阅读器时所在的频道，分享弹窗默认选中 */
+  activeChannelId?: number | null;
 }>();
 
 const emit = defineEmits<{
@@ -101,6 +114,9 @@ const bibleFontSize = ref(defaultBibleFontSize);
 const showBibleFontMenu = ref(false);
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
 const sendBusyKey = ref("");
+const showShareDialog = ref(false);
+const shareChannelId = ref<number | null>(null);
+const shareBusy = ref(false);
 const toast = ref("");
 let toastTimer = 0;
 let persistTimer = 0;
@@ -166,10 +182,12 @@ watch(
   () => props.open,
   (open) => {
     if (open) {
-      view.value = "home";
-      homeSection.value = "catalog";
-      selectedBook.value = null;
+      // 进入时保留已恢复的窗格状态（直接回到上次的阅读视图）
       void ensureCatalog();
+    } else {
+      // 退出阅读器时立即保存并同步账号级窗格状态
+      persistWorkspaceState();
+      void flushWorkspaceServerSync();
     }
   },
   { immediate: true }
@@ -211,6 +229,7 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointerdown", handleWorkspacePointerDown);
   window.removeEventListener("resize", handleViewportResize);
   persistWorkspaceState();
+  void flushWorkspaceServerSync();
   if (toastTimer) window.clearTimeout(toastTimer);
   if (persistTimer) window.clearTimeout(persistTimer);
   if (catalogPreloadTimer) window.clearTimeout(catalogPreloadTimer);
@@ -219,11 +238,21 @@ onBeforeUnmount(() => {
 async function restoreWorkspaceState() {
   stateRestored = false;
   resetWorkspaceState();
-  const saved = loadBibleWorkspaceState(window.localStorage, props.accountId);
+  const local = loadBibleWorkspaceState(window.localStorage, props.accountId);
+  const server = props.serverWorkspace ? bibleWorkspaceStateFromSnapshot(props.serverWorkspace, local) : null;
+  const saved = bibleWorkspaceStateNewer(local, server);
   if (!saved) {
     stateRestored = true;
     return;
   }
+  let savedPanes = saved.panes;
+  if (saved.view === "reader" && savedPanes.length) {
+    await ensureCatalog();
+    // 服务器快照可能带有本机目录中不存在的书卷，恢复时过滤
+    const knownCodes = new Set(allBooks.value.map((book) => book.code));
+    savedPanes = savedPanes.filter((pane) => knownCodes.has(pane.book.code));
+  }
+  const paneIds = new Set(savedPanes.map((pane) => pane.id));
   searchMode.value = saved.searchMode === "text" ? "text" : "topic";
   topicQuery.value = saved.topicQuery || "";
   textQuery.value = saved.textQuery || "";
@@ -231,14 +260,13 @@ async function restoreWorkspaceState() {
   textResult.value = saved.textResult || null;
   selectedBook.value = saved.selectedBook || null;
   searchHistory.value = saved.history || [];
-  panes.value = saved.panes;
-  activePaneId.value = saved.activePaneId;
-  receivingPaneId.value = saved.receivingPaneId;
+  panes.value = savedPanes;
+  activePaneId.value = saved.activePaneId && paneIds.has(saved.activePaneId) ? saved.activePaneId : savedPanes[0]?.id || null;
+  receivingPaneId.value = saved.receivingPaneId && paneIds.has(saved.receivingPaneId) ? saved.receivingPaneId : null;
   splitOrientation.value = saved.orientation;
-  paneSizes.value = saved.paneSizes;
-  paneSequence = saved.panes.reduce((highest, pane) => Math.max(highest, Number(pane.id.match(/(\d+)$/)?.[1] || 0)), 0);
-  if (saved.view === "reader" && saved.panes.length) {
-    await ensureCatalog();
+  paneSizes.value = savedPanes.length === saved.panes.length ? saved.paneSizes : equalBiblePaneSizes(savedPanes.length || 1);
+  paneSequence = savedPanes.reduce((highest, pane) => Math.max(highest, Number(pane.id.match(/(\d+)$/)?.[1] || 0)), 0);
+  if (saved.view === "reader" && savedPanes.length) {
     view.value = "reader";
   } else view.value = saved.view === "chapters" && saved.selectedBook ? "chapters" : "home";
   stateRestored = true;
@@ -284,12 +312,43 @@ function persistWorkspaceState() {
     receivingPaneId: receivingPaneId.value,
     orientation: splitOrientation.value,
     paneSizes: paneSizes.value,
-    history: searchHistory.value
+    history: searchHistory.value,
+    updatedAt: new Date().toISOString()
   };
   try {
     saveBibleWorkspaceState(window.localStorage, props.accountId, state);
   } catch {
     // Storage can be unavailable in private browsing; the mounted component still retains state.
+  }
+  scheduleWorkspaceServerSync(state);
+}
+
+let serverSyncTimer = 0;
+let pendingWorkspaceSyncJson = "";
+let lastSyncedWorkspaceJson = "";
+
+// 账号级保存：防抖 PATCH 到 /api/me/preferences，失败保留待下次重试
+function scheduleWorkspaceServerSync(state: BibleWorkspaceState) {
+  const json = JSON.stringify(bibleWorkspaceSnapshot(state, state.updatedAt || new Date().toISOString()));
+  if (json === lastSyncedWorkspaceJson) return;
+  pendingWorkspaceSyncJson = json;
+  if (serverSyncTimer) window.clearTimeout(serverSyncTimer);
+  serverSyncTimer = window.setTimeout(() => void flushWorkspaceServerSync(), 2000);
+}
+
+async function flushWorkspaceServerSync() {
+  if (serverSyncTimer) {
+    window.clearTimeout(serverSyncTimer);
+    serverSyncTimer = 0;
+  }
+  const json = pendingWorkspaceSyncJson;
+  if (!json || !props.accountId) return;
+  pendingWorkspaceSyncJson = "";
+  try {
+    await api("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ bibleWorkspace: JSON.parse(json) }) });
+    lastSyncedWorkspaceJson = json;
+  } catch {
+    pendingWorkspaceSyncJson = json;
   }
 }
 
@@ -478,21 +537,21 @@ async function openBookInActivePane(book: BibleBookCatalogDTO, chapter: number) 
   await paneRefs.get(paneId)?.openLocation({ book, visibleChapter: chapter, targetVerse: null, scrollAnchor: null });
 }
 
-async function addBiblePane() {
-  if (panes.value.length >= MAX_BIBLE_PANES) return;
+async function addBiblePane(): Promise<string | null> {
+  if (panes.value.length >= MAX_BIBLE_PANES) return null;
   await ensureCatalog();
   const active = activePaneId.value ? paneRefs.get(activePaneId.value)?.snapshot() : null;
   const source = active || panes.value.find((pane) => pane.id === activePaneId.value) || panes.value[0];
   if (!source) {
     const firstBook = allBooks.value[0];
-    if (!firstBook) return;
+    if (!firstBook) return null;
     const firstPane = createPaneState(firstBook, 1);
     const secondPane = createPaneState(firstBook, 1);
     panes.value = [firstPane, secondPane];
     paneSizes.value = equalBiblePaneSizes(2);
     activePaneId.value = secondPane.id;
     view.value = "reader";
-    return;
+    return secondPane.id;
   }
   const pane: BiblePaneState = {
     ...source,
@@ -505,6 +564,7 @@ async function addBiblePane() {
   paneSizes.value = equalBiblePaneSizes(panes.value.length);
   activePaneId.value = pane.id;
   view.value = "reader";
+  return pane.id;
 }
 
 function closeBiblePane(paneId: string) {
@@ -576,6 +636,12 @@ async function handlePaneReference(sourcePaneId: string, reference: string) {
       `/api/bible/lookup?reference=${encodeURIComponent(reference)}`
     );
     if (!response.success || !response.result) throw new Error(response.message || "无法识别这处经文");
+    // 单窗格阅读时点击经文链接：自动分屏，链接内容进入新窗格 B，
+    // 并把 B 设为默认接收窗格（链接图标按下）。
+    if (panes.value.length === 1 && panes.value[0]?.id === sourcePaneId) {
+      const receiverId = await addBiblePane();
+      if (receiverId) receivingPaneId.value = receiverId;
+    }
     await routeLookup(response.result, sourcePaneId);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "经文跳转失败");
@@ -629,7 +695,7 @@ async function openLookupContext(lookup: BibleLookupDTO) {
   await routeLookup(lookup, activePaneId.value);
 }
 
-defineExpose({ openLookupContext });
+defineExpose({ openLookupContext, openSession });
 
 function singleVerseLookup(verse: BibleVerseLineDTO): BibleLookupDTO {
   return {
@@ -754,6 +820,85 @@ async function sendLookup(lookup: BibleLookupDTO, key: string) {
   }
 }
 
+function openShareDialog() {
+  const channels = props.shareChannels || [];
+  if (!channels.length) {
+    showToast("暂时没有可分享的频道");
+    return;
+  }
+  shareChannelId.value = channels.some((channel) => channel.id === props.activeChannelId) ? props.activeChannelId || channels[0].id : channels[0].id;
+  showShareDialog.value = true;
+}
+
+async function confirmShare() {
+  if (shareBusy.value || !shareChannelId.value) return;
+  const currentPanes = panes.value.map((pane) => paneRefs.get(pane.id)?.snapshot() || pane);
+  const payload = buildBibleSessionSharePayload(currentPanes, effectiveSplitOrientation.value, receivingPaneId.value, catalog.value?.translation || "");
+  if (!payload) return;
+  shareBusy.value = true;
+  try {
+    await api<{ success: boolean }>("/api/bible/share", {
+      method: "POST",
+      body: JSON.stringify({
+        channelId: shareChannelId.value,
+        panes: payload.panes,
+        orientation: payload.orientation,
+        receivingIndex: payload.receivingIndex
+      })
+    });
+    const channelName = (props.shareChannels || []).find((channel) => channel.id === shareChannelId.value)?.name || "聊天室";
+    showShareDialog.value = false;
+    showToast(`已分享到：${channelName}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "分享失败，请重试");
+  } finally {
+    shareBusy.value = false;
+  }
+}
+
+/** 打开他人分享的“打开的圣经”：按分享载荷重建窗格布局（各自本地阅读） */
+async function openSession(payload: BibleSessionPayloadDTO) {
+  await ensureCatalog();
+  const books = new Map(allBooks.value.map((book) => [book.code, book]));
+  const sessionPanes: BiblePaneState[] = [];
+  for (const sessionPane of payload.panes.slice(0, MAX_BIBLE_PANES)) {
+    const book = books.get(sessionPane.bookCode);
+    if (!book) continue;
+    const chapter = Math.max(1, Math.min(book.chapterCount, Math.floor(sessionPane.chapter) || 1));
+    sessionPanes.push({
+      id: nextPaneId(),
+      book,
+      visibleChapter: chapter,
+      targetVerse: sessionPane.verseStart
+        ? { chapter, verse: sessionPane.verseStart, endVerse: sessionPane.verseEnd || sessionPane.verseStart, matches: [] }
+        : null,
+      scrollAnchor: null,
+      selectedVerseKeys: [],
+      selectionAnchorKey: null,
+      backStack: []
+    });
+  }
+  if (!sessionPanes.length) {
+    showToast("分享的经卷在当前目录中不存在");
+    return;
+  }
+  panes.value = sessionPanes;
+  paneSizes.value = equalBiblePaneSizes(sessionPanes.length);
+  activePaneId.value = sessionPanes[0].id;
+  receivingPaneId.value = payload.receivingIndex !== null ? sessionPanes[payload.receivingIndex]?.id || null : null;
+  splitOrientation.value = payload.orientation;
+  view.value = "reader";
+  await nextTick();
+  await Promise.all(
+    sessionPanes.map((pane) =>
+      paneRefs.get(pane.id)?.openLocation(
+        { book: pane.book, visibleChapter: pane.visibleChapter, targetVerse: pane.targetVerse, scrollAnchor: null },
+        false
+      )
+    )
+  );
+}
+
 function showToast(message: string) {
   toast.value = message;
   if (toastTimer) window.clearTimeout(toastTimer);
@@ -832,6 +977,14 @@ function handleTouchEnd(event: TouchEvent) {
             <button type="button" :disabled="bibleFontSize >= maxBibleFontSize" @click="adjustBibleFontSize(1)">大</button>
           </div>
         </div>
+        <button
+          v-if="view === 'reader' && panes.length"
+          type="button"
+          class="bible-resource-link"
+          aria-label="分享当前阅读窗格到聊天室"
+          title="分享打开的圣经"
+          @click="openShareDialog"
+        ><Share2 :size="19" /></button>
         <button type="button" class="bible-topbar-button chat" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
       </div>
     </header>
@@ -981,6 +1134,22 @@ function handleTouchEnd(event: TouchEvent) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <div v-if="showShareDialog" class="bible-share-backdrop" @click.self="showShareDialog = false" @keydown.esc="showShareDialog = false">
+      <div class="bible-share-dialog" role="dialog" aria-modal="true" aria-label="分享打开的圣经">
+        <h2>分享打开的圣经</h2>
+        <p class="bible-share-summary">把当前 {{ panes.length }} 个阅读窗格发送到聊天室，成员点击卡片即可一起阅读。</p>
+        <label class="bible-share-field">
+          <span>分享到频道</span>
+          <select v-model="shareChannelId">
+            <option v-for="channel in props.shareChannels || []" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
+          </select>
+        </label>
+        <div class="bible-share-actions">
+          <button type="button" :disabled="shareBusy" @click="showShareDialog = false">取消</button>
+          <button type="button" class="primary" :disabled="shareBusy || !shareChannelId" @click="confirmShare">{{ shareBusy ? "分享中…" : "分享" }}</button>
+        </div>
+      </div>
+    </div>
     <div v-if="toast" class="bible-toast" role="status">{{ toast }}</div>
   </section>
 </template>
@@ -1113,6 +1282,16 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-state.error { color: #a33d30; }
 .bible-state button { border: 0; border-radius: 9px; padding: 9px 14px; color: white; background: #80613f; }
 .bible-toast { position: fixed; left: 50%; bottom: calc(76px + var(--safe-bottom)); z-index: 5; transform: translateX(-50%); max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 999px; color: white; background: rgba(55, 41, 28, .9); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); white-space: nowrap; }
+.bible-share-backdrop { position: fixed; inset: 0; z-index: 6; display: grid; place-items: center; padding: 20px; background: rgba(45, 33, 22, .45); }
+.bible-share-dialog { width: min(360px, 100%); padding: 18px; border: 1px solid rgba(117, 84, 47, .2); border-radius: 14px; background: #faf4e8; box-shadow: 0 18px 48px rgba(45, 33, 22, .3); }
+.bible-share-dialog h2 { margin: 0 0 8px; color: #6d5135; font-family: "Songti SC", "STSong", serif; font-size: 19px; }
+.bible-share-summary { margin: 0 0 14px; color: #8b7259; font-size: 13px; line-height: 1.6; }
+.bible-share-field { display: grid; gap: 6px; color: #6d5135; font-size: 13px; }
+.bible-share-field select { min-height: 38px; padding: 0 10px; border: 1px solid #cbb797; border-radius: 9px; color: #4f3b29; background: #fffdf7; font: inherit; }
+.bible-share-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.bible-share-actions button { min-height: 36px; padding: 0 14px; border: 1px solid #cbb797; border-radius: 9px; color: #6d5135; background: transparent; font: inherit; cursor: pointer; }
+.bible-share-actions button.primary { color: white; border-color: #80613f; background: #80613f; }
+.bible-share-actions button:disabled { opacity: .45; cursor: default; }
 @media (max-width: 900px) { .bible-book-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 @media (max-width: 600px) {
   .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: 62px minmax(0, 1fr) auto; }

@@ -21,6 +21,7 @@ import { createAiClient } from "./multichar/ai.js";
 import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
+import { registerBibleRoutes } from "./routes/bible.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -78,6 +79,7 @@ import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../sh
 import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
 import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
+import { cleanBibleWorkspaceState } from "./bible/workspaceState.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import {
   channelNeedsExplicitMembership,
@@ -1368,11 +1370,13 @@ async function updateAccountAvatarFromUpload(accountId: number, request: Fastify
 
 function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
   const row = value && typeof value === "object" ? (value as Partial<BiblePreferencesDTO>) : {};
+  const workspace = row.workspace ? cleanBibleWorkspaceState(row.workspace) : null;
   return {
     outputFormat: BIBLE_OUTPUT_FORMATS.has(String(row.outputFormat)) ? (row.outputFormat as BiblePreferencesDTO["outputFormat"]) : DEFAULT_BIBLE_PREFERENCES.outputFormat,
     referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
     combinedPassageMode: BIBLE_COMBINED_PASSAGE_MODES.has(String(row.combinedPassageMode)) ? (row.combinedPassageMode as BiblePreferencesDTO["combinedPassageMode"]) : DEFAULT_BIBLE_PREFERENCES.combinedPassageMode,
-    quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle
+    quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle,
+    ...(workspace ? { workspace } : {})
   };
 }
 
@@ -1382,7 +1386,8 @@ function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
     outputFormat: preferences.outputFormat,
     referenceLabelMode: preferences.referenceLabelMode,
     combinedPassageMode: preferences.combinedPassageMode,
-    quotationStyle: preferences.quotationStyle
+    quotationStyle: preferences.quotationStyle,
+    ...(preferences.workspace ? { workspace: preferences.workspace as unknown as Prisma.InputJsonValue } : {})
   };
 }
 
@@ -2468,6 +2473,7 @@ function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "chain") return `${message.sender.displayName} 发起了接龙：${stripPushText(message.content) || "接龙"}`;
   if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
   if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
+  if (message.type === "bible_session") return `${message.sender.displayName} 分享了打开的圣经：${stripPushText(message.content) || "一起阅读"}`;
   if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
   if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
   if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
@@ -3621,7 +3627,7 @@ app.patch("/api/notifications/channels/:id", { preHandler: requireAuth }, async 
   return { success: true, channelId, muted: body.muted };
 });
 
-app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) => {
+app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const body = z
     .object({
@@ -3633,7 +3639,8 @@ app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) =>
           combinedPassageMode: z.string().optional(),
           quotationStyle: z.string().optional()
         })
-        .optional()
+        .optional(),
+      bibleWorkspace: z.unknown().nullable().optional()
     })
     .parse(request.body);
   const data: Prisma.AccountUpdateInput = {};
@@ -3641,9 +3648,21 @@ app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request) =>
     const requestedTheme = cleanThemeId(body.theme);
     data.theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
   }
-  if (body.biblePreferences !== undefined) {
+  if (body.biblePreferences !== undefined || body.bibleWorkspace !== undefined) {
     const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { biblePreferences: true } });
-    data.biblePreferences = biblePreferencesJson({ ...(current?.biblePreferences as Record<string, unknown> | null | undefined), ...body.biblePreferences });
+    const merged: Record<string, unknown> = {
+      ...(current?.biblePreferences as Record<string, unknown> | null | undefined),
+      ...body.biblePreferences
+    };
+    if (body.bibleWorkspace !== undefined) {
+      if (body.bibleWorkspace === null) delete merged.workspace;
+      else {
+        const workspace = cleanBibleWorkspaceState(body.bibleWorkspace);
+        if (!workspace) return reply.code(400).send({ success: false, message: "阅读窗格状态格式无效" });
+        merged.workspace = workspace;
+      }
+    }
+    data.biblePreferences = biblePreferencesJson(merged);
   }
   const account = Object.keys(data).length
     ? await prisma.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })
@@ -5219,6 +5238,16 @@ const musicProgressTracker = registerMusicRoutes(app, {
   displayWebpFileName,
   safeUnlinkMusicScore
 });
+
+registerBibleRoutes(app, {
+  prisma,
+  requireAuth,
+  canWriteChannel,
+  emitMessage,
+  sendMessagePush,
+  hydrateMessage
+});
+
 const friendFeedService = createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") });
 
 registerFriendRoutes(app, {
@@ -6471,7 +6500,7 @@ function listStorageFiles(dir: string) {
 }
 
 function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
-  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
+  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "bible_session" ? "[圣经]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
   return stripMarkdownSyntax(raw.replace(/<[^>]*>/g, " ")).slice(0, 120);
 }
 

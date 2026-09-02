@@ -1,5 +1,5 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "bible_session" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -755,6 +755,26 @@ export interface BibleFavoriteDTO extends BibleFavoriteKeyDTO {
   verseLine: BibleVerseLineDTO;
 }
 
+/** “打开的圣经”分享卡片中的单个窗格 */
+export interface BibleSessionPaneDTO {
+  bookCode: string;
+  bookName: string;
+  chapter: number;
+  verseStart?: number | null;
+  verseEnd?: number | null;
+}
+
+/** “打开的圣经”分享消息 payload：记录分享者当前打开的窗格布局 */
+export interface BibleSessionPayloadDTO {
+  kind: "bible_session";
+  translation: string;
+  orientation: "columns" | "rows" | null;
+  receivingIndex: number | null;
+  panes: BibleSessionPaneDTO[];
+  /** 分享者留言（可选） */
+  description?: string;
+}
+
 export interface BibleBookCatalogDTO {
   code: string;
   name: string;
@@ -805,6 +825,46 @@ export interface BiblePreferencesDTO {
   referenceLabelMode: BibleReferenceLabelMode;
   combinedPassageMode: BibleCombinedPassageMode;
   quotationStyle: BibleQuotationStyle;
+  /** 账号级保存的阅读窗格快照；缺省表示从未同步 */
+  workspace?: BibleWorkspaceSnapshotDTO | null;
+}
+
+/** 阅读器窗格定位目标（节范围 + 文本匹配区间） */
+export interface BibleWorkspaceTargetSnapshotDTO {
+  chapter: number;
+  verse: number;
+  endVerse: number;
+  matches: BibleTextMatchRangeDTO[];
+}
+
+export interface BibleWorkspaceScrollAnchorDTO {
+  chapter: number;
+  verse: number | null;
+  offset: number;
+}
+
+export interface BibleWorkspaceLocationSnapshotDTO {
+  book: BibleBookCatalogDTO;
+  visibleChapter: number;
+  targetVerse: BibleWorkspaceTargetSnapshotDTO | null;
+  scrollAnchor: BibleWorkspaceScrollAnchorDTO | null;
+}
+
+export interface BibleWorkspacePaneSnapshotDTO extends BibleWorkspaceLocationSnapshotDTO {
+  id: string;
+  backStack: BibleWorkspaceLocationSnapshotDTO[];
+}
+
+/** 账号级同步的阅读器窗格布局；不含设备本地的搜索历史 */
+export interface BibleWorkspaceSnapshotDTO {
+  version: 2;
+  view: "home" | "chapters" | "reader";
+  panes: BibleWorkspacePaneSnapshotDTO[];
+  activePaneId: string | null;
+  receivingPaneId: string | null;
+  orientation: "columns" | "rows" | null;
+  paneSizes: number[];
+  updatedAt: string;
 }
 
 export interface AiRoleDTO {

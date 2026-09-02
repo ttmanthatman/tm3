@@ -56,6 +56,7 @@ const templateSections: Array<{ key: WeChatRelayTemplateKey; title: string; hint
   { key: "musicPlaylist", title: "歌单分享", hint: "例如：{name}分享了一个歌单" },
   { key: "chain", title: "接龙", hint: "可使用 {content} 显示接龙主题" },
   { key: "whyTopic", title: "‘为什么’话题卡", hint: "例如：{name}分享了一个新话题" },
+  { key: "bibleSession", title: "书房阅读邀请", hint: "例如：{name}坐到了书桌旁，邀请你一起读" },
   { key: "pinned", title: "置顶消息", hint: "建议保留 {systemPrefix}、{channel}、{title}" },
   { key: "versionUpdate", title: "系统版本升级", hint: "可使用 {systemPrefix}、{version} 和 {changelog}" },
   { key: "system", title: "其他系统消息", hint: "建议保留 {systemPrefix}" },
