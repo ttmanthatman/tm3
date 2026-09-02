@@ -686,7 +686,7 @@ const previewMessage = ref<MessageDTO | null>(null);
 const previewPinnedImage = ref<{ url: string; fileName: string; score?: boolean; trackId?: number; pageId?: number } | null>(null);
 const imagePreviewScale = ref(1);
 const imagePreviewOffset = ref({ x: 0, y: 0 });
-const chainPromptPosition = ref({ x: 0, y: 0 });
+const chainPromptAnchor = ref<HTMLElement | null>(null);
 const downloadPromptPosition = ref({ x: 0, y: 0 });
 const recallPromptPosition = ref({ x: 0, y: 0 });
 const messageActionPromptPosition = ref({ x: 0, y: 0 });
@@ -794,6 +794,9 @@ const {
   getReplyToId: () => replyTo.value?.id || null,
   onOpenCreate: () => { composerPanel.value = null; },
   onCreated: () => { composerPanel.value = null; }
+});
+watch(pendingChain, (message) => {
+  if (!message) chainPromptAnchor.value = null;
 });
 
 async function switchVisibleChannel(channelId: number, prayerOnly = false) {
@@ -2173,10 +2176,6 @@ const loginBrand = computed(() => ({
   title: store.appearance.loginTitle || "Team Chat",
   subtitle: store.appearance.loginSubtitle,
   showSubtitle: store.appearance.loginShowSubtitle !== false
-}));
-const chainPromptStyle = computed(() => ({
-  left: `${chainPromptPosition.value.x}px`,
-  top: `${chainPromptPosition.value.y}px`
 }));
 const memberPromptStyle = computed(() => ({
   left: `${memberPromptPosition.value.x}px`,
@@ -6971,7 +6970,7 @@ async function loadUntilMessageVisible(id: number, token = 0) {
 }
 
 function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
-  chainPromptPosition.value = positionPromptNearEvent(event, { width: 320, height: 360 });
+  chainPromptAnchor.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
   openChainJoin(message);
   pendingRecall.value = null;
   pendingPrayer.value = null;
@@ -11167,7 +11166,7 @@ async function toggleVirtual(character: any) {
     <ChainJoinPopover
       v-if="pendingChain"
       :message="pendingChain"
-      :position-style="chainPromptStyle"
+      :anchor-element="chainPromptAnchor"
       :busy="chainJoinBusy"
       :error="chainJoinError"
       @close="closeChainJoin"

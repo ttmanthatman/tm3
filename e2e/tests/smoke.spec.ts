@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 
 async function blockPublicNetwork(page: Page) {
@@ -19,6 +19,28 @@ async function loginAsAdmin(page: Page) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   await waitForChatSocket(page);
+}
+
+async function expectPopoverNearAnchor(page: Page, anchor: Locator, popover: Locator) {
+  await expect(anchor).toBeVisible();
+  await expect(popover).toBeVisible();
+  const anchorRect = await anchor.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  const popoverRect = await popover.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+  });
+  const viewport = page.viewportSize();
+  if (!viewport) throw new Error("浏览器视口不可用");
+  expect(popoverRect.left).toBeGreaterThanOrEqual(11);
+  expect(popoverRect.top).toBeGreaterThanOrEqual(11);
+  expect(popoverRect.right).toBeLessThanOrEqual(viewport.width - 11);
+  expect(popoverRect.bottom).toBeLessThanOrEqual(viewport.height - 11);
+  const horizontalGap = Math.max(anchorRect.left - popoverRect.right, popoverRect.left - anchorRect.right, 0);
+  const verticalGap = Math.max(anchorRect.top - popoverRect.bottom, popoverRect.top - anchorRect.bottom, 0);
+  expect(Math.hypot(horizontalGap, verticalGap)).toBeLessThanOrEqual(12);
 }
 
 async function readChatSocket(page: Page) {
@@ -135,7 +157,7 @@ test("文字消息刷新后仍然存在", async ({ page }) => {
 
 test("发起人要求具体项目后，参与者必须选择或填写其他", async ({ page }) => {
   test.setTimeout(60_000);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1280, height: 800 });
   await loginAsAdmin(page);
 
   async function openRequiredChain(topic: string, option: string) {
@@ -155,8 +177,14 @@ test("发起人要求具体项目后，参与者必须选择或填写其他", as
   const presetTopic = "浏览器项目接龙：预设项";
   const presetChain = await openRequiredChain(presetTopic, "跑步");
   await expect(presetChain.getByText("参与时需选择：跑步、其他", { exact: true })).toBeVisible();
-  await presetChain.getByRole("button", { name: "参与接龙", exact: true }).click();
+  const presetJoinButton = presetChain.getByRole("button", { name: "参与接龙", exact: true });
+  await presetJoinButton.click();
   const presetPopover = page.locator(".chain-join-popover");
+  await expectPopoverNearAnchor(page, presetJoinButton, presetPopover);
+  await page.setViewportSize({ width: 360, height: 844 });
+  await expectPopoverNearAnchor(page, presetJoinButton, presetPopover);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expectPopoverNearAnchor(page, presetJoinButton, presetPopover);
   await presetPopover.getByRole("button", { name: "是", exact: true }).click();
   await presetPopover.getByRole("button", { name: "跑步", exact: true }).click();
   const updatedPresetChain = page.locator("[data-message-id]").filter({ hasText: presetTopic }).last();
@@ -164,9 +192,12 @@ test("发起人要求具体项目后，参与者必须选择或填写其他", as
   await expect(presetParticipant).toContainText("跑步");
 
   const customTopic = "浏览器项目接龙：自定义项";
+  await page.setViewportSize({ width: 390, height: 844 });
   const customChain = await openRequiredChain(customTopic, "游泳");
-  await customChain.getByRole("button", { name: "参与接龙", exact: true }).click();
+  const customJoinButton = customChain.getByRole("button", { name: "参与接龙", exact: true });
+  await customJoinButton.click();
   const customPopover = page.locator(".chain-join-popover");
+  await expectPopoverNearAnchor(page, customJoinButton, customPopover);
   await customPopover.getByRole("button", { name: "是", exact: true }).click();
   await customPopover.getByRole("button", { name: "其他", exact: true }).click();
   await customPopover.getByPlaceholder("填写具体项目").fill("骑行 30 分钟");

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { ArrowLeft, X } from "lucide-vue-next";
 import type { ChainSelectionInput, MessageDTO } from "../../../shared/types";
 import { chainPayload, chainRequiresSelection } from "./chain";
+import { positionChainPopover, type ChainPopoverRect } from "./chainPopoverPosition";
 
 const props = defineProps<{
   message: MessageDTO;
-  positionStyle: Record<string, string>;
+  anchorElement?: HTMLElement | null;
   busy: boolean;
   error?: string;
 }>();
@@ -18,18 +19,97 @@ const emit = defineEmits<{
 
 const stage = ref<"confirm" | "options" | "custom">("confirm");
 const customText = ref("");
+const popoverElement = ref<HTMLElement | null>(null);
+const positionStyle = ref<Record<string, string>>({ left: "12px", top: "12px", visibility: "hidden" });
+let positionFrame: number | undefined;
+let resizeObserver: ResizeObserver | undefined;
 
 watch(
   () => props.message.id,
   () => {
     stage.value = "confirm";
     customText.value = "";
+    nextTick(schedulePositionUpdate);
   },
   { immediate: true }
 );
 
 const payload = computed(() => chainPayload(props.message));
 const requiresSelection = computed(() => chainRequiresSelection(props.message));
+
+function anchorRect(viewport: { left: number; top: number; right: number; bottom: number }): ChainPopoverRect {
+  const rect = props.anchorElement?.isConnected ? props.anchorElement.getBoundingClientRect() : null;
+  if (rect?.width && rect.height) {
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height
+    };
+  }
+  const x = viewport.left + (viewport.right - viewport.left) / 2;
+  const y = viewport.top + (viewport.bottom - viewport.top) / 2;
+  return { left: x, top: y, right: x, bottom: y, width: 0, height: 0 };
+}
+
+function updatePosition() {
+  const element = popoverElement.value;
+  if (!element) return;
+  const visualViewport = window.visualViewport;
+  const viewportLeft = visualViewport?.offsetLeft || 0;
+  const viewportTop = visualViewport?.offsetTop || 0;
+  const safeTop = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-top")) || 0;
+  const safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-bottom")) || 0;
+  const viewport = {
+    left: viewportLeft,
+    top: viewportTop + safeTop,
+    right: viewportLeft + (visualViewport?.width || window.innerWidth),
+    bottom: viewportTop + (visualViewport?.height || window.innerHeight) - safeBottom
+  };
+  const rect = element.getBoundingClientRect();
+  const position = positionChainPopover(anchorRect(viewport), { width: rect.width, height: rect.height }, viewport);
+  positionStyle.value = { left: `${position.x}px`, top: `${position.y}px`, visibility: "visible" };
+}
+
+function schedulePositionUpdate() {
+  if (positionFrame !== undefined) window.cancelAnimationFrame(positionFrame);
+  positionFrame = window.requestAnimationFrame(() => {
+    positionFrame = undefined;
+    updatePosition();
+  });
+}
+
+watch(stage, () => nextTick(schedulePositionUpdate));
+watch(
+  () => props.anchorElement,
+  (anchor, previousAnchor) => {
+    if (previousAnchor) resizeObserver?.unobserve(previousAnchor);
+    if (anchor) resizeObserver?.observe(anchor);
+    nextTick(schedulePositionUpdate);
+  }
+);
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver(schedulePositionUpdate);
+  if (popoverElement.value) resizeObserver.observe(popoverElement.value);
+  if (props.anchorElement) resizeObserver.observe(props.anchorElement);
+  document.addEventListener("scroll", schedulePositionUpdate, true);
+  window.addEventListener("resize", schedulePositionUpdate, { passive: true });
+  window.visualViewport?.addEventListener("resize", schedulePositionUpdate, { passive: true });
+  window.visualViewport?.addEventListener("scroll", schedulePositionUpdate, { passive: true });
+  schedulePositionUpdate();
+});
+
+onBeforeUnmount(() => {
+  if (positionFrame !== undefined) window.cancelAnimationFrame(positionFrame);
+  resizeObserver?.disconnect();
+  document.removeEventListener("scroll", schedulePositionUpdate, true);
+  window.removeEventListener("resize", schedulePositionUpdate);
+  window.visualViewport?.removeEventListener("resize", schedulePositionUpdate);
+  window.visualViewport?.removeEventListener("scroll", schedulePositionUpdate);
+});
 
 function confirmJoin() {
   if (requiresSelection.value) {
@@ -51,7 +131,7 @@ function joinCustom() {
 </script>
 
 <template>
-  <section class="tap-popover chain-join-popover" :class="`stage-${stage}`" :style="positionStyle" data-chain-popover>
+  <section ref="popoverElement" class="tap-popover chain-join-popover" :class="`stage-${stage}`" :style="positionStyle" data-chain-popover>
     <div class="tap-popover-card">
       <div v-if="stage === 'confirm'" class="compact-confirm">
         <span>确认接龙？</span>
