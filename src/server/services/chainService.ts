@@ -41,7 +41,7 @@ export function createChainPayload(topic: string, config?: ChainCreateConfigInpu
     topic,
     schemaVersion: 2,
     participation: {
-      mode: "required_single_choice",
+      mode: config.allowMultiple ? "required_multiple_choice" : "required_single_choice",
       options: labels.map((label, index) => ({ id: `option-${index + 1}`, label })),
       allowCustom: true
     },
@@ -50,7 +50,9 @@ export function createChainPayload(topic: string, config?: ChainCreateConfigInpu
 }
 
 export function isRequiredChoiceChain(payload: ChainPayload) {
-  return payload.participation?.mode === "required_single_choice" && Array.isArray(payload.participation.options) && payload.participation.options.length > 0;
+  return (payload.participation?.mode === "required_single_choice" || payload.participation?.mode === "required_multiple_choice")
+    && Array.isArray(payload.participation.options)
+    && payload.participation.options.length > 0;
 }
 
 export function appendChainParticipant(
@@ -75,6 +77,43 @@ export function appendChainParticipant(
     return { success: true, payload };
   }
   if (!selection) return { success: false, status: 400, message: "请选择具体项目后再参与接龙" };
+  const allowsMultiple = payload.participation?.mode === "required_multiple_choice";
+  if (selection.kind === "multiple") {
+    if (!allowsMultiple) return { success: false, status: 400, message: "这个接龙只能选择一个项目" };
+    const uniqueOptionIds = [...new Set(selection.optionIds)];
+    if (uniqueOptionIds.length !== selection.optionIds.length) {
+      return { success: false, status: 400, message: "所选接龙项目不能重复" };
+    }
+    const selectedOptions = uniqueOptionIds.map((optionId) => payload.participation?.options.find((item) => item.id === optionId));
+    if (selectedOptions.some((option) => !option)) {
+      return { success: false, status: 400, message: "所选接龙项目无效，请重新选择" };
+    }
+    const customText = compactSpaces(selection.customText || "");
+    if ([...customText].length > CHAIN_CUSTOM_TEXT_LIMIT) {
+      return { success: false, status: 400, message: `其他项目不能超过 ${CHAIN_CUSTOM_TEXT_LIMIT} 个字` };
+    }
+    if (!selectedOptions.length && !customText) {
+      return { success: false, status: 400, message: "请至少选择一个具体项目" };
+    }
+    const storedOptions = selectedOptions.map((option) => ({ optionId: option!.id, label: option!.label }));
+    const labels = storedOptions.map((option) => option.label);
+    if (customText) labels.push(`其他：${customText}`);
+    payload.participants.push({
+      actorId: actor.id,
+      name: actor.displayName,
+      text: labels.join("、"),
+      at,
+      selection: {
+        kind: "multiple",
+        options: storedOptions,
+        ...(customText ? { customLabel: customText } : {})
+      }
+    });
+    return { success: true, payload };
+  }
+  if (allowsMultiple) {
+    return { success: false, status: 400, message: "这个接龙可以多选，请重新选择项目" };
+  }
   if (selection.kind === "option") {
     const option = payload.participation?.options.find((item) => item.id === selection.optionId);
     if (!option) return { success: false, status: 400, message: "所选接龙项目无效，请重新选择" };

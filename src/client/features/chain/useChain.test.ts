@@ -44,15 +44,39 @@ test("sends required choices when creating a chain", async () => {
   try {
     const chain = useChain({ currentChannelId: ref(9), getReplyToId: () => 4 });
     chain.openCreateDialog();
-    await chain.createChain({ topic: "今天锻炼", requiredSelection: true, options: ["跑步", "游泳"] });
+    await chain.createChain({ topic: "今天锻炼", requiredSelection: true, allowMultiple: true, options: ["跑步", "游泳"] });
     assert.deepEqual(requestBody, {
       channelId: 9,
       type: "chain",
       chainTopic: "今天锻炼",
-      chainConfig: { requiredSelection: true, options: ["跑步", "游泳"] },
+      chainConfig: { requiredSelection: true, allowMultiple: true, options: ["跑步", "游泳"] },
       replyToId: 4
     });
     assert.equal(chain.showCreateDialog.value, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreLocalStorage();
+  }
+});
+
+test("sends all selected projects for a multi-select chain", async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreLocalStorage = installLocalStorage();
+  let requestBody: Record<string, unknown> | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body || "{}"));
+    return jsonResponse({ success: true });
+  };
+  try {
+    const chain = useChain({ currentChannelId: ref(9), getReplyToId: () => null });
+    chain.openJoin(chainMessage());
+    await chain.joinPendingChain({ kind: "multiple", optionIds: ["option-1", "option-2"], customText: "自带水杯" });
+    assert.deepEqual(requestBody, {
+      channelId: 9,
+      type: "chain",
+      chainRootId: 12,
+      chainSelection: { kind: "multiple", optionIds: ["option-1", "option-2"], customText: "自带水杯" }
+    });
   } finally {
     globalThis.fetch = originalFetch;
     restoreLocalStorage();

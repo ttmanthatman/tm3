@@ -16,6 +16,7 @@ const emit = defineEmits<{
 
 const topic = ref("");
 const requiredSelection = ref(false);
+const allowMultiple = ref(false);
 const options = ref<string[]>([]);
 const optionDraft = ref("");
 const localError = ref("");
@@ -26,6 +27,7 @@ watch(
     if (!open) return;
     topic.value = "";
     requiredSelection.value = false;
+    allowMultiple.value = false;
     options.value = [];
     optionDraft.value = "";
     localError.value = "";
@@ -83,6 +85,7 @@ function submitForm() {
   emit("submit", {
     topic: topic.value.trim(),
     requiredSelection: requiredSelection.value,
+    allowMultiple: requiredSelection.value && allowMultiple.value,
     options: [...options.value]
   });
 }
@@ -103,11 +106,18 @@ function submitForm() {
           <input v-model="requiredSelection" type="checkbox" />
           <span>
             <strong>参与者必须选择具体项目</strong>
-            <small>确认参与后，还要从你设置的项目中选择一项。</small>
+            <small>确认参与后，还要从你设置的项目中选择。</small>
           </span>
         </label>
 
         <div v-if="requiredSelection" class="chain-option-editor">
+          <label class="chain-require-row chain-multiple-row">
+            <input v-model="allowMultiple" type="checkbox" />
+            <span>
+              <strong>允许多选</strong>
+              <small>参与者可以同时选择多个项目。</small>
+            </span>
+          </label>
           <label for="chain-option">参与项目</label>
           <div v-if="options.length" class="chain-option-list">
             <div v-for="(item, index) in options" :key="item" class="chain-option-item">

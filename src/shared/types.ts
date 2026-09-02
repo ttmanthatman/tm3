@@ -22,7 +22,7 @@ export interface ChainPayload {
   topic: string;
   schemaVersion?: 2;
   participation?: {
-    mode: "required_single_choice";
+    mode: "required_single_choice" | "required_multiple_choice";
     options: ChainChoiceOption[];
     allowCustom: true;
   };
@@ -42,16 +42,23 @@ export interface ChainChoiceOption {
 
 export type ChainParticipantSelection =
   | { kind: "option"; optionId: string; label: string }
-  | { kind: "custom"; label: string };
+  | { kind: "custom"; label: string }
+  | {
+      kind: "multiple";
+      options: Array<{ optionId: string; label: string }>;
+      customLabel?: string;
+    };
 
 export interface ChainCreateConfigInput {
   requiredSelection: true;
+  allowMultiple?: boolean;
   options: string[];
 }
 
 export type ChainSelectionInput =
   | { kind: "option"; optionId: string }
-  | { kind: "custom"; text: string };
+  | { kind: "custom"; text: string }
+  | { kind: "multiple"; optionIds: string[]; customText?: string };
 
 export interface MessageEffectPayload {
   effect?: MessageEffect;

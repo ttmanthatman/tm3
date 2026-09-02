@@ -9,9 +9,10 @@ export function chainPayload(message: MessageDTO): ChainPayload {
   return {
     topic: typeof raw.topic === "string" ? raw.topic : message.content || "接龙",
     schemaVersion: raw.schemaVersion === 2 ? 2 : undefined,
-    participation: raw.participation?.mode === "required_single_choice" && Array.isArray(raw.participation.options)
+    participation: (raw.participation?.mode === "required_single_choice" || raw.participation?.mode === "required_multiple_choice")
+      && Array.isArray(raw.participation.options)
       ? {
-          mode: "required_single_choice",
+          mode: raw.participation.mode,
           options: raw.participation.options.filter((option) => !!option?.id && !!option?.label),
           allowCustom: true
         }
@@ -22,11 +23,17 @@ export function chainPayload(message: MessageDTO): ChainPayload {
 
 export function chainRequiresSelection(message: MessageDTO) {
   const participation = chainPayload(message).participation;
-  return participation?.mode === "required_single_choice" && participation.options.length > 0;
+  return !!participation && participation.options.length > 0;
 }
 
 export function chainParticipantProject(participant: ChainParticipant) {
   if (participant.selection?.kind === "option") return participant.selection.label;
   if (participant.selection?.kind === "custom") return `其他：${participant.selection.label}`;
+  if (participant.selection?.kind === "multiple") {
+    return [
+      ...participant.selection.options.map((option) => option.label),
+      ...(participant.selection.customLabel ? [`其他：${participant.selection.customLabel}`] : [])
+    ].join("、");
+  }
   return participant.text || "";
 }

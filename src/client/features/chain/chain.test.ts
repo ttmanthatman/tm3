@@ -43,3 +43,35 @@ test("reads required choices and participant projects", () => {
     selection: { kind: "custom", label: "骑行" }
   }), "其他：骑行");
 });
+
+test("reads multi-select chains and formats all selected projects", () => {
+  const configured = message({
+    topic: "周末活动",
+    schemaVersion: 2,
+    participation: {
+      mode: "required_multiple_choice",
+      options: [
+        { id: "option-1", label: "跑步" },
+        { id: "option-2", label: "游泳" }
+      ],
+      allowCustom: true
+    },
+    participants: []
+  });
+  assert.equal(chainRequiresSelection(configured), true);
+  assert.equal(chainPayload(configured).participation?.mode, "required_multiple_choice");
+  assert.equal(chainParticipantProject({
+    actorId: 3,
+    name: "小林",
+    text: "跑步、游泳、其他：带水",
+    at: "now",
+    selection: {
+      kind: "multiple",
+      options: [
+        { optionId: "option-1", label: "跑步" },
+        { optionId: "option-2", label: "游泳" }
+      ],
+      customLabel: "带水"
+    }
+  }), "跑步、游泳、其他：带水");
+});

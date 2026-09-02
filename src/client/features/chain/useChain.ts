@@ -5,6 +5,7 @@ import { api } from "../../api";
 export interface ChainCreateFormValue {
   topic: string;
   requiredSelection: boolean;
+  allowMultiple: boolean;
   options: string[];
 }
 
@@ -41,7 +42,7 @@ export function useChain(options: UseChainOptions) {
     createError.value = "";
     try {
       const chainConfig: ChainCreateConfigInput | undefined = value.requiredSelection
-        ? { requiredSelection: true, options: value.options }
+        ? { requiredSelection: true, allowMultiple: value.allowMultiple, options: value.options }
         : undefined;
       await api("/api/messages", {
         method: "POST",

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowLeft, X } from "lucide-vue-next";
+import { ArrowLeft, Check, X } from "lucide-vue-next";
 import type { ChainSelectionInput, MessageDTO } from "../../../shared/types";
 import { chainPayload, chainRequiresSelection } from "./chain";
 import { positionChainPopover, type ChainPopoverRect } from "./chainPopoverPosition";
@@ -19,6 +19,7 @@ const emit = defineEmits<{
 
 const stage = ref<"confirm" | "options" | "custom">("confirm");
 const customText = ref("");
+const selectedOptionIds = ref<string[]>([]);
 const popoverElement = ref<HTMLElement | null>(null);
 const positionStyle = ref<Record<string, string>>({ left: "12px", top: "12px", visibility: "hidden" });
 let positionFrame: number | undefined;
@@ -29,6 +30,7 @@ watch(
   () => {
     stage.value = "confirm";
     customText.value = "";
+    selectedOptionIds.value = [];
     nextTick(schedulePositionUpdate);
   },
   { immediate: true }
@@ -36,6 +38,8 @@ watch(
 
 const payload = computed(() => chainPayload(props.message));
 const requiresSelection = computed(() => chainRequiresSelection(props.message));
+const allowsMultiple = computed(() => payload.value.participation?.mode === "required_multiple_choice");
+const selectedCount = computed(() => selectedOptionIds.value.length + (customText.value.trim() ? 1 : 0));
 
 function anchorRect(viewport: { left: number; top: number; right: number; bottom: number }): ChainPopoverRect {
   const rect = props.anchorElement?.isConnected ? props.anchorElement.getBoundingClientRect() : null;
@@ -120,13 +124,39 @@ function confirmJoin() {
 }
 
 function joinOption(optionId: string) {
-  emit("join", { kind: "option", optionId });
+  if (!allowsMultiple.value) {
+    emit("join", { kind: "option", optionId });
+    return;
+  }
+  selectedOptionIds.value = selectedOptionIds.value.includes(optionId)
+    ? selectedOptionIds.value.filter((id) => id !== optionId)
+    : [...selectedOptionIds.value, optionId];
 }
 
 function joinCustom() {
   const text = customText.value.trim();
   if (!text) return;
+  if (allowsMultiple.value) {
+    customText.value = text;
+    stage.value = "options";
+    return;
+  }
   emit("join", { kind: "custom", text });
+}
+
+function clearCustomSelection() {
+  customText.value = "";
+  stage.value = "options";
+}
+
+function joinMultiple() {
+  const customValue = customText.value.trim();
+  if (!selectedOptionIds.value.length && !customValue) return;
+  emit("join", {
+    kind: "multiple",
+    optionIds: [...selectedOptionIds.value],
+    ...(customValue ? { customText: customValue } : {})
+  });
 }
 </script>
 
@@ -142,11 +172,11 @@ function joinCustom() {
       </div>
 
       <template v-else>
-        <header class="tap-popover-head chain-join-head">
+        <header class="tap-popover-head chain-join-head" :class="{ 'has-back': stage === 'custom' }">
           <button v-if="stage === 'custom'" class="icon-btn" type="button" :disabled="busy" aria-label="返回项目列表" @click="stage = 'options'">
             <ArrowLeft :size="18" />
           </button>
-          <strong>{{ stage === 'custom' ? '填写其他项目' : '选择具体项目' }}</strong>
+          <strong>{{ stage === 'custom' ? '填写其他' : (allowsMultiple ? '请选择（可多选）' : '请选择') }}</strong>
           <button class="icon-btn" type="button" :disabled="busy" aria-label="关闭项目选择" @click="emit('close')"><X :size="18" /></button>
         </header>
 
@@ -155,17 +185,30 @@ function joinCustom() {
             v-for="option in payload.participation?.options || []"
             :key="option.id"
             class="chain-choice-btn"
+            :class="{ selected: selectedOptionIds.includes(option.id) }"
             type="button"
             :disabled="busy"
+            :aria-pressed="allowsMultiple ? selectedOptionIds.includes(option.id) : undefined"
             @click="joinOption(option.id)"
-          >{{ option.label }}</button>
-          <button class="chain-choice-btn" type="button" :disabled="busy" @click="stage = 'custom'">其他</button>
-          <small>选择一项后会立即参与接龙。</small>
+          >
+            <span>{{ option.label }}</span>
+            <Check v-if="allowsMultiple && selectedOptionIds.includes(option.id)" :size="17" aria-hidden="true" />
+          </button>
+          <button class="chain-choice-btn" :class="{ selected: !!customText.trim() }" type="button" :disabled="busy" :aria-pressed="allowsMultiple ? !!customText.trim() : undefined" @click="stage = 'custom'">
+            <span>{{ customText.trim() ? `其他：${customText.trim()}` : '其他' }}</span>
+            <Check v-if="allowsMultiple && customText.trim()" :size="17" aria-hidden="true" />
+          </button>
+          <button v-if="allowsMultiple" class="primary-btn chain-multi-submit" type="button" :disabled="busy || selectedCount === 0" @click="joinMultiple">
+            {{ busy ? '正在接龙…' : `参与接龙${selectedCount ? `（${selectedCount}项）` : ''}` }}
+          </button>
         </div>
 
         <form v-else class="chain-custom-form" @submit.prevent="joinCustom">
           <input v-model="customText" maxlength="40" autocomplete="off" autofocus placeholder="填写具体项目" />
-          <button class="primary-btn" type="submit" :disabled="busy || !customText.trim()">{{ busy ? "正在接龙…" : "参与接龙" }}</button>
+          <div class="chain-custom-actions">
+            <button v-if="allowsMultiple && customText.trim()" class="mini-btn secondary" type="button" :disabled="busy" @click="clearCustomSelection">移除</button>
+            <button class="primary-btn" type="submit" :disabled="busy || !customText.trim()">{{ busy ? "正在接龙…" : (allowsMultiple ? "保存" : "参与接龙") }}</button>
+          </div>
         </form>
 
       </template>
@@ -176,7 +219,9 @@ function joinCustom() {
 
 <style scoped>
 .chain-join-popover {
-  width: min(320px, calc(100vw - 24px));
+  width: max-content;
+  min-width: min(240px, calc(100vw - 24px));
+  max-width: min(320px, calc(100vw - 24px));
 }
 
 .tap-popover-card,
@@ -185,24 +230,34 @@ function joinCustom() {
   background: var(--panel);
 }
 
+.tap-popover-card {
+  border-radius: 12px;
+  box-shadow: 0 18px 46px rgba(15, 23, 42, 0.22), 0 2px 8px rgba(15, 23, 42, 0.08);
+}
+
 .chain-join-popover.stage-confirm {
   width: max-content;
 }
 
 .chain-join-head {
-  display: grid;
-  grid-template-columns: 32px minmax(0, 1fr) 32px;
-  gap: 6px;
-  text-align: center;
+  min-height: 46px;
+  gap: 8px;
+  padding-left: 14px;
 }
 
 .chain-join-head strong {
-  align-self: center;
+  min-width: 0;
+  font-size: 15px;
+  white-space: nowrap;
+}
+
+.chain-join-head > .icon-btn:last-child {
+  margin-left: auto;
 }
 
 .chain-choice-list,
 .chain-custom-form {
-  padding: 10px;
+  padding: 10px 12px 12px;
   display: grid;
   gap: 8px;
 }
@@ -210,30 +265,57 @@ function joinCustom() {
 .chain-choice-btn {
   min-height: 42px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 12px;
+  border-radius: 9px;
+  padding: 8px 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--text);
   background: var(--panel);
   font-weight: 650;
   text-align: left;
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
 }
 
-.chain-choice-btn:active {
-  background: var(--line);
+.chain-choice-btn:hover,
+.chain-choice-btn:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+  background: color-mix(in srgb, var(--accent) 5%, var(--panel));
 }
 
-.chain-choice-list > small {
-  color: var(--muted);
-  text-align: center;
+.chain-choice-btn.selected {
+  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+
+.chain-choice-btn span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.chain-choice-btn svg {
+  flex: 0 0 auto;
 }
 
 .chain-custom-form input {
   width: 100%;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 12px;
   color: var(--text);
   background: var(--bubble-other);
+}
+
+.chain-custom-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.chain-multi-submit {
+  margin-top: 2px;
 }
 
 .chain-join-error {
@@ -245,12 +327,6 @@ function joinCustom() {
 }
 
 @media (max-width: 560px) {
-  .chain-join-popover:not(.stage-confirm) {
-    inset: auto 8px max(8px, calc(var(--safe-bottom) + 8px)) 8px !important;
-    width: auto;
-    max-width: none;
-  }
-
   .chain-choice-list {
     max-height: min(52vh, 380px);
     overflow-y: auto;

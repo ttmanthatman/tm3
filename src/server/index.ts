@@ -4786,6 +4786,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
   const chainConfigSchema = z
     .object({
       requiredSelection: z.literal(true),
+      allowMultiple: z.boolean().optional(),
       options: z.array(z.string().trim().min(1).max(CHAIN_OPTION_LABEL_LIMIT)).min(1).max(CHAIN_OPTION_LIMIT)
     })
     .superRefine((value, context) => {
@@ -4795,7 +4796,12 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     });
   const chainSelectionSchema = z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("option"), optionId: z.string().min(1).max(40) }),
-    z.object({ kind: z.literal("custom"), text: z.string().trim().min(1).max(CHAIN_CUSTOM_TEXT_LIMIT) })
+    z.object({ kind: z.literal("custom"), text: z.string().trim().min(1).max(CHAIN_CUSTOM_TEXT_LIMIT) }),
+    z.object({
+      kind: z.literal("multiple"),
+      optionIds: z.array(z.string().min(1).max(40)).max(CHAIN_OPTION_LIMIT),
+      customText: z.string().trim().min(1).max(CHAIN_CUSTOM_TEXT_LIMIT).optional()
+    })
   ]);
   const body = z
     .object({
