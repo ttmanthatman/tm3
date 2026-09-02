@@ -920,11 +920,20 @@ const RELEASE_1_14_0_NOTES = [
   "圣经书房新增最多四窗格阅读：桌面默认左右、手机默认上下，可切换方向并拖动分隔线；窗格支持独立关闭、指定链接接收窗格、交叉打开经文及返回原阅读点。平行经文出处现可直接跳转，并统一使用冒号与半角连字符。"
 ] as const
 
+const RELEASE_1_14_1_NOTES = [
+  "接龙发起人可要求参与者必须选择具体项目：发起时设置预设选项，参与者确认后选择一项；选择“其他”时必须填写具体内容，接龙名单会同时显示昵称和所选项目。普通接龙保持原有流程。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.14.2",
+    date: "2026-09-02",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.14.1",
     date: "2026-09-02",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_14_1_NOTES
   },
   {
     version: "1.14.0",
