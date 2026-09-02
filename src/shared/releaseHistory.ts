@@ -916,11 +916,20 @@ const RELEASE_1_13_8_NOTES = [
   "普通私密频道的每位成员都可从频道设置退出；创建者退出前需指定现有成员接任负责人。退出会同步收回同账号所有设备的频道访问与新消息通知，成员加入或退出会在聊天中留下灰色系统提示。"
 ] as const
 
+const RELEASE_1_14_0_NOTES = [
+  "圣经书房新增最多四窗格阅读：桌面默认左右、手机默认上下，可切换方向并拖动分隔线；窗格支持独立关闭、指定链接接收窗格、交叉打开经文及返回原阅读点。平行经文出处现可直接跳转，并统一使用冒号与半角连字符。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.14.1",
+    date: "2026-09-02",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.14.0",
     date: "2026-09-01",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_14_0_NOTES
   },
   {
     version: "1.13.8",
