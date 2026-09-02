@@ -4555,16 +4555,36 @@ app.put("/api/messages/:messageId/favorite", { preHandler: requireAuth }, async 
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
   const body = z.object({ favorited: z.boolean() }).parse(request.body);
-  const message = await prisma.message.findUnique({ where: { id: messageId }, select: { channelId: true } });
+  const message = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { channelId: true, sender: { select: { accountId: true, displayName: true } } }
+  });
   if (!message || !(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(404).send({ success: false, message: "消息不存在" });
   const key = { messageId_accountId: { messageId, accountId: auth.accountId } };
+  const existing = await prisma.messageFavorite.findUnique({ where: key });
+  let notification = null;
   if (body.favorited) {
-    await prisma.messageFavorite.upsert({ where: key, create: { messageId, accountId: auth.accountId }, update: {} });
-  } else {
+    const favorite = await prisma.messageFavorite.upsert({ where: key, create: { messageId, accountId: auth.accountId }, update: {} });
+    if (!existing && message.sender.accountId && message.sender.accountId !== auth.accountId) {
+      const favoriter = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { displayName: true } });
+      notification = {
+        id: favorite.id,
+        channelId: message.channelId,
+        messageId,
+        senderName: message.sender.displayName,
+        favoriterName: favoriter?.displayName || auth.username,
+        createdAt: favorite.createdAt.toISOString()
+      };
+      io.to(`acct:${message.sender.accountId}`).emit("message:favorited", notification);
+    }
+  } else if (existing) {
     await prisma.messageFavorite.deleteMany({ where: { messageId, accountId: auth.accountId } });
+    if (message.sender.accountId && message.sender.accountId !== auth.accountId) {
+      io.to(`acct:${message.sender.accountId}`).emit("message:favorite-removed", { id: existing.id });
+    }
   }
   const reactions = await broadcastMessageReactions(messageId, auth.accountId);
-  return { success: true, reactions };
+  return { success: true, reactions, notification };
 });
 
 app.post("/api/messages/:messageId/forward", { preHandler: requireAuth }, async (request, reply) => {
@@ -4711,16 +4731,27 @@ app.get("/api/favorites", { preHandler: requireAuth }, async (request) => {
 
 app.get("/api/like-notifications", { preHandler: requireAuth }, async (request) => {
   const auth = (request as AuthedRequest).auth;
-  const rows = await prisma.messageLike.findMany({
-    where: {
-      dismissedAt: null,
-      accountId: { not: auth.accountId },
-      message: { sender: { accountId: auth.accountId } }
-    },
-    include: { account: { select: { displayName: true } }, message: { include: { sender: true } } },
-    orderBy: { createdAt: "desc" },
-    take: 20
-  });
+  const [rows, favoriteRows] = await Promise.all([
+    prisma.messageLike.findMany({
+      where: {
+        dismissedAt: null,
+        accountId: { not: auth.accountId },
+        message: { sender: { accountId: auth.accountId } }
+      },
+      include: { account: { select: { displayName: true } }, message: { include: { sender: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 20
+    }),
+    prisma.messageFavorite.findMany({
+      where: {
+        accountId: { not: auth.accountId },
+        message: { sender: { accountId: auth.accountId } }
+      },
+      include: { account: { select: { displayName: true } }, message: { include: { sender: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 20
+    })
+  ]);
   return {
     notifications: rows.map((like) => ({
       id: like.id,
@@ -4729,6 +4760,14 @@ app.get("/api/like-notifications", { preHandler: requireAuth }, async (request) 
       senderName: like.message.sender.displayName,
       likerName: like.account.displayName,
       createdAt: like.createdAt.toISOString()
+    })),
+    favoriteNotifications: favoriteRows.map((favorite) => ({
+      id: favorite.id,
+      channelId: favorite.message.channelId,
+      messageId: favorite.messageId,
+      senderName: favorite.message.sender.displayName,
+      favoriterName: favorite.account.displayName,
+      createdAt: favorite.createdAt.toISOString()
     }))
   };
 });

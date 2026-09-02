@@ -122,6 +122,8 @@ import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
+import AppMenu from "./components/AppMenu.vue";
+import AppMenuItem from "./components/AppMenuItem.vue";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./features/voice/voiceRecording";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
@@ -178,7 +180,7 @@ import {
 import { composerHeightForContent } from "./composerLayout";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
-import { likeNotificationToTopNotice } from "./likeNotification";
+import { favoriteNotificationToTopNotice, likeNotificationToTopNotice } from "./likeNotification";
 import {
   NEWEST_POSITION_THRESHOLD,
   NEWEST_READ_POSITION,
@@ -736,19 +738,20 @@ const channelEditorBusy = ref(false);
 const channelEditorMsg = ref("");
 const channelNameSuggestions = ref<string[]>([]);
 const channelNameSuggestionBusy = ref(false);
-type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string };
+type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string; createdAt: string };
 type TopNotice = {
   id: string;
-  kind: "mention" | "like";
+  kind: "mention" | "like" | "favorite";
   title: string;
   body: string;
+  createdAt: string;
   channelId?: number;
   messageId?: number;
   notificationId?: number;
 };
 const mentionToasts = ref<MentionToast[]>([]);
 const acknowledgedMentionIds = ref<Set<number>>(new Set());
-const topNoticeIndex = ref(0);
+const acknowledgedFavoriteNotificationIds = ref<Set<number>>(new Set());
 const pausedEffectIds = ref<Set<number>>(new Set());
 const observedEffectIds = ref<Set<number>>(new Set());
 const visibleEffectIds = ref<Set<number>>(new Set());
@@ -978,7 +981,6 @@ let channelLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
 let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
 let imagePinchStart: { distance: number; scale: number } | null = null;
-let topNoticeTimer: number | undefined;
 let deviceOrientationPermissionRequested = false;
 const defaultPalette: ThemePaletteDTO = {
   accent: "#1aad19",
@@ -1392,31 +1394,13 @@ watch(
 );
 
 watch(
-  () => store.likeNotifications.map((item) => item.id).join(","),
-  () => {
-    topNoticeIndex.value = 0;
-    if (topNoticeTimer) {
-      window.clearInterval(topNoticeTimer);
-      topNoticeTimer = undefined;
-    }
-    const noticeCount = store.likeNotifications.length;
-    if (noticeCount > 1) {
-      topNoticeTimer = window.setInterval(() => {
-        topNoticeIndex.value = (topNoticeIndex.value + 1) % Math.max(1, likeNoticeItems.value.length);
-      }, 3600);
-    }
-  },
-  { immediate: true }
-);
-
-watch(
   () => store.account?.id,
   (accountId) => {
     queuedMessageImagePreloads.clear();
     messageImagePreloadQueue.splice(0);
     mentionToasts.value = [];
     acknowledgedMentionIds.value = loadAcknowledgedMentionIds();
-    topNoticeIndex.value = 0;
+    acknowledgedFavoriteNotificationIds.value = loadAcknowledgedFavoriteNotificationIds();
     messageFontSize.value = loadMessageFontSizePreference(accountId);
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
     if (accountId) {
@@ -1497,7 +1481,6 @@ onBeforeUnmount(() => {
   pendingTimelineHeights.clear();
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
-  if (topNoticeTimer) window.clearInterval(topNoticeTimer);
   if (sermonDecisionTimer !== undefined) window.clearTimeout(sermonDecisionTimer);
   if (versionCheckTimer) window.clearInterval(versionCheckTimer);
   if (updateStatusTimer) window.clearInterval(updateStatusTimer);
@@ -1707,7 +1690,8 @@ const loadedMentionToasts = computed<MentionToast[]>(() =>
       channelId: message.channelId,
       channelName: channelName(message.channelId),
       senderName: message.sender.displayName,
-      text: messagePreviewText(message)
+      text: messagePreviewText(message),
+      createdAt: message.createdAt
     }))
 );
 const mentionNoticeItems = computed<TopNotice[]>(() => {
@@ -1722,22 +1706,35 @@ const mentionNoticeItems = computed<TopNotice[]>(() => {
       kind: "mention",
       title: `${toast.senderName} @了你`,
       body: `${toast.channelName} · ${toast.text}`,
+      createdAt: toast.createdAt,
       channelId: toast.channelId,
       messageId: toast.id
     }));
 });
 const likeNoticeItems = computed<TopNotice[]>(() =>
-  store.likeNotifications.map((notification) =>
-    likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name)
-  )
+  store.likeNotifications.map((notification) => ({
+    ...likeNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name),
+    createdAt: notification.createdAt
+  }))
 );
-const activeTopNotice = computed(() => likeNoticeItems.value[topNoticeIndex.value % Math.max(1, likeNoticeItems.value.length)] || null);
-const activeMentionNotice = computed(() => mentionNoticeItems.value[0] || null);
-const mentionNoticeCount = computed(() => mentionNoticeItems.value.length);
+const favoriteNoticeItems = computed<TopNotice[]>(() =>
+  store.favoriteNotifications
+    .filter((notification) => !acknowledgedFavoriteNotificationIds.value.has(notification.id))
+    .map((notification) => ({
+      ...favoriteNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name),
+      createdAt: notification.createdAt
+    }))
+);
+const messageNoticeItems = computed<TopNotice[]>(() =>
+  [...mentionNoticeItems.value, ...likeNoticeItems.value, ...favoriteNoticeItems.value]
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+);
+const activeMessageNotice = computed(() => messageNoticeItems.value[0] || null);
+const messageNoticeCount = computed(() => messageNoticeItems.value.length);
 const chatSubtitleText = computed(() => {
   if (showFavorites.value) return "集中查看所有收藏，长按消息可跳转到聊天上下文";
   if (showBibleFavorites.value) return "经文正文只展开一次，避免出处与正文重复嵌套";
-  if (!activeTopNotice.value && store.prayerOnly) return "只显示本频道代祷卡片";
+  if (store.prayerOnly) return "只显示本频道代祷卡片";
   return "";
 });
 const isAdmin = computed(() => !!store.account?.isAdmin);
@@ -3040,7 +3037,8 @@ function queueMentionToast(message: MessageDTO) {
       channelId: message.channelId,
       channelName: channelName(message.channelId),
       senderName: message.sender.displayName,
-      text: messagePreviewText(message)
+      text: messagePreviewText(message),
+      createdAt: message.createdAt
     }
   ].slice(-8);
 }
@@ -3065,6 +3063,29 @@ function saveAcknowledgedMentionIds() {
   if (!key) return;
   const ids = [...acknowledgedMentionIds.value].slice(-500);
   localStorage.setItem(key, JSON.stringify(ids));
+}
+
+function favoriteNotificationAcknowledgementKey() {
+  return store.account ? `team-chat-favorite-notification-acknowledged-${store.account.id}` : "";
+}
+
+function loadAcknowledgedFavoriteNotificationIds() {
+  const key = favoriteNotificationAcknowledgementKey();
+  if (!key) return new Set<number>();
+  try {
+    const ids = JSON.parse(localStorage.getItem(key) || "[]");
+    return new Set(Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : []);
+  } catch {
+    return new Set<number>();
+  }
+}
+
+function acknowledgeFavoriteNotificationId(notificationId: number) {
+  if (acknowledgedFavoriteNotificationIds.value.has(notificationId)) return;
+  acknowledgedFavoriteNotificationIds.value = new Set([...acknowledgedFavoriteNotificationIds.value, notificationId]);
+  const key = favoriteNotificationAcknowledgementKey();
+  if (key) localStorage.setItem(key, JSON.stringify([...acknowledgedFavoriteNotificationIds.value].slice(-500)));
+  store.favoriteNotifications = store.favoriteNotifications.filter((item) => item.id !== notificationId);
 }
 
 function isMentionAlertActive(message: MessageDTO) {
@@ -3335,10 +3356,11 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
 }
 
 async function openTopNotice(notice: TopNotice) {
-  if (!notice.channelId || !notice.messageId || (notice.kind !== "mention" && notice.kind !== "like")) return;
+  if (!notice.channelId || !notice.messageId) return;
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
   if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
   if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
+  if (notice.kind === "favorite" && notice.notificationId) acknowledgeFavoriteNotificationId(notice.notificationId);
 }
 
 async function doLogin() {
@@ -10047,24 +10069,7 @@ async function toggleVirtual(character: any) {
             </button>
             <strong data-testid="active-channel-name">{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
           </div>
-          <div v-if="!showingFavoriteSurface && activeTopNotice" class="chat-status-line" :class="`chat-status-${activeTopNotice.kind}`" aria-live="polite">
-            <button
-              class="chat-status-text clickable"
-              type="button"
-              :aria-label="activeTopNotice.title"
-              @click="openTopNotice(activeTopNotice)"
-            >
-              <span class="chat-status-copy">{{ activeTopNotice.title }}</span>
-            </button>
-            <button
-              v-if="activeTopNotice.kind === 'like' && activeTopNotice.notificationId"
-              class="chat-status-close"
-              type="button"
-              aria-label="关闭点赞提醒"
-              @click="dismissLikeNotification(activeTopNotice.notificationId)"
-            ><X :size="11" /></button>
-          </div>
-          <OverflowMarquee v-else-if="chatSubtitleText" :text="chatSubtitleText" />
+          <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
         <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
         <SermonHub v-if="!showingFavoriteSurface" />
@@ -10111,17 +10116,17 @@ async function toggleVirtual(character: any) {
             :aria-expanded="showChatToolsMenu"
             @click.stop="toggleChatToolsMenu"
           ><Ellipsis :size="22" /></button>
-          <div v-if="showChatToolsMenu" class="chat-tools-menu" role="menu" aria-label="聊天管理功能" @click.stop>
+          <AppMenu v-if="showChatToolsMenu" class="chat-tools-menu" label="聊天管理功能" @click.stop>
             <div class="chat-tools-font-row" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`">
-              <span class="chat-tools-font-label"><span aria-hidden="true">字</span>字体</span>
+              <span class="chat-tools-font-label">字号调节</span>
               <button type="button" :disabled="messageFontSize <= minMessageFontSize" aria-label="减小消息字体" @click="adjustMessageFontSize(-1)">小</button>
-              <output aria-live="polite">{{ messageFontSize }}</output>
+              <output :aria-label="`当前消息字号 ${messageFontSize} 像素`" aria-live="polite">{{ messageFontSize }}</output>
               <button type="button" :disabled="messageFontSize >= maxMessageFontSize" aria-label="增大消息字体" @click="adjustMessageFontSize(1)">大</button>
             </div>
-            <button type="button" role="menuitem" @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></button>
-            <button v-if="isAdmin || canPinCurrentChannel" type="button" role="menuitem" :class="{ active: messageSelectionMode }" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></button>
-            <button v-if="isAdmin" type="button" role="menuitem" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></button>
-          </div>
+            <AppMenuItem @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></AppMenuItem>
+            <AppMenuItem v-if="isAdmin || canPinCurrentChannel" :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
+            <AppMenuItem v-if="isAdmin" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></AppMenuItem>
+          </AppMenu>
         </div>
       </header>
 
@@ -10162,22 +10167,26 @@ async function toggleVirtual(character: any) {
       </Transition>
 
       <section
-        v-if="!showingFavoriteSurface && activeMentionNotice"
-        class="mention-notice-bar"
-        :class="{ 'below-music-lyrics': musicLyricsHeaderVisible }"
+        v-if="!showingFavoriteSurface && activeMessageNotice"
+        class="message-notice-bar"
+        :class="[`message-notice-${activeMessageNotice.kind}`, { 'below-music-lyrics': musicLyricsHeaderVisible }]"
         aria-live="polite"
       >
         <button
           type="button"
-          :aria-label="`${activeMentionNotice.title}，${activeMentionNotice.body}，点击查看`"
-          @click="openTopNotice(activeMentionNotice)"
+          :aria-label="`${activeMessageNotice.title}，${activeMessageNotice.body}，点击查看`"
+          @click="openTopNotice(activeMessageNotice)"
         >
-          <span class="mention-notice-icon" aria-hidden="true"><AtSign :size="15" /></span>
-          <span class="mention-notice-copy">
-            <strong>{{ activeMentionNotice.title }}</strong>
-            <small>{{ activeMentionNotice.body }}</small>
+          <span class="message-notice-icon" aria-hidden="true">
+            <AtSign v-if="activeMessageNotice.kind === 'mention'" :size="15" />
+            <ThumbsUp v-else-if="activeMessageNotice.kind === 'like'" :size="15" />
+            <Heart v-else :size="15" />
           </span>
-          <span v-if="mentionNoticeCount > 1" class="mention-notice-count">{{ mentionNoticeCount }} 条</span>
+          <span class="message-notice-copy">
+            <strong>{{ activeMessageNotice.title }}</strong>
+            <small>{{ activeMessageNotice.body }}</small>
+          </span>
+          <span v-if="messageNoticeCount > 1" class="message-notice-count">{{ messageNoticeCount }} 条</span>
           <ChevronRight :size="16" aria-hidden="true" />
         </button>
       </section>

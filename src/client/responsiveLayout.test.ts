@@ -9,6 +9,8 @@ const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const bibleReaderPane = fs.readFileSync(new URL("./components/BibleReaderPane.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
+const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
+const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
 const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
@@ -46,12 +48,12 @@ test("reception invitations use a dedicated visitor-only route", () => {
 
 test("the message viewport and composer occupy separate chat grid rows", () => {
   const chatPaneRule = css.match(/\.chat-pane \{([^}]*)\}/)?.[1] ?? "";
-  const mentionNoticeRule = css.match(/\.mention-notice-bar \{([^}]*)\}/)?.[1] ?? "";
+  const messageNoticeRule = css.match(/\.message-notice-bar \{([^}]*)\}/)?.[1] ?? "";
   const messagesRule = css.match(/\.messages-viewport \{([^}]*)\}/)?.[1] ?? "";
   const composerRule = css.match(/\.composer \{([^}]*)\}/)?.[1] ?? "";
 
   assert.match(chatPaneRule, /grid-template-rows: auto auto auto auto auto minmax\(0, 1fr\) auto;/);
-  assert.match(mentionNoticeRule, /grid-row: 5;/);
+  assert.match(messageNoticeRule, /grid-row: 5;/);
   assert.match(messagesRule, /grid-row: 6;/);
   assert.match(composerRule, /grid-row: 7;/);
 });
@@ -260,9 +262,13 @@ test("unread badges increment from socket messages and clear when the channel op
   assert.match(server, /lastMessageId: lastMessageIds\.get\(channel\.id\) \?\? null/);
 });
 
-test("like alerts use the header status line instead of a reading-area overlay", () => {
+test("like and favorite alerts use the shared message notice bar instead of the header", () => {
   assert.match(app, /likeNotificationToTopNotice\(/);
-  assert.match(app, /activeTopNotice\.kind === 'like'[\s\S]*?关闭点赞提醒/);
+  assert.match(app, /favoriteNotificationToTopNotice\(/);
+  assert.match(app, /\.\.\.mentionNoticeItems\.value, \.\.\.likeNoticeItems\.value, \.\.\.favoriteNoticeItems\.value/);
+  assert.match(app, /activeMessageNotice\.kind === 'like'[\s\S]*?<ThumbsUp/);
+  assert.match(app, /<Heart v-else/);
+  assert.doesNotMatch(app, /activeTopNotice|关闭点赞提醒/);
   assert.doesNotMatch(app, /class="like-notification-stack"/);
 });
 
@@ -518,13 +524,15 @@ test("the three-dot chat menu consolidates font, members, message selection, and
   const headerEnd = app.indexOf("</header>", headerStart);
   const header = app.slice(headerStart, headerEnd);
   assert.match(header, /class="chat-tools-control" data-chat-tools-menu[\s\S]*?aria-label="更多管理功能"[\s\S]*?<Ellipsis/);
-  assert.match(header, /class="chat-tools-menu" role="menu"[\s\S]*?class="chat-tools-font-row"[\s\S]*?adjustMessageFontSize\(-1\)[\s\S]*?adjustMessageFontSize\(1\)/);
-  assert.match(header, /role="menuitem"[\s\S]*?toggleCurrentMemberPane[\s\S]*?成员列表/);
+  assert.match(header, /<AppMenu[^>]*class="chat-tools-menu"[^>]*label="聊天管理功能"[\s\S]*?class="chat-tools-font-row"[\s\S]*?字号调节[\s\S]*?adjustMessageFontSize\(-1\)[\s\S]*?\{\{ messageFontSize \}\}[\s\S]*?adjustMessageFontSize\(1\)/);
+  assert.match(header, /<AppMenuItem[^>]*toggleCurrentMemberPane[\s\S]*?成员列表/);
   assert.match(header, /v-if="isAdmin \|\| canPinCurrentChannel"[\s\S]*?toggleMessageSelectionMode[\s\S]*?消息多选/);
   assert.match(header, /v-if="isAdmin"[\s\S]*?loadAdmin[\s\S]*?系统设置/);
   assert.doesNotMatch(header, /class="message-font-control"/);
   assert.match(app, /if \(showChatToolsMenu\.value && !target\.closest\("\[data-chat-tools-menu\]"\)\) \{\s*showChatToolsMenu\.value = false;/);
   assert.match(css, /\.chat-tools-menu \{[\s\S]*?position: absolute;[\s\S]*?right: 0;[\s\S]*?z-index: 44;/);
+  assert.match(appMenu, /class="app-menu" role="menu"/);
+  assert.match(appMenuItem, /role="menuitem"[\s\S]*?\.app-menu-item:hover,[\s\S]*?background: var\(--accent\)/);
 });
 
 test("pinned content and live activity share one ordered notice stack", () => {
@@ -533,7 +541,7 @@ test("pinned content and live activity share one ordered notice stack", () => {
   const header = app.slice(headerStart, headerEnd);
   const afterHeader = app.slice(headerEnd);
 
-  assert.match(header, /class="chat-title"[\s\S]*?class="chat-status-line"[\s\S]*?activeTopNotice\.title/);
+  assert.doesNotMatch(header, /activeTopNotice|chat-status-like/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
   assert.match(afterHeader, /class="chat-notice-stack"[\s\S]*?class="pinned-ticker-row"[\s\S]*?pinnedText[\s\S]*?pinnedTickerBody[\s\S]*?class="chat-activity-ticker"[\s\S]*?<ActivityTicker :items="activityStatusItems"/);
   const noticeStart = afterHeader.indexOf('class="chat-notice-stack"');
@@ -562,21 +570,28 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(css, /\.sender-line em \{[\s\S]*?color: #38bdf8;[\s\S]*?text-shadow: none;/);
 });
 
-test("persistent mention notices sit below every existing top surface and stay out of the composer", () => {
+test("persistent message notices sit below every existing top surface and stay out of the composer", () => {
   const noticeStack = app.indexOf('class="chat-notice-stack"');
   const lyricsHeader = app.indexOf("<MusicLyricsHeader", noticeStack);
-  const mentionNotice = app.indexOf('class="mention-notice-bar"', lyricsHeader);
-  const messagesViewport = app.indexOf('class="messages-viewport"', mentionNotice);
+  const messageNotice = app.indexOf('class="message-notice-bar"', lyricsHeader);
+  const messagesViewport = app.indexOf('class="messages-viewport"', messageNotice);
 
   assert.ok(noticeStack >= 0, "the pinned and activity stack should exist");
   assert.ok(lyricsHeader > noticeStack, "karaoke lyrics should follow pinned and activity notices");
-  assert.ok(mentionNotice > lyricsHeader, "mention notices should follow karaoke lyrics");
-  assert.ok(messagesViewport > mentionNotice, "mention notices should stay above the message timeline");
+  assert.ok(messageNotice > lyricsHeader, "message notices should follow karaoke lyrics");
+  assert.ok(messagesViewport > messageNotice, "message notices should stay above the message timeline");
   assert.match(app, /const loadedMentionToasts = computed[\s\S]*?store\.messages[\s\S]*?isMentionAlertActive/);
-  assert.match(app, /class="mention-notice-bar"[\s\S]*?activeMentionNotice[\s\S]*?@click="openTopNotice\(activeMentionNotice\)"/);
+  assert.match(app, /class="message-notice-bar"[\s\S]*?activeMessageNotice[\s\S]*?@click="openTopNotice\(activeMessageNotice\)"/);
   assert.match(app, /'below-music-lyrics': musicLyricsHeaderVisible/);
   assert.doesNotMatch(app, /composerMentionNameList|mentionNames: composerMentionNameList/);
   assert.doesNotMatch(app, /给你说话了，回应一下？/);
+});
+
+test("mention highlights glow and shake until the message or its notice is opened", () => {
+  assert.match(app, /function handleBubbleClick\(message: MessageDTO[\s\S]*?acknowledgeMentionAlert\(message\)/);
+  assert.match(app, /function openTopNotice\(notice: TopNotice\)[\s\S]*?jumpToMessageInChannel[\s\S]*?notice\.kind === "mention"[\s\S]*?acknowledgeMentionId/);
+  assert.match(css, /\.message-row\.mention-alert \.bubble \{[\s\S]*?mentionBubbleGlow/);
+  assert.match(css, /\.message-row\.mention-alert \.message-bubble-cluster \{[\s\S]*?mentionBubbleShake/);
 });
 
 test("version changes add one clickable timeline-style update notice", () => {

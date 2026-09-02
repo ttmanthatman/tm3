@@ -139,6 +139,15 @@ export interface LikeNotificationDTO {
   createdAt: string;
 }
 
+export interface FavoriteNotificationDTO {
+  id: number;
+  channelId: number;
+  messageId: number;
+  senderName: string;
+  favoriterName: string;
+  createdAt: string;
+}
+
 export interface LinkPreviewDTO {
   url: string;
   title: string;

@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import { markRaw } from "vue";
-import type { AccountDTO, AppearanceDTO, ChannelDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonStateDTO } from "@shared/types";
+import type { AccountDTO, AppearanceDTO, ChannelDTO, FavoriteNotificationDTO, LikeNotificationDTO, MessageDTO, MessageReactionsDTO, PinnedDTO, SermonEndedEvent, SermonInvitedEvent, SermonPresentationPreviewEvent, SermonRemovedEvent, SermonStateDTO } from "@shared/types";
 import { api, clearToken, getToken, setToken } from "./api";
 import {
   applySermonDirectory,
@@ -145,6 +145,7 @@ export const useChatStore = defineStore("chat", {
     unreadAccountId: 0,
     unreadSeeded: false,
     likeNotifications: [] as LikeNotificationDTO[],
+    favoriteNotifications: [] as FavoriteNotificationDTO[],
     socket: null as Socket | null,
     connectionState: "offline" as "offline" | "connecting" | "connected",
     loading: false,
@@ -319,6 +320,7 @@ export const useChatStore = defineStore("chat", {
       this.account = null;
       resetSermonState();
       this.likeNotifications = [];
+      this.favoriteNotifications = [];
       this.unreadCounts = {};
       this.unreadLastRead = {};
       this.unreadAccountId = 0;
@@ -334,8 +336,9 @@ export const useChatStore = defineStore("chat", {
       this.appearance = await api<AppearanceDTO>("/api/settings/appearance").catch(() => ({ ...defaultAppearance }));
     },
     async loadLikeNotifications() {
-      const result = await api<{ notifications: LikeNotificationDTO[] }>("/api/like-notifications").catch(() => ({ notifications: [] }));
+      const result = await api<{ notifications: LikeNotificationDTO[]; favoriteNotifications?: FavoriteNotificationDTO[] }>("/api/like-notifications").catch(() => ({ notifications: [], favoriteNotifications: [] }));
       this.likeNotifications = result.notifications;
+      this.favoriteNotifications = result.favoriteNotifications || [];
     },
     initUnreadForAccount() {
       if (!this.account || this.unreadAccountId === this.account.id) return;
@@ -694,6 +697,12 @@ export const useChatStore = defineStore("chat", {
       });
       socket.on("message:liked", (notification: LikeNotificationDTO) => {
         this.likeNotifications = [notification, ...this.likeNotifications.filter((item) => item.id !== notification.id)].slice(0, 20);
+      });
+      socket.on("message:favorited", (notification: FavoriteNotificationDTO) => {
+        this.favoriteNotifications = [notification, ...this.favoriteNotifications.filter((item) => item.id !== notification.id)].slice(0, 20);
+      });
+      socket.on("message:favorite-removed", (event: { id: number }) => {
+        this.favoriteNotifications = this.favoriteNotifications.filter((item) => item.id !== event.id);
       });
       socket.on("message:typing", (event: { channelId: number; actor: { id: number; displayName: string }; state: "start" | "stop" }) => {
         if (event.channelId !== this.currentChannelId || event.actor.id === this.account?.actorId) return;
