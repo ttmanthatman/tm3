@@ -87,6 +87,25 @@ test("bible session share uses the description as message content when provided"
   assert.equal(((state.created as { payload: { description?: string } }).payload.description), "今晚一起读这段");
 });
 
+test("bible session share keeps known pane translations and rejects unknown ones", async () => {
+  const { app, state } = createBibleRouteHarness();
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/bible/share",
+    payload: { channelId: 10, panes: [{ bookCode: "MAT", chapter: 3, translation: "cmncbs" }] }
+  });
+  assert.equal(response.statusCode, 200);
+  const panes = (state.created as { payload: { panes: Array<{ translation?: string }> } }).payload.panes;
+  assert.equal(panes[0]?.translation, "cmncbs");
+
+  const rejected = await app.inject({
+    method: "POST",
+    url: "/api/bible/share",
+    payload: { channelId: 10, panes: [{ bookCode: "MAT", chapter: 3, translation: "kjv-only" }] }
+  });
+  assert.equal(rejected.statusCode, 400);
+});
+
 test("bible session share rejects malformed payloads", async () => {
   const { app } = createBibleRouteHarness();
   for (const payload of [

@@ -5836,10 +5836,11 @@ app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request, reply
   if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
   const query = z.object({
     book: z.string().trim().min(3).max(3),
-    chapter: z.coerce.number().int().positive()
+    chapter: z.coerce.number().int().positive(),
+    translation: z.string().trim().min(1).max(30).optional()
   }).parse(request.query);
   try {
-    const result: BibleChapterDTO = lookupBibleChapter(query.book, query.chapter);
+    const result: BibleChapterDTO = lookupBibleChapter(query.book, query.chapter, query.translation);
     return { success: true, result };
   } catch {
     return { success: false, message: "暂时找不到这一章经文" };
@@ -5947,10 +5948,17 @@ app.delete("/api/bible/favorites", { preHandler: requireAuth }, async (request) 
   return { success: true, favorites: await listBibleFavorites(auth.accountId) };
 });
 
-app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request) => {
-  const query = z.object({ query: z.string().min(1).max(200) }).parse(request.query);
-  const result = searchBibleText(query.query, 0, 40000, 40000);
-  return { success: true, result };
+app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request, reply) => {
+  const query = z.object({
+    query: z.string().min(1).max(200),
+    translation: z.string().trim().min(1).max(30).optional()
+  }).parse(request.query);
+  try {
+    const result = searchBibleText(query.query, 0, 40000, 40000, query.translation);
+    return { success: true, result };
+  } catch {
+    return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
+  }
 });
 
 app.get("/api/bible/search", { preHandler: requireAuth }, async (request, reply) => {
@@ -5959,11 +5967,16 @@ app.get("/api/bible/search", { preHandler: requireAuth }, async (request, reply)
     .object({
       query: z.string().min(1).max(200),
       offset: z.coerce.number().int().min(0).default(0),
-      limit: z.coerce.number().int().min(1).max(50).default(50)
+      limit: z.coerce.number().int().min(1).max(50).default(50),
+      translation: z.string().trim().min(1).max(30).optional()
     })
     .parse(request.query);
-  const result: BibleTextSearchDTO = searchBibleText(query.query, query.offset, query.limit);
-  return { success: true, result };
+  try {
+    const result: BibleTextSearchDTO = searchBibleText(query.query, query.offset, query.limit, 50, query.translation);
+    return { success: true, result };
+  } catch {
+    return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
+  }
 });
 
 app.post("/api/bible/related", { preHandler: requireAuth }, async (request, reply) => {

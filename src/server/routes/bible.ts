@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import type { BibleSessionPayloadDTO, MessageDTO } from "../../shared/types.js";
-import { bibleCatalog } from "../bible/lookup.js";
+import { bibleCatalog, bibleTranslations } from "../bible/lookup.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
 
 export type BibleAuthContext = {
@@ -32,7 +32,8 @@ const shareBodySchema = z.object({
         bookCode: z.string().trim().min(1).max(20),
         chapter: z.number().int().min(1).max(150),
         verseStart: z.number().int().min(1).max(200).nullable().optional(),
-        verseEnd: z.number().int().min(1).max(200).nullable().optional()
+        verseEnd: z.number().int().min(1).max(200).nullable().optional(),
+        translation: z.string().trim().min(1).max(30).optional()
       })
     )
     .min(1)
@@ -50,6 +51,7 @@ export function registerBibleRoutes(app: FastifyInstance, deps: BibleRouteDepend
     if (!parsed.success) return reply.code(400).send({ success: false, message: "分享内容格式无效" });
     const body = parsed.data;
     const catalog = bibleCatalog();
+    const knownTranslations = new Set(bibleTranslations().map((translation) => translation.id));
     const books = new Map([...catalog.oldTestament, ...catalog.newTestament].map((book) => [book.code, book]));
     const panes: BibleSessionPayloadDTO["panes"] = [];
     for (const pane of body.panes) {
@@ -57,12 +59,15 @@ export function registerBibleRoutes(app: FastifyInstance, deps: BibleRouteDepend
       if (!book || pane.chapter > book.chapterCount) {
         return reply.code(400).send({ success: false, message: "分享的经卷或章节不存在" });
       }
+      if (pane.translation && !knownTranslations.has(pane.translation)) {
+        return reply.code(400).send({ success: false, message: "分享的圣经译本不存在" });
+      }
       const verseStart = pane.verseStart ?? null;
       const verseEnd = pane.verseEnd ?? verseStart;
       if (verseStart !== null && verseEnd !== null && verseEnd < verseStart) {
         return reply.code(400).send({ success: false, message: "分享的节范围无效" });
       }
-      panes.push({ bookCode: book.code, bookName: book.name, chapter: pane.chapter, verseStart, verseEnd });
+      panes.push({ bookCode: book.code, bookName: book.name, chapter: pane.chapter, verseStart, verseEnd, ...(pane.translation ? { translation: pane.translation } : {}) });
     }
     const channel = await prisma.channel.findUnique({ where: { id: body.channelId }, select: { kind: true } });
     if (!channel || (channel.kind !== "standard" && channel.kind !== "direct") || !(await canWriteChannel(auth.accountId, body.channelId))) {

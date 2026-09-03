@@ -36,6 +36,7 @@ import {
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
 import BibleReaderPane from "./BibleReaderPane.vue";
+import { DEFAULT_BIBLE_TRANSLATION_ID } from "../bibleChapterCache";
 import {
   MAX_BIBLE_PANES,
   biblePaneLabel,
@@ -78,6 +79,7 @@ type BibleReaderPaneExpose = {
   openLookup: (lookup: BibleLookupDTO, pushCurrent?: boolean) => Promise<void>;
   openLocation: (location: BiblePaneLocationState, pushCurrent?: boolean) => Promise<void>;
   snapshot: () => BiblePaneState;
+  applyTranslation: (translationId: string) => void;
 };
 
 type TextSegment = { text: string; highlighted: boolean };
@@ -418,22 +420,29 @@ async function searchTopic(append = false) {
   }
 }
 
+function activePaneTranslation(): string {
+  const pane = panes.value.find((item) => item.id === activePaneId.value) || panes.value[0];
+  return pane?.translation || DEFAULT_BIBLE_TRANSLATION_ID;
+}
+
 async function searchText(loadMore = false) {
   const query = textQuery.value.trim();
   if (!query || textBusy.value) return;
   textBusy.value = true;
   textError.value = "";
+  const translationId = activePaneTranslation();
   const extendingCurrentSearch = loadMore
-    && normalizeBibleSearchQuery(textResult.value?.query || "") === normalizeBibleSearchQuery(query);
+    && normalizeBibleSearchQuery(textResult.value?.query || "") === normalizeBibleSearchQuery(query)
+    && (textResult.value?.sourceId || DEFAULT_BIBLE_TRANSLATION_ID) === translationId;
   const offset = extendingCurrentSearch ? textResult.value?.items.length || 0 : 0;
   try {
     const response = await api<{ success: boolean; result: BibleTextSearchDTO }>(
-      `/api/bible/search?query=${encodeURIComponent(query)}&offset=${offset}&limit=50`
+      `/api/bible/search?query=${encodeURIComponent(query)}&offset=${offset}&limit=50&translation=${encodeURIComponent(translationId)}`
     );
     textResult.value = extendingCurrentSearch && textResult.value
       ? { ...response.result, items: [...textResult.value.items, ...response.result.items] }
       : response.result;
-    recordSearchHistory({ kind: "text", query, updatedAt: new Date().toISOString(), result: textResult.value });
+    recordSearchHistory({ kind: "text", query, updatedAt: new Date().toISOString(), result: textResult.value, translation: translationId });
   } catch (error) {
     textError.value = error instanceof Error ? error.message : "文本检索失败";
   } finally {
@@ -480,7 +489,7 @@ function bookForVerse(verse: BibleVerseLineDTO) {
 }
 
 function openTextResult(item: BibleTextSearchItemDTO) {
-  void routeLookup(singleVerseLookup(item.verse), activePaneId.value, item.matches);
+  void routeLookup(singleVerseLookup(item.verse), activePaneId.value, item.matches, textResult.value?.sourceId);
 }
 
 function openTopicResult(lookup: BibleLookupDTO) {
@@ -648,7 +657,7 @@ async function handlePaneReference(sourcePaneId: string, reference: string) {
   }
 }
 
-async function routeLookup(lookup: BibleLookupDTO, sourcePaneId: string | null, matches: BibleTextMatchRangeDTO[] = []) {
+async function routeLookup(lookup: BibleLookupDTO, sourcePaneId: string | null, matches: BibleTextMatchRangeDTO[] = [], translationId?: string) {
   const first = lookup.verses[0];
   if (!first) return;
   await ensureCatalog();
@@ -664,11 +673,13 @@ async function routeLookup(lookup: BibleLookupDTO, sourcePaneId: string | null, 
       endVerse: first.endVerse,
       matches
     });
+    if (translationId) pane.translation = translationId;
     panes.value = [pane];
     activePaneId.value = pane.id;
     paneSizes.value = [100];
     view.value = "reader";
     await nextTick();
+    if (translationId) paneRefs.get(pane.id)?.applyTranslation(translationId);
     if (matches.length) {
       await paneRefs.get(pane.id)?.openLocation({ book, visibleChapter: first.chapter, targetVerse: pane.targetVerse, scrollAnchor: null }, false);
     } else await paneRefs.get(pane.id)?.openLookup(lookup, false);
@@ -681,6 +692,7 @@ async function routeLookup(lookup: BibleLookupDTO, sourcePaneId: string | null, 
   activePaneId.value = targetId;
   view.value = "reader";
   await nextTick();
+  if (translationId) paneRefs.get(targetId)?.applyTranslation(translationId);
   if (matches.length) {
     await paneRefs.get(targetId)?.openLocation({
       book,
@@ -701,8 +713,8 @@ function singleVerseLookup(verse: BibleVerseLineDTO): BibleLookupDTO {
   return {
     reference: verse.reference,
     normalizedReference: verse.reference,
-    translation: catalog.value?.translation || "新标点和合本（简体）",
-    sourceId: catalog.value?.sourceId || "cmn-cu89s",
+    translation: textResult.value?.translation || catalog.value?.translation || "新标点和合本（简体）",
+    sourceId: textResult.value?.sourceId || catalog.value?.sourceId || "cmn-cu89s",
     verses: [verse]
   };
 }
@@ -745,7 +757,7 @@ function copyTopicResults() {
 
 function copyTextItem(item: BibleTextSearchItemDTO) {
   return writeClipboard(
-    formatBibleVersesForCopy([item.verse], catalog.value?.translation || "新标点和合本（简体）"),
+    formatBibleVersesForCopy([item.verse], textResult.value?.translation || catalog.value?.translation || "新标点和合本（简体）"),
     `已复制 ${item.verse.reference}`
   );
 }
@@ -770,12 +782,13 @@ async function copyAllTextResults() {
   const query = textResult.value?.query;
   if (!query || textBusy.value) return;
   textBusy.value = true;
+  const translationId = textResult.value?.sourceId || activePaneTranslation();
   try {
     const response = await api<{ success: boolean; result: BibleTextSearchDTO }>(
-      `/api/bible/search/export?query=${encodeURIComponent(query)}`
+      `/api/bible/search/export?query=${encodeURIComponent(query)}&translation=${encodeURIComponent(translationId)}`
     );
     await writeClipboard(
-      formatBibleVersesForCopy(response.result.items.map((item) => item.verse), catalog.value?.translation || "新标点和合本（简体）"),
+      formatBibleVersesForCopy(response.result.items.map((item) => item.verse), response.result.translation),
       `已复制全部 ${response.result.total} 节结果`
     );
   } catch (error) {
@@ -860,6 +873,7 @@ async function confirmShare() {
 async function openSession(payload: BibleSessionPayloadDTO) {
   await ensureCatalog();
   const books = new Map(allBooks.value.map((book) => [book.code, book]));
+  const knownTranslations = new Set((catalog.value?.translations || []).map((translation) => translation.id));
   const sessionPanes: BiblePaneState[] = [];
   for (const sessionPane of payload.panes.slice(0, MAX_BIBLE_PANES)) {
     const book = books.get(sessionPane.bookCode);
@@ -875,7 +889,8 @@ async function openSession(payload: BibleSessionPayloadDTO) {
       scrollAnchor: null,
       selectedVerseKeys: [],
       selectionAnchorKey: null,
-      backStack: []
+      backStack: [],
+      ...(sessionPane.translation && knownTranslations.has(sessionPane.translation) ? { translation: sessionPane.translation } : {})
     });
   }
   if (!sessionPanes.length) {

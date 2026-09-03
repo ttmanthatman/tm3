@@ -85,3 +85,16 @@ test("bibleSessionPaneLabel formats chapters and verse ranges", () => {
   assert.equal(bibleSessionPaneLabel({ bookCode: "MAT", bookName: "马太福音", chapter: 3, verseStart: 13, verseEnd: 17 }), "马太福音 3:13-17");
   assert.equal(bibleSessionPaneLabel({ bookCode: "MAT", bookName: "马太福音", chapter: 3, verseStart: 13, verseEnd: 13 }), "马太福音 3:13");
 });
+
+test("bible session share payload keeps per-pane translations", () => {
+  const first = pane("pane-a", matthew, 3);
+  first.translation = "cmncbs";
+  const payload = buildBibleSessionSharePayload([first, pane("pane-b", mark, 1)], null, null, "新标点和合本（简体）");
+  assert.ok(payload);
+  assert.equal(payload.panes[0]?.translation, "cmncbs");
+  assert.equal(payload.panes[1]?.translation, undefined);
+
+  const parsed = parseBibleSessionPayload(JSON.parse(JSON.stringify(payload)));
+  assert.deepEqual(parsed, payload);
+  assert.equal(parsed?.panes[0]?.translation, "cmncbs");
+});

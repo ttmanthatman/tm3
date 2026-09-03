@@ -762,6 +762,8 @@ export interface BibleSessionPaneDTO {
   chapter: number;
   verseStart?: number | null;
   verseEnd?: number | null;
+  /** 窗格使用的译本数据 ID；缺省为默认译本（和合本） */
+  translation?: string;
 }
 
 /** “打开的圣经”分享消息 payload：记录分享者当前打开的窗格布局 */
@@ -775,6 +777,17 @@ export interface BibleSessionPayloadDTO {
   description?: string;
 }
 
+export interface BibleTranslationDTO {
+  /** 数据文件 ID，如 cmn-cu89s / cmncbs */
+  id: string;
+  /** 完整显示名，如 新标点和合本（简体） */
+  name: string;
+  /** 版本选择器里的短名，如 和合本 / 当代译本 */
+  shortName: string;
+  /** 需要展示的书末版权署名行（可选） */
+  copyright?: string;
+}
+
 export interface BibleBookCatalogDTO {
   code: string;
   name: string;
@@ -786,6 +799,8 @@ export interface BibleCatalogDTO {
   sourceId: string;
   oldTestament: BibleBookCatalogDTO[];
   newTestament: BibleBookCatalogDTO[];
+  /** 可用的圣经译本列表；首个为默认译本 */
+  translations: BibleTranslationDTO[];
 }
 
 export type BibleTextSearchMode = "phrase" | "allTerms";
@@ -802,6 +817,9 @@ export interface BibleTextSearchItemDTO {
 
 export interface BibleTextSearchDTO {
   query: string;
+  /** 检索所用译本的显示名与数据 ID */
+  translation: string;
+  sourceId: string;
   mode: BibleTextSearchMode;
   terms: string[];
   total: number;
@@ -853,6 +871,8 @@ export interface BibleWorkspaceLocationSnapshotDTO {
 export interface BibleWorkspacePaneSnapshotDTO extends BibleWorkspaceLocationSnapshotDTO {
   id: string;
   backStack: BibleWorkspaceLocationSnapshotDTO[];
+  /** 窗格使用的译本数据 ID；缺省为默认译本（和合本） */
+  translation?: string;
 }
 
 /** 账号级同步的阅读器窗格布局；不含设备本地的搜索历史 */

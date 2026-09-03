@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { BibleWorkspaceSnapshotDTO } from "../../shared/types.js";
+import { bibleTranslations } from "./lookup.js";
 
 // 账号级阅读窗格快照的服务端清洗：结构严格校验 + 数量/长度限幅，
 // 防止偏好 JSON 被异常膨胀或注入非法章节。
@@ -36,7 +37,8 @@ const locationSchema = z.object({
 
 const paneSchema = locationSchema.extend({
   id: z.string().trim().min(1).max(40),
-  backStack: z.array(locationSchema).max(20)
+  backStack: z.array(locationSchema).max(20),
+  translation: z.string().trim().min(1).max(30).optional()
 });
 
 const snapshotSchema = z.object({
@@ -54,12 +56,20 @@ export function cleanBibleWorkspaceState(input: unknown): BibleWorkspaceSnapshot
   const parsed = snapshotSchema.safeParse(input);
   if (!parsed.success) return null;
   const snapshot = parsed.data;
+  const knownTranslations = new Set(bibleTranslations().map((translation) => translation.id));
   const ids = new Set<string>();
   const panes = snapshot.panes.filter((pane) => {
     if (ids.has(pane.id)) return false;
     if (pane.visibleChapter > pane.book.chapterCount) return false;
     ids.add(pane.id);
     return true;
+  }).map((pane) => {
+    // 未登记译本的快照字段直接剔除，回退为默认译本（和合本）
+    if (pane.translation && !knownTranslations.has(pane.translation)) {
+      const { translation: _dropped, ...rest } = pane;
+      return rest;
+    }
+    return pane;
   });
   const paneCount = Math.max(1, panes.length);
   return {

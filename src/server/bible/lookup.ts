@@ -1,6 +1,8 @@
 import biblePayload from "./cmn-cu89s.json" with { type: "json" };
 import bibleLayoutPayload from "./cmn-cu89s-layout.json" with { type: "json" };
 import bibleFootnoteVersePayload from "./cmn-cu89s-footnote-verses.json" with { type: "json" };
+import ccbPayload from "./cmncbs.json" with { type: "json" };
+import ccbLayoutPayload from "./cmncbs-layout.json" with { type: "json" };
 import type {
   BibleCatalogDTO,
   BibleChapterBlockDTO,
@@ -9,6 +11,7 @@ import type {
   BibleTextMatchRangeDTO,
   BibleTextSearchDTO,
   BibleTextSearchItemDTO,
+  BibleTranslationDTO,
   BibleVerseLineDTO
 } from "../../shared/types.js";
 
@@ -31,6 +34,7 @@ type BibleVerse = {
 type BiblePayload = {
   id: string;
   displayName: string;
+  copyright?: string;
   verses: BibleVerse[];
 };
 
@@ -57,6 +61,23 @@ type BibleLayoutBlock =
 type BibleLayoutPayload = {
   id: string;
   chapters: Record<string, BibleLayoutBlock[]>;
+};
+
+type BibleTranslationSource = {
+  id: string;
+  shortName: string;
+  payload: BiblePayload;
+  layout: BibleLayoutPayload;
+  footnotes: BibleFootnoteVersePayload | null;
+};
+
+type BibleTranslationIndex = {
+  source: BibleTranslationSource;
+  payload: BiblePayload;
+  verseMap: Map<string, BibleVerse>;
+  chapterMap: Map<string, BibleVerse[]>;
+  searchableVerses: BibleVerse[];
+  catalog: BibleCatalogDTO;
 };
 
 type PassageReference = {
@@ -101,7 +122,7 @@ const BOOKS: BibleBook[] = [
   { code: "DAN", chineseName: "但以理书", aliases: ["但以理书", "但", "Daniel", "Dan", "Da"] },
   { code: "HOS", chineseName: "何西阿书", aliases: ["何西阿书", "何", "Hosea", "Hos"] },
   { code: "JOL", chineseName: "约珥书", aliases: ["约珥书", "珥", "Joel", "Joe", "Jol"] },
-  { code: "AMO", chineseName: "阿摩司书", aliases: ["阿摩司书", "摩", "Amos", "Amo", "Am"] },
+  { code: "AMO", chineseName: "阿摩司书", aliases: ["阿摩司书", "摩", "Amos", "Am"] },
   { code: "OBA", chineseName: "俄巴底亚书", aliases: ["俄巴底亚书", "俄", "Obadiah", "Obad", "Oba"] },
   { code: "JON", chineseName: "约拿书", aliases: ["约拿书", "拿", "Jonah", "Jon"] },
   { code: "MIC", chineseName: "弥迦书", aliases: ["弥迦书", "弥", "Micah", "Mic"] },
@@ -117,8 +138,8 @@ const BOOKS: BibleBook[] = [
   { code: "JHN", chineseName: "约翰福音", aliases: ["约翰福音", "约翰", "约", "John", "Jhn", "Jn"] },
   { code: "ACT", chineseName: "使徒行传", aliases: ["使徒行传", "徒", "Acts", "Act", "Ac"] },
   { code: "ROM", chineseName: "罗马书", aliases: ["罗马书", "罗", "Romans", "Rom", "Ro"] },
-  { code: "1CO", chineseName: "哥林多前书", aliases: ["哥林多前书", "林前", "1 Corinthians", "1Corinthians", "1 Cor", "1Cor", "I Corinthians", "ICorinthians"] },
-  { code: "2CO", chineseName: "哥林多后书", aliases: ["哥林多后书", "林后", "2 Corinthians", "2Corinthians", "2 Cor", "2Cor", "II Corinthians", "IICorinthians"] },
+  { code: "1CO", chineseName: "哥林多前书", aliases: ["林前", "1 Corinthians", "1Corinthians", "1 Cor", "1Cor", "I Corinthians", "ICorinthians"] },
+  { code: "2CO", chineseName: "哥林多后书", aliases: ["林后", "2 Corinthians", "2Corinthians", "2 Cor", "2Cor", "II Corinthians", "IICorinthians"] },
   { code: "GAL", chineseName: "加拉太书", aliases: ["加拉太书", "加", "Galatians", "Gal"] },
   { code: "EPH", chineseName: "以弗所书", aliases: ["以弗所书", "弗", "Ephesians", "Eph"] },
   { code: "PHP", chineseName: "腓立比书", aliases: ["腓立比书", "腓", "Philippians", "Phil", "Php"] },
@@ -140,76 +161,126 @@ const BOOKS: BibleBook[] = [
   { code: "REV", chineseName: "启示录", aliases: ["启示录", "启", "Revelation", "Revelations", "Rev", "Re"] }
 ];
 
-const basePayload = biblePayload as BiblePayload;
-const footnoteVersePayload = bibleFootnoteVersePayload as BibleFootnoteVersePayload;
-const layoutPayload = bibleLayoutPayload as unknown as BibleLayoutPayload;
-if (layoutPayload.id !== basePayload.id || footnoteVersePayload.id !== basePayload.id) {
-  throw new Error("Bible text, footnote verse, and layout source IDs do not match");
-}
-const baseVerseKeys = new Set<string>();
-for (const verse of basePayload.verses) {
-  for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) {
-    baseVerseKeys.add(verseKey(verse.book, verse.chapter, verseNumber));
+// 译本注册表：首个为默认译本（和合本）。经文展开、讲道台、收藏等永远走默认译本；
+// 只有章节阅读与全文搜索接受 translationId 参数。
+export const DEFAULT_BIBLE_TRANSLATION_ID = "cmn-cu89s";
+
+const TRANSLATION_SOURCES: BibleTranslationSource[] = [
+  {
+    id: "cmn-cu89s",
+    shortName: "和合本",
+    payload: biblePayload as BiblePayload,
+    layout: bibleLayoutPayload as unknown as BibleLayoutPayload,
+    footnotes: bibleFootnoteVersePayload as BibleFootnoteVersePayload
+  },
+  {
+    id: "cmncbs",
+    shortName: "当代译本",
+    payload: ccbPayload as BiblePayload,
+    layout: ccbLayoutPayload as unknown as BibleLayoutPayload,
+    footnotes: null
   }
-}
-const footnoteVerseKeys = new Set<string>();
-for (const verse of footnoteVersePayload.verses) {
-  const key = verseKey(verse.book, verse.chapter, verse.verse);
-  const anchorKey = verseKey(verse.book, verse.chapter, verse.anchorVerse);
-  if (verse.verse !== verse.endVerse || baseVerseKeys.has(key) || footnoteVerseKeys.has(key) || !baseVerseKeys.has(anchorKey)) {
-    throw new Error(`Invalid numbered Bible footnote verse: ${key}`);
-  }
-  footnoteVerseKeys.add(key);
-}
-const payload: BiblePayload = {
-  ...basePayload,
-  verses: [...basePayload.verses, ...footnoteVersePayload.verses]
-};
+];
+
 const bookByCode = new Map(BOOKS.map((book) => [book.code, book]));
 const bookOrder = new Map(BOOKS.map((book, index) => [book.code, index]));
 const startAliases = BOOKS.flatMap((book) => [book.chineseName, book.code, ...book.aliases].map((alias) => ({ alias: normalizeBook(alias), book })))
   .filter((item) => item.alias)
   .sort((left, right) => right.alias.length - left.alias.length);
-const verseMap = new Map<string, BibleVerse>();
-const chapterMap = new Map<string, BibleVerse[]>();
 
-for (const verse of payload.verses) {
-  for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) {
-    verseMap.set(verseKey(verse.book, verse.chapter, verseNumber), verse);
-  }
-  const key = chapterKey(verse.book, verse.chapter);
-  chapterMap.set(key, [...(chapterMap.get(key) || []), verse]);
-}
-
-for (const [key, verses] of chapterMap.entries()) {
-  chapterMap.set(
-    key,
-    verses.sort((left, right) => (left.order === right.order ? left.verse - right.verse : left.order - right.order))
-  );
-}
-
-const searchableVerses = [...payload.verses].sort(compareBibleVerses);
-const catalogBooks = BOOKS.map((book) => ({
-  code: book.code,
-  name: book.chineseName,
-  chapterCount: Math.max(0, ...payload.verses.filter((verse) => verse.book === book.code).map((verse) => verse.chapter))
+const translationList: BibleTranslationDTO[] = TRANSLATION_SOURCES.map((source) => ({
+  id: source.id,
+  name: source.payload.displayName,
+  shortName: source.shortName,
+  ...(source.payload.copyright ? { copyright: source.payload.copyright } : {})
 }));
-const catalog: BibleCatalogDTO = {
-  translation: payload.displayName,
-  sourceId: payload.id,
-  oldTestament: catalogBooks.slice(0, 39),
-  newTestament: catalogBooks.slice(39)
-};
 
-export function bibleCatalog(): BibleCatalogDTO {
-  return catalog;
+const translationIndexes = new Map<string, BibleTranslationIndex>();
+for (const source of TRANSLATION_SOURCES) {
+  translationIndexes.set(source.id, buildTranslationIndex(source));
 }
 
-export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximumLimit = 50): BibleTextSearchDTO {
+export function bibleTranslations(): BibleTranslationDTO[] {
+  return translationList;
+}
+
+function indexFor(translationId?: string): BibleTranslationIndex {
+  const index = translationIndexes.get(translationId || DEFAULT_BIBLE_TRANSLATION_ID);
+  if (!index) throw new Error("unknown bible translation");
+  return index;
+}
+
+function buildTranslationIndex(source: BibleTranslationSource): BibleTranslationIndex {
+  const basePayload = source.payload;
+  const footnoteVersePayload = source.footnotes;
+  const layoutPayload = source.layout;
+  if (layoutPayload.id !== basePayload.id || (footnoteVersePayload && footnoteVersePayload.id !== basePayload.id)) {
+    throw new Error("Bible text, footnote verse, and layout source IDs do not match");
+  }
+  const baseVerseKeys = new Set<string>();
+  for (const verse of basePayload.verses) {
+    for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) {
+      baseVerseKeys.add(verseKey(verse.book, verse.chapter, verseNumber));
+    }
+  }
+  const footnoteVerses = footnoteVersePayload?.verses || [];
+  const footnoteVerseKeys = new Set<string>();
+  for (const verse of footnoteVerses) {
+    const key = verseKey(verse.book, verse.chapter, verse.verse);
+    const anchorKey = verseKey(verse.book, verse.chapter, verse.anchorVerse);
+    if (verse.verse !== verse.endVerse || baseVerseKeys.has(key) || footnoteVerseKeys.has(key) || !baseVerseKeys.has(anchorKey)) {
+      throw new Error(`Invalid numbered Bible footnote verse: ${key}`);
+    }
+    footnoteVerseKeys.add(key);
+  }
+  const payload: BiblePayload = {
+    ...basePayload,
+    verses: [...basePayload.verses, ...footnoteVerses]
+  };
+  const verseMap = new Map<string, BibleVerse>();
+  const chapterMap = new Map<string, BibleVerse[]>();
+
+  for (const verse of payload.verses) {
+    for (let verseNumber = verse.verse; verseNumber <= verse.endVerse; verseNumber += 1) {
+      verseMap.set(verseKey(verse.book, verse.chapter, verseNumber), verse);
+    }
+    const key = chapterKey(verse.book, verse.chapter);
+    chapterMap.set(key, [...(chapterMap.get(key) || []), verse]);
+  }
+
+  for (const [key, verses] of chapterMap.entries()) {
+    chapterMap.set(
+      key,
+      verses.sort((left, right) => (left.order === right.order ? left.verse - right.verse : left.order - right.order))
+    );
+  }
+
+  const searchableVerses = [...payload.verses].sort(compareBibleVerses);
+  const catalogBooks = BOOKS.map((book) => ({
+    code: book.code,
+    name: book.chineseName,
+    chapterCount: Math.max(0, ...payload.verses.filter((verse) => verse.book === book.code).map((verse) => verse.chapter))
+  }));
+  const catalog: BibleCatalogDTO = {
+    translation: payload.displayName,
+    sourceId: payload.id,
+    oldTestament: catalogBooks.slice(0, 39),
+    newTestament: catalogBooks.slice(39),
+    translations: translationList
+  };
+  return { source, payload, verseMap, chapterMap, searchableVerses, catalog };
+}
+
+export function bibleCatalog(translationId?: string): BibleCatalogDTO {
+  return indexFor(translationId).catalog;
+}
+
+export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximumLimit = 50, translationId?: string): BibleTextSearchDTO {
+  const index = indexFor(translationId);
   const query = rawQuery.replace(/\u3000/g, " ").replace(/\s+/g, " ").trim();
   if (!query) throw new Error("empty query");
   const normalizedQuery = normalizeSearchText(query);
-  const phraseMatches = searchableVerses.flatMap((verse) => {
+  const phraseMatches = index.searchableVerses.flatMap((verse) => {
     const text = cleanVerseText(verse.text);
     const matches = findTextMatches(text, [normalizedQuery]);
     return matches.length ? [{ verse, matches }] : [];
@@ -217,7 +288,7 @@ export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximu
   const terms = query.split(/\s+/).map(normalizeSearchText).filter(Boolean);
   const useAllTerms = phraseMatches.length === 0 && terms.length > 1;
   const matches = useAllTerms
-    ? searchableVerses.flatMap((verse) => {
+    ? index.searchableVerses.flatMap((verse) => {
         const text = cleanVerseText(verse.text);
         const normalizedText = normalizeSearchText(text);
         if (!terms.every((term) => normalizedText.includes(term))) return [];
@@ -232,6 +303,8 @@ export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximu
   }));
   return {
     query,
+    translation: index.payload.displayName,
+    sourceId: index.payload.id,
     mode: useAllTerms ? "allTerms" : "phrase",
     terms: useAllTerms ? terms : [normalizedQuery],
     total: matches.length,
@@ -242,24 +315,26 @@ export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximu
 }
 
 export function lookupBibleReference(reference: string): BibleLookupDTO {
+  const index = indexFor();
   const parsed = parseReference(reference);
-  const verses = versesForParsedReference(parsed);
+  const verses = versesForParsedReference(index, parsed);
   return {
     reference,
     normalizedReference: displayParsedReference(parsed),
-    translation: payload.displayName,
-    sourceId: payload.id,
+    translation: index.payload.displayName,
+    sourceId: index.payload.id,
     verses: verses.map(serializeVerse)
   };
 }
 
-export function lookupBibleChapter(bookCode: string, chapter: number): BibleChapterDTO {
+export function lookupBibleChapter(bookCode: string, chapter: number, translationId?: string): BibleChapterDTO {
+  const index = indexFor(translationId);
   const book = bookByCode.get(bookCode.toUpperCase());
   if (!book || !Number.isInteger(chapter) || chapter < 1) throw new Error("invalid chapter");
-  const verses = versesForWholeChapter(book, chapter);
-  const sourceBlocks = layoutPayload.chapters[`${book.code}.${chapter}`];
+  const verses = versesForWholeChapter(index, book, chapter);
+  const sourceBlocks = index.source.layout.chapters[`${book.code}.${chapter}`];
   if (!sourceBlocks) throw new Error("chapter layout not found");
-  const rawBlocks = insertFootnoteVerseBlocks(sourceBlocks, book.code, chapter);
+  const rawBlocks = insertFootnoteVerseBlocks(index, sourceBlocks, book.code, chapter);
 
   const serializedVerses = verses.map(serializeVerse);
   const serializedByStartVerse = new Map(serializedVerses.map((verse) => [verse.verse, verse]));
@@ -301,31 +376,32 @@ export function lookupBibleChapter(bookCode: string, chapter: number): BibleChap
     bookCode: book.code,
     bookName: book.chineseName,
     chapter,
-    translation: payload.displayName,
-    sourceId: payload.id,
+    translation: index.payload.displayName,
+    sourceId: index.payload.id,
     verses: serializedVerses,
     blocks
   };
 }
 
-function insertFootnoteVerseBlocks(sourceBlocks: BibleLayoutBlock[], book: string, chapter: number) {
+function insertFootnoteVerseBlocks(index: BibleTranslationIndex, sourceBlocks: BibleLayoutBlock[], book: string, chapter: number) {
+  const footnoteVerses = index.source.footnotes?.verses || [];
   const additionsByBlock = new Map<number, BibleFootnoteVerse[]>();
-  for (const verse of footnoteVersePayload.verses) {
+  for (const verse of footnoteVerses) {
     if (verse.book !== book || verse.chapter !== chapter) continue;
     let anchorBlockIndex = -1;
-    for (let index = 0; index < sourceBlocks.length; index += 1) {
-      const block = sourceBlocks[index];
+    for (let blockIndex = 0; blockIndex < sourceBlocks.length; blockIndex += 1) {
+      const block = sourceBlocks[blockIndex];
       if ((block[0] === "p" || block[0] === "q") && block[1].some(([verseNumber]) => verseNumber === verse.anchorVerse)) {
-        anchorBlockIndex = index;
+        anchorBlockIndex = blockIndex;
       }
     }
     if (anchorBlockIndex < 0) throw new Error(`Bible footnote verse anchor not found: ${book} ${chapter}:${verse.anchorVerse}`);
     additionsByBlock.set(anchorBlockIndex, [...(additionsByBlock.get(anchorBlockIndex) || []), verse]);
   }
 
-  return sourceBlocks.flatMap((block, index) => [
+  return sourceBlocks.flatMap((block, blockIndex) => [
     block,
-    ...(additionsByBlock.get(index) || [])
+    ...(additionsByBlock.get(blockIndex) || [])
       .sort((left, right) => left.verse - right.verse)
       .map((verse): BibleLayoutBlock => ["p", [[verse.verse, 0, displayVerseText(verse).length]]])
   ]);
@@ -480,11 +556,11 @@ function parseInheritedVerseStyle(body: string, book: BibleBook, currentChapter?
   return null;
 }
 
-function versesForParsedReference(parsedReference: ParsedReference) {
+function versesForParsedReference(index: BibleTranslationIndex, parsedReference: ParsedReference) {
   const result: BibleVerse[] = [];
   const seen = new Set<string>();
   for (const passage of parsedReference.passages) {
-    for (const verse of versesForPassage(passage)) {
+    for (const verse of versesForPassage(index, passage)) {
       const key = canonicalVerseKey(verse);
       if (seen.has(key)) continue;
       seen.add(key);
@@ -494,19 +570,19 @@ function versesForParsedReference(parsedReference: ParsedReference) {
   return result.sort(compareBibleVerses);
 }
 
-function versesForPassage(passage: PassageReference) {
+function versesForPassage(index: BibleTranslationIndex, passage: PassageReference) {
   if (passage.startVerse === undefined || passage.endVerse === undefined) {
-    return versesForWholeChapter(passage.book, passage.startChapter);
+    return versesForWholeChapter(index, passage.book, passage.startChapter);
   }
   if (passage.startChapter > passage.endChapter) throw new Error("invalid range");
   const result: BibleVerse[] = [];
   const seen = new Set<string>();
   for (let chapter = passage.startChapter; chapter <= passage.endChapter; chapter += 1) {
     const start = chapter === passage.startChapter ? passage.startVerse : 1;
-    const end = chapter === passage.endChapter ? passage.endVerse : lastVerseNumber(passage.book, chapter);
+    const end = chapter === passage.endChapter ? passage.endVerse : lastVerseNumber(index, passage.book, chapter);
     if (start > end) throw new Error("invalid range");
     for (let verseNumber = start; verseNumber <= end; verseNumber += 1) {
-      const verse = verseMap.get(verseKey(passage.book.code, chapter, verseNumber));
+      const verse = index.verseMap.get(verseKey(passage.book.code, chapter, verseNumber));
       if (!verse) throw new Error("verse not found");
       const key = canonicalVerseKey(verse);
       if (seen.has(key)) continue;
@@ -517,14 +593,14 @@ function versesForPassage(passage: PassageReference) {
   return result;
 }
 
-function versesForWholeChapter(book: BibleBook, chapter: number) {
-  const verses = chapterMap.get(chapterKey(book.code, chapter));
+function versesForWholeChapter(index: BibleTranslationIndex, book: BibleBook, chapter: number) {
+  const verses = index.chapterMap.get(chapterKey(book.code, chapter));
   if (!verses?.length) throw new Error("chapter not found");
   return verses;
 }
 
-function lastVerseNumber(book: BibleBook, chapter: number) {
-  const verses = versesForWholeChapter(book, chapter);
+function lastVerseNumber(index: BibleTranslationIndex, book: BibleBook, chapter: number) {
+  const verses = versesForWholeChapter(index, book, chapter);
   return verses[verses.length - 1]?.endVerse || 0;
 }
 

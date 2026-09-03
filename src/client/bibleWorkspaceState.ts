@@ -22,6 +22,8 @@ export type BibleTextSearchHistoryEntry = {
   query: string;
   updatedAt: string;
   result: BibleTextSearchDTO;
+  /** 检索时使用的译本数据 ID；缺省为默认译本（和合本） */
+  translation?: string;
 };
 
 export type BibleSearchHistoryEntry = BibleTopicSearchHistoryEntry | BibleTextSearchHistoryEntry;
@@ -51,6 +53,8 @@ export type BiblePaneState = BiblePaneLocationState & {
   selectedVerseKeys: string[];
   selectionAnchorKey: string | null;
   backStack: BiblePaneLocationState[];
+  /** 窗格使用的译本数据 ID；缺省为默认译本（和合本） */
+  translation?: string;
 };
 
 export type BibleWorkspaceStateV1 = {
@@ -198,7 +202,9 @@ function sanitizeWorkspaceState(state: BibleWorkspaceState): BibleWorkspaceState
     selectedVerseKeys: Array.isArray(pane.selectedVerseKeys) ? pane.selectedVerseKeys : [],
     selectionAnchorKey: pane.selectionAnchorKey || null,
     scrollAnchor: pane.scrollAnchor || null,
-    backStack: Array.isArray(pane.backStack) ? pane.backStack.slice(-20) : []
+    backStack: Array.isArray(pane.backStack) ? pane.backStack.slice(-20) : [],
+    // 非字符串的脏数据一律剔除，回退为默认译本（和合本）
+    translation: typeof pane.translation === "string" && pane.translation ? pane.translation : undefined
   }));
   const ids = new Set(panes.map((pane) => pane.id));
   return {
@@ -235,7 +241,8 @@ export function bibleWorkspaceSnapshot(state: BibleWorkspaceState, updatedAt = n
       visibleChapter: pane.visibleChapter,
       targetVerse: pane.targetVerse,
       scrollAnchor: pane.scrollAnchor,
-      backStack: pane.backStack.slice(-20)
+      backStack: pane.backStack.slice(-20),
+      ...(pane.translation ? { translation: pane.translation } : {})
     })),
     activePaneId: state.activePaneId,
     receivingPaneId: state.receivingPaneId,

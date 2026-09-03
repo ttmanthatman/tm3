@@ -3,12 +3,37 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import biblePayload from "../server/bible/cmn-cu89s.json" with { type: "json" };
 
-const SOURCE_URL = "https://ebible.org/Scriptures/cmn-cu89s_usfx.zip";
-const SOURCE_FILE = "cmn-cu89s_usfx.xml";
-const SOURCE_SHA256 = "4d8eca84f57f38202a9fc1551a6b667a135d88c31d5bed5d3a8287099ca34da5";
-const DEFAULT_OUTPUT = path.resolve("src/server/bible/cmn-cu89s-layout.json");
+// eBible USFX → 阅读器章节排版 JSON，以对应译本的经文 JSON 为基准逐节校验。
+// 用法: npm run bible:import-layout -- <cmn-cu89s_usfx.zip> [output.json]
+// 译本元数据（zip 校验和、经文 JSON 路径）登记在 TRANSLATIONS；新增译本时补充条目。
+type TranslationMeta = {
+  id: string;
+  sourceUrl: string;
+  sourceFile: string;
+  sha256: string;
+  versesJson: string;
+  defaultOutput: string;
+};
+
+const TRANSLATIONS: Record<string, TranslationMeta> = {
+  "cmn-cu89s": {
+    id: "cmn-cu89s",
+    sourceUrl: "https://ebible.org/Scriptures/cmn-cu89s_usfx.zip",
+    sourceFile: "cmn-cu89s_usfx.xml",
+    sha256: "4d8eca84f57f38202a9fc1551a6b667a135d88c31d5bed5d3a8287099ca34da5",
+    versesJson: "src/server/bible/cmn-cu89s.json",
+    defaultOutput: "src/server/bible/cmn-cu89s-layout.json"
+  },
+  cmncbs: {
+    id: "cmncbs",
+    sourceUrl: "https://ebible.org/Scriptures/cmncbs_usfx.zip",
+    sourceFile: "cmncbs_usfx.xml",
+    sha256: "7c5266220d70700b09d17b7e3a750a7d631e56acfa33747f8fd97bd75f8b3fb3",
+    versesJson: "src/server/bible/cmncbs.json",
+    defaultOutput: "src/server/bible/cmncbs-layout.json"
+  }
+};
 
 type CanonicalVerse = {
   book: string;
@@ -33,21 +58,26 @@ type LayoutBlock =
   | [kind: "p" | "q", fragments: LayoutFragment[]];
 
 const input = process.argv[2];
-const output = path.resolve(process.argv[3] || DEFAULT_OUTPUT);
 if (!input) throw new Error("usage: npm run bible:import-layout -- <cmn-cu89s_usfx.zip> [output.json]");
+const id = path.basename(input).match(/^([a-z0-9-]+)_usfx\.zip$/i)?.[1]?.toLowerCase() || "";
+const meta = TRANSLATIONS[id];
+if (!meta) throw new Error(`unknown USFX translation id: ${id || input}`);
+const output = path.resolve(process.argv[3] || meta.defaultOutput);
 
 const archive = fs.readFileSync(path.resolve(input));
 const checksum = createHash("sha256").update(archive).digest("hex");
-if (checksum !== SOURCE_SHA256) {
+if (checksum !== meta.sha256) {
   throw new Error(`unexpected USFX archive checksum: ${checksum}`);
 }
 
-const xml = execFileSync("unzip", ["-p", path.resolve(input), SOURCE_FILE], {
+const xml = execFileSync("unzip", ["-p", path.resolve(input), meta.sourceFile], {
   encoding: "utf8",
   maxBuffer: 16 * 1024 * 1024
 });
 
-const canonicalVerses = (biblePayload.verses as CanonicalVerse[]);
+const biblePayload = JSON.parse(fs.readFileSync(path.resolve(meta.versesJson), "utf8")) as { id: string; verses: CanonicalVerse[] };
+if (biblePayload.id !== meta.id) throw new Error(`verses JSON id ${biblePayload.id} does not match ${meta.id}`);
+const canonicalVerses = biblePayload.verses;
 const canonicalByKey = new Map(canonicalVerses.map((verse) => [verseKey(verse.book, verse.chapter, verse.verse), verse]));
 const drafts = parseUsfx(xml);
 const fragmentOffsets = validateAndLocateFragments(drafts, canonicalByKey);
@@ -78,10 +108,10 @@ for (const [key, blocks] of drafts) {
 const result = {
   id: biblePayload.id,
   source: {
-    url: SOURCE_URL,
+    url: meta.sourceUrl,
     format: "eBible USFX",
-    sourceFile: SOURCE_FILE,
-    sha256: SOURCE_SHA256
+    sourceFile: meta.sourceFile,
+    sha256: meta.sha256
   },
   chapters
 };

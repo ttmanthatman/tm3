@@ -23,7 +23,8 @@ export function buildBibleSessionSharePayload(
         bookName: pane.book.name,
         chapter: pane.visibleChapter,
         verseStart: target?.verse ?? null,
-        verseEnd: target?.endVerse ?? null
+        verseEnd: target?.endVerse ?? null,
+        ...(pane.translation ? { translation: pane.translation } : {})
       };
     })
   };
@@ -45,15 +46,16 @@ export function parseBibleSessionPayload(input: unknown): BibleSessionPayloadDTO
     const verseEnd = pane.verseEnd === null || pane.verseEnd === undefined ? null : Number(pane.verseEnd);
     if (verseStart !== null && (!Number.isInteger(verseStart) || verseStart < 1)) return null;
     if (verseEnd !== null && (!Number.isInteger(verseEnd) || verseEnd < 1)) return null;
-    panes.push({ bookCode: pane.bookCode, bookName: pane.bookName, chapter, verseStart, verseEnd });
+    const translation = typeof pane.translation === "string" && pane.translation.trim() ? pane.translation.trim().slice(0, 30) : undefined;
+    panes.push({ bookCode: pane.bookCode, bookName: pane.bookName, chapter, verseStart, verseEnd, ...(translation ? { translation } : {}) });
   }
   if (!panes.length) return null;
-  const receivingIndex = Number(raw.receivingIndex);
+  const receivingIndex = raw.receivingIndex === null || raw.receivingIndex === undefined ? null : Number(raw.receivingIndex);
   return {
     kind: "bible_session",
     translation: typeof raw.translation === "string" ? raw.translation : "",
     orientation: raw.orientation === "columns" || raw.orientation === "rows" ? raw.orientation : null,
-    receivingIndex: Number.isInteger(receivingIndex) && receivingIndex >= 0 && receivingIndex < panes.length ? receivingIndex : null,
+    receivingIndex: receivingIndex !== null && Number.isInteger(receivingIndex) && receivingIndex >= 0 && receivingIndex < panes.length ? receivingIndex : null,
     panes,
     ...(typeof raw.description === "string" && raw.description.trim() ? { description: raw.description.trim().slice(0, 200) } : {})
   };

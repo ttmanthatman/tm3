@@ -75,3 +75,16 @@ test("cleanBibleWorkspaceState downgrades a reader view without panes to home", 
   assert.equal(cleaned?.view, "home");
   assert.equal(cleaned?.panes.length, 0);
 });
+
+test("cleanBibleWorkspaceState keeps known pane translations and drops unknown ones", () => {
+  const snapshot = validSnapshot();
+  const panes = [
+    { ...snapshot.panes[0], id: "pane-1", translation: "cmncbs" },
+    { ...snapshot.panes[0], id: "pane-2", translation: "kjv-only" },
+    { ...snapshot.panes[0], id: "pane-3" }
+  ];
+  const cleaned = cleanBibleWorkspaceState({ ...snapshot, panes, paneSizes: [34, 33, 33] });
+  assert.equal(cleaned?.panes[0]?.translation, "cmncbs");
+  assert.equal(cleaned?.panes[1]?.translation, undefined);
+  assert.equal(cleaned?.panes[2]?.translation, undefined);
+});

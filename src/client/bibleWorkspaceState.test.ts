@@ -254,3 +254,37 @@ test("bibleWorkspaceStateNewer prefers the state with the latest updatedAt", () 
   delete withoutTimestamp.updatedAt;
   assert.equal(bibleWorkspaceStateNewer(withoutTimestamp, newer), newer);
 });
+
+test("pane translation round-trips through storage and account snapshots", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) || null,
+    setItem: (key: string, value: string) => values.set(key, value)
+  };
+  const state = readerState("2026-09-03T02:00:00.000Z");
+  state.panes[0]!.translation = "cmncbs";
+  saveBibleWorkspaceState(storage, 34, state);
+
+  const restored = loadBibleWorkspaceState(storage, 34);
+  assert.equal(restored?.panes[0]?.translation, "cmncbs");
+  assert.equal(restored?.panes[1]?.translation, undefined);
+
+  const snapshot = bibleWorkspaceSnapshot(restored!, "2026-09-03T02:00:00.000Z");
+  assert.equal(snapshot.panes[0]?.translation, "cmncbs");
+  assert.equal(snapshot.panes[1]?.translation, undefined);
+
+  const fromSnapshot = bibleWorkspaceStateFromSnapshot(snapshot, null);
+  assert.equal(fromSnapshot.panes[0]?.translation, "cmncbs");
+});
+
+test("sanitize drops non-string pane translations", () => {
+  const values = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => values.get(key) || null,
+    setItem: (key: string, value: string) => values.set(key, value)
+  };
+  const state = readerState("2026-09-03T02:00:00.000Z");
+  (state.panes[0] as unknown as { translation: unknown }).translation = 42;
+  saveBibleWorkspaceState(storage, 34, state);
+  assert.equal(loadBibleWorkspaceState(storage, 34)?.panes[0]?.translation, undefined);
+});

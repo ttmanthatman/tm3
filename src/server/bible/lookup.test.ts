@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./lookup.js";
+import { bibleCatalog, bibleTranslations, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./lookup.js";
 
 test("Bible catalog exposes all 66 books and 1189 chapters", () => {
   const catalog = bibleCatalog();
@@ -145,4 +145,44 @@ test("structured chapters place mid-verse speaker labels without changing the ca
   assert.ok(verse?.text.includes("〔耶路撒冷的众女子〕"));
   const fragments = chapter.blocks.flatMap((block) => block.type === "paragraph" ? block.fragments : []).filter((fragment) => fragment.verse.verse === 1);
   assert.ok(fragments.every((fragment) => !fragment.text.includes("〔耶路撒冷的众女子〕")));
+});
+
+test("translation registry lists 和合本 first and 当代译本 with copyright", () => {
+  const translations = bibleTranslations();
+  assert.deepEqual(translations.map((item) => item.id), ["cmn-cu89s", "cmncbs"]);
+  assert.equal(translations[0].shortName, "和合本");
+  assert.equal(translations[1].shortName, "当代译本");
+  assert.match(translations[1].copyright || "", /Biblica/);
+  assert.match(translations[1].copyright || "", /CC BY-SA 4\.0/);
+  assert.ok(bibleCatalog().translations.length >= 2);
+});
+
+test("chapter lookup switches text by translation while reference lookup stays on the default", () => {
+  const cuv = lookupBibleChapter("JHN", 3);
+  const ccb = lookupBibleChapter("JHN", 3, "cmncbs");
+  assert.equal(cuv.sourceId, "cmn-cu89s");
+  assert.equal(ccb.sourceId, "cmncbs");
+  assert.equal(ccb.translation, "当代译本（简体）");
+  // 当代译本存在合并节（一节条目覆盖多节），条目数不要求与和合本一致
+  assert.ok(ccb.verses.length >= 35);
+  assert.ok(ccb.verses.some((verse) => verse.verse <= 36 && verse.endVerse >= 36));
+  const ccb316 = ccb.verses.find((verse) => verse.verse === 16);
+  assert.match(ccb316?.text || "", /上帝爱世人/);
+  assert.match(lookupBibleReference("约翰福音 3:16").verses[0].text, /神爱世人/);
+  assert.equal(lookupBibleReference("约翰福音 3:16").sourceId, "cmn-cu89s");
+});
+
+test("text search follows the requested translation", () => {
+  const ccb = searchBibleText("上帝爱世人", 0, 50, 50, "cmncbs");
+  assert.equal(ccb.sourceId, "cmncbs");
+  assert.ok(ccb.items.some((item) => item.verse.reference === "约翰福音 3:16"));
+  const cuv = searchBibleText("上帝爱世人", 0, 50, 50, "cmn-cu89s");
+  assert.equal(cuv.sourceId, "cmn-cu89s");
+  assert.equal(cuv.total, 0);
+});
+
+test("unknown translation ids are rejected", () => {
+  assert.throws(() => lookupBibleChapter("JHN", 3, "kjv"), /unknown bible translation/);
+  assert.throws(() => searchBibleText("神", 0, 50, 50, "kjv"), /unknown bible translation/);
+  assert.throws(() => bibleCatalog("kjv"), /unknown bible translation/);
 });

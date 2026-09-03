@@ -31,7 +31,8 @@ test("context resolves the projected book from either its Chinese name or code",
     translation: "新标点和合本（简体）",
     sourceId: "cmn-cu89s",
     oldTestament: [{ code: "GEN", name: "创世记", chapterCount: 50 }],
-    newTestament: [{ code: "JHN", name: "约翰福音", chapterCount: 21 }]
+    newTestament: [{ code: "JHN", name: "约翰福音", chapterCount: 21 }],
+    translations: [{ id: "cmn-cu89s", name: "新标点和合本（简体）", shortName: "和合本" }]
   };
 
   assert.equal(sermonContextBookForVerse(catalog, "创世记")?.code, "GEN");
