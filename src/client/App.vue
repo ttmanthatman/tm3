@@ -7418,10 +7418,6 @@ async function collapsePinned() {
 
 function openPinnedFromTicker() {
   if (!visiblePinned.value) return;
-  if (canPinCurrentChannel.value) {
-    openPinnedEditor();
-    return;
-  }
   pinnedExpanded.value = true;
 }
 
@@ -10163,7 +10159,7 @@ async function toggleVirtual(character: any) {
         :class="{ 'has-pinned': !!visiblePinned, 'has-activity': !!activityTickerText }"
         :role="visiblePinned ? 'button' : undefined"
         :tabindex="visiblePinned ? 0 : undefined"
-        :aria-label="visiblePinned ? (canPinCurrentChannel ? '编辑置顶消息' : '查看置顶消息') : '聊天室实时动态'"
+        :aria-label="visiblePinned ? '查看置顶消息' : '聊天室实时动态'"
         @click="openPinnedFromTicker"
         @keydown.enter="openPinnedFromTicker"
         @keydown.space.prevent="openPinnedFromTicker"
@@ -10176,7 +10172,16 @@ async function toggleVirtual(character: any) {
               <span v-if="pinnedTickerBody">{{ pinnedTickerBody }}</span>
             </span>
           </span>
-          <span class="pinned-ticker-action">{{ canPinCurrentChannel ? "编辑" : "查看" }}</span>
+          <button
+            v-if="canPinCurrentChannel"
+            type="button"
+            class="pinned-ticker-action pinned-ticker-edit"
+            aria-label="编辑置顶消息"
+            @click.stop="openPinnedEditor"
+            @keydown.enter.stop
+            @keydown.space.stop
+          >编辑</button>
+          <span v-else class="pinned-ticker-action">查看</span>
         </span>
         <span v-if="activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
           <ActivityTicker :items="activityStatusItems" />

@@ -550,7 +550,8 @@ test("pinned content and live activity share one ordered notice stack", () => {
   const tickerStart = notice.indexOf('class="chat-activity-ticker"');
   const ticker = notice.slice(tickerStart);
   assert.match(notice, /@click="openPinnedFromTicker"/);
-  assert.match(app, /function openPinnedFromTicker\(\)[\s\S]*?canPinCurrentChannel\.value[\s\S]*?openPinnedEditor\(\)[\s\S]*?pinnedExpanded\.value = true/);
+  assert.match(app, /function openPinnedFromTicker\(\) \{\s*if \(!visiblePinned\.value\) return;\s*pinnedExpanded\.value = true;\s*\}/);
+  assert.match(notice, /class="pinned-ticker-action pinned-ticker-edit"[\s\S]*?@click\.stop="openPinnedEditor"/);
   assert.doesNotMatch(notice, /pinned-image|block\.type === 'image'/);
   assert.doesNotMatch(ticker, /chat-activity-orbit/);
   assert.equal(ticker.match(/<ActivityTicker :items="activityStatusItems"/g)?.length, 1);

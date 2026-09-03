@@ -2824,6 +2824,14 @@ button {
   font-weight: 750;
 }
 
+button.pinned-ticker-action {
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
 .chat-activity-ticker {
   min-height: 27px;
   padding: 4px 12px;
