@@ -91,6 +91,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `e2e-remote/`, `playwright.remote.config.ts`, and `scripts/run-e2e-remote.sh`: a separate, non-destructive test-station smoke runner. It requires ignored local credentials, accepts only the dedicated test hostname/account/channel, blocks every other browser origin, and never invokes reset, seed, Prisma cleanup, or direct database writes.
 - `prisma/schema.prisma` and `prisma/migrations/`: the current database model and its immutable, ordered migration history.
 - `scripts/verify-prisma-migrations.sh`: guarded empty-database apply, status, schema-diff, and migration-history verification for local work and CI.
+- `scripts/self-update.sh`: settings-panel self-update (clone → install → build → `prisma migrate deploy` → rsync excluding `.git`/`.env`/`storage`/`AGENTS.md` → PM2 restart). On some servers/networks git's HTTP/2 to github.com is broken: the response is mangled into a bogus 401 auth challenge and the probe fails with exit 128 ("could not read Username"/"expected flush after ref listing") even for public repositories, while curl to the same hosts works. When touching the git commands in this script, force `-c http.version=HTTP/1.1`; the codeload tarball fallback remains the safety net when the git channel is unusable.
 - `public/sw.js`: service worker cache versioning.
 
 ## Music Player State Ownership
