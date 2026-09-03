@@ -107,22 +107,50 @@ clone_repo() {
     max_attempts=3
   fi
 
-  log_step 8 "检查 GitHub 连接"
-  git ls-remote --exit-code --heads "$REPO_URL" "$BRANCH" >>"$LOG_PATH" 2>&1
+  case "$REPO_URL" in
+    https://github.com/*)
+      # 服务器全局 git 配置（过期令牌、url.insteadOf 重写、凭据助手）会把公开仓库的
+      # 匿名 HTTPS 访问拦成 401；对 GitHub 公开地址清空全局配置并禁止交互式询问。
+      export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+      ;;
+  esac
 
-  while [ "$attempt" -le "$max_attempts" ]; do
-    log_step 12 "下载最新代码（第 ${attempt}/${max_attempts} 次）"
-    if git clone --depth 1 --single-branch --branch "$BRANCH" "$REPO_URL" "$RELEASE_DIR" >>"$LOG_PATH" 2>&1; then
-      return 0
-    fi
-    if [ "$attempt" -lt "$max_attempts" ]; then
-      printf '[%s] 下载失败，5 秒后重试\n' "$(date -Iseconds)" >>"$LOG_PATH"
-      rm -rf "$RELEASE_DIR"
-      sleep 5
-    fi
-    attempt=$((attempt + 1))
-  done
-  return 1
+  log_step 8 "检查 GitHub 连接"
+  if git ls-remote --exit-code --heads "$REPO_URL" "$BRANCH" >>"$LOG_PATH" 2>&1; then
+    while [ "$attempt" -le "$max_attempts" ]; do
+      log_step 12 "下载最新代码（第 ${attempt}/${max_attempts} 次）"
+      if git clone --depth 1 --single-branch --branch "$BRANCH" "$REPO_URL" "$RELEASE_DIR" >>"$LOG_PATH" 2>&1; then
+        return 0
+      fi
+      if [ "$attempt" -lt "$max_attempts" ]; then
+        printf '[%s] 下载失败，5 秒后重试\n' "$(date -Iseconds)" >>"$LOG_PATH"
+        rm -rf "$RELEASE_DIR"
+        sleep 5
+      fi
+      attempt=$((attempt + 1))
+    done
+  fi
+
+  # git 通道不可用（401/网络拦截）时回退到 codeload 压缩包：与版本检查使用的
+  # api.github.com 同族， git 协议被中间设备干扰时通常仍可达。
+  download_tarball
+}
+
+download_tarball() {
+  local repo_path="${REPO_URL#https://github.com/}"
+  repo_path="${repo_path%.git}"
+  if [ "$repo_path" = "$REPO_URL" ] || ! [[ "$repo_path" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    printf '[%s] 仓库地址不是 GitHub HTTPS 形式，无法使用压缩包回退：%s\n' "$(date -Iseconds)" "$REPO_URL" >>"$LOG_PATH"
+    return 1
+  fi
+  log_step 12 "git 通道不可用，改用压缩包下载最新代码"
+  rm -rf "$RELEASE_DIR"
+  local tarball="$TMP_DIR/repo.tar.gz"
+  if ! curl -fsSL --retry 3 --retry-delay 5 -o "$tarball" "https://codeload.github.com/${repo_path}/tar.gz/refs/heads/${BRANCH}" >>"$LOG_PATH" 2>&1; then
+    return 1
+  fi
+  mkdir -p "$RELEASE_DIR"
+  tar -xzf "$tarball" -C "$RELEASE_DIR" --strip-components=1 >>"$LOG_PATH" 2>&1
 }
 
 trap 'code=$?; printf "[%s] 更新失败：%s，退出码 %s\n" "$(date -Iseconds)" "$CURRENT_STEP" "$code" >>"$LOG_PATH"; write_status "failed" 100 "更新失败：${CURRENT_STEP}（退出码 ${code}）"' ERR
@@ -145,6 +173,8 @@ require_command git
 require_command rsync
 require_command npm
 require_command node
+require_command curl
+require_command tar
 
 case "$RESTART_MODE" in
   pm2)
