@@ -936,11 +936,20 @@ const RELEASE_1_14_3_NOTES = [
   "圣经书房顶栏新增分享按钮：可把当前打开的阅读窗格发送到所选频道，聊天室出现“打开的圣经”卡片，显示各窗格经卷章节，成员点击即可按相同布局一起阅读。微信中继通知单独归为“读书邀请”一类（可在中继设置里自定义措辞），默认不出现经卷信息。"
 ] as const
 
+const RELEASE_1_14_4_NOTES = [
+  "修复设置面板自动更新在部分服务器上失败的问题：服务器全局 git 配置（过期令牌、URL 重写）或网络干扰会让公开仓库的匿名访问被误认为需要登录，更新在“检查 GitHub 连接”一步失败；现在更新时会忽略这些干扰配置，git 通道不可用时会自动改用压缩包下载。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.15.0",
+    date: "2026-09-03",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.14.4",
     date: "2026-09-03",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_14_4_NOTES
   },
   {
     version: "1.14.3",
