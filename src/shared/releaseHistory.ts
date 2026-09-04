@@ -940,11 +940,20 @@ const RELEASE_1_14_4_NOTES = [
   "修复设置面板自动更新在部分服务器上失败的问题：服务器全局 git 配置（过期令牌、URL 重写）或网络干扰会让公开仓库的匿名访问被误认为需要登录，更新在“检查 GitHub 连接”一步失败；现在更新时会忽略这些干扰配置，git 通道不可用时会自动改用压缩包下载。"
 ] as const
 
+const RELEASE_1_15_0_NOTES = [
+  "圣经书房新增当代译本修订版（CCB）：每个阅读窗格的工具栏可独立切换「和合本 / 当代译本」，支持两个版本并排对照阅读；全文检索跟随当前窗格所用译本，窗格版本随账号同步并在分享“打开的圣经”时保留。当代译本为 Biblica 开放资源（CC BY-SA 4.0），书末附有版权署名。聊天消息中的经文展开、讲道台经文、经文收藏与 AI 主题检索仍固定使用和合本。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.16.0",
+    date: "2026-09-04",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.15.0",
     date: "2026-09-03",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_15_0_NOTES
   },
   {
     version: "1.14.4",
