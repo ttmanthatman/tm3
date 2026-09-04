@@ -127,6 +127,9 @@ let componentMounted = false;
 let stateRestored = false;
 let swipeStart: { x: number; y: number } | null = null;
 let catalogPreloadTimer = 0;
+let serverSyncTimer = 0;
+let pendingWorkspaceSyncJson = "";
+let lastSyncedWorkspaceJson = "";
 
 function clampBibleFontSize(value: number) {
   if (!Number.isFinite(value)) return defaultBibleFontSize;
@@ -324,10 +327,6 @@ function persistWorkspaceState() {
   }
   scheduleWorkspaceServerSync(state);
 }
-
-let serverSyncTimer = 0;
-let pendingWorkspaceSyncJson = "";
-let lastSyncedWorkspaceJson = "";
 
 // 账号级保存：防抖 PATCH 到 /api/me/preferences，失败保留待下次重试
 function scheduleWorkspaceServerSync(state: BibleWorkspaceState) {
