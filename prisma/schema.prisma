@@ -120,6 +120,8 @@ model Account {
   musicPlaybackState      MusicPlaybackState?
   friendPlaybacks         FriendPlayback[]
   whyReads                WhyTopicRead[]
+  booksCreated            Book[]
+  bookProgress            BookProgress[]
 
   @@map("accounts")
 }
@@ -734,6 +736,37 @@ model EngineAction {
   event          EngineEvent? @relation(fields: [eventId], references: [id], onDelete: SetNull)
 
   @@map("engine_actions")
+}
+
+model Book {
+  id          Int      @id @default(autoincrement())
+  title       String   @db.VarChar(200)
+  author      String   @default("") @db.VarChar(120)
+  language    String   @default("") @db.VarChar(20)
+  fileName    String   @unique @map("file_name") @db.VarChar(64)
+  coverName   String?  @map("cover_name") @db.VarChar(64)
+  fileSize    Int      @map("file_size")
+  createdById Int?     @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdBy   Account? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  progress    BookProgress[]
+
+  @@map("books")
+}
+
+model BookProgress {
+  id        Int      @id @default(autoincrement())
+  bookId    Int      @map("book_id")
+  accountId Int      @map("account_id")
+  fraction  Float
+  updatedAt DateTime @updatedAt @map("updated_at")
+  book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([bookId, accountId])
+  @@index([accountId, updatedAt])
+  @@map("book_progress")
 }
 
 model AuditLog {

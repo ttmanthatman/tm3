@@ -22,6 +22,7 @@ import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleRoutes } from "./routes/bible.js";
+import { registerBooksRoutes } from "./routes/books.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -139,6 +140,7 @@ const DIST_CLIENT = path.join(ROOT, "dist/client");
 const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
 const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
 const MUSIC_SCORE_DIR = path.join(STORAGE_ROOT, "music-scores");
+const BOOKS_DIR = path.join(STORAGE_ROOT, "books");
 const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
 const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
 const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");
@@ -5246,6 +5248,16 @@ registerBibleRoutes(app, {
   emitMessage,
   sendMessagePush,
   hydrateMessage
+});
+
+registerBooksRoutes(app, {
+  prisma,
+  booksDir: BOOKS_DIR,
+  requireAuth,
+  requireMediaAuth,
+  requireAdmin,
+  authFor: (request) => (request as AuthedRequest).auth,
+  imageWebpEffort: IMAGE_WEBP_EFFORT
 });
 
 const friendFeedService = createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") });
