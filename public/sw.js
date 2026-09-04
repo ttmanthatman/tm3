@@ -68,7 +68,8 @@ function isCacheableContent(url) {
     || /^\/api\/music\/tracks\/\d+\/(stream|score\/)/.test(url.pathname)
     || /^\/api\/files\/\d+/.test(url.pathname)
     || /^\/api\/channels\/\d+\/pinned\/files\//.test(url.pathname)
-    || /^\/api\/bible\/(lookup|chapter|catalog|search)$/.test(url.pathname);
+    || /^\/api\/bible\/(lookup|chapter|catalog|search)$/.test(url.pathname)
+    || /^\/api\/books\/\d+\/(file|cover)$/.test(url.pathname);
 }
 
 async function updateContentCache(request, cache, key, cached) {

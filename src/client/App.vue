@@ -58,7 +58,8 @@ import {
   Users,
   Vibrate,
   WandSparkles,
-  X
+  X,
+  Library
 } from "lucide-vue-next";
 import type {
   AccountDTO,
@@ -237,11 +238,13 @@ const AdminResourceManager = defineAsyncComponent(() => import("./components/Adm
 const PdfViewer = defineAsyncComponent(() => import("./components/PdfViewer.vue"));
 const PdfScoreInline = defineAsyncComponent(() => import("./components/PdfScoreInline.vue"));
 const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWorkspace.vue"));
+const BookWorkspace = defineAsyncComponent(() => import("./components/BookWorkspace.vue"));
 const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicLyricsHeader.vue"));
 const MusicManager = defineAsyncComponent(() => import("./features/music/MusicManager.vue"));
 const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
+const AdminBooksPage = defineAsyncComponent(() => import("./features/admin/AdminBooksPage.vue"));
 const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/AdminReceptionPage.vue"));
 const WeChatRelayPanel = defineAsyncComponent(() => import("./features/admin/WeChatRelayPanel.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
@@ -324,6 +327,7 @@ const {
   refreshPresenterStatus: refreshSermonPresenterStatus
 } = useSermon({ getSocket: () => store.socket });
 const sermonWorkspaceOpen = ref(false);
+const bookWorkspaceOpen = ref(false);
 const sermonEntryOpen = ref(false);
 // 首次打开后才挂载讲道台 chunk（懒加载），之后保持挂载以保留滑入滑出过渡。
 const sermonWorkspaceMounted = ref(false);
@@ -470,6 +474,7 @@ type AdminPage =
   | "backups"
   | "messages"
   | "resources"
+  | "books"
   | "wechatRelay"
   | "demo"
   | "release";
@@ -1379,9 +1384,9 @@ watch(
 );
 
 watch(
-  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, bibleOpen.value || sermonWorkspaceOpen.value] as const,
+  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value] as const,
   () => {
-    if (bibleOpen.value || sermonWorkspaceOpen.value) {
+    if (bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value) {
       messageEffectObserver?.disconnect();
       stopRainEffect();
       stopDripPhysics(true);
@@ -1863,6 +1868,7 @@ const adminPageMeta: Record<AdminPage, { title: string; description: string }> =
   backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
   messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
   resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
+  books: { title: "图书", description: "上传 EPUB 图书，管理图书室藏书" },
   wechatRelay: { title: "微信通知转发", description: "连接 NAS 微信、选择来源频道并测试发送" },
   demo: { title: "演示模式", description: "从 GitHub 载入或复位标准演示数据" },
   release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
@@ -4541,12 +4547,25 @@ function openBibleWorkspace() {
   showChannels.value = false;
   showMembers.value = false;
   sermonWorkspaceOpen.value = false;
+  bookWorkspaceOpen.value = false;
   bibleTargetChannelId.value = currentChannel.value?.id || null;
   bibleOpen.value = true;
 }
 
 function closeBibleWorkspace() {
   bibleOpen.value = false;
+}
+
+function openBookWorkspace() {
+  showChannels.value = false;
+  showMembers.value = false;
+  bibleOpen.value = false;
+  sermonWorkspaceOpen.value = false;
+  bookWorkspaceOpen.value = true;
+}
+
+function closeBookWorkspace() {
+  bookWorkspaceOpen.value = false;
 }
 
 // 打开聊天室里分享的“打开的圣经”：各自在本地按相同窗格布局一起阅读
@@ -4563,7 +4582,7 @@ async function openBibleSessionFromMessage(message: MessageDTO) {
 }
 
 // 圣经负一屏与讲道台负一屏共用同一套“打开时暂停聊天区动效、关闭时恢复”的生命周期。
-watch(() => bibleOpen.value || sermonWorkspaceOpen.value, async (open) => {
+watch(() => bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value, async (open) => {
   if (open) {
     if (parallaxFrame) window.cancelAnimationFrame(parallaxFrame);
     parallaxFrame = 0;
@@ -9898,6 +9917,8 @@ async function toggleVirtual(character: any) {
       @reading-change="handleBibleReadingChange"
     />
 
+    <BookWorkspace v-if="bookWorkspaceOpen" @close="closeBookWorkspace" />
+
     <SermonWorkspace
       v-if="sermonWorkspaceMounted"
       :open="sermonWorkspaceOpen"
@@ -9910,7 +9931,7 @@ async function toggleVirtual(character: any) {
       @own="openOwnSermonWorkspace"
     />
 
-    <aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
+    <aside v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
         <button v-if="!store.account?.isGuest" class="icon-btn" @click="showReceptionManager = true" aria-label="会客厅" title="会客厅"><DoorOpen :size="20" /></button>
@@ -9995,7 +10016,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </aside>
 
-    <section v-if="!bibleOpen && !sermonWorkspaceOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
+    <section v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -10095,6 +10116,7 @@ async function toggleVirtual(character: any) {
           <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
         </div>
         <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
+        <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
         <SermonHub v-if="!showingFavoriteSurface" />
         <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
           <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer()" aria-label="打开音乐播放器">
@@ -11131,7 +11153,7 @@ async function toggleVirtual(character: any) {
       </footer>
     </section>
 
-    <aside v-if="!bibleOpen && !sermonWorkspaceOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
+    <aside v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>
@@ -11930,6 +11952,7 @@ async function toggleVirtual(character: any) {
               <button class="admin-entry-row" @click="openAdminPage('users')"><span class="admin-entry-icon"><Users :size="20" /></span><span><b>用户与权限</b><small>账号、头像、密码和管理权限</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('reception')"><span class="admin-entry-icon"><DoorOpen :size="20" /></span><span><b>会客厅</b><small>创建者、期限、人数和用量</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('books')"><span class="admin-entry-icon"><Library :size="20" /></span><span><b>图书</b><small>上传 EPUB 图书，管理图书室藏书</small></span><ChevronRight :size="19" /></button>
             </div>
             <div class="admin-hub-group">
               <label>通知与连接</label>
@@ -12563,6 +12586,8 @@ async function toggleVirtual(character: any) {
               @delete-all="deleteAllAdminAttachments"
             />
           </section>
+
+          <AdminBooksPage v-else-if="adminPage === 'books'" @message="adminMsg = $event" />
 
           <WeChatRelayPanel v-else-if="adminPage === 'wechatRelay'" />
 

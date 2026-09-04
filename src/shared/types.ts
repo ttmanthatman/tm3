@@ -335,6 +335,22 @@ export interface MusicLyricsResourceDTO {
   uploadedByName: string | null;
 }
 
+export interface BookDTO {
+  id: number;
+  title: string;
+  author: string;
+  language: string;
+  fileName: string;
+  coverName: string | null;
+  fileSize: number;
+  createdAt: string;
+  progress: number | null;
+}
+
+export interface BookSaveProgressDTO {
+  fraction: number;
+}
+
 export interface MusicScoreResourceDTO {
   id: number;
   title: string;
