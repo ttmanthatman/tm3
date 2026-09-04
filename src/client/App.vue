@@ -76,6 +76,7 @@ import type {
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleReaderPresenceDTO,
+  BookReaderPresenceDTO,
   BibleOutputFormat,
   BibleReferenceLabelMode,
   BibleCombinedPassageMode,
@@ -309,6 +310,7 @@ const showChatToolsMenu = ref(false);
 const musicTracks = ref<MusicTrackDTO[]>([]);
 const musicListeners = ref<MusicListenerDTO[]>([]);
 const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
+const bookReaders = ref<BookReaderPresenceDTO[]>([]);
 const friendListeners = ref<FriendListenerDTO[]>([]);
 const friendListeningProgram = ref<FriendProgramDTO | null>(null);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
@@ -673,6 +675,7 @@ type BibleWorkspaceHandle = {
 };
 const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
 const bibleReadingActivity = ref<{ active: boolean; bookName: string | null }>({ active: false, bookName: null });
+const bookReadingActivity = ref<{ active: boolean; bookTitle: string | null }>({ active: false, bookTitle: null });
 let bibleSwipeStart: { x: number; y: number } | null = null;
 const bibleSettingsMsg = ref("");
 const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
@@ -1609,6 +1612,7 @@ function toggleFriendPrograms() {
 }
 const activityStatusItems = computed(() => activityTickerItems(
   bibleReaders.value,
+  bookReaders.value,
   musicListeners.value,
   friendListeners.value,
   Object.values(store.typing)
@@ -4611,6 +4615,11 @@ function handleBibleReadingChange(activity: { active: boolean; bookName: string 
   publishBibleReading();
 }
 
+function handleBookReadingChange(activity: { active: boolean; bookTitle: string | null }) {
+  bookReadingActivity.value = activity;
+  publishBookReading();
+}
+
 function handleBibleSwipeStart(event: TouchEvent) {
   if (bibleOpen.value || sermonWorkspaceOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
   const touch = event.touches[0];
@@ -7264,6 +7273,17 @@ function handleMusicListeners(listeners: MusicListenerDTO[]) {
     : [];
 }
 
+function handleBookReaders(readers: BookReaderPresenceDTO[]) {
+  bookReaders.value = Array.isArray(readers)
+    ? readers.filter(
+        (reader) =>
+          Number.isFinite(reader?.accountId) &&
+          typeof reader?.displayName === "string" &&
+          typeof reader?.bookTitle === "string"
+      )
+    : [];
+}
+
 function handleBibleReaders(readers: BibleReaderPresenceDTO[]) {
   bibleReaders.value = Array.isArray(readers)
     ? readers.filter(
@@ -7287,8 +7307,16 @@ function publishBibleReading() {
   store.socket?.emit("bible:reading", bibleReadingActivity.value);
 }
 
+function publishBookReading() {
+  store.socket?.emit("book:reading", bookReadingActivity.value);
+}
+
 function stopPublishingBibleReading() {
   store.socket?.emit("bible:reading", { active: false, bookName: null });
+}
+
+function stopPublishingBookReading() {
+  store.socket?.emit("book:reading", { active: false, bookTitle: null });
 }
 
 function handleFriendListeners(listeners: FriendListenerDTO[]) {
@@ -7318,6 +7346,7 @@ function stopPublishingFriendListening() {
 function publishPresenceActivities() {
   publishMusicListening();
   publishBibleReading();
+  publishBookReading();
   publishFriendListening();
 }
 
@@ -7341,6 +7370,8 @@ function attachMusicSocket() {
   store.socket?.on("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.on("bible:readers", handleBibleReaders);
+  store.socket?.off("book:readers", handleBookReaders);
+  store.socket?.on("book:readers", handleBookReaders);
   store.socket?.off("friend:listeners", handleFriendListeners);
   store.socket?.on("friend:listeners", handleFriendListeners);
   store.socket?.off("connect", handleActivitySocketConnect);
@@ -9917,7 +9948,7 @@ async function toggleVirtual(character: any) {
       @reading-change="handleBibleReadingChange"
     />
 
-    <BookWorkspace v-if="bookWorkspaceOpen" @close="closeBookWorkspace" />
+    <BookWorkspace v-if="bookWorkspaceOpen" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
 
     <SermonWorkspace
       v-if="sermonWorkspaceMounted"

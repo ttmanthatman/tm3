@@ -4,7 +4,7 @@
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
 // 用户点开某本书才通过 HTTP Range 流式下载该本（只拉取读到的章节）。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ListTree, LoaderCircle, Minus, Plus, X } from "lucide-vue-next";
+import { ListTree, LoaderCircle, MessagesSquare, Minus, Plus, X } from "lucide-vue-next";
 import type { BookDTO } from "@shared/types";
 import { api, getToken } from "../api";
 import {
@@ -21,7 +21,10 @@ import {
   type ReaderStyle
 } from "../books/reader";
 
-const emit = defineEmits<{ (e: "close"): void }>();
+const emit = defineEmits<{
+  (e: "close"): void;
+  (e: "reading-change", activity: { active: boolean; bookTitle: string | null }): void;
+}>();
 
 type FoliateModule = unknown;
 
@@ -122,6 +125,7 @@ function backToShelf() {
   closeBookView();
   readerOpen.value = false;
   activeBook.value = null;
+  emit("reading-change", { active: false, bookTitle: null });
   void loadShelf();
 }
 
@@ -151,6 +155,7 @@ async function openBook(book: BookDTO) {
   openingBook.value = true;
   readerError.value = "";
   activeBook.value = book;
+  emit("reading-change", { active: true, bookTitle: book.title });
   try {
     await nextTick(); // 等阅读器容器渲染（openingBook 驱动 v-if）
     const module = await (foliatePromise ??= import("foliate-js/view.js"));
@@ -212,6 +217,7 @@ async function openBook(book: BookDTO) {
     readerError.value = error instanceof Error ? error.message : "图书打开失败";
     closeBookView();
     activeBook.value = null;
+    emit("reading-change", { active: false, bookTitle: null });
   } finally {
     openingBook.value = false;
   }
@@ -333,6 +339,61 @@ function onStageWheel(event: WheelEvent) {
   (view as unknown as { scrollBy?(dx: number, dy: number): void })?.scrollBy?.(event.deltaX, event.deltaY);
 }
 
+// ---- 滚动版式跨节：原生滚动到本节底部/顶部就停住，这里接管边界继续翻节 ----
+let sectionChaining = false;
+let chainTouchY: number | null = null;
+
+function chainSection(direction: 1 | -1) {
+  if (!view || sectionChaining) return;
+  const target = view.renderer;
+  const jump = direction === 1 ? target.nextSection : target.prevSection;
+  if (!jump) return;
+  sectionChaining = true;
+  Promise.resolve(jump.call(target))
+    .catch(() => { /* 翻节失败保持原地 */ })
+    .finally(() => { sectionChaining = false; });
+}
+
+function scrolledRenderer() {
+  if (!view || style.value.flow !== "scrolled") return null;
+  return view.renderer;
+}
+
+function onReaderWheelCapture(event: WheelEvent) {
+  const renderer = scrolledRenderer();
+  if (!renderer) return;
+  const nearBottom = renderer.viewSize - renderer.end <= 8;
+  const nearTop = renderer.start <= 8;
+  if (event.deltaY > 0 && nearBottom && !sectionChaining) {
+    event.preventDefault();
+    chainSection(1);
+  } else if (event.deltaY < 0 && nearTop && !sectionChaining) {
+    event.preventDefault();
+    chainSection(-1);
+  }
+}
+
+function onReaderTouchStartCapture(event: TouchEvent) {
+  chainTouchY = event.touches[0]?.clientY ?? null;
+}
+
+function onReaderTouchMoveCapture(event: TouchEvent) {
+  const renderer = scrolledRenderer();
+  if (!renderer || chainTouchY == null || sectionChaining) return;
+  const y = event.touches[0]?.clientY ?? chainTouchY;
+  const dy = chainTouchY - y;
+  chainTouchY = y;
+  const nearBottom = renderer.viewSize - renderer.end <= 8;
+  const nearTop = renderer.start <= 8;
+  if (dy > 8 && nearBottom) {
+    event.preventDefault();
+    chainSection(1);
+  } else if (dy < -8 && nearTop) {
+    event.preventDefault();
+    chainSection(-1);
+  }
+}
+
 let swipeStart: { x: number; y: number } | null = null;
 function onSwipeStart(event: TouchEvent) {
   const touch = event.changedTouches[0];
@@ -414,7 +475,14 @@ defineExpose({ reload: loadShelf });
     </div>
 
     <!-- 阅读器 -->
-    <div v-if="readerOpen || openingBook" class="book-reader" :data-theme="style.theme">
+    <div
+      v-if="readerOpen || openingBook"
+      class="book-reader"
+      :data-theme="style.theme"
+      @wheel.capture="onReaderWheelCapture"
+      @touchstart.capture.passive="onReaderTouchStartCapture"
+      @touchmove.capture="onReaderTouchMoveCapture"
+    >
       <div ref="bookStage" class="book-stage"></div>
       <div
         v-if="style.flow === 'paginated'"
@@ -435,6 +503,7 @@ defineExpose({ reload: loadShelf });
         <div class="book-bar-group">
           <button class="book-bar-btn" type="button" :aria-label="'Aa 阅读设置'" @click="settingsOpen = !settingsOpen">Aa</button>
           <button class="book-bar-btn" type="button" :aria-label="'目录'" @click="tocOpen = true"><ListTree :size="17" /></button>
+          <button class="book-bar-btn" type="button" @click="emitClose"><MessagesSquare :size="17" /> 聊天室</button>
         </div>
       </header>
 
@@ -587,6 +656,7 @@ defineExpose({ reload: loadShelf });
   cursor: default;
 }
 
+/* 阅读器控制条与书架顶栏同一套暖纸视觉：同底色、同分隔线、同按钮字色 */
 .book-bar {
   position: absolute;
   left: 0;
@@ -595,22 +665,25 @@ defineExpose({ reload: loadShelf });
   display: flex;
   align-items: center;
   gap: 8px;
-  background: rgba(250, 250, 250, .92);
+  background: rgba(250, 247, 240, .96);
   backdrop-filter: blur(14px);
   transition: transform .2s ease, opacity .2s ease;
 }
-.book-reader[data-theme="dark"] .book-bar { background: rgba(28, 28, 30, .92); }
-.book-top { top: 0; padding: calc(8px + var(--safe-top, 0px)) 12px 8px; }
-.book-bottom { bottom: 0; padding: 8px 12px calc(8px + var(--safe-bottom, 0px)); }
+.book-top { top: 0; padding: calc(8px + var(--safe-top, 0px)) 12px 8px; border-bottom: 1px solid rgba(90, 72, 50, .14); }
+.book-bottom { bottom: 0; padding: 8px 12px calc(8px + var(--safe-bottom, 0px)); border-top: 1px solid rgba(90, 72, 50, .14); }
+.book-reader[data-theme="dark"] .book-bar { background: rgba(38, 33, 28, .94); }
+.book-reader[data-theme="dark"] .book-top { border-bottom-color: rgba(232, 221, 201, .16); }
+.book-reader[data-theme="dark"] .book-bottom { border-top-color: rgba(232, 221, 201, .16); }
 .book-bar.bar-hidden { opacity: 0; pointer-events: none; }
 .book-top.bar-hidden { transform: translateY(-100%); }
 .book-bottom.bar-hidden { transform: translateY(100%); }
 .book-bar-btn {
   border: 0;
   background: none;
-  color: #2f7de1;
+  color: #6d573d;
   font: inherit;
   font-size: 15px;
+  font-weight: 700;
   padding: 6px 8px;
   border-radius: 8px;
   cursor: pointer;
@@ -619,16 +692,18 @@ defineExpose({ reload: loadShelf });
   align-items: center;
   gap: 4px;
 }
-.book-reader[data-theme="dark"] .book-bar-btn { color: #5fa8ff; }
-.book-bar-btn.bordered { border: 1px solid rgba(0, 0, 0, .14); }
-.book-reader[data-theme="dark"] .book-bar-btn.bordered { border-color: rgba(255, 255, 255, .16); }
-.book-bar-btn.active { background: #2f7de1; color: #fff; border-color: transparent; }
-.book-reader[data-theme="dark"] .book-bar-btn.active { background: #0a84ff; }
+.book-reader[data-theme="dark"] .book-bar-btn { color: #d9cbb6; }
+.book-bar-btn.bordered { border: 1px solid rgba(90, 72, 50, .25); font-weight: 400; }
+.book-reader[data-theme="dark"] .book-bar-btn.bordered { border-color: rgba(232, 221, 201, .22); }
+.book-bar-btn.active { background: #6d573d; color: #fff; border-color: transparent; }
+.book-reader[data-theme="dark"] .book-bar-btn.active { background: #e8ddc9; color: #26211c; }
 .book-reader-title { flex: 1; min-width: 0; text-align: center; }
 .book-reader-title strong { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.book-reader-title small { display: block; font-size: 11.5px; color: #8a8a8e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-reader-title small { display: block; font-size: 11.5px; color: #97836a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-reader[data-theme="dark"] .book-reader-title small { color: #a89a86; }
 .book-bar-group { display: flex; align-items: center; gap: 4px; }
-.book-progress-label { font-size: 12px; color: #8a8a8e; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.book-progress-label { font-size: 12px; color: #97836a; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
+.book-reader[data-theme="dark"] .book-progress-label { color: #a89a86; }
 .book-bottom input { flex: 1; }
 
 .book-settings {
@@ -636,7 +711,7 @@ defineExpose({ reload: loadShelf });
   right: 12px;
   top: calc(54px + var(--safe-top, 0px));
   z-index: 40;
-  background: rgba(250, 250, 250, .97);
+  background: rgba(250, 247, 240, .97);
   backdrop-filter: blur(14px);
   border-radius: 12px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, .16);
@@ -646,9 +721,10 @@ defineExpose({ reload: loadShelf });
   gap: 10px;
   min-width: 232px;
 }
-.book-reader[data-theme="dark"] .book-settings { background: rgba(28, 28, 30, .97); }
+.book-reader[data-theme="dark"] .book-settings { background: rgba(38, 33, 28, .97); }
 .book-settings-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-.book-settings-row > span:first-child { width: 34px; color: #6a6a6e; }
+.book-settings-row > span:first-child { width: 34px; color: #97836a; }
+.book-reader[data-theme="dark"] .book-settings-row > span:first-child { color: #a89a86; }
 .book-font-pct { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
 
 .book-toc {
@@ -663,7 +739,7 @@ defineExpose({ reload: loadShelf });
   display: flex;
   flex-direction: column;
 }
-.book-reader[data-theme="dark"] .book-toc { background: #1c1c1e; color: #e5e5ea; }
+.book-reader[data-theme="dark"] .book-toc { background: #26211c; color: #e8ddc9; }
 .book-toc-head { padding: calc(16px + var(--safe-top, 0px)) 16px 10px; font-weight: 800; font-size: 16px; border-bottom: 1px solid rgba(0, 0, 0, .07); }
 .book-toc-list { overflow-y: auto; padding: 6px 0 calc(20px + var(--safe-bottom, 0px)); }
 .book-toc-item {

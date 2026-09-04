@@ -294,6 +294,12 @@ export interface BibleReaderPresenceDTO {
   bookName: string | null;
 }
 
+export interface BookReaderPresenceDTO {
+  accountId: number;
+  displayName: string;
+  bookTitle: string;
+}
+
 export interface MusicLyricCueDTO {
   index: number;
   startMs: number;

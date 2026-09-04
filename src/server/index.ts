@@ -60,6 +60,7 @@ import type {
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleReaderPresenceDTO,
+  BookReaderPresenceDTO,
   BibleRelatedSearchDTO,
   BibleTextSearchDTO,
   ChainPayload,
@@ -602,6 +603,7 @@ const accountSocketIds = new Map<number, Set<string>>();
 const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
 const bibleReaders = new Map<string, BibleReaderPresenceDTO & { updatedAt: number }>();
+const bookReaders = new Map<string, BookReaderPresenceDTO & { updatedAt: number }>();
 const friendListeners = new Map<string, FriendListenerDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
 let pushReady = false;
@@ -2662,6 +2664,17 @@ function broadcastBibleReaders() {
   io.emit("bible:readers", bibleReadersSnapshot());
 }
 
+function bookReadersSnapshot() {
+  return [...bookReaders.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .filter((reader, index, all) => all.findIndex((candidate) => candidate.accountId === reader.accountId) === index)
+    .map(({ updatedAt: _updatedAt, ...reader }) => reader);
+}
+
+function broadcastBookReaders() {
+  io.emit("book:readers", bookReadersSnapshot());
+}
+
 function friendListenersSnapshot() {
   return [...friendListeners.values()]
     .sort((left, right) => right.updatedAt - left.updatedAt)
@@ -2675,6 +2688,7 @@ function broadcastFriendListeners() {
 
 let musicListenerCleanupTimer: NodeJS.Timeout | undefined;
 let bibleReaderCleanupTimer: NodeJS.Timeout | undefined;
+let bookReaderCleanupTimer: NodeJS.Timeout | undefined;
 let friendListenerCleanupTimer: NodeJS.Timeout | undefined;
 let friendFeedRefreshTimer: NodeJS.Timeout | undefined;
 let stopReceptionCleanup: (() => void) | undefined;
@@ -2704,6 +2718,18 @@ function startCleanupTimers() {
     if (changed) broadcastBibleReaders();
   }, 15_000);
   bibleReaderCleanupTimer.unref();
+
+  bookReaderCleanupTimer = setInterval(() => {
+    const staleBefore = Date.now() - 45_000;
+    let changed = false;
+    for (const [socketId, reader] of bookReaders) {
+      if (reader.updatedAt >= staleBefore) continue;
+      bookReaders.delete(socketId);
+      changed = true;
+    }
+    if (changed) broadcastBookReaders();
+  }, 15_000);
+  bookReaderCleanupTimer.unref();
 
   friendListenerCleanupTimer = setInterval(() => {
     const staleBefore = Date.now() - 45_000;
@@ -7727,6 +7753,7 @@ registerMusicResourceRoutes(app, {
 app.addHook("onClose", async () => {
   if (musicListenerCleanupTimer) clearInterval(musicListenerCleanupTimer);
   if (bibleReaderCleanupTimer) clearInterval(bibleReaderCleanupTimer);
+  if (bookReaderCleanupTimer) clearInterval(bookReaderCleanupTimer);
   if (friendListenerCleanupTimer) clearInterval(friendListenerCleanupTimer);
   if (friendFeedRefreshTimer) clearTimeout(friendFeedRefreshTimer);
   stopReceptionCleanup?.();
@@ -7931,6 +7958,32 @@ io.on("connection", async (socket: Socket) => {
     broadcastBibleReaders();
   });
 
+  socket.on("book:reading", async (data: unknown) => {
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    if (currentAuth.isGuest) {
+      if (bookReaders.delete(socket.id)) broadcastBookReaders();
+      return;
+    }
+    const body = z.object({ active: z.boolean(), bookTitle: z.string().trim().min(1).max(80).nullable() }).safeParse(data);
+    if (!body.success || !body.data.active || !body.data.bookTitle) {
+      if (bookReaders.delete(socket.id)) broadcastBookReaders();
+      return;
+    }
+    const existing = bookReaders.get(socket.id);
+    if (existing?.bookTitle === body.data.bookTitle) {
+      existing.updatedAt = Date.now();
+      return;
+    }
+    bookReaders.set(socket.id, {
+      accountId: currentAuth.accountId,
+      displayName: account.displayName,
+      bookTitle: body.data.bookTitle,
+      updatedAt: Date.now()
+    });
+    broadcastBookReaders();
+  });
+
   socket.on("friend:listening", async (data: unknown) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
@@ -7965,6 +8018,7 @@ io.on("connection", async (socket: Socket) => {
     online.delete(socket.id);
     const musicListenerChanged = musicListeners.delete(socket.id);
     const bibleReaderChanged = bibleReaders.delete(socket.id);
+    const bookReaderChanged = bookReaders.delete(socket.id);
     const friendListenerChanged = friendListeners.delete(socket.id);
     const set = accountSocketIds.get(account.id);
     let isOffline = false;
@@ -7991,6 +8045,7 @@ io.on("connection", async (socket: Socket) => {
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
     if (bibleReaderChanged) broadcastBibleReaders();
+    if (bookReaderChanged) broadcastBookReaders();
     if (friendListenerChanged) broadcastFriendListeners();
   });
 });

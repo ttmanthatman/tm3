@@ -5,7 +5,7 @@ import { getToken } from "../api";
 export type ReaderThemeName = "light" | "sepia" | "dark";
 
 export const READER_THEMES: Record<ReaderThemeName, { bg: string; fg: string; link: string; scheme: string; label: string }> = {
-  light: { bg: "#ffffff", fg: "#1c1c1e", link: "#0066cc", scheme: "light", label: "白" },
+  light: { bg: "#faf7f0", fg: "#1c1c1e", link: "#0066cc", scheme: "light", label: "白" },
   sepia: { bg: "#f7f0e0", fg: "#3f3222", link: "#8b5e34", scheme: "light", label: "黄" },
   dark: { bg: "#161617", fg: "#e5e5ea", link: "#8ab4f8", scheme: "dark", label: "黑" }
 };
@@ -28,7 +28,9 @@ export function buildBookCSS(style: ReaderStyle): string {
   const t = READER_THEMES[style.theme];
   return `
     @namespace epub "http://www.idpf.org/2007/ops";
-    html { color-scheme: ${t.scheme}; background: ${t.bg} !important; font-size: ${style.fontPct}%; }
+    /* --theme-bg-color 会被 foliate 分页器的 #background 读取：它用图书自带背景绘制页边，
+       不显式覆盖的话，切到深色主题时页边会保持 EPUB 自带的白底。 */
+    html { color-scheme: ${t.scheme}; background: ${t.bg} !important; --theme-bg-color: ${t.bg}; font-size: ${style.fontPct}%; }
     body { background: ${t.bg} !important; color: ${t.fg} !important; }
     a:link { color: ${t.link} !important; }
     p, li, blockquote, dd {
@@ -83,6 +85,12 @@ type FoliateView = HTMLElement & {
     setStyles?(css: string): void;
     getContents(): { doc: Document }[];
     next(): void;
+    // 滚动版式跨节翻页：paginator 只在键盘/触摸翻页时自动跨节，原生滚动触底会停住
+    nextSection(): Promise<void>;
+    prevSection(): Promise<void>;
+    start: number;
+    end: number;
+    viewSize: number;
   };
   book: {
     metadata?: { title?: unknown; author?: unknown; language?: unknown };
