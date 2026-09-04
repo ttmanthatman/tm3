@@ -68,6 +68,33 @@ function coverHrefFromOpf(opf: string, opfDir: string): string | null {
   return null;
 }
 
+// 最后兜底：不少 EPUB 既无 cover-image 声明也无 cover 命名，只是 spine 第一页
+// 单独放了一张封面图（正文几乎无文字）。识别这种“封面页”，取其中的图片。
+async function coverHrefFromFirstPage(zip: JSZip, opf: string, opfDir: string): Promise<string | null> {
+  const spine = /<spine\b[^>]*>([\s\S]*?)<\/spine>/.exec(opf)?.[1];
+  if (!spine) return null;
+  const idref = /<itemref\b[^>]*idref="([^"]+)"/.exec(spine)?.[1];
+  if (!idref) return null;
+  const escId = idref.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const item = new RegExp(`<item\\b[^>]*id="${escId}"[^>]*>`).exec(opf)?.[0];
+  const pageHref = item ? /href="([^"]*)"/.exec(item)?.[1] : null;
+  if (!pageHref) return null;
+  const pagePath = joinEntryPath(opfDir, decodeXmlEntities(pageHref));
+  if (!safeEntryPath(pagePath)) return null;
+  const page = await zip.file(pagePath)?.async("string").catch(() => "");
+  if (!page) return null;
+  const text = page.replace(/<[^>]+>/g, "").replace(/&\w+;/g, " ").replace(/\s+/g, "").length;
+  if (text > 10) return null; // 有正文文字的页面不是封面页
+  const pageDir = pagePath.split("/").slice(0, -1).join("/");
+  const imgRef = /<img\b[^>]*src="([^"]+)"/i.exec(page)?.[1]
+    ?? /<svg:image\b[^>]*xlink:href="([^"]+)"/i.exec(page)?.[1]
+    ?? /<image\b[^>]*xlink:href="([^"]+)"/i.exec(page)?.[1];
+  if (!imgRef) return null;
+  const imgPath = joinEntryPath(pageDir, decodeXmlEntities(imgRef));
+  if (!/\.(jpe?g|png|gif|webp|avif)$/i.test(imgPath)) return null;
+  return zip.file(imgPath) ? imgPath : null;
+}
+
 function joinEntryPath(dir: string, href: string): string {
   const raw = href.split("#", 1)[0].split("?", 1)[0];
   const parts = [...(dir ? dir.split("/") : []), ...raw.split("/")];
@@ -112,7 +139,8 @@ export async function readEpubMeta(buffer: Buffer): Promise<{ meta: EpubMeta; zi
   const author = decodeXmlEntities(textOf(opf, "dc:creator"));
   const language = textOf(opf, "dc:language");
   const coverHref = coverHrefFromOpf(opf, opfDir);
-  const coverEntry = coverHref && zip.file(coverHref) ? coverHref : null;
+  const coverEntry = (coverHref && zip.file(coverHref) ? coverHref : null)
+    ?? await coverHrefFromFirstPage(zip, opf, opfDir);
 
   return {
     meta: {

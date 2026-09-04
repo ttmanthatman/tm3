@@ -14,6 +14,8 @@ export type ReaderStyle = {
   theme: ReaderThemeName;
   fontPct: number;
   spacing: number;
+  // 页边距（px）：映射到 foliate 分页器的 margin 属性，分页与滚动版式共用
+  margin: number;
   flow: "paginated" | "scrolled";
 };
 
@@ -21,6 +23,7 @@ export const DEFAULT_READER_STYLE: ReaderStyle = {
   theme: "light",
   fontPct: 100,
   spacing: 1.6,
+  margin: 48,
   flow: "paginated"
 };
 
@@ -85,9 +88,7 @@ type FoliateView = HTMLElement & {
     setStyles?(css: string): void;
     getContents(): { doc: Document }[];
     next(): void;
-    // 滚动版式跨节翻页：paginator 只在键盘/触摸翻页时自动跨节，原生滚动触底会停住
-    nextSection(): Promise<void>;
-    prevSection(): Promise<void>;
+    prev(): void;
     start: number;
     end: number;
     viewSize: number;

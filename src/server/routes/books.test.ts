@@ -157,6 +157,55 @@ test("readEpubMeta falls back to id/href based cover detection (Calibre-style ep
   assert.equal(meta2.coverEntry, "OEBPS/images/My-Cover.PNG");
 });
 
+test("readEpubMeta detects a cover from an image-only first spine page", async () => {
+  // 无 meta/properties/id/href 任何 cover 线索，仅 spine 第一页是一张图
+  const opf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:test:2</dc:identifier>
+    <dc:title>无封面声明</dc:title>
+    <dc:creator>作者</dc:creator>
+    <dc:language>zh</dc:language>
+  </metadata>
+  <manifest>
+    <item id="p0" href="pages/p0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="im0" href="images/p0.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="p0"/><itemref idref="ch1"/></spine>
+</package>`;
+  const coverPage = '<html><body><div><svg xmlns:xlink="http://www.w3.org/1999/xlink"><image xlink:href="../images/p0.png"/></svg></div></body></html>';
+  const { meta } = await readEpubMeta(await buildEpub({
+    opf,
+    extra: { "OEBPS/pages/p0.xhtml": coverPage, "OEBPS/images/p0.png": PNG }
+  }));
+  assert.equal(meta.coverEntry, "OEBPS/images/p0.png");
+});
+
+test("readEpubMeta does not treat a text-bearing first page as a cover", async () => {
+  const opf = `<?xml version="1.0"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="uid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:identifier id="uid">urn:test:3</dc:identifier>
+    <dc:title>正文首页</dc:title>
+    <dc:creator>作者</dc:creator>
+    <dc:language>zh</dc:language>
+  </metadata>
+  <manifest>
+    <item id="p0" href="pages/p0.xhtml" media-type="application/xhtml+xml"/>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="im0" href="images/p0.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="p0"/><itemref idref="ch1"/></spine>
+</package>`;
+  const textPage = '<html><body><h1>第一章</h1><p>这是有正文内容的第一页，附带一张插图。</p><img src="../images/p0.png"/></body></html>';
+  const { meta } = await readEpubMeta(await buildEpub({
+    opf,
+    extra: { "OEBPS/pages/p0.xhtml": textPage, "OEBPS/images/p0.png": PNG }
+  }));
+  assert.equal(meta.coverEntry, null);
+});
+
 test("upload generates a title cover when the epub has no cover image", async (t) => {
   const { app, dir } = await createHarness({ admin: true });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));

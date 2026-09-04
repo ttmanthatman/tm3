@@ -179,11 +179,13 @@ async function openBook(book: BookDTO) {
     });
 
     element.renderer.setAttribute("flow", style.value.flow);
+    element.renderer.setAttribute("margin", String(style.value.margin));
     element.renderer.setStyles?.(buildBookCSS(style.value));
 
     const restoreTarget = nudgeFromSectionBoundaries(element.getSectionFractions(), cachedProgress(book));
     relocateHandler = (event) => onRelocate(event as CustomEvent<{ index: number; fraction: number; range: Range }>);
     element.addEventListener("relocate", relocateHandler);
+    element.addEventListener("load", onViewLoad);
 
     const metadata = element.book?.metadata ?? {};
     activeBookTitle.value = formatLang(metadata.title) || book.title;
@@ -211,6 +213,9 @@ async function openBook(book: BookDTO) {
     } else {
       element.renderer.next(); // foliate 官方 demo 的初始化手法
     }
+    chromeVisible.value = true;
+    settingsOpen.value = false;
+    tocOpen.value = false;
     readerOpen.value = true;
   } catch (error) {
     console.error(error);
@@ -312,6 +317,14 @@ function setFlow(flow: ReaderStyle["flow"]) {
   style.value = { ...style.value, flow };
   view?.renderer.setAttribute("flow", flow);
   persistStyle();
+  // 滚动版式进入沉浸阅读：自动隐藏控制栏（之后向下滚动隐藏、向上滚动或点按中部显示）；
+  // 切回分页则恢复显示，保持可发现性
+  if (flow === "scrolled") {
+    chromeVisible.value = false;
+    settingsOpen.value = false;
+  } else {
+    chromeVisible.value = true;
+  }
 }
 
 function stepFont(delta: number) {
@@ -320,95 +333,149 @@ function stepFont(delta: number) {
   applyStyle();
 }
 
-// 点按分区：左/右翻页，中间显示/隐藏控制栏
-function onStageTap(event: MouseEvent) {
+function stepSpacing(delta: number) {
+  const spacing = Math.round(Math.max(1.2, Math.min(2.4, style.value.spacing + delta)) * 10) / 10;
+  style.value = { ...style.value, spacing };
+  applyStyle();
+}
+
+function stepMargin(delta: number) {
+  const margin = Math.max(16, Math.min(96, style.value.margin + delta));
+  style.value = { ...style.value, margin };
+  persistStyle();
+  // margin 是 foliate 分页器属性（不是注入 CSS），改动会触发其重排
+  view?.renderer.setAttribute("margin", String(margin));
+}
+
+// ---- 内容区交互 ----
+// iframe 内的 wheel/touch/click 事件不会冒泡到父文档，外层覆盖层或 capture 监听都收不到；
+// 因此所有内容区交互都挂在章节文档上（foliate-view 的 load 事件逐节派发）。
+// 链接点击交给 foliate 自带的 link 处理（内部跳转/外链打开），这里只处理空白区点按。
+
+function isLinkClick(event: MouseEvent): boolean {
+  const target = event.target as Element | null;
+  return !!target?.closest?.("a[href]");
+}
+
+function hasTextSelection(doc: Document): boolean {
+  const selection = doc.getSelection?.();
+  return !!selection && selection.rangeCount > 0 && !selection.isCollapsed;
+}
+
+function toggleChrome() {
+  chromeVisible.value = !chromeVisible.value;
+  if (!chromeVisible.value) settingsOpen.value = false;
+}
+
+function pageBy(direction: 1 | -1) {
+  const target = view as unknown as { goLeft?(): void; goRight?(): void } | null;
+  if (!target) return;
+  if (direction > 0) target.goRight?.();
+  else target.goLeft?.();
+}
+
+// 点按分区：分页时左右翻页、中间显示/隐藏控制栏；滚动时点按切换控制栏
+function onDocClick(doc: Document, event: MouseEvent) {
+  if (!view || openingBook.value) return;
+  if (isLinkClick(event)) return;
+  if (hasTextSelection(doc)) return; // 选中文字后不翻页
+  const width = doc.defaultView?.innerWidth ?? 1;
+  const ratio = event.clientX / width;
+  if (style.value.flow === "paginated") {
+    if (ratio < 0.3) pageBy(-1);
+    else if (ratio > 0.7) pageBy(1);
+    else toggleChrome();
+  } else {
+    toggleChrome();
+  }
+}
+
+// 滚动版式跨节：原生滚动到本节底部/顶部就停住，越过边界时接管翻节。
+// renderer.next()/prev() 自带锁定与节内滚动处理，到节尾再调用即翻入下一节。
+function chainScrolledSection(event: { preventDefault(): void }, direction: 1 | -1) {
+  if (!view) return;
+  event.preventDefault();
+  if (direction > 0) void view.renderer.next();
+  else void view.renderer.prev();
+}
+
+function onDocWheel(event: WheelEvent) {
+  if (!view) return;
+  const renderer = view.renderer;
+  if (style.value.flow === "scrolled") {
+    // 沉浸阅读：向下滚隐藏控制栏、向上滚显示
+    if (event.deltaY > 4 && chromeVisible.value) {
+      chromeVisible.value = false;
+      settingsOpen.value = false;
+    } else if (event.deltaY < -4 && !chromeVisible.value) {
+      chromeVisible.value = true;
+    }
+    const nearBottom = renderer.viewSize - renderer.end <= 8;
+    const nearTop = renderer.start <= 8;
+    if (event.deltaY > 0 && nearBottom) chainScrolledSection(event, 1);
+    else if (event.deltaY < 0 && nearTop) chainScrolledSection(event, -1);
+    return;
+  }
+  // 分页：滚轮按阈值翻页，翻页间隙忽略连续滚动（触控板会连续派发 delta）
+  const now = Date.now();
+  if (now < pageWheelLockUntil) return;
+  pageWheelAccum += Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+  if (Math.abs(pageWheelAccum) >= 80) {
+    const direction = pageWheelAccum > 0 ? 1 : -1;
+    pageWheelAccum = 0;
+    pageWheelLockUntil = now + 400;
+    pageBy(direction);
+  }
+}
+
+let pageWheelAccum = 0;
+let pageWheelLockUntil = 0;
+let docTouchY: number | null = null;
+
+function onDocTouchStart(event: TouchEvent) {
+  docTouchY = event.touches[0]?.clientY ?? null;
+}
+
+// 滚动版式的触摸跨节；分页的滑动手势由 foliate 分页器自带处理（带速度吸附）
+function onDocTouchMove(event: TouchEvent) {
+  if (!view || style.value.flow !== "scrolled" || docTouchY == null) return;
+  const renderer = view.renderer;
+  const y = event.touches[0]?.clientY ?? docTouchY;
+  const dy = docTouchY - y;
+  docTouchY = y;
+  if (dy > 8 && chromeVisible.value) {
+    chromeVisible.value = false;
+    settingsOpen.value = false;
+  } else if (dy < -8 && !chromeVisible.value) {
+    chromeVisible.value = true;
+  }
+  const nearBottom = renderer.viewSize - renderer.end <= 8;
+  const nearTop = renderer.start <= 8;
+  if (dy > 8 && nearBottom) chainScrolledSection(event, 1);
+  else if (dy < -8 && nearTop) chainScrolledSection(event, -1);
+}
+
+// iframe 之外的页边留白区：点按/滚轮同样生效（iframe 内事件不会冒泡到这里，两套监听互不重复）
+function onStageZoneClick(event: MouseEvent) {
   if (!view || openingBook.value) return;
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
   const ratio = (event.clientX - rect.left) / rect.width;
-  const target = view as unknown as { goLeft?(): void; goRight?(): void };
-  if (ratio < 0.3) target.goLeft?.();
-  else if (ratio > 0.7) target.goRight?.();
-  else {
-    chromeVisible.value = !chromeVisible.value;
-    if (!chromeVisible.value) settingsOpen.value = false;
+  if (style.value.flow === "paginated") {
+    if (ratio < 0.3) pageBy(-1);
+    else if (ratio > 0.7) pageBy(1);
+    else toggleChrome();
+  } else {
+    toggleChrome();
   }
 }
 
-function onStageWheel(event: WheelEvent) {
-  // tap 层挡住了 iframe，滚轮转发给分页器翻页
-  (view as unknown as { scrollBy?(dx: number, dy: number): void })?.scrollBy?.(event.deltaX, event.deltaY);
-}
-
-// ---- 滚动版式跨节：原生滚动到本节底部/顶部就停住，这里接管边界继续翻节 ----
-let sectionChaining = false;
-let chainTouchY: number | null = null;
-
-function chainSection(direction: 1 | -1) {
-  if (!view || sectionChaining) return;
-  const target = view.renderer;
-  const jump = direction === 1 ? target.nextSection : target.prevSection;
-  if (!jump) return;
-  sectionChaining = true;
-  Promise.resolve(jump.call(target))
-    .catch(() => { /* 翻节失败保持原地 */ })
-    .finally(() => { sectionChaining = false; });
-}
-
-function scrolledRenderer() {
-  if (!view || style.value.flow !== "scrolled") return null;
-  return view.renderer;
-}
-
-function onReaderWheelCapture(event: WheelEvent) {
-  const renderer = scrolledRenderer();
-  if (!renderer) return;
-  const nearBottom = renderer.viewSize - renderer.end <= 8;
-  const nearTop = renderer.start <= 8;
-  if (event.deltaY > 0 && nearBottom && !sectionChaining) {
-    event.preventDefault();
-    chainSection(1);
-  } else if (event.deltaY < 0 && nearTop && !sectionChaining) {
-    event.preventDefault();
-    chainSection(-1);
-  }
-}
-
-function onReaderTouchStartCapture(event: TouchEvent) {
-  chainTouchY = event.touches[0]?.clientY ?? null;
-}
-
-function onReaderTouchMoveCapture(event: TouchEvent) {
-  const renderer = scrolledRenderer();
-  if (!renderer || chainTouchY == null || sectionChaining) return;
-  const y = event.touches[0]?.clientY ?? chainTouchY;
-  const dy = chainTouchY - y;
-  chainTouchY = y;
-  const nearBottom = renderer.viewSize - renderer.end <= 8;
-  const nearTop = renderer.start <= 8;
-  if (dy > 8 && nearBottom) {
-    event.preventDefault();
-    chainSection(1);
-  } else if (dy < -8 && nearTop) {
-    event.preventDefault();
-    chainSection(-1);
-  }
-}
-
-let swipeStart: { x: number; y: number } | null = null;
-function onSwipeStart(event: TouchEvent) {
-  const touch = event.changedTouches[0];
-  swipeStart = { x: touch?.clientX ?? 0, y: touch?.clientY ?? 0 };
-}
-function onSwipeEnd(event: TouchEvent) {
-  if (!swipeStart || !view) return;
-  const touch = event.changedTouches[0];
-  const dx = (touch?.clientX ?? 0) - swipeStart.x;
-  const dy = (touch?.clientY ?? 0) - swipeStart.y;
-  swipeStart = null;
-  if (Math.abs(dx) < 48 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
-  const target = view as unknown as { goLeft?(): void; goRight?(): void };
-  if (dx < 0) target.goRight?.();
-  else target.goLeft?.();
+function onViewLoad(event: Event) {
+  const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
+  if (!doc) return;
+  doc.addEventListener("click", (e) => onDocClick(doc, e));
+  doc.addEventListener("wheel", onDocWheel, { passive: false });
+  doc.addEventListener("touchstart", onDocTouchStart, { passive: true });
+  doc.addEventListener("touchmove", onDocTouchMove, { passive: false });
 }
 
 function onSliderInput(event: Event) {
@@ -479,20 +546,8 @@ defineExpose({ reload: loadShelf });
       v-if="readerOpen || openingBook"
       class="book-reader"
       :data-theme="style.theme"
-      @wheel.capture="onReaderWheelCapture"
-      @touchstart.capture.passive="onReaderTouchStartCapture"
-      @touchmove.capture="onReaderTouchMoveCapture"
     >
-      <div ref="bookStage" class="book-stage"></div>
-      <div
-        v-if="style.flow === 'paginated'"
-        class="book-tap-layer"
-        aria-hidden="true"
-        @click="onStageTap"
-        @wheel.passive="onStageWheel"
-        @touchstart.passive="onSwipeStart"
-        @touchend.passive="onSwipeEnd"
-      ></div>
+      <div ref="bookStage" class="book-stage" @click="onStageZoneClick" @wheel="onDocWheel"></div>
 
       <header class="book-bar book-top" :class="{ 'bar-hidden': !chromeVisible }">
         <button class="book-bar-btn" type="button" @click="backToShelf">‹ 书架</button>
@@ -518,6 +573,18 @@ defineExpose({ reload: loadShelf });
           <button class="book-bar-btn bordered" type="button" :aria-label="'缩小字号'" @click="stepFont(-10)"><Minus :size="14" /></button>
           <span class="book-font-pct">{{ style.fontPct }}%</span>
           <button class="book-bar-btn bordered" type="button" :aria-label="'放大字号'" @click="stepFont(10)"><Plus :size="14" /></button>
+        </div>
+        <div class="book-settings-row">
+          <span>行距</span>
+          <button class="book-bar-btn bordered" type="button" :aria-label="'减小行距'" @click="stepSpacing(-0.2)"><Minus :size="14" /></button>
+          <span class="book-font-pct">{{ style.spacing.toFixed(1) }}</span>
+          <button class="book-bar-btn bordered" type="button" :aria-label="'增大行距'" @click="stepSpacing(0.2)"><Plus :size="14" /></button>
+        </div>
+        <div class="book-settings-row">
+          <span>边距</span>
+          <button class="book-bar-btn bordered" type="button" :aria-label="'减小边距'" @click="stepMargin(-16)"><Minus :size="14" /></button>
+          <span class="book-font-pct">{{ style.margin }}</span>
+          <button class="book-bar-btn bordered" type="button" :aria-label="'增大边距'" @click="stepMargin(16)"><Plus :size="14" /></button>
         </div>
         <div class="book-settings-row" role="radiogroup" aria-label="主题">
           <span>主题</span>
@@ -646,16 +713,6 @@ defineExpose({ reload: loadShelf });
 .book-reader[data-theme="dark"] { background: #161617; color: #e5e5ea; }
 .book-stage { position: absolute; inset: 0; }
 .book-stage :deep(foliate-view) { width: 100%; height: 100%; display: block; }
-/* iframe 内点击不会冒泡到父文档，点按分区靠这层覆盖实现 */
-.book-tap-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 10;
-  display: grid;
-  grid-template-columns: 1fr 1.4fr 1fr;
-  cursor: default;
-}
-
 /* 阅读器控制条与书架顶栏同一套暖纸视觉：同底色、同分隔线、同按钮字色 */
 .book-bar {
   position: absolute;
