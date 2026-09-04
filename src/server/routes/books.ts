@@ -99,6 +99,29 @@ async function extractCover(zipEntryFile: { async(format: "nodebuffer"): Promise
     .toFile(targetPath);
 }
 
+// EPUB 未带封面时，按书名/作者生成一张与书架风格一致的封面，保证书单视觉统一。
+async function renderGeneratedCover(title: string, author: string, targetPath: string): Promise<void> {
+  const { default: sharp } = await import("sharp");
+  const escape = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const shortTitle = title.slice(0, 40);
+  const shortAuthor = author.slice(0, 24);
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800" viewBox="0 0 600 800">
+  <defs>
+    <linearGradient id="spine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e8ddc9"/>
+      <stop offset="0.05" stop-color="#f4ecdc"/>
+      <stop offset="1" stop-color="#faf5ea"/>
+    </linearGradient>
+  </defs>
+  <rect width="600" height="800" fill="url(#spine)"/>
+  <rect x="30" y="30" width="540" height="740" fill="none" stroke="#c9b896" stroke-width="2"/>
+  <text x="300" y="330" text-anchor="middle" font-family="Songti SC, STSong, serif" font-size="${shortTitle.length > 14 ? 40 : 52}" font-weight="700" fill="#5d4a33">${escape(shortTitle)}</text>
+  <line x1="220" y1="380" x2="380" y2="380" stroke="#b39a72" stroke-width="2"/>
+  ${shortAuthor ? `<text x="300" y="430" text-anchor="middle" font-family="Songti SC, STSong, serif" font-size="28" fill="#8a7557">${escape(shortAuthor)}</text>` : ""}
+</svg>`;
+  await sharp(Buffer.from(svg)).webp({ quality: 88 }).toFile(targetPath);
+}
+
 export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) {
   const { prisma, booksDir, requireAuth, requireMediaAuth, requireAdmin, authFor } = deps;
 
@@ -149,6 +172,16 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
         coverName = coverFileName;
       } catch {
         coverName = null; // 封面提取失败不阻断导入
+      }
+    }
+    if (!coverName) {
+      // EPUB 未带封面：生成书名封面，保证书架每本书都有封面
+      try {
+        const coverFileName = `${crypto.randomUUID()}.webp`;
+        await renderGeneratedCover(meta.title, meta.author, path.join(booksDir, coverFileName));
+        coverName = coverFileName;
+      } catch {
+        coverName = null;
       }
     }
 

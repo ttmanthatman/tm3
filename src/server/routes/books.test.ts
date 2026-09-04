@@ -140,6 +140,35 @@ test("readEpubMeta extracts title/author/language/cover from a valid epub", asyn
   assert.equal(meta.coverEntry, "OEBPS/cover.png");
 });
 
+test("readEpubMeta falls back to id/href based cover detection (Calibre-style epubs)", async () => {
+  // 无 <meta name="cover"> 也无 properties="cover-image"，仅 id 带 cover 的图片条目
+  const opf = OPF
+    .replace(/<meta name="cover"[^>]*>/, "")
+    .replace('id="cvr"', 'id="my-cover-image"');
+  const { meta } = await readEpubMeta(await buildEpub({ opf }));
+  assert.equal(meta.coverEntry, "OEBPS/cover.png");
+
+  // 文件名带 cover 的图片条目
+  const opf2 = OPF
+    .replace(/<meta name="cover"[^>]*>/, "")
+    .replace('id="cvr" href="cover.png"', 'id="img1" href="images/My-Cover.PNG"')
+    .replace('href="cover.png"', 'href="images/My-Cover.PNG"');
+  const { meta: meta2 } = await readEpubMeta(await buildEpub({ opf: opf2, extra: { "OEBPS/images/My-Cover.PNG": PNG } }));
+  assert.equal(meta2.coverEntry, "OEBPS/images/My-Cover.PNG");
+});
+
+test("upload generates a title cover when the epub has no cover image", async (t) => {
+  const { app, dir } = await createHarness({ admin: true });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const opf = OPF.replace(/<item id="cvr"[^>]*>/, "");
+  const res = await upload(app, "nocover.epub", await buildEpub({ opf }));
+  assert.equal(res.statusCode, 201, res.body);
+  const { book } = res.json();
+  assert.match(book.coverName, /\.webp$/);
+  assert.ok(fs.existsSync(path.join(dir, book.coverName)));
+  assert.ok(fs.statSync(path.join(dir, book.coverName)).size > 0);
+});
+
 test("readEpubMeta decodes XML entities in titles", async () => {
   const opf = OPF.replace("<dc:title>测试图书</dc:title>", "<dc:title>A &amp; B &#23665;</dc:title>");
   const { meta } = await readEpubMeta(await buildEpub({ opf }));

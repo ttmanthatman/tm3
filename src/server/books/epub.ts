@@ -55,6 +55,16 @@ function coverHrefFromOpf(opf: string, opfDir: string): string | null {
     const href = item ? /href="([^"]*)"/.exec(item)?.[1] : null;
     if (href) return joinEntryPath(opfDir, decodeXmlEntities(href));
   }
+  // 兜底：不少 EPUB（常见于 Calibre 导出）不写 meta/properties 声明，
+  // 只有 id 或文件名带 cover 的图片条目（如 id="my-cover-image"）。
+  const items = opf.match(/<item\b[^>]*>/g) ?? [];
+  const imageItems = items.filter((item) => /media-type="image\//.test(item));
+  const byId = imageItems.find((item) => /\bid="[^"]*cover[^"]*"/i.test(item));
+  const byIdHref = byId ? /href="([^"]*)"/.exec(byId)?.[1] : null;
+  if (byIdHref) return joinEntryPath(opfDir, decodeXmlEntities(byIdHref));
+  const byHref = imageItems.find((item) => /href="[^"]*cover[^"]*\.(jpe?g|png|gif|webp)"/i.test(item));
+  const byHrefHref = byHref ? /href="([^"]*)"/.exec(byHref)?.[1] : null;
+  if (byHrefHref) return joinEntryPath(opfDir, decodeXmlEntities(byHrefHref));
   return null;
 }
 
