@@ -799,6 +799,8 @@ const forwardConfirming = ref(false);
 const forwardChannelIds = ref<number[]>([]);
 const forwardBusy = ref(false);
 const forwardError = ref("");
+const forwardSuccess = ref(false);
+let forwardSuccessTimer: ReturnType<typeof setTimeout> | null = null;
 const chatRecordViewMessage = ref<MessageDTO | null>(null);
 const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
@@ -2413,6 +2415,15 @@ function handleMessageImageLoad(message: MessageDTO, event: Event) {
     ...resolvedMessageImageDimensions.value,
     [message.id]: { width: image.naturalWidth, height: image.naturalHeight }
   };
+}
+
+// 转发的附件引用原文件；原文件被删除后图片加载失败，占位显示“转发附件已被删除”。
+const brokenAttachmentIds = ref<Set<number>>(new Set());
+
+function markAttachmentBroken(message: MessageDTO) {
+  const next = new Set(brokenAttachmentIds.value);
+  next.add(message.id);
+  brokenAttachmentIds.value = next;
 }
 
 function pumpMessageImagePreloads() {
@@ -6447,6 +6458,11 @@ function resetForwardState() {
   forwardMode.value = "separate";
   forwardConfirming.value = false;
   forwardError.value = "";
+  forwardSuccess.value = false;
+  if (forwardSuccessTimer) {
+    clearTimeout(forwardSuccessTimer);
+    forwardSuccessTimer = null;
+  }
 }
 
 function closeForwardDialog() {
@@ -6519,14 +6535,15 @@ async function submitMessageForward() {
         mode: forwardMode.value
       })
     });
-    resetForwardState();
+    forwardSuccess.value = true;
     messageSelectionMode.value = false;
     selectedMessageIds.value = new Set();
-    alert("已转发");
+    forwardSuccessTimer = setTimeout(() => {
+      forwardSuccessTimer = null;
+      resetForwardState();
+    }, 1200);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "转发失败";
-    forwardError.value = message;
-    alert(message);
+    forwardError.value = error instanceof Error ? error.message : "转发失败";
   } finally {
     forwardBusy.value = false;
   }
@@ -10846,7 +10863,9 @@ async function toggleVirtual(character: any) {
                   </button>
                 </template>
                 <template v-else-if="row.message.type === 'image'">
+                  <p v-if="brokenAttachmentIds.has(row.message.id)" class="attachment-broken">转发附件已被删除</p>
                   <button
+                    v-else
                     class="image-preview-button"
                     :class="{ 'image-preview-sized': !!messageImageDimensions(row.message) }"
                     :style="messageImagePresentationStyle(row.message)"
@@ -10862,6 +10881,7 @@ async function toggleVirtual(character: any) {
                       decoding="async"
                       fetchpriority="low"
                       @load="handleMessageImageLoad(row.message, $event)"
+                      @error="markAttachmentBroken(row.message)"
                       alt=""
                     />
                   </button>
@@ -11420,6 +11440,11 @@ async function toggleVirtual(character: any) {
 
     <section v-if="forwardPickerOpen" class="modal-shell" @click.self="closeForwardDialog">
       <div class="small-modal forward-message-modal">
+        <div v-if="forwardSuccess" class="forward-success">
+          <CheckCircle2 :size="56" class="forward-success-icon" />
+          <strong>已转发</strong>
+        </div>
+        <template v-else>
         <header class="modal-head">
           <div>
             <strong>{{ forwardConfirming ? "发送给" : "转发消息" }}</strong>
@@ -11469,6 +11494,7 @@ async function toggleVirtual(character: any) {
             </button>
           </template>
         </div>
+        </template>
       </div>
     </section>
 

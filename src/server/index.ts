@@ -22,7 +22,7 @@ import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleRoutes } from "./routes/bible.js";
-import { chatRecordStoredFile, registerForwardRoutes } from "./routes/forward.js";
+import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
@@ -5284,8 +5284,7 @@ registerForwardRoutes(app, {
   canAccessChannel,
   canWriteChannel,
   emitMessage,
-  sendMessagePush,
-  uploadDir: UPLOAD_DIR
+  sendMessagePush
 });
 
 registerBooksRoutes(app, {
@@ -5380,22 +5379,29 @@ app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (reques
   let storedFileName: string;
   let fileName: string;
   if (message.type === "chat_record") {
-    // 合并转发记录条目的附件按 ?item=<index> 从 payload 中取拷贝后的文件名。
+    // 合并转发记录条目的附件按 ?item=<index> 解析到源消息，引用原文件提供；
+    // 源消息或源文件被删除后按“转发附件已被删除”处理。附件可见性以源频道权限为准。
     const itemIndex = Number(query.item);
-    const item = Number.isInteger(itemIndex) && itemIndex >= 0 ? chatRecordStoredFile(message.payload, itemIndex) : null;
-    if (!item) return reply.code(404).send({ success: false, message: "文件不存在" });
-    storedFileName = item.storedFile;
-    fileName = item.fileName;
+    const ref = Number.isInteger(itemIndex) && itemIndex >= 0 ? chatRecordItemRef(message.payload, itemIndex) : null;
+    if (!ref) return reply.code(404).send({ success: false, message: "转发附件已被删除" });
+    const source = await prisma.message.findUnique({
+      where: { id: ref.sourceMessageId },
+      select: { channelId: true, filePath: true, fileName: true }
+    });
+    if (!source?.filePath) return reply.code(404).send({ success: false, message: "转发附件已被删除" });
+    if (!(await canAccessChannel(auth.accountId, source.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
+    storedFileName = source.filePath;
+    fileName = source.fileName || ref.fileName;
   } else {
     if (!message.filePath) return reply.code(404).send({ success: false, message: "文件不存在" });
+    if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
     storedFileName = message.filePath;
     fileName = message.fileName || message.filePath;
   }
-  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
   let filePath = path.join(UPLOAD_DIR, path.basename(storedFileName));
   // Bubble rendering asks for the thumbnail variant; fall back to the
   // original for older uploads that predate thumbnail generation.
-  const servingThumb = query.thumb === "1" && message.type !== "chat_record" && fs.existsSync(`${filePath}.thumb.webp`);
+  const servingThumb = query.thumb === "1" && fs.existsSync(`${filePath}.thumb.webp`);
   if (servingThumb) filePath = `${filePath}.thumb.webp`;
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
   const stat = fs.statSync(filePath);

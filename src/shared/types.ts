@@ -122,7 +122,7 @@ export interface ChatRecordItemDTO {
   voiceDurationMs?: number;
   imageWidth?: number;
   imageHeight?: number;
-  storedFile?: string;
+  sourceMessageId?: number;
   createdAt: string;
 }
 

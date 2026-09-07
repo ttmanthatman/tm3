@@ -1,13 +1,10 @@
 /// <reference types="node" />
 
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
 import Fastify, { type FastifyRequest } from "fastify";
-import { chatRecordStoredFile, registerForwardRoutes, type ForwardSourceMessage } from "./forward.js";
+import { chatRecordItemRef, registerForwardRoutes, type ForwardSourceMessage } from "./forward.js";
 
 type HarnessOptions = {
   messages?: Array<Partial<ForwardSourceMessage> & { id: number; channelId: number }>;
@@ -33,14 +30,10 @@ function textMessage(id: number, content: string): Partial<ForwardSourceMessage>
 }
 
 function createForwardHarness(options: HarnessOptions = {}) {
-  const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), "tm3-forward-test-"));
-  const sourceFile = path.join(uploadDir, "source-audio.m4a");
-  fs.writeFileSync(sourceFile, "fake-audio");
   const state = {
     created: [] as Array<Record<string, unknown>>,
     emitted: [] as number[],
-    pushed: [] as number[],
-    uploadDir
+    pushed: [] as number[]
   };
   let nextId = 900;
   const messages = (options.messages ?? [textMessage(1, "你好"), textMessage(2, "再见")]) as ForwardSourceMessage[];
@@ -82,10 +75,9 @@ function createForwardHarness(options: HarnessOptions = {}) {
     },
     sendMessagePush: async (id: number) => {
       state.pushed.push(id);
-    },
-    uploadDir
+    }
   });
-  return { app, state, uploadDir };
+  return { app, state };
 }
 
 test("separate forward copies text messages to each target channel", async () => {
@@ -111,7 +103,7 @@ test("separate forward copies text messages to each target channel", async () =>
   assert.equal(state.pushed.length, 4);
 });
 
-test("separate forward physically copies attachment files", async () => {
+test("separate forward references the original attachment instead of copying it", async () => {
   const fileMessage = {
     ...textMessage(3, ""),
     type: "file",
@@ -120,7 +112,7 @@ test("separate forward physically copies attachment files", async () => {
     fileSize: 10,
     payload: { kind: "voice", durationMs: 1200, mimeType: "audio/mp4" }
   } as Partial<ForwardSourceMessage> & { id: number; channelId: number };
-  const { app, state, uploadDir } = createForwardHarness({ messages: [fileMessage] });
+  const { app, state } = createForwardHarness({ messages: [fileMessage] });
   const response = await app.inject({
     method: "POST",
     url: "/api/messages/forward",
@@ -128,9 +120,32 @@ test("separate forward physically copies attachment files", async () => {
   });
   assert.equal(response.statusCode, 200);
   const created = state.created[0] as { filePath: string; fileName: string; payload: { kind: string } };
-  assert.notEqual(created.filePath, "source-audio.m4a");
-  assert.equal(fs.readFileSync(path.join(uploadDir, created.filePath), "utf8"), "fake-audio");
+  assert.equal(created.filePath, "source-audio.m4a");
   assert.equal(created.payload.kind, "voice");
+});
+
+test("merged forward record items reference the source message for attachments", async () => {
+  const fileMessage = {
+    ...textMessage(3, ""),
+    type: "file",
+    fileName: "voice.m4a",
+    filePath: "source-audio.m4a",
+    fileSize: 10,
+    payload: { kind: "voice", durationMs: 1200, mimeType: "audio/mp4" }
+  } as Partial<ForwardSourceMessage> & { id: number; channelId: number };
+  const { app, state } = createForwardHarness({ messages: [textMessage(1, "你好"), fileMessage] });
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/messages/forward",
+    payload: { messageIds: [1, 3], channelIds: [10], mode: "merged" }
+  });
+  assert.equal(response.statusCode, 200);
+  const record = state.created[0] as { payload: { items: Array<{ content?: string; sourceMessageId?: number; voiceDurationMs?: number }> } };
+  assert.deepEqual(
+    record.payload.items.map((item) => item.sourceMessageId ?? null),
+    [null, 3]
+  );
+  assert.equal(record.payload.items[1]?.voiceDurationMs, 1200);
 });
 
 test("merged forward creates one chat_record snapshot per target channel", async () => {
@@ -259,7 +274,7 @@ test("forward returns 404 when a message id does not exist", async () => {
   assert.equal(response.statusCode, 404);
 });
 
-test("chatRecordStoredFile resolves items only from chat_record payloads", () => {
+test("chatRecordItemRef resolves items only from chat_record payloads", () => {
   const payload = {
     kind: "chat_record",
     title: "t",
@@ -267,13 +282,13 @@ test("chatRecordStoredFile resolves items only from chat_record payloads", () =>
     itemCount: 2,
     items: [
       { senderName: "a", type: "text", content: "hi", createdAt: "2026-09-07T00:00:00.000Z" },
-      { senderName: "b", type: "image", fileName: "photo.jpg", storedFile: "uuid-photo.jpg", createdAt: "2026-09-07T00:01:00.000Z" }
+      { senderName: "b", type: "image", fileName: "photo.jpg", sourceMessageId: 42, createdAt: "2026-09-07T00:01:00.000Z" }
     ]
   };
-  assert.equal(chatRecordStoredFile(payload, 0), null);
-  assert.deepEqual(chatRecordStoredFile(payload, 1), { fileName: "photo.jpg", storedFile: "uuid-photo.jpg" });
-  assert.equal(chatRecordStoredFile(payload, 2), null);
-  assert.equal(chatRecordStoredFile({ kind: "chat_record" }, 1), null);
-  assert.equal(chatRecordStoredFile(null, 0), null);
-  assert.equal(chatRecordStoredFile({ kind: "other" }, 0), null);
+  assert.equal(chatRecordItemRef(payload, 0), null);
+  assert.deepEqual(chatRecordItemRef(payload, 1), { sourceMessageId: 42, fileName: "photo.jpg" });
+  assert.equal(chatRecordItemRef(payload, 2), null);
+  assert.equal(chatRecordItemRef({ kind: "chat_record" }, 1), null);
+  assert.equal(chatRecordItemRef(null, 0), null);
+  assert.equal(chatRecordItemRef({ kind: "other" }, 0), null);
 });

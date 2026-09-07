@@ -1,6 +1,3 @@
-import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import { Prisma, type Message, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
@@ -22,7 +19,6 @@ export type ForwardRouteDependencies = {
   canWriteChannel(accountId: number, channelId: number): Promise<boolean>;
   emitMessage(messageId: number): Promise<unknown>;
   sendMessagePush(messageId: number, origin: string): Promise<void>;
-  uploadDir: string;
 };
 
 const forwardBodySchema = z.object({
@@ -48,20 +44,18 @@ function voicePayload(payload: unknown): VoicePayload | null {
   return value.kind === "voice" ? (value as unknown as VoicePayload) : null;
 }
 
-// 聊天记录条目的附件以拷贝后的 uploads 基名存放在 payload 里，
-// 通过 /api/files/:messageId?item=<index> 按记录消息所在频道鉴权后提供。
-export type ChatRecordStoredItem = ChatRecordItemDTO & { storedFile?: string };
-
-export function chatRecordStoredFile(payload: unknown, itemIndex: number): { fileName: string; storedFile: string } | null {
+// 聊天记录条目的附件不复制，通过 sourceMessageId 引用原消息；
+// 由 /api/files/:messageId?item=<index> 解析到源消息后按源频道鉴权提供。
+export function chatRecordItemRef(payload: unknown, itemIndex: number): { sourceMessageId: number; fileName: string } | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
   const value = payload as Record<string, unknown>;
   if (value.kind !== "chat_record" || !Array.isArray(value.items)) return null;
   const item = value.items[itemIndex] as Record<string, unknown> | undefined;
-  if (!item || typeof item.storedFile !== "string" || !item.storedFile) return null;
-  return { fileName: typeof item.fileName === "string" && item.fileName ? item.fileName : item.storedFile, storedFile: item.storedFile };
+  if (!item || typeof item.sourceMessageId !== "number" || !Number.isInteger(item.sourceMessageId)) return null;
+  return { sourceMessageId: item.sourceMessageId, fileName: typeof item.fileName === "string" && item.fileName ? item.fileName : "附件" };
 }
 
-function recordItemFromMessage(message: ForwardSourceMessage, storedFile?: string): ChatRecordStoredItem {
+function recordItemFromMessage(message: ForwardSourceMessage): ChatRecordItemDTO {
   const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload)
     ? (message.payload as Record<string, unknown>)
     : null;
@@ -79,25 +73,20 @@ function recordItemFromMessage(message: ForwardSourceMessage, storedFile?: strin
     ...base,
     type: message.type === "image" ? "image" : "file",
     content: message.fileName || "",
+    sourceMessageId: message.id,
     ...(message.fileName ? { fileName: message.fileName } : {}),
     ...(typeof message.fileSize === "number" ? { fileSize: message.fileSize } : {}),
-    ...(storedFile ? { storedFile } : {}),
     ...(voice && typeof voice.durationMs === "number" ? { voiceDurationMs: Math.round(voice.durationMs) } : {}),
     ...(voice && typeof voice.mimeType === "string" ? { mimeType: voice.mimeType.slice(0, 80) } : {}),
     ...(dimensions ? { imageWidth: dimensions.width, imageHeight: dimensions.height } : {})
   };
 }
 
-function copyFileName(sourceFilePath: string, fallbackName: string | null) {
-  const extension = path.extname(sourceFilePath).toLowerCase() || path.extname(fallbackName || "").toLowerCase() || ".bin";
-  return `${randomUUID()}${extension}`;
-}
-
 export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDependencies) {
-  const { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush, uploadDir } = deps;
+  const { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush } = deps;
 
   // 多选转发：逐条复制消息，或合并为一条“聊天记录”快照卡片。
-  // 附件一律物理拷贝，源消息被撤回/删除不影响已转发副本。
+  // 附件一律引用原消息的文件（不复制），源文件被删除后转发副本显示“转发附件已被删除”。
   app.post("/api/messages/forward", { preHandler: requireAuth }, async (request, reply) => {
     const auth = (request as AuthedForwardRequest).auth;
     const parsed = forwardBodySchema.safeParse(request.body);
@@ -135,44 +124,26 @@ export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDe
       }
     }
 
-    for (const message of ordered) {
-      if (message.filePath && !fs.existsSync(path.join(uploadDir, path.basename(message.filePath)))) {
-        return reply.code(404).send({ success: false, message: `附件文件不存在：${message.fileName || "文件"}` });
-      }
-    }
-
     const pushOrigin = pushOriginFromHeaders(request.headers);
-    const copiedFiles: string[] = [];
     try {
       let forwarded = 0;
       if (body.mode === "separate") {
-        const jobs: Array<{ channelId: number; message: ForwardSourceMessage; filePath?: string }> = [];
-        for (const channelId of channelIds) {
-          for (const message of ordered) {
-            if (!message.filePath) {
-              jobs.push({ channelId, message });
-              continue;
-            }
-            const filePath = copyFileName(message.filePath, message.fileName);
-            await fs.promises.copyFile(path.join(uploadDir, path.basename(message.filePath)), path.join(uploadDir, filePath));
-            copiedFiles.push(filePath);
-            jobs.push({ channelId, message, filePath });
-          }
-        }
         const created = await prisma.$transaction(
-          jobs.map((job) =>
-            prisma.message.create({
-              data: {
-                channelId: job.channelId,
-                senderActorId: auth.actorId,
-                content: job.message.content || "",
-                type: job.message.type,
-                ...(job.message.payload === null ? {} : { payload: job.message.payload as Prisma.InputJsonValue }),
-                ...(job.message.fileName ? { fileName: job.message.fileName } : {}),
-                ...(job.filePath ? { filePath: job.filePath } : {}),
-                ...(typeof job.message.fileSize === "number" ? { fileSize: job.message.fileSize } : {})
-              }
-            })
+          channelIds.flatMap((channelId) =>
+            ordered.map((message) =>
+              prisma.message.create({
+                data: {
+                  channelId,
+                  senderActorId: auth.actorId,
+                  content: message.content || "",
+                  type: message.type,
+                  ...(message.payload === null ? {} : { payload: message.payload as Prisma.InputJsonValue }),
+                  ...(message.fileName ? { fileName: message.fileName } : {}),
+                  ...(message.filePath ? { filePath: message.filePath } : {}),
+                  ...(typeof message.fileSize === "number" ? { fileSize: message.fileSize } : {})
+                }
+              })
+            )
           )
         );
         for (const message of created) {
@@ -197,23 +168,13 @@ export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDe
             : `${sourceChannel?.name || "群聊"}的聊天记录`;
 
         for (const channelId of channelIds) {
-          const items: ChatRecordStoredItem[] = [];
+          const items: ChatRecordItemDTO[] = [];
           let truncated = false;
           let payloadBytes = 64;
           for (const message of ordered) {
-            let storedFile: string | undefined;
-            if (message.filePath) {
-              storedFile = copyFileName(message.filePath, message.fileName);
-              await fs.promises.copyFile(path.join(uploadDir, path.basename(message.filePath)), path.join(uploadDir, storedFile));
-              copiedFiles.push(storedFile);
-            }
-            const item = recordItemFromMessage(message, storedFile);
+            const item = recordItemFromMessage(message);
             payloadBytes += Buffer.byteLength(JSON.stringify(item));
             if (payloadBytes > RECORD_PAYLOAD_BYTE_LIMIT) {
-              if (storedFile) {
-                fs.unlinkSync(path.join(uploadDir, storedFile));
-                copiedFiles.splice(copiedFiles.indexOf(storedFile), 1);
-              }
               truncated = true;
               break;
             }
@@ -244,10 +205,6 @@ export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDe
       }
       return { success: true, forwarded, skipped };
     } catch (error) {
-      for (const storedFile of copiedFiles) {
-        const copiedPath = path.join(uploadDir, storedFile);
-        if (fs.existsSync(copiedPath)) fs.unlinkSync(copiedPath);
-      }
       request.log.error({ error, sourceChannelId }, "message forward failed");
       return reply.code(500).send({ success: false, message: "转发失败，请稍后重试" });
     }

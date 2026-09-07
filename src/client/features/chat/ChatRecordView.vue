@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { X } from "lucide-vue-next";
 import type { ChatRecordItemDTO, ChatRecordPayloadDTO, MessageDTO } from "@shared/types";
 import { getToken } from "../../api";
@@ -8,6 +8,14 @@ import { chatRecordItemUrl } from "../../messageForward";
 
 const props = defineProps<{ message: MessageDTO }>();
 const emit = defineEmits<{ close: [] }>();
+
+const brokenItems = ref<Set<number>>(new Set());
+
+function markItemBroken(index: number) {
+  const next = new Set(brokenItems.value);
+  next.add(index);
+  brokenItems.value = next;
+}
 
 const payload = computed(() => {
   const value = props.message.payload as ChatRecordPayloadDTO | undefined;
@@ -59,11 +67,17 @@ function voiceSeconds(item: ChatRecordItemDTO) {
               <small>{{ itemTime(item.createdAt) }}</small>
             </span>
             <p v-if="item.type === 'text'" class="chat-record-text">{{ item.content }}</p>
-            <img v-else-if="item.type === 'image'" class="chat-record-image" :src="itemUrl(index)" loading="lazy" alt="聊天记录图片" />
+            <template v-else-if="item.type === 'image'">
+              <p v-if="brokenItems.has(index)" class="chat-record-broken">转发附件已被删除</p>
+              <img v-else class="chat-record-image" :src="itemUrl(index)" loading="lazy" alt="聊天记录图片" @error="markItemBroken(index)" />
+            </template>
             <div v-else class="chat-record-file">
               <template v-if="item.voiceDurationMs">
-                <span>[语音] {{ voiceSeconds(item) }}″</span>
-                <audio class="chat-record-voice" :src="itemUrl(index)" controls preload="none"></audio>
+                <p v-if="brokenItems.has(index)" class="chat-record-broken">转发附件已被删除</p>
+                <template v-else>
+                  <span>[语音] {{ voiceSeconds(item) }}″</span>
+                  <audio class="chat-record-voice" :src="itemUrl(index)" controls preload="none" @error="markItemBroken(index)"></audio>
+                </template>
               </template>
               <template v-else>
                 <span class="chat-record-file-name">{{ item.fileName || "文件" }}</span>
