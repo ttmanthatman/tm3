@@ -16,6 +16,8 @@ import {
   DEFAULT_READER_STYLE,
   globalFraction,
   nudgeFromSectionBoundaries,
+  preloadAdjacentSections,
+  readerLayoutMetrics,
   READER_THEMES,
   type FoliateView,
   type ReaderStyle
@@ -30,6 +32,8 @@ type FoliateModule = unknown;
 
 const STYLE_KEY = "book-reader-style";
 const LOCAL_PROGRESS_PREFIX = "book-progress.";
+// 记录上次阅读的书，返回图书室时自动打开并恢复进度
+const LAST_READ_KEY = "book-last-read";
 
 const books = ref<BookDTO[]>([]);
 const shelfLoading = ref(true);
@@ -139,9 +143,15 @@ function closeBookView() {
     clearTimeout(saveTimer);
     saveTimer = null;
   }
+  if (resizeTimer) {
+    clearTimeout(resizeTimer);
+    resizeTimer = null;
+  }
+  window.removeEventListener("resize", onWindowResize);
   flushProgress();
   if (view && relocateHandler) view.removeEventListener("relocate", relocateHandler);
   relocateHandler = null;
+  lastPreloadIndex = -1;
   view?.remove();
   view = null;
   tocItems.value = [];
@@ -179,7 +189,7 @@ async function openBook(book: BookDTO) {
     });
 
     element.renderer.setAttribute("flow", style.value.flow);
-    element.renderer.setAttribute("margin", String(style.value.margin));
+    applyLayout();
     element.renderer.setStyles?.(buildBookCSS(style.value));
 
     const restoreTarget = nudgeFromSectionBoundaries(element.getSectionFractions(), cachedProgress(book));
@@ -217,6 +227,8 @@ async function openBook(book: BookDTO) {
     settingsOpen.value = false;
     tocOpen.value = false;
     readerOpen.value = true;
+    localStorage.setItem(LAST_READ_KEY, String(book.id));
+    window.addEventListener("resize", onWindowResize);
   } catch (error) {
     console.error(error);
     readerError.value = error instanceof Error ? error.message : "图书打开失败";
@@ -262,11 +274,23 @@ function jumpTo(href: string) {
   void (view as unknown as { goTo(target: string): Promise<void> })?.goTo?.(href);
 }
 
-function onRelocate(event: CustomEvent<{ index: number; fraction: number; range: Range }>) {
+type RelocateDetail = {
+  index?: number;
+  fraction: number;
+  range: Range;
+  // foliate-view 重新抛出的事件用 section.current 表示节号，此时 fraction 已是全书比例
+  section?: { current?: number };
+};
+
+function onRelocate(event: CustomEvent<RelocateDetail>) {
   if (!view) return;
-  const { index, fraction, range } = event.detail;
+  const detail = event.detail;
+  const index = detail.section?.current ?? detail.index ?? 0;
+  const { range } = detail;
   const starts = view.getSectionFractions();
-  const global = globalFraction(starts, index, fraction);
+  const global = detail.section?.current != null
+    ? Math.max(0, Math.min(0.9999, detail.fraction))
+    : globalFraction(starts, index, detail.fraction);
   sliderValue.value = global;
   progressLabel.value = `${Math.round(global * 100)}%`;
   try {
@@ -276,6 +300,11 @@ function onRelocate(event: CustomEvent<{ index: number; fraction: number; range:
     chapterLabel.value = tocItem?.label ?? "";
   } catch { /* 章节定位失败不阻塞阅读 */ }
   scheduleSave(global);
+  // 预取相邻章：滚动/翻节进入下一章时内容已在缓存里，避免白屏闪烁
+  if (index !== lastPreloadIndex) {
+    lastPreloadIndex = index;
+    preloadAdjacentSections(view, index);
+  }
 }
 
 function scheduleSave(global: number) {
@@ -302,6 +331,25 @@ function flushProgress() {
   }).catch(() => { /* 离线时保留本地进度，下次同步 */ });
 }
 
+// 边距/版式变化时同步 foliate 布局三件套。margin 只管上下页边距且必须带单位；
+// 左右留白由 max-inline-size + gap 决定（见 readerLayoutMetrics），
+// 其中 gap 在分页模式是栏间距、滚动模式是正文两侧 padding。
+function applyLayout() {
+  if (!view) return;
+  const stage = bookStage.value;
+  const metrics = readerLayoutMetrics(style.value, stage?.clientWidth ?? 0, stage?.clientHeight ?? 0);
+  view.renderer.setAttribute("margin", `${metrics.margin}px`);
+  view.renderer.setAttribute("max-inline-size", `${metrics.maxInlineSize}px`);
+  view.renderer.setAttribute("gap", `${metrics.gapPct}%`);
+}
+
+let resizeTimer: ReturnType<typeof setTimeout> | null = null;
+function onWindowResize() {
+  if (!view) return;
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => applyLayout(), 150);
+}
+
 function applyStyle() {
   persistStyle();
   if (!view) return;
@@ -316,6 +364,7 @@ function setTheme(theme: ReaderStyle["theme"]) {
 function setFlow(flow: ReaderStyle["flow"]) {
   style.value = { ...style.value, flow };
   view?.renderer.setAttribute("flow", flow);
+  applyLayout(); // 横屏栏数随版式变化，需要重算 max-inline-size
   persistStyle();
   // 滚动版式进入沉浸阅读：自动隐藏控制栏（之后向下滚动隐藏、向上滚动或点按中部显示）；
   // 切回分页则恢复显示，保持可发现性
@@ -343,8 +392,8 @@ function stepMargin(delta: number) {
   const margin = Math.max(16, Math.min(96, style.value.margin + delta));
   style.value = { ...style.value, margin };
   persistStyle();
-  // margin 是 foliate 分页器属性（不是注入 CSS），改动会触发其重排
-  view?.renderer.setAttribute("margin", String(margin));
+  // margin/max-inline-size/gap 是 foliate 分页器属性（不是注入 CSS），改动会触发其重排
+  applyLayout();
 }
 
 // ---- 内容区交互 ----
@@ -428,6 +477,7 @@ function onDocWheel(event: WheelEvent) {
   }
 }
 
+let lastPreloadIndex = -1;
 let pageWheelAccum = 0;
 let pageWheelLockUntil = 0;
 let docTouchY: number | null = null;
@@ -499,7 +549,14 @@ watch(readerOpen, (open) => {
   else document.removeEventListener("keydown", onKeydown);
 });
 
-void loadShelf();
+void loadShelf().then(() => {
+  // 返回图书室自动打开上次读的书；进度恢复走既有 cachedProgress 逻辑。
+  // 书被删除（不在书架）时留在书架页。
+  const raw = localStorage.getItem(LAST_READ_KEY);
+  const id = raw == null ? Number.NaN : Number(raw);
+  const book = Number.isFinite(id) ? books.value.find((b) => b.id === id) : undefined;
+  if (book) void openBook(book);
+});
 void preloadFoliate();
 
 onBeforeUnmount(() => {

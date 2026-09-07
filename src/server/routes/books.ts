@@ -211,7 +211,8 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
     for (const name of [book.fileName, book.coverName]) {
       if (!name) continue;
       if (!(bookFileNameRe.test(name) || coverFileNameRe.test(name))) continue;
-      fs.promises.unlink(path.join(booksDir, name)).catch(() => {});
+      // 等待文件删除完成再响应，避免删除后文件仍短暂存在的竞态
+      await fs.promises.unlink(path.join(booksDir, name)).catch(() => { /* 文件可能已不存在 */ });
     }
     return { success: true };
   });

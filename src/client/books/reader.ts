@@ -98,6 +98,8 @@ type FoliateView = HTMLElement & {
     toc?: { label?: string; href?: string; subitems?: unknown[] }[];
     dir?: string;
     transformTarget?: EventTarget;
+    // foliate 的节对象；load() 预取该节内容（内部带缓存与引用计数，重复调用便宜）
+    sections?: { load?: () => Promise<unknown> }[];
   } | null;
 };
 
@@ -138,6 +140,44 @@ export async function createStreamingLoader(url: string): Promise<ZipLoader> {
 export async function createEpubBook(loader: ZipLoader): Promise<unknown> {
   const { EPUB } = await import("foliate-js/epub.js");
   return new EPUB(loader as never).init();
+}
+
+export type ReaderLayoutMetrics = {
+  margin: number;
+  // 正文栏宽上限（px），对应 foliate 的 max-inline-size 属性
+  maxInlineSize: number;
+  // 栏间距/两侧留白百分比，对应 foliate 的 gap 属性
+  gapPct: number;
+};
+
+// foliate 分页器的 margin 属性只管上下边距；桌面宽屏的左右留白由
+// max-inline-size（默认 720px）与 gap（默认 7%）决定，所以设置里的「边距」
+// 在桌面几乎无感。这里把边距换算成三件套：
+// - maxInlineSize = (舞台宽 − 边距×2) / 栏数。栏数与 foliate 规则一致：
+//   分页且舞台横屏为 2 栏，其余 1 栏；foliate 内部 columnWidth = 舞台宽/栏数 − gap，
+//   代入 gap≈边距后正好等于本公式，所以设置多大边距就留出多大留白。
+// - gapPct：foliate 把 gap 百分比 a 折算成 px 的公式是 a/(1+a)×舞台宽，
+//   反解 a = 边距/(舞台宽 − 边距)，得到 px 后恰好等于边距；
+//   分页时它是栏间距，滚动时它是正文两侧 padding。
+export function readerLayoutMetrics(style: ReaderStyle, stageWidth: number, stageHeight: number): ReaderLayoutMetrics {
+  const margin = style.margin;
+  if (!stageWidth) return { margin, maxInlineSize: 720, gapPct: 7 };
+  const spread = style.flow === "paginated" && stageWidth > stageHeight ? 2 : 1;
+  const textWidth = Math.max(240, stageWidth - margin * 2);
+  const maxInlineSize = Math.round(textWidth / spread);
+  const gapPct = Math.round((margin / Math.max(1, stageWidth - margin)) * 1000) / 10;
+  return { margin, maxInlineSize, gapPct };
+}
+
+// 提前加载相邻节：滚动/翻节进入下一章时内容已在缓存里（引用计数保证
+// foliate 换节时的 unload 不会清掉预取），避免新章白屏闪烁。
+export function preloadAdjacentSections(view: FoliateView, index: number): void {
+  const sections = view.book?.sections;
+  if (!sections?.length) return;
+  for (const i of [index - 1, index + 1]) {
+    const section = sections[i];
+    if (section?.load) void section.load().catch(() => { /* 预取失败不影响当前阅读 */ });
+  }
 }
 
 export type { FoliateView };
