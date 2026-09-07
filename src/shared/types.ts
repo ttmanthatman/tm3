@@ -1,5 +1,5 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "bible_session" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "bible_session" | "chat_record" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -109,6 +109,30 @@ export interface MessageDTO {
   musicPlaylist?: MusicPlaylistDTO | null;
   relayText?: string;
   relayMentions?: string[];
+}
+
+export interface ChatRecordItemDTO {
+  senderName: string;
+  senderAvatarPath?: string | null;
+  type: "text" | "image" | "file";
+  content?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  voiceDurationMs?: number;
+  imageWidth?: number;
+  imageHeight?: number;
+  storedFile?: string;
+  createdAt: string;
+}
+
+export interface ChatRecordPayloadDTO {
+  kind: "chat_record";
+  title: string;
+  sourceChannelId: number;
+  itemCount: number;
+  truncated?: boolean;
+  items: ChatRecordItemDTO[];
 }
 
 export interface MessageReactionsDTO {

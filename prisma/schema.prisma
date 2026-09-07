@@ -50,6 +50,7 @@ enum MessageType {
   sermon_request
   why_topic_card
   bible_session
+  chat_record
   system
 }
 

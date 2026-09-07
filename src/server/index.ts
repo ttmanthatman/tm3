@@ -22,6 +22,7 @@ import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleRoutes } from "./routes/bible.js";
+import { chatRecordStoredFile, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
@@ -2478,6 +2479,7 @@ function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
   if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
   if (message.type === "bible_session") return `${message.sender.displayName} 分享了打开的圣经：${stripPushText(message.content) || "一起阅读"}`;
+  if (message.type === "chat_record") return `${message.sender.displayName} 转发了聊天记录：${stripPushText(message.content) || "聊天记录"}`;
   if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
   if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
   if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
@@ -5276,6 +5278,16 @@ registerBibleRoutes(app, {
   hydrateMessage
 });
 
+registerForwardRoutes(app, {
+  prisma,
+  requireAuth,
+  canAccessChannel,
+  canWriteChannel,
+  emitMessage,
+  sendMessagePush,
+  uploadDir: UPLOAD_DIR
+});
+
 registerBooksRoutes(app, {
   prisma,
   booksDir: BOOKS_DIR,
@@ -5362,19 +5374,32 @@ registerSermonRoutes(app, {
 app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const messageId = Number((request.params as { messageId: string }).messageId);
-  const query = request.query as { download?: string; thumb?: string };
+  const query = request.query as { download?: string; thumb?: string; item?: string };
   const message = await prisma.message.findUnique({ where: { id: messageId } });
-  if (!message?.filePath) return reply.code(404).send({ success: false, message: "文件不存在" });
+  if (!message) return reply.code(404).send({ success: false, message: "文件不存在" });
+  let storedFileName: string;
+  let fileName: string;
+  if (message.type === "chat_record") {
+    // 合并转发记录条目的附件按 ?item=<index> 从 payload 中取拷贝后的文件名。
+    const itemIndex = Number(query.item);
+    const item = Number.isInteger(itemIndex) && itemIndex >= 0 ? chatRecordStoredFile(message.payload, itemIndex) : null;
+    if (!item) return reply.code(404).send({ success: false, message: "文件不存在" });
+    storedFileName = item.storedFile;
+    fileName = item.fileName;
+  } else {
+    if (!message.filePath) return reply.code(404).send({ success: false, message: "文件不存在" });
+    storedFileName = message.filePath;
+    fileName = message.fileName || message.filePath;
+  }
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问文件" });
-  let filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
+  let filePath = path.join(UPLOAD_DIR, path.basename(storedFileName));
   // Bubble rendering asks for the thumbnail variant; fall back to the
   // original for older uploads that predate thumbnail generation.
-  const servingThumb = query.thumb === "1" && fs.existsSync(`${filePath}.thumb.webp`);
+  const servingThumb = query.thumb === "1" && message.type !== "chat_record" && fs.existsSync(`${filePath}.thumb.webp`);
   if (servingThumb) filePath = `${filePath}.thumb.webp`;
   if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "文件不存在" });
   const stat = fs.statSync(filePath);
   const range = request.headers.range;
-  const fileName = message.fileName || message.filePath;
   reply.header("Accept-Ranges", "bytes");
   applyFileResponseHeaders(reply, servingThumb ? displayWebpFileName(fileName) : fileName, query.download === "1");
   if (applyFileValidation(request, reply, stat)) return reply.code(304).send();

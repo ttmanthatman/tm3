@@ -526,7 +526,7 @@ test("the three-dot chat menu consolidates font, members, message selection, and
   assert.match(header, /class="chat-tools-control" data-chat-tools-menu[\s\S]*?aria-label="更多管理功能"[\s\S]*?<Ellipsis/);
   assert.match(header, /<AppMenu[^>]*class="chat-tools-menu"[^>]*label="聊天管理功能"[\s\S]*?class="chat-tools-font-row"[\s\S]*?字号调节[\s\S]*?adjustMessageFontSize\(-1\)[\s\S]*?\{\{ messageFontSize \}\}[\s\S]*?adjustMessageFontSize\(1\)/);
   assert.match(header, /<AppMenuItem[^>]*toggleCurrentMemberPane[\s\S]*?成员列表/);
-  assert.match(header, /v-if="isAdmin \|\| canPinCurrentChannel"[\s\S]*?toggleMessageSelectionMode[\s\S]*?消息多选/);
+  assert.match(header, /<AppMenuItem :active="messageSelectionMode"[^>]*toggleMessageSelectionMode[\s\S]*?消息多选/);
   assert.match(header, /v-if="isAdmin"[\s\S]*?loadAdmin[\s\S]*?系统设置/);
   assert.doesNotMatch(header, /class="message-font-control"/);
   assert.match(app, /if \(showChatToolsMenu\.value && !target\.closest\("\[data-chat-tools-menu\]"\)\) \{\s*showChatToolsMenu\.value = false;/);
@@ -677,11 +677,12 @@ test("double-at song mentions render inline with independent playback controls",
   assert.match(css, /\.music-mention-capsule \{[\s\S]*?border-radius: 999px;[\s\S]*?radial-gradient[\s\S]*?box-shadow:/);
 });
 
-test("audio messages offer multi-group forwarding from the long-press menu", () => {
-  assert.match(app, /isAudioMessage\(pendingMessageActions\)[^>]*[\s\S]*?openForwardMessageDialog[\s\S]*?转发到其他群/);
-  assert.match(app, /class="small-modal forward-message-modal"[^>]*submitAudioForward/);
+test("messages offer multi-channel forwarding from the long-press menu", () => {
+  assert.match(app, /isForwardableMessage\(pendingMessageActions\)[^>]*[\s\S]*?openSingleForward[\s\S]*?转发/);
+  assert.match(app, /startSelectionFromAction[\s\S]*?多选/);
+  assert.match(app, /class="small-modal forward-message-modal"/);
   assert.match(app, /v-for="channel in forwardTargetChannels"/);
-  assert.match(app, /\/api\/messages\/\$\{message\.id\}\/forward/);
+  assert.match(app, /"\/api\/messages\/forward"/);
   assert.match(css, /\.forward-channel-row\.selected \{/);
 });
 

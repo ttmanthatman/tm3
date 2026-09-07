@@ -119,6 +119,14 @@ import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
+import {
+  chatRecordPreviewLines,
+  chatRecordPreviewPayload,
+  chatRecordPreviewTitle,
+  forwardTargetChannels as resolveForwardTargetChannels,
+  forwardableMessages,
+  isForwardableMessage
+} from "./messageForward";
 import { useChatStore } from "./store";
 import { memoizeMessage } from "./memoize";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
@@ -256,6 +264,8 @@ const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/Ser
 const SermonEntryDialog = defineAsyncComponent(() => import("./features/sermon/SermonEntryDialog.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
 const BibleSessionCard = defineAsyncComponent(() => import("./features/bible/BibleSessionCard.vue"));
+const ChatRecordCard = defineAsyncComponent(() => import("./features/chat/ChatRecordCard.vue"));
+const ChatRecordView = defineAsyncComponent(() => import("./features/chat/ChatRecordView.vue"));
 // 正在讲道的预览通知常驻，体积小且时效敏感，不进异步分包。
 import SermonHub from "./features/sermon/SermonHub.vue";
 type UploadStatus = "uploading" | "processing" | "failed";
@@ -781,10 +791,15 @@ const waterEffectVisible = computed(() => store.messages.some((message) => (
 const messageSelectionMode = ref(false);
 const selectedMessageIds = ref<Set<number>>(new Set());
 const pendingMessageActions = ref<MessageDTO | null>(null);
-const forwardMessage = ref<MessageDTO | null>(null);
+const forwardActionSheetOpen = ref(false);
+const forwardPickerOpen = ref(false);
+const forwardSourceMessages = ref<MessageDTO[]>([]);
+const forwardMode = ref<"separate" | "merged">("separate");
+const forwardConfirming = ref(false);
 const forwardChannelIds = ref<number[]>([]);
 const forwardBusy = ref(false);
 const forwardError = ref("");
+const chatRecordViewMessage = ref<MessageDTO | null>(null);
 const textSelectableMessageId = ref<number | null>(null);
 const pendingCloseChannel = ref<ChannelDTO | null>(null);
 const pendingLeaveChannel = ref<ChannelDTO | null>(null);
@@ -1294,6 +1309,8 @@ watch(
     pendingPrayerUpdate.value = null;
     pendingMessageActions.value = null;
     textSelectableMessageId.value = null;
+    resetForwardState();
+    chatRecordViewMessage.value = null;
     oopsPhysicsLayer.value?.reset();
     oopsActiveMessageIds.value = new Set();
     selectedMessageIds.value = new Set();
@@ -1538,9 +1555,7 @@ const bibleSendUnavailableReason = computed(() => {
   if (bibleTargetChannel.value.canWrite === false) return "你在当前频道没有发送权限";
   return "";
 });
-const forwardTargetChannels = computed(() =>
-  store.channels.filter((channel) => channel.kind === "standard" && !channel.directKey && channel.id !== forwardMessage.value?.channelId)
-);
+const forwardTargetChannels = computed(() => resolveForwardTargetChannels(store.channels));
 // “打开的圣经”可分享到的频道：公开/私密聊天频道与私聊，且当前账号可发言
 const bibleShareChannels = computed(() =>
   store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false)
@@ -2376,6 +2391,7 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "sermon_request") return 200;
   if (row.message.type === "bible_session") return 200;
+  if (row.message.type === "chat_record") return 200;
   if (row.message.type === "chain") return 190;
   if (isAudioMessage(row.message)) return 112;
   if (row.message.type === "file") return 126;
@@ -6338,7 +6354,7 @@ function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
 
 function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
   clearMessageLongPress();
-  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: isAudioMessage(message) ? 200 : 164 });
+  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: 200 + (isForwardableMessage(message) ? 36 : 0) });
   pendingMessageActions.value = message;
   pendingChain.value = null;
   pendingDownload.value = null;
@@ -6423,20 +6439,19 @@ function closeMessageActionMenu() {
   pendingMessageActions.value = null;
 }
 
-function openForwardMessageDialog() {
-  const message = pendingMessageActions.value;
-  if (!message || !isAudioMessage(message)) return;
-  forwardMessage.value = message;
+function resetForwardState() {
+  forwardPickerOpen.value = false;
+  forwardActionSheetOpen.value = false;
+  forwardSourceMessages.value = [];
   forwardChannelIds.value = [];
+  forwardMode.value = "separate";
+  forwardConfirming.value = false;
   forwardError.value = "";
-  closeMessageActionMenu();
 }
 
-function closeForwardMessageDialog() {
+function closeForwardDialog() {
   if (forwardBusy.value) return;
-  forwardMessage.value = null;
-  forwardChannelIds.value = [];
-  forwardError.value = "";
+  resetForwardState();
 }
 
 function toggleForwardChannel(channelId: number) {
@@ -6446,25 +6461,83 @@ function toggleForwardChannel(channelId: number) {
   forwardChannelIds.value = [...next];
 }
 
-async function submitAudioForward() {
-  const message = forwardMessage.value;
-  if (!message || forwardBusy.value || !forwardChannelIds.value.length) return;
+function openSingleForward() {
+  const message = pendingMessageActions.value;
+  if (!message || !isForwardableMessage(message)) return;
+  resetForwardState();
+  forwardSourceMessages.value = [message];
+  forwardPickerOpen.value = true;
+  closeMessageActionMenu();
+}
+
+function startSelectionFromAction() {
+  const message = pendingMessageActions.value;
+  if (!message || message.id <= 0) return;
+  messageSelectionMode.value = true;
+  selectedMessageIds.value = new Set([message.id]);
+  pendingChain.value = null;
+  pendingMessageActions.value = null;
+}
+
+function openForwardActionSheet() {
+  const selected = store.messages.filter((message) => selectedMessageIds.value.has(message.id));
+  const { supported, skippedCount } = forwardableMessages(selected);
+  if (!supported.length) {
+    alert("所选消息暂不支持转发");
+    return;
+  }
+  if (skippedCount > 0) alert(`有 ${skippedCount} 条消息类型不支持转发，已跳过`);
+  resetForwardState();
+  forwardSourceMessages.value = supported;
+  forwardActionSheetOpen.value = true;
+}
+
+function chooseForwardMode(mode: "separate" | "merged") {
+  forwardMode.value = mode;
+  forwardActionSheetOpen.value = false;
+  forwardPickerOpen.value = true;
+}
+
+const forwardSelectedChannels = computed(() =>
+  forwardTargetChannels.value.filter((channel) => forwardChannelIds.value.includes(channel.id))
+);
+const forwardMergedPreviewPayload = computed(() =>
+  chatRecordPreviewPayload(chatRecordPreviewTitle(currentChannel.value?.name || ""), store.currentChannelId || 0, forwardSourceMessages.value)
+);
+const forwardMergedPreviewLines = computed(() => chatRecordPreviewLines(forwardMergedPreviewPayload.value));
+
+async function submitMessageForward() {
+  if (forwardBusy.value || !forwardChannelIds.value.length || !forwardSourceMessages.value.length) return;
   forwardBusy.value = true;
   forwardError.value = "";
   try {
-    const result = await api<{ success: boolean; forwarded: number }>(`/api/messages/${message.id}/forward`, {
+    await api<{ success: boolean; forwarded: number; skipped: number }>("/api/messages/forward", {
       method: "POST",
-      body: JSON.stringify({ channelIds: forwardChannelIds.value })
+      body: JSON.stringify({
+        messageIds: forwardSourceMessages.value.map((message) => message.id),
+        channelIds: forwardChannelIds.value,
+        mode: forwardMode.value
+      })
     });
-    const forwarded = result.forwarded;
-    forwardMessage.value = null;
-    forwardChannelIds.value = [];
-    alert(`已转发到 ${forwarded} 个群`);
+    resetForwardState();
+    messageSelectionMode.value = false;
+    selectedMessageIds.value = new Set();
+    alert("已转发");
   } catch (error) {
-    forwardError.value = error instanceof Error ? error.message : "转发失败";
+    const message = error instanceof Error ? error.message : "转发失败";
+    forwardError.value = message;
+    alert(message);
   } finally {
     forwardBusy.value = false;
   }
+}
+
+function openChatRecord(message: MessageDTO) {
+  if (messageSelectionMode.value) {
+    toggleMessageSelected(message);
+    return;
+  }
+  chatRecordViewMessage.value = message;
 }
 
 function quoteActionMessage() {
@@ -6715,7 +6788,7 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
     event.stopPropagation();
     return;
   }
-  if (messageSelectionMode.value && (isAdmin.value || canPinCurrentChannel.value) && message.id > 0) {
+  if (messageSelectionMode.value && message.id > 0) {
     toggleMessageSelected(message);
     event.preventDefault();
     event.stopPropagation();
@@ -6761,7 +6834,7 @@ function handleOopsActiveChange(change: { messageId: number; active: boolean }) 
 function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
   if (Date.now() < suppressNextTapUntil) return;
   if (event) event.stopPropagation();
-  if (messageSelectionMode.value && isAdmin.value && message.id > 0) {
+  if (messageSelectionMode.value && message.id > 0) {
     toggleMessageSelected(message);
     return;
   }
@@ -10200,7 +10273,7 @@ async function toggleVirtual(character: any) {
               <button type="button" :disabled="messageFontSize >= maxMessageFontSize" aria-label="增大消息字体" @click="adjustMessageFontSize(1)">大</button>
             </div>
             <AppMenuItem @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></AppMenuItem>
-            <AppMenuItem v-if="isAdmin || canPinCurrentChannel" :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
+            <AppMenuItem :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
             <AppMenuItem v-if="isAdmin" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></AppMenuItem>
           </AppMenu>
         </div>
@@ -10279,6 +10352,7 @@ async function toggleVirtual(character: any) {
       <section v-if="!showingFavoriteSurface && messageSelectionMode" class="message-selection-bar">
         <span>已选择 {{ selectedMessageCount }} 条</span>
         <button class="mini-btn secondary" @click="toggleVisibleMessageSelection">{{ visibleMessagesSelected ? "取消全选" : "全选当前" }}</button>
+        <button class="mini-btn" :disabled="!selectedMessageCount" @click="openForwardActionSheet"><Send :size="15" />转发</button>
         <button v-if="canPinCurrentChannel" class="mini-btn" :disabled="!selectedMessageCount" @click="pinSelectedMessages"><Pin :size="15" />设为置顶</button>
         <button v-if="isAdmin" class="mini-btn danger-action" :disabled="!selectedMessageCount" @click="deleteSelectedMessages"><Trash2 :size="15" />删除</button>
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
@@ -10725,6 +10799,9 @@ async function toggleVirtual(character: any) {
                 </template>
                 <template v-else-if="row.message.type === 'bible_session'">
                   <BibleSessionCard :message="row.message" @open="openBibleSessionFromMessage" />
+                </template>
+                <template v-else-if="row.message.type === 'chat_record'">
+                  <ChatRecordCard :message="row.message" @open="openChatRecord" />
                 </template>
                 <template v-else-if="pendingUploadFor(row.message)">
                   <div class="upload-card" :class="{ failed: pendingUploadFor(row.message)?.status === 'failed' }" @click.stop>
@@ -11332,7 +11409,8 @@ async function toggleVirtual(character: any) {
         </div>
         <div class="message-actions-list">
           <button type="button" @click="quoteActionMessage"><MessageSquareQuote :size="15" />引用</button>
-          <button v-if="isAudioMessage(pendingMessageActions)" type="button" @click="openForwardMessageDialog"><Send :size="15" />转发到其他群</button>
+          <button v-if="isForwardableMessage(pendingMessageActions)" type="button" @click="openSingleForward"><Send :size="15" />转发</button>
+          <button type="button" @click="startSelectionFromAction"><CheckCircle2 :size="15" />多选</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="openMusicTrackInManager"><AudioLines :size="15" />在音乐管理中打开</button>
           <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
@@ -11340,13 +11418,16 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="forwardMessage" class="modal-shell" @click.self="closeForwardMessageDialog">
-      <form class="small-modal forward-message-modal" @submit.prevent="submitAudioForward">
+    <section v-if="forwardPickerOpen" class="modal-shell" @click.self="closeForwardDialog">
+      <div class="small-modal forward-message-modal">
         <header class="modal-head">
-          <div><strong>转发音频</strong><small>{{ forwardMessage.fileName || "音频" }}</small></div>
-          <button class="icon-btn" type="button" :disabled="forwardBusy" @click="closeForwardMessageDialog" aria-label="关闭转发"><X :size="20" /></button>
+          <div>
+            <strong>{{ forwardConfirming ? "发送给" : "转发消息" }}</strong>
+            <small>{{ forwardMode === "merged" ? `合并转发 ${forwardSourceMessages.length} 条消息` : `逐条转发 ${forwardSourceMessages.length} 条消息` }}</small>
+          </div>
+          <button class="icon-btn" type="button" :disabled="forwardBusy" @click="closeForwardDialog" aria-label="关闭转发"><X :size="20" /></button>
         </header>
-        <div class="forward-channel-body">
+        <div v-if="!forwardConfirming" class="forward-channel-body">
           <div v-if="forwardTargetChannels.length" class="forward-channel-list">
             <button
               v-for="channel in forwardTargetChannels"
@@ -11357,21 +11438,49 @@ async function toggleVirtual(character: any) {
               @click="toggleForwardChannel(channel.id)"
             >
               <span class="channel-icon">{{ channel.icon }}</span>
-              <span><strong>{{ channel.name }}</strong><small>{{ channel.description || "群聊" }}</small></span>
+              <span><strong>{{ channel.name }}</strong><small>{{ channel.description || (channel.kind === "direct" ? "私聊" : "群聊") }}</small></span>
               <CheckCircle2 v-if="forwardChannelIds.includes(channel.id)" :size="19" />
             </button>
           </div>
-          <div v-else class="member-picker-empty">没有可转发的其他群</div>
+          <div v-else class="member-picker-empty">没有可转发的聊天</div>
+          <p v-if="forwardError" class="form-error">{{ forwardError }}</p>
+        </div>
+        <div v-else class="forward-channel-body forward-confirm-body">
+          <p class="forward-confirm-targets">发送给：{{ forwardSelectedChannels.map((channel) => channel.name).join("、") }}</p>
+          <div v-if="forwardMode === 'merged'" class="chat-record-card forward-confirm-preview">
+            <strong class="chat-record-title">{{ forwardMergedPreviewPayload.title }}</strong>
+            <span v-for="(line, index) in forwardMergedPreviewLines" :key="index" class="chat-record-line">{{ line }}</span>
+            <span class="chat-record-footer">聊天记录</span>
+          </div>
+          <p v-else class="forward-confirm-summary">逐条发送 {{ forwardSourceMessages.length }} 条消息</p>
           <p v-if="forwardError" class="form-error">{{ forwardError }}</p>
         </div>
         <div class="confirm-actions member-picker-actions">
-          <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="closeForwardMessageDialog">取消</button>
-          <button class="primary-btn" type="submit" :disabled="forwardBusy || !forwardChannelIds.length">
-            {{ forwardBusy ? "转发中..." : `转发到 ${forwardChannelIds.length || ""} 个群` }}
-          </button>
+          <template v-if="!forwardConfirming">
+            <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="closeForwardDialog">取消</button>
+            <button class="primary-btn" type="button" :disabled="!forwardChannelIds.length" @click="forwardConfirming = true">
+              确定<template v-if="forwardChannelIds.length">（{{ forwardChannelIds.length }}）</template>
+            </button>
+          </template>
+          <template v-else>
+            <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="forwardConfirming = false">取消</button>
+            <button class="primary-btn" type="button" :disabled="forwardBusy" @click="submitMessageForward">
+              {{ forwardBusy ? "发送中..." : "发送" }}
+            </button>
+          </template>
         </div>
-      </form>
+      </div>
     </section>
+
+    <section v-if="forwardActionSheetOpen" class="modal-shell forward-sheet-shell" @click.self="forwardActionSheetOpen = false">
+      <div class="forward-action-sheet" role="dialog" aria-label="选择转发方式">
+        <button type="button" @click="chooseForwardMode('separate')">逐条转发</button>
+        <button type="button" @click="chooseForwardMode('merged')">合并转发</button>
+        <button type="button" class="forward-action-cancel" @click="forwardActionSheetOpen = false">取消</button>
+      </div>
+    </section>
+
+    <ChatRecordView v-if="chatRecordViewMessage" :message="chatRecordViewMessage" @close="chatRecordViewMessage = null" />
 
     <section v-if="pendingPrayer" class="tap-popover prayer-popover" :style="prayerPromptStyle" data-prayer-popover>
       <div class="tap-popover-card">

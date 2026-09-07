@@ -174,6 +174,51 @@ test("文字消息刷新后仍然存在", async ({ page }) => {
   await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
 });
 
+test("多选消息后合并转发为聊天记录卡片", async ({ page }) => {
+  const first = "合并转发冒烟：第一条";
+  const second = "合并转发冒烟：第二条";
+  await loginAsAdmin(page);
+
+  for (const text of [first, second]) {
+    await page.locator(".composer-main textarea").fill(text);
+    await page.getByRole("button", { name: "发送", exact: true }).click();
+    await expect(page.locator("[data-message-id]").filter({ hasText: text })).toHaveCount(1);
+  }
+
+  await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
+  await page.getByRole("menuitem", { name: "消息多选", exact: true }).click();
+  await page.locator("[data-message-id]").filter({ hasText: first }).locator(".bubble").click();
+  await page.locator("[data-message-id]").filter({ hasText: second }).locator(".bubble").click();
+  const selectionBar = page.locator(".message-selection-bar");
+  await expect(selectionBar).toContainText("已选择 2 条");
+
+  await selectionBar.getByRole("button", { name: "转发", exact: true }).click();
+  await page.locator(".forward-action-sheet").getByRole("button", { name: "合并转发", exact: true }).click();
+
+  const forwardModal = page.locator(".forward-message-modal");
+  await expect(forwardModal).toBeVisible();
+  await forwardModal.locator(".forward-channel-row").filter({ hasText: E2E_CHANNELS.secondary }).click();
+  await forwardModal.getByRole("button", { name: /确定/ }).click();
+  await expect(forwardModal.getByText(`发送给：${E2E_CHANNELS.secondary}`)).toBeVisible();
+  await expect(forwardModal.locator(".chat-record-card")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await forwardModal.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(forwardModal).toHaveCount(0);
+
+  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
+  const recordCard = page.locator(".chat-record-card").filter({ hasText: `${E2E_CHANNELS.default}的聊天记录` });
+  await expect(recordCard).toBeVisible();
+  await recordCard.click();
+  const recordView = page.locator(".chat-record-view");
+  await expect(recordView).toBeVisible();
+  await expect(recordView).toContainText("共 2 条");
+  await expect(recordView.getByText(first)).toBeVisible();
+  await expect(recordView.getByText(second)).toBeVisible();
+  await recordView.getByRole("button", { name: "关闭聊天记录" }).click();
+  await expect(recordView).toHaveCount(0);
+});
+
 test("发起人要求具体项目后，参与者必须选择或填写其他", async ({ page }) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1280, height: 800 });
