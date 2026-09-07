@@ -6,14 +6,23 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 
 ## Start Every Session
 
-1. Run `git status --short`.
-2. Run `git branch --show-current`.
-3. Run `git log --oneline -n 20`.
-4. Stop if the worktree contains changes that are not understood.
-5. Read `docs/development-index.md` before locating implementation code.
-6. Read `docs/model-task-routing.md` and apply its model and escalation rules.
-7. Check for a more specific `AGENTS.md` in the target directory.
-8. If `AGENTS.local.md` exists, read it and apply its private local guidance; never commit it.
+1. Run `git status --short` and `git log --oneline -n 5`.
+2. Stop if the worktree contains changes that are not understood.
+3. Check for a more specific `AGENTS.md` in the target directory and read it before editing there.
+4. If `AGENTS.local.md` exists, read it and apply its private local guidance; never commit it.
+
+Read reference documents on demand, not at startup:
+
+- `docs/development-index.md`: read only the sections the task touches (module-map entries for the files being changed, plus any triggered checklist). Locate sections with a heading search instead of reading the whole file.
+- `docs/model-task-routing.md`: consult its routing and escalation rules when sizing or escalating a task; audit background lives in `docs/architecture-audit.md`.
+
+## Token Economy
+
+- Discover code with the knowledge-graph tools (`search_graph`, `trace_path`, `get_code_snippet`) before opening files; fall back to text search only for literals, configuration, and non-code files.
+- Read the smallest useful region around a symbol. Never read a large file end to end when symbol-level inspection works, and do not re-read files that have not changed.
+- Delegate broad exploration and commands with large output to subagents so intermediate dumps stay out of the main context.
+- Iterate with the narrowest relevant test command and `npm run verify:changed`; reserve `npm run verify:full` for final verification.
+- Keep reports short; do not paste large diffs, logs, or file dumps into the conversation.
 
 ## Scope Discipline
 

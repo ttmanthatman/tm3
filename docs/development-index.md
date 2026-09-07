@@ -1,6 +1,6 @@
 # Development Index
 
-This index is the first file to read before changing Team Chat. It is intentionally short and public-safe: do not add deployment hosts, private domains, `.env` values, database snapshots, or local machine notes here.
+This index is the canonical module map and checklist reference for Team Chat. Read the sections relevant to your task instead of the whole file; locate sections with a heading search. It is intentionally public-safe: do not add deployment hosts, private domains, `.env` values, database snapshots, or local machine notes here.
 
 ## Codex Guidance
 
@@ -11,11 +11,12 @@ This index is the first file to read before changing Team Chat. It is intentiona
 
 ## Start Every Work Session
 
-1. Run `git status --short`, `git branch --show-current`, and `git log --oneline -n 20`.
+1. Run `git status --short` and `git log --oneline -n 5`.
 2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
-3. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
-4. Before release or push, run `npm run verify:full`.
-5. Review `git diff` locally before deployment or publishing.
+3. Read only the sections of this index the task touches: module-map entries for the files being changed and any checklist the change triggers.
+4. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
+5. Iterate with `npm run verify:changed`; before release or push, run `npm run verify:full`.
+6. Review `git diff` locally before deployment or publishing.
 
 ## Continuous Integration
 
