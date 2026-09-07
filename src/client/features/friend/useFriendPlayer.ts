@@ -4,7 +4,7 @@ import { api, getToken } from "../../api";
 import { musicFadeVolume } from "../../musicPlayer";
 
 const FRIEND_FADE_MS = 900;
-const FRIEND_PROGRESS_SAVE_MS = 10_000;
+const FRIEND_PROGRESS_SAVE_MS = 30_000;
 const FRIEND_RESUME_MIN_MS = 5_000;
 const FRIEND_HISTORY_MIN_MS = 10_000;
 const FRIEND_HISTORY_LIMIT = 20;
@@ -80,6 +80,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
   let fadeFrame: number | undefined;
   let fadeTimer: number | undefined;
   let progressTimer: number | undefined;
+  let removeVisibilitySaveListener: (() => void) | null = null;
   let disposed = false;
   /** 当前节目已累计的真实收听时长；自动与主动播放均在满 10 秒后才写入收听记录 */
   let listenedMs = 0;
@@ -236,6 +237,13 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     if (audio || disposed) return;
     audio = runtime.createAudio();
     audio.preload = "metadata";
+    if (!removeVisibilitySaveListener && typeof document !== "undefined") {
+      const handleVisibilitySave = () => {
+        if (document.visibilityState === "hidden") savePlaybackProgress();
+      };
+      document.addEventListener("visibilitychange", handleVisibilitySave);
+      removeVisibilitySaveListener = () => document.removeEventListener("visibilitychange", handleVisibilitySave);
+    }
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
@@ -440,6 +448,8 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     stopProgressTimer();
     savePlaybackProgress();
     notifyListening(null);
+    removeVisibilitySaveListener?.();
+    removeVisibilitySaveListener = null;
     if (audio) {
       const targetAudio = audio;
       targetAudio.pause();

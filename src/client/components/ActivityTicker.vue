@@ -1,49 +1,40 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { advanceActivityTickerPosition } from "../activityTicker";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+
+const TICKER_SPEED_PX_PER_SECOND = 36;
 
 const props = defineProps<{ items: string[] }>();
 const viewport = ref<HTMLElement | null>(null);
 const track = ref<HTMLElement | null>(null);
-const position = ref(0);
-let frame = 0;
-let previousTime = 0;
+const viewportWidth = ref(0);
+const contentWidth = ref(0);
 let resizeObserver: ResizeObserver | null = null;
 
-function resetPosition() {
-  position.value = viewport.value?.clientWidth || 0;
+const scrolling = computed(() => viewportWidth.value > 0 && contentWidth.value > viewportWidth.value);
+const trackStyle = computed(() => ({
+  "--activity-ticker-start": `${viewportWidth.value}px`,
+  "--activity-ticker-distance": `${contentWidth.value}px`,
+  "--activity-ticker-duration": `${((viewportWidth.value + contentWidth.value) / TICKER_SPEED_PX_PER_SECOND).toFixed(1)}s`
+}));
+
+function measureOverflow() {
+  const viewportElement = viewport.value;
+  const trackElement = track.value;
+  if (!viewportElement || !trackElement) return;
+  viewportWidth.value = viewportElement.clientWidth;
+  contentWidth.value = trackElement.scrollWidth;
 }
 
-function tick(now: number) {
-  const elapsed = previousTime ? Math.min(100, now - previousTime) : 0;
-  previousTime = now;
-  if (!document.hidden && viewport.value && track.value) {
-    position.value = advanceActivityTickerPosition(
-      position.value,
-      elapsed,
-      track.value.scrollWidth,
-      viewport.value.clientWidth
-    );
-  }
-  frame = window.requestAnimationFrame(tick);
-}
-
-watch(() => props.items, () => void nextTick(() => {
-  if (track.value && position.value <= -track.value.scrollWidth) resetPosition();
-}), { deep: true });
+watch(() => props.items, () => void nextTick(measureOverflow), { deep: true });
 
 onMounted(() => {
-  resetPosition();
-  resizeObserver = new ResizeObserver(() => {
-    if (position.value > (viewport.value?.clientWidth || 0)) resetPosition();
-  });
+  resizeObserver = new ResizeObserver(measureOverflow);
   if (viewport.value) resizeObserver.observe(viewport.value);
   if (track.value) resizeObserver.observe(track.value);
-  frame = window.requestAnimationFrame(tick);
+  void nextTick(measureOverflow);
 });
 
 onBeforeUnmount(() => {
-  window.cancelAnimationFrame(frame);
   resizeObserver?.disconnect();
   resizeObserver = null;
 });
@@ -51,7 +42,7 @@ onBeforeUnmount(() => {
 
 <template>
   <span ref="viewport" class="chat-activity-viewport">
-    <span ref="track" class="chat-activity-track" :style="{ transform: `translate3d(${position}px, 0, 0)` }">
+    <span ref="track" class="chat-activity-track" :class="{ scrolling }" :style="trackStyle">
       <span v-for="(item, index) in items" :key="`${item}-${index}`" class="chat-activity-item">{{ item }}</span>
     </span>
   </span>

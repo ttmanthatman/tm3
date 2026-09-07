@@ -36,7 +36,6 @@ const currentIndex = computed(() => {
 });
 const currentCue = computed(() => props.cues[currentIndex.value] || null);
 const nextCue = computed(() => props.cues[currentIndex.value + 1] || null);
-const currentProgress = computed(() => cueProgress(currentCue.value));
 
 function clockNeeded() {
   return shouldRunMusicLyricsClock({
@@ -90,6 +89,22 @@ function cueProgress(cue: MusicLyricCueDTO | MusicLyricSegmentDTO | null) {
   return Math.max(0, Math.min(100, ((currentTimeMs.value - cue.startMs) / Math.max(1, cue.endMs - cue.startMs)) * 100));
 }
 
+// Outer fill scales by progress while the inner counter-scales, keeping glyphs undistorted;
+// below FILL_MIN_PROGRESS the counter-scale would grow extreme, so the fill stays hidden.
+const FILL_MIN_PROGRESS = 0.02;
+
+function cueFillStyle(cue: MusicLyricCueDTO | MusicLyricSegmentDTO | null): Record<string, string> {
+  const progress = cueProgress(cue) / 100;
+  if (progress < FILL_MIN_PROGRESS) return { transform: "scaleX(0)", visibility: "hidden" };
+  return { transform: `scaleX(${progress})` };
+}
+
+function cueFillInnerStyle(cue: MusicLyricCueDTO | MusicLyricSegmentDTO | null): Record<string, string> {
+  const progress = cueProgress(cue) / 100;
+  if (progress < FILL_MIN_PROGRESS) return { transform: "scaleX(1)" };
+  return { transform: `scaleX(${1 / progress})` };
+}
+
 function lyricDisplayText(text?: string | null) {
   return String(text || "").replace(/\s*\n\s*/g, " ");
 }
@@ -112,16 +127,16 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button type="button" class="music-lyrics-header" aria-label="隐藏歌词五秒" @click.stop="$emit('hide')">
+  <button type="button" class="music-lyrics-header" :class="{ playing }" aria-label="隐藏歌词五秒" @click.stop="$emit('hide')">
     <span v-if="currentCue?.segments?.length" class="music-lyrics-current music-lyrics-current-enhanced">
       <span v-for="(segment, segmentIndex) in currentCue.segments" :key="`${segment.startMs}-${segmentIndex}`" class="music-lyrics-segment">
         <span class="music-lyrics-segment-base">{{ segment.text }}</span>
-        <span class="music-lyrics-segment-fill" :style="{ clipPath: `inset(0 ${100 - cueProgress(segment)}% 0 0)` }">{{ segment.text }}</span>
+        <span class="music-lyrics-segment-fill" :style="cueFillStyle(segment)"><span class="music-lyrics-segment-fill-inner" :style="cueFillInnerStyle(segment)">{{ segment.text }}</span></span>
       </span>
     </span>
     <span v-else class="music-lyrics-current">
       <span class="music-lyrics-current-base">{{ lyricDisplayText(currentCue?.text) }}</span>
-      <span class="music-lyrics-current-fill" :style="{ clipPath: `inset(0 ${100 - currentProgress}% 0 0)` }">{{ lyricDisplayText(currentCue?.text) }}</span>
+      <span class="music-lyrics-current-fill" :style="cueFillStyle(currentCue)"><span class="music-lyrics-current-fill-inner" :style="cueFillInnerStyle(currentCue)">{{ lyricDisplayText(currentCue?.text) }}</span></span>
     </span>
     <span v-if="nextCue" class="music-lyrics-next">{{ lyricDisplayText(nextCue.text) }}</span>
   </button>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import {
   ChevronLeft,
   ChevronRight,
@@ -77,8 +77,18 @@ function refreshSongProgress() {
   const durationMs = controls.currentPlaybackDurationMs();
   currentSongProgress.value = durationMs > 0 ? Math.min(100, Math.round((controls.currentPlaybackTimeMs() / durationMs) * 100)) : 0;
 }
-const progressTimer = window.setInterval(refreshSongProgress, 1000);
-onBeforeUnmount(() => window.clearInterval(progressTimer));
+let progressTimer: number | undefined;
+function stopSongProgressTimer() {
+  if (progressTimer !== undefined) window.clearInterval(progressTimer);
+  progressTimer = undefined;
+}
+watch([timerKind, playing], ([kind, isPlaying]) => {
+  stopSongProgressTimer();
+  if (kind !== "tracks" || !isPlaying) return;
+  refreshSongProgress();
+  progressTimer = window.setInterval(refreshSongProgress, 1000);
+}, { immediate: true });
+onBeforeUnmount(stopSongProgressTimer);
 
 const minutesInput = ref("");
 const tracksInput = ref("");

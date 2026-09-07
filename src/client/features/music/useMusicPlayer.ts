@@ -24,7 +24,7 @@ import {
 } from "../../musicPlayer";
 
 const MUSIC_FADE_OUT_MS = 900;
-const MUSIC_STATE_SYNC_INTERVAL_MS = 15_000;
+const MUSIC_STATE_SYNC_INTERVAL_MS = 30_000;
 
 type MusicPlayerRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 

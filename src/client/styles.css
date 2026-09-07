@@ -1116,7 +1116,18 @@ button {
   inset: 0;
   color: #ffb54d;
   text-shadow: 0 0 9px rgba(255, 137, 28, 0.62), 0 1px 0 rgba(0, 0, 0, 0.35);
-  transition: clip-path 120ms linear;
+  transform-origin: left center;
+}
+
+.music-lyrics-current-fill-inner,
+.music-lyrics-segment-fill-inner {
+  display: block;
+  transform-origin: left center;
+}
+
+.music-lyrics-current-fill-inner {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .music-lyrics-current-enhanced {
@@ -1139,9 +1150,17 @@ button {
 .music-lyrics-segment-fill {
   position: absolute;
   inset: 0;
+  overflow: hidden;
   color: #ffb54d;
   text-shadow: 0 0 9px rgba(255, 137, 28, 0.62), 0 1px 0 rgba(0, 0, 0, 0.35);
-  transition: clip-path 70ms linear;
+  transform-origin: left center;
+}
+
+.music-lyrics-header.playing .music-lyrics-current-fill,
+.music-lyrics-header.playing .music-lyrics-segment-fill,
+.music-lyrics-header.playing .music-lyrics-current-fill-inner,
+.music-lyrics-header.playing .music-lyrics-segment-fill-inner {
+  will-change: transform;
 }
 
 .music-lyrics-next {
@@ -1961,6 +1980,13 @@ button {
 
   .music-title-track.scrolling span + span {
     display: none;
+  }
+
+  .music-player-trigger.spinning .music-player-glyph,
+  .friend-player-trigger.spinning .friend-player-glyph,
+  .friend-spin,
+  .music-score-trigger.page-turning .music-score-page-glyph {
+    animation: none;
   }
 }
 
@@ -2854,6 +2880,15 @@ button.pinned-ticker-action {
   align-items: center;
   gap: 12px;
   will-change: transform;
+}
+
+.chat-activity-track.scrolling {
+  animation: chatActivityTickerScroll var(--activity-ticker-duration) linear infinite;
+}
+
+@keyframes chatActivityTickerScroll {
+  from { transform: translateX(var(--activity-ticker-start)); }
+  to { transform: translateX(calc(0px - var(--activity-ticker-distance))); }
 }
 
 .chat-activity-item {

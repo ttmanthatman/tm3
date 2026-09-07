@@ -54,7 +54,8 @@ function handleSeek(event: MouseEvent) {
   emit("seek", Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)));
 }
 
-watch(() => [props.samples, props.progress], () => void nextTick(draw), { deep: true });
+// samples 与 progress 都由父组件整体替换（computed/数值），浅监听即可。
+watch(() => [props.samples, props.progress], () => void nextTick(draw));
 
 onMounted(() => {
   resizeObserver = new ResizeObserver(draw);

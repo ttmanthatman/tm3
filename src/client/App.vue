@@ -131,7 +131,7 @@ import { useChatStore } from "./store";
 import { memoizeMessage } from "./memoize";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
-import ResponsiveAudioWaveform from "./components/ResponsiveAudioWaveform.vue";
+import InlineAudioPlayer from "./components/InlineAudioPlayer.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
@@ -148,7 +148,6 @@ import {
   type VirtualTimelineItem
 } from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
-import { resolveMessageWaveform } from "./audioWaveform";
 import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import {
   advanceWallpaperPan,
@@ -225,7 +224,7 @@ import { useMusicPlayer } from "./features/music/useMusicPlayer";
 import { useMusicSleepTimer } from "./features/music/useMusicSleepTimer";
 import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
-import { createExclusiveAudio } from "./features/audio/exclusiveAudio";
+import { getSharedExclusiveAudio, stopAllMessageAudioPlayback } from "./features/audio/messageAudioPlayback";
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
 import ChainCreateDialog from "./features/chain/ChainCreateDialog.vue";
 import ChainJoinPopover from "./features/chain/ChainJoinPopover.vue";
@@ -957,9 +956,6 @@ const messagePreviewUrl = memoizeMessage((message: MessageDTO) => {
   return extractMessageUrls(message.content)[0] || "";
 });
 const voiceSending = ref(false);
-const playingVoiceId = ref<number | null>(null);
-const voiceProgress = ref<Record<number, number>>({});
-const voiceDurations = ref<Record<number, number>>({});
 const recordingDuration = ref(0);
 const recordingStatus = ref("");
 const recordingNotice = ref("");
@@ -997,7 +993,6 @@ let gooeyNextId = 1;
 let gooeyParticles: GooeyDripParticle[] = [];
 let loadingHistoryFromScroll = false;
 let loadingNewerFromScroll = false;
-const voicePlayers = new Map<number, HTMLAudioElement>();
 const longPressMs = 520;
 const rainDurationMs = 15_000;
 const playedRainEffectIds = new Set<number>();
@@ -1296,7 +1291,7 @@ watch(
     activeReadAnchor = null;
     pendingTimelineAnchor = null;
     chatScrollIntentTracker.reset();
-    stopAllVoicePlayback();
+    stopAllMessageAudioPlayback();
     selectedMember.value = null;
     memberPaneChannelOverride.value = null;
     managedMembers.value = [];
@@ -1529,7 +1524,7 @@ onBeforeUnmount(() => {
   stopDripPhysics(true);
   stopGooeyDripPhysics(true);
   oopsPhysicsLayer.value?.reset();
-  stopAllVoicePlayback();
+  stopAllMessageAudioPlayback();
   resetRecording();
   stopPublishingMusicListening();
   stopPublishingBibleReading();
@@ -1564,7 +1559,7 @@ const bibleShareChannels = computed(() =>
 );
 const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, "manual"));
 const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
-const exclusiveAudio = createExclusiveAudio();
+const exclusiveAudio = getSharedExclusiveAudio();
 const musicPlayer = useMusicPlayer({
   tracks: musicTracks,
   libraryTracks: sortedMusicTracks,
@@ -1617,7 +1612,6 @@ const friendPlayer = useFriendPlayer({
 const { playing: friendPlaying } = friendPlayer.state;
 exclusiveAudio.register({ id: "music", resumable: true, suspend: () => pauseMusic(), resume: () => void playCurrentMusic({ fadeIn: true }) });
 exclusiveAudio.register({ id: "friend", resumable: true, suspend: () => friendPlayer.controls.duck(), resume: () => void friendPlayer.controls.resumeWithFade() });
-exclusiveAudio.register({ id: "voice", resumable: false, suspend: () => stopAllVoicePlayback(), resume: () => undefined });
 const friendProgramsOpen = ref(false);
 function toggleFriendPrograms() {
   friendProgramsOpen.value = !friendProgramsOpen.value;
@@ -2962,8 +2956,8 @@ function bibleRichTextSegmentsFromText(text: string, keyPrefix: string) {
   return splitBibleTextNode(text || "", keyPrefix);
 }
 
-// Message rows re-render whenever any reactive input changes (voice progress,
-// effect ticks), so the heavy per-row derivations are memoized on the message
+// Message rows re-render whenever any reactive input changes (effect ticks,
+// presence updates), so the heavy per-row derivations are memoized on the message
 // object itself: identical rows return instantly from the WeakMap.
 const messageRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `message-${message.id}`));
 
@@ -8006,18 +8000,8 @@ async function analyzeAudioBlob(blob: Blob, bars = 48) {
   }
 }
 
-const waveformForMessage = memoizeMessage((message: MessageDTO) => resolveMessageWaveform(audioPayload(message).waveform, message.id));
-
 function voiceDurationMs(message: MessageDTO) {
-  return voiceDurations.value[message.id] || audioPayload(message).durationMs || 0;
-}
-
-function voiceProgressValue(message: MessageDTO) {
-  return voiceProgress.value[message.id] || 0;
-}
-
-function audioElapsedMs(message: MessageDTO) {
-  return Math.round(voiceDurationMs(message) * voiceProgressValue(message));
+  return audioPayload(message).durationMs || 0;
 }
 
 function voiceBarStyle(bar: number, index: number, total: number, progress: number) {
@@ -8025,49 +8009,6 @@ function voiceBarStyle(bar: number, index: number, total: number, progress: numb
     height: `${Math.round(7 + bar * 25)}px`,
     opacity: index / Math.max(1, total) <= progress ? 1 : 0.52
   };
-}
-
-function setVoiceProgress(id: number, value: number) {
-  voiceProgress.value = { ...voiceProgress.value, [id]: Math.min(1, Math.max(0, value)) };
-}
-
-function setVoiceDuration(id: number, value: number) {
-  if (!Number.isFinite(value) || value <= 0) return;
-  voiceDurations.value = { ...voiceDurations.value, [id]: Math.round(value * 1000) };
-}
-
-function stopAllVoicePlayback(exceptId?: number) {
-  for (const [id, audio] of voicePlayers) {
-    if (id === exceptId) continue;
-    audio.pause();
-    audio.currentTime = 0;
-    setVoiceProgress(id, 0);
-  }
-  if (!exceptId) playingVoiceId.value = null;
-}
-
-function getVoicePlayer(message: MessageDTO) {
-  let audio = voicePlayers.get(message.id);
-  if (audio) return audio;
-  audio = new Audio(fileUrl(message));
-  audio.preload = "metadata";
-  audio.setAttribute("playsinline", "true");
-  audio.setAttribute("webkit-playsinline", "true");
-  audio.addEventListener("loadedmetadata", () => setVoiceDuration(message.id, audio!.duration));
-  audio.addEventListener("timeupdate", () => {
-    if (audio?.duration) setVoiceProgress(message.id, audio.currentTime / audio.duration);
-  });
-  audio.addEventListener("ended", () => {
-    setVoiceProgress(message.id, 1);
-    if (playingVoiceId.value === message.id) playingVoiceId.value = null;
-    exclusiveAudio.deactivate("voice", { resumeSuspended: true });
-  });
-  audio.addEventListener("pause", () => {
-    if (playingVoiceId.value === message.id && !audio?.ended) playingVoiceId.value = null;
-    if (!audio?.ended) exclusiveAudio.deactivate("voice");
-  });
-  voicePlayers.set(message.id, audio);
-  return audio;
 }
 
 async function markVoiceListened(message: MessageDTO) {
@@ -8078,37 +8019,6 @@ async function markVoiceListened(message: MessageDTO) {
   } catch {
     message.voiceListened = false;
   }
-}
-
-function toggleVoicePlayback(message: MessageDTO) {
-  const audio = getVoicePlayer(message);
-  if (playingVoiceId.value === message.id) {
-    audio.pause();
-    playingVoiceId.value = null;
-    return;
-  }
-  stopAllVoicePlayback(message.id);
-  if (audio.ended) {
-    audio.currentTime = 0;
-    setVoiceProgress(message.id, 0);
-  }
-  playingVoiceId.value = message.id;
-  exclusiveAudio.activate("voice");
-  const playAttempt = audio.play();
-  void markVoiceListened(message);
-  playAttempt.catch(() => {
-    playingVoiceId.value = null;
-  });
-}
-
-function seekInlineAudio(message: MessageDTO, progress: number) {
-  const audio = getVoicePlayer(message);
-  const duration = Number.isFinite(audio.duration) ? audio.duration : voiceDurationMs(message) / 1000;
-  if (!duration) return;
-  const normalizedProgress = Math.min(1, Math.max(0, progress));
-  audio.currentTime = duration * normalizedProgress;
-  setVoiceProgress(message.id, normalizedProgress);
-  if (audio.paused) toggleVoicePlayback(message);
 }
 
 function togglePreviewPlayback() {
@@ -10014,7 +9924,7 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="appearanceStyle">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying }" :style="appearanceStyle">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
@@ -10886,67 +10796,14 @@ async function toggleVirtual(character: any) {
                     />
                   </button>
                 </template>
-                <template v-else-if="isVoiceMessage(row.message)">
-                  <div class="voice-card" :class="{ playing: playingVoiceId === row.message.id, unread: hasUnlistenedVoice(row.message) }" @click.stop>
-                    <button class="voice-play" @click="toggleVoicePlayback(row.message)" :aria-label="playingVoiceId === row.message.id ? '暂停语音' : '播放语音'">
-                      <Pause v-if="playingVoiceId === row.message.id" :size="20" />
-                      <Play v-else :size="20" />
-                    </button>
-                    <button class="voice-waveform" @click="toggleVoicePlayback(row.message)" aria-label="播放语音波形">
-                      <span
-                        v-for="(bar, idx) in waveformForMessage(row.message)"
-                        :key="idx"
-                        class="voice-bar"
-                        :class="{ active: idx / waveformForMessage(row.message).length <= voiceProgressValue(row.message) }"
-                        :style="voiceBarStyle(bar, idx, waveformForMessage(row.message).length, voiceProgressValue(row.message))"
-                      ></span>
-                    </button>
-                    <div class="voice-meta">
-                      <span>{{ formatDuration(voiceDurationMs(row.message)) }}</span>
-                      <small>{{ compactBytes(row.message.fileSize) }}</small>
-                    </div>
-                    <span v-if="hasUnlistenedVoice(row.message)" class="voice-unread-dot" aria-label="未收听"></span>
-                  </div>
-                </template>
-                <template v-else-if="isAudioMessage(row.message)">
-                  <div
-                    class="inline-audio-player"
-                    :class="{ playing: playingVoiceId === row.message.id }"
-                    role="group"
-                    :aria-label="`${row.message.fileName || '音频'}播放器`"
-                    @click.stop
-                  >
-                    <div class="inline-audio-head">
-                      <span class="inline-audio-title">
-                        <strong :title="row.message.fileName || '音频'">{{ row.message.fileName || "音频" }}</strong>
-                        <small>音频 · {{ compactBytes(row.message.fileSize) }}<template v-if="row.message.lyrics"> · 带歌词</template></small>
-                      </span>
-                      <span class="inline-audio-actions">
-                        <button type="button" @click="requestDownload(row.message, $event)" aria-label="下载音频" title="下载音频"><Download :size="15" /></button>
-                      </span>
-                    </div>
-                    <div class="inline-audio-controls">
-                      <button
-                        type="button"
-                        class="inline-audio-play"
-                        @click="toggleVoicePlayback(row.message)"
-                        :aria-label="playingVoiceId === row.message.id ? '暂停音频' : '播放音频'"
-                      >
-                        <Pause v-if="playingVoiceId === row.message.id" :size="21" />
-                        <Play v-else :size="21" />
-                      </button>
-                      <ResponsiveAudioWaveform
-                        :samples="waveformForMessage(row.message)"
-                        :progress="voiceProgressValue(row.message)"
-                        @seek="seekInlineAudio(row.message, $event)"
-                      />
-                    </div>
-                    <div class="inline-audio-time">
-                      <span>{{ formatDuration(audioElapsedMs(row.message)) }}</span>
-                      <span>{{ formatDuration(voiceDurationMs(row.message)) }}</span>
-                    </div>
-                  </div>
-                </template>
+                <InlineAudioPlayer
+                  v-else-if="isAudioMessage(row.message)"
+                  :message="row.message"
+                  :src="fileUrl(row.message)"
+                  :unread="hasUnlistenedVoice(row.message)"
+                  @play="markVoiceListened(row.message)"
+                  @download="requestDownload(row.message, $event)"
+                />
                 <template v-else-if="isVideoMessage(row.message)">
                   <button class="media-file-card video-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
                     <span class="media-file-icon"><Play :size="22" /></span>

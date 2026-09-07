@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activityTickerItems, advanceActivityTickerPosition } from "./activityTicker";
+import { activityTickerItems } from "./activityTicker";
 
 test("activity ticker combines Bible, book, music, friend, and typing presence", () => {
   assert.deepEqual(
@@ -27,10 +27,4 @@ test("activity ticker combines Bible, book, music, friend, and typing presence",
 
 test("a single typing user keeps the compact ellipsis treatment", () => {
   assert.deepEqual(activityTickerItems([], [], [], [], [{ displayName: "小平" }]), ["小平正在输入…"]);
-});
-
-test("activity ticker moves at a stable pixel speed and only resets after all text exits", () => {
-  assert.equal(advanceActivityTickerPosition(200, 1_000, 500, 320), 164);
-  assert.equal(advanceActivityTickerPosition(-499, 1_000, 500, 320), 320);
-  assert.equal(advanceActivityTickerPosition(-250, 100, 200, 320), 320);
 });

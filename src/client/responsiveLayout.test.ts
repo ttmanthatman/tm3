@@ -9,6 +9,7 @@ const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const bibleReaderPane = fs.readFileSync(new URL("./components/BibleReaderPane.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
+const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlayer.vue", import.meta.url), "utf8");
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
@@ -137,7 +138,7 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
 });
 
 test("music playback freezes panning wallpaper while keeping the song glyph spinning", () => {
-  assert.match(app, /'music-low-power': musicPlaying && wallpaperPanActive/);
+  assert.match(app, /'music-low-power': musicPlaying \}/);
   assert.match(app, /'playback-paused': musicPlaying/);
   assert.match(app, /shouldAdvanceWallpaperPan\(\{[\s\S]*?musicPlaying: musicPlaying\.value/);
   assert.match(css, /\.wallpaper-pan-background\.ready:not\(\.playback-paused\) \{[\s\S]*?will-change: transform;/);
@@ -181,13 +182,22 @@ test("all file previews keep close at the upper right and download at the lower 
 });
 
 test("audio attachments render their waveform player immediately without a collapsed state", () => {
-  assert.match(app, /<template v-else-if="isAudioMessage\(row\.message\)">[\s\S]*?class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
-  assert.match(app, /@seek="seekInlineAudio\(row\.message, \$event\)"/);
+  assert.match(app, /<InlineAudioPlayer\s+v-else-if="isAudioMessage\(row\.message\)"/);
+  assert.match(inlineAudioPlayer, /class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
+  assert.match(inlineAudioPlayer, /@seek="seek"/);
   assert.doesNotMatch(app, /isInlineAudioPlayerExpanded|expandInlineAudioPlayer|collapseInlineAudioPlayer|expandedAudioMessageIds/);
   assert.doesNotMatch(app, /audio-file-card/);
   assert.doesNotMatch(app, /class="media-preview-audio"/);
   assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
+});
+
+test("voice/audio per-tick playback state is contained in the InlineAudioPlayer leaf", () => {
+  assert.doesNotMatch(app, /voiceProgress|setVoiceProgress|playingVoiceId|toggleVoicePlayback/);
+  assert.match(inlineAudioPlayer, /addEventListener\("timeupdate"/);
+  assert.match(inlineAudioPlayer, /const progress = ref\(0\)/);
+  assert.match(inlineAudioPlayer, /exclusiveAudio\.activate\(participantId\)/);
+  assert.match(app, /stopAllMessageAudioPlayback\(\)/);
 });
 
 test("audio attachment headers omit the redundant decorative audio icon", () => {
@@ -199,7 +209,7 @@ test("audio attachment headers omit the redundant decorative audio icon", () => 
 test("inline audio waveform uses a responsive physical-pixel canvas and never escapes the bubble", () => {
   const waveformCss = css.match(/\.inline-audio-waveform \{([^}]*)\}/)?.[1] || "";
   assert.match(css, /\.inline-audio-player \{[\s\S]*?box-sizing: border-box;[\s\S]*?max-width: 100%;[\s\S]*?min-width: 0;/);
-  assert.match(app, /import ResponsiveAudioWaveform from "\.\/components\/ResponsiveAudioWaveform\.vue"/);
+  assert.match(inlineAudioPlayer, /import ResponsiveAudioWaveform from "\.\/ResponsiveAudioWaveform\.vue"/);
   assert.match(waveformCss, /width: 100%;[\s\S]*?overflow: hidden;/);
   assert.doesNotMatch(waveformCss, /justify-content: space-between/);
 });
@@ -710,7 +720,7 @@ test("SRT and LRC lyrics upload from the music manager and render over the heade
   assert.match(musicManager, /xhrUpload\("PUT", `\/api\/music\/tracks\/\$\{track\.id\}\/lyrics`, form\)/);
   assert.match(lyricsHeader, /class="music-lyrics-header"[\s\S]*?music-lyrics-current-fill/);
   assert.match(app, /scheduleMusicLyricsHeaderResume[\s\S]*?5000/);
-  assert.match(app, /compactBytes\(row\.message\.fileSize\)[\s\S]*?带歌词/);
+  assert.match(inlineAudioPlayer, /compactBytes\(message\.fileSize\)[\s\S]*?带歌词/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/lyrics"/);
   assert.match(server, /source\.musicLyrics[\s\S]*?musicLyrics: \{\s*create: \{\s*fileName: source\.musicLyrics\.fileName/);
 });
@@ -720,7 +730,10 @@ test("Enhanced LRC uses segment timing for progressive karaoke color", () => {
   assert.match(app, /<MusicLyricsHeader[\s\S]*?:get-current-time-ms="currentMusicPlaybackTimeMs"/);
   assert.doesNotMatch(app, /musicLyricsFrame|requestAnimationFrame\(tick\)|musicCurrentTimeMs/);
   assert.match(lyricsHeader, /window\.setTimeout\(runClock, MUSIC_LYRICS_TICK_MS\)/);
-  assert.match(css, /\.music-lyrics-segment-fill \{[\s\S]*?transition: clip-path 70ms linear;/);
+  assert.match(css, /\.music-lyrics-segment-fill \{[\s\S]*?transform-origin: left center;/);
+  assert.doesNotMatch(css, /transition: clip-path/);
+  assert.match(lyricsHeader, /class="music-lyrics-segment-fill" :style="cueFillStyle\(segment\)"[\s\S]*?class="music-lyrics-segment-fill-inner" :style="cueFillInnerStyle\(segment\)"/);
+  assert.match(css, /\.music-lyrics-current-fill-inner,\n\.music-lyrics-segment-fill-inner \{[\s\S]*?transform-origin: left center;/);
   assert.match(server, /parseLyrics\(content, file\.filename\)/);
 });
 
