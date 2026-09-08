@@ -43,7 +43,8 @@ async function runManagedControl(
 ) {
   let driverReady = false;
   let calibratedTarget: string | null = null;
-  let lastError: string | null = null;
+  let driverError: string | null = null;
+  let controlError: string | null = null;
   const completed = new Map<string, { success: boolean; message: string }>();
 
   try {
@@ -53,7 +54,7 @@ async function runManagedControl(
       ? fs.readFileSync(calibratedTargetPath, "utf8").trim() || null
       : null;
   } catch (error) {
-    lastError = errorMessage(error);
+    driverError = errorMessage(error);
   }
 
   while (!source.isStopped()) {
@@ -75,6 +76,7 @@ async function runManagedControl(
               fs.writeFileSync(calibratedTargetPath, `${action.targetGroup}\n`, { mode: 0o600 });
               driverReady = true;
               calibratedTarget = action.targetGroup;
+              driverError = null;
               result = { success: true, message: `已绑定微信群 ${action.targetGroup}` };
             } else {
               if (!driverReady || calibratedTarget !== action.targetGroup) {
@@ -85,12 +87,12 @@ async function runManagedControl(
             }
           } catch (error) {
             result = { success: false, message: errorMessage(error) };
-            lastError = result.message;
+            controlError = result.message;
           }
           completed.set(action.id, result);
         }
         await source.reportAction(action.id, result.success, result.message);
-        if (result.success) lastError = null;
+        if (result.success) controlError = null;
       }
       await source.heartbeat({
         deviceName: "NAS 微信虚拟机",
@@ -98,11 +100,12 @@ async function runManagedControl(
         calibratedTarget,
         queue: queue.counts() as Record<string, number>,
         attention: queue.attention().length,
-        lastError
+        lastError: controlError ?? driverError
       });
+      controlError = null;
     } catch (error) {
-      lastError = errorMessage(error);
-      console.error(`managed relay control failed: ${lastError}`);
+      controlError = errorMessage(error);
+      console.error(`managed relay control failed: ${controlError}`);
     }
     if (!source.isStopped()) await delay(Math.max(5000, intervalMs));
   }
