@@ -1,4 +1,5 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { composerPromptCharTiming } from "@shared/composerPrompts";
 
 export type ComposerPlaceholderPhase = "idle" | "appear" | "hold" | "disappear";
 
@@ -88,5 +89,20 @@ export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
     document.removeEventListener("visibilitychange", onVisibilityChange);
   }
 
-  return { text, phase, stop };
+  const chars = computed(() => [...text.value].map((char) => (char === " " ? " " : char)));
+  const appearTiming = computed(() => composerPromptCharTiming(chars.value.length, sources.getAppearSeconds()));
+  const disappearTiming = computed(() => composerPromptCharTiming(chars.value.length, sources.getDisappearSeconds()));
+
+  function charStyle(index: number) {
+    const appear = appearTiming.value;
+    const disappear = disappearTiming.value;
+    return {
+      animationDelay: `${(index * appear.stagger).toFixed(3)}s`,
+      animationDuration: `${appear.duration.toFixed(3)}s`,
+      transitionDelay: `${(index * disappear.stagger).toFixed(3)}s`,
+      transitionDuration: `${disappear.duration.toFixed(3)}s`
+    };
+  }
+
+  return { text, phase, chars, charStyle, stop };
 }

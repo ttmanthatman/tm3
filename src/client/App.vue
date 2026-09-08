@@ -1,13 +1,11 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
-  Archive,
   AudioLines,
   AtSign,
   ArrowDown,
   ArrowUp,
   Bell,
-  BellOff,
   Bookmark,
   BookOpen,
   Bot,
@@ -27,16 +25,13 @@ import {
   HeartHandshake,
   Heart,
   Image as ImageIcon,
-  Info,
   LockKeyhole,
   LogOut,
   MessageSquareQuote,
   MessageCircle,
-  Menu,
   Mic,
   Monitor,
   Pause,
-  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -47,7 +42,6 @@ import {
   RotateCcw,
   Save,
   Send,
-  Sparkles,
   Smartphone,
   Settings,
   Square,
@@ -63,16 +57,8 @@ import {
 } from "lucide-vue-next";
 import type {
   AccountDTO,
-  AdminChannelDTO,
-  AdminAttachmentDTO,
-  AdminBackupDTO,
-  AdminLoginLogDTO,
-  AdminLoginLogKind,
-  AppearanceDTO,
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
-  AiRoleDTO,
-  AiSettingsDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleReaderPresenceDTO,
@@ -85,15 +71,12 @@ import type {
   ChannelDTO,
   FavoriteMessageDTO,
   MessageReactionsDTO,
-  DeviceSessionDTO,
   FlashEffectSettingsDTO,
   FriendListenerDTO,
   FriendProgramDTO,
-  LinkPreviewDTO,
   MessageDTO,
   MessageEffect,
   MessageEffectPayload,
-  MusicMentionPayload,
   MusicListenerDTO,
   MusicPlaylistDTO,
   MusicPlaylistSourceKind,
@@ -102,10 +85,6 @@ import type {
   MusicTrackDTO,
   PinnedBodyDTO,
   PinnedContentBlockDTO,
-  PrayerPayload,
-  PrayerStatus,
-  ParallaxKitDTO,
-  ParallaxLayerDTO,
   UpdateCheckDTO,
   UpdateStatusDTO,
   VersionDTO,
@@ -114,21 +93,12 @@ import type {
   ActorDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, joinReception, login, register } from "./api";
-import { randomId } from "./randomId";
 import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
-import { compactBytes, formatSeparator, shouldShowSeparator } from "./time";
-import {
-  chatRecordPreviewLines,
-  chatRecordPreviewPayload,
-  chatRecordPreviewTitle,
-  forwardTargetChannels as resolveForwardTargetChannels,
-  forwardableMessages,
-  isForwardableMessage
-} from "./messageForward";
+import { compactBytes } from "./time";
+import { isForwardableMessage } from "./messageForward";
 import { useChatStore } from "./store";
-import { memoizeMessage } from "./memoize";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import InlineAudioPlayer from "./components/InlineAudioPlayer.vue";
@@ -136,23 +106,30 @@ import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
 import AppMenuItem from "./components/AppMenuItem.vue";
-import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./features/voice/voiceRecording";
+import { useVoiceRecording } from "./features/voice/useVoiceRecording";
+import { useUploads } from "./features/uploads/useUploads";
+import { messageEffect, useComposer } from "./features/composer/useComposer";
+import { useAuth } from "./features/auth/useAuth";
+import { useBibleWorkspaceIntegration } from "./features/bible/useBibleWorkspaceIntegration";
+import { useMusicLibraryIntegration } from "./features/music/useMusicLibraryIntegration";
+import { useRainEffect } from "./features/effects/useRainEffect";
+import { useDripEffect } from "./features/effects/useDripEffect";
+import { useGooeyDripEffect } from "./features/effects/useGooeyDripEffect";
+import { useWaterRippleEffect } from "./features/effects/useWaterRippleEffect";
+import { useMessageEffectVisibility } from "./features/effects/useMessageEffectVisibility";
 import { activityTickerItems } from "./activityTicker";
 import { shouldAdvanceWallpaperPan, shouldRenderMessageEffect, shouldRunFlashEffectTimer, shouldTriggerIncomingRainEffect } from "./animationPolicy";
 import {
   calculateVirtualWindow,
-  estimatedImageTimelineHeight,
   scrollTopForVirtualAnchor,
   virtualItemOffset,
-  type VirtualTimelineAnchor,
-  type VirtualTimelineItem
+  type VirtualTimelineAnchor
 } from "./messageVirtualization";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
-import { DEFAULT_PARALLAX_KITS, cleanParallaxKits, cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
+import { cleanParallaxSpeed, parallaxAssetUrl, parallaxKit } from "./parallax";
 import {
   advanceWallpaperPan,
   cleanWallpaperPanDirection,
-  cleanWallpaperPanFocusX,
   cleanWallpaperPanSpeed,
   initialWallpaperPanOffset,
   wallpaperPanBounds,
@@ -162,32 +139,19 @@ import {
 } from "@shared/wallpaperPan";
 import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
 import {
-  DEFAULT_COMPOSER_PROMPT_APPEAR,
-  DEFAULT_COMPOSER_PROMPT_DISAPPEAR,
-  DEFAULT_COMPOSER_PROMPT_GAP,
-  DEFAULT_COMPOSER_PROMPT_INTERVAL,
   cleanComposerPromptAppearSeconds,
   cleanComposerPromptDisappearSeconds,
   cleanComposerPromptGapSeconds,
   cleanComposerPromptIntervalSeconds,
-  cleanComposerPrompts,
   composerPromptCharTiming
 } from "@shared/composerPrompts";
 import {
   canEditChannel,
   canLeaveChannel,
-  canManageChannelMembers,
   canOpenChannelSettings,
-  canSubmitChannelDraft,
-  createChannelDraft,
-  normalizeChannelDraft
+  canSubmitChannelDraft
 } from "./channelManagement";
-import {
-  canRemoveChannelMember,
-  channelOwnershipSuccessors,
-  isCurrentAccountChannelOwner,
-  memberRoleLabel
-} from "./memberManagement";
+import { memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
@@ -210,10 +174,8 @@ import {
 } from "./chatScrollStability";
 import { formatUnreadCount } from "./unread";
 import { flushPendingPersists } from "./messageWindowCache";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "@shared/release";
-import { friendlyDeviceName, type ActivityLogCategory } from "@shared/activityLog";
+import type { ActivityLogCategory } from "@shared/activityLog";
 import {
   musicMentionTokenAtCursor,
   shouldKeepMusicScoreForTrack,
@@ -232,6 +194,41 @@ import { chainParticipantProject, chainPayload, chainRequiresSelection } from ".
 import { useChain } from "./features/chain/useChain";
 import { useSermon } from "./features/sermon/useSermon";
 
+import {
+  TIMELINE_SCROLL_IDLE_MS,
+  VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS,
+  VIRTUAL_TIMELINE_FORWARD_OVERSCAN,
+  VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN,
+  useVirtualTimeline,
+  type TimelineRow
+} from "./features/timeline/useVirtualTimeline";
+import {
+  chainTopicRichTextSegments,
+  escapeHtmlText,
+  isMarkdownMessage,
+  messageBibleReferenceScope,
+  messagePayloadRecord,
+  musicMentionPayload,
+  normalizeMessageUrl,
+  previewSiteName,
+  replyPreviewText,
+  trimUrlPunctuation
+} from "./features/messages/messageRendering";
+import { useMessageRendering, type MentionToast } from "./features/messages/useMessageRendering";
+import { useMusicMentionRendering } from "./features/messages/useMusicMentionRendering";
+import { useAdminTools } from "./features/admin/useAdminTools";
+import { useAiSettings } from "./features/admin/useAiSettings";
+import { useAccountSettings } from "./features/settings/useAccountSettings";
+import type { SettingsTab } from "./features/settings/settingsTabs";
+import { usePrayer } from "./features/prayer/usePrayer";
+import { useChannelManagement } from "./features/channels/useChannelManagement";
+import { useMessageActions } from "./features/messages/useMessageActions";
+import { useMessageForward } from "./features/messages/useMessageForward";
+import { useMediaPreview, type PinnedMediaBlock } from "./features/messages/useMediaPreview";
+import { useMessageRecall } from "./features/messages/useMessageRecall";
+import { useMessageSelection } from "./features/messages/useMessageSelection";
+import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearanceSettings";
+
 const store = useChatStore();
 const {
   pending: messageSendPending,
@@ -239,7 +236,6 @@ const {
   send: sendMessage,
   clearStatus: clearMessageSendStatus
 } = useMessageSender({ getSocket: () => store.socket });
-const AdminResourceManager = defineAsyncComponent(() => import("./components/AdminResourceManager.vue"));
 // Heavy or rarely-opened surfaces load on first use instead of inflating the
 // entry chunk (PdfViewer/PdfScoreInline pull in pdfjs-dist; the music manager
 // and Bible workspace are the largest feature components).
@@ -251,11 +247,8 @@ const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicL
 const MusicManager = defineAsyncComponent(() => import("./features/music/MusicManager.vue"));
 const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
-const AdminAccountsPage = defineAsyncComponent(() => import("./features/admin/AdminAccountsPage.vue"));
-const AdminBooksPage = defineAsyncComponent(() => import("./features/admin/AdminBooksPage.vue"));
-const AdminReceptionPage = defineAsyncComponent(() => import("./features/admin/AdminReceptionPage.vue"));
-const WeChatRelayPanel = defineAsyncComponent(() => import("./features/admin/WeChatRelayPanel.vue"));
-const DemoModePanel = defineAsyncComponent(() => import("./features/admin/DemoModePanel.vue"));
+const AdminPanel = defineAsyncComponent(() => import("./features/admin/AdminPanel.vue"));
+const SettingsPanel = defineAsyncComponent(() => import("./features/settings/SettingsPanel.vue"));
 const ReceptionManager = defineAsyncComponent(() => import("./features/reception/ReceptionManager.vue"));
 // 讲道经文相关界面全部独立分包：观众端覆盖层仅在展示激活时挂载，讲道台负一屏打开时再下载，申请卡仅在消息列表渲染到时下载。
 const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/SermonOverlay.vue"));
@@ -267,22 +260,9 @@ const ChatRecordCard = defineAsyncComponent(() => import("./features/chat/ChatRe
 const ChatRecordView = defineAsyncComponent(() => import("./features/chat/ChatRecordView.vue"));
 // 正在讲道的预览通知常驻，体积小且时效敏感，不进异步分包。
 import SermonHub from "./features/sermon/SermonHub.vue";
-type UploadStatus = "uploading" | "processing" | "failed";
-type PendingUpload = {
-  file: File;
-  options: { voice?: boolean; durationMs?: number; waveform?: number[]; originalImage?: boolean };
-  progress: number;
-  status: UploadStatus;
-  message?: string;
-};
-const username = ref("");
-const password = ref("");
-const displayName = ref("");
 const receptionInviteRouteMatch = window.location.pathname.match(/^\/visit\/([A-Za-z0-9_-]{40,512})\/?$/);
 const isReceptionInviteRoute = window.location.pathname === "/visit" || window.location.pathname.startsWith("/visit/");
 const receptionInviteToken = receptionInviteRouteMatch?.[1] || "";
-const authMode = ref<"login" | "register" | "reception">(isReceptionInviteRoute ? "reception" : "login");
-const loginError = ref("");
 const input = ref("");
 const composerFocused = ref(false);
 const selectedMusicMention = ref<MusicTrackDTO | null>(null);
@@ -290,16 +270,13 @@ const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
 const replyTo = ref<MessageDTO | null>(null);
+const musicMentionToken = computed(() => (selectedMusicMention.value ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)));
 const showChannels = ref(false);
 const showFavorites = ref(false);
 const showBibleFavorites = ref(false);
 const favoriteMessages = ref<FavoriteMessageDTO[]>([]);
 const favoritesLoading = ref(false);
-const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
-const bibleFavoritesLoading = ref(false);
-const bibleFavoritesError = ref("");
 const showingFavoriteSurface = computed(() => showFavorites.value || showBibleFavorites.value);
-const bibleFavoritePassages = computed(() => groupBibleFavoritePassages(bibleFavorites.value));
 const showMembers = ref(false);
 const showReceptionManager = ref(false);
 const channelsCollapsed = ref(false);
@@ -316,21 +293,83 @@ const legacyMessageFontSizes: Record<string, number> = {
 };
 const messageFontSize = ref(defaultMessageFontSize);
 const showChatToolsMenu = ref(false);
-const musicTracks = ref<MusicTrackDTO[]>([]);
-const musicListeners = ref<MusicListenerDTO[]>([]);
-const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
-const bookReaders = ref<BookReaderPresenceDTO[]>([]);
-const friendListeners = ref<FriendListenerDTO[]>([]);
-const friendListeningProgram = ref<FriendProgramDTO | null>(null);
 const musicScoreCachedUrls = ref<Record<number, string>>({});
 const musicScorePreloadPromises = new Map<number, Promise<string>>();
 let musicScoreCacheGeneration = 0;
-const musicPlaylists = ref<MusicPlaylistDTO[]>([]);
-const musicSourceKind = ref<MusicPlaylistSourceKind>("library");
-const selectedMusicPlaylistId = ref<number | null>(null);
-const musicManagerOpen = ref(false);
-const musicManagerInitialFocus = ref<MusicManagerFocus | null>(null);
 const musicManagerRef = ref<InstanceType<typeof MusicManager> | null>(null);
+const {
+  musicTracks,
+  musicPlaylists,
+  musicSourceKind,
+  selectedMusicPlaylistId,
+  musicManagerOpen,
+  musicManagerInitialFocus,
+  musicPlayerExpanded,
+  musicListeners,
+  bibleReaders,
+  bookReaders,
+  friendListeners,
+  friendListeningProgram,
+  sortedMusicTracks,
+  favoriteMusicTracks,
+  toggleChatToolsMenu,
+  handleMusicFavoriteUpdated,
+  toggleCurrentMusicFavorite,
+  loadMusicPlaylists,
+  openMusicManager,
+  closeMusicSurface,
+  handleMusicUpdated,
+  handleMusicPlaylistUpdated,
+  handleMusicListeners,
+  handleBookReaders,
+  handleBibleReaders,
+  handleFriendListeners,
+  clearPresenceEmitCache,
+  publishMusicListening,
+  stopPublishingMusicListening,
+  publishBibleReading,
+  publishBookReading,
+  stopPublishingBibleReading,
+  stopPublishingBookReading,
+  publishFriendListening,
+  stopPublishingFriendListening,
+  publishPresenceActivities,
+  attachMusicSocket,
+  stopPresenceHeartbeat
+} = useMusicLibraryIntegration({
+  showChatToolsMenu,
+  musicManagerRef,
+  isMusicPlaying: () => musicPlaying.value,
+  currentTrack: () => currentMusicTrack.value,
+  currentTrackId: () => currentMusicTrackId.value,
+  onlyFavorites: () => musicOnlyFavorites.value,
+  pause: (immediate) => pauseMusic(immediate),
+  replaceCurrentTrack: (track, continuePlaying) => replaceCurrentMusicTrack(track, continuePlaying),
+  handlePlaylistDeleted: (playlistId) => handleMusicPlaylistDeleted(playlistId),
+  loadMusicTracks,
+  onActivitySocketConnect: handleActivitySocketConnect,
+  getBibleReadingActivity: () => bibleReadingActivity.value,
+  getBookReadingActivity: () => bookReadingActivity.value
+});
+const {
+  username,
+  password,
+  displayName,
+  authMode,
+  loginError,
+  handleReceptionCreated,
+  handleReceptionUpdated,
+  handleReceptionDeleted,
+  selectReceptionRoom,
+  handleReceptionClosed,
+  logoutApp
+} = useAuth({
+  initialAuthMode: isReceptionInviteRoute ? "reception" : "login",
+  showReceptionManager,
+  musicTracks,
+  musicPlaylists,
+  persistPlaybackState: () => persistMusicPlaybackState(true)
+});
 const {
   watchedState: sermonOverlayState,
   latestRequestDecision: sermonRequestDecision,
@@ -344,7 +383,6 @@ const sermonEntryOpen = ref(false);
 const sermonWorkspaceMounted = ref(false);
 const sermonDecisionNotice = ref("");
 let sermonDecisionTimer: number | undefined;
-const musicPlayerExpanded = ref(false);
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
 const musicScoreChatCleared = ref(false);
@@ -356,7 +394,6 @@ const MUSIC_SCORE_CHAT_DURATION_MS = 1740;
 const MUSIC_SCORE_STAGE_DURATION_MS = 980;
 let musicScoreTimer: number | undefined;
 let musicLyricsHeaderResumeTimer: number | undefined;
-let musicListenerHeartbeatTimer: number | undefined;
 let activityConnectRetryTimer: number | undefined;
 const showAdmin = ref(false);
 const showSettings = ref(false);
@@ -396,7 +433,6 @@ const appStartCodeLines = [
   'window.addEventListener("resize", handleTimelineViewportResize, { passive: true });',
   'await store.bootstrap();'
 ] as const;
-const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
 const isLogRoute = ref(window.location.pathname === "/log");
 const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
@@ -404,13 +440,8 @@ const keepOriginalImages = ref(false);
 const composerInput = ref<HTMLTextAreaElement | null>(null);
 const scroller = ref<HTMLElement | null>(null);
 const chatPane = ref<HTMLElement | null>(null);
-const timelineScrollTop = ref(0);
-const timelineViewportHeight = ref(0);
-const timelineViewportWidth = ref(window.innerWidth);
-const resolvedMessageImageDimensions = ref<Record<number, { width: number; height: number }>>({});
 const queuedMessageImagePreloads = new Set<number>();
 const messageImagePreloadQueue: MessageDTO[] = [];
-let activeMessageImagePreloads = 0;
 // Yield image-cache warming to idle time so it never competes with startup
 // or message-loading requests; Safari lacks requestIdleCallback. Declared
 // with the other preload state because the immediate messages watch below
@@ -419,13 +450,10 @@ const scheduleImagePreload: (callback: () => void) => void =
   typeof window !== "undefined" && typeof window.requestIdleCallback === "function"
     ? (callback) => window.requestIdleCallback(callback)
     : (callback) => window.setTimeout(callback, 1200);
-const measuredTimelineHeights = ref<Record<string, number>>({});
 let timelineResizeObserver: ResizeObserver | null = null;
 let timelineScrollFrame: number | undefined;
 let timelineMeasurementFrame: number | undefined;
 let timelineScrollIdleTimer: number | undefined;
-const timelineScrollActive = ref(false);
-const pendingTimelineHeights = new Map<string, number>();
 let pendingTimelineAnchor: VirtualTimelineAnchor | null = null;
 type OopsPhysicsLayerHandle = {
   start: (messageId: number, bubble: HTMLElement, textRoot: HTMLElement) => Promise<boolean>;
@@ -435,8 +463,6 @@ type OopsPhysicsLayerHandle = {
 };
 const oopsPhysicsLayer = ref<OopsPhysicsLayerHandle | null>(null);
 const oopsActiveMessageIds = ref<Set<number>>(new Set());
-const parallaxLayerInput = ref<HTMLInputElement | null>(null);
-const parallaxLayerUploadBusy = ref(false);
 const parallaxOffset = ref(0);
 let lastParallaxScrollTop: number | null = null;
 let pendingParallaxDelta = 0;
@@ -464,169 +490,130 @@ let readPositionRestoreToken = 0;
 let activeReadAnchor: ChatReadAnchor | null = null;
 const chatScrollIntentTracker = createChatScrollIntentTracker();
 let pendingMessageJumpId: number | null = null;
-const rainCanvas = ref<HTMLCanvasElement | null>(null);
-const dripLayer = ref<HTMLCanvasElement | null>(null);
-const gooeyDripLayer = ref<SVGSVGElement | null>(null);
-type AdminPage =
-  | "home"
-  | "pin"
-  | "users"
-  | "channels"
-  | "reception"
-  | "channelDetail"
-  | "appearance"
-  | "appearanceBrand"
-  | "appearanceLogin"
-  | "appearanceChat"
-  | "appearanceParallax"
-  | "appearanceThemes"
-  | "appearanceFlash"
-  | "data"
-  | "backups"
-  | "messages"
-  | "resources"
-  | "books"
-  | "wechatRelay"
-  | "demo"
-  | "release";
-const adminPage = ref<AdminPage>("home");
-const adminPageLoading = ref(false);
-const adminPageError = ref("");
-type SettingsTab = "account" | "appearance" | "bible" | "devices" | "notifications" | "release";
 const settingsTab = ref<SettingsTab>("account");
-const settingsTabMeta: Record<SettingsTab, { title: string; description: string }> = {
-  account: { title: "账号", description: "管理头像、昵称、密码和账号" },
-  appearance: { title: "外观", description: "选择舒服、清晰的聊天主题" },
-  bible: { title: "经文显示", description: "控制经文弹出的阅读方式" },
-  notifications: { title: "通知", description: "决定哪些消息需要提醒你" },
-  devices: { title: "登录设备", description: "查看并退出已登录的设备" },
-  release: { title: "关于", description: "版本信息与更新说明" }
-};
 const settingsLoadError = ref("");
-const accountDisplayName = ref("");
-const accountCurrentPassword = ref("");
-const accountNewPassword = ref("");
-const accountConfirmPassword = ref("");
-const accountDeletePassword = ref("");
-const accountAvatarBusy = ref(false);
-const accountProfileBusy = ref(false);
-const accountPasswordBusy = ref(false);
-const accountDeleteBusy = ref(false);
-const accountProfileMsg = ref("");
-const accountPasswordMsg = ref("");
-const accountDeleteMsg = ref("");
-const adminMsg = ref("");
-const newVirtual = ref({
-  username: "",
-  displayName: "",
-  model: "",
-  thinkingEnabled: false,
-  persona: "",
-  shortTermMemory: "",
-  midTermMemory: "",
-  longTermMemory: "",
-  channelIds: [] as number[],
-  enabled: true
-});
-const virtuals = ref<any[]>([]);
-const mcStatus = ref<any | null>(null);
-const mcSelectedChannelId = ref<number | null>(null);
-const mcSelectedCharacterIds = ref<number[]>([]);
-const mcBusy = ref(false);
-const mcMsg = ref("");
-const adminChannels = ref<AdminChannelDTO[]>([]);
-const adminDirectConversations = ref<AdminChannelDTO[]>([]);
-const adminDirectTotal = ref(0);
-const adminDirectPage = ref(1);
-const adminDirectPageSize = 30;
-const adminDirectQuery = ref("");
-const adminSelectedChannelId = ref<number | null>(null);
-const channelEdits = ref<Record<number, { name: string; description: string; listColor: string; useListColor: boolean }>>({});
-type WallpaperFit = AppearanceDTO["wallpaperFit"];
-type LoginBackgroundFit = AppearanceDTO["loginBackgroundFit"];
-type LoginFormPosition = AppearanceDTO["loginFormPosition"];
-type AppearanceSection = "brand" | "login" | "chat" | "parallax" | "themes" | "flash";
-type AppearanceImageField = "appIconPath" | "loginIconPath" | "loginBackgroundPath" | "wallpaperPath";
-type AppearanceFitField = "loginBackgroundFit" | "wallpaperFit";
-const wallpaperFitOptions: Array<{ value: WallpaperFit; label: string }> = [
-  { value: "cover", label: "填满" },
-  { value: "contain", label: "适合" },
-  { value: "stretch", label: "拉伸" },
-  { value: "repeat", label: "平铺" },
-  { value: "pan", label: "推拉摇移" }
-];
-const loginBackgroundFitOptions = wallpaperFitOptions.filter((option): option is { value: LoginBackgroundFit; label: string } => option.value !== "pan");
-const loginPositionOptions: Array<{ value: LoginFormPosition; label: string }> = [
-  { value: "top", label: "上" },
-  { value: "middle", label: "中" },
-  { value: "bottom", label: "下" }
-];
-const appearanceSections: Array<{ id: AppearanceSection; label: string; description: string }> = [
-  { id: "brand", label: "品牌与标签页", description: "浏览器标题和站点图标" },
-  { id: "login", label: "登录页", description: "登录内容、背景和入口" },
-  { id: "chat", label: "聊天室", description: "聊天壁纸和显示方式" },
-  { id: "parallax", label: "卷轴背景", description: "随消息阅读方向横向移动的多层景色" },
-  { id: "themes", label: "主题颜色", description: "成员可选的自定义主题" },
-  { id: "flash", label: "闪动特效", description: "/闪动 消息的颜色节奏" }
-];
-const appearanceSection = ref<AppearanceSection>("brand");
-const appearancePreviewOpen = ref(false);
-const appearanceThemeAdvancedOpen = ref(false);
-const appearanceImagePicker = ref<{ field: AppearanceImageField; title: string; fitField?: AppearanceFitField; hint: string } | null>(null);
-const loginAppearanceEdit = ref({
-  appTitle: "Team Chat",
-  appIconPath: null as string | null,
-  loginTitle: "Team Chat",
-  loginSubtitle: "轻快、稳定的团队聊天。",
-  loginIconPath: null as string | null,
-  loginShowIcon: true,
-  loginShowSubtitle: true,
-  loginBackgroundPath: null as string | null,
-  loginFormPosition: "middle" as LoginFormPosition,
-  loginBackgroundFit: "cover" as LoginBackgroundFit,
-  wallpaperPath: null as string | null,
-  wallpaperFit: "cover" as WallpaperFit,
-  wallpaperPanFocusX: 0.5,
-  wallpaperPanDirection: "left" as WallpaperPanDirection,
-  wallpaperPanSpeed: 0.18,
-  parallaxKit: "none",
-  parallaxSpeed: 1,
-  parallaxKits: cleanParallaxKits(DEFAULT_PARALLAX_KITS),
-  registrationEnabled: false,
-  musicPanelFontSize: 20,
-  prayerBubbleMineColor: "#f0fbf1",
-  prayerBubbleOtherColor: "#fffaf0"
-});
-const flashEffectEdit = ref<FlashEffectSettingsDTO>({
-  colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-  intervalSeconds: 0.4,
-  transitionMode: "smooth"
-});
-const composerPromptsText = ref("");
-const composerPromptIntervalEdit = ref(DEFAULT_COMPOSER_PROMPT_INTERVAL);
-const composerPromptAppearEdit = ref(DEFAULT_COMPOSER_PROMPT_APPEAR);
-const composerPromptDisappearEdit = ref(DEFAULT_COMPOSER_PROMPT_DISAPPEAR);
-const composerPromptGapEdit = ref(DEFAULT_COMPOSER_PROMPT_GAP);
-const customThemesDraft = ref<ThemeDTO[]>([]);
+const accountSettings = useAccountSettings();
+const {
+  accountDisplayName,
+  accountCurrentPassword,
+  accountNewPassword,
+  accountConfirmPassword,
+  accountDeletePassword,
+  accountAvatarBusy,
+  accountProfileBusy,
+  accountPasswordBusy,
+  accountDeleteBusy,
+  accountProfileMsg,
+  accountPasswordMsg,
+  accountDeleteMsg,
+  syncAccountSettings
+} = accountSettings;
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
-const adminAttachments = ref<AdminAttachmentDTO[]>([]);
-const adminAttachmentsLoading = ref(false);
-const adminAttachmentsError = ref("");
-const adminBackups = ref<AdminBackupDTO[]>([]);
-const adminBackupBusy = ref(false);
-const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
-const adminLoginLogsBusy = ref(false);
-const adminLoginLogsMsg = ref("");
-const activityLogFilter = ref<"all" | ActivityLogCategory>("all");
 const activityLogFilterOptions: Array<{ value: "all" | ActivityLogCategory; label: string }> = [
   { value: "all", label: "全部" },
   { value: "session", label: "会话" },
   { value: "music", label: "音乐" },
   { value: "usage", label: "使用情况" }
 ];
-const dataChannelFilter = ref(0);
-const devices = ref<DeviceSessionDTO[]>([]);
+const adminTools = useAdminTools({
+  showAdmin,
+  showSettings,
+  showChatToolsMenu,
+  saveReadPosition,
+  restoreChatSurface,
+  checkForUpdates,
+  ensureReleaseHistory,
+  pinnedNoticeText: () => pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n"),
+  replaceChannelSnapshot,
+  authMode,
+  activePalette: () => activePalette.value,
+  flashEffect: () => flashEffect.value,
+  flashEffectStep,
+  wallpaperUrl,
+  paletteStyle,
+  wallpaperFitStyle,
+  readableTextColor,
+  cleanFlashEffectSettings
+});
+const {
+  adminPage,
+  adminMsg,
+  adminChannels,
+  adminLoginLogs,
+  adminLoginLogsBusy,
+  adminLoginLogsMsg,
+  activityLogFilter,
+  devices,
+  adminAppearancePages,
+  loadAdmin,
+  loadAdminLoginLogs,
+  setActivityLogFilter,
+  loadDevices,
+  revokeDevice,
+  syncChannelEdits,
+  closeAdminPanel,
+  deleteChannel,
+  adminDate,
+  adminDateTime,
+  loginLogKindLabel,
+  loginLogTone,
+  displayedDeviceName,
+  activityStateLabel,
+  activityDuration,
+  musicProgressSummary,
+  backgroundAttachmentLabel,
+  appearanceSection,
+  appearancePreviewOpen,
+  appearanceImagePicker,
+  loginAppearanceEdit,
+  backgroundAttachmentOptions,
+  appearanceImagePickerSelection,
+  appearanceImagePickerFit,
+  appearanceImagePickerFitOptions,
+  appearancePreviewFlash,
+  closeAppearanceImagePicker,
+  uploadAppearanceImageForPicker,
+  selectAppearanceImage,
+  clearAppearancePickerImage,
+  syncLoginAppearanceEdit
+} = adminTools;
+const {
+  isAiSettingsRoute,
+  newVirtual,
+  virtuals,
+  aiSettings,
+  aiSettingsEdit,
+  aiSettingsBusy,
+  aiSettingsMsg,
+  aiSettingsTab,
+  loadVirtualCharacters,
+  loadAiSettings,
+  loadMcStatus,
+  saveAiSettings,
+  saveVirtualCharacter,
+  addVirtual,
+  uploadVirtualAvatar,
+  toggleNewVirtualChannel,
+  toggleVirtualChannel,
+  virtualEnabled,
+  virtualModel,
+  virtualThinkingEnabled,
+  virtualPersona,
+  virtualManualMemory,
+  virtualChannelIds,
+  setVirtualDisplayName,
+  setVirtualEnabled,
+  setVirtualManualMemory,
+  setVirtualModel,
+  setVirtualPersona,
+  setVirtualThinkingEnabled
+} = useAiSettings({
+  showAdmin,
+  isLogRoute,
+  adminMsg,
+  saveReadPosition
+});
 const notificationMsg = ref("");
 const notificationPublicKey = ref("");
 const notificationPermission = ref(typeof Notification === "undefined" ? "default" : Notification.permission);
@@ -635,56 +622,105 @@ const notificationBusy = ref(false);
 const notificationPromptOpen = ref(false);
 const notificationPermissionAttempts = ref(0);
 const mutedChannelIds = ref<Set<number>>(new Set());
-const aiSettings = ref<AiSettingsDTO | null>(null);
-const aiSettingsEdit = ref({
-  enabled: true,
-  apiKey: "",
-  clearApiKey: false,
-  promptCommand: "",
-  aiRoles: [] as AiRoleDTO[],
-  cardCooldownSeconds: 30,
-  userLimitPerMinute: 3,
-  maxSuccessPerMessage: 7
-});
-const aiSettingsBusy = ref(false);
-const aiSettingsMsg = ref("");
-const aiSettingsShowAdvanced = ref(false);
-const aiSettingsTab = ref<"llm" | "virtuals" | "verses">("llm");
-const noticeText = ref("");
 const pinnedExpanded = ref(false);
 const showPinnedEditor = ref(false);
 const pinnedEditTitle = ref("");
 const pinnedEditBlocks = ref<PinnedContentBlockDTO[]>([]);
 const pinnedEditMsg = ref("");
-const pendingDownload = ref<MessageDTO | null>(null);
-const pendingRecall = ref<MessageDTO | null>(null);
-const pendingPrayer = ref<MessageDTO | null>(null);
-const pendingPrayerUpdate = ref<MessageDTO | null>(null);
-const prayerUpdateTextarea = ref<HTMLTextAreaElement | null>(null);
-const prayerUpdateContent = ref("");
-const prayerUpdateBusy = ref(false);
-const prayerUpdateError = ref("");
-const prayerUpdatePhotoInput = ref<HTMLInputElement | null>(null);
-const prayerUpdatePhoto = ref<File | null>(null);
-const prayerUpdatePhotoPreview = ref("");
-const prayerComposerPhoto = ref<File | null>(null);
-const prayerComposerPhotoPreview = ref("");
-const expandedAiSuggestionMessageIds = ref<Set<number>>(new Set());
-const expandedMusicBackgroundMessageIds = ref<Set<number>>(new Set());
-const aiSuggestionBusyIds = ref<Set<number>>(new Set());
-const aiSuggestionErrors = ref<Record<number, string>>({});
+const {
+  pendingPrayer,
+  pendingPrayerUpdate,
+  prayerUpdateTextarea,
+  prayerUpdateContent,
+  prayerUpdateBusy,
+  prayerUpdateError,
+  prayerUpdatePhotoInput,
+  prayerUpdatePhotoPreview,
+  prayerComposerPhoto,
+  prayerComposerPhotoPreview,
+  aiSuggestionErrors,
+  prayerPromptStyle,
+  requestPrayerPrayed,
+  clearPrayerComposerPhoto,
+  prayerPayload,
+  prayerStatusText,
+  prayerActionText,
+  prayerLatestTime,
+  prayerImageUrl,
+  openPrayerImage,
+  prayerAiSuggestions,
+  prayerAiSuggestionCount,
+  prayerAiLimitReached,
+  isPrayerAiExpanded,
+  isPrayerAiBusy,
+  togglePrayerAiSuggestions,
+  generatePrayerAiSuggestions,
+  markPrayerPrayed,
+  updatePrayerStatus,
+  canPublishPrayerUpdate,
+  prayerUpdateCanPublish,
+  clearPrayerUpdatePhoto,
+  openPrayerUpdateEditor,
+  closePrayerUpdateEditor,
+  handlePrayerUpdatePhotoPick,
+  uploadPrayerImage,
+  publishPrayerUpdate,
+  withdrawPrayer
+} = usePrayer({
+  isMine,
+  openAttachmentFromTap: (message, event) => openAttachmentFromTap(message, event),
+  scrollBottom,
+  positionPromptNearEvent,
+  closeCompetingPrompts: () => {
+    pendingChain.value = null;
+    pendingDownload.value = null;
+    pendingRecall.value = null;
+    pendingMessageActions.value = null;
+    selectedMember.value = null;
+  }
+});
 const expandedBibleReferenceKeys = ref<Set<string>>(new Set());
 const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
-const bibleOpen = ref(false);
-const bibleTargetChannelId = ref<number | null>(null);
-type BibleWorkspaceHandle = {
-  openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
-  openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
-};
-const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
-const bibleReadingActivity = ref<{ active: boolean; bookName: string | null }>({ active: false, bookName: null });
-const bookReadingActivity = ref<{ active: boolean; bookTitle: string | null }>({ active: false, bookTitle: null });
+const {
+  bibleOpen,
+  bibleTargetChannelId,
+  bibleWorkspace,
+  bibleReadingActivity,
+  bookReadingActivity,
+  bibleFavorites,
+  bibleFavoritesLoading,
+  bibleFavoritesError,
+  bibleFavoritePassages,
+  bibleTargetChannel,
+  bibleCanSend,
+  bibleSendUnavailableReason,
+  bibleShareChannels,
+  loadBibleFavorites,
+  updateBibleFavorites,
+  openBibleFavorites,
+  openBibleWorkspace,
+  closeBibleWorkspace,
+  openBibleFavoritePassage,
+  openFavoriteMessage,
+  openBibleSessionFromMessage,
+  handleBibleReadingChange,
+  handleBookReadingChange,
+  sendBiblePassage
+} = useBibleWorkspaceIntegration({
+  showChannels,
+  showMembers,
+  showFavorites,
+  showBibleFavorites,
+  sermonWorkspaceOpen,
+  bookWorkspaceOpen,
+  saveReadPosition,
+  currentChannelId: () => currentChannel.value?.id || null,
+  isTapSuppressed: () => Date.now() < suppressNextTapUntil,
+  publishBibleReading,
+  publishBookReading,
+  jumpToMessageInChannel
+});
 let bibleSwipeStart: { x: number; y: number } | null = null;
 const bibleSettingsMsg = ref("");
 const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
@@ -707,61 +743,7 @@ const bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: str
   { value: "halfWidth", label: "半角引号 \" \"" },
   { value: "square", label: "保留方引号 「 」" }
 ];
-const previewMessage = ref<MessageDTO | null>(null);
-const previewPinnedImage = ref<{ url: string; fileName: string; score?: boolean; trackId?: number; pageId?: number } | null>(null);
-const imagePreviewScale = ref(1);
-const imagePreviewOffset = ref({ x: 0, y: 0 });
 const chainPromptAnchor = ref<HTMLElement | null>(null);
-const downloadPromptPosition = ref({ x: 0, y: 0 });
-const recallPromptPosition = ref({ x: 0, y: 0 });
-const messageActionPromptPosition = ref({ x: 0, y: 0 });
-const prayerPromptPosition = ref({ x: 0, y: 0 });
-const memberPromptPosition = ref({ x: 0, y: 0 });
-type MemberActionTarget = {
-  id: number;
-  accountId?: number;
-  characterId?: number;
-  kind: string;
-  username?: string;
-  displayName: string;
-  avatarPath?: string | null;
-  role?: string;
-  membershipRole?: string | null;
-  isSiteAdmin?: boolean;
-};
-type MemberPickerCandidate = {
-  id: number;
-  accountId?: number;
-  characterId?: number;
-  kind: "human" | "virtual";
-  username: string;
-  displayName: string;
-  avatarPath?: string | null;
-};
-const selectedMember = ref<MemberActionTarget | null>(null);
-const memberPaneChannelOverride = ref<ChannelDTO | null>(null);
-const managedMembers = ref<MemberActionTarget[]>([]);
-const memberRemoveMode = ref(false);
-const memberPickerOpen = ref(false);
-const memberPickerChannel = ref<ChannelDTO | null>(null);
-const memberPickerCandidates = ref<MemberPickerCandidate[]>([]);
-const memberPickerSelectedIds = ref<string[]>([]);
-const memberPickerBusy = ref(false);
-const memberManageMsg = ref("");
-const ownerTransferOpen = ref(false);
-const ownerTransferChannel = ref<ChannelDTO | null>(null);
-const ownerTransferSuccessorId = ref<number | null>(null);
-const ownerTransferBusy = ref(false);
-const ownerTransferMsg = ref("");
-const showChannelEditor = ref(false);
-const channelEditorMode = ref<"create" | "edit">("create");
-const channelEditorChannel = ref<ChannelDTO | null>(null);
-const channelEditorDraft = ref(createChannelDraft());
-const channelEditorBusy = ref(false);
-const channelEditorMsg = ref("");
-const channelNameSuggestions = ref<string[]>([]);
-const channelNameSuggestionBusy = ref(false);
-type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string; createdAt: string };
 type TopNotice = {
   id: string;
   kind: "mention" | "like" | "favorite";
@@ -772,40 +754,59 @@ type TopNotice = {
   messageId?: number;
   notificationId?: number;
 };
-const mentionToasts = ref<MentionToast[]>([]);
-const acknowledgedMentionIds = ref<Set<number>>(new Set());
 const acknowledgedFavoriteNotificationIds = ref<Set<number>>(new Set());
-const pausedEffectIds = ref<Set<number>>(new Set());
-const observedEffectIds = ref<Set<number>>(new Set());
-const visibleEffectIds = ref<Set<number>>(new Set());
 const documentVisible = ref(document.visibilityState === "visible");
 let messageEffectObserver: IntersectionObserver | null = null;
-const orientationEffectsVisible = computed(() => store.messages.some((message) => {
-  const effect = String((message.payload as MessageEffectPayload | undefined)?.effect || "");
-  return ["water", "drip", "dripGooey"].includes(effect) && !isMessageEffectPaused(message);
-}));
-const waterEffectVisible = computed(() => store.messages.some((message) => (
-  String((message.payload as MessageEffectPayload | undefined)?.effect || "") === "water" && !isMessageEffectPaused(message)
-)));
-const messageSelectionMode = ref(false);
-const selectedMessageIds = ref<Set<number>>(new Set());
-const pendingMessageActions = ref<MessageDTO | null>(null);
-const forwardActionSheetOpen = ref(false);
-const forwardPickerOpen = ref(false);
-const forwardSourceMessages = ref<MessageDTO[]>([]);
-const forwardMode = ref<"separate" | "merged">("separate");
-const forwardConfirming = ref(false);
-const forwardChannelIds = ref<number[]>([]);
-const forwardBusy = ref(false);
-const forwardError = ref("");
-const forwardSuccess = ref(false);
-let forwardSuccessTimer: ReturnType<typeof setTimeout> | null = null;
-const chatRecordViewMessage = ref<MessageDTO | null>(null);
-const textSelectableMessageId = ref<number | null>(null);
-const pendingCloseChannel = ref<ChannelDTO | null>(null);
-const pendingLeaveChannel = ref<ChannelDTO | null>(null);
-const channelLeaveBusy = ref(false);
-const channelLeaveMsg = ref("");
+const {
+  pausedEffectIds,
+  observedEffectIds,
+  visibleEffectIds,
+  messageIdForEffectElement,
+  updateEffectVisibility,
+  toggleMessageEffect
+} = useMessageEffectVisibility({ messageEffect });
+const {
+  rainCanvas,
+  rainActive,
+  hydratePlayedRainEffectIds,
+  stopRainEffect,
+  triggerOneShotMessageEffects
+} = useRainEffect({ messageEffect });
+const {
+  dripLayer,
+  ensureDripPhysics,
+  stopDripPhysics
+} = useDripEffect({
+  scroller,
+  messages: () => store.messages,
+  messageEffect,
+  isMessageEffectPaused
+});
+const {
+  waterTilt,
+  requestDeviceOrientationPermissionOnce,
+  stirWaterMessage,
+  settleWaterMessage,
+  getDeviceGravity
+} = useWaterRippleEffect({
+  messages: () => store.messages,
+  messageEffect,
+  isMessageEffectPaused,
+  documentVisible
+});
+const {
+  gooeyDripLayer,
+  gooeyBlobs,
+  gooeyHighlights,
+  ensureGooeyDripPhysics,
+  stopGooeyDripPhysics
+} = useGooeyDripEffect({
+  scroller,
+  messages: () => store.messages,
+  messageEffect,
+  isMessageEffectPaused,
+  gravity: getDeviceGravity
+});
 const composerPanel = ref<"voice" | "more" | null>(null);
 const currentChainChannelId = computed(() => store.currentChannelId);
 const {
@@ -861,46 +862,6 @@ async function openFavorites() {
   }
 }
 
-async function loadBibleFavorites() {
-  if (!store.account || bibleFavoritesLoading.value) return;
-  bibleFavoritesLoading.value = true;
-  bibleFavoritesError.value = "";
-  try {
-    const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites");
-    bibleFavorites.value = result.favorites;
-  } catch (error) {
-    bibleFavoritesError.value = error instanceof Error ? error.message : "经文收藏加载失败";
-  } finally {
-    bibleFavoritesLoading.value = false;
-  }
-}
-
-async function updateBibleFavorites(verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) {
-  if (!verses.length || bibleFavoritesLoading.value) return;
-  bibleFavoritesLoading.value = true;
-  bibleFavoritesError.value = "";
-  try {
-    const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites", {
-      method: favorited ? "POST" : "DELETE",
-      body: JSON.stringify({ verses, ...(favorited && color ? { color } : {}) })
-    });
-    bibleFavorites.value = result.favorites;
-  } catch (error) {
-    bibleFavoritesError.value = error instanceof Error ? error.message : "经文收藏更新失败";
-    throw error;
-  } finally {
-    bibleFavoritesLoading.value = false;
-  }
-}
-
-async function openBibleFavorites() {
-  if (!showBibleFavorites.value) saveReadPosition();
-  showBibleFavorites.value = true;
-  showFavorites.value = false;
-  showChannels.value = false;
-  await loadBibleFavorites();
-}
-
 async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
   if (!window.confirm(`取消收藏“${passage.lookup.normalizedReference}”？`)) return;
   try {
@@ -914,16 +875,6 @@ async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
   }
 }
 
-async function openBibleFavoritePassage(passage: BibleFavoritePassage) {
-  openBibleWorkspace();
-  await nextTick();
-  await bibleWorkspace.value?.openLookupContext(passage.lookup);
-}
-
-async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
-  await jumpToMessageInChannel(favorite.channel.id, favorite.message.id);
-}
-
 async function removeFavorite(favorite: FavoriteMessageDTO) {
   if (!window.confirm("取消收藏这条消息？")) return;
   await api(`/api/messages/${favorite.message.id}/favorite`, { method: "PUT", body: JSON.stringify({ favorited: false }) });
@@ -931,34 +882,103 @@ async function removeFavorite(favorite: FavoriteMessageDTO) {
   store.updateMessageReactions(favorite.message.id, { currentUserFavorited: false, favoriteCount: Math.max(0, (favorite.message.reactions?.favoriteCount || 1) - 1) });
 }
 
-const mediaRecorder = ref<MediaRecorder | null>(null);
-const isRecording = ref(false);
-const audioPreviewUrl = ref("");
-const audioFile = ref<File | null>(null);
-const audioPreviewWaveform = ref<number[]>([]);
-const audioPreviewDurationMs = ref(0);
-const previewAudioEl = ref<HTMLAudioElement | null>(null);
-const previewPlaying = ref(false);
-const previewProgress = ref(0);
-const pendingUploads = ref<Record<number, PendingUpload>>({});
-type LinkPreviewState = { status: "loading" | "ready" | "error"; preview?: LinkPreviewDTO; error?: string };
-const linkPreviewCache = ref<Record<string, LinkPreviewState>>({});
-// Preview requests queue here instead of firing all at once; declared beside
-// the cache because the immediate messages watch below runs before the later
-// function bodies are evaluated.
-const linkPreviewQueue: string[] = [];
-const linkPreviewQueued = new Set<string>();
-let activeLinkPreviews = 0;
-// Memoized on the message object; declared beside the queue state because the
-// immediate messages watch below reaches it before later consts are evaluated.
-const messagePreviewUrl = memoizeMessage((message: MessageDTO) => {
-  if (message.type !== "text" && message.type !== "prayer") return "";
-  return extractMessageUrls(message.content)[0] || "";
+const {
+  pendingUploads,
+  setPendingUpload,
+  removePendingUpload,
+  replacePendingMessage,
+  pendingUploadFor,
+  pendingUploadLabel,
+  pendingUploadKindLabel,
+  pushPendingVoiceMessage,
+  isImageFile,
+  uploadPickedFile,
+  handlePickedFile,
+  handleComposerPaste,
+  removePendingMessage,
+  retryPendingUpload
+} = useUploads({
+  composerPanel,
+  keepOriginalImages,
+  isMusicChannel: () => isMusicChannel.value,
+  scrollBottom,
+  uploadFile
 });
-const voiceSending = ref(false);
-const recordingDuration = ref(0);
-const recordingStatus = ref("");
-const recordingNotice = ref("");
+const {
+  isRecording,
+  audioPreviewUrl,
+  audioFile,
+  audioPreviewWaveform,
+  audioPreviewDurationMs,
+  previewAudioEl,
+  previewPlaying,
+  previewProgress,
+  voiceSending,
+  recordingDuration,
+  recordingStatus,
+  recordingNotice,
+  resetRecording,
+  startRecording,
+  stopRecording,
+  sendVoice,
+  formatDuration,
+  voiceBarStyle,
+  togglePreviewPlayback,
+  updatePreviewProgress,
+  syncPreviewMetadata,
+  endPreviewPlayback,
+  handleRecordingVisibilityChange
+} = useVoiceRecording({ composerPanel, pushPendingVoiceMessage, uploadFile });
+const {
+  slashCommandToken,
+  matchingSlashCommands,
+  mentionToken,
+  matchingMentionMembers,
+  matchingMusicMentionTracks,
+  activeComposerSuggestionKind,
+  composerSuggestionCount,
+  showComposerSuggestionMenu,
+  canSendText,
+  socketReadyToSend,
+  composerSendStatus,
+  composerSendState,
+  parseComposerText,
+  syncComposerCaret,
+  chooseSlashCommand,
+  startPrayerComposer,
+  chooseMentionSuggestion,
+  removeMusicMention,
+  sendText,
+  toggleMorePanel,
+  toggleVoicePanel,
+  onInput,
+  onKeydown,
+  pickReply
+} = useComposer({
+  input,
+  composerFocused,
+  selectedMusicMention,
+  composerCaret,
+  composerSuggestionIndex,
+  composerSuggestionSuppressed,
+  replyTo,
+  musicMentionToken,
+  composerInput,
+  composerPanel,
+  messageSendPending,
+  messageSendStatus,
+  clearMessageSendStatus,
+  sendMessage,
+  prayerComposerPhoto,
+  uploadPrayerImage,
+  clearPrayerComposerPhoto,
+  isRecording,
+  startRecording,
+  stopRecording,
+  audioFile,
+  sortedMusicTracks: () => sortedMusicTracks.value,
+  chooseActiveSuggestion: () => chooseActiveComposerSuggestion()
+});
 const serverVersion = ref<VersionDTO | null>(null);
 const versionUpdateNotice = ref("");
 const staleVersionVisible = ref(false);
@@ -967,204 +987,66 @@ const updateCheck = ref<UpdateCheckDTO | null>(null);
 const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
 const selectedUpdateBranch = ref("");
-const rainActive = ref(false);
-const waterTilt = ref({ x: 0, y: 0 });
-let deviceGravity: GravityVector = { x: 0, y: 1, strength: 1 };
-const gooeyBlobs = ref<GooeyBlob[]>([]);
-const gooeyHighlights = ref<GooeyHighlight[]>([]);
+
+const {
+  timeline,
+  measuredTimelineHeights,
+  resolvedMessageImageDimensions,
+  timelineScrollActive,
+  pendingTimelineHeights,
+  timelineViewportHeight,
+  timelineViewportWidth,
+  virtualTimelineItems,
+  virtualTimelineActive,
+  virtualTimelineWindow,
+  timelineTopSpacerHeight,
+  timelineBottomSpacerHeight,
+  timelineReservedHeight,
+  timelineRowKey,
+  messageImageDimensions,
+  messageImagePresentationStyle,
+  estimatedImageTimelineRowHeight,
+  syncVirtualTimelineViewport,
+  measuredTimelineRowHeight,
+  visibleTimelineAnchor,
+  pumpMessageImagePreloads
+} = useVirtualTimeline({
+  scroller,
+  versionUpdateNotice,
+  estimateRowHeight: estimatedTimelineRowHeight,
+  computeWindow: computeVirtualTimelineWindow,
+  imagePreloadQueue: messageImagePreloadQueue,
+  queuedImagePreloads: queuedMessageImagePreloads,
+  fileThumbUrl
+});
+const {
+  mentionToasts,
+  acknowledgedMentionIds,
+  loadAcknowledgedMentionIds,
+  queueMentionToast,
+  ensureVisibleLinkPreviews,
+  isMentionAlertActive,
+  acknowledgeMentionAlert,
+  acknowledgeMentionId,
+  channelName,
+  messagePreviewText,
+  linkPreviewFor,
+  messageContentHtml,
+  markdownMessageHtml,
+  textContentHtml,
+  messageRichTextSegments,
+  prayerRichTextSegments
+} = useMessageRendering({ linkifyMessageHtml, isMine, reconcileReadPositionAfterLayout });
 const hasUnreadMessages = ref(false);
 const awayFromNewest = ref(false);
-let recordingTimer: number | undefined;
-let activeVoiceRecordingSession: VoiceRecordingSession | null = null;
-const recordingWakeLock = createRecordingWakeLock(navigator);
 let versionCheckTimer: number | undefined;
 let updateStatusTimer: number | undefined;
-let rainAnimationFrame: number | undefined;
-let rainUntil = 0;
-let rainDrops: RainDrop[] = [];
-let dripAnimationFrame: number | undefined;
-let dripLastFrame = 0;
-let dripLastSpawn = 0;
-let dripParticles: DripParticle[] = [];
-let gooeyAnimationFrame: number | undefined;
-let gooeyLastFrame = 0;
-let gooeyLastSpawn = 0;
-let gooeyNextId = 1;
-let gooeyParticles: GooeyDripParticle[] = [];
 let loadingHistoryFromScroll = false;
 let loadingNewerFromScroll = false;
 const longPressMs = 520;
-const rainDurationMs = 15_000;
-const playedRainEffectIds = new Set<number>();
-let longPressTimer: number | undefined;
-let longPressStartedAt = { x: 0, y: 0 };
 let blankScoreLongPressTimer: number | undefined;
 let blankScoreLongPressStartedAt = { x: 0, y: 0 };
-let favoriteLongPressTimer: number | undefined;
-let favoriteLongPressStartedAt = { x: 0, y: 0 };
-let channelLongPressTimer: number | undefined;
-let channelLongPressStartedAt = { x: 0, y: 0 };
 let suppressNextTapUntil = 0;
-let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
-let imagePinchStart: { distance: number; scale: number } | null = null;
-let deviceOrientationPermissionRequested = false;
-const defaultPalette: ThemePaletteDTO = {
-  accent: "#1aad19",
-  accentDark: "#129611",
-  buttonText: "#ffffff",
-  bg: "#ededed",
-  chatBg: "#ededed",
-  panel: "#f7f7f7",
-  line: "#d9d9d9",
-  text: "#111111",
-  muted: "#7b7b7b",
-  bubbleOther: "#ffffff",
-  bubbleOtherText: "#111111",
-  bubbleMine: "#95ec69",
-  bubbleMineText: "#111111"
-};
-const builtInThemes: ThemeDTO[] = [
-  { id: "wechat", name: "微信绿", palette: { ...defaultPalette } },
-  {
-    id: "jade",
-    name: "竹影",
-    palette: {
-      ...defaultPalette,
-      accent: "#0f8f72",
-      accentDark: "#0a6f5d",
-      bg: "#e8efed",
-      chatBg: "#edf4f1",
-      panel: "#f7faf8",
-      line: "#cfded9",
-      text: "#13201d",
-      muted: "#64756f",
-      bubbleOther: "#ffffff",
-      bubbleMine: "#bfead8"
-    }
-  },
-  {
-    id: "paper",
-    name: "纸墨",
-    palette: {
-      ...defaultPalette,
-      accent: "#33658a",
-      accentDark: "#274c68",
-      bg: "#f1f0ea",
-      chatBg: "#f6f5ef",
-      panel: "#fbfaf6",
-      line: "#ddd8ca",
-      text: "#202124",
-      muted: "#6f6a61",
-      bubbleOther: "#ffffff",
-      bubbleMine: "#d7e7f3"
-    }
-  },
-  {
-    id: "night",
-    name: "夜航",
-    palette: {
-      ...defaultPalette,
-      accent: "#35a7ff",
-      accentDark: "#1e7ec4",
-      buttonText: "#07131f",
-      bg: "#171b20",
-      chatBg: "#1d232a",
-      panel: "#222932",
-      line: "#3a4450",
-      text: "#f5f7fa",
-      muted: "#a8b3bf",
-      bubbleOther: "#2c343e",
-      bubbleOtherText: "#f5f7fa",
-      bubbleMine: "#245d82",
-      bubbleMineText: "#ffffff"
-    }
-  }
-];
-const colorFields: Array<{ key: keyof ThemePaletteDTO; label: string }> = [
-  { key: "accent", label: "按钮颜色" },
-  { key: "accentDark", label: "按钮按下" },
-  { key: "buttonText", label: "按钮文字" },
-  { key: "bubbleMine", label: "我的气泡背景" },
-  { key: "bubbleMineText", label: "我的气泡文字" },
-  { key: "bubbleOther", label: "对方气泡背景" },
-  { key: "bubbleOtherText", label: "对方气泡文字" },
-  { key: "bg", label: "页面背景" },
-  { key: "chatBg", label: "聊天区背景" },
-  { key: "panel", label: "面板背景" },
-  { key: "text", label: "主文字" },
-  { key: "muted", label: "辅助文字" },
-  { key: "line", label: "边框线" }
-];
-const primaryColorFieldKeys = new Set<keyof ThemePaletteDTO>(["accent", "bubbleMine", "bubbleOther", "chatBg", "text"]);
-const primaryColorFields = colorFields.filter((field) => primaryColorFieldKeys.has(field.key));
-const customThemeEdit = ref<ThemeDTO>({ id: "", name: "我的主题", palette: { ...defaultPalette } });
-type IconComponent = typeof Sparkles;
-type RainDrop = { x: number; y: number; length: number; speed: number; width: number; sway: number; alpha: number };
-type DripParticle = {
-  state: "attached" | "falling" | "splash";
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  sourceId: number;
-  anchorRatio: number;
-  anchorX: number;
-  anchorY: number;
-  mass: number;
-  stretch: number;
-  age: number;
-  life: number;
-  phase: number;
-  seed: number;
-};
-type GravityVector = { x: number; y: number; strength: number };
-type DripCollisionRect = DOMRect & {
-  id: number;
-  layerLeft: number;
-  layerRight: number;
-  layerTop: number;
-  layerBottom: number;
-};
-type GooeyEdgeAnchor = { x: number; y: number; normalX: number; normalY: number; tangentX: number; tangentY: number; tangentLimit: number };
-type GooeyDripParticle = {
-  id: number;
-  state: "attached" | "falling" | "splash";
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  radius: number;
-  sourceId: number;
-  anchorX: number;
-  anchorY: number;
-  edgeOffset: number;
-  edgeVelocity: number;
-  mass: number;
-  age: number;
-  life: number;
-  alpha: number;
-};
-type GooeyBlob = { id: string; x: number; y: number; rx: number; ry: number; alpha: number; rotate: number };
-type GooeyHighlight = { id: string; x: number; y: number; rx: number; ry: number; alpha: number; rotate: number };
-type BubbleLayerRect = DOMRect & { layerLeft: number; layerRight: number; layerTop: number; layerBottom: number; layerCenterX: number; layerCenterY: number };
-const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: IconComponent }> = [
-  { command: "/闪动", effect: "flash", label: "闪动", hint: "气泡持续换色", icon: Sparkles },
-  { command: "/流光", effect: "shine", label: "流光", hint: "文字金属反光", icon: WandSparkles },
-  { command: "/震动", effect: "shake", label: "震动", hint: "气泡持续颤抖", icon: Vibrate },
-  { command: "/飞机", effect: "fly", label: "飞机", hint: "文字横向循环飞行", icon: Plane },
-  { command: "/水滴", effect: "drip", label: "水滴", hint: "液滴下落并撞出水花", icon: Droplet },
-  { command: "/下雨", effect: "rain", label: "下雨", hint: "聊天室下 15 秒大雨", icon: CloudRain },
-  { command: "/哎呀", effect: "oops", label: "哎呀", hint: "点一下，文字会随机掉下来", icon: ArrowDown }
-];
-const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
-const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
-const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
-type SlashCommandSuggestion =
-  | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
-  | { kind: "sermonRequest"; command: string; label: string; hint: string; icon: IconComponent }
-  | { kind: "format"; command: string; label: string; hint: string; icon: IconComponent }
-  | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
 type VoicePayload = {
   kind?: string;
@@ -1179,7 +1061,6 @@ onMounted(async () => {
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
   document.addEventListener("keydown", handleGlobalEscape);
   document.addEventListener("visibilitychange", handleDocumentVisibilityChange);
-  window.addEventListener("deviceorientation", handleDeviceOrientation, { passive: true });
   window.addEventListener("resize", handleTimelineViewportResize, { passive: true });
   window.visualViewport?.addEventListener("resize", handleTimelineViewportResize, { passive: true });
   window.visualViewport?.addEventListener("scroll", handleTimelineViewportResize, { passive: true });
@@ -1463,10 +1344,6 @@ watch(messageFontSize, (value) => {
 // 音乐小窗字号由管理员在「聊天室外观」里统一设置，默认 20px
 const musicPanelFontSize = computed(() => cleanMusicPanelFontSize(store.appearance.musicPanelFontSize));
 
-watch(memberRemoveMode, () => {
-  selectedMember.value = null;
-});
-
 watch(
   () => store.account?.isAdmin,
   (isAdminAccount) => {
@@ -1490,7 +1367,6 @@ onBeforeUnmount(() => {
   document.removeEventListener("visibilitychange", handleDocumentVisibilityChange);
   window.removeEventListener("pagehide", handlePageHideFlush);
   window.removeEventListener("reception-closed", handleReceptionClosed);
-  window.removeEventListener("deviceorientation", handleDeviceOrientation);
   window.removeEventListener("resize", handleTimelineViewportResize);
   window.visualViewport?.removeEventListener("resize", handleTimelineViewportResize);
   window.visualViewport?.removeEventListener("scroll", handleTimelineViewportResize);
@@ -1520,9 +1396,6 @@ onBeforeUnmount(() => {
   clearBlankScoreLongPress();
   clearFavoriteLongPress();
   clearChannelLongPress();
-  stopRainEffect();
-  stopDripPhysics(true);
-  stopGooeyDripPhysics(true);
   oopsPhysicsLayer.value?.reset();
   stopAllMessageAudioPlayback();
   resetRecording();
@@ -1535,7 +1408,7 @@ onBeforeUnmount(() => {
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
   store.socket?.off("connect", handleActivitySocketConnect);
-  if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
+  stopPresenceHeartbeat();
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
   disposeMusicPlayer();
@@ -1544,21 +1417,6 @@ onBeforeUnmount(() => {
 
 const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
-const bibleTargetChannel = computed(() => store.channels.find((channel) => channel.id === bibleTargetChannelId.value) || null);
-const bibleCanSend = computed(() => !!bibleTargetChannel.value && bibleTargetChannel.value.kind !== "music" && bibleTargetChannel.value.canWrite !== false);
-const bibleSendUnavailableReason = computed(() => {
-  if (!bibleTargetChannel.value) return "进入圣经前的聊天室已不可用";
-  if (bibleTargetChannel.value.kind === "music") return "音乐频道不能发送文字经文";
-  if (bibleTargetChannel.value.canWrite === false) return "你在当前频道没有发送权限";
-  return "";
-});
-const forwardTargetChannels = computed(() => resolveForwardTargetChannels(store.channels));
-// “打开的圣经”可分享到的频道：公开/私密聊天频道与私聊，且当前账号可发言
-const bibleShareChannels = computed(() =>
-  store.channels.filter((channel) => (channel.kind === "standard" || channel.kind === "direct") && channel.canWrite !== false)
-);
-const sortedMusicTracks = computed(() => sortMusicTracks(musicTracks.value, "manual"));
-const favoriteMusicTracks = computed(() => sortedMusicTracks.value.filter((track) => track.favorited));
 const exclusiveAudio = getSharedExclusiveAudio();
 const musicPlayer = useMusicPlayer({
   tracks: musicTracks,
@@ -1599,6 +1457,27 @@ const {
   handlePlaylistDeleted: handleMusicPlaylistDeleted,
   currentPlaybackTimeMs: currentMusicPlaybackTimeMs
 } = musicPlayer.controls;
+
+const {
+  musicMentionTitle,
+  musicMentionTextHtml,
+  isMentionedMusicPlaying,
+  toggleMentionedMusic,
+  musicMentionBackground,
+  isMusicMentionBackgroundExpanded,
+  toggleMusicMentionBackground
+} = useMusicMentionRendering({
+  linkifyMessageHtml,
+  musicTracks,
+  currentMusicTrackId,
+  musicPlaying,
+  pauseMusic,
+  selectMusicTrack: selectMusicTrackCore,
+  musicSourceKind,
+  selectedMusicPlaylistId,
+  musicPlayerExpanded,
+  musicManagerOpen
+});
 const musicSleepTimer = useMusicSleepTimer({ currentTrackId: currentMusicTrackId, onStop: () => pauseMusic(true) });
 const friendPlayer = useFriendPlayer({
   onUserPlay: () => exclusiveAudio.activate("friend"),
@@ -1771,7 +1650,6 @@ const isAdmin = computed(() => !!store.account?.isAdmin);
 const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
 const visiblePinned = computed(() => (!store.prayerOnly && store.pinned ? store.pinned : null));
 const themeOptions = computed<ThemeDTO[]>(() => [...builtInThemes, ...(store.appearance.customThemes || [])]);
-const appearanceThemeOptions = computed<ThemeDTO[]>(() => [...builtInThemes, ...customThemesDraft.value]);
 const activeTheme = computed(() => (themeOptions.value.some((theme) => theme.id === store.account?.theme) ? store.account?.theme || "wechat" : "wechat"));
 const activeThemeConfig = computed(() => themeOptions.value.find((theme) => theme.id === activeTheme.value) || builtInThemes[0]);
 const activePalette = computed(() => activeThemeConfig.value.palette);
@@ -1860,59 +1738,280 @@ watch(
 );
 
 const loginShellClass = computed(() => `login-position-${store.appearance.loginFormPosition || "middle"}`);
-const canDeleteCurrentChannel = computed(() => !!currentChannel.value?.canManage && currentChannel.value.kind !== "music" && !currentChannel.value.isDefault && !currentChannel.value.directKey);
-const adminChannelRows = computed(() => adminChannels.value);
-const adminSelectedChannel = computed(() => adminChannels.value.find((channel) => channel.id === adminSelectedChannelId.value) || null);
-const adminDirectPageCount = computed(() => Math.max(1, Math.ceil(adminDirectTotal.value / adminDirectPageSize)));
-const adminAppearancePages = new Set<AdminPage>(["appearanceBrand", "appearanceLogin", "appearanceChat", "appearanceParallax", "appearanceThemes", "appearanceFlash"]);
-const adminPageMeta: Record<AdminPage, { title: string; description: string }> = {
-  home: { title: "管理中心", description: "按功能进入独立管理页面" },
-  pin: { title: "置顶公告", description: "管理当前频道顶部公告" },
-  users: { title: "用户与权限", description: "新增用户、修改资料与管理权限" },
-  channels: { title: "频道与私聊历史", description: "正式频道和历史会话分别管理" },
-  reception: { title: "会客厅", description: "查看创建者、期限和用量，不读取聊天内容" },
-  channelDetail: { title: "频道详情", description: "修改频道资料、成员和访问权限" },
-  appearance: { title: "外观与体验", description: "每项外观配置都在独立页面完成" },
-  appearanceBrand: { title: "品牌与标签页", description: "浏览器标题、收藏图标和应用入口" },
-  appearanceLogin: { title: "登录页", description: "登录内容、背景、位置与注册入口" },
-  appearanceChat: { title: "聊天室外观", description: "聊天区壁纸和显示方式" },
-  appearanceParallax: { title: "卷轴背景", description: "选择多层卷轴套件并调整相对移动速度" },
-  appearanceThemes: { title: "主题颜色", description: "创建和维护聊天室配色" },
-  appearanceFlash: { title: "消息闪动特效", description: "配置闪动消息的颜色和节奏" },
-  data: { title: "数据与系统", description: "备份、聊天记录、资源和审计记录" },
-  backups: { title: "备份与迁移", description: "完整备份及聊天、用户数据导入导出" },
-  messages: { title: "聊天记录", description: "按频道选择或清理聊天消息" },
-  resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
-  books: { title: "图书", description: "上传 EPUB 图书，管理图书室藏书" },
-  wechatRelay: { title: "微信通知转发", description: "连接 NAS 微信、选择来源频道并测试发送" },
-  demo: { title: "演示模式", description: "从 GitHub 载入或复位标准演示数据" },
-  release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }
-};
-const activeAdminPageMeta = computed(() => {
-  if (adminPage.value === "channelDetail" && adminSelectedChannel.value) {
-    return { title: adminSelectedChannel.value.name, description: "频道详情" };
+const {
+  selectedMember,
+  memberPaneChannelOverride,
+  managedMembers,
+  memberRemoveMode,
+  memberPickerOpen,
+  memberPickerChannel,
+  memberPickerCandidates,
+  memberPickerSelectedIds,
+  memberPickerBusy,
+  memberManageMsg,
+  ownerTransferOpen,
+  ownerTransferChannel,
+  ownerTransferSuccessorId,
+  ownerTransferBusy,
+  ownerTransferMsg,
+  showChannelEditor,
+  channelEditorMode,
+  channelEditorChannel,
+  channelEditorDraft,
+  channelEditorBusy,
+  channelEditorMsg,
+  channelNameSuggestions,
+  channelNameSuggestionBusy,
+  pendingCloseChannel,
+  pendingLeaveChannel,
+  channelLeaveBusy,
+  channelLeaveMsg,
+  memberPromptPosition,
+  memberPromptStyle,
+  canDeleteCurrentChannel,
+  activeMemberPaneChannel,
+  activeMemberPaneMembers,
+  canManageActiveMembers,
+  ownerTransferCandidates,
+  memberPaneTitle,
+  memberPaneSubtitle,
+  memberPickerTitle,
+  channelEditorTitle,
+  channelEditorSubtitle,
+  isTwoPersonDirectEditor,
+  isGroupDirectEditor,
+  mentionMember,
+  openMemberActions,
+  openSenderActions,
+  mentionSelectedMember,
+  startPrivateChat,
+  resetChannelEditorDraft,
+  openCreateChannelEditor,
+  openEditChannelEditor,
+  closeChannelEditor,
+  requestDirectChatNameSuggestions,
+  openChannelEditorMembers,
+  saveChannelEditor,
+  uploadChannelEditorIcon,
+  toggleCurrentMemberPane,
+  refreshMembersForChannel,
+  openAdminChannelMembers,
+  canRemoveMemberFromActive,
+  openMemberPicker,
+  closeMemberPicker,
+  memberPickerCandidateKey,
+  toggleMemberPickerAccount,
+  addSelectedMembers,
+  removeMemberFromActive,
+  openOwnerTransfer,
+  closeOwnerTransfer,
+  transferOwnedChannelAndLeave,
+  requestLeaveChannel,
+  leavePendingChannel,
+  requestCloseChannel,
+  closePendingChannel
+} = useChannelManagement({
+  input,
+  composerInput,
+  showMembers,
+  showChannels,
+  membersCollapsed,
+  showChatToolsMenu,
+  showAdmin,
+  adminMsg,
+  pendingChain,
+  isAdmin,
+  currentChannel,
+  positionPromptNearEvent,
+  replaceChannelSnapshot,
+  saveReadPosition,
+  switchVisibleChannel,
+  restoreSavedReadPosition,
+  restoreChatSurface,
+  scrollBottom
+});
+const {
+  pendingMessageActions,
+  messageActionPromptPosition,
+  messageActionPromptStyle,
+  textSelectableMessageId,
+  handleBubblePointerMove,
+  handleBubblePointerLeave,
+  beginMessageLongPress,
+  moveMessageLongPress,
+  clearMessageLongPress,
+  beginFavoriteLongPress,
+  moveFavoriteLongPress,
+  clearFavoriteLongPress,
+  beginChannelLongPress,
+  moveChannelLongPress,
+  clearChannelLongPress,
+  openChannelContextMenu,
+  openMessageActionMenu,
+  defaultMessageReactions,
+  toggleMessageLike,
+  toggleMessageFavorite,
+  likeActionMessage,
+  favoriteActionMessage,
+  likedByTitle,
+  dismissLikeNotification,
+  closeMessageActionMenu,
+  quoteActionMessage,
+  selectActionMessageText
+} = useMessageActions({
+  scroller,
+  showFavorites,
+  oopsActiveMessageIds,
+  messageEffect,
+  requestDeviceOrientationPermissionOnce,
+  stirWaterMessage,
+  settleWaterMessage,
+  positionPromptNearEvent,
+  suppressNextTap: () => { suppressNextTapUntil = Date.now() + 650; },
+  openFavoriteMessage,
+  openFavorites,
+  openEditChannelEditor,
+  pickReply,
+  closeCompetingPrompts: () => {
+    pendingChain.value = null;
+    pendingDownload.value = null;
+    pendingRecall.value = null;
+    pendingPrayer.value = null;
+    selectedMember.value = null;
   }
-  return adminPageMeta[adminPage.value];
 });
-const activeMemberPaneChannel = computed(() => memberPaneChannelOverride.value || currentChannel.value);
-const activeMemberPaneMembers = computed(() => (memberPaneChannelOverride.value ? managedMembers.value : store.members));
-const canManageActiveMembers = computed(() => {
-  const channel = activeMemberPaneChannel.value;
-  return channel?.kind !== "music" && canManageChannelMembers(channel);
+const {
+  messageSelectionMode,
+  selectedMessageIds,
+  selectableMessages,
+  selectedMessageCount,
+  visibleMessagesSelected,
+  toggleMessageSelectionMode,
+  startMessageSelectionMode,
+  toggleMessageSelected,
+  toggleVisibleMessageSelection,
+  deleteSelectedMessages,
+  pinSelectedMessages
+} = useMessageSelection({
+  showChatToolsMenu,
+  showAdmin,
+  adminMsg,
+  pinnedExpanded,
+  canPinCurrentChannel,
+  restoreChatSurface,
+  closeCompetingPrompts: () => {
+    pendingChain.value = null;
+    pendingDownload.value = null;
+    pendingRecall.value = null;
+    pendingMessageActions.value = null;
+    pendingPrayer.value = null;
+  }
 });
-const ownerTransferCandidates = computed(() => channelOwnershipSuccessors(activeMemberPaneMembers.value, store.account?.id));
-const memberPaneTitle = computed(() => (memberPaneChannelOverride.value ? "成员管理" : "成员"));
-const memberPaneSubtitle = computed(() => activeMemberPaneChannel.value?.name || "");
-const memberPickerTitle = computed(() => (memberPickerChannel.value ? `添加到 ${memberPickerChannel.value.name}` : "添加成员"));
-const channelEditorTitle = computed(() => (channelEditorMode.value === "create" ? "创建频道" : "频道设置"));
-const channelEditorSubtitle = computed(() => (channelEditorMode.value === "create" ? "创建后可立即添加成员" : channelEditorChannel.value?.name || ""));
-const isTwoPersonDirectEditor = computed(() => {
-  const channel = channelEditorChannel.value;
-  return channelEditorMode.value === "edit" && channel?.kind === "direct" && !channel.directKey?.startsWith("virtual:") && channel.memberCount === 2;
+const {
+  pendingRecall,
+  recallPromptPosition,
+  recallPromptStyle,
+  recallRemainingMs,
+  canRecallMessage,
+  recallRemainingText,
+  openRecallPrompt,
+  recallPendingMessage,
+  recallActionMessage
+} = useMessageRecall({
+  pendingMessageActions,
+  isMine,
+  positionPromptNearEvent,
+  closeChainJoin,
+  closeMessageActionMenu,
+  closeCompetingPrompts: () => {
+    pendingDownload.value = null;
+    pendingMessageActions.value = null;
+    pendingPrayer.value = null;
+    selectedMember.value = null;
+  }
 });
-const isGroupDirectEditor = computed(() => {
-  const channel = channelEditorChannel.value;
-  return channelEditorMode.value === "edit" && channel?.kind === "direct" && !channel.directKey?.startsWith("virtual:") && channel.memberCount > 2;
+const {
+  previewMessage,
+  previewPinnedImage,
+  imagePreviewScale,
+  imagePreviewOffset,
+  downloadPromptPosition,
+  downloadPromptStyle,
+  pendingDownload,
+  openAttachmentFromTap,
+  openPreviewMessage,
+  openPinnedImage,
+  resetImagePreviewTransform,
+  closePreviewMessage,
+  previewImageSrc,
+  downloadPreviewImage,
+  clampImageScale,
+  imagePreviewTransform,
+  touchDistance,
+  onImagePreviewTouchStart,
+  onImagePreviewTouchMove,
+  endImagePreviewTouch,
+  onImagePreviewPointerDown,
+  onImagePreviewPointerMove,
+  onImagePreviewWheel,
+  requestDownload,
+  fileDownloadUrl,
+  downloadFile,
+  fileExtension,
+  isPdfMessage,
+  isVideoMessage,
+  canPreviewMessage,
+  isDocumentMessage,
+  documentIconSrc,
+  documentKindLabel
+} = useMediaPreview({
+  isTapSuppressed: () => Date.now() < suppressNextTapUntil,
+  messageSelectionMode,
+  toggleMessageSelected,
+  fileUrl,
+  pinnedFileUrl,
+  positionPromptNearEvent,
+  closeCompetingPrompts: () => {
+    pendingChain.value = null;
+    pendingRecall.value = null;
+    pendingMessageActions.value = null;
+    pendingPrayer.value = null;
+    selectedMember.value = null;
+  }
+});
+const {
+  forwardActionSheetOpen,
+  forwardPickerOpen,
+  forwardSourceMessages,
+  forwardMode,
+  forwardConfirming,
+  forwardChannelIds,
+  forwardBusy,
+  forwardError,
+  forwardSuccess,
+  chatRecordViewMessage,
+  forwardTargetChannels,
+  forwardSelectedChannels,
+  forwardMergedPreviewPayload,
+  forwardMergedPreviewLines,
+  resetForwardState,
+  closeForwardDialog,
+  toggleForwardChannel,
+  openSingleForward,
+  startSelectionFromAction,
+  openForwardActionSheet,
+  chooseForwardMode,
+  submitMessageForward,
+  openChatRecord
+} = useMessageForward({
+  pendingMessageActions,
+  pendingChain,
+  messageSelectionMode,
+  selectedMessageIds,
+  currentChannel,
+  toggleMessageSelected,
+  closeMessageActionMenu,
+  submitForward: (payload) => api<{ success: boolean; forwarded: number; skipped: number }>("/api/messages/forward", { method: "POST", body: JSON.stringify(payload) })
 });
 const messageLoadBanner = computed(() => {
   if (store.messageLoadError) return { kind: "error", text: `${store.messageLoadError}，点按重试` };
@@ -1963,123 +2062,7 @@ async function ensureReleaseHistory() {
   }
 }
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
-const backgroundAttachmentOptions = computed(() => adminAttachments.value.filter((item) => item.kind === "background" && item.exists && item.url));
-const activeAppearanceSection = computed(() => appearanceSections.find((section) => section.id === appearanceSection.value) || appearanceSections[0]);
-const appearanceDraftIcon = computed(() => loginAppearanceEdit.value.appIconPath ? wallpaperUrl(loginAppearanceEdit.value.appIconPath) : "/images/icon-192.svg");
-const appearanceDraftLoginIcon = computed(() => loginAppearanceEdit.value.loginIconPath ? wallpaperUrl(loginAppearanceEdit.value.loginIconPath) : "/images/icon-192.svg");
-const appearanceDraftLoginBackground = computed(() => loginAppearanceEdit.value.loginBackgroundPath);
-const appearanceDraftWallpaper = computed(() => loginAppearanceEdit.value.wallpaperPath);
-const appearanceImagePickerSelection = computed(() => {
-  const picker = appearanceImagePicker.value;
-  return picker ? loginAppearanceEdit.value[picker.field] : null;
-});
-const appearanceImagePickerFit = computed(() => {
-  const picker = appearanceImagePicker.value;
-  return picker?.fitField ? loginAppearanceEdit.value[picker.fitField] : null;
-});
-const appearanceImagePickerFitOptions = computed(() => appearanceImagePicker.value?.fitField === "loginBackgroundFit" ? loginBackgroundFitOptions : wallpaperFitOptions);
-const appearancePreviewLoginStyle = computed(() => {
-  const fit = wallpaperFitStyle(loginAppearanceEdit.value.loginBackgroundFit);
-  return {
-    backgroundImage: appearanceDraftLoginBackground.value ? `url(${wallpaperUrl(appearanceDraftLoginBackground.value)})` : "none",
-    backgroundSize: fit.size,
-    backgroundRepeat: fit.repeat
-  };
-});
-const appearancePreviewChatStyle = computed(() => {
-  const fit = wallpaperFitStyle(loginAppearanceEdit.value.wallpaperFit);
-  return {
-    backgroundImage: appearanceDraftWallpaper.value ? `url(${wallpaperUrl(appearanceDraftWallpaper.value)})` : "none",
-    backgroundSize: fit.size,
-    backgroundRepeat: fit.repeat,
-    backgroundPosition: "center"
-  };
-});
-const wallpaperPanFocusMarkerStyle = computed(() => ({ left: `${cleanWallpaperPanFocusX(loginAppearanceEdit.value.wallpaperPanFocusX) * 100}%` }));
-const wallpaperPanSpeedLabel = computed(() => `${cleanWallpaperPanSpeed(loginAppearanceEdit.value.wallpaperPanSpeed).toFixed(2)}×`);
-const parallaxKitOptions = computed(() => loginAppearanceEdit.value.parallaxKits);
 const activeParallaxKit = computed(() => parallaxKit(store.appearance.parallaxKits || [], store.appearance.parallaxKit));
-const draftParallaxKit = computed(() => parallaxKit(loginAppearanceEdit.value.parallaxKits, loginAppearanceEdit.value.parallaxKit));
-const parallaxSpeedLabel = computed(() => `${cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed).toFixed(2)}×`);
-const appearancePreviewFlash = computed(() => cleanFlashEffectSettings(flashEffectEdit.value));
-const appearancePreviewFlashColor = computed(() => {
-  const colors = appearancePreviewFlash.value.colors;
-  return colors[flashEffectStep.value % colors.length] || colors[0] || "#fff176";
-});
-const appearancePreviewFlashStyle = computed(() => {
-  const interval = `${appearancePreviewFlash.value.intervalSeconds}s`;
-  return {
-    background: appearancePreviewFlashColor.value,
-    color: readableTextColor(appearancePreviewFlashColor.value),
-    transition: appearancePreviewFlash.value.transitionMode === "smooth" ? `background ${interval} linear, color ${interval} linear` : "none"
-  };
-});
-const appearanceThemePreviewStyle = computed(() => paletteStyle(customThemeEdit.value.palette));
-const customThemeDraftIds = computed(() => new Set(customThemesDraft.value.map((theme) => theme.id)));
-const appearanceAdvancedColorFields = computed(() => colorFields.filter((field) => !primaryColorFieldKeys.has(field.key)));
-const appearanceSavePayload = computed(() => ({
-  appTitle: loginAppearanceEdit.value.appTitle,
-  appIconPath: loginAppearanceEdit.value.appIconPath,
-  loginTitle: loginAppearanceEdit.value.loginTitle,
-  loginSubtitle: loginAppearanceEdit.value.loginSubtitle,
-  loginIconPath: loginAppearanceEdit.value.loginIconPath,
-  loginShowIcon: loginAppearanceEdit.value.loginShowIcon,
-  loginShowSubtitle: loginAppearanceEdit.value.loginShowSubtitle,
-  loginBackgroundPath: loginAppearanceEdit.value.loginBackgroundPath,
-  loginFormPosition: loginAppearanceEdit.value.loginFormPosition,
-  loginBackgroundFit: loginAppearanceEdit.value.loginBackgroundFit,
-  wallpaperPath: loginAppearanceEdit.value.wallpaperPath,
-  wallpaperFit: loginAppearanceEdit.value.wallpaperFit,
-  wallpaperPanFocusX: cleanWallpaperPanFocusX(loginAppearanceEdit.value.wallpaperPanFocusX),
-  wallpaperPanDirection: cleanWallpaperPanDirection(loginAppearanceEdit.value.wallpaperPanDirection),
-  wallpaperPanSpeed: cleanWallpaperPanSpeed(loginAppearanceEdit.value.wallpaperPanSpeed),
-  parallaxKit: loginAppearanceEdit.value.parallaxKit,
-  parallaxSpeed: cleanParallaxSpeed(loginAppearanceEdit.value.parallaxSpeed),
-  parallaxKits: cleanParallaxKits(loginAppearanceEdit.value.parallaxKits),
-  registrationEnabled: loginAppearanceEdit.value.registrationEnabled,
-  musicPanelFontSize: cleanMusicPanelFontSize(loginAppearanceEdit.value.musicPanelFontSize),
-  prayerBubbleMineColor: loginAppearanceEdit.value.prayerBubbleMineColor,
-  prayerBubbleOtherColor: loginAppearanceEdit.value.prayerBubbleOtherColor,
-  flashEffect: cleanFlashEffectSettings(flashEffectEdit.value),
-  customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } })),
-  composerPrompts: cleanComposerPrompts(composerPromptsText.value.split("\n")),
-  composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(composerPromptIntervalEdit.value),
-  composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(composerPromptAppearEdit.value),
-  composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(composerPromptDisappearEdit.value),
-  composerPromptGapSeconds: cleanComposerPromptGapSeconds(composerPromptGapEdit.value)
-}));
-const currentAppearancePayload = computed(() => ({
-  appTitle: store.appearance.appTitle || "Team Chat",
-  appIconPath: store.appearance.appIconPath || null,
-  loginTitle: store.appearance.loginTitle || "Team Chat",
-  loginSubtitle: store.appearance.loginSubtitle || "",
-  loginIconPath: store.appearance.loginIconPath || null,
-  loginShowIcon: store.appearance.loginShowIcon !== false,
-  loginShowSubtitle: store.appearance.loginShowSubtitle !== false,
-  loginBackgroundPath: store.appearance.loginBackgroundPath || null,
-  loginFormPosition: store.appearance.loginFormPosition || "middle",
-  loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
-  wallpaperPath: store.appearance.wallpaperPath || null,
-  wallpaperFit: store.appearance.wallpaperFit || "cover",
-  wallpaperPanFocusX: cleanWallpaperPanFocusX(store.appearance.wallpaperPanFocusX),
-  wallpaperPanDirection: cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection),
-  wallpaperPanSpeed: cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
-  parallaxKit: store.appearance.parallaxKit || "none",
-  parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
-  parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
-  registrationEnabled: !!store.appearance.registrationEnabled,
-  musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
-  prayerBubbleMineColor: store.appearance.prayerBubbleMineColor || "#f0fbf1",
-  prayerBubbleOtherColor: store.appearance.prayerBubbleOtherColor || "#fffaf0",
-  flashEffect: cleanFlashEffectSettings(store.appearance.flashEffect),
-  customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } })),
-  composerPrompts: cleanComposerPrompts(store.appearance.composerPrompts || []),
-  composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
-  composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
-  composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds),
-  composerPromptGapSeconds: cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
-}));
-const appearanceHasDraftChanges = computed(() => JSON.stringify(appearanceSavePayload.value) !== JSON.stringify(currentAppearancePayload.value));
 watch(
   () => [
     `${appearancePreviewFlash.value.colors.join(",")}:${appearancePreviewFlash.value.intervalSeconds}:${appearancePreviewFlash.value.transitionMode}`,
@@ -2092,9 +2075,6 @@ watch(
   () => [showAdmin.value, adminPage.value, appearanceSection.value, appearancePreviewOpen.value] as const,
   () => syncFlashEffectTimer()
 );
-const selectableMessages = computed(() => store.messages.filter((message) => message.id > 0));
-const selectedMessageCount = computed(() => selectedMessageIds.value.size);
-const visibleMessagesSelected = computed(() => selectableMessages.value.length > 0 && selectableMessages.value.every((message) => selectedMessageIds.value.has(message.id)));
 const notificationSupported = computed(() => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window);
 const notificationPermissionLabel = computed(() => {
   if (!notificationSupported.value) return "当前浏览器不支持";
@@ -2126,108 +2106,13 @@ const notificationPromptHint = computed(() => {
   if (notificationPermissionAttempts.value > 0) return "它先变成静音铃铛，但还在等你点“开启通知”。";
   return "开启后，即使没有停留在聊天室页面，也能收到 @ 和重要公告提醒。";
 });
-const slashCommandToken = computed(() => slashCommandTokenAtCursor(input.value, composerCaret.value));
-const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
-  const token = slashCommandToken.value;
-  if (!token) return [];
-  if (token.kind === "prayer-effect") {
-    return [
-      { ...markdownCommand, kind: "format" as const },
-      ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
-    ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
-  }
-  return [
-    { ...markdownCommand, kind: "format" as const },
-    { ...prayerCommand, kind: "prayer" as const },
-    { ...sermonRequestCommand, kind: "sermonRequest" as const },
-    ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
-  ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
-});
-const mentionToken = computed(() => mentionTokenAtCursor(input.value, composerCaret.value));
-const matchingMentionMembers = computed(() => {
-  const token = mentionToken.value;
-  if (!token) return [];
-  const query = token.query.trim().toLowerCase();
-  return store.members.filter((member) => {
-    if (!member.displayName.trim()) return false;
-    if (!query) return true;
-    return member.displayName.toLowerCase().includes(query) || (member.username || "").toLowerCase().includes(query);
-  });
-});
-const musicMentionToken = computed(() => (selectedMusicMention.value ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)));
-const matchingMusicMentionTracks = computed(() => {
-  const token = musicMentionToken.value;
-  if (!token) return [];
-  const query = token.query.trim().toLowerCase();
-  if (!query) return sortedMusicTracks.value;
-  return sortedMusicTracks.value.filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
-});
-const activeComposerSuggestionKind = computed<"music" | "mention" | "effect" | null>(() => {
-  if (matchingMusicMentionTracks.value.length > 0) return "music";
-  if (matchingMentionMembers.value.length > 0) return "mention";
-  if (matchingSlashCommands.value.length > 0) return "effect";
-  return null;
-});
-const composerSuggestionCount = computed(() =>
-  activeComposerSuggestionKind.value === "music"
-    ? matchingMusicMentionTracks.value.length
-    : activeComposerSuggestionKind.value === "mention"
-      ? matchingMentionMembers.value.length
-      : matchingSlashCommands.value.length
-);
-const showComposerSuggestionMenu = computed(() => !composerSuggestionSuppressed.value && !!activeComposerSuggestionKind.value && composerSuggestionCount.value > 0);
-watch(composerSuggestionCount, (count) => {
-  if (composerSuggestionIndex.value >= count) composerSuggestionIndex.value = 0;
-});
-const canSendText = computed(() => {
-  return !!selectedMusicMention.value || !!parseComposerText(input.value).content;
-});
-const socketReadyToSend = computed(() => store.connectionState === "connected" && store.socket?.connected === true);
 const canSubmitText = computed(() => canSendText.value && socketReadyToSend.value && !messageSendPending.value);
-const composerSendStatus = computed(() => {
-  if (messageSendPending.value) return "正在发送…";
-  if (canSendText.value && !socketReadyToSend.value) {
-    return store.connectionState === "connecting" ? "正在连接……" : "连接恢复后再发送";
-  }
-  return messageSendStatus.value;
-});
-const composerSendState = computed(() => {
-  if (messageSendPending.value) return "pending";
-  if (canSendText.value && !socketReadyToSend.value) return "retry";
-  return messageSendStatus.value ? "failed" : undefined;
-});
-watch(
-  () => store.connectionState,
-  (state) => {
-    if (state === "connected" && messageSendStatus.value === "连接恢复后再发送") clearMessageSendStatus();
-  }
-);
 const loginBrand = computed(() => ({
   iconPath: store.appearance.loginIconPath || "/images/icon-192.svg",
   showIcon: store.appearance.loginShowIcon !== false,
   title: store.appearance.loginTitle || "Team Chat",
   subtitle: store.appearance.loginSubtitle,
   showSubtitle: store.appearance.loginShowSubtitle !== false
-}));
-const memberPromptStyle = computed(() => ({
-  left: `${memberPromptPosition.value.x}px`,
-  top: `${memberPromptPosition.value.y}px`
-}));
-const downloadPromptStyle = computed(() => ({
-  left: `${downloadPromptPosition.value.x}px`,
-  top: `${downloadPromptPosition.value.y}px`
-}));
-const recallPromptStyle = computed(() => ({
-  left: `${recallPromptPosition.value.x}px`,
-  top: `${recallPromptPosition.value.y}px`
-}));
-const messageActionPromptStyle = computed(() => ({
-  left: `${messageActionPromptPosition.value.x}px`,
-  top: `${messageActionPromptPosition.value.y}px`
-}));
-const prayerPromptStyle = computed(() => ({
-  left: `${prayerPromptPosition.value.x}px`,
-  top: `${prayerPromptPosition.value.y}px`
 }));
 const updateProgress = computed(() => Math.min(100, Math.max(0, Number(updateStatus.value?.progress || 0))));
 const updateStateText = computed(() => {
@@ -2245,141 +2130,73 @@ const updateRestartModeLabel = computed(() => {
   return mode ? `重启方式：${mode}` : "自动重启";
 });
 const updateStartDisabled = computed(() => updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value?.updateAvailable);
-let nextPendingMessageId = -1;
 
-function pendingUploadFor(message: MessageDTO) {
-  return pendingUploads.value[message.id];
-}
-
-function pendingUploadLabel(upload: PendingUpload) {
-  if (upload.status === "failed") return upload.message || "发送失败";
-  if (upload.status === "processing") return upload.message || "正在发布";
-  return `上传中 ${upload.progress}%`;
-}
-
-function pendingUploadKindLabel(file: File) {
-  if (isImageFile(file)) return "图片";
-  if (file.type.startsWith("audio/")) return "音频";
-  if (file.type.startsWith("video/")) return "视频";
-  return "文件";
-}
-
-function setPendingUpload(id: number, patch: Partial<PendingUpload>) {
-  const current = pendingUploads.value[id];
-  if (!current) return;
-  pendingUploads.value = { ...pendingUploads.value, [id]: { ...current, ...patch } };
-}
-
-function removePendingUpload(id: number) {
-  const next = { ...pendingUploads.value };
-  delete next[id];
-  pendingUploads.value = next;
-}
-
-function pushPendingVoiceMessage(file: File, options: { durationMs?: number; waveform?: number[] }) {
-  if (!store.currentChannelId || !store.account) return 0;
-  const id = nextPendingMessageId;
-  nextPendingMessageId -= 1;
-  pendingUploads.value = {
-    ...pendingUploads.value,
-    [id]: {
-      file,
-      options: { voice: true, durationMs: options.durationMs, waveform: options.waveform },
-      progress: 0,
-      status: "uploading"
-    }
-  };
-  store.appendLocalMessage({
-    id,
-    channelId: store.currentChannelId,
-    sender: {
-      id: store.account.actorId,
-      kind: "human",
-      username: store.account.username,
-      displayName: store.account.displayName,
-      avatarPath: store.account.avatarPath
-    },
-    content: "",
-    type: "file",
-    payload: { kind: "voice", durationMs: options.durationMs, waveform: options.waveform },
-    fileName: file.name,
-    fileSize: file.size,
-    voiceListened: true,
-    createdAt: new Date().toISOString()
-  });
-  void nextTick(() => scrollBottom(true));
-  return id;
-}
-
-function pushPendingFileMessage(file: File, options: { originalImage?: boolean } = {}) {
-  if (!store.currentChannelId || !store.account) return 0;
-  const id = nextPendingMessageId;
-  nextPendingMessageId -= 1;
-  const type = isImageFile(file) ? "image" : "file";
-  pendingUploads.value = {
-    ...pendingUploads.value,
-    [id]: {
-      file,
-      options,
-      progress: 0,
-      status: "uploading"
-    }
-  };
-  store.appendLocalMessage({
-    id,
-    channelId: store.currentChannelId,
-    sender: {
-      id: store.account.actorId,
-      kind: "human",
-      username: store.account.username,
-      displayName: store.account.displayName,
-      avatarPath: store.account.avatarPath
-    },
-    content: "",
-    type,
-    fileName: file.name,
-    fileSize: file.size,
-    voiceListened: true,
-    createdAt: new Date().toISOString()
-  });
-  void nextTick(() => scrollBottom(true));
-  return id;
-}
-
-function replacePendingMessage(pendingId: number, message: MessageDTO) {
-  store.replaceMessage(message, pendingId);
-}
-
-type TimelineRow =
-  | { kind: "time"; label: string; id: string }
-  | { kind: "version"; label: string; id: string }
-  | { kind: "message"; message: MessageDTO };
-const VIRTUAL_TIMELINE_THRESHOLD = 40;
-const VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN = 2_400;
-const VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS = 4;
-const VIRTUAL_TIMELINE_FORWARD_OVERSCAN = 320;
-// Keep layout measurement and history prepends out of native wheel/touch momentum.
-const TIMELINE_SCROLL_IDLE_MS = 500;
-
-const timeline = computed<TimelineRow[]>(() => {
-  const rows: TimelineRow[] = [];
-  let prev: string | undefined;
-  for (const message of store.messages) {
-    if (shouldShowSeparator(prev, message.createdAt)) rows.push({ kind: "time", label: formatSeparator(message.createdAt), id: `t-${message.id}` });
-    rows.push({ kind: "message", message });
-    prev = message.createdAt;
-  }
-  if (versionUpdateNotice.value && !store.loadingInitialMessages) {
-    rows.push({ kind: "version", label: versionUpdateNotice.value, id: `version-${APP_VERSION}` });
-  }
-  return rows;
-});
-
-function timelineRowKey(row: TimelineRow) {
-  if (row.kind === "time") return `time:${row.id}`;
-  if (row.kind === "version") return `version:${row.id}`;
-  return `message:${row.message.id}`;
-}
+const adminReleaseBindings = {
+  serverVersion,
+  updateCheck,
+  updateStatus,
+  updateBusy,
+  selectedUpdateBranch,
+  updateProgress,
+  updateStateText,
+  updateRestartModeLabel,
+  updateStartDisabled,
+  checkForUpdates,
+  startServerUpdate,
+  releaseHistory,
+  releaseDeveloper
+};
+const adminPanelActions = {
+  startMessageSelectionMode,
+  openAdminChannelMembers,
+  channelIconUrl,
+  wallpaperUrl,
+  themeSwatchStyle
+};
+const settingsPanelBindings = {
+  settingsTab,
+  settingsLoadError,
+  selectSettingsTab,
+  closeSettingsPanel,
+  uploadOwnAvatar,
+  saveOwnProfile,
+  changeOwnPassword,
+  deleteOwnAccount,
+  themeOptions,
+  activeTheme,
+  chooseTheme,
+  themeSwatchStyle,
+  bibleSettingsMsg,
+  bibleOutputFormatOptions,
+  bibleReferenceLabelOptions,
+  bibleCombinedPassageOptions,
+  bibleQuotationStyleOptions,
+  biblePreferences,
+  saveBiblePreference,
+  devices,
+  displayedDeviceName,
+  revokeDevice,
+  deviceIcon,
+  deviceLabel,
+  notificationMsg,
+  notificationEnabled,
+  notificationBusy,
+  notificationSupported,
+  notificationPermissionLabel,
+  sendTestNotification,
+  enableNotifications,
+  disableNotifications,
+  isChannelMuted,
+  setChannelMuted,
+  channelIconUrl,
+  avatarUrl,
+  avatarText,
+  serverVersion,
+  compareVersions,
+  reloadToLatestVersion,
+  releaseHistory,
+  releaseDeveloper
+};
 
 function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.kind === "time" || row.kind === "version") return 52;
@@ -2394,10 +2211,6 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.message.type === "system") return 64;
   const visualLines = Math.max(1, Math.ceil(Array.from(row.message.content || "").length / 24));
   return 68 + Math.min(160, visualLines * 20);
-}
-
-function messageImageDimensions(message: MessageDTO) {
-  return resolvedMessageImageDimensions.value[message.id] || imageDimensionsFromPayload(message.payload);
 }
 
 function handleMessageImageLoad(message: MessageDTO, event: Event) {
@@ -2420,24 +2233,6 @@ function markAttachmentBroken(message: MessageDTO) {
   brokenAttachmentIds.value = next;
 }
 
-function pumpMessageImagePreloads() {
-  while (activeMessageImagePreloads < 2 && messageImagePreloadQueue.length) {
-    const message = messageImagePreloadQueue.shift();
-    if (!message) return;
-    activeMessageImagePreloads += 1;
-    void fetch(fileThumbUrl(message), { cache: "force-cache", credentials: "same-origin" })
-      .then((response) => {
-        if (!response.ok) throw new Error(`image preload failed: ${response.status}`);
-        return response.blob();
-      })
-      .catch(() => queuedMessageImagePreloads.delete(message.id))
-      .finally(() => {
-        activeMessageImagePreloads -= 1;
-        pumpMessageImagePreloads();
-      });
-  }
-}
-
 function preloadMessageImages(messages: MessageDTO[]) {
   if (bibleOpen.value) return;
   // Only warm the newest few images; older history loads on demand through
@@ -2451,23 +2246,6 @@ function preloadMessageImages(messages: MessageDTO[]) {
   if (messageImagePreloadQueue.length) scheduleImagePreload(() => pumpMessageImagePreloads());
 }
 
-function messageImagePresentationStyle(message: MessageDTO) {
-  const dimensions = messageImageDimensions(message);
-  if (!dimensions) return undefined;
-  const availableWidth = timelineViewportWidth.value > 0 ? timelineViewportWidth.value * 0.62 : 260;
-  const width = Math.min(dimensions.width, 260, availableWidth);
-  return { width: `${Math.round(width)}px`, aspectRatio: `${dimensions.width} / ${dimensions.height}` };
-}
-
-function estimatedImageTimelineRowHeight(message: MessageDTO, viewportWidth: number) {
-  return estimatedImageTimelineHeight(messageImageDimensions(message), viewportWidth);
-}
-
-const virtualTimelineItems = computed<VirtualTimelineItem[]>(() => timeline.value.map((row) => ({
-  key: timelineRowKey(row),
-  estimatedHeight: estimatedTimelineRowHeight(row)
-})));
-const virtualTimelineActive = computed(() => timeline.value.length > VIRTUAL_TIMELINE_THRESHOLD);
 function computeVirtualTimelineWindow(scrollTop: number) {
   return calculateVirtualWindow({
     items: virtualTimelineItems.value,
@@ -2478,13 +2256,7 @@ function computeVirtualTimelineWindow(scrollTop: number) {
     overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN
   });
 }
-const virtualTimelineWindow = computed(() => {
-  if (!virtualTimelineActive.value) {
-    const renderedHeight = virtualTimelineItems.value.reduce((sum, item) => sum + (measuredTimelineHeights.value[item.key] || item.estimatedHeight), 0);
-    return { start: 0, end: timeline.value.length, topSpacer: 0, bottomSpacer: 0, renderedHeight, totalHeight: renderedHeight };
-  }
-  return computeVirtualTimelineWindow(timelineScrollTop.value);
-});
+
 const renderedTimelineRows = computed(() => timeline.value
   .slice(virtualTimelineWindow.value.start, virtualTimelineWindow.value.end)
   .map((row, offset) => ({
@@ -2492,30 +2264,6 @@ const renderedTimelineRows = computed(() => timeline.value
     timelineIndex: virtualTimelineWindow.value.start + offset,
     key: timelineRowKey(row)
   })));
-const timelineTopSpacerHeight = computed(() => virtualTimelineWindow.value.topSpacer);
-const timelineBottomSpacerHeight = computed(() => virtualTimelineWindow.value.bottomSpacer);
-
-function timelineReservedHeight(key: string) {
-  const item = virtualTimelineItems.value.find((candidate) => candidate.key === key);
-  return measuredTimelineHeights.value[key] || item?.estimatedHeight || 1;
-}
-
-function syncVirtualTimelineViewport(root = scroller.value) {
-  if (!root) return;
-  const nextScrollTop = root.scrollTop;
-  if (virtualTimelineActive.value && nextScrollTop !== timelineScrollTop.value) {
-    const current = virtualTimelineWindow.value;
-    const candidate = computeVirtualTimelineWindow(nextScrollTop);
-    // Skip the reactive write while the rendered window (and its spacers) is unchanged.
-    if (candidate.start !== current.start || candidate.end !== current.end) {
-      timelineScrollTop.value = nextScrollTop;
-    }
-  } else {
-    timelineScrollTop.value = nextScrollTop;
-  }
-  timelineViewportHeight.value = root.clientHeight;
-  timelineViewportWidth.value = root.clientWidth;
-}
 
 function scheduleVirtualTimelineViewport(root = scroller.value) {
   if (!root || timelineScrollFrame !== undefined) return;
@@ -2533,23 +2281,6 @@ function scheduleVirtualTimelineViewport(root = scroller.value) {
 function handleTimelineViewportResize() {
   syncVirtualTimelineViewport();
   reconcileReadPositionAfterLayout();
-}
-
-function measuredTimelineRowHeight(element: HTMLElement) {
-  const style = window.getComputedStyle(element);
-  const marginTop = Number.parseFloat(style.marginTop) || 0;
-  const marginBottom = Number.parseFloat(style.marginBottom) || 0;
-  return Math.max(1, element.getBoundingClientRect().height + marginTop + marginBottom);
-}
-
-function visibleTimelineAnchor(root: HTMLElement): VirtualTimelineAnchor | null {
-  const rootTop = root.getBoundingClientRect().top;
-  const element = Array.from(root.querySelectorAll<HTMLElement>("[data-timeline-key]")).find((candidate) => candidate.getBoundingClientRect().bottom >= rootTop);
-  const key = element?.dataset.timelineKey || "";
-  const virtualOffset = key ? virtualItemOffset(virtualTimelineItems.value, measuredTimelineHeights.value, key) : null;
-  return element && key && virtualOffset !== null
-    ? { key, offset: element.getBoundingClientRect().top - rootTop, scrollTop: root.scrollTop, virtualOffset }
-    : null;
 }
 
 async function flushPendingTimelineMeasurements() {
@@ -2639,79 +2370,6 @@ watch(
   { flush: "post", immediate: true }
 );
 
-function plainTextFromHtml(value: string) {
-  const el = document.createElement("div");
-  el.innerHTML = value;
-  return (el.textContent || el.innerText || "").replace(/\s+/g, " ").trim();
-}
-
-// 剥离 Markdown 语法标记，用于引用预览等纯文本场景，和服务端 stripMarkdownSyntax 保持一致。
-function stripMarkdownSyntax(value: string) {
-  return String(value || "")
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/^```[^\n]*\n?/gm, "").replace(/```$/g, ""))
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "• ")
-    .replace(/^\s*(\d+)[.、)]\s+/gm, "$1. ")
-    .replace(/^>\s?/gm, "")
-    .replace(/^\s*[-*_]{3,}\s*$/gm, "—")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/(^|[^*])\*([^*]+)\*/g, "$1$2")
-    .replace(/(^|[^_])_([^_]+)_/g, "$1$2")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function replyPreviewText(message: MessageDTO) {
-  const text = stripMarkdownSyntax(plainTextFromHtml(message.content || ""));
-  return text.slice(0, 140);
-}
-
-function trimUrlPunctuation(value: string) {
-  let url = value;
-  let suffix = "";
-  while (/[，。！？、,.!?:;；：）)\]}》】”’"'`]+$/.test(url)) {
-    suffix = `${url.slice(-1)}${suffix}`;
-    url = url.slice(0, -1);
-  }
-  return { url, suffix };
-}
-
-function normalizeMessageUrl(value: string) {
-  try {
-    const parsed = new URL(value);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-    parsed.hash = "";
-    return parsed.toString();
-  } catch {
-    return "";
-  }
-}
-
-function extractMessageUrls(html: string) {
-  const root = document.createElement("div");
-  root.innerHTML = html || "";
-  const urls: string[] = [];
-  for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
-    const url = normalizeMessageUrl(anchor.href);
-    if (url) urls.push(url);
-  }
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode()) {
-    const text = walker.currentNode.textContent || "";
-    for (const match of text.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
-      const { url } = trimUrlPunctuation(match[0]);
-      const normalized = normalizeMessageUrl(url);
-      if (normalized) urls.push(normalized);
-    }
-  }
-  return [...new Set(urls)];
-}
-
 function linkifyMessageHtml(html: string) {
   const root = document.createElement("div");
   root.innerHTML = html || "";
@@ -2758,320 +2416,10 @@ function linkifyMessageHtml(html: string) {
   return root.innerHTML;
 }
 
-function messageContentHtml(message: MessageDTO) {
-  return linkifyMessageHtml(message.content);
-}
-
-const AI_ASSISTANT_USERNAMES = new Set(["why_assistant", "ai_slmm"]);
-
-function isAiAssistantMessage(message: MessageDTO) {
-  return message.sender?.kind === "virtual" && AI_ASSISTANT_USERNAMES.has(message.sender?.username || "");
-}
-
-function messagePayloadRecord(message: MessageDTO) {
-  return message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
-}
-
-function musicMentionPayload(message: MessageDTO): MusicMentionPayload | null {
-  const payload = messagePayloadRecord(message);
-  const musicTrackId = Number(payload.musicTrackId);
-  const musicTrackTitle = typeof payload.musicTrackTitle === "string" ? payload.musicTrackTitle.trim() : "";
-  return Number.isInteger(musicTrackId) && musicTrackId > 0 ? { musicTrackId, musicTrackTitle: musicTrackTitle || "歌曲" } : null;
-}
-
-function musicMentionTitle(message: MessageDTO) {
-  const payload = musicMentionPayload(message);
-  if (!payload) return "歌曲";
-  return musicTracks.value.find((track) => track.id === payload.musicTrackId)?.title || payload.musicTrackTitle;
-}
-
-function musicMentionTextHtml(message: MessageDTO) {
-  const payload = musicMentionPayload(message);
-  const title = musicMentionTitle(message);
-  const root = document.createElement("div");
-  root.innerHTML = message.content || "";
-  const plainText = (root.textContent || "").trim();
-  const legacyPlaceholders = new Set([`提及歌曲：${title}`, `提及歌曲：${payload?.musicTrackTitle || title}`]);
-  const makeTitle = () => {
-    const strong = document.createElement("strong");
-    strong.className = "music-mention-title";
-    strong.textContent = title;
-    return strong;
-  };
-  if (!plainText || legacyPlaceholders.has(plainText)) {
-    root.replaceChildren(makeTitle());
-    return root.innerHTML;
-  }
-  const markers = [...new Set([`@@${payload?.musicTrackTitle || ""}`, `@@${title}`].filter((marker) => marker.length > 2))];
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-  let replaced = false;
-  while (walker.nextNode() && !replaced) {
-    const node = walker.currentNode as Text;
-    const text = node.textContent || "";
-    for (const marker of markers) {
-      const index = text.indexOf(marker);
-      if (index < 0) continue;
-      const fragment = document.createDocumentFragment();
-      fragment.append(document.createTextNode(text.slice(0, index)), makeTitle(), document.createTextNode(text.slice(index + marker.length)));
-      node.replaceWith(fragment);
-      replaced = true;
-      break;
-    }
-  }
-  if (!replaced) root.prepend(makeTitle(), document.createTextNode(" "));
-  return linkifyMessageHtml(root.innerHTML);
-}
-
-function isMentionedMusicPlaying(message: MessageDTO) {
-  const payload = musicMentionPayload(message);
-  return !!payload && currentMusicTrackId.value === payload.musicTrackId && musicPlaying.value;
-}
-
-async function toggleMentionedMusic(message: MessageDTO) {
-  const payload = musicMentionPayload(message);
-  if (!payload) return;
-  const track = musicTracks.value.find((item) => item.id === payload.musicTrackId);
-  if (!track) {
-    alert("这首歌曲已被删除或暂时不可用");
-    return;
-  }
-  if (currentMusicTrackId.value === track.id && musicPlaying.value) {
-    pauseMusic(true);
-    return;
-  }
-  musicSourceKind.value = "library";
-  selectedMusicPlaylistId.value = null;
-  musicPlayerExpanded.value = true;
-  musicManagerOpen.value = false;
-  selectMusicTrackCore(track);
-}
-
 function stopMentionedMusic(message: MessageDTO) {
   const payload = musicMentionPayload(message);
   if (!payload || currentMusicTrackId.value !== payload.musicTrackId) return;
   stopMusic();
-}
-
-function musicMentionBackground(message: MessageDTO) {
-  const payload = musicMentionPayload(message);
-  if (!payload) return "";
-  return musicTracks.value.find((track) => track.id === payload.musicTrackId)?.background?.trim() || "";
-}
-
-function isMusicMentionBackgroundExpanded(message: MessageDTO) {
-  return expandedMusicBackgroundMessageIds.value.has(message.id);
-}
-
-function toggleMusicMentionBackground(message: MessageDTO) {
-  const next = new Set(expandedMusicBackgroundMessageIds.value);
-  if (next.has(message.id)) next.delete(message.id);
-  else next.add(message.id);
-  expandedMusicBackgroundMessageIds.value = next;
-}
-
-function isMarkdownMessage(message: MessageDTO) {
-  const payload = messagePayloadRecord(message);
-  return payload.contentFormat === "markdown" || payload.markdown === true || isAiAssistantMessage(message);
-}
-
-const MARKDOWN_ALLOWED_TAGS = [
-  "p", "br", "strong", "b", "em", "i", "u", "s", "del", "a", "code", "pre",
-  "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "hr",
-  "span", "table", "thead", "tbody", "tr", "th", "td"
-];
-
-function renderMarkdownToHtml(md: string): string {
-  if (!md) return "";
-  let raw = "";
-  try {
-    raw = marked.parse(md, { breaks: true, gfm: true, async: false }) as string;
-  } catch {
-    raw = "";
-  }
-  if (!raw) return "";
-  return DOMPurify.sanitize(raw, {
-    ALLOWED_TAGS: MARKDOWN_ALLOWED_TAGS,
-    ALLOWED_ATTR: ["href", "target", "rel", "title"],
-    ALLOW_DATA_ATTR: false,
-    FORBID_TAGS: ["script", "style", "img", "iframe", "object", "embed", "form", "input", "button"],
-    FORBID_ATTR: ["src", "style", "onerror", "onload", "onclick", "onmouseover"]
-  });
-}
-
-const markdownMessageHtml = memoizeMessage((message: MessageDTO) => linkifyMessageHtml(renderMarkdownToHtml(message.content || "")));
-
-function aiMessageHtml(message: MessageDTO) {
-  return markdownMessageHtml(message);
-}
-
-type BibleRichTextSegment =
-  | { kind: "html"; key: string; html: string }
-  | { kind: "reference"; key: string; reference: string; className?: string };
-
-function textContentHtml(text: string) {
-  const root = document.createElement("div");
-  root.textContent = text || "";
-  return linkifyMessageHtml(root.innerHTML.replace(/\n/g, "<br />"));
-}
-
-function escapeHtmlText(text: string) {
-  const element = document.createElement("span");
-  element.textContent = text;
-  return element.innerHTML.replace(/\n/g, "<br />");
-}
-
-function wrapInlineHtml(html: string, tags: string[]) {
-  return tags.reduceRight((value, tag) => `<${tag}>${value}</${tag}>`, html);
-}
-
-function splitBibleTextNode(text: string, keyPrefix: string, inlineTags: string[] = []) {
-  const segments: BibleRichTextSegment[] = [];
-  const referenceClass = inlineTags.some((tag) => tag === "s" || tag === "del") ? "text-struck" : undefined;
-  let cursor = 0;
-  for (const match of extractBibleReferenceMatches(text)) {
-    if (match.start > cursor) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: wrapInlineHtml(escapeHtmlText(text.slice(cursor, match.start)), inlineTags) });
-    segments.push({ kind: "reference", key: `${keyPrefix}-r-${match.start}`, reference: match.reference, className: referenceClass });
-    cursor = match.end;
-  }
-  if (cursor < text.length) segments.push({ kind: "html", key: `${keyPrefix}-t-${cursor}`, html: wrapInlineHtml(escapeHtmlText(text.slice(cursor)), inlineTags) });
-  return segments;
-}
-
-function bibleRichTextSegmentsFromHtml(html: string, keyPrefix: string): BibleRichTextSegment[] {
-  const root = document.createElement("div");
-  root.innerHTML = linkifyMessageHtml(html || "");
-  const segments: BibleRichTextSegment[] = [];
-  let index = 0;
-  const walk = (node: Node, inlineTags: string[] = []) => {
-    if (node.nodeType === Node.TEXT_NODE) {
-      segments.push(...splitBibleTextNode(node.textContent || "", `${keyPrefix}-${index++}`, inlineTags));
-      return;
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-    const element = node as HTMLElement;
-    if (element.tagName === "A") {
-      segments.push({ kind: "html", key: `${keyPrefix}-a-${index++}`, html: element.outerHTML });
-      return;
-    }
-    if (element.tagName === "BR") {
-      segments.push({ kind: "html", key: `${keyPrefix}-br-${index++}`, html: "<br />" });
-      return;
-    }
-    const tag = element.tagName.toLowerCase();
-    const nextTags = ["b", "strong", "i", "em", "u", "s", "del"].includes(tag) ? [...inlineTags, tag] : inlineTags;
-    for (const child of Array.from(element.childNodes)) walk(child, nextTags);
-  };
-  for (const child of Array.from(root.childNodes)) walk(child);
-  return segments;
-}
-
-function bibleRichTextSegmentsFromText(text: string, keyPrefix: string) {
-  return splitBibleTextNode(text || "", keyPrefix);
-}
-
-// Message rows re-render whenever any reactive input changes (effect ticks,
-// presence updates), so the heavy per-row derivations are memoized on the message
-// object itself: identical rows return instantly from the WeakMap.
-const messageRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `message-${message.id}`));
-
-const prayerRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `prayer-${message.id}`));
-
-const chainTopicRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromText(chainPayload(message).topic || "", `chain-${message.id}`));
-
-function bibleReferencesFromHtml(html: string) {
-  return extractBibleReferencesFromText(plainTextFromHtml(html));
-}
-
-function messageBibleReferences(message: MessageDTO) {
-  return message.type === "text" ? bibleReferencesFromHtml(message.content) : [];
-}
-
-function chainBibleReferences(message: MessageDTO) {
-  return message.type === "chain" ? extractBibleReferencesFromText(chainPayload(message).topic || "") : [];
-}
-
-function messageBibleReferenceScope(message: MessageDTO, area: "content" | "chain") {
-  return `${area}:${message.id}`;
-}
-
-function linkPreviewFor(message: MessageDTO) {
-  const url = messagePreviewUrl(message);
-  const state = url ? linkPreviewCache.value[url] : undefined;
-  return state?.status === "ready" ? state.preview || null : null;
-}
-
-function hostFromUrl(value: string) {
-  try {
-    return new URL(value).hostname.replace(/^www\./, "");
-  } catch {
-    return "";
-  }
-}
-
-function previewSiteName(preview?: LinkPreviewDTO | null) {
-  return preview ? preview.siteName || hostFromUrl(preview.url) : "";
-}
-
-function pumpLinkPreviews() {
-  // Cold caches used to fire up to 40 preview requests at once; keep a small
-  // worker pool so previews never crowd out message and channel traffic.
-  while (activeLinkPreviews < 3 && linkPreviewQueue.length) {
-    const url = linkPreviewQueue.shift();
-    if (!url) return;
-    activeLinkPreviews += 1;
-    void ensureLinkPreview(url).finally(() => {
-      linkPreviewQueued.delete(url);
-      activeLinkPreviews -= 1;
-      pumpLinkPreviews();
-    });
-  }
-}
-
-function ensureVisibleLinkPreviews() {
-  const urls = [...new Set(store.messages.map(messagePreviewUrl).filter(Boolean))].slice(-40);
-  for (const url of urls) {
-    if (linkPreviewCache.value[url] || linkPreviewQueued.has(url)) continue;
-    linkPreviewQueued.add(url);
-    linkPreviewQueue.push(url);
-  }
-  pumpLinkPreviews();
-}
-
-async function ensureLinkPreview(url: string) {
-  if (!store.account || linkPreviewCache.value[url]) return;
-  linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "loading" } };
-  try {
-    const preview = await api<LinkPreviewDTO>(`/api/link-preview?url=${encodeURIComponent(url)}`);
-    if (!preview.title && !preview.image && !preview.description) throw new Error("empty preview");
-    linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "ready", preview } };
-    await nextTick();
-    reconcileReadPositionAfterLayout();
-  } catch (error) {
-    linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "error", error: error instanceof Error ? error.message : "preview failed" } };
-  }
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function messageMentionsCurrentUser(message: MessageDTO) {
-  if (!store.account || isMine(message) || message.type !== "text") return false;
-  const text = plainTextFromHtml(message.content);
-  const names = [store.account.displayName, store.account.username].filter((name): name is string => !!name?.trim());
-  return names.some((name) => {
-    const pattern = new RegExp(`(^|[\\s，。！？、,.!?:;；：])@${escapeRegExp(name.trim())}(?=$|[\\s，。！？、,.!?:;；：])`);
-    return pattern.test(text);
-  });
-}
-
-function messagePreviewText(message: MessageDTO) {
-  const text = plainTextFromHtml(message.content || message.fileName || "");
-  return text.length > 48 ? `${text.slice(0, 48)}...` : text || "新消息";
-}
-
-function channelName(channelId: number) {
-  return store.channels.find((channel) => channel.id === channelId)?.name || "聊天室";
 }
 
 function unreadCountFor(channelId: number) {
@@ -3082,43 +2430,6 @@ const otherChannelUnreadCount = computed(() => store.channels.reduce((total, cha
   if (channel.id === store.currentChannelId || channel.kind === "music") return total;
   return total + unreadCountFor(channel.id);
 }, 0));
-
-function queueMentionToast(message: MessageDTO) {
-  if (!messageMentionsCurrentUser(message) || mentionToasts.value.some((toast) => toast.id === message.id)) return;
-  mentionToasts.value = [
-    ...mentionToasts.value,
-    {
-      id: message.id,
-      channelId: message.channelId,
-      channelName: channelName(message.channelId),
-      senderName: message.sender.displayName,
-      text: messagePreviewText(message),
-      createdAt: message.createdAt
-    }
-  ].slice(-8);
-}
-
-function mentionAcknowledgementKey() {
-  return store.account ? `team-chat-mention-acknowledged-${store.account.id}` : "";
-}
-
-function loadAcknowledgedMentionIds() {
-  const key = mentionAcknowledgementKey();
-  if (!key) return new Set<number>();
-  try {
-    const ids = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Set(Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : []);
-  } catch {
-    return new Set<number>();
-  }
-}
-
-function saveAcknowledgedMentionIds() {
-  const key = mentionAcknowledgementKey();
-  if (!key) return;
-  const ids = [...acknowledgedMentionIds.value].slice(-500);
-  localStorage.setItem(key, JSON.stringify(ids));
-}
 
 function favoriteNotificationAcknowledgementKey() {
   return store.account ? `team-chat-favorite-notification-acknowledged-${store.account.id}` : "";
@@ -3143,48 +2454,13 @@ function acknowledgeFavoriteNotificationId(notificationId: number) {
   store.favoriteNotifications = store.favoriteNotifications.filter((item) => item.id !== notificationId);
 }
 
-function isMentionAlertActive(message: MessageDTO) {
-  return messageMentionsCurrentUser(message) && !acknowledgedMentionIds.value.has(message.id);
-}
-
-function acknowledgeMentionAlert(message: MessageDTO) {
-  if (!isMentionAlertActive(message)) return false;
-  acknowledgeMentionId(message.id);
-  return true;
-}
-
-function acknowledgeMentionId(messageId: number) {
-  if (acknowledgedMentionIds.value.has(messageId)) return;
-  acknowledgedMentionIds.value = new Set([...acknowledgedMentionIds.value, messageId]);
-  saveAcknowledgedMentionIds();
-}
-
-const { text: composerPromptText, phase: composerPromptPhase, stop: stopComposerPlaceholder } = useComposerPlaceholder({
+const { text: composerPromptText, phase: composerPromptPhase, chars: composerPromptChars, charStyle: composerPromptCharStyle, stop: stopComposerPlaceholder } = useComposerPlaceholder({
   getPrompts: () => store.appearance.composerPrompts || [],
   getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
   getAppearSeconds: () => cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
   getDisappearSeconds: () => cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds),
   getGapSeconds: () => cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds)
 });
-
-const composerPromptChars = computed(() => [...composerPromptText.value].map((char) => (char === " " ? " " : char)));
-const composerPromptAppearTiming = computed(() =>
-  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds))
-);
-const composerPromptDisappearTiming = computed(() =>
-  composerPromptCharTiming(composerPromptChars.value.length, cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds))
-);
-
-function composerPromptCharStyle(index: number) {
-  const appear = composerPromptAppearTiming.value;
-  const disappear = composerPromptDisappearTiming.value;
-  return {
-    animationDelay: `${(index * appear.stagger).toFixed(3)}s`,
-    animationDuration: `${appear.duration.toFixed(3)}s`,
-    transitionDelay: `${(index * disappear.stagger).toFixed(3)}s`,
-    transitionDuration: `${disappear.duration.toFixed(3)}s`
-  };
-}
 
 function isNearMessageBottom(distance = 96) {
   const el = scroller.value;
@@ -3467,47 +2743,6 @@ async function doLogin() {
   }
 }
 
-function upsertReceptionRoom(channel: ChannelDTO) {
-  const existing = store.channels.find((row) => row.id === channel.id);
-  if (existing) Object.assign(existing, channel);
-  else store.channels.push(channel);
-}
-
-async function handleReceptionCreated(channel: ChannelDTO) {
-  upsertReceptionRoom(channel);
-  await store.switchChannel(channel.id);
-}
-
-function handleReceptionUpdated(channel: ChannelDTO) {
-  upsertReceptionRoom(channel);
-}
-
-async function handleReceptionDeleted(channelId: number) {
-  const wasCurrent = store.currentChannelId === channelId;
-  store.channels = store.channels.filter((row) => row.id !== channelId);
-  if (wasCurrent) await store.loadChannels();
-}
-
-async function selectReceptionRoom(channelId: number) {
-  showReceptionManager.value = false;
-  await store.switchChannel(channelId);
-}
-
-function handleReceptionClosed() {
-  loginError.value = "会客厅已经结束，相关内容已自动清除。";
-}
-
-async function logoutApp(revoke = true) {
-  persistMusicPlaybackState(true);
-  if ("serviceWorker" in navigator) {
-    const registration = await navigator.serviceWorker.ready.catch(() => null);
-    registration?.active?.postMessage({ type: "CLEAR_PRIVATE_CACHE", token: getToken() });
-  }
-  await store.logout(revoke);
-  musicTracks.value = [];
-  musicPlaylists.value = [];
-}
-
 async function switchToLinkedChannel() {
   const params = new URLSearchParams(window.location.search);
   const channelId = Number(params.get("channelId") || 0);
@@ -3554,17 +2789,6 @@ async function selectSettingsTab(tab: typeof settingsTab.value) {
   } catch (error) {
     settingsLoadError.value = error instanceof Error ? error.message : "设置加载失败";
   }
-}
-
-function syncAccountSettings() {
-  accountDisplayName.value = store.account?.displayName || "";
-  accountCurrentPassword.value = "";
-  accountNewPassword.value = "";
-  accountConfirmPassword.value = "";
-  accountDeletePassword.value = "";
-  accountProfileMsg.value = "";
-  accountPasswordMsg.value = "";
-  accountDeleteMsg.value = "";
 }
 
 async function uploadOwnAvatar(event: Event) {
@@ -3669,483 +2893,6 @@ async function returnToChat() {
   isLogRoute.value = false;
   window.history.pushState({}, "", "/");
   await restoreChatSurface();
-}
-
-async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
-  if (!store.account?.isAdmin) return;
-  saveReadPosition();
-  showAdmin.value = false;
-  isLogRoute.value = false;
-  isAiSettingsRoute.value = true;
-  aiSettingsTab.value = tab;
-  window.history.pushState({}, "", "/ai-settings");
-  await loadAiSettings();
-  if (tab === "virtuals") await loadVirtualCharacters().catch(() => undefined);
-}
-
-function syncAiSettingsEdit(settings: AiSettingsDTO) {
-  aiSettings.value = settings;
-  aiSettingsEdit.value = {
-    enabled: settings.enabled,
-    apiKey: "",
-    clearApiKey: false,
-    promptCommand: settings.promptCommand,
-    aiRoles: (settings.aiRoles || []).map((role) => ({
-      ...role,
-      model: role.model || "",
-      thinkingEnabled: !!role.thinkingEnabled,
-      shortTermMemory: role.shortTermMemory || "",
-      midTermMemory: role.midTermMemory || "",
-      longTermMemory: role.longTermMemory || "",
-      channelIds: role.channelIds || [],
-      contextTurnLimit: role.contextTurnLimit || (role.username === "ai_slmm" ? 10 : undefined),
-      contextWindowMinutes: role.contextWindowMinutes || (role.username === "ai_slmm" ? 10 : undefined)
-    })),
-    cardCooldownSeconds: settings.cardCooldownSeconds,
-    userLimitPerMinute: settings.userLimitPerMinute,
-    maxSuccessPerMessage: settings.maxSuccessPerMessage
-  };
-}
-
-function aiRoleHint(role: AiRoleDTO) {
-  if (role.username === "ai_slmm") return "普通聊天里检测到问句后自动触发，并把原消息交给这个角色回复。";
-  if (role.username === "why_assistant") return "私聊里的研究话题引导助手。";
-  return "AI 角色";
-}
-
-function aiRoleForCharacter(character: any) {
-  const username = character?.actor?.username || "";
-  return aiSettingsEdit.value.aiRoles.find((role) => role.username === username) || null;
-}
-
-function virtualConfig(character: any) {
-  const raw = character?.config && typeof character.config === "object" && !Array.isArray(character.config) ? character.config : {};
-  const profile = raw.profile && typeof raw.profile === "object" && !Array.isArray(raw.profile) ? raw.profile : {};
-  const manualMemory = raw.manualMemory && typeof raw.manualMemory === "object" && !Array.isArray(raw.manualMemory) ? raw.manualMemory : {};
-  const generation = raw.generation && typeof raw.generation === "object" && !Array.isArray(raw.generation) ? raw.generation : {};
-  const multichar = raw.multichar && typeof raw.multichar === "object" && !Array.isArray(raw.multichar) ? raw.multichar : {};
-  const modelHints = multichar.modelHints && typeof multichar.modelHints === "object" && !Array.isArray(multichar.modelHints) ? multichar.modelHints : {};
-  return {
-    ...raw,
-    profile: {
-      ...profile,
-      name: String(profile.name || character?.actor?.displayName || ""),
-      persona: String(profile.persona || ""),
-      speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
-    },
-    manualMemory: {
-      ...manualMemory,
-      shortTerm: String(manualMemory.shortTerm || ""),
-      midTerm: String(manualMemory.midTerm || ""),
-      longTerm: String(manualMemory.longTerm || "")
-    },
-    generation: {
-      ...generation,
-      model: String(generation.model || modelHints.mainModel || ""),
-      thinkingEnabled: !!generation.thinkingEnabled
-    },
-    activationJudgePrompt: String(raw.activationJudgePrompt || ""),
-    channels: Array.isArray(raw.channels) ? raw.channels.map(Number).filter(Number.isFinite) : []
-  };
-}
-
-function buildVirtualConfig(
-  displayName: string,
-  persona: string,
-  channelIds: number[],
-  existing?: any,
-  activationJudgePrompt?: string,
-  model?: string,
-  thinkingEnabled?: boolean,
-  manualMemory?: { shortTerm?: string; midTerm?: string; longTerm?: string }
-) {
-  const base = existing ? virtualConfig(existing) : {};
-  const profile = base.profile && typeof base.profile === "object" && !Array.isArray(base.profile) ? base.profile : {};
-  const multichar = (base as any).multichar && typeof (base as any).multichar === "object" && !Array.isArray((base as any).multichar) ? (base as any).multichar : {};
-  const bio = multichar.bio && typeof multichar.bio === "object" && !Array.isArray(multichar.bio) ? multichar.bio : {};
-  const basics = bio.basics && typeof bio.basics === "object" && !Array.isArray(bio.basics) ? bio.basics : {};
-  const generation = (base as any).generation && typeof (base as any).generation === "object" && !Array.isArray((base as any).generation) ? (base as any).generation : {};
-  const existingManualMemory = (base as any).manualMemory && typeof (base as any).manualMemory === "object" && !Array.isArray((base as any).manualMemory) ? (base as any).manualMemory : {};
-  const modelHints = multichar.modelHints && typeof multichar.modelHints === "object" && !Array.isArray(multichar.modelHints) ? { ...multichar.modelHints } : {};
-  const modelValue = String(model ?? generation.model ?? modelHints.mainModel ?? "").trim();
-  if (modelValue) modelHints.mainModel = modelValue;
-  else delete modelHints.mainModel;
-  return {
-    ...base,
-    profile: {
-      ...profile,
-      name: displayName,
-      persona,
-      speakingStyle: String((profile as any).speakingStyle || "像微信群里的真人，简短自然")
-    },
-    activationJudgePrompt: activationJudgePrompt ?? String((base as any).activationJudgePrompt || ""),
-    manualMemory: {
-      ...existingManualMemory,
-      shortTerm: String(manualMemory?.shortTerm ?? existingManualMemory.shortTerm ?? ""),
-      midTerm: String(manualMemory?.midTerm ?? existingManualMemory.midTerm ?? ""),
-      longTerm: String(manualMemory?.longTerm ?? existingManualMemory.longTerm ?? "")
-    },
-    generation: {
-      ...generation,
-      model: modelValue,
-      thinkingEnabled: !!(thinkingEnabled ?? generation.thinkingEnabled)
-    },
-    multichar: {
-      ...multichar,
-      bio: {
-        ...bio,
-        basics: {
-          ...basics,
-          name: displayName,
-          identity: persona || String((basics as any).identity || "")
-        }
-      },
-      emotionBaseline: String(multichar.emotionBaseline || "平静中性"),
-      modelHints
-    },
-    channels: [...new Set(channelIds.map(Number).filter(Number.isFinite))]
-  };
-}
-
-function virtualPersona(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) return role.promptCommand || "";
-  return virtualConfig(character).profile.persona;
-}
-
-function virtualManualMemory(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) {
-    return {
-      shortTerm: role.shortTermMemory || "",
-      midTerm: role.midTermMemory || "",
-      longTerm: role.longTermMemory || ""
-    };
-  }
-  const memory = virtualConfig(character).manualMemory;
-  return {
-    shortTerm: String(memory.shortTerm || ""),
-    midTerm: String(memory.midTerm || ""),
-    longTerm: String(memory.longTerm || "")
-  };
-}
-
-function virtualModel(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) return role.model || "";
-  return virtualConfig(character).generation.model || "";
-}
-
-function virtualThinkingEnabled(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) return !!role.thinkingEnabled;
-  return !!virtualConfig(character).generation.thinkingEnabled;
-}
-
-function virtualActivationJudgePrompt(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) return role.activationJudgePrompt || "";
-  return virtualConfig(character).activationJudgePrompt;
-}
-
-function virtualEnabled(character: any) {
-  const role = aiRoleForCharacter(character);
-  return role ? role.enabled : !!character.enabled;
-}
-
-function virtualChannelIds(character: any) {
-  const role = aiRoleForCharacter(character);
-  if (role) return role.channelIds || [];
-  return virtualConfig(character).channels;
-}
-
-function virtualChannelNames(character: any) {
-  const ids = new Set(virtualChannelIds(character));
-  const names = store.channels.filter((channel) => ids.has(channel.id)).map((channel) => channel.name);
-  return names.length ? names.join("、") : "未指定频道";
-}
-
-function toggleNewVirtualChannel(channelId: number) {
-  const ids = new Set(newVirtual.value.channelIds);
-  if (ids.has(channelId)) ids.delete(channelId);
-  else ids.add(channelId);
-  newVirtual.value.channelIds = [...ids];
-}
-
-async function toggleVirtualChannel(character: any, channelId: number) {
-  const ids = new Set<number>(virtualChannelIds(character));
-  if (ids.has(channelId)) ids.delete(channelId);
-  else ids.add(channelId);
-  setVirtualChannelIds(character, [...ids]);
-}
-
-async function loadVirtualCharacters() {
-  virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
-}
-
-function setVirtualChannelIds(character: any, channelIds: number[]) {
-  const role = aiRoleForCharacter(character);
-  if (role) role.channelIds = channelIds;
-  character.config = buildVirtualConfig(
-    character.actor?.displayName || "",
-    virtualPersona(character),
-    channelIds,
-    character,
-    virtualActivationJudgePrompt(character),
-    virtualModel(character),
-    virtualThinkingEnabled(character),
-    virtualManualMemory(character)
-  );
-}
-
-function setVirtualDisplayName(character: any, value: string) {
-  character.actor.displayName = value;
-  const role = aiRoleForCharacter(character);
-  if (role) role.displayName = value;
-  character.config = buildVirtualConfig(value, virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
-}
-
-function setVirtualEnabled(character: any, value: boolean) {
-  character.enabled = value;
-  const role = aiRoleForCharacter(character);
-  if (role) role.enabled = value;
-}
-
-function setVirtualPersona(character: any, value: string) {
-  const role = aiRoleForCharacter(character);
-  if (role) role.promptCommand = value;
-  character.config = buildVirtualConfig(character.actor?.displayName || "", value, virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
-}
-
-function setVirtualModel(character: any, value: string) {
-  const role = aiRoleForCharacter(character);
-  if (role) role.model = value;
-  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), value, virtualThinkingEnabled(character), virtualManualMemory(character));
-}
-
-function setVirtualThinkingEnabled(character: any, value: boolean) {
-  const role = aiRoleForCharacter(character);
-  if (role) role.thinkingEnabled = value;
-  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, virtualActivationJudgePrompt(character), virtualModel(character), value, virtualManualMemory(character));
-}
-
-function setVirtualActivationJudgePrompt(character: any, value: string) {
-  const role = aiRoleForCharacter(character);
-  if (role) role.activationJudgePrompt = value;
-  character.config = buildVirtualConfig(character.actor?.displayName || "", virtualPersona(character), virtualChannelIds(character), character, value, virtualModel(character), virtualThinkingEnabled(character), virtualManualMemory(character));
-}
-
-function setVirtualManualMemory(character: any, key: "shortTerm" | "midTerm" | "longTerm", value: string) {
-  const role = aiRoleForCharacter(character);
-  if (role) {
-    if (key === "shortTerm") role.shortTermMemory = value;
-    if (key === "midTerm") role.midTermMemory = value;
-    if (key === "longTerm") role.longTermMemory = value;
-  }
-  const memory = virtualManualMemory(character);
-  memory[key] = value;
-  character.config = buildVirtualConfig(
-    character.actor?.displayName || "",
-    virtualPersona(character),
-    virtualChannelIds(character),
-    character,
-    virtualActivationJudgePrompt(character),
-    virtualModel(character),
-    virtualThinkingEnabled(character),
-    memory
-  );
-}
-
-async function updateVirtual(character: any, patch: { displayName?: string; persona?: string; channelIds?: number[]; enabled?: boolean; activationJudgePrompt?: string; model?: string; thinkingEnabled?: boolean; manualMemory?: { shortTerm?: string; midTerm?: string; longTerm?: string } }) {
-  const role = aiRoleForCharacter(character);
-  const displayName = (patch.displayName ?? character.actor?.displayName ?? "").trim();
-  if (!displayName) return;
-  const enabled = patch.enabled ?? virtualEnabled(character);
-  const persona = patch.persona ?? virtualPersona(character);
-  const activationJudgePrompt = patch.activationJudgePrompt ?? virtualActivationJudgePrompt(character);
-  const model = patch.model ?? virtualModel(character);
-  const thinkingEnabled = patch.thinkingEnabled ?? virtualThinkingEnabled(character);
-  const manualMemory = patch.manualMemory ?? virtualManualMemory(character);
-  if (role) {
-    role.displayName = displayName;
-    role.enabled = enabled;
-    role.promptCommand = persona;
-    role.activationJudgePrompt = activationJudgePrompt;
-    role.model = model;
-    role.thinkingEnabled = thinkingEnabled;
-    role.shortTermMemory = manualMemory.shortTerm || "";
-    role.midTermMemory = manualMemory.midTerm || "";
-    role.longTermMemory = manualMemory.longTerm || "";
-    role.channelIds = patch.channelIds ?? virtualChannelIds(character);
-  }
-  await api(`/api/virtual-characters/${character.id}`, {
-    method: "PUT",
-    body: JSON.stringify({
-      displayName,
-      enabled,
-      config: buildVirtualConfig(displayName, persona, patch.channelIds ?? virtualChannelIds(character), character, activationJudgePrompt, model, thinkingEnabled, manualMemory)
-    })
-  });
-  await loadVirtualCharacters();
-  aiSettingsMsg.value = "虚拟角色已保存";
-}
-
-async function saveVirtualCharacter(character: any, reload = true) {
-  const role = aiRoleForCharacter(character);
-  const displayName = String(character.actor?.displayName || "").trim();
-  if (!displayName) return;
-  await updateVirtual(character, {
-    displayName,
-    enabled: virtualEnabled(character),
-    persona: virtualPersona(character),
-    channelIds: virtualChannelIds(character),
-    activationJudgePrompt: virtualActivationJudgePrompt(character),
-    model: virtualModel(character),
-    thinkingEnabled: virtualThinkingEnabled(character),
-    manualMemory: virtualManualMemory(character)
-  });
-  if (role) await saveAiSettings();
-  if (reload) await loadVirtualCharacters();
-}
-
-async function saveAllVirtualCharacters() {
-  for (const character of virtuals.value) {
-    const role = aiRoleForCharacter(character);
-    if (role) continue;
-    await api(`/api/virtual-characters/${character.id}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        displayName: String(character.actor?.displayName || "").trim(),
-        enabled: virtualEnabled(character),
-        config: buildVirtualConfig(
-          String(character.actor?.displayName || "").trim(),
-          virtualPersona(character),
-          virtualChannelIds(character),
-          character,
-          virtualActivationJudgePrompt(character),
-          virtualModel(character),
-          virtualThinkingEnabled(character),
-          virtualManualMemory(character)
-        )
-      })
-    });
-  }
-}
-
-async function uploadVirtualAvatar(character: any, event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(`/api/virtual-characters/${character.id}/avatar`, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "头像上传失败" }));
-    alert(result.message || "头像上传失败");
-    return;
-  }
-  await loadVirtualCharacters();
-  syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
-  aiSettingsMsg.value = "头像已更新";
-}
-
-async function uploadAiRoleAvatar(role: AiRoleDTO, event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(`/api/admin/ai-roles/${encodeURIComponent(role.username)}/avatar`, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "头像上传失败" }));
-    alert(result.message || "头像上传失败");
-    return;
-  }
-  const result = (await response.json()) as { role: AiRoleDTO };
-  const index = aiSettingsEdit.value.aiRoles.findIndex((item) => item.username === role.username);
-  if (index >= 0) aiSettingsEdit.value.aiRoles[index] = { ...aiSettingsEdit.value.aiRoles[index], avatarPath: result.role.avatarPath };
-  aiSettingsMsg.value = "AI 角色头像已更新";
-}
-
-async function loadAiSettings() {
-  if (!store.account?.isAdmin) return;
-  aiSettingsBusy.value = true;
-  aiSettingsMsg.value = "";
-  try {
-    syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
-  } catch (error) {
-    aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置加载失败";
-  } finally {
-    aiSettingsBusy.value = false;
-  }
-}
-
-async function loadAdminLoginLogs() {
-  if (!store.account?.isAdmin) return;
-  adminLoginLogsBusy.value = true;
-  adminLoginLogsMsg.value = "";
-  try {
-    const params = new URLSearchParams({ limit: "300", category: activityLogFilter.value });
-    const result = await api<{ logs: AdminLoginLogDTO[] }>(`/api/admin/activity-logs?${params.toString()}`);
-    adminLoginLogs.value = result.logs;
-  } catch (error) {
-    adminLoginLogsMsg.value = error instanceof Error ? error.message : "活动日志加载失败";
-  } finally {
-    adminLoginLogsBusy.value = false;
-  }
-}
-
-async function setActivityLogFilter(filter: "all" | ActivityLogCategory) {
-  activityLogFilter.value = filter;
-  await loadAdminLoginLogs();
-}
-
-async function saveAiSettings() {
-  if (!store.account?.isAdmin) return;
-  aiSettingsBusy.value = true;
-  aiSettingsMsg.value = "";
-  try {
-    if (virtuals.value.length) await saveAllVirtualCharacters();
-    const payload = {
-      enabled: aiSettingsEdit.value.enabled,
-      apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
-      clearApiKey: aiSettingsEdit.value.clearApiKey,
-      promptCommand: aiSettingsEdit.value.promptCommand,
-      aiRoles: aiSettingsEdit.value.aiRoles.map((role) => ({
-        username: role.username,
-        displayName: role.displayName,
-        enabled: role.enabled,
-        model: role.model || "",
-        thinkingEnabled: !!role.thinkingEnabled,
-        promptCommand: role.promptCommand,
-        shortTermMemory: role.shortTermMemory || "",
-        midTermMemory: role.midTermMemory || "",
-        longTermMemory: role.longTermMemory || "",
-        channelIds: role.channelIds || [],
-        activationJudgePrompt: role.activationJudgePrompt,
-        webSearchEnabled: role.webSearchEnabled,
-        questionTriggerEnabled: role.questionTriggerEnabled,
-        contextTurnLimit: Number(role.contextTurnLimit || 10),
-        contextWindowMinutes: Number(role.contextWindowMinutes || 10)
-      })),
-      cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
-      userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
-      maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
-    };
-    syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
-    if (virtuals.value.length) await loadVirtualCharacters();
-    aiSettingsMsg.value = "AI 设置已保存";
-  } catch (error) {
-    aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置保存失败";
-  } finally {
-    aiSettingsBusy.value = false;
-  }
-}
-
-async function loadDevices() {
-  if (!store.account) return;
-  const result = await api<{ sessions: DeviceSessionDTO[] }>("/api/me/sessions").catch(() => ({ sessions: [] }));
-  devices.value = result.sessions;
 }
 
 function urlBase64ToUint8Array(value: string) {
@@ -4293,16 +3040,6 @@ async function setChannelMuted(channel: ChannelDTO, muted: boolean) {
   notificationMsg.value = muted ? `已关闭“${channel.name}”通知` : `已开启“${channel.name}”通知`;
 }
 
-async function revokeDevice(device: DeviceSessionDTO) {
-  await api<{ current: boolean }>(`/api/me/sessions/${device.id}`, { method: "DELETE" });
-  if (device.current) {
-    await store.logout(false);
-    showSettings.value = false;
-    return;
-  }
-  await loadDevices();
-}
-
 async function chooseTheme(theme: string) {
   const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ theme }) });
   if (result.account) store.account = result.account;
@@ -4418,92 +3155,6 @@ async function startServerUpdate() {
   }
 }
 
-type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "sermon_request"; contentFormat?: "markdown" };
-
-function consumeLeadingCommand(value: string, command: string) {
-  if (value === command) return "";
-  if (value.startsWith(`${command} `) || value.startsWith(`${command}\n`)) return value.slice(command.length).trim();
-  return null;
-}
-
-function parseComposerText(value: string): ComposerParseResult {
-  let content = value.trim();
-  let effect: MessageEffect | undefined;
-  let type: "text" | "prayer" | "sermon_request" | undefined;
-  let contentFormat: "markdown" | undefined;
-  let consumed = true;
-
-  while (consumed) {
-    consumed = false;
-    const markdownContent = consumeLeadingCommand(content, markdownCommand.command);
-    if (markdownContent !== null) {
-      contentFormat = "markdown";
-      content = markdownContent;
-      consumed = true;
-      continue;
-    }
-    const prayerContent = consumeLeadingCommand(content, prayerCommand.command);
-    if (prayerContent !== null) {
-      type = "prayer";
-      content = prayerContent;
-      consumed = true;
-      continue;
-    }
-    const sermonRequestContent = consumeLeadingCommand(content, sermonRequestCommand.command);
-    if (sermonRequestContent !== null) {
-      type = "sermon_request";
-      content = sermonRequestContent;
-      consumed = true;
-      continue;
-    }
-    for (const command of effectCommands) {
-      const effectContent = consumeLeadingCommand(content, command.command);
-      if (effectContent === null) continue;
-      effect = command.effect;
-      if (!type) type = "text";
-      content = effectContent;
-      consumed = true;
-      break;
-    }
-  }
-
-  return { content, effect, type, contentFormat };
-}
-
-function mentionTokenAtCursor(value: string, caret: number) {
-  const beforeCursor = value.slice(0, caret);
-  const match = beforeCursor.match(/(^|[\s，。！？、,.!?:;；：])@([^\s@，。！？、,.!?:;；：]*)$/);
-  if (!match) return null;
-  return {
-    start: beforeCursor.length - match[2].length - 1,
-    end: caret,
-    query: match[2]
-  };
-}
-
-function slashCommandTokenAtCursor(value: string, caret: number) {
-  const beforeCursor = value.slice(0, caret);
-  const firstLine = beforeCursor.split(/\r?\n/, 1)[0] || "";
-  if (firstLine === "/" || /^\/[^\s/]*$/.test(firstLine)) {
-    return { kind: "root" as const, start: 0, end: caret, query: firstLine };
-  }
-  const prayerEffectMatch = beforeCursor.match(/^\/代祷\s+(\/[^\s/]*)$/);
-  if (prayerEffectMatch) {
-    return {
-      kind: "prayer-effect" as const,
-      start: beforeCursor.length - prayerEffectMatch[1].length,
-      end: caret,
-      query: prayerEffectMatch[1]
-    };
-  }
-  return null;
-}
-
-function syncComposerCaret() {
-  const el = composerInput.value;
-  composerCaret.value = el?.selectionStart ?? input.value.length;
-}
-
 function syncComposerHeight() {
   const textarea = composerInput.value;
   if (!textarea) return;
@@ -4511,48 +3162,6 @@ function syncComposerHeight() {
   const height = composerHeightForContent(textarea.scrollHeight);
   textarea.style.height = `${height}px`;
   textarea.style.overflowY = textarea.scrollHeight > height ? "auto" : "hidden";
-}
-
-function chooseSlashCommand(item: SlashCommandSuggestion) {
-  const token = slashCommandToken.value;
-  const command = item.command;
-  const start = token?.start ?? 0;
-  const end = token?.end ?? input.value.length;
-  input.value = `${input.value.slice(0, start)}${command} ${input.value.slice(end)}`;
-  composerPanel.value = null;
-  composerSuggestionSuppressed.value = true;
-  nextTick(() => {
-    composerInput.value?.focus();
-    const cursor = start + command.length + 1;
-    composerInput.value?.setSelectionRange(cursor, cursor);
-    syncComposerCaret();
-  });
-}
-
-function startPrayerComposer() {
-  input.value = "/代祷 ";
-  composerPanel.value = null;
-  nextTick(() => {
-    composerInput.value?.focus();
-    composerInput.value?.setSelectionRange(input.value.length, input.value.length);
-    syncComposerCaret();
-  });
-}
-
-function chooseMentionSuggestion(member: { displayName: string }) {
-  const token = mentionToken.value;
-  const mention = `@${member.displayName} `;
-  const start = token?.start ?? input.value.length;
-  const end = token?.end ?? input.value.length;
-  input.value = `${input.value.slice(0, start)}${mention}${input.value.slice(end)}`;
-  composerPanel.value = null;
-  composerSuggestionSuppressed.value = true;
-  nextTick(() => {
-    composerInput.value?.focus();
-    const cursor = start + mention.length;
-    composerInput.value?.setSelectionRange(cursor, cursor);
-    syncComposerCaret();
-  });
 }
 
 function chooseMusicMentionSuggestion(track: MusicTrackDTO) {
@@ -4572,13 +3181,6 @@ function chooseMusicMentionSuggestion(track: MusicTrackDTO) {
   });
 }
 
-function removeMusicMention() {
-  const marker = selectedMusicMention.value ? `@@${selectedMusicMention.value.title}` : "";
-  if (marker) input.value = input.value.replace(marker, "").replace(/[ \t]{2,}/g, " ").trim();
-  selectedMusicMention.value = null;
-  nextTick(() => composerInput.value?.focus());
-}
-
 function chooseActiveComposerSuggestion() {
   const index = Math.min(composerSuggestionIndex.value, Math.max(0, composerSuggestionCount.value - 1));
   if (activeComposerSuggestionKind.value === "music") {
@@ -4595,20 +3197,6 @@ function chooseActiveComposerSuggestion() {
   if (command) chooseSlashCommand(command);
 }
 
-function openBibleWorkspace() {
-  if (!bibleOpen.value) saveReadPosition();
-  showChannels.value = false;
-  showMembers.value = false;
-  sermonWorkspaceOpen.value = false;
-  bookWorkspaceOpen.value = false;
-  bibleTargetChannelId.value = currentChannel.value?.id || null;
-  bibleOpen.value = true;
-}
-
-function closeBibleWorkspace() {
-  bibleOpen.value = false;
-}
-
 function openBookWorkspace() {
   showChannels.value = false;
   showMembers.value = false;
@@ -4619,19 +3207,6 @@ function openBookWorkspace() {
 
 function closeBookWorkspace() {
   bookWorkspaceOpen.value = false;
-}
-
-// 打开聊天室里分享的“打开的圣经”：各自在本地按相同窗格布局一起阅读
-async function openBibleSessionFromMessage(message: MessageDTO) {
-  if (Date.now() < suppressNextTapUntil) return;
-  const payload = parseBibleSessionPayload(message.payload);
-  if (!payload) {
-    alert("这条圣经分享内容已失效");
-    return;
-  }
-  openBibleWorkspace();
-  await nextTick();
-  await bibleWorkspace.value?.openSession(payload);
 }
 
 // 圣经负一屏与讲道台负一屏共用同一套“打开时暂停聊天区动效、关闭时恢复”的生命周期。
@@ -4659,16 +3234,6 @@ watch(() => bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.va
   syncFlashEffectTimer();
 });
 
-function handleBibleReadingChange(activity: { active: boolean; bookName: string | null }) {
-  bibleReadingActivity.value = activity;
-  publishBibleReading();
-}
-
-function handleBookReadingChange(activity: { active: boolean; bookTitle: string | null }) {
-  bookReadingActivity.value = activity;
-  publishBookReading();
-}
-
 function handleBibleSwipeStart(event: TouchEvent) {
   if (bibleOpen.value || sermonWorkspaceOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
   const touch = event.touches[0];
@@ -4689,135 +3254,6 @@ function handleBibleSwipeEnd(event: TouchEvent) {
   if (deltaX >= 64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) openBibleWorkspace();
 }
 
-async function sendBiblePassage(lookup: BibleLookupDTO) {
-  const channel = bibleTargetChannel.value;
-  if (!channel) throw new Error("进入圣经前的聊天室已不可用");
-  if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
-  if (!store.socket?.connected) throw new Error("聊天室连接尚未恢复，请稍后重试");
-  const body = lookup.verses.map((verse) => verse.text).join("");
-  const content = `${escapeHtmlText(lookup.normalizedReference)}<br>“${escapeHtmlText(body)}”<br>——${escapeHtmlText(lookup.translation)}`;
-  await new Promise<void>((resolve, reject) => {
-    store.socket?.emit(
-      "message:send",
-      { channelId: channel.id, content, type: "text", replyToId: null },
-      (ack: { success?: boolean; message?: string }) => {
-        if (ack?.success) resolve();
-        else reject(new Error(ack?.message || "发送失败，请重试"));
-      }
-    );
-  });
-}
-
-async function sendText() {
-  const parsed = parseComposerText(input.value);
-  const musicMention = selectedMusicMention.value;
-  const content = parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
-  if (!content || !store.currentChannelId) return;
-  const originalInput = input.value;
-  const originalMusicMention = musicMention;
-  const originalReply = replyTo.value;
-  const messageType = musicMention ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
-  let prayerImageMessageId: number | null = null;
-  if (messageType === "prayer" && prayerComposerPhoto.value) {
-    try {
-      prayerImageMessageId = await uploadPrayerImage(prayerComposerPhoto.value, store.currentChannelId);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "照片上传失败");
-      return;
-    }
-  }
-  const messagePayload = {
-    ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
-    ...(messageType === "sermon_request" ? { note: content } : {}),
-    ...(parsed.effect ? { effect: parsed.effect } : {}),
-    ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
-    ...(musicMention ? { musicTrackId: musicMention.id } : {}),
-    ...(prayerImageMessageId ? { imageMessageId: prayerImageMessageId } : {})
-  };
-  const payload = {
-    channelId: store.currentChannelId,
-    content,
-    type: messageType,
-    payload: Object.keys(messagePayload).length ? messagePayload : undefined,
-    replyToId: originalReply?.id || null
-  };
-  const result = await sendMessage(payload);
-  const submittedComposerIsCurrent =
-    input.value === originalInput &&
-    selectedMusicMention.value === originalMusicMention &&
-    replyTo.value === originalReply;
-  if (!submittedComposerIsCurrent) return;
-  input.value = composerDraftAfterSend(result, originalInput, input.value);
-  if (!result.ok) return;
-  selectedMusicMention.value = null;
-  replyTo.value = null;
-  if (prayerImageMessageId) clearPrayerComposerPhoto();
-}
-
-function mentionMember(member: { displayName: string }) {
-  const mention = `@${member.displayName} `;
-  const el = composerInput.value;
-  if (!el) {
-    input.value = `${input.value}${mention}`;
-    return;
-  }
-  const start = el.selectionStart ?? input.value.length;
-  const end = el.selectionEnd ?? input.value.length;
-  input.value = `${input.value.slice(0, start)}${mention}${input.value.slice(end)}`;
-  nextTick(() => {
-    el.focus();
-    const cursor = start + mention.length;
-    el.setSelectionRange(cursor, cursor);
-  });
-}
-
-function openMemberActions(member: MemberActionTarget, event?: MouseEvent) {
-  memberPromptPosition.value = positionPromptNearEvent(event, { width: 178, height: 52 });
-  selectedMember.value = member;
-  pendingChain.value = null;
-}
-
-function openSenderActions(sender: ActorDTO, event?: MouseEvent) {
-  const member = store.members.find((row) => row.kind === sender.kind && row.username === sender.username);
-  if (member) {
-    openMemberActions(member, event);
-    return;
-  }
-  const online = store.online.find((user) => user.actorId === sender.id);
-  openMemberActions({
-    id: sender.id,
-    accountId: sender.kind === "virtual" ? undefined : online?.accountId,
-    kind: sender.kind,
-    username: sender.username,
-    displayName: sender.displayName,
-    avatarPath: sender.avatarPath
-  }, event);
-}
-
-function mentionSelectedMember() {
-  if (!selectedMember.value) return;
-  mentionMember(selectedMember.value);
-  selectedMember.value = null;
-  showMembers.value = false;
-}
-
-async function startPrivateChat(member: MemberActionTarget) {
-  if (member.kind !== "virtual" && (!member.accountId || member.accountId === store.account?.id)) return;
-  const result =
-    member.kind === "virtual"
-      ? await api<{ channel: ChannelDTO }>("/api/direct-virtual-channels", { method: "POST", body: JSON.stringify({ username: member.username }) })
-      : await api<{ channel: ChannelDTO }>("/api/direct-channels", { method: "POST", body: JSON.stringify({ accountId: member.accountId }) });
-  selectedMember.value = null;
-  showMembers.value = false;
-  if (result.channel && !store.channels.some((channel) => channel.id === result.channel.id)) {
-    store.channels = [result.channel, ...store.channels];
-  }
-  saveReadPosition();
-  await switchVisibleChannel(result.channel.id);
-  await nextTick();
-  await restoreSavedReadPosition();
-}
-
 function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToStore?: boolean; addToAdmin?: boolean } = {}) {
   if (!channel) return;
   const storeIndex = store.channels.findIndex((row) => row.id === channel.id);
@@ -4830,384 +3266,6 @@ function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToSto
   }
   if (memberPaneChannelOverride.value?.id === channel.id) memberPaneChannelOverride.value = channel;
   syncChannelEdits();
-}
-
-function resetChannelEditorDraft() {
-  channelEditorDraft.value = createChannelDraft();
-}
-
-function openCreateChannelEditor() {
-  channelEditorMode.value = "create";
-  channelEditorChannel.value = null;
-  resetChannelEditorDraft();
-  channelEditorMsg.value = "";
-  channelNameSuggestions.value = [];
-  showChannelEditor.value = true;
-}
-
-function openEditChannelEditor(channel: ChannelDTO) {
-  if (!canOpenChannelSettings(channel)) return;
-  channelEditorMode.value = "edit";
-  channelEditorChannel.value = channel;
-  channelEditorDraft.value = {
-    name: channel.name,
-    description: channel.description || "",
-    isPrivate: channel.isPrivate,
-    listColor: channel.listColor || "#e8f4ec",
-    useListColor: !!channel.listColor
-  };
-  channelEditorMsg.value = "";
-  channelNameSuggestions.value = [];
-  showChannelEditor.value = true;
-}
-
-function closeChannelEditor() {
-  if (channelEditorBusy.value) return;
-  showChannelEditor.value = false;
-  channelEditorMsg.value = "";
-  channelNameSuggestions.value = [];
-}
-
-async function requestDirectChatNameSuggestions() {
-  const channel = channelEditorChannel.value;
-  if (!channel || !isGroupDirectEditor.value || channelNameSuggestionBusy.value) return;
-  channelNameSuggestionBusy.value = true;
-  channelEditorMsg.value = "";
-  try {
-    const result = await api<{ suggestions: string[] }>(`/api/channels/${channel.id}/name-suggestions`, { method: "POST" });
-    channelNameSuggestions.value = result.suggestions;
-  } catch (error) {
-    channelEditorMsg.value = error instanceof Error ? error.message : "暂时想不到新名字，请稍后再试";
-  } finally {
-    channelNameSuggestionBusy.value = false;
-  }
-}
-
-async function openChannelEditorMembers() {
-  const channel = channelEditorChannel.value;
-  if (!channel || !canEditChannel(channel)) return;
-  showChannelEditor.value = false;
-  showChannels.value = false;
-  await openAdminChannelMembers(channel);
-}
-
-async function saveChannelEditor() {
-  if (channelEditorMode.value === "edit" && !canEditChannel(channelEditorChannel.value)) return;
-  const draft = normalizeChannelDraft(channelEditorDraft.value);
-  if (!canSubmitChannelDraft(channelEditorDraft.value, channelEditorBusy.value)) {
-    channelEditorMsg.value = "请输入频道名";
-    return;
-  }
-  channelEditorBusy.value = true;
-  channelEditorMsg.value = "";
-  try {
-    if (channelEditorMode.value === "create") {
-      const result = await api<{ channel: ChannelDTO }>("/api/channels", {
-        method: "POST",
-        body: JSON.stringify({
-          name: draft.name,
-          description: draft.description,
-          isPrivate: draft.isPrivate,
-          listColor: draft.listColor
-        })
-      });
-      replaceChannelSnapshot(result.channel, { addToStore: true, addToAdmin: isAdmin.value });
-      showChannelEditor.value = false;
-      showChannels.value = false;
-      await switchVisibleChannel(result.channel.id);
-      membersCollapsed.value = false;
-      showMembers.value = true;
-      await nextTick();
-      if (result.channel.isPrivate) await openMemberPicker(result.channel);
-      return;
-    }
-    const channel = channelEditorChannel.value;
-    if (!channel) return;
-    const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        name: draft.name,
-        description: draft.description,
-        listColor: draft.listColor
-      })
-    });
-    replaceChannelSnapshot(result.channel);
-    channelEditorChannel.value = result.channel;
-    showChannelEditor.value = false;
-    adminMsg.value = "频道已更新";
-  } catch (error) {
-    channelEditorMsg.value = error instanceof Error ? error.message : "频道保存失败";
-  } finally {
-    channelEditorBusy.value = false;
-  }
-}
-
-async function uploadChannelEditorIcon(event: Event) {
-  const channel = channelEditorChannel.value;
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  if (!channel || !file) return;
-  channelEditorBusy.value = true;
-  channelEditorMsg.value = "";
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`/api/channels/${channel.id}/icon`, { method: "POST", headers: authHeaders(), body: form });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({ message: "频道图标上传失败" }));
-      throw new Error(result.message || "频道图标上传失败");
-    }
-    const result = (await response.json()) as { channel: ChannelDTO };
-    replaceChannelSnapshot(result.channel);
-    channelEditorChannel.value = result.channel;
-    channelEditorMsg.value = "频道图标已更新";
-  } catch (error) {
-    channelEditorMsg.value = error instanceof Error ? error.message : "频道图标上传失败";
-  } finally {
-    channelEditorBusy.value = false;
-  }
-}
-
-function toggleCurrentMemberPane() {
-  showChatToolsMenu.value = false;
-  selectedMember.value = null;
-  if (memberPaneChannelOverride.value) {
-    memberPaneChannelOverride.value = null;
-    managedMembers.value = [];
-  }
-  memberRemoveMode.value = false;
-  memberManageMsg.value = "";
-  membersCollapsed.value = false;
-  showMembers.value = !showMembers.value;
-}
-
-async function refreshMembersForChannel(channelId: number) {
-  const rows = await store.loadMembers(channelId);
-  if (memberPaneChannelOverride.value?.id === channelId) managedMembers.value = rows;
-  return rows;
-}
-
-async function openAdminChannelMembers(channel: ChannelDTO) {
-  memberPaneChannelOverride.value = channel;
-  managedMembers.value = [];
-  memberRemoveMode.value = false;
-  memberManageMsg.value = "";
-  showAdmin.value = false;
-  membersCollapsed.value = false;
-  showMembers.value = true;
-  managedMembers.value = await store.loadMembers(channel.id);
-  await restoreChatSurface();
-}
-
-function canRemoveMemberFromActive(member: MemberActionTarget) {
-  return canRemoveChannelMember(member, { canManage: canManageActiveMembers.value, currentAccountId: store.account?.id });
-}
-
-async function openMemberPicker(channel = activeMemberPaneChannel.value) {
-  if (!canManageChannelMembers(channel)) return;
-  selectedMember.value = null;
-  memberPickerChannel.value = channel;
-  memberPickerOpen.value = true;
-  memberPickerSelectedIds.value = [];
-  memberPickerCandidates.value = [];
-  memberPickerBusy.value = true;
-  memberManageMsg.value = "";
-  try {
-    const result = await api<{ accounts: AccountDTO[]; virtuals: MemberPickerCandidate[] }>(`/api/channels/${channel.id}/member-candidates`);
-    memberPickerCandidates.value = [
-      ...result.accounts.map((account) => ({
-        id: account.id,
-        accountId: account.id,
-        kind: "human" as const,
-        username: account.username,
-        displayName: account.displayName,
-        avatarPath: account.avatarPath
-      })),
-      ...(result.virtuals || [])
-    ];
-  } catch (error) {
-    memberManageMsg.value = error instanceof Error ? error.message : "成员候选加载失败";
-  } finally {
-    memberPickerBusy.value = false;
-  }
-}
-
-function closeMemberPicker() {
-  memberPickerOpen.value = false;
-  memberPickerChannel.value = null;
-  memberPickerCandidates.value = [];
-  memberPickerSelectedIds.value = [];
-}
-
-function memberPickerCandidateKey(candidate: MemberPickerCandidate) {
-  return candidate.kind === "virtual" ? `virtual:${candidate.characterId}` : `human:${candidate.accountId}`;
-}
-
-function toggleMemberPickerAccount(candidate: MemberPickerCandidate) {
-  const key = memberPickerCandidateKey(candidate);
-  memberPickerSelectedIds.value = memberPickerSelectedIds.value.includes(key)
-    ? memberPickerSelectedIds.value.filter((id) => id !== key)
-    : [...memberPickerSelectedIds.value, key];
-}
-
-async function addSelectedMembers() {
-  const channel = memberPickerChannel.value;
-  const selectedCandidates = memberPickerCandidates.value.filter((candidate) => memberPickerSelectedIds.value.includes(memberPickerCandidateKey(candidate)));
-  const accountIds = selectedCandidates.flatMap((candidate) => candidate.accountId ? [candidate.accountId] : []);
-  const virtualCharacterIds = selectedCandidates.flatMap((candidate) => candidate.characterId ? [candidate.characterId] : []);
-  if (!channel || (!accountIds.length && !virtualCharacterIds.length)) return;
-  memberPickerBusy.value = true;
-  try {
-    const result = await api<{ channel: ChannelDTO; added: number }>(`/api/channels/${channel.id}/members`, {
-      method: "POST",
-      body: JSON.stringify({ accountIds, virtualCharacterIds })
-    });
-    replaceChannelSnapshot(result.channel);
-    await refreshMembersForChannel(channel.id);
-    memberManageMsg.value = `已添加 ${result.added} 人`;
-    closeMemberPicker();
-  } catch (error) {
-    memberManageMsg.value = error instanceof Error ? error.message : "添加成员失败";
-  } finally {
-    memberPickerBusy.value = false;
-  }
-}
-
-async function removeMemberFromActive(member: MemberActionTarget) {
-  const channel = activeMemberPaneChannel.value;
-  if (!channel || !canRemoveMemberFromActive(member)) return;
-  if (!confirm(`从“${channel.name}”移除 ${member.displayName}？`)) return;
-  try {
-    const endpoint = member.kind === "virtual"
-      ? `/api/channels/${channel.id}/virtual-members/${member.characterId}`
-      : `/api/channels/${channel.id}/members/${member.accountId}`;
-    const result = await api<{ channel: ChannelDTO }>(endpoint, { method: "DELETE" });
-    replaceChannelSnapshot(result.channel);
-    await refreshMembersForChannel(channel.id);
-    memberManageMsg.value = `已移除 ${member.displayName}`;
-    if (!activeMemberPaneMembers.value.some(canRemoveMemberFromActive)) memberRemoveMode.value = false;
-  } catch (error) {
-    memberManageMsg.value = error instanceof Error ? error.message : "移除成员失败";
-  }
-}
-
-function openOwnerTransfer(channel = activeMemberPaneChannel.value) {
-  if (!channel || !canLeaveChannel(channel) || !isCurrentAccountChannelOwner(activeMemberPaneMembers.value, store.account?.id)) return;
-  selectedMember.value = null;
-  ownerTransferChannel.value = channel;
-  ownerTransferSuccessorId.value = null;
-  ownerTransferMsg.value = "";
-  ownerTransferOpen.value = true;
-}
-
-function closeOwnerTransfer() {
-  if (ownerTransferBusy.value) return;
-  ownerTransferOpen.value = false;
-  ownerTransferChannel.value = null;
-  ownerTransferSuccessorId.value = null;
-  ownerTransferMsg.value = "";
-  if (!showMembers.value) {
-    memberPaneChannelOverride.value = null;
-    managedMembers.value = [];
-  }
-}
-
-async function transferOwnedChannelAndLeave() {
-  const channel = ownerTransferChannel.value;
-  const successorAccountId = ownerTransferSuccessorId.value;
-  if (!channel || !successorAccountId || ownerTransferBusy.value) return;
-  const leavingCurrentChannel = store.currentChannelId === channel.id;
-  const fallbackChannelId = leavingCurrentChannel ? store.previousChannelId : store.currentChannelId;
-  ownerTransferBusy.value = true;
-  ownerTransferMsg.value = "";
-  try {
-    await api(`/api/channels/${channel.id}/leave`, {
-      method: "POST",
-      body: JSON.stringify({ successorAccountId })
-    });
-    ownerTransferOpen.value = false;
-    ownerTransferChannel.value = null;
-    ownerTransferSuccessorId.value = null;
-    memberRemoveMode.value = false;
-    memberPaneChannelOverride.value = null;
-    managedMembers.value = [];
-    showMembers.value = false;
-    await store.loadChannels(fallbackChannelId);
-    if (leavingCurrentChannel) {
-      await nextTick();
-      scrollBottom(false);
-    }
-  } catch (error) {
-    ownerTransferMsg.value = error instanceof Error ? error.message : "频道移交失败";
-  } finally {
-    ownerTransferBusy.value = false;
-  }
-}
-
-async function requestLeaveChannel(channel = channelEditorChannel.value) {
-  if (!channel || !canLeaveChannel(channel) || channelLeaveBusy.value) return;
-  channelLeaveBusy.value = true;
-  channelLeaveMsg.value = "";
-  try {
-    const members = await store.loadMembers(channel.id);
-    showChannelEditor.value = false;
-    if (isCurrentAccountChannelOwner(members, store.account?.id)) {
-      memberPaneChannelOverride.value = channel;
-      managedMembers.value = members;
-      openOwnerTransfer(channel);
-      return;
-    }
-    pendingLeaveChannel.value = channel;
-  } catch (error) {
-    channelEditorMsg.value = error instanceof Error ? error.message : "频道成员加载失败";
-    showChannelEditor.value = true;
-  } finally {
-    channelLeaveBusy.value = false;
-  }
-}
-
-async function leavePendingChannel() {
-  const channel = pendingLeaveChannel.value;
-  if (!channel || channelLeaveBusy.value) return;
-  const leavingCurrentChannel = store.currentChannelId === channel.id;
-  const fallbackChannelId = leavingCurrentChannel ? store.previousChannelId : store.currentChannelId;
-  channelLeaveBusy.value = true;
-  channelLeaveMsg.value = "";
-  try {
-    await api(`/api/channels/${channel.id}/leave`, { method: "POST", body: JSON.stringify({}) });
-    pendingLeaveChannel.value = null;
-    await store.loadChannels(fallbackChannelId);
-    if (leavingCurrentChannel) {
-      await nextTick();
-      scrollBottom(false);
-    }
-  } catch (error) {
-    channelLeaveMsg.value = error instanceof Error ? error.message : "退出频道失败";
-  } finally {
-    channelLeaveBusy.value = false;
-  }
-}
-
-function requestCloseChannel() {
-  if (!currentChannel.value?.directKey) return;
-  pendingCloseChannel.value = currentChannel.value;
-}
-
-async function closePendingChannel() {
-  const channel = pendingCloseChannel.value;
-  if (!channel) return;
-  const fallbackChannelId = store.previousChannelId;
-  await api(`/api/channels/${channel.id}/membership`, { method: "DELETE" });
-  pendingCloseChannel.value = null;
-  await store.loadChannels(fallbackChannelId);
-  await nextTick();
-  scrollBottom(false);
-}
-
-function toggleMorePanel() {
-  if (isRecording.value) return;
-  composerPanel.value = composerPanel.value === "more" ? null : "more";
 }
 
 function closeComposerMorePanel() {
@@ -5242,71 +3300,6 @@ watch(sermonRequestDecision, (event) => {
   }, 8000);
 });
 
-async function toggleVoicePanel() {
-  if (isRecording.value) {
-    stopRecording();
-    return;
-  }
-  if (composerPanel.value !== "voice") {
-    composerPanel.value = "voice";
-    await startRecording();
-    return;
-  }
-  if (!audioFile.value) {
-    await startRecording();
-  }
-}
-
-let lastTypingEmitAt = 0;
-
-function onInput() {
-  syncComposerCaret();
-  composerSuggestionIndex.value = 0;
-  composerSuggestionSuppressed.value = false;
-  if (!store.currentChannelId) return;
-  // Throttle typing signals to one per window; the server also debounces.
-  const now = Date.now();
-  if (now - lastTypingEmitAt < 3000) return;
-  lastTypingEmitAt = now;
-  store.socket?.emit("message:typing", { channelId: store.currentChannelId, state: "start" });
-}
-
-function onKeydown(event: KeyboardEvent) {
-  if (showComposerSuggestionMenu.value) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      const direction = event.key === "ArrowDown" ? 1 : -1;
-      const count = composerSuggestionCount.value;
-      composerSuggestionIndex.value = count ? (composerSuggestionIndex.value + direction + count) % count : 0;
-      return;
-    }
-    if ((event.key === "Enter" && !event.shiftKey && !event.isComposing) || event.key === "Tab") {
-      event.preventDefault();
-      chooseActiveComposerSuggestion();
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      composerSuggestionSuppressed.value = true;
-      return;
-    }
-  }
-  if (isComposerSendKey(event) && !isTouchDevice()) {
-    event.preventDefault();
-    void sendText();
-  }
-}
-
-function pickReply(message: MessageDTO) {
-  replyTo.value = message;
-}
-
-function messageEffect(message: MessageDTO): MessageEffect | null {
-  const payload = message.payload as MessageEffectPayload | undefined;
-  const effect = payload?.effect;
-  return effect && effectCommands.some((item) => item.effect === effect) ? effect : null;
-}
-
 function isMessageEffectPaused(message: MessageDTO) {
   return !shouldRenderMessageEffect({
     manuallyPaused: pausedEffectIds.value.has(message.id),
@@ -5314,21 +3307,6 @@ function isMessageEffectPaused(message: MessageDTO) {
     visible: visibleEffectIds.value.has(message.id),
     documentVisible: documentVisible.value
   });
-}
-
-function messageIdForEffectElement(element: Element) {
-  const row = element.closest<HTMLElement>(".message-row[data-message-id]");
-  const id = Number(row?.dataset.messageId);
-  return Number.isFinite(id) ? id : null;
-}
-
-function setsEqual(left: Set<number>, right: Set<number>) {
-  return left.size === right.size && [...left].every((value) => right.has(value));
-}
-
-function updateEffectVisibility(observed: Set<number>, visible: Set<number>) {
-  if (!setsEqual(observedEffectIds.value, observed)) observedEffectIds.value = observed;
-  if (!setsEqual(visibleEffectIds.value, visible)) visibleEffectIds.value = visible;
 }
 
 function handleMessageEffectIntersections(entries: IntersectionObserverEntry[]) {
@@ -5382,17 +3360,13 @@ function handleDocumentVisibilityChange() {
   if (!documentVisible.value) {
     saveReadPosition();
     clearMusicLyricsHeaderResumeTimer();
-    if (isRecording.value) recordingStatus.value = "录音可能因锁屏或切换应用而中断";
+    handleRecordingVisibilityChange(false);
     stopRainEffect();
     stopDripPhysics(true);
     stopGooeyDripPhysics(true);
     oopsPhysicsLayer.value?.reset();
   } else {
-    if (isRecording.value) {
-      void recordingWakeLock.acquire().then((held) => {
-        recordingStatus.value = held ? "正在录音" : "正在录音，请保持屏幕亮起";
-      });
-    }
+    handleRecordingVisibilityChange(true);
     if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
     nextTick(() => {
       refreshMessageEffectObserver();
@@ -5401,16 +3375,6 @@ function handleDocumentVisibilityChange() {
     });
   }
   syncFlashEffectTimer();
-}
-
-function toggleMessageEffect(message: MessageDTO) {
-  const effect = messageEffect(message);
-  if (!effect || effect === "rain" || effect === "oops") return false;
-  const next = new Set(pausedEffectIds.value);
-  if (next.has(message.id)) next.delete(message.id);
-  else next.add(message.id);
-  pausedEffectIds.value = next;
-  return true;
 }
 
 function messageEffectClass(message: MessageDTO) {
@@ -5438,870 +3402,6 @@ function messageEffectStyle(message: MessageDTO) {
   };
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function handleDeviceOrientation(event: DeviceOrientationEvent) {
-  if (!documentVisible.value || !orientationEffectsVisible.value) return;
-  const gamma = Number.isFinite(event.gamma) ? Number(event.gamma) : 0;
-  const beta = Number.isFinite(event.beta) ? Number(event.beta) : 0;
-  if (waterEffectVisible.value) {
-    waterTilt.value = {
-      x: clamp(gamma, -36, 36) * 0.42,
-      y: clamp(beta - 35, -42, 42) * 0.28
-    };
-  }
-  deviceGravity = screenGravityFromOrientation(beta, gamma);
-}
-
-function screenGravityFromOrientation(beta: number, gamma: number): GravityVector {
-  const radians = Math.PI / 180;
-  const rawX = Math.sin(clamp(gamma, -90, 90) * radians) * 0.62;
-  const rawY = Math.sin(clamp(beta, -90, 90) * radians);
-  const angle = typeof screen !== "undefined" && screen.orientation ? screen.orientation.angle : Number((window as unknown as { orientation?: number }).orientation || 0);
-  const rotation = -angle * radians;
-  const projectedX = rawX * Math.cos(rotation) - rawY * Math.sin(rotation);
-  const projectedY = rawX * Math.sin(rotation) + rawY * Math.cos(rotation);
-  const projectedLength = Math.hypot(projectedX, projectedY);
-  const visualDownBias = 0.58 * (1 - clamp(projectedLength * 1.35, 0, 1));
-  const x = projectedX;
-  const y = projectedY + visualDownBias;
-  const length = Math.hypot(x, y);
-  if (length < 0.08) return { x: 0, y: 1, strength: 0.42 };
-  return {
-    x: x / length,
-    y: y / length,
-    strength: clamp(length, 0.42, 1)
-  };
-}
-
-function requestDeviceOrientationPermissionOnce() {
-  if (deviceOrientationPermissionRequested || typeof DeviceOrientationEvent === "undefined") return;
-  const eventWithPermission = DeviceOrientationEvent as typeof DeviceOrientationEvent & {
-    requestPermission?: () => Promise<"granted" | "denied">;
-  };
-  if (!eventWithPermission.requestPermission) return;
-  deviceOrientationPermissionRequested = true;
-  void eventWithPermission.requestPermission().catch(() => undefined);
-}
-
-function handleBubblePointerMove(message: MessageDTO, event: PointerEvent) {
-  moveMessageLongPress(event);
-  stirWaterMessage(message, event);
-}
-
-function handleBubblePointerLeave(message: MessageDTO, event: PointerEvent) {
-  clearMessageLongPress();
-  settleWaterMessage(message, event);
-}
-
-function stirWaterMessage(message: MessageDTO, event: PointerEvent) {
-  if (messageEffect(message) !== "water" || isMessageEffectPaused(message)) return;
-  const bubble = event.currentTarget;
-  if (!(bubble instanceof HTMLElement)) return;
-  const rect = bubble.getBoundingClientRect();
-  const x = clamp(((event.clientX - rect.left) / Math.max(1, rect.width)) * 100, 0, 100);
-  const y = clamp(((event.clientY - rect.top) / Math.max(1, rect.height)) * 100, 0, 100);
-  bubble.style.setProperty("--water-pointer-x", `${x.toFixed(1)}%`);
-  bubble.style.setProperty("--water-pointer-y", `${y.toFixed(1)}%`);
-  bubble.style.setProperty("--water-stir-size", "38%");
-  bubble.style.setProperty("--water-stir-opacity", "0.54");
-  bubble.style.setProperty("--water-ripple-wide", "200px");
-  bubble.style.setProperty("--water-ripple-tall", "82px");
-  bubble.style.setProperty("--water-ripple-opacity", "0.87");
-}
-
-function settleWaterMessage(message: MessageDTO, event: PointerEvent) {
-  if (messageEffect(message) !== "water") return;
-  const bubble = event.currentTarget;
-  if (bubble instanceof HTMLElement) {
-    bubble.style.setProperty("--water-stir-size", "20%");
-    bubble.style.setProperty("--water-stir-opacity", "0.12");
-    bubble.style.setProperty("--water-ripple-wide", "130px");
-    bubble.style.setProperty("--water-ripple-tall", "54px");
-    bubble.style.setProperty("--water-ripple-opacity", "0.55");
-  }
-}
-
-function triggerOneShotMessageEffects(message: MessageDTO) {
-  if (messageEffect(message) === "rain") void startRainForMessage(message.id);
-}
-
-function hydratePlayedRainEffectIds() {
-  playedRainEffectIds.clear();
-  for (const id of readPlayedRainEffectIds()) playedRainEffectIds.add(id);
-}
-
-function readPlayedRainEffectIds() {
-  try {
-    return JSON.parse(localStorage.getItem("team-chat-played-rain-effects") || "[]")
-      .map((value: unknown) => Number(value))
-      .filter((value: number) => Number.isFinite(value) && value > 0)
-      .slice(-180);
-  } catch {
-    return [];
-  }
-}
-
-function persistPlayedRainEffectIds() {
-  try {
-    localStorage.setItem("team-chat-played-rain-effects", JSON.stringify([...playedRainEffectIds].slice(-180)));
-  } catch {
-    // Private browsing or quota limits should not block chat effects.
-  }
-}
-
-async function startRainForMessage(messageId: number) {
-  if (messageId <= 0 || playedRainEffectIds.has(messageId)) return;
-  playedRainEffectIds.add(messageId);
-  persistPlayedRainEffectIds();
-  if (rainActive.value) return;
-  rainActive.value = true;
-  rainUntil = performance.now() + rainDurationMs;
-  await nextTick();
-  const canvas = rainCanvas.value;
-  if (!canvas) {
-    rainActive.value = false;
-    return;
-  }
-  rainDrops = [];
-  rainAnimationFrame = requestAnimationFrame(drawRainFrame);
-}
-
-function stopRainEffect() {
-  if (rainAnimationFrame) window.cancelAnimationFrame(rainAnimationFrame);
-  rainAnimationFrame = undefined;
-  rainActive.value = false;
-  rainUntil = 0;
-  rainDrops = [];
-  const canvas = rainCanvas.value;
-  const context = canvas?.getContext("2d");
-  if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function drawRainFrame(now: number) {
-  const canvas = rainCanvas.value;
-  const context = canvas?.getContext("2d");
-  if (!canvas || !context || now >= rainUntil) {
-    stopRainEffect();
-    return;
-  }
-  const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height));
-  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-    canvas.width = Math.floor(width * dpr);
-    canvas.height = Math.floor(height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    rainDrops = [];
-  }
-  if (!rainDrops.length) rainDrops = makeRainDrops(width, height);
-  const remaining = clamp((rainUntil - now) / rainDurationMs, 0, 1);
-  context.clearRect(0, 0, width, height);
-  context.fillStyle = `rgba(12, 24, 38, ${0.12 * Math.min(1, remaining + 0.35)})`;
-  context.fillRect(0, 0, width, height);
-  context.lineCap = "round";
-  for (const drop of rainDrops) {
-    drop.y += drop.speed;
-    drop.x += drop.sway;
-    if (drop.y > height + drop.length) {
-      drop.y = -drop.length - Math.random() * height * 0.45;
-      drop.x = Math.random() * width;
-    }
-    if (drop.x > width + 28) drop.x = -28;
-    if (drop.x < -28) drop.x = width + 28;
-    context.globalAlpha = drop.alpha * Math.min(1, remaining * 1.7);
-    context.lineWidth = drop.width;
-    context.strokeStyle = "#d9f2ff";
-    context.beginPath();
-    context.moveTo(drop.x, drop.y);
-    context.lineTo(drop.x - drop.length * 0.25, drop.y + drop.length);
-    context.stroke();
-  }
-  context.globalAlpha = 1;
-  rainAnimationFrame = requestAnimationFrame(drawRainFrame);
-}
-
-function makeRainDrops(width: number, height: number): RainDrop[] {
-  const count = Math.min(260, Math.max(110, Math.floor((width * height) / 3200)));
-  return Array.from({ length: count }, () => ({
-    x: Math.random() * width,
-    y: Math.random() * height - height,
-    length: 13 + Math.random() * 24,
-    speed: 9 + Math.random() * 15,
-    width: 0.7 + Math.random() * 1.3,
-    sway: -1.9 - Math.random() * 1.4,
-    alpha: 0.28 + Math.random() * 0.52
-  }));
-}
-
-function randomBetween(min: number, max: number) {
-  return min + Math.random() * (max - min);
-}
-
-function ensureDripPhysics() {
-  const active = hasActiveDripMessages();
-  if ((active || dripParticles.length) && !dripAnimationFrame) {
-    dripLastFrame = 0;
-    dripLastSpawn = 0;
-    dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
-  }
-}
-
-function stopDripPhysics(clear = false) {
-  if (dripAnimationFrame) window.cancelAnimationFrame(dripAnimationFrame);
-  dripAnimationFrame = undefined;
-  dripLastFrame = 0;
-  dripLastSpawn = 0;
-  if (clear) {
-    dripParticles = [];
-    const canvas = dripLayer.value;
-    const context = canvas?.getContext("2d");
-    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
-  }
-}
-
-function hasActiveDripMessages() {
-  return store.messages.some((message) => messageEffect(message) === "drip" && !isMessageEffectPaused(message));
-}
-
-function updateDripPhysics(now: number) {
-  const canvas = dripLayer.value;
-  const context = canvas?.getContext("2d");
-  if (!canvas || !context) {
-    stopDripPhysics(true);
-    return;
-  }
-  const active = hasActiveDripMessages();
-  const dt = Math.min(0.042, Math.max(0.008, (dripLastFrame ? now - dripLastFrame : 16) / 1000));
-  dripLastFrame = now;
-  const layerSize = prepareDripCanvas(canvas, context);
-  if (active && now - dripLastSpawn > 360 && dripParticles.length < 120) {
-    spawnDripParticles(canvas);
-    dripLastSpawn = now;
-  }
-  const bubbleRects = dripCollisionRects(canvas);
-  const nextParticles: DripParticle[] = [];
-  for (const particle of dripParticles) {
-    particle.age += dt;
-    if (particle.state === "attached") {
-      updateAttachedDrip(particle, bubbleRects, dt);
-    } else if (particle.state === "falling") {
-      particle.vy += 1420 * dt;
-      particle.vx *= 0.992;
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-      const hit = findDripHit(particle, bubbleRects);
-      if (hit) {
-        spawnDripSplash(nextParticles, particle, hit.layerTop);
-        continue;
-      }
-    } else {
-      particle.vy += 1180 * dt;
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-      particle.vx *= 0.965;
-    }
-    if (particle.y > layerSize.height + 42 || particle.x < -42 || particle.x > layerSize.width + 42) continue;
-    if (particle.state === "splash" && particle.age >= particle.life) continue;
-    nextParticles.push(particle);
-  }
-  dripParticles = nextParticles;
-  drawDripFrame(context, layerSize.width, layerSize.height, dripParticles);
-  if (active || dripParticles.length) {
-    dripAnimationFrame = requestAnimationFrame(updateDripPhysics);
-  } else {
-    stopDripPhysics();
-  }
-}
-
-function prepareDripCanvas(canvas: HTMLCanvasElement, context: CanvasRenderingContext2D) {
-  const rect = canvas.getBoundingClientRect();
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
-  const width = Math.max(1, Math.floor(rect.width));
-  const height = Math.max(1, Math.floor(rect.height));
-  if (canvas.width !== Math.floor(width * dpr) || canvas.height !== Math.floor(height * dpr)) {
-    canvas.width = Math.floor(width * dpr);
-    canvas.height = Math.floor(height * dpr);
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    dripParticles = [];
-  }
-  return { width, height };
-}
-
-function spawnDripParticles(layer: HTMLCanvasElement) {
-  const layerRect = layer.getBoundingClientRect();
-  for (const { message, bubble } of activeDripBubbles().slice(-6)) {
-    const rect = bubble.getBoundingClientRect();
-    if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
-    const existing = dripParticles.filter((particle) => particle.sourceId === message.id && particle.state === "attached").length;
-    if (existing >= 4) continue;
-    const count = Math.random() > 0.68 ? 2 : 1;
-    for (let i = 0; i < count; i += 1) {
-      const seed = Math.random();
-      const radius = 2.7 + seed * 2.4;
-      const anchorRatio = clamp(0.12 + Math.random() * 0.76, 0.08, 0.92);
-      const x = rect.left - layerRect.left + rect.width * anchorRatio;
-      const y = rect.bottom - layerRect.top + radius * 0.32;
-      const particle: DripParticle = {
-        state: "attached",
-        x,
-        y,
-        vx: (Math.random() - 0.5) * 16,
-        vy: 0,
-        radius,
-        sourceId: message.id,
-        anchorRatio,
-        anchorX: x,
-        anchorY: y - radius * 0.32,
-        mass: 0.22 + Math.random() * 0.26,
-        stretch: 0,
-        age: 0,
-        life: 2.4 + Math.random() * 2.2,
-        phase: Math.random() * Math.PI * 2,
-        seed
-      };
-      dripParticles.push(particle);
-    }
-  }
-}
-
-function activeDripBubbles() {
-  const root = scroller.value;
-  if (!root) return [];
-  return store.messages
-    .filter((message) => messageEffect(message) === "drip" && !isMessageEffectPaused(message))
-    .map((message) => {
-      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
-      const bubble = row?.querySelector<HTMLElement>(".message-effect-drip");
-      return bubble ? { message, bubble } : null;
-    })
-    .filter((item): item is { message: MessageDTO; bubble: HTMLElement } => !!item);
-}
-
-function dripCollisionRects(layer: HTMLCanvasElement) {
-  const root = scroller.value;
-  if (!root) return new Map<number, DripCollisionRect>();
-  const layerRect = layer.getBoundingClientRect();
-  const rects = new Map<number, DripCollisionRect>();
-  for (const row of root.querySelectorAll<HTMLElement>(".message-row[data-message-id]")) {
-    const id = Number(row.dataset.messageId || 0);
-    if (!id) continue;
-    const bubble = row.querySelector<HTMLElement>(".bubble");
-    if (!bubble) continue;
-    const message = store.messages.find((item) => item.id === id);
-    const rect = bubble.getBoundingClientRect();
-    rects.set(id, Object.assign(rect, {
-      id,
-      layerLeft: rect.left - layerRect.left,
-      layerRight: rect.right - layerRect.left,
-      layerTop: rect.top - layerRect.top,
-      layerBottom: rect.bottom - layerRect.top
-    }));
-  }
-  return rects;
-}
-
-function updateAttachedDrip(
-  particle: DripParticle,
-  bubbleRects: Map<number, DripCollisionRect>,
-  dt: number
-) {
-  const rect = bubbleRects.get(particle.sourceId);
-  if (!rect) {
-    detachDrip(particle);
-    return;
-  }
-  particle.anchorX = rect.layerLeft + rect.width * particle.anchorRatio;
-  particle.anchorY = rect.layerBottom - 1;
-  particle.mass += (0.34 + particle.seed * 0.28) * dt;
-  particle.radius = Math.min(7.8, particle.radius + particle.mass * 0.12 * dt);
-  particle.stretch = clamp(particle.stretch + (0.32 + particle.mass * 0.42) * dt, 0, 1.45);
-  particle.x = particle.anchorX;
-  particle.y = particle.anchorY + particle.radius * (0.74 + particle.stretch * 1.05);
-  const release = particle.mass > 1.15 + particle.seed * 0.45 || particle.age > particle.life || particle.stretch > 1.36;
-  if (release) detachDrip(particle);
-}
-
-function detachDrip(particle: DripParticle) {
-  particle.state = "falling";
-  particle.vx = 0;
-  particle.vy = 110 + particle.mass * 72;
-  particle.age = 0;
-  particle.life = 2.8;
-}
-
-function findDripHit(
-  particle: DripParticle,
-  bubbleRects: Map<number, DripCollisionRect>
-) {
-  const particleBottom = particle.y + particle.radius * (1.1 + Math.min(0.7, particle.vy / 1100));
-  for (const [id, rect] of bubbleRects) {
-    if (id === particle.sourceId) continue;
-    if (
-      particle.x >= rect.layerLeft - particle.radius &&
-      particle.x <= rect.layerRight + particle.radius &&
-      particleBottom >= rect.layerTop &&
-      particle.y <= rect.layerBottom
-    ) {
-      return rect;
-    }
-  }
-  return null;
-}
-
-function spawnDripSplash(nextParticles: DripParticle[], source: DripParticle, y: number) {
-  const count = 4 + Math.floor(Math.random() * 4);
-  for (let i = 0; i < count; i += 1) {
-    const angle = Math.PI + (Math.PI * i) / Math.max(1, count - 1) + (Math.random() - 0.5) * 0.34;
-    const speed = 90 + Math.random() * 220 + Math.min(170, source.vy * 0.16);
-    nextParticles.push({
-      state: "splash",
-      x: source.x,
-      y,
-      vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed - 70,
-      radius: Math.max(1.4, source.radius * (0.22 + Math.random() * 0.22)),
-      sourceId: source.sourceId,
-      anchorRatio: source.anchorRatio,
-      anchorX: source.x,
-      anchorY: y,
-      mass: source.mass,
-      stretch: 0,
-      age: 0,
-      life: 0.28 + Math.random() * 0.22,
-      phase: Math.random() * Math.PI * 2,
-      seed: Math.random()
-    });
-  }
-}
-
-function drawDripFrame(context: CanvasRenderingContext2D, width: number, height: number, particles: DripParticle[]) {
-  context.clearRect(0, 0, width, height);
-  for (const particle of particles) {
-    if (particle.state === "attached") drawAttachedDrip(context, particle);
-    else if (particle.state === "falling") drawFallingDrip(context, particle);
-    else drawSplashDrip(context, particle);
-  }
-}
-
-function drawAttachedDrip(context: CanvasRenderingContext2D, particle: DripParticle) {
-  const alpha = clamp(0.42 + particle.mass * 0.42, 0.45, 0.96);
-  const neck = clamp(particle.stretch, 0, 1.45);
-  const width = particle.radius * (0.82 - neck * 0.12);
-  context.save();
-  context.globalAlpha = alpha;
-  context.beginPath();
-  context.moveTo(particle.anchorX - width * 0.42, particle.anchorY - 1);
-  context.bezierCurveTo(particle.anchorX - width * 0.72, particle.anchorY + particle.radius, particle.x - particle.radius * 0.96, particle.y - particle.radius * 0.7, particle.x - particle.radius * 0.8, particle.y);
-  context.bezierCurveTo(particle.x - particle.radius * 0.62, particle.y + particle.radius * 1.1, particle.x + particle.radius * 0.62, particle.y + particle.radius * 1.1, particle.x + particle.radius * 0.8, particle.y);
-  context.bezierCurveTo(particle.x + particle.radius * 0.96, particle.y - particle.radius * 0.7, particle.anchorX + width * 0.72, particle.anchorY + particle.radius, particle.anchorX + width * 0.42, particle.anchorY - 1);
-  context.closePath();
-  const gradient = context.createRadialGradient(
-    particle.x - particle.radius * 0.38,
-    particle.y - particle.radius * 0.52,
-    particle.radius * 0.1,
-    particle.x,
-    particle.y + particle.radius * 0.22,
-    particle.radius * (1.7 + neck * 0.52)
-  );
-  gradient.addColorStop(0, "rgba(255,255,255,0.96)");
-  gradient.addColorStop(0.22, "rgba(205,244,255,0.82)");
-  gradient.addColorStop(0.66, "rgba(56,189,248,0.58)");
-  gradient.addColorStop(1, "rgba(3,105,161,0.5)");
-  context.fillStyle = gradient;
-  context.fill();
-  drawDripHighlights(context, particle.x, particle.y, particle.radius, alpha);
-  context.restore();
-}
-
-function drawFallingDrip(context: CanvasRenderingContext2D, particle: DripParticle) {
-  const speedStretch = clamp(particle.vy / 1300, 0, 0.72);
-  const radiusX = particle.radius * (1 - speedStretch * 0.2);
-  const radiusY = particle.radius * (1.08 + speedStretch);
-  context.save();
-  context.translate(particle.x, particle.y);
-  context.beginPath();
-  context.ellipse(0, 0, radiusX, radiusY, 0, 0, Math.PI * 2);
-  const gradient = context.createRadialGradient(-radiusX * 0.35, -radiusY * 0.42, radiusX * 0.12, 0, radiusY * 0.16, radiusY * 1.12);
-  gradient.addColorStop(0, "rgba(255,255,255,0.95)");
-  gradient.addColorStop(0.28, "rgba(186,230,253,0.78)");
-  gradient.addColorStop(0.78, "rgba(14,165,233,0.68)");
-  gradient.addColorStop(1, "rgba(3,105,161,0.46)");
-  context.fillStyle = gradient;
-  context.shadowColor = "rgba(3,105,161,0.22)";
-  context.shadowBlur = 8;
-  context.shadowOffsetY = 3;
-  context.fill();
-  context.shadowColor = "transparent";
-  drawDripHighlights(context, 0, 0, particle.radius, 0.88);
-  context.restore();
-}
-
-function drawSplashDrip(context: CanvasRenderingContext2D, particle: DripParticle) {
-  const remaining = clamp(1 - particle.age / particle.life, 0, 1);
-  context.save();
-  context.globalAlpha = remaining * 0.82;
-  context.beginPath();
-  context.ellipse(particle.x, particle.y, particle.radius * (1.4 - remaining * 0.25), particle.radius * 0.72, particle.vx * 0.004, 0, Math.PI * 2);
-  context.fillStyle = "rgba(186,230,253,0.9)";
-  context.fill();
-  context.restore();
-}
-
-function drawDripHighlights(context: CanvasRenderingContext2D, x: number, y: number, radius: number, alpha: number) {
-  context.save();
-  context.globalAlpha = alpha;
-  context.fillStyle = "rgba(255,255,255,0.82)";
-  context.beginPath();
-  context.ellipse(x - radius * 0.34, y - radius * 0.44, radius * 0.22, radius * 0.34, -0.45, 0, Math.PI * 2);
-  context.fill();
-  context.strokeStyle = "rgba(255,255,255,0.38)";
-  context.lineWidth = Math.max(0.7, radius * 0.12);
-  context.beginPath();
-  context.arc(x + radius * 0.1, y + radius * 0.08, radius * 0.58, 0.55, 1.72);
-  context.stroke();
-  context.restore();
-}
-
-function ensureGooeyDripPhysics() {
-  const active = hasActiveGooeyDripMessages();
-  if ((active || gooeyParticles.length) && !gooeyAnimationFrame) {
-    gooeyLastFrame = 0;
-    gooeyLastSpawn = 0;
-    gooeyAnimationFrame = requestAnimationFrame(updateGooeyDripPhysics);
-  }
-}
-
-function stopGooeyDripPhysics(clear = false) {
-  if (gooeyAnimationFrame) window.cancelAnimationFrame(gooeyAnimationFrame);
-  gooeyAnimationFrame = undefined;
-  gooeyLastFrame = 0;
-  gooeyLastSpawn = 0;
-  if (clear) {
-    gooeyParticles = [];
-    gooeyBlobs.value = [];
-    gooeyHighlights.value = [];
-  }
-}
-
-function hasActiveGooeyDripMessages() {
-  return store.messages.some((message) => messageEffect(message) === "dripGooey" && !isMessageEffectPaused(message));
-}
-
-function updateGooeyDripPhysics(now: number) {
-  const layer = gooeyDripLayer.value;
-  if (!layer) {
-    stopGooeyDripPhysics(true);
-    return;
-  }
-  const active = hasActiveGooeyDripMessages();
-  const dt = Math.min(0.042, Math.max(0.008, (gooeyLastFrame ? now - gooeyLastFrame : 16) / 1000));
-  gooeyLastFrame = now;
-  const layerRect = layer.getBoundingClientRect();
-  const layerSize = { width: Math.max(1, layerRect.width), height: Math.max(1, layerRect.height) };
-  if (active && now - gooeyLastSpawn > 380 && gooeyParticles.length < 90) {
-    spawnGooeyDripParticles(layer);
-    gooeyLastSpawn = now;
-  }
-  const gravity = deviceGravity;
-  const bubbleRects = gooeyCollisionRects(layer);
-  const nextParticles: GooeyDripParticle[] = [];
-  for (const particle of gooeyParticles) {
-    particle.age += dt;
-    if (particle.state === "attached") {
-      const rect = bubbleRects.get(particle.sourceId);
-      if (!rect || isOutsideLayer(rect, layerSize.width, layerSize.height, 18)) continue;
-      updateAttachedGooeyDrip(particle, rect, gravity, dt);
-    } else if (particle.state === "falling") {
-      const acceleration = 1480 * gravity.strength;
-      particle.vx += gravity.x * acceleration * dt;
-      particle.vy += gravity.y * acceleration * dt;
-      particle.vx *= 0.992;
-      particle.vy *= 0.992;
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-      const hit = findGooeyDripHit(particle, bubbleRects);
-      if (hit) {
-        spawnGooeyDripSplash(nextParticles, particle, hit.x, hit.y, gravity);
-        continue;
-      }
-    } else {
-      const acceleration = 960 * gravity.strength;
-      particle.vx += gravity.x * acceleration * dt;
-      particle.vy += gravity.y * acceleration * dt;
-      particle.vx *= 0.94;
-      particle.vy *= 0.94;
-      particle.x += particle.vx * dt;
-      particle.y += particle.vy * dt;
-    }
-    if (isPointOutsideLayer(particle.x, particle.y, layerSize.width, layerSize.height, 44)) continue;
-    if (particle.state === "splash" && particle.age > particle.life) continue;
-    nextParticles.push(particle);
-  }
-  gooeyParticles = nextParticles;
-  renderGooeyDrips(gooeyParticles, gravity);
-  if (active || gooeyParticles.length) {
-    gooeyAnimationFrame = requestAnimationFrame(updateGooeyDripPhysics);
-  } else {
-    stopGooeyDripPhysics(true);
-  }
-}
-
-function spawnGooeyDripParticles(layer: SVGSVGElement) {
-  const layerRect = layer.getBoundingClientRect();
-  const gravity = deviceGravity;
-  for (const { message, bubble } of activeGooeyDripBubbles().slice(-5)) {
-    const rect = bubble.getBoundingClientRect();
-    if (rect.bottom < layerRect.top || rect.top > layerRect.bottom) continue;
-    const sourceId = message.id;
-    const existing = gooeyParticles.filter((particle) => particle.sourceId === sourceId && particle.state === "attached").length;
-    if (existing >= 6) continue;
-    const layerBubbleRect = toLayerRect(rect, layerRect);
-    const count = Math.random() > 0.62 ? 2 : 1;
-    for (let i = 0; i < count; i += 1) {
-      const radius = 2.4 + Math.random() * 3.2;
-      const edgeProbe = gooeyEdgePoint(layerBubbleRect, gravity, 0);
-      const edgeLimit = Math.max(10, edgeProbe.tangentLimit * 0.92);
-      const edgeOffset = (Math.random() * 2 - 1) * edgeLimit;
-      const anchor = gooeyEdgePoint(layerBubbleRect, gravity, edgeOffset);
-      const center = gooeyDropCenter(anchor, radius, 0.18);
-      gooeyParticles.push({
-        id: gooeyNextId,
-        state: "attached",
-        x: center.x,
-        y: center.y,
-        vx: 0,
-        vy: 0,
-        radius,
-        sourceId,
-        anchorX: anchor.x,
-        anchorY: anchor.y,
-        edgeOffset,
-        edgeVelocity: 0,
-        mass: 0.16 + Math.random() * 0.18,
-        age: 0,
-        life: 2.9 + Math.random() * 2.2,
-        alpha: 0.78
-      });
-      gooeyNextId += 1;
-    }
-  }
-}
-
-function activeGooeyDripBubbles() {
-  const root = scroller.value;
-  if (!root) return [];
-  return store.messages
-    .filter((message) => messageEffect(message) === "dripGooey" && !isMessageEffectPaused(message))
-    .map((message) => {
-      const row = root.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
-      const bubble = row?.querySelector<HTMLElement>(".message-effect-drip-gooey");
-      return bubble ? { message, bubble } : null;
-    })
-    .filter((item): item is { message: MessageDTO; bubble: HTMLElement } => !!item);
-}
-
-function gooeyCollisionRects(layer: SVGSVGElement) {
-  const root = scroller.value;
-  if (!root) return new Map<number, BubbleLayerRect>();
-  const layerRect = layer.getBoundingClientRect();
-  const rects = new Map<number, BubbleLayerRect>();
-  for (const row of root.querySelectorAll<HTMLElement>(".message-row[data-message-id]")) {
-    const id = Number(row.dataset.messageId || 0);
-    if (!id) continue;
-    const bubble = row.querySelector<HTMLElement>(".bubble");
-    if (!bubble) continue;
-    rects.set(id, toLayerRect(bubble.getBoundingClientRect(), layerRect));
-  }
-  return rects;
-}
-
-function toLayerRect(rect: DOMRect, layerRect: DOMRect): BubbleLayerRect {
-  const layerLeft = rect.left - layerRect.left;
-  const layerTop = rect.top - layerRect.top;
-  const layerRight = rect.right - layerRect.left;
-  const layerBottom = rect.bottom - layerRect.top;
-  return Object.assign(rect, {
-    layerLeft,
-    layerRight,
-    layerTop,
-    layerBottom,
-    layerCenterX: (layerLeft + layerRight) / 2,
-    layerCenterY: (layerTop + layerBottom) / 2
-  });
-}
-
-function updateAttachedGooeyDrip(particle: GooeyDripParticle, rect: BubbleLayerRect, gravity: GravityVector, dt: number) {
-  const edgeProbe = gooeyEdgePoint(rect, gravity, particle.edgeOffset);
-  const clampedOffset = clamp(particle.edgeOffset, -edgeProbe.tangentLimit, edgeProbe.tangentLimit);
-  particle.edgeVelocity += (clampedOffset - particle.edgeOffset) * 14 * dt;
-  particle.edgeVelocity *= Math.pow(0.18, dt);
-  particle.edgeOffset += particle.edgeVelocity * dt;
-  particle.mass += (0.22 + gravity.strength * 0.16) * dt;
-  particle.radius = Math.min(8.4, particle.radius + particle.mass * 0.13 * dt);
-  const anchor = gooeyEdgePoint(rect, gravity, particle.edgeOffset);
-  const center = gooeyDropCenter(anchor, particle.radius, particle.mass);
-  particle.anchorX = anchor.x;
-  particle.anchorY = anchor.y;
-  const follow = 1 - Math.exp(-10 * dt);
-  particle.x += (center.x - particle.x) * follow;
-  particle.y += (center.y - particle.y) * follow;
-  const shouldDetach = particle.mass > 1.16 || particle.age > particle.life;
-  if (shouldDetach) detachGooeyDrip(particle, gravity);
-}
-
-function detachGooeyDrip(particle: GooeyDripParticle, gravity: GravityVector) {
-  particle.state = "falling";
-  const speed = 135 + particle.mass * 95;
-  particle.vx += gravity.x * speed;
-  particle.vy += gravity.y * speed;
-  particle.age = 0;
-  particle.life = 3.2;
-}
-
-function gooeyEdgePoint(rect: BubbleLayerRect, gravity: GravityVector, edgeOffset: number): GooeyEdgeAnchor {
-  const gx = Math.abs(gravity.x) < 0.001 ? 0 : gravity.x;
-  const gy = Math.abs(gravity.y) < 0.001 ? 0 : gravity.y;
-  const hw = Math.max(1, rect.width / 2);
-  const hh = Math.max(1, rect.height / 2);
-  const scaleX = gx ? hw / Math.abs(gx) : Number.POSITIVE_INFINITY;
-  const scaleY = gy ? hh / Math.abs(gy) : Number.POSITIVE_INFINITY;
-  const scale = Math.min(scaleX, scaleY);
-  const tangent = { x: -gy, y: gx };
-  const baseX = rect.layerCenterX + gx * scale;
-  const baseY = rect.layerCenterY + gy * scale;
-  const maxOffsetX = tangent.x
-    ? (tangent.x > 0 ? rect.layerRight - baseX : baseX - rect.layerLeft) / Math.abs(tangent.x)
-    : Number.POSITIVE_INFINITY;
-  const maxOffsetY = tangent.y
-    ? (tangent.y > 0 ? rect.layerBottom - baseY : baseY - rect.layerTop) / Math.abs(tangent.y)
-    : Number.POSITIVE_INFINITY;
-  const tangentLimit = Math.max(6, Math.min(maxOffsetX, maxOffsetY) - 5);
-  const offset = clamp(edgeOffset, -tangentLimit, tangentLimit);
-  return {
-    x: clamp(baseX + tangent.x * offset, rect.layerLeft, rect.layerRight),
-    y: clamp(baseY + tangent.y * offset, rect.layerTop, rect.layerBottom),
-    normalX: gx,
-    normalY: gy,
-    tangentX: tangent.x,
-    tangentY: tangent.y,
-    tangentLimit
-  };
-}
-
-function gooeyDropCenter(anchor: GooeyEdgeAnchor, radius: number, mass: number) {
-  const outsideDistance = radius * (1.08 + clamp(mass, 0, 1.3) * 0.42);
-  return {
-    x: anchor.x + anchor.normalX * outsideDistance,
-    y: anchor.y + anchor.normalY * outsideDistance
-  };
-}
-
-function findGooeyDripHit(particle: GooeyDripParticle, bubbleRects: Map<number, BubbleLayerRect>) {
-  for (const [id, rect] of bubbleRects) {
-    if (id === particle.sourceId) continue;
-    const x = clamp(particle.x, rect.layerLeft, rect.layerRight);
-    const y = clamp(particle.y, rect.layerTop, rect.layerBottom);
-    if (Math.hypot(particle.x - x, particle.y - y) <= particle.radius + 1.5) return { x, y };
-  }
-  return null;
-}
-
-function spawnGooeyDripSplash(nextParticles: GooeyDripParticle[], source: GooeyDripParticle, x: number, y: number, gravity: GravityVector) {
-  const tangent = { x: -gravity.y, y: gravity.x };
-  const count = 3 + Math.floor(Math.random() * 4);
-  for (let i = 0; i < count; i += 1) {
-    const spread = (i / Math.max(1, count - 1) - 0.5) * 2;
-    const speed = 90 + Math.random() * 140;
-    nextParticles.push({
-      id: gooeyNextId,
-      state: "splash",
-      x,
-      y,
-      vx: tangent.x * spread * speed - gravity.x * speed * 0.35,
-      vy: tangent.y * spread * speed - gravity.y * speed * 0.35,
-      radius: Math.max(1.5, source.radius * (0.22 + Math.random() * 0.24)),
-      sourceId: source.sourceId,
-      anchorX: x,
-      anchorY: y,
-      edgeOffset: 0,
-      edgeVelocity: 0,
-      mass: source.mass,
-      age: 0,
-      life: 0.32 + Math.random() * 0.22,
-      alpha: 0.78
-    });
-    gooeyNextId += 1;
-  }
-}
-
-function renderGooeyDrips(particles: GooeyDripParticle[], gravity: GravityVector) {
-  const blobs: GooeyBlob[] = [];
-  const highlights: GooeyHighlight[] = [];
-  const angle = (Math.atan2(gravity.y, gravity.x) * 180) / Math.PI - 90;
-  for (const particle of particles) {
-    const fade = particle.state === "splash" ? clamp(1 - particle.age / particle.life, 0, 1) : 1;
-    if (particle.state === "attached") {
-      const bridgeX = (particle.anchorX + particle.x) / 2;
-      const bridgeY = (particle.anchorY + particle.y) / 2;
-      blobs.push({ id: `${particle.id}-anchor`, x: particle.anchorX, y: particle.anchorY, rx: particle.radius * 0.34, ry: particle.radius * 0.28, alpha: 0.42, rotate: angle });
-      blobs.push({ id: `${particle.id}-bridge`, x: bridgeX, y: bridgeY, rx: particle.radius * 0.3, ry: Math.max(1.4, Math.hypot(particle.x - particle.anchorX, particle.y - particle.anchorY) * 0.34), alpha: 0.34, rotate: angle });
-      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * 0.98, ry: particle.radius * (1.04 + particle.mass * 0.16), alpha: particle.alpha, rotate: angle });
-    } else {
-      const speedStretch = particle.state === "falling" ? clamp(Math.hypot(particle.vx, particle.vy) / 980, 0, 0.62) : 0;
-      blobs.push({ id: `${particle.id}-drop`, x: particle.x, y: particle.y, rx: particle.radius * (1 - speedStretch * 0.16), ry: particle.radius * (1.03 + speedStretch), alpha: particle.alpha * fade, rotate: angle });
-    }
-    highlights.push({
-      id: `${particle.id}-shine`,
-      x: particle.x - particle.radius * 0.36,
-      y: particle.y - particle.radius * 0.42,
-      rx: Math.max(0.7, particle.radius * 0.16),
-      ry: Math.max(1, particle.radius * 0.28),
-      alpha: 0.52 * fade,
-      rotate: angle - 28
-    });
-  }
-  gooeyBlobs.value = blobs;
-  gooeyHighlights.value = highlights;
-}
-
-function isPointOutsideLayer(x: number, y: number, width: number, height: number, margin: number) {
-  return x < -margin || y < -margin || x > width + margin || y > height + margin;
-}
-
-function isOutsideLayer(rect: BubbleLayerRect, width: number, height: number, margin: number) {
-  return rect.layerRight < -margin || rect.layerBottom < -margin || rect.layerLeft > width + margin || rect.layerTop > height + margin;
-}
-
-function beginMessageLongPress(message: MessageDTO, event: PointerEvent) {
-  if (messageEffect(message) === "water" || messageEffect(message) === "dripGooey") requestDeviceOrientationPermissionOnce();
-  if (oopsActiveMessageIds.value.has(message.id)) return;
-  if (message.id <= 0 || message.type === "system" || event.button !== 0) return;
-  const target = event.target;
-  if (target instanceof Element && target.closest(".reply-preview, .chain-card button, .voice-card button, .prayer-actions, .message-bible, .message-select-btn, a, audio, video, iframe")) return;
-  longPressStartedAt = { x: event.clientX, y: event.clientY };
-  clearMessageLongPress();
-  longPressTimer = window.setTimeout(() => {
-    openMessageActionMenu(message, event);
-    suppressNextTapUntil = Date.now() + 650;
-    navigator.vibrate?.(12);
-  }, longPressMs);
-}
-
-function moveMessageLongPress(event: PointerEvent) {
-  if (!longPressTimer) return;
-  const distance = Math.hypot(event.clientX - longPressStartedAt.x, event.clientY - longPressStartedAt.y);
-  if (distance > 10) clearMessageLongPress();
-}
-
-function clearMessageLongPress() {
-  if (longPressTimer) window.clearTimeout(longPressTimer);
-  longPressTimer = undefined;
-}
-
 function beginBlankScoreLongPress(event: PointerEvent) {
   clearBlankScoreLongPress();
   if (event.button !== 0 || !musicScoreTriggerVisible.value || musicScoreOpen.value) return;
@@ -6327,288 +3427,6 @@ function moveBlankScoreLongPress(event: PointerEvent) {
 function clearBlankScoreLongPress() {
   if (blankScoreLongPressTimer) window.clearTimeout(blankScoreLongPressTimer);
   blankScoreLongPressTimer = undefined;
-}
-
-function beginFavoriteLongPress(favorite: FavoriteMessageDTO, event: PointerEvent) {
-  if (event.button !== 0) return;
-  const target = event.target;
-  if (target instanceof Element && target.closest("button, a, audio, video")) return;
-  favoriteLongPressStartedAt = { x: event.clientX, y: event.clientY };
-  clearFavoriteLongPress();
-  favoriteLongPressTimer = window.setTimeout(() => {
-    favoriteLongPressTimer = undefined;
-    suppressNextTapUntil = Date.now() + 650;
-    navigator.vibrate?.(12);
-    void openFavoriteMessage(favorite);
-  }, longPressMs);
-}
-
-function moveFavoriteLongPress(event: PointerEvent) {
-  if (!favoriteLongPressTimer) return;
-  const distance = Math.hypot(event.clientX - favoriteLongPressStartedAt.x, event.clientY - favoriteLongPressStartedAt.y);
-  if (distance > 10) clearFavoriteLongPress();
-}
-
-function clearFavoriteLongPress() {
-  if (favoriteLongPressTimer) window.clearTimeout(favoriteLongPressTimer);
-  favoriteLongPressTimer = undefined;
-}
-
-function beginChannelLongPress(channel: ChannelDTO, event: PointerEvent) {
-  if (!canOpenChannelSettings(channel) || event.button !== 0) return;
-  const target = event.target;
-  if (target instanceof Element && target.closest("input, label, a")) return;
-  channelLongPressStartedAt = { x: event.clientX, y: event.clientY };
-  clearChannelLongPress();
-  channelLongPressTimer = window.setTimeout(() => {
-    openEditChannelEditor(channel);
-    suppressNextTapUntil = Date.now() + 650;
-    navigator.vibrate?.(12);
-  }, longPressMs);
-}
-
-function moveChannelLongPress(event: PointerEvent) {
-  if (!channelLongPressTimer) return;
-  const distance = Math.hypot(event.clientX - channelLongPressStartedAt.x, event.clientY - channelLongPressStartedAt.y);
-  if (distance > 10) clearChannelLongPress();
-}
-
-function clearChannelLongPress() {
-  if (channelLongPressTimer) window.clearTimeout(channelLongPressTimer);
-  channelLongPressTimer = undefined;
-}
-
-function openChannelContextMenu(channel: ChannelDTO, event: MouseEvent) {
-  if (!canOpenChannelSettings(channel)) return;
-  event.preventDefault();
-  suppressNextTapUntil = Date.now() + 650;
-  openEditChannelEditor(channel);
-}
-
-function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
-  clearMessageLongPress();
-  messageActionPromptPosition.value = positionPromptNearEvent(event, { width: 190, height: 200 + (isForwardableMessage(message) ? 36 : 0) });
-  pendingMessageActions.value = message;
-  pendingChain.value = null;
-  pendingDownload.value = null;
-  pendingRecall.value = null;
-  pendingPrayer.value = null;
-  selectedMember.value = null;
-}
-
-function defaultMessageReactions(): MessageReactionsDTO {
-  return { likeCount: 0, likedBy: [], favoriteCount: 0, currentUserLiked: false, currentUserFavorited: false };
-}
-
-async function toggleMessageLike(message: MessageDTO) {
-  if (message.id <= 0 || message.type === "system") return;
-  const previous = message.reactions || defaultMessageReactions();
-  const liked = !previous.currentUserLiked;
-  message.reactions = {
-    ...previous,
-    currentUserLiked: liked,
-    likeCount: Math.max(0, previous.likeCount + (liked ? 1 : -1))
-  };
-  try {
-    const result = await api<{ reactions: MessageReactionsDTO }>(`/api/messages/${message.id}/like`, {
-      method: "PUT",
-      body: JSON.stringify({ liked })
-    });
-    store.updateMessageReactions(message.id, result.reactions);
-  } catch {
-    message.reactions = previous;
-  }
-}
-
-async function toggleMessageFavorite(message: MessageDTO) {
-  if (message.id <= 0 || message.type === "system") return false;
-  const previous = message.reactions || defaultMessageReactions();
-  const favorited = !previous.currentUserFavorited;
-  message.reactions = {
-    ...previous,
-    currentUserFavorited: favorited,
-    favoriteCount: Math.max(0, previous.favoriteCount + (favorited ? 1 : -1))
-  };
-  try {
-    const result = await api<{ reactions: MessageReactionsDTO }>(`/api/messages/${message.id}/favorite`, {
-      method: "PUT",
-      body: JSON.stringify({ favorited })
-    });
-    store.updateMessageReactions(message.id, result.reactions);
-    if (showFavorites.value) await openFavorites();
-    return true;
-  } catch {
-    message.reactions = previous;
-    return false;
-  }
-}
-
-async function likeActionMessage() {
-  const message = pendingMessageActions.value;
-  if (!message) return;
-  await toggleMessageLike(message);
-  closeMessageActionMenu();
-}
-
-async function favoriteActionMessage() {
-  const message = pendingMessageActions.value;
-  if (!message) return;
-  const shouldOpenFavorites = message.type === "music_playlist" && !message.reactions?.currentUserFavorited;
-  const updated = await toggleMessageFavorite(message);
-  closeMessageActionMenu();
-  if (updated && shouldOpenFavorites) await openFavorites();
-}
-
-function likedByTitle(message: MessageDTO) {
-  return message.reactions?.likedBy.map((person) => person.displayName).join("、") || "";
-}
-
-async function dismissLikeNotification(id: number) {
-  store.likeNotifications = store.likeNotifications.filter((item) => item.id !== id);
-  await api(`/api/like-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
-}
-
-function closeMessageActionMenu() {
-  pendingMessageActions.value = null;
-}
-
-function resetForwardState() {
-  forwardPickerOpen.value = false;
-  forwardActionSheetOpen.value = false;
-  forwardSourceMessages.value = [];
-  forwardChannelIds.value = [];
-  forwardMode.value = "separate";
-  forwardConfirming.value = false;
-  forwardError.value = "";
-  forwardSuccess.value = false;
-  if (forwardSuccessTimer) {
-    clearTimeout(forwardSuccessTimer);
-    forwardSuccessTimer = null;
-  }
-}
-
-function closeForwardDialog() {
-  if (forwardBusy.value) return;
-  resetForwardState();
-}
-
-function toggleForwardChannel(channelId: number) {
-  const next = new Set(forwardChannelIds.value);
-  if (next.has(channelId)) next.delete(channelId);
-  else next.add(channelId);
-  forwardChannelIds.value = [...next];
-}
-
-function openSingleForward() {
-  const message = pendingMessageActions.value;
-  if (!message || !isForwardableMessage(message)) return;
-  resetForwardState();
-  forwardSourceMessages.value = [message];
-  forwardPickerOpen.value = true;
-  closeMessageActionMenu();
-}
-
-function startSelectionFromAction() {
-  const message = pendingMessageActions.value;
-  if (!message || message.id <= 0) return;
-  messageSelectionMode.value = true;
-  selectedMessageIds.value = new Set([message.id]);
-  pendingChain.value = null;
-  pendingMessageActions.value = null;
-}
-
-function openForwardActionSheet() {
-  const selected = store.messages.filter((message) => selectedMessageIds.value.has(message.id));
-  const { supported, skippedCount } = forwardableMessages(selected);
-  if (!supported.length) {
-    alert("所选消息暂不支持转发");
-    return;
-  }
-  if (skippedCount > 0) alert(`有 ${skippedCount} 条消息类型不支持转发，已跳过`);
-  resetForwardState();
-  forwardSourceMessages.value = supported;
-  forwardActionSheetOpen.value = true;
-}
-
-function chooseForwardMode(mode: "separate" | "merged") {
-  forwardMode.value = mode;
-  forwardActionSheetOpen.value = false;
-  forwardPickerOpen.value = true;
-}
-
-const forwardSelectedChannels = computed(() =>
-  forwardTargetChannels.value.filter((channel) => forwardChannelIds.value.includes(channel.id))
-);
-const forwardMergedPreviewPayload = computed(() =>
-  chatRecordPreviewPayload(chatRecordPreviewTitle(currentChannel.value?.name || ""), store.currentChannelId || 0, forwardSourceMessages.value)
-);
-const forwardMergedPreviewLines = computed(() => chatRecordPreviewLines(forwardMergedPreviewPayload.value));
-
-async function submitMessageForward() {
-  if (forwardBusy.value || !forwardChannelIds.value.length || !forwardSourceMessages.value.length) return;
-  forwardBusy.value = true;
-  forwardError.value = "";
-  try {
-    await api<{ success: boolean; forwarded: number; skipped: number }>("/api/messages/forward", {
-      method: "POST",
-      body: JSON.stringify({
-        messageIds: forwardSourceMessages.value.map((message) => message.id),
-        channelIds: forwardChannelIds.value,
-        mode: forwardMode.value
-      })
-    });
-    forwardSuccess.value = true;
-    messageSelectionMode.value = false;
-    selectedMessageIds.value = new Set();
-    forwardSuccessTimer = setTimeout(() => {
-      forwardSuccessTimer = null;
-      resetForwardState();
-    }, 1200);
-  } catch (error) {
-    forwardError.value = error instanceof Error ? error.message : "转发失败";
-  } finally {
-    forwardBusy.value = false;
-  }
-}
-
-function openChatRecord(message: MessageDTO) {
-  if (messageSelectionMode.value) {
-    toggleMessageSelected(message);
-    return;
-  }
-  chatRecordViewMessage.value = message;
-}
-
-function quoteActionMessage() {
-  const message = pendingMessageActions.value;
-  if (!message) return;
-  pickReply(message);
-  closeMessageActionMenu();
-}
-
-function recallActionMessage(event?: MouseEvent) {
-  const message = pendingMessageActions.value;
-  if (!message || !canRecallMessage(message)) return;
-  closeMessageActionMenu();
-  openRecallPrompt(message, event);
-}
-
-async function selectActionMessageText() {
-  const message = pendingMessageActions.value;
-  if (!message) return;
-  textSelectableMessageId.value = message.id;
-  closeMessageActionMenu();
-  await nextTick();
-  const row = scroller.value?.querySelector<HTMLElement>(`.message-row[data-message-id="${message.id}"]`);
-  const selectionTarget =
-    row?.querySelector<HTMLElement>(".message-text, .prayer-text, .chain-card h3, .media-file-card span, .file-card span") ||
-    row?.querySelector<HTMLElement>(".bubble");
-  if (!selectionTarget) return;
-  const range = document.createRange();
-  range.selectNodeContents(selectionTarget);
-  const selection = window.getSelection();
-  selection?.removeAllRanges();
-  selection?.addRange(range);
 }
 
 function isManageableMusicMessage(message: MessageDTO) {
@@ -6870,234 +3688,6 @@ function handleOopsActiveChange(change: { messageId: number; active: boolean }) 
   oopsActiveMessageIds.value = next;
 }
 
-function openAttachmentFromTap(message: MessageDTO, event?: MouseEvent) {
-  if (Date.now() < suppressNextTapUntil) return;
-  if (event) event.stopPropagation();
-  if (messageSelectionMode.value && message.id > 0) {
-    toggleMessageSelected(message);
-    return;
-  }
-  if (canPreviewMessage(message)) {
-    openPreviewMessage(message);
-    return;
-  }
-  requestDownload(message, event);
-}
-
-function openPreviewMessage(message: MessageDTO) {
-  previewMessage.value = message;
-  previewPinnedImage.value = null;
-  pendingDownload.value = null;
-  resetImagePreviewTransform();
-}
-
-type PinnedMediaBlock = { type: "image" | "file"; fileName: string; filePath: string; fileSize?: number | null };
-
-function openPinnedImage(block: PinnedMediaBlock) {
-  previewPinnedImage.value = { url: pinnedFileUrl(block), fileName: block.fileName };
-  previewMessage.value = {
-    id: -1,
-    channelId: store.currentChannelId,
-    sender: { id: 0, kind: "system", username: "pinned", displayName: "置顶" },
-    content: "",
-    type: "image",
-    fileName: block.fileName,
-    fileSize: block.fileSize,
-    createdAt: new Date().toISOString()
-  };
-  pendingDownload.value = null;
-  resetImagePreviewTransform();
-}
-
-function resetImagePreviewTransform() {
-  imagePreviewScale.value = 1;
-  imagePreviewOffset.value = { x: 0, y: 0 };
-  imagePinchStart = null;
-}
-
-function closePreviewMessage() {
-  previewMessage.value = null;
-  previewPinnedImage.value = null;
-  resetImagePreviewTransform();
-}
-
-function previewImageSrc() {
-  return previewPinnedImage.value?.url || (previewMessage.value ? fileUrl(previewMessage.value) : "");
-}
-
-function downloadPreviewImage() {
-  if (!previewPinnedImage.value) {
-    if (previewMessage.value) downloadFile(previewMessage.value);
-    return;
-  }
-  const anchor = document.createElement("a");
-  anchor.href = previewPinnedImage.value.url;
-  anchor.download = previewPinnedImage.value.fileName || "image";
-  anchor.click();
-}
-
-function clampImageScale(value: number) {
-  return Math.min(5, Math.max(1, value));
-}
-
-function imagePreviewTransform() {
-  return {
-    transform: `translate3d(${imagePreviewOffset.value.x}px, ${imagePreviewOffset.value.y}px, 0) scale(${imagePreviewScale.value})`
-  };
-}
-
-function touchDistance(touches: TouchList) {
-  const first = touches[0];
-  const second = touches[1];
-  return Math.hypot(second.clientX - first.clientX, second.clientY - first.clientY);
-}
-
-function onImagePreviewTouchStart(event: TouchEvent) {
-  if (event.touches.length === 2) {
-    imagePinchStart = { distance: touchDistance(event.touches), scale: imagePreviewScale.value };
-    return;
-  }
-  if (event.touches.length === 1) {
-    imagePanStart = {
-      x: event.touches[0].clientX,
-      y: event.touches[0].clientY,
-      offsetX: imagePreviewOffset.value.x,
-      offsetY: imagePreviewOffset.value.y
-    };
-  }
-}
-
-function onImagePreviewTouchMove(event: TouchEvent) {
-  if (event.touches.length === 2 && imagePinchStart) {
-    event.preventDefault();
-    imagePreviewScale.value = clampImageScale(imagePinchStart.scale * (touchDistance(event.touches) / Math.max(1, imagePinchStart.distance)));
-    return;
-  }
-  if (event.touches.length === 1 && imagePreviewScale.value > 1) {
-    event.preventDefault();
-    imagePreviewOffset.value = {
-      x: imagePanStart.offsetX + event.touches[0].clientX - imagePanStart.x,
-      y: imagePanStart.offsetY + event.touches[0].clientY - imagePanStart.y
-    };
-  }
-}
-
-function endImagePreviewTouch() {
-  imagePinchStart = null;
-}
-
-function onImagePreviewPointerDown(event: PointerEvent) {
-  if (event.pointerType === "touch" || imagePreviewScale.value <= 1) return;
-  imagePanStart = {
-    x: event.clientX,
-    y: event.clientY,
-    offsetX: imagePreviewOffset.value.x,
-    offsetY: imagePreviewOffset.value.y
-  };
-  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-}
-
-function onImagePreviewPointerMove(event: PointerEvent) {
-  if (event.pointerType === "touch" || imagePreviewScale.value <= 1 || !(event.buttons & 1)) return;
-  imagePreviewOffset.value = {
-    x: imagePanStart.offsetX + event.clientX - imagePanStart.x,
-    y: imagePanStart.offsetY + event.clientY - imagePanStart.y
-  };
-}
-
-function onImagePreviewWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) return;
-  event.preventDefault();
-  imagePreviewScale.value = clampImageScale(imagePreviewScale.value + (event.deltaY < 0 ? 0.18 : -0.18));
-  if (imagePreviewScale.value === 1) imagePreviewOffset.value = { x: 0, y: 0 };
-}
-
-function requestDownload(message: MessageDTO, event?: MouseEvent) {
-  downloadPromptPosition.value = positionPromptNearEvent(event, { width: 184, height: 82 });
-  pendingDownload.value = message;
-  pendingChain.value = null;
-  pendingRecall.value = null;
-  pendingMessageActions.value = null;
-  pendingPrayer.value = null;
-  selectedMember.value = null;
-}
-
-function requestPrayerPrayed(message: MessageDTO, event?: MouseEvent) {
-  if (prayerPayload(message).status !== "active") return;
-  prayerPromptPosition.value = positionPromptNearEvent(event, { width: 238, height: 104 });
-  pendingPrayer.value = message;
-  pendingChain.value = null;
-  pendingDownload.value = null;
-  pendingRecall.value = null;
-  pendingMessageActions.value = null;
-  selectedMember.value = null;
-}
-
-function fileDownloadUrl(message: MessageDTO) {
-  return `${fileUrl(message)}&download=1`;
-}
-
-async function downloadFile(message: MessageDTO) {
-  const response = await fetch(fileDownloadUrl(message), { headers: authHeaders() });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "下载失败" }));
-    alert(result.message || "下载失败");
-    pendingDownload.value = null;
-    return;
-  }
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = objectUrl;
-  link.download = message.fileName || "附件";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
-  pendingDownload.value = null;
-}
-
-function fileExtension(message: MessageDTO) {
-  return (message.fileName || "").split(".").pop()?.toLowerCase() || "";
-}
-
-function isPdfMessage(message: MessageDTO) {
-  return message.type === "file" && fileExtension(message) === "pdf";
-}
-
-function isVideoMessage(message: MessageDTO) {
-  return message.type === "file" && /\.(mp4|m4v|mov)$/i.test(message.fileName || "");
-}
-
-function canPreviewMessage(message: MessageDTO) {
-  return message.type === "image" || isVideoMessage(message) || isPdfMessage(message);
-}
-
-function isDocumentMessage(message: MessageDTO) {
-  return message.type === "file" && /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|pages|numbers|key|txt|csv)$/i.test(message.fileName || "");
-}
-
-function documentIconSrc(message: MessageDTO) {
-  const ext = fileExtension(message);
-  if (ext === "pdf") return "/images/file-icons/pdf.png";
-  if (["doc", "docx", "pages"].includes(ext)) return "/images/file-icons/word.png";
-  if (["xls", "xlsx", "numbers", "csv"].includes(ext)) return "/images/file-icons/excel.png";
-  if (["ppt", "pptx", "key"].includes(ext)) return "/images/file-icons/powerpoint.png";
-  if (["txt", "md", "rtf"].includes(ext)) return "/images/file-icons/text.png";
-  return "/images/file-icons/document.png";
-}
-
-function documentKindLabel(message: MessageDTO) {
-  const ext = fileExtension(message);
-  if (ext === "pdf") return "PDF";
-  if (["doc", "docx", "pages"].includes(ext)) return "Word 文档";
-  if (["xls", "xlsx", "numbers", "csv"].includes(ext)) return "Excel 表格";
-  if (["ppt", "pptx", "key"].includes(ext)) return "演示文稿";
-  if (["txt", "md", "rtf"].includes(ext)) return "文本文件";
-  if (["zip", "rar", "7z"].includes(ext)) return "压缩包";
-  return "文件";
-}
-
 async function jumpToReply(id: number) {
   const root = scroller.value;
   let el = root?.querySelector<HTMLElement>(`[data-message-id="${id}"]`) || null;
@@ -7225,45 +3815,6 @@ function clampMessageFontSize(value: number) {
   return Math.min(maxMessageFontSize, Math.max(minMessageFontSize, Math.round(value)));
 }
 
-function toggleChatToolsMenu() {
-  showChatToolsMenu.value = !showChatToolsMenu.value;
-  if (showChatToolsMenu.value) musicPlayerExpanded.value = false;
-}
-
-function handleMusicFavoriteUpdated(event: { trackId?: number; favorited?: boolean }) {
-  if (!Number.isFinite(event?.trackId) || typeof event?.favorited !== "boolean") return;
-  musicTracks.value = musicTracks.value.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track);
-  musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
-    ...playlist,
-    tracks: playlist.tracks.map((track) => track.id === event.trackId ? { ...track, favorited: event.favorited } : track)
-  }));
-}
-
-async function toggleCurrentMusicFavorite(track?: MusicTrackDTO | PointerEvent) {
-  const target = track && !(track instanceof PointerEvent) ? track : currentMusicTrack.value;
-  if (!target) return;
-  const favorited = !target.favorited;
-  handleMusicFavoriteUpdated({ trackId: target.id, favorited });
-  try {
-    await api(`/api/music/tracks/${target.id}/favorite`, {
-      method: "PUT",
-      body: JSON.stringify({ favorited })
-    });
-    if (!favorited && musicOnlyFavorites.value && currentMusicTrackId.value === target.id) {
-      const next = favoriteMusicTracks.value[0];
-      if (!next) {
-        pauseMusic(true);
-      } else {
-        const continuePlaying = musicPlaying.value;
-        replaceCurrentMusicTrack(next, continuePlaying);
-      }
-    }
-  } catch (error) {
-    handleMusicFavoriteUpdated({ trackId: target.id, favorited: !favorited });
-    alert(error instanceof Error ? error.message : "保存歌曲收藏失败");
-  }
-}
-
 function selectMusicTrack(track: MusicTrackDTO) {
   selectMusicTrackCore(track);
 }
@@ -7276,27 +3827,29 @@ function openMusicPlayer() {
   }
 }
 
-async function loadMusicPlaylists() {
+async function loadMusicTracks() {
   if (!store.account) return;
-  const result = await api<{ playlists: MusicPlaylistDTO[] }>("/api/music/playlists").catch(() => ({ playlists: [] }));
-  musicPlaylists.value = result.playlists;
-  const selectedId = selectedMusicPlaylistId.value;
-  if (selectedId && !musicPlaylists.value.some((playlist) => playlist.id === selectedId)) {
-    const shared = await api<{ playlist: MusicPlaylistDTO }>(`/api/music/playlists/${selectedId}`).catch(() => null);
-    if (shared?.playlist) musicPlaylists.value = [...musicPlaylists.value, shared.playlist];
-    else {
-      musicSourceKind.value = "library";
-      selectedMusicPlaylistId.value = null;
-    }
+  try {
+    const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
+    musicTracks.value = result.tracks;
+    const byId = new Map(result.tracks.map((track) => [track.id, track]));
+    musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
+      ...playlist,
+      tracks: playlist.tracks.flatMap((track) => {
+        const current = byId.get(track.id);
+        return current ? [current] : [];
+      }),
+      trackCount: playlist.tracks.filter((track) => byId.has(track.id)).length
+    }));
+    // Warming every score page of the whole library costs dozens of MB on
+    // startup; warm only the restored track's pages. The score viewer and
+    // inline previews load pages on demand.
+    const restoredTrackId = currentMusicTrack.value?.id;
+    void preloadMusicScorePages(restoredTrackId ? result.tracks.filter((track) => track.id === restoredTrackId) : []);
+    reconcileMusicTracks();
+  } catch (error) {
+    musicError.value = error instanceof Error ? error.message : "歌单加载失败";
   }
-}
-
-function openMusicManager(focus?: MusicManagerFocus) {
-  musicManagerInitialFocus.value = focus || null;
-  musicManagerOpen.value = true;
-  musicPlayerExpanded.value = false;
-  showChatToolsMenu.value = false;
-  if (focus) void nextTick(() => musicManagerRef.value?.openFocus(focus));
 }
 
 function openMusicManagerFromMiniPanel() {
@@ -7330,178 +3883,14 @@ function openSharedMusicPlaylistFromTap(message: MessageDTO) {
   void openSharedMusicPlaylist(message);
 }
 
-function closeMusicSurface() {
-  musicManagerOpen.value = false;
-  musicPlayerExpanded.value = false;
-}
-
-async function loadMusicTracks() {
-  if (!store.account) return;
-  try {
-    const result = await api<{ tracks: MusicTrackDTO[] }>("/api/music/tracks");
-    musicTracks.value = result.tracks;
-    const byId = new Map(result.tracks.map((track) => [track.id, track]));
-    musicPlaylists.value = musicPlaylists.value.map((playlist) => ({
-      ...playlist,
-      tracks: playlist.tracks.flatMap((track) => {
-        const current = byId.get(track.id);
-        return current ? [current] : [];
-      }),
-      trackCount: playlist.tracks.filter((track) => byId.has(track.id)).length
-    }));
-    // Warming every score page of the whole library costs dozens of MB on
-    // startup; warm only the restored track's pages. The score viewer and
-    // inline previews load pages on demand.
-    const restoredTrackId = currentMusicTrack.value?.id;
-    void preloadMusicScorePages(restoredTrackId ? result.tracks.filter((track) => track.id === restoredTrackId) : []);
-    reconcileMusicTracks();
-  } catch (error) {
-    musicError.value = error instanceof Error ? error.message : "歌单加载失败";
-  }
-}
-
-function handleMusicUpdated(event?: { action?: string; trackId?: number; heat?: number }) {
-  if (event?.action === "heat-updated" && Number.isFinite(event.trackId) && Number.isFinite(event.heat)) {
-    musicTracks.value = musicTracks.value.map((track) => (track.id === event.trackId ? { ...track, heat: Number(event.heat) } : track));
-    return;
-  }
-  void loadMusicTracks();
-}
-
-function handleMusicPlaylistUpdated(event?: { playlistId?: number; deleted?: boolean }) {
-  if (event?.deleted && Number.isFinite(event.playlistId)) handleMusicPlaylistDeleted(Number(event.playlistId));
-  void loadMusicPlaylists();
-}
-
-function handleMusicListeners(listeners: MusicListenerDTO[]) {
-  musicListeners.value = Array.isArray(listeners)
-    ? listeners.filter(
-        (listener) =>
-          Number.isFinite(listener?.accountId) &&
-          Number.isFinite(listener?.trackId) &&
-          typeof listener?.displayName === "string" &&
-          typeof listener?.trackTitle === "string"
-      )
-    : [];
-}
-
-function handleBookReaders(readers: BookReaderPresenceDTO[]) {
-  bookReaders.value = Array.isArray(readers)
-    ? readers.filter(
-        (reader) =>
-          Number.isFinite(reader?.accountId) &&
-          typeof reader?.displayName === "string" &&
-          typeof reader?.bookTitle === "string"
-      )
-    : [];
-}
-
-function handleBibleReaders(readers: BibleReaderPresenceDTO[]) {
-  bibleReaders.value = Array.isArray(readers)
-    ? readers.filter(
-        (reader) =>
-          Number.isFinite(reader?.accountId) &&
-          typeof reader?.displayName === "string" &&
-          (reader.bookName === null || typeof reader.bookName === "string")
-      )
-    : [];
-}
-
-const presenceEmitCache = new Map<string, string>();
-
-function emitPresence(event: string, payload: unknown) {
-  const serialized = JSON.stringify(payload ?? null);
-  if (presenceEmitCache.get(event) === serialized) return;
-  presenceEmitCache.set(event, serialized);
-  store.socket?.emit(event, payload);
-}
-
-function publishMusicListening() {
-  emitPresence("music:listening", { trackId: musicPlaying.value ? currentMusicTrack.value?.id || null : null });
-}
-
-function stopPublishingMusicListening() {
-  emitPresence("music:listening", { trackId: null });
-}
-
-function publishBibleReading() {
-  emitPresence("bible:reading", bibleReadingActivity.value);
-}
-
-function publishBookReading() {
-  emitPresence("book:reading", bookReadingActivity.value);
-}
-
-function stopPublishingBibleReading() {
-  emitPresence("bible:reading", { active: false, bookName: null });
-}
-
-function stopPublishingBookReading() {
-  emitPresence("book:reading", { active: false, bookTitle: null });
-}
-
-function handleFriendListeners(listeners: FriendListenerDTO[]) {
-  friendListeners.value = Array.isArray(listeners)
-    ? listeners.filter(
-        (listener) =>
-          Number.isFinite(listener?.accountId) &&
-          typeof listener?.displayName === "string" &&
-          typeof listener?.programId === "string" &&
-          typeof listener?.programTitle === "string"
-      )
-    : [];
-}
-
-function publishFriendListening() {
-  const program = friendListeningProgram.value;
-  emitPresence(
-    "friend:listening",
-    program ? { programId: program.id, programTitle: `${program.seriesTitle}·${program.title}`.slice(0, 200) } : null
-  );
-}
-
-function stopPublishingFriendListening() {
-  emitPresence("friend:listening", null);
-}
-
-function publishPresenceActivities() {
-  publishMusicListening();
-  publishBibleReading();
-  publishBookReading();
-  publishFriendListening();
-}
-
 function handleActivitySocketConnect() {
-  presenceEmitCache.clear();
+  clearPresenceEmitCache();
   publishPresenceActivities();
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   activityConnectRetryTimer = window.setTimeout(() => {
     activityConnectRetryTimer = undefined;
     publishPresenceActivities();
   }, 700);
-}
-
-function attachMusicSocket() {
-  store.socket?.off("music:updated", handleMusicUpdated);
-  store.socket?.on("music:updated", handleMusicUpdated);
-  store.socket?.off("music:playlist-updated", handleMusicPlaylistUpdated);
-  store.socket?.on("music:playlist-updated", handleMusicPlaylistUpdated);
-  store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
-  store.socket?.on("music:favorite-updated", handleMusicFavoriteUpdated);
-  store.socket?.off("music:listeners", handleMusicListeners);
-  store.socket?.on("music:listeners", handleMusicListeners);
-  store.socket?.off("bible:readers", handleBibleReaders);
-  store.socket?.on("bible:readers", handleBibleReaders);
-  store.socket?.off("book:readers", handleBookReaders);
-  store.socket?.on("book:readers", handleBookReaders);
-  store.socket?.off("friend:listeners", handleFriendListeners);
-  store.socket?.on("friend:listeners", handleFriendListeners);
-  store.socket?.off("connect", handleActivitySocketConnect);
-  store.socket?.on("connect", handleActivitySocketConnect);
-  if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
-  musicListenerHeartbeatTimer = window.setInterval(publishPresenceActivities, 15_000);
-  presenceEmitCache.clear();
-  publishPresenceActivities();
 }
 
 function adjustMessageFontSize(delta: number) {
@@ -7518,64 +3907,6 @@ function loadMessageFontSizePreference(accountId?: number | null) {
   if (!saved) return defaultMessageFontSize;
   if (saved in legacyMessageFontSizes) return legacyMessageFontSizes[saved];
   return clampMessageFontSize(Number(saved));
-}
-
-function toggleMessageSelectionMode() {
-  showChatToolsMenu.value = false;
-  messageSelectionMode.value = !messageSelectionMode.value;
-  selectedMessageIds.value = new Set();
-  pendingChain.value = null;
-  pendingDownload.value = null;
-  pendingRecall.value = null;
-  pendingMessageActions.value = null;
-  pendingPrayer.value = null;
-}
-
-async function startMessageSelectionMode() {
-  showAdmin.value = false;
-  messageSelectionMode.value = true;
-  selectedMessageIds.value = new Set();
-  await restoreChatSurface();
-}
-
-function toggleMessageSelected(message: MessageDTO) {
-  if (message.id <= 0) return;
-  const next = new Set(selectedMessageIds.value);
-  if (next.has(message.id)) next.delete(message.id);
-  else next.add(message.id);
-  selectedMessageIds.value = next;
-}
-
-function toggleVisibleMessageSelection() {
-  selectedMessageIds.value = visibleMessagesSelected.value ? new Set() : new Set(selectableMessages.value.map((message) => message.id));
-}
-
-async function deleteSelectedMessages() {
-  const ids = [...selectedMessageIds.value];
-  if (!ids.length) return;
-  if (!confirm(`删除选中的 ${ids.length} 条聊天记录？附件文件也会一并删除。`)) return;
-  const result = await api<{ deleted: number }>("/api/admin/messages", {
-    method: "DELETE",
-    body: JSON.stringify({ ids })
-  });
-  adminMsg.value = `已删除 ${result.deleted} 条聊天记录`;
-  selectedMessageIds.value = new Set();
-  await store.loadMessages();
-}
-
-async function pinSelectedMessages() {
-  const ids = [...selectedMessageIds.value];
-  if (!ids.length || !store.currentChannelId || !canPinCurrentChannel.value) return;
-  const result = await api<{ pinned: NonNullable<typeof store.pinned> }>(`/api/channels/${store.currentChannelId}/pinned`, {
-    method: "POST",
-    body: JSON.stringify({ messageIds: ids, active: true })
-  });
-  store.pinned = result.pinned;
-  const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
-  if (ch) ch.pinned = result.pinned;
-  pinnedExpanded.value = true;
-  selectedMessageIds.value = new Set();
-  messageSelectionMode.value = false;
 }
 
 async function collapsePinned() {
@@ -7662,99 +3993,6 @@ async function clearPinned() {
   showPinnedEditor.value = false;
 }
 
-function isImageFile(file: File) {
-  return file.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name);
-}
-
-function shouldKeepOriginalImage(file: File) {
-  return keepOriginalImages.value && isImageFile(file);
-}
-
-function uploadPickedFile(file: File) {
-  if (isMusicChannel.value && !/\.(mp3|m4a)$/i.test(file.name)) {
-    alert("音乐频道只支持上传 MP3 和 M4A 文件");
-    return Promise.resolve({ success: false, duplicate: false, skipped: false });
-  }
-  const options = { originalImage: shouldKeepOriginalImage(file) };
-  const pendingMessageId = pushPendingFileMessage(file, options);
-  return uploadFile(file, { ...options, pendingMessageId });
-}
-
-function handlePickedFile(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (file) uploadPickedFile(file);
-  input.value = "";
-}
-
-function clearPrayerComposerPhoto() {
-  if (prayerComposerPhotoPreview.value) URL.revokeObjectURL(prayerComposerPhotoPreview.value);
-  prayerComposerPhoto.value = null;
-  prayerComposerPhotoPreview.value = "";
-}
-
-async function handlePickedFiles(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = Array.from(input.files || []);
-  input.value = "";
-  if (store.prayerOnly) {
-    const image = files.find((file) => isImageFile(file));
-    if (image) {
-      clearPrayerComposerPhoto();
-      prayerComposerPhoto.value = image;
-      prayerComposerPhotoPreview.value = URL.createObjectURL(image);
-      return;
-    }
-  }
-  let skipped = 0;
-  for (const file of files) {
-    const result = await uploadPickedFile(file);
-    if (result.skipped) skipped += 1;
-  }
-  if (skipped) alert(`已按文件内容跳过 ${skipped} 首重复歌曲`);
-}
-
-function extensionFromImageMime(type: string) {
-  if (type === "image/jpeg") return "jpg";
-  if (type === "image/png") return "png";
-  if (type === "image/gif") return "gif";
-  if (type === "image/webp") return "webp";
-  if (type === "image/heic") return "heic";
-  if (type === "image/heif") return "heif";
-  if (type === "image/tiff") return "tiff";
-  return "png";
-}
-
-function namedClipboardImage(file: File, index: number) {
-  if (/\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name)) return file;
-  const extension = extensionFromImageMime(file.type);
-  return new File([file], `粘贴图片-${Date.now()}-${index + 1}.${extension}`, { type: file.type || "image/png", lastModified: file.lastModified || Date.now() });
-}
-
-function clipboardImageFiles(event: ClipboardEvent) {
-  const data = event.clipboardData;
-  if (!data) return [];
-  const files: File[] = [];
-  for (const item of Array.from(data.items || [])) {
-    if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-    const file = item.getAsFile();
-    if (file) files.push(file);
-  }
-  if (!files.length) {
-    for (const file of Array.from(data.files || [])) {
-      if (isImageFile(file)) files.push(file);
-    }
-  }
-  return files;
-}
-
-function handleComposerPaste(event: ClipboardEvent) {
-  const files = clipboardImageFiles(event);
-  if (!files.length) return;
-  event.preventDefault();
-  files.forEach((file, index) => uploadPickedFile(namedClipboardImage(file, index)));
-}
-
 async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean } = {}) {
   if (!store.currentChannelId) return { success: false, duplicate: false, skipped: false };
   const form = new FormData();
@@ -7818,172 +4056,25 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
   }
 }
 
-function pickAudioMimeType() {
-  const recorder = window.MediaRecorder;
-  const candidates = ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
-  return candidates.find((type) => recorder.isTypeSupported?.(type)) || "";
-}
-
-function audioExtensionFromMime(type: string) {
-  if (type.includes("mp4") || type.includes("aac")) return "m4a";
-  if (type.includes("ogg")) return "ogg";
-  if (type.includes("mpeg")) return "mp3";
-  if (type.includes("wav")) return "wav";
-  return "webm";
-}
-
-function clearRecordingTimer() {
-  if (recordingTimer) window.clearInterval(recordingTimer);
-  recordingTimer = undefined;
-}
-
-function resetRecording() {
-  const recorder = mediaRecorder.value;
-  const session = activeVoiceRecordingSession;
-  if (recorder && session) session.stop(recorder, "discard");
-  else if (recorder && recorder.state !== "inactive") recorder.stop();
-  previewAudioEl.value?.pause();
-  mediaRecorder.value = null;
-  activeVoiceRecordingSession = null;
-  isRecording.value = false;
-  recordingDuration.value = 0;
-  recordingStatus.value = "";
-  recordingNotice.value = "";
-  audioFile.value = null;
-  audioPreviewWaveform.value = [];
-  audioPreviewDurationMs.value = 0;
-  previewPlaying.value = false;
-  previewProgress.value = 0;
-  clearRecordingTimer();
-  void recordingWakeLock.release();
-  if (audioPreviewUrl.value) URL.revokeObjectURL(audioPreviewUrl.value);
-  audioPreviewUrl.value = "";
-}
-
-async function startRecording() {
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    alert("当前浏览器不支持录音");
-    return;
+async function handlePickedFiles(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = Array.from(input.files || []);
+  input.value = "";
+  if (store.prayerOnly) {
+    const image = files.find((file) => isImageFile(file));
+    if (image) {
+      clearPrayerComposerPhoto();
+      prayerComposerPhoto.value = image;
+      prayerComposerPhotoPreview.value = URL.createObjectURL(image);
+      return;
+    }
   }
-  resetRecording();
-  recordingStatus.value = "准备录音…";
-  let stream: MediaStream | undefined;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    });
-    const activeStream = stream;
-    const mimeType = pickAudioMimeType();
-    const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: 16000 };
-    if (mimeType) recorderOptions.mimeType = mimeType;
-    const recorder = new MediaRecorder(stream, recorderOptions);
-    const session = createVoiceRecordingSession();
-    const chunks: Blob[] = [];
-    const startedAt = Date.now();
-    mediaRecorder.value = recorder;
-    activeVoiceRecordingSession = session;
-    recorder.ondataavailable = (event) => {
-      if (event.data.size > 0) chunks.push(event.data);
-    };
-    recorder.onstop = () => {
-      const outcome = session.consumeStop();
-      const isActiveSession = activeVoiceRecordingSession === session;
-      activeStream.getTracks().forEach((track) => track.stop());
-      if (isActiveSession) {
-        recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
-        clearRecordingTimer();
-        isRecording.value = false;
-        mediaRecorder.value = null;
-        activeVoiceRecordingSession = null;
-        void recordingWakeLock.release();
-      }
-      if (!outcome.keepPreview || !isActiveSession) return;
-      const type = recorder.mimeType || mimeType || "audio/webm";
-      const blob = new Blob(chunks, { type });
-      if (!blob.size) {
-        recordingStatus.value = "没有录到声音";
-        recordingNotice.value = outcome.reason === "interrupted" ? "录音被系统提前中断，而且没有保留下声音。请保持屏幕亮起并停留在聊天室后重录。" : "";
-        return;
-      }
-      const ext = audioExtensionFromMime(type);
-      audioFile.value = new File([blob], `语音消息-${Date.now()}.${ext}`, { type });
-      audioPreviewUrl.value = URL.createObjectURL(blob);
-      audioPreviewDurationMs.value = recordingDuration.value;
-      audioPreviewWaveform.value = fallbackWaveform(Date.now());
-      void analyzeAudioBlob(blob).then((result) => {
-        audioPreviewDurationMs.value = result.durationMs || recordingDuration.value;
-        audioPreviewWaveform.value = result.waveform;
-      });
-      recordingStatus.value = "录音已完成";
-      recordingNotice.value = outcome.reason === "interrupted"
-        ? "录音被系统提前中断，下面只保留了中断前的部分。请保持屏幕亮起并停留在聊天室后重录。"
-        : "";
-    };
-    recorder.onerror = () => {
-      if (activeVoiceRecordingSession === session) recordingStatus.value = "录音发生错误，正在保留已录部分";
-    };
-    session.start(recorder);
-    isRecording.value = true;
-    recordingStatus.value = "正在录音";
-    recordingTimer = window.setInterval(() => {
-      recordingDuration.value = Date.now() - startedAt;
-    }, 250);
-    void recordingWakeLock.acquire().then((held) => {
-      if (!held && activeVoiceRecordingSession === session && isRecording.value) {
-        recordingStatus.value = "正在录音，请保持屏幕亮起";
-      }
-    });
-  } catch {
-    stream?.getTracks().forEach((track) => track.stop());
-    recordingStatus.value = "";
-    composerPanel.value = null;
-    alert("无法开始录音，请允许麦克风权限");
+  let skipped = 0;
+  for (const file of files) {
+    const result = await uploadPickedFile(file);
+    if (result.skipped) skipped += 1;
   }
-}
-
-function stopRecording() {
-  const recorder = mediaRecorder.value;
-  if (!recorder || recorder.state === "inactive") return;
-  if (activeVoiceRecordingSession) activeVoiceRecordingSession.stop(recorder, "user");
-  else recorder.stop();
-}
-
-async function sendVoice() {
-  if (!audioFile.value || voiceSending.value) return;
-  const file = audioFile.value;
-  const options = { durationMs: audioPreviewDurationMs.value || recordingDuration.value, waveform: audioPreviewWaveform.value };
-  const pendingMessageId = pushPendingVoiceMessage(file, options);
-  if (!pendingMessageId) return;
-  voiceSending.value = true;
-  resetRecording();
-  composerPanel.value = null;
-  try {
-    await uploadFile(file, { voice: true, ...options, pendingMessageId });
-  } finally {
-    voiceSending.value = false;
-  }
-}
-
-function removePendingMessage(id: number) {
-  store.removeMessage(id);
-  removePendingUpload(id);
-}
-
-async function retryPendingUpload(id: number) {
-  const upload = pendingUploads.value[id];
-  if (!upload || upload.status !== "failed") return;
-  setPendingUpload(id, { status: "uploading", progress: 0, message: "" });
-  await uploadFile(upload.file, { ...upload.options, pendingMessageId: id });
-}
-
-function formatDuration(ms: number) {
-  const seconds = Math.max(0, Math.floor(ms / 1000));
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+  if (skipped) alert(`已按文件内容跳过 ${skipped} 首重复歌曲`);
 }
 
 function isAudioMessage(message: MessageDTO) {
@@ -8008,46 +4099,8 @@ function hasUnlistenedVoice(message: MessageDTO) {
   return isVoiceMessage(message) && message.sender.id !== store.account?.actorId && !message.voiceListened;
 }
 
-function fallbackWaveform(seed: number, bars = 48) {
-  return Array.from({ length: bars }, (_, index) => {
-    const value = Math.abs(Math.sin((index + 1) * 1.37 + seed * 0.013) * 0.75 + Math.sin(index * 0.41) * 0.25);
-    return Math.min(1, Math.max(0.16, value));
-  });
-}
-
-async function analyzeAudioBlob(blob: Blob, bars = 48) {
-  const fallback = { durationMs: audioPreviewDurationMs.value || recordingDuration.value, waveform: fallbackWaveform(Date.now(), bars) };
-  try {
-    const AudioContextCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!AudioContextCtor) return fallback;
-    const context = new AudioContextCtor();
-    const buffer = await context.decodeAudioData(await blob.arrayBuffer());
-    const channel = buffer.getChannelData(0);
-    const blockSize = Math.max(1, Math.floor(channel.length / bars));
-    const waveform = Array.from({ length: bars }, (_, index) => {
-      const start = index * blockSize;
-      const end = Math.min(channel.length, start + blockSize);
-      let sum = 0;
-      for (let cursor = start; cursor < end; cursor += 1) sum += Math.abs(channel[cursor]);
-      return sum / Math.max(1, end - start);
-    });
-    await context.close();
-    const max = Math.max(...waveform, 0.01);
-    return { durationMs: Math.round(buffer.duration * 1000), waveform: waveform.map((bar) => Math.min(1, Math.max(0.1, bar / max))) };
-  } catch {
-    return fallback;
-  }
-}
-
 function voiceDurationMs(message: MessageDTO) {
   return audioPayload(message).durationMs || 0;
-}
-
-function voiceBarStyle(bar: number, index: number, total: number, progress: number) {
-  return {
-    height: `${Math.round(7 + bar * 25)}px`,
-    opacity: index / Math.max(1, total) <= progress ? 1 : 0.52
-  };
 }
 
 async function markVoiceListened(message: MessageDTO) {
@@ -8058,34 +4111,6 @@ async function markVoiceListened(message: MessageDTO) {
   } catch {
     message.voiceListened = false;
   }
-}
-
-function togglePreviewPlayback() {
-  const audio = previewAudioEl.value;
-  if (!audio) return;
-  if (previewPlaying.value) {
-    audio.pause();
-    previewPlaying.value = false;
-    return;
-  }
-  void audio.play();
-  previewPlaying.value = true;
-}
-
-function updatePreviewProgress() {
-  const audio = previewAudioEl.value;
-  if (!audio?.duration) return;
-  previewProgress.value = Math.min(1, Math.max(0, audio.currentTime / audio.duration));
-}
-
-function syncPreviewMetadata() {
-  const audio = previewAudioEl.value;
-  if (audio?.duration) audioPreviewDurationMs.value = Math.round(audio.duration * 1000);
-}
-
-function endPreviewPlayback() {
-  previewPlaying.value = false;
-  previewProgress.value = 0;
 }
 
 function scrollBottom(smooth = true) {
@@ -8472,99 +4497,6 @@ function pinnedFileUrl(block: PinnedMediaBlock) {
   return `/api/channels/${store.currentChannelId}/pinned/files/${encodeURIComponent(block.filePath)}?token=${encodeURIComponent(getToken())}`;
 }
 
-function prayerPayload(message: MessageDTO): PrayerPayload {
-  const raw = (message.payload || {}) as Partial<PrayerPayload>;
-  const status = raw.status === "closed" || raw.status === "answered" ? raw.status : "active";
-  return {
-    kind: "prayer",
-    status,
-    statusAt: raw.statusAt,
-    statusBy: raw.statusBy,
-    effect: raw.effect,
-    imageMessageId: Number(raw.imageMessageId || 0) > 0 ? Number(raw.imageMessageId) : null,
-    updates: Array.isArray(raw.updates) ? raw.updates : [],
-    prayerCount: Number(raw.prayerCount || 0),
-    prayerActionCount: Number(raw.prayerActionCount || 0),
-    currentUserPrayed: !!raw.currentUserPrayed,
-    prayedBy: Array.isArray(raw.prayedBy) ? raw.prayedBy : [],
-    aiSuggestions: Array.isArray(raw.aiSuggestions) ? raw.aiSuggestions : [],
-    aiSuggestionSuccessCount: Number(raw.aiSuggestionSuccessCount || 0),
-    aiSuggestionMaxSuccess: Number(raw.aiSuggestionMaxSuccess || 7)
-  };
-}
-
-function prayerStatusText(status: PrayerStatus) {
-  if (status === "answered") return "已蒙应允";
-  if (status === "closed") return "无需再代祷";
-  return "正在代祷";
-}
-
-function prayerActionText(message: MessageDTO) {
-  const payload = prayerPayload(message);
-  if (!payload.prayerCount) return "还没有人记录祷告";
-  const names = payload.prayedBy
-    .slice(0, 3)
-    .map((item) => item.displayName)
-    .join("、");
-  return `${names}${payload.prayerCount > 3 ? ` 等 ${payload.prayerCount} 人` : ""} 已为此祷告`;
-}
-
-function prayerLatestTime(message: MessageDTO) {
-  const latest = prayerPayload(message).prayedBy[0]?.latestPrayedAt;
-  return latest ? adminDate(latest) : "";
-}
-
-function prayerImageUrl(imageMessageId: number) {
-  return `/api/files/${imageMessageId}?token=${encodeURIComponent(getToken())}`;
-}
-
-function openPrayerImage(message: MessageDTO, imageMessageId: number, event?: MouseEvent) {
-  if (event) event.stopPropagation();
-  openAttachmentFromTap({ id: imageMessageId, channelId: message.channelId, type: "image" } as MessageDTO, event);
-}
-
-function prayerAiSuggestions(message: MessageDTO) {
-  return prayerPayload(message).aiSuggestions || [];
-}
-
-function prayerAiSuggestionCount(message: MessageDTO) {
-  return prayerPayload(message).aiSuggestionSuccessCount || 0;
-}
-
-function prayerAiSuggestionMax(message: MessageDTO) {
-  return prayerPayload(message).aiSuggestionMaxSuccess || 7;
-}
-
-function prayerAiLimitReached(message: MessageDTO) {
-  return prayerAiSuggestionCount(message) >= prayerAiSuggestionMax(message);
-}
-
-function isPrayerAiExpanded(message: MessageDTO) {
-  return expandedAiSuggestionMessageIds.value.has(message.id);
-}
-
-function isPrayerAiBusy(message: MessageDTO) {
-  return aiSuggestionBusyIds.value.has(message.id);
-}
-
-function setPrayerAiExpanded(message: MessageDTO, expanded: boolean) {
-  const next = new Set(expandedAiSuggestionMessageIds.value);
-  if (expanded) next.add(message.id);
-  else next.delete(message.id);
-  expandedAiSuggestionMessageIds.value = next;
-}
-
-function setPrayerAiBusy(message: MessageDTO, busy: boolean) {
-  const next = new Set(aiSuggestionBusyIds.value);
-  if (busy) next.add(message.id);
-  else next.delete(message.id);
-  aiSuggestionBusyIds.value = next;
-}
-
-function setPrayerAiError(message: MessageDTO, text = "") {
-  aiSuggestionErrors.value = { ...aiSuggestionErrors.value, [message.id]: text };
-}
-
 function bibleReferenceKey(scope: string | number, reference: string) {
   return `${scope}:${reference}`;
 }
@@ -8718,937 +4650,12 @@ async function openBibleReferenceInWorkspace(scope: string | number, reference: 
   await bibleWorkspace.value?.openLookupContext(lookup);
 }
 
-async function togglePrayerAiSuggestions(message: MessageDTO) {
-  const hasSuggestions = prayerAiSuggestions(message).length > 0;
-  if (!hasSuggestions && !isPrayerAiBusy(message)) {
-    setPrayerAiExpanded(message, true);
-    await generatePrayerAiSuggestions(message);
-    return;
-  }
-  setPrayerAiExpanded(message, !isPrayerAiExpanded(message));
-}
-
-async function generatePrayerAiSuggestions(message: MessageDTO) {
-  if (isPrayerAiBusy(message) || prayerAiLimitReached(message)) return;
-  setPrayerAiExpanded(message, true);
-  setPrayerAiBusy(message, true);
-  setPrayerAiError(message);
-  try {
-    const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/ai-suggestions/related-verses`, {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    store.replaceMessage(result.message);
-  } catch (error) {
-    setPrayerAiError(message, error instanceof Error ? error.message : "生成失败，可以稍后重试。");
-  } finally {
-    setPrayerAiBusy(message, false);
-  }
-}
-
-async function markPrayerPrayed(message: MessageDTO) {
-  await api(`/api/messages/${message.id}/prayed`, { method: "POST", body: JSON.stringify({}) });
-  pendingPrayer.value = null;
-  await store.loadMessages();
-}
-
-async function updatePrayerStatus(message: MessageDTO, status: "closed" | "answered") {
-  await api(`/api/messages/${message.id}/prayer-status`, { method: "PATCH", body: JSON.stringify({ status }) });
-  await store.loadMessages();
-}
-
-function canPublishPrayerUpdate(message: MessageDTO) {
-  return message.type === "prayer" && (isMine(message) || !!store.account?.isAdmin);
-}
-
-function buildPrayerUpdateHtml() {
-  return escapeHtmlText(prayerUpdateContent.value.trim());
-}
-
-const prayerUpdateCanPublish = computed(() => {
-  return !!prayerUpdateContent.value.trim();
-});
-
-function clearPrayerUpdatePhoto() {
-  if (prayerUpdatePhotoPreview.value) URL.revokeObjectURL(prayerUpdatePhotoPreview.value);
-  prayerUpdatePhoto.value = null;
-  prayerUpdatePhotoPreview.value = "";
-  if (prayerUpdatePhotoInput.value) prayerUpdatePhotoInput.value.value = "";
-}
-
-function openPrayerUpdateEditor(message: MessageDTO) {
-  pendingPrayerUpdate.value = message;
-  prayerUpdateContent.value = "";
-  prayerUpdateError.value = "";
-  prayerUpdateBusy.value = false;
-  clearPrayerUpdatePhoto();
-}
-
-function closePrayerUpdateEditor() {
-  if (prayerUpdateBusy.value) return;
-  pendingPrayerUpdate.value = null;
-  prayerUpdateContent.value = "";
-  prayerUpdateError.value = "";
-  clearPrayerUpdatePhoto();
-}
-
-function handlePrayerUpdatePhotoPick(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  if (!file) return;
-  clearPrayerUpdatePhoto();
-  prayerUpdatePhoto.value = file;
-  prayerUpdatePhotoPreview.value = URL.createObjectURL(file);
-  prayerUpdateError.value = "";
-}
-
-async function uploadPrayerImage(file: File, channelId: number) {
-  const form = new FormData();
-  form.append("channelId", String(channelId));
-  form.append("file", file, file.name);
-  const result = await api<{ success: boolean; message?: MessageDTO }>("/api/files/upload", { method: "POST", body: form });
-  if (!result.message?.id) throw new Error("照片上传失败");
-  return result.message.id;
-}
-
-async function publishPrayerUpdate() {
-  const message = pendingPrayerUpdate.value;
-  const content = buildPrayerUpdateHtml();
-  if (!message || !prayerUpdateCanPublish.value || prayerUpdateBusy.value) return;
-  prayerUpdateBusy.value = true;
-  prayerUpdateError.value = "";
-  try {
-    const imageMessageId = prayerUpdatePhoto.value ? await uploadPrayerImage(prayerUpdatePhoto.value, message.channelId) : null;
-    const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/prayer-update`, {
-      method: "POST",
-      body: JSON.stringify({ content, imageMessageId })
-    });
-    if (result.message) store.appendLocalMessage(result.message);
-    pendingPrayerUpdate.value = null;
-    prayerUpdateContent.value = "";
-    clearPrayerUpdatePhoto();
-    await nextTick();
-    scrollBottom(true);
-  } catch (error) {
-    prayerUpdateError.value = error instanceof Error ? error.message : "更新最新动态失败";
-  } finally {
-    prayerUpdateBusy.value = false;
-  }
-}
-
-async function withdrawPrayer(message: MessageDTO) {
-  if (!confirm("撤回这条代祷事项？")) return;
-  await api(`/api/messages/${message.id}/prayer`, { method: "DELETE" });
-  await store.loadMessages();
-}
-
 function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
 
-function recallRemainingMs(message: MessageDTO) {
-  return 120_000 - (Date.now() - new Date(message.createdAt).getTime());
-}
-
-function canRecallMessage(message: MessageDTO) {
-  return message.id > 0 && message.type !== "system" && isMine(message) && recallRemainingMs(message) > 0;
-}
-
-function recallRemainingText(message: MessageDTO) {
-  const seconds = Math.max(0, Math.ceil(recallRemainingMs(message) / 1000));
-  return `${seconds} 秒内可撤回`;
-}
-
-function openRecallPrompt(message: MessageDTO, event?: MouseEvent) {
-  recallPromptPosition.value = positionPromptNearEvent(event, { width: 210, height: 104 });
-  pendingRecall.value = message;
-  closeChainJoin();
-  pendingDownload.value = null;
-  pendingMessageActions.value = null;
-  pendingPrayer.value = null;
-  selectedMember.value = null;
-}
-
-async function recallPendingMessage() {
-  const message = pendingRecall.value;
-  if (!message) return;
-  try {
-    await api(`/api/messages/${message.id}/recall`, { method: "POST", body: JSON.stringify({}) });
-    pendingRecall.value = null;
-    await store.loadMessages();
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "撤回失败");
-  }
-}
-
 function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
   return channel?.icon ? wallpaperUrl(channel.icon) : "/images/icon-192.png";
-}
-
-async function saveNotice() {
-  if (!store.currentChannelId) return;
-  const result = await api<{ pinned: NonNullable<typeof store.pinned> | null }>(`/api/channels/${store.currentChannelId}/pinned`, {
-    method: "POST",
-    body: JSON.stringify({
-      body: { blocks: noticeText.value.trim() ? [{ id: "notice", type: "text", text: noticeText.value }] : [] },
-      active: !!noticeText.value.trim()
-    })
-  });
-  store.pinned = result.pinned;
-  adminMsg.value = "已更新置顶";
-}
-
-async function loadAdmin() {
-  showChatToolsMenu.value = false;
-  saveReadPosition();
-  showAdmin.value = true;
-  adminPage.value = "home";
-  adminPageError.value = "";
-  adminMsg.value = "";
-  if (!isAdmin.value) return;
-  noticeText.value = pinnedBlocks.value.filter((block) => block.type === "text").map((block) => block.text).join("\n");
-}
-
-async function loadAdminChannels(page = adminDirectPage.value) {
-  if (!isAdmin.value) return;
-  const params = new URLSearchParams({
-    directPage: String(page),
-    directPageSize: String(adminDirectPageSize)
-  });
-  if (adminDirectQuery.value.trim()) params.set("q", adminDirectQuery.value.trim());
-  const result = await api<{
-    channels: AdminChannelDTO[];
-    directConversations: AdminChannelDTO[];
-    directTotal: number;
-    directPage: number;
-  }>(`/api/admin/channels?${params.toString()}`);
-  adminChannels.value = result.channels.filter(Boolean);
-  adminDirectConversations.value = result.directConversations.filter(Boolean);
-  adminDirectTotal.value = result.directTotal;
-  adminDirectPage.value = result.directPage;
-  syncChannelEdits();
-}
-
-async function openAdminPage(page: AdminPage) {
-  const wasAppearancePage = adminAppearancePages.has(adminPage.value);
-  const nextIsAppearancePage = adminAppearancePages.has(page);
-  if (wasAppearancePage && !nextIsAppearancePage && page !== "appearance") {
-    abandonAppearanceDraft();
-    appearancePreviewOpen.value = false;
-  }
-  adminPage.value = page;
-  adminPageError.value = "";
-  adminMsg.value = "";
-  const sectionByPage: Partial<Record<AdminPage, AppearanceSection>> = {
-    appearanceBrand: "brand",
-    appearanceLogin: "login",
-    appearanceChat: "chat",
-    appearanceParallax: "parallax",
-    appearanceThemes: "themes",
-    appearanceFlash: "flash"
-  };
-  if (sectionByPage[page]) appearanceSection.value = sectionByPage[page]!;
-  adminPageLoading.value = true;
-  try {
-    if (page === "channels") await loadAdminChannels();
-    if (nextIsAppearancePage || page === "resources") await loadAdminAttachments();
-    if (page === "backups") await loadAdminBackups();
-    if (page === "release") await Promise.all([checkForUpdates(), ensureReleaseHistory()]);
-  } catch (error) {
-    adminPageError.value = error instanceof Error ? error.message : "页面加载失败，请稍后重试";
-  } finally {
-    adminPageLoading.value = false;
-  }
-}
-
-function openAdminChannelDetail(channel: AdminChannelDTO) {
-  adminSelectedChannelId.value = channel.id;
-  void openAdminPage("channelDetail");
-}
-
-function returnFromAdminPage() {
-  if (adminPage.value === "channelDetail") {
-    void openAdminPage("channels");
-    return;
-  }
-  if (adminAppearancePages.has(adminPage.value)) {
-    void openAdminPage("appearance");
-    return;
-  }
-  if (["backups", "messages", "resources", "demo"].includes(adminPage.value)) {
-    void openAdminPage("data");
-    return;
-  }
-  void openAdminPage("home");
-}
-
-function searchDirectConversations() {
-  adminDirectPage.value = 1;
-  void openAdminPage("channels");
-}
-
-function changeDirectConversationPage(delta: number) {
-  const nextPage = Math.min(adminDirectPageCount.value, Math.max(1, adminDirectPage.value + delta));
-  if (nextPage === adminDirectPage.value) return;
-  adminDirectPage.value = nextPage;
-  void openAdminPage("channels");
-}
-
-async function loadMcStatus() {
-  try {
-    const result = await api<{ sessions: any[] }>("/api/admin/multichar/status");
-    if (result.sessions && result.sessions.length > 0) {
-      mcStatus.value = result.sessions[0];
-      mcSelectedChannelId.value = result.sessions[0].channelId ?? null;
-    } else {
-      mcStatus.value = null;
-    }
-  } catch { mcStatus.value = null; }
-}
-
-async function startMultichar() {
-  if (!mcSelectedChannelId.value || mcSelectedCharacterIds.value.length === 0) {
-    mcMsg.value = "请选择频道和至少一个角色";
-    return;
-  }
-  mcBusy.value = true;
-  mcMsg.value = "";
-  try {
-    const result = await api<{ session: any }>("/api/admin/multichar/start", {
-      method: "POST",
-      body: JSON.stringify({
-        channelId: mcSelectedChannelId.value,
-        characterIds: mcSelectedCharacterIds.value,
-      }),
-    });
-    mcStatus.value = result.session;
-    mcMsg.value = "已启动";
-  } catch (e: any) {
-    mcMsg.value = e?.message || "启动失败";
-  } finally {
-    mcBusy.value = false;
-  }
-}
-
-async function stopMultichar() {
-  if (!mcSelectedChannelId.value) return;
-  mcBusy.value = true;
-  try {
-    await api("/api/admin/multichar/stop", {
-      method: "POST",
-      body: JSON.stringify({ channelId: mcSelectedChannelId.value }),
-    });
-    mcStatus.value = null;
-    mcMsg.value = "已停止";
-  } catch (e: any) {
-    mcMsg.value = e?.message || "停止失败";
-  } finally {
-    mcBusy.value = false;
-  }
-}
-
-function toggleMcCharacter(id: number) {
-  const idx = mcSelectedCharacterIds.value.indexOf(id);
-  if (idx >= 0) mcSelectedCharacterIds.value.splice(idx, 1);
-  else mcSelectedCharacterIds.value.push(id);
-}
-
-async function loadAdminData() {
-  await Promise.all([loadAdminAttachments(), loadAdminBackups()]);
-}
-
-async function loadAdminAttachments() {
-  adminAttachmentsLoading.value = true;
-  adminAttachmentsError.value = "";
-  try {
-    const result = await api<{ attachments: AdminAttachmentDTO[] }>("/api/admin/attachments");
-    adminAttachments.value = result.attachments;
-  } catch (error) {
-    adminAttachmentsError.value = error instanceof Error ? error.message : "资源索引加载失败";
-  } finally {
-    adminAttachmentsLoading.value = false;
-  }
-}
-
-async function loadAdminBackups() {
-  const result = await api<{ backups: AdminBackupDTO[] }>("/api/admin/backups");
-  adminBackups.value = result.backups;
-}
-
-function adminDate(value?: string | null) {
-  if (!value) return "";
-  return new Date(value).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
-}
-
-function adminDateTime(value?: string | null) {
-  if (!value) return "";
-  return new Date(value).toLocaleString("zh-CN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function loginLogKindLabel(kind: AdminLoginLogKind) {
-  const labels: Record<AdminLoginLogKind, string> = {
-    auth_login: "登录",
-    auth_logout: "退出登录",
-    session_replaced: "旧设备被新登录替换",
-    session_revoked: "设备被撤销",
-    presence_join: "进入聊天",
-    presence_leave: "离开聊天",
-    music_progress: "歌曲进度",
-    channel_view: "查看频道",
-    message_sent: "发送消息"
-  };
-  return labels[kind] || kind;
-}
-
-function loginLogTone(kind: AdminLoginLogKind) {
-  if (kind === "auth_login" || kind === "presence_join") return "enter";
-  if (kind === "auth_logout" || kind === "presence_leave") return "leave";
-  if (kind === "music_progress") return "music";
-  if (kind === "channel_view" || kind === "message_sent") return "usage";
-  return "system";
-}
-
-function displayedDeviceName(log: Pick<AdminLoginLogDTO, "deviceName" | "userAgent"> | Pick<DeviceSessionDTO, "deviceName">) {
-  return friendlyDeviceName(log.deviceName, "userAgent" in log ? log.userAgent || "" : "");
-}
-
-function activityStateLabel(state?: string | null) {
-  const labels: Record<string, string> = {
-    started: "开始 / 恢复",
-    progress: "播放中",
-    paused: "暂停",
-    changed: "切换歌曲",
-    ended: "播放完毕",
-    error: "播放出错",
-    text: "文字消息",
-    prayer: "代祷消息"
-  };
-  return state ? labels[state] || state : "";
-}
-
-function activityDuration(value?: number | null) {
-  const totalSeconds = Math.max(0, Math.round((value || 0) / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  return [hours ? `${hours} 小时` : "", minutes ? `${minutes} 分` : "", `${seconds} 秒`].filter(Boolean).join(" ");
-}
-
-function musicProgressSummary(log: AdminLoginLogDTO) {
-  const durationMs = Math.max(1, log.durationMs || 0);
-  const percent = Math.min(100, Math.max(0, Math.round(((log.progressMs || 0) / durationMs) * 100)));
-  return `进度 ${activityDuration(log.progressMs)} / ${activityDuration(log.durationMs)}（${percent}%） · 自然收听 ${activityDuration(log.listenedMs)}`;
-}
-
-function backgroundAttachmentLabel(item: AdminAttachmentDTO) {
-  const usage = item.usage.length ? item.usage.join("、") : "未使用";
-  const date = adminDate(item.createdAt);
-  return `${date ? `${date} · ` : ""}${usage} · ${item.label}`;
-}
-
-function isImageAttachmentId(id: string) {
-  const fileName = id.split(":").slice(1).join(":");
-  return /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(fileName);
-}
-
-async function clearAdminMessages(channelId = dataChannelFilter.value) {
-  const channel = channelId ? store.channels.find((item) => item.id === channelId) : null;
-  const label = channel ? `频道“${channel.name}”` : "全部频道";
-  if (!confirm(`清除${label}的所有聊天记录？相关上传文件也会删除。`)) return;
-  const url = channelId ? `/api/admin/messages?channelId=${channelId}` : "/api/admin/messages";
-  const result = await api<{ deleted: number }>(url, { method: "DELETE" });
-  adminMsg.value = `已清除 ${result.deleted} 条聊天记录`;
-  await loadAdminData();
-  await store.loadChannels(channelId || store.currentChannelId);
-}
-
-async function deleteAdminAttachments(ids: string[]) {
-  if (!ids.length) return;
-  if (!confirm(`删除选中的 ${ids.length} 个附件？关联消息会保留为删除提示。`)) return;
-  const result = await api<{ deleted: number; requested: number }>("/api/admin/attachments", {
-    method: "DELETE",
-    body: JSON.stringify({ ids })
-  });
-  adminMsg.value = `已删除 ${result.deleted} 个文件，处理 ${result.requested} 条附件记录`;
-  await loadAdminData();
-  await store.loadChannels(store.currentChannelId);
-}
-
-async function deleteAllAdminAttachments() {
-  if (!adminAttachments.value.length) return;
-  if (!confirm("删除所有上传文件、语音、头像和壁纸？关联消息会保留为删除提示，外观引用会被移除。")) return;
-  const result = await api<{ deleted: number; requested: number }>("/api/admin/attachments", {
-    method: "DELETE",
-    body: JSON.stringify({ all: true })
-  });
-  adminMsg.value = `已删除 ${result.deleted} 个文件，处理 ${result.requested} 条附件记录`;
-  await loadAdminData();
-  await store.loadChannels(store.currentChannelId);
-}
-
-async function createAdminBackup() {
-  if (adminBackupBusy.value) return;
-  adminBackupBusy.value = true;
-  adminMsg.value = "正在创建完整备份...";
-  try {
-    const result = await api<{ backup?: AdminBackupDTO }>("/api/admin/backups", { method: "POST" });
-    await loadAdminBackups();
-    if (result.backup) {
-      await downloadAdminFile(result.backup.url, result.backup.fileName);
-      adminMsg.value = `备份已创建并开始下载：${result.backup.fileName}`;
-    } else {
-      adminMsg.value = "备份已创建";
-    }
-  } catch (e: any) {
-    adminMsg.value = e?.message || "备份失败";
-  } finally {
-    adminBackupBusy.value = false;
-  }
-}
-
-async function deleteAdminBackup(backup: AdminBackupDTO) {
-  if (!confirm(`删除备份“${backup.fileName}”？`)) return;
-  const result = await api<{ backups: AdminBackupDTO[] }>(backup.url, { method: "DELETE" });
-  adminBackups.value = result.backups;
-  adminMsg.value = "备份已删除";
-}
-
-async function compressAdminAttachments(ids: string[]) {
-  const targets = ids.filter(isImageAttachmentId);
-  if (!targets.length) return;
-  const result = await api<{ compressed: number; skipped: number; savedBytes: number; attachments: AdminAttachmentDTO[] }>("/api/admin/attachments/compress", {
-    method: "POST",
-    body: JSON.stringify({ ids: targets })
-  });
-  adminMsg.value = `已压缩 ${result.compressed} 张图片，跳过 ${result.skipped} 张，节省 ${compactBytes(result.savedBytes)}`;
-  adminAttachments.value = result.attachments;
-  await store.loadChannels(store.currentChannelId);
-}
-
-function syncChannelEdits() {
-  const rows = adminChannelRows.value;
-  channelEdits.value = Object.fromEntries(
-    rows.map((channel) => [
-      channel.id,
-      {
-        name: channel.name,
-        description: channel.description || "",
-        listColor: channel.listColor || "#e8f4ec",
-        useListColor: !!channel.listColor
-      }
-    ])
-  );
-}
-
-async function downloadAdminFile(url: string, filename: string) {
-  const response = await fetch(url, { headers: authHeaders() });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "下载失败" }));
-    alert(result.message || "下载失败");
-    return;
-  }
-  const blob = await response.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = objectUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(objectUrl);
-}
-
-async function importAdminFile(url: string, event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(url, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "导入失败" }));
-    alert(result.message || "导入失败");
-    return;
-  }
-  await store.loadChannels();
-  syncChannelEdits();
-  adminMsg.value = "导入完成";
-}
-
-function setAppearanceDraftImage(field: AppearanceImageField, fileName: string | null, message: string) {
-  loginAppearanceEdit.value[field] = fileName;
-  adminMsg.value = message;
-}
-
-function openAppearanceImagePicker(field: AppearanceImageField, title: string, hint: string, fitField?: AppearanceFitField) {
-  appearanceImagePicker.value = { field, title, hint, fitField };
-  void loadAdminAttachments().catch(() => undefined);
-}
-
-function closeAppearanceImagePicker() {
-  appearanceImagePicker.value = null;
-}
-
-async function uploadAppearanceImage(event: Event, url: string, field: AppearanceImageField, failureMessage: string, successMessage: string) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(url, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: failureMessage }));
-    alert(result.message || failureMessage);
-    return;
-  }
-  const result = (await response.json()) as { fileName: string; url?: string };
-  setAppearanceDraftImage(field, result.fileName, successMessage);
-  await loadAdminAttachments().catch(() => undefined);
-}
-
-async function uploadAppearanceImageForPicker(event: Event) {
-  const picker = appearanceImagePicker.value;
-  if (!picker) return;
-  const uploadConfig: Record<AppearanceImageField, { url: string; failure: string; success: string }> = {
-    appIconPath: { url: "/api/admin/appearance/app-icon", failure: "标签页图标上传失败", success: "标签页图标已上传并选入草稿，保存后生效" },
-    loginIconPath: { url: "/api/admin/appearance/login-icon", failure: "登录页图标上传失败", success: "登录页图标已上传并选入草稿，保存后生效" },
-    loginBackgroundPath: { url: "/api/admin/appearance/login-background", failure: "登录页背景上传失败", success: "登录页背景已上传并选入草稿，保存后生效" },
-    wallpaperPath: { url: "/api/admin/appearance/wallpaper", failure: "壁纸上传失败", success: "壁纸已上传并选入草稿，保存后生效" }
-  };
-  const config = uploadConfig[picker.field];
-  await uploadAppearanceImage(event, config.url, picker.field, config.failure, config.success);
-}
-
-function createParallaxKit() {
-  const suffix = `${Date.now().toString(36)}-${randomId().slice(0, 8)}`;
-  const kit: ParallaxKitDTO = {
-    id: `custom-${suffix}`,
-    name: `自定义卷轴 ${loginAppearanceEdit.value.parallaxKits.filter((item) => !item.builtIn).length + 1}`,
-    description: "上传透明 PNG，并按从后到前排列图层。",
-    credit: "",
-    builtIn: false,
-    layers: []
-  };
-  loginAppearanceEdit.value.parallaxKits.push(kit);
-  loginAppearanceEdit.value.parallaxKit = kit.id;
-  adminMsg.value = "已创建卷轴套件草稿，请上传至少一个图层";
-}
-
-function deleteParallaxKit(kit: ParallaxKitDTO) {
-  if (kit.builtIn || !confirm(`删除卷轴套件“${kit.name}”？已上传的文件仍保留在服务器。`)) return;
-  loginAppearanceEdit.value.parallaxKits = loginAppearanceEdit.value.parallaxKits.filter((item) => item.id !== kit.id);
-  if (loginAppearanceEdit.value.parallaxKit === kit.id) loginAppearanceEdit.value.parallaxKit = "none";
-}
-
-function restoreBuiltInParallaxKit() {
-  const defaultKit = cleanParallaxKits(DEFAULT_PARALLAX_KITS).find((kit) => kit.id === "rural");
-  if (!defaultKit) return;
-  const index = loginAppearanceEdit.value.parallaxKits.findIndex((kit) => kit.id === "rural");
-  if (index >= 0) loginAppearanceEdit.value.parallaxKits.splice(index, 1, defaultKit);
-  else loginAppearanceEdit.value.parallaxKits.unshift(defaultKit);
-  loginAppearanceEdit.value.parallaxKit = "rural";
-  adminMsg.value = "乡野河谷已恢复官方层序和速度草稿";
-}
-
-function moveParallaxLayer(index: number, direction: -1 | 1) {
-  const kit = draftParallaxKit.value;
-  const target = index + direction;
-  if (!kit || target < 0 || target >= kit.layers.length) return;
-  const [layer] = kit.layers.splice(index, 1);
-  if (layer) kit.layers.splice(target, 0, layer);
-}
-
-function removeParallaxLayer(index: number) {
-  const kit = draftParallaxKit.value;
-  if (!kit) return;
-  kit.layers.splice(index, 1);
-}
-
-function pickParallaxLayer() {
-  if (!draftParallaxKit.value) createParallaxKit();
-  parallaxLayerInput.value?.click();
-}
-
-async function uploadParallaxLayer(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = "";
-  const kit = draftParallaxKit.value;
-  if (!file || !kit || parallaxLayerUploadBusy.value) return;
-  parallaxLayerUploadBusy.value = true;
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`/api/admin/parallax/${encodeURIComponent(kit.id)}/layers`, { method: "POST", headers: authHeaders(), body: form });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({ message: "卷轴图层上传失败" }));
-      throw new Error(result.message || "卷轴图层上传失败");
-    }
-    const result = (await response.json()) as { layer: ParallaxLayerDTO; size: { width: number; height: number } };
-    kit.layers.push(result.layer);
-    adminMsg.value = `已上传 ${result.layer.name}（${result.size.width}×${result.size.height}），保存外观后生效`;
-  } catch (error) {
-    alert(error instanceof Error ? error.message : "卷轴图层上传失败");
-  } finally {
-    parallaxLayerUploadBusy.value = false;
-  }
-}
-
-function selectAppearanceImage(fileName: string) {
-  const picker = appearanceImagePicker.value;
-  if (!picker) return;
-  const image = backgroundAttachmentOptions.value.find((item) => item.fileName === fileName);
-  if (!image) return;
-  setAppearanceDraftImage(picker.field, image.fileName, "已选择图片草稿，保存后生效");
-}
-
-function setWallpaperPanFocus(event: MouseEvent) {
-  const image = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLImageElement>("img");
-  if (!image) return;
-  const rect = image.getBoundingClientRect();
-  if (rect.width <= 0) return;
-  loginAppearanceEdit.value.wallpaperPanFocusX = cleanWallpaperPanFocusX((event.clientX - rect.left) / rect.width);
-}
-
-function clearAppearancePickerImage() {
-  const picker = appearanceImagePicker.value;
-  if (!picker) return;
-  const labels: Record<AppearanceImageField, string> = {
-    appIconPath: "标签页图标已在草稿中恢复默认，保存后生效",
-    loginIconPath: "登录页图标已从草稿移除，保存后生效",
-    loginBackgroundPath: "登录页背景已从草稿移除，保存后生效",
-    wallpaperPath: "聊天室壁纸已从草稿移除，保存后生效"
-  };
-  setAppearanceDraftImage(picker.field, null, labels[picker.field]);
-}
-
-function abandonAppearanceDraft() {
-  syncLoginAppearanceEdit();
-  resetThemeEditor();
-  appearanceImagePicker.value = null;
-}
-
-async function closeAdminPanel() {
-  if (adminAppearancePages.has(adminPage.value)) abandonAppearanceDraft();
-  showAdmin.value = false;
-  appearancePreviewOpen.value = false;
-  await restoreChatSurface();
-}
-
-function syncLoginAppearanceEdit() {
-  loginAppearanceEdit.value = {
-    appTitle: store.appearance.appTitle || "Team Chat",
-    appIconPath: store.appearance.appIconPath || null,
-    loginTitle: store.appearance.loginTitle || "Team Chat",
-    loginSubtitle: store.appearance.loginSubtitle || "",
-    loginIconPath: store.appearance.loginIconPath || null,
-    loginShowIcon: store.appearance.loginShowIcon !== false,
-    loginShowSubtitle: store.appearance.loginShowSubtitle !== false,
-    loginBackgroundPath: store.appearance.loginBackgroundPath || null,
-    loginFormPosition: store.appearance.loginFormPosition || "middle",
-    loginBackgroundFit: store.appearance.loginBackgroundFit || "cover",
-    wallpaperPath: store.appearance.wallpaperPath || null,
-    wallpaperFit: store.appearance.wallpaperFit || "cover",
-    wallpaperPanFocusX: cleanWallpaperPanFocusX(store.appearance.wallpaperPanFocusX),
-    wallpaperPanDirection: cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection),
-    wallpaperPanSpeed: cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
-    parallaxKit: store.appearance.parallaxKit || "none",
-    parallaxSpeed: cleanParallaxSpeed(store.appearance.parallaxSpeed),
-    parallaxKits: cleanParallaxKits(store.appearance.parallaxKits),
-    registrationEnabled: !!store.appearance.registrationEnabled,
-    musicPanelFontSize: cleanMusicPanelFontSize(store.appearance.musicPanelFontSize),
-    prayerBubbleMineColor: store.appearance.prayerBubbleMineColor || "#f0fbf1",
-    prayerBubbleOtherColor: store.appearance.prayerBubbleOtherColor || "#fffaf0"
-  };
-  flashEffectEdit.value = {
-    colors: [...flashEffect.value.colors],
-    intervalSeconds: flashEffect.value.intervalSeconds,
-    transitionMode: flashEffect.value.transitionMode
-  };
-  customThemesDraft.value = (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }));
-  composerPromptsText.value = cleanComposerPrompts(store.appearance.composerPrompts || []).join("\n");
-  composerPromptIntervalEdit.value = cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds);
-  composerPromptAppearEdit.value = cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds);
-  composerPromptDisappearEdit.value = cleanComposerPromptDisappearSeconds(store.appearance.composerPromptDisappearSeconds);
-  composerPromptGapEdit.value = cleanComposerPromptGapSeconds(store.appearance.composerPromptGapSeconds);
-  if (customThemeEdit.value.id && !customThemesDraft.value.some((theme) => theme.id === customThemeEdit.value.id)) resetThemeEditor();
-  if (!store.appearance.registrationEnabled && authMode.value === "register") authMode.value = "login";
-}
-
-function addFlashColor() {
-  if (flashEffectEdit.value.colors.length >= 10) return;
-  flashEffectEdit.value.colors.push(flashEffectEdit.value.colors[flashEffectEdit.value.colors.length - 1] || "#fff176");
-}
-
-function removeFlashColor(index: number) {
-  if (flashEffectEdit.value.colors.length <= 1) return;
-  flashEffectEdit.value.colors.splice(index, 1);
-}
-
-async function saveLoginAppearance() {
-  const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
-    method: "POST",
-    body: JSON.stringify(appearanceSavePayload.value)
-  });
-  store.appearance = result.appearance;
-  syncLoginAppearanceEdit();
-  await loadAdminAttachments().catch(() => undefined);
-  adminMsg.value = "外观设置已保存并生效";
-}
-
-function themeSlug(name: string) {
-  const ascii = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 24);
-  return ascii || `theme-${Date.now().toString(36)}`;
-}
-
-function editTheme(theme: ThemeDTO) {
-  const isBuiltIn = builtInThemes.some((item) => item.id === theme.id);
-  customThemeEdit.value = {
-    id: isBuiltIn ? "" : theme.id,
-    name: isBuiltIn ? `${theme.name}副本` : theme.name,
-    palette: { ...theme.palette }
-  };
-  adminMsg.value = isBuiltIn ? "已用内置主题填充草稿，可另存为自定义主题" : "正在编辑自定义主题草稿";
-}
-
-function resetThemeEditor() {
-  customThemeEdit.value = { id: "", name: "我的主题", palette: { ...activePalette.value } };
-}
-
-function saveCustomTheme() {
-  const id = customThemeEdit.value.id || themeSlug(customThemeEdit.value.name);
-  const theme: ThemeDTO = {
-    id,
-    name: customThemeEdit.value.name.trim() || "自定义主题",
-    palette: { ...customThemeEdit.value.palette }
-  };
-  const existing = customThemesDraft.value;
-  customThemesDraft.value = existing.some((item) => item.id === id) ? existing.map((item) => (item.id === id ? theme : item)) : [...existing, theme];
-  customThemeEdit.value = { ...theme, palette: { ...theme.palette } };
-  adminMsg.value = "主题已更新到草稿，保存外观后生效";
-}
-
-function deleteCustomTheme(theme: ThemeDTO) {
-  if (!confirm(`删除主题“${theme.name}”的草稿？保存外观后，使用该主题的成员会回到默认主题。`)) return;
-  customThemesDraft.value = customThemesDraft.value.filter((item) => item.id !== theme.id);
-  if (customThemeEdit.value.id === theme.id) resetThemeEditor();
-  adminMsg.value = "主题已从草稿移除，保存外观后生效";
-}
-
-async function updateChannel(channel: ChannelDTO) {
-  const edit = channelEdits.value[channel.id];
-  if (!edit) return;
-  const result = await api<{ channel: ChannelDTO }>(`/api/channels/${channel.id}`, {
-    method: "PATCH",
-    body: JSON.stringify(channel.kind === "music"
-      ? { listColor: edit.useListColor ? edit.listColor : null }
-      : { name: edit.name, description: edit.description, listColor: edit.useListColor ? edit.listColor : null })
-  });
-  replaceChannelSnapshot(result.channel);
-  syncChannelEdits();
-  adminMsg.value = "频道已更新";
-}
-
-async function uploadChannelIcon(channel: ChannelDTO, event: Event) {
-  const file = (event.target as HTMLInputElement).files?.[0];
-  (event.target as HTMLInputElement).value = "";
-  if (!file) return;
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(`/api/channels/${channel.id}/icon`, { method: "POST", headers: authHeaders(), body: form });
-  if (!response.ok) {
-    const result = await response.json().catch(() => ({ message: "频道图标上传失败" }));
-    alert(result.message || "频道图标上传失败");
-    return;
-  }
-  const result = (await response.json()) as { channel: ChannelDTO };
-  replaceChannelSnapshot(result.channel);
-  syncChannelEdits();
-  adminMsg.value = "频道图标已更新";
-}
-
-async function deleteChannel(channel: ChannelDTO) {
-  if (channel.isDefault || channel.directKey || !channel.canManage) return;
-  if (!confirm(`删除频道“${channel.name}”？频道内聊天记录会一并删除。`)) return;
-  const fallbackChannelId = channel.id === store.currentChannelId ? store.previousChannelId : store.currentChannelId;
-  await api(`/api/channels/${channel.id}`, { method: "DELETE" });
-  await Promise.all([store.loadChannels(fallbackChannelId), loadAdminChannels()]);
-  syncChannelEdits();
-  adminMsg.value = `频道“${channel.name}”已删除`;
-}
-
-function directConversationLabel(channel: AdminChannelDTO) {
-  return channel.name.replace(/^私聊[：:]\s*/, "") || "未命名私聊";
-}
-
-function directConversationActivity(channel: AdminChannelDTO) {
-  const time = channel.lastMessageAt || channel.createdAt;
-  return time ? adminDateTime(time) : "无活动记录";
-}
-
-async function deleteDirectConversation(channel: AdminChannelDTO) {
-  const label = directConversationLabel(channel);
-  if (!confirm(`永久删除“${label}”的私聊历史？其中 ${channel.messageCount} 条消息和附件会一并删除，且无法恢复。`)) return;
-  const fallbackChannelId = channel.id === store.currentChannelId ? store.previousChannelId : store.currentChannelId;
-  await api(`/api/admin/direct-conversations/${channel.id}`, { method: "DELETE" });
-  if (channel.id === store.currentChannelId) await store.loadChannels(fallbackChannelId);
-  const targetPage = adminDirectConversations.value.length === 1 && adminDirectPage.value > 1 ? adminDirectPage.value - 1 : adminDirectPage.value;
-  await loadAdminChannels(targetPage);
-  adminMsg.value = `私聊历史“${label}”已删除`;
-}
-
-async function addVirtual() {
-  await api("/api/virtual-characters", {
-    method: "POST",
-    body: JSON.stringify({
-      username: newVirtual.value.username.trim(),
-      displayName: newVirtual.value.displayName.trim(),
-      enabled: newVirtual.value.enabled,
-      config: buildVirtualConfig(
-        newVirtual.value.displayName.trim(),
-        newVirtual.value.persona.trim(),
-        newVirtual.value.channelIds,
-        undefined,
-        "",
-        newVirtual.value.model.trim(),
-        newVirtual.value.thinkingEnabled,
-        {
-          shortTerm: newVirtual.value.shortTermMemory,
-          midTerm: newVirtual.value.midTermMemory,
-          longTerm: newVirtual.value.longTermMemory
-        }
-      )
-    })
-  });
-  newVirtual.value = {
-    username: "",
-    displayName: "",
-    model: "",
-    thinkingEnabled: false,
-    persona: "",
-    shortTermMemory: "",
-    midTermMemory: "",
-    longTermMemory: "",
-    channelIds: [],
-    enabled: true
-  };
-  await loadVirtualCharacters();
-  adminMsg.value = "虚拟角色已创建";
-  aiSettingsMsg.value = "虚拟角色已创建";
-}
-
-async function toggleVirtual(character: any) {
-  await api(`/api/virtual-characters/${character.id}`, {
-    method: "PUT",
-    body: JSON.stringify({ enabled: !character.enabled })
-  });
-  await loadVirtualCharacters();
 }
 </script>
 
@@ -11792,923 +6799,9 @@ async function toggleVirtual(character: any) {
       </div>
     </section>
 
-    <section v-if="showSettings" class="modal-shell" role="dialog" aria-modal="true" aria-label="个人设置" @click.self="closeSettingsPanel">
-      <div class="settings-modal">
-        <aside class="settings-sidebar">
-          <header class="settings-profile">
-            <div class="avatar">
-              <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
-              <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
-            </div>
-            <span><strong>{{ store.account?.displayName }}</strong><small>@{{ store.account?.username }}</small></span>
-          </header>
-          <nav class="settings-nav" aria-label="设置分类">
-            <button :class="{ active: settingsTab === 'account' }" @click="selectSettingsTab('account')"><Users :size="19" /><span><b>账号</b><small>头像与安全</small></span></button>
-            <button :class="{ active: settingsTab === 'appearance' }" @click="selectSettingsTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
-            <button :class="{ active: settingsTab === 'bible' }" @click="selectSettingsTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
-            <button :class="{ active: settingsTab === 'notifications' }" @click="selectSettingsTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
-            <button :class="{ active: settingsTab === 'devices' }" @click="selectSettingsTab('devices')"><Monitor :size="19" /><span><b>登录设备</b><small>会话与安全</small></span></button>
-            <button :class="{ active: settingsTab === 'release' }" @click="selectSettingsTab('release')"><Info :size="19" /><span><b>关于</b><small>版本与更新</small></span></button>
-          </nav>
-          <small class="settings-sidebar-version">Team Chat v{{ APP_VERSION }}</small>
-        </aside>
-        <div class="settings-content">
-          <header class="settings-content-head">
-            <div>
-              <strong>{{ settingsTabMeta[settingsTab].title }}</strong>
-              <small>{{ settingsTabMeta[settingsTab].description }}</small>
-            </div>
-            <button class="icon-btn" @click="closeSettingsPanel" aria-label="关闭设置"><X :size="20" /></button>
-          </header>
-          <div class="admin-body settings-body">
-          <div v-if="settingsLoadError" class="settings-load-error" role="alert"><CircleOff :size="17" /><span>{{ settingsLoadError }}</span><button @click="selectSettingsTab(settingsTab)">重试</button></div>
-          <section v-if="settingsTab === 'account'" class="form-grid settings-section account-settings">
-            <div class="settings-section-head"><strong>个人账号</strong><small>头像和昵称会显示在聊天消息旁。</small></div>
-            <label class="account-avatar-card" :class="{ busy: accountAvatarBusy }">
-              <span class="avatar account-settings-avatar">
-                <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
-                <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
-              </span>
-              <span><strong>{{ accountAvatarBusy ? "正在上传头像" : "更换头像" }}</strong><small>选择 JPG、PNG、GIF 或 WebP 图片</small></span>
-              <Upload :size="19" />
-              <input class="hidden" type="file" accept="image/*" :disabled="accountAvatarBusy" @change="uploadOwnAvatar" />
-            </label>
-            <label for="account-display-name">昵称</label>
-            <div class="account-inline-form">
-              <input id="account-display-name" v-model="accountDisplayName" maxlength="80" autocomplete="nickname" />
-              <button class="primary-btn" :disabled="accountProfileBusy" @click="saveOwnProfile"><Save :size="16" />{{ accountProfileBusy ? "保存中" : "保存昵称" }}</button>
-            </div>
-            <p v-if="accountProfileMsg" class="settings-note">{{ accountProfileMsg }}</p>
+    <SettingsPanel v-if="showSettings" :account="accountSettings" :settings="settingsPanelBindings" />
 
-            <div class="account-security-grid">
-              <div class="account-setting-card">
-                <div><strong>修改密码</strong><small>修改后，其他已登录设备会自动退出。</small></div>
-                <label>当前密码<input v-model="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password" /></label>
-                <label>新密码<input v-model="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
-                <label>再次输入新密码<input v-model="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
-                <button class="primary-btn" :disabled="accountPasswordBusy" @click="changeOwnPassword">{{ accountPasswordBusy ? "修改中" : "修改密码" }}</button>
-                <p v-if="accountPasswordMsg" class="settings-note">{{ accountPasswordMsg }}</p>
-              </div>
-              <div class="account-setting-card account-danger-card">
-                <div><strong>删除账号</strong><small>账号与个人数据将永久删除，历史消息会匿名保留。</small></div>
-                <label>当前密码<input v-model="accountDeletePassword" type="password" maxlength="128" autocomplete="current-password" /></label>
-                <button class="mini-btn danger-action" :disabled="accountDeleteBusy" @click="deleteOwnAccount"><Trash2 :size="16" />{{ accountDeleteBusy ? "删除中" : "永久删除账号" }}</button>
-                <p v-if="accountDeleteMsg" class="settings-note">{{ accountDeleteMsg }}</p>
-              </div>
-            </div>
-          </section>
-          <section v-if="settingsTab === 'appearance'" class="form-grid settings-section">
-            <div class="settings-section-head"><strong>聊天主题</strong><small>仅影响你的账号，可随时切换。</small></div>
-            <label>主题</label>
-            <div class="theme-grid">
-              <button
-                v-for="theme in themeOptions"
-                :key="theme.id"
-                class="theme-tile"
-                :class="{ active: activeTheme === theme.id }"
-                @click="chooseTheme(theme.id)"
-              >
-                <span :style="themeSwatchStyle(theme)"></span>
-                <b>{{ theme.name }}</b>
-              </button>
-            </div>
-          </section>
-
-          <section v-if="settingsTab === 'bible'" class="form-grid settings-section">
-            <div class="settings-section-head"><strong>经文阅读</strong><small>保持聊天原文不变，只调整展开后的排版。</small></div>
-            <label>经文弹出格式</label>
-            <div class="bible-settings-grid">
-              <button
-                v-for="option in bibleOutputFormatOptions"
-                :key="option.value"
-                class="bible-setting-tile"
-                :class="{ active: biblePreferences().outputFormat === option.value }"
-                @click="saveBiblePreference('outputFormat', option.value)"
-              >
-                <b>{{ option.label }}</b>
-                <small>{{ option.description }}</small>
-              </button>
-            </div>
-            <label>引用标签</label>
-            <select :value="biblePreferences().referenceLabelMode" @change="saveBiblePreference('referenceLabelMode', ($event.target as HTMLSelectElement).value as BibleReferenceLabelMode)">
-              <option v-for="option in bibleReferenceLabelOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <label>组合经文</label>
-            <select :value="biblePreferences().combinedPassageMode" @change="saveBiblePreference('combinedPassageMode', ($event.target as HTMLSelectElement).value as BibleCombinedPassageMode)">
-              <option v-for="option in bibleCombinedPassageOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <label>引号样式</label>
-            <select :value="biblePreferences().quotationStyle" @change="saveBiblePreference('quotationStyle', ($event.target as HTMLSelectElement).value as BibleQuotationStyle)">
-              <option v-for="option in bibleQuotationStyleOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-            <p class="settings-note">这些设置只影响你自己看到的经文弹出内容，不会改动聊天消息原文。</p>
-            <p v-if="bibleSettingsMsg" class="settings-note">{{ bibleSettingsMsg }}</p>
-          </section>
-
-          <section v-if="settingsTab === 'devices'" class="form-grid settings-section">
-            <div class="settings-section-head"><strong>会话安全</strong><small>不认识的设备应立即登出；当前设备退出后需要重新登录。</small></div>
-            <label>已登录设备</label>
-            <div class="device-list">
-              <div v-for="device in devices" :key="device.id" class="device-row">
-                <component :is="deviceIcon(device.deviceKind)" :size="20" />
-                <span>
-                  <b>{{ displayedDeviceName(device) }}</b>
-                  <small>{{ deviceLabel(device.deviceKind) }} · {{ new Date(device.lastSeenAt).toLocaleString() }}<template v-if="device.current"> · 当前设备</template></small>
-                </span>
-                <button class="mini-btn secondary" @click="revokeDevice(device)">登出</button>
-              </div>
-            </div>
-          </section>
-
-          <section v-if="settingsTab === 'notifications'" class="form-grid settings-section">
-            <div class="settings-section-head"><strong>消息提醒</strong><small>先开启当前设备，再按频道精细控制。</small></div>
-            <label>本设备通知</label>
-            <div class="notification-card">
-              <div>
-                <strong>{{ notificationEnabled ? "已开启" : "未开启" }}</strong>
-                <small>权限：{{ notificationPermissionLabel }}</small>
-              </div>
-              <div v-if="notificationEnabled" class="notification-card-actions">
-                <button class="mini-btn" :disabled="notificationBusy" @click="sendTestNotification"><Bell :size="15" />测试</button>
-                <button class="mini-btn secondary" :disabled="notificationBusy" @click="disableNotifications"><BellOff :size="15" />关闭</button>
-              </div>
-              <button v-else class="primary-btn" :disabled="notificationBusy || !notificationSupported" @click="enableNotifications"><Bell :size="16" />开启</button>
-            </div>
-            <label>频道通知</label>
-            <div class="notification-channel-list">
-              <article v-for="channel in store.channels" :key="channel.id" class="notification-channel-row">
-                <span class="channel-icon"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
-                <div>
-                  <strong>{{ channel.name }}</strong>
-                  <small>{{ isChannelMuted(channel.id) ? "不通知普通消息" : "通知普通消息" }}</small>
-                </div>
-                <button class="icon-btn" :aria-label="isChannelMuted(channel.id) ? '开启频道通知' : '关闭频道通知'" @click="setChannelMuted(channel, !isChannelMuted(channel.id))">
-                  <BellOff v-if="isChannelMuted(channel.id)" :size="18" />
-                  <Bell v-else :size="18" />
-                </button>
-              </article>
-            </div>
-            <p v-if="notificationMsg" class="settings-note">{{ notificationMsg }}</p>
-          </section>
-
-          <section v-if="settingsTab === 'release'" class="release-panel settings-section">
-            <div class="release-head">
-              <span>当前版本</span>
-              <strong>v{{ APP_VERSION }}</strong>
-              <small>{{ RELEASE_DATE }} · 开发者：{{ releaseDeveloper }}</small>
-            </div>
-            <div v-if="serverVersion && compareVersions(serverVersion.version, APP_VERSION) > 0" class="release-update-card">
-              <div>
-                <b>发现服务器新版本 v{{ serverVersion.version }}</b>
-                <small>当前手机里的版本是 v{{ APP_VERSION }}</small>
-              </div>
-              <button class="mini-btn" @click="reloadToLatestVersion">刷新到最新版</button>
-            </div>
-            <div class="release-current">
-              <b>本次更新</b>
-              <ol>
-                <li v-for="note in RELEASE_NOTES" :key="note">{{ note }}</li>
-              </ol>
-            </div>
-            <div class="release-history">
-              <article v-for="release in releaseHistory" :key="release.version" class="release-entry">
-                <h3>v{{ release.version }} <small>{{ release.date }}</small></h3>
-                <ol>
-                  <li v-for="note in release.notes" :key="note">{{ note }}</li>
-                </ol>
-              </article>
-            </div>
-          </section>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="showAdmin" class="modal-shell" role="dialog" aria-modal="true" aria-label="管理面板" @click.self="closeAdminPanel">
-      <div class="admin-modal">
-        <header class="modal-head admin-page-head">
-          <button v-if="adminPage !== 'home'" class="icon-btn" @click="returnFromAdminPage" aria-label="返回上一级"><ChevronLeft :size="21" /></button>
-          <div class="admin-page-heading">
-            <strong>{{ activeAdminPageMeta.title }}</strong>
-            <small>{{ activeAdminPageMeta.description }}</small>
-          </div>
-          <button class="icon-btn" @click="closeAdminPanel" aria-label="关闭管理"><X :size="20" /></button>
-        </header>
-
-        <div class="admin-body">
-          <div v-if="adminPageLoading" class="admin-page-state" role="status"><span class="loading-dot"></span>正在加载...</div>
-          <div v-else-if="adminPageError" class="admin-page-state error" role="alert">
-            <CircleOff :size="20" />
-            <span>{{ adminPageError }}</span>
-            <button class="mini-btn secondary" @click="openAdminPage(adminPage)">重试</button>
-          </div>
-
-          <section v-else-if="adminPage === 'home'" class="admin-hub">
-            <div class="admin-hub-intro">
-              <strong>管理聊天室</strong>
-              <small>选择一个功能进入独立页面；返回时会回到这一层。</small>
-            </div>
-            <div class="admin-hub-group">
-              <label>内容与成员</label>
-              <button class="admin-entry-row" @click="openAdminPage('pin')"><span class="admin-entry-icon"><Pin :size="20" /></span><span><b>置顶公告</b><small>管理当前频道的顶部公告</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('users')"><span class="admin-entry-icon"><Users :size="20" /></span><span><b>用户与权限</b><small>账号、头像、密码和管理权限</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('reception')"><span class="admin-entry-icon"><DoorOpen :size="20" /></span><span><b>会客厅</b><small>创建者、期限、人数和用量</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('books')"><span class="admin-entry-icon"><Library :size="20" /></span><span><b>图书</b><small>上传 EPUB 图书，管理图书室藏书</small></span><ChevronRight :size="19" /></button>
-            </div>
-            <div class="admin-hub-group">
-              <label>通知与连接</label>
-              <button class="admin-entry-row" @click="openAdminPage('wechatRelay')"><span class="admin-entry-icon"><Bell :size="20" /></span><span><b>微信通知转发</b><small>连接 NAS 微信并向指定群发送频道通知</small></span><ChevronRight :size="19" /></button>
-            </div>
-            <div class="admin-hub-group">
-              <label>外观与数据</label>
-              <button class="admin-entry-row" @click="openAdminPage('appearance')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>外观与体验</b><small>品牌、登录页、聊天室和主题</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('data')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>数据与系统</b><small>备份、消息和资源管理</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('release')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>版本与更新</b><small>版本状态和发布记录</small></span><ChevronRight :size="19" /></button>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'appearance'" class="admin-hub compact">
-            <div class="admin-hub-group">
-              <button class="admin-entry-row" @click="openAdminPage('appearanceBrand')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>品牌与标签页</b><small>浏览器标题、图标和应用入口</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('appearanceLogin')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>登录页</b><small>内容、背景、位置和注册入口</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('appearanceChat')"><span class="admin-entry-icon"><MessageCircle :size="20" /></span><span><b>聊天室外观</b><small>聊天区壁纸和显示方式</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('appearanceParallax')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>卷轴背景</b><small>多层景色和阅读联动速度</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('appearanceThemes')"><span class="admin-entry-icon"><Palette :size="20" /></span><span><b>主题颜色</b><small>创建和维护聊天室配色</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('appearanceFlash')"><span class="admin-entry-icon"><Sparkles :size="20" /></span><span><b>消息闪动特效</b><small>颜色、过渡方式和闪动节奏</small></span><ChevronRight :size="19" /></button>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'data'" class="admin-hub compact">
-            <div class="admin-hub-group">
-              <button class="admin-entry-row" @click="openAdminPage('backups')"><span class="admin-entry-icon"><Download :size="20" /></span><span><b>备份与迁移</b><small>完整备份及数据导入导出</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('messages')"><span class="admin-entry-icon"><MessageSquareQuote :size="20" /></span><span><b>聊天记录</b><small>选择消息或按频道清理</small></span><ChevronRight :size="19" /></button>
-              <button class="admin-entry-row" @click="openAdminPage('resources')"><span class="admin-entry-icon"><ImageIcon :size="20" /></span><span><b>资源管理</b><small>查看、压缩和删除附件</small></span><ChevronRight :size="19" /></button>
-              <button v-if="serverVersion?.demo?.available" class="admin-entry-row" @click="openAdminPage('demo')"><span class="admin-entry-icon"><RotateCcw :size="20" /></span><span><b>演示模式</b><small>从 GitHub 载入或复位标准演示数据</small></span><ChevronRight :size="19" /></button>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'pin'" class="form-grid admin-page-section">
-            <label>当前频道置顶公告</label>
-            <textarea v-model="noticeText" rows="4" placeholder="留空并保存可撤下置顶公告"></textarea>
-            <button class="primary-btn" @click="saveNotice">保存置顶</button>
-          </section>
-
-          <AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = $event" />
-
-          <AdminReceptionPage v-else-if="adminPage === 'reception'" />
-
-          <section v-else-if="adminPage === 'channels'" class="admin-page-section channel-history-page">
-            <div class="admin-section-heading">
-              <div><strong>正式频道</strong><small>公开和私密频道；点击进入详情页编辑。</small></div>
-              <span>{{ adminChannelRows.length }} 个</span>
-            </div>
-            <div class="admin-object-list">
-              <button v-for="channel in adminChannelRows" :key="channel.id" class="admin-object-row" @click="openAdminChannelDetail(channel)">
-                <span class="channel-icon-admin"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
-                <span class="admin-object-main"><b>{{ channel.name }}</b><small>{{ channel.isPrivate ? '私密频道' : '公开频道' }} · {{ channel.memberCount }} 人 · {{ channel.messageCount }} 条消息</small></span>
-                <span v-if="channel.isDefault" class="admin-status-pill">默认</span>
-                <ChevronRight :size="19" />
-              </button>
-              <p v-if="!adminChannelRows.length" class="empty-note">还没有正式频道</p>
-            </div>
-
-            <div class="admin-section-heading direct-history-heading">
-              <div><strong>私聊历史</strong><small>保留的历史会话不再作为频道；可在这里查找和永久删除。</small></div>
-              <span>{{ adminDirectTotal }} 个</span>
-            </div>
-            <form class="admin-search-row" @submit.prevent="searchDirectConversations">
-              <input v-model="adminDirectQuery" maxlength="80" placeholder="搜索私聊参与者" aria-label="搜索私聊历史" />
-              <button class="mini-btn secondary" type="submit">搜索</button>
-            </form>
-            <div class="admin-object-list direct-history-list">
-              <article v-for="conversation in adminDirectConversations" :key="conversation.id" class="admin-object-row direct-history-row">
-                <span class="admin-entry-icon"><Archive :size="20" /></span>
-                <span class="admin-object-main">
-                  <b>{{ directConversationLabel(conversation) }}</b>
-                  <small>{{ conversation.messageCount }} 条消息 · {{ conversation.memberCount }} 位参与者 · 最后活动 {{ directConversationActivity(conversation) }}</small>
-                </span>
-                <button class="mini-btn danger-action" @click="deleteDirectConversation(conversation)"><Trash2 :size="15" />删除历史</button>
-              </article>
-              <p v-if="!adminDirectConversations.length" class="empty-note">{{ adminDirectQuery ? '没有匹配的私聊历史' : '还没有私聊历史' }}</p>
-            </div>
-            <div v-if="adminDirectTotal > adminDirectPageSize" class="admin-pagination">
-              <button class="mini-btn secondary" :disabled="adminDirectPage <= 1" @click="changeDirectConversationPage(-1)">上一页</button>
-              <span>第 {{ adminDirectPage }} / {{ adminDirectPageCount }} 页</span>
-              <button class="mini-btn secondary" :disabled="adminDirectPage >= adminDirectPageCount" @click="changeDirectConversationPage(1)">下一页</button>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'channelDetail' && adminSelectedChannel && channelEdits[adminSelectedChannel.id]" class="form-grid admin-page-section channel-detail-page">
-            <label>频道图标</label>
-            <label class="channel-detail-icon" :class="{ 'upload-icon-trigger': adminSelectedChannel.kind !== 'music' }" :aria-label="adminSelectedChannel.kind === 'music' ? '音乐频道系统图标' : `上传 ${adminSelectedChannel.name} 的频道图标`" :title="adminSelectedChannel.kind === 'music' ? '系统频道' : '点击上传图标'">
-              <span v-if="adminSelectedChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
-              <img v-else :src="channelIconUrl(adminSelectedChannel)" alt="" />
-              <span>{{ adminSelectedChannel.kind === "music" ? "系统频道" : "点击更换图标" }}</span>
-              <input v-if="adminSelectedChannel.kind !== 'music'" class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
-            </label>
-            <label for="admin-channel-name">频道名称</label>
-            <input id="admin-channel-name" v-model="channelEdits[adminSelectedChannel.id].name" maxlength="80" :disabled="adminSelectedChannel.kind === 'music'" />
-            <label for="admin-channel-description">频道描述</label>
-            <textarea id="admin-channel-description" v-model="channelEdits[adminSelectedChannel.id].description" maxlength="255" rows="3" :disabled="adminSelectedChannel.kind === 'music'"></textarea>
-            <label class="check-row check-row-inline">
-              <input v-model="channelEdits[adminSelectedChannel.id].useListColor" type="checkbox" />
-              <span>自定义频道列表底色</span>
-            </label>
-            <label v-if="channelEdits[adminSelectedChannel.id].useListColor" class="channel-list-color-field">
-              <span>列表底色</span>
-              <input v-model="channelEdits[adminSelectedChannel.id].listColor" type="color" aria-label="频道列表底色" />
-              <code>{{ channelEdits[adminSelectedChannel.id].listColor }}</code>
-            </label>
-            <div class="channel-detail-summary">
-              <span>{{ adminSelectedChannel.isPrivate ? '私密频道' : '公开频道' }}</span>
-              <span>{{ adminSelectedChannel.memberCount }} 位成员</span>
-              <span>{{ adminSelectedChannel.messageCount }} 条消息</span>
-            </div>
-            <div class="channel-detail-actions">
-              <button class="primary-btn" @click="updateChannel(adminSelectedChannel)"><Save :size="15" />保存修改</button>
-              <button v-if="adminSelectedChannel.kind !== 'music'" class="mini-btn secondary" @click="openAdminChannelMembers(adminSelectedChannel)"><Users :size="15" />管理成员</button>
-              <button v-if="adminSelectedChannel.kind !== 'music' && !adminSelectedChannel.isDefault" class="mini-btn danger-action" @click="deleteChannel(adminSelectedChannel)"><Trash2 :size="15" />删除频道</button>
-            </div>
-            <p v-if="adminSelectedChannel.kind === 'music'" class="settings-note">音乐频道的名称和图标由系统维护；列表底色仍可自定义。</p>
-          </section>
-
-          <section v-else-if="adminAppearancePages.has(adminPage)" class="appearance-admin-layout">
-            <div class="appearance-save-bar">
-              <div>
-                <b>外观草稿</b>
-                <small>{{ appearanceHasDraftChanges ? "有未保存更改，保存后才会对聊天室生效。" : "所有外观设置都已保存。" }}</small>
-              </div>
-              <div class="appearance-save-actions">
-                <button class="mini-btn secondary appearance-mobile-preview-btn" @click="appearancePreviewOpen = true">预览</button>
-                <button class="primary-btn" :class="{ attention: appearanceHasDraftChanges }" @click="saveLoginAppearance"><Save :size="15" />保存外观</button>
-              </div>
-            </div>
-
-            <div class="appearance-editor-panel form-grid">
-              <template v-if="appearanceSection === 'brand'">
-                <label class="inline-field-row">
-                  <span>浏览器标签页</span>
-                  <input v-model="loginAppearanceEdit.appTitle" maxlength="80" placeholder="浏览器标签页标题" aria-label="浏览器标签页标题" />
-                </label>
-                <div class="appearance-image-control">
-                  <button class="appearance-image-preview-button login-icon-preview" @click="openAppearanceImagePicker('appIconPath', '选择标签页图标', '适合方形或接近方形的小图。')" aria-label="选择标签页图标">
-                    <img :src="appearanceDraftIcon" alt="" />
-                  </button>
-                  <div>
-                    <strong>标签页图标</strong>
-                    <small>点击图标选择图片；用于浏览器标签、收藏夹和应用入口。</small>
-                  </div>
-                </div>
-              </template>
-
-              <template v-else-if="appearanceSection === 'login'">
-                <label>登录页内容</label>
-                <div class="login-brand-grid">
-                  <input v-model="loginAppearanceEdit.loginTitle" maxlength="80" placeholder="登录页标题" aria-label="登录页标题" />
-                  <input v-model="loginAppearanceEdit.loginSubtitle" maxlength="160" placeholder="登录页副标题" aria-label="登录页副标题" />
-                </div>
-                <div class="check-grid login-visibility-options">
-                  <label class="check-row"><input v-model="loginAppearanceEdit.loginShowIcon" type="checkbox" /> 显示登录页图标</label>
-                  <label class="check-row"><input v-model="loginAppearanceEdit.loginShowSubtitle" type="checkbox" /> 显示登录页副标题</label>
-                </div>
-
-                <label>登录区域位置</label>
-                <div class="segmented-row login-position-options">
-                  <button
-                    v-for="option in loginPositionOptions"
-                    :key="option.value"
-                    class="mini-btn"
-                    :class="{ secondary: loginAppearanceEdit.loginFormPosition !== option.value }"
-                    @click="loginAppearanceEdit.loginFormPosition = option.value"
-                  >
-                    {{ option.label }}
-                  </button>
-                </div>
-
-                <label>登录页图标与背景</label>
-                <div class="appearance-image-stack">
-                  <div class="appearance-image-control">
-                    <button class="appearance-image-preview-button login-icon-preview" @click="openAppearanceImagePicker('loginIconPath', '选择登录页图标', '登录卡片中的品牌图标，建议方形图片。')" aria-label="选择登录页图标">
-                      <img :src="appearanceDraftLoginIcon" alt="" />
-                    </button>
-                    <div>
-                      <strong>登录页图标</strong>
-                      <small>{{ loginAppearanceEdit.loginIconPath || "使用默认图标，点击图标更换" }}</small>
-                    </div>
-                  </div>
-                  <div class="appearance-image-control">
-                    <button class="appearance-image-preview-button login-background-preview" :style="appearancePreviewLoginStyle" @click="openAppearanceImagePicker('loginBackgroundPath', '选择登录页背景', '适合横向或竖向大图，可在这里设置显示方式。', 'loginBackgroundFit')" aria-label="选择登录页背景"></button>
-                    <div>
-                      <strong>登录页背景</strong>
-                      <small>{{ loginAppearanceEdit.loginBackgroundPath || "未设置背景图，点击预览更换" }}</small>
-                    </div>
-                    <select v-model="loginAppearanceEdit.loginBackgroundFit" aria-label="登录页背景显示方式">
-                      <option v-for="option in loginBackgroundFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                    </select>
-                  </div>
-                </div>
-
-                <label>登录入口</label>
-                <label class="check-row"><input v-model="loginAppearanceEdit.registrationEnabled" type="checkbox" /> 开放注册</label>
-              </template>
-
-              <template v-else-if="appearanceSection === 'chat'">
-                <label>聊天室壁纸</label>
-                <div class="appearance-image-control">
-                  <button class="appearance-image-preview-button login-background-preview chat" :style="appearancePreviewChatStyle" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸、平铺或推拉摇移。', 'wallpaperFit')" aria-label="选择聊天室壁纸"></button>
-                  <div>
-                    <strong>聊天区背景图</strong>
-                    <small>{{ loginAppearanceEdit.wallpaperPath || "未设置壁纸，点击预览更换" }}</small>
-                  </div>
-                  <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
-                    <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                  </select>
-                </div>
-                <section v-if="loginAppearanceEdit.wallpaperFit === 'pan'" class="wallpaper-pan-settings">
-                  <div>
-                    <b>初始画面中心</b>
-                    <small>在图上点选一个位置；打开聊天室时，该横坐标会尽量对准视口中心。</small>
-                  </div>
-                  <button
-                    v-if="appearanceDraftWallpaper"
-                    type="button"
-                    class="wallpaper-pan-focus-picker"
-                    @click="setWallpaperPanFocus"
-                    aria-label="在壁纸上指定初始画面中心"
-                  >
-                    <span class="wallpaper-pan-focus-image">
-                      <img :src="wallpaperUrl(appearanceDraftWallpaper)" alt="" />
-                      <span class="wallpaper-pan-focus-line" :style="wallpaperPanFocusMarkerStyle"><i></i></span>
-                    </span>
-                  </button>
-                  <p v-else class="settings-note">请先选择一张聊天室壁纸。</p>
-                  <div class="wallpaper-pan-controls">
-                    <label>
-                      <span>初始移动方向</span>
-                      <span class="segmented-buttons">
-                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'left' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'left'">向左</button>
-                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'right' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'right'">向右</button>
-                      </span>
-                    </label>
-                    <label>
-                      <span><b>相对消息移动速度</b><output>{{ wallpaperPanSpeedLabel }}</output></span>
-                      <input v-model.number="loginAppearanceEdit.wallpaperPanSpeed" type="range" min="0.02" max="1" step="0.01" />
-                      <small>消息上下移动 100 像素时，壁纸移动 {{ Math.round(cleanWallpaperPanSpeed(loginAppearanceEdit.wallpaperPanSpeed) * 100) }} 像素。</small>
-                    </label>
-                  </div>
-                </section>
-                <label>音乐小窗</label>
-                <div class="wallpaper-pan-controls">
-                  <label>
-                    <span><b>「歌」小窗字号</b><output>{{ cleanMusicPanelFontSize(loginAppearanceEdit.musicPanelFontSize) }}px</output></span>
-                    <input v-model.number="loginAppearanceEdit.musicPanelFontSize" type="range" :min="MUSIC_PANEL_FONT_SIZE_MIN" :max="MUSIC_PANEL_FONT_SIZE_MAX" step="1" />
-                    <small>调整点击「歌」弹出的播放小窗文字大小，对所有成员生效。</small>
-                  </label>
-                </div>
-                <label>代祷卡片</label>
-                <div class="color-grid">
-                  <label class="color-row">
-                    <span>自己的代祷卡片</span>
-                    <input v-model="loginAppearanceEdit.prayerBubbleMineColor" type="color" />
-                    <code>{{ loginAppearanceEdit.prayerBubbleMineColor }}</code>
-                  </label>
-                  <label class="color-row">
-                    <span>别人的代祷卡片</span>
-                    <input v-model="loginAppearanceEdit.prayerBubbleOtherColor" type="color" />
-                    <code>{{ loginAppearanceEdit.prayerBubbleOtherColor }}</code>
-                  </label>
-                </div>
-                <small>建议选择浅色，保存后对所有成员即时生效。</small>
-                <label>输入框引导语</label>
-                <div class="composer-prompt-settings">
-                  <textarea v-model="composerPromptsText" rows="4" placeholder="一行一条，例如：分享下今天的恩典？"></textarea>
-                  <small>输入框空闲时轮播这些引导语，文字逐字显现、逐字熄灭；有人 @ 成员时立即提醒「回应一下」。清空列表可关闭轮播。</small>
-                  <label class="flash-interval-row">
-                    <span>显示时长（秒）</span>
-                    <input v-model.number="composerPromptIntervalEdit" type="number" min="1" max="30" step="0.5" />
-                  </label>
-                  <label class="flash-interval-row">
-                    <span>出现动画（秒）</span>
-                    <input v-model.number="composerPromptAppearEdit" type="number" min="0.3" max="5" step="0.1" />
-                  </label>
-                  <label class="flash-interval-row">
-                    <span>消失动画（秒）</span>
-                    <input v-model.number="composerPromptDisappearEdit" type="number" min="0.3" max="5" step="0.1" />
-                  </label>
-                  <label class="flash-interval-row">
-                    <span>间隔时间（秒）</span>
-                    <input v-model.number="composerPromptGapEdit" type="number" min="1" max="60" step="1" />
-                  </label>
-                </div>
-              </template>
-
-              <template v-else-if="appearanceSection === 'parallax'">
-                <div class="parallax-section-heading">
-                  <div><b>卷轴套件</b><small>选择现有套件，或创建套件后逐层上传透明 PNG。</small></div>
-                  <button type="button" class="mini-btn secondary" @click="createParallaxKit"><Plus :size="14" />新建套件</button>
-                </div>
-                <div class="parallax-kit-grid">
-                  <button
-                    type="button"
-                    class="parallax-kit-card"
-                    :class="{ selected: loginAppearanceEdit.parallaxKit === 'none' }"
-                    @click="loginAppearanceEdit.parallaxKit = 'none'"
-                  >
-                    <span class="parallax-off-preview">关闭</span>
-                    <strong>不使用卷轴</strong>
-                    <small>继续显示聊天室壁纸或主题背景。</small>
-                  </button>
-                  <button
-                    v-for="kit in parallaxKitOptions"
-                    :key="kit.id"
-                    type="button"
-                    class="parallax-kit-card"
-                    :class="{ selected: loginAppearanceEdit.parallaxKit === kit.id }"
-                    @click="loginAppearanceEdit.parallaxKit = kit.id"
-                  >
-                    <span class="parallax-kit-thumbnail"><ParallaxBackground :kit="kit" :offset="34" preview /></span>
-                    <strong>{{ kit.name }}</strong>
-                    <small>{{ kit.description }}</small>
-                  </button>
-                </div>
-                <section v-if="draftParallaxKit" class="parallax-kit-editor">
-                  <header>
-                    <div>
-                      <b>套件设置</b>
-                      <small>{{ draftParallaxKit.layers.length }} 层 · 下方顺序为从后到前</small>
-                    </div>
-                    <button v-if="draftParallaxKit.builtIn" type="button" class="mini-btn secondary" @click="restoreBuiltInParallaxKit"><RotateCcw :size="14" />恢复官方设置</button>
-                    <button v-else type="button" class="mini-btn danger-action" @click="deleteParallaxKit(draftParallaxKit)"><Trash2 :size="14" />删除套件</button>
-                  </header>
-                  <div class="parallax-kit-fields">
-                    <label><span>套件名称</span><input v-model="draftParallaxKit.name" maxlength="40" /></label>
-                    <label><span>说明</span><input v-model="draftParallaxKit.description" maxlength="120" /></label>
-                    <label><span>素材署名</span><input v-model="draftParallaxKit.credit" maxlength="120" placeholder="可选" /></label>
-                  </div>
-                  <div class="parallax-layer-toolbar">
-                    <div><b>图层</b><small>速度 0 为固定；上下位置单位为像素；画布高度 1.00× 通常适合等尺寸图层。</small></div>
-                    <button type="button" class="mini-btn secondary" :disabled="parallaxLayerUploadBusy" @click="pickParallaxLayer"><Upload :size="14" />{{ parallaxLayerUploadBusy ? "上传中…" : "上传图层" }}</button>
-                    <input ref="parallaxLayerInput" class="hidden" type="file" accept="image/*" @change="uploadParallaxLayer" />
-                  </div>
-                  <div v-if="draftParallaxKit.layers.length" class="parallax-layer-list">
-                    <article v-for="(layer, index) in draftParallaxKit.layers" :key="layer.id" class="parallax-layer-row" :data-layer-id="layer.id">
-                      <div class="parallax-layer-thumb" :style="{ backgroundImage: `url(${parallaxAssetUrl(draftParallaxKit.id, layer.file)})` }"></div>
-                      <div class="parallax-layer-main">
-                        <label><span>{{ index + 1 }} · {{ index === 0 ? "最远" : index === draftParallaxKit.layers.length - 1 ? "最前" : "中间" }}</span><input v-model="layer.name" maxlength="40" /></label>
-                        <div class="parallax-layer-values">
-                          <label><span>速度比</span><input v-model.number="layer.speed" type="number" min="0" max="3" step="0.01" /></label>
-                          <label><span>上下位置</span><input v-model.number="layer.yOffset" type="number" min="-600" max="600" step="1" /><em>px</em></label>
-                          <label><span>画布高度</span><input v-model.number="layer.heightScale" type="number" min="0.25" max="4" step="0.05" /><em>×</em></label>
-                        </div>
-                      </div>
-                      <div class="parallax-layer-actions">
-                        <button type="button" class="icon-btn" :disabled="index === 0" title="向后移动" @click="moveParallaxLayer(index, -1)"><ArrowUp :size="15" /></button>
-                        <button type="button" class="icon-btn" :disabled="index === draftParallaxKit.layers.length - 1" title="向前移动" @click="moveParallaxLayer(index, 1)"><ArrowDown :size="15" /></button>
-                        <button type="button" class="icon-btn danger-action" title="移除图层" @click="removeParallaxLayer(index)"><Trash2 :size="15" /></button>
-                      </div>
-                    </article>
-                  </div>
-                  <p v-else class="parallax-empty-layers">还没有图层。上传的第一张图会作为最远背景，后续图层依次放在它前面。</p>
-                </section>
-                <label class="parallax-speed-field">
-                  <span><b>相对移动速度</b><output>{{ parallaxSpeedLabel }}</output></span>
-                  <input v-model.number="loginAppearanceEdit.parallaxSpeed" type="range" min="0.25" max="3" step="0.05" :disabled="loginAppearanceEdit.parallaxKit === 'none'" />
-                  <small>1.00× 为推荐速度；向上查看历史时景色向左，向下阅读及新消息跟随时向右。</small>
-                </label>
-                <p v-if="draftParallaxKit?.credit" class="parallax-credit">素材：{{ draftParallaxKit.credit }}</p>
-              </template>
-
-              <template v-else-if="appearanceSection === 'themes'">
-                <label>主题编辑</label>
-                <div class="theme-editor-head">
-                  <input v-model="customThemeEdit.name" maxlength="24" placeholder="主题名称" />
-                  <button class="mini-btn secondary" @click="resetThemeEditor">用当前主题填充</button>
-                </div>
-                <div class="color-grid">
-                  <label v-for="field in primaryColorFields" :key="field.key" class="color-row">
-                    <span>{{ field.label }}</span>
-                    <input v-model="customThemeEdit.palette[field.key]" type="color" />
-                    <code>{{ customThemeEdit.palette[field.key] }}</code>
-                  </label>
-                </div>
-                <button class="mini-btn secondary" @click="appearanceThemeAdvancedOpen = !appearanceThemeAdvancedOpen">{{ appearanceThemeAdvancedOpen ? "收起更多颜色" : "更多颜色" }}</button>
-                <div v-if="appearanceThemeAdvancedOpen" class="color-grid">
-                  <label v-for="field in appearanceAdvancedColorFields" :key="field.key" class="color-row">
-                    <span>{{ field.label }}</span>
-                    <input v-model="customThemeEdit.palette[field.key]" type="color" />
-                    <code>{{ customThemeEdit.palette[field.key] }}</code>
-                  </label>
-                </div>
-                <button class="primary-btn" @click="saveCustomTheme"><Save :size="15" />加入 / 更新主题草稿</button>
-
-                <label>可选主题</label>
-                <div class="theme-admin-list">
-                  <article v-for="theme in appearanceThemeOptions" :key="theme.id" class="theme-admin-row">
-                    <span class="theme-admin-swatch" :style="themeSwatchStyle(theme)"></span>
-                    <b>{{ theme.name }}</b>
-                    <small>{{ customThemeDraftIds.has(theme.id) ? "自定义" : "内置" }}</small>
-                    <button class="mini-btn secondary" @click="editTheme(theme)">编辑</button>
-                    <button v-if="customThemeDraftIds.has(theme.id)" class="mini-btn danger-action" @click="deleteCustomTheme(theme)"><Trash2 :size="14" />删除</button>
-                  </article>
-                </div>
-              </template>
-
-              <template v-else>
-                <label>闪动节奏</label>
-                <div class="flash-effect-editor">
-                  <label class="flash-interval-row">
-                    <span>闪动间隔（秒）</span>
-                    <input v-model.number="flashEffectEdit.intervalSeconds" type="number" min="0.01" max="10" step="0.01" />
-                  </label>
-                  <label class="flash-interval-row">
-                    <span>色彩过渡</span>
-                    <select v-model="flashEffectEdit.transitionMode">
-                      <option value="smooth">渐变过渡</option>
-                      <option value="step">硬切换</option>
-                    </select>
-                  </label>
-                  <div class="color-grid">
-                    <label v-for="(color, index) in flashEffectEdit.colors" :key="index" class="color-row flash-color-row">
-                      <span>第 {{ index + 1 }} 色</span>
-                      <input v-model="flashEffectEdit.colors[index]" type="color" />
-                      <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length <= 1" @click.prevent="removeFlashColor(index)">删除</button>
-                    </label>
-                  </div>
-                  <div class="action-grid">
-                    <button class="mini-btn secondary" :disabled="flashEffectEdit.colors.length >= 10" @click="addFlashColor">增加颜色</button>
-                  </div>
-                </div>
-              </template>
-            </div>
-
-            <aside class="appearance-preview-panel" :class="{ open: appearancePreviewOpen }">
-              <header>
-                <div>
-                  <b>{{ activeAppearanceSection.label }}预览</b>
-                  <small>预览跟随当前草稿变化。</small>
-                </div>
-                <button class="icon-btn appearance-preview-close" @click="appearancePreviewOpen = false" aria-label="关闭预览"><X :size="18" /></button>
-                <span>{{ appearanceHasDraftChanges ? "未保存" : "已保存" }}</span>
-              </header>
-              <div class="appearance-preview-grid" :class="`preview-${appearanceSection}`">
-                <template v-if="appearanceSection === 'brand'">
-                  <div class="appearance-preview-block wide">
-                    <strong>浏览器标签</strong>
-                    <div class="appearance-device desktop">
-                      <div class="preview-browser-bar large"><img :src="appearanceDraftIcon" alt="" /><span>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</span></div>
-                      <div class="appearance-brand-preview">
-                        <img :src="appearanceDraftIcon" alt="" />
-                        <b>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</b>
-                        <small>浏览器标签页、收藏夹和安装后的应用入口会使用这组品牌信息。</small>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else-if="appearanceSection === 'login'">
-                  <div class="appearance-preview-block">
-                    <strong>桌面登录页</strong>
-                    <div class="appearance-device desktop">
-                      <div class="preview-browser-bar"><img :src="appearanceDraftIcon" alt="" /><span>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</span></div>
-                      <div class="appearance-login-preview" :class="`login-position-${loginAppearanceEdit.loginFormPosition}`" :style="appearancePreviewLoginStyle">
-                        <div class="appearance-login-card">
-                          <img v-if="loginAppearanceEdit.loginShowIcon" :src="appearanceDraftLoginIcon" alt="" />
-                          <b>{{ loginAppearanceEdit.loginTitle || "Team Chat" }}</b>
-                          <small v-if="loginAppearanceEdit.loginShowSubtitle">{{ loginAppearanceEdit.loginSubtitle || "轻快、稳定的团队聊天。" }}</small>
-                          <span>{{ loginAppearanceEdit.registrationEnabled ? "登录 / 注册" : "登录" }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="appearance-preview-block">
-                    <strong>移动登录页</strong>
-                    <div class="appearance-device mobile">
-                      <div class="preview-browser-bar"><img :src="appearanceDraftIcon" alt="" /><span>{{ loginAppearanceEdit.appTitle || "Team Chat" }}</span></div>
-                      <div class="appearance-login-preview" :class="`login-position-${loginAppearanceEdit.loginFormPosition}`" :style="appearancePreviewLoginStyle">
-                        <div class="appearance-login-card">
-                          <img v-if="loginAppearanceEdit.loginShowIcon" :src="appearanceDraftLoginIcon" alt="" />
-                          <b>{{ loginAppearanceEdit.loginTitle || "Team Chat" }}</b>
-                          <small v-if="loginAppearanceEdit.loginShowSubtitle">{{ loginAppearanceEdit.loginSubtitle || "轻快、稳定的团队聊天。" }}</small>
-                          <span>{{ loginAppearanceEdit.registrationEnabled ? "登录 / 注册" : "登录" }}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else-if="appearanceSection === 'chat'">
-                  <div class="appearance-preview-block">
-                    <strong>桌面聊天室</strong>
-                    <div class="appearance-device desktop">
-                      <div class="appearance-chat-preview" :style="appearancePreviewChatStyle">
-                        <div class="appearance-chat-sidebar"><b>频道</b><span>主聊天室</span><span>代祷事项</span></div>
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message other">这是别人发来的消息。</p>
-                          <p class="preview-message mine">这是自己的消息。</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="appearance-preview-block">
-                    <strong>移动聊天室</strong>
-                    <div class="appearance-device mobile">
-                      <div class="appearance-chat-preview mobile-chat" :style="appearancePreviewChatStyle">
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message other">移动端消息</p>
-                          <p class="preview-message mine">自己的回复</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else-if="appearanceSection === 'parallax'">
-                  <div class="appearance-preview-block wide">
-                    <strong>卷轴背景预览</strong>
-                    <div class="appearance-device desktop parallax-preview-device">
-                      <ParallaxBackground :kit="draftParallaxKit" :offset="74 * cleanParallaxSpeed(loginAppearanceEdit.parallaxSpeed)" preview />
-                      <div class="parallax-preview-messages">
-                        <p class="preview-message other">向上看历史，景色向左。</p>
-                        <p class="preview-message mine">向下阅读，景色向右。</p>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else-if="appearanceSection === 'themes'">
-                  <div class="appearance-preview-block wide">
-                    <strong>主题效果</strong>
-                    <div class="appearance-device desktop">
-                      <div class="appearance-chat-preview theme-preview" :style="appearanceThemePreviewStyle">
-                        <div class="appearance-chat-sidebar"><b>频道</b><span>主聊天室</span><span>同工沟通</span></div>
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message other">对方消息颜色</p>
-                          <p class="preview-message mine">我的消息颜色</p>
-                          <button class="primary-btn">按钮预览</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-
-                <template v-else>
-                  <div class="appearance-preview-block wide">
-                    <strong>闪动消息</strong>
-                    <div class="appearance-device desktop">
-                      <div class="appearance-chat-preview flash-preview">
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message mine flash" :style="appearancePreviewFlashStyle">/闪动 预览消息</p>
-                          <small>颜色和过渡会按草稿实时变化。</small>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </div>
-            </aside>
-          </section>
-
-          <section v-else-if="adminPage === 'backups'" class="form-grid admin-page-section">
-            <label>完整备份</label>
-            <div class="admin-inline-card backup-card">
-              <div>
-                <strong>备份全部数据和程序</strong>
-                <small>生成 ZIP 后会自动下载。备份包含聊天/用户导出、storage 数据、源码、配置和静态资源，不包含依赖目录、Git 元数据和已有备份。</small>
-              </div>
-              <button class="primary-btn" :disabled="adminBackupBusy" @click="createAdminBackup">
-                <Download :size="16" />{{ adminBackupBusy ? "备份中" : "一键备份并下载" }}
-              </button>
-            </div>
-            <div class="data-toolbar data-toolbar-compact">
-              <button class="mini-btn secondary" :disabled="adminBackupBusy" @click="loadAdminBackups"><RotateCcw :size="15" />刷新备份</button>
-            </div>
-            <div class="admin-data-list backup-list">
-              <article v-for="backup in adminBackups" :key="backup.fileName" class="admin-data-row backup-row">
-                <div class="admin-data-main">
-                  <strong>{{ backup.fileName }}</strong>
-                  <small>{{ compactBytes(backup.size) }} · {{ adminDateTime(backup.createdAt) }}</small>
-                </div>
-                <div class="backup-actions">
-                  <button class="mini-btn secondary" @click="downloadAdminFile(backup.url, backup.fileName)"><Download :size="15" />下载</button>
-                  <button class="mini-btn danger-action" @click="deleteAdminBackup(backup)"><Trash2 :size="15" />删除</button>
-                </div>
-              </article>
-              <p v-if="!adminBackups.length" class="empty-note">还没有完整备份</p>
-            </div>
-            <label>聊天数据</label>
-            <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.zip')"><Download :size="16" />导出聊天</button>
-              <label class="mini-btn secondary">
-                <Upload :size="16" />导入聊天
-                <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/chat', $event)" />
-              </label>
-            </div>
-            <label>用户数据</label>
-            <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/users', 'liao-users.zip')"><Download :size="16" />导出用户</button>
-              <label class="mini-btn secondary">
-                <Upload :size="16" />导入用户
-                <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
-              </label>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'messages'" class="form-grid admin-page-section">
-            <label>聊天记录删除</label>
-            <div class="admin-inline-card">
-              <div>
-                <strong>在主聊天界面多选删除</strong>
-                <small>回到当前频道后，可以按真实上下文选择多条消息并一次删除。</small>
-              </div>
-              <button class="primary-btn" @click="startMessageSelectionMode"><CheckCircle2 :size="16" />进入多选</button>
-            </div>
-            <div class="data-toolbar data-toolbar-compact">
-              <select v-model.number="dataChannelFilter" aria-label="筛选频道">
-                <option :value="0">全部频道</option>
-                <option v-for="channel in store.channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option>
-              </select>
-              <button class="mini-btn danger-action" :disabled="!dataChannelFilter" @click="clearAdminMessages(dataChannelFilter)"><Trash2 :size="15" />清空当前频道</button>
-              <button class="mini-btn danger-action" @click="clearAdminMessages(0)"><Trash2 :size="15" />清空全部记录</button>
-            </div>
-          </section>
-
-          <section v-else-if="adminPage === 'resources'" class="admin-page-section">
-            <AdminResourceManager
-              :attachments="adminAttachments"
-              :loading="adminAttachmentsLoading"
-              :error="adminAttachmentsError"
-              @refresh="loadAdminAttachments"
-              @compress="compressAdminAttachments"
-              @delete="deleteAdminAttachments"
-              @delete-all="deleteAllAdminAttachments"
-            />
-          </section>
-
-          <AdminBooksPage v-else-if="adminPage === 'books'" @message="adminMsg = $event" />
-
-          <WeChatRelayPanel v-else-if="adminPage === 'wechatRelay'" />
-
-          <DemoModePanel v-else-if="adminPage === 'demo'" />
-
-          <section v-else-if="adminPage === 'release'" class="release-panel admin-page-section">
-            <div class="release-head">
-              <span>当前版本</span>
-              <strong>v{{ APP_VERSION }}</strong>
-              <small>{{ RELEASE_DATE }} · 开发者：{{ releaseDeveloper }}</small>
-            </div>
-            <div class="release-update-card">
-              <div>
-                <b>GitHub 更新</b>
-                <small>
-                  当前 v{{ updateCheck?.current || APP_VERSION }}
-                  <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}</template>
-                </small>
-                <small v-if="updateCheck || serverVersion?.update">
-                  {{ updateCheck?.repo || serverVersion?.update?.repoUrl || "GitHub 仓库" }} · {{ updateRestartModeLabel }}
-                </small>
-              </div>
-              <div class="release-update-actions">
-                <label>
-                  <span>更新分支</span>
-                  <select v-model="selectedUpdateBranch" :disabled="updateBusy || !updateCheck" @change="checkForUpdates">
-                    <option v-for="branch in updateCheck?.branches || []" :key="branch" :value="branch">{{ branch }}</option>
-                  </select>
-                </label>
-                <button class="mini-btn secondary" :disabled="updateBusy" @click="checkForUpdates"><RotateCcw :size="15" />检查</button>
-                <button class="mini-btn" :disabled="updateStartDisabled" @click="startServerUpdate">更新</button>
-              </div>
-              <div class="update-progress">
-                <span :style="{ width: `${updateProgress}%` }"></span>
-              </div>
-              <small>{{ updateStateText }} · {{ updateStatus?.detail || "等待检查" }}</small>
-              <ol v-if="updateStatus?.log.length" class="update-log">
-                <li v-for="line in updateStatus.log.slice(-8)" :key="line">{{ line }}</li>
-              </ol>
-            </div>
-            <div class="release-current">
-              <b>本次更新</b>
-              <ol>
-                <li v-for="note in RELEASE_NOTES" :key="note">{{ note }}</li>
-              </ol>
-            </div>
-            <div class="release-history">
-              <article v-for="release in releaseHistory" :key="release.version" class="release-entry">
-                <h3>v{{ release.version }} <small>{{ release.date }}</small></h3>
-                <ol>
-                  <li v-for="note in release.notes" :key="note">{{ note }}</li>
-                </ol>
-              </article>
-            </div>
-          </section>
-        </div>
-        <footer v-if="adminMsg" class="admin-msg" role="status" aria-live="polite">{{ adminMsg }}</footer>
-      </div>
-    </section>
+    <AdminPanel v-if="showAdmin" :tools="adminTools" :release="adminReleaseBindings" :actions="adminPanelActions" />
 
     <section v-if="appearanceImagePicker" class="modal-shell appearance-picker-shell" @click.self="closeAppearanceImagePicker">
       <div class="small-modal appearance-picker-modal">

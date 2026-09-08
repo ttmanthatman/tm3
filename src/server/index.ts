@@ -12,7 +12,6 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import jwt from "jsonwebtoken";
 import { Prisma, PrismaClient, type Actor, type Account, type AccountSession, type ChannelKind, type DeviceKind, type Message, type MessageAiSuggestion, type MessageType, type MusicLyrics, type MusicScore, type MusicScorePage, type PinnedItem, type PrayerAction } from "@prisma/client";
 import sanitizeHtml from "sanitize-html";
-import sharp from "sharp";
 import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
@@ -32,6 +31,52 @@ import { registerChannelOwnershipRoutes } from "./routes/channelOwnership.js";
 import { registerReceptionRoutes } from "./routes/reception.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
 import { registerSermonRoutes } from "./routes/sermon.js";
+import { registerAdminDataRoutes } from "./routes/adminData.js";
+import { registerAdminLogRoutes } from "./routes/adminLogs.js";
+import { registerAdminUpdateRoutes, UPDATE_REPO_URL } from "./routes/adminUpdate.js";
+import { registerAiSettingsRoutes } from "./routes/aiSettings.js";
+import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
+import { registerAuthRoutes } from "./routes/auth.js";
+import { registerBibleLookupRoutes } from "./routes/bibleLookup.js";
+import { registerEngineRoutes, defaultVirtualCharacterConfig } from "./routes/engine.js";
+import { registerNotificationsRoutes } from "./routes/notifications.js";
+import { registerSystemRoutes } from "./routes/system.js";
+import { registerWhyTopicsRoutes } from "./routes/whyTopics.js";
+import {
+  AI_RELATED_VERSES_KIND,
+  AI_ROLE_USERNAMES,
+  DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS,
+  DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES,
+  DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
+  DEFAULT_QUESTION_ASSISTANT_PROMPT,
+  DEFAULT_WHY_ASSISTANT_PROMPT,
+  QUESTION_ASSISTANT_NAME,
+  QUESTION_ASSISTANT_USERNAME,
+  WHY_ASSISTANT_NAME,
+  WHY_ASSISTANT_USERNAME,
+  clampInteger,
+  createAiSettingsStore,
+  parseAiVerseReferences
+} from "./aiSettings.js";
+import { cleanBiblePreferences } from "./biblePreferences.js";
+import { applyFileResponseHeaders, applyFileValidation } from "./fileResponses.js";
+import {
+  IMAGE_EXTENSIONS,
+  IMAGE_WEBP_EFFORT,
+  compressImageFile,
+  displayWebpFileName,
+  imageProcessingLog,
+  isImageFileName,
+  storedImageDimensions,
+  validateStoredImage,
+  wantsOriginalImage,
+  writeImageThumbnail
+} from "./imageProcessing.js";
+import { appendPinnedTextBlock, cleanPinnedTitle, pinnedBlocksFromMessage, pinnedBodyUploadFilePaths, pinnedPlainTextFromHtml, serializePinnedBody } from "./pinnedBody.js";
+import { AVATAR_DIR, BACKUP_DIR, BG_DIR, BOOKS_DIR, DIST_CLIENT, MUSIC_SCORE_DIR, PARALLAX_DIR, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore } from "./storageDirs.js";
+import { parseJsonField, plainTextFromHtml, stripMarkdownSyntax } from "./textUtils.js";
+
+export { writeImageThumbnail };
 import { createSermonPresentationService } from "./sermon/presentations.js";
 import { registerSermonSocket } from "./sermon/socket.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
@@ -47,42 +92,22 @@ import {
   normalizeChainOptionLabels
 } from "./services/chainService.js";
 import type {
-  AdminAttachmentDTO,
-  AdminBackupDTO,
   AdminLoginLogKind,
-  AdminMessageDTO,
-  AiRoleDTO,
   AiSettingsDTO,
   AiSuggestionDTO,
-  BibleCatalogDTO,
-  BibleChapterDTO,
-  BibleFavoriteDTO,
-  BibleFavoriteKeyDTO,
-  BibleLookupDTO,
-  BiblePreferencesDTO,
   BibleReaderPresenceDTO,
   BookReaderPresenceDTO,
-  BibleRelatedSearchDTO,
-  BibleTextSearchDTO,
   ChainPayload,
-  FlashEffectSettingsDTO,
   FriendListenerDTO,
   MessageDTO,
   MessageEffect,
   MusicListenerDTO,
   PinnedBodyDTO,
   PinnedContentBlockDTO,
-  PrayerStatus,
-  ThemeDTO,
-  ThemePaletteDTO
+  PrayerStatus
 } from "../shared/types.js";
-import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../shared/release.js";
-import { RELEASE_HISTORY } from "../shared/releaseHistory.js";
-import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../shared/bibleFavoriteColors.js";
-import { cleanParallaxKits, cleanParallaxSpeed } from "../shared/parallax.js";
+import { APP_VERSION, RELEASE_NOTES } from "../shared/release.js";
 import { cleanSupportedMessageEffect } from "../shared/messageEffects.js";
-import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./bible/lookup.js";
-import { cleanBibleWorkspaceState } from "./bible/workspaceState.js";
 import { fetchLinkPreview } from "./linkPreview.js";
 import {
   channelNeedsExplicitMembership,
@@ -95,8 +120,6 @@ import { leaveAccountSocketsFromChannel } from "./channelSocketMembership.js";
 import { CONTENT_SECURITY_POLICY } from "./securityHeaders.js";
 import { envFlagEnabled } from "./featureFlags.js";
 import { pushOriginFromHeaders } from "./pushOrigin.js";
-import { githubPackageManifestUrl } from "./updateManifest.js";
-import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "./updateBranches.js";
 import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isStoredMusicFile, musicTrackTitle } from "./music.js";
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { parseLyrics } from "./srt.js";
@@ -107,70 +130,23 @@ import { recalledMessageData } from "./messageRecall.js";
 import { prependPrayerUpdateHistory } from "./prayerUpdates.js";
 import { fallbackDirectChatNames, isAutomaticDirectChatName, parseDirectChatNameSuggestions } from "./directChatNames.js";
 import { demoCacheDir, demoManifestUrl, demoModeAvailable, demoStatePath } from "./demo/config.js";
-import { isZipArchive, unzipArchive, zipArchive, type ZipArchiveEntry } from "./zipArchive.js";
-import {
-  WALLPAPER_PAN_SPEED_MAX,
-  WALLPAPER_PAN_SPEED_MIN,
-  cleanWallpaperPanDirection,
-  cleanWallpaperPanFocusX,
-  cleanWallpaperPanSpeed
-} from "../shared/wallpaperPan.js";
-import {
-  MUSIC_PANEL_FONT_SIZE_MAX,
-  MUSIC_PANEL_FONT_SIZE_MIN,
-  cleanMusicPanelFontSize
-} from "../shared/musicPlayback.js";
-import {
-  COMPOSER_PROMPT_ANIM_MAX,
-  COMPOSER_PROMPT_ANIM_MIN,
-  COMPOSER_PROMPT_GAP_MAX,
-  COMPOSER_PROMPT_GAP_MIN,
-  DEFAULT_COMPOSER_PROMPTS,
-  cleanComposerPromptAppearSeconds,
-  cleanComposerPromptDisappearSeconds,
-  cleanComposerPromptGapSeconds,
-  cleanComposerPromptIntervalSeconds,
-  cleanComposerPrompts
-} from "../shared/composerPrompts.js";
 
 export type BuildAppOptions = {
   runStartupTasks?: boolean;
 };
 
-const ROOT = process.cwd();
-const DIST_CLIENT = path.join(ROOT, "dist/client");
-const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage");
-const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
-const MUSIC_SCORE_DIR = path.join(STORAGE_ROOT, "music-scores");
-const BOOKS_DIR = path.join(STORAGE_ROOT, "books");
-const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
-const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
-const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");
-const BACKUP_DIR = path.join(STORAGE_ROOT, "backups");
 const JWT_SECRET = process.env.JWT_SECRET || "dev-change-me-before-production";
 const RECEPTION_INVITE_ORIGIN = process.env.RECEPTION_INVITE_ORIGIN?.trim() || undefined;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 if (IS_PRODUCTION && (JWT_SECRET === "dev-change-me-before-production" || JWT_SECRET.length < 32)) {
   throw new Error("JWT_SECRET must be set to at least 32 characters in production");
 }
-const ENGINE_API_TOKEN = process.env.ENGINE_API_TOKEN || "";
 // 登录限流阈值可用环境变量放宽（e2e 多账号并发登录），默认保持 10 次/分钟。
 const AUTH_LOGIN_RATE_LIMIT_MAX = Math.max(1, Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX || 10) || 10);
 const WECHAT_RELAY_AGENT_TOKEN = process.env.WECHAT_RELAY_AGENT_TOKEN || "";
 const WECHAT_RELAY_NAS_ACCESS_URL = normalizeWeChatRelayNasAccessUrl(process.env.WECHAT_RELAY_NAS_ACCESS_URL);
 const PUSH_NOTIFICATIONS_ENABLED = envFlagEnabled(process.env.PUSH_NOTIFICATIONS_ENABLED);
 const VAPID_SUBJECT = process.env.VAPID_SUBJECT || process.env.WEB_PUSH_SUBJECT || "mailto:admin@example.com";
-const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
-const UPDATE_REPO_URL = process.env.UPDATE_REPO_URL || process.env.REPO_URL || "https://github.com/ttmanthatman/tm3.git";
-const DEFAULT_UPDATE_BRANCH = process.env.UPDATE_BRANCH || process.env.BRANCH || "main";
-const UPDATE_PM2_APP = process.env.UPDATE_PM2_APP || process.env.APP_NAME || "team-chat";
-const UPDATE_RESTART_MODE = process.env.UPDATE_RESTART_MODE || (process.env.UPDATE_RESTART_COMMAND ? "command" : "pm2");
-const UPDATE_RESTART_COMMAND = process.env.UPDATE_RESTART_COMMAND || "";
-const UPDATE_STATUS_PATH = path.join(STORAGE_ROOT, "update-status.json");
-const UPDATE_LOG_PATH = path.join(STORAGE_ROOT, "update.log");
-const UPDATE_BRANCH_CONFIG_PATH = process.env.UPDATE_BRANCH_CONFIG_PATH || path.join(STORAGE_ROOT, "update-branch.json");
-const UPDATE_RUNNING_TIMEOUT_MS = Number(process.env.UPDATE_RUNNING_TIMEOUT_MS || 30 * 60 * 1000);
-const UPDATE_LOG_TAIL_BYTES = Math.max(64 * 1024, Number(process.env.UPDATE_LOG_TAIL_BYTES || 256 * 1024) || 256 * 1024);
 const AI_SETTINGS_SECRET = process.env.AI_SETTINGS_SECRET || JWT_SECRET;
 const DEMO_MODE_AVAILABLE = demoModeAvailable();
 const DEMO_MANIFEST_URL = DEMO_MODE_AVAILABLE ? demoManifestUrl(UPDATE_REPO_URL) : "";
@@ -182,54 +158,6 @@ const CONFIGURED_CORS_ORIGINS = (process.env.CORS_ORIGINS || process.env.ALLOWED
 const SESSION_TTL_DAYS = 30;
 const SESSION_TTL_MS = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
 const JWT_EXPIRES_IN = `${SESSION_TTL_DAYS}d`;
-const THEMES = new Set(["wechat", "jade", "paper", "night"]);
-const WALLPAPER_FITS = new Set(["cover", "contain", "stretch", "repeat", "pan"]);
-const LOGIN_BACKGROUND_FITS = new Set(["cover", "contain", "stretch", "repeat"]);
-const LOGIN_FORM_POSITIONS = new Set(["top", "middle", "bottom"]);
-const BIBLE_OUTPUT_FORMATS = new Set(["referenceVerseLines", "continuousText", "referenceHeader", "numberedVerses"]);
-const BIBLE_REFERENCE_LABEL_MODES = new Set(["normalizedFull", "preserveInput", "omit"]);
-const BIBLE_COMBINED_PASSAGE_MODES = new Set(["compactEllipsis", "groupedLines"]);
-const BIBLE_QUOTATION_STYLES = new Set(["fullWidth", "halfWidth", "square"]);
-const DEFAULT_BIBLE_PREFERENCES: BiblePreferencesDTO = {
-  outputFormat: "continuousText",
-  referenceLabelMode: "normalizedFull",
-  combinedPassageMode: "compactEllipsis",
-  quotationStyle: "fullWidth"
-};
-const DEFAULT_APP_TITLE = "Team Chat";
-const DEFAULT_LOGIN_TITLE = "Team Chat";
-const DEFAULT_LOGIN_SUBTITLE = "轻快、稳定的团队聊天。";
-const DEFAULT_FLASH_EFFECT: FlashEffectSettingsDTO = {
-  colors: ["#fff176", "#ef4444", "#60a5fa", "#6d28d9", "#34d399", "#111827"],
-  intervalSeconds: 0.4,
-  transitionMode: "smooth"
-};
-const PARALLAX_KIT_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
-const PARALLAX_SPEED_MIN = 0.25;
-const PARALLAX_SPEED_MAX = 3;
-const DEFAULT_THEME_PALETTE: ThemePaletteDTO = {
-  accent: "#1aad19",
-  accentDark: "#129611",
-  buttonText: "#ffffff",
-  bg: "#ededed",
-  chatBg: "#ededed",
-  panel: "#f7f7f7",
-  line: "#d9d9d9",
-  text: "#111111",
-  muted: "#7b7b7b",
-  bubbleOther: "#ffffff",
-  bubbleOtherText: "#111111",
-  bubbleMine: "#95ec69",
-  bubbleMineText: "#111111"
-};
-const AI_RELATED_VERSES_KIND = "prayer_related_verses";
-const BIBLE_TOPIC_SEARCH_PROMPT = [
-  "你根据用户输入的主题推荐圣经经文出处。",
-  "只输出 8 个真实存在的经文出处，每行一个。",
-  "可以输出单节或连续几节，但不要输出整章。",
-  "不要输出经文正文、解释、标题、序号或其他文字。",
-  "如果不确定出处是否存在，不要输出。"
-].join("\n");
 const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
 
 // Channel visibility shared by the channel list and the unread-counts route:
@@ -248,64 +176,6 @@ function channelListWhere(accountId: number, isGuest = false): Prisma.ChannelWhe
 }
 const MUSIC_CHANNEL_NAME = "音乐频道";
 const MUSIC_CHANNEL_ICON = "歌";
-const DEFAULT_AI_PROMPT_COMMAND = [
-  "你只根据用户代祷信息，推荐 3 个可能相关的圣经经文出处。",
-  "只输出经文出处，每行一个。",
-  "不要输出完整经文。",
-  "不要解释。",
-  "不要祷告文。",
-  "不要评价代祷发起人。",
-  "不要替代牧养辅导。",
-  "如果不确定出处是否存在，不要输出。",
-  "尽量避开已推荐过的出处。"
-].join("\n");
-const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
-  enabled: true,
-  apiKeyConfigured: false,
-  baseUrl: "https://api.deepseek.com",
-  model: "deepseek-v4-flash",
-  promptCommand: DEFAULT_AI_PROMPT_COMMAND,
-  cardCooldownSeconds: 30,
-  userLimitPerMinute: 3,
-  maxSuccessPerMessage: 7
-};
-const WHY_ASSISTANT_USERNAME = "why_assistant";
-const WHY_ASSISTANT_NAME = "为什么助手";
-const QUESTION_ASSISTANT_USERNAME = "ai_slmm";
-const QUESTION_ASSISTANT_NAME = "ai_slmm";
-const DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS = 10;
-const DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES = 10;
-const DEFAULT_WHY_ASSISTANT_PROMPT = [
-  "你是“为什么助手”，是严格的查经和思考引导师，不是答案机。",
-  "默认用中文短答。你要用问题引导用户观察、查证、祷告和找真实弟兄姐妹交通。",
-  "不要直接给解经结论、神学定论或人生答案；事实型问题可以直接回答并给查证路径。",
-  "查经/知识/思辨类问题要像老师批改作业一样严格：指出敷衍，要求用户回到文本、列观察、区分事实和解释。",
-  "情绪、关系、创伤、婚恋、家庭痛苦类问题要收起严格语气，鼓励用户找真实可信的弟兄姐妹、带领者同行祷告。",
-  "自伤或危险信号优先安全支持，不继续查经或神学分析。",
-  "如果提供背景资料，优先英文资料，并标明出处；无法核验的资料要标为待查证。",
-  "每次最多输出：一句对当前进度的判断、2-3 个下一步问题、必要时 1-2 条带出处的背景资料。"
-].join("\n");
-const DEFAULT_QUESTION_ASSISTANT_PROMPT = [
-  "你是聊天室里的 AI 助手 ai_slmm。",
-  "当有人在普通聊天里发出问题时，你会收到这条消息。",
-  "默认用中文回复，语气自然、简短、像群聊里认真帮忙的人。",
-  "优先直接回应用户问的内容；如果信息不足，先问一个必要的澄清问题。",
-  "不要编造事实；不确定时要说明不确定，并给出可查证路径。",
-  "不要重复用户原话，不要自称大型语言模型。"
-].join("\n");
-const DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT = [
-  "你是 ai_slmm 的弱激活判断体，只判断当前用户发言是否应该交给 ai_slmm 回复。",
-  "如果当前发言延续上一次强激活问题、继续追问、补充信息、纠正 ai_slmm、或明显是在和 ai_slmm 对话，输出 yes。",
-  "如果当前发言已经换话题、明显是在和其他人说话、只是群聊闲谈、通知、寒暄、表态或不需要 ai_slmm 参与，输出 no。",
-  "只输出 yes 或 no，不要解释。"
-].join("\n");
-const AI_ROLE_USERNAMES = new Set([WHY_ASSISTANT_USERNAME, QUESTION_ASSISTANT_USERNAME]);
-const bibleTopicSearchWindows = new Map<number, number[]>();
-const IMAGE_WEBP_QUALITY = 82;
-const IMAGE_WEBP_EFFORT = 5;
-const IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif", ".tif", ".tiff"]);
-// 导入的 ZIP 包含消息附件和头像，放宽单文件上限（全局 multipart 默认 80MB）。
-const IMPORT_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
 
 const allowedOrigins = new Set(CONFIGURED_CORS_ORIGINS.map((origin) => normalizeOrigin(origin)).filter(Boolean));
 
@@ -335,6 +205,8 @@ function socketCorsOrigin(origin: string | undefined, callback: (error: Error | 
 }
 
 const prisma = new PrismaClient();
+const appearanceService = createAppearanceService({ prisma });
+const aiSettingsStore = createAiSettingsStore({ prisma, secret: AI_SETTINGS_SECRET });
 
 function redactRequestUrl(rawUrl?: string) {
   if (!rawUrl || !rawUrl.includes("token=")) return rawUrl || "";
@@ -347,131 +219,6 @@ function redactRequestUrl(rawUrl?: string) {
   }
 }
 
-function compareVersions(a: string, b: string) {
-  const left = a.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
-  const right = b.split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
-  for (let i = 0; i < Math.max(left.length, right.length); i += 1) {
-    const diff = (left[i] || 0) - (right[i] || 0);
-    if (diff) return diff;
-  }
-  return 0;
-}
-
-function parseGitHubRepo(url: string) {
-  const trimmed = url.trim().replace(/\.git$/, "");
-  const ssh = trimmed.match(/github\.com[:/]([^/]+)\/([^/]+)$/);
-  if (ssh) return { owner: ssh[1], repo: ssh[2] };
-  try {
-    const parsed = new URL(trimmed);
-    if (!/github\.com$/i.test(parsed.hostname)) return null;
-    const [owner, repo] = parsed.pathname.replace(/^\/+/, "").split("/");
-    return owner && repo ? { owner, repo } : null;
-  } catch {
-    return null;
-  }
-}
-
-function configuredUpdateBranch() {
-  try {
-    const value = JSON.parse(fs.readFileSync(UPDATE_BRANCH_CONFIG_PATH, "utf8")) as { branch?: unknown };
-    return typeof value.branch === "string" && isSafeUpdateBranch(value.branch) ? value.branch : DEFAULT_UPDATE_BRANCH;
-  } catch {
-    return DEFAULT_UPDATE_BRANCH;
-  }
-}
-
-async function githubBranches() {
-  const repo = parseGitHubRepo(UPDATE_REPO_URL);
-  if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
-  const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}/branches?per_page=100`, {
-    cache: "no-store",
-    headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
-  });
-  if (!response.ok) throw new Error(`无法读取 GitHub 分支：HTTP ${response.status}`);
-  const payload = await response.json() as unknown;
-  if (!Array.isArray(payload)) throw new Error("GitHub 分支列表无效");
-  const branches = normalizeUpdateBranches(payload.map((item) => typeof item === "object" && item ? (item as { name?: unknown }).name : undefined));
-  if (!branches.length) throw new Error("GitHub 没有可用更新分支");
-  return { repo, branches };
-}
-
-async function latestGitHubPackage(branch: string) {
-  const repo = parseGitHubRepo(UPDATE_REPO_URL);
-  if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
-  const url = githubPackageManifestUrl(repo.owner, repo.repo, branch);
-  const response = await fetch(url, {
-    cache: "no-store",
-    headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
-  });
-  if (!response.ok) throw new Error(`无法读取 GitHub 版本：HTTP ${response.status}`);
-  const manifest = (await response.json()) as { content?: string; encoding?: string };
-  if (!manifest.content || manifest.encoding !== "base64") throw new Error("GitHub package.json 内容无效");
-  const pkg = JSON.parse(Buffer.from(manifest.content, "base64").toString("utf8")) as { version?: string };
-  if (!pkg.version || !/^\d+\.\d+\.\d+/.test(pkg.version)) throw new Error("GitHub package.json 缺少有效版本号");
-  return {
-    owner: repo.owner,
-    repo: repo.repo,
-    branch,
-    version: String(pkg.version || ""),
-    url: `https://github.com/${repo.owner}/${repo.repo}`
-  };
-}
-
-function expireStaleUpdateStatus(status: { state: string; progress: number; detail: string; updatedAt?: string }) {
-  if (status.state !== "running" || !status.updatedAt || !Number.isFinite(UPDATE_RUNNING_TIMEOUT_MS) || UPDATE_RUNNING_TIMEOUT_MS <= 0) {
-    return status;
-  }
-  const updatedAt = Date.parse(status.updatedAt);
-  if (!Number.isFinite(updatedAt) || Date.now() - updatedAt <= UPDATE_RUNNING_TIMEOUT_MS) return status;
-  return {
-    ...status,
-    state: "failed",
-    progress: 100,
-    detail: "更新进程长时间没有进展，请检查日志后重试"
-  };
-}
-
-function readUpdateStatus() {
-  let status: { state: string; progress: number; detail: string; updatedAt?: string } = { state: "idle", progress: 0, detail: "尚未开始更新" };
-  if (fs.existsSync(UPDATE_STATUS_PATH)) {
-    try {
-      status = { ...status, ...JSON.parse(fs.readFileSync(UPDATE_STATUS_PATH, "utf8")) };
-    } catch {
-      status = { state: "unknown", progress: 0, detail: "更新状态文件无法读取" };
-    }
-  }
-  const log = readLogTail(UPDATE_LOG_PATH, UPDATE_LOG_TAIL_BYTES);
-  return { ...expireStaleUpdateStatus(status), log };
-}
-
-function writeUpdateStatus(state: string, progress: number, detail: string) {
-  fs.mkdirSync(STORAGE_ROOT, { recursive: true });
-  const payload = {
-    state,
-    progress: Math.min(100, Math.max(0, Number(progress) || 0)),
-    detail: detail.slice(0, 500),
-    updatedAt: new Date().toISOString()
-  };
-  const tempPath = `${UPDATE_STATUS_PATH}.${process.pid}.tmp`;
-  fs.writeFileSync(tempPath, `${JSON.stringify(payload, null, 2)}\n`);
-  fs.renameSync(tempPath, UPDATE_STATUS_PATH);
-}
-
-function readLogTail(filePath: string, maxBytes: number) {
-  if (!fs.existsSync(filePath)) return [];
-  const stat = fs.statSync(filePath);
-  const start = Math.max(0, stat.size - maxBytes);
-  const length = stat.size - start;
-  const fd = fs.openSync(filePath, "r");
-  try {
-    const buffer = Buffer.alloc(length);
-    fs.readSync(fd, buffer, 0, length, start);
-    const text = `${start > 0 ? "...日志过长，仅显示最后部分\n" : ""}${buffer.toString("utf8")}`;
-    return text.split(/\r?\n/).filter(Boolean).slice(-120);
-  } finally {
-    fs.closeSync(fd);
-  }
-}
 
 const PERIODIC_REQUEST_LOG_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
   { method: "POST", pattern: /^\/api\/music\/tracks\/\d+\/progress$/ },
@@ -500,6 +247,8 @@ const app = Fastify({
   bodyLimit: 8 * 1024 * 1024,
   trustProxy: process.env.TRUST_PROXY === "true" ? true : ["127.0.0.1", "::1"]
 });
+
+imageProcessingLog.warn = (data, message) => app.log.warn(data, message);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
@@ -609,13 +358,6 @@ const friendListeners = new Map<string, FriendListenerDTO & { updatedAt: number 
 let vapidPublicKey = "";
 let pushReady = false;
 
-const pushSubscriptionSchema = z.object({
-  endpoint: z.string().url().max(512),
-  keys: z.object({
-    p256dh: z.string().min(1).max(255),
-    auth: z.string().min(1).max(255)
-  })
-});
 
 function detectDeviceKind(userAgent: string): DeviceKind {
   const ua = userAgent.toLowerCase();
@@ -822,68 +564,6 @@ function isPrayerUpdateMessage(message: Pick<Message, "id" | "payload">) {
   return sourcePrayerMessageId(message.payload, message.id) !== message.id;
 }
 
-let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; loadedAt: number } | null = null;
-
-function clampInteger(value: unknown, fallback: number, min: number, max: number) {
-  const parsed = Math.round(Number(value));
-  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
-}
-
-function aiEncryptionKey() {
-  return crypto.createHash("sha256").update(AI_SETTINGS_SECRET).digest();
-}
-
-function encryptAiApiKey(value: string) {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", aiEncryptionKey(), iv);
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-  return ["v1", iv.toString("base64url"), tag.toString("base64url"), encrypted.toString("base64url")].join(":");
-}
-
-function decryptAiApiKey(value: string) {
-  if (!value) return "";
-  try {
-    const [version, iv, tag, encrypted] = value.split(":");
-    if (version !== "v1" || !iv || !tag || !encrypted) return "";
-    const decipher = crypto.createDecipheriv("aes-256-gcm", aiEncryptionKey(), Buffer.from(iv, "base64url"));
-    decipher.setAuthTag(Buffer.from(tag, "base64url"));
-    return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
-  } catch {
-    return "";
-  }
-}
-
-async function loadAiSettings(force = false) {
-  if (!force && aiSettingsCache && Date.now() - aiSettingsCache.loadedAt < 5000) return aiSettingsCache;
-  const rows = await prisma.setting.findMany({
-    where: {
-      key: {
-        in: [
-          "aiDeepSeekApiKeyEncrypted",
-          "aiRelatedVersesEnabled",
-          "aiRelatedVersesPromptCommand",
-          "aiRelatedVersesCardCooldownSeconds",
-          "aiRelatedVersesUserLimitPerMinute",
-          "aiRelatedVersesMaxSuccessPerMessage"
-        ]
-      }
-    }
-  });
-  const settings = new Map(rows.map((row) => [row.key, row.value]));
-  const encryptedApiKey = settings.get("aiDeepSeekApiKeyEncrypted") || "";
-  const value: AiSettingsDTO = {
-    ...DEFAULT_AI_SETTINGS,
-    enabled: settings.get("aiRelatedVersesEnabled") !== "false",
-    apiKeyConfigured: !!decryptAiApiKey(encryptedApiKey),
-    promptCommand: (settings.get("aiRelatedVersesPromptCommand") || DEFAULT_AI_PROMPT_COMMAND).trim() || DEFAULT_AI_PROMPT_COMMAND,
-    cardCooldownSeconds: clampInteger(settings.get("aiRelatedVersesCardCooldownSeconds"), DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600),
-    userLimitPerMinute: clampInteger(settings.get("aiRelatedVersesUserLimitPerMinute"), DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60),
-    maxSuccessPerMessage: clampInteger(settings.get("aiRelatedVersesMaxSuccessPerMessage"), DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20)
-  };
-  aiSettingsCache = { value, encryptedApiKey, loadedAt: Date.now() };
-  return aiSettingsCache;
-}
 
 async function directChatMemberNames(channelId: number) {
   const members = await prisma.channelMember.findMany({
@@ -896,8 +576,8 @@ async function directChatMemberNames(channelId: number) {
 
 async function generateDirectChatNameSuggestions(memberNames: string[]) {
   const fallback = fallbackDirectChatNames(memberNames);
-  const aiSettings = await loadAiSettings();
-  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
+  const aiSettings = await aiSettingsStore.loadAiSettings();
+  const apiKey = aiSettingsStore.decryptAiApiKey(aiSettings.encryptedApiKey);
   if (!apiKey) return fallback;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
@@ -956,74 +636,10 @@ async function ensureDirectGroupDefaultName(channelId: number) {
   if (name) await prisma.channel.update({ where: { id: channelId }, data: { name } });
 }
 
-function resetAiSettingsCache() {
-  aiSettingsCache = null;
-}
 
-function plainTextFromHtml(input?: string | null, maxLength = 2000) {
-  return String(input || "")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]*>/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
-    .slice(0, maxLength);
-}
 
-// 剥离常见 Markdown 语法标记，用于频道预览、推送通知等纯文本场景，
-// 让 AI 助手回复里的 **、#、`、列表符号等不再原样显示。
-function stripMarkdownSyntax(input?: string | null) {
-  return String(input || "")
-    .replace(/```[\s\S]*?```/g, (block) => block.replace(/^```[^\n]*\n?/gm, "").replace(/```$/g, ""))
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^\s*[-*+]\s+/gm, "• ")
-    .replace(/^\s*(\d+)[.、)]\s+/gm, "$1. ")
-    .replace(/^>\s?/gm, "")
-    .replace(/^\s*[-*_]{3,}\s*$/gm, "—")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/__([^_]+)__/g, "$1")
-    .replace(/(^|[^*])\*([^*]+)\*/g, "$1$2")
-    .replace(/(^|[^_])_([^_]+)_/g, "$1$2")
-    .replace(/~~([^~]+)~~/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
-function cleanAiError(error: unknown) {
-  if (error instanceof Error) return error.message.slice(0, 1000);
-  return String(error || "AI request failed").slice(0, 1000);
-}
 
-function parseAiVerseReferences(input: string, limit = 3) {
-  const seen = new Set<string>();
-  const references: string[] = [];
-  for (const rawLine of input.split(/\n|;|；/g)) {
-    const cleaned = rawLine
-      .replace(/^\s*(?:[-*•]\s*|\d+[.、]\s*)/, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .replace(/[。.!！]+$/g, "");
-    if (!cleaned || seen.has(cleaned)) continue;
-    seen.add(cleaned);
-    references.push(cleaned);
-    if (references.length >= limit) break;
-  }
-  return references;
-}
-
-function bibleTopicSearchAllowed(accountId: number, limit: number) {
-  const cutoff = Date.now() - 60_000;
-  const recent = (bibleTopicSearchWindows.get(accountId) || []).filter((timestamp) => timestamp >= cutoff);
-  if (recent.length >= limit) {
-    bibleTopicSearchWindows.set(accountId, recent);
-    return false;
-  }
-  recent.push(Date.now());
-  bibleTopicSearchWindows.set(accountId, recent);
-  return true;
-}
 
 function serializeAiSuggestion(row: {
   id: number;
@@ -1048,125 +664,8 @@ function serializeAiSuggestion(row: {
   };
 }
 
-function aiConfigurationMessage(auth: Pick<AuthContext, "isAdmin">) {
-  return auth.isAdmin ? "AI 经文建议尚未配置，请前往 /ai-settings 填写 API Key。" : "暂时还不能生成经文建议，请稍后再试。";
-}
 
-function applyFileResponseHeaders(reply: FastifyReply, name: string, forceDownload: boolean) {
-  const policy = fileResponsePolicy(name, forceDownload);
-  reply.header("X-Content-Type-Options", "nosniff");
-  reply.header("Cross-Origin-Resource-Policy", "same-origin");
-  reply.header("Content-Type", policy.contentType);
-  reply.header("Content-Disposition", `${policy.disposition}; filename*=UTF-8''${encodeURIComponent(path.basename(name))}`);
-  if (policy.sandbox) reply.header("Content-Security-Policy", "sandbox; default-src 'none'");
-  return policy;
-}
 
-function applyFileValidation(request: FastifyRequest, reply: FastifyReply, stat: fs.Stats) {
-  const etag = `W/\"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}\"`;
-  reply.header("ETag", etag);
-  reply.header("Last-Modified", stat.mtime.toUTCString());
-  // Served files are content-addressed (UUID filenames, one upload per name),
-  // so long-lived immutable caching is safe and avoids a revalidation round
-  // trip per avatar/image on every page view.
-  reply.header("Cache-Control", "private, max-age=31536000, immutable");
-  const noneMatch = String(request.headers["if-none-match"] || "");
-  const modifiedSince = Date.parse(String(request.headers["if-modified-since"] || ""));
-  return noneMatch === etag || (!noneMatch && Number.isFinite(modifiedSince) && stat.mtimeMs <= modifiedSince + 999);
-}
-
-function applyJsonValidation(request: FastifyRequest, reply: FastifyReply, etag: string) {
-  reply.header("ETag", etag);
-  reply.header("Cache-Control", "private, no-cache");
-  return String(request.headers["if-none-match"] || "") === etag;
-}
-
-function isImageFileName(name?: string | null) {
-  return IMAGE_EXTENSIONS.has(path.extname(name || "").toLowerCase());
-}
-
-function wantsOriginalImage(fields: Record<string, { value?: string }>) {
-  const value = String(fields.originalImage?.value || fields.original?.value || "").toLowerCase();
-  return value === "1" || value === "true" || value === "yes";
-}
-
-function compressedImageFileName(shortName = false) {
-  return `${shortName ? crypto.randomBytes(5).toString("hex") : crypto.randomUUID()}.webp`;
-}
-
-function shortStorageFileName(ext: string) {
-  const tokenLength = Math.max(4, 16 - ext.length);
-  return `${crypto.randomBytes(Math.ceil(tokenLength / 2)).toString("hex").slice(0, tokenLength)}${ext}`;
-}
-
-function displayWebpFileName(name: string) {
-  const base = path.basename(name, path.extname(name)).trim() || "image";
-  return `${base}.webp`;
-}
-
-async function compressImageFile(inputPath: string, outputDir: string, options: { shortName?: boolean; maxDimension?: number } = {}) {
-  const originalStat = fs.statSync(inputPath);
-  const outputName = compressedImageFileName(options.shortName);
-  const outputPath = path.join(outputDir, outputName);
-  try {
-    let pipeline = sharp(inputPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 }).rotate();
-    if (options.maxDimension) {
-      pipeline = pipeline.resize({ width: options.maxDimension, height: options.maxDimension, fit: "inside", withoutEnlargement: true });
-    }
-    await pipeline
-      .webp({ quality: IMAGE_WEBP_QUALITY, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
-      .toFile(outputPath);
-    const outputStat = fs.statSync(outputPath);
-    if (outputStat.size >= originalStat.size) {
-      fs.unlinkSync(outputPath);
-      return null;
-    }
-    return {
-      fileName: outputName,
-      filePath: outputPath,
-      size: outputStat.size,
-      originalSize: originalStat.size,
-      savedBytes: originalStat.size - outputStat.size
-    };
-  } catch (error) {
-    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
-    app.log.warn({ error, inputPath }, "image compression failed");
-    return null;
-  }
-}
-
-async function validateStoredImage(filePath: string) {
-  try {
-    const metadata = await sharp(filePath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
-    return !!metadata.format && !!metadata.width && !!metadata.height && metadata.width <= 20_000 && metadata.height <= 20_000;
-  } catch {
-    return false;
-  }
-}
-
-const IMAGE_THUMB_MAX_DIMENSION = 480;
-
-// Chat bubbles render at ~260px but used to transfer the full-size image;
-// keep a small webp variant next to the stored file for bubble rendering and
-// preload warming. Served through /api/files/:id?thumb=1 with a server-side
-// fallback to the original when no thumbnail exists (older uploads).
-export async function writeImageThumbnail(storedPath: string) {
-  const thumbPath = `${storedPath}.thumb.webp`;
-  if (fs.existsSync(thumbPath)) return;
-  try {
-    const source = sharp(storedPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 });
-    const metadata = await source.metadata();
-    if (!metadata.width || !metadata.height || Math.max(metadata.width, metadata.height) <= IMAGE_THUMB_MAX_DIMENSION) return;
-    await sharp(storedPath, { animated: true, failOn: "error", limitInputPixels: 40_000_000 })
-      .rotate()
-      .resize({ width: IMAGE_THUMB_MAX_DIMENSION, height: IMAGE_THUMB_MAX_DIMENSION, fit: "inside", withoutEnlargement: true })
-      .webp({ quality: 78, effort: IMAGE_WEBP_EFFORT, smartSubsample: true })
-      .toFile(thumbPath);
-  } catch (error) {
-    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
-    app.log.warn({ error, storedPath }, "image thumbnail failed");
-  }
-}
 
 // Older uploads predate thumbnails; generate missing variants once in the
 // background after boot. Already-covered files skip on an existsSync check.
@@ -1177,15 +676,6 @@ async function backfillImageThumbnails() {
   }
 }
 
-async function storedImageDimensions(filePath: string): Promise<ImageDimensions | undefined> {
-  try {
-    const metadata = await sharp(filePath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
-    if (!metadata.width || !metadata.height || metadata.width > 20_000 || metadata.height > 20_000) return undefined;
-    return orientedImageDimensions(metadata.width, metadata.height, metadata.orientation);
-  } catch {
-    return undefined;
-  }
-}
 
 function isAudioFileName(name?: string | null) {
   return /\.(webm|mp3|m4a|wav|ogg|aac|mp4)$/i.test(name || "");
@@ -1199,73 +689,6 @@ function cleanChannelIcon(input: unknown) {
   return /\.(jpe?g|png|gif|webp)$/i.test(icon) ? icon : "";
 }
 
-function cleanHexColor(input: unknown, fallback: string) {
-  const value = String(input || "").trim();
-  return /^#[0-9a-fA-F]{6}$/.test(value) ? value.toLowerCase() : fallback;
-}
-
-function cleanThemeId(input: unknown) {
-  return String(input || "")
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .slice(0, 32)
-    .replace(/^-|-$/g, "");
-}
-
-function cleanThemePalette(input: unknown): ThemePaletteDTO {
-  const palette = (input && typeof input === "object" ? input : {}) as Partial<Record<keyof ThemePaletteDTO, unknown>>;
-  return {
-    accent: cleanHexColor(palette.accent, DEFAULT_THEME_PALETTE.accent),
-    accentDark: cleanHexColor(palette.accentDark, DEFAULT_THEME_PALETTE.accentDark),
-    buttonText: cleanHexColor(palette.buttonText, DEFAULT_THEME_PALETTE.buttonText),
-    bg: cleanHexColor(palette.bg, DEFAULT_THEME_PALETTE.bg),
-    chatBg: cleanHexColor(palette.chatBg, DEFAULT_THEME_PALETTE.chatBg),
-    panel: cleanHexColor(palette.panel, DEFAULT_THEME_PALETTE.panel),
-    line: cleanHexColor(palette.line, DEFAULT_THEME_PALETTE.line),
-    text: cleanHexColor(palette.text, DEFAULT_THEME_PALETTE.text),
-    muted: cleanHexColor(palette.muted, DEFAULT_THEME_PALETTE.muted),
-    bubbleOther: cleanHexColor(palette.bubbleOther, DEFAULT_THEME_PALETTE.bubbleOther),
-    bubbleOtherText: cleanHexColor(palette.bubbleOtherText, DEFAULT_THEME_PALETTE.bubbleOtherText),
-    bubbleMine: cleanHexColor(palette.bubbleMine, DEFAULT_THEME_PALETTE.bubbleMine),
-    bubbleMineText: cleanHexColor(palette.bubbleMineText, DEFAULT_THEME_PALETTE.bubbleMineText)
-  };
-}
-
-function cleanFlashEffect(input: unknown): FlashEffectSettingsDTO {
-  const raw = (input && typeof input === "object" ? input : {}) as Partial<FlashEffectSettingsDTO>;
-  const colors = (Array.isArray(raw.colors) ? raw.colors : DEFAULT_FLASH_EFFECT.colors)
-    .map((color) => cleanHexColor(color, ""))
-    .filter(Boolean)
-    .slice(0, 10);
-  const seconds = Number(raw.intervalSeconds);
-  const intervalSeconds = Math.round(Math.min(10, Math.max(0.01, Number.isFinite(seconds) ? seconds : DEFAULT_FLASH_EFFECT.intervalSeconds)) * 100) / 100;
-  const transitionMode = raw.transitionMode === "step" ? "step" : "smooth";
-  return {
-    colors: colors.length ? colors : [...DEFAULT_FLASH_EFFECT.colors],
-    intervalSeconds,
-    transitionMode
-  };
-}
-
-function cleanCustomThemes(input: unknown): ThemeDTO[] {
-  if (!Array.isArray(input)) return [];
-  const seen = new Set<string>();
-  return input
-    .map((theme, index) => {
-      const row = (theme && typeof theme === "object" ? theme : {}) as Partial<ThemeDTO>;
-      const id = cleanThemeId(row.id) || `custom-${index + 1}`;
-      const name = String(row.name || "").trim().slice(0, 24) || "自定义主题";
-      return { id, name, palette: cleanThemePalette(row.palette) };
-    })
-    .filter((theme) => {
-      if (THEMES.has(theme.id) || seen.has(theme.id)) return false;
-      seen.add(theme.id);
-      return true;
-    })
-    .slice(0, 24);
-}
 
 function directChannelKey(accountA: number, accountB: number) {
   return [accountA, accountB].sort((a, b) => a - b).join(":");
@@ -1373,29 +796,6 @@ async function updateAccountAvatarFromUpload(accountId: number, request: Fastify
   return { success: true, account: authDto(updated) };
 }
 
-function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
-  const row = value && typeof value === "object" ? (value as Partial<BiblePreferencesDTO>) : {};
-  const workspace = row.workspace ? cleanBibleWorkspaceState(row.workspace) : null;
-  return {
-    outputFormat: BIBLE_OUTPUT_FORMATS.has(String(row.outputFormat)) ? (row.outputFormat as BiblePreferencesDTO["outputFormat"]) : DEFAULT_BIBLE_PREFERENCES.outputFormat,
-    referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
-    combinedPassageMode: BIBLE_COMBINED_PASSAGE_MODES.has(String(row.combinedPassageMode)) ? (row.combinedPassageMode as BiblePreferencesDTO["combinedPassageMode"]) : DEFAULT_BIBLE_PREFERENCES.combinedPassageMode,
-    quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle,
-    ...(workspace ? { workspace } : {})
-  };
-}
-
-function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
-  const preferences = cleanBiblePreferences(value);
-  return {
-    outputFormat: preferences.outputFormat,
-    referenceLabelMode: preferences.referenceLabelMode,
-    combinedPassageMode: preferences.combinedPassageMode,
-    quotationStyle: preferences.quotationStyle,
-    ...(preferences.workspace ? { workspace: preferences.workspace as unknown as Prisma.InputJsonValue } : {})
-  };
-}
-
 async function canAccessChannel(accountId: number, channelId: number) {
   const [channel, account] = await Promise.all([
     prisma.channel.findUnique({ where: { id: channelId } }),
@@ -1474,7 +874,7 @@ async function canPinChannel(auth: Pick<AuthContext, "accountId" | "isAdmin" | "
 type MessageSerializeBatch = {
   voiceListenedMessageIds?: Set<number>;
   prayer?: {
-    aiSettings: Awaited<ReturnType<typeof loadAiSettings>>;
+    aiSettings: Awaited<ReturnType<typeof aiSettingsStore.loadAiSettings>>;
     sourceMessages: Map<number, Message | null>;
     actionsByMessageId: Map<number, Array<PrayerAction & { account: Pick<Account, "displayName" | "avatarPath"> }>>;
     aiSuggestionsByMessageId: Map<number, Array<MessageAiSuggestion & { createdBy: Pick<Account, "displayName"> | null }>>;
@@ -1535,7 +935,7 @@ async function serializeMessage(message: Message & { sender: Actor; replyTo?: (M
       ])
     : [[], null];
   if (message.type === "prayer") {
-    const aiSettings = batch?.prayer ? batch.prayer.aiSettings : await loadAiSettings();
+    const aiSettings = batch?.prayer ? batch.prayer.aiSettings : await aiSettingsStore.loadAiSettings();
     const raw = prayerPayloadRaw(message.payload);
     const sourceId = sourcePrayerMessageId(message.payload, message.id);
     const sourceMessage =
@@ -1901,7 +1301,7 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
 }
 
 async function loadWhyAssistantSettings() {
-  const aiSettings = await loadAiSettings();
+  const aiSettings = await aiSettingsStore.loadAiSettings();
   const rows = await prisma.setting.findMany({
     where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName", "whyAssistantModel", "whyAssistantThinkingEnabled"] } }
   });
@@ -1991,7 +1391,7 @@ async function maybeTriggerWhyDirectAssistant(messageId: number) {
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
   if (message.channel.directKey !== virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
   const settings = await loadWhyAssistantSettings();
-  const apiKey = decryptAiApiKey(settings.encryptedApiKey);
+  const apiKey = aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey);
   if (!settings.value.enabled || !apiKey) return;
   const assistant = await ensureWhyAssistantCharacter(settings.value.displayName);
   const contextText = await buildWhyDirectAssistantContext(message, assistant);
@@ -2009,7 +1409,7 @@ async function maybeTriggerWhyDirectAssistant(messageId: number) {
 }
 
 async function loadQuestionAssistantSettings() {
-  const aiSettings = await loadAiSettings();
+  const aiSettings = await aiSettingsStore.loadAiSettings();
   const rows = await prisma.setting.findMany({
     where: {
       key: {
@@ -2269,7 +1669,7 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   if (message.channel.directKey === virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
   const settings = await loadQuestionAssistantSettings();
   const directActivation = questionAssistantDirectActivation(message.content, settings.value.displayName);
-  const apiKey = decryptAiApiKey(settings.encryptedApiKey);
+  const apiKey = aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey);
   if (!settings.value.enabled || !apiKey) return;
   let activationMode: QuestionAssistantActivationMode | null = directActivation;
   let activationAnchor: Message | null | undefined = directActivation ? message : null;
@@ -2305,78 +1705,6 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   });
 }
 
-function decodeBasicHtmlEntities(input: string) {
-  return input
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
-}
-
-function pinnedPlainTextFromHtml(input?: string | null) {
-  return decodeBasicHtmlEntities(
-    String(input || "")
-      .replace(/<br\s*\/?>/gi, "\n")
-      .replace(/<\/p\s*>/gi, "\n")
-      .replace(/<[^>]*>/g, "")
-  )
-    .replace(/\r\n/g, "\n")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function cleanPinnedText(input: unknown) {
-  return String(input || "").replace(/\r\n/g, "\n").trim().slice(0, 20000);
-}
-
-function cleanPinnedTitle(input: unknown) {
-  return String(input || "").trim().slice(0, 160);
-}
-
-function pinnedBlockId() {
-  return crypto.randomBytes(6).toString("hex");
-}
-
-function appendPinnedTextBlock(blocks: PinnedContentBlockDTO[], text: string) {
-  const cleaned = cleanPinnedText(text);
-  if (!cleaned) return;
-  const previous = blocks[blocks.length - 1];
-  if (previous?.type === "text") {
-    previous.text = [previous.text, cleaned].filter(Boolean).join("\n");
-  } else {
-    blocks.push({ id: pinnedBlockId(), type: "text", text: cleaned });
-  }
-}
-
-function serializePinnedBody(input: unknown, fallbackContent?: string | null): PinnedBodyDTO {
-  const raw = input && typeof input === "object" && !Array.isArray(input) ? (input as { blocks?: unknown }) : null;
-  const blocks: PinnedContentBlockDTO[] = [];
-  if (Array.isArray(raw?.blocks)) {
-    for (const block of raw.blocks) {
-      const row = block && typeof block === "object" ? (block as Record<string, unknown>) : {};
-      const id = String(row.id || pinnedBlockId()).slice(0, 40);
-      if (row.type === "text") {
-        const text = cleanPinnedText(row.text);
-        if (text) blocks.push({ id, type: "text", text });
-      } else if (row.type === "image" || row.type === "file") {
-        const filePath = path.basename(String(row.filePath || ""));
-        if (!filePath) continue;
-        blocks.push({
-          id,
-          type: row.type,
-          fileName: String(row.fileName || filePath).slice(0, 255),
-          filePath,
-          fileSize: Number.isFinite(Number(row.fileSize)) ? Number(row.fileSize) : null
-        });
-      }
-    }
-  }
-  if (!blocks.length) appendPinnedTextBlock(blocks, pinnedPlainTextFromHtml(fallbackContent));
-  return { blocks };
-}
 
 function pinnedBodyPreview(body: PinnedBodyDTO, title?: string | null) {
   const text = body.blocks
@@ -2387,41 +1715,6 @@ function pinnedBodyPreview(body: PinnedBodyDTO, title?: string | null) {
   return stripPushText(title || text || "新的置顶消息");
 }
 
-function pinnedBodyUploadFilePaths(body: PinnedBodyDTO) {
-  return new Set(body.blocks.flatMap((block) => (block.type === "image" || block.type === "file" ? [path.basename(block.filePath)] : [])));
-}
-
-function pinnedBlocksFromMessage(message: Message): PinnedContentBlockDTO[] {
-  const blocks: PinnedContentBlockDTO[] = [];
-  if (message.type === "system") return blocks;
-  if (message.type === "chain") {
-    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Partial<ChainPayload>) : {};
-    const participants = Array.isArray(payload.participants) ? payload.participants : [];
-    appendPinnedTextBlock(
-      blocks,
-      [`接龙：${payload.topic || pinnedPlainTextFromHtml(message.content) || "接龙"}`, ...participants.map((item, index) => `${index + 1}. ${item.name}${item.text ? `：${item.text}` : ""}`)].join("\n")
-    );
-    return blocks;
-  }
-  if (message.type === "prayer") {
-    const payload = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as { status?: unknown }) : {};
-    const status = payload.status === "closed" ? "无需再代祷" : payload.status === "answered" ? "已蒙应允" : "代祷中";
-    appendPinnedTextBlock(blocks, `代祷事项（${status}）：${pinnedPlainTextFromHtml(message.content) || "代祷事项"}`);
-    return blocks;
-  }
-  const text = pinnedPlainTextFromHtml(message.content);
-  if (text) appendPinnedTextBlock(blocks, text);
-  if ((message.type === "image" || message.type === "file") && message.filePath) {
-    blocks.push({
-      id: pinnedBlockId(),
-      type: message.type === "image" ? "image" : "file",
-      fileName: message.fileName || path.basename(message.filePath),
-      filePath: path.basename(message.filePath),
-      fileSize: message.fileSize || null
-    });
-  }
-  return blocks;
-}
 
 async function pinnedBodyFromMessages(channelId: number, messageIds: number[]) {
   const messages = await prisma.message.findMany({
@@ -2506,7 +1799,7 @@ async function ensureWebPush() {
       const generated = webPush.generateVAPIDKeys();
       publicKey = generated.publicKey;
       privateKey = generated.privateKey;
-      await Promise.all([setSetting("webPushVapidPublicKey", publicKey), setSetting("webPushVapidPrivateKey", privateKey)]);
+      await Promise.all([appearanceService.setSetting("webPushVapidPublicKey", publicKey), appearanceService.setSetting("webPushVapidPrivateKey", privateKey)]);
     }
   }
   if (!publicKey || !privateKey) {
@@ -3057,15 +2350,6 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   };
 }
 
-function parseJsonField<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string") return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
-
 async function createMessageFromActor(input: {
   channelId: number;
   actorId: number;
@@ -3112,650 +2396,13 @@ async function createMessageFromActor(input: {
   return message;
 }
 
-app.get("/api/health", async () => ({ ok: true, name: "team-chat", time: new Date().toISOString() }));
 
-app.get("/api/version", async () => ({
-  version: APP_VERSION,
-  date: RELEASE_DATE,
-  developer: RELEASE_DISPLAY_DEVELOPER,
-  notes: RELEASE_NOTES,
-  ...(DEMO_MODE_AVAILABLE ? { demo: { available: true as const } } : {}),
-  update: {
-    repoUrl: UPDATE_REPO_URL,
-    branch: configuredUpdateBranch(),
-    restartMode: UPDATE_RESTART_MODE,
-    pm2App: UPDATE_PM2_APP
-  }
-}));
 
-// Past-version notes are only needed when someone opens the release modal,
-// keeping the full history out of the client entry chunk.
-app.get("/api/version/history", async () => ({ history: RELEASE_HISTORY }));
 
-app.get("/api/admin/update/check", { preHandler: requireAdmin }, async (request) => {
-  const { repo, branches } = await githubBranches();
-  const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
-  const branch = selectUpdateBranch((request.query as { branch?: unknown }).branch, branches, fallbackBranch);
-  const latest = await latestGitHubPackage(branch);
-  return {
-    current: APP_VERSION,
-    latest: latest.version,
-    updateAvailable: latest.branch !== configuredUpdateBranch() || compareVersions(latest.version, APP_VERSION) > 0,
-    repo: `${repo.owner}/${repo.repo}`,
-    branch: latest.branch,
-    branches,
-    url: latest.url,
-    restartMode: UPDATE_RESTART_MODE,
-    status: readUpdateStatus()
-  };
-});
 
-app.get("/api/admin/update/status", { preHandler: requireAdmin }, async () => readUpdateStatus());
 
-app.post("/api/admin/update/start", { preHandler: requireAdmin }, async (request, reply) => {
-  const status = readUpdateStatus();
-  if (status.state === "running") return reply.code(409).send({ success: false, message: "更新已经在进行中", status });
-  const { branches } = await githubBranches();
-  const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
-  const branch = selectUpdateBranch((request.body as { branch?: unknown } | undefined)?.branch, branches, fallbackBranch);
-  const scriptPath = path.join(ROOT, "scripts", "self-update.sh");
-  if (!fs.existsSync(scriptPath)) return reply.code(500).send({ success: false, message: "缺少更新脚本" });
-  fs.writeFileSync(UPDATE_LOG_PATH, "");
-  writeUpdateStatus("running", 1, `准备更新 ${branch}`);
-  const child = spawn("bash", [scriptPath], {
-    cwd: ROOT,
-    detached: true,
-    stdio: "ignore",
-    env: {
-      ...process.env,
-      APP_DIR: ROOT,
-      UPDATE_REPO_URL,
-      UPDATE_BRANCH: branch,
-      UPDATE_PM2_APP,
-      UPDATE_RESTART_MODE,
-      UPDATE_RESTART_COMMAND,
-      UPDATE_STATUS_PATH,
-      UPDATE_LOG_PATH,
-      UPDATE_BRANCH_CONFIG_PATH
-    }
-  });
-  child.on("error", (error) => {
-    const detail = `启动更新脚本失败：${error.message}`;
-    fs.appendFileSync(UPDATE_LOG_PATH, `[${new Date().toISOString()}] ${detail}\n`);
-    writeUpdateStatus("failed", 100, detail);
-  });
-  child.unref();
-  return { success: true, status: readUpdateStatus() };
-});
 
-app.get("/avatars/:file", async (request, reply) => {
-  const file = path.basename((request.params as { file: string }).file);
-  const filePath = path.join(AVATAR_DIR, file);
-  if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  const stat = fs.statSync(filePath);
-  applyFileResponseHeaders(reply, file, false);
-  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
-  reply.header("Cache-Control", "public, no-cache");
-  reply.header("Content-Length", String(stat.size));
-  return reply.send(fs.createReadStream(filePath));
-});
 
-app.get("/backgrounds/:file", async (request, reply) => {
-  const file = path.basename((request.params as { file: string }).file);
-  const filePath = path.join(BG_DIR, file);
-  if (!fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  const stat = fs.statSync(filePath);
-  applyFileResponseHeaders(reply, file, false);
-  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
-  reply.header("Cache-Control", "public, no-cache");
-  reply.header("Content-Length", String(stat.size));
-  return reply.send(fs.createReadStream(filePath));
-});
-
-app.post("/api/auth/login", { config: { rateLimit: { max: AUTH_LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (request, reply) => {
-  const body = z.object({ username: z.string().min(1).max(40), password: z.string().min(1).max(128), deviceName: z.string().max(120).optional(), appVersion: z.string().max(32).optional() }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "参数错误" });
-  const account = await prisma.account.findUnique({ where: { username: body.data.username }, include: { actor: true } });
-  if (!account || account.isGuest || !(await bcrypt.compare(body.data.password, account.passwordHash))) {
-    return reply.code(401).send({ success: false, message: "用户名或密码错误" });
-  }
-  const session = await createAuthSession(account.id, request, body.data.deviceName, body.data.appVersion);
-  const updated = await prisma.account.findUniqueOrThrow({ where: { id: account.id }, include: { actor: true } });
-  return { success: true, token: signToken(updated, session), account: authDto(updated) };
-});
-
-app.post("/api/auth/register", { config: { rateLimit: { max: 5, timeWindow: "1 minute" } } }, async (request, reply) => {
-  const enabled = await settingBool("registrationEnabled", false);
-  if (!enabled) return reply.code(403).send({ success: false, message: "暂未开放注册" });
-  const body = z
-    .object({
-      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
-      displayName: z.string().min(1).max(80),
-      password: z.string().min(10).max(128),
-      deviceName: z.string().max(120).optional(),
-      appVersion: z.string().max(32).optional()
-    })
-    .safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "用户名需 2-40 位，密码需 10-128 位" });
-  const existing = await prisma.account.findUnique({ where: { username: body.data.username }, select: { id: true } });
-  if (existing) return reply.code(409).send({ success: false, message: "用户名已存在" });
-  const account = await prisma.account.create({
-    data: {
-      username: body.data.username,
-      passwordHash: await bcrypt.hash(body.data.password, 12),
-      displayName: body.data.displayName,
-      role: "user",
-      actor: { create: { kind: "human", username: body.data.username, displayName: body.data.displayName } }
-    },
-    include: { actor: true }
-  });
-  const publicChannels = await prisma.channel.findMany({ where: { isPrivate: false }, select: { id: true } });
-  if (publicChannels.length) {
-    await prisma.channelMember.createMany({
-      data: publicChannels.map((channel) => ({ accountId: account.id, channelId: channel.id, role: "member" })),
-      skipDuplicates: true
-    });
-  }
-  const session = await createAuthSession(account.id, request, body.data.deviceName, body.data.appVersion);
-  return { success: true, token: signToken(account, session), account: authDto(account) };
-});
-
-app.get("/api/auth/me", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const [account, session] = await Promise.all([
-    prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } }),
-    prisma.accountSession.update({ where: { id: auth.sessionId }, data: { expiresAt: sessionExpiresAt(), lastSeenAt: new Date() }, select: { id: true } })
-  ]);
-  return { account: authDto(account), token: signToken(account, session) };
-});
-
-app.patch("/api/me/profile", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({ displayName: z.string().trim().min(1).max(80) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "昵称需为 1-80 个字符" });
-  const updated = await prisma.account.update({
-    where: { id: auth.accountId },
-    data: {
-      displayName: body.data.displayName,
-      actor: { update: { displayName: body.data.displayName } }
-    },
-    include: { actor: true }
-  });
-  refreshAccountConnections(updated);
-  return { success: true, account: authDto(updated) };
-});
-
-app.post("/api/me/avatar", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  return updateAccountAvatarFromUpload(auth.accountId, request, reply);
-});
-
-app.post("/api/auth/change-password", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({ oldPassword: z.string().max(128), newPassword: z.string().min(10).max(128) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "新密码需 10-128 位" });
-  const account = await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId } });
-  if (!(await bcrypt.compare(body.data.oldPassword, account.passwordHash))) return reply.code(400).send({ success: false, message: "原密码错误" });
-  await prisma.account.update({ where: { id: auth.accountId }, data: { passwordHash: await bcrypt.hash(body.data.newPassword, 12) } });
-  const sessionsToRevoke = await prisma.accountSession.findMany({
-    where: { accountId: auth.accountId, id: { not: auth.sessionId }, revokedAt: null },
-    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
-  });
-  const revokedAt = new Date();
-  await prisma.accountSession.updateMany({ where: { id: { in: sessionsToRevoke.map((session) => session.id) } }, data: { revokedAt } });
-  await Promise.all(sessionsToRevoke.map((session) => writeLoginLog("session_revoked", auth.accountId, session, revokedAt)));
-  disconnectSessions(sessionsToRevoke.map((session) => session.id));
-  return { success: true };
-});
-
-app.delete("/api/me/account", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({ password: z.string().min(1).max(128) }).safeParse(request.body);
-  if (!body.success) return reply.code(400).send({ success: false, message: "请输入当前密码" });
-  const account = await prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } });
-  if (!account) return reply.code(404).send({ success: false, message: "账号不存在" });
-  if (!(await bcrypt.compare(body.data.password, account.passwordHash))) {
-    return reply.code(400).send({ success: false, message: "当前密码错误" });
-  }
-  if (account.role === "admin") {
-    const otherAdmins = await prisma.account.count({ where: { role: "admin", id: { not: account.id } } });
-    if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
-  }
-  const ownedReceptionRooms = await prisma.channel.findMany({
-    where: { kind: "reception", receptionOwnerAccountId: account.id },
-    select: { id: true }
-  });
-  for (const room of ownedReceptionRooms) await receptionService.deleteRoom(room.id);
-  const sessions = await prisma.accountSession.findMany({ where: { accountId: account.id }, select: { id: true } });
-  await prisma.$transaction(async (tx) => {
-    if (account.actor) {
-      await tx.actor.update({
-        where: { id: account.actor.id },
-        data: {
-          accountId: null,
-          username: `deleted-${account.id}-${crypto.randomUUID()}`,
-          displayName: "已注销用户",
-          avatarPath: null,
-          status: "deleted"
-        }
-      });
-    }
-    await tx.account.delete({ where: { id: account.id } });
-  });
-  disconnectSessions(sessions.map((session) => session.id));
-  return { success: true };
-});
-
-app.post("/api/auth/logout", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const session = await prisma.accountSession.findFirst({
-    where: { id: auth.sessionId, accountId: auth.accountId },
-    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
-  });
-  const now = new Date();
-  await prisma.accountSession.updateMany({ where: { id: auth.sessionId, accountId: auth.accountId }, data: { revokedAt: now } });
-  await writeLoginLog("auth_logout", auth.accountId, session, now);
-  disconnectSessions([auth.sessionId]);
-  return { success: true };
-});
-
-app.get("/api/me/sessions", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const sessions = await prisma.accountSession.findMany({
-    where: { accountId: auth.accountId, revokedAt: null, expiresAt: { gt: new Date() } },
-    orderBy: [{ deviceKind: "asc" }, { lastSeenAt: "desc" }]
-  });
-  return {
-    sessions: sessions.map((session) => ({
-      id: session.id,
-      deviceKind: session.deviceKind,
-      deviceName: session.deviceName,
-      ipAddress: session.ipAddress,
-      createdAt: session.createdAt.toISOString(),
-      lastSeenAt: session.lastSeenAt.toISOString(),
-      expiresAt: session.expiresAt.toISOString(),
-      current: session.id === auth.sessionId
-    }))
-  };
-});
-
-app.delete("/api/me/sessions/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const sessionId = (request.params as { id: string }).id;
-  const session = await prisma.accountSession.findFirst({
-    where: { id: sessionId, accountId: auth.accountId, revokedAt: null },
-    select: { id: true, deviceKind: true, deviceName: true, ipAddress: true, userAgent: true }
-  });
-  const now = new Date();
-  const result = await prisma.accountSession.updateMany({
-    where: { id: sessionId, accountId: auth.accountId, revokedAt: null },
-    data: { revokedAt: now }
-  });
-  if (!result.count) return reply.code(404).send({ success: false, message: "设备不存在" });
-  await writeLoginLog("session_revoked", auth.accountId, session, now);
-  disconnectSessions([sessionId]);
-  return { success: true, current: sessionId === auth.sessionId };
-});
-
-async function adminActivityLogs(request: FastifyRequest, reply: FastifyReply) {
-  const parsed = z
-    .object({
-      limit: z.coerce.number().int().min(1).max(500).default(300),
-      category: z.enum(["all", "session", "music", "usage"]).default("all")
-    })
-    .safeParse(request.query);
-  if (!parsed.success) return reply.code(400).send({ success: false, message: "日志参数无效" });
-  const sourceLimit = Math.min(1000, parsed.data.limit * 3);
-  const activityRows = await prisma.$queryRaw<
-    Array<{
-      id: number;
-      kind: AdminLoginLogKind;
-      accountId: number;
-      username: string | null;
-      displayName: string | null;
-      deviceKind: DeviceKind | null;
-      deviceName: string | null;
-      ipAddress: string | null;
-      userAgent: string | null;
-      sessionId: string | null;
-      channelId: number | null;
-      channelName: string | null;
-      trackId: number | null;
-      trackFileName: string | null;
-      playbackId: string | null;
-      appVersion: string | null;
-      latestVersion: string | null;
-      isLatestVersion: boolean | number | null;
-      state: string | null;
-      progressMs: number | null;
-      listenedMs: number | null;
-      durationMs: number | null;
-      createdAt: Date;
-    }>
-  >`
-    SELECT
-      log.id,
-      log.kind,
-      log.account_id AS accountId,
-      account.username AS username,
-      account.display_name AS displayName,
-      log.device_kind AS deviceKind,
-      log.device_name AS deviceName,
-      log.ip_address AS ipAddress,
-      log.user_agent AS userAgent,
-      log.session_id AS sessionId,
-      log.channel_id AS channelId,
-      channel.name AS channelName,
-      log.track_id AS trackId,
-      track.file_name AS trackFileName,
-      log.playback_id AS playbackId,
-      log.app_version AS appVersion,
-      log.latest_version AS latestVersion,
-      log.is_latest_version AS isLatestVersion,
-      log.event_state AS state,
-      log.progress_ms AS progressMs,
-      log.listened_ms AS listenedMs,
-      log.duration_ms AS durationMs,
-      log.created_at AS createdAt
-    FROM account_activity_logs log
-    LEFT JOIN accounts account ON account.id = log.account_id
-    LEFT JOIN channels channel ON channel.id = log.channel_id
-    LEFT JOIN messages track ON track.id = log.track_id
-    WHERE (account.is_guest = FALSE OR account.is_guest IS NULL)
-      AND (channel.kind <> 'reception' OR channel.kind IS NULL)
-    ORDER BY log.created_at DESC, log.id DESC
-    LIMIT ${sourceLimit}
-  `;
-  const legacyRows = await prisma.$queryRaw<
-    Array<{
-      id: number;
-      kind: AdminLoginLogKind;
-      accountId: number;
-      username: string | null;
-      displayName: string | null;
-      deviceKind: DeviceKind | null;
-      deviceName: string | null;
-      ipAddress: string | null;
-      userAgent: string | null;
-      sessionId: string | null;
-      createdAt: Date;
-    }>
-  >`
-    SELECT
-      log.id,
-      log.kind,
-      log.account_id AS accountId,
-      account.username AS username,
-      account.display_name AS displayName,
-      log.device_kind AS deviceKind,
-      log.device_name AS deviceName,
-      log.ip_address AS ipAddress,
-      log.user_agent AS userAgent,
-      log.session_id AS sessionId,
-      log.created_at AS createdAt
-    FROM account_login_logs log
-    LEFT JOIN accounts account ON account.id = log.account_id
-    WHERE account.is_guest = FALSE OR account.is_guest IS NULL
-    ORDER BY log.created_at DESC, log.id DESC
-    LIMIT ${sourceLimit}
-  `;
-  const activityLogs = activityRows.map((row) => ({
-    id: `activity-${row.id}`,
-    kind: row.kind,
-    category: activityLogCategory(row.kind),
-    accountId: row.accountId,
-    username: row.username || `user-${row.accountId}`,
-    displayName: row.displayName || row.username || `用户 ${row.accountId}`,
-    deviceKind: row.deviceKind,
-    deviceName: row.deviceName || row.userAgent ? friendlyDeviceName(row.deviceName, row.userAgent || "") : null,
-    ipAddress: row.ipAddress,
-    userAgent: row.userAgent,
-    sessionId: row.sessionId,
-    channelId: row.channelId,
-    channelName: row.channelName,
-    trackId: row.trackId,
-    trackTitle: row.trackFileName ? musicTrackTitle(row.trackFileName) : null,
-    playbackId: row.playbackId,
-    appVersion: row.appVersion,
-    latestVersion: row.latestVersion,
-    isLatestVersion: row.isLatestVersion === null ? null : !!row.isLatestVersion,
-    state: row.state,
-    progressMs: row.progressMs,
-    listenedMs: row.listenedMs,
-    durationMs: row.durationMs,
-    createdAt: row.createdAt.toISOString()
-  }));
-  const legacyLogs = legacyRows.map((row) => ({
-    id: `legacy-${row.id}`,
-    kind: row.kind,
-    category: "session" as const,
-    accountId: row.accountId,
-    username: row.username || `user-${row.accountId}`,
-    displayName: row.displayName || row.username || `用户 ${row.accountId}`,
-    deviceKind: row.deviceKind,
-    deviceName: row.deviceName || row.userAgent ? friendlyDeviceName(row.deviceName, row.userAgent || "") : null,
-    ipAddress: row.ipAddress,
-    userAgent: row.userAgent,
-    sessionId: row.sessionId,
-    createdAt: row.createdAt.toISOString()
-  }));
-  const logs = [...activityLogs, ...legacyLogs]
-    .filter((row) => parsed.data.category === "all" || row.category === parsed.data.category)
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-    .slice(0, parsed.data.limit);
-  return { logs };
-}
-
-app.get("/api/admin/activity-logs", { preHandler: requireAdmin }, adminActivityLogs);
-app.get("/api/admin/login-logs", { preHandler: requireAdmin }, adminActivityLogs);
-
-app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const origin = pushOriginFromHeaders(request.headers);
-  const preferences = await prisma.channelNotificationPreference.findMany({
-    where: { accountId: auth.accountId, muted: true },
-    select: { channelId: true }
-  });
-  const subscriptions = PUSH_NOTIFICATIONS_ENABLED && origin ? await prisma.pushSubscription.count({ where: { accountId: auth.accountId, origin } }) : 0;
-  return {
-    enabled: PUSH_NOTIFICATIONS_ENABLED,
-    publicKey: vapidPublicKey,
-    pushReady,
-    subscriptions,
-    mutedChannelIds: preferences.map((item) => item.channelId)
-  };
-});
-
-app.post("/api/push-subscriptions", { preHandler: requireAuth }, async (request, reply) => {
-  if (!PUSH_NOTIFICATIONS_ENABLED) return reply.code(503).send({ success: false, message: "当前环境已关闭消息推送" });
-  const auth = (request as AuthedRequest).auth;
-  const origin = pushOriginFromHeaders(request.headers);
-  if (!origin) return reply.code(400).send({ success: false, message: "无法识别当前站点来源" });
-  const body = pushSubscriptionSchema.parse(request.body);
-  await prisma.pushSubscription.upsert({
-    where: { endpoint: body.endpoint },
-    update: {
-      accountId: auth.accountId,
-      origin,
-      keysP256dh: body.keys.p256dh,
-      keysAuth: body.keys.auth
-    },
-    create: {
-      accountId: auth.accountId,
-      endpoint: body.endpoint,
-      origin,
-      keysP256dh: body.keys.p256dh,
-      keysAuth: body.keys.auth
-    }
-  });
-  return { success: true };
-});
-
-app.delete("/api/push-subscriptions", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const origin = pushOriginFromHeaders(request.headers);
-  const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
-  const where = body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint, origin } : { accountId: auth.accountId, origin };
-  await prisma.pushSubscription.deleteMany({ where });
-  return { success: true };
-});
-
-app.post("/api/notifications/test", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  if (!pushReady) return reply.code(400).send({ success: false, message: "服务器推送未就绪" });
-  const origin = pushOriginFromHeaders(request.headers);
-  if (!origin) return reply.code(400).send({ success: false, message: "无法识别当前站点来源" });
-  const body = z.object({ endpoint: z.string().url().max(512).optional() }).parse(request.body || {});
-  const subscriptions = await prisma.pushSubscription.findMany({
-    where: body.endpoint ? { accountId: auth.accountId, endpoint: body.endpoint, origin } : { accountId: auth.accountId, origin }
-  });
-  if (!subscriptions.length) return reply.code(404).send({ success: false, message: "当前设备还没有通知订阅" });
-  await Promise.all(
-    subscriptions.map(async (subscription) => {
-      try {
-        await webPush.sendNotification(
-          {
-            endpoint: subscription.endpoint,
-            keys: { p256dh: subscription.keysP256dh, auth: subscription.keysAuth }
-          },
-          JSON.stringify({
-            title: "Team Chat 测试通知",
-            body: "通知已经可以用啦。以后 @ 和重要公告会从这里提醒你。",
-            url: "/",
-            tag: `notification-test-${auth.accountId}`,
-            channelId: 0
-          })
-        );
-      } catch (error) {
-        const statusCode = (error as { statusCode?: number }).statusCode;
-        if (statusCode === 404 || statusCode === 410) {
-          await prisma.pushSubscription.deleteMany({ where: { endpoint: subscription.endpoint } });
-        } else {
-          app.log.warn({ error }, "test push notification failed");
-          throw error;
-        }
-      }
-    })
-  );
-  return { success: true, sent: subscriptions.length };
-});
-
-app.patch("/api/notifications/channels/:id", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const channelId = Number((request.params as { id: string }).id);
-  if (!channelId || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
-  const body = z.object({ muted: z.boolean() }).parse(request.body);
-  if (body.muted) {
-    await prisma.channelNotificationPreference.upsert({
-      where: { channelId_accountId: { channelId, accountId: auth.accountId } },
-      update: { muted: true },
-      create: { channelId, accountId: auth.accountId, muted: true }
-    });
-  } else {
-    await prisma.channelNotificationPreference.deleteMany({ where: { channelId, accountId: auth.accountId } });
-  }
-  return { success: true, channelId, muted: body.muted };
-});
-
-app.patch("/api/me/preferences", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z
-    .object({
-      theme: z.string().optional(),
-      biblePreferences: z
-        .object({
-          outputFormat: z.string().optional(),
-          referenceLabelMode: z.string().optional(),
-          combinedPassageMode: z.string().optional(),
-          quotationStyle: z.string().optional()
-        })
-        .optional(),
-      bibleWorkspace: z.unknown().nullable().optional()
-    })
-    .parse(request.body);
-  const data: Prisma.AccountUpdateInput = {};
-  if (body.theme !== undefined) {
-    const requestedTheme = cleanThemeId(body.theme);
-    data.theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
-  }
-  if (body.biblePreferences !== undefined || body.bibleWorkspace !== undefined) {
-    const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { biblePreferences: true } });
-    const merged: Record<string, unknown> = {
-      ...(current?.biblePreferences as Record<string, unknown> | null | undefined),
-      ...body.biblePreferences
-    };
-    if (body.bibleWorkspace !== undefined) {
-      if (body.bibleWorkspace === null) delete merged.workspace;
-      else {
-        const workspace = cleanBibleWorkspaceState(body.bibleWorkspace);
-        if (!workspace) return reply.code(400).send({ success: false, message: "阅读窗格状态格式无效" });
-        merged.workspace = workspace;
-      }
-    }
-    data.biblePreferences = biblePreferencesJson(merged);
-  }
-  const account = Object.keys(data).length
-    ? await prisma.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })
-    : await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
-  return { success: true, account: authDto(account) };
-});
-
-app.get("/api/why/topics", { preHandler: requireAuth }, async (request) => {
-  void request;
-  return { topics: [] };
-});
-
-app.get("/api/why/summary", { preHandler: requireAuth }, async (request) => {
-  void request;
-  const unreadCount = 0;
-  const pendingRequestCount = 0;
-  return { unreadCount, pendingRequestCount };
-});
-
-app.post("/api/why/topics", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.get("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.post("/api/why/topics/:id/messages", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.post("/api/why/topics/:id/request", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.post("/api/why/topics/:id/requests/:accountId", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.patch("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.post("/api/why/topics/:id/complete", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.post("/api/why/topics/:id/retry-assistant", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
-
-app.delete("/api/why/topics/:id", { preHandler: requireAuth }, async (request, reply) => {
-  void request;
-  return reply.code(410).send({ success: false, message: "为什么频道已移除，请和为什么助手私聊继续研究话题" });
-});
 
 
 app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
@@ -4461,7 +3108,7 @@ async function buildMessageSerializeBatch(rows: Array<Message & { sender: Actor 
   }
 
   if (prayerRows.length) {
-    const aiSettings = await loadAiSettings();
+    const aiSettings = await aiSettingsStore.loadAiSettings();
     const sourceIds = [
       ...new Set(
         prayerRows
@@ -5429,1134 +4076,16 @@ app.get("/api/files/:messageId", { preHandler: requireMediaAuth }, async (reques
   return reply.send(fs.createReadStream(filePath));
 });
 
-async function appearanceDto() {
-  const rows = await prisma.setting.findMany({
-    where: {
-      key: {
-        in: [
-          "appTitle",
-          "appIconPath",
-          "wallpaperPath",
-          "wallpaperFit",
-          "wallpaperPanFocusX",
-          "wallpaperPanDirection",
-          "wallpaperPanSpeed",
-          "parallaxKit",
-          "parallaxSpeed",
-          "parallaxKits",
-          "loginIconPath",
-          "loginShowIcon",
-          "loginTitle",
-          "loginSubtitle",
-          "loginShowSubtitle",
-          "loginBackgroundPath",
-          "loginBackgroundFit",
-          "loginFormPosition",
-          "registrationEnabled",
-          "musicPanelFontSize",
-          "prayerBubbleMineColor",
-          "prayerBubbleOtherColor",
-          "flashEffect",
-          "customThemes",
-          "composerPrompts",
-          "composerPromptIntervalSeconds",
-          "composerPromptAnimSeconds",
-          "composerPromptAppearSeconds",
-          "composerPromptDisappearSeconds",
-          "composerPromptGapSeconds"
-        ]
-      }
-    }
-  });
-  const settings = new Map(rows.map((row) => [row.key, row.value]));
-  const wallpaperFit = settings.get("wallpaperFit") || "cover";
-  const loginBackgroundFit = settings.get("loginBackgroundFit") || "cover";
-  const loginFormPosition = settings.get("loginFormPosition") || "middle";
-  const parallaxKit = settings.get("parallaxKit") || "none";
-  const parallaxSpeed = cleanParallaxSpeed(settings.get("parallaxSpeed"));
-  const parallaxKits = cleanParallaxKits(parseJsonField(settings.get("parallaxKits"), undefined));
-  return {
-    appTitle: settings.get("appTitle") || DEFAULT_APP_TITLE,
-    appIconPath: settings.get("appIconPath") || null,
-    wallpaperPath: settings.get("wallpaperPath") || null,
-    wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",
-    wallpaperPanFocusX: cleanWallpaperPanFocusX(settings.get("wallpaperPanFocusX")),
-    wallpaperPanDirection: cleanWallpaperPanDirection(settings.get("wallpaperPanDirection")),
-    wallpaperPanSpeed: cleanWallpaperPanSpeed(settings.get("wallpaperPanSpeed")),
-    parallaxKit: parallaxKit === "none" || parallaxKits.some((kit) => kit.id === parallaxKit) ? parallaxKit : "none",
-    parallaxSpeed,
-    parallaxKits,
-    loginIconPath: settings.get("loginIconPath") || null,
-    loginShowIcon: settings.get("loginShowIcon") !== "false",
-    loginTitle: settings.get("loginTitle") || DEFAULT_LOGIN_TITLE,
-    loginSubtitle: settings.has("loginSubtitle") ? settings.get("loginSubtitle") || "" : DEFAULT_LOGIN_SUBTITLE,
-    loginShowSubtitle: settings.get("loginShowSubtitle") !== "false",
-    loginBackgroundPath: settings.get("loginBackgroundPath") || null,
-    loginBackgroundFit: LOGIN_BACKGROUND_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
-    loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
-    registrationEnabled: settings.get("registrationEnabled") === "true",
-    musicPanelFontSize: cleanMusicPanelFontSize(settings.get("musicPanelFontSize")),
-    prayerBubbleMineColor: cleanHexColor(settings.get("prayerBubbleMineColor"), "#f0fbf1"),
-    prayerBubbleOtherColor: cleanHexColor(settings.get("prayerBubbleOtherColor"), "#fffaf0"),
-    flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
-    customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), [])),
-    composerPrompts: settings.has("composerPrompts")
-      ? cleanComposerPrompts(parseJsonField(settings.get("composerPrompts"), []))
-      : [...DEFAULT_COMPOSER_PROMPTS],
-    composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(settings.get("composerPromptIntervalSeconds")),
-    composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(
-      settings.get("composerPromptAppearSeconds") ?? settings.get("composerPromptAnimSeconds")
-    ),
-    composerPromptDisappearSeconds: cleanComposerPromptDisappearSeconds(settings.get("composerPromptDisappearSeconds")),
-    composerPromptGapSeconds: cleanComposerPromptGapSeconds(settings.get("composerPromptGapSeconds"))
-  };
-}
 
-async function setSetting(key: string, value: string) {
-  await prisma.setting.upsert({ where: { key }, update: { value }, create: { key, value } });
-}
 
-async function settingBool(key: string, fallback = false) {
-  const row = await prisma.setting.findUnique({ where: { key } });
-  if (!row) return fallback;
-  return row.value === "true";
-}
 
-async function customThemesSetting() {
-  const row = await prisma.setting.findUnique({ where: { key: "customThemes" } });
-  return cleanCustomThemes(parseJsonField(row?.value, []));
-}
 
-async function aiSettingsDto() {
-  const base = (await loadAiSettings(true)).value;
-  const rows = await prisma.setting.findMany({
-    where: {
-      key: {
-        in: [
-          "whyAssistantEnabled",
-          "whyAssistantPromptCommand",
-          "whyAssistantActivationJudgePrompt",
-          "whyAssistantWebSearchEnabled",
-          "whyAssistantDisplayName",
-          "whyAssistantModel",
-          "whyAssistantThinkingEnabled",
-          "questionAssistantEnabled",
-          "questionAssistantTriggerEnabled",
-          "questionAssistantPromptCommand",
-          "questionAssistantActivationJudgePrompt",
-          "questionAssistantWebSearchEnabled",
-          "questionAssistantDisplayName",
-          "questionAssistantModel",
-          "questionAssistantThinkingEnabled",
-          "questionAssistantContextTurnLimit",
-          "questionAssistantContextWindowMinutes"
-        ]
-      }
-    }
-  });
-  const settings = new Map(rows.map((row) => [row.key, row.value]));
-  const whyActor = await ensureWhyAssistantCharacter(settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME);
-  const questionActor = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME);
-  const [whyCharacter, questionCharacter] = await Promise.all([
-    prisma.virtualCharacter.findUnique({ where: { actorId: whyActor.id } }),
-    prisma.virtualCharacter.findUnique({ where: { actorId: questionActor.id } })
-  ]);
-  const whyConfig = roleConfigDetails(whyCharacter?.config);
-  const questionConfig = roleConfigDetails(questionCharacter?.config);
-  const aiRoles: AiRoleDTO[] = [
-    {
-      username: WHY_ASSISTANT_USERNAME,
-      displayName: whyActor.displayName,
-      avatarPath: whyActor.avatarPath,
-      enabled: settings.get("whyAssistantEnabled") !== "false",
-      model: normalizeRoleModel(settings.get("whyAssistantModel")) || whyConfig.model,
-      thinkingEnabled: settings.get("whyAssistantThinkingEnabled") === "true",
-      promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
-      shortTermMemory: whyConfig.shortTermMemory,
-      midTermMemory: whyConfig.midTermMemory,
-      longTermMemory: whyConfig.longTermMemory,
-      channelIds: whyConfig.channelIds,
-      activationJudgePrompt: settings.get("whyAssistantActivationJudgePrompt") || whyConfig.activationJudgePrompt,
-      webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false"
-    },
-    {
-      username: QUESTION_ASSISTANT_USERNAME,
-      displayName: questionActor.displayName,
-      avatarPath: questionActor.avatarPath,
-      enabled: settings.get("questionAssistantEnabled") !== "false",
-      model: normalizeRoleModel(settings.get("questionAssistantModel")) || questionConfig.model,
-      thinkingEnabled: settings.get("questionAssistantThinkingEnabled") === "true",
-      promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
-      shortTermMemory: questionConfig.shortTermMemory,
-      midTermMemory: questionConfig.midTermMemory,
-      longTermMemory: questionConfig.longTermMemory,
-      channelIds: questionConfig.channelIds,
-      activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || questionConfig.activationJudgePrompt || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
-      webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
-      questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
-      contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
-      contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
-    }
-  ];
-  return {
-    ...base,
-    whyAssistantEnabled: settings.get("whyAssistantEnabled") !== "false",
-    whyAssistantWebSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false",
-    whyAssistantPromptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
-    aiRoles
-  };
-}
 
-function buildRelatedVersesContext(message: Message & { sender: Actor }, previousReferences: string[]) {
-  const lines = [
-    "上下文内容：",
-    `代祷发起人：${message.sender.displayName}`,
-    `代祷信息：${plainTextFromHtml(message.content, 2000) || "代祷事项"}`,
-    "",
-    previousReferences.length ? `已推荐过的出处：${previousReferences.join("；")}` : "已推荐过的出处：无",
-    "",
-    "请输出 3 行，每行只有一个经文出处。"
-  ];
-  return lines.join("\n").slice(0, 5000);
-}
 
-async function callDeepSeekBibleReferences(settings: AiSettingsDTO, apiKey: string, systemPrompt: string, contextText: string, limit: number) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: contextText }
-        ],
-        thinking: { type: "disabled" },
-        stream: false
-      }),
-      signal: controller.signal
-    });
-    const payload = (await response.json().catch(() => ({}))) as any;
-    if (!response.ok) {
-      const message = payload?.error?.message || payload?.message || `DeepSeek HTTP ${response.status}`;
-      throw new Error(String(message));
-    }
-    const responseText = String(payload?.choices?.[0]?.message?.content || "").trim();
-    if (!responseText) throw new Error("DeepSeek returned empty content");
-    const references = parseAiVerseReferences(responseText, limit);
-    if (!references.length) throw new Error("DeepSeek did not return verse references");
-    return { responseText, references };
-  } finally {
-    clearTimeout(timeout);
-  }
-}
 
-function callDeepSeekRelatedVerses(settings: AiSettingsDTO, apiKey: string, contextText: string) {
-  return callDeepSeekBibleReferences(settings, apiKey, settings.promptCommand, contextText, 3);
-}
 
-app.get("/api/admin/ai-settings", { preHandler: requireAdmin }, async () => {
-  return aiSettingsDto();
-});
 
-app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request) => {
-  const body = z
-    .object({
-      enabled: z.boolean().optional(),
-      apiKey: z.string().max(400).optional(),
-      clearApiKey: z.boolean().optional(),
-      promptCommand: z.string().max(4000).optional(),
-      cardCooldownSeconds: z.number().min(0).max(3600).optional(),
-      userLimitPerMinute: z.number().min(1).max(60).optional(),
-      maxSuccessPerMessage: z.number().min(1).max(20).optional(),
-      whyAssistantEnabled: z.boolean().optional(),
-      whyAssistantWebSearchEnabled: z.boolean().optional(),
-      whyAssistantPromptCommand: z.string().max(6000).optional(),
-      aiRoles: z
-        .array(
-          z.object({
-            username: z.string().max(80),
-            displayName: z.string().min(1).max(80).optional(),
-            enabled: z.boolean().optional(),
-            model: z.string().max(120).optional(),
-            thinkingEnabled: z.boolean().optional(),
-            promptCommand: z.string().max(6000).optional(),
-            shortTermMemory: z.string().max(8000).optional(),
-            midTermMemory: z.string().max(8000).optional(),
-            longTermMemory: z.string().max(8000).optional(),
-            channelIds: z.array(z.number()).optional(),
-            activationJudgePrompt: z.string().max(6000).optional(),
-            webSearchEnabled: z.boolean().optional(),
-            questionTriggerEnabled: z.boolean().optional(),
-            contextTurnLimit: z.number().min(1).max(50).optional(),
-            contextWindowMinutes: z.number().min(1).max(1440).optional()
-          })
-        )
-        .optional()
-    })
-    .parse(request.body);
-  if (Object.prototype.hasOwnProperty.call(body, "enabled")) await setSetting("aiRelatedVersesEnabled", body.enabled ? "true" : "false");
-  if (body.clearApiKey) await setSetting("aiDeepSeekApiKeyEncrypted", "");
-  if (body.apiKey?.trim()) await setSetting("aiDeepSeekApiKeyEncrypted", encryptAiApiKey(body.apiKey.trim()));
-  if (Object.prototype.hasOwnProperty.call(body, "promptCommand")) await setSetting("aiRelatedVersesPromptCommand", (body.promptCommand || "").trim() || DEFAULT_AI_PROMPT_COMMAND);
-  if (Object.prototype.hasOwnProperty.call(body, "cardCooldownSeconds")) await setSetting("aiRelatedVersesCardCooldownSeconds", String(clampInteger(body.cardCooldownSeconds, DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600)));
-  if (Object.prototype.hasOwnProperty.call(body, "userLimitPerMinute")) await setSetting("aiRelatedVersesUserLimitPerMinute", String(clampInteger(body.userLimitPerMinute, DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60)));
-  if (Object.prototype.hasOwnProperty.call(body, "maxSuccessPerMessage")) await setSetting("aiRelatedVersesMaxSuccessPerMessage", String(clampInteger(body.maxSuccessPerMessage, DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20)));
-  if (Object.prototype.hasOwnProperty.call(body, "whyAssistantEnabled")) await setSetting("whyAssistantEnabled", body.whyAssistantEnabled ? "true" : "false");
-  if (Object.prototype.hasOwnProperty.call(body, "whyAssistantWebSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", body.whyAssistantWebSearchEnabled ? "true" : "false");
-  if (Object.prototype.hasOwnProperty.call(body, "whyAssistantPromptCommand")) await setSetting("whyAssistantPromptCommand", (body.whyAssistantPromptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
-  for (const role of body.aiRoles || []) {
-    if (role.username === WHY_ASSISTANT_USERNAME) {
-      const displayName = (role.displayName || "").trim() || WHY_ASSISTANT_NAME;
-      await setSetting("whyAssistantDisplayName", displayName);
-      if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("whyAssistantEnabled", role.enabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("whyAssistantModel", normalizeRoleModel(role.model));
-      if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("whyAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("whyAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
-      if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) await setSetting("whyAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim());
-      await syncAiRoleVirtualCharacterConfig(WHY_ASSISTANT_USERNAME, WHY_ASSISTANT_NAME, {
-        displayName,
-        persona: (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT,
-        enabled: role.enabled,
-        activationJudgePrompt: (role.activationJudgePrompt || "").trim(),
-        channelIds: role.channelIds,
-        model: role.model,
-        thinkingEnabled: role.thinkingEnabled,
-        shortTermMemory: role.shortTermMemory,
-        midTermMemory: role.midTermMemory,
-        longTermMemory: role.longTermMemory
-      });
-    }
-    if (role.username === QUESTION_ASSISTANT_USERNAME) {
-      const displayName = (role.displayName || "").trim() || QUESTION_ASSISTANT_NAME;
-      await setSetting("questionAssistantDisplayName", displayName);
-      if (Object.prototype.hasOwnProperty.call(role, "enabled")) await setSetting("questionAssistantEnabled", role.enabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "questionTriggerEnabled")) await setSetting("questionAssistantTriggerEnabled", role.questionTriggerEnabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "webSearchEnabled")) await setSetting("questionAssistantWebSearchEnabled", role.webSearchEnabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("questionAssistantModel", normalizeRoleModel(role.model));
-      if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("questionAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
-      if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
-      if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) {
-        await setSetting("questionAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT);
-      }
-      if (Object.prototype.hasOwnProperty.call(role, "contextTurnLimit")) {
-        await setSetting("questionAssistantContextTurnLimit", String(clampInteger(role.contextTurnLimit, DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50)));
-      }
-      if (Object.prototype.hasOwnProperty.call(role, "contextWindowMinutes")) {
-        await setSetting("questionAssistantContextWindowMinutes", String(clampInteger(role.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)));
-      }
-      await syncAiRoleVirtualCharacterConfig(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, {
-        displayName,
-        persona: (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT,
-        enabled: role.enabled,
-        activationJudgePrompt: (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
-        channelIds: role.channelIds,
-        model: role.model,
-        thinkingEnabled: role.thinkingEnabled,
-        shortTermMemory: role.shortTermMemory,
-        midTermMemory: role.midTermMemory,
-        longTermMemory: role.longTermMemory
-      });
-    }
-  }
-  resetAiSettingsCache();
-  return aiSettingsDto();
-});
 
-app.post("/api/admin/ai-roles/:username/avatar", { preHandler: requireAdmin }, async (request, reply) => {
-  const username = (request.params as { username: string }).username;
-  if (!AI_ROLE_USERNAMES.has(username)) return reply.code(404).send({ success: false, message: "AI 角色不存在" });
-  const fallbackName = username === WHY_ASSISTANT_USERNAME ? WHY_ASSISTANT_NAME : QUESTION_ASSISTANT_NAME;
-  const displayNameKey = username === WHY_ASSISTANT_USERNAME ? "whyAssistantDisplayName" : "questionAssistantDisplayName";
-  const displayName = (await prisma.setting.findUnique({ where: { key: displayNameKey } }))?.value || fallbackName;
-  const actor = await ensureAiRoleCharacter(username, fallbackName, displayName);
-  const file = await request.file();
-  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
-  const ext = path.extname(file.filename).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
-  const safeName = `${crypto.randomUUID()}${ext}`;
-  const outPath = path.join(AVATAR_DIR, safeName);
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createWriteStream(outPath);
-    file.file.pipe(stream);
-    file.file.on("error", reject);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
-  if (!(await validateStoredImage(outPath))) {
-    safeUnlink("avatar", safeName);
-    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
-  }
-  let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR, { maxDimension: 256 });
-  if (compressed) {
-    fs.unlinkSync(outPath);
-    avatarPath = compressed.fileName;
-  }
-  const updated = await prisma.actor.update({ where: { id: actor.id }, data: { avatarPath } });
-  const settings = await aiSettingsDto();
-  const role = settings.aiRoles?.find((item) => item.username === username);
-  return { success: true, role: role || { username, displayName: updated.displayName, avatarPath: updated.avatarPath, enabled: true, promptCommand: "" } };
-});
-
-app.post("/api/messages/:messageId/ai-suggestions/related-verses", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const messageId = Number((request.params as { messageId: string }).messageId);
-  const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
-  if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
-  if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
-  const target = await canonicalPrayerMessage(message);
-  const targetMessageId = target.id;
-  const targetWithSender =
-    targetMessageId === message.id ? message : await prisma.message.findUniqueOrThrow({ where: { id: targetMessageId }, include: { sender: true } });
-
-  const aiSettings = await loadAiSettings();
-  const settings = aiSettings.value;
-  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
-  if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
-
-  const successCount = await prisma.messageAiSuggestion.count({ where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } });
-  if (successCount >= settings.maxSuccessPerMessage) {
-    return reply.code(409).send({ success: false, message: "这张代祷卡片的经文建议已达到上限" });
-  }
-
-  const now = new Date();
-  const latestForMessage = await prisma.messageAiSuggestion.findFirst({
-    where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
-    orderBy: { createdAt: "desc" }
-  });
-  const nextAllowedAt = latestForMessage ? latestForMessage.createdAt.getTime() + settings.cardCooldownSeconds * 1000 : 0;
-  if (settings.cardCooldownSeconds > 0 && nextAllowedAt > now.getTime()) {
-    const seconds = Math.max(1, Math.ceil((nextAllowedAt - now.getTime()) / 1000));
-    return reply.code(429).send({ success: false, message: `请 ${seconds} 秒后再换一组经文建议` });
-  }
-
-  const userWindowStart = new Date(now.getTime() - 60_000);
-  const userRequests = await prisma.messageAiSuggestion.count({
-    where: { createdByAccountId: auth.accountId, kind: AI_RELATED_VERSES_KIND, createdAt: { gte: userWindowStart } }
-  });
-  if (userRequests >= settings.userLimitPerMinute) {
-    return reply.code(429).send({ success: false, message: "生成太频繁了，请稍后再试" });
-  }
-
-  const previousRows = await prisma.messageAiSuggestion.findMany({
-    where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
-    select: { references: true },
-    orderBy: { createdAt: "desc" }
-  });
-  const previousReferences = previousRows.flatMap((row) => (Array.isArray(row.references) ? row.references.map(String).filter(Boolean) : []));
-  const contextText = buildRelatedVersesContext(targetWithSender, previousReferences);
-  try {
-    const result = await callDeepSeekRelatedVerses(settings, apiKey, contextText);
-    await prisma.messageAiSuggestion.create({
-      data: {
-        messageId: targetMessageId,
-        kind: AI_RELATED_VERSES_KIND,
-        status: "success",
-        promptCommand: settings.promptCommand,
-        contextText,
-        responseText: result.responseText,
-        references: result.references as Prisma.InputJsonArray,
-        model: settings.model,
-        baseUrl: settings.baseUrl,
-        createdByAccountId: auth.accountId
-      }
-    });
-    const dto = await hydrateMessage(messageId, auth.accountId);
-    if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
-    return { success: true, message: dto };
-  } catch (error) {
-    await prisma.messageAiSuggestion.create({
-      data: {
-        messageId: targetMessageId,
-        kind: AI_RELATED_VERSES_KIND,
-        status: "failed",
-        promptCommand: settings.promptCommand,
-        contextText,
-        errorText: cleanAiError(error),
-        model: settings.model,
-        baseUrl: settings.baseUrl,
-        createdByAccountId: auth.accountId
-      }
-    });
-    request.log.warn({ error }, "AI related verses generation failed");
-    return reply.code(502).send({ success: false, message: auth.isAdmin ? `AI 生成失败：${cleanAiError(error)}` : "生成失败，可以稍后重试。" });
-  }
-});
-
-app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request, reply) => {
-  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
-  const query = z.object({ reference: z.string().min(1).max(120) }).parse(request.query);
-  try {
-    const result: BibleLookupDTO = lookupBibleReference(query.reference);
-    return { success: true, result };
-  } catch {
-    return { success: false, message: "暂时找不到这处经文" };
-  }
-});
-
-app.get("/api/bible/chapter", { preHandler: requireAuth }, async (request, reply) => {
-  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
-  const query = z.object({
-    book: z.string().trim().min(3).max(3),
-    chapter: z.coerce.number().int().positive(),
-    translation: z.string().trim().min(1).max(30).optional()
-  }).parse(request.query);
-  try {
-    const result: BibleChapterDTO = lookupBibleChapter(query.book, query.chapter, query.translation);
-    return { success: true, result };
-  } catch {
-    return { success: false, message: "暂时找不到这一章经文" };
-  }
-});
-
-app.get("/api/bible/catalog", { preHandler: requireAuth }, async (request, reply) => {
-  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
-  const result: BibleCatalogDTO = bibleCatalog();
-  return { success: true, result };
-});
-
-const bibleFavoriteKeySchema = z.object({
-  bookCode: z.string().trim().length(3).transform((value) => value.toUpperCase()),
-  chapter: z.coerce.number().int().positive(),
-  verse: z.coerce.number().int().positive()
-});
-
-function resolveBibleFavorite(key: BibleFavoriteKeyDTO) {
-  const chapter = lookupBibleChapter(key.bookCode, key.chapter);
-  const verseLine = chapter.verses.find((verse) => verse.verse === key.verse);
-  if (!verseLine) throw new Error("invalid verse");
-  return { bookCode: chapter.bookCode, chapter: chapter.chapter, verse: verseLine.verse, verseLine };
-}
-
-async function listBibleFavorites(accountId: number): Promise<BibleFavoriteDTO[]> {
-  const rows = await prisma.bibleFavorite.findMany({
-    where: { accountId },
-    orderBy: { createdAt: "desc" },
-    take: 1000
-  });
-  return rows.flatMap((row) => {
-    try {
-      const resolved = resolveBibleFavorite(row);
-      return [{
-        id: row.id,
-        bookCode: resolved.bookCode,
-        chapter: resolved.chapter,
-        verse: resolved.verse,
-        color: normalizeBibleFavoriteColor(row.color),
-        savedAt: row.createdAt.toISOString(),
-        verseLine: resolved.verseLine
-      }];
-    } catch {
-      return [];
-    }
-  });
-}
-
-app.get("/api/bible/favorites", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
-});
-
-app.post("/api/bible/favorites", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({
-    verses: z.array(bibleFavoriteKeySchema).min(1).max(500),
-    color: z.string().optional()
-  }).parse(request.body);
-  const color = normalizeBibleFavoriteColor(body.color || DEFAULT_BIBLE_FAVORITE_COLOR);
-  let verses: ReturnType<typeof resolveBibleFavorite>[];
-  try {
-    verses = body.verses.map(resolveBibleFavorite);
-  } catch {
-    return reply.code(400).send({ success: false, message: "收藏中包含无效经文" });
-  }
-  const verseWhere = verses.map((verse) => ({
-    bookCode: verse.bookCode,
-    chapter: verse.chapter,
-    verse: verse.verse
-  }));
-  await prisma.$transaction([
-    prisma.bibleFavorite.createMany({
-      data: verses.map((verse) => ({
-        accountId: auth.accountId,
-        bookCode: verse.bookCode,
-        chapter: verse.chapter,
-        verse: verse.verse,
-        color
-      })),
-      skipDuplicates: true
-    }),
-    prisma.bibleFavorite.updateMany({
-      where: { accountId: auth.accountId, OR: verseWhere },
-      data: { color }
-    })
-  ]);
-  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
-});
-
-app.delete("/api/bible/favorites", { preHandler: requireAuth }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({ verses: z.array(bibleFavoriteKeySchema).min(1).max(500) }).parse(request.body);
-  await prisma.bibleFavorite.deleteMany({
-    where: {
-      accountId: auth.accountId,
-      OR: body.verses.map((verse) => ({
-        bookCode: verse.bookCode,
-        chapter: verse.chapter,
-        verse: verse.verse
-      }))
-    }
-  });
-  return { success: true, favorites: await listBibleFavorites(auth.accountId) };
-});
-
-app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request, reply) => {
-  const query = z.object({
-    query: z.string().min(1).max(200),
-    translation: z.string().trim().min(1).max(30).optional()
-  }).parse(request.query);
-  try {
-    const result = searchBibleText(query.query, 0, 40000, 40000, query.translation);
-    return { success: true, result };
-  } catch {
-    return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
-  }
-});
-
-app.get("/api/bible/search", { preHandler: requireAuth }, async (request, reply) => {
-  if (applyJsonValidation(request, reply, `W/\"bible-${APP_VERSION}\"`)) return reply.code(304).send();
-  const query = z
-    .object({
-      query: z.string().min(1).max(200),
-      offset: z.coerce.number().int().min(0).default(0),
-      limit: z.coerce.number().int().min(1).max(50).default(50),
-      translation: z.string().trim().min(1).max(30).optional()
-    })
-    .parse(request.query);
-  try {
-    const result: BibleTextSearchDTO = searchBibleText(query.query, query.offset, query.limit, 50, query.translation);
-    return { success: true, result };
-  } catch {
-    return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
-  }
-});
-
-app.post("/api/bible/related", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  const body = z.object({
-    query: z.string().trim().min(2).max(200),
-    excludeReferences: z.array(z.string().trim().min(1).max(120)).max(60).default([])
-  }).parse(request.body);
-  const aiSettings = await loadAiSettings();
-  const settings = aiSettings.value;
-  const apiKey = decryptAiApiKey(aiSettings.encryptedApiKey);
-  if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
-  if (!bibleTopicSearchAllowed(auth.accountId, settings.userLimitPerMinute)) {
-    return reply.code(429).send({ success: false, message: "主题检索太频繁了，请稍后再试。" });
-  }
-  try {
-    const exclusionInstruction = body.excludeReferences.length
-      ? `请追加不同的经文，不要重复这些已有出处：${body.excludeReferences.join("、")}。`
-      : "";
-    const generated = await callDeepSeekBibleReferences(
-      settings,
-      apiKey,
-      BIBLE_TOPIC_SEARCH_PROMPT,
-      `用户想查找关于“${body.query}”的经文。${exclusionInstruction}`,
-      10
-    );
-    const seen = new Set<string>();
-    const results: BibleLookupDTO[] = [];
-    for (const reference of generated.references) {
-      try {
-        const lookup = lookupBibleReference(reference);
-        if (!lookup.verses.length || seen.has(lookup.normalizedReference)) continue;
-        seen.add(lookup.normalizedReference);
-        results.push(lookup);
-        if (results.length >= 6) break;
-      } catch {
-        // AI references must resolve against the bundled Bible before being returned.
-      }
-    }
-    if (!results.length) throw new Error("AI did not return locally valid Bible references");
-    const result: BibleRelatedSearchDTO = { query: body.query, results };
-    return { success: true, result };
-  } catch (error) {
-    request.log.warn({ error }, "Bible topic search failed");
-    return reply.code(502).send({ success: false, message: auth.isAdmin ? `主题检索失败：${cleanAiError(error)}` : "主题检索暂时不可用，请稍后重试。" });
-  }
-});
-
-async function themeExists(theme: string) {
-  if (THEMES.has(theme)) return true;
-  const customThemes = await customThemesSetting();
-  return customThemes.some((item) => item.id === theme);
-}
-
-async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, missingMessage: string, shortName = false) {
-  const file = await request.file();
-  if (!file) {
-    reply.code(400).send({ success: false, message: missingMessage });
-    return "";
-  }
-  const ext = path.extname(file.filename).toLowerCase();
-  const allowed = IMAGE_EXTENSIONS;
-  if (!allowed.has(ext) || !file.mimetype.startsWith("image/")) {
-    reply.code(400).send({ success: false, message: "只支持图片文件" });
-    return "";
-  }
-  const safeExt = ext === ".jpeg" ? ".jpg" : ext;
-  const safeName = shortName ? shortStorageFileName(safeExt) : `${crypto.randomUUID()}${safeExt}`;
-  const outPath = path.join(BG_DIR, safeName);
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createWriteStream(outPath);
-    file.file.pipe(stream);
-    file.file.on("error", reject);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
-  if (!(await validateStoredImage(outPath))) {
-    safeUnlink("background", safeName);
-    reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
-    return "";
-  }
-  const compressed = await compressImageFile(outPath, BG_DIR, { shortName, maxDimension: 2560 });
-  if (compressed) {
-    fs.unlinkSync(outPath);
-    return compressed.fileName;
-  }
-  return safeName;
-}
-
-async function saveParallaxLayerUpload(request: FastifyRequest, reply: FastifyReply, kitId: string) {
-  const file = await request.file();
-  if (!file) {
-    reply.code(400).send({ success: false, message: "缺少卷轴图层图片" });
-    return null;
-  }
-  const ext = path.extname(file.filename).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) {
-    reply.code(400).send({ success: false, message: "只支持图片文件" });
-    return null;
-  }
-  const kitDir = path.join(PARALLAX_DIR, kitId);
-  fs.mkdirSync(kitDir, { recursive: true });
-  const token = crypto.randomUUID();
-  const tempPath = path.join(kitDir, `.${token}${ext}`);
-  const fileName = `${token}.png`;
-  const outputPath = path.join(kitDir, fileName);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const stream = fs.createWriteStream(tempPath);
-      file.file.pipe(stream);
-      file.file.on("error", reject);
-      stream.on("finish", resolve);
-      stream.on("error", reject);
-    });
-    if (!(await validateStoredImage(tempPath))) {
-      reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
-      return null;
-    }
-    const metadata = await sharp(tempPath, { failOn: "error", limitInputPixels: 40_000_000 }).metadata();
-    await sharp(tempPath, { failOn: "error", limitInputPixels: 40_000_000 }).png({ compressionLevel: 9 }).toFile(outputPath);
-    return {
-      fileName,
-      originalName: path.basename(file.filename, ext).trim().slice(0, 40) || "新图层",
-      width: metadata.width || 0,
-      height: metadata.height || 0
-    };
-  } finally {
-    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-  }
-}
-
-app.get("/api/settings/appearance", async () => {
-  return appearanceDto();
-});
-
-app.get<{ Params: { kit: string; file: string } }>("/api/parallax/:kit/:file", async (request, reply) => {
-  const { kit, file } = request.params;
-  if (!PARALLAX_KIT_ID_PATTERN.test(kit) || path.basename(file) !== file || path.extname(file).toLowerCase() !== ".png") {
-    return reply.code(404).send({ success: false, message: "parallax asset not found" });
-  }
-  const filePath = path.join(PARALLAX_DIR, kit, file);
-  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    return reply.code(404).send({ success: false, message: "parallax asset not found" });
-  }
-  const stat = fs.statSync(filePath);
-  reply.type("image/png");
-  if (applyFileValidation(request, reply, stat)) return reply.code(304).send();
-  reply.header("Cache-Control", "public, no-cache");
-  reply.header("Content-Length", String(stat.size));
-  return reply.send(fs.createReadStream(filePath));
-});
-
-app.post<{ Params: { kit: string } }>("/api/admin/parallax/:kit/layers", { preHandler: requireAdmin }, async (request, reply) => {
-  const kitId = request.params.kit.trim().toLowerCase();
-  if (!PARALLAX_KIT_ID_PATTERN.test(kitId)) return reply.code(400).send({ success: false, message: "卷轴套件编号无效" });
-  const uploaded = await saveParallaxLayerUpload(request, reply, kitId);
-  if (!uploaded) return reply;
-  return {
-    success: true,
-    layer: {
-      id: `layer-${crypto.randomBytes(6).toString("hex")}`,
-      name: uploaded.originalName,
-      file: uploaded.fileName,
-      speed: 1,
-      yOffset: 0,
-      heightScale: 1
-    },
-    size: { width: uploaded.width, height: uploaded.height }
-  };
-});
-
-app.post("/api/admin/appearance", { preHandler: requireAdmin }, async (request) => {
-  const body = z
-    .object({
-      wallpaperPath: z.string().nullable().optional(),
-      appTitle: z.string().max(80).nullable().optional(),
-      appIconPath: z.string().nullable().optional(),
-      wallpaperFit: z.enum(["cover", "contain", "stretch", "repeat", "pan"]).optional(),
-      wallpaperPanFocusX: z.number().min(0).max(1).optional(),
-      wallpaperPanDirection: z.enum(["left", "right"]).optional(),
-      wallpaperPanSpeed: z.number().min(WALLPAPER_PAN_SPEED_MIN).max(WALLPAPER_PAN_SPEED_MAX).optional(),
-      parallaxKit: z.string().regex(/^(none|[a-z0-9][a-z0-9-]{0,63})$/).optional(),
-      parallaxSpeed: z.number().min(PARALLAX_SPEED_MIN).max(PARALLAX_SPEED_MAX).optional(),
-      parallaxKits: z.array(z.unknown()).max(12).optional(),
-      loginIconPath: z.string().nullable().optional(),
-      loginShowIcon: z.boolean().optional(),
-      loginTitle: z.string().max(80).nullable().optional(),
-      loginSubtitle: z.string().max(160).nullable().optional(),
-      loginShowSubtitle: z.boolean().optional(),
-      loginBackgroundPath: z.string().nullable().optional(),
-      loginBackgroundFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
-      loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
-      registrationEnabled: z.boolean().optional(),
-      musicPanelFontSize: z.number().min(MUSIC_PANEL_FONT_SIZE_MIN).max(MUSIC_PANEL_FONT_SIZE_MAX).optional(),
-      prayerBubbleMineColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-      prayerBubbleOtherColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-      flashEffect: z.unknown().optional(),
-      customThemes: z.array(z.unknown()).optional(),
-      composerPrompts: z.array(z.string().max(80)).max(50).optional(),
-      composerPromptIntervalSeconds: z.number().min(1).max(30).optional(),
-      composerPromptAppearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
-      composerPromptDisappearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
-      composerPromptGapSeconds: z.number().min(COMPOSER_PROMPT_GAP_MIN).max(COMPOSER_PROMPT_GAP_MAX).optional()
-    })
-    .parse(request.body);
-  if (Object.prototype.hasOwnProperty.call(body, "appTitle")) await setSetting("appTitle", (body.appTitle || "").trim() || DEFAULT_APP_TITLE);
-  if (Object.prototype.hasOwnProperty.call(body, "appIconPath")) await setSetting("appIconPath", body.appIconPath || "");
-  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPath")) await setSetting("wallpaperPath", body.wallpaperPath || "");
-  if (Object.prototype.hasOwnProperty.call(body, "wallpaperFit")) await setSetting("wallpaperFit", body.wallpaperFit || "cover");
-  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanFocusX")) await setSetting("wallpaperPanFocusX", String(cleanWallpaperPanFocusX(body.wallpaperPanFocusX)));
-  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanDirection")) await setSetting("wallpaperPanDirection", cleanWallpaperPanDirection(body.wallpaperPanDirection));
-  if (Object.prototype.hasOwnProperty.call(body, "wallpaperPanSpeed")) await setSetting("wallpaperPanSpeed", String(cleanWallpaperPanSpeed(body.wallpaperPanSpeed)));
-  if (Object.prototype.hasOwnProperty.call(body, "parallaxKit")) await setSetting("parallaxKit", body.parallaxKit || "none");
-  if (Object.prototype.hasOwnProperty.call(body, "parallaxSpeed")) await setSetting("parallaxSpeed", String(body.parallaxSpeed || 1));
-  if (Object.prototype.hasOwnProperty.call(body, "parallaxKits")) await setSetting("parallaxKits", JSON.stringify(cleanParallaxKits(body.parallaxKits)));
-  if (Object.prototype.hasOwnProperty.call(body, "loginIconPath")) await setSetting("loginIconPath", body.loginIconPath || "");
-  if (Object.prototype.hasOwnProperty.call(body, "loginShowIcon")) await setSetting("loginShowIcon", body.loginShowIcon ? "true" : "false");
-  if (Object.prototype.hasOwnProperty.call(body, "loginTitle")) await setSetting("loginTitle", (body.loginTitle || "").trim() || DEFAULT_LOGIN_TITLE);
-  if (Object.prototype.hasOwnProperty.call(body, "loginSubtitle")) await setSetting("loginSubtitle", (body.loginSubtitle || "").trim());
-  if (Object.prototype.hasOwnProperty.call(body, "loginShowSubtitle")) await setSetting("loginShowSubtitle", body.loginShowSubtitle ? "true" : "false");
-  if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundPath")) await setSetting("loginBackgroundPath", body.loginBackgroundPath || "");
-  if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundFit")) await setSetting("loginBackgroundFit", body.loginBackgroundFit || "cover");
-  if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
-  if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
-  if (Object.prototype.hasOwnProperty.call(body, "musicPanelFontSize")) await setSetting("musicPanelFontSize", String(cleanMusicPanelFontSize(body.musicPanelFontSize)));
-  if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleMineColor")) await setSetting("prayerBubbleMineColor", cleanHexColor(body.prayerBubbleMineColor, "#f0fbf1"));
-  if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleOtherColor")) await setSetting("prayerBubbleOtherColor", cleanHexColor(body.prayerBubbleOtherColor, "#fffaf0"));
-  if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
-  if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPrompts")) await setSetting("composerPrompts", JSON.stringify(cleanComposerPrompts(body.composerPrompts)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPromptIntervalSeconds")) await setSetting("composerPromptIntervalSeconds", String(cleanComposerPromptIntervalSeconds(body.composerPromptIntervalSeconds)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPromptAppearSeconds")) await setSetting("composerPromptAppearSeconds", String(cleanComposerPromptAppearSeconds(body.composerPromptAppearSeconds)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPromptDisappearSeconds")) await setSetting("composerPromptDisappearSeconds", String(cleanComposerPromptDisappearSeconds(body.composerPromptDisappearSeconds)));
-  if (Object.prototype.hasOwnProperty.call(body, "composerPromptGapSeconds")) await setSetting("composerPromptGapSeconds", String(cleanComposerPromptGapSeconds(body.composerPromptGapSeconds)));
-  const appearance = await appearanceDto();
-  io.emit("appearance:updated", appearance);
-  return { success: true, appearance };
-});
-
-app.post("/api/admin/appearance/wallpaper", { preHandler: requireAdmin }, async (request, reply) => {
-  const safeName = await saveImageUpload(request, reply, "缺少图片");
-  if (!safeName) return reply;
-  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
-});
-
-app.post("/api/admin/appearance/login-background", { preHandler: requireAdmin }, async (request, reply) => {
-  const safeName = await saveImageUpload(request, reply, "缺少登录页背景");
-  if (!safeName) return reply;
-  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
-});
-
-app.post("/api/admin/appearance/login-icon", { preHandler: requireAdmin }, async (request, reply) => {
-  const safeName = await saveImageUpload(request, reply, "缺少登录页图标");
-  if (!safeName) return reply;
-  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
-});
-
-app.post("/api/admin/appearance/app-icon", { preHandler: requireAdmin }, async (request, reply) => {
-  const safeName = await saveImageUpload(request, reply, "缺少标签页图标", true);
-  if (!safeName) return reply;
-  return { success: true, fileName: safeName, url: `/backgrounds/${encodeURIComponent(safeName)}` };
-});
-
-function zipDownload(reply: FastifyReply, fileName: string, entries: ZipArchiveEntry[]) {
-  reply.header("Content-Type", "application/zip");
-  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-  return reply.send(zipArchive(entries));
-}
-
-function badImportRequest(message: string): never {
-  const error = new Error(message) as Error & { statusCode?: number };
-  error.statusCode = 400;
-  throw error;
-}
-
-// 导入兼容旧版纯 JSON 导出和当前 ZIP 导出包；ZIP 内按文件名定位数据 JSON。
-async function readDataImportUpload(request: FastifyRequest, jsonFileName: string): Promise<{ payload: any; entries: ZipArchiveEntry[] }> {
-  const file = await request.file({ limits: { fileSize: IMPORT_ARCHIVE_MAX_BYTES, files: 1 } });
-  if (!file) badImportRequest("缺少导入文件");
-  const chunks: Buffer[] = [];
-  for await (const chunk of file.file) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  if (file.file.truncated) badImportRequest("导入文件超过大小限制");
-  const buffer = Buffer.concat(chunks);
-  if (!isZipArchive(buffer)) {
-    try {
-      return { payload: JSON.parse(buffer.toString("utf8")) as any, entries: [] };
-    } catch {
-      badImportRequest("导入文件不是有效 JSON 或 ZIP");
-    }
-  }
-  let entries: ZipArchiveEntry[];
-  try {
-    entries = unzipArchive(buffer);
-  } catch {
-    badImportRequest("导入文件不是有效的 ZIP 包");
-  }
-  const jsonEntry = entries.find((entry) => entry.name.split("/").pop() === jsonFileName);
-  if (!jsonEntry) badImportRequest(`导入包中缺少 ${jsonFileName}`);
-  try {
-    return { payload: JSON.parse(jsonEntry.data.toString("utf8")) as any, entries };
-  } catch {
-    badImportRequest(`导入包中的 ${jsonFileName} 不是有效 JSON`);
-  }
-}
-
-// 把导出包中指定前缀（uploads/、avatars/）的文件还原到对应存储目录。
-function restoreExportFiles(entries: ZipArchiveEntry[], prefix: string, targetDir: string) {
-  let restored = 0;
-  for (const entry of entries) {
-    if (!entry.name.startsWith(prefix)) continue;
-    const fileName = path.basename(entry.name);
-    if (!fileName) continue;
-    fs.mkdirSync(targetDir, { recursive: true });
-    fs.writeFileSync(path.join(targetDir, fileName), entry.data);
-    restored += 1;
-  }
-  return restored;
-}
-
-function parseDate(value: unknown, fallback = new Date()) {
-  const date = value ? new Date(String(value)) : fallback;
-  return Number.isNaN(date.getTime()) ? fallback : date;
-}
-
-function zipSafeName(name: string) {
-  return name.replace(/[\\/:*?"<>|]+/g, "_").replace(/\.+/g, ".").slice(0, 180) || "file";
-}
-
-function backupFileUrl(fileName: string) {
-  return `/api/admin/backups/${encodeURIComponent(path.basename(fileName))}`;
-}
-
-function isManagedBackupFileName(fileName: string) {
-  return /^liao-full-backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.zip$/.test(path.basename(fileName));
-}
-
-function backupFilePath(fileName: string) {
-  const safeName = path.basename(fileName);
-  if (!isManagedBackupFileName(safeName)) return "";
-  return path.join(BACKUP_DIR, safeName);
-}
-
-function listAdminBackups(): AdminBackupDTO[] {
-  if (!fs.existsSync(BACKUP_DIR)) return [];
-  return fs
-    .readdirSync(BACKUP_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && isManagedBackupFileName(entry.name))
-    .map((entry) => {
-      const filePath = path.join(BACKUP_DIR, entry.name);
-      const stat = fs.statSync(filePath);
-      return {
-        fileName: entry.name,
-        size: stat.size,
-        createdAt: stat.birthtime.toISOString(),
-        url: backupFileUrl(entry.name)
-      };
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-}
-
-function shouldSkipBackupEntry(relativePath: string, isDirectory: boolean) {
-  const parts = relativePath.split(path.sep).filter(Boolean);
-  if (!parts.length) return false;
-  const first = parts[0];
-  if ([".git", "node_modules", ".playwright-cli", ".codebase-memory", "coverage"].includes(first)) return true;
-  if (first === "storage" && parts[1] === "backups") return true;
-  if (isDirectory && first === ".vite") return true;
-  return relativePath.endsWith(".tmp") || relativePath.endsWith(".log");
-}
-
-function collectDirectoryBackupEntries(rootDir: string, zipPrefix: string, skipEntry: (relativePath: string, isDirectory: boolean) => boolean) {
-  const entries: Array<{ name: string; data: Buffer; date?: Date }> = [];
-  if (!fs.existsSync(rootDir)) return entries;
-  const walk = (dir: string) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      const relativePath = path.relative(rootDir, fullPath);
-      if (!relativePath || skipEntry(relativePath, entry.isDirectory())) continue;
-      if (entry.isDirectory()) {
-        walk(fullPath);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      const stat = fs.statSync(fullPath);
-      entries.push({
-        name: `${zipPrefix}/${relativePath.split(path.sep).map(zipSafeName).join("/")}`,
-        data: fs.readFileSync(fullPath),
-        date: stat.mtime
-      });
-    }
-  };
-  walk(rootDir);
-  return entries;
-}
-
-function collectBackupProgramEntries(rootDir = ROOT, hiddenReceptionUploads = new Set<string>()) {
-  return collectDirectoryBackupEntries(rootDir, "program", (relativePath, isDirectory) => {
-    if (shouldSkipBackupEntry(relativePath, isDirectory)) return true;
-    const parts = relativePath.split(path.sep).filter(Boolean);
-    return !isDirectory && parts[0] === "storage" && parts[1] === "uploads" && hiddenReceptionUploads.has(parts[2] || "");
-  });
-}
-
-function isPathInside(childPath: string, parentPath: string) {
-  const relative = path.relative(parentPath, childPath);
-  return !relative || (!relative.startsWith("..") && !path.isAbsolute(relative));
-}
-
-function collectExternalStorageEntries(hiddenReceptionUploads = new Set<string>()) {
-  if (STORAGE_ROOT === path.join(ROOT, "storage") || isPathInside(STORAGE_ROOT, ROOT)) return [];
-  return collectDirectoryBackupEntries(STORAGE_ROOT, "storage", (relativePath, isDirectory) => {
-    const parts = relativePath.split(path.sep).filter(Boolean);
-    if (parts[0] === "backups") return true;
-    if (!isDirectory && parts[0] === "uploads" && hiddenReceptionUploads.has(parts[1] || "")) return true;
-    return isDirectory ? false : relativePath.endsWith(".tmp") || relativePath.endsWith(".log");
-  });
-}
-
-function sqliteDatabasePath() {
-  const databaseUrl = process.env.DATABASE_URL || "";
-  if (!databaseUrl.startsWith("file:")) return "";
-  const rawPath = databaseUrl.slice("file:".length).split("?")[0];
-  if (!rawPath || rawPath === ":memory:") return "";
-  return path.resolve(ROOT, rawPath);
-}
-
-function collectExternalDatabaseEntry(existingEntries: Array<{ name: string }>) {
-  const dbPath = sqliteDatabasePath();
-  if (!dbPath || !fs.existsSync(dbPath) || isPathInside(dbPath, ROOT) || isPathInside(dbPath, STORAGE_ROOT)) return [];
-  const stat = fs.statSync(dbPath);
-  const name = `database/${zipSafeName(path.basename(dbPath))}`;
-  if (existingEntries.some((entry) => entry.name === name)) return [];
-  return [{ name, data: fs.readFileSync(dbPath), date: stat.mtime }];
-}
-
-async function createFullBackup(auth: Pick<AuthContext, "username">) {
-  fs.mkdirSync(BACKUP_DIR, { recursive: true });
-  const createdAt = new Date();
-  const stamp = createdAt.toISOString().replace(/[:.]/g, "-");
-  const fileName = `liao-full-backup-${stamp}.zip`;
-  const filePath = path.join(BACKUP_DIR, fileName);
-  const [chatData, userData, appearance, attachments, receptionFiles] = await Promise.all([
-    chatExportPayload(),
-    usersExportPayload(),
-    appearanceDto(),
-    adminAttachmentList(),
-    prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } })
-  ]);
-  const hiddenReceptionUploads = new Set(receptionFiles.map((message) => path.basename(message.filePath || "")).filter(Boolean));
-  const entries = [...collectBackupProgramEntries(ROOT, hiddenReceptionUploads), ...collectExternalStorageEntries(hiddenReceptionUploads)];
-  entries.push(...collectExternalDatabaseEntry(entries));
-  const manifest = {
-    kind: "liao-full-backup",
-    version: 1,
-    appVersion: APP_VERSION,
-    createdAt: createdAt.toISOString(),
-    createdBy: auth.username,
-    root: ROOT,
-    storageRoot: STORAGE_ROOT,
-    included: {
-      programFiles: entries.length,
-      attachments: attachments.length,
-      chatMessages: Array.isArray((chatData as { messages?: unknown[] }).messages) ? (chatData as { messages: unknown[] }).messages.length : 0,
-      accounts: Array.isArray((userData as { accounts?: unknown[] }).accounts) ? (userData as { accounts: unknown[] }).accounts.length : 0
-    },
-    notes: [
-      "program/ contains the application files and storage data except generated backups, dependency folders, git metadata, and transient logs.",
-      "data/chat.json and data/users.json are portable exports from the admin data tools."
-    ]
-  };
-  entries.unshift(
-    { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), date: createdAt },
-    { name: "data/chat.json", data: Buffer.from(JSON.stringify(chatData, null, 2), "utf8"), date: createdAt },
-    { name: "data/users.json", data: Buffer.from(JSON.stringify(userData, null, 2), "utf8"), date: createdAt },
-    { name: "data/appearance.json", data: Buffer.from(JSON.stringify(appearance, null, 2), "utf8"), date: createdAt }
-  );
-  fs.writeFileSync(filePath, zipArchive(entries));
-  return { fileName, filePath };
-}
-
-function storageFilePath(kind: AdminAttachmentDTO["kind"], fileName: string) {
-  const dir = kind === "upload" ? UPLOAD_DIR : kind === "avatar" ? AVATAR_DIR : BG_DIR;
-  return path.join(dir, path.basename(fileName));
-}
-
-function attachmentId(kind: AdminAttachmentDTO["kind"], fileName: string) {
-  return `${kind}:${path.basename(fileName)}`;
-}
-
-function adminAttachmentFileUrl(kind: AdminAttachmentDTO["kind"], fileName: string) {
-  return `/api/admin/attachments/file/${kind}/${encodeURIComponent(path.basename(fileName))}`;
-}
-
-function parseAttachmentId(id: string) {
-  const [kind, ...rest] = String(id || "").split(":");
-  const fileName = path.basename(rest.join(":"));
-  if ((kind === "upload" || kind === "avatar" || kind === "background") && fileName) {
-    return { kind: kind as AdminAttachmentDTO["kind"], fileName };
-  }
-  return null;
-}
-
-function safeUnlink(kind: AdminAttachmentDTO["kind"], fileName: string) {
-  const target = storageFilePath(kind, fileName);
-  if (fs.existsSync(target)) fs.unlinkSync(target);
-}
-
-function safeUnlinkMusicScore(fileName: string) {
-  const target = path.join(MUSIC_SCORE_DIR, path.basename(fileName));
-  if (fs.existsSync(target)) fs.unlinkSync(target);
-}
 
 async function activePinnedUsesUpload(fileName: string) {
   const target = path.basename(fileName);
@@ -6569,48 +4098,6 @@ async function uploadIsStillReferenced(fileName: string) {
   return (await prisma.message.count({ where: { filePath: target } })) > 0 || (await activePinnedUsesUpload(target));
 }
 
-function listStorageFiles(dir: string) {
-  if (!fs.existsSync(dir)) return [];
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isFile())
-    .map((entry) => {
-      const filePath = path.join(dir, entry.name);
-      const stat = fs.statSync(filePath);
-      return { name: entry.name, size: stat.size, createdAt: stat.birthtime };
-    });
-}
-
-function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
-  const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "bible_session" ? "[圣经]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
-  return stripMarkdownSyntax(raw.replace(/<[^>]*>/g, " ")).slice(0, 120);
-}
-
-async function detachMessageAttachments(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>) {
-  const ids = messages.map((message) => message.id);
-  const channelIds = [...new Set(messages.map((message) => message.channelId))];
-  const scorePages = ids.length
-    ? await prisma.musicScorePage.findMany({ where: { score: { trackId: { in: ids } } }, select: { filePath: true } })
-    : [];
-  if (ids.length) {
-    await prisma.$transaction([
-      prisma.voiceListen.deleteMany({ where: { messageId: { in: ids } } }),
-      prisma.prayerAction.deleteMany({ where: { messageId: { in: ids } } }),
-      prisma.musicScorePage.deleteMany({ where: { score: { trackId: { in: ids } } } }),
-      prisma.musicScore.deleteMany({ where: { trackId: { in: ids } } }),
-      prisma.message.updateMany({
-        where: { id: { in: ids } },
-        data: { type: "text", content: "[附件已由管理员删除]", payload: Prisma.JsonNull, fileName: null, filePath: null, fileSize: null }
-      })
-    ]);
-  }
-  for (const message of messages) {
-    if (message.filePath && !(await uploadIsStillReferenced(message.filePath))) safeUnlink("upload", message.filePath);
-  }
-  for (const page of scorePages) safeUnlinkMusicScore(page.filePath);
-  for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
-  return ids.length;
-}
 
 async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>) {
   const ids = messages.map((message) => message.id);
@@ -6634,180 +4121,8 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
   return ids.length;
 }
 
-async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
-  const [messages, receptionMessages, accounts, channels, pinnedItems, appearance] = await Promise.all([
-    prisma.message.findMany({
-      where: { filePath: { not: null }, channel: { kind: { not: "reception" } } },
-      include: { channel: true, sender: true },
-      orderBy: { id: "desc" }
-    }),
-    prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } }),
-    prisma.account.findMany({ where: { isGuest: false }, select: { displayName: true, avatarPath: true } }),
-    prisma.channel.findMany({ where: { kind: { not: "reception" } }, select: { name: true, icon: true } }),
-    prisma.pinnedItem.findMany({ where: { active: true, channel: { kind: { not: "reception" } } }, include: { channel: true }, orderBy: { id: "desc" } }),
-    appearanceDto()
-  ]);
 
-  const rows = new Map<string, AdminAttachmentDTO>();
-  const hiddenReceptionUploads = new Set(receptionMessages.map((message) => path.basename(message.filePath || "")).filter(Boolean));
-  for (const file of listStorageFiles(UPLOAD_DIR)) {
-    if (hiddenReceptionUploads.has(file.name)) continue;
-    rows.set(attachmentId("upload", file.name), {
-      id: attachmentId("upload", file.name),
-      kind: "upload",
-      fileName: file.name,
-      label: file.name,
-      size: file.size,
-      createdAt: file.createdAt.toISOString(),
-      url: adminAttachmentFileUrl("upload", file.name),
-      usage: [],
-      exists: true
-    });
-  }
-  for (const message of messages) {
-    if (!message.filePath) continue;
-    const fileName = path.basename(message.filePath);
-    const id = attachmentId("upload", fileName);
-    const current = rows.get(id);
-    rows.set(id, {
-      id,
-      kind: "upload",
-      fileName,
-      label: message.fileName || fileName,
-      size: current?.size || message.fileSize || 0,
-      createdAt: message.createdAt.toISOString(),
-      url: current?.exists ? current.url : undefined,
-      messageId: message.id,
-      channelName: message.channel.name,
-      ownerName: message.sender.displayName,
-      usage: [...new Set([...(current?.usage || []), `消息 #${message.id}`, message.channel.name, message.sender.displayName])],
-      exists: current?.exists || false
-    });
-  }
-  for (const pin of pinnedItems) {
-    const body = serializePinnedBody(pin.body, pin.content);
-    for (const block of body.blocks) {
-      if (block.type !== "image" && block.type !== "file") continue;
-      const fileName = path.basename(block.filePath);
-      const id = attachmentId("upload", fileName);
-      const current = rows.get(id);
-      const usage = [...(current?.usage || []), `置顶 · ${pin.channel.name}`];
-      rows.set(id, {
-        id,
-        kind: "upload",
-        fileName,
-        label: current?.label || block.fileName || fileName,
-        size: current?.size || block.fileSize || 0,
-        createdAt: current?.createdAt || pin.createdAt.toISOString(),
-        url: current?.exists ? current.url : undefined,
-        messageId: current?.messageId,
-        channelName: current?.channelName || pin.channel.name,
-        ownerName: current?.ownerName,
-        usage,
-        exists: current?.exists || false
-      });
-    }
-  }
 
-  for (const file of listStorageFiles(AVATAR_DIR)) {
-    const usage = accounts.filter((account) => account.avatarPath === file.name).map((account) => `${account.displayName} 头像`);
-    rows.set(attachmentId("avatar", file.name), {
-      id: attachmentId("avatar", file.name),
-      kind: "avatar",
-      fileName: file.name,
-      label: usage[0] || file.name,
-      size: file.size,
-      createdAt: file.createdAt.toISOString(),
-      url: adminAttachmentFileUrl("avatar", file.name),
-      usage,
-      exists: true
-    });
-  }
-
-  const backgroundUsage = new Map<string, string[]>();
-  if (appearance.appIconPath) backgroundUsage.set(path.basename(appearance.appIconPath), ["聊天室标签页图标"]);
-  if (appearance.wallpaperPath) backgroundUsage.set(path.basename(appearance.wallpaperPath), ["聊天室壁纸"]);
-  if (appearance.loginBackgroundPath) backgroundUsage.set(path.basename(appearance.loginBackgroundPath), [...(backgroundUsage.get(path.basename(appearance.loginBackgroundPath)) || []), "登录页背景"]);
-  if (appearance.loginIconPath) backgroundUsage.set(path.basename(appearance.loginIconPath), [...(backgroundUsage.get(path.basename(appearance.loginIconPath)) || []), "登录页图标"]);
-  for (const channel of channels) {
-    if (channel.icon && /\.(jpe?g|png|gif|webp)$/i.test(channel.icon)) {
-      const fileName = path.basename(channel.icon);
-      backgroundUsage.set(fileName, [...(backgroundUsage.get(fileName) || []), `${channel.name} 频道图标`]);
-    }
-  }
-  for (const file of listStorageFiles(BG_DIR)) {
-    const usage = backgroundUsage.get(file.name) || [];
-    rows.set(attachmentId("background", file.name), {
-      id: attachmentId("background", file.name),
-      kind: "background",
-      fileName: file.name,
-      label: usage[0] || file.name,
-      size: file.size,
-      createdAt: file.createdAt.toISOString(),
-      url: adminAttachmentFileUrl("background", file.name),
-      usage,
-      exists: true
-    });
-  }
-
-  return [...rows.values()].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-}
-
-async function isReceptionUpload(fileName: string) {
-  const target = path.basename(fileName);
-  if (!target) return false;
-  return (await prisma.message.count({ where: { filePath: target, channel: { kind: "reception" } } })) > 0;
-}
-
-async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>) {
-  let deleted = 0;
-  const refreshChannels = new Set<number>();
-  let appearanceChanged = false;
-  let channelsChanged = false;
-  for (const target of targets) {
-    const fileName = path.basename(target.fileName);
-    if (target.kind === "upload" && (await isReceptionUpload(fileName))) continue;
-    const filePath = storageFilePath(target.kind, fileName);
-    const existed = fs.existsSync(filePath);
-    const keepForPinned = target.kind === "upload" && (await activePinnedUsesUpload(fileName));
-    if (target.kind === "upload") {
-      const messages = await prisma.message.findMany({ where: { filePath: fileName }, select: { id: true, channelId: true, filePath: true } });
-      for (const message of messages) refreshChannels.add(message.channelId);
-      if (messages.length) await detachMessageAttachments(messages);
-    } else if (target.kind === "avatar") {
-      await prisma.account.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
-      await prisma.actor.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
-    } else {
-      const appearance = await appearanceDto();
-      if (appearance.wallpaperPath === fileName) {
-        await setSetting("wallpaperPath", "");
-        appearanceChanged = true;
-      }
-      if (appearance.appIconPath === fileName) {
-        await setSetting("appIconPath", "");
-        appearanceChanged = true;
-      }
-      if (appearance.loginBackgroundPath === fileName) {
-        await setSetting("loginBackgroundPath", "");
-        appearanceChanged = true;
-      }
-      if (appearance.loginIconPath === fileName) {
-        await setSetting("loginIconPath", "");
-        appearanceChanged = true;
-      }
-      const updated = await prisma.channel.updateMany({ where: { icon: fileName }, data: { icon: "" } });
-      channelsChanged = channelsChanged || updated.count > 0;
-    }
-    if (existed && !keepForPinned) {
-      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-      deleted += 1;
-    }
-  }
-  for (const channelId of refreshChannels) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
-  if (appearanceChanged) io.emit("appearance:updated", await appearanceDto());
-  if (channelsChanged) io.emit("channel:updated", { action: "updated" });
-  return deleted;
-}
 
 async function emitPinnedRefresh(channelIds: Set<number>) {
   for (const channelId of channelIds) {
@@ -6816,185 +4131,7 @@ async function emitPinnedRefresh(channelIds: Set<number>) {
   }
 }
 
-async function replaceUploadAttachmentReferences(oldFileName: string, newFileName: string, newSize: number) {
-  const refreshChannels = new Set<number>();
-  const pinChannels = new Set<number>();
-  const messages = await prisma.message.findMany({ where: { filePath: oldFileName }, select: { id: true, channelId: true, fileName: true, type: true } });
-  for (const message of messages) {
-    refreshChannels.add(message.channelId);
-    await prisma.message.update({
-      where: { id: message.id },
-      data: {
-        filePath: newFileName,
-        fileName: message.type === "image" ? displayWebpFileName(message.fileName || oldFileName) : message.fileName,
-        fileSize: newSize
-      }
-    });
-  }
 
-  const pins = await prisma.pinnedItem.findMany({ orderBy: { id: "asc" } });
-  for (const pin of pins) {
-    const body = serializePinnedBody(pin.body, pin.content);
-    let changed = false;
-    for (const block of body.blocks) {
-      if ((block.type === "image" || block.type === "file") && path.basename(block.filePath) === oldFileName) {
-        block.filePath = newFileName;
-        block.fileName = block.type === "image" ? displayWebpFileName(block.fileName || oldFileName) : block.fileName;
-        block.fileSize = newSize;
-        changed = true;
-      }
-    }
-    if (changed) {
-      await prisma.pinnedItem.update({ where: { id: pin.id }, data: { body: body as unknown as Prisma.InputJsonValue } });
-      pinChannels.add(pin.channelId);
-    }
-  }
-
-  for (const channelId of refreshChannels) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
-  await emitPinnedRefresh(pinChannels);
-}
-
-async function replaceAvatarAttachmentReferences(oldFileName: string, newFileName: string) {
-  await prisma.account.updateMany({ where: { avatarPath: oldFileName }, data: { avatarPath: newFileName } });
-  await prisma.actor.updateMany({ where: { avatarPath: oldFileName }, data: { avatarPath: newFileName } });
-  const accounts = await prisma.account.findMany({ where: { avatarPath: newFileName }, include: { actor: true } });
-  for (const account of accounts) refreshAccountConnections(account);
-  io.emit("channel:updated", { action: "updated" });
-}
-
-async function replaceBackgroundAttachmentReferences(oldFileName: string, newFileName: string) {
-  const appearance = await appearanceDto();
-  let appearanceChanged = false;
-  if (appearance.wallpaperPath === oldFileName) {
-    await setSetting("wallpaperPath", newFileName);
-    appearanceChanged = true;
-  }
-  if (appearance.appIconPath === oldFileName) {
-    await setSetting("appIconPath", newFileName);
-    appearanceChanged = true;
-  }
-  if (appearance.loginBackgroundPath === oldFileName) {
-    await setSetting("loginBackgroundPath", newFileName);
-    appearanceChanged = true;
-  }
-  if (appearance.loginIconPath === oldFileName) {
-    await setSetting("loginIconPath", newFileName);
-    appearanceChanged = true;
-  }
-  const updated = await prisma.channel.updateMany({ where: { icon: oldFileName }, data: { icon: newFileName } });
-  if (appearanceChanged) io.emit("appearance:updated", await appearanceDto());
-  if (updated.count > 0) io.emit("channel:updated", { action: "updated" });
-}
-
-async function compressAttachmentTarget(target: { kind: AdminAttachmentDTO["kind"]; fileName: string }) {
-  const fileName = path.basename(target.fileName);
-  if (target.kind === "upload" && (await isReceptionUpload(fileName))) {
-    return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "会客厅内容不向管理员开放" };
-  }
-  if (!isImageFileName(fileName)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "不是图片文件" };
-  const filePath = storageFilePath(target.kind, fileName);
-  if (!fs.existsSync(filePath)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "文件不存在" };
-  const shortName = target.kind === "background" && (await prisma.channel.count({ where: { icon: fileName } })) > 0;
-  const compressed = await compressImageFile(filePath, path.dirname(filePath), { shortName });
-  if (!compressed) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "压缩后没有更小" };
-
-  fs.unlinkSync(filePath);
-  if (target.kind === "upload") {
-    await replaceUploadAttachmentReferences(fileName, compressed.fileName, compressed.size);
-  } else if (target.kind === "avatar") {
-    await replaceAvatarAttachmentReferences(fileName, compressed.fileName);
-  } else {
-    await replaceBackgroundAttachmentReferences(fileName, compressed.fileName);
-  }
-  return {
-    id: attachmentId(target.kind, fileName),
-    status: "compressed" as const,
-    fileName: compressed.fileName,
-    size: compressed.size,
-    originalSize: compressed.originalSize,
-    savedBytes: compressed.savedBytes
-  };
-}
-
-async function chatExportPayload() {
-  const channels = await prisma.channel.findMany({ where: { kind: { not: "reception" } }, orderBy: { id: "asc" } });
-  const channelIds = channels.map((channel) => channel.id);
-  const [channelMembers, messages, pinnedItems, voiceListens, prayerActions, messageAiSuggestions] = await Promise.all([
-    prisma.channelMember.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
-    prisma.message.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
-    prisma.pinnedItem.findMany({ where: { channelId: { in: channelIds } }, orderBy: { id: "asc" } }),
-    prisma.voiceListen.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } }),
-    prisma.prayerAction.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } }),
-    prisma.messageAiSuggestion.findMany({ where: { message: { channelId: { in: channelIds } } }, orderBy: { id: "asc" } })
-  ]);
-  return {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    channels,
-    channelMembers,
-    messages,
-    pinnedItems,
-    voiceListens,
-    prayerActions,
-    messageAiSuggestions
-  };
-}
-
-async function usersExportPayload() {
-  const accounts = await prisma.account.findMany({ where: { isGuest: false }, include: { actor: true }, orderBy: { id: "asc" } });
-  return {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    accounts: accounts.map((account) => ({
-      id: account.id,
-      username: account.username,
-      passwordHash: account.passwordHash,
-      displayName: account.displayName,
-      avatarPath: account.avatarPath,
-      role: account.role,
-      canPinMessages: account.canPinMessages,
-      theme: account.theme,
-      biblePreferences: cleanBiblePreferences(account.biblePreferences),
-      createdAt: account.createdAt,
-      updatedAt: account.updatedAt,
-      actor: account.actor
-    }))
-  };
-}
-
-// 聊天导出包：chat.json + 消息与置顶内容引用的附件文件。
-async function chatExportZipEntries() {
-  const payload = await chatExportPayload();
-  const entries: ZipArchiveEntry[] = [{ name: "chat.json", data: Buffer.from(JSON.stringify(payload, null, 2), "utf8") }];
-  const fileNames = new Set<string>();
-  for (const message of payload.messages) {
-    if (message.filePath) fileNames.add(path.basename(message.filePath));
-  }
-  for (const pin of payload.pinnedItems) {
-    for (const fileName of pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content))) fileNames.add(fileName);
-  }
-  for (const fileName of fileNames) {
-    const filePath = path.join(UPLOAD_DIR, fileName);
-    if (fs.existsSync(filePath)) entries.push({ name: `uploads/${fileName}`, data: fs.readFileSync(filePath) });
-  }
-  return entries;
-}
-
-// 用户导出包：users.json + 账号和角色引用的头像文件。
-async function usersExportZipEntries() {
-  const payload = await usersExportPayload();
-  const entries: ZipArchiveEntry[] = [{ name: "users.json", data: Buffer.from(JSON.stringify(payload, null, 2), "utf8") }];
-  const avatarNames = new Set<string>();
-  for (const account of payload.accounts) {
-    if (account.avatarPath) avatarNames.add(path.basename(account.avatarPath));
-    if (account.actor?.avatarPath) avatarNames.add(path.basename(account.actor.avatarPath));
-  }
-  for (const fileName of avatarNames) {
-    const filePath = path.join(AVATAR_DIR, fileName);
-    if (fs.existsSync(filePath)) entries.push({ name: `avatars/${fileName}`, data: fs.readFileSync(filePath) });
-  }
-  return entries;
-}
 
 app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
@@ -7107,649 +4244,103 @@ registerWeChatRelayRoutes(app, {
   nasAccessUrl: WECHAT_RELAY_NAS_ACCESS_URL
 });
 
-app.get("/api/admin/export/chat", { preHandler: requireAdmin }, async (_request, reply) => {
-  return zipDownload(reply, `team-chat-data-${new Date().toISOString().slice(0, 10)}.zip`, await chatExportZipEntries());
-});
+registerSystemRoutes(app);
 
-app.post("/api/admin/import/chat", { preHandler: requireAdmin }, async (request, reply) => {
-  const { payload, entries } = await readDataImportUpload(request, "chat.json");
-  const channels = Array.isArray(payload.channels) ? payload.channels : [];
-  const channelMembers = Array.isArray(payload.channelMembers) ? payload.channelMembers : [];
-  const messages = Array.isArray(payload.messages) ? payload.messages : [];
-  const pinnedItems = Array.isArray(payload.pinnedItems) ? payload.pinnedItems : [];
-  const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
-  const prayerActions = Array.isArray(payload.prayerActions) ? payload.prayerActions : [];
-  const messageAiSuggestions = Array.isArray(payload.messageAiSuggestions) ? payload.messageAiSuggestions : [];
-  await prisma.$transaction(async (tx) => {
-    for (const channel of channels) {
-      await tx.channel.upsert({
-        where: { id: Number(channel.id) },
-        update: {
-          name: String(channel.name || "未命名频道").slice(0, 80),
-          description: String(channel.description || "").slice(0, 255),
-          icon: cleanChannelIcon(channel.icon),
-          isPrivate: !!channel.isPrivate,
-          isDefault: !!channel.isDefault,
-          directKey: channel.directKey ? String(channel.directKey).slice(0, 120) : null,
-          createdAt: parseDate(channel.createdAt),
-          updatedAt: parseDate(channel.updatedAt)
-        },
-        create: {
-          id: Number(channel.id) || undefined,
-          name: String(channel.name || "未命名频道").slice(0, 80),
-          description: String(channel.description || "").slice(0, 255),
-          icon: cleanChannelIcon(channel.icon),
-          isPrivate: !!channel.isPrivate,
-          isDefault: !!channel.isDefault,
-          directKey: channel.directKey ? String(channel.directKey).slice(0, 120) : null,
-          createdAt: parseDate(channel.createdAt),
-          updatedAt: parseDate(channel.updatedAt)
-        }
-      });
-    }
-    for (const member of channelMembers) {
-      await tx.channelMember.upsert({
-        where: { channelId_accountId: { channelId: Number(member.channelId), accountId: Number(member.accountId) } },
-        update: { role: member.role || "member" },
-        create: { channelId: Number(member.channelId), accountId: Number(member.accountId), role: member.role || "member", createdAt: parseDate(member.createdAt) }
-      });
-    }
-    for (const message of messages) {
-      await tx.message.upsert({
-        where: { id: Number(message.id) },
-        update: {
-          channelId: Number(message.channelId),
-          senderActorId: Number(message.senderActorId),
-          content: message.content || "",
-          type: message.type || "text",
-          payload: message.payload === null || message.payload === undefined ? Prisma.JsonNull : message.payload,
-          fileName: message.fileName || null,
-          filePath: message.filePath || null,
-          fileSize: message.fileSize === null || message.fileSize === undefined ? null : Number(message.fileSize),
-          replyToId: message.replyToId || null,
-          chainRootId: message.chainRootId || null,
-          chainVersion: message.chainVersion || null,
-          createdAt: parseDate(message.createdAt)
-        },
-        create: {
-          id: Number(message.id) || undefined,
-          channelId: Number(message.channelId),
-          senderActorId: Number(message.senderActorId),
-          content: message.content || "",
-          type: message.type || "text",
-          payload: message.payload === null || message.payload === undefined ? Prisma.JsonNull : message.payload,
-          fileName: message.fileName || null,
-          filePath: message.filePath || null,
-          fileSize: message.fileSize === null || message.fileSize === undefined ? null : Number(message.fileSize),
-          replyToId: message.replyToId || null,
-          chainRootId: message.chainRootId || null,
-          chainVersion: message.chainVersion || null,
-          createdAt: parseDate(message.createdAt)
-        }
-      });
-    }
-    for (const pin of pinnedItems) {
-      await tx.pinnedItem.upsert({
-        where: { id: Number(pin.id) },
-        update: {
-          channelId: Number(pin.channelId),
-          kind: pin.kind || "notice",
-          title: pin.title || null,
-          content: pin.content || null,
-          body: pin.body === null || pin.body === undefined ? Prisma.JsonNull : pin.body,
-          messageId: pin.messageId || null,
-          version: Number(pin.version) || 1,
-          active: !!pin.active
-        },
-        create: {
-          id: Number(pin.id) || undefined,
-          channelId: Number(pin.channelId),
-          kind: pin.kind || "notice",
-          title: pin.title || null,
-          content: pin.content || null,
-          body: pin.body === null || pin.body === undefined ? Prisma.JsonNull : pin.body,
-          messageId: pin.messageId || null,
-          version: Number(pin.version) || 1,
-          active: !!pin.active,
-          createdAt: parseDate(pin.createdAt),
-          updatedAt: parseDate(pin.updatedAt)
-        }
-      });
-    }
-    for (const listen of voiceListens) {
-      await tx.voiceListen.upsert({
-        where: { messageId_accountId: { messageId: Number(listen.messageId), accountId: Number(listen.accountId) } },
-        update: { listenedAt: parseDate(listen.listenedAt) },
-        create: { messageId: Number(listen.messageId), accountId: Number(listen.accountId), listenedAt: parseDate(listen.listenedAt) }
-      });
-    }
-    for (const action of prayerActions) {
-      const id = Number(action.id) || undefined;
-      const data = { messageId: Number(action.messageId), accountId: Number(action.accountId), prayedAt: parseDate(action.prayedAt) };
-      if (id) {
-        await tx.prayerAction.upsert({ where: { id }, update: data, create: { id, ...data } });
-      } else {
-        await tx.prayerAction.create({ data });
-      }
-    }
-    for (const suggestion of messageAiSuggestions) {
-      const id = Number(suggestion.id) || undefined;
-      const data = {
-        messageId: Number(suggestion.messageId),
-        kind: String(suggestion.kind || AI_RELATED_VERSES_KIND).slice(0, 64),
-        status: String(suggestion.status || "success").slice(0, 24),
-        promptCommand: String(suggestion.promptCommand || "").slice(0, 4000),
-        contextText: String(suggestion.contextText || "").slice(0, 5000),
-        responseText: suggestion.responseText ? String(suggestion.responseText).slice(0, 4000) : null,
-        references: suggestion.references === null || suggestion.references === undefined ? Prisma.JsonNull : suggestion.references,
-        errorText: suggestion.errorText ? String(suggestion.errorText).slice(0, 1000) : null,
-        model: suggestion.model ? String(suggestion.model).slice(0, 120) : null,
-        baseUrl: suggestion.baseUrl ? String(suggestion.baseUrl).slice(0, 255) : null,
-        createdByAccountId: suggestion.createdByAccountId ? Number(suggestion.createdByAccountId) : null,
-        createdAt: parseDate(suggestion.createdAt)
-      };
-      if (id) {
-        await tx.messageAiSuggestion.upsert({ where: { id }, update: data, create: { id, ...data } });
-      } else {
-        await tx.messageAiSuggestion.create({ data });
-      }
-    }
-  });
-  const attachments = restoreExportFiles(entries, "uploads/", UPLOAD_DIR);
-  return { success: true, imported: { channels: channels.length, messages: messages.length, attachments } };
-});
+registerAdminUpdateRoutes(app, { requireAdmin });
 
-app.get("/api/admin/export/users", { preHandler: requireAdmin }, async (_request, reply) => {
-  return zipDownload(reply, `liao-users-${new Date().toISOString().slice(0, 10)}.zip`, await usersExportZipEntries());
-});
-
-app.get("/api/admin/backups", { preHandler: requireAdmin }, async () => {
-  return { backups: listAdminBackups() };
-});
-
-app.post("/api/admin/backups", { preHandler: requireAdmin }, async (request) => {
-  const { fileName } = await createFullBackup((request as AuthedRequest).auth);
-  return { success: true, backup: listAdminBackups().find((backup) => backup.fileName === fileName) };
-});
-
-app.get("/api/admin/backups/:file", { preHandler: requireAdmin }, async (request, reply) => {
-  const fileName = path.basename((request.params as { file: string }).file);
-  const filePath = backupFilePath(fileName);
-  if (!filePath || !fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "备份不存在" });
-  const stat = fs.statSync(filePath);
-  reply.header("X-Content-Type-Options", "nosniff");
-  reply.header("Content-Type", "application/zip");
-  reply.header("Content-Length", String(stat.size));
-  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(fileName)}`);
-  return reply.send(fs.createReadStream(filePath));
-});
-
-app.delete("/api/admin/backups/:file", { preHandler: requireAdmin }, async (request, reply) => {
-  const fileName = path.basename((request.params as { file: string }).file);
-  const filePath = backupFilePath(fileName);
-  if (!filePath || !fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "备份不存在" });
-  fs.unlinkSync(filePath);
-  return { success: true, deleted: fileName, backups: listAdminBackups() };
-});
-
-app.get("/api/admin/messages", { preHandler: requireAdmin }, async (request) => {
-  const query = request.query as { channelId?: string; q?: string; limit?: string };
-  const channelId = Number(query.channelId || 0);
-  const q = String(query.q || "").trim();
-  const limit = Math.min(Math.max(Number(query.limit || 80), 1), 200);
-  const where: Prisma.MessageWhereInput = {
-    channel: { kind: { not: "reception" } },
-    ...(channelId ? { channelId } : {}),
-    ...(q
-      ? {
-          OR: [
-            { content: { contains: q } },
-            { fileName: { contains: q } },
-            { sender: { displayName: { contains: q } } },
-            { channel: { name: { contains: q } } }
-          ]
-        }
-      : {})
-  };
-  const messages = await prisma.message.findMany({
-    where,
-    include: { channel: true, sender: true },
-    orderBy: { id: "desc" },
-    take: limit
-  });
-  return {
-    messages: messages.map(
-      (message): AdminMessageDTO => ({
-        id: message.id,
-        channelId: message.channelId,
-        channelName: message.channel.name,
-        senderName: message.sender.displayName,
-        type: message.type,
-        content: messagePreview(message),
-        fileName: message.fileName,
-        fileSize: message.fileSize,
-        createdAt: message.createdAt.toISOString()
-      })
-    )
-  };
-});
-
-app.delete("/api/admin/messages/:id", { preHandler: requireAdmin }, async (request, reply) => {
-  const id = Number((request.params as { id: string }).id);
-  const message = await prisma.message.findFirst({ where: { id, channel: { kind: { not: "reception" } } }, select: { id: true, channelId: true, filePath: true } });
-  if (!message) return reply.code(404).send({ success: false, message: "消息不存在" });
-  const deleted = await deleteMessages([message]);
-  return { success: true, deleted };
-});
-
-app.delete("/api/admin/messages", { preHandler: requireAdmin }, async (request, reply) => {
-  const query = request.query as { channelId?: string };
-  if (request.body !== undefined && (typeof request.body !== "object" || Array.isArray(request.body))) {
-    return reply.code(400).send({ success: false, message: "聊天记录参数无效" });
-  }
-  const body = request.body || {};
-  const parsedBody = z.object({ ids: z.array(z.number().int().positive()).max(200).optional() }).strict().safeParse(body);
-  if (!parsedBody.success) return reply.code(400).send({ success: false, message: "聊天记录参数无效" });
-  const ids = parsedBody.success ? parsedBody.data.ids || [] : [];
-  if (ids.length) {
-    const messages = await prisma.message.findMany({
-      where: { id: { in: ids }, channel: { kind: { not: "reception" } } },
-      select: { id: true, channelId: true, filePath: true }
+registerAuthRoutes(app, {
+  prisma,
+  requireAuth,
+  authLoginRateLimitMax: AUTH_LOGIN_RATE_LIMIT_MAX,
+  settingBool: appearanceService.settingBool,
+  themeExists: appearanceService.themeExists,
+  signToken,
+  authDto,
+  createAuthSession,
+  sessionExpiresAt,
+  writeLoginLog,
+  disconnectSessions,
+  refreshAccountConnections,
+  updateAccountAvatarFromUpload,
+  deleteOwnedReceptionRooms: async (accountId: number) => {
+    const ownedRooms = await prisma.channel.findMany({
+      where: { kind: "reception", receptionOwnerAccountId: accountId },
+      select: { id: true }
     });
-    const deleted = await deleteMessages(messages);
-    return { success: true, deleted };
-  }
-  const channelId = Number(query.channelId || 0);
-  const messages = await prisma.message.findMany({
-    where: channelId ? { channelId, channel: { kind: { not: "reception" } } } : { channel: { kind: { not: "reception" } } },
-    select: { id: true, channelId: true, filePath: true }
-  });
-  const deleted = await deleteMessages(messages);
-  return { success: true, deleted };
-});
-
-app.get("/api/admin/attachments", { preHandler: requireAdmin }, async () => {
-  return { attachments: await adminAttachmentList() };
-});
-
-app.get("/api/admin/attachments/file/:kind/:file", { preHandler: requireAdmin }, async (request, reply) => {
-  const { kind, file } = request.params as { kind: AdminAttachmentDTO["kind"]; file: string };
-  const query = request.query as { download?: string };
-  if (kind !== "upload" && kind !== "avatar" && kind !== "background") return reply.code(404).send("Not found");
-  const fileName = path.basename(file);
-  if (kind === "upload" && (await isReceptionUpload(fileName))) return reply.code(404).send("Not found");
-  const filePath = storageFilePath(kind, fileName);
-  if (!fileName || !fs.existsSync(filePath)) return reply.code(404).send("Not found");
-  const stat = fs.statSync(filePath);
-  const range = request.headers.range;
-  reply.header("Accept-Ranges", "bytes");
-  applyFileResponseHeaders(reply, fileName, query.download === "1");
-  if (range) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(range);
-    if (match) {
-      const start = match[1] ? Number(match[1]) : 0;
-      const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
-      if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < stat.size) {
-        reply.code(206);
-        reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
-        reply.header("Content-Length", String(end - start + 1));
-        return reply.send(fs.createReadStream(filePath, { start, end }));
-      }
-    }
-    reply.code(416);
-    reply.header("Content-Range", `bytes */${stat.size}`);
-    return reply.send();
-  }
-  reply.header("Content-Length", String(stat.size));
-  return reply.send(fs.createReadStream(filePath));
-});
-
-app.delete("/api/admin/attachments", { preHandler: requireAdmin }, async (request, reply) => {
-  const body = z.object({ ids: z.array(z.string()).optional(), all: z.boolean().optional() }).parse(request.body || {});
-  const targets = body.all ? (await adminAttachmentList()).map((item) => parseAttachmentId(item.id)).filter(Boolean) : (body.ids || []).map(parseAttachmentId).filter(Boolean);
-  if (!targets.length) return reply.code(400).send({ success: false, message: "请选择要删除的附件" });
-  const deleted = await deleteAttachmentTargets(targets as Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>);
-  return { success: true, deleted, requested: targets.length };
-});
-
-app.post("/api/admin/attachments/compress", { preHandler: requireAdmin }, async (request, reply) => {
-  const body = z.object({ ids: z.array(z.string()).min(1).max(50) }).parse(request.body || {});
-  const targets = body.ids.map(parseAttachmentId).filter(Boolean) as Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>;
-  if (!targets.length) return reply.code(400).send({ success: false, message: "请选择要压缩的图片" });
-  const results = [];
-  for (const target of targets) results.push(await compressAttachmentTarget(target));
-  const compressed = results.filter((item) => item.status === "compressed");
-  const savedBytes = compressed.reduce((sum, item) => sum + ("savedBytes" in item ? item.savedBytes : 0), 0);
-  return {
-    success: true,
-    compressed: compressed.length,
-    skipped: results.length - compressed.length,
-    savedBytes,
-    results,
-    attachments: await adminAttachmentList()
-  };
-});
-
-app.post("/api/admin/import/users", { preHandler: requireAdmin }, async (request) => {
-  const auth = (request as AuthedRequest).auth;
-  const { payload, entries } = await readDataImportUpload(request, "users.json");
-  const accounts = Array.isArray(payload.accounts) ? payload.accounts : [];
-  const changedAccountIds = new Set<number>();
-  for (const item of accounts) {
-    const role = item.role === "admin" ? "admin" : "user";
-    const theme = THEMES.has(item.theme) ? item.theme : "wechat";
-    const biblePreferences = biblePreferencesJson(item.biblePreferences);
-    const passwordHash = String(item.passwordHash || (await bcrypt.hash(crypto.randomUUID(), 12)));
-    const account = await prisma.account.upsert({
-      where: { username: String(item.username) },
-      update: {
-        passwordHash,
-        displayName: String(item.displayName || item.username).slice(0, 80),
-        avatarPath: item.avatarPath || null,
-        role,
-        canPinMessages: !!item.canPinMessages,
-        theme,
-        biblePreferences
-      },
-      create: {
-        id: Number(item.id) || undefined,
-        username: String(item.username).slice(0, 64),
-        passwordHash,
-        displayName: String(item.displayName || item.username).slice(0, 80),
-        avatarPath: item.avatarPath || null,
-        role,
-        canPinMessages: !!item.canPinMessages,
-        theme,
-        biblePreferences,
-        createdAt: parseDate(item.createdAt),
-        actor: {
-          create: {
-            id: Number(item.actor?.id) || undefined,
-            kind: "human",
-            username: String(item.actor?.username || item.username).slice(0, 80),
-            displayName: String(item.actor?.displayName || item.displayName || item.username).slice(0, 80),
-            avatarPath: item.actor?.avatarPath || item.avatarPath || null,
-            status: item.actor?.status || "active",
-            createdAt: parseDate(item.actor?.createdAt)
-          }
-        }
-      },
-      include: { actor: true }
-    });
-    changedAccountIds.add(account.id);
-    if (account.actor) {
-      await prisma.actor.update({
-        where: { id: account.actor.id },
-        data: {
-          displayName: String(item.actor?.displayName || item.displayName || item.username).slice(0, 80),
-          avatarPath: item.actor?.avatarPath || item.avatarPath || null,
-          status: item.actor?.status || "active"
-        }
-      });
-    }
-  }
-  const adminCount = await prisma.account.count({ where: { role: "admin" } });
-  if (!adminCount) {
-    await prisma.account.update({ where: { id: auth.accountId }, data: { role: "admin" } });
-    changedAccountIds.add(auth.accountId);
-  }
-  const changedAccounts = changedAccountIds.size
-    ? await prisma.account.findMany({ where: { id: { in: [...changedAccountIds] } }, include: { actor: true } })
-    : [];
-  changedAccounts.forEach(refreshAccountConnections);
-  const avatars = restoreExportFiles(entries, "avatars/", AVATAR_DIR);
-  return { success: true, imported: { accounts: accounts.length, avatars } };
-});
-
-app.get("/api/admin/accounts/:id/attachments/export", { preHandler: requireAdmin }, async (request, reply) => {
-  const accountId = Number((request.params as { id: string }).id);
-  const account = await prisma.account.findUnique({ where: { id: accountId }, include: { actor: true } });
-  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
-  const messages = await prisma.message.findMany({ where: { sender: { accountId }, filePath: { not: null } }, orderBy: { id: "asc" } });
-  const manifest = {
-    account: authDto(account),
-    exportedAt: new Date().toISOString(),
-    files: messages.map((message) => ({ messageId: message.id, fileName: message.fileName, filePath: message.filePath, fileSize: message.fileSize, createdAt: message.createdAt }))
-  };
-  const entries: Array<{ name: string; data: Buffer; date?: Date }> = [{ name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8") }];
-  for (const message of messages) {
-    if (!message.filePath) continue;
-    const filePath = path.join(UPLOAD_DIR, path.basename(message.filePath));
-    if (fs.existsSync(filePath)) {
-      entries.push({ name: `attachments/${message.id}-${zipSafeName(message.fileName || message.filePath)}`, data: fs.readFileSync(filePath), date: message.createdAt });
-    }
-  }
-  const zip = zipArchive(entries);
-  reply.header("Content-Type", "application/zip");
-  reply.header("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(`liao-${account.username}-attachments.zip`)}`);
-  return reply.send(zip);
-});
-
-app.delete("/api/admin/accounts/:id/attachments", { preHandler: requireAdmin }, async (request, reply) => {
-  const accountId = Number((request.params as { id: string }).id);
-  const account = await prisma.account.findUnique({ where: { id: accountId } });
-  if (!account) return reply.code(404).send({ success: false, message: "用户不存在" });
-  const messages = await prisma.message.findMany({ where: { sender: { accountId }, filePath: { not: null } }, select: { id: true, channelId: true, filePath: true } });
-  const deleted = await detachMessageAttachments(messages);
-  return { success: true, deleted };
-});
-
-app.get("/api/virtual-characters", { preHandler: requireAdmin }, async () => {
-  const rows = await prisma.virtualCharacter.findMany({ include: { actor: true, memories: { take: 20, orderBy: { updatedAt: "desc" } } }, orderBy: { id: "asc" } });
-  return { characters: rows };
-});
-
-app.post("/api/virtual-characters", { preHandler: requireAdmin }, async (request, reply) => {
-  const body = z
-    .object({
-      username: z.string().regex(/^[a-zA-Z0-9_.-]{2,40}$/),
-      displayName: z.string().min(1).max(80),
-      enabled: z.boolean().default(true),
-      config: z.unknown().optional(),
-      engineBinding: z.unknown().optional()
-    })
-    .parse(request.body);
-  try {
-    const character = await prisma.virtualCharacter.create({
-      data: {
-        enabled: body.enabled,
-        config: (body.config as object) || defaultVirtualCharacterConfig(body.displayName),
-        engineBinding: (body.engineBinding as object) || {},
-        actor: { create: { kind: "virtual", username: body.username, displayName: body.displayName } }
-      },
-      include: { actor: true }
-    });
-    return { success: true, character };
-  } catch {
-    return reply.code(409).send({ success: false, message: "角色用户名已存在" });
+    for (const room of ownedRooms) await receptionService.deleteRoom(room.id);
   }
 });
 
-app.put("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (request, reply) => {
-  const id = Number((request.params as { id: string }).id);
-  const body = z.object({ displayName: z.string().min(1).max(80).optional(), enabled: z.boolean().optional(), config: z.unknown().optional(), engineBinding: z.unknown().optional() }).parse(request.body);
-  const current = await prisma.virtualCharacter.findUnique({ where: { id }, include: { actor: true } });
-  if (!current) return reply.code(404).send({ success: false, message: "角色不存在" });
-  const updated = await prisma.virtualCharacter.update({
-    where: { id },
-    data: {
-      enabled: body.enabled,
-      config: body.config as object | undefined,
-      engineBinding: body.engineBinding as object | undefined,
-      actor: body.displayName ? { update: { displayName: body.displayName } } : undefined
-    },
-    include: { actor: true }
-  });
-  return { success: true, character: updated };
+registerAdminLogRoutes(app, { prisma, requireAdmin });
+
+registerNotificationsRoutes(app, {
+  prisma,
+  requireAuth,
+  pushNotificationsEnabled: PUSH_NOTIFICATIONS_ENABLED,
+  vapidPublicKey: () => vapidPublicKey,
+  pushReady: () => pushReady,
+  canAccessChannel
 });
 
-app.post("/api/virtual-characters/:id/avatar", { preHandler: requireAdmin }, async (request, reply) => {
-  const id = Number((request.params as { id: string }).id);
-  const character = await prisma.virtualCharacter.findUnique({ where: { id }, include: { actor: true } });
-  if (!character) return reply.code(404).send({ success: false, message: "角色不存在" });
-  const file = await request.file();
-  if (!file) return reply.code(400).send({ success: false, message: "缺少头像图片" });
-  const ext = path.extname(file.filename).toLowerCase();
-  if (!IMAGE_EXTENSIONS.has(ext) || !file.mimetype.startsWith("image/")) return reply.code(400).send({ success: false, message: "只支持图片头像" });
-  const safeName = `${crypto.randomUUID()}${ext}`;
-  const outPath = path.join(AVATAR_DIR, safeName);
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createWriteStream(outPath);
-    file.file.pipe(stream);
-    file.file.on("error", reject);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
-  if (!(await validateStoredImage(outPath))) {
-    safeUnlink("avatar", safeName);
-    return reply.code(400).send({ success: false, message: "头像内容无效或尺寸过大" });
-  }
-  let avatarPath = safeName;
-  const compressed = await compressImageFile(outPath, AVATAR_DIR, { maxDimension: 256 });
-  if (compressed) {
-    fs.unlinkSync(outPath);
-    avatarPath = compressed.fileName;
-  }
-  const actor = await prisma.actor.update({ where: { id: character.actorId }, data: { avatarPath } });
-  return { success: true, character: { ...character, actor } };
+registerWhyTopicsRoutes(app, { requireAuth });
+
+registerAppearanceRoutes(app, {
+  requireAdmin,
+  appearance: appearanceService,
+  io,
+  applyFileValidation
 });
 
-app.delete("/api/virtual-characters/:id", { preHandler: requireAdmin }, async (request) => {
-  const id = Number((request.params as { id: string }).id);
-  await prisma.virtualCharacter.delete({ where: { id } });
-  return { success: true };
+registerBibleLookupRoutes(app, {
+  prisma,
+  requireAuth,
+  aiSettings: aiSettingsStore
 });
 
-app.post("/api/virtual-characters/:id/test-event", { preHandler: requireAdmin }, async (request) => {
-  const id = Number((request.params as { id: string }).id);
-  const body = z.object({ channelId: z.number(), prompt: z.string().default("手动测试") }).parse(request.body);
-  await createEngineEvent("manual_test", { prompt: body.prompt }, body.channelId, undefined, id);
-  return { success: true };
+registerAiSettingsRoutes(app, {
+  prisma,
+  requireAuth,
+  requireAdmin,
+  io,
+  aiSettings: aiSettingsStore,
+  setSetting: appearanceService.setSetting,
+  canAccessChannel,
+  canonicalPrayerMessage,
+  hydrateMessage,
+  ensureAiRoleCharacter,
+  ensureWhyAssistantCharacter,
+  roleConfigDetails,
+  normalizeRoleModel,
+  syncAiRoleVirtualCharacterConfig
 });
 
-app.get("/api/engine/v1/events", async (request, reply) => {
-  if (!checkEngineAuth(request)) return reply.code(401).send({ success: false, message: "engine token invalid" });
-  const after = Number((request.query as { after?: string }).after || 0);
-  const events = await prisma.engineEvent.findMany({ where: { id: { gt: after } }, orderBy: { id: "asc" }, take: 100 });
-  return { events };
+const adminDataRoutes = registerAdminDataRoutes(app, {
+  prisma,
+  requireAdmin,
+  io,
+  authDto,
+  refreshAccountConnections,
+  cleanChannelIcon,
+  deleteMessages,
+  activePinnedUsesUpload,
+  uploadIsStillReferenced,
+  emitPinnedRefresh,
+  appearanceDto: appearanceService.appearanceDto,
+  setSetting: appearanceService.setSetting
 });
 
-app.post("/api/engine/v1/actions", async (request, reply) => {
-  if (!checkEngineAuth(request)) return reply.code(401).send({ success: false, message: "engine token invalid" });
-  const body = z
-    .object({
-      eventId: z.number().optional(),
-      event_id: z.number().optional(),
-      idempotencyKey: z.string().min(8).max(120).optional(),
-      idempotency_key: z.string().min(8).max(120).optional(),
-      actionType: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
-      action_type: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
-      action: z.enum(["skip", "typing_start", "typing_stop", "send_message", "remember_user", "schedule_topic"]).optional(),
-      characterId: z.number().optional(),
-      character_id: z.number().optional(),
-      channelId: z.number().optional(),
-      channel_id: z.number().optional(),
-      payload: z.unknown().optional()
-    })
-    .parse(request.body);
-
-  const idempotencyKey = body.idempotencyKey || body.idempotency_key;
-  const actionType = body.actionType || body.action_type || body.action;
-  if (!idempotencyKey || !actionType) return reply.code(400).send({ success: false, message: "idempotency_key and action are required" });
-
-  const rawPayload = body.payload && typeof body.payload === "object" && !Array.isArray(body.payload) ? (body.payload as Record<string, unknown>) : {};
-  const payload = {
-    ...rawPayload,
-    characterId: rawPayload.characterId || rawPayload.character_id || body.characterId || body.character_id,
-    channelId: rawPayload.channelId || rawPayload.channel_id || body.channelId || body.channel_id
-  };
-  const eventId = body.eventId || body.event_id;
-
-  const existing = await prisma.engineAction.findUnique({ where: { idempotencyKey } });
-  if (existing) return { success: true, duplicate: true, result: existing.result };
-  const result = await handleEngineAction(actionType, payload, eventId);
-  await prisma.engineAction.create({
-    data: {
-      eventId: eventId || null,
-      idempotencyKey,
-      actionType,
-      payload,
-      result: result as object
-    }
-  });
-  return { success: true, result };
+registerEngineRoutes(app, {
+  prisma,
+  requireAdmin,
+  io,
+  cleanText,
+  createMessageFromActor,
+  hydrateMessage,
+  createEngineEvent
 });
 
-function defaultVirtualCharacterConfig(displayName: string) {
-  return {
-    profile: { name: displayName, persona: "", speakingStyle: "像微信群里的真人，简短自然" },
-    channels: [],
-    manualMemory: { shortTerm: "", midTerm: "", longTerm: "" },
-    generation: { model: "", thinkingEnabled: false },
-    replyPolicy: { mode: "external_engine_decides", allowSkip: true, allowMultipleMessages: true },
-    proactivePolicy: { enabled: false, idleMinutes: 30 },
-    typing: { show: true, minMs: 800, maxMs: 8000 },
-    memory: { rememberUsers: true, maxItemsPerUser: 50 },
-    modelHints: { provider: "deepseek", compatibleEndpoint: "/chat/completions", preferredModels: ["deepseek-v4-flash", "deepseek-v4-pro"] },
-    multichar: {
-      bio: { basics: { name: displayName, identity: "" } },
-      emotionBaseline: "平静中性",
-      modelHints: {}
-    }
-  };
-}
 
-function checkEngineAuth(request: FastifyRequest) {
-  if (!ENGINE_API_TOKEN) return false;
-  const token = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : request.headers["x-engine-token"];
-  return token === ENGINE_API_TOKEN;
-}
 
-async function handleEngineAction(actionType: string, payload: unknown, eventId?: number) {
-  const data = payload as any;
-  if (actionType === "skip") return { skipped: true };
-  if (actionType === "typing_start" || actionType === "typing_stop") {
-    const channelId = Number(data.channelId);
-    const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
-    if (!channelId || !character) throw new Error("invalid typing action");
-    io.to(`ch:${channelId}`).emit("message:typing", {
-      channelId,
-      actor: { id: character.actor.id, username: character.actor.username, displayName: character.actor.displayName, kind: "virtual" },
-      state: actionType === "typing_start" ? "start" : "stop"
-    });
-    return { typing: actionType };
-  }
-  if (actionType === "send_message") {
-    const channelId = Number(data.channelId);
-    const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
-    if (!channelId || !character?.enabled) throw new Error("invalid send action");
-    const messages = Array.isArray(data.messages) ? data.messages : [{ content: data.content }];
-    const created: MessageDTO[] = [];
-    for (const msg of messages.slice(0, 6)) {
-      const content = cleanText(msg.content);
-      if (!content) continue;
-      const row = await createMessageFromActor({ channelId, actorId: character.actorId, content, type: "text", replyToId: Number(msg.replyToId) || null });
-      const dto = await hydrateMessage(row.id);
-      if (dto) created.push(dto);
-    }
-    return { sent: created.map((m) => m.id) };
-  }
-  if (actionType === "remember_user") {
-    const characterId = Number(data.characterId);
-    const subjectType = String(data.subjectType || "account").slice(0, 32);
-    const subjectId = String(data.subjectId || "").slice(0, 80);
-    const content = String(data.content || "").slice(0, 2000);
-    if (!characterId || !subjectId || !content) throw new Error("invalid memory action");
-    const memory = await prisma.characterMemory.create({ data: { characterId, subjectType, subjectId, content, confidence: Number(data.confidence || 1) } });
-    return { memoryId: memory.id };
-  }
-  if (actionType === "schedule_topic") {
-    const channelId = Number(data.channelId);
-    await createEngineEvent("active_topic_due", { topic: data.topic || "", scheduledBy: data.characterId || null }, channelId, undefined, Number(data.characterId) || undefined);
-    return { scheduled: true };
-  }
-  return { ok: true, eventId };
-}
 
 const multicharDeps: MulticharDeps = {
   prisma,
@@ -7758,8 +4349,8 @@ const multicharDeps: MulticharDeps = {
     const logger = app.log as any;
     if (typeof logger[level] === "function") logger[level]({ data }, `[multichar] ${msg}`);
   },
-  loadAiSettings: () => loadAiSettings(),
-  decryptAiApiKey: (value: string) => decryptAiApiKey(value),
+  loadAiSettings: () => aiSettingsStore.loadAiSettings(),
+  decryptAiApiKey: (value: string) => aiSettingsStore.decryptAiApiKey(value),
   createMessageFromActor: (input: any) => createMessageFromActor(input),
 };
 const multicharManager = createMulticharManager(multicharDeps);
@@ -7776,8 +4367,8 @@ registerMusicResourceRoutes(app, {
   serializeMessage,
   displayWebpFileName,
   safeUnlinkMusicScore,
-  loadAiSettings,
-  decryptAiApiKey,
+  loadAiSettings: aiSettingsStore.loadAiSettings,
+  decryptAiApiKey: aiSettingsStore.decryptAiApiKey,
   callLlm: (messages, options) => musicResourceAiClient.callLlm(messages, options)
 });
 
@@ -8127,12 +4718,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
         },
         gate: demoResetGate,
         createBackup: async (operator) => {
-          await createFullBackup(operator);
+          await adminDataRoutes.createFullBackup(operator);
         },
         afterReset: async (operatorAccountId, datasetVersion) => {
-          resetAiSettingsCache();
+          aiSettingsStore.resetAiSettingsCache();
           authSessionCache.clear();
-          io.emit("appearance:updated", await appearanceDto());
+          io.emit("appearance:updated", await appearanceService.appearanceDto());
           io.emit("demo:reset", { datasetVersion });
           for (const socket of io.sockets.sockets.values()) {
             const auth = socket.data.auth as AuthContext | undefined;

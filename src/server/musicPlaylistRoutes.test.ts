@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const server = fs.readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+const server = [
+  "./index.ts",
+  "./fileResponses.ts",
+  "./routes/system.ts",
+  "./routes/appearance.ts",
+  "./routes/bibleLookup.ts"
+].map((file) => fs.readFileSync(new URL(file, import.meta.url), "utf8")).join("\n");
 const musicRoutes = fs.readFileSync(new URL("./routes/music.ts", import.meta.url), "utf8");
 const musicService = fs.readFileSync(new URL("./services/musicService.ts", import.meta.url), "utf8");
 const schema = fs.readFileSync(new URL("../../prisma/schema.prisma", import.meta.url), "utf8");

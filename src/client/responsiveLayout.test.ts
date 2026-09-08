@@ -13,6 +13,8 @@ const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlaye
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
+const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
+const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
 const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
 const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
@@ -21,7 +23,10 @@ const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepT
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
-  fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8")
+  fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../server/routes/auth.ts", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../server/routes/adminLogs.ts", import.meta.url), "utf8"),
+  fs.readFileSync(new URL("../server/fileResponses.ts", import.meta.url), "utf8")
 ].join("\n");
 
 test("narrow viewports always switch the chat shell to one column", () => {
@@ -94,7 +99,7 @@ test("Bible reader offers per-pane jumps and replaces the resource glyph with sp
 });
 
 test("user administration uses a searchable master-detail layout with guarded destructive actions", () => {
-  assert.match(app, /<AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = \$event" \/>/);
+  assert.match(adminPanel, /<AdminAccountsPage v-else-if="adminPage === 'users'" @message="adminMsg = \$event" \/>/);
   assert.doesNotMatch(app, /\/api\/admin\/accounts/);
   assert.match(adminAccountsLogic, /adminAccountDeleteConfirmation[\s\S]*?警告：确定删除用户[\s\S]*?method: "DELETE"/);
   assert.match(adminAccountsPage, /class="admin-account-list-pane"[\s\S]*?class="admin-account-detail-pane"/);
@@ -980,7 +985,7 @@ test("composer autosizes through twelve rows while controls keep their dimension
 
 test("the profile settings entry opens complete self-service account controls", () => {
   assert.match(app, /async function openSettings\(tab: SettingsTab = "account"\)/);
-  assert.match(app, /settingsTab === 'account'[\s\S]*?>账号<[\s\S]*?class="account-avatar-card"/);
+  assert.match(settingsPanel, /settingsTab === 'account'[\s\S]*?>账号<[\s\S]*?class="account-avatar-card"/);
   assert.match(app, /uploadOwnAvatar[\s\S]*?\/api\/me\/avatar/);
   assert.match(app, /saveOwnProfile[\s\S]*?\/api\/me\/profile/);
   assert.match(app, /changeOwnPassword[\s\S]*?\/api\/auth\/change-password/);
