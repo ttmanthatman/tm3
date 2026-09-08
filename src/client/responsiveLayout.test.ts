@@ -138,7 +138,7 @@ test("panning wallpaper stays on its own compositor layer during mobile scrollin
 });
 
 test("music playback freezes panning wallpaper while keeping the song glyph spinning", () => {
-  assert.match(app, /'music-low-power': musicPlaying \}/);
+  assert.match(app, /'music-low-power': musicPlaying && wallpaperPanActive/);
   assert.match(app, /'playback-paused': musicPlaying/);
   assert.match(app, /shouldAdvanceWallpaperPan\(\{[\s\S]*?musicPlaying: musicPlaying\.value/);
   assert.match(css, /\.wallpaper-pan-background\.ready:not\(\.playback-paused\) \{[\s\S]*?will-change: transform;/);

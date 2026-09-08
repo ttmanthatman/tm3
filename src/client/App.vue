@@ -2468,19 +2468,22 @@ const virtualTimelineItems = computed<VirtualTimelineItem[]>(() => timeline.valu
   estimatedHeight: estimatedTimelineRowHeight(row)
 })));
 const virtualTimelineActive = computed(() => timeline.value.length > VIRTUAL_TIMELINE_THRESHOLD);
+function computeVirtualTimelineWindow(scrollTop: number) {
+  return calculateVirtualWindow({
+    items: virtualTimelineItems.value,
+    measuredHeights: measuredTimelineHeights.value,
+    scrollTop,
+    viewportHeight: timelineViewportHeight.value,
+    overscanBefore: Math.max(VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN, timelineViewportHeight.value * VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS),
+    overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN
+  });
+}
 const virtualTimelineWindow = computed(() => {
   if (!virtualTimelineActive.value) {
     const renderedHeight = virtualTimelineItems.value.reduce((sum, item) => sum + (measuredTimelineHeights.value[item.key] || item.estimatedHeight), 0);
     return { start: 0, end: timeline.value.length, topSpacer: 0, bottomSpacer: 0, renderedHeight, totalHeight: renderedHeight };
   }
-  return calculateVirtualWindow({
-    items: virtualTimelineItems.value,
-    measuredHeights: measuredTimelineHeights.value,
-    scrollTop: timelineScrollTop.value,
-    viewportHeight: timelineViewportHeight.value,
-    overscanBefore: Math.max(VIRTUAL_TIMELINE_MIN_BACKWARD_OVERSCAN, timelineViewportHeight.value * VIRTUAL_TIMELINE_BACKWARD_VIEWPORTS),
-    overscanAfter: VIRTUAL_TIMELINE_FORWARD_OVERSCAN
-  });
+  return computeVirtualTimelineWindow(timelineScrollTop.value);
 });
 const renderedTimelineRows = computed(() => timeline.value
   .slice(virtualTimelineWindow.value.start, virtualTimelineWindow.value.end)
@@ -2499,7 +2502,17 @@ function timelineReservedHeight(key: string) {
 
 function syncVirtualTimelineViewport(root = scroller.value) {
   if (!root) return;
-  timelineScrollTop.value = root.scrollTop;
+  const nextScrollTop = root.scrollTop;
+  if (virtualTimelineActive.value && nextScrollTop !== timelineScrollTop.value) {
+    const current = virtualTimelineWindow.value;
+    const candidate = computeVirtualTimelineWindow(nextScrollTop);
+    // Skip the reactive write while the rendered window (and its spacers) is unchanged.
+    if (candidate.start !== current.start || candidate.end !== current.end) {
+      timelineScrollTop.value = nextScrollTop;
+    }
+  } else {
+    timelineScrollTop.value = nextScrollTop;
+  }
   timelineViewportHeight.value = root.clientHeight;
   timelineViewportWidth.value = root.clientWidth;
 }
@@ -3212,6 +3225,9 @@ function visibleMessageElements() {
   });
 }
 
+let lastSavedReadPositionSignature = "";
+let readPositionSaveTimer: number | undefined;
+
 function saveReadPosition() {
   if (pendingReadPositionRestore.value) return null;
   const root = scroller.value;
@@ -3229,8 +3245,20 @@ function saveReadPosition() {
       scrollTop: root.scrollTop,
       savedAt: Date.now()
     };
-  localStorage.setItem(key, JSON.stringify(position));
+  const signature = [key, position.messageId, position.atBottom, Math.round(position.offset), Math.round(position.scrollTop)].join("|");
+  if (signature !== lastSavedReadPositionSignature) {
+    localStorage.setItem(key, JSON.stringify(position));
+    lastSavedReadPositionSignature = signature;
+  }
   return position;
+}
+
+function scheduleSaveReadPosition() {
+  if (readPositionSaveTimer !== undefined) window.clearTimeout(readPositionSaveTimer);
+  readPositionSaveTimer = window.setTimeout(() => {
+    readPositionSaveTimer = undefined;
+    saveReadPosition();
+  }, 400);
 }
 
 function loadSavedReadPosition(): SavedReadPosition | null {
@@ -7379,28 +7407,37 @@ function handleBibleReaders(readers: BibleReaderPresenceDTO[]) {
     : [];
 }
 
+const presenceEmitCache = new Map<string, string>();
+
+function emitPresence(event: string, payload: unknown) {
+  const serialized = JSON.stringify(payload ?? null);
+  if (presenceEmitCache.get(event) === serialized) return;
+  presenceEmitCache.set(event, serialized);
+  store.socket?.emit(event, payload);
+}
+
 function publishMusicListening() {
-  store.socket?.emit("music:listening", { trackId: musicPlaying.value ? currentMusicTrack.value?.id || null : null });
+  emitPresence("music:listening", { trackId: musicPlaying.value ? currentMusicTrack.value?.id || null : null });
 }
 
 function stopPublishingMusicListening() {
-  store.socket?.emit("music:listening", { trackId: null });
+  emitPresence("music:listening", { trackId: null });
 }
 
 function publishBibleReading() {
-  store.socket?.emit("bible:reading", bibleReadingActivity.value);
+  emitPresence("bible:reading", bibleReadingActivity.value);
 }
 
 function publishBookReading() {
-  store.socket?.emit("book:reading", bookReadingActivity.value);
+  emitPresence("book:reading", bookReadingActivity.value);
 }
 
 function stopPublishingBibleReading() {
-  store.socket?.emit("bible:reading", { active: false, bookName: null });
+  emitPresence("bible:reading", { active: false, bookName: null });
 }
 
 function stopPublishingBookReading() {
-  store.socket?.emit("book:reading", { active: false, bookTitle: null });
+  emitPresence("book:reading", { active: false, bookTitle: null });
 }
 
 function handleFriendListeners(listeners: FriendListenerDTO[]) {
@@ -7417,14 +7454,14 @@ function handleFriendListeners(listeners: FriendListenerDTO[]) {
 
 function publishFriendListening() {
   const program = friendListeningProgram.value;
-  store.socket?.emit(
+  emitPresence(
     "friend:listening",
     program ? { programId: program.id, programTitle: `${program.seriesTitle}·${program.title}`.slice(0, 200) } : null
   );
 }
 
 function stopPublishingFriendListening() {
-  store.socket?.emit("friend:listening", null);
+  emitPresence("friend:listening", null);
 }
 
 function publishPresenceActivities() {
@@ -7435,6 +7472,7 @@ function publishPresenceActivities() {
 }
 
 function handleActivitySocketConnect() {
+  presenceEmitCache.clear();
   publishPresenceActivities();
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   activityConnectRetryTimer = window.setTimeout(() => {
@@ -7462,6 +7500,7 @@ function attachMusicSocket() {
   store.socket?.on("connect", handleActivitySocketConnect);
   if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
   musicListenerHeartbeatTimer = window.setInterval(publishPresenceActivities, 15_000);
+  presenceEmitCache.clear();
   publishPresenceActivities();
 }
 
@@ -8276,7 +8315,7 @@ function handleMessagesScroll() {
   scheduleVirtualTimelineViewport(el);
   clearBlankScoreLongPress();
   updateParallaxFromScroll(el);
-  saveReadPosition();
+  scheduleSaveReadPosition();
   chatScrollIntentTracker.noteScroll(currentNewestViewportState(el));
   syncNewestIndicators(el);
 }
@@ -9924,7 +9963,7 @@ async function toggleVirtual(character: any) {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying }" :style="appearanceStyle">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleOpen, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="appearanceStyle">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
@@ -10340,7 +10379,7 @@ async function toggleVirtual(character: any) {
             >
               <header class="favorite-message-head">
                 <div class="avatar" :class="{ bot: favorite.message.sender.kind === 'virtual' }">
-                  <img v-if="avatarUrl(favorite.message.sender.avatarPath)" :src="avatarUrl(favorite.message.sender.avatarPath)" alt="" />
+                  <img v-if="avatarUrl(favorite.message.sender.avatarPath)" :src="avatarUrl(favorite.message.sender.avatarPath)" alt="" decoding="async" />
                   <span v-else>{{ avatarText(favorite.message.sender.displayName) }}</span>
                 </div>
                 <div>
@@ -10543,7 +10582,7 @@ async function toggleVirtual(character: any) {
               :aria-label="`${row.message.sender.displayName} 的操作`"
               @click.stop="openSenderActions(row.message.sender, $event)"
             >
-              <img v-if="avatarUrl(row.message.sender.avatarPath)" :src="avatarUrl(row.message.sender.avatarPath)" alt="" />
+              <img v-if="avatarUrl(row.message.sender.avatarPath)" :src="avatarUrl(row.message.sender.avatarPath)" alt="" decoding="async" />
               <span v-else>{{ avatarText(row.message.sender.displayName) }}</span>
               <i v-if="isActorOnline(row.message.sender.id)" class="online-dot" aria-label="在线"></i>
             </div>
@@ -10661,7 +10700,7 @@ async function toggleVirtual(character: any) {
                     </div>
                     <div v-if="prayerPayload(row.message).prayedBy.length" class="prayer-people" aria-label="已祷告成员">
                       <span v-for="person in prayerPayload(row.message).prayedBy.slice(0, 6)" :key="person.accountId" class="mini-avatar" :title="`${person.displayName} · ${person.times} 次`">
-                        <img v-if="avatarUrl(person.avatarPath)" :src="avatarUrl(person.avatarPath)" alt="" />
+                        <img v-if="avatarUrl(person.avatarPath)" :src="avatarUrl(person.avatarPath)" alt="" decoding="async" />
                         <span v-else>{{ avatarText(person.displayName) }}</span>
                       </span>
                     </div>
@@ -11042,7 +11081,7 @@ async function toggleVirtual(character: any) {
                 @click="chooseMentionSuggestion(member)"
               >
                 <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
-                  <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" />
+                  <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" decoding="async" />
                   <span v-else>{{ avatarText(member.displayName) }}</span>
                   <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
                 </div>
@@ -11175,7 +11214,7 @@ async function toggleVirtual(character: any) {
           @click="memberRemoveMode ? removeMemberFromActive(member) : openMemberActions(member, $event)"
         >
           <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
-            <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" />
+            <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" decoding="async" />
             <span v-else>{{ avatarText(member.displayName) }}</span>
             <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
             <i v-if="memberRemoveMode && canRemoveMemberFromActive(member)" class="member-remove-badge" aria-hidden="true"><X :size="12" /></i>
@@ -11527,7 +11566,7 @@ async function toggleVirtual(character: any) {
               @click="toggleMemberPickerAccount(candidate)"
             >
               <div class="avatar presence-avatar" :class="{ bot: candidate.kind === 'virtual' }">
-                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" />
+                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" decoding="async" />
                 <span v-else>{{ avatarText(candidate.displayName) }}</span>
                 <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
               </div>
@@ -11571,7 +11610,7 @@ async function toggleVirtual(character: any) {
               @click="ownerTransferSuccessorId = candidate.accountId || null"
             >
               <div class="avatar presence-avatar">
-                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" />
+                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" decoding="async" />
                 <span v-else>{{ avatarText(candidate.displayName) }}</span>
                 <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
               </div>

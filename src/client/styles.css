@@ -2879,15 +2879,22 @@ button.pinned-ticker-action {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  will-change: transform;
 }
 
 .chat-activity-track.scrolling {
+  will-change: transform;
   animation: chatActivityTickerScroll var(--activity-ticker-duration) linear infinite;
 }
 
+.chat-activity-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
 @keyframes chatActivityTickerScroll {
-  from { transform: translateX(var(--activity-ticker-start)); }
+  from { transform: translateX(0); }
   to { transform: translateX(calc(0px - var(--activity-ticker-distance))); }
 }
 
@@ -2934,7 +2941,6 @@ button.pinned-ticker-action {
   inset: 0;
   background-repeat: repeat-x;
   image-rendering: auto;
-  will-change: background-position;
 }
 
 .parallax-background.preview {
@@ -10703,7 +10709,7 @@ button.admin-object-row:focus-visible {
     animation: none;
   }
 
-  .chat-activity-track > span {
+  .chat-activity-item {
     animation: none;
   }
 }

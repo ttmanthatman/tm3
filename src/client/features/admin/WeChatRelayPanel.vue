@@ -280,7 +280,10 @@ async function requestAction(type: "calibrate" | "test") {
 
 onMounted(async () => {
   await load();
-  refreshTimer = window.setInterval(() => void load(true), 5000);
+  refreshTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    void load(true);
+  }, 5000);
 });
 
 onBeforeUnmount(() => {
