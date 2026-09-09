@@ -174,6 +174,6 @@ Also run a local grep for any project-specific private hostnames, addresses, org
 
 ## Next Deepening Opportunities
 
-- Extract a modal shell module so outside-click closing, safe-area sizing, and scroll containment have one interface.
+- Extract a modal shell module so outside-click closing, safe-area sizing, and scroll containment have one interface. Stage 1 done: `src/client/components/ui/AppModal.vue` owns the `modal-shell`/`modal-head` contract (outside click, Escape, busy guard, role/aria) and hosts the forward picker plus the leave/close-channel confirmations in `App.vue`; the remaining `modal-shell` surfaces in `App.vue` still migrate one commit at a time.
 - Extract channel navigation into a client module so panel state, channel switching, prayer subviews, Why returns, and read-position persistence share one seam.
 - Split admin data tools out of `App.vue` after the modal shell exists; attachment management and data import/export are currently too far from their checks.

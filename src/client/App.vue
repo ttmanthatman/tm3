@@ -106,6 +106,7 @@ import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
 import AppMenuItem from "./components/AppMenuItem.vue";
+import AppModal from "./components/ui/AppModal.vue";
 import { useVoiceRecording } from "./features/voice/useVoiceRecording";
 import { useUploads } from "./features/uploads/useUploads";
 import { messageEffect, useComposer } from "./features/composer/useComposer";
@@ -6341,20 +6342,18 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
       </div>
     </section>
 
-    <section v-if="forwardPickerOpen" class="modal-shell" @click.self="closeForwardDialog">
-      <div class="small-modal forward-message-modal">
-        <div v-if="forwardSuccess" class="forward-success">
-          <CheckCircle2 :size="56" class="forward-success-icon" />
-          <strong>已转发</strong>
+    <AppModal :open="forwardPickerOpen" content-class="forward-message-modal" :busy="forwardBusy" aria-label="转发消息" close-label="关闭转发" @close="closeForwardDialog">
+      <template v-if="!forwardSuccess" #header>
+        <div>
+          <strong>{{ forwardConfirming ? "发送给" : "转发消息" }}</strong>
+          <small>{{ forwardMode === "merged" ? `合并转发 ${forwardSourceMessages.length} 条消息` : `逐条转发 ${forwardSourceMessages.length} 条消息` }}</small>
         </div>
-        <template v-else>
-        <header class="modal-head">
-          <div>
-            <strong>{{ forwardConfirming ? "发送给" : "转发消息" }}</strong>
-            <small>{{ forwardMode === "merged" ? `合并转发 ${forwardSourceMessages.length} 条消息` : `逐条转发 ${forwardSourceMessages.length} 条消息` }}</small>
-          </div>
-          <button class="icon-btn" type="button" :disabled="forwardBusy" @click="closeForwardDialog" aria-label="关闭转发"><X :size="20" /></button>
-        </header>
+      </template>
+      <div v-if="forwardSuccess" class="forward-success">
+        <CheckCircle2 :size="56" class="forward-success-icon" />
+        <strong>已转发</strong>
+      </div>
+      <template v-else>
         <div v-if="!forwardConfirming" class="forward-channel-body">
           <div v-if="forwardTargetChannels.length" class="forward-channel-list">
             <button
@@ -6397,9 +6396,8 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
             </button>
           </template>
         </div>
-        </template>
-      </div>
-    </section>
+      </template>
+    </AppModal>
 
     <section v-if="forwardActionSheetOpen" class="modal-shell forward-sheet-shell" @click.self="forwardActionSheetOpen = false">
       <div class="forward-action-sheet" role="dialog" aria-label="选择转发方式">
@@ -6739,42 +6737,30 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
       </div>
     </section>
 
-    <section v-if="pendingLeaveChannel" class="modal-shell" @click.self="!channelLeaveBusy && (pendingLeaveChannel = null)">
-      <div class="small-modal">
-        <header class="modal-head">
-          <strong>退出频道</strong>
-          <button class="icon-btn" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null" aria-label="取消退出频道"><X :size="20" /></button>
-        </header>
-        <div class="confirm-body">
-          <p>退出后，这个频道会从你的列表中移除，你也不会再收到它的新消息或通知。</p>
-          <strong>{{ pendingLeaveChannel.name }}</strong>
-          <p v-if="channelLeaveMsg" class="form-error">{{ channelLeaveMsg }}</p>
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null">取消</button>
-            <button class="primary-btn" :disabled="channelLeaveBusy" @click="leavePendingChannel">
-              {{ channelLeaveBusy ? "正在退出..." : "确认退出" }}
-            </button>
-          </div>
+    <AppModal :open="!!pendingLeaveChannel" title="退出频道" :busy="channelLeaveBusy" close-label="取消退出频道" @close="pendingLeaveChannel = null">
+      <div v-if="pendingLeaveChannel" class="confirm-body">
+        <p>退出后，这个频道会从你的列表中移除，你也不会再收到它的新消息或通知。</p>
+        <strong>{{ pendingLeaveChannel.name }}</strong>
+        <p v-if="channelLeaveMsg" class="form-error">{{ channelLeaveMsg }}</p>
+        <div class="confirm-actions">
+          <button class="mini-btn secondary" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null">取消</button>
+          <button class="primary-btn" :disabled="channelLeaveBusy" @click="leavePendingChannel">
+            {{ channelLeaveBusy ? "正在退出..." : "确认退出" }}
+          </button>
         </div>
       </div>
-    </section>
+    </AppModal>
 
-    <section v-if="pendingCloseChannel" class="modal-shell" @click.self="pendingCloseChannel = null">
-      <div class="small-modal">
-        <header class="modal-head">
-          <strong>关闭私聊</strong>
-          <button class="icon-btn" @click="pendingCloseChannel = null" aria-label="取消关闭私聊"><X :size="20" /></button>
-        </header>
-        <div class="confirm-body">
-          <p>关闭后这个私聊会从你的频道列表里移除，历史消息会保留。之后重新发起私聊可以再次打开。</p>
-          <strong>{{ pendingCloseChannel.name }}</strong>
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" @click="pendingCloseChannel = null">取消</button>
-            <button class="primary-btn" @click="closePendingChannel">关闭私聊</button>
-          </div>
+    <AppModal :open="!!pendingCloseChannel" title="关闭私聊" close-label="取消关闭私聊" @close="pendingCloseChannel = null">
+      <div v-if="pendingCloseChannel" class="confirm-body">
+        <p>关闭后这个私聊会从你的频道列表里移除，历史消息会保留。之后重新发起私聊可以再次打开。</p>
+        <strong>{{ pendingCloseChannel.name }}</strong>
+        <div class="confirm-actions">
+          <button class="mini-btn secondary" @click="pendingCloseChannel = null">取消</button>
+          <button class="primary-btn" @click="closePendingChannel">关闭私聊</button>
         </div>
       </div>
-    </section>
+    </AppModal>
 
     <section v-if="notificationPromptOpen" class="modal-shell" @click.self="notificationPromptOpen = false">
       <div class="small-modal notification-check-modal">

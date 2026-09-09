@@ -12,6 +12,7 @@ const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vu
 const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlayer.vue", import.meta.url), "utf8");
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
+const appModal = fs.readFileSync(new URL("./components/ui/AppModal.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
 const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
@@ -695,10 +696,23 @@ test("double-at song mentions render inline with independent playback controls",
 test("messages offer multi-channel forwarding from the long-press menu", () => {
   assert.match(app, /isForwardableMessage\(pendingMessageActions\)[^>]*[\s\S]*?openSingleForward[\s\S]*?转发/);
   assert.match(app, /startSelectionFromAction[\s\S]*?多选/);
-  assert.match(app, /class="small-modal forward-message-modal"/);
+  assert.match(app, /<AppModal :open="forwardPickerOpen" content-class="forward-message-modal"/);
   assert.match(app, /v-for="channel in forwardTargetChannels"/);
   assert.match(app, /"\/api\/messages\/forward"/);
   assert.match(css, /\.forward-channel-row\.selected \{/);
+});
+
+test("AppModal hosts the forward and channel confirm dialogs with the modal-shell contract", () => {
+  assert.match(app, /<AppModal :open="forwardPickerOpen" content-class="forward-message-modal" :busy="forwardBusy"/);
+  assert.match(app, /<AppModal :open="!!pendingLeaveChannel" title="退出频道" :busy="channelLeaveBusy"/);
+  assert.match(app, /<AppModal :open="!!pendingCloseChannel" title="关闭私聊"/);
+  assert.match(appModal, /class="modal-shell"/);
+  assert.match(appModal, /role="dialog"/);
+  assert.match(appModal, /aria-modal="true"/);
+  assert.match(appModal, /class="modal-head"/);
+  assert.match(appModal, /small-modal/);
+  assert.match(appModal, /@click\.self="requestClose"/);
+  assert.match(appModal, /event\.key !== "Escape"/);
 });
 
 test("forwarded audio copies attached score pages and exposes them on the new message", () => {
