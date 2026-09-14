@@ -13,12 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  CloudRain,
-  Droplet,
   Download,
   DoorOpen,
-  Ellipsis,
-  FileText,
   FileUp,
   CheckCircle2,
   CircleOff,
@@ -29,31 +25,23 @@ import {
   LogOut,
   MessageSquareQuote,
   MessageCircle,
-  Mic,
   Monitor,
-  Pause,
   PanelLeftClose,
-  PanelLeftOpen,
   PanelRightClose,
   Pin,
-  Plane,
-  Play,
   Plus,
   RotateCcw,
   Save,
   Send,
   Smartphone,
   Settings,
-  Square,
   Tablet,
   Trash2,
   ThumbsUp,
   Upload,
   Users,
-  Vibrate,
   WandSparkles,
-  X,
-  Library
+  X
 } from "lucide-vue-next";
 import type {
   AccountDTO,
@@ -102,10 +90,8 @@ import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import MessageRow from "./features/messages/MessageRow.vue";
-import OverflowMarquee from "./components/OverflowMarquee.vue";
-import ActivityTicker from "./components/ActivityTicker.vue";
-import AppMenu from "./components/AppMenu.vue";
-import AppMenuItem from "./components/AppMenuItem.vue";
+import ComposerBar from "./features/composer/ComposerBar.vue";
+import ChatHeader from "./features/chat/ChatHeader.vue";
 import AppModal from "./components/ui/AppModal.vue";
 import AppButton from "./components/ui/AppButton.vue";
 import ConfirmDialog from "./components/ui/ConfirmDialog.vue";
@@ -250,7 +236,6 @@ const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWork
 const BookWorkspace = defineAsyncComponent(() => import("./components/BookWorkspace.vue"));
 const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicLyricsHeader.vue"));
 const MusicManager = defineAsyncComponent(() => import("./features/music/MusicManager.vue"));
-const MusicMiniPanel = defineAsyncComponent(() => import("./features/music/MusicMiniPanel.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminPanel = defineAsyncComponent(() => import("./features/admin/AdminPanel.vue"));
 const SettingsPanel = defineAsyncComponent(() => import("./features/settings/SettingsPanel.vue"));
@@ -263,8 +248,6 @@ const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/S
 const BibleSessionCard = defineAsyncComponent(() => import("./features/bible/BibleSessionCard.vue"));
 const ChatRecordCard = defineAsyncComponent(() => import("./features/chat/ChatRecordCard.vue"));
 const ChatRecordView = defineAsyncComponent(() => import("./features/chat/ChatRecordView.vue"));
-// 正在讲道的预览通知常驻，体积小且时效敏感，不进异步分包。
-import SermonHub from "./features/sermon/SermonHub.vue";
 const receptionInviteRouteMatch = window.location.pathname.match(/^\/visit\/([A-Za-z0-9_-]{40,512})\/?$/);
 const isReceptionInviteRoute = window.location.pathname === "/visit" || window.location.pathname.startsWith("/visit/");
 const receptionInviteToken = receptionInviteRouteMatch?.[1] || "";
@@ -439,10 +422,11 @@ const appStartCodeLines = [
   'await store.bootstrap();'
 ] as const;
 const isLogRoute = ref(window.location.pathname === "/log");
-const fileInput = ref<HTMLInputElement | null>(null);
-const photoInput = ref<HTMLInputElement | null>(null);
 const keepOriginalImages = ref(false);
-const composerInput = ref<HTMLTextAreaElement | null>(null);
+// The textarea lives inside ComposerBar; the exposed element feeds
+// useComposer / useChannelManagement / syncComposerHeight below.
+const composerBarRef = ref<{ composerInput: HTMLTextAreaElement | null } | null>(null);
+const composerInput = computed(() => composerBarRef.value?.composerInput ?? null);
 const scroller = ref<HTMLElement | null>(null);
 const chatPane = ref<HTMLElement | null>(null);
 const queuedMessageImagePreloads = new Set<number>();
@@ -4651,6 +4635,126 @@ function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
 
+// Reactive prop bundles for the extracted chat header and composer: state and
+// handlers stay here while the child components render them. The refs those
+// templates mutate directly (input, replyTo, composerFocused,
+// keepOriginalImages, previewPlaying, showChannels, channelsCollapsed,
+// musicPlayerExpanded) are v-model pairs bound at each mount point.
+const chatHeaderBindings = computed(() => ({
+  otherChannelUnreadCount: otherChannelUnreadCount.value,
+  notificationAttentionVisible: notificationAttentionVisible.value,
+  notificationNudgeCharacters,
+  showBibleFavorites: showBibleFavorites.value,
+  showFavorites: showFavorites.value,
+  prayerOnly: store.prayerOnly,
+  currentChannel: currentChannel.value,
+  chatSubtitleText: chatSubtitleText.value,
+  showingFavoriteSurface: showingFavoriteSurface.value,
+  musicPlaying: musicPlaying.value,
+  musicPlayer,
+  favoriteMusicTracks: favoriteMusicTracks.value,
+  musicPlaylists: musicPlaylists.value,
+  musicSleepTimer,
+  musicPanelFontSize: musicPanelFontSize.value,
+  friendProgramsOpen: friendProgramsOpen.value,
+  friendPlaying: friendPlaying.value,
+  musicScoreTriggerVisible: musicScoreTriggerVisible.value,
+  musicScoreOpen: musicScoreOpen.value,
+  canDeleteCurrentChannel: canDeleteCurrentChannel.value,
+  showChatToolsMenu: showChatToolsMenu.value,
+  messageFontSize: messageFontSize.value,
+  minMessageFontSize,
+  maxMessageFontSize,
+  messageSelectionMode: messageSelectionMode.value,
+  isAdmin: isAdmin.value,
+  visiblePinned: visiblePinned.value,
+  activityTickerText: activityTickerText.value,
+  activityStatusItems: activityStatusItems.value,
+  pinnedText: pinnedText.value,
+  pinnedTickerBody: pinnedTickerBody.value,
+  canPinCurrentChannel: canPinCurrentChannel.value,
+  handleChatHeaderInteraction,
+  formatUnreadCount,
+  openNotificationPrompt,
+  openBibleWorkspace,
+  openBookWorkspace,
+  openMusicPlayer,
+  toggleCurrentMusicFavorite,
+  openMusicManagerFromMiniPanel,
+  toggleFriendPrograms,
+  toggleMusicScore,
+  requestCloseChannel,
+  deleteChannel,
+  toggleChatToolsMenu,
+  adjustMessageFontSize,
+  toggleCurrentMemberPane,
+  toggleMessageSelectionMode,
+  loadAdmin,
+  openPinnedFromTicker,
+  openPinnedEditor
+}));
+const composerBindings = computed(() => ({
+  selectedMusicMention: selectedMusicMention.value,
+  prayerComposerPhotoPreview: prayerComposerPhotoPreview.value,
+  composerPanel: composerPanel.value,
+  composerPromptText: composerPromptText.value,
+  composerPromptPhase: composerPromptPhase.value,
+  composerPromptChars: composerPromptChars.value,
+  prayerOnly: store.prayerOnly,
+  canSendText: canSendText.value,
+  canSubmitText: canSubmitText.value,
+  messageSendPending: messageSendPending.value,
+  composerSendStatus: composerSendStatus.value,
+  composerSendState: composerSendState.value,
+  showComposerSuggestionMenu: showComposerSuggestionMenu.value,
+  activeComposerSuggestionKind: activeComposerSuggestionKind.value,
+  matchingMusicMentionTracks: matchingMusicMentionTracks.value,
+  composerSuggestionIndex: composerSuggestionIndex.value,
+  matchingMentionMembers: matchingMentionMembers.value,
+  matchingSlashCommands: matchingSlashCommands.value,
+  recordingNotice: recordingNotice.value,
+  audioPreviewUrl: audioPreviewUrl.value,
+  isRecording: isRecording.value,
+  recordingStatus: recordingStatus.value,
+  recordingDuration: recordingDuration.value,
+  audioPreviewWaveform: audioPreviewWaveform.value,
+  previewProgress: previewProgress.value,
+  audioPreviewDurationMs: audioPreviewDurationMs.value,
+  voiceSending: voiceSending.value,
+  previewAudioEl,
+  replyPreviewText,
+  removeMusicMention,
+  clearPrayerComposerPhoto,
+  toggleVoicePanel,
+  focusComposer,
+  syncComposerCaret,
+  composerPromptCharStyle,
+  onInput,
+  onKeydown,
+  handleComposerPaste,
+  sendText,
+  toggleMorePanel,
+  handlePickedFile,
+  handlePickedFiles,
+  chooseMusicMentionSuggestion,
+  chooseMentionSuggestion,
+  chooseSlashCommand,
+  avatarText,
+  isAccountOnline,
+  formatDuration,
+  stopRecording,
+  startRecording,
+  updatePreviewProgress,
+  syncPreviewMetadata,
+  endPreviewPlayback,
+  resetRecording,
+  togglePreviewPlayback,
+  voiceBarStyle,
+  sendVoice,
+  openChainModal,
+  startPrayerComposer,
+  openSermonWorkspace
+}));
 // Stable helper/handler bundle shared by the timeline bubble and the favorites
 // card so both render message bodies through MessageRow with identical wiring.
 // brokenAttachmentIds is a ref and is bound separately at each usage site.
@@ -5198,132 +5302,12 @@ const messageRowBindings = {
       <div v-if="store.connectionState !== 'connected'" class="connection-banner" role="status">
         <span></span>{{ store.connectionState === "connecting" ? "正在连接聊天室…" : "连接已中断，恢复后会继续接收新消息" }}
       </div>
-      <header class="chat-head" @pointerdown="handleChatHeaderInteraction">
-        <button
-          class="icon-btn mobile-only channel-mobile-trigger"
-          @click="showChannels = true"
-          :aria-label="otherChannelUnreadCount > 0 ? `频道，其他频道有 ${otherChannelUnreadCount} 条未读消息` : '频道'"
-        >
-          <span v-if="otherChannelUnreadCount > 0" class="channel-mobile-unread">{{ formatUnreadCount(otherChannelUnreadCount) }}</span>
-          <ChevronLeft v-else :size="22" />
-        </button>
-        <button v-if="channelsCollapsed" class="icon-btn desktop-only" @click="channelsCollapsed = false" aria-label="展开频道"><PanelLeftOpen :size="20" /></button>
-        <div class="chat-title">
-          <div class="chat-title-line">
-            <button
-              v-if="notificationAttentionVisible"
-              class="notification-nudge"
-              type="button"
-              aria-label="请打开通知"
-              @click="openNotificationPrompt"
-            >
-              <span class="notification-nudge-characters" aria-hidden="true">
-                <span
-                  v-for="(character, index) in notificationNudgeCharacters"
-                  :key="character"
-                  class="notification-nudge-character"
-                  :style="{ '--notification-char-index': index }"
-                >{{ character }}</span>
-              </span>
-            </button>
-            <strong data-testid="active-channel-name">{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : store.prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
-          </div>
-          <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
-        </div>
-        <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
-        <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
-        <SermonHub v-if="!showingFavoriteSurface" />
-        <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
-          <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer()" aria-label="打开音乐播放器">
-            <span class="music-player-glyph" aria-hidden="true">歌</span>
-          </button>
-          <MusicMiniPanel
-            v-if="musicPlayerExpanded"
-            :player="musicPlayer"
-            :favorite-tracks="favoriteMusicTracks"
-            :playlists="musicPlaylists"
-            :sleep-timer="musicSleepTimer"
-            :font-size="musicPanelFontSize"
-            @close="musicPlayerExpanded = false"
-            @toggle-favorite="toggleCurrentMusicFavorite"
-            @open-manager="openMusicManagerFromMiniPanel"
-          />
-        </div>
-        <div v-if="!showingFavoriteSurface" class="friend-player-control">
-          <button class="icon-btn friend-player-trigger" type="button" :class="{ active: friendProgramsOpen, spinning: friendPlaying }" @click.stop="toggleFriendPrograms" aria-label="打开良友节目">
-            <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
-          </button>
-        </div>
-        <button
-          v-if="!showingFavoriteSurface && musicScoreTriggerVisible"
-          class="icon-btn message-font-trigger music-score-trigger"
-          :class="{ active: musicScoreOpen, 'page-turning': musicPlaying }"
-          type="button"
-          aria-label="打开或关闭歌谱"
-          :aria-expanded="musicScoreOpen"
-          @click.stop="toggleMusicScore"
-        >
-          <span class="message-font-glyph music-score-page-glyph" aria-hidden="true">谱</span>
-        </button>
-        <button v-if="!showingFavoriteSurface && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel()" aria-label="关闭私聊"><X :size="20" /></button>
-        <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
-        <div v-if="!showingFavoriteSurface" class="chat-tools-control" data-chat-tools-menu>
-          <button
-            class="icon-btn chat-tools-trigger"
-            type="button"
-            :class="{ active: showChatToolsMenu }"
-            aria-label="更多管理功能"
-            :aria-expanded="showChatToolsMenu"
-            @click.stop="toggleChatToolsMenu"
-          ><Ellipsis :size="22" /></button>
-          <AppMenu v-if="showChatToolsMenu" class="chat-tools-menu" label="聊天管理功能" @click.stop>
-            <div class="chat-tools-font-row" role="group" :aria-label="`消息字体大小，当前 ${messageFontSize} 号`">
-              <span class="chat-tools-font-label">字号调节</span>
-              <button type="button" :disabled="messageFontSize <= minMessageFontSize" aria-label="减小消息字体" @click="adjustMessageFontSize(-1)">小</button>
-              <output :aria-label="`当前消息字号 ${messageFontSize} 像素`" aria-live="polite">{{ messageFontSize }}</output>
-              <button type="button" :disabled="messageFontSize >= maxMessageFontSize" aria-label="增大消息字体" @click="adjustMessageFontSize(1)">大</button>
-            </div>
-            <AppMenuItem @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></AppMenuItem>
-            <AppMenuItem :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
-            <AppMenuItem v-if="isAdmin" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></AppMenuItem>
-          </AppMenu>
-        </div>
-      </header>
-
-      <section
-        v-if="!showingFavoriteSurface && (visiblePinned || activityTickerText)"
-        class="chat-notice-stack"
-        :class="{ 'has-pinned': !!visiblePinned, 'has-activity': !!activityTickerText }"
-        :role="visiblePinned ? 'button' : undefined"
-        :tabindex="visiblePinned ? 0 : undefined"
-        :aria-label="visiblePinned ? '查看置顶消息' : '聊天室实时动态'"
-        @click="openPinnedFromTicker"
-        @keydown.enter="openPinnedFromTicker"
-        @keydown.space.prevent="openPinnedFromTicker"
-      >
-        <span v-if="visiblePinned" class="pinned-ticker-row">
-          <span class="pinned-ticker-icon" aria-hidden="true"><Pin :size="14" /></span>
-          <span class="pinned-ticker-viewport">
-            <span class="pinned-ticker-track">
-              <strong>{{ pinnedText }}</strong>
-              <span v-if="pinnedTickerBody">{{ pinnedTickerBody }}</span>
-            </span>
-          </span>
-          <button
-            v-if="canPinCurrentChannel"
-            type="button"
-            class="pinned-ticker-action pinned-ticker-edit"
-            aria-label="编辑置顶消息"
-            @click.stop="openPinnedEditor"
-            @keydown.enter.stop
-            @keydown.space.stop
-          >编辑</button>
-          <span v-else class="pinned-ticker-action">查看</span>
-        </span>
-        <span v-if="activityTickerText" class="chat-activity-ticker" aria-label="聊天室实时动态" aria-live="polite">
-          <ActivityTicker :items="activityStatusItems" />
-        </span>
-      </section>
+      <ChatHeader
+        v-model:show-channels="showChannels"
+        v-model:channels-collapsed="channelsCollapsed"
+        v-model:music-player-expanded="musicPlayerExpanded"
+        v-bind="chatHeaderBindings"
+      />
 
       <Transition name="music-lyrics-panel">
         <MusicLyricsHeader
@@ -5890,190 +5874,16 @@ const messageRowBindings = {
         <ArrowDown :size="18" />
       </button>
 
-      <footer v-if="!showingFavoriteSurface && !isMusicChannel" class="composer">
-        <div v-if="replyTo" class="reply-bar">
-          <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
-          <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
-        </div>
-        <div v-if="selectedMusicMention" class="music-mention-chip">
-          <AudioLines :size="17" />
-          <span><small>已提及歌曲</small><strong>{{ selectedMusicMention.title }}</strong></span>
-          <button class="icon-btn" type="button" @click="removeMusicMention" aria-label="取消提及歌曲"><X :size="16" /></button>
-        </div>
-        <div v-if="prayerComposerPhotoPreview" class="music-mention-chip prayer-photo-chip">
-          <img :src="prayerComposerPhotoPreview" alt="代祷附带照片预览" />
-          <span><small>已附照片</small><strong>随代祷一起发送</strong></span>
-          <button class="icon-btn" type="button" @click="clearPrayerComposerPhoto" aria-label="移除附带照片"><X :size="16" /></button>
-        </div>
-        <div class="composer-input-shell">
-          <div class="composer-main" :class="{ raised: composerPanel }">
-            <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
-            <div class="composer-glow-shell" :class="{ on: composerFocused }">
-              <textarea
-                ref="composerInput"
-                v-model="input"
-                rows="1"
-                :class="{ 'composer-glow': composerFocused }"
-                :placeholder="composerPromptText ? '' : (store.prayerOnly ? '输入代祷事项' : '')"
-                @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
-                @blur="composerFocused = false"
-                @input="onInput"
-                @click="syncComposerCaret"
-                @keyup="syncComposerCaret"
-                @keydown="onKeydown"
-                @paste="handleComposerPaste"
-              ></textarea>
-            </div>
-            <span
-              v-if="!input.trim() && composerPromptText"
-              class="composer-prompt-overlay"
-              :class="`phase-${composerPromptPhase}`"
-              aria-hidden="true"
-            ><span
-                v-for="(char, index) in composerPromptChars"
-                :key="index"
-                class="composer-prompt-char"
-                :style="composerPromptCharStyle(index)"
-              >{{ char }}</span></span>
-            <button
-              v-if="canSendText"
-              class="send-btn composer-edge-btn composer-send-btn"
-              :disabled="!canSubmitText"
-              :aria-label="messageSendPending ? '正在发送' : '发送'"
-              :title="composerSendStatus || '发送'"
-              @click="sendText"
-            ><Send :size="19" /></button>
-            <button v-else class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
-            <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
-            <input ref="photoInput" class="hidden" type="file" accept="image/*" multiple @change="handlePickedFiles" />
-          </div>
-          <small
-            v-if="composerSendStatus"
-            class="composer-send-status"
-            :data-send-state="composerSendState"
-            role="status"
-            aria-live="polite"
-          >{{ composerSendStatus }}</small>
-          <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
-            <template v-if="activeComposerSuggestionKind === 'music'">
-              <button
-                v-for="(track, index) in matchingMusicMentionTracks"
-                :key="track.id"
-                type="button"
-                class="composer-suggestion music-suggestion"
-                :class="{ active: index === composerSuggestionIndex }"
-                @click="chooseMusicMentionSuggestion(track)"
-              >
-                <AudioLines :size="18" />
-                <span>{{ track.title }}</span>
-                <small>热度 {{ track.heat }}</small>
-              </button>
-            </template>
-            <template v-else-if="activeComposerSuggestionKind === 'mention'">
-              <button
-                v-for="(member, index) in matchingMentionMembers"
-                :key="member.id"
-                type="button"
-                class="composer-suggestion"
-                :class="{ active: index === composerSuggestionIndex }"
-                @click="chooseMentionSuggestion(member)"
-              >
-                <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
-                  <AvatarImage :path="member.avatarPath">
-                    <span>{{ avatarText(member.displayName) }}</span>
-                  </AvatarImage>
-                  <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
-                </div>
-                <span>{{ member.displayName }}</span>
-                <small>{{ member.username ? `@${member.username}` : member.kind === 'virtual' ? '虚拟角色' : '频道成员' }}</small>
-              </button>
-            </template>
-            <template v-else>
-              <button
-                v-for="(item, index) in matchingSlashCommands"
-                :key="item.command"
-                type="button"
-                class="composer-suggestion"
-                :class="{ active: index === composerSuggestionIndex }"
-                @click="chooseSlashCommand(item)"
-              >
-                <component :is="item.icon" :size="18" />
-                <span>{{ item.command }}</span>
-                <small>{{ item.hint }}</small>
-              </button>
-            </template>
-          </div>
-        </div>
-        <div v-if="composerPanel === 'voice'" class="composer-drawer voice-drawer">
-          <p v-if="recordingNotice" class="voice-recording-notice" role="alert">{{ recordingNotice }}</p>
-          <div v-if="!audioPreviewUrl" class="record-strip" :class="{ recording: isRecording }">
-            <span class="record-dot"></span>
-            <strong>{{ recordingStatus || "点击麦克风开始录音" }}</strong>
-            <small>{{ formatDuration(recordingDuration) }}</small>
-            <button v-if="isRecording" class="icon-btn" @click="stopRecording" aria-label="停止录音"><Square :size="18" /></button>
-            <button v-else class="icon-btn" @click="startRecording" aria-label="重新录音"><RotateCcw :size="18" /></button>
-          </div>
-          <div v-if="audioPreviewUrl" class="voice-preview">
-            <audio
-              ref="previewAudioEl"
-              class="hidden"
-              :src="audioPreviewUrl"
-              preload="metadata"
-              @timeupdate="updatePreviewProgress"
-              @loadedmetadata="syncPreviewMetadata"
-              @ended="endPreviewPlayback"
-              @pause="previewPlaying = false"
-            ></audio>
-            <button class="icon-btn danger" @click="resetRecording" aria-label="删除录音"><Trash2 :size="18" /></button>
-            <div class="voice-preview-card">
-              <button class="preview-play" @click="togglePreviewPlayback" :aria-label="previewPlaying ? '暂停预览' : '播放预览'">
-                <Pause v-if="previewPlaying" :size="20" />
-                <Play v-else :size="20" />
-              </button>
-              <div class="preview-waveform">
-                <span
-                  v-for="(bar, idx) in audioPreviewWaveform"
-                  :key="idx"
-                  class="voice-bar"
-                  :class="{ active: idx / audioPreviewWaveform.length <= previewProgress }"
-                  :style="voiceBarStyle(bar, idx, audioPreviewWaveform.length, previewProgress)"
-                ></span>
-              </div>
-              <span>{{ formatDuration(audioPreviewDurationMs) }}</span>
-            </div>
-            <button class="send-btn" :disabled="voiceSending" @click="sendVoice">{{ voiceSending ? "发送中" : "发送" }}</button>
-          </div>
-        </div>
-        <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
-          <button class="tool-tile" @click="fileInput?.click()">
-            <span><FileUp :size="25" /></span>
-            <small>文件</small>
-          </button>
-          <div class="tool-tile-wrap photo-tool-wrap">
-            <button class="tool-tile" @click="photoInput?.click()">
-              <span><ImageIcon :size="25" /></span>
-              <small>照片</small>
-            </button>
-            <label class="original-image-corner" :class="{ active: keepOriginalImages }" title="保留原图">
-              <input v-model="keepOriginalImages" type="checkbox" />
-              <span class="original-image-check"><CheckCircle2 v-if="keepOriginalImages" :size="13" /></span>
-              <small>原图</small>
-            </label>
-          </div>
-          <button class="tool-tile" @click="openChainModal">
-            <span><Plus :size="25" /></span>
-            <small>接龙</small>
-          </button>
-          <button class="tool-tile" @click="startPrayerComposer">
-            <span><HeartHandshake :size="25" /></span>
-            <small>代祷</small>
-          </button>
-          <button class="tool-tile" @click="openSermonWorkspace">
-            <span><Monitor :size="25" /></span>
-            <small>讲道台</small>
-          </button>
-        </div>
-      </footer>
+      <ComposerBar
+        v-if="!showingFavoriteSurface && !isMusicChannel"
+        ref="composerBarRef"
+        v-model:input="input"
+        v-model:reply-to="replyTo"
+        v-model:composer-focused="composerFocused"
+        v-model:keep-original-images="keepOriginalImages"
+        v-model:preview-playing="previewPlaying"
+        v-bind="composerBindings"
+      />
     </section>
 
     <aside v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed }">

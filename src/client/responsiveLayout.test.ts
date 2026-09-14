@@ -19,6 +19,8 @@ const appField = fs.readFileSync(new URL("./components/ui/AppField.vue", import.
 const avatarImage = fs.readFileSync(new URL("./components/ui/AvatarImage.vue", import.meta.url), "utf8");
 const channelIcon = fs.readFileSync(new URL("./components/ui/ChannelIcon.vue", import.meta.url), "utf8");
 const messageRow = fs.readFileSync(new URL("./features/messages/MessageRow.vue", import.meta.url), "utf8");
+const composerBar = fs.readFileSync(new URL("./features/composer/ComposerBar.vue", import.meta.url), "utf8");
+const chatHeader = fs.readFileSync(new URL("./features/chat/ChatHeader.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
 const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
@@ -74,7 +76,7 @@ test("the message viewport and composer occupy separate chat grid rows", () => {
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
   assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
   assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
-  assert.match(app, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
+  assert.match(chatHeader, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
   assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);
   assert.match(bibleWorkspace, /catalog\.oldTestament[\s\S]*?catalog\.newTestament/);
@@ -120,7 +122,7 @@ test("user administration uses a searchable master-detail layout with guarded de
 });
 
 test("chat subtitles scroll only when their rendered text overflows", () => {
-  assert.match(app, /<OverflowMarquee[\s\S]*?:text="chatSubtitleText"/);
+  assert.match(chatHeader, /<OverflowMarquee[\s\S]*?:text="chatSubtitleText"/);
   assert.match(overflowMarquee, /contentElement\.scrollWidth - viewportElement\.clientWidth/);
   assert.match(overflowMarquee, /new ResizeObserver\(measureOverflow\)/);
   assert.match(overflowMarquee, /chatSubtitleMarquee[\s\S]*?translateX\(calc\(0px - var\(--overflow-distance\)\)\)/);
@@ -273,7 +275,7 @@ test("chat channel rows show a capped unread badge pinned to the channel icon", 
 
 test("the mobile channel trigger replaces its chevron with all other-channel unread messages", () => {
   assert.match(app, /const otherChannelUnreadCount = computed\(\(\) => store\.channels\.reduce[\s\S]*?channel\.id === store\.currentChannelId \|\| channel\.kind === "music"[\s\S]*?unreadCountFor\(channel\.id\)/);
-  assert.match(app, /class="icon-btn mobile-only channel-mobile-trigger"[\s\S]*?v-if="otherChannelUnreadCount > 0" class="channel-mobile-unread"[\s\S]*?formatUnreadCount\(otherChannelUnreadCount\)[\s\S]*?<ChevronLeft v-else/);
+  assert.match(chatHeader, /class="icon-btn mobile-only channel-mobile-trigger"[\s\S]*?v-if="otherChannelUnreadCount > 0" class="channel-mobile-unread"[\s\S]*?formatUnreadCount\(otherChannelUnreadCount\)[\s\S]*?<ChevronLeft v-else/);
   assert.match(css, /\.channel-mobile-unread \{[\s\S]*?border-radius: 999px;[\s\S]*?color: #fff;[\s\S]*?background: #f04438;/);
 });
 
@@ -323,7 +325,8 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
   assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
-  assert.match(app, /v-if="!showingFavoriteSurface && !isMusicChannel" class="composer"/);
+  assert.match(app, /<ComposerBar\s+v-if="!showingFavoriteSurface && !isMusicChannel"/);
+  assert.match(composerBar, /<footer class="composer">/);
   assert.match(app, /<MusicManager[\s\S]*?embedded[\s\S]*?:tracks="musicTracks"[\s\S]*?@refresh-tracks="loadMusicTracks"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
@@ -375,8 +378,8 @@ test("opening the music player starts or resumes playback without pausing an act
 });
 
 test("the mini panel floats centered over a plain dim backdrop instead of covering the header", () => {
-  assert.match(app, /@click\.stop="openMusicPlayer\(\)"/);
-  assert.match(app, /<MusicMiniPanel[\s\S]*?v-if="musicPlayerExpanded"/);
+  assert.match(chatHeader, /@click\.stop="openMusicPlayer\(\)"/);
+  assert.match(chatHeader, /<MusicMiniPanel[\s\S]*?v-if="musicPlayerExpanded"/);
   assert.match(musicMiniPanel, /<Teleport to="body">/);
   assert.match(musicMiniPanel, /class="music-mini-backdrop"[\s\S]*?@click="emit\('close'\)"/);
   assert.match(css, /\.music-mini-backdrop \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;/);
@@ -399,7 +402,7 @@ test("the mini panel font size comes from the admin appearance setting", () => {
   assert.match(musicMiniPanel, /fontSize: number;/);
   assert.match(musicMiniPanel, /const panelStyle = computed\(\(\) => \(\{ fontSize: `\$\{props\.fontSize\}px` \}\)\)/);
   assert.match(musicMiniPanel, /:style="panelStyle"/);
-  assert.match(app, /:font-size="musicPanelFontSize"/);
+  assert.match(chatHeader, /:font-size="musicPanelFontSize"/);
   assert.match(app, /const musicPanelFontSize = computed\(\(\) => cleanMusicPanelFontSize\(store\.appearance\.musicPanelFontSize\)\)/);
   assert.match(css, /\.music-mini-panel-mode \{[\s\S]*?font-size: 0\.85em;/);
   assert.match(css, /\.music-mini-panel-track \{[\s\S]*?font-size: 0\.9em;/);
@@ -454,7 +457,7 @@ test("the queue section shows all tracks of the current source in playlist order
 test("the source name carries an expand button that opens the full music manager", () => {
   assert.match(musicMiniPanel, /"open-manager": \[\]/);
   assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-expand"[\s\S]*?aria-label="打开歌单管理"[\s\S]*?@click="emit\('open-manager'\)"/);
-  assert.match(app, /@open-manager="openMusicManagerFromMiniPanel"/);
+  assert.match(chatHeader, /@open-manager="openMusicManagerFromMiniPanel"/);
   assert.match(app, /function openMusicManagerFromMiniPanel\(\) \{[\s\S]*?openMusicManager\(\{ kind: "playlist", id: selectedMusicPlaylistId\.value \}\)/);
 });
 
@@ -485,8 +488,8 @@ test("mobile drawers and the music manager head respect the top safe area", () =
 });
 
 test("voice record strip hides once a preview is ready", () => {
-  assert.match(app, /<div v-if="!audioPreviewUrl" class="record-strip"/);
-  assert.match(app, /v-if="recordingNotice" class="voice-recording-notice" role="alert"/);
+  assert.match(composerBar, /<div v-if="!audioPreviewUrl" class="record-strip"/);
+  assert.match(composerBar, /v-if="recordingNotice" class="voice-recording-notice" role="alert"/);
 });
 
 test("mobile composer edge buttons stay square and align with the one-line input", () => {
@@ -505,7 +508,7 @@ test("the music manager opens from the mini panel expand button as a separate ov
 
 test("music favorites persist per account and can constrain the playback queue", () => {
   assert.match(musicMiniPanel, /music-mini-panel-heart[\s\S]*?emit\('toggle-favorite', currentTrack\)/);
-  assert.match(app, /@toggle-favorite="toggleCurrentMusicFavorite"/);
+  assert.match(chatHeader, /@toggle-favorite="toggleCurrentMusicFavorite"/);
   assert.match(musicPlayer, /const playableTracks = computed[\s\S]*?playbackSourceKind\.value === "favorites"[\s\S]*?options\.favoriteTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
@@ -530,9 +533,9 @@ test("manual music pause fades out within one second", () => {
 });
 
 test("song control stays to the left of the score and consolidated chat tools", () => {
-  const headerStart = app.indexOf('<header class="chat-head"');
-  const headerEnd = app.indexOf("</header>", headerStart);
-  const header = app.slice(headerStart, headerEnd);
+  const headerStart = chatHeader.indexOf('<header class="chat-head"');
+  const headerEnd = chatHeader.indexOf("</header>", headerStart);
+  const header = chatHeader.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
   assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="chat-tools-control"'));
   assert.match(header, /v-if="[^"]*musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
@@ -544,9 +547,9 @@ test("song control stays to the left of the score and consolidated chat tools", 
 });
 
 test("the three-dot chat menu consolidates font, members, message selection, and system settings", () => {
-  const headerStart = app.indexOf('<header class="chat-head"');
-  const headerEnd = app.indexOf("</header>", headerStart);
-  const header = app.slice(headerStart, headerEnd);
+  const headerStart = chatHeader.indexOf('<header class="chat-head"');
+  const headerEnd = chatHeader.indexOf("</header>", headerStart);
+  const header = chatHeader.slice(headerStart, headerEnd);
   assert.match(header, /class="chat-tools-control" data-chat-tools-menu[\s\S]*?aria-label="更多管理功能"[\s\S]*?<Ellipsis/);
   assert.match(header, /<AppMenu[^>]*class="chat-tools-menu"[^>]*label="聊天管理功能"[\s\S]*?class="chat-tools-font-row"[\s\S]*?字号调节[\s\S]*?adjustMessageFontSize\(-1\)[\s\S]*?\{\{ messageFontSize \}\}[\s\S]*?adjustMessageFontSize\(1\)/);
   assert.match(header, /<AppMenuItem[^>]*toggleCurrentMemberPane[\s\S]*?成员列表/);
@@ -560,10 +563,10 @@ test("the three-dot chat menu consolidates font, members, message selection, and
 });
 
 test("pinned content and live activity share one ordered notice stack", () => {
-  const headerStart = app.indexOf('<header class="chat-head"');
-  const headerEnd = app.indexOf("</header>", headerStart);
-  const header = app.slice(headerStart, headerEnd);
-  const afterHeader = app.slice(headerEnd);
+  const headerStart = chatHeader.indexOf('<header class="chat-head"');
+  const headerEnd = chatHeader.indexOf("</header>", headerStart);
+  const header = chatHeader.slice(headerStart, headerEnd);
+  const afterHeader = chatHeader.slice(headerEnd);
 
   assert.doesNotMatch(header, /activeTopNotice|chat-status-like/);
   assert.doesNotMatch(afterHeader, /class="top-notice-shell"/);
@@ -596,13 +599,15 @@ test("pinned content and live activity share one ordered notice stack", () => {
 });
 
 test("persistent message notices sit below every existing top surface and stay out of the composer", () => {
-  const noticeStack = app.indexOf('class="chat-notice-stack"');
-  const lyricsHeader = app.indexOf("<MusicLyricsHeader", noticeStack);
+  const noticeStack = chatHeader.indexOf('class="chat-notice-stack"');
+  const chatHeaderMount = app.indexOf("<ChatHeader");
+  const lyricsHeader = app.indexOf("<MusicLyricsHeader", chatHeaderMount);
   const messageNotice = app.indexOf('class="message-notice-bar"', lyricsHeader);
   const messagesViewport = app.indexOf('class="messages-viewport"', messageNotice);
 
   assert.ok(noticeStack >= 0, "the pinned and activity stack should exist");
-  assert.ok(lyricsHeader > noticeStack, "karaoke lyrics should follow pinned and activity notices");
+  assert.ok(chatHeaderMount >= 0, "the chat header hosting the notice stack should be mounted");
+  assert.ok(lyricsHeader > chatHeaderMount, "karaoke lyrics should follow the chat header with pinned and activity notices");
   assert.ok(messageNotice > lyricsHeader, "message notices should follow karaoke lyrics");
   assert.ok(messagesViewport > messageNotice, "message notices should stay above the message timeline");
   assert.match(app, /const loadedMentionToasts = computed[\s\S]*?store\.messages[\s\S]*?isMentionAlertActive/);
@@ -690,7 +695,7 @@ test("score image preview fills the viewport width without black side bars", () 
 
 test("double-at song mentions render inline with independent playback controls", () => {
   assert.match(app, /musicMentionTokenAtCursor\(input\.value, composerCaret\.value\)/);
-  assert.match(app, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
+  assert.match(composerBar, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
   assert.match(app, /const mention = `@@\$\{track\.title\} `/);
   assert.match(messageRow, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
   assert.match(app, /onToggleMentionedMusic: toggleMentionedMusic[\s\S]*?onStopMentionedMusic: stopMentionedMusic/);
@@ -868,7 +873,8 @@ test("karaoke clock sleeps across iOS page hiding and component exit", () => {
 });
 
 test("karaoke lyrics stay above chat content and retain refined enter and leave motion", () => {
-  assert.match(app, /<\/header>[\s\S]*?<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
+  assert.match(chatHeader, /<\/header>/);
+  assert.match(app, /<ChatHeader[\s\S]*?<Transition name="music-lyrics-panel">[\s\S]*?<MusicLyricsHeader/);
   assert.doesNotMatch(lyricsHeader, /music-lyrics-track-title/);
   assert.match(css, /\.music-lyrics-header \{[\s\S]*?height: calc\(112px \+ var\(--safe-top\)\);[\s\S]*?border-radius: 0;/);
   assert.match(css, /\.chat-pane > \.music-lyrics-header \{[\s\S]*?z-index: 30;/);
@@ -983,7 +989,7 @@ test("music track detail and previews keep controls outside iPhone safe areas", 
 });
 
 test("the photo picker uploads every selected image", () => {
-  assert.match(app, /ref="photoInput"[^>]*accept="image\/\*"[^>]*multiple[^>]*@change="handlePickedFiles"/);
+  assert.match(composerBar, /ref="photoInput"[^>]*accept="image\/\*"[^>]*multiple[^>]*@change="handlePickedFiles"/);
   assert.match(app, /async function handlePickedFiles[\s\S]*?Array\.from\(input\.files \|\| \[\]\)[\s\S]*?for \(const file of files\)/);
 });
 
@@ -1064,9 +1070,9 @@ test("the profile settings entry opens complete self-service account controls", 
 });
 
 test("composer swaps one compact trailing action between more and a connection-aware send", () => {
-  assert.match(app, /v-if="canSendText"[\s\S]*?class="send-btn composer-edge-btn composer-send-btn"[\s\S]*?:disabled="!canSubmitText"/);
-  assert.match(app, /<button v-else class="icon-btn composer-edge-btn"[\s\S]*?aria-label="更多功能"/);
-  assert.match(app, /class="composer-send-status"[\s\S]*?:data-send-state="composerSendState"[\s\S]*?aria-live="polite"/);
+  assert.match(composerBar, /v-if="canSendText"[\s\S]*?class="send-btn composer-edge-btn composer-send-btn"[\s\S]*?:disabled="!canSubmitText"/);
+  assert.match(composerBar, /<button v-else class="icon-btn composer-edge-btn"[\s\S]*?aria-label="更多功能"/);
+  assert.match(composerBar, /class="composer-send-status"[\s\S]*?:data-send-state="composerSendState"[\s\S]*?aria-live="polite"/);
   assert.match(app, /const canSubmitText = computed\(\(\) => canSendText\.value && socketReadyToSend\.value && !messageSendPending\.value\)/);
   assert.match(css, /\.composer-main \{[\s\S]*?gap: 2px;/);
   assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 34px;[\s\S]*?flex: 0 0 34px;[\s\S]*?padding: 0;/);
@@ -1080,7 +1086,7 @@ test("clicking the message display closes an open more-tools drawer", () => {
 
 test("original image selection is a small unchecked control on the photo tile", () => {
   assert.match(app, /const keepOriginalImages = ref\(false\)/);
-  assert.match(app, /class="tool-tile-wrap photo-tool-wrap"[\s\S]*?class="original-image-corner"[\s\S]*?>原图</);
+  assert.match(composerBar, /class="tool-tile-wrap photo-tool-wrap"[\s\S]*?class="original-image-corner"[\s\S]*?>原图</);
   assert.doesNotMatch(app, /class="original-image-toggle"/);
   assert.match(css, /\.original-image-corner \{[\s\S]*?position: absolute;[\s\S]*?bottom: -1px;/);
   assert.match(css, /\.original-image-check \{[\s\S]*?width: 14px;[\s\S]*?border-radius: 50%;/);
