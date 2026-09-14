@@ -544,9 +544,10 @@ export function useChannelManagement(options: UseChannelManagementOptions) {
     }
   }
 
-  function requestCloseChannel() {
-    if (!options.currentChannel.value?.directKey) return;
-    pendingCloseChannel.value = options.currentChannel.value;
+  function requestCloseChannel(channel = options.currentChannel.value) {
+    if (!channel?.directKey) return;
+    showChannelEditor.value = false;
+    pendingCloseChannel.value = channel;
   }
 
   async function closePendingChannel() {

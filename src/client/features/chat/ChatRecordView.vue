@@ -5,6 +5,7 @@ import type { ChatRecordItemDTO, ChatRecordPayloadDTO, MessageDTO } from "@share
 import { getToken } from "../../api";
 import { compactBytes } from "../../time";
 import { chatRecordItemUrl } from "../../messageForward";
+import AvatarImage from "../../components/ui/AvatarImage.vue";
 
 const props = defineProps<{ message: MessageDTO }>();
 const emit = defineEmits<{ close: [] }>();
@@ -21,11 +22,6 @@ const payload = computed(() => {
   const value = props.message.payload as ChatRecordPayloadDTO | undefined;
   return value?.kind === "chat_record" ? value : null;
 });
-
-function itemAvatarUrl(path?: string | null) {
-  if (!path) return "";
-  return path.startsWith("/") ? path : `/avatars/${path}`;
-}
 
 function avatarText(name: string) {
   return (name || "?").slice(0, 1).toUpperCase();
@@ -58,8 +54,9 @@ function voiceSeconds(item: ChatRecordItemDTO) {
       <div class="chat-record-body">
         <div v-for="(item, index) in payload?.items || []" :key="index" class="chat-record-item">
           <span class="chat-record-avatar" aria-hidden="true">
-            <img v-if="itemAvatarUrl(item.senderAvatarPath)" :src="itemAvatarUrl(item.senderAvatarPath)" alt="" />
-            <span v-else>{{ avatarText(item.senderName) }}</span>
+            <AvatarImage :path="item.senderAvatarPath">
+              <span>{{ avatarText(item.senderName) }}</span>
+            </AvatarImage>
           </span>
           <div class="chat-record-item-main">
             <span class="chat-record-meta">

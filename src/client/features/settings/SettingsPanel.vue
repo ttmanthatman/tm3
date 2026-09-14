@@ -27,6 +27,8 @@ import type {
 } from "@shared/types";
 import { APP_VERSION, RELEASE_DATE, RELEASE_NOTES } from "@shared/release";
 import { useChatStore } from "../../store";
+import AvatarImage from "../../components/ui/AvatarImage.vue";
+import ChannelIcon from "../../components/ui/ChannelIcon.vue";
 import { settingsTabMeta, type SettingsTab } from "./settingsTabs";
 import type { AccountSettings } from "./useAccountSettings";
 
@@ -65,8 +67,6 @@ interface SettingsPanelBindings {
   disableNotifications: () => Promise<void>;
   isChannelMuted: (channelId: number) => boolean;
   setChannelMuted: (channel: ChannelDTO, muted: boolean) => Promise<void>;
-  channelIconUrl: (channel?: Pick<ChannelDTO, "icon"> | null) => string;
-  avatarUrl: (path?: string | null) => string;
   avatarText: (name: string) => string;
   serverVersion: Ref<VersionDTO | null>;
   compareVersions: (a: string, b: string) => number;
@@ -132,8 +132,6 @@ const {
   disableNotifications,
   isChannelMuted,
   setChannelMuted,
-  channelIconUrl,
-  avatarUrl,
   avatarText,
   serverVersion,
   compareVersions,
@@ -149,8 +147,9 @@ const {
         <aside class="settings-sidebar">
           <header class="settings-profile">
             <div class="avatar">
-              <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
-              <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
+              <AvatarImage :path="store.account?.avatarPath">
+                <span>{{ avatarText(store.account?.displayName || '') }}</span>
+              </AvatarImage>
             </div>
             <span><strong>{{ store.account?.displayName }}</strong><small>@{{ store.account?.username }}</small></span>
           </header>
@@ -178,8 +177,9 @@ const {
             <div class="settings-section-head"><strong>个人账号</strong><small>头像和昵称会显示在聊天消息旁。</small></div>
             <label class="account-avatar-card" :class="{ busy: accountAvatarBusy }">
               <span class="avatar account-settings-avatar">
-                <img v-if="avatarUrl(store.account?.avatarPath)" :src="avatarUrl(store.account?.avatarPath)" alt="" />
-                <span v-else>{{ avatarText(store.account?.displayName || '') }}</span>
+                <AvatarImage :path="store.account?.avatarPath">
+                  <span>{{ avatarText(store.account?.displayName || '') }}</span>
+                </AvatarImage>
               </span>
               <span><strong>{{ accountAvatarBusy ? "正在上传头像" : "更换头像" }}</strong><small>选择 JPG、PNG、GIF 或 WebP 图片</small></span>
               <Upload :size="19" />
@@ -289,7 +289,7 @@ const {
             <label>频道通知</label>
             <div class="notification-channel-list">
               <article v-for="channel in store.channels" :key="channel.id" class="notification-channel-row">
-                <span class="channel-icon"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="channel-icon"><ChannelIcon :icon="channel.icon" :kind="channel.kind" /></span>
                 <div>
                   <strong>{{ channel.name }}</strong>
                   <small>{{ isChannelMuted(channel.id) ? "不通知普通消息" : "通知普通消息" }}</small>

@@ -13,6 +13,7 @@ import {
 } from "lucide-vue-next";
 import type { AccountDTO } from "@shared/types";
 import { useChatStore } from "../../store";
+import AvatarImage from "../../components/ui/AvatarImage.vue";
 import {
   type NewAdminAccountField,
   useAdminAccounts
@@ -76,11 +77,6 @@ const {
 
 function avatarText(name: string) {
   return (name || "?").slice(0, 1).toUpperCase();
-}
-
-function avatarUrl(path?: string | null) {
-  if (!path) return "";
-  return path.startsWith("/") ? path : `/avatars/${path}`;
 }
 
 function openAccount(account: AccountDTO) {
@@ -213,8 +209,9 @@ onMounted(loadAccounts);
             @click="openAccount(account)"
           >
             <span class="avatar admin-account-list-avatar">
-              <img v-if="avatarUrl(account.avatarPath)" :src="avatarUrl(account.avatarPath)" alt="" />
-              <span v-else>{{ avatarText(account.displayName) }}</span>
+              <AvatarImage :path="account.avatarPath">
+                <span>{{ avatarText(account.displayName) }}</span>
+              </AvatarImage>
             </span>
             <span class="admin-account-list-copy">
               <span class="admin-account-list-name">
@@ -345,8 +342,9 @@ onMounted(loadAccounts);
         >
           <div class="admin-account-detail-heading">
             <label class="avatar admin-account-detail-avatar upload-avatar-trigger">
-              <img v-if="avatarUrl(selectedAccount.avatarPath)" :src="avatarUrl(selectedAccount.avatarPath)" alt="" />
-              <span v-else>{{ avatarText(selectedAccount.displayName) }}</span>
+              <AvatarImage :path="selectedAccount.avatarPath">
+                <span>{{ avatarText(selectedAccount.displayName) }}</span>
+              </AvatarImage>
               <span class="admin-account-avatar-action">
                 <Camera :size="13" />
               </span>

@@ -37,6 +37,7 @@ import { cleanWallpaperPanSpeed } from "@shared/wallpaperPan";
 import { compactBytes } from "../../time";
 import { cleanParallaxSpeed, parallaxAssetUrl } from "../../parallax";
 import ParallaxBackground from "../../components/ParallaxBackground.vue";
+import ChannelIcon from "../../components/ui/ChannelIcon.vue";
 import { useChatStore } from "../../store";
 import { adminDirectPageSize, type AdminTools } from "./useAdminTools";
 import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields, wallpaperFitOptions } from "./useAppearanceSettings";
@@ -67,7 +68,6 @@ interface AdminReleaseBindings {
 interface AdminPanelActions {
   startMessageSelectionMode: () => Promise<void>;
   openAdminChannelMembers: (channel: ChannelDTO) => Promise<void>;
-  channelIconUrl: (channel?: Pick<ChannelDTO, "icon"> | null) => string;
   wallpaperUrl: (path?: string | null) => string;
   themeSwatchStyle: (theme: ThemeDTO) => { background: string };
 }
@@ -190,7 +190,7 @@ const {
   releaseDeveloper
 } = props.release;
 
-const { startMessageSelectionMode, openAdminChannelMembers, channelIconUrl, wallpaperUrl, themeSwatchStyle } = props.actions;
+const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeSwatchStyle } = props.actions;
 </script>
 
 <template>
@@ -275,7 +275,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, channelIconUrl, wall
             </div>
             <div class="admin-object-list">
               <button v-for="channel in adminChannelRows" :key="channel.id" class="admin-object-row" @click="openAdminChannelDetail(channel)">
-                <span class="channel-icon-admin"><span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span><img v-else :src="channelIconUrl(channel)" alt="" /></span>
+                <span class="channel-icon-admin"><ChannelIcon :icon="channel.icon" :kind="channel.kind" /></span>
                 <span class="admin-object-main"><b>{{ channel.name }}</b><small>{{ channel.isPrivate ? '私密频道' : '公开频道' }} · {{ channel.memberCount }} 人 · {{ channel.messageCount }} 条消息</small></span>
                 <span v-if="channel.isDefault" class="admin-status-pill">默认</span>
                 <ChevronRight :size="19" />
@@ -312,8 +312,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, channelIconUrl, wall
           <section v-else-if="adminPage === 'channelDetail' && adminSelectedChannel && channelEdits[adminSelectedChannel.id]" class="form-grid admin-page-section channel-detail-page">
             <label>频道图标</label>
             <label class="channel-detail-icon" :class="{ 'upload-icon-trigger': adminSelectedChannel.kind !== 'music' }" :aria-label="adminSelectedChannel.kind === 'music' ? '音乐频道系统图标' : `上传 ${adminSelectedChannel.name} 的频道图标`" :title="adminSelectedChannel.kind === 'music' ? '系统频道' : '点击上传图标'">
-              <span v-if="adminSelectedChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
-              <img v-else :src="channelIconUrl(adminSelectedChannel)" alt="" />
+              <ChannelIcon :icon="adminSelectedChannel.icon" :kind="adminSelectedChannel.kind" />
               <span>{{ adminSelectedChannel.kind === "music" ? "系统频道" : "点击更换图标" }}</span>
               <input v-if="adminSelectedChannel.kind !== 'music'" class="hidden" type="file" accept="image/*" @change="uploadChannelIcon(adminSelectedChannel, $event)" />
             </label>

@@ -13,6 +13,8 @@ const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlaye
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const appModal = fs.readFileSync(new URL("./components/ui/AppModal.vue", import.meta.url), "utf8");
+const avatarImage = fs.readFileSync(new URL("./components/ui/AvatarImage.vue", import.meta.url), "utf8");
+const channelIcon = fs.readFileSync(new URL("./components/ui/ChannelIcon.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
 const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
@@ -713,6 +715,27 @@ test("AppModal hosts the forward and channel confirm dialogs with the modal-shel
   assert.match(appModal, /small-modal/);
   assert.match(appModal, /@click\.self="requestClose"/);
   assert.match(appModal, /event\.key !== "Escape"/);
+});
+
+test("AvatarImage and ChannelIcon primitives own avatar fallback and channel icon rendering", () => {
+  assert.match(avatarImage, /@error="failed = true"/);
+  assert.match(avatarImage, /<slot v-else \/>/);
+  assert.match(avatarImage, /`\/avatars\/\$\{path\}`/);
+  assert.match(channelIcon, /v-if="kind === 'music'" class="channel-icon-glyph"/);
+  assert.match(channelIcon, /`\/backgrounds\/\$\{icon\}`/);
+  assert.match(channelIcon, /\/images\/icon-192\.png/);
+  assert.match(app, /<ChannelIcon :icon="channel\.icon" :kind="channel\.kind" \/>/);
+  assert.doesNotMatch(app, /function avatarUrl\(/);
+  assert.doesNotMatch(app, /function channelIconUrl\(/);
+  assert.match(settingsPanel, /<AvatarImage :path="store\.account\?\.avatarPath">/);
+  assert.match(settingsPanel, /<ChannelIcon :icon="channel\.icon" :kind="channel\.kind" \/>/);
+  assert.match(adminPanel, /<ChannelIcon :icon="channel\.icon" :kind="channel\.kind" \/>/);
+  assert.match(adminAccountsPage, /<AvatarImage :path="account\.avatarPath">/);
+});
+
+test("direct message channels can be closed from the channel editor", () => {
+  assert.match(app, /channelEditorMode === 'edit' && channelEditorChannel\?\.directKey[\s\S]*?requestCloseChannel\(channelEditorChannel\)[\s\S]*?关闭私聊/);
+  assert.match(app, /<AppModal :open="!!pendingCloseChannel" title="关闭私聊"/);
 });
 
 test("forwarded audio copies attached score pages and exposes them on the new message", () => {

@@ -107,6 +107,8 @@ import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
 import AppMenuItem from "./components/AppMenuItem.vue";
 import AppModal from "./components/ui/AppModal.vue";
+import AvatarImage from "./components/ui/AvatarImage.vue";
+import ChannelIcon from "./components/ui/ChannelIcon.vue";
 import { useVoiceRecording } from "./features/voice/useVoiceRecording";
 import { useUploads } from "./features/uploads/useUploads";
 import { messageEffect, useComposer } from "./features/composer/useComposer";
@@ -2150,7 +2152,6 @@ const adminReleaseBindings = {
 const adminPanelActions = {
   startMessageSelectionMode,
   openAdminChannelMembers,
-  channelIconUrl,
   wallpaperUrl,
   themeSwatchStyle
 };
@@ -2189,8 +2190,6 @@ const settingsPanelBindings = {
   disableNotifications,
   isChannelMuted,
   setChannelMuted,
-  channelIconUrl,
-  avatarUrl,
   avatarText,
   serverVersion,
   compareVersions,
@@ -4370,11 +4369,6 @@ function avatarText(name: string) {
   return (name || "?").slice(0, 1).toUpperCase();
 }
 
-function avatarUrl(path?: string | null) {
-  if (!path) return "";
-  return path.startsWith("/") ? path : `/avatars/${path}`;
-}
-
 function isAccountOnline(accountId?: number | null) {
   return !!accountId && store.online.some((user) => user.accountId === accountId);
 }
@@ -4654,10 +4648,6 @@ async function openBibleReferenceInWorkspace(scope: string | number, reference: 
 function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
-
-function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
-  return channel?.icon ? wallpaperUrl(channel.icon) : "/images/icon-192.png";
-}
 </script>
 
 <template>
@@ -4815,8 +4805,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
                       <td class="virtual-id-cell">@{{ character.actor.username }}</td>
                       <td>
                         <label class="avatar virtual-table-avatar" :class="{ online: virtualEnabled(character) }">
-                          <img v-if="avatarUrl(character.actor?.avatarPath)" :src="avatarUrl(character.actor.avatarPath)" alt="" />
-                          <span v-else>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span>
+                          <AvatarImage :path="character.actor?.avatarPath"><span>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span></AvatarImage>
                           <input type="file" accept="image/*" @change="uploadVirtualAvatar(character, $event)" />
                         </label>
                       </td>
@@ -5036,8 +5025,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
             @pointercancel="clearChannelLongPress"
           >
             <span class="channel-icon">
-              <span v-if="channel.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
-              <img v-else :src="channelIconUrl(channel)" alt="" />
+              <ChannelIcon :icon="channel.icon" :kind="channel.kind" />
               <i v-if="channel.isPrivate" class="private-channel-badge" aria-label="私密频道" title="私密频道">
                 <LockKeyhole :size="11" :stroke-width="2.6" />
               </i>
@@ -5082,8 +5070,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
       </button>
       <footer class="profile-row">
         <div class="avatar">
-          <img v-if="avatarUrl(store.account.avatarPath)" :src="avatarUrl(store.account.avatarPath)" alt="" />
-          <span v-else>{{ avatarText(store.account.displayName) }}</span>
+          <AvatarImage :path="store.account.avatarPath"><span>{{ avatarText(store.account.displayName) }}</span></AvatarImage>
         </div>
         <div>
           <b>{{ store.account.displayName }}</b>
@@ -5228,7 +5215,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
         >
           <span class="message-font-glyph music-score-page-glyph" aria-hidden="true">谱</span>
         </button>
-        <button v-if="!showingFavoriteSurface && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel" aria-label="关闭私聊"><X :size="20" /></button>
+        <button v-if="!showingFavoriteSurface && currentChannel?.directKey" class="icon-btn" @click="requestCloseChannel()" aria-label="关闭私聊"><X :size="20" /></button>
         <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
         <div v-if="!showingFavoriteSurface" class="chat-tools-control" data-chat-tools-menu>
           <button
@@ -5387,8 +5374,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
             >
               <header class="favorite-message-head">
                 <div class="avatar" :class="{ bot: favorite.message.sender.kind === 'virtual' }">
-                  <img v-if="avatarUrl(favorite.message.sender.avatarPath)" :src="avatarUrl(favorite.message.sender.avatarPath)" alt="" decoding="async" />
-                  <span v-else>{{ avatarText(favorite.message.sender.displayName) }}</span>
+                  <AvatarImage :path="favorite.message.sender.avatarPath"><span>{{ avatarText(favorite.message.sender.displayName) }}</span></AvatarImage>
                 </div>
                 <div>
                   <strong>{{ favorite.message.sender.displayName }}</strong>
@@ -5590,8 +5576,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
               :aria-label="`${row.message.sender.displayName} 的操作`"
               @click.stop="openSenderActions(row.message.sender, $event)"
             >
-              <img v-if="avatarUrl(row.message.sender.avatarPath)" :src="avatarUrl(row.message.sender.avatarPath)" alt="" decoding="async" />
-              <span v-else>{{ avatarText(row.message.sender.displayName) }}</span>
+              <AvatarImage :path="row.message.sender.avatarPath">
+                <span>{{ avatarText(row.message.sender.displayName) }}</span>
+              </AvatarImage>
               <i v-if="isActorOnline(row.message.sender.id)" class="online-dot" aria-label="在线"></i>
             </div>
             <div class="bubble-wrap">
@@ -5708,8 +5695,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
                     </div>
                     <div v-if="prayerPayload(row.message).prayedBy.length" class="prayer-people" aria-label="已祷告成员">
                       <span v-for="person in prayerPayload(row.message).prayedBy.slice(0, 6)" :key="person.accountId" class="mini-avatar" :title="`${person.displayName} · ${person.times} 次`">
-                        <img v-if="avatarUrl(person.avatarPath)" :src="avatarUrl(person.avatarPath)" alt="" decoding="async" />
-                        <span v-else>{{ avatarText(person.displayName) }}</span>
+                        <AvatarImage :path="person.avatarPath">
+                          <span>{{ avatarText(person.displayName) }}</span>
+                        </AvatarImage>
                       </span>
                     </div>
                     <div class="prayer-actions">
@@ -6089,8 +6077,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
                 @click="chooseMentionSuggestion(member)"
               >
                 <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
-                  <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" decoding="async" />
-                  <span v-else>{{ avatarText(member.displayName) }}</span>
+                  <AvatarImage :path="member.avatarPath">
+                    <span>{{ avatarText(member.displayName) }}</span>
+                  </AvatarImage>
                   <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
                 </div>
                 <span>{{ member.displayName }}</span>
@@ -6222,8 +6211,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
           @click="memberRemoveMode ? removeMemberFromActive(member) : openMemberActions(member, $event)"
         >
           <div class="avatar presence-avatar" :class="{ bot: member.kind === 'virtual' }">
-            <img v-if="avatarUrl(member.avatarPath)" :src="avatarUrl(member.avatarPath)" alt="" decoding="async" />
-            <span v-else>{{ avatarText(member.displayName) }}</span>
+            <AvatarImage :path="member.avatarPath">
+              <span>{{ avatarText(member.displayName) }}</span>
+            </AvatarImage>
             <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
             <i v-if="memberRemoveMode && canRemoveMemberFromActive(member)" class="member-remove-badge" aria-hidden="true"><X :size="12" /></i>
           </div>
@@ -6364,7 +6354,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
               :class="{ selected: forwardChannelIds.includes(channel.id) }"
               @click="toggleForwardChannel(channel.id)"
             >
-              <span class="channel-icon">{{ channel.icon }}</span>
+              <span class="channel-icon"><ChannelIcon :icon="channel.icon" :kind="channel.kind" /></span>
               <span><strong>{{ channel.name }}</strong><small>{{ channel.description || (channel.kind === "direct" ? "私聊" : "群聊") }}</small></span>
               <CheckCircle2 v-if="forwardChannelIds.includes(channel.id)" :size="19" />
             </button>
@@ -6459,8 +6449,7 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
           <template v-if="channelEditorMode === 'edit' && channelEditorChannel && !isTwoPersonDirectEditor && canEditChannel(channelEditorChannel)">
             <label>频道图标</label>
             <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
-              <span v-if="channelEditorChannel?.kind === 'music'" class="channel-icon-glyph" aria-hidden="true">歌</span>
-              <img v-else :src="channelIconUrl(channelEditorChannel)" alt="" />
+              <ChannelIcon :icon="channelEditorChannel.icon" :kind="channelEditorChannel.kind" />
               <span><Upload :size="15" />更换图标</span>
               <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
             </label>
@@ -6537,6 +6526,15 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
             >
               <LogOut :size="15" />退出频道
             </button>
+            <button
+              v-if="channelEditorMode === 'edit' && channelEditorChannel?.directKey"
+              class="mini-btn danger-action"
+              type="button"
+              :disabled="channelEditorBusy"
+              @click="requestCloseChannel(channelEditorChannel)"
+            >
+              <X :size="15" />关闭私聊
+            </button>
             <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">
               {{ channelEditorMode === "edit" && !canEditChannel(channelEditorChannel) ? "关闭" : "取消" }}
             </button>
@@ -6571,8 +6569,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
               @click="toggleMemberPickerAccount(candidate)"
             >
               <div class="avatar presence-avatar" :class="{ bot: candidate.kind === 'virtual' }">
-                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" decoding="async" />
-                <span v-else>{{ avatarText(candidate.displayName) }}</span>
+                <AvatarImage :path="candidate.avatarPath">
+                  <span>{{ avatarText(candidate.displayName) }}</span>
+                </AvatarImage>
                 <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
               </div>
               <span>
@@ -6615,8 +6614,9 @@ function channelIconUrl(channel?: Pick<ChannelDTO, "icon"> | null) {
               @click="ownerTransferSuccessorId = candidate.accountId || null"
             >
               <div class="avatar presence-avatar">
-                <img v-if="avatarUrl(candidate.avatarPath)" :src="avatarUrl(candidate.avatarPath)" alt="" decoding="async" />
-                <span v-else>{{ avatarText(candidate.displayName) }}</span>
+                <AvatarImage :path="candidate.avatarPath">
+                  <span>{{ avatarText(candidate.displayName) }}</span>
+                </AvatarImage>
                 <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
               </div>
               <span>
