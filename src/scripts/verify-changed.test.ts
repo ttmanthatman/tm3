@@ -14,7 +14,7 @@ function summary(files: string[]) {
 test("single client file runs client type checking and tests", () => {
   assert.deepEqual(summary(["src/client/store.ts"]), {
     domains: ["client"],
-    commands: ["npm run check:client", "npm run test:client"],
+    commands: ["npm run lint", "npm run check:client", "npm run test:client"],
     fallbackReasons: []
   });
 });
@@ -22,7 +22,7 @@ test("single client file runs client type checking and tests", () => {
 test("single server file runs server type checking and tests", () => {
   assert.deepEqual(summary(["src/server/linkPreview.ts"]), {
     domains: ["server"],
-    commands: ["npm run check:server", "npm run test:server"],
+    commands: ["npm run lint", "npm run check:server", "npm run test:server"],
     fallbackReasons: []
   });
 });
@@ -31,6 +31,7 @@ test("shared types cover both clients plus shared tests", () => {
   assert.deepEqual(summary(["src/shared/types.ts"]), {
     domains: ["shared"],
     commands: [
+      "npm run lint",
       "npm run check:client",
       "npm run check:server",
       "npm run test:client",
@@ -65,6 +66,7 @@ test("multiple source domains combine commands without duplicates", () => {
   assert.deepEqual(summary(["src/server/main.ts", "src/client/api.ts"]), {
     domains: ["client", "server"],
     commands: [
+      "npm run lint",
       "npm run check:client",
       "npm run check:server",
       "npm run test:client",

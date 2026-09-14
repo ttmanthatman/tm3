@@ -1113,3 +1113,11 @@ test("score pages can be managed individually and paged in preview", () => {
   assert.match(css, /\.score-preview-pager \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
   assert.match(css, /\.score-preview-pager button \{[\s\S]*?background: rgba\(20, 20, 20, 0\.24\);/);
 });
+
+test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
+  const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
+  assert.ok(
+    occurrences <= 10,
+    `App.vue must not add modal-shell blocks (baseline 10, found ${occurrences}); put new dialogs in focused components`
+  );
+});

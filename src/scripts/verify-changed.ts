@@ -37,6 +37,7 @@ const COMMAND_ORDER = [
   "npm run prisma:generate",
   "npm run check:public-tree",
   "npm run check:release",
+  "npm run lint",
   "npm run check:client",
   "npm run check:server",
   "npm run test:client",
@@ -147,11 +148,12 @@ export function classifyChangedFile(file: string): FileClassification {
 function commandsForDomain(domain: VerifyDomain) {
   switch (domain) {
     case "client":
-      return ["npm run check:client", "npm run test:client"];
+      return ["npm run lint", "npm run check:client", "npm run test:client"];
     case "server":
-      return ["npm run check:server", "npm run test:server"];
+      return ["npm run lint", "npm run check:server", "npm run test:server"];
     case "shared":
       return [
+        "npm run lint",
         "npm run check:client",
         "npm run check:server",
         "npm run test:client",

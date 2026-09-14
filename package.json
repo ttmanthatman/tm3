@@ -20,6 +20,10 @@
     "demo:disable": "tsx src/scripts/configure-demo-mode.ts disable",
     "demo:bundle": "tsx src/scripts/export-demo-snapshot.ts",
     "check": "npm run check:client && npm run check:server",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "check:client": "vue-tsc --noEmit",
     "check:server": "tsc -p tsconfig.server.json --noEmit",
     "check:public-tree": "tsx src/scripts/check-public-tree.ts",
@@ -46,7 +50,7 @@
     "test:security": "npm run test:server && npm run test:scripts && npm run test:service-worker",
     "release:prepare": "tsx src/scripts/prepare-release.ts",
     "verify:changed": "tsx src/scripts/verify-changed.ts",
-    "verify:full": "npm run check:public-tree && npm run check:release && npm run check && npm run test:all && npm run build"
+    "verify:full": "npm run check:public-tree && npm run check:release && npm run lint && npm run check && npm run test:all && npm run build"
   },
   "dependencies": {
     "@fastify/compress": "^9.1.1",
@@ -88,9 +92,13 @@
     "@types/web-push": "^3.6.4",
     "@vitejs/plugin-vue": "^6.0.7",
     "concurrently": "^10.0.5",
+    "eslint": "^10.10.0",
+    "eslint-plugin-vue": "^10.11.0",
+    "prettier": "^3.9.6",
     "prisma": "^6.9.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0",
     "vite": "^8.0.16",
     "vue-tsc": "^2.2.10"
   },

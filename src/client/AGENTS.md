@@ -13,6 +13,10 @@ Follow the root `AGENTS.md` first and use `docs/development-index.md` for the mo
 - Keep API calls behind the existing client API boundary.
 - Keep shared DTO assumptions aligned with `src/shared/`.
 - Prefer extending an existing focused module over creating a second implementation.
+- `components/ui/*` are presentation primitives: no API calls, no store access; communicate through props and emits only.
+- `features/<domain>/*` own domain UI and state; do not add new domain files at the `src/client/` root.
+- New dialogs and panels must not introduce additional `class="modal-shell"` blocks in `App.vue`; compose `components/ui/AppModal.vue` inside a focused component instead.
+- Naming for new code: visibility state uses the `*Open` suffix, in-flight submit state uses the `*Busy` suffix.
 
 ## Change Discipline
 
