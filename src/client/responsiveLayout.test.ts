@@ -18,6 +18,7 @@ const confirmDialog = fs.readFileSync(new URL("./components/ui/ConfirmDialog.vue
 const appField = fs.readFileSync(new URL("./components/ui/AppField.vue", import.meta.url), "utf8");
 const avatarImage = fs.readFileSync(new URL("./components/ui/AvatarImage.vue", import.meta.url), "utf8");
 const channelIcon = fs.readFileSync(new URL("./components/ui/ChannelIcon.vue", import.meta.url), "utf8");
+const messageRow = fs.readFileSync(new URL("./features/messages/MessageRow.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
 const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
@@ -193,7 +194,8 @@ test("all file previews keep close at the upper right and download at the lower 
 });
 
 test("audio attachments render their waveform player immediately without a collapsed state", () => {
-  assert.match(app, /<InlineAudioPlayer\s+v-else-if="isAudioMessage\(row\.message\)"/);
+  assert.match(messageRow, /<InlineAudioPlayer\s+v-else-if="isAudioMessage\(message\)"/);
+  assert.match(app, /<MessageRow[\s\S]*?variant="timeline"/);
   assert.match(inlineAudioPlayer, /class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
   assert.match(inlineAudioPlayer, /@seek="seek"/);
   assert.doesNotMatch(app, /isInlineAudioPlayerExpanded|expandInlineAudioPlayer|collapseInlineAudioPlayer|expandedAudioMessageIds/);
@@ -326,7 +328,8 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
   assert.match(css, /\.favorite-image-card \{[\s\S]*?width: fit-content;[\s\S]*?justify-self: start;/);
   assert.match(css, /\.favorite-image-card \.favorite-message-content \{[\s\S]*?background: transparent;/);
-  assert.match(app, /favorite\.message\.type === 'music_playlist'[\s\S]*?music-playlist-message-card[\s\S]*?openSharedMusicPlaylistFromTap\(favorite\.message\)/);
+  assert.match(app, /class="favorite-message-content"[\s\S]*?<MessageRow[\s\S]*?variant="favorite"/);
+  assert.match(messageRow, /message\.type === 'music_playlist'[\s\S]*?music-playlist-message-card[\s\S]*?emit\('open-shared-playlist', message\)/);
   assert.match(app, /async function removeFavorite[\s\S]*?window\.confirm\("取消收藏这条消息？"\)/);
 });
 
@@ -689,11 +692,12 @@ test("double-at song mentions render inline with independent playback controls",
   assert.match(app, /musicMentionTokenAtCursor\(input\.value, composerCaret\.value\)/);
   assert.match(app, /activeComposerSuggestionKind === 'music'[\s\S]*?chooseMusicMentionSuggestion\(track\)/);
   assert.match(app, /const mention = `@@\$\{track\.title\} `/);
-  assert.match(app, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
-  assert.match(app, /toggleMentionedMusic\(row\.message\)[\s\S]*?stopMentionedMusic\(row\.message\)/);
+  assert.match(messageRow, /class="message-text music-mention-text"[\s\S]*?class="music-mention-capsule"/);
+  assert.match(app, /onToggleMentionedMusic: toggleMentionedMusic[\s\S]*?onStopMentionedMusic: stopMentionedMusic/);
+  assert.match(messageRow, /emit\('toggle-mentioned-music', message\)[\s\S]*?emit\('stop-mentioned-music', message\)/);
   assert.match(app, /function stopMentionedMusic[\s\S]*?stopMusic\(\)/);
   assert.match(musicPlayer, /function stop\(\)[\s\S]*?audio\.currentTime = 0/);
-  assert.match(app, /v-if="!isMentionedMusicPlaying\(row\.message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-stop[\s\S]*?music-mention-capsule-pause/);
+  assert.match(messageRow, /v-if="!isMentionedMusicPlaying\(message\)"[\s\S]*?music-mention-capsule-play[\s\S]*?<template v-else>[\s\S]*?music-mention-capsule-stop[\s\S]*?music-mention-capsule-pause/);
   assert.match(css, /\.music-mention-text \.music-mention-title \{[\s\S]*?color: #ed741b;[\s\S]*?font-weight: 850;/);
   assert.match(css, /\.music-mention-capsule \{[\s\S]*?border-radius: 999px;[\s\S]*?radial-gradient[\s\S]*?box-shadow:/);
 });
@@ -829,8 +833,8 @@ test("large message timelines render a measured virtual window", () => {
 });
 
 test("image messages reserve their intrinsic aspect ratio before loading", () => {
-  assert.match(app, /:width="messageImageDimensions\(row\.message\)\?\.width"/);
-  assert.match(app, /:height="messageImageDimensions\(row\.message\)\?\.height"/);
+  assert.match(messageRow, /:width="messageImageDimensions\(message\)\?\.width"/);
+  assert.match(messageRow, /:height="messageImageDimensions\(message\)\?\.height"/);
   assert.match(app, /estimatedImageTimelineRowHeight\(row\.message, timelineViewportWidth\.value\)/);
 });
 
@@ -909,13 +913,14 @@ test("music manager offers library navigation, playlists, multi-select, and comp
   assert.match(musicManager, /v-model="shareDescription"/);
   assert.match(musicManager, /sharePlaylist[\s\S]*?\/share[\s\S]*?description: shareDescription\.value[\s\S]*?shareStatus/);
   assert.match(app, /function sharedMusicPlaylistDescription[\s\S]*?messagePayloadRecord/);
-  assert.match(app, /class="music-playlist-message-text"[\s\S]*?class="music-playlist-message-card"/);
-  assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}music-playlist-message-description/);
-  assert.doesNotMatch(app, /music-playlist-message-card[\s\S]{0,500}ownerName \}\} 分享的歌单/);
-  assert.match(app, /openSharedMusicPlaylistFromTap\(row\.message\)/);
+  assert.match(messageRow, /class="music-playlist-message-text"[\s\S]*?class="music-playlist-message-card"/);
+  assert.doesNotMatch(messageRow, /music-playlist-message-card[\s\S]{0,500}music-playlist-message-description/);
+  assert.doesNotMatch(messageRow, /music-playlist-message-card[\s\S]{0,500}ownerName \}\} 分享的歌单/);
+  assert.match(app, /onOpenSharedPlaylist: openSharedMusicPlaylistFromTap/);
   assert.match(app, /openSharedMusicPlaylistFromTap[\s\S]*?suppressNextTapUntil/);
   assert.match(app, /openMusicManager\(\{ kind: "playlist", id: playlist\.id \}\)/);
-  assert.match(app, /music-playlist-message-card[\s\S]*?@pointerdown\.stop="beginMessageLongPress\(row\.message, \$event\)"/);
+  assert.match(messageRow, /music-playlist-message-card[\s\S]*?@pointerdown\.stop="emit\('longpress-begin', message, \$event\)"/);
+  assert.match(app, /onLongpressBegin: beginMessageLongPress/);
   assert.match(server, /app\.post\("\/api\/music\/playlists\/:id\/share"[\s\S]*?description: z\.string\(\)\.trim\(\)\.max\(500\)[\s\S]*?payload:[\s\S]*?description: body\.description/);
   assert.match(css, /\.music-playlist-bubble \{[\s\S]*?width: fit-content;/);
   assert.match(css, /\.music-playlist-cluster \{[\s\S]*?width: fit-content;/);

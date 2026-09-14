@@ -101,7 +101,7 @@ import { isForwardableMessage } from "./messageForward";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
-import InlineAudioPlayer from "./components/InlineAudioPlayer.vue";
+import MessageRow from "./features/messages/MessageRow.vue";
 import OverflowMarquee from "./components/OverflowMarquee.vue";
 import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
@@ -4650,6 +4650,54 @@ async function openBibleReferenceInWorkspace(scope: string | number, reference: 
 function isMine(message: MessageDTO) {
   return message.sender.id === store.account?.actorId || (!!message.sender.username && message.sender.username === store.account?.username);
 }
+
+// Stable helper/handler bundle shared by the timeline bubble and the favorites
+// card so both render message bodies through MessageRow with identical wiring.
+// brokenAttachmentIds is a ref and is bound separately at each usage site.
+const messageRowBindings = {
+  fileUrl,
+  fileThumbUrl,
+  compactBytes,
+  formatDuration,
+  isAudioMessage,
+  isVideoMessage,
+  isVoiceMessage,
+  voiceDurationMs,
+  hasUnlistenedVoice,
+  isDocumentMessage,
+  documentIconSrc,
+  documentKindLabel,
+  messageImageDimensions,
+  messageImagePresentationStyle,
+  sharedMusicPlaylistDescription,
+  markdownMessageHtml,
+  messageContentHtml,
+  messageRichTextSegments,
+  linkPreviewFor,
+  musicMentionTextHtml,
+  musicMentionTitle,
+  musicMentionBackground,
+  isMentionedMusicPlaying,
+  isMusicMentionBackgroundExpanded,
+  isBibleReferenceExpanded,
+  isBibleReferenceBusy,
+  bibleReferenceLookup,
+  formatBibleLookup,
+  onOpenSharedPlaylist: openSharedMusicPlaylistFromTap,
+  onLongpressBegin: beginMessageLongPress,
+  onLongpressMove: moveMessageLongPress,
+  onLongpressClear: clearMessageLongPress,
+  onOpenAttachment: openAttachmentFromTap,
+  onImageLoad: handleMessageImageLoad,
+  onImageError: markAttachmentBroken,
+  onVoicePlay: markVoiceListened,
+  onVoiceDownload: requestDownload,
+  onToggleMentionedMusic: toggleMentionedMusic,
+  onStopMentionedMusic: stopMentionedMusic,
+  onToggleMusicMentionBackground: toggleMusicMentionBackground,
+  onToggleBibleReference: toggleBibleReference,
+  onOpenBibleReference: openBibleReferenceInWorkspace
+};
 </script>
 
 <template>
@@ -5385,17 +5433,12 @@ function isMine(message: MessageDTO) {
                 <button class="favorite-remove" type="button" @click="removeFavorite(favorite)" aria-label="取消收藏"><X :size="16" /></button>
               </header>
               <div class="favorite-message-content">
-                <img v-if="favorite.message.type === 'image'" class="favorite-message-image" :src="fileUrl(favorite.message)" loading="lazy" alt="收藏的图片" />
-                <div v-else-if="isVoiceMessage(favorite.message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(favorite.message)) }}</span></div>
-                <div v-else-if="favorite.message.type === 'file'" class="favorite-message-file"><FileUp :size="19" /><span>{{ favorite.message.fileName || "附件" }}</span><small>{{ compactBytes(favorite.message.fileSize) }}</small></div>
-                <button v-else-if="favorite.message.type === 'music_playlist'" class="music-playlist-message-card" type="button" @click="openSharedMusicPlaylistFromTap(favorite.message)">
-                  <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
-                  <span v-if="favorite.message.musicPlaylist" class="music-playlist-message-copy"><strong>{{ favorite.message.musicPlaylist.name }}</strong><em>{{ favorite.message.musicPlaylist.trackCount }} 首</em></span>
-                  <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
-                  <ChevronRight :size="18" />
-                </button>
-                <div v-else-if="isMarkdownMessage(favorite.message)" class="message-text markdown-render" v-html="markdownMessageHtml(favorite.message)"></div>
-                <div v-else class="message-text" v-html="messageContentHtml(favorite.message)"></div>
+                <MessageRow
+                  variant="favorite"
+                  :message="favorite.message"
+                  :broken-attachment-ids="brokenAttachmentIds"
+                  v-bind="messageRowBindings"
+                />
               </div>
               <footer class="favorite-message-actions">
                 <span>长按卡片跳转</span>
@@ -5788,156 +5831,13 @@ function isMine(message: MessageDTO) {
                     </div>
                   </div>
                 </template>
-                <template v-else-if="row.message.type === 'music_playlist'">
-                  <p v-if="sharedMusicPlaylistDescription(row.message)" class="music-playlist-message-text">{{ sharedMusicPlaylistDescription(row.message) }}</p>
-                  <button
-                    class="music-playlist-message-card"
-                    type="button"
-                    @pointerdown.stop="beginMessageLongPress(row.message, $event)"
-                    @pointermove.stop="moveMessageLongPress"
-                    @pointerup.stop="clearMessageLongPress"
-                    @pointercancel.stop="clearMessageLongPress"
-                    @pointerleave.stop="clearMessageLongPress"
-                    @click.stop="openSharedMusicPlaylistFromTap(row.message)"
-                  >
-                    <span class="music-playlist-message-icon"><AudioLines :size="25" /></span>
-                    <span v-if="row.message.musicPlaylist" class="music-playlist-message-copy">
-                      <strong>{{ row.message.musicPlaylist.name }}</strong>
-                      <em>{{ row.message.musicPlaylist.trackCount }} 首<template v-if="row.message.musicPlaylist.tracks.length"> · {{ row.message.musicPlaylist.tracks.slice(0, 3).map((track) => track.title).join('、') }}</template></em>
-                    </span>
-                    <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong><em>创建者已移除这个歌单</em></span>
-                    <ChevronRight :size="18" />
-                  </button>
-                </template>
-                <template v-else-if="row.message.type === 'image'">
-                  <p v-if="brokenAttachmentIds.has(row.message.id)" class="attachment-broken">转发附件已被删除</p>
-                  <button
-                    v-else
-                    class="image-preview-button"
-                    :class="{ 'image-preview-sized': !!messageImageDimensions(row.message) }"
-                    :style="messageImagePresentationStyle(row.message)"
-                    aria-label="查看图片"
-                    @click.stop="openAttachmentFromTap(row.message, $event)"
-                  >
-                    <img
-                      class="chat-image"
-                      :src="fileThumbUrl(row.message)"
-                      :width="messageImageDimensions(row.message)?.width"
-                      :height="messageImageDimensions(row.message)?.height"
-                      loading="lazy"
-                      decoding="async"
-                      fetchpriority="low"
-                      @load="handleMessageImageLoad(row.message, $event)"
-                      @error="markAttachmentBroken(row.message)"
-                      alt=""
-                    />
-                  </button>
-                </template>
-                <InlineAudioPlayer
-                  v-else-if="isAudioMessage(row.message)"
+                <MessageRow
+                  v-else
+                  variant="timeline"
                   :message="row.message"
-                  :src="fileUrl(row.message)"
-                  :unread="hasUnlistenedVoice(row.message)"
-                  @play="markVoiceListened(row.message)"
-                  @download="requestDownload(row.message, $event)"
+                  :broken-attachment-ids="brokenAttachmentIds"
+                  v-bind="messageRowBindings"
                 />
-                <template v-else-if="isVideoMessage(row.message)">
-                  <button class="media-file-card video-file-card" @click.stop="openAttachmentFromTap(row.message, $event)">
-                    <span class="media-file-icon"><Play :size="22" /></span>
-                    <span>{{ row.message.fileName }}</span>
-                    <small>{{ compactBytes(row.message.fileSize) }}</small>
-                  </button>
-                </template>
-                <template v-else-if="row.message.type === 'file'">
-                  <button class="file-card" data-file-card @click.stop="openAttachmentFromTap(row.message, $event)">
-                    <img v-if="isDocumentMessage(row.message)" class="file-card-icon" :src="documentIconSrc(row.message)" alt="" />
-                    <span v-else class="generic-file-icon"><Download :size="18" /></span>
-                    <span>{{ row.message.fileName }}</span>
-                    <small>{{ documentKindLabel(row.message) }} · {{ compactBytes(row.message.fileSize) }}</small>
-                  </button>
-                </template>
-                <template v-else>
-                  <template v-if="musicMentionPayload(row.message)">
-                    <div class="message-text music-mention-text" v-html="musicMentionTextHtml(row.message)"></div>
-                    <div
-                      class="music-mention-capsule"
-                      :class="{ playing: isMentionedMusicPlaying(row.message) }"
-                      role="group"
-                      :aria-label="`${musicMentionTitle(row.message)}播放控制`"
-                      @click.stop
-                      @pointerdown.stop
-                    >
-                      <button
-                        v-if="!isMentionedMusicPlaying(row.message)"
-                        type="button"
-                        class="music-mention-capsule-action music-mention-capsule-play"
-                        @click="toggleMentionedMusic(row.message)"
-                        aria-label="播放歌曲"
-                      >
-                        <Play :size="16" fill="currentColor" />
-                        <span>播放</span>
-                      </button>
-                      <template v-else>
-                        <button type="button" class="music-mention-capsule-action music-mention-capsule-stop" @click="stopMentionedMusic(row.message)" aria-label="停止歌曲">
-                          <Square :size="13" fill="currentColor" />
-                          <span>停止</span>
-                        </button>
-                        <i class="music-mention-capsule-divider" aria-hidden="true"></i>
-                        <button type="button" class="music-mention-capsule-action music-mention-capsule-pause" @click="toggleMentionedMusic(row.message)" aria-label="暂停歌曲">
-                          <Pause :size="15" fill="currentColor" />
-                          <span>暂停</span>
-                        </button>
-                      </template>
-                    </div>
-                    <button
-                      v-if="musicMentionBackground(row.message)"
-                      type="button"
-                      class="music-mention-background-toggle"
-                      :class="{ expanded: isMusicMentionBackgroundExpanded(row.message) }"
-                      :aria-expanded="isMusicMentionBackgroundExpanded(row.message)"
-                      aria-label="展开或收起写作背景"
-                      @click.stop="toggleMusicMentionBackground(row.message)"
-                      @pointerdown.stop
-                    >
-                      <BookOpen :size="13" />
-                      <span>写作背景</span>
-                      <ChevronDown :size="13" class="music-mention-background-chevron" />
-                    </button>
-                    <div
-                      v-if="isMusicMentionBackgroundExpanded(row.message) && musicMentionBackground(row.message)"
-                      class="music-mention-background"
-                    >{{ musicMentionBackground(row.message) }}</div>
-                  </template>
-                  <template v-else>
-                    <div v-if="isMarkdownMessage(row.message)" class="message-text markdown-render" v-html="markdownMessageHtml(row.message)"></div>
-                    <div v-else class="message-text bible-rich-text">
-                      <template v-for="segment in messageRichTextSegments(row.message)" :key="segment.key">
-                        <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
-                        <span v-else class="inline-bible-reference" :class="segment.className" @click.stop>
-                          <button class="inline-bible-btn" type="button" @click.stop="toggleBibleReference(messageBibleReferenceScope(row.message, 'content'), segment.reference)">
-                            <BookOpen :size="13" />{{ segment.reference }}
-                          </button>
-                          <span v-if="isBibleReferenceExpanded(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-popover">
-                            <span v-if="isBibleReferenceBusy(messageBibleReferenceScope(row.message, 'content'), segment.reference)" class="inline-bible-empty">正在查找经文...</span>
-                            <template v-else-if="bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.verses.length">
-                              <small>{{ bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference)?.translation }}</small>
-                              <span class="inline-bible-passage"><span class="inline-bible-body">{{ formatBibleLookup(bibleReferenceLookup(messageBibleReferenceScope(row.message, 'content'), segment.reference), segment.reference) }}</span><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(messageBibleReferenceScope(row.message, 'content'), segment.reference)"><BookOpen :size="15" /></button></span>
-                            </template>
-                            <span v-else class="inline-bible-empty">暂时找不到这处经文</span>
-                          </span>
-                        </span>
-                      </template>
-                    </div>
-                    <a v-if="linkPreviewFor(row.message)" class="link-preview-card" :href="linkPreviewFor(row.message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
-                      <span class="link-preview-copy">
-                        <small>{{ previewSiteName(linkPreviewFor(row.message)) }}</small>
-                        <strong>{{ linkPreviewFor(row.message)?.title }}</strong>
-                        <em v-if="linkPreviewFor(row.message)?.description">{{ linkPreviewFor(row.message)?.description }}</em>
-                      </span>
-                      <img v-if="linkPreviewFor(row.message)?.image" :src="linkPreviewFor(row.message)?.image" alt="" loading="lazy" />
-                    </a>
-                  </template>
-                </template>
               </div>
               <button
                 v-if="musicScorePreviewPage(row.message)"
