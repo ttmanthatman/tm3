@@ -1,0 +1,511 @@
+@media (max-width: 1024px) {
+  .app-shell {
+    grid-template-columns: 248px minmax(0, 1fr);
+  }
+
+  .appearance-admin-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .appearance-preview-panel {
+    grid-column: 1 / -1;
+    position: static;
+  }
+
+  .app-shell.channels-collapsed,
+  .app-shell.channels-collapsed.members-collapsed {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+
+  .app-shell.members-collapsed {
+    grid-template-columns: 248px minmax(0, 1fr);
+  }
+
+  .member-pane {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(320px, 86vw);
+    padding-top: var(--safe-top);
+    transform: translateX(102%);
+    transition: transform 0.2s ease;
+    z-index: 23;
+  }
+
+  .member-pane.open {
+    transform: translateX(0);
+  }
+
+  .scrim {
+    display: block;
+  }
+
+  .tablet-down {
+    display: grid;
+  }
+}
+
+@media (max-width: 760px) {
+  .chat-pane {
+    height: var(--app-height);
+  }
+
+  .chat-head {
+    height: calc(48px + var(--safe-top));
+    min-height: calc(48px + var(--safe-top));
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .music-lyrics-header {
+    height: calc(104px + var(--safe-top));
+    padding: calc(var(--safe-top) + 12px) 14px 12px;
+    gap: 7px;
+    border-radius: 0;
+  }
+
+  .messages-scroll {
+    padding: 8px 10px 12px;
+  }
+
+  .bubble-wrap {
+    max-width: calc(100vw - 94px);
+  }
+
+  .avatar {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .member-tile .avatar,
+  .member-tool-avatar {
+    width: 48px;
+    height: 48px;
+    flex-basis: 48px;
+  }
+
+  .member-picker-row .avatar {
+    width: 42px;
+    height: 42px;
+    flex-basis: 42px;
+  }
+
+  .sender-line {
+    display: flex;
+    margin-bottom: 2px;
+    font-size: 11px;
+    line-height: 1.15;
+  }
+
+  .message-row {
+    gap: 7px;
+    margin: 7px 0;
+  }
+
+  .bubble {
+    padding: 8px 10px;
+  }
+
+  .prayer-bubble {
+    width: min(360px, calc(100vw - 94px));
+    padding: 0;
+  }
+
+  .composer {
+    padding: 6px 4px var(--composer-bottom-gap);
+  }
+
+  .modal-shell {
+    padding: max(8px, calc(var(--safe-top) + 8px)) 8px max(8px, calc(var(--safe-bottom) + 8px));
+    place-items: center;
+  }
+
+  .admin-modal,
+  .settings-modal,
+  .small-modal {
+    width: 100%;
+    max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 16px);
+  }
+
+  .admin-modal {
+    height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 16px);
+  }
+
+  .modal-head {
+    min-height: 48px;
+    padding: 0 10px;
+  }
+
+  .tabs button {
+    min-height: 44px;
+    padding: 0 12px;
+  }
+
+  .composer-main {
+    gap: 2px;
+  }
+
+  .icon-btn {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .send-btn {
+    min-width: 42px;
+    padding: 0 10px;
+  }
+
+  .composer-main .composer-edge-btn {
+    width: 38px;
+    min-width: 38px;
+    height: 38px;
+    flex-basis: 38px;
+    padding: 0;
+  }
+
+  .pin-card-body {
+    padding: 0 10px 9px 34px;
+  }
+
+  .pinned-view-head,
+  .pinned-view-body,
+  .pinned-view-actions {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .pinned-view-body {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .composer-drawer {
+    padding: 9px 4px var(--composer-drawer-bottom-gap);
+  }
+
+  .audio-card {
+    width: min(310px, 70vw);
+  }
+
+  .inline-audio-player {
+    width: min(330px, calc(100vw - 106px));
+    min-width: 0;
+  }
+
+  .inline-audio-head {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px;
+  }
+
+  .inline-audio-actions button {
+    width: 25px;
+    height: 25px;
+  }
+
+  .inline-audio-controls {
+    grid-template-columns: 36px minmax(0, 1fr);
+    gap: 7px;
+  }
+
+  .inline-audio-play {
+    width: 36px;
+    height: 36px;
+  }
+
+  .music-score-inline-preview {
+    width: 50px;
+    min-width: 50px;
+  }
+
+  .inline-audio-time {
+    margin-left: 43px;
+  }
+
+  .voice-card {
+    width: 40vw;
+    min-width: 138px;
+    max-width: 180px;
+    grid-template-columns: 30px minmax(48px, 1fr) 34px;
+    gap: 5px;
+  }
+
+  .voice-upload-card {
+    width: min(210px, 56vw);
+    grid-template-columns: 30px minmax(78px, 1fr) auto;
+  }
+
+  .voice-meta small {
+    display: none;
+  }
+
+  .voice-waveform,
+  .preview-waveform {
+    gap: 1px;
+  }
+
+  .voice-preview {
+    grid-template-columns: 36px minmax(0, 1fr) 54px;
+  }
+
+  .voice-preview-card {
+    grid-template-columns: 32px minmax(82px, 1fr) 38px;
+    gap: 6px;
+    padding-right: 8px;
+  }
+
+  .more-drawer {
+    gap: 10px;
+  }
+
+  .tool-tile span {
+    width: 58px;
+  }
+
+  .device-row,
+  .channel-admin-row,
+  .admin-data-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .data-toolbar,
+  .data-toolbar-compact,
+  .admin-inline-card,
+  .appearance-preview-grid,
+  .theme-editor-head,
+  .color-row,
+  .theme-admin-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .device-row .mini-btn,
+  .channel-icon-admin,
+  .channel-admin-row .mini-btn,
+  .admin-data-row .mini-btn,
+  .backup-actions,
+  .admin-inline-card .primary-btn,
+  .data-toolbar input,
+  .data-toolbar select {
+    grid-column: 1 / -1;
+  }
+
+  .channel-icon-admin {
+    width: 100%;
+    grid-template-columns: 46px minmax(0, 1fr);
+    justify-items: start;
+    align-items: center;
+  }
+
+  .data-toolbar .mini-btn,
+  .admin-data-row .mini-btn,
+  .backup-actions,
+  .admin-inline-card .primary-btn {
+    width: 100%;
+  }
+
+  .backup-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-body {
+    padding: 12px;
+  }
+
+  .admin-modal > .admin-body {
+    padding: 0;
+  }
+
+  .admin-hub,
+  .admin-page-section,
+  .appearance-admin-layout {
+    padding: 16px 12px;
+  }
+
+  .admin-page-head {
+    min-height: 56px;
+  }
+
+  .direct-history-row {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
+
+  .direct-history-row > .mini-btn {
+    grid-column: 2;
+    width: max-content;
+  }
+
+  .appearance-admin-layout {
+    grid-template-columns: minmax(0, 1fr);
+    padding-bottom: 76px;
+  }
+
+  .appearance-save-bar,
+  .appearance-preview-panel header,
+  .appearance-image-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .appearance-save-bar {
+    order: 3;
+    position: sticky;
+    bottom: -12px;
+    z-index: 5;
+    box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.08);
+  }
+
+  .appearance-editor-panel {
+    order: 1;
+  }
+
+  .appearance-preview-panel {
+    display: none;
+  }
+
+  .appearance-preview-panel.open {
+    position: fixed;
+    inset: 0;
+    z-index: 46;
+    padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px);
+    display: grid;
+    align-content: start;
+    overflow: auto;
+    background: rgba(255, 255, 255, 0.96);
+  }
+
+  .appearance-save-bar,
+  .appearance-preview-panel header {
+    display: grid;
+    align-items: stretch;
+  }
+
+  .appearance-preview-panel header {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+
+  .appearance-preview-panel header > div {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .appearance-preview-panel header > .appearance-preview-close {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .appearance-preview-panel header > span {
+    grid-column: 1 / -1;
+    width: max-content;
+  }
+
+  .appearance-save-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .appearance-mobile-preview-btn,
+  .appearance-preview-close {
+    display: grid;
+  }
+
+  .appearance-image-control {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .appearance-image-control select {
+    grid-column: 1 / -1;
+  }
+
+  .wallpaper-pan-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wallpaper-pan-focus-picker {
+    min-height: 130px;
+  }
+
+  .appearance-image-control .mini-btn,
+  .appearance-image-control select,
+  .appearance-save-bar .primary-btn {
+    width: 100%;
+  }
+
+  .appearance-device.mobile {
+    width: 100%;
+  }
+
+  .tabs button {
+    min-height: 46px;
+    padding: 0 12px;
+  }
+
+  .message-selection-bar {
+    flex-wrap: wrap;
+  }
+
+  .message-selection-bar span {
+    flex-basis: 100%;
+  }
+
+  .channel-admin-row {
+    grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .channel-icon-admin {
+    grid-column: 1;
+    width: 56px;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+  }
+
+  .channel-admin-main {
+    grid-column: 2;
+  }
+
+  .channel-admin-row > .mini-btn {
+    grid-column: 2;
+    width: 100%;
+  }
+
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  .mobile-only {
+    display: grid;
+  }
+
+  .channel-pane {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(310px, 86vw);
+    padding-top: var(--safe-top);
+    transform: translateX(-102%);
+    transition: transform 0.2s ease;
+    z-index: 23;
+  }
+
+  .channel-pane.open {
+    transform: translateX(0);
+  }
+
+  .channel-pane.collapsed {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+

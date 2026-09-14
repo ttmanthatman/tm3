@@ -1,0 +1,576 @@
+.message-font-glyph {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.icon-btn:active,
+.channel-row:active,
+.member-row:active {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.desktop-only {
+  display: grid;
+}
+
+.mobile-only,
+.tablet-down {
+  display: none;
+}
+
+.channel-row {
+  width: 100%;
+  min-height: 62px;
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.channel-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.favorites-entry {
+  position: relative;
+  z-index: 6;
+  flex: 0 0 auto;
+  min-height: 54px;
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  color: #b42355;
+  background: color-mix(in srgb, #ef476f 5%, transparent);
+  box-shadow: 0 -8px 18px rgba(15, 23, 42, 0.05);
+}
+
+.favorites-icon {
+  color: #ef476f;
+  background: #fff0f4;
+}
+
+.bible-favorites-entry {
+  color: #76502d;
+  background: color-mix(in srgb, #c28a43 7%, transparent);
+  box-shadow: none;
+}
+
+.bible-favorites-icon,
+.bible-favorites-main-icon {
+  color: #80613f;
+  background: #f3e7d2;
+}
+
+.favorites-empty {
+  margin: 48px auto;
+  max-width: 420px;
+  padding: 0 18px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.favorite-remove {
+  width: 30px;
+  height: 30px;
+  margin-left: auto;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.favorites-main-scroll {
+  min-height: 0;
+  height: 100%;
+  padding: 18px clamp(14px, 4vw, 42px) 32px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.favorites-main-head,
+.favorites-main-list {
+  width: min(620px, 100%);
+  margin-inline: auto;
+}
+
+.favorites-main-head {
+  margin-bottom: 14px;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, #ef476f 22%, var(--line));
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--panel) 88%, #fff0f4);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.favorites-main-icon {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #ef476f;
+  background: #fff0f4;
+}
+
+.favorites-main-head > div,
+.favorite-message-head > div:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.favorites-main-head small,
+.favorite-message-head small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.favorites-main-list {
+  display: grid;
+  gap: 12px;
+}
+
+.bible-favorites-main-head {
+  border-color: color-mix(in srgb, #a87943 28%, var(--line));
+  background: color-mix(in srgb, var(--panel) 86%, #f3e7d2);
+}
+
+.bible-favorite-passage-list {
+  gap: 14px;
+}
+
+.bible-favorites-error {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: #a4382c;
+}
+
+.bible-favorite-passage-card {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.bible-favorite-passage-head {
+  min-height: 48px;
+  padding: 8px 10px 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid color-mix(in srgb, #a87943 18%, var(--line));
+  background: color-mix(in srgb, #f3e7d2 42%, var(--panel));
+}
+
+.bible-favorite-passage-head > button:first-child {
+  min-width: 0;
+  border: 0;
+  padding: 6px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #76502d;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.bible-favorite-passage-head strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 18px;
+}
+
+.bible-favorite-expanded {
+  padding: 15px 16px 17px;
+  color: #4f3b29;
+  background: color-mix(in srgb, var(--panel) 96%, #fff9ed);
+}
+
+.bible-favorite-expanded small {
+  display: block;
+  margin-bottom: 7px;
+  color: #92775b;
+  font-size: 11px;
+}
+
+.bible-favorite-expanded .formatted-bible-text {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: calc(var(--message-content-font-size) + 2px);
+  line-height: 1.85;
+}
+
+.favorite-message-card {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 94%, #ffffff);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.favorite-message-card:active {
+  border-color: color-mix(in srgb, #ef476f 42%, var(--line));
+  transform: scale(0.997);
+}
+
+.favorite-message-head {
+  padding: 13px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.favorite-message-head .avatar {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+
+.favorite-message-content {
+  margin: 0 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--chat-bg) 52%, var(--panel));
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.favorite-message-content .message-text {
+  white-space: normal;
+}
+
+.favorite-message-image {
+  display: block;
+  width: auto;
+  max-width: min(100%, 420px);
+  max-height: 360px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.favorite-image-card {
+  width: fit-content;
+  max-width: 100%;
+  justify-self: start;
+}
+
+.favorite-image-card .favorite-message-content {
+  margin: 0 10px;
+  padding: 0;
+  background: transparent;
+}
+
+.favorite-image-card .favorite-message-image {
+  max-width: min(100%, 320px);
+  max-height: 520px;
+}
+
+.favorite-message-file {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.favorite-message-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.favorite-message-file small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.favorite-message-actions {
+  min-height: 48px;
+  padding: 9px 14px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.favorite-message-actions > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.channel-row-wrap {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: stretch;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.channel-row-wrap.has-action {
+  grid-template-columns: minmax(0, 1fr) 42px;
+}
+
+.channel-row-wrap > .channel-row {
+  border-bottom: 0;
+}
+
+.channel-row-wrap.has-list-color > .channel-row {
+  background: var(--channel-list-color);
+}
+
+.channel-row-wrap.has-list-color.active > .channel-row {
+  background: color-mix(in srgb, var(--channel-list-color) 72%, #dcdcdc);
+}
+
+.channel-row-wrap.active {
+  background: #dcdcdc;
+}
+
+.channel-row.active {
+  background: #dcdcdc;
+}
+
+.channel-row-label {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.channel-list-color-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.channel-list-color-field input[type="color"] {
+  width: 48px;
+  height: 36px;
+  padding: 2px;
+}
+
+.channel-row-action {
+  width: 34px;
+  height: 34px;
+  align-self: center;
+  justify-self: center;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  opacity: 0.66;
+}
+
+.channel-row-wrap:hover .channel-row-action,
+.channel-row-action:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.channel-row-action:active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.channel-subrow {
+  min-height: 44px;
+  padding: 6px 14px 6px 34px;
+  gap: 10px;
+  color: #4d5a50;
+}
+
+.channel-subrow b {
+  font-size: 13px;
+}
+
+.channel-icon {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  background: #e9ecef;
+}
+
+.private-channel-badge {
+  position: absolute;
+  z-index: 2;
+  right: -4px;
+  bottom: -4px;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #9a5800;
+  background: #fff0ad;
+  font-style: normal;
+  line-height: 1;
+  box-shadow: 0 1px 4px rgba(83, 51, 0, 0.22);
+}
+
+.channel-unread-badge {
+  position: absolute;
+  z-index: 3;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #f04438;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.channel-mobile-unread {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: #f04438;
+  box-shadow: 0 1px 5px rgba(176, 28, 22, 0.34);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.channel-icon.prayer-icon {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  color: #8a4a1f;
+  background: #fff0d6;
+}
+
+.channel-icon img {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.channel-icon-glyph {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #7a3f16;
+  background: linear-gradient(145deg, #fff3c4, #f7c873);
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  border-radius: inherit;
+  overflow: hidden;
+}
+
+.profile-row {
+  position: relative;
+  z-index: 7;
+  flex: 0 0 auto;
+  margin-top: auto;
+  min-height: 64px;
+  padding: 10px 12px calc(10px + var(--safe-bottom));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.avatar {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #cfd8dc;
+  color: #263238;
+  font-weight: 700;
+}
+
+.online-dot {
+  position: absolute;
+  z-index: 2;
+  right: -3px;
+  bottom: -3px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--panel);
+  border-radius: 999px;
+  background: #22c55e;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
+}
+
+.message-row .online-dot {
+  border-color: var(--chat-bg);
+}
+
+.presence-avatar {
+  overflow: visible;
+}
+
+.avatar-clickable {
+  cursor: pointer;
+}
+
+.presence-avatar > img {
+  border-radius: inherit;
+}
+
+.avatar.bot {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.avatar img {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+

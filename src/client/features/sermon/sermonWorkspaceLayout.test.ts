@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { readClientStyles } from "../../stylesManifest";
 
 const workspace = readFileSync(new URL("./SermonWorkspace.vue", import.meta.url), "utf8");
 const hub = readFileSync(new URL("./SermonHub.vue", import.meta.url), "utf8");
@@ -8,7 +9,7 @@ const entryDialog = readFileSync(new URL("./SermonEntryDialog.vue", import.meta.
 const overlay = readFileSync(new URL("./SermonOverlay.vue", import.meta.url), "utf8");
 const stage = readFileSync(new URL("./SermonStage.vue", import.meta.url), "utf8");
 const contextPanel = readFileSync(new URL("./SermonContextPanel.vue", import.meta.url), "utf8");
-const css = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+const css = readClientStyles();
 
 test("late-mounted preview refs reconnect to ResizeObserver", () => {
   assert.match(workspace, /watch\(\[projectorFrame, phoneFrame\], reconnectPreviewObserver, \{ flush: "post" \}\)/);

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { readClientStyles } from "./stylesManifest";
 
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const manager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
-const styles = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const styles = readClientStyles();
 
 test("playlist sharing always opens an explicit channel destination dialog", () => {
   assert.match(manager, /aria-label="分享歌单" @click="openShare\(playlist\)"/);

@@ -1,0 +1,503 @@
+.ai-settings-page {
+  width: 100%;
+  height: var(--app-height);
+  min-height: var(--app-height);
+  padding: calc(var(--safe-top) + 18px) 16px calc(var(--safe-bottom) + 18px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--bg);
+  gap: 20px;
+}
+
+.ai-settings-panel {
+  width: min(680px, 100%);
+  max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 36px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.12);
+}
+
+.ai-settings-head {
+  min-height: 58px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-settings-head div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-settings-head strong {
+  font-size: 17px;
+}
+
+.ai-settings-head small {
+  color: var(--muted);
+}
+
+.ai-settings-form {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.ai-settings-tabs {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: color-mix(in srgb, var(--panel) 86%, var(--bg));
+}
+
+.ai-settings-tabs button {
+  min-height: 36px;
+  border-radius: 6px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  background: transparent;
+}
+
+.ai-settings-tabs button.active {
+  color: var(--button-text);
+  background: var(--accent);
+}
+
+.ai-settings-full-page {
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.12), transparent 34%),
+    linear-gradient(315deg, rgba(56, 189, 248, 0.14), transparent 38%),
+    #f6f8fb;
+}
+
+.ai-settings-workspace {
+  width: 100%;
+  height: var(--app-height);
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  background: transparent;
+  box-shadow: none;
+}
+
+.ai-settings-workspace .ai-settings-head {
+  min-height: calc(var(--safe-top) + 76px);
+  padding: calc(var(--safe-top) + 14px) clamp(18px, 3vw, 34px) 16px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(18px);
+}
+
+.ai-settings-workspace .ai-settings-head strong {
+  color: #0f172a;
+  font-size: clamp(22px, 2.4vw, 30px);
+  line-height: 1.1;
+}
+
+.ai-settings-workspace .ai-settings-head small {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.ai-settings-workspace .ai-settings-head .mini-btn {
+  min-width: 104px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.08);
+}
+
+.ai-settings-overview {
+  padding: 14px clamp(18px, 3vw, 34px);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.ai-settings-overview > div {
+  min-width: 0;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.06);
+}
+
+.ai-settings-overview span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-settings-overview strong {
+  color: #0f172a;
+  font-size: 20px;
+  overflow-wrap: anywhere;
+}
+
+.ai-settings-shell {
+  min-height: 0;
+  padding: 0 clamp(18px, 3vw, 34px) calc(var(--safe-bottom) + 20px);
+  display: grid;
+  grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  gap: 16px;
+  overflow: hidden;
+}
+
+.ai-settings-workspace .ai-settings-tabs {
+  align-self: start;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.ai-settings-workspace .ai-settings-tabs button {
+  min-height: 58px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  color: #475569;
+  font-size: 14px;
+  text-align: left;
+  background: transparent;
+}
+
+.ai-settings-workspace .ai-settings-tabs button span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-settings-workspace .ai-settings-tabs button small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ai-settings-workspace .ai-settings-tabs button.active {
+  border-color: rgba(20, 184, 166, 0.32);
+  color: #0f766e;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.16), rgba(56, 189, 248, 0.12));
+  box-shadow: inset 3px 0 0 #14b8a6;
+}
+
+.ai-settings-workspace .ai-settings-form {
+  min-height: 0;
+  padding: 0 2px 2px;
+  overflow: auto;
+  align-content: start;
+  gap: 14px;
+}
+
+.ai-settings-card {
+  border-color: rgba(15, 23, 42, 0.08);
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.07);
+}
+
+.ai-section-title {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.ai-section-title strong {
+  color: #0f172a;
+  font-size: 16px;
+}
+
+.ai-section-title small {
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.ai-settings-workspace .form-grid input,
+.ai-settings-workspace .form-grid select,
+.ai-settings-workspace .form-grid textarea {
+  border-color: rgba(15, 23, 42, 0.12);
+  border-radius: 7px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(15, 23, 42, 0.03);
+}
+
+.ai-settings-workspace .form-grid input:focus,
+.ai-settings-workspace .form-grid textarea:focus {
+  outline: 2px solid rgba(20, 184, 166, 0.25);
+  border-color: rgba(20, 184, 166, 0.7);
+}
+
+.ai-settings-workspace .ai-defaults {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-color: rgba(20, 184, 166, 0.18);
+  color: #475569;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.08), rgba(245, 158, 11, 0.08));
+}
+
+.ai-settings-inline-actions,
+.ai-settings-savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.ai-settings-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 -12px 34px rgba(15, 23, 42, 0.08);
+}
+
+.ai-settings-savebar .settings-note {
+  margin: 0;
+}
+
+.ai-settings-savebar .primary-btn,
+.ai-settings-inline-actions .primary-btn {
+  background: #0f766e;
+  box-shadow: 0 12px 26px rgba(15, 118, 110, 0.22);
+}
+
+.login-log-panel {
+  width: min(980px, 100%);
+}
+
+.login-log-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.login-log-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px;
+}
+
+.activity-log-filters {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.activity-log-filters button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.activity-log-filters button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--accent) 12%, white);
+}
+
+.login-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.login-log-row {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  background: #fff;
+}
+
+.login-log-badge {
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: #374151;
+  background: #f3f4f6;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.login-log-badge.enter {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.login-log-badge.leave {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.login-log-badge.music {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
+.login-log-badge.usage {
+  color: #1e3a8a;
+  background: #dbeafe;
+}
+
+.login-log-main {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.login-log-title,
+.login-log-meta {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.login-log-title strong {
+  font-size: 14px;
+}
+
+.login-log-title small,
+.login-log-title time,
+.login-log-meta,
+.login-log-agent {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.activity-log-detail {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.login-log-agent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-defaults,
+.ai-advanced-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-defaults {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.52);
+  font-size: 13px;
+}
+
+.ai-advanced-toggle {
+  justify-self: start;
+}
+
+.ai-denied-panel {
+  min-height: 240px;
+  grid-template-rows: none;
+  place-items: center;
+  padding: 22px;
+  text-align: center;
+}
+
+.ai-denied-panel p {
+  margin: 0;
+  color: var(--muted);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+input,
+textarea {
+  font-size: 16px;
+}
+
+button {
+  border: 0;
+  background: none;
+  color: inherit;
+}
+
+/* Older iPad WebKit can add native button padding to the grid alignment area. */
+.icon-btn,
+.notification-nudge,
+.favorite-remove,
+.channel-row-action,
+.pin-toggle,
+.message-select-btn,
+.inline-audio-actions button,
+.inline-audio-play,
+.voice-play,
+.preview-play,
+.mini-icon-btn,
+.preview-control,
+.score-preview-pager button,
+.admin-account-avatar-action,
+.music-manager-icon-btn,
+.music-manager-play,
+.music-manager-heart,
+.music-manager-playlist-actions button,
+.music-manager-score-pages figcaption button {
+  padding: 0;
+}
+
+.hidden {
+  display: none;
+}
+

@@ -1,0 +1,130 @@
+.member-list {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.member-pane-head {
+  gap: 8px;
+}
+
+.member-pane-title {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.member-pane-title strong,
+.member-pane-title small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-pane-title small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.member-pane-head .icon-btn.active {
+  color: #b42318;
+  background: #fff1f0;
+}
+
+.member-manage-msg {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  color: #0b7d0a;
+  font-size: 13px;
+}
+
+.member-grid {
+  padding: 14px 12px 18px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 14px 8px;
+}
+
+.member-tile {
+  position: relative;
+  min-width: 0;
+  min-height: 88px;
+  padding: 0 2px;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 6px;
+  color: var(--text);
+  text-align: center;
+}
+
+.member-tile .avatar,
+.member-tool-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+}
+
+.member-tile > span:not(.member-tool-avatar),
+.member-tile > small {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-tile > span:not(.member-tool-avatar) {
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.member-tile > small {
+  min-height: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.member-tool-avatar {
+  border: 1px dashed color-mix(in srgb, var(--muted) 56%, transparent);
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: #4b5563;
+}
+
+.member-tool-avatar.danger {
+  border-color: #f3b3ad;
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.member-tool-tile.active .member-tool-avatar,
+.member-tile.removable .avatar {
+  box-shadow: 0 0 0 3px rgba(180, 35, 24, 0.14);
+}
+
+.member-tile.locked {
+  opacity: 0.45;
+}
+
+.member-remove-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 19px;
+  height: 19px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: #e5484d;
+  color: #fff;
+}
+

@@ -1,0 +1,325 @@
+.flash .bubble {
+  animation: flash 0.9s ease;
+}
+
+@keyframes messageShine {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@keyframes messageShake {
+  0%,
+  100% {
+    transform: rotate(-1.2deg) translateY(0);
+  }
+  25% {
+    transform: rotate(1.4deg) translateY(-1px);
+  }
+  50% {
+    transform: rotate(-0.8deg) translateY(1px);
+  }
+  75% {
+    transform: rotate(1deg) translateY(0);
+  }
+}
+
+@keyframes messageFly {
+  0% {
+    transform: translateX(-100vw);
+  }
+  100% {
+    transform: translateX(100vw);
+  }
+}
+
+@keyframes messageFlyReverse {
+  0% {
+    transform: translateX(100vw);
+  }
+  100% {
+    transform: translateX(-100vw);
+  }
+}
+
+@keyframes messageSunPulse {
+  0%,
+  100% {
+    filter: saturate(1);
+  }
+  50% {
+    filter: saturate(1.25) brightness(1.05);
+  }
+}
+
+@keyframes messageSunRays {
+  0% {
+    transform: rotate(0deg) scale(0.96);
+  }
+  50% {
+    transform: rotate(180deg) scale(1.04);
+  }
+  100% {
+    transform: rotate(360deg) scale(0.96);
+  }
+}
+
+@keyframes messageSunHalo {
+  0%,
+  100% {
+    opacity: 0.56;
+    transform: scale(0.94);
+  }
+  50% {
+    opacity: 0.86;
+    transform: scale(1.06);
+  }
+}
+
+@keyframes messageMarqueeSpin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes messageMarqueeBulbs {
+  0%,
+  100% {
+    opacity: 0.98;
+    filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.9));
+  }
+  50% {
+    opacity: 0.48;
+    filter: drop-shadow(0 0 2px rgba(255, 255, 255, 0.5));
+  }
+}
+
+@keyframes messageWaterRipple {
+  0% {
+    background-position:
+      0 0,
+      0 0;
+  }
+  100% {
+    background-position:
+      130px 54px,
+      -108px 42px;
+  }
+}
+
+@keyframes messageRainLines {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: -18px 28px;
+  }
+}
+
+@keyframes messageSkeleton {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -120% 0;
+  }
+}
+
+@keyframes mentionBubbleGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0 rgba(245, 158, 11, 0.2),
+      0 8px 22px rgba(120, 53, 15, 0.08);
+  }
+  50% {
+    box-shadow:
+      0 0 0 5px rgba(245, 158, 11, 0.18),
+      0 10px 28px rgba(120, 53, 15, 0.16);
+  }
+}
+
+@keyframes mentionBubbleRing {
+  0%,
+  100% {
+    opacity: 0.52;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.015);
+  }
+}
+
+@keyframes mentionBubbleShake {
+  0%,
+  18%,
+  100% {
+    transform: translateX(0) rotate(0);
+  }
+  3% {
+    transform: translateX(-2px) rotate(-0.35deg);
+  }
+  6% {
+    transform: translateX(2px) rotate(0.35deg);
+  }
+  9% {
+    transform: translateX(-1.5px) rotate(-0.2deg);
+  }
+  12% {
+    transform: translateX(1px) rotate(0.15deg);
+  }
+}
+
+@keyframes flash {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  40% {
+    box-shadow: 0 0 0 4px rgba(26, 173, 25, 0.25);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes chatStatusShimmer {
+  0%,
+  100% {
+    opacity: 0.58;
+    text-shadow: 0 0 0 transparent;
+  }
+  46% {
+    opacity: 1;
+    text-shadow: 0 0 7px color-mix(in srgb, var(--muted) 46%, transparent);
+  }
+}
+
+@keyframes typingDotsReveal {
+  0% {
+    width: 0;
+  }
+  75%,
+  100% {
+    width: 1.35em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message-row.mention-alert .message-bubble-cluster {
+    animation: none;
+  }
+
+  .chat-status-text {
+    opacity: 0.82;
+    animation: none;
+  }
+
+  .typing-dots > span {
+    width: 1.35em;
+    animation: none;
+  }
+
+  .music-player-listener-track,
+  .music-listener-marquee-track,
+  .music-player-listener-track > span,
+  .music-listener-marquee-track > span {
+    animation: none;
+  }
+
+  .music-player-listener-track > span + span,
+  .music-listener-marquee-track > span + span {
+    display: none;
+  }
+
+  .chat-activity-track {
+    padding-left: 0;
+    animation: none;
+  }
+
+  .chat-activity-item {
+    animation: none;
+  }
+}
+
+@keyframes bellWiggle {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0) scale(1);
+  }
+  10% {
+    transform: translateX(-3px) rotate(-28deg) scale(1.06);
+  }
+  20% {
+    transform: translateX(3px) rotate(24deg) scale(1.04);
+  }
+  30% {
+    transform: translateX(-3px) rotate(-22deg) scale(1.08);
+  }
+  40% {
+    transform: translateX(2px) rotate(18deg) scale(1.03);
+  }
+  52% {
+    transform: translateX(-1px) rotate(-12deg) scale(1.05);
+  }
+  64% {
+    transform: translateX(1px) rotate(8deg) scale(1.01);
+  }
+  76% {
+    transform: translateX(0) rotate(0) scale(1);
+  }
+}
+
+@keyframes notificationNudgeCharacter {
+  0%,
+  19.999% {
+    opacity: 1;
+  }
+  20%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes sleepyWiggle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0) scale(1);
+  }
+  12% {
+    transform: translate(-2px, -1px) rotate(-18deg) scale(1.05);
+  }
+  24% {
+    transform: translate(3px, 1px) rotate(16deg) scale(1.03);
+  }
+  36% {
+    transform: translate(-3px, 1px) rotate(-14deg) scale(1.06);
+  }
+  50% {
+    transform: translate(2px, -1px) rotate(10deg) scale(1.02);
+  }
+  68% {
+    transform: translateY(0) rotate(0) scale(1);
+  }
+}
+
+@keyframes uploadSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+

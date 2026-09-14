@@ -1,0 +1,107 @@
+:root {
+  --app-height: 100dvh;
+  --keyboard-offset: 0px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --composer-bottom-gap: clamp(6px, calc(var(--safe-bottom) - 26px), 12px);
+  --composer-drawer-bottom-gap: max(2px, calc(var(--composer-bottom-gap) - 4px));
+  --accent: #1aad19;
+  --accent-dark: #129611;
+  --button-text: #fff;
+  --bg: #ededed;
+  --chat-bg: #ededed;
+  --panel: #f7f7f7;
+  --line: #d9d9d9;
+  --text: #111;
+  --muted: #7b7b7b;
+  --bubble-other: #fff;
+  --bubble-other-text: #111;
+  --bubble-mine: #95ec69;
+  --bubble-mine-text: #111;
+  --message-content-font-size: 15px;
+  --wallpaper-image: none;
+  --wallpaper-size: cover;
+  --wallpaper-repeat: no-repeat;
+  --wallpaper-position: center;
+  --login-background-image: none;
+  --login-background-size: cover;
+  --login-background-repeat: no-repeat;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
+.theme-jade {
+  --accent: #0f8f72;
+  --accent-dark: #0a6f5d;
+  --button-text: #fff;
+  --bg: #e8efed;
+  --chat-bg: #edf4f1;
+  --panel: #f7faf8;
+  --line: #cfded9;
+  --text: #13201d;
+  --muted: #64756f;
+  --bubble-other: #ffffff;
+  --bubble-other-text: #13201d;
+  --bubble-mine: #bfead8;
+  --bubble-mine-text: #13201d;
+}
+
+.theme-paper {
+  --accent: #33658a;
+  --accent-dark: #274c68;
+  --button-text: #fff;
+  --bg: #f1f0ea;
+  --chat-bg: #f6f5ef;
+  --panel: #fbfaf6;
+  --line: #ddd8ca;
+  --text: #202124;
+  --muted: #6f6a61;
+  --bubble-other: #ffffff;
+  --bubble-other-text: #202124;
+  --bubble-mine: #d7e7f3;
+  --bubble-mine-text: #202124;
+}
+
+.theme-night {
+  --accent: #35a7ff;
+  --accent-dark: #1e7ec4;
+  --button-text: #07131f;
+  --bg: #171b20;
+  --chat-bg: #1d232a;
+  --panel: #222932;
+  --line: #3a4450;
+  --text: #f5f7fa;
+  --muted: #a8b3bf;
+  --bubble-other: #2c343e;
+  --bubble-other-text: #f5f7fa;
+  --bubble-mine: #245d82;
+  --bubble-mine-text: #fff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+body {
+  position: fixed;
+  inset: 0;
+  overscroll-behavior: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+

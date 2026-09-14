@@ -1,0 +1,557 @@
+.composer {
+  grid-row: 7;
+  padding: 8px 6px var(--composer-bottom-gap);
+  position: relative;
+  display: grid;
+  gap: 6px;
+  background: #f7f7f7;
+  border-top: 1px solid var(--line);
+  z-index: 3;
+}
+
+.reply-bar {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 34px;
+  margin-bottom: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ececec;
+  color: #555;
+  font-size: 13px;
+  overflow: hidden;
+}
+
+.reply-bar span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.music-mention-chip {
+  min-height: 38px;
+  margin-bottom: 6px;
+  padding: 4px 6px 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--line));
+  border-radius: 7px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent-dark);
+  background: color-mix(in srgb, var(--panel) 88%, var(--accent) 12%);
+}
+
+.music-mention-chip > span {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.music-mention-chip small {
+  color: var(--muted);
+}
+
+.music-mention-chip strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-btn {
+  color: #0b7d0a;
+  font-weight: 700;
+}
+
+.composer-input-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.composer-main {
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  position: relative;
+}
+
+.composer-main.raised {
+  align-items: center;
+}
+
+@property --composer-glow-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.composer-glow-shell {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+/* A blurred copy of the rotating gradient sits behind the textarea, so the
+   halo radiates the border's own colors instead of a flat single-color glow. */
+.composer-glow-shell::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 10px;
+  background: conic-gradient(
+    from var(--composer-glow-angle),
+    #22d3ee,
+    #a78bfa,
+    #f472b6,
+    #facc15,
+    #34d399,
+    #22d3ee
+  );
+  filter: blur(12px);
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.composer-glow-shell.on::before {
+  opacity: 0.8;
+  animation: composerGlowSpin 3.2s linear infinite;
+}
+
+.composer-glow-shell textarea {
+  position: relative;
+  z-index: 1;
+}
+
+.composer textarea.composer-glow {
+  outline: none;
+  background:
+    linear-gradient(#fff, #fff) padding-box,
+    conic-gradient(
+      from var(--composer-glow-angle),
+      #22d3ee,
+      #a78bfa,
+      #f472b6,
+      #facc15,
+      #34d399,
+      #22d3ee
+    ) border-box;
+  animation: composerGlowSpin 3.2s linear infinite;
+}
+
+@keyframes composerGlowSpin {
+  to {
+    --composer-glow-angle: 360deg;
+  }
+}
+
+@supports not (background: conic-gradient(from var(--composer-glow-angle), red, blue)) {
+  .composer textarea.composer-glow {
+    background:
+      linear-gradient(#fff, #fff) padding-box,
+      linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15) border-box;
+    animation: none;
+  }
+
+  .composer-glow-shell.on::before {
+    background: linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15);
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer textarea.composer-glow,
+  .composer-glow-shell.on::before {
+    animation: none;
+  }
+}
+
+.composer-prompt-overlay {
+  position: absolute;
+  left: 48px;
+  right: 48px;
+  bottom: 10px;
+  height: 22px;
+  line-height: 22px;
+  font-size: inherit;
+  color: #9aa3b2;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.composer-prompt-char {
+  opacity: 0;
+  transition-property: opacity;
+  transition-timing-function: ease-in-out;
+}
+
+.composer-prompt-overlay.phase-appear .composer-prompt-char,
+.composer-prompt-overlay.phase-hold .composer-prompt-char {
+  opacity: 1;
+}
+
+/* Newly mounted spans cannot run a transition, so the appear phase uses an
+   animation; per-char delay and duration come from inline styles. */
+.composer-prompt-overlay.phase-appear .composer-prompt-char {
+  animation-name: composerPromptCharIn;
+  animation-fill-mode: both;
+  animation-timing-function: ease-in-out;
+}
+
+@keyframes composerPromptCharIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-prompt-char {
+    transition: none;
+    animation: none;
+  }
+}
+
+.composer-prompt-settings {
+  display: grid;
+  gap: 8px;
+}
+
+.composer-main .composer-edge-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 36px;
+  flex: 0 0 34px;
+  padding: 0;
+}
+
+.composer-main .composer-send-btn {
+  background: var(--accent);
+  color: var(--button-text);
+}
+
+.composer-main .composer-send-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.composer-send-status {
+  min-height: 18px;
+  margin: 4px 42px 0;
+  display: block;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.composer-send-status[data-send-state="pending"] {
+  color: var(--muted);
+}
+
+.icon-btn.active {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.composer textarea {
+  min-width: 0;
+  flex: 1;
+  max-height: 280px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  resize: none;
+  background: #fff padding-box;
+  line-height: 22px;
+}
+
+.composer textarea:focus {
+  outline: none;
+}
+
+.composer-markdown-toggle {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  background: #fff;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.composer-markdown-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.composer-markdown-toggle.active {
+  border-color: var(--accent);
+  color: var(--accent-dark);
+  background: #f0f7ee;
+}
+
+.composer-suggestion-menu {
+  position: absolute;
+  left: 40px;
+  right: 48px;
+  bottom: calc(100% + 6px);
+  max-height: min(320px, 46vh);
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+  overflow-y: auto;
+  z-index: 7;
+}
+
+.composer-suggestion {
+  min-width: 0;
+  min-height: 42px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(0, auto);
+  gap: 8px;
+  align-items: center;
+  color: #333;
+  text-align: left;
+}
+
+.composer-suggestion:hover,
+.composer-suggestion.active {
+  background: #f0f7ee;
+}
+
+.composer-suggestion svg {
+  justify-self: center;
+  color: var(--accent);
+}
+
+.composer-suggestion .avatar {
+  width: 28px;
+  height: 28px;
+  flex-basis: 28px;
+}
+
+.composer-suggestion .online-dot {
+  right: -1px;
+  bottom: -1px;
+}
+
+.composer-suggestion span,
+.composer-suggestion small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-suggestion span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.composer-suggestion small {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.composer-suggestion:active {
+  background: #eeeeee;
+}
+
+.composer-drawer {
+  min-width: 0;
+  border-top: 1px solid var(--line);
+  padding: 10px 6px var(--composer-drawer-bottom-gap);
+}
+
+.record-strip {
+  min-height: 44px;
+  padding: 7px 8px 7px 12px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #fff;
+}
+
+.voice-recording-notice {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border: 1px solid #f3b4aa;
+  border-radius: 6px;
+  background: #fff1ef;
+  color: #a61b0f;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.record-strip.recording .record-dot {
+  background: #e03131;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.record-strip strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+
+.record-strip small {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-preview {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn.danger {
+  color: #c92a2a;
+}
+
+.voice-preview-card {
+  min-width: 0;
+  min-height: 42px;
+  padding: 5px 10px 5px 7px;
+  border-radius: 999px;
+  display: grid;
+  grid-template-columns: 32px minmax(96px, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  background: #fff;
+}
+
+.voice-preview-card > span {
+  color: #333;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.more-drawer {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(64px, 1fr));
+  gap: 12px;
+}
+
+.tool-tile-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.tool-tile-wrap .tool-tile {
+  width: 100%;
+}
+
+.original-image-corner {
+  position: absolute;
+  right: max(2px, calc(50% - 38px));
+  bottom: -1px;
+  z-index: 2;
+  width: 30px;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.original-image-corner input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.original-image-check {
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid #94a3b8;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: #fff;
+}
+
+.original-image-corner.active {
+  color: var(--accent-dark);
+}
+
+.original-image-corner.active .original-image-check {
+  border: 0;
+  color: var(--accent);
+}
+
+.original-image-corner small {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.tool-tile {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  color: #666;
+}
+
+.tool-tile span {
+  width: 62px;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: #fff;
+  color: #444;
+}
+
+.tool-tile:active span {
+  background: #eeeeee;
+}
+
+.tool-tile small {
+  font-size: 13px;
+}
+

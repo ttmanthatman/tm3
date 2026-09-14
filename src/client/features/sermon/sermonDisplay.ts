@@ -37,7 +37,7 @@ export function sermonDisplayStyle(display: SermonDisplayDTO): Record<string, st
   return style;
 }
 
-/** 舞台根元素的 data 属性：预设背景与字体族由 styles.css 的 [data-sermon-*] 选择器映射。 */
+/** 舞台根元素的 data 属性：预设背景与字体族由 styles/sermon.css 的 [data-sermon-*] 选择器映射。 */
 export function sermonDisplayAttrs(display: SermonDisplayDTO): Record<string, string | null> {
   return {
     "data-sermon-font": display.fontFamily,

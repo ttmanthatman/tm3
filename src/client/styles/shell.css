@@ -1,0 +1,423 @@
+.app-start-shell {
+  min-height: var(--app-height);
+  padding: calc(var(--safe-top) + 24px) 18px calc(var(--safe-bottom) + 24px);
+  display: grid;
+  place-items: center;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--bg);
+}
+
+.app-start-code {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
+  color: color-mix(in srgb, var(--accent) 58%, var(--text));
+  background: var(--bg);
+}
+
+.app-start-code-track {
+  width: max-content;
+  min-width: 100%;
+  animation: appStartCodeScroll 6s linear infinite;
+}
+
+.app-start-code pre {
+  min-width: 100vw;
+  margin: 0;
+  padding: 10px clamp(14px, 3vw, 42px);
+  box-sizing: border-box;
+  font: 550 clamp(11px, 1.25vw, 14px) / 1.62 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  letter-spacing: 0.01em;
+  opacity: 0.46;
+  text-align: left;
+  white-space: pre;
+}
+
+.app-start-code code,
+.app-start-code code span {
+  display: block;
+}
+
+.app-start-card {
+  width: min(560px, 100%);
+  max-height: calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 48px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 24px;
+  display: grid;
+  position: relative;
+  z-index: 1;
+  gap: 18px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 14px 42px rgba(15, 23, 42, 0.1);
+  text-align: left;
+}
+
+.app-start-card small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.app-start-card.error {
+  width: min(360px, 100%);
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.app-start-heading {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-start-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.app-start-heading strong,
+.app-start-heading small {
+  display: block;
+}
+
+.app-start-version {
+  align-self: start;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+.app-start-release {
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+
+.app-start-release > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.app-start-release ul {
+  margin: 0;
+  padding-left: 1.25em;
+  display: grid;
+  gap: 7px;
+}
+
+.app-start-release li {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.app-start-card.error > svg {
+  color: #b42318;
+}
+
+.app-start-card .primary-btn {
+  margin-top: 6px;
+}
+
+.app-start-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid color-mix(in srgb, var(--accent) 18%, #dbe3ea);
+  border-top-color: var(--accent);
+  border-radius: 999px;
+  animation: appStartSpin 0.8s linear infinite;
+}
+
+@keyframes appStartSpin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes appStartCodeScroll {
+  to { transform: translateY(-25%); }
+}
+
+@media (max-width: 560px) {
+  .app-start-shell {
+    padding-inline: 14px;
+  }
+
+  .app-start-card {
+    padding: 20px;
+  }
+
+  .app-start-heading {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .app-start-version {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .app-start-release li {
+    font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-start-code-track,
+  .app-start-spinner {
+    animation: none;
+  }
+}
+
+.login-shell {
+  min-height: var(--app-height);
+  padding: calc(var(--safe-top) + 32px) 18px calc(var(--safe-bottom) + 32px);
+  display: grid;
+  place-items: center;
+  background:
+    var(--login-background-image) center / var(--login-background-size) var(--login-background-repeat),
+    var(--bg);
+}
+
+.login-shell.login-position-top {
+  place-items: start center;
+}
+
+.login-shell.login-position-bottom {
+  place-items: end center;
+}
+
+.login-panel {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 16px;
+  text-align: center;
+}
+
+.login-mark {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--accent);
+  font-size: 34px;
+  font-weight: 800;
+  overflow: hidden;
+}
+
+.login-mark img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.login-mark span {
+  overflow-wrap: anywhere;
+}
+
+.login-panel h1 {
+  margin: 0;
+  font-size: 24px;
+  overflow-wrap: anywhere;
+}
+
+.login-panel p {
+  margin: -8px 0 8px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.login-panel form,
+.form-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.login-panel form {
+  width: min(300px, 100%);
+  margin: 0 auto;
+}
+
+.login-mode-btn {
+  justify-self: center;
+}
+
+.login-panel input,
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  background: #fff;
+}
+
+.primary-btn,
+.send-btn,
+.mini-btn {
+  min-height: 40px;
+  border-radius: 6px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--accent);
+  color: var(--button-text);
+  font-weight: 700;
+}
+
+.mini-btn:disabled {
+  opacity: 0.42;
+}
+
+.primary-btn:active,
+.send-btn:active,
+.mini-btn:active {
+  background: var(--accent-dark);
+}
+
+.send-btn:disabled {
+  opacity: 0.42;
+}
+
+.form-error {
+  color: #b42318;
+  font-size: 14px;
+}
+
+.app-shell {
+  position: fixed;
+  inset: 0;
+  height: var(--app-height);
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr) 260px;
+  grid-template-rows: minmax(0, 1fr);
+  background:
+    var(--wallpaper-image) center / var(--wallpaper-size) var(--wallpaper-repeat),
+    var(--bg);
+  overflow: hidden;
+}
+
+.app-shell.channels-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 260px;
+}
+
+.app-shell.members-collapsed {
+  grid-template-columns: 280px minmax(0, 1fr) 0;
+}
+
+.app-shell.channels-collapsed.members-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.app-shell.bible-open > .channel-pane,
+.app-shell.bible-open > .chat-pane,
+.app-shell.bible-open > .member-pane,
+.app-shell.sermon-open > .channel-pane,
+.app-shell.sermon-open > .chat-pane,
+.app-shell.sermon-open > .member-pane {
+  visibility: hidden;
+}
+
+.version-refresh-banner {
+  position: fixed;
+  top: max(10px, calc(var(--safe-top) + 8px));
+  left: 50%;
+  z-index: 45;
+  width: min(520px, calc(100vw - 24px));
+  min-height: 42px;
+  padding: 7px 8px 7px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  background: color-mix(in srgb, var(--panel) 94%, #ffffff 6%);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.16);
+  transform: translateX(-50%);
+}
+
+.version-refresh-banner span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.channel-pane,
+.member-pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  z-index: 5;
+}
+
+.channel-pane.collapsed,
+.member-pane.collapsed {
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.member-pane {
+  border-right: 0;
+  border-left: 1px solid var(--line);
+}
+
+.pane-head,
+.chat-head {
+  min-height: 56px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.pane-head {
+  flex: 0 0 auto;
+}
+
+.chat-head {
+  grid-row: 1;
+  position: relative;
+  z-index: 21;
+  padding-top: var(--safe-top);
+  height: calc(56px + var(--safe-top));
+  min-height: calc(56px + var(--safe-top));
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+
+.chat-head .icon-btn {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+

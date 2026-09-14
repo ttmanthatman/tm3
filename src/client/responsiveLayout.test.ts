@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
+import { readClientStyles } from "./stylesManifest";
 
-const css = fs.readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const css = readClientStyles();
 const app = fs.readFileSync(new URL("./App.vue", import.meta.url), "utf8");
 const store = fs.readFileSync(new URL("./store.ts", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
