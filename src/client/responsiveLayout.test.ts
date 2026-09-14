@@ -32,6 +32,7 @@ const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.
 const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
+const channelEditorDialog = fs.readFileSync(new URL("./features/channels/ChannelEditorDialog.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -253,8 +254,8 @@ test("direct chats present the peer in pairs and offer seven AI names for groups
   assert.match(server, /"\/api\/channels\/:id\/name-suggestions"[\s\S]*?generateDirectChatNameSuggestions/);
   assert.match(server, /ensureDirectGroupDefaultName\(channelId\)[\s\S]*?emitChannelMembersChanged/);
   assert.match(app, /channelNameSuggestions[\s\S]*?requestDirectChatNameSuggestions/);
-  assert.match(app, /class="direct-name-option"[\s\S]*?\{\{ suggestion \}\}/);
-  assert.match(app, /双人私聊的名称和图标会自动跟随对方的昵称与头像/);
+  assert.match(channelEditorDialog, /class="direct-name-option"[\s\S]*?\{\{ suggestion \}\}/);
+  assert.match(channelEditorDialog, /双人私聊的名称和图标会自动跟随对方的昵称与头像/);
 });
 
 test("private locks and online dots sit above unclipped avatar artwork", () => {
@@ -769,7 +770,8 @@ test("AvatarImage and ChannelIcon primitives own avatar fallback and channel ico
 });
 
 test("direct message channels can be closed from the channel editor", () => {
-  assert.match(app, /channelEditorMode === 'edit' && channelEditorChannel\?\.directKey[\s\S]*?requestCloseChannel\(channelEditorChannel\)[\s\S]*?关闭私聊/);
+  assert.match(channelEditorDialog, /mode === 'edit' && channel\?\.directKey[\s\S]*?emit\('closeDirect', channel\)[\s\S]*?关闭私聊/);
+  assert.match(app, /<ChannelEditorDialog\s+v-if="showChannelEditor"[\s\S]*?@close-direct="requestCloseChannel"/);
   assert.match(app, /<ConfirmDialog\s+:open="!!pendingCloseChannel"[\s\S]*?title="关闭私聊"/);
 });
 
@@ -1128,10 +1130,22 @@ test("prayer update editor dialog lives outside App.vue with the modal-shell con
   assert.match(prayerUpdateEditor, /更新并推送/);
 });
 
+test("channel editor dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<ChannelEditorDialog\s+v-if="showChannelEditor"[\s\S]*?@close="closeChannelEditor"[\s\S]*?@submit="saveChannelEditor"/);
+  assert.doesNotMatch(app, /channel-editor-modal/);
+  assert.match(channelEditorDialog, /<section class="modal-shell" @click\.self="emit\('close'\)">/);
+  assert.match(channelEditorDialog, /<form class="small-modal channel-editor-modal" @submit\.prevent="emit\('submit'\)">/);
+  assert.match(channelEditorDialog, /aria-label="关闭频道设置"/);
+  assert.match(channelEditorDialog, /channel-editor-icon-picker upload-icon-trigger/);
+  assert.match(channelEditorDialog, /class="direct-name-suggestions"[\s\S]*?aria-label="私聊名称备选"/);
+  assert.match(channelEditorDialog, /aria-label="频道列表底色"/);
+  assert.match(channelEditorDialog, /canSubmitChannelDraft\(draft, busy\)/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 9,
-    `App.vue must not add modal-shell blocks (baseline 9, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 8,
+    `App.vue must not add modal-shell blocks (baseline 8, found ${occurrences}); put new dialogs in focused components`
   );
 });

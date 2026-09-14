@@ -38,8 +38,6 @@ import {
   Trash2,
   ThumbsUp,
   Upload,
-  Users,
-  WandSparkles,
   X
 } from "lucide-vue-next";
 import type {
@@ -135,12 +133,7 @@ import {
   cleanComposerPromptIntervalSeconds,
   composerPromptCharTiming
 } from "@shared/composerPrompts";
-import {
-  canEditChannel,
-  canLeaveChannel,
-  canOpenChannelSettings,
-  canSubmitChannelDraft
-} from "./channelManagement";
+import { canOpenChannelSettings } from "./channelManagement";
 import { memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
@@ -211,6 +204,7 @@ import { useAiSettings } from "./features/admin/useAiSettings";
 import { useAccountSettings } from "./features/settings/useAccountSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
+import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6125,127 +6119,28 @@ const messageRowBindings = {
       </div>
     </section>
 
-    <section v-if="showChannelEditor" class="modal-shell" @click.self="closeChannelEditor">
-      <form class="small-modal channel-editor-modal" @submit.prevent="saveChannelEditor">
-        <header class="modal-head">
-          <div>
-            <strong>{{ channelEditorTitle }}</strong>
-            <small>{{ channelEditorSubtitle }}</small>
-          </div>
-          <button class="icon-btn" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor" aria-label="关闭频道设置"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form channel-editor-form">
-          <div v-if="isTwoPersonDirectEditor && canEditChannel(channelEditorChannel)" class="direct-chat-follow-note">
-            <span class="direct-chat-follow-icon"><LockKeyhole :size="18" /></span>
-            <span>
-              <strong>显示对方的资料</strong>
-              <small>双人私聊的名称和图标会自动跟随对方的昵称与头像。</small>
-            </span>
-          </div>
-          <template v-if="channelEditorMode === 'edit' && channelEditorChannel && !isTwoPersonDirectEditor && canEditChannel(channelEditorChannel)">
-            <label>频道图标</label>
-            <label class="channel-editor-icon-picker upload-icon-trigger" :aria-label="`上传 ${channelEditorChannel.name} 的频道图标`" title="点击上传图标">
-              <ChannelIcon :icon="channelEditorChannel.icon" :kind="channelEditorChannel.kind" />
-              <span><Upload :size="15" />更换图标</span>
-              <input class="hidden" type="file" accept="image/*" :disabled="channelEditorBusy" @change="uploadChannelEditorIcon" />
-            </label>
-          </template>
-          <template v-if="!isTwoPersonDirectEditor && (channelEditorMode === 'create' || canEditChannel(channelEditorChannel))">
-            <label class="channel-name-label">
-              <span>频道名称</span>
-              <button
-                v-if="isGroupDirectEditor"
-                class="text-action"
-                type="button"
-                :disabled="channelNameSuggestionBusy"
-                @click="requestDirectChatNameSuggestions"
-              >
-                <WandSparkles :size="14" />{{ channelNameSuggestionBusy ? "正在想..." : "换一个" }}
-              </button>
-            </label>
-            <input v-model="channelEditorDraft.name" maxlength="80" autocomplete="off" placeholder="频道名" />
-            <div v-if="isGroupDirectEditor && channelNameSuggestions.length" class="direct-name-suggestions" aria-label="私聊名称备选">
-              <button
-                v-for="suggestion in channelNameSuggestions"
-                :key="suggestion"
-                class="direct-name-option"
-                :class="{ selected: channelEditorDraft.name === suggestion }"
-                type="button"
-                @click="channelEditorDraft.name = suggestion"
-              >
-                {{ suggestion }}
-              </button>
-            </div>
-            <label>频道描述</label>
-            <textarea v-model="channelEditorDraft.description" maxlength="255" rows="3" placeholder="描述"></textarea>
-          </template>
-          <label v-if="channelEditorMode === 'create'" class="check-row check-row-inline">
-            <input v-model="channelEditorDraft.isPrivate" type="checkbox" />
-            <span>私密频道</span>
-          </label>
-          <label v-if="channelEditorMode === 'create' || canEditChannel(channelEditorChannel)" class="check-row check-row-inline">
-            <input v-model="channelEditorDraft.useListColor" type="checkbox" />
-            <span>自定义频道列表底色</span>
-          </label>
-          <label v-if="channelEditorDraft.useListColor && (channelEditorMode === 'create' || canEditChannel(channelEditorChannel))" class="channel-list-color-field">
-            <span>列表底色</span>
-            <input v-model="channelEditorDraft.listColor" type="color" aria-label="频道列表底色" />
-            <code>{{ channelEditorDraft.listColor }}</code>
-          </label>
-          <p v-if="channelEditorMsg" class="form-error">{{ channelEditorMsg }}</p>
-          <div
-            v-if="channelEditorMode === 'edit' && channelEditorChannel && !canEditChannel(channelEditorChannel)"
-            class="direct-chat-follow-note"
-          >
-            <span class="direct-chat-follow-icon"><LockKeyhole :size="18" /></span>
-            <span>
-              <strong>{{ channelEditorChannel.name }}</strong>
-              <small>{{ channelEditorChannel.description || "私密频道" }}</small>
-            </span>
-          </div>
-          <div class="confirm-actions channel-editor-actions">
-            <button
-              v-if="channelEditorMode === 'edit' && canEditChannel(channelEditorChannel)"
-              class="mini-btn secondary"
-              type="button"
-              :disabled="channelEditorBusy"
-              @click="openChannelEditorMembers"
-            >
-              <Users :size="15" />成员
-            </button>
-            <button
-              v-if="channelEditorMode === 'edit' && canLeaveChannel(channelEditorChannel)"
-              class="mini-btn danger-action"
-              type="button"
-              :disabled="channelEditorBusy || channelLeaveBusy"
-              @click="requestLeaveChannel()"
-            >
-              <LogOut :size="15" />退出频道
-            </button>
-            <button
-              v-if="channelEditorMode === 'edit' && channelEditorChannel?.directKey"
-              class="mini-btn danger-action"
-              type="button"
-              :disabled="channelEditorBusy"
-              @click="requestCloseChannel(channelEditorChannel)"
-            >
-              <X :size="15" />关闭私聊
-            </button>
-            <button class="mini-btn secondary" type="button" :disabled="channelEditorBusy" @click="closeChannelEditor">
-              {{ channelEditorMode === "edit" && !canEditChannel(channelEditorChannel) ? "关闭" : "取消" }}
-            </button>
-            <button
-              v-if="channelEditorMode === 'create' || canEditChannel(channelEditorChannel)"
-              class="primary-btn"
-              type="submit"
-              :disabled="!canSubmitChannelDraft(channelEditorDraft, channelEditorBusy)"
-            >
-              {{ channelEditorBusy ? "保存中..." : channelEditorMode === "create" ? "创建" : "保存" }}
-            </button>
-          </div>
-        </div>
-      </form>
-    </section>
+    <ChannelEditorDialog
+      v-if="showChannelEditor"
+      v-model:draft="channelEditorDraft"
+      :mode="channelEditorMode"
+      :channel="channelEditorChannel"
+      :busy="channelEditorBusy"
+      :msg="channelEditorMsg"
+      :leave-busy="channelLeaveBusy"
+      :title="channelEditorTitle"
+      :subtitle="channelEditorSubtitle"
+      :two-person-direct="isTwoPersonDirectEditor"
+      :group-direct="isGroupDirectEditor"
+      :name-suggestions="channelNameSuggestions"
+      :name-suggestion-busy="channelNameSuggestionBusy"
+      @close="closeChannelEditor"
+      @submit="saveChannelEditor"
+      @upload-icon="uploadChannelEditorIcon"
+      @suggest-names="requestDirectChatNameSuggestions"
+      @open-members="openChannelEditorMembers"
+      @leave="requestLeaveChannel()"
+      @close-direct="requestCloseChannel"
+    />
 
     <section v-if="memberPickerOpen" class="modal-shell" @click.self="closeMemberPicker">
       <form class="small-modal member-picker-modal" @submit.prevent="addSelectedMembers">
