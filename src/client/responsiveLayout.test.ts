@@ -35,6 +35,7 @@ const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpda
 const channelEditorDialog = fs.readFileSync(new URL("./features/channels/ChannelEditorDialog.vue", import.meta.url), "utf8");
 const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
 const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
+const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessageEditor.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1011,8 +1012,12 @@ test("mobile settings categories run horizontally across the top", () => {
 });
 
 test("pinned editor is a compact single-column dialog without a visible title bar", () => {
-  assert.match(app, /aria-label="编辑置顶消息"[\s\S]*?class="small-modal pinned-editor-modal"/);
-  assert.doesNotMatch(app, /<strong>编辑置顶消息<\/strong>/);
+  assert.match(app, /<PinnedMessageEditor\s+v-if="showPinnedEditor"[\s\S]*?@close="showPinnedEditor = false"[\s\S]*?@save="savePinnedEditor"[\s\S]*?@clear="clearPinned"/);
+  assert.match(pinnedMessageEditor, /aria-label="编辑置顶消息"[\s\S]*?class="small-modal pinned-editor-modal"/);
+  assert.match(pinnedMessageEditor, /<section[\s\S]*?class="modal-shell"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-label="编辑置顶消息"[\s\S]*?@click\.self="emit\('close'\)"/);
+  assert.doesNotMatch(pinnedMessageEditor, /<strong>编辑置顶消息<\/strong>/);
+  assert.match(pinnedMessageEditor, /class="pinned-editor-block-actions"/);
+  assert.match(pinnedMessageEditor, /添加文字/);
   assert.match(css, /\.pinned-editor-modal \{[\s\S]*?grid-template-rows: minmax\(0, 1fr\);/);
 });
 
@@ -1172,7 +1177,7 @@ test("owner transfer dialog lives outside App.vue with the modal-shell contract 
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 6,
-    `App.vue must not add modal-shell blocks (baseline 6, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 5,
+    `App.vue must not add modal-shell blocks (baseline 5, found ${occurrences}); put new dialogs in focused components`
   );
 });

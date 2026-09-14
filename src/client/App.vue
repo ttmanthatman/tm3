@@ -4,7 +4,6 @@ import {
   AudioLines,
   AtSign,
   ArrowDown,
-  ArrowUp,
   Bell,
   Bookmark,
   BookOpen,
@@ -207,6 +206,7 @@ import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
+import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -3918,22 +3918,6 @@ function openPinnedEditor() {
   showPinnedEditor.value = true;
 }
 
-function addPinnedTextBlock() {
-  pinnedEditBlocks.value = [...pinnedEditBlocks.value, { id: `new-${Date.now()}`, type: "text", text: "" }];
-}
-
-function movePinnedBlock(index: number, direction: -1 | 1) {
-  const targetIndex = index + direction;
-  if (targetIndex < 0 || targetIndex >= pinnedEditBlocks.value.length) return;
-  const blocks = [...pinnedEditBlocks.value];
-  [blocks[index], blocks[targetIndex]] = [blocks[targetIndex], blocks[index]];
-  pinnedEditBlocks.value = blocks;
-}
-
-function removePinnedBlock(index: number) {
-  pinnedEditBlocks.value = pinnedEditBlocks.value.filter((_block, idx) => idx !== index);
-}
-
 function cleanPinnedEditBody(): PinnedBodyDTO {
   return {
     blocks: pinnedEditBlocks.value
@@ -6231,44 +6215,16 @@ const messageRowBindings = {
       </div>
     </section>
 
-    <section v-if="showPinnedEditor" class="modal-shell" role="dialog" aria-modal="true" aria-label="编辑置顶消息" @click.self="showPinnedEditor = false">
-      <div class="small-modal pinned-editor-modal">
-        <div class="form-grid">
-          <label>标题（可选）</label>
-          <input v-model="pinnedEditTitle" placeholder="置顶消息" />
-          <label>正文</label>
-          <div class="pinned-editor-blocks">
-            <article v-for="(block, index) in pinnedEditBlocks" :key="block.id" class="pinned-editor-block">
-              <template v-if="block.type === 'text'">
-                <textarea v-model="block.text" rows="5" placeholder="置顶正文"></textarea>
-              </template>
-              <template v-else>
-                <img v-if="block.type === 'image'" :src="pinnedFileUrl(block)" alt="" />
-                <div v-else class="file-card pinned-file-card">
-                  <FileUp :size="24" />
-                  <span>
-                    <strong>{{ block.fileName }}</strong>
-                    <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
-                  </span>
-                </div>
-              </template>
-              <div class="pinned-editor-block-actions">
-                <button class="mini-btn secondary" :disabled="index === 0" @click="movePinnedBlock(index, -1)"><ArrowUp :size="15" />上移</button>
-                <button class="mini-btn secondary" :disabled="index === pinnedEditBlocks.length - 1" @click="movePinnedBlock(index, 1)"><ArrowDown :size="15" />下移</button>
-                <button class="mini-btn danger-action" @click="removePinnedBlock(index)"><Trash2 :size="15" />删除此块</button>
-              </div>
-            </article>
-          </div>
-          <button class="mini-btn secondary" @click="addPinnedTextBlock">添加文字</button>
-          <p v-if="pinnedEditMsg" class="admin-msg">{{ pinnedEditMsg }}</p>
-          <div class="confirm-actions">
-            <button class="mini-btn danger-action" @click="clearPinned">撤下置顶</button>
-            <button class="mini-btn secondary" @click="showPinnedEditor = false">取消</button>
-            <button class="primary-btn" @click="savePinnedEditor"><Save :size="16" />保存</button>
-          </div>
-        </div>
-      </div>
-    </section>
+    <PinnedMessageEditor
+      v-if="showPinnedEditor"
+      v-model:title="pinnedEditTitle"
+      v-model:blocks="pinnedEditBlocks"
+      :msg="pinnedEditMsg"
+      :pinned-file-url="pinnedFileUrl"
+      @close="showPinnedEditor = false"
+      @save="savePinnedEditor"
+      @clear="clearPinned"
+    />
 
     <ConfirmDialog
       :open="!!pendingLeaveChannel"
