@@ -34,6 +34,7 @@ const receptionManager = fs.readFileSync(new URL("./features/reception/Reception
 const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
 const channelEditorDialog = fs.readFileSync(new URL("./features/channels/ChannelEditorDialog.vue", import.meta.url), "utf8");
 const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
+const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1155,10 +1156,23 @@ test("member picker dialog lives outside App.vue with the modal-shell contract i
   assert.match(memberPickerDialog, /:disabled="busy \|\| !selectedIds\.length"/);
 });
 
+test("owner transfer dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<OwnerTransferDialog\s+v-if="ownerTransferOpen"[\s\S]*?@close="closeOwnerTransfer"[\s\S]*?@submit="transferOwnedChannelAndLeave"/);
+  assert.doesNotMatch(app, /v-if="ownerTransferOpen" class="modal-shell"/);
+  assert.doesNotMatch(app, /member-picker-modal/);
+  assert.match(ownerTransferDialog, /<section class="modal-shell" @click\.self="emit\('close'\)">/);
+  assert.match(ownerTransferDialog, /<form class="small-modal member-picker-modal" @submit\.prevent="emit\('submit'\)">/);
+  assert.match(ownerTransferDialog, /aria-label="关闭负责人移交"/);
+  assert.match(ownerTransferDialog, /class="owner-transfer-note"/);
+  assert.match(ownerTransferDialog, /selected: successorId === candidate\.accountId/);
+  assert.match(ownerTransferDialog, /还没有可接任的成员，请先添加成员。/);
+  assert.match(ownerTransferDialog, /class="primary-btn owner-transfer-submit"[\s\S]*?指定并退出/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 7,
-    `App.vue must not add modal-shell blocks (baseline 7, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 6,
+    `App.vue must not add modal-shell blocks (baseline 6, found ${occurrences}); put new dialogs in focused components`
   );
 });

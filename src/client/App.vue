@@ -206,6 +206,7 @@ import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
+import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6157,51 +6158,18 @@ const messageRowBindings = {
       @toggle="toggleMemberPickerAccount"
     />
 
-    <section v-if="ownerTransferOpen" class="modal-shell" @click.self="closeOwnerTransfer">
-      <form class="small-modal member-picker-modal" @submit.prevent="transferOwnedChannelAndLeave">
-        <header class="modal-head">
-          <div>
-            <strong>移交负责人并退出</strong>
-            <small>{{ ownerTransferChannel?.name }}</small>
-          </div>
-          <button class="icon-btn" type="button" :disabled="ownerTransferBusy" @click="closeOwnerTransfer" aria-label="关闭负责人移交"><X :size="20" /></button>
-        </header>
-        <p class="owner-transfer-note">选择一位现有成员作为新的频道负责人。确认后，你会立即退出这个频道。</p>
-        <div class="member-picker-body">
-          <div v-if="ownerTransferCandidates.length" class="member-picker-list">
-            <button
-              v-for="candidate in ownerTransferCandidates"
-              :key="candidate.accountId"
-              type="button"
-              class="member-picker-row"
-              :class="{ selected: ownerTransferSuccessorId === candidate.accountId }"
-              :disabled="ownerTransferBusy"
-              @click="ownerTransferSuccessorId = candidate.accountId || null"
-            >
-              <div class="avatar presence-avatar">
-                <AvatarImage :path="candidate.avatarPath">
-                  <span>{{ avatarText(candidate.displayName) }}</span>
-                </AvatarImage>
-                <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
-              </div>
-              <span>
-                <strong>{{ candidate.displayName }}</strong>
-                <small>@{{ candidate.username }}</small>
-              </span>
-              <CheckCircle2 v-if="ownerTransferSuccessorId === candidate.accountId" :size="18" />
-            </button>
-          </div>
-          <div v-else class="member-picker-empty">还没有可接任的成员，请先添加成员。</div>
-        </div>
-        <p v-if="ownerTransferMsg" class="form-error owner-transfer-error">{{ ownerTransferMsg }}</p>
-        <div class="confirm-actions member-picker-actions">
-          <button class="mini-btn secondary" type="button" :disabled="ownerTransferBusy" @click="closeOwnerTransfer">取消</button>
-          <button class="primary-btn owner-transfer-submit" type="submit" :disabled="ownerTransferBusy || !ownerTransferSuccessorId">
-            {{ ownerTransferBusy ? "正在移交..." : "指定并退出" }}
-          </button>
-        </div>
-      </form>
-    </section>
+    <OwnerTransferDialog
+      v-if="ownerTransferOpen"
+      v-model:successor-id="ownerTransferSuccessorId"
+      :channel-name="ownerTransferChannel?.name || ''"
+      :busy="ownerTransferBusy"
+      :msg="ownerTransferMsg"
+      :candidates="ownerTransferCandidates"
+      :avatar-text="avatarText"
+      :is-account-online="isAccountOnline"
+      @close="closeOwnerTransfer"
+      @submit="transferOwnedChannelAndLeave"
+    />
 
     <MusicManager
       v-if="musicManagerOpen"
