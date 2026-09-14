@@ -4,14 +4,6 @@ import { isApprovedRemoteRequest, remoteE2EEnvironment } from "./safety.js";
 
 const remote = remoteE2EEnvironment();
 
-// The demo site enforces the production API rate limit (240 req/min per client).
-// message-diagnostic runs first and consumes most of the window, so let this
-// file start in a fresh window instead of failing mid-test on HTTP 429.
-test.beforeAll(async () => {
-  test.setTimeout(120_000);
-  await new Promise((resolve) => setTimeout(resolve, 61_000));
-});
-
 interface BrowserSignals {
   consoleErrors: number;
   pageErrors: number;
