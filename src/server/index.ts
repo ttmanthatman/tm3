@@ -16,6 +16,7 @@ import { Server as SocketIOServer, type Socket } from "socket.io";
 import webPush from "web-push";
 import { z } from "zod";
 import { createMulticharManager } from "./multichar/index.js";
+import { createRateLimitKeyGenerator, isRateLimitExempt } from "./rateLimitPolicy.js";
 import { createAiClient } from "./multichar/ai.js";
 import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
@@ -282,7 +283,14 @@ if (DEMO_MODE_AVAILABLE) {
 
 await app.register(cors, { origin: fastifyCorsOrigin as any, credentials: true });
 // 全局限流阈值可用环境变量放宽（e2e 短时间内请求密度远超生产），默认保持 240 次/分钟。
-await app.register(rateLimit, { max: Math.max(1, Number(process.env.API_RATE_LIMIT_MAX || 240) || 240), timeWindow: "1 minute" });
+// 认证请求按账号计数（聚会场景同一场地共享出口 IP 时不再互相挤占），
+// 静态资源与媒体流不计数，未认证请求仍按 IP 兜底。
+await app.register(rateLimit, {
+  max: Math.max(1, Number(process.env.API_RATE_LIMIT_MAX || 240) || 240),
+  timeWindow: "1 minute",
+  keyGenerator: createRateLimitKeyGenerator(JWT_SECRET),
+  allowList: (request) => isRateLimitExempt(request.method, request.url)
+});
 await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
 // JSON APIs and text assets cross a high-latency link; only compressible
 // content types are transformed, so media streams and binaries pass through.
