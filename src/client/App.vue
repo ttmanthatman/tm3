@@ -205,6 +205,7 @@ import { useAccountSettings } from "./features/settings/useAccountSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
+import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6142,46 +6143,19 @@ const messageRowBindings = {
       @close-direct="requestCloseChannel"
     />
 
-    <section v-if="memberPickerOpen" class="modal-shell" @click.self="closeMemberPicker">
-      <form class="small-modal member-picker-modal" @submit.prevent="addSelectedMembers">
-        <header class="modal-head">
-          <strong>{{ memberPickerTitle }}</strong>
-          <button class="icon-btn" type="button" @click="closeMemberPicker" aria-label="关闭添加成员"><X :size="20" /></button>
-        </header>
-        <div class="member-picker-body">
-          <div v-if="memberPickerBusy" class="member-picker-empty">加载中...</div>
-          <div v-else-if="memberPickerCandidates.length" class="member-picker-list">
-            <button
-              v-for="candidate in memberPickerCandidates"
-              :key="memberPickerCandidateKey(candidate)"
-              type="button"
-              class="member-picker-row"
-              :class="{ selected: memberPickerSelectedIds.includes(memberPickerCandidateKey(candidate)) }"
-              @click="toggleMemberPickerAccount(candidate)"
-            >
-              <div class="avatar presence-avatar" :class="{ bot: candidate.kind === 'virtual' }">
-                <AvatarImage :path="candidate.avatarPath">
-                  <span>{{ avatarText(candidate.displayName) }}</span>
-                </AvatarImage>
-                <i v-if="candidate.accountId && isAccountOnline(candidate.accountId)" class="online-dot" aria-label="在线"></i>
-              </div>
-              <span>
-                <strong>{{ candidate.displayName }}</strong>
-                <small>{{ candidate.kind === "virtual" ? "AI 角色" : `@${candidate.username}` }}</small>
-              </span>
-              <CheckCircle2 v-if="memberPickerSelectedIds.includes(memberPickerCandidateKey(candidate))" :size="18" />
-            </button>
-          </div>
-          <div v-else class="member-picker-empty">没有可添加的人</div>
-        </div>
-        <div class="confirm-actions member-picker-actions">
-          <button class="mini-btn secondary" type="button" :disabled="memberPickerBusy" @click="closeMemberPicker">取消</button>
-          <button class="primary-btn" type="submit" :disabled="memberPickerBusy || !memberPickerSelectedIds.length">
-            {{ memberPickerBusy ? "添加中..." : `添加 ${memberPickerSelectedIds.length || ""}` }}
-          </button>
-        </div>
-      </form>
-    </section>
+    <MemberPickerDialog
+      v-if="memberPickerOpen"
+      :title="memberPickerTitle"
+      :busy="memberPickerBusy"
+      :candidates="memberPickerCandidates"
+      :selected-ids="memberPickerSelectedIds"
+      :candidate-key="memberPickerCandidateKey"
+      :avatar-text="avatarText"
+      :is-account-online="isAccountOnline"
+      @close="closeMemberPicker"
+      @submit="addSelectedMembers"
+      @toggle="toggleMemberPickerAccount"
+    />
 
     <section v-if="ownerTransferOpen" class="modal-shell" @click.self="closeOwnerTransfer">
       <form class="small-modal member-picker-modal" @submit.prevent="transferOwnedChannelAndLeave">

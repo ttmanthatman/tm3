@@ -30,7 +30,7 @@ type MemberActionTarget = {
   isSiteAdmin?: boolean;
 };
 
-type MemberPickerCandidate = {
+export type MemberPickerCandidate = {
   id: number;
   accountId?: number;
   characterId?: number;

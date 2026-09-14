@@ -33,6 +33,7 @@ const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepT
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
 const channelEditorDialog = fs.readFileSync(new URL("./features/channels/ChannelEditorDialog.vue", import.meta.url), "utf8");
+const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1142,10 +1143,22 @@ test("channel editor dialog lives outside App.vue with the modal-shell contract 
   assert.match(channelEditorDialog, /canSubmitChannelDraft\(draft, busy\)/);
 });
 
+test("member picker dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<MemberPickerDialog\s+v-if="memberPickerOpen"[\s\S]*?@close="closeMemberPicker"[\s\S]*?@submit="addSelectedMembers"[\s\S]*?@toggle="toggleMemberPickerAccount"/);
+  assert.doesNotMatch(app, /v-if="memberPickerOpen" class="modal-shell"/);
+  assert.match(memberPickerDialog, /<section class="modal-shell" @click\.self="emit\('close'\)">/);
+  assert.match(memberPickerDialog, /<form class="small-modal member-picker-modal" @submit\.prevent="emit\('submit'\)">/);
+  assert.match(memberPickerDialog, /aria-label="关闭添加成员"/);
+  assert.match(memberPickerDialog, /class="member-picker-row"[\s\S]*?selected: selectedIds\.includes\(candidateKey\(candidate\)\)/);
+  assert.match(memberPickerDialog, /class="online-dot"[\s\S]*?aria-label="在线"/);
+  assert.match(memberPickerDialog, /没有可添加的人/);
+  assert.match(memberPickerDialog, /:disabled="busy \|\| !selectedIds\.length"/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 8,
-    `App.vue must not add modal-shell blocks (baseline 8, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 7,
+    `App.vue must not add modal-shell blocks (baseline 7, found ${occurrences}); put new dialogs in focused components`
   );
 });
