@@ -31,6 +31,7 @@ const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue"
 const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.vue", import.meta.url), "utf8");
 const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
+const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1114,10 +1115,23 @@ test("score pages can be managed individually and paged in preview", () => {
   assert.match(css, /\.score-preview-pager button \{[\s\S]*?background: rgba\(20, 20, 20, 0\.24\);/);
 });
 
+test("prayer update editor dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<PrayerUpdateEditor\s+v-if="pendingPrayerUpdate"[\s\S]*?@close="closePrayerUpdateEditor"[\s\S]*?@submit="publishPrayerUpdate"/);
+  assert.doesNotMatch(app, /prayer-update-modal/);
+  assert.match(prayerUpdateEditor, /<section class="modal-shell" @mousedown\.self="emit\('close'\)">/);
+  assert.match(prayerUpdateEditor, /<form class="small-modal prayer-update-modal" @submit\.prevent="emit\('submit'\)">/);
+  assert.match(prayerUpdateEditor, /aria-label="关闭最新动态编辑"/);
+  assert.match(prayerUpdateEditor, /ref="prayerUpdateTextarea"/);
+  assert.match(prayerUpdateEditor, /class="prayer-update-photo-chip"/);
+  assert.match(prayerUpdateEditor, /aria-label="移除照片"/);
+  assert.match(prayerUpdateEditor, /class="hidden"[\s\S]*?type="file"[\s\S]*?accept="image\/\*"/);
+  assert.match(prayerUpdateEditor, /更新并推送/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 10,
-    `App.vue must not add modal-shell blocks (baseline 10, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 9,
+    `App.vue must not add modal-shell blocks (baseline 9, found ${occurrences}); put new dialogs in focused components`
   );
 });

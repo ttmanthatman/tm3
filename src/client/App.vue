@@ -20,7 +20,6 @@ import {
   CircleOff,
   HeartHandshake,
   Heart,
-  Image as ImageIcon,
   LockKeyhole,
   LogOut,
   MessageSquareQuote,
@@ -211,6 +210,7 @@ import { useAdminTools } from "./features/admin/useAdminTools";
 import { useAiSettings } from "./features/admin/useAiSettings";
 import { useAccountSettings } from "./features/settings/useAccountSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
+import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -619,11 +619,9 @@ const pinnedEditMsg = ref("");
 const {
   pendingPrayer,
   pendingPrayerUpdate,
-  prayerUpdateTextarea,
   prayerUpdateContent,
   prayerUpdateBusy,
   prayerUpdateError,
-  prayerUpdatePhotoInput,
   prayerUpdatePhotoPreview,
   prayerComposerPhoto,
   prayerComposerPhotoPreview,
@@ -5959,32 +5957,18 @@ const messageRowBindings = {
       @submit="createChain"
     />
 
-    <section v-if="pendingPrayerUpdate" class="modal-shell" @mousedown.self="closePrayerUpdateEditor">
-      <form class="small-modal prayer-update-modal" @submit.prevent="publishPrayerUpdate">
-        <header class="modal-head">
-          <strong>更新代祷最新动态</strong>
-          <button class="icon-btn" type="button" @click="closePrayerUpdateEditor" aria-label="关闭最新动态编辑"><X :size="20" /></button>
-        </header>
-        <div class="form-grid modal-form">
-          <textarea ref="prayerUpdateTextarea" v-model="prayerUpdateContent" rows="9" placeholder="写下最新动态…"></textarea>
-          <div class="prayer-update-attach">
-            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="prayerUpdatePhotoInput?.click()"><ImageIcon :size="15" />附上照片</button>
-            <span v-if="prayerUpdatePhotoPreview" class="prayer-update-photo-chip">
-              <img :src="prayerUpdatePhotoPreview" alt="已选照片预览" />
-              <button class="icon-btn" type="button" :disabled="prayerUpdateBusy" aria-label="移除照片" @click="clearPrayerUpdatePhoto"><X :size="14" /></button>
-            </span>
-          </div>
-          <input ref="prayerUpdatePhotoInput" class="hidden" type="file" accept="image/*" @change="handlePrayerUpdatePhotoPick" />
-          <p v-if="prayerUpdateError" class="form-error">{{ prayerUpdateError }}</p>
-          <div class="confirm-actions">
-            <button class="mini-btn secondary" type="button" :disabled="prayerUpdateBusy" @click="closePrayerUpdateEditor">取消</button>
-            <button class="primary-btn" type="submit" :disabled="prayerUpdateBusy || !prayerUpdateCanPublish">
-              {{ prayerUpdateBusy ? "正在更新..." : "更新并推送" }}
-            </button>
-          </div>
-        </div>
-      </form>
-    </section>
+    <PrayerUpdateEditor
+      v-if="pendingPrayerUpdate"
+      v-model:content="prayerUpdateContent"
+      :busy="prayerUpdateBusy"
+      :error="prayerUpdateError"
+      :photo-preview="prayerUpdatePhotoPreview"
+      :can-publish="prayerUpdateCanPublish"
+      @close="closePrayerUpdateEditor"
+      @submit="publishPrayerUpdate"
+      @clear-photo="clearPrayerUpdatePhoto"
+      @photo-pick="handlePrayerUpdatePhotoPick"
+    />
 
     <ChainJoinPopover
       v-if="pendingChain"

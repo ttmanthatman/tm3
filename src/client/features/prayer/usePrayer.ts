@@ -17,11 +17,9 @@ export function usePrayer(options: UsePrayerOptions) {
   const store = useChatStore();
   const pendingPrayer = ref<MessageDTO | null>(null);
   const pendingPrayerUpdate = ref<MessageDTO | null>(null);
-  const prayerUpdateTextarea = ref<HTMLTextAreaElement | null>(null);
   const prayerUpdateContent = ref("");
   const prayerUpdateBusy = ref(false);
   const prayerUpdateError = ref("");
-  const prayerUpdatePhotoInput = ref<HTMLInputElement | null>(null);
   const prayerUpdatePhoto = ref<File | null>(null);
   const prayerUpdatePhotoPreview = ref("");
   const prayerComposerPhoto = ref<File | null>(null);
@@ -197,7 +195,6 @@ export function usePrayer(options: UsePrayerOptions) {
     if (prayerUpdatePhotoPreview.value) URL.revokeObjectURL(prayerUpdatePhotoPreview.value);
     prayerUpdatePhoto.value = null;
     prayerUpdatePhotoPreview.value = "";
-    if (prayerUpdatePhotoInput.value) prayerUpdatePhotoInput.value.value = "";
   }
 
   function openPrayerUpdateEditor(message: MessageDTO) {
@@ -269,11 +266,9 @@ export function usePrayer(options: UsePrayerOptions) {
   return {
     pendingPrayer,
     pendingPrayerUpdate,
-    prayerUpdateTextarea,
     prayerUpdateContent,
     prayerUpdateBusy,
     prayerUpdateError,
-    prayerUpdatePhotoInput,
     prayerUpdatePhoto,
     prayerUpdatePhotoPreview,
     prayerComposerPhoto,
