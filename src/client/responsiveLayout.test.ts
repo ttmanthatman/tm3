@@ -13,6 +13,9 @@ const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlaye
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const appModal = fs.readFileSync(new URL("./components/ui/AppModal.vue", import.meta.url), "utf8");
+const appButton = fs.readFileSync(new URL("./components/ui/AppButton.vue", import.meta.url), "utf8");
+const confirmDialog = fs.readFileSync(new URL("./components/ui/ConfirmDialog.vue", import.meta.url), "utf8");
+const appField = fs.readFileSync(new URL("./components/ui/AppField.vue", import.meta.url), "utf8");
 const avatarImage = fs.readFileSync(new URL("./components/ui/AvatarImage.vue", import.meta.url), "utf8");
 const channelIcon = fs.readFileSync(new URL("./components/ui/ChannelIcon.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
@@ -704,10 +707,14 @@ test("messages offer multi-channel forwarding from the long-press menu", () => {
   assert.match(css, /\.forward-channel-row\.selected \{/);
 });
 
-test("AppModal hosts the forward and channel confirm dialogs with the modal-shell contract", () => {
+test("AppModal hosts the forward dialog and ConfirmDialog owns the channel confirmations with the modal-shell contract", () => {
   assert.match(app, /<AppModal :open="forwardPickerOpen" content-class="forward-message-modal" :busy="forwardBusy"/);
-  assert.match(app, /<AppModal :open="!!pendingLeaveChannel" title="退出频道" :busy="channelLeaveBusy"/);
-  assert.match(app, /<AppModal :open="!!pendingCloseChannel" title="关闭私聊"/);
+  assert.match(app, /<ConfirmDialog\s+:open="!!pendingLeaveChannel"[\s\S]*?title="退出频道"[\s\S]*?:busy="channelLeaveBusy"/);
+  assert.match(app, /<ConfirmDialog\s+:open="!!pendingCloseChannel"[\s\S]*?title="关闭私聊"/);
+  assert.match(confirmDialog, /<AppModal :open="open" :title="title" :busy="busy"/);
+  assert.match(confirmDialog, /class="confirm-body"/);
+  assert.match(confirmDialog, /class="confirm-actions"/);
+  assert.match(confirmDialog, /class="form-error"/);
   assert.match(appModal, /class="modal-shell"/);
   assert.match(appModal, /role="dialog"/);
   assert.match(appModal, /aria-modal="true"/);
@@ -715,6 +722,23 @@ test("AppModal hosts the forward and channel confirm dialogs with the modal-shel
   assert.match(appModal, /small-modal/);
   assert.match(appModal, /@click\.self="requestClose"/);
   assert.match(appModal, /event\.key !== "Escape"/);
+});
+
+test("AppButton and AppField primitives back the demo dialog buttons and settings fields", () => {
+  assert.match(appButton, /primary: "primary-btn"/);
+  assert.match(appButton, /ghost: "mini-btn secondary"/);
+  assert.match(appButton, /danger: "mini-btn danger-action"/);
+  assert.match(appButton, /icon: "icon-btn"/);
+  assert.match(appButton, /:disabled="disabled"/);
+  assert.match(confirmDialog, /<AppButton variant="ghost" :disabled="busy"/);
+  assert.match(confirmDialog, /<AppButton :variant="danger \? 'danger' : 'primary'" :disabled="busy"/);
+  assert.match(app, /<AppButton variant="ghost" :disabled="forwardBusy" @click="closeForwardDialog">取消<\/AppButton>/);
+  assert.match(app, /<AppButton variant="primary" :disabled="forwardBusy" @click="submitMessageForward">/);
+  assert.match(appField, /class="app-field"/);
+  assert.match(appField, /class="form-error" role="alert"/);
+  assert.match(appField, /class="settings-note"/);
+  assert.match(settingsPanel, /<AppField label="当前密码" input-id="account-current-password">/);
+  assert.match(settingsPanel, /<AppField label="新密码" input-id="account-new-password">/);
 });
 
 test("AvatarImage and ChannelIcon primitives own avatar fallback and channel icon rendering", () => {
@@ -735,7 +759,7 @@ test("AvatarImage and ChannelIcon primitives own avatar fallback and channel ico
 
 test("direct message channels can be closed from the channel editor", () => {
   assert.match(app, /channelEditorMode === 'edit' && channelEditorChannel\?\.directKey[\s\S]*?requestCloseChannel\(channelEditorChannel\)[\s\S]*?关闭私聊/);
-  assert.match(app, /<AppModal :open="!!pendingCloseChannel" title="关闭私聊"/);
+  assert.match(app, /<ConfirmDialog\s+:open="!!pendingCloseChannel"[\s\S]*?title="关闭私聊"/);
 });
 
 test("forwarded audio copies attached score pages and exposes them on the new message", () => {

@@ -29,6 +29,7 @@ import { APP_VERSION, RELEASE_DATE, RELEASE_NOTES } from "@shared/release";
 import { useChatStore } from "../../store";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import ChannelIcon from "../../components/ui/ChannelIcon.vue";
+import AppField from "../../components/ui/AppField.vue";
 import { settingsTabMeta, type SettingsTab } from "./settingsTabs";
 import type { AccountSettings } from "./useAccountSettings";
 
@@ -195,8 +196,12 @@ const {
             <div class="account-security-grid">
               <div class="account-setting-card">
                 <div><strong>修改密码</strong><small>修改后，其他已登录设备会自动退出。</small></div>
-                <label>当前密码<input v-model="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password" /></label>
-                <label>新密码<input v-model="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
+                <AppField label="当前密码" input-id="account-current-password">
+                  <input id="account-current-password" v-model="accountCurrentPassword" type="password" maxlength="128" autocomplete="current-password" />
+                </AppField>
+                <AppField label="新密码" input-id="account-new-password">
+                  <input id="account-new-password" v-model="accountNewPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" />
+                </AppField>
                 <label>再次输入新密码<input v-model="accountConfirmPassword" type="password" minlength="10" maxlength="128" autocomplete="new-password" /></label>
                 <button class="primary-btn" :disabled="accountPasswordBusy" @click="changeOwnPassword">{{ accountPasswordBusy ? "修改中" : "修改密码" }}</button>
                 <p v-if="accountPasswordMsg" class="settings-note">{{ accountPasswordMsg }}</p>

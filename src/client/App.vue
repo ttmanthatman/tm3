@@ -107,6 +107,8 @@ import ActivityTicker from "./components/ActivityTicker.vue";
 import AppMenu from "./components/AppMenu.vue";
 import AppMenuItem from "./components/AppMenuItem.vue";
 import AppModal from "./components/ui/AppModal.vue";
+import AppButton from "./components/ui/AppButton.vue";
+import ConfirmDialog from "./components/ui/ConfirmDialog.vue";
 import AvatarImage from "./components/ui/AvatarImage.vue";
 import ChannelIcon from "./components/ui/ChannelIcon.vue";
 import { useVoiceRecording } from "./features/voice/useVoiceRecording";
@@ -6374,16 +6376,16 @@ function isMine(message: MessageDTO) {
         </div>
         <div class="confirm-actions member-picker-actions">
           <template v-if="!forwardConfirming">
-            <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="closeForwardDialog">取消</button>
-            <button class="primary-btn" type="button" :disabled="!forwardChannelIds.length" @click="forwardConfirming = true">
+            <AppButton variant="ghost" :disabled="forwardBusy" @click="closeForwardDialog">取消</AppButton>
+            <AppButton variant="primary" :disabled="!forwardChannelIds.length" @click="forwardConfirming = true">
               确定<template v-if="forwardChannelIds.length">（{{ forwardChannelIds.length }}）</template>
-            </button>
+            </AppButton>
           </template>
           <template v-else>
-            <button class="mini-btn secondary" type="button" :disabled="forwardBusy" @click="forwardConfirming = false">取消</button>
-            <button class="primary-btn" type="button" :disabled="forwardBusy" @click="submitMessageForward">
+            <AppButton variant="ghost" :disabled="forwardBusy" @click="forwardConfirming = false">取消</AppButton>
+            <AppButton variant="primary" :disabled="forwardBusy" @click="submitMessageForward">
               {{ forwardBusy ? "发送中..." : "发送" }}
-            </button>
+            </AppButton>
           </template>
         </div>
       </template>
@@ -6737,30 +6739,29 @@ function isMine(message: MessageDTO) {
       </div>
     </section>
 
-    <AppModal :open="!!pendingLeaveChannel" title="退出频道" :busy="channelLeaveBusy" close-label="取消退出频道" @close="pendingLeaveChannel = null">
-      <div v-if="pendingLeaveChannel" class="confirm-body">
-        <p>退出后，这个频道会从你的列表中移除，你也不会再收到它的新消息或通知。</p>
-        <strong>{{ pendingLeaveChannel.name }}</strong>
-        <p v-if="channelLeaveMsg" class="form-error">{{ channelLeaveMsg }}</p>
-        <div class="confirm-actions">
-          <button class="mini-btn secondary" :disabled="channelLeaveBusy" @click="pendingLeaveChannel = null">取消</button>
-          <button class="primary-btn" :disabled="channelLeaveBusy" @click="leavePendingChannel">
-            {{ channelLeaveBusy ? "正在退出..." : "确认退出" }}
-          </button>
-        </div>
-      </div>
-    </AppModal>
+    <ConfirmDialog
+      :open="!!pendingLeaveChannel"
+      title="退出频道"
+      message="退出后，这个频道会从你的列表中移除，你也不会再收到它的新消息或通知。"
+      :detail="pendingLeaveChannel?.name || ''"
+      :confirm-text="channelLeaveBusy ? '正在退出...' : '确认退出'"
+      :busy="channelLeaveBusy"
+      :error="channelLeaveMsg"
+      close-label="取消退出频道"
+      @close="pendingLeaveChannel = null"
+      @confirm="leavePendingChannel"
+    />
 
-    <AppModal :open="!!pendingCloseChannel" title="关闭私聊" close-label="取消关闭私聊" @close="pendingCloseChannel = null">
-      <div v-if="pendingCloseChannel" class="confirm-body">
-        <p>关闭后这个私聊会从你的频道列表里移除，历史消息会保留。之后重新发起私聊可以再次打开。</p>
-        <strong>{{ pendingCloseChannel.name }}</strong>
-        <div class="confirm-actions">
-          <button class="mini-btn secondary" @click="pendingCloseChannel = null">取消</button>
-          <button class="primary-btn" @click="closePendingChannel">关闭私聊</button>
-        </div>
-      </div>
-    </AppModal>
+    <ConfirmDialog
+      :open="!!pendingCloseChannel"
+      title="关闭私聊"
+      message="关闭后这个私聊会从你的频道列表里移除，历史消息会保留。之后重新发起私聊可以再次打开。"
+      :detail="pendingCloseChannel?.name || ''"
+      confirm-text="关闭私聊"
+      close-label="取消关闭私聊"
+      @close="pendingCloseChannel = null"
+      @confirm="closePendingChannel"
+    />
 
     <section v-if="notificationPromptOpen" class="modal-shell" @click.self="notificationPromptOpen = false">
       <div class="small-modal notification-check-modal">
