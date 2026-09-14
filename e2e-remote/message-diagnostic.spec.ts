@@ -116,7 +116,7 @@ test("单条消息发送与刷新持久化诊断", async ({ page }) => {
   });
 
   await loginToDiagnosticChannel(page);
-  const input = page.getByPlaceholder("输入消息");
+  const input = page.locator(".composer-main textarea");
   const send = page.getByRole("button", { name: "发送", exact: true });
   await input.fill(marker);
   const before = {

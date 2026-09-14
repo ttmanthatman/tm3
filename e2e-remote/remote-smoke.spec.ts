@@ -82,9 +82,9 @@ test("专用账号的关键远程浏览器冒烟流程", async ({ page }) => {
   });
   await test.step("发送唯一前缀消息并确认刷新后存在", async () => {
     const message = `[REMOTE-E2E-${Date.now()}] remote browser smoke`;
-    await page.getByPlaceholder("输入消息").fill(message);
+    await page.locator(".composer-main textarea").fill(message);
     await page.getByRole("button", { name: "发送", exact: true }).click();
-    await expect(page.getByPlaceholder("输入消息")).toHaveValue("");
+    await expect(page.locator(".composer-main textarea")).toHaveValue("");
     await expect(page.locator(".message-row[data-message-id]").filter({ hasText: message })).toHaveCount(1);
     await page.reload();
     await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);
@@ -96,7 +96,7 @@ test("专用账号的关键远程浏览器冒烟流程", async ({ page }) => {
     await page.getByRole("button", { name: "频道", exact: true }).click();
     await page.getByRole("button", { name: remote.channel, exact: true }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);
-    const mobileInput = page.getByPlaceholder("输入消息");
+    const mobileInput = page.locator(".composer-main textarea");
     const mobileDraft = `[REMOTE-E2E-MOBILE-DRAFT-${Date.now()}]`;
     await expect(mobileInput).toBeEnabled();
     await mobileInput.fill(mobileDraft);
