@@ -209,6 +209,7 @@ import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
 import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
 import NotificationPromptDialog from "./features/settings/NotificationPromptDialog.vue";
 import AppearanceImagePicker from "./features/admin/AppearanceImagePicker.vue";
+import ForwardActionSheet from "./features/messages/ForwardActionSheet.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6067,13 +6068,11 @@ const messageRowBindings = {
       </template>
     </AppModal>
 
-    <section v-if="forwardActionSheetOpen" class="modal-shell forward-sheet-shell" @click.self="forwardActionSheetOpen = false">
-      <div class="forward-action-sheet" role="dialog" aria-label="选择转发方式">
-        <button type="button" @click="chooseForwardMode('separate')">逐条转发</button>
-        <button type="button" @click="chooseForwardMode('merged')">合并转发</button>
-        <button type="button" class="forward-action-cancel" @click="forwardActionSheetOpen = false">取消</button>
-      </div>
-    </section>
+    <ForwardActionSheet
+      v-if="forwardActionSheetOpen"
+      @close="forwardActionSheetOpen = false"
+      @choose="chooseForwardMode"
+    />
 
     <ChatRecordView v-if="chatRecordViewMessage" :message="chatRecordViewMessage" @close="chatRecordViewMessage = null" />
 

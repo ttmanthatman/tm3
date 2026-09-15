@@ -38,6 +38,7 @@ const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTr
 const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessageEditor.vue", import.meta.url), "utf8");
 const notificationPromptDialog = fs.readFileSync(new URL("./features/settings/NotificationPromptDialog.vue", import.meta.url), "utf8");
 const appearanceImagePicker = fs.readFileSync(new URL("./features/admin/AppearanceImagePicker.vue", import.meta.url), "utf8");
+const forwardActionSheet = fs.readFileSync(new URL("./features/messages/ForwardActionSheet.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1198,10 +1199,20 @@ test("appearance image picker dialog lives outside App.vue with the modal-shell 
   assert.match(appearanceImagePicker, /还没有可选图片。上传后会自动选中为当前草稿。/);
 });
 
+test("forward action sheet lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<ForwardActionSheet\s+v-if="forwardActionSheetOpen"[\s\S]*?@close="forwardActionSheetOpen = false"[\s\S]*?@choose="chooseForwardMode"/);
+  assert.doesNotMatch(app, /forward-action-sheet/);
+  assert.match(forwardActionSheet, /<section class="modal-shell forward-sheet-shell" @click\.self="emit\('close'\)">/);
+  assert.match(forwardActionSheet, /class="forward-action-sheet" role="dialog" aria-label="选择转发方式"/);
+  assert.match(forwardActionSheet, /emit\('choose', 'separate'\)[\s\S]*?逐条转发/);
+  assert.match(forwardActionSheet, /emit\('choose', 'merged'\)[\s\S]*?合并转发/);
+  assert.match(forwardActionSheet, /class="forward-action-cancel"/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 3,
-    `App.vue must not add modal-shell blocks (baseline 3, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 2,
+    `App.vue must not add modal-shell blocks (baseline 2, found ${occurrences}); put new dialogs in focused components`
   );
 });
