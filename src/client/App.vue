@@ -927,6 +927,7 @@ const updateCheck = ref<UpdateCheckDTO | null>(null);
 const updateStatus = ref<UpdateStatusDTO | null>(null);
 const updateBusy = ref(false);
 const selectedUpdateBranch = ref("");
+const selectedUpdateCommit = ref("");
 
 const {
   timeline,
@@ -2060,6 +2061,7 @@ const adminReleaseBindings = {
   updateStatus,
   updateBusy,
   selectedUpdateBranch,
+  selectedUpdateCommit,
   checkForUpdates,
   startServerUpdate,
   releaseHistory,
@@ -2923,6 +2925,7 @@ async function checkForUpdates() {
     const result = await api<UpdateCheckDTO>(`/api/admin/update/check${params}`);
     updateCheck.value = result;
     selectedUpdateBranch.value = result.branch;
+    selectedUpdateCommit.value = result.latestCommit?.sha || "";
     updateStatus.value = result.status;
     if (result.status.state === "running") startUpdatePolling();
   } catch (error) {
@@ -2937,7 +2940,7 @@ async function startServerUpdate() {
   updateBusy.value = true;
   adminMsg.value = "已开始更新，服务器会在完成后自动重启。";
   try {
-    await api("/api/admin/update/start", { method: "POST", body: JSON.stringify({ branch: selectedUpdateBranch.value || updateCheck.value?.branch }) });
+    await api("/api/admin/update/start", { method: "POST", body: JSON.stringify({ branch: selectedUpdateBranch.value || updateCheck.value?.branch, commit: selectedUpdateCommit.value || undefined }) });
   } catch {
     // Restart may interrupt the request; the status poll will pick up progress when the server returns.
   } finally {

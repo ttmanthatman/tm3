@@ -4,6 +4,7 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-$(pwd)}"
 REPO_URL="${UPDATE_REPO_URL:-${REPO_URL:-https://github.com/ttmanthatman/tm3.git}}"
 BRANCH="${UPDATE_BRANCH:-${BRANCH:-main}}"
+UPDATE_COMMIT="${UPDATE_COMMIT:-}"
 PM2_APP="${UPDATE_PM2_APP:-${APP_NAME:-team-chat}}"
 RESTART_MODE="${UPDATE_RESTART_MODE:-pm2}"
 RESTART_COMMAND="${UPDATE_RESTART_COMMAND:-}"
@@ -116,10 +117,10 @@ clone_repo() {
   esac
 
   log_step 8 "检查 GitHub 连接"
-  if git ls-remote --exit-code --heads "$REPO_URL" "$BRANCH" >>"$LOG_PATH" 2>&1; then
+  if git -c http.version=HTTP/1.1 ls-remote --exit-code --heads "$REPO_URL" "$BRANCH" >>"$LOG_PATH" 2>&1; then
     while [ "$attempt" -le "$max_attempts" ]; do
       log_step 12 "下载最新代码（第 ${attempt}/${max_attempts} 次）"
-      if git clone --depth 1 --single-branch --branch "$BRANCH" "$REPO_URL" "$RELEASE_DIR" >>"$LOG_PATH" 2>&1; then
+      if git -c http.version=HTTP/1.1 clone --depth 1 --single-branch --branch "$BRANCH" "$REPO_URL" "$RELEASE_DIR" >>"$LOG_PATH" 2>&1; then
         return 0
       fi
       if [ "$attempt" -lt "$max_attempts" ]; then
@@ -146,11 +147,30 @@ download_tarball() {
   log_step 12 "git 通道不可用，改用压缩包下载最新代码"
   rm -rf "$RELEASE_DIR"
   local tarball="$TMP_DIR/repo.tar.gz"
-  if ! curl -fsSL --retry 3 --retry-delay 5 -o "$tarball" "https://codeload.github.com/${repo_path}/tar.gz/refs/heads/${BRANCH}" >>"$LOG_PATH" 2>&1; then
+  local ref="${UPDATE_COMMIT:-refs/heads/${BRANCH}}"
+  if ! curl -fsSL --retry 3 --retry-delay 5 -o "$tarball" "https://codeload.github.com/${repo_path}/tar.gz/${ref}" >>"$LOG_PATH" 2>&1; then
     return 1
   fi
   mkdir -p "$RELEASE_DIR"
   tar -xzf "$tarball" -C "$RELEASE_DIR" --strip-components=1 >>"$LOG_PATH" 2>&1
+}
+
+checkout_target() {
+  if [ -z "$UPDATE_COMMIT" ] || [ ! -d "$RELEASE_DIR/.git" ]; then
+    return 0
+  fi
+  log_step 16 "检出指定提交 ${UPDATE_COMMIT}"
+  if git -C "$RELEASE_DIR" -c http.version=HTTP/1.1 fetch --depth 1 origin "$UPDATE_COMMIT" >>"$LOG_PATH" 2>&1 \
+    && git -C "$RELEASE_DIR" checkout --detach FETCH_HEAD >>"$LOG_PATH" 2>&1; then
+    return 0
+  fi
+  printf '[%s] 按提交直接拉取失败，改为加深分支历史后检出\n' "$(date -Iseconds)" >>"$LOG_PATH"
+  git -C "$RELEASE_DIR" -c http.version=HTTP/1.1 fetch --deepen=200 origin "$BRANCH" >>"$LOG_PATH" 2>&1 || true
+  if git -C "$RELEASE_DIR" checkout --detach "$UPDATE_COMMIT" >>"$LOG_PATH" 2>&1; then
+    return 0
+  fi
+  git -C "$RELEASE_DIR" -c http.version=HTTP/1.1 fetch --unshallow origin "$BRANCH" >>"$LOG_PATH" 2>&1 || true
+  git -C "$RELEASE_DIR" checkout --detach "$UPDATE_COMMIT" >>"$LOG_PATH" 2>&1
 }
 
 trap 'code=$?; printf "[%s] 更新失败：%s，退出码 %s\n" "$(date -Iseconds)" "$CURRENT_STEP" "$code" >>"$LOG_PATH"; write_status "failed" 100 "更新失败：${CURRENT_STEP}（退出码 ${code}）"' ERR
@@ -207,6 +227,8 @@ fi
 
 clone_repo
 
+checkout_target
+
 if [ ! -f "$RELEASE_DIR/package.json" ] || [ ! -f "$RELEASE_DIR/package-lock.json" ]; then
   fail_step "更新失败：GitHub 代码缺少 package.json 或 package-lock.json"
 fi
@@ -220,6 +242,7 @@ cd "$RELEASE_DIR"
 # 前端构建工具（Vite、TypeScript）位于 devDependencies；生产环境中的 npm
 # 会默认省略它们，导致后续构建阶段出现 "vite: not found"。
 run_logged 32 "安装依赖" npm ci --include=dev --no-audit --no-fund
+run_logged 42 "记录构建信息" npm run build:info
 run_logged 52 "生成 Prisma Client" npm run prisma:generate
 log_resources
 run_node_logged 62 "构建前端" npm run build:client

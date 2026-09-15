@@ -35,6 +35,7 @@ import { APP_VERSION, RELEASE_DATE, RELEASE_NOTES } from "@shared/release";
 import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
 import { cleanWallpaperPanSpeed } from "@shared/wallpaperPan";
 import { compactBytes } from "../../time";
+import { adminDate } from "./adminFormat";
 import { cleanParallaxSpeed, parallaxAssetUrl } from "../../parallax";
 import ParallaxBackground from "../../components/ParallaxBackground.vue";
 import ChannelIcon from "../../components/ui/ChannelIcon.vue";
@@ -55,6 +56,7 @@ interface AdminReleaseBindings {
   updateStatus: Ref<UpdateStatusDTO | null>;
   updateBusy: Ref<boolean>;
   selectedUpdateBranch: Ref<string>;
+  selectedUpdateCommit: Ref<string>;
   checkForUpdates: () => Promise<void>;
   startServerUpdate: () => Promise<void>;
   releaseHistory: Ref<Array<{ version: string; date: string; notes: readonly string[] }>>;
@@ -176,6 +178,7 @@ const {
   updateStatus,
   updateBusy,
   selectedUpdateBranch,
+  selectedUpdateCommit,
   checkForUpdates,
   startServerUpdate,
   releaseHistory,
@@ -197,7 +200,20 @@ const updateRestartModeLabel = computed(() => {
   if (mode === "none") return "更新后需手动重启";
   return mode ? `重启方式：${mode}` : "自动重启";
 });
-const updateStartDisabled = computed(() => updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value?.updateAvailable);
+const updateStartDisabled = computed(() => {
+  if (updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value) return true;
+  if (updateCheck.value.updateAvailable) return false;
+  const selected = selectedUpdateCommit.value;
+  if (!selected) return true;
+  if (updateCheck.value.currentCommit) return selected === updateCheck.value.currentCommit;
+  return selected === updateCheck.value.latestCommit?.sha;
+});
+const currentBuildLabel = computed(() => {
+  const sha = updateCheck.value?.currentCommit ?? serverVersion.value?.commit;
+  if (!sha) return "";
+  const at = updateCheck.value?.currentCommittedAt ?? serverVersion.value?.committedAt;
+  return at ? `${sha.slice(0, 7)} · ${adminDate(at)}` : sha.slice(0, 7);
+});
 
 const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeSwatchStyle } = props.actions;
 </script>
@@ -877,14 +893,14 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
             <div class="release-head">
               <span>当前版本</span>
               <strong>v{{ APP_VERSION }}</strong>
-              <small>{{ RELEASE_DATE }} · 开发者：{{ releaseDeveloper }}</small>
+              <small>{{ RELEASE_DATE }}<template v-if="currentBuildLabel"> · {{ currentBuildLabel }}</template> · 开发者：{{ releaseDeveloper }}</small>
             </div>
             <div class="release-update-card">
               <div>
                 <b>GitHub 更新</b>
                 <small>
-                  当前 v{{ updateCheck?.current || APP_VERSION }}
-                  <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}</template>
+                  当前 v{{ updateCheck?.current || APP_VERSION }}<template v-if="currentBuildLabel">（{{ currentBuildLabel }}）</template>
+                  <template v-if="updateCheck"> · GitHub v{{ updateCheck.latest }}<template v-if="updateCheck.latestCommit">（{{ updateCheck.latestCommit.short }} · {{ adminDate(updateCheck.latestCommit.committedAt) }}）</template></template>
                 </small>
                 <small v-if="updateCheck || serverVersion?.update">
                   {{ updateCheck?.repo || serverVersion?.update?.repoUrl || "GitHub 仓库" }} · {{ updateRestartModeLabel }}
@@ -895,6 +911,12 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
                   <span>更新分支</span>
                   <select v-model="selectedUpdateBranch" :disabled="updateBusy || !updateCheck" @change="checkForUpdates">
                     <option v-for="branch in updateCheck?.branches || []" :key="branch" :value="branch">{{ branch }}</option>
+                  </select>
+                </label>
+                <label v-if="updateCheck?.commits?.length">
+                  <span>目标提交</span>
+                  <select v-model="selectedUpdateCommit" :disabled="updateBusy">
+                    <option v-for="commit in updateCheck.commits" :key="commit.sha" :value="commit.sha">{{ commit.short }} · {{ adminDate(commit.committedAt) }} · {{ commit.message }}</option>
                   </select>
                 </label>
                 <button class="mini-btn secondary" :disabled="updateBusy" @click="checkForUpdates"><RotateCcw :size="15" />检查</button>

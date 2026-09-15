@@ -3,7 +3,9 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import { APP_VERSION } from "../../shared/release.js";
+import { currentBuildInfo } from "../buildInfo.js";
 import { ROOT, STORAGE_ROOT } from "../storageDirs.js";
+import { githubCommitsUrl, isSafeUpdateCommit, normalizeGitHubCommits, resolveUpdateCommit } from "../updateCommits.js";
 import { githubPackageManifestUrl } from "../updateManifest.js";
 import { availableDefaultUpdateBranch, isSafeUpdateBranch, normalizeUpdateBranches, selectUpdateBranch } from "../updateBranches.js";
 
@@ -88,6 +90,17 @@ async function latestGitHubPackage(branch: string) {
   };
 }
 
+async function githubBranchCommits(branch: string, perPage = 30) {
+  const repo = parseGitHubRepo(UPDATE_REPO_URL);
+  if (!repo) throw new Error("只支持 GitHub 仓库更新地址");
+  const response = await fetch(githubCommitsUrl(repo.owner, repo.repo, branch, perPage), {
+    cache: "no-store",
+    headers: { accept: "application/vnd.github+json", "user-agent": "team-chat-updater" }
+  });
+  if (!response.ok) throw new Error(`无法读取 GitHub 提交记录：HTTP ${response.status}`);
+  return normalizeGitHubCommits(await response.json(), perPage);
+}
+
 function expireStaleUpdateStatus(status: { state: string; progress: number; detail: string; updatedAt?: string }) {
   if (status.state !== "running" || !status.updatedAt || !Number.isFinite(UPDATE_RUNNING_TIMEOUT_MS) || UPDATE_RUNNING_TIMEOUT_MS <= 0) {
     return status;
@@ -151,11 +164,20 @@ export function registerAdminUpdateRoutes(app: FastifyInstance, deps: { requireA
     const { repo, branches } = await githubBranches();
     const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
     const branch = selectUpdateBranch((request.query as { branch?: unknown }).branch, branches, fallbackBranch);
-    const latest = await latestGitHubPackage(branch);
+    const [latest, commits] = await Promise.all([latestGitHubPackage(branch), githubBranchCommits(branch)]);
+    const build = currentBuildInfo();
+    const latestCommit = commits[0] ?? null;
+    const branchChanged = latest.branch !== configuredUpdateBranch();
+    const versionNewer = compareVersions(latest.version, APP_VERSION) > 0;
+    const commitDiffers = !!(build?.commit && latestCommit && build.commit !== latestCommit.sha);
     return {
       current: APP_VERSION,
+      currentCommit: build?.commit ?? null,
+      currentCommittedAt: build?.committedAt ?? null,
       latest: latest.version,
-      updateAvailable: latest.branch !== configuredUpdateBranch() || compareVersions(latest.version, APP_VERSION) > 0,
+      latestCommit,
+      commits,
+      updateAvailable: branchChanged || versionNewer || commitDiffers,
       repo: `${repo.owner}/${repo.repo}`,
       branch: latest.branch,
       branches,
@@ -172,11 +194,21 @@ export function registerAdminUpdateRoutes(app: FastifyInstance, deps: { requireA
     if (status.state === "running") return reply.code(409).send({ success: false, message: "更新已经在进行中", status });
     const { branches } = await githubBranches();
     const fallbackBranch = availableDefaultUpdateBranch(branches, configuredUpdateBranch(), DEFAULT_UPDATE_BRANCH);
-    const branch = selectUpdateBranch((request.body as { branch?: unknown } | undefined)?.branch, branches, fallbackBranch);
+    const body = request.body as { branch?: unknown; commit?: unknown } | undefined;
+    const branch = selectUpdateBranch(body?.branch, branches, fallbackBranch);
+    let targetCommit: string | null = null;
+    if (typeof body?.commit === "string" && body.commit.trim()) {
+      const requested = body.commit.trim();
+      if (!isSafeUpdateCommit(requested)) return reply.code(400).send({ success: false, message: "提交哈希格式无效" });
+      const commits = await githubBranchCommits(branch, 100);
+      const match = resolveUpdateCommit(requested, commits);
+      if (!match) return reply.code(400).send({ success: false, message: "所选提交不在该分支的最近记录中" });
+      targetCommit = match.sha;
+    }
     const scriptPath = path.join(ROOT, "scripts", "self-update.sh");
     if (!fs.existsSync(scriptPath)) return reply.code(500).send({ success: false, message: "缺少更新脚本" });
     fs.writeFileSync(UPDATE_LOG_PATH, "");
-    writeUpdateStatus("running", 1, `准备更新 ${branch}`);
+    writeUpdateStatus("running", 1, targetCommit ? `准备更新 ${branch}@${targetCommit.slice(0, 7)}` : `准备更新 ${branch}`);
     const child = spawn("bash", [scriptPath], {
       cwd: ROOT,
       detached: true,
@@ -186,6 +218,7 @@ export function registerAdminUpdateRoutes(app: FastifyInstance, deps: { requireA
         APP_DIR: ROOT,
         UPDATE_REPO_URL,
         UPDATE_BRANCH: branch,
+        UPDATE_COMMIT: targetCommit ?? "",
         UPDATE_PM2_APP,
         UPDATE_RESTART_MODE,
         UPDATE_RESTART_COMMAND,

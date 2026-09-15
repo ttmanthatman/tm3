@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -n server,web -c blue,green \"tsx watch src/server/main.ts\" \"vite --host 0.0.0.0\"",
-    "build": "npm run build:client && npm run build:server",
+    "build": "npm run build:info && npm run build:client && npm run build:server",
+    "build:info": "tsx src/scripts/write-build-info.ts",
     "build:client": "NODE_ENV=production vite build",
     "build:server": "node --max-old-space-size=${BUILD_NODE_MAX_OLD_SPACE_SIZE:-2048} ./node_modules/typescript/bin/tsc -p tsconfig.server.json",
     "start": "node dist/server/server/main.js",

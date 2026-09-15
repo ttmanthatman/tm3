@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "../../shared/release.js";
 import { RELEASE_HISTORY } from "../../shared/releaseHistory.js";
 import { demoModeAvailable } from "../demo/config.js";
+import { currentBuildInfo } from "../buildInfo.js";
 import { applyFileResponseHeaders, applyFileValidation } from "../fileResponses.js";
 import { AVATAR_DIR, BG_DIR } from "../storageDirs.js";
 import { configuredUpdateBranch, UPDATE_PM2_APP, UPDATE_REPO_URL, UPDATE_RESTART_MODE } from "./adminUpdate.js";
@@ -14,19 +15,24 @@ const DEMO_MODE_AVAILABLE = demoModeAvailable();
 export function registerSystemRoutes(app: FastifyInstance) {
   app.get("/api/health", async () => ({ ok: true, name: "team-chat", time: new Date().toISOString() }));
 
-  app.get("/api/version", async () => ({
-    version: APP_VERSION,
-    date: RELEASE_DATE,
-    developer: RELEASE_DISPLAY_DEVELOPER,
-    notes: RELEASE_NOTES,
-    ...(DEMO_MODE_AVAILABLE ? { demo: { available: true as const } } : {}),
-    update: {
-      repoUrl: UPDATE_REPO_URL,
-      branch: configuredUpdateBranch(),
-      restartMode: UPDATE_RESTART_MODE,
-      pm2App: UPDATE_PM2_APP
-    }
-  }));
+  app.get("/api/version", async () => {
+    const build = currentBuildInfo();
+    return {
+      version: APP_VERSION,
+      date: RELEASE_DATE,
+      developer: RELEASE_DISPLAY_DEVELOPER,
+      notes: RELEASE_NOTES,
+      commit: build?.commit ?? null,
+      committedAt: build?.committedAt ?? null,
+      ...(DEMO_MODE_AVAILABLE ? { demo: { available: true as const } } : {}),
+      update: {
+        repoUrl: UPDATE_REPO_URL,
+        branch: configuredUpdateBranch(),
+        restartMode: UPDATE_RESTART_MODE,
+        pm2App: UPDATE_PM2_APP
+      }
+    };
+  });
 
   // Past-version notes are only needed when someone opens the release modal,
   // keeping the full history out of the client entry chunk.

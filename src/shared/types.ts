@@ -500,6 +500,8 @@ export interface VersionDTO {
   date: string;
   developer: string;
   notes: readonly string[];
+  commit?: string | null;
+  committedAt?: string | null;
   demo?: {
     available: true;
   };
@@ -519,9 +521,20 @@ export interface UpdateStatusDTO {
   log: string[];
 }
 
+export interface UpdateCommitDTO {
+  sha: string;
+  short: string;
+  committedAt: string;
+  message: string;
+}
+
 export interface UpdateCheckDTO {
   current: string;
+  currentCommit: string | null;
+  currentCommittedAt: string | null;
   latest: string;
+  latestCommit: UpdateCommitDTO | null;
+  commits: UpdateCommitDTO[];
   updateAvailable: boolean;
   repo: string;
   branch: string;

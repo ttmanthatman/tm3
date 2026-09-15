@@ -49,6 +49,8 @@ const server = [
   fs.readFileSync(new URL("../server/routes/adminLogs.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/fileResponses.ts", import.meta.url), "utf8")
 ].join("\n");
+const adminUpdateRoutes = fs.readFileSync(new URL("../server/routes/adminUpdate.ts", import.meta.url), "utf8");
+const selfUpdateScript = fs.readFileSync(new URL("../../scripts/self-update.sh", import.meta.url), "utf8");
 
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);
@@ -1095,6 +1097,23 @@ test("settings and admin panels own their panel-exclusive state instead of recei
   assert.match(settingsPanel, /async function saveBiblePreference[\s\S]*?bibleSettingsMsg/);
   assert.match(adminPanel, /const updateStartDisabled = computed/);
   assert.doesNotMatch(app, /const updateStartDisabled = computed/);
+});
+
+test("update flow detects commit hash and time and lets admins pick a target commit", () => {
+  assert.match(adminUpdateRoutes, /currentCommit: build\?\.commit \?\? null/);
+  assert.match(adminUpdateRoutes, /latestCommit,\s*commits,/);
+  assert.match(adminUpdateRoutes, /commitDiffers = !!\(build\?\.commit && latestCommit && build\.commit !== latestCommit\.sha\)/);
+  assert.match(adminUpdateRoutes, /isSafeUpdateCommit\(requested\)[\s\S]*?resolveUpdateCommit\(requested, commits\)[\s\S]*?UPDATE_COMMIT: targetCommit/);
+  assert.match(selfUpdateScript, /UPDATE_COMMIT="\$\{UPDATE_COMMIT:-\}"/);
+  assert.match(selfUpdateScript, /checkout_target\(\)[\s\S]*?checkout --detach/);
+  assert.match(selfUpdateScript, /npm run build:info/);
+  assert.match(app, /const selectedUpdateCommit = ref\(""\)/);
+  assert.match(app, /selectedUpdateCommit\.value = result\.latestCommit\?\.sha \|\| ""/);
+  assert.match(app, /commit: selectedUpdateCommit\.value \|\| undefined/);
+  assert.match(adminPanel, /v-model="selectedUpdateCommit"[\s\S]*?v-for="commit in updateCheck\.commits"/);
+  assert.match(adminPanel, /commit\.short \}\} · \{\{ adminDate\(commit\.committedAt\)/);
+  assert.match(adminPanel, /const currentBuildLabel = computed/);
+  assert.match(adminPanel, /serverVersion\.value\?\.commit/);
 });
 
 test("composer swaps one compact trailing action between more and a connection-aware send", () => {
