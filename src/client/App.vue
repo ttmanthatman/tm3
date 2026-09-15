@@ -12,7 +12,6 @@ import {
   ChevronRight,
   ChevronUp,
   DoorOpen,
-  FileUp,
   CheckCircle2,
   CircleOff,
   HeartHandshake,
@@ -205,6 +204,7 @@ import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
 import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
+import PinnedMessageViewer from "./features/chat/PinnedMessageViewer.vue";
 import NotificationPromptDialog from "./features/settings/NotificationPromptDialog.vue";
 import AppearanceImagePicker from "./features/admin/AppearanceImagePicker.vue";
 import ForwardActionSheet from "./features/messages/ForwardActionSheet.vue";
@@ -5333,35 +5333,17 @@ const messageRowBindings = {
         <button class="mini-btn secondary" @click="toggleMessageSelectionMode">完成</button>
       </section>
 
-      <section v-if="!showingFavoriteSurface && visiblePinned && pinnedExpanded" class="modal-shell pinned-view-shell" role="dialog" aria-modal="true" aria-label="置顶消息" @click.self="pinnedExpanded = false">
-        <div class="pinned-view-modal">
-          <header class="pinned-view-head">
-            <span class="pinned-view-icon"><Pin :size="17" /></span>
-            <span>
-              <strong>{{ pinnedText }}</strong>
-              <small>{{ pinnedSummary }}</small>
-            </span>
-          </header>
-          <div class="pin-card-body pinned-view-body">
-            <template v-for="block in pinnedBlocks" :key="block.id">
-              <p v-if="block.type === 'text'" v-html="textContentHtml(block.text)"></p>
-              <button v-else-if="block.type === 'image'" class="image-preview-button pinned-image-button" @click.stop="openPinnedImage(block)">
-                <img class="chat-image pinned-image" :src="pinnedFileUrl(block)" loading="lazy" decoding="async" alt="置顶图片" />
-              </button>
-              <a v-else class="file-card pinned-file-card" :href="pinnedFileUrl(block)" target="_blank" rel="noopener noreferrer" @click.stop>
-                <FileUp :size="24" />
-                <span>
-                  <strong>{{ block.fileName }}</strong>
-                  <small>{{ block.fileSize ? compactBytes(block.fileSize) : "文件" }}</small>
-                </span>
-              </a>
-            </template>
-          </div>
-          <footer class="pinned-view-actions">
-            <button class="primary-btn pinned-ack-btn" @click="collapsePinned"><CheckCircle2 :size="17" />朕知道了</button>
-          </footer>
-        </div>
-      </section>
+      <PinnedMessageViewer
+        v-if="!showingFavoriteSurface && visiblePinned && pinnedExpanded"
+        :pinned-text="pinnedText"
+        :pinned-summary="pinnedSummary"
+        :blocks="pinnedBlocks"
+        :text-content-html="textContentHtml"
+        :pinned-file-url="pinnedFileUrl"
+        @close="pinnedExpanded = false"
+        @ack="collapsePinned"
+        @open-image="openPinnedImage"
+      />
 
       <div v-if="showFavorites" class="messages-viewport favorites-viewport">
         <div class="favorites-main-scroll">

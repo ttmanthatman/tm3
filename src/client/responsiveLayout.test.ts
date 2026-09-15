@@ -36,6 +36,7 @@ const channelEditorDialog = fs.readFileSync(new URL("./features/channels/Channel
 const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
 const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
 const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessageEditor.vue", import.meta.url), "utf8");
+const pinnedMessageViewer = fs.readFileSync(new URL("./features/chat/PinnedMessageViewer.vue", import.meta.url), "utf8");
 const notificationPromptDialog = fs.readFileSync(new URL("./features/settings/NotificationPromptDialog.vue", import.meta.url), "utf8");
 const appearanceImagePicker = fs.readFileSync(new URL("./features/admin/AppearanceImagePicker.vue", import.meta.url), "utf8");
 const forwardActionSheet = fs.readFileSync(new URL("./features/messages/ForwardActionSheet.vue", import.meta.url), "utf8");
@@ -148,7 +149,7 @@ test("mobile drawers stay above the chat header and their scrim", () => {
 test("pinned notices stay above chat content and retain their modal layer", () => {
   assert.match(css, /\.chat-pane > :where\(:not\(\.wallpaper-pan-background\):not\(\.parallax-background\):not\(\.modal-shell\):not\(\.music-lyrics-header\)\) \{[\s\S]*?z-index: 1;/);
   assert.match(css, /\.pinned-view-shell \{[\s\S]*?z-index: 50;/);
-  assert.match(app, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
+  assert.match(pinnedMessageViewer, /class="modal-shell pinned-view-shell"[\s\S]*?class="primary-btn pinned-ack-btn"/);
 });
 
 test("panning wallpaper stays on its own compositor layer during mobile scrolling", () => {
@@ -1219,10 +1220,19 @@ test("media preview modal lives outside App.vue with the modal-shell contract in
   assert.match(mediaPreviewModal, /<PdfViewer[\s\S]*?@close="emit\('close'\)"/);
 });
 
-test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
+test("pinned message viewer lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<PinnedMessageViewer\s+v-if="!showingFavoriteSurface && visiblePinned && pinnedExpanded"[\s\S]*?@close="pinnedExpanded = false"[\s\S]*?@ack="collapsePinned"[\s\S]*?@open-image="openPinnedImage"/);
+  assert.doesNotMatch(app, /pinned-view-modal/);
+  assert.match(pinnedMessageViewer, /<section[\s\S]*?class="modal-shell pinned-view-shell"[\s\S]*?role="dialog"[\s\S]*?aria-modal="true"[\s\S]*?aria-label="置顶消息"[\s\S]*?@click\.self="emit\('close'\)"[\s\S]*?>/);
+  assert.match(pinnedMessageViewer, /class="pinned-view-head"[\s\S]*?\{\{ pinnedText \}\}[\s\S]*?\{\{ pinnedSummary \}\}/);
+  assert.match(pinnedMessageViewer, /class="pin-card-body pinned-view-body"/);
+  assert.match(pinnedMessageViewer, /class="primary-btn pinned-ack-btn"[\s\S]*?朕知道了/);
+});
+
+test("App.vue contains no modal-shell blocks; dialogs live in focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 1,
-    `App.vue must not add modal-shell blocks (baseline 1, found ${occurrences}); put new dialogs in focused components`
+    occurrences === 0,
+    `App.vue contains no modal-shell blocks (found ${occurrences}); dialogs live in focused components`
   );
 });
