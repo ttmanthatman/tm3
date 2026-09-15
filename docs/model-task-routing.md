@@ -9,6 +9,14 @@ Routing priority is **Sol > Terra > Luna**. File count never lowers the model re
 the risk. If any Sol rule applies, route the whole task to Sol or split out a genuinely
 independent lower-risk task with its own acceptance criteria.
 
+**When Sol is unavailable, work does not stop — risk ownership moves to the user.** In
+order: (1) split out and finish the genuinely independent lower-risk parts; (2) defer the
+high-risk part until Sol is available; or (3) the user explicitly authorizes a lighter
+model to proceed — record the authorization on the task card, tighten acceptance (more
+targeted failure cases plus an independent review), and never deliver a downgraded task
+against the original standard silently. The Sol-only list below still defines what counts
+as high risk; unavailability does not reclassify it.
+
 ## Luna 可处理
 
 - 单一纯函数。
@@ -54,42 +62,30 @@ or shared contracts may still follow the ordinary Luna/Terra limits.
 
 ## 统一任务模板
 
-```md
-# 任务
+A task card ([docs/task-cards.md](task-cards.md)) is required only for tasks that cross a
+boundary: delegated to another model or session, run in parallel with other work, or
+touching a Sol-risk area. Routine single-session fixes inside one domain do not need one.
+The card carries baseline, goal, owner, dependencies, allowed/forbidden files,
+reproduction, acceptance, targeted/full checks, and unverified items. Fill every field;
+write "none" with a reason instead of deleting a field.
 
-## 目标
-- 要交付的可观察结果：
+## 多模型协作规则
 
-## 非目标
-- 本任务明确不处理：
-
-## 允许修改文件
-- 精确文件或目录：
-
-## 禁止修改文件
-- schema、迁移、发布文件、Service Worker 或其他越界区域：
-
-## 验收条件
-- 行为、接口、错误状态和兼容性要求：
-
-## 定向测试
-- 最小复现或失败测试：
-- 领域检查命令：
-
-## 完整测试
-- `npm run verify:full`
-- 任务需要的浏览器、迁移或其他独立检查：
-
-## 停止条件
-- 同一失败连续两次。
-- 需要修改禁止文件、扩大到第三个以上领域或取得新权限。
-- 发现无法解释的工作区改动、数据风险、安全风险或秘密信息。
-
-## 最终报告格式
-- 修改文件：
-- 测试结果：
-- 剩余风险：
-```
+- **Ownership:** Sol owns high-risk areas (schema/migrations, auth, Socket concurrency,
+  file storage, Service Worker caching, architecture). Kimi takes bounded client, test,
+  and documentation tasks with an explicit file scope. File count never lowers the model
+  required by the risk, and Sol unavailability follows the downgrade rule at the top of
+  this document — it never silently reclassifies a task.
+- **Shared files serialize:** tasks that write `App.vue`, `store.ts`, or `api.ts` run one
+  at a time, never in parallel. Independent tasks use separate worktrees; a separate
+  worktree prevents tree pollution but not logical conflicts, so the integration order is
+  declared in the task cards before work starts.
+- **Baseline before conclusions:** record the commit, environment, and graph-index
+  freshness on the card. A clean Git diff does not prove a fresh index; a failed check
+  caused by missing dependencies is an environment problem, not a source regression.
+- **Independent review on handoff:** the reviewer re-runs the card's acceptance scenarios
+  against the delivered diff — actual call wiring, lifecycle cleanup, and test realism —
+  and fixes only the findings, without expanding into a second refactor.
 
 ## 审计背景
 

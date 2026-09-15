@@ -7,16 +7,25 @@ This index is the canonical module map and checklist reference for Team Chat. Re
 - The root `AGENTS.md` is the Codex entry point and contains repository-wide behavior rules.
 - `AGENTS.local.md` is only for private, machine-local instructions and must never be committed.
 - A nested `AGENTS.md` applies to work inside its directory and supplements the root rules.
+- Delegated and multi-session tasks use the task card format in [task-cards.md](task-cards.md); routing rules live in [model-task-routing.md](model-task-routing.md).
 - Keep detailed module knowledge in this development index instead of expanding agent guidance into a second handbook.
 
 ## Start Every Work Session
 
-1. Run `git status --short` and `git log --oneline -n 5`.
+1. Run `git status --short` and `git log --oneline -n 5`. Record the task baseline (HEAD commit) in the task card.
 2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
 3. Read only the sections of this index the task touches: module-map entries for the files being changed and any checklist the change triggers.
 4. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
 5. Iterate with `npm run verify:changed`; before release or push, run `npm run verify:full`.
 6. Review `git diff` locally before deployment or publishing.
+
+### Baseline Health Check
+
+Run these before trusting any check result, and record the outcome in the task card:
+
+- **Environment:** confirm Node version, lockfile integrity, and dependency availability (`npm ci` state). If a check fails because packages are missing or stale, treat it as an environment problem and repair the install first — do not report it as a source regression or change source code to work around it.
+- **Code graph:** a clean Git diff does not prove the knowledge-graph index is fresh. Verify a known symbol before relying on graph results; re-index when the graph looks stale, and fall back to targeted source reading for files the index could not fully parse.
+- **Changed-file scope:** after a commit, `verify:changed` against the default `HEAD` sees an empty diff and selects nothing. Pass an explicit `--base <ref>` covering the whole task, or cite the recorded results from before the commit. "No checks selected" is never a pass.
 
 ## Continuous Integration
 
@@ -55,7 +64,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 
 - `src/client/App.vue`: current UI shell. It still owns many interfaces: auth, chat, Why, modals, composer, effects, and release UI; the admin and settings modal surfaces now live in `features/admin/AdminPanel.vue` and `features/settings/SettingsPanel.vue`, mounted by `App.vue` with grouped composable bindings as props.
 - `src/client/features/admin/AdminPanel.vue`: the admin modal shell (page navigation plus accounts, reception, channels, appearance, attachments/backups/messages, books, WeChat relay, demo mode, and release panes). Receives the whole `useAdminTools` return as `tools`, update/release state as `release`, and App-hosted helpers as `actions`; heavy child pages stay `defineAsyncComponent` inside it.
-- `src/client/features/settings/SettingsPanel.vue`: the personal settings modal (account/appearance/bible/notifications/devices/release tabs). Receives `useAccountSettings` as `account` and a grouped `settings` bindings object; tab metadata lives in `features/settings/settingsTabs.ts`.
+- `src/client/features/settings/SettingsPanel.vue`: the personal settings modal (account/appearance/bible/notifications/devices/release tabs). Creates `useAccountSettings` internally and receives only a grouped `settings` bindings object from `App.vue`; tab metadata lives in `features/settings/settingsTabs.ts`.
 - `src/client/features/music/useMusicPlayer.ts`: music playback queue, current track, playback mode, audio element, progress restoration/reporting, Media Session, account-scoped playback persistence, and playback timer lifecycle.
 - `src/client/features/music/MusicManager.vue` and `useMusicLibrary.ts`: the unified music manager (tracks, lyrics/score binding, resource pool, playlists). Rendered as an overlay from the player bar and embedded full-page in the music channel; `App.vue` only mounts it, and `useMusicLibraryIntegration.ts` owns the underlying track/playlist collections.
 - `src/client/features/audio/exclusiveAudio.ts`: global exclusive-audio coordinator. Participants (music, friend programs, voice messages) register suspend/resume hooks; the user's latest playback choice ducks the others, and a naturally-ended player fades the most recently ducked participant back in.
