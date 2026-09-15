@@ -4,6 +4,7 @@ import { authHeaders } from "../../api";
 import { useChatStore } from "../../store";
 
 type PinnedMediaBlock = { type: "image" | "file"; fileName: string; filePath: string; fileSize?: number | null };
+type PinnedImagePreview = { url: string; fileName: string; score?: boolean; trackId?: number; pageId?: number };
 
 interface UseMediaPreviewOptions {
   isTapSuppressed: () => boolean;
@@ -18,7 +19,7 @@ interface UseMediaPreviewOptions {
 export function useMediaPreview(options: UseMediaPreviewOptions) {
   const store = useChatStore();
   const previewMessage = ref<MessageDTO | null>(null);
-  const previewPinnedImage = ref<{ url: string; fileName: string; score?: boolean; trackId?: number; pageId?: number } | null>(null);
+  const previewPinnedImage = ref<PinnedImagePreview | null>(null);
   const imagePreviewScale = ref(1);
   const imagePreviewOffset = ref({ x: 0, y: 0 });
   const downloadPromptPosition = ref({ x: 0, y: 0 });
@@ -279,4 +280,4 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
   };
 }
 
-export type { PinnedMediaBlock };
+export type { PinnedMediaBlock, PinnedImagePreview };

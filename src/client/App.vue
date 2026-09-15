@@ -9,10 +9,8 @@ import {
   BookOpen,
   Bot,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Download,
   DoorOpen,
   FileUp,
   CheckCircle2,
@@ -210,6 +208,7 @@ import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
 import NotificationPromptDialog from "./features/settings/NotificationPromptDialog.vue";
 import AppearanceImagePicker from "./features/admin/AppearanceImagePicker.vue";
 import ForwardActionSheet from "./features/messages/ForwardActionSheet.vue";
+import MediaPreviewModal from "./features/messages/MediaPreviewModal.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -227,9 +226,9 @@ const {
   clearStatus: clearMessageSendStatus
 } = useMessageSender({ getSocket: () => store.socket });
 // Heavy or rarely-opened surfaces load on first use instead of inflating the
-// entry chunk (PdfViewer/PdfScoreInline pull in pdfjs-dist; the music manager
-// and Bible workspace are the largest feature components).
-const PdfViewer = defineAsyncComponent(() => import("./components/PdfViewer.vue"));
+// entry chunk (PdfScoreInline pulls in pdfjs-dist; the music manager
+// and Bible workspace are the largest feature components). PdfViewer is
+// async-loaded inside MediaPreviewModal for the same reason.
 const PdfScoreInline = defineAsyncComponent(() => import("./components/PdfScoreInline.vue"));
 const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWorkspace.vue"));
 const BookWorkspace = defineAsyncComponent(() => import("./components/BookWorkspace.vue"));
@@ -6177,44 +6176,30 @@ const messageRowBindings = {
     <SermonOverlay v-if="sermonJoinedPresentationId !== null && sermonOverlayState?.active" />
     <div v-if="sermonDecisionNotice" class="sermon-decision-toast" role="status">{{ sermonDecisionNotice }}</div>
 
-    <section v-if="previewMessage" class="modal-shell media-preview-shell" :class="{ image: previewMessage.type === 'image', score: previewPinnedImage?.score }" @click.self="closePreviewMessage">
-      <div class="media-preview-modal" :class="{ 'image-preview-modal': previewMessage.type === 'image', 'score-preview-modal': previewPinnedImage?.score }">
-        <header v-if="previewMessage.type !== 'image'" class="modal-head">
-          <strong>{{ previewMessage.fileName || "图片预览" }}</strong>
-        </header>
-        <button class="preview-control preview-close" @click="closePreviewMessage" aria-label="关闭预览"><X :size="22" /></button>
-        <button class="preview-control preview-download" @click.stop="previewMessage.type === 'image' ? downloadPreviewImage() : downloadFile(previewMessage)" aria-label="下载"><Download :size="20" /></button>
-        <div v-if="previewPinnedImage?.score && (previewScorePages.length > 1 || (previewScoreTrack?.scores?.length || 0) > 1)" class="score-preview-pager">
-          <template v-if="previewScorePages.length > 1">
-            <button type="button" @click.stop="shiftMusicScorePreview(-1)" aria-label="上一页歌谱"><ChevronLeft :size="23" /></button>
-            <span>{{ previewScorePageIndex + 1 }} / {{ previewScorePages.length }}</span>
-            <button type="button" @click.stop="shiftMusicScorePreview(1)" aria-label="下一页歌谱"><ChevronRight :size="23" /></button>
-          </template>
-          <span v-if="(previewScoreTrack?.scores?.length || 0) > 1" class="score-preview-score-name">{{ previewScoreEntry?.title }}</span>
-        </div>
-        <div
-          class="media-preview-body"
-          :class="{ 'image-preview-body': previewMessage.type === 'image' }"
-          @touchstart="previewMessage.type === 'image' && onImagePreviewTouchStart($event)"
-          @touchmove="previewMessage.type === 'image' && onImagePreviewTouchMove($event)"
-          @touchend="endImagePreviewTouch"
-          @touchcancel="endImagePreviewTouch"
-          @pointerdown="previewMessage.type === 'image' && onImagePreviewPointerDown($event)"
-          @pointermove="previewMessage.type === 'image' && onImagePreviewPointerMove($event)"
-          @wheel="previewMessage.type === 'image' && onImagePreviewWheel($event)"
-          @click.self="previewMessage.type === 'image' && closePreviewMessage()"
-        >
-          <img v-if="previewMessage.type === 'image'" class="media-preview-image" :style="imagePreviewTransform()" :src="previewImageSrc()" alt="图片预览" draggable="false" />
-          <video v-else-if="isVideoMessage(previewMessage)" class="media-preview-video" :src="fileUrl(previewMessage)" controls autoplay playsinline preload="metadata"></video>
-          <PdfViewer
-            v-else-if="isPdfMessage(previewMessage)"
-            :src="previewPinnedImage?.score ? previewPinnedImage.url : fileUrl(previewMessage)"
-            :file-name="previewMessage.fileName || undefined"
-            @close="closePreviewMessage"
-          />
-        </div>
-      </div>
-    </section>
+    <MediaPreviewModal
+      v-if="previewMessage"
+      :message="previewMessage"
+      :pinned-image="previewPinnedImage"
+      :score-track="previewScoreTrack"
+      :score-entry="previewScoreEntry"
+      :score-pages="previewScorePages"
+      :score-page-index="previewScorePageIndex"
+      :file-url="fileUrl"
+      :image-preview-transform="imagePreviewTransform"
+      :preview-image-src="previewImageSrc"
+      :is-video-message="isVideoMessage"
+      :is-pdf-message="isPdfMessage"
+      :image-touch-start="onImagePreviewTouchStart"
+      :image-touch-move="onImagePreviewTouchMove"
+      :image-touch-end="endImagePreviewTouch"
+      :image-pointer-down="onImagePreviewPointerDown"
+      :image-pointer-move="onImagePreviewPointerMove"
+      :image-wheel="onImagePreviewWheel"
+      @close="closePreviewMessage"
+      @shift-score="shiftMusicScorePreview"
+      @download-preview="downloadPreviewImage"
+      @download-file="downloadFile"
+    />
 
     <PinnedMessageEditor
       v-if="showPinnedEditor"

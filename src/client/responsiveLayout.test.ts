@@ -39,6 +39,7 @@ const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessa
 const notificationPromptDialog = fs.readFileSync(new URL("./features/settings/NotificationPromptDialog.vue", import.meta.url), "utf8");
 const appearanceImagePicker = fs.readFileSync(new URL("./features/admin/AppearanceImagePicker.vue", import.meta.url), "utf8");
 const forwardActionSheet = fs.readFileSync(new URL("./features/messages/ForwardActionSheet.vue", import.meta.url), "utf8");
+const mediaPreviewModal = fs.readFileSync(new URL("./features/messages/MediaPreviewModal.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -197,9 +198,9 @@ test("new-message jump is a compact translucent arrow centered above the compose
 });
 
 test("all file previews keep close at the upper right and download at the lower right", () => {
-  assert.match(app, /class="preview-control preview-close"[\s\S]*?aria-label="关闭预览"[\s\S]*?<X/);
-  assert.match(app, /class="preview-control preview-download"[\s\S]*?aria-label="下载"[\s\S]*?<Download/);
-  assert.doesNotMatch(app, /class="image-preview-download"/);
+  assert.match(mediaPreviewModal, /class="preview-control preview-close"[\s\S]*?aria-label="关闭预览"[\s\S]*?<X/);
+  assert.match(mediaPreviewModal, /class="preview-control preview-download"[\s\S]*?aria-label="下载"[\s\S]*?<Download/);
+  assert.doesNotMatch(mediaPreviewModal, /class="image-preview-download"/);
   assert.match(css, /\.preview-close \{[\s\S]*?top: calc\(var\(--safe-top\) \+ 12px\);/);
   assert.match(css, /\.preview-download \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
 });
@@ -211,7 +212,7 @@ test("audio attachments render their waveform player immediately without a colla
   assert.match(inlineAudioPlayer, /@seek="seek"/);
   assert.doesNotMatch(app, /isInlineAudioPlayerExpanded|expandInlineAudioPlayer|collapseInlineAudioPlayer|expandedAudioMessageIds/);
   assert.doesNotMatch(app, /audio-file-card/);
-  assert.doesNotMatch(app, /class="media-preview-audio"/);
+  assert.doesNotMatch(mediaPreviewModal, /class="media-preview-audio"/);
   assert.match(css, /\.inline-audio-player \{[\s\S]*?--audio-accent: #ff5500;[\s\S]*?width: min\(410px, 66vw\);/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.inline-audio-player \{[\s\S]*?width: min\(330px, calc\(100vw - 106px\)\);/);
 });
@@ -697,7 +698,7 @@ test("long pressing an empty part of the chat opens the available music score", 
 });
 
 test("score image preview fills the viewport width without black side bars", () => {
-  assert.match(app, /'score-preview-modal': previewPinnedImage\?\.score/);
+  assert.match(mediaPreviewModal, /'score-preview-modal': pinnedImage\?\.score/);
   assert.match(css, /\.media-preview-shell\.image\.score \{[\s\S]*?background: #fff;/);
   assert.match(css, /\.media-preview-shell\.score \.media-preview-image \{[\s\S]*?width: 100vw;[\s\S]*?max-width: none;/);
 });
@@ -1122,7 +1123,7 @@ test("the admin-only log workspace combines sessions, music progress, and usage 
 test("score pages can be managed individually and paged in preview", () => {
   assert.match(musicManager, /moveScorePage\(score, pageIndex, -1\)[\s\S]*?moveScorePage\(score, pageIndex, 1\)/);
   assert.match(musicManager, /removeScorePage\(score, page\)/);
-  assert.match(app, /class="score-preview-pager"[\s\S]*?上一页歌谱[\s\S]*?下一页歌谱/);
+  assert.match(mediaPreviewModal, /class="score-preview-pager"[\s\S]*?上一页歌谱[\s\S]*?下一页歌谱/);
   assert.match(css, /\.score-preview-pager \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
   assert.match(css, /\.score-preview-pager button \{[\s\S]*?background: rgba\(20, 20, 20, 0\.24\);/);
 });
@@ -1209,10 +1210,19 @@ test("forward action sheet lives outside App.vue with the modal-shell contract i
   assert.match(forwardActionSheet, /class="forward-action-cancel"/);
 });
 
+test("media preview modal lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<MediaPreviewModal\s+v-if="previewMessage"[\s\S]*?@close="closePreviewMessage"[\s\S]*?@shift-score="shiftMusicScorePreview"/);
+  assert.doesNotMatch(app, /media-preview-modal/);
+  assert.match(mediaPreviewModal, /<section[\s\S]*?class="modal-shell media-preview-shell"[\s\S]*?:class="\{ image: message\.type === 'image', score: pinnedImage\?\.score \}"[\s\S]*?@click\.self="emit\('close'\)"[\s\S]*?>/);
+  assert.match(mediaPreviewModal, /aria-label="关闭预览"/);
+  assert.match(mediaPreviewModal, /class="media-preview-video"[\s\S]*?controls[\s\S]*?autoplay[\s\S]*?playsinline/);
+  assert.match(mediaPreviewModal, /<PdfViewer[\s\S]*?@close="emit\('close'\)"/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 2,
-    `App.vue must not add modal-shell blocks (baseline 2, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 1,
+    `App.vue must not add modal-shell blocks (baseline 1, found ${occurrences}); put new dialogs in focused components`
   );
 });
