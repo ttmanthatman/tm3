@@ -207,6 +207,7 @@ import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
 import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
+import NotificationPromptDialog from "./features/settings/NotificationPromptDialog.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6250,28 +6251,22 @@ const messageRowBindings = {
       @confirm="closePendingChannel"
     />
 
-    <section v-if="notificationPromptOpen" class="modal-shell" @click.self="notificationPromptOpen = false">
-      <div class="small-modal notification-check-modal">
-        <header class="modal-head">
-          <strong>通知体检</strong>
-          <button class="icon-btn" @click="notificationPromptOpen = false" aria-label="关闭通知体检"><X :size="18" /></button>
-        </header>
-        <div class="notification-check-body">
-          <span class="notification-check-bell" :class="`level-${notificationNudgeLevel}`" aria-hidden="true">{{ notificationNudgeIcon }}</span>
-          <div>
-            <strong>{{ notificationEnabled ? "通知已经开启" : "还没有开启通知" }}</strong>
-            <small>权限：{{ notificationPermissionLabel }}</small>
-          </div>
-          <p>{{ notificationPromptHint }}</p>
-          <div class="notification-check-actions">
-            <button v-if="notificationEnabled" class="primary-btn" :disabled="notificationBusy" @click="sendTestNotification"><Bell :size="16" />发送测试通知</button>
-            <button v-else class="primary-btn" :disabled="notificationBusy || !notificationSupported || notificationPermission === 'denied'" @click="enableNotifications"><Bell :size="16" />开启通知</button>
-            <button class="mini-btn secondary" :disabled="notificationBusy" @click="openSettings('notifications'); notificationPromptOpen = false">更多设置</button>
-          </div>
-          <p v-if="notificationMsg" class="settings-note">{{ notificationMsg }}</p>
-        </div>
-      </div>
-    </section>
+    <NotificationPromptDialog
+      v-if="notificationPromptOpen"
+      :nudge-level="notificationNudgeLevel"
+      :nudge-icon="notificationNudgeIcon"
+      :enabled="notificationEnabled"
+      :permission-label="notificationPermissionLabel"
+      :hint="notificationPromptHint"
+      :busy="notificationBusy"
+      :supported="notificationSupported"
+      :permission="notificationPermission"
+      :msg="notificationMsg"
+      @close="notificationPromptOpen = false"
+      @send-test="sendTestNotification"
+      @enable="enableNotifications"
+      @more-settings="openSettings('notifications'); notificationPromptOpen = false"
+    />
 
     <SettingsPanel v-if="showSettings" :account="accountSettings" :settings="settingsPanelBindings" />
 

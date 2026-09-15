@@ -36,6 +36,7 @@ const channelEditorDialog = fs.readFileSync(new URL("./features/channels/Channel
 const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
 const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
 const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessageEditor.vue", import.meta.url), "utf8");
+const notificationPromptDialog = fs.readFileSync(new URL("./features/settings/NotificationPromptDialog.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -1174,10 +1175,21 @@ test("owner transfer dialog lives outside App.vue with the modal-shell contract 
   assert.match(ownerTransferDialog, /class="primary-btn owner-transfer-submit"[\s\S]*?指定并退出/);
 });
 
+test("notification prompt dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<NotificationPromptDialog\s+v-if="notificationPromptOpen"[\s\S]*?@send-test="sendTestNotification"[\s\S]*?@enable="enableNotifications"/);
+  assert.doesNotMatch(app, /notification-check-modal/);
+  assert.match(notificationPromptDialog, /<section class="modal-shell" @click\.self="emit\('close'\)">/);
+  assert.match(notificationPromptDialog, /aria-label="关闭通知体检"/);
+  assert.match(notificationPromptDialog, /class="notification-check-bell"[\s\S]*?level-\$\{nudgeLevel\}/);
+  assert.match(notificationPromptDialog, /发送测试通知/);
+  assert.match(notificationPromptDialog, /:disabled="busy \|\| !supported \|\| permission === 'denied'"/);
+  assert.match(notificationPromptDialog, /更多设置/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 5,
-    `App.vue must not add modal-shell blocks (baseline 5, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 4,
+    `App.vue must not add modal-shell blocks (baseline 4, found ${occurrences}); put new dialogs in focused components`
   );
 });
