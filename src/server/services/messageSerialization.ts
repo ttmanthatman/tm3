@@ -1,9 +1,8 @@
 import type { Actor, Account, Message, MessageAiSuggestion, MusicLyrics, MusicScore, MusicScorePage, PrayerAction, PrismaClient } from "@prisma/client";
 import type { AiSettingsDTO, AiSuggestionDTO, MessageDTO, PrayerStatus } from "../../shared/types.js";
+import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
 import { parseLyrics } from "../srt.js";
 import type { MusicService } from "./musicService.js";
-
-export const AI_RELATED_VERSES_KIND = "prayer_related_verses";
 
 type AiSettingsCache = { value: AiSettingsDTO; encryptedApiKey: string; loadedAt: number };
 
