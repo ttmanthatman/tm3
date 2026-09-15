@@ -35,40 +35,82 @@ function apiHeaders(options: RequestInit): HeadersInit {
   };
 }
 
-async function fetchForAttempt(url: string, options: RequestInit, withTimeout: boolean): Promise<Response> {
+interface AttemptResult {
+  response: Response;
+  payload: unknown;
+}
+
+async function readPayload(response: Response): Promise<unknown> {
+  const type = response.headers.get("content-type") || "";
+  return type.includes("application/json") ? response.json() : response.text();
+}
+
+async function fetchForAttempt(url: string, options: RequestInit, withTimeout: boolean): Promise<AttemptResult> {
   const headers = apiHeaders(options);
-  if (!withTimeout || options.signal) return fetch(url, { ...options, headers, cache: "no-store" });
+  const externalSignal = options.signal;
+  if (externalSignal?.aborted) throw externalSignal.reason;
+  if (!withTimeout && !externalSignal) {
+    const response = await fetch(url, { ...options, headers, cache: "no-store" });
+    return { response, payload: await readPayload(response) };
+  }
+  // The deadline spans the whole attempt: the abort signal stays wired until
+  // the response body has been fully read, not just until headers arrive.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS);
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  const timer = withTimeout ? setTimeout(() => controller.abort(), API_GET_TIMEOUT_MS) : null;
+  externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   try {
-    return await fetch(url, { ...options, headers, cache: "no-store", signal: controller.signal });
+    const response = await fetch(url, { ...options, headers, cache: "no-store", signal: controller.signal });
+    return { response, payload: await readPayload(response) };
   } catch (error) {
-    if (controller.signal.aborted && !options.signal) throw new Error("请求超时，请检查网络后重试");
+    if (externalSignal?.aborted) throw externalSignal.reason;
+    if (controller.signal.aborted) throw new Error("请求超时，请检查网络后重试");
     throw error;
   } finally {
-    clearTimeout(timer);
+    if (timer !== null) clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
+}
+
+function waitForRetryDelay(signal: AbortSignal | null | undefined): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, API_GET_RETRY_DELAY_MS);
+    function cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export async function api<T>(url: string, options: RequestInit = {}): Promise<T> {
   // GETs drive startup and revalidation; a stalled request on a weak link
-  // used to hang the whole bootstrap until the TCP timeout, so bound it and
-  // retry the transport once. Non-GET requests (uploads, mutations) keep
-  // their previous behavior.
+  // used to hang the whole bootstrap until the TCP timeout, so bound the
+  // whole attempt (send through body read) and retry the transport once.
+  // Non-GET requests (uploads, mutations) keep their previous behavior.
   const isGet = !options.method || options.method.toUpperCase() === "GET";
   const maxAttempts = isGet ? 2 : 1;
   let lastTransportError: unknown = null;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, API_GET_RETRY_DELAY_MS));
-    let response: Response;
+    if (attempt > 0) await waitForRetryDelay(options.signal);
+    let result: AttemptResult;
     try {
-      response = await fetchForAttempt(url, options, isGet);
+      result = await fetchForAttempt(url, options, isGet);
     } catch (error) {
+      // A caller-initiated abort is never retried, unlike transport failures.
+      if (options.signal?.aborted) throw options.signal.reason;
       lastTransportError = error;
       continue;
     }
-    const type = response.headers.get("content-type") || "";
-    const payload = type.includes("application/json") ? await response.json() : await response.text();
+    const { response, payload } = result;
     if (!response.ok) {
       const message = typeof payload === "object" && payload ? (payload as { message?: string }).message : "";
       throw new Error(message || `HTTP ${response.status}`);
