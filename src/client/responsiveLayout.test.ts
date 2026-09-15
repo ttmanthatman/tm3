@@ -14,6 +14,7 @@ const inlineAudioPlayer = fs.readFileSync(new URL("./components/InlineAudioPlaye
 const appMenu = fs.readFileSync(new URL("./components/AppMenu.vue", import.meta.url), "utf8");
 const appMenuItem = fs.readFileSync(new URL("./components/AppMenuItem.vue", import.meta.url), "utf8");
 const appModal = fs.readFileSync(new URL("./components/ui/AppModal.vue", import.meta.url), "utf8");
+const modalStack = fs.readFileSync(new URL("./components/ui/modalStack.ts", import.meta.url), "utf8");
 const appButton = fs.readFileSync(new URL("./components/ui/AppButton.vue", import.meta.url), "utf8");
 const confirmDialog = fs.readFileSync(new URL("./components/ui/ConfirmDialog.vue", import.meta.url), "utf8");
 const appField = fs.readFileSync(new URL("./components/ui/AppField.vue", import.meta.url), "utf8");
@@ -744,7 +745,9 @@ test("AppModal hosts the forward dialog and ConfirmDialog owns the channel confi
   assert.match(appModal, /class="modal-head"/);
   assert.match(appModal, /small-modal/);
   assert.match(appModal, /@click\.self="requestClose"/);
-  assert.match(appModal, /event\.key !== "Escape"/);
+  assert.match(appModal, /sharedModalStack\(\)\.register/);
+  assert.match(modalStack, /event\.key === "Escape"/);
+  assert.match(modalStack, /event\.isComposing/);
 });
 
 test("AppButton and AppField primitives back the demo dialog buttons and settings fields", () => {
