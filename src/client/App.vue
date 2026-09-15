@@ -208,6 +208,7 @@ import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
 import PinnedMessageEditor from "./features/chat/PinnedMessageEditor.vue";
 import NotificationPromptDialog from "./features/settings/NotificationPromptDialog.vue";
+import AppearanceImagePicker from "./features/admin/AppearanceImagePicker.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -6272,49 +6273,19 @@ const messageRowBindings = {
 
     <AdminPanel v-if="showAdmin" :tools="adminTools" :release="adminReleaseBindings" :actions="adminPanelActions" />
 
-    <section v-if="appearanceImagePicker" class="modal-shell appearance-picker-shell" @click.self="closeAppearanceImagePicker">
-      <div class="small-modal appearance-picker-modal">
-        <header class="modal-head">
-          <strong>{{ appearanceImagePicker.title }}</strong>
-          <button class="icon-btn" @click="closeAppearanceImagePicker" aria-label="关闭图片选择"><X :size="20" /></button>
-        </header>
-        <div class="appearance-picker-body">
-          <p class="settings-note">{{ appearanceImagePicker.hint }}</p>
-          <div class="appearance-picker-actions">
-            <label class="primary-btn">
-              <Upload :size="16" />上传新图片
-              <input class="hidden" type="file" accept="image/*" @change="uploadAppearanceImageForPicker" />
-            </label>
-            <button class="mini-btn secondary" :disabled="!appearanceImagePickerSelection" @click="clearAppearancePickerImage">移除当前</button>
-            <select v-if="appearanceImagePicker.fitField" v-model="loginAppearanceEdit[appearanceImagePicker.fitField]" aria-label="图片显示方式">
-              <option v-for="option in appearanceImagePickerFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-            </select>
-          </div>
-          <div v-if="appearanceImagePickerSelection" class="appearance-picker-current">
-            <img :src="wallpaperUrl(appearanceImagePickerSelection)" alt="" />
-            <div>
-              <b>当前草稿</b>
-              <small>{{ appearanceImagePickerSelection }}<template v-if="appearanceImagePickerFit"> · {{ appearanceImagePickerFitOptions.find((option) => option.value === appearanceImagePickerFit)?.label }}</template></small>
-            </div>
-          </div>
-          <div v-if="backgroundAttachmentOptions.length" class="appearance-image-grid picker-grid">
-            <button
-              v-for="image in backgroundAttachmentOptions"
-              :key="image.id"
-              class="appearance-image-card"
-              :class="{ active: image.fileName === appearanceImagePickerSelection }"
-              @click="selectAppearanceImage(image.fileName)"
-            >
-              <img :src="wallpaperUrl(image.fileName)" alt="" />
-              <span>
-                <b>{{ image.label }}</b>
-                <small>{{ backgroundAttachmentLabel(image) }}</small>
-              </span>
-            </button>
-          </div>
-          <p v-else class="empty-note">还没有可选图片。上传后会自动选中为当前草稿。</p>
-        </div>
-      </div>
-    </section>
+    <AppearanceImagePicker
+      v-if="appearanceImagePicker"
+      v-model:edit="loginAppearanceEdit"
+      :picker="appearanceImagePicker"
+      :selection="appearanceImagePickerSelection"
+      :fit="appearanceImagePickerFit"
+      :fit-options="appearanceImagePickerFitOptions"
+      :images="backgroundAttachmentOptions"
+      :wallpaper-url="wallpaperUrl"
+      @close="closeAppearanceImagePicker"
+      @upload="uploadAppearanceImageForPicker"
+      @clear="clearAppearancePickerImage"
+      @select="selectAppearanceImage"
+    />
   </main>
 </template>

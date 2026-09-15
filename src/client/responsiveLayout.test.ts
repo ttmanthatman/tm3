@@ -37,6 +37,7 @@ const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPi
 const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
 const pinnedMessageEditor = fs.readFileSync(new URL("./features/chat/PinnedMessageEditor.vue", import.meta.url), "utf8");
 const notificationPromptDialog = fs.readFileSync(new URL("./features/settings/NotificationPromptDialog.vue", import.meta.url), "utf8");
+const appearanceImagePicker = fs.readFileSync(new URL("./features/admin/AppearanceImagePicker.vue", import.meta.url), "utf8");
 const server = [
   fs.readFileSync(new URL("../server/index.ts", import.meta.url), "utf8"),
   fs.readFileSync(new URL("../server/routes/music.ts", import.meta.url), "utf8"),
@@ -183,8 +184,8 @@ test("panning wallpaper re-observes the chat pane whenever the pane element moun
 });
 
 test("appearance image picker previews uploaded backgrounds through the public route", () => {
-  assert.match(app, /v-for="image in backgroundAttachmentOptions"[\s\S]*?:src="wallpaperUrl\(image\.fileName\)"/);
-  assert.doesNotMatch(app, /v-for="image in backgroundAttachmentOptions"[\s\S]*?:src="image\.url"/);
+  assert.match(appearanceImagePicker, /v-for="image in images"[\s\S]*?:src="wallpaperUrl\(image\.fileName\)"/);
+  assert.doesNotMatch(appearanceImagePicker, /v-for="image in images"[\s\S]*?:src="image\.url"/);
 });
 
 test("new-message jump is a compact translucent arrow centered above the composer", () => {
@@ -1186,10 +1187,21 @@ test("notification prompt dialog lives outside App.vue with the modal-shell cont
   assert.match(notificationPromptDialog, /更多设置/);
 });
 
+test("appearance image picker dialog lives outside App.vue with the modal-shell contract intact", () => {
+  assert.match(app, /<AppearanceImagePicker\s+v-if="appearanceImagePicker"[\s\S]*?@close="closeAppearanceImagePicker"[\s\S]*?@select="selectAppearanceImage"/);
+  assert.doesNotMatch(app, /appearance-picker-modal/);
+  assert.match(appearanceImagePicker, /<section class="modal-shell appearance-picker-shell" @click\.self="emit\('close'\)">/);
+  assert.match(appearanceImagePicker, /aria-label="关闭图片选择"/);
+  assert.match(appearanceImagePicker, /aria-label="图片显示方式"/);
+  assert.match(appearanceImagePicker, /class="appearance-picker-current"/);
+  assert.match(appearanceImagePicker, /active: image\.fileName === selection/);
+  assert.match(appearanceImagePicker, /还没有可选图片。上传后会自动选中为当前草稿。/);
+});
+
 test("App.vue may not gain new modal-shell blocks while dialogs migrate to focused components", () => {
   const occurrences = app.match(/class="modal-shell/g)?.length ?? 0;
   assert.ok(
-    occurrences <= 4,
-    `App.vue must not add modal-shell blocks (baseline 4, found ${occurrences}); put new dialogs in focused components`
+    occurrences <= 3,
+    `App.vue must not add modal-shell blocks (baseline 3, found ${occurrences}); put new dialogs in focused components`
   );
 });
