@@ -20,6 +20,13 @@ import { DEFAULT_PARALLAX_KITS } from "@shared/parallax";
 import { DEFAULT_COMPOSER_PROMPTS, DEFAULT_COMPOSER_PROMPT_APPEAR, DEFAULT_COMPOSER_PROMPT_DISAPPEAR, DEFAULT_COMPOSER_PROMPT_GAP, DEFAULT_COMPOSER_PROMPT_INTERVAL } from "@shared/composerPrompts";
 import { UNREAD_COUNT_CAP, isOwnMessage, loadUnreadState, noteUnreadIncoming, recordChannelRead, saveUnreadState } from "./unread";
 import { clearPersistedWindows, lastMsgwinAccount, loadPersistedWindow, persistWindowThrottled, rememberMsgwinAccount } from "./messageWindowCache";
+import {
+  beginMessageWindowRequest,
+  invalidateMessageWindowKind,
+  invalidateMessageWindowRequests,
+  isMessageWindowRequestCurrent,
+  type MessageWindowRequestTicket
+} from "./messageWindowRequests";
 import { mergeChannelUpdate, mergeMessageUpdate } from "./messageUpdates";
 import { noteChannelMessage, orderChannels } from "./channelOrdering";
 
@@ -62,6 +69,11 @@ let channelLoadPromise: Promise<void> | null = null;
 // parallel with the identity request — it needs only the token, not the
 // account. loadChannels() reuses it when the channel survived revalidation.
 let initialMessagesPromise: Promise<void> | null = null;
+
+// Socket removals/updates landing while a first-page request is in flight are
+// newer than the HTTP snapshot; the latest loadMessages() owns this tracker and
+// folds it into its commit so stale snapshots cannot resurrect or revert them.
+let activeInitialLoadMutations: { removed: Set<number>; updated: Map<number, MessageDTO> } | null = null;
 
 function loadInitialPersistedWindow(): { accountId: number; messages: MessageDTO[]; hasOlder: boolean } | null {
   try {
@@ -201,10 +213,14 @@ export const useChatStore = defineStore("chat", {
       if (this.account && !this.hasNewerMessages) persistWindowThrottled(this.account.id, key, this.messages, this.hasOlderMessages);
     },
     resetMessageWindow() {
+      // Wiping the window (logout, account switch, losing the channel) revokes
+      // every in-flight message request.
+      invalidateMessageWindowRequests();
       this.messages = [];
       this.hasOlderMessages = false;
       this.hasNewerMessages = false;
       this.prefetchedOlderMessages = [];
+      this.loading = false;
       this.loadingInitialMessages = false;
       this.loadingOlderMessages = false;
       this.loadingNewerMessages = false;
@@ -256,6 +272,11 @@ export const useChatStore = defineStore("chat", {
       for (const [key, value] of Object.entries(params)) query.set(key, String(value));
       return `/api/messages?${query.toString()}`;
     },
+    // A request may commit only while its ticket is current (session/view epoch
+    // plus per-kind sequence) and the view identity it captured still matches.
+    isMessageWindowTicketCurrent(ticket: MessageWindowRequestTicket, channelId: number, prayerOnly: boolean) {
+      return isMessageWindowRequestCurrent(ticket) && this.currentChannelId === channelId && this.prayerOnly === prayerOnly;
+    },
     async bootstrap() {
       const tasks: Promise<unknown>[] = [this.loadAppearance()];
       if (getToken()) {
@@ -303,6 +324,7 @@ export const useChatStore = defineStore("chat", {
       }
     },
     async afterLogin(account: AccountDTO) {
+      invalidateMessageWindowRequests();
       this.account = account;
       rememberMsgwinAccount(account.id);
       this.initUnreadForAccount();
@@ -453,6 +475,7 @@ export const useChatStore = defineStore("chat", {
         const restoredChannelId = this.currentChannelId;
         const candidates = [this.currentChannelId, preferredChannelId, this.previousChannelId];
         const nextChannelId = candidates.find((id) => id && this.channels.some((ch) => ch.id === id)) || this.channels[0]?.id || 0;
+        if (nextChannelId !== restoredChannelId) invalidateMessageWindowRequests();
         this.currentChannelId = nextChannelId;
         if (this.currentChannelId) {
           localStorage.setItem("team-chat-current-channel", String(this.currentChannelId));
@@ -479,6 +502,7 @@ export const useChatStore = defineStore("chat", {
     },
     async switchChannel(id: number) {
       if (this.currentChannelId === id && !this.prayerOnly) return;
+      invalidateMessageWindowRequests();
       this.cacheCurrentMessages();
       this.previousChannelId = this.currentChannelId;
       this.currentChannelId = id;
@@ -491,6 +515,7 @@ export const useChatStore = defineStore("chat", {
       await Promise.all([this.loadMessages(), this.loadMembers()]);
     },
     async switchPrayerView(id: number) {
+      invalidateMessageWindowRequests();
       this.cacheCurrentMessages();
       if (this.currentChannelId !== id) {
         this.previousChannelId = this.currentChannelId;
@@ -507,6 +532,7 @@ export const useChatStore = defineStore("chat", {
     },
     async switchChatView() {
       if (!this.prayerOnly) return;
+      invalidateMessageWindowRequests();
       this.cacheCurrentMessages();
       this.prayerOnly = false;
       localStorage.setItem("team-chat-message-view", "chat");
@@ -517,26 +543,37 @@ export const useChatStore = defineStore("chat", {
       if (!this.currentChannelId) return;
       const channelId = this.currentChannelId;
       const prayerOnly = this.prayerOnly;
+      const ticket = beginMessageWindowRequest("initial");
       const messageIdsBeforeLoad = new Set(this.messages.map((message) => message.id));
+      const inFlightMutations = { removed: new Set<number>(), updated: new Map<number, MessageDTO>() };
+      activeInitialLoadMutations = inFlightMutations;
       this.loading = true;
       this.loadingInitialMessages = true;
       this.messageLoadError = "";
       try {
         const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly));
-        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return;
+        if (!this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) return;
+        const page = result.messages
+          .filter((message) => !inFlightMutations.removed.has(message.id))
+          .map((message) => inFlightMutations.updated.get(message.id) ?? message);
         const messagesReceivedDuringLoad = this.messages.filter((message) => !messageIdsBeforeLoad.has(message.id));
-        this.messages = this.dedupeMessages([...result.messages, ...messagesReceivedDuringLoad]);
+        this.messages = this.dedupeMessages([...page, ...messagesReceivedDuringLoad]);
         this.prefetchedOlderMessages = [];
         this.updateMessageWindowFlagsFromRows(result.messages, "initial");
+        // The window was just re-anchored; any prefetch still in flight was
+        // anchored at the previous head and must not commit.
+        invalidateMessageWindowKind("prefetch");
+        this.prefetchingOlderMessages = false;
         this.cacheCurrentMessages();
         this.pinned = this.channels.find((ch) => ch.id === this.currentChannelId)?.pinned || null;
         if (!prayerOnly) this.markChannelRead(channelId);
         void this.prefetchOlderMessages();
       } catch (error) {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "消息加载失败";
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.messageLoadError = error instanceof Error ? error.message : "消息加载失败";
         throw error;
       } finally {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) {
+        if (activeInitialLoadMutations === inFlightMutations) activeInitialLoadMutations = null;
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) {
           this.loading = false;
           this.loadingInitialMessages = false;
         }
@@ -548,25 +585,27 @@ export const useChatStore = defineStore("chat", {
       const prayerOnly = this.prayerOnly;
       const before = this.messages.find((message) => message.id > 0)?.id || 0;
       if (!before) return;
+      const ticket = beginMessageWindowRequest("prefetch");
       this.prefetchingOlderMessages = true;
       try {
         const result = await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { before }));
-        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return;
+        if (!this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) return;
         this.prefetchedOlderMessages = result.messages;
         if (result.messages.length < MESSAGE_PAGE_SIZE) this.hasOlderMessages = false;
         this.cacheCurrentMessages();
       } catch {
         // Prefetch is an optimization; visible loading will report errors.
       } finally {
-        this.prefetchingOlderMessages = false;
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.prefetchingOlderMessages = false;
       }
     },
     async loadOlderMessages() {
       if (!this.currentChannelId || this.loadingOlderMessages || (!this.hasOlderMessages && !this.prefetchedOlderMessages.length)) return false;
-      this.loadingOlderMessages = true;
-      this.messageLoadError = "";
       const channelId = this.currentChannelId;
       const prayerOnly = this.prayerOnly;
+      const ticket = beginMessageWindowRequest("older");
+      this.loadingOlderMessages = true;
+      this.messageLoadError = "";
       try {
         const before = this.messages.find((message) => message.id > 0)?.id || 0;
         const rows = this.prefetchedOlderMessages.length
@@ -574,42 +613,50 @@ export const useChatStore = defineStore("chat", {
           : before
             ? (await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { before }))).messages
             : [];
-        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return false;
+        if (!this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) return false;
         this.prefetchedOlderMessages = [];
         this.messages = this.dedupeMessages([...rows, ...this.messages]);
         this.updateMessageWindowFlagsFromRows(rows, "older");
         this.trimMessageWindow("older");
+        // The window head moved; an in-flight prefetch anchored at the
+        // previous head would interleave rows incorrectly if it committed.
+        invalidateMessageWindowKind("prefetch");
+        this.prefetchingOlderMessages = false;
         this.cacheCurrentMessages();
         void this.prefetchOlderMessages();
         return rows.length > 0;
       } catch (error) {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "更早消息加载失败";
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.messageLoadError = error instanceof Error ? error.message : "更早消息加载失败";
         return false;
       } finally {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.loadingOlderMessages = false;
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.loadingOlderMessages = false;
       }
     },
     async loadNewerMessages() {
       if (!this.currentChannelId || this.loadingNewerMessages || !this.hasNewerMessages) return false;
-      this.loadingNewerMessages = true;
-      this.messageLoadError = "";
       const channelId = this.currentChannelId;
       const prayerOnly = this.prayerOnly;
+      const ticket = beginMessageWindowRequest("newer");
+      this.loadingNewerMessages = true;
+      this.messageLoadError = "";
       try {
         const positiveMessages = this.messages.filter((message) => message.id > 0);
         const after = positiveMessages[positiveMessages.length - 1]?.id || 0;
         const result = after ? await api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, { after })) : { messages: [] };
-        if (this.currentChannelId !== channelId || this.prayerOnly !== prayerOnly) return false;
+        if (!this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) return false;
         this.messages = this.dedupeMessages([...this.messages, ...result.messages]);
         this.updateMessageWindowFlagsFromRows(result.messages, "newer");
         this.trimMessageWindow("newer");
+        // Trimming can move the window head an in-flight prefetch anchored at.
+        invalidateMessageWindowKind("prefetch");
+        this.prefetchingOlderMessages = false;
         this.cacheCurrentMessages();
         return result.messages.length > 0;
       } catch (error) {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.messageLoadError = error instanceof Error ? error.message : "较新消息加载失败";
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.messageLoadError = error instanceof Error ? error.message : "较新消息加载失败";
         return false;
       } finally {
-        if (this.currentChannelId === channelId && this.prayerOnly === prayerOnly) this.loadingNewerMessages = false;
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly)) this.loadingNewerMessages = false;
       }
     },
     appendLocalMessage(message: MessageDTO) {
@@ -631,11 +678,16 @@ export const useChatStore = defineStore("chat", {
         this.appendLocalMessage(message);
         return;
       }
+      activeInitialLoadMutations?.updated.set(message.id, message);
       this.cacheCurrentMessages();
     },
     removeMessage(id: number) {
       const index = this.messages.findIndex((message) => message.id === id);
       if (index >= 0) this.messages.splice(index, 1);
+      if (activeInitialLoadMutations) {
+        activeInitialLoadMutations.removed.add(id);
+        activeInitialLoadMutations.updated.delete(id);
+      }
       this.cacheCurrentMessages();
     },
     async loadMembers(channelId?: number) {
