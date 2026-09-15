@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from "vue";
+import { computed, defineAsyncComponent } from "vue";
 import type { Component, ComputedRef, Ref } from "vue";
 import {
   Archive,
@@ -55,10 +55,6 @@ interface AdminReleaseBindings {
   updateStatus: Ref<UpdateStatusDTO | null>;
   updateBusy: Ref<boolean>;
   selectedUpdateBranch: Ref<string>;
-  updateProgress: ComputedRef<number>;
-  updateStateText: ComputedRef<string>;
-  updateRestartModeLabel: ComputedRef<string>;
-  updateStartDisabled: ComputedRef<boolean>;
   checkForUpdates: () => Promise<void>;
   startServerUpdate: () => Promise<void>;
   releaseHistory: Ref<Array<{ version: string; date: string; notes: readonly string[] }>>;
@@ -180,15 +176,28 @@ const {
   updateStatus,
   updateBusy,
   selectedUpdateBranch,
-  updateProgress,
-  updateStateText,
-  updateRestartModeLabel,
-  updateStartDisabled,
   checkForUpdates,
   startServerUpdate,
   releaseHistory,
   releaseDeveloper
 } = props.release;
+
+const updateProgress = computed(() => Math.min(100, Math.max(0, Number(updateStatus.value?.progress || 0))));
+const updateStateText = computed(() => {
+  const state = updateStatus.value?.state || "idle";
+  if (state === "running") return "更新中";
+  if (state === "complete") return "已完成";
+  if (state === "failed") return "更新失败";
+  return "未开始";
+});
+const updateRestartModeLabel = computed(() => {
+  const mode = updateCheck.value?.restartMode || serverVersion.value?.update?.restartMode || "";
+  if (mode === "pm2") return "PM2 自动重启";
+  if (mode === "command") return "自定义命令重启";
+  if (mode === "none") return "更新后需手动重启";
+  return mode ? `重启方式：${mode}` : "自动重启";
+});
+const updateStartDisabled = computed(() => updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value?.updateAvailable);
 
 const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeSwatchStyle } = props.actions;
 </script>

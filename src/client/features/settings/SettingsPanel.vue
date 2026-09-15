@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { Component, ComputedRef, Ref } from "vue";
+import { onMounted, ref } from "vue";
+import type { ComputedRef, Ref } from "vue";
 import {
   Bell,
   BellOff,
@@ -9,12 +10,15 @@ import {
   Monitor,
   Palette,
   Save,
+  Smartphone,
+  Tablet,
   Trash2,
   Upload,
   Users,
   X
 } from "lucide-vue-next";
 import type {
+  AccountDTO,
   BibleCombinedPassageMode,
   BibleOutputFormat,
   BiblePreferencesDTO,
@@ -26,37 +30,26 @@ import type {
   VersionDTO
 } from "@shared/types";
 import { APP_VERSION, RELEASE_DATE, RELEASE_NOTES } from "@shared/release";
+import { api } from "../../api";
 import { useChatStore } from "../../store";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import ChannelIcon from "../../components/ui/ChannelIcon.vue";
 import AppField from "../../components/ui/AppField.vue";
 import { settingsTabMeta, type SettingsTab } from "./settingsTabs";
-import type { AccountSettings } from "./useAccountSettings";
+import { useAccountSettings } from "./useAccountSettings";
 
 interface SettingsPanelBindings {
   settingsTab: Ref<SettingsTab>;
   settingsLoadError: Ref<string>;
   selectSettingsTab: (tab: SettingsTab) => Promise<void>;
   closeSettingsPanel: () => Promise<void>;
-  uploadOwnAvatar: (event: Event) => Promise<void>;
-  saveOwnProfile: () => Promise<void>;
-  changeOwnPassword: () => Promise<void>;
-  deleteOwnAccount: () => Promise<void>;
   themeOptions: ComputedRef<ThemeDTO[]>;
   activeTheme: ComputedRef<string>;
-  chooseTheme: (theme: string) => Promise<void>;
   themeSwatchStyle: (theme: ThemeDTO) => { background: string };
-  bibleSettingsMsg: Ref<string>;
-  bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }>;
-  bibleReferenceLabelOptions: Array<{ value: BibleReferenceLabelMode; label: string }>;
-  bibleCombinedPassageOptions: Array<{ value: BibleCombinedPassageMode; label: string }>;
-  bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: string }>;
   biblePreferences: () => BiblePreferencesDTO;
-  saveBiblePreference: <K extends keyof BiblePreferencesDTO>(key: K, value: BiblePreferencesDTO[K]) => Promise<void>;
   devices: Ref<DeviceSessionDTO[]>;
   displayedDeviceName: (device: Pick<DeviceSessionDTO, "deviceName">) => string;
   revokeDevice: (device: DeviceSessionDTO) => Promise<void>;
-  deviceIcon: (kind: string) => Component;
   deviceLabel: (kind: string) => string;
   notificationMsg: Ref<string>;
   notificationEnabled: Ref<boolean>;
@@ -77,8 +70,11 @@ interface SettingsPanelBindings {
 }
 
 const props = defineProps<{
-  account: AccountSettings;
   settings: SettingsPanelBindings;
+}>();
+
+const emit = defineEmits<{
+  deleted: [];
 }>();
 
 const store = useChatStore();
@@ -95,33 +91,26 @@ const {
   accountDeleteBusy,
   accountProfileMsg,
   accountPasswordMsg,
-  accountDeleteMsg
-} = props.account;
+  accountDeleteMsg,
+  syncAccountSettings,
+  uploadOwnAvatar,
+  saveOwnProfile,
+  changeOwnPassword,
+  deleteOwnAccount
+} = useAccountSettings({ onDeleted: () => emit("deleted") });
 
 const {
   settingsTab,
   settingsLoadError,
   selectSettingsTab,
   closeSettingsPanel,
-  uploadOwnAvatar,
-  saveOwnProfile,
-  changeOwnPassword,
-  deleteOwnAccount,
   themeOptions,
   activeTheme,
-  chooseTheme,
   themeSwatchStyle,
-  bibleSettingsMsg,
-  bibleOutputFormatOptions,
-  bibleReferenceLabelOptions,
-  bibleCombinedPassageOptions,
-  bibleQuotationStyleOptions,
   biblePreferences,
-  saveBiblePreference,
   devices,
   displayedDeviceName,
   revokeDevice,
-  deviceIcon,
   deviceLabel,
   notificationMsg,
   notificationEnabled,
@@ -140,6 +129,61 @@ const {
   releaseHistory,
   releaseDeveloper
 } = props.settings;
+
+onMounted(() => {
+  if (settingsTab.value === "account") syncAccountSettings();
+});
+
+async function selectTab(tab: SettingsTab) {
+  if (tab === "account") syncAccountSettings();
+  await selectSettingsTab(tab);
+}
+
+async function chooseTheme(theme: string) {
+  const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ theme }) });
+  if (result.account) store.account = result.account;
+}
+
+const bibleSettingsMsg = ref("");
+const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
+  { value: "continuousText", label: "连续正文", description: "创世记 1:1 起初，神创造天地。" },
+  { value: "referenceVerseLines", label: "每节完整标签", description: "每行显示“书卷 章:节 经文”。" },
+  { value: "referenceHeader", label: "首行引用", description: "第一行显示出处，后面逐节分行。" },
+  { value: "numberedVerses", label: "每节带节号", description: "出处后逐行显示节号和经文。" }
+];
+const bibleReferenceLabelOptions: Array<{ value: BibleReferenceLabelMode; label: string }> = [
+  { value: "normalizedFull", label: "改写为完整标签" },
+  { value: "preserveInput", label: "保留原输入标签" },
+  { value: "omit", label: "不显示引用标签" }
+];
+const bibleCombinedPassageOptions: Array<{ value: BibleCombinedPassageMode; label: string }> = [
+  { value: "compactEllipsis", label: "合并为一段" },
+  { value: "groupedLines", label: "按片段分行" }
+];
+const bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: string }> = [
+  { value: "fullWidth", label: "全角引号 “ ”" },
+  { value: "halfWidth", label: "半角引号 \" \"" },
+  { value: "square", label: "保留方引号 「 」" }
+];
+
+async function saveBiblePreference<K extends keyof BiblePreferencesDTO>(key: K, value: BiblePreferencesDTO[K]) {
+  bibleSettingsMsg.value = "";
+  const current = biblePreferences();
+  const next = { ...current, [key]: value };
+  try {
+    const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ biblePreferences: next }) });
+    if (result.account) store.account = result.account;
+    bibleSettingsMsg.value = "经文显示设置已保存";
+  } catch {
+    bibleSettingsMsg.value = "保存失败，请稍后再试";
+  }
+}
+
+function deviceIcon(kind: string) {
+  if (kind === "mobile") return Smartphone;
+  if (kind === "tablet") return Tablet;
+  return Monitor;
+}
 </script>
 
 <template>
@@ -155,12 +199,12 @@ const {
             <span><strong>{{ store.account?.displayName }}</strong><small>@{{ store.account?.username }}</small></span>
           </header>
           <nav class="settings-nav" aria-label="设置分类">
-            <button :class="{ active: settingsTab === 'account' }" @click="selectSettingsTab('account')"><Users :size="19" /><span><b>账号</b><small>头像与安全</small></span></button>
-            <button :class="{ active: settingsTab === 'appearance' }" @click="selectSettingsTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
-            <button :class="{ active: settingsTab === 'bible' }" @click="selectSettingsTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
-            <button :class="{ active: settingsTab === 'notifications' }" @click="selectSettingsTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
-            <button :class="{ active: settingsTab === 'devices' }" @click="selectSettingsTab('devices')"><Monitor :size="19" /><span><b>登录设备</b><small>会话与安全</small></span></button>
-            <button :class="{ active: settingsTab === 'release' }" @click="selectSettingsTab('release')"><Info :size="19" /><span><b>关于</b><small>版本与更新</small></span></button>
+            <button :class="{ active: settingsTab === 'account' }" @click="selectTab('account')"><Users :size="19" /><span><b>账号</b><small>头像与安全</small></span></button>
+            <button :class="{ active: settingsTab === 'appearance' }" @click="selectTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
+            <button :class="{ active: settingsTab === 'bible' }" @click="selectTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
+            <button :class="{ active: settingsTab === 'notifications' }" @click="selectTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
+            <button :class="{ active: settingsTab === 'devices' }" @click="selectTab('devices')"><Monitor :size="19" /><span><b>登录设备</b><small>会话与安全</small></span></button>
+            <button :class="{ active: settingsTab === 'release' }" @click="selectTab('release')"><Info :size="19" /><span><b>关于</b><small>版本与更新</small></span></button>
           </nav>
           <small class="settings-sidebar-version">Team Chat v{{ APP_VERSION }}</small>
         </aside>
@@ -173,7 +217,7 @@ const {
             <button class="icon-btn" @click="closeSettingsPanel" aria-label="关闭设置"><X :size="20" /></button>
           </header>
           <div class="admin-body settings-body">
-          <div v-if="settingsLoadError" class="settings-load-error" role="alert"><CircleOff :size="17" /><span>{{ settingsLoadError }}</span><button @click="selectSettingsTab(settingsTab)">重试</button></div>
+          <div v-if="settingsLoadError" class="settings-load-error" role="alert"><CircleOff :size="17" /><span>{{ settingsLoadError }}</span><button @click="selectTab(settingsTab)">重试</button></div>
           <section v-if="settingsTab === 'account'" class="form-grid settings-section account-settings">
             <div class="settings-section-head"><strong>个人账号</strong><small>头像和昵称会显示在聊天消息旁。</small></div>
             <label class="account-avatar-card" :class="{ busy: accountAvatarBusy }">

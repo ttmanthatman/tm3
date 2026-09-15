@@ -26,6 +26,7 @@ const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccount
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
 const settingsPanel = fs.readFileSync(new URL("./features/settings/SettingsPanel.vue", import.meta.url), "utf8");
 const adminAccountsLogic = fs.readFileSync(new URL("./features/admin/useAdminAccounts.ts", import.meta.url), "utf8");
+const accountSettingsLogic = fs.readFileSync(new URL("./features/settings/useAccountSettings.ts", import.meta.url), "utf8");
 const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts", import.meta.url), "utf8");
 const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
 const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.vue", import.meta.url), "utf8");
@@ -1074,15 +1075,26 @@ test("composer autosizes through twelve rows while controls keep their dimension
 test("the profile settings entry opens complete self-service account controls", () => {
   assert.match(app, /async function openSettings\(tab: SettingsTab = "account"\)/);
   assert.match(settingsPanel, /settingsTab === 'account'[\s\S]*?>账号<[\s\S]*?class="account-avatar-card"/);
-  assert.match(app, /uploadOwnAvatar[\s\S]*?\/api\/me\/avatar/);
-  assert.match(app, /saveOwnProfile[\s\S]*?\/api\/me\/profile/);
-  assert.match(app, /changeOwnPassword[\s\S]*?\/api\/auth\/change-password/);
-  assert.match(app, /deleteOwnAccount[\s\S]*?\/api\/me\/account/);
+  assert.match(accountSettingsLogic, /uploadOwnAvatar[\s\S]*?\/api\/me\/avatar/);
+  assert.match(accountSettingsLogic, /saveOwnProfile[\s\S]*?\/api\/me\/profile/);
+  assert.match(accountSettingsLogic, /changeOwnPassword[\s\S]*?\/api\/auth\/change-password/);
+  assert.match(accountSettingsLogic, /deleteOwnAccount[\s\S]*?\/api\/me\/account/);
   assert.match(server, /app\.patch\("\/api\/me\/profile", \{ preHandler: requireAuth \}/);
   assert.match(server, /app\.post\("\/api\/me\/avatar", \{ preHandler: requireAuth \}/);
   assert.match(server, /app\.delete\("\/api\/me\/account", \{ preHandler: requireAuth \}/);
   assert.match(server, /至少需要保留一个管理员/);
   assert.match(server, /accountId: null,[\s\S]*?displayName: "已注销用户"[\s\S]*?await tx\.account\.delete/);
+});
+
+test("settings and admin panels own their panel-exclusive state instead of receiving it from App.vue", () => {
+  assert.match(app, /<SettingsPanel\s+v-if="showSettings" :settings="settingsPanelBindings" @deleted="handleOwnAccountDeleted" \/>/);
+  assert.doesNotMatch(app, /:account="accountSettings"/);
+  assert.doesNotMatch(app, /uploadOwnAvatar|saveOwnProfile|changeOwnPassword|deleteOwnAccount/);
+  assert.match(settingsPanel, /useAccountSettings\(\{ onDeleted: \(\) => emit\("deleted"\) \}\)/);
+  assert.match(settingsPanel, /async function chooseTheme[\s\S]*?\/api\/me\/preferences/);
+  assert.match(settingsPanel, /async function saveBiblePreference[\s\S]*?bibleSettingsMsg/);
+  assert.match(adminPanel, /const updateStartDisabled = computed/);
+  assert.doesNotMatch(app, /const updateStartDisabled = computed/);
 });
 
 test("composer swaps one compact trailing action between more and a connection-aware send", () => {

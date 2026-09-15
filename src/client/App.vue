@@ -28,26 +28,19 @@ import {
   RotateCcw,
   Save,
   Send,
-  Smartphone,
   Settings,
-  Tablet,
   Trash2,
   ThumbsUp,
   Upload,
   X
 } from "lucide-vue-next";
 import type {
-  AccountDTO,
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
   BiblePreferencesDTO,
   BibleReaderPresenceDTO,
   BookReaderPresenceDTO,
-  BibleOutputFormat,
-  BibleReferenceLabelMode,
-  BibleCombinedPassageMode,
-  BibleQuotationStyle,
   BibleSessionPayloadDTO,
   ChannelDTO,
   FavoriteMessageDTO,
@@ -197,7 +190,6 @@ import { useMessageRendering, type MentionToast } from "./features/messages/useM
 import { useMusicMentionRendering } from "./features/messages/useMusicMentionRendering";
 import { useAdminTools } from "./features/admin/useAdminTools";
 import { useAiSettings } from "./features/admin/useAiSettings";
-import { useAccountSettings } from "./features/settings/useAccountSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
@@ -479,22 +471,6 @@ const chatScrollIntentTracker = createChatScrollIntentTracker();
 let pendingMessageJumpId: number | null = null;
 const settingsTab = ref<SettingsTab>("account");
 const settingsLoadError = ref("");
-const accountSettings = useAccountSettings();
-const {
-  accountDisplayName,
-  accountCurrentPassword,
-  accountNewPassword,
-  accountConfirmPassword,
-  accountDeletePassword,
-  accountAvatarBusy,
-  accountProfileBusy,
-  accountPasswordBusy,
-  accountDeleteBusy,
-  accountProfileMsg,
-  accountPasswordMsg,
-  accountDeleteMsg,
-  syncAccountSettings
-} = accountSettings;
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
 const activityLogFilterOptions: Array<{ value: "all" | ActivityLogCategory; label: string }> = [
@@ -707,27 +683,6 @@ const {
   jumpToMessageInChannel
 });
 let bibleSwipeStart: { x: number; y: number } | null = null;
-const bibleSettingsMsg = ref("");
-const bibleOutputFormatOptions: Array<{ value: BibleOutputFormat; label: string; description: string }> = [
-  { value: "continuousText", label: "连续正文", description: "创世记 1:1 起初，神创造天地。" },
-  { value: "referenceVerseLines", label: "每节完整标签", description: "每行显示“书卷 章:节 经文”。" },
-  { value: "referenceHeader", label: "首行引用", description: "第一行显示出处，后面逐节分行。" },
-  { value: "numberedVerses", label: "每节带节号", description: "出处后逐行显示节号和经文。" }
-];
-const bibleReferenceLabelOptions: Array<{ value: BibleReferenceLabelMode; label: string }> = [
-  { value: "normalizedFull", label: "改写为完整标签" },
-  { value: "preserveInput", label: "保留原输入标签" },
-  { value: "omit", label: "不显示引用标签" }
-];
-const bibleCombinedPassageOptions: Array<{ value: BibleCombinedPassageMode; label: string }> = [
-  { value: "compactEllipsis", label: "合并为一段" },
-  { value: "groupedLines", label: "按片段分行" }
-];
-const bibleQuotationStyleOptions: Array<{ value: BibleQuotationStyle; label: string }> = [
-  { value: "fullWidth", label: "全角引号 “ ”" },
-  { value: "halfWidth", label: "半角引号 \" \"" },
-  { value: "square", label: "保留方引号 「 」" }
-];
 const chainPromptAnchor = ref<HTMLElement | null>(null);
 type TopNotice = {
   id: string;
@@ -2099,33 +2054,12 @@ const loginBrand = computed(() => ({
   subtitle: store.appearance.loginSubtitle,
   showSubtitle: store.appearance.loginShowSubtitle !== false
 }));
-const updateProgress = computed(() => Math.min(100, Math.max(0, Number(updateStatus.value?.progress || 0))));
-const updateStateText = computed(() => {
-  const state = updateStatus.value?.state || "idle";
-  if (state === "running") return "更新中";
-  if (state === "complete") return "已完成";
-  if (state === "failed") return "更新失败";
-  return "未开始";
-});
-const updateRestartModeLabel = computed(() => {
-  const mode = updateCheck.value?.restartMode || serverVersion.value?.update?.restartMode || "";
-  if (mode === "pm2") return "PM2 自动重启";
-  if (mode === "command") return "自定义命令重启";
-  if (mode === "none") return "更新后需手动重启";
-  return mode ? `重启方式：${mode}` : "自动重启";
-});
-const updateStartDisabled = computed(() => updateBusy.value || updateStatus.value?.state === "running" || !updateCheck.value?.updateAvailable);
-
 const adminReleaseBindings = {
   serverVersion,
   updateCheck,
   updateStatus,
   updateBusy,
   selectedUpdateBranch,
-  updateProgress,
-  updateStateText,
-  updateRestartModeLabel,
-  updateStartDisabled,
   checkForUpdates,
   startServerUpdate,
   releaseHistory,
@@ -2142,25 +2076,13 @@ const settingsPanelBindings = {
   settingsLoadError,
   selectSettingsTab,
   closeSettingsPanel,
-  uploadOwnAvatar,
-  saveOwnProfile,
-  changeOwnPassword,
-  deleteOwnAccount,
   themeOptions,
   activeTheme,
-  chooseTheme,
   themeSwatchStyle,
-  bibleSettingsMsg,
-  bibleOutputFormatOptions,
-  bibleReferenceLabelOptions,
-  bibleCombinedPassageOptions,
-  bibleQuotationStyleOptions,
   biblePreferences,
-  saveBiblePreference,
   devices,
   displayedDeviceName,
   revokeDevice,
-  deviceIcon,
   deviceLabel,
   notificationMsg,
   notificationEnabled,
@@ -2764,7 +2686,6 @@ async function selectSettingsTab(tab: typeof settingsTab.value) {
   settingsTab.value = tab;
   settingsLoadError.value = "";
   try {
-    if (tab === "account") syncAccountSettings();
     if (tab === "devices") await loadDevices();
     if (tab === "notifications") await loadNotificationSettings();
     if (tab === "release") await Promise.all([checkServerVersion(), ensureReleaseHistory()]);
@@ -2773,96 +2694,9 @@ async function selectSettingsTab(tab: typeof settingsTab.value) {
   }
 }
 
-async function uploadOwnAvatar(event: Event) {
-  const inputElement = event.target as HTMLInputElement;
-  const file = inputElement.files?.[0];
-  if (!file) return;
-  accountAvatarBusy.value = true;
-  accountProfileMsg.value = "";
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const result = await api<{ success: true; account: AccountDTO }>("/api/me/avatar", { method: "POST", body: form });
-    store.account = result.account;
-    accountProfileMsg.value = "头像已更新";
-  } catch (error) {
-    accountProfileMsg.value = error instanceof Error ? error.message : "头像更新失败";
-  } finally {
-    accountAvatarBusy.value = false;
-    inputElement.value = "";
-  }
-}
-
-async function saveOwnProfile() {
-  const nextDisplayName = accountDisplayName.value.trim();
-  if (!nextDisplayName) {
-    accountProfileMsg.value = "请输入昵称";
-    return;
-  }
-  accountProfileBusy.value = true;
-  accountProfileMsg.value = "";
-  try {
-    const result = await api<{ success: true; account: AccountDTO }>("/api/me/profile", {
-      method: "PATCH",
-      body: JSON.stringify({ displayName: nextDisplayName })
-    });
-    store.account = result.account;
-    accountDisplayName.value = result.account.displayName;
-    accountProfileMsg.value = "昵称已保存";
-  } catch (error) {
-    accountProfileMsg.value = error instanceof Error ? error.message : "昵称保存失败";
-  } finally {
-    accountProfileBusy.value = false;
-  }
-}
-
-async function changeOwnPassword() {
-  if (accountNewPassword.value.length < 10) {
-    accountPasswordMsg.value = "新密码至少需要 10 位";
-    return;
-  }
-  if (accountNewPassword.value !== accountConfirmPassword.value) {
-    accountPasswordMsg.value = "两次输入的新密码不一致";
-    return;
-  }
-  accountPasswordBusy.value = true;
-  accountPasswordMsg.value = "";
-  try {
-    await api<{ success: true }>("/api/auth/change-password", {
-      method: "POST",
-      body: JSON.stringify({ oldPassword: accountCurrentPassword.value, newPassword: accountNewPassword.value })
-    });
-    accountCurrentPassword.value = "";
-    accountNewPassword.value = "";
-    accountConfirmPassword.value = "";
-    accountPasswordMsg.value = "密码已修改，其他设备已退出登录";
-  } catch (error) {
-    accountPasswordMsg.value = error instanceof Error ? error.message : "密码修改失败";
-  } finally {
-    accountPasswordBusy.value = false;
-  }
-}
-
-async function deleteOwnAccount() {
-  if (!accountDeletePassword.value) {
-    accountDeleteMsg.value = "请输入当前密码";
-    return;
-  }
-  if (!window.confirm("确定永久删除账号吗？账号数据无法恢复，历史消息会显示为“已注销用户”。")) return;
-  accountDeleteBusy.value = true;
-  accountDeleteMsg.value = "";
-  try {
-    await api<{ success: true }>("/api/me/account", {
-      method: "DELETE",
-      body: JSON.stringify({ password: accountDeletePassword.value })
-    });
-    showSettings.value = false;
-    await logoutApp(false);
-  } catch (error) {
-    accountDeleteMsg.value = error instanceof Error ? error.message : "账号删除失败";
-  } finally {
-    accountDeleteBusy.value = false;
-  }
+async function handleOwnAccountDeleted() {
+  showSettings.value = false;
+  await logoutApp(false);
 }
 
 async function closeSettingsPanel() {
@@ -3022,34 +2856,10 @@ async function setChannelMuted(channel: ChannelDTO, muted: boolean) {
   notificationMsg.value = muted ? `已关闭“${channel.name}”通知` : `已开启“${channel.name}”通知`;
 }
 
-async function chooseTheme(theme: string) {
-  const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ theme }) });
-  if (result.account) store.account = result.account;
-}
-
-async function saveBiblePreference<K extends keyof BiblePreferencesDTO>(key: K, value: BiblePreferencesDTO[K]) {
-  bibleSettingsMsg.value = "";
-  const current = biblePreferences();
-  const next = { ...current, [key]: value };
-  try {
-    const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ biblePreferences: next }) });
-    if (result.account) store.account = result.account;
-    bibleSettingsMsg.value = "经文显示设置已保存";
-  } catch {
-    bibleSettingsMsg.value = "保存失败，请稍后再试";
-  }
-}
-
 function deviceLabel(kind: string) {
   if (kind === "mobile") return "手机";
   if (kind === "tablet") return "平板";
   return "电脑";
-}
-
-function deviceIcon(kind: string) {
-  if (kind === "mobile") return Smartphone;
-  if (kind === "tablet") return Tablet;
-  return Monitor;
 }
 
 function compareVersions(a: string, b: string) {
@@ -6235,7 +6045,7 @@ const messageRowBindings = {
       @more-settings="openSettings('notifications'); notificationPromptOpen = false"
     />
 
-    <SettingsPanel v-if="showSettings" :account="accountSettings" :settings="settingsPanelBindings" />
+    <SettingsPanel v-if="showSettings" :settings="settingsPanelBindings" @deleted="handleOwnAccountDeleted" />
 
     <AdminPanel v-if="showAdmin" :tools="adminTools" :release="adminReleaseBindings" :actions="adminPanelActions" />
 
