@@ -980,11 +980,21 @@ const RELEASE_1_18_1_NOTES = [
   "内部重构收尾：剩余弹窗全部组件化，新增 ESLint/Prettier 护栏与弹窗增长守护。"
 ] as const
 
+const RELEASE_1_18_2_NOTES = [
+  "弱网切换更省流：链接预览只加载当前屏幕可见消息的预览，快速切换频道时旧频道的预览请求会立即取消、不再占用网络；加载失败的预览会稍后自动重试，缓存有上限并在退出登录时清理。",
+  "内部：新增弱网、弹窗键盘、移动端视口与性能基线的隔离浏览器测试（共 31 项），性能指标有了可重复的前后对比依据；新增消息发送 ACK 丢失后的幂等恢复协议设计文档（仅设计，尚未实现）。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "1.18.3",
+    date: "2026-09-17",
+    notes: RELEASE_NOTES
+  },
   {
     version: "1.18.2",
     date: "2026-09-16",
-    notes: RELEASE_NOTES
+    notes: RELEASE_1_18_2_NOTES
   },
   {
     version: "1.18.1",
