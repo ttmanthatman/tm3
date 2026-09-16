@@ -251,6 +251,10 @@
     animation: none;
   }
 
+  .chat-activity-copy + .chat-activity-copy {
+    display: none;
+  }
+
   .chat-activity-item {
     animation: none;
   }

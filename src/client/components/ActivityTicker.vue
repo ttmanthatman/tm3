@@ -16,13 +16,16 @@ const trackStyle = computed(() => ({
 }));
 
 // The track holds two identical copies; one loop shifts exactly one copy plus
-// the inter-copy gap, so the wrap is seamless.
+// the inter-copy gap, so the wrap is seamless. A leading padding of 100% of the
+// viewport parks the first copy beyond the right edge so items scroll in from
+// the right; that padding must stay out of the measured shift distance.
 function measureTickerDistance() {
   const trackElement = track.value;
   if (!trackElement) return;
-  const copy = trackElement.firstElementChild as HTMLElement | null;
-  const copyWidth = copy?.offsetWidth || 0;
-  tickerDistance.value = copyWidth > 0 ? trackElement.scrollWidth - copyWidth : 0;
+  const firstCopy = trackElement.firstElementChild as HTMLElement | null;
+  const secondCopy = firstCopy?.nextElementSibling as HTMLElement | null;
+  const copyWidth = firstCopy?.offsetWidth || 0;
+  tickerDistance.value = firstCopy && secondCopy && copyWidth > 0 ? secondCopy.offsetLeft - firstCopy.offsetLeft : 0;
 }
 
 watch(() => props.items, () => void nextTick(measureTickerDistance), { deep: true });

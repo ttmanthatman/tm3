@@ -271,9 +271,15 @@
 }
 
 .message-load-banner {
+  /* Overlay the scroll viewport instead of taking normal-flow space, so the
+     banner appearing or disappearing never pushes the message list. */
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
   width: fit-content;
-  max-width: min(420px, 100%);
-  margin: 2px auto 10px;
+  max-width: min(420px, calc(100% - 24px));
   padding: 5px 10px;
   border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-radius: 999px;

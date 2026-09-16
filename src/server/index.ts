@@ -3136,6 +3136,7 @@ app.get("/api/like-notifications", { preHandler: requireAuth }, async (request) 
     }),
     prisma.messageFavorite.findMany({
       where: {
+        dismissedAt: null,
         accountId: { not: auth.accountId },
         message: { sender: { accountId: auth.accountId } }
       },
@@ -3170,6 +3171,15 @@ app.patch("/api/like-notifications/:id/dismiss", { preHandler: requireAuth }, as
   const like = await prisma.messageLike.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
   if (!like || like.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
   await prisma.messageLike.update({ where: { id }, data: { dismissedAt: new Date() } });
+  return { success: true };
+});
+
+app.patch("/api/favorite-notifications/:id/dismiss", { preHandler: requireAuth }, async (request, reply) => {
+  const auth = (request as AuthedRequest).auth;
+  const id = Number((request.params as { id: string }).id);
+  const favorite = await prisma.messageFavorite.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
+  if (!favorite || favorite.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
+  await prisma.messageFavorite.update({ where: { id }, data: { dismissedAt: new Date() } });
   return { success: true };
 });
 
@@ -3823,7 +3833,7 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
 async function emitPinnedRefresh(channelIds: Set<number>) {
   for (const channelId of channelIds) {
     const pin = await prisma.pinnedItem.findFirst({ where: { channelId, active: true }, orderBy: { updatedAt: "desc" } });
-    io.to(`ch:${channelId}`).emit("pinned:updated", pin ? await serializePinnedItem(pin) : null);
+    io.to(`ch:${channelId}`).emit("pinned:updated", { channelId, pinned: pin ? await serializePinnedItem(pin) : null });
   }
 }
 
@@ -3871,7 +3881,7 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
     await prisma.pinnedItem.updateMany({ where: { channelId }, data: { active: false } });
   }
   const dto = await channelDto(channelId, auth);
-  io.to(`ch:${channelId}`).emit("pinned:updated", dto?.pinned || null);
+  io.to(`ch:${channelId}`).emit("pinned:updated", { channelId, pinned: dto?.pinned || null });
   return { success: true, pinned: dto?.pinned || null };
 });
 

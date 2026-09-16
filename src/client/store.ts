@@ -477,6 +477,11 @@ export const useChatStore = defineStore("chat", {
         const nextChannelId = candidates.find((id) => id && this.channels.some((ch) => ch.id === id)) || this.channels[0]?.id || 0;
         if (nextChannelId !== restoredChannelId) invalidateMessageWindowRequests();
         this.currentChannelId = nextChannelId;
+        // The early message page may already have committed before the channel
+        // list landed and cleared the pinned notice; re-derive it here. This
+        // block runs synchronously with the channel assignment, so a channel
+        // switch mid-load cannot interleave.
+        this.pinned = this.channels.find((ch) => ch.id === nextChannelId)?.pinned || null;
         if (this.currentChannelId) {
           localStorage.setItem("team-chat-current-channel", String(this.currentChannelId));
           // bootstrap() may already have the first page in flight (or done) for
@@ -623,6 +628,9 @@ export const useChatStore = defineStore("chat", {
         invalidateMessageWindowKind("prefetch");
         this.prefetchingOlderMessages = false;
         this.cacheCurrentMessages();
+        // Re-arm the prefetch chain only after clearing the loading flag;
+        // prefetchOlderMessages refuses to run while a load is in flight.
+        this.loadingOlderMessages = false;
         void this.prefetchOlderMessages();
         return rows.length > 0;
       } catch (error) {
@@ -714,6 +722,9 @@ export const useChatStore = defineStore("chat", {
         if (reconnecting) {
           this.unreadSeeded = false;
           void this.seedUnreadCounts();
+          // Pinned notices and channel metadata may have changed while the
+          // socket was down; reloading the list also re-derives this.pinned.
+          void this.loadChannels().catch(() => undefined);
           if (this.currentChannelId) void this.loadMessages().catch(() => undefined);
         }
       });
@@ -777,10 +788,10 @@ export const useChatStore = defineStore("chat", {
       socket.on("sermon:invited", (event: SermonInvitedEvent) => applySermonInvited(event));
       socket.on("sermon:removed", (event: SermonRemovedEvent) => applySermonRemoved(event));
       socket.on("sermon:ended", (event: SermonEndedEvent) => applySermonEnded(event));
-      socket.on("pinned:updated", (pinned: PinnedDTO | null) => {
-        this.pinned = pinned;
-        const ch = this.channels.find((c) => c.id === this.currentChannelId);
-        if (ch) ch.pinned = pinned;
+      socket.on("pinned:updated", (event: { channelId: number; pinned: PinnedDTO | null }) => {
+        const ch = this.channels.find((c) => c.id === event.channelId);
+        if (ch) ch.pinned = event.pinned;
+        if (event.channelId === this.currentChannelId) this.pinned = event.pinned;
       });
       socket.on("voice:listened", (event: { messageId: number }) => {
         const message = this.messages.find((m) => m.id === event.messageId);

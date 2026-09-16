@@ -211,6 +211,11 @@ export function useMessageActions(options: UseMessageActionsOptions) {
     await api(`/api/like-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
   }
 
+  async function dismissFavoriteNotification(id: number) {
+    store.favoriteNotifications = store.favoriteNotifications.filter((item) => item.id !== id);
+    await api(`/api/favorite-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
+  }
+
   function closeMessageActionMenu() {
     pendingMessageActions.value = null;
   }
@@ -265,6 +270,7 @@ export function useMessageActions(options: UseMessageActionsOptions) {
     favoriteActionMessage,
     likedByTitle,
     dismissLikeNotification,
+    dismissFavoriteNotification,
     closeMessageActionMenu,
     quoteActionMessage,
     selectActionMessageText

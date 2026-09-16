@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createPinia, setActivePinia } from "pinia";
-import type { AccountDTO, ChannelDTO } from "../shared/types";
+import type { AccountDTO, ChannelDTO, PinnedDTO } from "../shared/types";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -271,4 +271,36 @@ test("seedUnreadCounts batches per-channel recounts into one grouped request", a
   assert.equal(store.unreadCounts[1], 3);
   assert.equal(store.unreadCounts[2], 99); // capped at UNREAD_COUNT_CAP
   assert.equal(store.unreadCounts[3], 0); // first-seen channel treated as read locally
+});
+
+
+test("channel load backfills the pinned notice cleared by an early message page", async () => {
+  storage.clear();
+  storage.setItem("team-chat-token", "token-1");
+  storage.setItem("team-chat-current-channel", "1");
+
+  const pinned = { id: 9, kind: "notice", title: "Notice", version: 1 } as PinnedDTO;
+  const channelsGate = deferred<Response>();
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/channels/1/members")) return jsonResponse({ members: [] });
+    if (url.includes("/api/channels")) return channelsGate.promise;
+    if (url.includes("/api/messages")) return jsonResponse({ messages: [] });
+    throw new Error(`unexpected fetch ${url}`);
+  }) as typeof fetch;
+
+  setActivePinia(createPinia());
+  const store = useChatStore();
+  // bootstrap()'s early page commits before the channel list exists and
+  // therefore derives pinned = null.
+  await store.loadMessages();
+  assert.equal(store.pinned, null);
+
+  const loading = store.loadChannels();
+  channelsGate.resolve(jsonResponse({
+    channels: [{ id: 1, name: "General", kind: "standard", description: "", icon: "", isPrivate: false, isDefault: true, memberCount: 1, lastMessageId: 0, pinned }]
+  }));
+  await loading;
+  assert.deepEqual(store.pinned, pinned);
+  assert.equal(store.channels.find((ch) => ch.id === 1)?.pinned?.id, pinned.id);
 });

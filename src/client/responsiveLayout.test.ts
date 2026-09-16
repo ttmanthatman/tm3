@@ -78,7 +78,7 @@ test("reception invitations use a dedicated visitor-only route", () => {
 
 test("the message viewport and composer occupy separate chat grid rows", () => {
   const chatPaneRule = css.match(/\.chat-pane \{([^}]*)\}/)?.[1] ?? "";
-  const messageNoticeRule = css.match(/\.message-notice-bar \{([^}]*)\}/)?.[1] ?? "";
+  const messageNoticeRule = css.match(/^\.message-notice-bar \{([^}]*)\}/m)?.[1] ?? "";
   const messagesRule = css.match(/\.messages-viewport \{([^}]*)\}/)?.[1] ?? "";
   const composerRule = css.match(/\.composer \{([^}]*)\}/)?.[1] ?? "";
 
@@ -602,8 +602,16 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(server, /socket\.on\("bible:reading"[\s\S]*?broadcastBibleReaders\(\)/);
   assert.match(server, /bibleReaderCleanupTimer[\s\S]*?45_000/);
   assert.match(css, /\.chat-notice-stack \{[\s\S]*?grid-row: 4;[\s\S]*?backdrop-filter: blur\(14px\) saturate\(135%\);/);
+  const noticeStackRule = css.match(/\.chat-notice-stack \{([^}]*)\}/)?.[1] ?? "";
+  assert.match(noticeStackRule, /position: absolute;/, "the notice stack overlays the timeline instead of compressing it");
+  assert.match(noticeStackRule, /grid-column: 1 \/ -1;/);
+  assert.match(css, /\.chat-notice-stack:not\(\.has-pinned\) \{\s*pointer-events: none;/);
+  assert.match(css, /\.chat-notice-stack\.has-pinned\.has-activity ~ \.message-notice-bar \{\s*--notice-stack-clearance: 59px;/);
+  assert.match(css, /\.message-notice-bar\.below-music-lyrics \{\s*margin-top: calc\(56px \+ var\(--notice-stack-clearance, 0px\)\);/);
   const activityTickerRule = css.match(/\.chat-activity-ticker \{([^}]*)\}/)?.[1] ?? "";
   assert.doesNotMatch(activityTickerRule, /position: absolute;/);
+  assert.match(css, /\.chat-activity-track \{[\s\S]*?padding-left: 100%;/, "ticker entries scroll in from the right edge");
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.chat-activity-track \{\s*padding-left: 0;\s*animation: none;/);
   assert.match(css, /\.chat-activity-item \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);
   assert.match(css, /\.chat-status-text \{[\s\S]*?font-size: 11px;[\s\S]*?animation: chatStatusShimmer/);
@@ -902,14 +910,44 @@ test("karaoke lyrics stay above chat content and retain refined enter and leave 
   assert.match(css, /\.music-lyrics-panel-leave-active[\s\S]*?musicLyricsRetract/);
 });
 
-test("browser and login entry restore the last saved reading position", () => {
+test("session entries land on the newest messages while channel switches restore position", () => {
   assert.doesNotMatch(app, /saveNewestReadPositionForAccount/);
   assert.doesNotMatch(app, /async function enterChatAtNewest/);
-  assert.match(app, /onMounted\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\)/);
-  assert.match(app, /async function doLogin\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\)/);
+  assert.match(app, /onMounted\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\{ forceNewest: true \}\)/);
+  assert.match(app, /async function doLogin\([\s\S]*?pendingReadPositionRestore\.value = true;[\s\S]*?await restoreSavedReadPosition\(\{ forceNewest: true \}\)/);
+  // In-session channel switches still restore the channel's saved position.
+  assert.match(app, /void restoreSavedReadPosition\(\);/);
+  assert.match(app, /function restoreSavedReadPosition\(options\?: \{ forceNewest\?: boolean \}\)/);
   assert.match(app, /function handlePageHideFlush\(\) \{\s*saveReadPosition\(\);\s*flushPendingPersists\(\);\s*\}/);
   assert.match(app, /'messages-scroll--anchoring': initialChatAnchorPending \|\| pendingReadPositionRestore/);
   assert.match(css, /\.messages-scroll \{[\s\S]*?overflow-anchor: none;/);
+});
+
+test("a missing restore target falls back to the newest messages instead of stale pixels", () => {
+  assert.doesNotMatch(app, /root\.scrollTop = position\.scrollTop/);
+  assert.match(app, /function restoreSavedReadPosition[\s\S]*?loadUntilMessageVisible\(position\.messageId, token\)/);
+});
+
+test("the message list watch does not re-enter an active read-position restore", () => {
+  assert.match(app, /store\.loadingInitialMessages \|\| readPositionRestoreActive\) return;\s*void restoreSavedReadPosition\(\);/);
+  assert.match(app, /function finishReadPositionRestore[\s\S]*?readPositionRestoreActive = false;/);
+});
+
+test("the load banner overlays the scroll viewport without pushing message content", () => {
+  assert.match(app, /class="message-load-banner"[\s\S]*?ref="scroller"/);
+  assert.match(css, /\.message-load-banner \{[\s\S]*?position: absolute;[\s\S]*?transform: translateX\(-50%\);/);
+  assert.doesNotMatch(css, /\.message-load-banner \{[\s\S]*?margin: 2px auto 10px;/);
+});
+
+test("scrolling near the top edge loads older history before the idle timer", () => {
+  assert.match(app, /function handleMessagesScroll\(\)[\s\S]*?if \(el\.scrollTop < 180\) void loadTimelineEdgesAfterScroll\(\);/);
+  assert.match(app, /function loadTimelineEdgesAfterScroll[\s\S]*?loadingHistoryFromScroll = true;/);
+});
+
+test("prayer card photos reserve their box from the source image dimensions", () => {
+  assert.match(app, /function prayerImagePresentationStyle\(imageMessageId: number\)[\s\S]*?messageImagePresentationStyle\(source\)/);
+  assert.match(app, /class="image-preview-button prayer-image"[\s\S]*?:style="prayerImagePresentationStyle\(prayerPayload\(row\.message\)\.imageMessageId!\)"/);
+  assert.match(app, /class="image-preview-button prayer-image"[\s\S]*?:style="prayerImagePresentationStyle\(update\.imageMessageId\)"/);
 });
 
 test("timeline measurements consume the anchor captured on the last active scroll frame", () => {

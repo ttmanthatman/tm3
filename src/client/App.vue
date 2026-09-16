@@ -165,6 +165,7 @@ import ChainJoinPopover from "./features/chain/ChainJoinPopover.vue";
 import { chainParticipantProject, chainPayload, chainRequiresSelection } from "./features/chain/chain";
 import { useChain } from "./features/chain/useChain";
 import { useSermon } from "./features/sermon/useSermon";
+import { scheduleIdlePreload } from "./features/idlePreload";
 
 import {
   TIMELINE_SCROLL_IDLE_MS,
@@ -466,6 +467,9 @@ const pendingReadPositionRestore = ref(false);
 // semantic reading anchor has been restored.
 const initialChatAnchorPending = ref(store.messages.length > 0);
 let readPositionRestoreToken = 0;
+// True while a restore pass is running; the message-list watch must not
+// re-enter restore (and invalidate its token) on every page it commits.
+let readPositionRestoreActive = false;
 let activeReadAnchor: ChatReadAnchor | null = null;
 const chatScrollIntentTracker = createChatScrollIntentTracker();
 let pendingMessageJumpId: number | null = null;
@@ -694,7 +698,6 @@ type TopNotice = {
   messageId?: number;
   notificationId?: number;
 };
-const acknowledgedFavoriteNotificationIds = ref<Set<number>>(new Set());
 const documentVisible = ref(document.visibilityState === "visible");
 let messageEffectObserver: IntersectionObserver | null = null;
 const {
@@ -1039,6 +1042,8 @@ onMounted(async () => {
       });
     attachMusicSocket();
     void navigator.storage?.persist?.().catch(() => false);
+    // 登录就绪且首屏加载完成后，空闲时静默预热面板 chunk / 图书解析器 / 在读图书
+    void scheduleIdlePreload({ isActive: () => !!store.account });
   }
   if (isAiSettingsRoute.value && store.account?.isAdmin) {
     await loadAiSettings();
@@ -1053,7 +1058,7 @@ onMounted(async () => {
   if (linkedChannelId) await store.whenChannelsReady();
   await switchToLinkedChannel();
   pendingReadPositionRestore.value = true;
-  await restoreSavedReadPosition();
+  await restoreSavedReadPosition({ forceNewest: true });
   await nextTick();
   observeWallpaperPanViewport();
   await resetWallpaperPan();
@@ -1164,7 +1169,7 @@ watch(
 watch(
   () => [store.currentChannelId, store.prayerOnly, store.loadingInitialMessages, store.messages.map((message) => message.id).join(",")] as const,
   () => {
-    if (!pendingReadPositionRestore.value || store.loadingInitialMessages) return;
+    if (!pendingReadPositionRestore.value || store.loadingInitialMessages || readPositionRestoreActive) return;
     void restoreSavedReadPosition();
   }
 );
@@ -1259,7 +1264,6 @@ watch(
     messageImagePreloadQueue.splice(0);
     mentionToasts.value = [];
     acknowledgedMentionIds.value = loadAcknowledgedMentionIds();
-    acknowledgedFavoriteNotificationIds.value = loadAcknowledgedFavoriteNotificationIds();
     messageFontSize.value = loadMessageFontSizePreference(accountId);
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
     if (accountId) {
@@ -1577,12 +1581,10 @@ const likeNoticeItems = computed<TopNotice[]>(() =>
   }))
 );
 const favoriteNoticeItems = computed<TopNotice[]>(() =>
-  store.favoriteNotifications
-    .filter((notification) => !acknowledgedFavoriteNotificationIds.value.has(notification.id))
-    .map((notification) => ({
-      ...favoriteNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name),
-      createdAt: notification.createdAt
-    }))
+  store.favoriteNotifications.map((notification) => ({
+    ...favoriteNotificationToTopNotice(notification, store.channels.find((channel) => channel.id === notification.channelId)?.name),
+    createdAt: notification.createdAt
+  }))
 );
 const messageNoticeItems = computed<TopNotice[]>(() =>
   [...mentionNoticeItems.value, ...likeNoticeItems.value, ...favoriteNoticeItems.value]
@@ -1805,6 +1807,7 @@ const {
   favoriteActionMessage,
   likedByTitle,
   dismissLikeNotification,
+  dismissFavoriteNotification,
   closeMessageActionMenu,
   quoteActionMessage,
   selectActionMessageText
@@ -2139,6 +2142,13 @@ function handleMessageImageLoad(message: MessageDTO, event: Event) {
   };
 }
 
+// Prayer cards embed another message's photo; reserve its box from the source
+// message's known dimensions so the timeline height does not jump on load.
+function prayerImagePresentationStyle(imageMessageId: number) {
+  const source = store.messages.find((message) => message.id === imageMessageId);
+  return source ? messageImagePresentationStyle(source) : undefined;
+}
+
 // 转发的附件引用原文件；原文件被删除后图片加载失败，占位显示“转发附件已被删除”。
 const brokenAttachmentIds = ref<Set<number>>(new Set());
 
@@ -2348,29 +2358,6 @@ const otherChannelUnreadCount = computed(() => store.channels.reduce((total, cha
   return total + unreadCountFor(channel.id);
 }, 0));
 
-function favoriteNotificationAcknowledgementKey() {
-  return store.account ? `team-chat-favorite-notification-acknowledged-${store.account.id}` : "";
-}
-
-function loadAcknowledgedFavoriteNotificationIds() {
-  const key = favoriteNotificationAcknowledgementKey();
-  if (!key) return new Set<number>();
-  try {
-    const ids = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Set(Array.isArray(ids) ? ids.map(Number).filter(Number.isFinite) : []);
-  } catch {
-    return new Set<number>();
-  }
-}
-
-function acknowledgeFavoriteNotificationId(notificationId: number) {
-  if (acknowledgedFavoriteNotificationIds.value.has(notificationId)) return;
-  acknowledgedFavoriteNotificationIds.value = new Set([...acknowledgedFavoriteNotificationIds.value, notificationId]);
-  const key = favoriteNotificationAcknowledgementKey();
-  if (key) localStorage.setItem(key, JSON.stringify([...acknowledgedFavoriteNotificationIds.value].slice(-500)));
-  store.favoriteNotifications = store.favoriteNotifications.filter((item) => item.id !== notificationId);
-}
-
 const { text: composerPromptText, phase: composerPromptPhase, chars: composerPromptChars, charStyle: composerPromptCharStyle, stop: stopComposerPlaceholder } = useComposerPlaceholder({
   getPrompts: () => store.appearance.composerPrompts || [],
   getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
@@ -2471,17 +2458,31 @@ function handlePageHideFlush() {
 
 function finishReadPositionRestore(token: number) {
   if (token !== readPositionRestoreToken) return;
+  readPositionRestoreActive = false;
   pendingReadPositionRestore.value = false;
   initialChatAnchorPending.value = false;
 }
 
-async function restoreSavedReadPosition() {
+async function restoreSavedReadPosition(options?: { forceNewest?: boolean }) {
   const token = ++readPositionRestoreToken;
+  readPositionRestoreActive = true;
   pendingTimelineAnchor = null;
   await nextTick();
-  if (token !== readPositionRestoreToken || store.loadingInitialMessages) return;
+  if (token !== readPositionRestoreToken) return;
+  if (store.loadingInitialMessages) {
+    readPositionRestoreActive = false;
+    return;
+  }
   const root = scroller.value;
   if (!root) {
+    finishReadPositionRestore(token);
+    return;
+  }
+  // Session entries (cold start, login) always land on the newest messages;
+  // the saved mid-history position is only honored for in-session channel
+  // switches.
+  if (options?.forceNewest) {
+    await scrollToNewest(false);
     finishReadPositionRestore(token);
     return;
   }
@@ -2528,7 +2529,9 @@ async function restoreSavedReadPosition() {
       return;
     }
   }
-  root.scrollTop = position.scrollTop;
+  // The saved pixel offset does not translate to the re-anchored window, so
+  // fall back to the newest messages instead of an arbitrary position.
+  scrollBottom(false);
   hasUnreadMessages.value = false;
   finishReadPositionRestore(token);
 }
@@ -2623,7 +2626,7 @@ async function openTopNotice(notice: TopNotice) {
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
   if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
   if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
-  if (notice.kind === "favorite" && notice.notificationId) acknowledgeFavoriteNotificationId(notice.notificationId);
+  if (notice.kind === "favorite" && notice.notificationId) await dismissFavoriteNotification(notice.notificationId);
 }
 
 async function doLogin() {
@@ -2654,7 +2657,7 @@ async function doLogin() {
     }
     await switchToLinkedChannel();
     pendingReadPositionRestore.value = true;
-    await restoreSavedReadPosition();
+    await restoreSavedReadPosition({ forceNewest: true });
   } catch (error) {
     loginError.value = error instanceof Error ? error.message : authMode.value === "reception" ? "无法进入会客厅" : authMode.value === "register" ? "注册失败" : "登录失败";
   }
@@ -4133,6 +4136,10 @@ function handleMessagesScroll() {
   scheduleSaveReadPosition();
   chatScrollIntentTracker.noteScroll(currentNewestViewportState(el));
   syncNewestIndicators(el);
+  // Start loading older history as soon as the top edge comes into reach
+  // instead of waiting for the scroll-idle timer; the function guards
+  // re-entry via loadingHistoryFromScroll and anchors the inserted page.
+  if (el.scrollTop < 180) void loadTimelineEdgesAfterScroll();
 }
 
 async function retryMessageLoad() {
@@ -5306,6 +5313,16 @@ const messageRowBindings = {
             </button>
           </div>
         </section>
+        <button
+          v-if="messageLoadBanner && !isMusicChannel"
+          type="button"
+          class="message-load-banner"
+          :class="`message-load-${messageLoadBanner.kind}`"
+          :disabled="messageLoadBanner.kind !== 'error'"
+          @click="messageLoadBanner.kind === 'error' && retryMessageLoad()"
+        >
+          {{ messageLoadBanner.text }}
+        </button>
         <div
           v-if="!isMusicChannel"
           ref="scroller"
@@ -5322,16 +5339,6 @@ const messageRowBindings = {
           @pointercancel="clearBlankScoreLongPress"
           @pointerleave="clearBlankScoreLongPress"
         >
-        <button
-          v-if="messageLoadBanner"
-          type="button"
-          class="message-load-banner"
-          :class="`message-load-${messageLoadBanner.kind}`"
-          :disabled="messageLoadBanner.kind !== 'error'"
-          @click="messageLoadBanner.kind === 'error' && retryMessageLoad()"
-        >
-          {{ messageLoadBanner.text }}
-        </button>
         <div v-if="store.loadingInitialMessages && !store.messages.length" class="message-skeleton-list" aria-hidden="true">
           <span></span>
           <span></span>
@@ -5484,14 +5491,14 @@ const messageRowBindings = {
                         </span>
                       </template>
                     </div>
-                    <button v-if="prayerPayload(row.message).imageMessageId" class="image-preview-button prayer-image" type="button" @click.stop="openPrayerImage(row.message, prayerPayload(row.message).imageMessageId!, $event)">
+                    <button v-if="prayerPayload(row.message).imageMessageId" class="image-preview-button prayer-image" :class="{ 'image-preview-sized': !!prayerImagePresentationStyle(prayerPayload(row.message).imageMessageId!) }" :style="prayerImagePresentationStyle(prayerPayload(row.message).imageMessageId!)" type="button" @click.stop="openPrayerImage(row.message, prayerPayload(row.message).imageMessageId!, $event)">
                       <img class="chat-image" :src="prayerImageUrl(prayerPayload(row.message).imageMessageId!)" alt="代祷附带照片" loading="lazy" />
                     </button>
                     <div v-if="prayerPayload(row.message).updates?.length" class="prayer-updates">
                       <div v-for="(update, idx) in prayerPayload(row.message).updates" :key="idx" class="prayer-update-entry">
                         <small>{{ adminDate(update.at) }}<template v-if="update.by"> · {{ update.by }}</template></small>
                         <div class="prayer-text bible-rich-text" v-html="update.content"></div>
-                        <button v-if="update.imageMessageId" class="image-preview-button prayer-image" type="button" @click.stop="openPrayerImage(row.message, update.imageMessageId, $event)">
+                        <button v-if="update.imageMessageId" class="image-preview-button prayer-image" :class="{ 'image-preview-sized': !!prayerImagePresentationStyle(update.imageMessageId) }" :style="prayerImagePresentationStyle(update.imageMessageId)" type="button" @click.stop="openPrayerImage(row.message, update.imageMessageId, $event)">
                           <img class="chat-image" :src="prayerImageUrl(update.imageMessageId)" alt="历史动态附带照片" loading="lazy" />
                         </button>
                       </div>

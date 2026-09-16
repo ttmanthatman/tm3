@@ -461,6 +461,40 @@ test("initial load commit honors socket removals and updates received in flight"
   }
 });
 
+test("loadOlderMessages re-arms the prefetch chain after committing a page", async () => {
+  storage.clear();
+  seedSession(1);
+  const { gates, restore } = installFetchMock();
+  try {
+    const store = freshStore();
+    store.channels = [channel(1)];
+    store.currentChannelId = 1;
+    store.messages = [message(1000)];
+    store.hasOlderMessages = true;
+
+    const loadOlder = store.loadOlderMessages();
+    await waitFor(() => pagedGates(gates, 1).length === 1, "user pagination request");
+    // A full page keeps hasOlderMessages true so the chain should continue.
+    const fullPage = Array.from({ length: 80 }, (_, index) => message(841 + index));
+    pagedGates(gates, 1)[0].gate.resolve(jsonResponse({ messages: fullPage }));
+    assert.equal(await loadOlder, true);
+    assert.equal(store.loadingOlderMessages, false);
+    assert.equal(store.hasOlderMessages, true);
+
+    // Completing the page immediately prefetches the next one anchored at the
+    // new window head instead of waiting for the next user scroll.
+    await waitFor(() => pagedGates(gates, 1).length === 2, "chained prefetch request");
+    assert.equal(store.prefetchingOlderMessages, true);
+    assert.ok(pagedGates(gates, 1)[1].url.includes(`before=${fullPage[0].id}`));
+
+    pagedGates(gates, 1)[1].gate.resolve(jsonResponse({ messages: [message(800)] }));
+    await waitFor(() => !store.prefetchingOlderMessages, "prefetch completion");
+    assert.deepEqual(store.prefetchedOlderMessages.map((row) => row.id), [800]);
+  } finally {
+    restore();
+  }
+});
+
 test("user pagination interleaved with an in-flight prefetch drops the stale-anchored prefetch", async () => {
   storage.clear();
   seedSession(1);

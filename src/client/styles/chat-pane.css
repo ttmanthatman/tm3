@@ -57,10 +57,14 @@
 }
 
 .chat-notice-stack {
+  position: absolute;
   grid-row: 4;
+  grid-column: 1 / -1;
+  top: 0;
+  right: 0;
+  left: 0;
   z-index: 20;
   min-width: 0;
-  width: 100%;
   display: grid;
   overflow: hidden;
   border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
@@ -75,8 +79,27 @@
   cursor: pointer;
 }
 
+.chat-notice-stack:not(.has-pinned) {
+  pointer-events: none;
+}
+
 .chat-notice-stack.has-pinned:hover .pinned-ticker-row {
   background: color-mix(in srgb, #f59e0b 9%, transparent);
+}
+
+/* The notice stack overlays the rows below it, so the message notice bar
+   clears it by the stack's height: 28px activity row (27px + 1px border),
+   30px pinned row, plus the 1px section border. */
+.chat-notice-stack.has-activity ~ .message-notice-bar {
+  --notice-stack-clearance: 29px;
+}
+
+.chat-notice-stack.has-pinned ~ .message-notice-bar {
+  --notice-stack-clearance: 31px;
+}
+
+.chat-notice-stack.has-pinned.has-activity ~ .message-notice-bar {
+  --notice-stack-clearance: 59px;
 }
 
 .message-notice-bar {
@@ -86,6 +109,7 @@
   z-index: 19;
   min-width: 0;
   width: 100%;
+  margin-top: var(--notice-stack-clearance, 0px);
   border-bottom: 1px solid color-mix(in srgb, var(--message-notice-color) 34%, var(--line));
   background: color-mix(in srgb, var(--panel) 91%, var(--message-notice-tint));
   box-shadow: 0 5px 16px rgba(120, 53, 15, 0.06);
@@ -104,7 +128,7 @@
 }
 
 .message-notice-bar.below-music-lyrics {
-  margin-top: 56px;
+  margin-top: calc(56px + var(--notice-stack-clearance, 0px));
 }
 
 .message-notice-bar > button {
@@ -267,6 +291,7 @@ button.pinned-ticker-action {
   display: inline-flex;
   align-items: center;
   gap: 12px;
+  padding-left: 100%;
 }
 
 .chat-activity-track.scrolling {
