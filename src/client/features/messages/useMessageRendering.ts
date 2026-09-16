@@ -1,5 +1,5 @@
-import { nextTick, ref } from "vue";
-import type { LinkPreviewDTO, MessageDTO } from "@shared/types";
+import { nextTick, ref, watch } from "vue";
+import type { MessageDTO } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { memoizeMessage } from "../../memoize";
@@ -13,24 +13,42 @@ import {
   type BibleRichTextSegment,
   type LinkifyMessageHtml
 } from "./messageRendering";
+import { createLinkPreviewQueue, type LinkPreviewState } from "./linkPreviewQueue";
 
-export type LinkPreviewState = { status: "loading" | "ready" | "error"; preview?: LinkPreviewDTO; error?: string };
+export type { LinkPreviewState } from "./linkPreviewQueue";
 export type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string; createdAt: string };
 
 interface UseMessageRenderingOptions {
   linkifyMessageHtml: LinkifyMessageHtml;
   isMine: (message: MessageDTO) => boolean;
   reconcileReadPositionAfterLayout: () => void;
+  // 预览预取只针对实际渲染窗口（虚拟时间线可见区 + overscan）内的消息；
+  // 缺省退回全部已加载消息（仅测试或无虚拟窗口场景）。
+  visibleMessages?: () => MessageDTO[];
+  // 测试注入口：默认从消息 HTML 提取首个链接（需要 DOM）。
+  previewUrlFor?: (message: MessageDTO) => string;
+  // 测试注入口：覆盖失败重试退避节奏。
+  linkPreviewRetryDelaysMs?: readonly number[];
 }
 
 export function useMessageRendering(options: UseMessageRenderingOptions) {
   const store = useChatStore();
   const linkPreviewCache = ref<Record<string, LinkPreviewState>>({});
-  // Preview requests queue here instead of firing all at once; a small worker
-  // pool keeps previews from crowding out message and channel traffic.
-  const linkPreviewQueue: string[] = [];
-  const linkPreviewQueued = new Set<string>();
-  let activeLinkPreviews = 0;
+  let linkPreviewGeneration = 0;
+  const linkPreviewQueue = createLinkPreviewQueue({
+    fetchPreview: (url, signal) => api(`/api/link-preview?url=${encodeURIComponent(url)}`, { signal }),
+    retryDelaysMs: options.linkPreviewRetryDelaysMs,
+    onPreviewReady: () => {
+      const generation = linkPreviewGeneration;
+      void nextTick(() => {
+        // 卡片渲染会改变行高；切频道后落地的旧请求不再触碰新频道布局。
+        if (generation === linkPreviewGeneration) options.reconcileReadPositionAfterLayout();
+      });
+    }
+  });
+  linkPreviewQueue.onStateChange(() => {
+    linkPreviewCache.value = linkPreviewQueue.state();
+  });
   const mentionToasts = ref<MentionToast[]>([]);
   const acknowledgedMentionIds = ref<Set<number>>(new Set());
 
@@ -38,6 +56,8 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
     if (message.type !== "text" && message.type !== "prayer") return "";
     return extractMessageUrls(message.content)[0] || "";
   });
+
+  const previewUrlFor = options.previewUrlFor || messagePreviewUrl;
 
   function messageContentHtml(message: MessageDTO) {
     return options.linkifyMessageHtml(message.content);
@@ -65,49 +85,28 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
   const prayerRichTextSegments = memoizeMessage((message: MessageDTO) => bibleRichTextSegmentsFromHtml(message.content, `prayer-${message.id}`));
 
   function linkPreviewFor(message: MessageDTO) {
-    const url = messagePreviewUrl(message);
-    const state = url ? linkPreviewCache.value[url] : undefined;
-    return state?.status === "ready" ? state.preview || null : null;
-  }
-
-  function pumpLinkPreviews() {
-    // Cold caches used to fire up to 40 preview requests at once; keep a small
-    // worker pool so previews never crowd out message and channel traffic.
-    while (activeLinkPreviews < 3 && linkPreviewQueue.length) {
-      const url = linkPreviewQueue.shift();
-      if (!url) return;
-      activeLinkPreviews += 1;
-      void ensureLinkPreview(url).finally(() => {
-        linkPreviewQueued.delete(url);
-        activeLinkPreviews -= 1;
-        pumpLinkPreviews();
-      });
-    }
+    const url = previewUrlFor(message);
+    if (!url) return null;
+    // 渲染期必须读取 ref 保持响应式；previewFor 顺带刷新缓存淘汰顺序。
+    const state = linkPreviewCache.value[url];
+    return state?.status === "ready" ? linkPreviewQueue.previewFor(url) : null;
   }
 
   function ensureVisibleLinkPreviews() {
-    const urls = [...new Set(store.messages.map(messagePreviewUrl).filter(Boolean))].slice(-40);
-    for (const url of urls) {
-      if (linkPreviewCache.value[url] || linkPreviewQueued.has(url)) continue;
-      linkPreviewQueued.add(url);
-      linkPreviewQueue.push(url);
-    }
-    pumpLinkPreviews();
+    if (!store.account) return;
+    const messages = options.visibleMessages ? options.visibleMessages() : store.messages;
+    linkPreviewQueue.ensureVisible([...new Set(messages.map(previewUrlFor).filter(Boolean))]);
   }
 
-  async function ensureLinkPreview(url: string) {
-    if (!store.account || linkPreviewCache.value[url]) return;
-    linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "loading" } };
-    try {
-      const preview = await api<LinkPreviewDTO>(`/api/link-preview?url=${encodeURIComponent(url)}`);
-      if (!preview.title && !preview.image && !preview.description) throw new Error("empty preview");
-      linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "ready", preview } };
-      await nextTick();
-      options.reconcileReadPositionAfterLayout();
-    } catch (error) {
-      linkPreviewCache.value = { ...linkPreviewCache.value, [url]: { status: "error", error: error instanceof Error ? error.message : "preview failed" } };
+  // 切频道/切换代祷视图：丢弃旧队列并中止进行中请求（不算失败，可重新请求）；
+  // 换账号：整池缓存作废，避免跨账号残留。
+  watch(
+    () => [store.currentChannelId, store.prayerOnly, store.account?.id] as const,
+    (current, previous) => {
+      linkPreviewGeneration += 1;
+      linkPreviewQueue.reset({ clearCache: current[2] !== previous[2] });
     }
-  }
+  );
 
   function channelName(channelId: number) {
     return store.channels.find((channel) => channel.id === channelId)?.name || "聊天室";

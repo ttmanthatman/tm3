@@ -14,3 +14,9 @@ export const E2E_MEMBER = {
   displayName: "冒烟普通用户",
   password: "E2eMember123!"
 } as const;
+
+export const E2E_PERF = {
+  channel: "性能基线频道",
+  messageCount: 300,
+  messagePrefix: "性能基线消息"
+} as const;

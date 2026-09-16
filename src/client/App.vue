@@ -977,7 +977,16 @@ const {
   textContentHtml,
   messageRichTextSegments,
   prayerRichTextSegments
-} = useMessageRendering({ linkifyMessageHtml, isMine, reconcileReadPositionAfterLayout });
+} = useMessageRendering({
+  linkifyMessageHtml,
+  isMine,
+  reconcileReadPositionAfterLayout,
+  // 只预取虚拟时间线实际渲染窗口内的消息链接（窗口本身含 overscan，即可见区加小预算）。
+  visibleMessages: () =>
+    timeline.value
+      .slice(virtualTimelineWindow.value.start, virtualTimelineWindow.value.end)
+      .flatMap((row) => (row.kind === "message" ? [row.message] : []))
+});
 const hasUnreadMessages = ref(false);
 const awayFromNewest = ref(false);
 let versionCheckTimer: number | undefined;
@@ -2266,6 +2275,8 @@ watch(
 watch(
   () => renderedTimelineRows.value.map((entry) => entry.key).join("|"),
   () => {
+    // 渲染窗口随滚动移动：可见消息的链接预览随窗口补齐。
+    void ensureVisibleLinkPreviews();
     nextTick(() => {
       refreshTimelineMeasurements();
       refreshMessageEffectObserver();
