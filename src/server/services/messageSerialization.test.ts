@@ -535,6 +535,10 @@ function buildFeatureRows(harness: ReturnType<typeof createHarness>, groups: num
     const playlist = { id: 500 + group, name: `歌单${group}`, tracks: [] };
     harness.state.playlists.set(playlist.id, playlist);
     rows.push(makeMessage({ id: id++, type: "music_playlist", payload: { playlistId: playlist.id } }));
+
+    const graceVoice = voiceMessage(id++, 42);
+    harness.state.messagesById.set(graceVoice.id, graceVoice);
+    rows.push(makeMessage({ id: id++, type: "grace", content: "恩典记录", payload: { kind: "grace", voiceMessageId: graceVoice.id } }));
   }
   // The list route preloads reactions; mirror that so serialization stays batched.
   return rows.map((row) => Object.assign(row, { likes: [], favorites: [] }));
@@ -563,8 +567,8 @@ test("batched page serialization keeps the query count constant as page size gro
   }
   const small = await renderPage(1);
   const large = await renderPage(4);
-  assert.equal(small.dtos.length, 4);
-  assert.equal(large.dtos.length, 16);
+  assert.equal(small.dtos.length, 5);
+  assert.equal(large.dtos.length, 20);
   assert.deepEqual([...new Set(large.queries)].sort(), [...new Set(small.queries)].sort());
   assert.equal(large.queries.length, small.queries.length);
   for (const banned of ["voiceListen.findUnique", "messageLike.findMany", "messageFavorite.findMany", "message.findFirst", "musicLyrics.findUnique", "messageAiSuggestion.count"]) {
@@ -592,4 +596,72 @@ test("the list route and dependent route modules go through the shared serialize
   assert.match(route[0], /serializeMessage\(message, auth\.accountId, batch\)/);
   assert.match(indexSource, /registerMusicRoutes\(app, \{[\s\S]*?serializeMessage,[\s\S]*?hydrateMessage,/);
   assert.match(indexSource, /registerBibleRoutes\(app, \{[\s\S]*?hydrateMessage/);
+});
+
+test("grace messages assemble the referenced voice payload including transcript", async () => {
+  const harness = createHarness();
+  const source = makeMessage({
+    id: 301,
+    type: "file",
+    fileName: "voice.m4a",
+    payload: { kind: "voice", durationMs: 1500, waveform: [0.2, 0.8], mimeType: "audio/mp4", transcript: "语音文字", transcriptAt: "2026-09-17T01:00:00.000Z" }
+  });
+  harness.state.messagesById.set(source.id, source);
+  const grace = makeMessage({ id: 302, type: "grace", content: "恩典", payload: { kind: "grace", voiceMessageId: source.id, imageMessageId: 88 } });
+  const dto = await harness.service.serializeMessage(grace, VIEWER);
+  const payload = dto.payload as Record<string, unknown>;
+  assert.equal(payload.kind, "grace");
+  assert.equal(payload.voiceMessageId, source.id);
+  assert.equal(payload.imageMessageId, 88);
+  assert.deepEqual(payload.voice, {
+    kind: "voice",
+    durationMs: 1500,
+    waveform: [0.2, 0.8],
+    mimeType: "audio/mp4",
+    transcript: "语音文字"
+  });
+  assert.ok(harness.queries.includes("message.findFirst"));
+});
+
+test("grace messages without a voice source serialize voice as null", async () => {
+  const harness = createHarness();
+  const grace = makeMessage({ id: 303, type: "grace", content: "纯文字恩典", payload: { kind: "grace" } });
+  const dto = await harness.service.serializeMessage(grace, VIEWER);
+  const payload = dto.payload as Record<string, unknown>;
+  assert.equal(payload.kind, "grace");
+  assert.equal(payload.voice, null);
+});
+
+test("grace voice source lookup stays batched in list serialization", async () => {
+  const harness = createHarness();
+  const source = makeMessage({ id: 311, type: "file", fileName: "voice.m4a", payload: { kind: "voice", durationMs: 900 } });
+  harness.state.messagesById.set(source.id, source);
+  const rows = [1, 2].map((offset) =>
+    Object.assign(makeMessage({ id: 312 + offset, type: "grace", content: "恩典", payload: { kind: "grace", voiceMessageId: source.id } }), {
+      likes: [],
+      favorites: []
+    })
+  );
+  const batch = await harness.service.buildMessageSerializeBatch(rows, CHANNEL_ID, VIEWER);
+  const dtos = await Promise.all(rows.map((row) => harness.service.serializeMessage(row, VIEWER, batch)));
+  for (const dto of dtos) {
+    const payload = dto.payload as Record<string, unknown>;
+    assert.deepEqual(payload.voice, { kind: "voice", durationMs: 900 });
+  }
+  assert.ok(harness.queries.includes("message.findMany"));
+  assert.ok(!harness.queries.includes("message.findFirst"), "per-message grace lookup leaked into batch path");
+});
+
+test("voice message payloads keep transcript fields through serialization", async () => {
+  const harness = createHarness();
+  const voice = makeMessage({
+    id: 321,
+    type: "file",
+    fileName: "voice.m4a",
+    payload: { kind: "voice", durationMs: 700, transcript: "保留的文字", transcriptAt: "2026-09-17T02:00:00.000Z" }
+  });
+  const dto = await harness.service.serializeMessage(voice, VIEWER);
+  const payload = dto.payload as Record<string, unknown>;
+  assert.equal(payload.transcript, "保留的文字");
+  assert.equal(payload.transcriptAt, "2026-09-17T02:00:00.000Z");
 });

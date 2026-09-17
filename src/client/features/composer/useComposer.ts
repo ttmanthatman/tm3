@@ -31,15 +31,17 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/哎呀", effect: "oops", label: "哎呀", hint: "点一下，文字会随机掉下来", icon: ArrowDown }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
+const graceCommand = { command: "/恩典", label: "恩典", hint: "存入数算恩典频道", icon: Sparkles };
 const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
 export type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
+  | { kind: "grace"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "sermonRequest"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "format"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
-export type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "sermon_request"; contentFormat?: "markdown" };
+export type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "grace" | "sermon_request"; contentFormat?: "markdown" };
 export type ComposerMentionToken = { start: number; end: number; query: string };
 
 export function messageEffect(message: MessageDTO): MessageEffect | null {
@@ -63,6 +65,7 @@ interface UseComposerOptions {
   messageSendStatus: Ref<string>;
   clearMessageSendStatus: () => void;
   sendMessage: (payload: unknown) => Promise<MessageSendResult>;
+  openGraceComposer: (prefill: string) => void;
   prayerComposerPhoto: Ref<File | null>;
   uploadPrayerImage: (file: File, channelId: number) => Promise<number>;
   clearPrayerComposerPhoto: () => void;
@@ -95,7 +98,7 @@ export function useComposer(options: UseComposerOptions) {
   function parseComposerText(value: string): ComposerParseResult {
     let content = value.trim();
     let effect: MessageEffect | undefined;
-    let type: "text" | "prayer" | "sermon_request" | undefined;
+    let type: "text" | "prayer" | "grace" | "sermon_request" | undefined;
     let contentFormat: "markdown" | undefined;
     let consumed = true;
 
@@ -112,6 +115,13 @@ export function useComposer(options: UseComposerOptions) {
       if (prayerContent !== null) {
         type = "prayer";
         content = prayerContent;
+        consumed = true;
+        continue;
+      }
+      const graceContent = consumeLeadingCommand(content, graceCommand.command);
+      if (graceContent !== null) {
+        type = "grace";
+        content = graceContent;
         consumed = true;
         continue;
       }
@@ -178,6 +188,7 @@ export function useComposer(options: UseComposerOptions) {
     return [
       { ...markdownCommand, kind: "format" as const },
       { ...prayerCommand, kind: "prayer" as const },
+      { ...graceCommand, kind: "grace" as const },
       { ...sermonRequestCommand, kind: "sermonRequest" as const },
       ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
     ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
@@ -297,6 +308,13 @@ export function useComposer(options: UseComposerOptions) {
   async function sendText() {
     const parsed = parseComposerText(input.value);
     const musicMention = selectedMusicMention.value;
+    // /恩典 不发文本消息：打开恩典记录弹窗，输入内容预填进弹窗。
+    if (parsed.type === "grace" && !musicMention) {
+      input.value = "";
+      composerSuggestionSuppressed.value = true;
+      options.openGraceComposer(parsed.content);
+      return;
+    }
     const content = parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
     if (!content || !store.currentChannelId) return;
     const originalInput = input.value;

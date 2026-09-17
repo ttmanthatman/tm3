@@ -3,6 +3,7 @@ import { AudioLines, BookOpen, ChevronDown, ChevronRight, Download, FileUp, Mic,
 import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
 import InlineAudioPlayer from "../../components/InlineAudioPlayer.vue";
+import VoiceTranscript from "../voice/VoiceTranscript.vue";
 import {
   isMarkdownMessage,
   messageBibleReferenceScope,
@@ -128,14 +129,16 @@ const emit = defineEmits<{
         />
       </button>
     </template>
-    <InlineAudioPlayer
-      v-else-if="isAudioMessage(message)"
-      :message="message"
-      :src="fileUrl(message)"
-      :unread="hasUnlistenedVoice(message)"
-      @play="emit('voice-play', message)"
-      @download="emit('voice-download', message, $event)"
-    />
+    <template v-else-if="isAudioMessage(message)">
+      <InlineAudioPlayer
+        :message="message"
+        :src="fileUrl(message)"
+        :unread="hasUnlistenedVoice(message)"
+        @play="emit('voice-play', message)"
+        @download="emit('voice-download', message, $event)"
+      />
+      <VoiceTranscript v-if="isVoiceMessage(message)" :message="message" />
+    </template>
     <template v-else-if="isVideoMessage(message)">
       <button class="media-file-card video-file-card" @click.stop="emit('open-attachment', message, $event)">
         <span class="media-file-icon"><Play :size="22" /></span>

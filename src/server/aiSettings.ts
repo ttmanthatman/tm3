@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
-import type { AiSettingsDTO } from "../shared/types.js";
+import type { AiSettingsDTO, AsrSettingsDTO } from "../shared/types.js";
 
 export const AI_RELATED_VERSES_KIND = "prayer_related_verses";
 export const BIBLE_TOPIC_SEARCH_PROMPT = [
@@ -21,6 +21,15 @@ export const DEFAULT_AI_PROMPT_COMMAND = [
   "如果不确定出处是否存在，不要输出。",
   "尽量避开已推荐过的出处。"
 ].join("\n");
+export const DEFAULT_ASR_BASE_URL = "https://api.xiaomimimo.com/v1";
+export const DEFAULT_ASR_MODEL = "mimo-v2.5-asr";
+export const DEFAULT_AI_ASR_SETTINGS: AsrSettingsDTO = {
+  enabled: true,
+  apiKeyConfigured: false,
+  baseUrl: DEFAULT_ASR_BASE_URL,
+  model: DEFAULT_ASR_MODEL,
+  language: "auto"
+};
 export const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
   enabled: true,
   apiKeyConfigured: false,
@@ -29,7 +38,8 @@ export const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
   promptCommand: DEFAULT_AI_PROMPT_COMMAND,
   cardCooldownSeconds: 30,
   userLimitPerMinute: 3,
-  maxSuccessPerMessage: 7
+  maxSuccessPerMessage: 7,
+  asr: DEFAULT_AI_ASR_SETTINGS
 };
 export const WHY_ASSISTANT_USERNAME = "why_assistant";
 export const WHY_ASSISTANT_NAME = "为什么助手";
@@ -109,9 +119,13 @@ export function aiConfigurationMessage(auth: { isAdmin: boolean }) {
 
 export type AiSettingsStore = ReturnType<typeof createAiSettingsStore>;
 
+export function cleanAsrLanguage(input: unknown): AsrSettingsDTO["language"] {
+  return input === "zh" || input === "en" ? input : "auto";
+}
+
 export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: string }) {
   const { prisma, secret } = deps;
-  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; loadedAt: number } | null = null;
+  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; encryptedAsrApiKey: string; loadedAt: number } | null = null;
 
   function aiEncryptionKey() {
     return crypto.createHash("sha256").update(secret).digest();
@@ -149,13 +163,19 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
             "aiRelatedVersesPromptCommand",
             "aiRelatedVersesCardCooldownSeconds",
             "aiRelatedVersesUserLimitPerMinute",
-            "aiRelatedVersesMaxSuccessPerMessage"
+            "aiRelatedVersesMaxSuccessPerMessage",
+            "aiAsrEnabled",
+            "aiAsrApiKeyEncrypted",
+            "aiAsrBaseUrl",
+            "aiAsrModel",
+            "aiAsrLanguage"
           ]
         }
       }
     });
     const settings = new Map(rows.map((row) => [row.key, row.value]));
     const encryptedApiKey = settings.get("aiDeepSeekApiKeyEncrypted") || "";
+    const encryptedAsrApiKey = settings.get("aiAsrApiKeyEncrypted") || "";
     const value: AiSettingsDTO = {
       ...DEFAULT_AI_SETTINGS,
       enabled: settings.get("aiRelatedVersesEnabled") !== "false",
@@ -163,9 +183,16 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
       promptCommand: (settings.get("aiRelatedVersesPromptCommand") || DEFAULT_AI_PROMPT_COMMAND).trim() || DEFAULT_AI_PROMPT_COMMAND,
       cardCooldownSeconds: clampInteger(settings.get("aiRelatedVersesCardCooldownSeconds"), DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600),
       userLimitPerMinute: clampInteger(settings.get("aiRelatedVersesUserLimitPerMinute"), DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60),
-      maxSuccessPerMessage: clampInteger(settings.get("aiRelatedVersesMaxSuccessPerMessage"), DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20)
+      maxSuccessPerMessage: clampInteger(settings.get("aiRelatedVersesMaxSuccessPerMessage"), DEFAULT_AI_SETTINGS.maxSuccessPerMessage, 1, 20),
+      asr: {
+        enabled: settings.get("aiAsrEnabled") !== "false",
+        apiKeyConfigured: !!decryptAiApiKey(encryptedAsrApiKey),
+        baseUrl: (settings.get("aiAsrBaseUrl") || "").trim() || DEFAULT_ASR_BASE_URL,
+        model: (settings.get("aiAsrModel") || "").trim() || DEFAULT_ASR_MODEL,
+        language: cleanAsrLanguage(settings.get("aiAsrLanguage"))
+      }
     };
-    aiSettingsCache = { value, encryptedApiKey, loadedAt: Date.now() };
+    aiSettingsCache = { value, encryptedApiKey, encryptedAsrApiKey, loadedAt: Date.now() };
     return aiSettingsCache;
   }
 

@@ -1,5 +1,5 @@
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "sermon_request" | "why_topic_card" | "bible_session" | "chat_record" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "chat_record" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -87,6 +87,22 @@ export interface PrayerPayload extends MessageEffectPayload {
   aiSuggestions?: AiSuggestionDTO[];
   aiSuggestionSuccessCount?: number;
   aiSuggestionMaxSuccess?: number;
+}
+
+export interface GracePayload extends MessageEffectPayload {
+  kind: "grace";
+  voiceMessageId?: number | null;
+  imageMessageId?: number | null;
+  voice?: VoicePayload | null;
+}
+
+export interface VoicePayload {
+  kind: "voice";
+  durationMs?: number;
+  waveform?: number[];
+  mimeType?: string;
+  transcript?: string;
+  transcriptAt?: string;
 }
 
 export interface MessageDTO {
@@ -965,6 +981,14 @@ export interface AiRoleDTO {
   contextWindowMinutes?: number;
 }
 
+export interface AsrSettingsDTO {
+  enabled: boolean;
+  apiKeyConfigured: boolean;
+  baseUrl: string;
+  model: string;
+  language: "auto" | "zh" | "en";
+}
+
 export interface AiSettingsDTO {
   enabled: boolean;
   apiKeyConfigured: boolean;
@@ -978,6 +1002,7 @@ export interface AiSettingsDTO {
   whyAssistantWebSearchEnabled?: boolean;
   whyAssistantPromptCommand?: string;
   aiRoles?: AiRoleDTO[];
+  asr?: AsrSettingsDTO;
 }
 
 export interface FlashEffectSettingsDTO {

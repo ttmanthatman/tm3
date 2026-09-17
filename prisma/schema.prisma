@@ -47,6 +47,7 @@ enum MessageType {
   music_playlist
   chain
   prayer
+  grace
   sermon_request
   why_topic_card
   bible_session

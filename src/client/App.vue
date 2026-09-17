@@ -20,6 +20,7 @@ import {
   LogOut,
   MessageSquareQuote,
   MessageCircle,
+  Mic,
   Monitor,
   PanelLeftClose,
   PanelRightClose,
@@ -193,6 +194,10 @@ import { useAdminTools } from "./features/admin/useAdminTools";
 import { useAiSettings } from "./features/admin/useAiSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
+import AiAsrSettingsPanel from "./features/admin/AiAsrSettingsPanel.vue";
+import GraceComposer from "./features/grace/GraceComposer.vue";
+import GraceCard from "./features/grace/GraceCard.vue";
+import { useGrace } from "./features/grace/useGrace";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
 import OwnerTransferDialog from "./features/channels/OwnerTransferDialog.vue";
@@ -872,6 +877,20 @@ const {
   endPreviewPlayback,
   handleRecordingVisibilityChange
 } = useVoiceRecording({ composerPanel, pushPendingVoiceMessage, uploadFile });
+const graceToast = ref("");
+let graceToastTimer: number | undefined;
+function showGraceToast(text: string) {
+  graceToast.value = text;
+  if (graceToastTimer) window.clearTimeout(graceToastTimer);
+  graceToastTimer = window.setTimeout(() => {
+    graceToast.value = "";
+  }, 3200);
+}
+const grace = useGrace({
+  uploadFile,
+  jumpToMessage: (channelId, messageId) => jumpToMessageInChannel(channelId, messageId),
+  notify: showGraceToast
+});
 const {
   slashCommandToken,
   matchingSlashCommands,
@@ -912,6 +931,7 @@ const {
   messageSendStatus,
   clearMessageSendStatus,
   sendMessage,
+  openGraceComposer: (prefill) => grace.openGraceComposer(prefill),
   prayerComposerPhoto,
   uploadPrayerImage,
   clearPrayerComposerPhoto,
@@ -1006,6 +1026,8 @@ type VoicePayload = {
   durationMs?: number;
   waveform?: number[];
   mimeType?: string;
+  transcript?: string;
+  transcriptAt?: string;
 };
 
 onMounted(async () => {
@@ -3786,10 +3808,11 @@ async function clearPinned() {
   showPinnedEditor.value = false;
 }
 
-async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean } = {}) {
-  if (!store.currentChannelId) return { success: false, duplicate: false, skipped: false };
+async function uploadFile(file: File, options: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number; suppressAlert?: boolean } = {}) {
+  const uploadChannelId = options.channelId || store.currentChannelId;
+  if (!uploadChannelId) return { success: false, duplicate: false, skipped: false };
   const form = new FormData();
-  form.append("channelId", String(store.currentChannelId));
+  form.append("channelId", String(uploadChannelId));
   if (options.originalImage && isImageFile(file)) form.append("originalImage", "1");
   if (options.voice) {
     form.append("voice", "1");
@@ -3826,7 +3849,7 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
     });
     if (!result.success || !result.message) {
       if (options.pendingMessageId) setPendingUpload(options.pendingMessageId, { status: "failed", message: result.error || "上传失败" });
-      else alert(result.error || "上传失败");
+      else if (!options.suppressAlert) alert(result.error || "上传失败");
       return { success: false, duplicate: false, skipped: false };
     }
     if (options.pendingMessageId) {
@@ -3838,13 +3861,13 @@ async function uploadFile(file: File, options: { voice?: boolean; durationMs?: n
       }
       removePendingUpload(options.pendingMessageId);
     }
-    if (result.duplicate && !result.skipped && !isMusicChannel.value) alert("文件内容已经存在，已引用原文件并发送消息");
+    if (result.duplicate && !result.skipped && !isMusicChannel.value && !options.suppressAlert) alert("文件内容已经存在，已引用原文件并发送消息");
     composerPanel.value = null;
-    return { success: true, duplicate: !!result.duplicate, skipped: !!result.skipped };
+    return { success: true, duplicate: !!result.duplicate, skipped: !!result.skipped, messageId: result.message.id };
   } catch (error) {
     const message = error instanceof Error ? error.message : "上传失败";
     if (options.pendingMessageId) setPendingUpload(options.pendingMessageId, { status: "failed", message });
-    else alert(message);
+    else if (!options.suppressAlert) alert(message);
     return { success: false, duplicate: false, skipped: false };
   }
 }
@@ -4652,7 +4675,7 @@ const messageRowBindings = {
       <header class="ai-settings-head">
         <div>
           <strong>AI 设置</strong>
-          <small>LLM 接入 · 虚拟角色 · 相关经文</small>
+          <small>LLM 接入 · 虚拟角色 · 相关经文 · 语音识别</small>
         </div>
         <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
       </header>
@@ -4685,6 +4708,10 @@ const messageRowBindings = {
           <button type="button" :class="{ active: aiSettingsTab === 'verses' }" @click="aiSettingsTab = 'verses'">
             <BookOpen :size="17" />
             <span>相关经文<small>提示词与频率限制</small></span>
+          </button>
+          <button type="button" :class="{ active: aiSettingsTab === 'asr' }" @click="aiSettingsTab = 'asr'">
+            <Mic :size="17" />
+            <span>语音识别<small>语音消息转文字</small></span>
           </button>
         </nav>
 
@@ -4802,6 +4829,10 @@ const messageRowBindings = {
                 </table>
               </div>
             </section>
+          </template>
+
+          <template v-else-if="aiSettingsTab === 'asr'">
+            <AiAsrSettingsPanel :edit="aiSettingsEdit.asr" :configured="aiSettings?.asr" />
           </template>
 
           <template v-else>
@@ -5578,6 +5609,9 @@ const messageRowBindings = {
                     </div>
                   </div>
                 </template>
+                <template v-else-if="row.message.type === 'grace'">
+                  <GraceCard :message="row.message" @open-image="(imageMessageId, event) => openPrayerImage(row.message, imageMessageId, event)" />
+                </template>
                 <template v-else-if="row.message.type === 'sermon_request'">
                   <SermonRequestCard :message="row.message" />
                 </template>
@@ -5764,6 +5798,8 @@ const messageRowBindings = {
       @clear-photo="clearPrayerUpdatePhoto"
       @photo-pick="handlePrayerUpdatePhotoPick"
     />
+
+    <GraceComposer :grace="grace" />
 
     <ChainJoinPopover
       v-if="pendingChain"
@@ -5988,6 +6024,7 @@ const messageRowBindings = {
 
     <SermonOverlay v-if="sermonJoinedPresentationId !== null && sermonOverlayState?.active" />
     <div v-if="sermonDecisionNotice" class="sermon-decision-toast" role="status">{{ sermonDecisionNotice }}</div>
+    <div v-if="graceToast" class="grace-toast" role="status">{{ graceToast }}</div>
 
     <MediaPreviewModal
       v-if="previewMessage"

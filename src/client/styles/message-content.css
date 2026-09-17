@@ -864,3 +864,48 @@
   display: none;
 }
 
+.voice-transcript-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.voice-transcript-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.04);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.voice-transcript-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.voice-transcript-notice {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.voice-transcript-bubble {
+  margin-top: 6px;
+  padding: 7px 10px;
+  border-radius: 4px 12px 12px 12px;
+  background: rgba(0, 0, 0, 0.045);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-row.mine .voice-transcript-bubble {
+  background: rgba(255, 255, 255, 0.32);
+  color: var(--bubble-mine-text);
+  opacity: 0.86;
+}
+

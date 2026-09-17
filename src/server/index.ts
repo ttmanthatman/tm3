@@ -36,6 +36,9 @@ import { registerAdminDataRoutes } from "./routes/adminData.js";
 import { registerAdminLogRoutes } from "./routes/adminLogs.js";
 import { registerAdminUpdateRoutes, UPDATE_REPO_URL } from "./routes/adminUpdate.js";
 import { registerAiSettingsRoutes } from "./routes/aiSettings.js";
+import { registerGraceRoutes } from "./routes/grace.js";
+import { registerTranscribeRoutes } from "./routes/transcribe.js";
+import { createMimoAsrService } from "./mimoAsr.js";
 import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBibleLookupRoutes } from "./routes/bibleLookup.js";
@@ -207,6 +210,7 @@ function socketCorsOrigin(origin: string | undefined, callback: (error: Error | 
 const prisma = new PrismaClient();
 const appearanceService = createAppearanceService({ prisma });
 const aiSettingsStore = createAiSettingsStore({ prisma, secret: AI_SETTINGS_SECRET });
+const mimoAsrService = createMimoAsrService({ aiSettings: aiSettingsStore });
 
 function redactRequestUrl(rawUrl?: string) {
   if (!rawUrl || !rawUrl.includes("token=")) return rawUrl || "";
@@ -332,6 +336,8 @@ type VoicePayload = {
   durationMs?: number;
   waveform?: number[];
   mimeType?: string;
+  transcript?: string;
+  transcriptAt?: string;
 };
 type LoginLogSession = Pick<AccountSession, "id" | "deviceKind" | "deviceName" | "ipAddress" | "userAgent">;
 type ActivityLogInput = {
@@ -1573,6 +1579,7 @@ function stripPushText(input?: string | null) {
 function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "chain") return `${message.sender.displayName} 发起了接龙：${stripPushText(message.content) || "接龙"}`;
   if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
+  if (message.type === "grace") return `${message.sender.displayName} 存入一条恩典：${stripPushText(message.content) || "恩典记录"}`;
   if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
   if (message.type === "bible_session") return `${message.sender.displayName} 分享了打开的圣经：${stripPushText(message.content) || "一起阅读"}`;
   if (message.type === "chat_record") return `${message.sender.displayName} 转发了聊天记录：${stripPushText(message.content) || "聊天记录"}`;
@@ -4018,6 +4025,29 @@ registerAiSettingsRoutes(app, {
   roleConfigDetails,
   normalizeRoleModel,
   syncAiRoleVirtualCharacterConfig
+});
+
+registerTranscribeRoutes(app, {
+  prisma,
+  requireAuth,
+  io,
+  asr: mimoAsrService,
+  canAccessChannel,
+  hydrateMessage,
+  isVoiceMessage
+});
+
+registerGraceRoutes(app, {
+  prisma,
+  requireAuth,
+  io,
+  canAccessChannel,
+  canWriteChannel,
+  channelDto,
+  createMessageFromActor,
+  hydrateMessage,
+  joinAccountChannel,
+  cleanText
 });
 
 const adminDataRoutes = registerAdminDataRoutes(app, {

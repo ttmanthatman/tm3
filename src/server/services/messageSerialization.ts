@@ -1,5 +1,5 @@
 import type { Actor, Account, Message, MessageAiSuggestion, MusicLyrics, MusicScore, MusicScorePage, PrayerAction, PrismaClient } from "@prisma/client";
-import type { AiSettingsDTO, AiSuggestionDTO, MessageDTO, PrayerStatus } from "../../shared/types.js";
+import type { AiSettingsDTO, AiSuggestionDTO, MessageDTO, PrayerStatus, VoicePayload } from "../../shared/types.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
 import { parseLyrics } from "../srt.js";
 import type { MusicService } from "./musicService.js";
@@ -44,6 +44,9 @@ export type MessageSerializeBatch = {
     actionsByMessageId: Map<number, Array<PrayerAction & { account: Pick<Account, "displayName" | "avatarPath"> }>>;
     aiSuggestionsByMessageId: Map<number, Array<MessageAiSuggestion & { createdBy: Pick<Account, "displayName"> | null }>>;
     aiSuggestionCountsByMessageId: Map<number, number>;
+  };
+  grace?: {
+    voiceSourceMessages: Map<number, Message | null>;
   };
   playlists?: Map<number, Awaited<ReturnType<MusicService["playlistDto"]>>>;
 };
@@ -193,6 +196,28 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         aiSuggestionSuccessCount,
         aiSuggestionMaxSuccess: aiSettings.value.maxSuccessPerMessage
       };
+    }
+    if (message.type === "grace") {
+      const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+      const voiceMessageId = Number(raw.voiceMessageId || 0);
+      let voice: VoicePayload | null = null;
+      if (Number.isInteger(voiceMessageId) && voiceMessageId > 0) {
+        const source = batch?.grace
+          ? (batch.grace.voiceSourceMessages.get(voiceMessageId) ?? null)
+          : await prisma.message.findFirst({ where: { id: voiceMessageId, channelId: message.channelId, type: "file" } });
+        if (source && isVoiceMessage(source)) {
+          const sourcePayload =
+            source.payload && typeof source.payload === "object" && !Array.isArray(source.payload) ? (source.payload as Record<string, unknown>) : {};
+          voice = {
+            kind: "voice",
+            ...(typeof sourcePayload.durationMs === "number" ? { durationMs: sourcePayload.durationMs } : {}),
+            ...(Array.isArray(sourcePayload.waveform) ? { waveform: sourcePayload.waveform as number[] } : {}),
+            ...(typeof sourcePayload.mimeType === "string" ? { mimeType: sourcePayload.mimeType } : {}),
+            ...(typeof sourcePayload.transcript === "string" ? { transcript: sourcePayload.transcript } : {})
+          };
+        }
+      }
+      payload = { ...raw, kind: "grace", voice };
     }
     const playlistId = message.type === "music_playlist" && payload && typeof payload === "object"
       ? Number((payload as { playlistId?: unknown }).playlistId || 0)
@@ -380,6 +405,24 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         aiSuggestionCountsByMessageId.set(messageId, list.length);
       }
       batch.prayer = { aiSettings, sourceMessages, actionsByMessageId, aiSuggestionsByMessageId, aiSuggestionCountsByMessageId };
+    }
+
+    const graceVoiceSourceIds = [
+      ...new Set(
+        rows
+          .filter((message) => message.type === "grace")
+          .map((message) => {
+            const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
+            return Number(raw.voiceMessageId || 0);
+          })
+          .filter((id) => Number.isInteger(id) && id > 0)
+      )
+    ];
+    if (graceVoiceSourceIds.length) {
+      const sourceRows = await prisma.message.findMany({ where: { id: { in: graceVoiceSourceIds }, channelId, type: "file" } });
+      const voiceSourceMessages = new Map<number, Message | null>();
+      for (const sourceId of graceVoiceSourceIds) voiceSourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
+      batch.grace = { voiceSourceMessages };
     }
 
     if (playlistIds.length) {

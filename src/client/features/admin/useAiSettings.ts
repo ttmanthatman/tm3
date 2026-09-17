@@ -40,14 +40,22 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     aiRoles: [] as AiRoleDTO[],
     cardCooldownSeconds: 30,
     userLimitPerMinute: 3,
-    maxSuccessPerMessage: 7
+    maxSuccessPerMessage: 7,
+    asr: {
+      enabled: false,
+      apiKey: "",
+      clearApiKey: false,
+      baseUrl: "",
+      model: "",
+      language: "auto" as "auto" | "zh" | "en"
+    }
   });
   const aiSettingsBusy = ref(false);
   const aiSettingsMsg = ref("");
   const aiSettingsShowAdvanced = ref(false);
-  const aiSettingsTab = ref<"llm" | "virtuals" | "verses">("llm");
+  const aiSettingsTab = ref<"llm" | "virtuals" | "verses" | "asr">("llm");
 
-  async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" = "llm") {
+  async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" | "asr" = "llm") {
     if (!store.account?.isAdmin) return;
     options.saveReadPosition();
     options.showAdmin.value = false;
@@ -79,7 +87,15 @@ export function useAiSettings(options: UseAiSettingsOptions) {
       })),
       cardCooldownSeconds: settings.cardCooldownSeconds,
       userLimitPerMinute: settings.userLimitPerMinute,
-      maxSuccessPerMessage: settings.maxSuccessPerMessage
+      maxSuccessPerMessage: settings.maxSuccessPerMessage,
+      asr: {
+        enabled: !!settings.asr?.enabled,
+        apiKey: "",
+        clearApiKey: false,
+        baseUrl: settings.asr?.baseUrl || "",
+        model: settings.asr?.model || "",
+        language: settings.asr?.language || "auto"
+      }
     };
   }
 
@@ -486,7 +502,15 @@ export function useAiSettings(options: UseAiSettingsOptions) {
         })),
         cardCooldownSeconds: Number(aiSettingsEdit.value.cardCooldownSeconds),
         userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
-        maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage)
+        maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage),
+        asr: {
+          enabled: aiSettingsEdit.value.asr.enabled,
+          apiKey: aiSettingsEdit.value.asr.apiKey.trim() || undefined,
+          clearApiKey: aiSettingsEdit.value.asr.clearApiKey || undefined,
+          baseUrl: aiSettingsEdit.value.asr.baseUrl.trim(),
+          model: aiSettingsEdit.value.asr.model.trim(),
+          language: aiSettingsEdit.value.asr.language
+        }
       };
       syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
       if (virtuals.value.length) await loadVirtualCharacters();

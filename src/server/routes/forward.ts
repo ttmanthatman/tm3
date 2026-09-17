@@ -36,7 +36,7 @@ export type ForwardSourceMessage = Message & {
   sender: { displayName: string; avatarPath: string | null };
 };
 
-type VoicePayload = { kind: "voice"; durationMs?: unknown; mimeType?: unknown };
+type VoicePayload = { kind: "voice"; durationMs?: unknown; mimeType?: unknown; transcript?: unknown; transcriptAt?: unknown };
 
 function voicePayload(payload: unknown): VoicePayload | null {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;

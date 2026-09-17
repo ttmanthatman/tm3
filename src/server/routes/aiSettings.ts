@@ -23,6 +23,9 @@ import {
   callDeepSeekRelatedVerses,
   clampInteger,
   cleanAiError,
+  cleanAsrLanguage,
+  DEFAULT_ASR_BASE_URL,
+  DEFAULT_ASR_MODEL,
   type AiSettingsStore
 } from "../aiSettings.js";
 import { compressImageFile, IMAGE_EXTENSIONS, validateStoredImage } from "../imageProcessing.js";
@@ -205,6 +208,16 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         whyAssistantEnabled: z.boolean().optional(),
         whyAssistantWebSearchEnabled: z.boolean().optional(),
         whyAssistantPromptCommand: z.string().max(6000).optional(),
+        asr: z
+          .object({
+            enabled: z.boolean().optional(),
+            baseUrl: z.string().max(400).optional(),
+            model: z.string().max(120).optional(),
+            language: z.enum(["auto", "zh", "en"]).optional(),
+            apiKey: z.string().max(400).optional(),
+            clearApiKey: z.boolean().optional()
+          })
+          .optional(),
         aiRoles: z
           .array(
             z.object({
@@ -238,6 +251,14 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
     if (Object.prototype.hasOwnProperty.call(body, "whyAssistantEnabled")) await setSetting("whyAssistantEnabled", body.whyAssistantEnabled ? "true" : "false");
     if (Object.prototype.hasOwnProperty.call(body, "whyAssistantWebSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", body.whyAssistantWebSearchEnabled ? "true" : "false");
     if (Object.prototype.hasOwnProperty.call(body, "whyAssistantPromptCommand")) await setSetting("whyAssistantPromptCommand", (body.whyAssistantPromptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
+    if (body.asr) {
+      if (Object.prototype.hasOwnProperty.call(body.asr, "enabled")) await setSetting("aiAsrEnabled", body.asr.enabled ? "true" : "false");
+      if (body.asr.clearApiKey) await setSetting("aiAsrApiKeyEncrypted", "");
+      if (body.asr.apiKey?.trim()) await setSetting("aiAsrApiKeyEncrypted", aiSettings.encryptAiApiKey(body.asr.apiKey.trim()));
+      if (Object.prototype.hasOwnProperty.call(body.asr, "baseUrl")) await setSetting("aiAsrBaseUrl", (body.asr.baseUrl || "").trim() || DEFAULT_ASR_BASE_URL);
+      if (Object.prototype.hasOwnProperty.call(body.asr, "model")) await setSetting("aiAsrModel", (body.asr.model || "").trim() || DEFAULT_ASR_MODEL);
+      if (Object.prototype.hasOwnProperty.call(body.asr, "language")) await setSetting("aiAsrLanguage", cleanAsrLanguage(body.asr.language));
+    }
     for (const role of body.aiRoles || []) {
       if (role.username === WHY_ASSISTANT_USERNAME) {
         const displayName = (role.displayName || "").trim() || WHY_ASSISTANT_NAME;

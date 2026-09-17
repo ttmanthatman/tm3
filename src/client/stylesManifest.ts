@@ -21,6 +21,7 @@ export const STYLE_DOMAIN_FILES = [
   "messages.css",
   "message-content.css",
   "prayer.css",
+  "grace.css",
   "composer.css",
   "members.css",
   "modals.css",
