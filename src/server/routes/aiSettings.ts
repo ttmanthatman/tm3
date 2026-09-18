@@ -72,6 +72,7 @@ export type AiSettingsRouteDependencies = {
   setSetting(key: string, value: string): Promise<void>;
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
   canonicalPrayerMessage(message: Message): Promise<Message>;
+  canonicalGraceMessage(message: Message): Promise<Message>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
   ensureAiRoleCharacter(username: string, fallbackName: string, displayName?: string): Promise<Actor>;
   ensureWhyAssistantCharacter(displayName?: string): Promise<Actor>;
@@ -90,6 +91,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
     setSetting,
     canAccessChannel,
     canonicalPrayerMessage,
+    canonicalGraceMessage,
     hydrateMessage,
     ensureAiRoleCharacter,
     ensureWhyAssistantCharacter,
@@ -179,10 +181,13 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
   }
 
   function buildRelatedVersesContext(message: Message & { sender: Actor }, previousReferences: string[]) {
+    const subjectLabel = message.type === "grace" ? "恩典记录者" : "代祷发起人";
+    const contentLabel = message.type === "grace" ? "恩典见证" : "代祷信息";
+    const fallback = message.type === "grace" ? "恩典见证" : "代祷事项";
     const lines = [
       "上下文内容：",
-      `代祷发起人：${message.sender.displayName}`,
-      `代祷信息：${plainTextFromHtml(message.content, 2000) || "代祷事项"}`,
+      `${subjectLabel}：${message.sender.displayName}`,
+      `${contentLabel}：${plainTextFromHtml(message.content, 2000) || fallback}`,
       "",
       previousReferences.length ? `已推荐过的出处：${previousReferences.join("；")}` : "已推荐过的出处：无",
       "",
@@ -358,9 +363,9 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
     const auth = (request as AuthedAiSettingsRequest).auth;
     const messageId = Number((request.params as { messageId: string }).messageId);
     const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
-    if (!message || message.type !== "prayer") return reply.code(404).send({ success: false, message: "代祷事项不存在" });
-    if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此代祷" });
-    const target = await canonicalPrayerMessage(message);
+    if (!message || (message.type !== "prayer" && message.type !== "grace")) return reply.code(404).send({ success: false, message: "卡片不存在" });
+    if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此卡片" });
+    const target = message.type === "grace" ? await canonicalGraceMessage(message) : await canonicalPrayerMessage(message);
     const targetMessageId = target.id;
     const targetWithSender =
       targetMessageId === message.id ? message : await prisma.message.findUniqueOrThrow({ where: { id: targetMessageId }, include: { sender: true } });
@@ -372,7 +377,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
 
     const successCount = await prisma.messageAiSuggestion.count({ where: { messageId: targetMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } });
     if (successCount >= settings.maxSuccessPerMessage) {
-      return reply.code(409).send({ success: false, message: "这张代祷卡片的经文建议已达到上限" });
+      return reply.code(409).send({ success: false, message: `这张${message.type === "grace" ? "恩典" : "代祷"}卡片的经文建议已达到上限` });
     }
 
     const now = new Date();

@@ -98,7 +98,10 @@ test("transcribe success: merges transcript into the payload and broadcasts the 
   try {
     const response = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { success: true, transcript: "这是识别结果" });
+    assert.equal(response.json().success, true);
+    assert.equal(response.json().transcript, "这是识别结果");
+    assert.equal(response.json().cached, false);
+    assert.equal(typeof response.json().transcriptAt, "string");
     assert.deepEqual(transcribeCalls, ["data:audio/wav;base64,QUJD"]);
     assert.equal(messageUpdates.length, 1);
     const payload = messageUpdates[0].payload as Record<string, unknown>;
@@ -123,8 +126,32 @@ test("transcribe is idempotent when a transcript already exists", async () => {
   try {
     const response = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { success: true, transcript: "已有文字" });
+    assert.deepEqual(response.json(), {
+      success: true,
+      transcript: "已有文字",
+      transcriptAt: "2026-09-17T00:00:00.000Z",
+      cached: true
+    });
     assert.equal(transcribeCalls.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a second transcription request reuses the server-persisted result", async () => {
+  const { app, messageUpdates, transcribeCalls } = createHarness();
+  await app.ready();
+  try {
+    const first = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    const second = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.statusCode, 200);
+    assert.equal(first.json().cached, false);
+    assert.equal(second.json().cached, true);
+    assert.equal(second.json().transcript, "这是识别结果");
+    assert.equal(second.json().transcriptAt, first.json().transcriptAt);
+    assert.equal(transcribeCalls.length, 1);
+    assert.equal(messageUpdates.length, 1);
   } finally {
     await app.close();
   }

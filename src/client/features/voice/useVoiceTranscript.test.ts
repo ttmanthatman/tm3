@@ -53,7 +53,7 @@ test("a successful transcription patches the store message payload", async () =>
   const originalFetch = globalThis.fetch;
   globalThis.fetch = ((url: string | URL | Request) => {
     assert.equal(String(url), "/api/messages/31/transcribe");
-    return Promise.resolve(jsonResponse({ transcript: "识别出的文字" }));
+    return Promise.resolve(jsonResponse({ transcript: "识别出的文字", transcriptAt: "2026-09-18T01:02:03.000Z", cached: false }));
   }) as typeof fetch;
   try {
     const { useChatStore } = await import("../../store");
@@ -66,6 +66,7 @@ test("a successful transcription patches the store message payload", async () =>
     const stored = store.messages.find((row) => row.id === 31);
     assert.ok(stored, "expected the message to be stored");
     assert.equal((stored.payload as { transcript?: string }).transcript, "识别出的文字");
+    assert.equal((stored.payload as { transcriptAt?: string }).transcriptAt, "2026-09-18T01:02:03.000Z");
     assert.equal(transcript.isTranscriptBusy(message), false);
   } finally {
     globalThis.fetch = originalFetch;

@@ -577,6 +577,22 @@ function isPrayerUpdateMessage(message: Pick<Message, "id" | "payload">) {
   return sourcePrayerMessageId(message.payload, message.id) !== message.id;
 }
 
+function sourceGraceMessageId(input: unknown, fallback: number) {
+  const sourceId = Number(prayerPayloadRaw(input).sourceGraceMessageId || 0);
+  return Number.isFinite(sourceId) && sourceId > 0 ? sourceId : fallback;
+}
+
+async function canonicalGraceMessage(message: Message) {
+  const sourceId = sourceGraceMessageId(message.payload, message.id);
+  if (sourceId === message.id) return message;
+  const source = await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "grace" } });
+  return source || message;
+}
+
+function isGraceUpdateMessage(message: Pick<Message, "id" | "payload">) {
+  return sourceGraceMessageId(message.payload, message.id) !== message.id;
+}
+
 
 async function directChatMemberNames(channelId: number) {
   const members = await prisma.channelMember.findMany({
@@ -2899,7 +2915,11 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
     orderBy: { id: after > 0 ? "asc" : "desc" },
     take: limit
   });
-  const filteredRows = query.prayers === "1" ? rows.filter((message) => !isPrayerUpdateMessage(message)) : rows;
+  const filteredRows = query.prayers === "1"
+    ? rows.filter((message) => !isPrayerUpdateMessage(message))
+    : query.grace === "1"
+      ? rows.filter((message) => !isGraceUpdateMessage(message))
+      : rows;
   const orderedRows = after > 0 ? filteredRows : filteredRows.reverse();
   const batch = await buildMessageSerializeBatch(orderedRows, channelId, auth.accountId);
   const messages = await Promise.all(orderedRows.map((message) => serializeMessage(message, auth.accountId, batch)));
@@ -4024,6 +4044,7 @@ registerAiSettingsRoutes(app, {
   setSetting: appearanceService.setSetting,
   canAccessChannel,
   canonicalPrayerMessage,
+  canonicalGraceMessage,
   hydrateMessage,
   ensureAiRoleCharacter,
   ensureWhyAssistantCharacter,
@@ -4049,6 +4070,8 @@ registerGraceRoutes(app, {
   canWriteChannel,
   createMessageFromActor,
   hydrateMessage,
+  deleteMessages,
+  io,
   cleanText
 });
 

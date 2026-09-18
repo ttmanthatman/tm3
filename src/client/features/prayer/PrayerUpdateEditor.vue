@@ -2,12 +2,19 @@
 import { ref } from "vue";
 import { Image as ImageIcon, X } from "lucide-vue-next";
 
-defineProps<{
+withDefaults(defineProps<{
   busy: boolean;
   error: string;
   photoPreview: string;
   canPublish: boolean;
-}>();
+  title?: string;
+  closeLabel?: string;
+  placeholder?: string;
+}>(), {
+  title: "更新代祷最新动态",
+  closeLabel: "关闭最新动态编辑",
+  placeholder: "写下最新动态…"
+});
 
 const emit = defineEmits<{
   close: [];
@@ -32,8 +39,8 @@ function handlePhotoPick(event: Event) {
   <section class="modal-shell" @mousedown.self="emit('close')">
     <form class="small-modal prayer-update-modal" @submit.prevent="emit('submit')">
       <header class="modal-head">
-        <strong>更新代祷最新动态</strong>
-        <button class="icon-btn" type="button" @click="emit('close')" aria-label="关闭最新动态编辑">
+        <strong>{{ title }}</strong>
+        <button class="icon-btn" type="button" @click="emit('close')" :aria-label="closeLabel">
           <X :size="20" />
         </button>
       </header>
@@ -42,7 +49,7 @@ function handlePhotoPick(event: Event) {
           ref="prayerUpdateTextarea"
           v-model="content"
           rows="9"
-          placeholder="写下最新动态…"
+          :placeholder="placeholder"
         ></textarea>
         <div class="prayer-update-attach">
           <button

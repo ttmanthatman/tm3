@@ -81,9 +81,13 @@ export function useVoiceTranscript() {
         showTranscriptNotice("未配置语音识别");
         return;
       }
-      const result = (await response.json().catch(() => ({}))) as { transcript?: string; message?: string };
+      const result = (await response.json().catch(() => ({}))) as { transcript?: string; transcriptAt?: string; cached?: boolean; message?: string };
       if (!response.ok || typeof result.transcript !== "string") throw new Error(result.message || "识别失败，请稍后重试");
-      const payload = { ...(message.payload as Record<string, unknown> | undefined), transcript: result.transcript, transcriptAt: new Date().toISOString() };
+      const payload = {
+        ...(message.payload as Record<string, unknown> | undefined),
+        transcript: result.transcript,
+        transcriptAt: typeof result.transcriptAt === "string" && result.transcriptAt ? result.transcriptAt : new Date().toISOString()
+      };
       store.replaceMessage({ ...message, payload });
     } catch (error) {
       showTranscriptNotice(error instanceof Error && error.message ? error.message : "识别失败，请稍后重试");

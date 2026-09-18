@@ -623,6 +623,49 @@ test("grace messages assemble the referenced voice payload including transcript"
   assert.ok(harness.queries.includes("message.findFirst"));
 });
 
+test("grace messages aggregate gratitude, related verses, and update-source state", async () => {
+  const harness = createHarness();
+  const source = makeMessage({
+    id: 320,
+    type: "grace",
+    content: "原见证",
+    payload: { kind: "grace", updates: [{ content: "更早的见证", at: "2026-09-16T00:00:00.000Z" }] }
+  });
+  harness.state.messagesById.set(source.id, source);
+  harness.state.prayerActions.push(
+    { messageId: 320, accountId: VIEWER, prayedAt: new Date("2026-09-17T08:00:00.000Z"), account: { displayName: "访客", avatarPath: null } },
+    { messageId: 320, accountId: 42, prayedAt: new Date("2026-09-17T09:00:00.000Z"), account: { displayName: "王刚", avatarPath: "a.webp" } }
+  );
+  harness.state.aiSuggestions.push({
+    id: 81,
+    messageId: 320,
+    kind: "prayer_related_verses",
+    status: "success",
+    references: ["诗篇 103:2"],
+    responseText: null,
+    createdAt: new Date("2026-09-17T10:00:00.000Z"),
+    model: "test-model",
+    createdBy: { displayName: "助手" }
+  });
+  const update = makeMessage({
+    id: 321,
+    type: "grace",
+    content: "新见证",
+    payload: { kind: "grace", sourceGraceMessageId: 320, latestUpdateAt: "2026-09-18T00:00:00.000Z", latestUpdateBy: "Alice" }
+  });
+  const dto = await harness.service.serializeMessage(update, VIEWER);
+  const payload = dto.payload as Record<string, unknown>;
+  assert.equal(payload.sourceGraceMessageId, 320);
+  assert.equal(payload.gratitudeCount, 2);
+  assert.equal(payload.gratitudeActionCount, 2);
+  assert.equal(payload.currentUserGrateful, true);
+  assert.equal((payload.gratefulBy as Array<{ accountId: number }>)[0]?.accountId, 42);
+  assert.equal((payload.aiSuggestions as AiSuggestionDTO[])[0]?.references[0], "诗篇 103:2");
+  assert.equal(payload.aiSuggestionSuccessCount, 1);
+  assert.equal(payload.aiSuggestionMaxSuccess, 3);
+  assert.deepEqual(payload.updates, [{ content: "更早的见证", at: "2026-09-16T00:00:00.000Z" }]);
+});
+
 test("grace messages without a voice source serialize voice as null", async () => {
   const harness = createHarness();
   const grace = makeMessage({ id: 303, type: "grace", content: "纯文字恩典", payload: { kind: "grace" } });

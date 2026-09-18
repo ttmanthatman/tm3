@@ -83,9 +83,13 @@ export function replyPreviewText(message: MessageDTO) {
 }
 
 export function escapeHtmlText(text: string) {
-  const element = document.createElement("span");
-  element.textContent = text;
-  return element.innerHTML.replace(/\n/g, "<br />");
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/\n/g, "<br />");
 }
 
 export function wrapInlineHtml(html: string, tags: string[]) {

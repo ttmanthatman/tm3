@@ -671,10 +671,12 @@
   position: relative;
   width: clamp(190px, 36vw, 260px);
   min-height: 46px;
+  box-sizing: border-box;
+  padding: 4px 9px 4px 4px;
   display: grid;
-  grid-template-columns: 34px minmax(104px, 1fr) 42px;
+  grid-template-columns: 34px minmax(104px, 1fr) auto;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
 }
 
 .voice-play,
@@ -726,7 +728,7 @@
 }
 
 .voice-meta {
-  min-width: 38px;
+  min-width: 42px;
   display: grid;
   justify-items: end;
   gap: 1px;
@@ -897,8 +899,8 @@
   border-radius: 4px 12px 12px 12px;
   background: rgba(0, 0, 0, 0.045);
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--message-content-font-size);
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -908,4 +910,3 @@
   color: var(--bubble-mine-text);
   opacity: 0.86;
 }
-

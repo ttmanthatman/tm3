@@ -47,6 +47,11 @@ export type MessageSerializeBatch = {
   };
   grace?: {
     voiceSourceMessages: Map<number, Message | null>;
+    sourceMessages: Map<number, Message | null>;
+    actionsByMessageId: Map<number, Array<PrayerAction & { account: Pick<Account, "displayName" | "avatarPath"> }>>;
+    aiSuggestionsByMessageId: Map<number, Array<MessageAiSuggestion & { createdBy: Pick<Account, "displayName"> | null }>>;
+    aiSuggestionCountsByMessageId: Map<number, number>;
+    aiSettings: Awaited<ReturnType<MessageSerializationDependencies["loadAiSettings"]>>;
   };
   playlists?: Map<number, Awaited<ReturnType<MusicService["playlistDto"]>>>;
 };
@@ -79,6 +84,15 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
   function plainTextPreview(input?: string | null, maxLength = 80) {
     const text = stripMarkdownSyntax(plainTextFromHtml(input, 4000));
     return text.slice(0, maxLength);
+  }
+
+  function gracePayloadRaw(input: unknown) {
+    return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  }
+
+  function sourceGraceMessageId(input: unknown, fallback: number) {
+    const sourceId = Number(gracePayloadRaw(input).sourceGraceMessageId || 0);
+    return Number.isFinite(sourceId) && sourceId > 0 ? sourceId : fallback;
   }
 
   async function serializeMessage(
@@ -198,8 +212,55 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       };
     }
     if (message.type === "grace") {
-      const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
-      const voiceMessageId = Number(raw.voiceMessageId || 0);
+      const aiSettings = batch?.grace ? batch.grace.aiSettings : await loadAiSettings();
+      const raw = gracePayloadRaw(message.payload);
+      const sourceId = sourceGraceMessageId(message.payload, message.id);
+      const sourceMessage =
+        sourceId !== message.id
+          ? batch?.grace
+            ? (batch.grace.sourceMessages.get(sourceId) ?? null)
+            : await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "grace" } })
+          : null;
+      const actionMessageId = sourceMessage?.id || message.id;
+      const sourceRaw = gracePayloadRaw(sourceMessage?.payload);
+      const displayRaw = sourceMessage
+        ? { ...raw, ...sourceRaw, sourceGraceMessageId: sourceMessage.id, latestUpdateAt: raw.latestUpdateAt, latestUpdateBy: raw.latestUpdateBy }
+        : raw;
+      const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = batch?.grace
+        ? [
+            batch.grace.actionsByMessageId.get(actionMessageId) ?? [],
+            batch.grace.aiSuggestionsByMessageId.get(actionMessageId) ?? [],
+            batch.grace.aiSuggestionCountsByMessageId.get(actionMessageId) ?? 0
+          ]
+        : await Promise.all([
+            prisma.prayerAction.findMany({
+              where: { messageId: actionMessageId },
+              include: { account: { select: { displayName: true, avatarPath: true } } },
+              orderBy: { prayedAt: "desc" }
+            }),
+            prisma.messageAiSuggestion.findMany({
+              where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" },
+              include: { createdBy: { select: { displayName: true } } },
+              orderBy: { createdAt: "desc" },
+              take: 3
+            }),
+            prisma.messageAiSuggestion.count({ where: { messageId: actionMessageId, kind: AI_RELATED_VERSES_KIND, status: "success" } })
+          ]);
+      const byAccount = new Map<number, { accountId: number; displayName: string; avatarPath?: string | null; latestGratefulAt: string; times: number }>();
+      for (const action of actions) {
+        const current = byAccount.get(action.accountId);
+        if (current) current.times += 1;
+        else {
+          byAccount.set(action.accountId, {
+            accountId: action.accountId,
+            displayName: action.account.displayName,
+            avatarPath: action.account.avatarPath,
+            latestGratefulAt: action.prayedAt.toISOString(),
+            times: 1
+          });
+        }
+      }
+      const voiceMessageId = Number(displayRaw.voiceMessageId || 0);
       let voice: VoicePayload | null = null;
       if (Number.isInteger(voiceMessageId) && voiceMessageId > 0) {
         const source = batch?.grace
@@ -217,7 +278,18 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
           };
         }
       }
-      payload = { ...raw, kind: "grace", voice };
+      payload = {
+        ...displayRaw,
+        kind: "grace",
+        voice,
+        gratitudeCount: byAccount.size,
+        gratitudeActionCount: actions.length,
+        currentUserGrateful: viewerAccountId ? byAccount.has(viewerAccountId) : false,
+        gratefulBy: [...byAccount.values()],
+        aiSuggestions: aiSuggestionRows.map(serializeAiSuggestion),
+        aiSuggestionSuccessCount,
+        aiSuggestionMaxSuccess: aiSettings.value.maxSuccessPerMessage
+      };
     }
     const playlistId = message.type === "music_playlist" && payload && typeof payload === "object"
       ? Number((payload as { playlistId?: unknown }).playlistId || 0)
@@ -307,6 +379,11 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
 
   async function buildMessageSerializeBatch(rows: Array<Message & { sender: Actor }>, channelId: number, viewerAccountId: number): Promise<MessageSerializeBatch> {
     const batch: MessageSerializeBatch = {};
+    let sharedAiSettings: Awaited<ReturnType<MessageSerializationDependencies["loadAiSettings"]>> | null = null;
+    const batchAiSettings = async () => {
+      sharedAiSettings ||= await loadAiSettings();
+      return sharedAiSettings;
+    };
     const voiceIds = rows.filter((message) => isVoiceMessage(message) && message.sender.accountId !== viewerAccountId).map((message) => message.id);
     const audioRows = rows.filter((message) => message.type === "file" && isAudioFileName(message.fileName));
     const audioIds = audioRows.map((message) => message.id);
@@ -354,7 +431,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
     }
 
     if (prayerRows.length) {
-      const aiSettings = await loadAiSettings();
+      const aiSettings = await batchAiSettings();
       const sourceIds = [
         ...new Set(
           prayerRows
@@ -407,6 +484,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       batch.prayer = { aiSettings, sourceMessages, actionsByMessageId, aiSuggestionsByMessageId, aiSuggestionCountsByMessageId };
     }
 
+    const graceRows = rows.filter((message) => message.type === "grace");
     const graceVoiceSourceIds = [
       ...new Set(
         rows
@@ -418,11 +496,72 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
           .filter((id) => Number.isInteger(id) && id > 0)
       )
     ];
-    if (graceVoiceSourceIds.length) {
-      const sourceRows = await prisma.message.findMany({ where: { id: { in: graceVoiceSourceIds }, channelId, type: "file" } });
+    if (graceRows.length) {
+      const aiSettings = await batchAiSettings();
+      const sourceIds = [
+        ...new Set(
+          graceRows
+            .map((message) => ({ sourceId: sourceGraceMessageId(message.payload, message.id), messageId: message.id }))
+            .filter((entry) => entry.sourceId !== entry.messageId)
+            .map((entry) => entry.sourceId)
+        )
+      ];
+      const [voiceSourceRows, sourceRows] = await Promise.all([
+        graceVoiceSourceIds.length
+          ? prisma.message.findMany({ where: { id: { in: graceVoiceSourceIds }, channelId, type: "file" } })
+          : Promise.resolve([]),
+        sourceIds.length ? prisma.message.findMany({ where: { id: { in: sourceIds }, channelId, type: "grace" } }) : Promise.resolve([])
+      ]);
       const voiceSourceMessages = new Map<number, Message | null>();
-      for (const sourceId of graceVoiceSourceIds) voiceSourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
-      batch.grace = { voiceSourceMessages };
+      for (const sourceId of graceVoiceSourceIds) voiceSourceMessages.set(sourceId, voiceSourceRows.find((row) => row.id === sourceId) ?? null);
+      const sourceMessages = new Map<number, Message | null>();
+      for (const sourceId of sourceIds) sourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
+      const actionMessageIds = [
+        ...new Set(
+          graceRows.map((message) => {
+            const sourceId = sourceGraceMessageId(message.payload, message.id);
+            return (sourceId !== message.id ? sourceMessages.get(sourceId)?.id : undefined) || message.id;
+          })
+        )
+      ];
+      const [actionRows, suggestionRows] = await Promise.all([
+        prisma.prayerAction.findMany({
+          where: { messageId: { in: actionMessageIds } },
+          include: { account: { select: { displayName: true, avatarPath: true } } },
+          orderBy: { prayedAt: "desc" }
+        }),
+        prisma.messageAiSuggestion.findMany({
+          where: { messageId: { in: actionMessageIds }, kind: AI_RELATED_VERSES_KIND, status: "success" },
+          include: { createdBy: { select: { displayName: true } } },
+          orderBy: { createdAt: "desc" }
+        })
+      ]);
+      const actionsByMessageId = new Map<number, typeof actionRows>();
+      for (const action of actionRows) {
+        const list = actionsByMessageId.get(action.messageId) || [];
+        list.push(action);
+        actionsByMessageId.set(action.messageId, list);
+      }
+      const suggestionsByMessageId = new Map<number, typeof suggestionRows>();
+      for (const suggestion of suggestionRows) {
+        const list = suggestionsByMessageId.get(suggestion.messageId) || [];
+        list.push(suggestion);
+        suggestionsByMessageId.set(suggestion.messageId, list);
+      }
+      const aiSuggestionsByMessageId = new Map<number, typeof suggestionRows>();
+      const aiSuggestionCountsByMessageId = new Map<number, number>();
+      for (const [messageId, list] of suggestionsByMessageId) {
+        aiSuggestionsByMessageId.set(messageId, list.slice(0, 3));
+        aiSuggestionCountsByMessageId.set(messageId, list.length);
+      }
+      batch.grace = {
+        voiceSourceMessages,
+        sourceMessages,
+        actionsByMessageId,
+        aiSuggestionsByMessageId,
+        aiSuggestionCountsByMessageId,
+        aiSettings
+      };
     }
 
     if (playlistIds.length) {

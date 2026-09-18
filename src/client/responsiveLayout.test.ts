@@ -34,6 +34,8 @@ const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.
 const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
+const graceCard = fs.readFileSync(new URL("./features/grace/GraceCard.vue", import.meta.url), "utf8");
+const relatedVersesPanel = fs.readFileSync(new URL("./features/prayer/RelatedVersesPanel.vue", import.meta.url), "utf8");
 const channelEditorDialog = fs.readFileSync(new URL("./features/channels/ChannelEditorDialog.vue", import.meta.url), "utf8");
 const memberPickerDialog = fs.readFileSync(new URL("./features/channels/MemberPickerDialog.vue", import.meta.url), "utf8");
 const ownerTransferDialog = fs.readFileSync(new URL("./features/channels/OwnerTransferDialog.vue", import.meta.url), "utf8");
@@ -56,6 +58,21 @@ const selfUpdateScript = fs.readFileSync(new URL("../../scripts/self-update.sh",
 test("narrow viewports always switch the chat shell to one column", () => {
   assert.doesNotMatch(css, /@media \(max-width: 760px\) and \((?:hover|pointer):/);
   assert.match(css, /@media \(max-width: 760px\) \{[\s\S]*?\.app-shell \{[\s\S]*?grid-template-columns: minmax\(0, 1fr\);/);
+});
+
+test("grace cards reuse prayer-card structure and expose the requested actions without the old footer", () => {
+  assert.match(graceCard, /class="prayer-card grace-card"/);
+  assert.match(graceCard, />为此感恩<\/button>/);
+  assert.match(graceCard, />更新见证<\/button>/);
+  assert.match(graceCard, />撤回<\/button>/);
+  assert.doesNotMatch(graceCard, /收藏这一份恩典，也把盼望留给彼此/);
+  assert.match(graceCard, /<RelatedVersesPanel/);
+  assert.match(app, /<RelatedVersesPanel[\s\S]*?:suggestions="prayerAiSuggestions\(row\.message\)"/);
+  assert.match(relatedVersesPanel, /也许相关的经文/);
+  assert.match(app, />无需继续代祷<\/button>/);
+  assert.match(app, />更新动态<\/button>/);
+  assert.match(css, /\.grace-channel-subrow \.channel-icon\.grace-favorites-icon \{[\s\S]*?width: 30px;[\s\S]*?height: 30px;/);
+  assert.match(css, /\.message-row\.mine \.grace-bubble \{[\s\S]*?background:/);
 });
 
 test("reception management stays off the chat startup path and keeps readable controls", () => {
@@ -243,6 +260,16 @@ test("inline audio waveform uses a responsive physical-pixel canvas and never es
   assert.match(inlineAudioPlayer, /import ResponsiveAudioWaveform from "\.\/ResponsiveAudioWaveform\.vue"/);
   assert.match(waveformCss, /width: 100%;[\s\S]*?overflow: hidden;/);
   assert.doesNotMatch(waveformCss, /justify-content: space-between/);
+});
+
+test("voice cards keep metadata inset and transcripts follow the adjustable message font", () => {
+  const voiceCardCss = css.match(/\.voice-card \{([^}]*)\}/)?.[1] || "";
+  const transcriptCss = css.match(/\.voice-transcript-bubble \{([^}]*)\}/)?.[1] || "";
+  assert.match(voiceCardCss, /box-sizing: border-box;/);
+  assert.match(voiceCardCss, /padding:[^;]*9px[^;]*;/);
+  assert.match(css, /grid-template-columns: 30px minmax\(48px, 1fr\) auto;/);
+  assert.match(transcriptCss, /font-size: var\(--message-content-font-size\);/);
+  assert.doesNotMatch(transcriptCss, /font-size: 13px;/);
 });
 
 test("audio messages with a score render an attached full-height clickable score preview", () => {
@@ -1207,7 +1234,8 @@ test("prayer update editor dialog lives outside App.vue with the modal-shell con
   assert.doesNotMatch(app, /prayer-update-modal/);
   assert.match(prayerUpdateEditor, /<section class="modal-shell" @mousedown\.self="emit\('close'\)">/);
   assert.match(prayerUpdateEditor, /<form class="small-modal prayer-update-modal" @submit\.prevent="emit\('submit'\)">/);
-  assert.match(prayerUpdateEditor, /aria-label="关闭最新动态编辑"/);
+  assert.match(prayerUpdateEditor, /closeLabel: "关闭最新动态编辑"/);
+  assert.match(prayerUpdateEditor, /:aria-label="closeLabel"/);
   assert.match(prayerUpdateEditor, /ref="prayerUpdateTextarea"/);
   assert.match(prayerUpdateEditor, /class="prayer-update-photo-chip"/);
   assert.match(prayerUpdateEditor, /aria-label="移除照片"/);

@@ -75,6 +75,11 @@ function voiceTranscript(input: unknown) {
   return typeof transcript === "string" ? transcript.trim() : "";
 }
 
+function voiceTranscriptAt(input: unknown) {
+  const transcriptAt = voicePayloadRaw(input).transcriptAt;
+  return typeof transcriptAt === "string" ? transcriptAt : "";
+}
+
 export function registerTranscribeRoutes(app: FastifyInstance, deps: TranscribeRouteDependencies) {
   const { prisma, requireAuth, io, asr, canAccessChannel, hydrateMessage, isVoiceMessage } = deps;
   const convertVoiceToWavDataUrl = deps.convertVoiceToWavDataUrl || voiceFileToWavDataUrl;
@@ -96,7 +101,14 @@ export function registerTranscribeRoutes(app: FastifyInstance, deps: TranscribeR
       if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此语音" });
       if (!isVoiceMessage(message)) return reply.code(400).send({ success: false, message: "该消息不是语音消息" });
       const existingTranscript = voiceTranscript(message.payload);
-      if (existingTranscript) return { success: true, transcript: existingTranscript };
+      if (existingTranscript) {
+        return {
+          success: true,
+          transcript: existingTranscript,
+          transcriptAt: voiceTranscriptAt(message.payload),
+          cached: true
+        };
+      }
       const config = await asr.loadAsrConfig();
       if (!config) {
         return reply.code(409).send({ success: false, message: auth.isAdmin ? "语音识别尚未配置，请前往 /ai-settings 填写 ASR API Key。" : "暂时还不能识别语音，请稍后再试。" });
@@ -114,16 +126,17 @@ export function registerTranscribeRoutes(app: FastifyInstance, deps: TranscribeR
       }
       try {
         const transcript = await asr.transcribeWavDataUrl(audioDataUrl);
+        const transcriptAt = new Date().toISOString();
         const payload = {
           ...voicePayloadRaw(message.payload),
           kind: "voice",
           transcript,
-          transcriptAt: new Date().toISOString()
+          transcriptAt
         };
         await prisma.message.update({ where: { id: message.id }, data: { payload: payload as Prisma.InputJsonObject } });
         const dto = await hydrateMessage(message.id, auth.accountId);
         if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
-        return { success: true, transcript };
+        return { success: true, transcript, transcriptAt, cached: false };
       } catch (error) {
         request.log.warn({ error, messageId }, "voice transcription failed");
         return reply.code(502).send({ success: false, message: auth.isAdmin ? `语音识别失败：${String(error instanceof Error ? error.message : error).slice(0, 200)}` : "识别失败，可以稍后重试。" });

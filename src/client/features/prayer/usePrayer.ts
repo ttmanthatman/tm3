@@ -98,16 +98,28 @@ export function usePrayer(options: UsePrayerOptions) {
     options.openAttachmentFromTap({ id: imageMessageId, channelId: message.channelId, type: "image" } as MessageDTO, event);
   }
 
+  function relatedVersesPayload(message: MessageDTO) {
+    if (message.type === "prayer") return prayerPayload(message);
+    const raw = message.payload && typeof message.payload === "object" && !Array.isArray(message.payload)
+      ? (message.payload as Partial<PrayerPayload>)
+      : {};
+    return {
+      aiSuggestions: Array.isArray(raw.aiSuggestions) ? raw.aiSuggestions : [],
+      aiSuggestionSuccessCount: Number(raw.aiSuggestionSuccessCount || 0),
+      aiSuggestionMaxSuccess: Number(raw.aiSuggestionMaxSuccess || 7)
+    };
+  }
+
   function prayerAiSuggestions(message: MessageDTO) {
-    return prayerPayload(message).aiSuggestions || [];
+    return relatedVersesPayload(message).aiSuggestions || [];
   }
 
   function prayerAiSuggestionCount(message: MessageDTO) {
-    return prayerPayload(message).aiSuggestionSuccessCount || 0;
+    return relatedVersesPayload(message).aiSuggestionSuccessCount || 0;
   }
 
   function prayerAiSuggestionMax(message: MessageDTO) {
-    return prayerPayload(message).aiSuggestionMaxSuccess || 7;
+    return relatedVersesPayload(message).aiSuggestionMaxSuccess || 7;
   }
 
   function prayerAiLimitReached(message: MessageDTO) {

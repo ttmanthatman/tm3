@@ -34,6 +34,9 @@ interface GraceHarness {
   uploads: Array<{ file: File; options?: GraceUploadOptions }>;
   submitted: MessageDTO[];
   notices: string[];
+  updated: MessageDTO[];
+  deleted: number[];
+  scrolls: boolean[];
   requests: Array<{ url: string; init?: RequestInit }>;
 }
 
@@ -41,12 +44,18 @@ function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHa
   const uploads: GraceHarness["uploads"] = [];
   const submitted: MessageDTO[] = [];
   const notices: string[] = [];
+  const updated: MessageDTO[] = [];
+  const deleted: number[] = [];
+  const scrolls: boolean[] = [];
   const requests: GraceHarness["requests"] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
     const target = String(url);
     requests.push({ url: target, init });
     if (target.endsWith("/api/grace")) return Promise.resolve(jsonResponse({ success: true, message: graceMessage() }));
+    if (target.endsWith("/grateful")) return Promise.resolve(jsonResponse({ success: true, message: graceMessage(56) }));
+    if (target.endsWith("/grace-update")) return Promise.resolve(jsonResponse({ success: true, message: graceMessage(57) }));
+    if (target.endsWith("/grace") && init?.method === "DELETE") return Promise.resolve(jsonResponse({ success: true, deleted: 1 }));
     return Promise.resolve(jsonResponse({ message: "not found" }, 404));
   }) as typeof fetch;
   const grace = useGrace({
@@ -58,13 +67,16 @@ function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHa
     },
     currentChannelId: () => 9,
     onSubmitted: (message) => submitted.push(message),
+    onUpdated: (message) => updated.push(message),
+    onDeleted: () => { deleted.push(1); },
+    scrollBottom: (smooth) => scrolls.push(!!smooth),
     notify: (text) => notices.push(text)
   });
   // 测试结束后恢复 fetch（node:test 串行执行本文件用例）。
   test.after(() => {
     globalThis.fetch = originalFetch;
   });
-  return { grace, uploads, submitted, notices, requests };
+  return { grace, uploads, submitted, notices, updated, deleted, scrolls, requests };
 }
 
 test("graceSubmissionReady requires text or voice but accepts voice-only", () => {
@@ -74,15 +86,15 @@ test("graceSubmissionReady requires text or voice but accepts voice-only", () =>
   assert.equal(graceSubmissionReady("", true), true);
 });
 
-test("gracePayload normalizes loose payload values", () => {
+test("gracePayload normalizes loose payload values and interaction defaults", () => {
   const message = { ...graceMessage(), payload: { kind: "grace", voiceMessageId: "5", imageMessageId: 0 } };
-  assert.deepEqual(gracePayload(message), { kind: "grace", voiceMessageId: 5, imageMessageId: null, effect: undefined });
-  assert.deepEqual(gracePayload({ ...graceMessage(), payload: undefined }), {
-    kind: "grace",
-    voiceMessageId: null,
-    imageMessageId: null,
-    effect: undefined
-  });
+  const payload = gracePayload(message);
+  assert.equal(payload.voiceMessageId, 5);
+  assert.equal(payload.imageMessageId, null);
+  assert.equal(payload.gratitudeCount, 0);
+  assert.equal(payload.currentUserGrateful, false);
+  assert.deepEqual(payload.gratefulBy, []);
+  assert.deepEqual(payload.aiSuggestions, []);
 });
 
 test("empty grace submission is rejected before any network request", async () => {
@@ -137,4 +149,27 @@ test("a failed voice upload keeps the composer open with an inline error", async
   assert.equal(grace.graceComposerOpen.value, true);
   assert.equal(submitted.length, 0);
   assert.equal(requests.some((request) => request.url.endsWith("/api/grace") && request.init?.method === "POST"), false);
+});
+
+test("gratitude records against the grace card and replaces the rendered message", async () => {
+  const { grace, updated, requests } = createGraceHarness();
+  await grace.markGraceGrateful(graceMessage());
+  assert.equal(requests.at(-1)?.url.endsWith("/api/messages/55/grateful"), true);
+  assert.equal(requests.at(-1)?.init?.method, "POST");
+  assert.deepEqual(updated.map((message) => message.id), [56]);
+});
+
+test("updating a testimony reuses the update editor flow and appends the pushed card", async () => {
+  const { grace, submitted, scrolls, requests } = createGraceHarness();
+  grace.openGraceUpdateEditor(graceMessage());
+  grace.graceUpdateContent.value = "后来身体恢复了";
+  await grace.publishGraceUpdate();
+
+  const update = requests.find((request) => request.url.endsWith("/api/messages/55/grace-update"));
+  assert.ok(update);
+  assert.equal(update.init?.method, "POST");
+  assert.deepEqual(JSON.parse(String(update.init?.body)), { content: "后来身体恢复了", imageMessageId: null });
+  assert.deepEqual(submitted.map((message) => message.id), [57]);
+  assert.deepEqual(scrolls, [true]);
+  assert.equal(grace.pendingGraceUpdate.value, null);
 });

@@ -46,6 +46,7 @@ function createHarness() {
     },
     canAccessChannel: async () => true,
     canonicalPrayerMessage: async (message) => message as Message,
+    canonicalGraceMessage: async (message) => message as Message,
     hydrateMessage: async (id) => ({ id }) as MessageDTO,
     ensureAiRoleCharacter: async (username, fallbackName, displayName) => fakeActor(2, displayName || fallbackName || username),
     ensureWhyAssistantCharacter: async (displayName) => fakeActor(1, displayName || "为什么助手"),

@@ -51,6 +51,7 @@ const emit = defineEmits<{
           <div class="grace-favorite-card-content">
             <GraceCard
               :message="favorite.message"
+              :interactive="false"
               @open-image="(imageMessageId, event) => emit('open-image', favorite, imageMessageId, event)"
             />
           </div>

@@ -8,9 +8,7 @@ import {
   Bookmark,
   BookOpen,
   Bot,
-  ChevronDown,
   ChevronRight,
-  ChevronUp,
   DoorOpen,
   CheckCircle2,
   CircleOff,
@@ -196,6 +194,7 @@ import { useAdminTools } from "./features/admin/useAdminTools";
 import { useAiSettings } from "./features/admin/useAiSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
+import RelatedVersesPanel from "./features/prayer/RelatedVersesPanel.vue";
 import AiAsrSettingsPanel from "./features/admin/AiAsrSettingsPanel.vue";
 import GraceComposer from "./features/grace/GraceComposer.vue";
 import GraceCard from "./features/grace/GraceCard.vue";
@@ -933,8 +932,28 @@ const grace = useGrace({
     if (channel) channel.hasGraceItems = true;
     store.appendLocalMessage(message);
   },
+  onUpdated: (message) => store.replaceMessage(message),
+  onDeleted: () => store.loadMessages(),
+  scrollBottom,
   notify: showGraceToast
 });
+const {
+  pendingGraceUpdate,
+  graceUpdateContent,
+  graceUpdateBusy,
+  graceUpdateError,
+  graceUpdatePhotoPreview,
+  graceUpdateCanPublish,
+  graceActionText,
+  graceLatestTime,
+  markGraceGrateful,
+  clearGraceUpdatePhoto,
+  openGraceUpdateEditor,
+  closeGraceUpdateEditor,
+  handleGraceUpdatePhotoPick,
+  publishGraceUpdate,
+  withdrawGrace
+} = grace;
 const {
   slashCommandToken,
   matchingSlashCommands,
@@ -5638,59 +5657,56 @@ const messageRowBindings = {
                         <CheckCircle2 :size="15" />{{ prayerPayload(row.message).currentUserPrayed ? "再次记录祷告" : "我已祷告" }}
                       </button>
                       <template v-if="isMine(row.message) && prayerPayload(row.message).status === 'active'">
-                        <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'closed')"><CircleOff :size="15" />无需再代祷</button>
+                        <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'closed')"><CircleOff :size="15" />无需继续代祷</button>
                         <button class="mini-btn secondary" @click.stop="updatePrayerStatus(row.message, 'answered')"><CheckCircle2 :size="15" />已蒙应允</button>
                       </template>
-                      <button v-if="canPublishPrayerUpdate(row.message)" class="mini-btn secondary" @click.stop="openPrayerUpdateEditor(row.message)"><Bell :size="15" />更新最新动态</button>
+                      <button v-if="canPublishPrayerUpdate(row.message)" class="mini-btn secondary" @click.stop="openPrayerUpdateEditor(row.message)"><Bell :size="15" />更新动态</button>
                       <button v-if="isMine(row.message)" class="mini-btn danger-soft" @click.stop="withdrawPrayer(row.message)"><Trash2 :size="15" />撤回</button>
                     </div>
-                    <div class="prayer-ai" @click.stop>
-                      <button class="prayer-ai-toggle" type="button" @click="togglePrayerAiSuggestions(row.message)">
-                        <BookOpen :size="15" />
-                        <span>也许相关的经文<template v-if="prayerAiSuggestionCount(row.message)"> · {{ prayerAiSuggestionCount(row.message) }}</template></span>
-                        <ChevronUp v-if="isPrayerAiExpanded(row.message)" :size="15" />
-                        <ChevronDown v-else :size="15" />
-                      </button>
-                      <div v-if="isPrayerAiExpanded(row.message)" class="prayer-ai-body">
-                        <article v-for="suggestion in prayerAiSuggestions(row.message)" :key="suggestion.id" class="prayer-ai-suggestion">
-                          <div class="prayer-ai-meta">
-                            <span>{{ adminDate(suggestion.createdAt) }}</span>
-                            <small v-if="suggestion.createdByName">由 {{ suggestion.createdByName }} 生成</small>
-                          </div>
-                          <div v-for="reference in suggestion.references" :key="`${suggestion.id}-${reference}`" class="prayer-ai-reference">
-                            <button class="prayer-ai-reference-btn" type="button" @click="toggleBibleReference(suggestion.id, reference)">
-                              <span>{{ reference }}</span>
-                              <ChevronUp v-if="isBibleReferenceExpanded(suggestion.id, reference)" :size="14" />
-                              <ChevronDown v-else :size="14" />
-                            </button>
-                            <div v-if="isBibleReferenceExpanded(suggestion.id, reference)" class="prayer-ai-verses">
-                              <p v-if="isBibleReferenceBusy(suggestion.id, reference)" class="prayer-ai-empty">正在查找经文...</p>
-                              <template v-else-if="bibleReferenceLookup(suggestion.id, reference)?.verses.length">
-                                <small>{{ bibleReferenceLookup(suggestion.id, reference)?.translation }}</small>
-                                <div class="inline-bible-passage"><p class="formatted-bible-text">{{ formatBibleLookup(bibleReferenceLookup(suggestion.id, reference), reference) }}</p><button class="inline-bible-reader-link" type="button" title="在圣经中阅读" aria-label="在圣经中阅读并高亮这处经文" @click.stop="openBibleReferenceInWorkspace(suggestion.id, reference)"><BookOpen :size="15" /></button></div>
-                              </template>
-                              <p v-else class="prayer-ai-empty">暂时找不到这处经文</p>
-                            </div>
-                          </div>
-                        </article>
-                        <p v-if="!prayerAiSuggestions(row.message).length && !isPrayerAiBusy(row.message)" class="prayer-ai-empty">还没有经文建议</p>
-                        <p v-if="aiSuggestionErrors[row.message.id]" class="prayer-ai-error">{{ aiSuggestionErrors[row.message.id] }}</p>
-                        <div class="prayer-ai-actions">
-                          <button
-                            class="mini-btn secondary"
-                            :disabled="isPrayerAiBusy(row.message) || prayerAiLimitReached(row.message)"
-                            @click="generatePrayerAiSuggestions(row.message)"
-                          >
-                            {{ isPrayerAiBusy(row.message) ? "正在寻找相关经文..." : prayerAiSuggestions(row.message).length ? "换一组" : "生成建议" }}
-                          </button>
-                          <small v-if="prayerAiLimitReached(row.message)">这张代祷卡片的经文建议已达到上限</small>
-                        </div>
-                      </div>
-                    </div>
+                    <RelatedVersesPanel
+                      :suggestions="prayerAiSuggestions(row.message)"
+                      :suggestion-count="prayerAiSuggestionCount(row.message)"
+                      :limit-reached="prayerAiLimitReached(row.message)"
+                      :expanded="isPrayerAiExpanded(row.message)"
+                      :busy="isPrayerAiBusy(row.message)"
+                      :error="aiSuggestionErrors[row.message.id] || ''"
+                      :is-reference-expanded="isBibleReferenceExpanded"
+                      :is-reference-busy="isBibleReferenceBusy"
+                      :reference-lookup="bibleReferenceLookup"
+                      :format-lookup="formatBibleLookup"
+                      @toggle="togglePrayerAiSuggestions(row.message)"
+                      @generate="generatePrayerAiSuggestions(row.message)"
+                      @toggle-reference="toggleBibleReference"
+                      @open-reference="openBibleReferenceInWorkspace"
+                    />
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'grace'">
-                  <GraceCard :message="row.message" @open-image="(imageMessageId, event) => openPrayerImage(row.message, imageMessageId, event)" />
+                  <GraceCard
+                    :message="row.message"
+                    :mine="isMine(row.message)"
+                    :can-update="isMine(row.message) || !!store.account?.isAdmin"
+                    :action-text="graceActionText(row.message)"
+                    :latest-time="graceLatestTime(row.message)"
+                    :ai-suggestions="prayerAiSuggestions(row.message)"
+                    :ai-suggestion-count="prayerAiSuggestionCount(row.message)"
+                    :ai-limit-reached="prayerAiLimitReached(row.message)"
+                    :ai-expanded="isPrayerAiExpanded(row.message)"
+                    :ai-busy="isPrayerAiBusy(row.message)"
+                    :ai-error="aiSuggestionErrors[row.message.id] || ''"
+                    :is-reference-expanded="isBibleReferenceExpanded"
+                    :is-reference-busy="isBibleReferenceBusy"
+                    :reference-lookup="bibleReferenceLookup"
+                    :format-lookup="formatBibleLookup"
+                    @open-image="(imageMessageId, event) => openPrayerImage(row.message, imageMessageId, event)"
+                    @grateful="markGraceGrateful(row.message)"
+                    @update="openGraceUpdateEditor(row.message)"
+                    @withdraw="withdrawGrace(row.message)"
+                    @toggle-ai="togglePrayerAiSuggestions(row.message)"
+                    @generate-ai="generatePrayerAiSuggestions(row.message)"
+                    @toggle-reference="toggleBibleReference"
+                    @open-reference="openBibleReferenceInWorkspace"
+                  />
                 </template>
                 <template v-else-if="row.message.type === 'sermon_request'">
                   <SermonRequestCard :message="row.message" />
@@ -5877,6 +5893,22 @@ const messageRowBindings = {
       @submit="publishPrayerUpdate"
       @clear-photo="clearPrayerUpdatePhoto"
       @photo-pick="handlePrayerUpdatePhotoPick"
+    />
+
+    <PrayerUpdateEditor
+      v-if="pendingGraceUpdate"
+      v-model:content="graceUpdateContent"
+      :busy="graceUpdateBusy"
+      :error="graceUpdateError"
+      :photo-preview="graceUpdatePhotoPreview"
+      :can-publish="graceUpdateCanPublish"
+      title="更新恩典见证"
+      close-label="关闭恩典见证编辑"
+      placeholder="写下新的恩典见证…"
+      @close="closeGraceUpdateEditor"
+      @submit="publishGraceUpdate"
+      @clear-photo="clearGraceUpdatePhoto"
+      @photo-pick="handleGraceUpdatePhotoPick"
     />
 
     <GraceComposer :grace="grace" />

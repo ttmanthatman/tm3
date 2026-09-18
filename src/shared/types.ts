@@ -91,9 +91,26 @@ export interface PrayerPayload extends MessageEffectPayload {
 
 export interface GracePayload extends MessageEffectPayload {
   kind: "grace";
+  sourceGraceMessageId?: number | null;
+  latestUpdateAt?: string;
+  latestUpdateBy?: string;
   voiceMessageId?: number | null;
   imageMessageId?: number | null;
   voice?: VoicePayload | null;
+  updates?: Array<{ content: string; at: string; by?: string; imageMessageId?: number }>;
+  gratitudeCount: number;
+  gratitudeActionCount: number;
+  currentUserGrateful: boolean;
+  gratefulBy: Array<{
+    accountId: number;
+    displayName: string;
+    avatarPath?: string | null;
+    latestGratefulAt: string;
+    times: number;
+  }>;
+  aiSuggestions?: AiSuggestionDTO[];
+  aiSuggestionSuccessCount?: number;
+  aiSuggestionMaxSuccess?: number;
 }
 
 export interface VoicePayload {

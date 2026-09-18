@@ -1,13 +1,15 @@
-import type { MessageType, PrismaClient } from "@prisma/client";
+import { Prisma, type Message, type MessageType, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import type { MessageDTO } from "../../shared/types.js";
 import { cleanSupportedMessageEffect } from "../../shared/messageEffects.js";
+import { prependPrayerUpdateHistory } from "../prayerUpdates.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
 
 export type GraceAuthContext = {
   accountId: number;
   actorId: number;
+  username: string;
   isAdmin: boolean;
   isGuest: boolean;
   canPinMessages: boolean;
@@ -30,6 +32,8 @@ export type GraceRouteDependencies = {
     pushOrigin?: string;
   }): Promise<{ id: number }>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
+  deleteMessages(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>): Promise<number>;
+  io: { to(room: string): { emit(event: string, payload: unknown): unknown } };
   cleanText(input: unknown): string;
 };
 
@@ -44,7 +48,22 @@ function cleanGracePayload(input: { voiceMessageId?: number; imageMessageId?: nu
 }
 
 export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDependencies) {
-  const { prisma, requireAuth, canAccessChannel, canWriteChannel, createMessageFromActor, hydrateMessage, cleanText } = deps;
+  const { prisma, requireAuth, canAccessChannel, canWriteChannel, createMessageFromActor, hydrateMessage, deleteMessages, io, cleanText } = deps;
+
+  function gracePayloadRaw(input: unknown) {
+    return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  }
+
+  function sourceGraceMessageId(input: unknown, fallback: number) {
+    const sourceId = Number(gracePayloadRaw(input).sourceGraceMessageId || 0);
+    return Number.isFinite(sourceId) && sourceId > 0 ? sourceId : fallback;
+  }
+
+  async function canonicalGraceMessage(message: Message) {
+    const sourceId = sourceGraceMessageId(message.payload, message.id);
+    if (sourceId === message.id) return message;
+    return (await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "grace" } })) || message;
+  }
 
   async function isValidGraceVoiceMessage(voiceMessageId: number, channelId: number) {
     const source = await prisma.message.findFirst({
@@ -80,6 +99,7 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
     });
     const favorites = [];
     for (const row of rows) {
+      if (sourceGraceMessageId(row.payload, row.id) !== row.id) continue;
       if (!(await canAccessChannel(auth.accountId, row.channelId))) continue;
       const message = await hydrateMessage(row.id, auth.accountId);
       if (!message) continue;
@@ -129,5 +149,77 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
       pushOrigin
     });
     return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
+  });
+
+  app.post("/api/messages/:messageId/grateful", { preHandler: requireAuth }, async (request, reply) => {
+    const auth = (request as AuthedGraceRequest).auth;
+    const messageId = Number((request.params as { messageId: string }).messageId);
+    const message = await prisma.message.findUnique({ where: { id: messageId } });
+    if (!message || message.type !== "grace") return reply.code(404).send({ success: false, message: "恩典见证不存在" });
+    if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此恩典见证" });
+    const target = await canonicalGraceMessage(message);
+    await prisma.prayerAction.create({ data: { messageId: target.id, accountId: auth.accountId } });
+    const dto = await hydrateMessage(messageId, auth.accountId);
+    if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
+    return { success: true, message: dto };
+  });
+
+  app.post("/api/messages/:messageId/grace-update", { preHandler: requireAuth }, async (request, reply) => {
+    const auth = (request as AuthedGraceRequest).auth;
+    const pushOrigin = pushOriginFromHeaders(request.headers);
+    const messageId = Number((request.params as { messageId: string }).messageId);
+    const body = z.object({ content: z.string().max(10000), imageMessageId: z.number().nullable().optional() }).parse(request.body || {});
+    const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+    if (!message || message.type !== "grace") return reply.code(404).send({ success: false, message: "恩典见证不存在" });
+    if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此恩典见证" });
+    const source = await canonicalGraceMessage(message);
+    const sourceSender = source.id === message.id ? message.sender : await prisma.actor.findUnique({ where: { id: source.senderActorId } });
+    if (sourceSender?.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有记录者可以更新此恩典见证" });
+    const content = cleanText(body.content);
+    if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) {
+      return reply.code(400).send({ success: false, message: "恩典见证不能为空" });
+    }
+    const raw = gracePayloadRaw(source.payload);
+    const newImageMessageId = body.imageMessageId ? Number(body.imageMessageId) : 0;
+    if (newImageMessageId && !(await isValidGraceImageMessage(newImageMessageId, source.channelId))) {
+      return reply.code(400).send({ success: false, message: "附带照片无效" });
+    }
+    const previousImageMessageId = Number(raw.imageMessageId || 0);
+    const updates = prependPrayerUpdateHistory(
+      raw,
+      source.content || "",
+      typeof raw.latestUpdateAt === "string" ? raw.latestUpdateAt : source.createdAt.toISOString(),
+      typeof raw.latestUpdateBy === "string" ? raw.latestUpdateBy : sourceSender?.username,
+      Number.isInteger(previousImageMessageId) && previousImageMessageId > 0 ? previousImageMessageId : undefined
+    );
+    const sourcePayload = {
+      ...raw,
+      kind: "grace",
+      latestUpdateAt: new Date().toISOString(),
+      latestUpdateBy: auth.username,
+      imageMessageId: newImageMessageId > 0 ? newImageMessageId : null,
+      updates
+    };
+    await prisma.message.update({ where: { id: source.id }, data: { content, payload: sourcePayload as Prisma.InputJsonObject } });
+    const sourceDto = await hydrateMessage(source.id);
+    if (sourceDto) io.to(`ch:${source.channelId}`).emit("message:updated", sourceDto);
+    const updateMessage = await createMessageFromActor({
+      channelId: source.channelId,
+      actorId: auth.actorId,
+      content,
+      type: "grace",
+      payload: { ...sourcePayload, sourceGraceMessageId: source.id },
+      pushOrigin
+    });
+    return { success: true, message: await hydrateMessage(updateMessage.id, auth.accountId) };
+  });
+
+  app.delete("/api/messages/:messageId/grace", { preHandler: requireAuth }, async (request, reply) => {
+    const auth = (request as AuthedGraceRequest).auth;
+    const messageId = Number((request.params as { messageId: string }).messageId);
+    const message = await prisma.message.findUnique({ where: { id: messageId }, include: { sender: true } });
+    if (!message || message.type !== "grace") return reply.code(404).send({ success: false, message: "恩典见证不存在" });
+    if (message.sender.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有记录者可以撤回此恩典见证" });
+    return { success: true, deleted: await deleteMessages([{ id: message.id, channelId: message.channelId, filePath: message.filePath }]) };
   });
 }
