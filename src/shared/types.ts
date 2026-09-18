@@ -170,6 +170,15 @@ export interface FavoriteMessageDTO {
   message: MessageDTO;
 }
 
+export interface GraceFavoriteDTO {
+  id: number;
+  savedAt: string;
+  own: boolean;
+  favorited: boolean;
+  channel: { id: number; name: string };
+  message: MessageDTO;
+}
+
 export interface LikeNotificationDTO {
   id: number;
   channelId: number;
@@ -275,6 +284,7 @@ export interface ChannelDTO {
   canWrite?: boolean;
   canPin?: boolean;
   hasPrayerItems?: boolean;
+  hasGraceItems?: boolean;
   memberCount: number;
   lastMessageId: number | null;
   pinned?: PinnedDTO | null;

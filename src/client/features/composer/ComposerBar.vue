@@ -11,6 +11,7 @@ import {
   Pause,
   Play,
   Plus,
+  Sparkles,
   RotateCcw,
   Send,
   Square,
@@ -50,6 +51,7 @@ const props = defineProps<{
   composerPromptPhase: ComposerPlaceholderPhase;
   composerPromptChars: string[];
   prayerOnly: boolean;
+  graceOnly: boolean;
   canSendText: boolean;
   canSubmitText: boolean;
   messageSendPending: boolean;
@@ -102,6 +104,7 @@ const props = defineProps<{
   sendVoice: () => void;
   openChainModal: () => void;
   startPrayerComposer: () => void;
+  openGraceComposer: () => void;
   openSermonWorkspace: () => void;
 }>();
 
@@ -143,7 +146,7 @@ defineExpose({ composerInput });
             v-model="input"
             rows="1"
             :class="{ 'composer-glow': composerFocused }"
-            :placeholder="composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : '')"
+            :placeholder="composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
             @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
             @blur="composerFocused = false"
             @input="onInput"
@@ -296,6 +299,10 @@ defineExpose({ composerInput });
       <button class="tool-tile" @click="startPrayerComposer">
         <span><HeartHandshake :size="25" /></span>
         <small>代祷</small>
+      </button>
+      <button class="tool-tile" @click="toggleMorePanel(); openGraceComposer()">
+        <span><Sparkles :size="25" /></span>
+        <small>数算恩典</small>
       </button>
       <button class="tool-tile" @click="openSermonWorkspace">
         <span><Monitor :size="25" /></span>

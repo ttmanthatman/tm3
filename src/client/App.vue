@@ -30,6 +30,7 @@ import {
   Save,
   Send,
   Settings,
+  Sparkles,
   Trash2,
   ThumbsUp,
   Upload,
@@ -45,6 +46,7 @@ import type {
   BibleSessionPayloadDTO,
   ChannelDTO,
   FavoriteMessageDTO,
+  GraceFavoriteDTO,
   MessageReactionsDTO,
   FlashEffectSettingsDTO,
   FriendListenerDTO,
@@ -197,6 +199,7 @@ import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import AiAsrSettingsPanel from "./features/admin/AiAsrSettingsPanel.vue";
 import GraceComposer from "./features/grace/GraceComposer.vue";
 import GraceCard from "./features/grace/GraceCard.vue";
+import GraceFavorites from "./features/grace/GraceFavorites.vue";
 import { useGrace } from "./features/grace/useGrace";
 import ChannelEditorDialog from "./features/channels/ChannelEditorDialog.vue";
 import MemberPickerDialog from "./features/channels/MemberPickerDialog.vue";
@@ -257,10 +260,13 @@ const replyTo = ref<MessageDTO | null>(null);
 const musicMentionToken = computed(() => (selectedMusicMention.value ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)));
 const showChannels = ref(false);
 const showFavorites = ref(false);
+const showGraceFavorites = ref(false);
 const showBibleFavorites = ref(false);
 const favoriteMessages = ref<FavoriteMessageDTO[]>([]);
+const graceFavoriteMessages = ref<GraceFavoriteDTO[]>([]);
 const favoritesLoading = ref(false);
-const showingFavoriteSurface = computed(() => showFavorites.value || showBibleFavorites.value);
+const graceFavoritesLoading = ref(false);
+const showingFavoriteSurface = computed(() => showFavorites.value || showGraceFavorites.value || showBibleFavorites.value);
 const showMembers = ref(false);
 const showReceptionManager = ref(false);
 const channelsCollapsed = ref(false);
@@ -681,6 +687,7 @@ const {
   showChannels,
   showMembers,
   showFavorites,
+  showGraceFavorites,
   showBibleFavorites,
   sermonWorkspaceOpen,
   bookWorkspaceOpen,
@@ -781,24 +788,27 @@ watch(pendingChain, (message) => {
   if (!message) chainPromptAnchor.value = null;
 });
 
-async function switchVisibleChannel(channelId: number, prayerOnly = false) {
-  if (prayerOnly) await store.switchPrayerView(channelId);
+async function switchVisibleChannel(channelId: number, view: "chat" | "prayer" | "grace" = "chat") {
+  if (view === "prayer") await store.switchPrayerView(channelId);
+  else if (view === "grace") await store.switchGraceView(channelId);
   else await store.switchChannel(channelId);
 }
 
-async function openChannelFromList(channelId: number, prayerOnly = false) {
+async function openChannelFromList(channelId: number, view: "chat" | "prayer" | "grace" = "chat") {
   if (Date.now() < suppressNextTapUntil) return;
   if (!showingFavoriteSurface.value) saveReadPosition();
   showFavorites.value = false;
+  showGraceFavorites.value = false;
   showBibleFavorites.value = false;
   clearPrayerComposerPhoto();
-  await switchVisibleChannel(channelId, prayerOnly);
+  await switchVisibleChannel(channelId, view);
   showChannels.value = false;
 }
 
 async function openFavorites() {
   if (!showFavorites.value) saveReadPosition();
   showFavorites.value = true;
+  showGraceFavorites.value = false;
   showBibleFavorites.value = false;
   showChannels.value = false;
   favoritesLoading.value = true;
@@ -808,6 +818,35 @@ async function openFavorites() {
   } finally {
     favoritesLoading.value = false;
   }
+}
+
+async function openGraceFavorites() {
+  if (!showGraceFavorites.value) saveReadPosition();
+  showGraceFavorites.value = true;
+  showFavorites.value = false;
+  showBibleFavorites.value = false;
+  showChannels.value = false;
+  graceFavoritesLoading.value = true;
+  try {
+    const result = await api<{ favorites: GraceFavoriteDTO[] }>("/api/grace/favorites");
+    graceFavoriteMessages.value = result.favorites;
+  } finally {
+    graceFavoritesLoading.value = false;
+  }
+}
+
+async function removeGraceFavorite(favorite: GraceFavoriteDTO) {
+  if (favorite.own || !favorite.favorited || !window.confirm("取消收藏这张恩典卡？")) return;
+  await api(`/api/messages/${favorite.message.id}/favorite`, { method: "PUT", body: JSON.stringify({ favorited: false }) });
+  graceFavoriteMessages.value = graceFavoriteMessages.value.filter((item) => item.id !== favorite.id);
+  store.updateMessageReactions(favorite.message.id, {
+    currentUserFavorited: false,
+    favoriteCount: Math.max(0, (favorite.message.reactions?.favoriteCount || 1) - 1)
+  });
+}
+
+async function openGraceFavoriteMessage(favorite: GraceFavoriteDTO) {
+  await jumpToMessageInChannel(favorite.channel.id, favorite.message.id);
 }
 
 async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
@@ -888,7 +927,12 @@ function showGraceToast(text: string) {
 }
 const grace = useGrace({
   uploadFile,
-  jumpToMessage: (channelId, messageId) => jumpToMessageInChannel(channelId, messageId),
+  currentChannelId: () => store.currentChannelId || null,
+  onSubmitted: (message) => {
+    const channel = store.channels.find((row) => row.id === message.channelId);
+    if (channel) channel.hasGraceItems = true;
+    store.appendLocalMessage(message);
+  },
   notify: showGraceToast
 });
 const {
@@ -1143,7 +1187,7 @@ function handleGlobalEscape(event: KeyboardEvent) {
 }
 
 watch(
-  () => [store.currentChannelId, store.prayerOnly] as const,
+  () => [store.currentChannelId, store.prayerOnly, store.graceOnly] as const,
   async () => {
     readPositionRestoreToken += 1;
     activeReadAnchor = null;
@@ -1189,7 +1233,7 @@ watch(
 );
 
 watch(
-  () => [store.currentChannelId, store.prayerOnly, store.loadingInitialMessages, store.messages.map((message) => message.id).join(",")] as const,
+  () => [store.currentChannelId, store.prayerOnly, store.graceOnly, store.loadingInitialMessages, store.messages.map((message) => message.id).join(",")] as const,
   () => {
     if (!pendingReadPositionRestore.value || store.loadingInitialMessages || readPositionRestoreActive) return;
     void restoreSavedReadPosition();
@@ -1198,11 +1242,11 @@ watch(
 
 watch(
   () => {
-    const pinned = !store.prayerOnly && store.pinned ? store.pinned : null;
-    return `${pinned?.id || 0}:${pinned?.version || 0}:${pinned?.dismissed ? "dismissed" : "open"}:${store.prayerOnly ? "prayers" : "chat"}`;
+    const pinned = !store.prayerOnly && !store.graceOnly && store.pinned ? store.pinned : null;
+    return `${pinned?.id || 0}:${pinned?.version || 0}:${pinned?.dismissed ? "dismissed" : "open"}:${store.prayerOnly ? "prayers" : store.graceOnly ? "grace" : "chat"}`;
   },
   () => {
-    const pinned = !store.prayerOnly && store.pinned ? store.pinned : null;
+    const pinned = !store.prayerOnly && !store.graceOnly && store.pinned ? store.pinned : null;
     pinnedExpanded.value = !!pinned && !pinned.dismissed;
   },
   { immediate: true }
@@ -1246,6 +1290,7 @@ watch(
         messageChannelId: incoming.channelId,
         currentChannelId: store.currentChannelId,
         prayerOnly: store.prayerOnly,
+        graceOnly: store.graceOnly,
         messageType: incoming.type,
         activeView: !showingFavoriteSurface.value && !bibleOpen.value && !sermonWorkspaceOpen.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value,
         messageVisible: isNearMessageBottom(220),
@@ -1295,8 +1340,10 @@ watch(
     } else {
       versionUpdateNotice.value = "";
       bibleFavorites.value = [];
+      graceFavoriteMessages.value = [];
       bibleFavoritesError.value = "";
       showBibleFavorites.value = false;
+      showGraceFavorites.value = false;
       clearMusicScoreCache();
       musicTracks.value = [];
       resetMusicScoreState();
@@ -1616,13 +1663,15 @@ const activeMessageNotice = computed(() => messageNoticeItems.value[0] || null);
 const messageNoticeCount = computed(() => messageNoticeItems.value.length);
 const chatSubtitleText = computed(() => {
   if (showFavorites.value) return "集中查看所有收藏，长按消息可跳转到聊天上下文";
+  if (showGraceFavorites.value) return "自己发出的恩典自动收录，也可以收藏别人的恩典卡";
   if (showBibleFavorites.value) return "经文正文只展开一次，避免出处与正文重复嵌套";
   if (store.prayerOnly) return "只显示本频道代祷卡片";
+  if (store.graceOnly) return "只显示本频道恩典卡片";
   return "";
 });
 const isAdmin = computed(() => !!store.account?.isAdmin);
-const canPinCurrentChannel = computed(() => !store.prayerOnly && !!currentChannel.value?.canPin);
-const visiblePinned = computed(() => (!store.prayerOnly && store.pinned ? store.pinned : null));
+const canPinCurrentChannel = computed(() => !store.prayerOnly && !store.graceOnly && !!currentChannel.value?.canPin);
+const visiblePinned = computed(() => (!store.prayerOnly && !store.graceOnly && store.pinned ? store.pinned : null));
 const themeOptions = computed<ThemeDTO[]>(() => [...builtInThemes, ...(store.appearance.customThemes || [])]);
 const activeTheme = computed(() => (themeOptions.value.some((theme) => theme.id === store.account?.theme) ? store.account?.theme || "wechat" : "wechat"));
 const activeThemeConfig = computed(() => themeOptions.value.find((theme) => theme.id === activeTheme.value) || builtInThemes[0]);
@@ -2412,9 +2461,9 @@ function syncNewestIndicators(root = scroller.value) {
   if (!awayFromNewest.value) hasUnreadMessages.value = false;
 }
 
-function readPositionStorageKey(channelId = store.currentChannelId, prayerOnly = store.prayerOnly) {
+function readPositionStorageKey(channelId = store.currentChannelId, prayerOnly = store.prayerOnly, graceOnly = store.graceOnly) {
   if (!store.account || !channelId) return "";
-  return `team-chat-read-position-${store.account.id}-${channelId}-${prayerOnly ? "prayers" : "chat"}`;
+  return `team-chat-read-position-${store.account.id}-${channelId}-${prayerOnly ? "prayers" : graceOnly ? "grace" : "chat"}`;
 }
 
 function visibleMessageElements() {
@@ -2628,11 +2677,12 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
   chatScrollIntentTracker.reset();
   pendingReadPositionRestore.value = false;
   try {
-    if (store.currentChannelId !== channelId) {
+    if (store.currentChannelId !== channelId || store.prayerOnly || store.graceOnly) {
       saveReadPosition();
       await switchVisibleChannel(channelId);
     }
     showFavorites.value = false;
+    showGraceFavorites.value = false;
     showBibleFavorites.value = false;
     showChannels.value = false;
     await nextTick();
@@ -4479,8 +4529,10 @@ const chatHeaderBindings = computed(() => ({
   notificationAttentionVisible: notificationAttentionVisible.value,
   notificationNudgeCharacters,
   showBibleFavorites: showBibleFavorites.value,
+  showGraceFavorites: showGraceFavorites.value,
   showFavorites: showFavorites.value,
   prayerOnly: store.prayerOnly,
+  graceOnly: store.graceOnly,
   currentChannel: currentChannel.value,
   chatSubtitleText: chatSubtitleText.value,
   showingFavoriteSurface: showingFavoriteSurface.value,
@@ -4535,6 +4587,7 @@ const composerBindings = computed(() => ({
   composerPromptPhase: composerPromptPhase.value,
   composerPromptChars: composerPromptChars.value,
   prayerOnly: store.prayerOnly,
+  graceOnly: store.graceOnly,
   canSendText: canSendText.value,
   canSubmitText: canSubmitText.value,
   messageSendPending: messageSendPending.value,
@@ -4587,6 +4640,7 @@ const composerBindings = computed(() => ({
   sendVoice,
   openChainModal,
   startPrayerComposer,
+  openGraceComposer: () => grace.openGraceComposer(),
   openSermonWorkspace
 }));
 // Stable helper/handler bundle shared by the timeline bubble and the favorites
@@ -5006,12 +5060,12 @@ const messageRowBindings = {
       <template v-for="channel in store.channels" :key="channel.id">
         <div
           class="channel-row-wrap"
-          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly, 'has-action': canOpenChannelSettings(channel), 'has-list-color': !!channel.listColor }"
+          :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly && !store.graceOnly, 'has-action': canOpenChannelSettings(channel), 'has-list-color': !!channel.listColor }"
           :style="channel.listColor ? { '--channel-list-color': channel.listColor } : undefined"
         >
           <button
             class="channel-row"
-            :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly }"
+            :class="{ active: channel.id === store.currentChannelId && !store.prayerOnly && !store.graceOnly }"
             @click="openChannelFromList(channel.id)"
             @contextmenu="openChannelContextMenu(channel, $event)"
             @pointerdown="beginChannelLongPress(channel, $event)"
@@ -5046,11 +5100,23 @@ const messageRowBindings = {
           v-if="channel.hasPrayerItems"
           class="channel-row channel-subrow"
           :class="{ active: channel.id === store.currentChannelId && store.prayerOnly }"
-          @click="openChannelFromList(channel.id, true)"
+          @click="openChannelFromList(channel.id, 'prayer')"
         >
           <span class="channel-icon prayer-icon"><HeartHandshake :size="20" /></span>
           <span>
             <b>代祷事项</b>
+            <small>{{ channel.name }}</small>
+          </span>
+        </button>
+        <button
+          v-if="channel.hasGraceItems"
+          class="channel-row channel-subrow grace-channel-subrow"
+          :class="{ active: channel.id === store.currentChannelId && store.graceOnly }"
+          @click="openChannelFromList(channel.id, 'grace')"
+        >
+          <span class="channel-icon grace-favorites-icon"><Sparkles :size="20" /></span>
+          <span>
+            <b>数算恩典</b>
             <small>{{ channel.name }}</small>
           </span>
         </button>
@@ -5059,6 +5125,10 @@ const messageRowBindings = {
       <button class="channel-row favorites-entry" :class="{ active: showFavorites }" type="button" @click="openFavorites">
         <span class="channel-icon favorites-icon"><Heart :size="20" /></span>
         <span class="channel-row-label"><b>收藏夹</b></span>
+      </button>
+      <button class="channel-row favorites-entry grace-favorites-entry" :class="{ active: showGraceFavorites }" type="button" @click="openGraceFavorites">
+        <span class="channel-icon grace-favorites-icon"><Sparkles :size="20" /></span>
+        <span class="channel-row-label"><b>恩典收藏</b></span>
       </button>
       <button class="channel-row favorites-entry bible-favorites-entry" :class="{ active: showBibleFavorites }" type="button" @click="openBibleFavorites">
         <span class="channel-icon bible-favorites-icon"><Bookmark :size="20" /></span>
@@ -5257,6 +5327,16 @@ const messageRowBindings = {
         </div>
       </div>
 
+      <GraceFavorites
+        v-else-if="showGraceFavorites"
+        :favorites="graceFavoriteMessages"
+        :loading="graceFavoritesLoading"
+        :avatar-text="avatarText"
+        @remove="removeGraceFavorite"
+        @open="openGraceFavoriteMessage"
+        @open-image="(favorite, imageMessageId, event) => openPrayerImage(favorite.message, imageMessageId, event)"
+      />
+
       <div v-else-if="showBibleFavorites" class="messages-viewport favorites-viewport bible-favorites-viewport">
         <div class="favorites-main-scroll">
           <div class="favorites-main-head bible-favorites-main-head">
@@ -5448,7 +5528,7 @@ const messageRowBindings = {
               >
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'chain-bubble': row.message.type === 'chain', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'grace-bubble': row.message.type === 'grace', 'chain-bubble': row.message.type === 'chain', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
                 :data-message-effect="messageEffect(row.message) || null"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"

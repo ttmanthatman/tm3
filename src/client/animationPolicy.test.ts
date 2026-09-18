@@ -45,6 +45,8 @@ test("incoming rain runs only for a message visible in the active channel view",
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain" }), true);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", messageChannelId: 4 }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", prayerOnly: true }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", graceOnly: true }), false);
+  assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", graceOnly: true, messageType: "grace" }), true);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "fly" }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", activeView: false }), false);
   assert.equal(shouldTriggerIncomingRainEffect({ ...visible, effect: "rain", messageVisible: false }), false);

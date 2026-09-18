@@ -1,11 +1,9 @@
 import type { MessageType, PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
-import type { ChannelDTO, MessageDTO } from "../../shared/types.js";
+import type { MessageDTO } from "../../shared/types.js";
 import { cleanSupportedMessageEffect } from "../../shared/messageEffects.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
-
-export const GRACE_CHANNEL_NAME = "数算恩典";
 
 export type GraceAuthContext = {
   accountId: number;
@@ -20,13 +18,8 @@ type AuthedGraceRequest = FastifyRequest & { auth: GraceAuthContext };
 export type GraceRouteDependencies = {
   prisma: PrismaClient;
   requireAuth: preHandlerHookHandler;
-  io: {
-    to(room: string): { emit(event: string, payload: unknown): unknown };
-    emit(event: string, payload: unknown): unknown;
-  };
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
   canWriteChannel(accountId: number, channelId: number): Promise<boolean>;
-  channelDto(channelId: number, viewer?: Pick<GraceAuthContext, "accountId" | "isAdmin" | "canPinMessages">): Promise<ChannelDTO | null>;
   createMessageFromActor(input: {
     channelId: number;
     actorId: number;
@@ -37,7 +30,6 @@ export type GraceRouteDependencies = {
     pushOrigin?: string;
   }): Promise<{ id: number }>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
-  joinAccountChannel(accountId: number, channelId: number): void;
   cleanText(input: unknown): string;
 };
 
@@ -52,45 +44,7 @@ function cleanGracePayload(input: { voiceMessageId?: number; imageMessageId?: nu
 }
 
 export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDependencies) {
-  const { prisma, requireAuth, io, canAccessChannel, canWriteChannel, channelDto, createMessageFromActor, hydrateMessage, joinAccountChannel, cleanText } = deps;
-  let graceChannelIdCache: number | null = null;
-
-  function findGraceChannel() {
-    return prisma.channel.findFirst({ where: { name: GRACE_CHANNEL_NAME, kind: "standard" }, select: { id: true } });
-  }
-
-  async function ensureGraceChannel(): Promise<number> {
-    if (graceChannelIdCache) return graceChannelIdCache;
-    const existing = await findGraceChannel();
-    if (existing) {
-      graceChannelIdCache = existing.id;
-      return existing.id;
-    }
-    try {
-      const channel = await prisma.channel.create({
-        data: { name: GRACE_CHANNEL_NAME, description: "数算恩典，彼此见证", icon: "", isPrivate: false },
-        select: { id: true }
-      });
-      const accounts = await prisma.account.findMany({ select: { id: true } });
-      await prisma.channelMember.createMany({
-        data: accounts.map((account) => ({ accountId: account.id, channelId: channel.id, role: "member" })),
-        skipDuplicates: true
-      });
-      for (const account of accounts) joinAccountChannel(account.id, channel.id);
-      const dto = await channelDto(channel.id);
-      io.emit("channel:updated", { action: "created", channel: dto });
-      graceChannelIdCache = channel.id;
-      return channel.id;
-    } catch (error) {
-      // 并发首建时只有一个创建能成功，失败后重新查找赢家创建的频道。
-      const retry = await findGraceChannel();
-      if (retry) {
-        graceChannelIdCache = retry.id;
-        return retry.id;
-      }
-      throw error;
-    }
-  }
+  const { prisma, requireAuth, canAccessChannel, canWriteChannel, createMessageFromActor, hydrateMessage, cleanText } = deps;
 
   async function isValidGraceVoiceMessage(voiceMessageId: number, channelId: number) {
     const source = await prisma.message.findFirst({
@@ -107,19 +61,39 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
     return !!image;
   }
 
-  app.get("/api/grace/channel", { preHandler: requireAuth }, async (request, reply) => {
+  app.get("/api/grace/favorites", { preHandler: requireAuth }, async (request) => {
     const auth = (request as AuthedGraceRequest).auth;
-    if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能访问恩典频道" });
-    let channelId = await ensureGraceChannel();
-    if (!(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问恩典频道" });
-    let dto = await channelDto(channelId, auth);
-    if (!dto) {
-      graceChannelIdCache = null;
-      channelId = await ensureGraceChannel();
-      dto = await channelDto(channelId, auth);
+    const rows = await prisma.message.findMany({
+      where: {
+        type: "grace",
+        OR: [
+          { senderActorId: auth.actorId },
+          { favorites: { some: { accountId: auth.accountId } } }
+        ]
+      },
+      include: {
+        channel: { select: { id: true, name: true } },
+        favorites: { where: { accountId: auth.accountId }, select: { id: true, createdAt: true } }
+      },
+      orderBy: { createdAt: "desc" },
+      take: 200
+    });
+    const favorites = [];
+    for (const row of rows) {
+      if (!(await canAccessChannel(auth.accountId, row.channelId))) continue;
+      const message = await hydrateMessage(row.id, auth.accountId);
+      if (!message) continue;
+      const favorite = row.favorites[0];
+      favorites.push({
+        id: row.id,
+        savedAt: (favorite?.createdAt || row.createdAt).toISOString(),
+        own: row.senderActorId === auth.actorId,
+        favorited: !!favorite,
+        channel: row.channel,
+        message
+      });
     }
-    if (!dto) return reply.code(404).send({ success: false, message: "恩典频道不存在" });
-    return { success: true, channel: dto };
+    return { success: true, favorites };
   });
 
   app.post("/api/grace", { preHandler: requireAuth }, async (request, reply) => {
@@ -127,13 +101,14 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
     const pushOrigin = pushOriginFromHeaders(request.headers);
     const body = z
       .object({
+        channelId: z.number().int().positive(),
         content: z.string().max(10000).optional(),
         voiceMessageId: z.number().int().positive().optional(),
         imageMessageId: z.number().int().positive().optional(),
         effect: z.string().max(40).optional()
       })
       .parse(request.body || {});
-    const channelId = await ensureGraceChannel();
+    const channelId = body.channelId;
     if (!(await canWriteChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权在此频道发言" });
     const content = cleanText(body.content);
     const hasContent = !!content.replace(/<[^>]*>/g, "").trim() || /<br\s*\/?>/i.test(content);

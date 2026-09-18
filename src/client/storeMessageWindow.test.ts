@@ -224,7 +224,11 @@ function installFetchMock() {
 }
 
 function messageGates(gates: MessageGate[], channelId: number, prayers: boolean) {
-  return gates.filter((entry) => entry.url.includes(`channelId=${channelId}`) && entry.url.includes("prayers=1") === prayers && !entry.url.includes("before=") && !entry.url.includes("after="));
+  return gates.filter((entry) => entry.url.includes(`channelId=${channelId}`) && entry.url.includes("prayers=1") === prayers && (prayers || !entry.url.includes("grace=1")) && !entry.url.includes("before=") && !entry.url.includes("after="));
+}
+
+function graceMessageGates(gates: MessageGate[], channelId: number) {
+  return gates.filter((entry) => entry.url.includes(`channelId=${channelId}`) && entry.url.includes("grace=1") && !entry.url.includes("before=") && !entry.url.includes("after="));
 }
 
 function pagedGates(gates: MessageGate[], channelId: number) {
@@ -362,6 +366,37 @@ test("chat→prayer→chat: stale responses from earlier modes cannot commit", a
     assert.equal(store.loadingInitialMessages, false);
     assert.equal(store.messageLoadError, "");
     assert.deepEqual(store.messageCache["1:chat"]?.messages.map((row) => row.id), [30]);
+  } finally {
+    restore();
+  }
+});
+
+test("chat→grace→chat: the grace subchannel has its own request and cache window", async () => {
+  storage.clear();
+  seedSession(1);
+  const { gates, restore } = installFetchMock();
+  try {
+    const store = freshStore();
+    store.channels = [channel(1)];
+    store.currentChannelId = 1;
+
+    const firstChat = store.loadMessages();
+    await waitFor(() => messageGates(gates, 1, false).length === 1, "first chat request");
+    const toGrace = store.switchGraceView(1);
+    await waitFor(() => graceMessageGates(gates, 1).length === 1, "grace request");
+    graceMessageGates(gates, 1)[0].gate.resolve(jsonResponse({ messages: [{ ...message(41), type: "grace" }] }));
+    await toGrace;
+    const backToChat = store.switchChatView();
+    await waitFor(() => messageGates(gates, 1, false).length === 2, "return chat request");
+
+    messageGates(gates, 1, false)[1].gate.resolve(jsonResponse({ messages: [message(40)] }));
+    await backToChat;
+    messageGates(gates, 1, false)[0].gate.resolve(jsonResponse({ messages: [message(4)] }));
+    await firstChat;
+
+    assert.deepEqual(store.messages.map((row) => row.id), [40]);
+    assert.deepEqual(store.messageCache["1:chat"]?.messages.map((row) => row.id), [40]);
+    assert.deepEqual(store.messageCache["1:grace"]?.messages.map((row) => row.id), [41]);
   } finally {
     restore();
   }

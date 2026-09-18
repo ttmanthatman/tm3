@@ -31,7 +31,7 @@ const effectCommands: Array<{ command: string; effect: MessageEffect; label: str
   { command: "/哎呀", effect: "oops", label: "哎呀", hint: "点一下，文字会随机掉下来", icon: ArrowDown }
 ];
 const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道代祷卡片", icon: HeartHandshake };
-const graceCommand = { command: "/恩典", label: "恩典", hint: "存入数算恩典频道", icon: Sparkles };
+const graceCommand = { command: "/恩典", label: "恩典", hint: "发送频道恩典卡片", icon: Sparkles };
 const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
 export type SlashCommandSuggestion =
@@ -309,7 +309,7 @@ export function useComposer(options: UseComposerOptions) {
     const parsed = parseComposerText(input.value);
     const musicMention = selectedMusicMention.value;
     // /恩典 不发文本消息：打开恩典记录弹窗，输入内容预填进弹窗。
-    if (parsed.type === "grace" && !musicMention) {
+    if ((parsed.type === "grace" || store.graceOnly) && !musicMention) {
       input.value = "";
       composerSuggestionSuppressed.value = true;
       options.openGraceComposer(parsed.content);

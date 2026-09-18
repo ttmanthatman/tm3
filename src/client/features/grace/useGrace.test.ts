@@ -2,27 +2,13 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { ChannelDTO, MessageDTO } from "@shared/types";
+import type { MessageDTO } from "@shared/types";
 import { gracePayload, graceSubmissionReady, useGrace, type GraceUploadOptions } from "./useGrace";
 
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   value: { getItem: () => null, setItem: () => undefined, removeItem: () => undefined }
 });
-
-function graceChannel(): ChannelDTO {
-  return {
-    id: 9,
-    name: "数算恩典",
-    description: "",
-    icon: "",
-    kind: "standard",
-    isPrivate: false,
-    isDefault: false,
-    memberCount: 2,
-    lastMessageId: null
-  };
-}
 
 function graceMessage(id = 55): MessageDTO {
   return {
@@ -46,21 +32,20 @@ function jsonResponse(body: unknown, status = 200) {
 interface GraceHarness {
   grace: ReturnType<typeof useGrace>;
   uploads: Array<{ file: File; options?: GraceUploadOptions }>;
-  jumps: Array<{ channelId: number; messageId: number }>;
+  submitted: MessageDTO[];
   notices: string[];
   requests: Array<{ url: string; init?: RequestInit }>;
 }
 
 function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHarness {
   const uploads: GraceHarness["uploads"] = [];
-  const jumps: GraceHarness["jumps"] = [];
+  const submitted: MessageDTO[] = [];
   const notices: string[] = [];
   const requests: GraceHarness["requests"] = [];
   const originalFetch = globalThis.fetch;
   globalThis.fetch = ((url: string | URL | Request, init?: RequestInit) => {
     const target = String(url);
     requests.push({ url: target, init });
-    if (target.includes("/api/grace/channel")) return Promise.resolve(jsonResponse({ channel: graceChannel() }));
     if (target.endsWith("/api/grace")) return Promise.resolve(jsonResponse({ success: true, message: graceMessage() }));
     return Promise.resolve(jsonResponse({ message: "not found" }, 404));
   }) as typeof fetch;
@@ -71,16 +56,15 @@ function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHa
         ? { success: false, duplicate: false, skipped: false }
         : { success: true, duplicate: false, skipped: false, messageId: 77 };
     },
-    jumpToMessage: async (channelId, messageId) => {
-      jumps.push({ channelId, messageId });
-    },
+    currentChannelId: () => 9,
+    onSubmitted: (message) => submitted.push(message),
     notify: (text) => notices.push(text)
   });
   // 测试结束后恢复 fetch（node:test 串行执行本文件用例）。
   test.after(() => {
     globalThis.fetch = originalFetch;
   });
-  return { grace, uploads, jumps, notices, requests };
+  return { grace, uploads, submitted, notices, requests };
 }
 
 test("graceSubmissionReady requires text or voice but accepts voice-only", () => {
@@ -110,23 +94,23 @@ test("empty grace submission is rejected before any network request", async () =
   assert.equal(grace.graceComposerOpen.value, true);
 });
 
-test("text-only grace submission posts to the grace channel and jumps to the new card", async () => {
-  const { grace, uploads, jumps, notices, requests } = createGraceHarness();
+test("text-only grace submission posts a card to the current channel without navigating", async () => {
+  const { grace, uploads, submitted, notices, requests } = createGraceHarness();
   grace.openGraceComposer("谢谢今天的平安");
   await grace.submitGrace();
 
   const gracePost = requests.find((request) => request.url.endsWith("/api/grace") && request.init?.method === "POST");
   assert.ok(gracePost, "expected POST /api/grace");
-  assert.deepEqual(JSON.parse(String(gracePost.init?.body)), { content: "谢谢今天的平安" });
+  assert.deepEqual(JSON.parse(String(gracePost.init?.body)), { channelId: 9, content: "谢谢今天的平安" });
   assert.equal(uploads.length, 0);
-  assert.deepEqual(jumps, [{ channelId: 9, messageId: 55 }]);
-  assert.deepEqual(notices, ["已存入数算恩典"]);
+  assert.deepEqual(submitted.map((message) => message.id), [55]);
+  assert.deepEqual(notices, ["恩典卡片已发送"]);
   assert.equal(grace.graceComposerOpen.value, false);
   assert.equal(grace.graceError.value, "");
 });
 
 test("voice-only grace submission uploads through the shared voice upload channel", async () => {
-  const { grace, uploads, jumps, requests } = createGraceHarness();
+  const { grace, uploads, submitted, requests } = createGraceHarness();
   grace.openGraceComposer();
   grace.audioFile.value = new File([new Blob(["audio"])], "语音消息-1.m4a", { type: "audio/mp4" });
   grace.audioPreviewDurationMs.value = 1200;
@@ -139,18 +123,18 @@ test("voice-only grace submission uploads through the shared voice upload channe
   assert.equal(uploads[0].options?.durationMs, 1200);
   const gracePost = requests.find((request) => request.url.endsWith("/api/grace") && request.init?.method === "POST");
   assert.ok(gracePost);
-  assert.deepEqual(JSON.parse(String(gracePost.init?.body)), { voiceMessageId: 77 });
-  assert.deepEqual(jumps, [{ channelId: 9, messageId: 55 }]);
+  assert.deepEqual(JSON.parse(String(gracePost.init?.body)), { channelId: 9, voiceMessageId: 77 });
+  assert.deepEqual(submitted.map((message) => message.id), [55]);
 });
 
 test("a failed voice upload keeps the composer open with an inline error", async () => {
-  const { grace, jumps, requests } = createGraceHarness({ uploadSucceeds: false });
+  const { grace, submitted, requests } = createGraceHarness({ uploadSucceeds: false });
   grace.openGraceComposer();
   grace.audioFile.value = new File([new Blob(["audio"])], "语音消息-2.m4a", { type: "audio/mp4" });
   await grace.submitGrace();
 
   assert.ok(grace.graceError.value.includes("语音上传失败"));
   assert.equal(grace.graceComposerOpen.value, true);
-  assert.equal(jumps.length, 0);
+  assert.equal(submitted.length, 0);
   assert.equal(requests.some((request) => request.url.endsWith("/api/grace") && request.init?.method === "POST"), false);
 });

@@ -2,216 +2,148 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { PrismaClient } from "@prisma/client";
-import type { ChannelDTO, MessageDTO } from "../../shared/types.js";
-import { GRACE_CHANNEL_NAME, registerGraceRoutes } from "./grace.js";
+import type { MessageDTO } from "../../shared/types.js";
+import { registerGraceRoutes } from "./grace.js";
 
-type ChannelStub = { id: number; name: string; kind: string; isPrivate: boolean };
-type MessageStub = { id: number; channelId: number; type: string; payload: unknown };
+type SourceMessage = { id: number; channelId: number; type: string; payload: unknown };
+type GraceRow = {
+  id: number;
+  channelId: number;
+  senderActorId: number;
+  createdAt: Date;
+  channel: { id: number; name: string };
+  favorites: Array<{ id: number; createdAt: Date }>;
+};
 
-function createHarness(options: { canWrite?: boolean; isGuest?: boolean; existingGraceChannel?: boolean } = {}) {
-  const accounts = [{ id: 1 }, { id: 2 }, { id: 3 }];
-  const channels: ChannelStub[] = options.existingGraceChannel ? [{ id: 55, name: GRACE_CHANNEL_NAME, kind: "standard", isPrivate: false }] : [];
-  const sourceMessages: MessageStub[] = [];
-  const memberRows: Array<{ accountId: number; channelId: number; role: string }> = [];
-  const createdChannels: ChannelStub[] = [];
-  let nextChannelId = 100;
+function message(id: number, channelId: number, senderId = 22): MessageDTO {
+  return {
+    id,
+    channelId,
+    sender: { id: senderId, kind: "human", username: "reader", displayName: "读者" },
+    content: "今天的恩典",
+    type: "grace",
+    payload: { kind: "grace" },
+    createdAt: "2026-09-17T08:00:00.000Z"
+  };
+}
 
+function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: number) => boolean } = {}) {
+  const sourceMessages: SourceMessage[] = [];
+  const graceRows: GraceRow[] = [];
+  const hydrated = new Map<number, MessageDTO>();
   const prisma = {
-    channel: {
-      findFirst: async ({ where }: { where: { name: string; kind: string } }) =>
-        channels.find((channel) => channel.name === where.name && channel.kind === where.kind) || null,
-      create: async ({ data }: { data: { name: string; isPrivate: boolean } }) => {
-        const channel: ChannelStub = { id: nextChannelId++, name: data.name, kind: "standard", isPrivate: !!data.isPrivate };
-        channels.push(channel);
-        createdChannels.push(channel);
-        return { id: channel.id };
-      }
-    },
-    account: {
-      findMany: async () => accounts
-    },
-    channelMember: {
-      createMany: async ({ data }: { data: Array<{ accountId: number; channelId: number; role: string }> }) => {
-        memberRows.push(...data);
-        return { count: data.length };
-      }
-    },
     message: {
       findFirst: async ({ where }: { where: { id: number; channelId: number; type: string } }) =>
-        sourceMessages.find((message) => message.id === where.id && message.channelId === where.channelId && message.type === where.type) || null
+        sourceMessages.find((row) => row.id === where.id && row.channelId === where.channelId && row.type === where.type) || null,
+      findMany: async () => graceRows
     }
   } as unknown as PrismaClient;
-
-  const createdMessages: Array<{ channelId: number; actorId: number; content?: string; type?: string; payload?: unknown }> = [];
+  const createdMessages: Array<{ channelId: number; actorId: number; content?: string; type?: string; payload?: unknown; pushOrigin?: string }> = [];
   let nextMessageId = 1000;
-  const emissions: Array<{ room: string | null; event: string; payload: unknown }> = [];
-  const joinedChannels: Array<{ accountId: number; channelId: number }> = [];
-  const io = {
-    to: (room: string) => ({
-      emit: (event: string, payload: unknown) => {
-        emissions.push({ room, event, payload });
-      }
-    }),
-    emit: (event: string, payload: unknown) => {
-      emissions.push({ room: null, event, payload });
-    }
-  };
-
   const requireAuth = async (request: FastifyRequest, _reply: FastifyReply) => {
-    (request as FastifyRequest & { auth: unknown }).auth = { accountId: 2, actorId: 22, isAdmin: false, isGuest: !!options.isGuest, canPinMessages: false };
+    (request as FastifyRequest & { auth: unknown }).auth = {
+      accountId: 2,
+      actorId: 22,
+      isAdmin: false,
+      isGuest: false,
+      canPinMessages: false
+    };
   };
-
   const app = Fastify();
   registerGraceRoutes(app, {
     prisma,
     requireAuth,
-    io,
-    canAccessChannel: async () => !options.isGuest,
+    canAccessChannel: async (_accountId, channelId) => options.canAccess ? options.canAccess(channelId) : true,
     canWriteChannel: async () => options.canWrite !== false,
-    channelDto: async (channelId) => ({ id: channelId, name: GRACE_CHANNEL_NAME }) as ChannelDTO,
     createMessageFromActor: async (input) => {
       createdMessages.push(input);
-      return { id: nextMessageId++ };
+      const id = nextMessageId++;
+      hydrated.set(id, message(id, input.channelId));
+      return { id };
     },
-    hydrateMessage: async (id) => ({ id, channelId: createdChannels[0]?.id || 55 }) as MessageDTO,
-    joinAccountChannel: (accountId, channelId) => {
-      joinedChannels.push({ accountId, channelId });
-    },
+    hydrateMessage: async (id) => hydrated.get(id) || null,
     cleanText: (input) => String(input || "").trim().slice(0, 10000)
   });
-  return { app, channels, sourceMessages, memberRows, createdChannels, createdMessages, emissions, joinedChannels };
+  return { app, sourceMessages, graceRows, hydrated, createdMessages };
 }
 
-test("POST /api/grace creates the grace channel on first use and pulls in every account", async () => {
-  const { app, createdChannels, memberRows, joinedChannels, createdMessages, emissions } = createHarness();
+test("POST /api/grace sends a grace card into the selected channel", async () => {
+  const { app, createdMessages } = createHarness();
   await app.ready();
   try {
-    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "今天的恩典" } });
+    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "今天的恩典" } });
     assert.equal(response.statusCode, 200);
-    assert.equal(response.json().success, true);
-    assert.equal(createdChannels.length, 1);
-    const channel = createdChannels[0];
-    assert.equal(channel.name, GRACE_CHANNEL_NAME);
-    assert.equal(channel.isPrivate, false);
-    assert.deepEqual(
-      memberRows.map((row) => row.accountId).sort(),
-      [1, 2, 3]
-    );
-    assert.ok(memberRows.every((row) => row.channelId === channel.id && row.role === "member"));
-    assert.deepEqual(joinedChannels.length, 3);
+    assert.equal(response.json().message.channelId, 7);
     assert.equal(createdMessages.length, 1);
-    assert.equal(createdMessages[0].channelId, channel.id);
-    assert.equal(createdMessages[0].type, "grace");
-    assert.deepEqual(createdMessages[0].payload, { kind: "grace" });
-    assert.ok(emissions.some((entry) => entry.room === null && entry.event === "channel:updated"));
+    assert.deepEqual(
+      { ...createdMessages[0], pushOrigin: undefined },
+      { channelId: 7, actorId: 22, content: "今天的恩典", type: "grace", payload: { kind: "grace" }, pushOrigin: undefined }
+    );
   } finally {
     await app.close();
   }
 });
 
-test("POST /api/grace reuses the channel on later submissions and ignores client channelId", async () => {
-  const { app, createdChannels, createdMessages } = createHarness();
+test("POST /api/grace accepts voice-only cards and validates attachments in the same channel", async () => {
+  const { app, sourceMessages, createdMessages } = createHarness();
+  sourceMessages.push(
+    { id: 501, channelId: 7, type: "file", payload: { kind: "voice", durationMs: 800 } },
+    { id: 502, channelId: 7, type: "image", payload: null },
+    { id: 503, channelId: 8, type: "image", payload: null }
+  );
   await app.ready();
   try {
-    const first = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "第一条" } });
-    assert.equal(first.statusCode, 200);
-    const second = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "第二条", channelId: 999 } });
-    assert.equal(second.statusCode, 200);
-    assert.equal(createdChannels.length, 1);
-    assert.equal(createdMessages.length, 2);
-    assert.equal(createdMessages[1].channelId, createdChannels[0].id);
+    const good = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, voiceMessageId: 501, imageMessageId: 502 } });
+    assert.equal(good.statusCode, 200);
+    assert.deepEqual(createdMessages[0].payload, { kind: "grace", voiceMessageId: 501, imageMessageId: 502 });
+    const wrongChannel = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "带图", imageMessageId: 503 } });
+    assert.equal(wrongChannel.statusCode, 400);
   } finally {
     await app.close();
   }
 });
 
-test("POST /api/grace accepts a voice-only grace entry", async () => {
-  const harness = createHarness();
-  const { app, createdChannels, sourceMessages, createdMessages } = harness;
-  await app.ready();
+test("POST /api/grace rejects empty cards and channels without write access", async () => {
+  const writable = createHarness();
+  await writable.app.ready();
   try {
-    const first = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "占位" } });
-    assert.equal(first.statusCode, 200);
-    const channelId = createdChannels[0].id;
-    sourceMessages.push({ id: 501, channelId, type: "file", payload: { kind: "voice", durationMs: 800 } });
-    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { voiceMessageId: 501 } });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().success, true);
-    assert.deepEqual(createdMessages[1].payload, { kind: "grace", voiceMessageId: 501 });
-    assert.equal(createdMessages[1].content, "");
-  } finally {
-    await app.close();
-  }
-});
-
-test("POST /api/grace rejects empty submissions and invalid sources", async () => {
-  const harness = createHarness();
-  const { app, createdChannels, sourceMessages } = harness;
-  await app.ready();
-  try {
-    const empty = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "  " } });
+    const empty = await writable.app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "  " } });
     assert.equal(empty.statusCode, 400);
-    const seeded = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "占位" } });
-    assert.equal(seeded.statusCode, 200);
-    const channelId = createdChannels[0].id;
-    sourceMessages.push({ id: 601, channelId, type: "text", payload: null });
-    const badVoice = await app.inject({ method: "POST", url: "/api/grace", payload: { voiceMessageId: 601 } });
-    assert.equal(badVoice.statusCode, 400);
-    const badImage = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "带图", imageMessageId: 601 } });
-    assert.equal(badImage.statusCode, 400);
-    sourceMessages.push({ id: 602, channelId, type: "image", payload: null });
-    const goodImage = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "带图", imageMessageId: 602, effect: "rain" } });
-    assert.equal(goodImage.statusCode, 200);
   } finally {
-    await app.close();
+    await writable.app.close();
+  }
+  const readonly = createHarness({ canWrite: false });
+  await readonly.app.ready();
+  try {
+    const denied = await readonly.app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "恩典" } });
+    assert.equal(denied.statusCode, 403);
+    assert.equal(readonly.createdMessages.length, 0);
+  } finally {
+    await readonly.app.close();
   }
 });
 
-test("POST /api/grace rejects users without write access", async () => {
-  const { app, createdMessages } = createHarness({ canWrite: false });
+test("GET /api/grace/favorites returns accessible own and explicitly favorited grace cards", async () => {
+  const { app, graceRows, hydrated } = createHarness({ canAccess: (channelId) => channelId !== 9 });
+  const ownCreatedAt = new Date("2026-09-17T08:00:00.000Z");
+  const savedAt = new Date("2026-09-17T09:00:00.000Z");
+  graceRows.push(
+    { id: 11, channelId: 7, senderActorId: 22, createdAt: ownCreatedAt, channel: { id: 7, name: "团契" }, favorites: [] },
+    { id: 12, channelId: 8, senderActorId: 44, createdAt: ownCreatedAt, channel: { id: 8, name: "分享" }, favorites: [{ id: 91, createdAt: savedAt }] },
+    { id: 13, channelId: 9, senderActorId: 22, createdAt: ownCreatedAt, channel: { id: 9, name: "无权访问" }, favorites: [] }
+  );
+  hydrated.set(11, message(11, 7));
+  hydrated.set(12, message(12, 8, 44));
+  hydrated.set(13, message(13, 9));
   await app.ready();
   try {
-    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { content: "恩典" } });
-    assert.equal(response.statusCode, 403);
-    assert.equal(createdMessages.length, 0);
-  } finally {
-    await app.close();
-  }
-});
-
-test("GET /api/grace/channel returns the channel and blocks guests", async () => {
-  const harness = createHarness();
-  await harness.app.ready();
-  try {
-    const response = await harness.app.inject({ method: "GET", url: "/api/grace/channel" });
+    const response = await app.inject({ method: "GET", url: "/api/grace/favorites" });
     assert.equal(response.statusCode, 200);
-    const body = response.json();
-    assert.equal(body.success, true);
-    assert.equal(body.channel.name, GRACE_CHANNEL_NAME);
-    assert.equal(harness.createdChannels.length, 1);
-  } finally {
-    await harness.app.close();
-  }
-  const guest = createHarness({ isGuest: true });
-  await guest.app.ready();
-  try {
-    const response = await guest.app.inject({ method: "GET", url: "/api/grace/channel" });
-    assert.equal(response.statusCode, 403);
-    assert.equal(guest.createdChannels.length, 0);
-  } finally {
-    await guest.app.close();
-  }
-});
-
-test("ensureGraceChannel finds an existing grace channel without creating one", async () => {
-  const { app, createdChannels, memberRows } = createHarness({ existingGraceChannel: true });
-  await app.ready();
-  try {
-    const response = await app.inject({ method: "GET", url: "/api/grace/channel" });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().channel.id, 55);
-    assert.equal(createdChannels.length, 0);
-    assert.equal(memberRows.length, 0);
+    assert.deepEqual(response.json().favorites.map((row: { id: number; own: boolean; favorited: boolean }) => ({ id: row.id, own: row.own, favorited: row.favorited })), [
+      { id: 11, own: true, favorited: false },
+      { id: 12, own: false, favorited: true }
+    ]);
+    assert.equal(response.json().favorites[1].savedAt, savedAt.toISOString());
   } finally {
     await app.close();
   }

@@ -98,13 +98,13 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
     linkPreviewQueue.ensureVisible([...new Set(messages.map(previewUrlFor).filter(Boolean))]);
   }
 
-  // 切频道/切换代祷视图：丢弃旧队列并中止进行中请求（不算失败，可重新请求）；
+  // 切频道/切换代祷或恩典视图：丢弃旧队列并中止进行中请求（不算失败，可重新请求）；
   // 换账号：整池缓存作废，避免跨账号残留。
   watch(
-    () => [store.currentChannelId, store.prayerOnly, store.account?.id] as const,
+    () => [store.currentChannelId, store.prayerOnly, store.graceOnly, store.account?.id] as const,
     (current, previous) => {
       linkPreviewGeneration += 1;
-      linkPreviewQueue.reset({ clearCache: current[2] !== previous[2] });
+      linkPreviewQueue.reset({ clearCache: current[3] !== previous[3] });
     }
   );
 

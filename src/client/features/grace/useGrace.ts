@@ -1,5 +1,5 @@
 import { computed, ref } from "vue";
-import type { ChannelDTO, GracePayload, MessageDTO } from "@shared/types";
+import type { GracePayload, MessageDTO } from "@shared/types";
 import { api } from "../../api";
 import { useVoiceRecording } from "../voice/useVoiceRecording";
 
@@ -14,7 +14,8 @@ export type GraceUploadOptions = {
 
 interface UseGraceOptions {
   uploadFile: (file: File, options?: GraceUploadOptions) => Promise<GraceUploadResult>;
-  jumpToMessage: (channelId: number, messageId: number) => Promise<void>;
+  currentChannelId: () => number | null;
+  onSubmitted: (message: MessageDTO) => void;
   notify: (text: string) => void;
 }
 
@@ -40,6 +41,7 @@ export function useGrace(options: UseGraceOptions) {
   const graceContent = ref("");
   const gracePhoto = ref<File | null>(null);
   const gracePhotoPreview = ref("");
+  const graceTargetChannelId = ref<number | null>(null);
   // The recording flow is reused from the composer; its pending-message/send
   // path stays unused here because grace voice uploads go through submitGrace.
   const graceRecordingPanel = ref<"voice" | "more" | null>(null);
@@ -68,6 +70,7 @@ export function useGrace(options: UseGraceOptions) {
   }
 
   function openGraceComposer(prefill = "") {
+    graceTargetChannelId.value = options.currentChannelId();
     graceContent.value = prefill;
     graceError.value = "";
     graceBusy.value = false;
@@ -79,6 +82,7 @@ export function useGrace(options: UseGraceOptions) {
   function closeGraceComposer(force = false) {
     if (graceBusy.value && !force) return;
     graceComposerOpen.value = false;
+    graceTargetChannelId.value = null;
     graceContent.value = "";
     graceError.value = "";
     clearGracePhoto();
@@ -88,15 +92,19 @@ export function useGrace(options: UseGraceOptions) {
   async function submitGrace() {
     const content = graceContent.value.trim();
     const voiceFile = recording.audioFile.value;
+    const channelId = graceTargetChannelId.value;
     if (graceBusy.value) return;
     if (!graceSubmissionReady(content, !!voiceFile)) {
       graceError.value = "写下一段文字或录一段语音，再存入恩典册";
       return;
     }
+    if (!channelId) {
+      graceError.value = "请先进入一个频道再记录恩典";
+      return;
+    }
     graceBusy.value = true;
     graceError.value = "";
     try {
-      const { channel } = await api<{ channel: ChannelDTO }>("/api/grace/channel");
       let voiceMessageId: number | undefined;
       let imageMessageId: number | undefined;
       if (voiceFile) {
@@ -104,25 +112,24 @@ export function useGrace(options: UseGraceOptions) {
           voice: true,
           durationMs: recording.audioPreviewDurationMs.value || recording.recordingDuration.value,
           waveform: recording.audioPreviewWaveform.value,
-          channelId: channel.id,
+          channelId,
           suppressAlert: true
         });
         if (!upload.success || !upload.messageId) throw new Error("语音上传失败，请重试");
         voiceMessageId = upload.messageId;
       }
       if (gracePhoto.value) {
-        const upload = await options.uploadFile(gracePhoto.value, { channelId: channel.id, suppressAlert: true });
+        const upload = await options.uploadFile(gracePhoto.value, { channelId, suppressAlert: true });
         if (!upload.success || !upload.messageId) throw new Error("照片上传失败，请重试");
         imageMessageId = upload.messageId;
       }
       const result = await api<{ success: boolean; message: MessageDTO }>("/api/grace", {
         method: "POST",
-        body: JSON.stringify({ content: content || undefined, voiceMessageId, imageMessageId })
+        body: JSON.stringify({ channelId, content: content || undefined, voiceMessageId, imageMessageId })
       });
-      const messageId = result.message?.id;
+      if (result.message) options.onSubmitted(result.message);
       closeGraceComposer(true);
-      options.notify("已存入数算恩典");
-      if (messageId) await options.jumpToMessage(channel.id, messageId);
+      options.notify("恩典卡片已发送");
     } catch (error) {
       graceError.value = error instanceof Error ? error.message : "存入恩典失败，请重试";
     } finally {

@@ -22,6 +22,7 @@ interface UseBibleWorkspaceIntegrationOptions {
   showChannels: Ref<boolean>;
   showMembers: Ref<boolean>;
   showFavorites: Ref<boolean>;
+  showGraceFavorites: Ref<boolean>;
   showBibleFavorites: Ref<boolean>;
   sermonWorkspaceOpen: Ref<boolean>;
   bookWorkspaceOpen: Ref<boolean>;
@@ -94,6 +95,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     if (!options.showBibleFavorites.value) options.saveReadPosition();
     options.showBibleFavorites.value = true;
     options.showFavorites.value = false;
+    options.showGraceFavorites.value = false;
     options.showChannels.value = false;
     await loadBibleFavorites();
   }

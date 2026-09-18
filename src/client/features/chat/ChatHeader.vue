@@ -37,8 +37,10 @@ defineProps<{
   notificationAttentionVisible: boolean;
   notificationNudgeCharacters: readonly string[];
   showBibleFavorites: boolean;
+  showGraceFavorites: boolean;
   showFavorites: boolean;
   prayerOnly: boolean;
+  graceOnly: boolean;
   currentChannel: ChannelDTO | null;
   chatSubtitleText: string;
   showingFavoriteSurface: boolean;
@@ -116,7 +118,7 @@ defineProps<{
             >{{ character }}</span>
           </span>
         </button>
-        <strong data-testid="active-channel-name">{{ showBibleFavorites ? "经文收藏" : showFavorites ? "收藏夹" : prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : currentChannel?.name || "聊天室" }}</strong>
+        <strong data-testid="active-channel-name">{{ showBibleFavorites ? "经文收藏" : showGraceFavorites ? "恩典收藏" : showFavorites ? "收藏夹" : prayerOnly ? `${currentChannel?.name || "聊天室"} · 代祷事项` : graceOnly ? `${currentChannel?.name || "聊天室"} · 数算恩典` : currentChannel?.name || "聊天室" }}</strong>
       </div>
       <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
     </div>

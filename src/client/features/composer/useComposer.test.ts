@@ -100,3 +100,19 @@ test("sendText keeps plain text on the normal send path", async () => {
   assert.equal(sent.length, 1);
   assert.deepEqual(gracePrefills, []);
 });
+
+test("the grace subchannel opens the grace composer for typed text", async () => {
+  const { composer, input, sent, gracePrefills } = createComposerHarness();
+  const { useChatStore } = await import("../../store");
+  const store = useChatStore();
+  store.currentChannelId = 7;
+  store.graceOnly = true;
+  try {
+    input.value = "今天顺利回家";
+    await composer.sendText();
+    assert.deepEqual(gracePrefills, ["今天顺利回家"]);
+    assert.equal(sent.length, 0);
+  } finally {
+    store.graceOnly = false;
+  }
+});

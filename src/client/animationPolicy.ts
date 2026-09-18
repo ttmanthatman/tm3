@@ -40,6 +40,7 @@ export function shouldTriggerIncomingRainEffect(input: {
   messageChannelId: number;
   currentChannelId: number;
   prayerOnly: boolean;
+  graceOnly?: boolean;
   messageType: string;
   activeView: boolean;
   messageVisible: boolean;
@@ -48,6 +49,7 @@ export function shouldTriggerIncomingRainEffect(input: {
   return input.effect === "rain"
     && input.messageChannelId === input.currentChannelId
     && (!input.prayerOnly || input.messageType === "prayer")
+    && (!input.graceOnly || input.messageType === "grace")
     && input.activeView
     && input.messageVisible
     && input.documentVisible;

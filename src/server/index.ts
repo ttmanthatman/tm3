@@ -2131,9 +2131,10 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
       ? channel.members.find((member) => member.account.id !== viewer.accountId)?.account
       : null;
   const pin = channel.pinned[0];
-  const [pinned, prayerCount] = await Promise.all([
+  const [pinned, prayerCount, graceCount] = await Promise.all([
     pin ? serializePinnedItem(pin, viewer) : Promise.resolve(null),
-    prisma.message.count({ where: { channelId, type: "prayer" } })
+    prisma.message.count({ where: { channelId, type: "prayer" } }),
+    prisma.message.count({ where: { channelId, type: "grace" } })
   ]);
   return {
     id: channel.id,
@@ -2154,6 +2155,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     canWrite: viewer ? await canWriteChannel(viewer.accountId, channelId) : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     hasPrayerItems: prayerCount > 0,
+    hasGraceItems: graceCount > 0,
     memberCount: channel._count.members,
     lastMessageId: lastMessageIds?.get(channelId) ?? null,
     pinned
@@ -2231,13 +2233,15 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
     }
   });
   const channelIds = channels.map((ch) => ch.id);
-  const [lastMessageRows, prayerRows, viewerMemberships] = await Promise.all([
+  const [lastMessageRows, prayerRows, graceRows, viewerMemberships] = await Promise.all([
     prisma.message.groupBy({ by: ["channelId"], where: { channelId: { in: channelIds } }, _max: { id: true } }),
     prisma.message.groupBy({ by: ["channelId"], where: { channelId: { in: channelIds }, type: "prayer" }, _count: { _all: true } }),
+    prisma.message.groupBy({ by: ["channelId"], where: { channelId: { in: channelIds }, type: "grace" }, _count: { _all: true } }),
     prisma.channelMember.findMany({ where: { accountId: auth.accountId, channelId: { in: channelIds } }, select: { channelId: true, role: true } })
   ]);
   const lastMessageIds = new Map(lastMessageRows.map((row) => [row.channelId, row._max.id ?? 0]));
   const prayerCounts = new Map(prayerRows.map((row) => [row.channelId, row._count._all]));
+  const graceCounts = new Map(graceRows.map((row) => [row.channelId, row._count._all]));
   const membershipRoles = new Map(viewerMemberships.map((member) => [member.channelId, member.role]));
   // Pinned items are rare (at most one active pin per channel), so per-pin
   // hydration stays on the shared serializer without reviving the per-channel
@@ -2287,6 +2291,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
         canWrite,
         canPin,
         hasPrayerItems: (prayerCounts.get(channel.id) ?? 0) > 0,
+        hasGraceItems: (graceCounts.get(channel.id) ?? 0) > 0,
         memberCount: channel._count.members,
         lastMessageId: lastMessageIds.get(channel.id) ?? null,
         pinned: pinnedByChannel.get(channel.id) ?? null
@@ -2872,7 +2877,7 @@ app.delete("/api/channels/:id/members/:accountId", { preHandler: requireAuth }, 
 
 app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
-  const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string; prayers?: string };
+  const query = request.query as { channelId?: string; before?: string; after?: string; limit?: string; prayers?: string; grace?: string };
   const channelId = Number(query.channelId || 0);
   if (!channelId || !(await canAccessChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
   const limit = Math.min(Math.max(Number(query.limit || 50), 1), 200);
@@ -2880,7 +2885,7 @@ app.get("/api/messages", { preHandler: requireAuth }, async (request, reply) => 
   const after = Number(query.after || 0);
   const where = {
     channelId,
-    ...(query.prayers === "1" ? { type: "prayer" as const } : {}),
+    ...(query.prayers === "1" ? { type: "prayer" as const } : query.grace === "1" ? { type: "grace" as const } : {}),
     ...(after > 0 ? { id: { gt: after } } : before > 0 ? { id: { lt: before } } : {})
   };
   const rows = await prisma.message.findMany({
@@ -4040,13 +4045,10 @@ registerTranscribeRoutes(app, {
 registerGraceRoutes(app, {
   prisma,
   requireAuth,
-  io,
   canAccessChannel,
   canWriteChannel,
-  channelDto,
   createMessageFromActor,
   hydrateMessage,
-  joinAccountChannel,
   cleanText
 });
 
