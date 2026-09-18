@@ -266,8 +266,9 @@
 .messages-scroll.timeline-scrolling .message-timeline-slot {
   overflow: hidden;
   overflow: clip;
-  /* 允许在线绿点、提及角标等略微溢出头像的装饰元素在滚动裁剪时仍可见 */
-  overflow-clip-margin: 6px;
+  /* Keep overflow decorations visible while preserving per-slot paint clipping.
+     The ended-chain stamp crosses the bubble by about 34px, including rotation. */
+  overflow-clip-margin: 48px;
 }
 
 .message-load-banner {

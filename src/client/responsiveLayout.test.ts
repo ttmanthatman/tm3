@@ -951,6 +951,14 @@ test("session entries land on the newest messages while channel switches restore
   assert.match(css, /\.messages-scroll \{[\s\S]*?overflow-anchor: none;/);
 });
 
+test("scroll clipping leaves room for the ended-chain stamp outside its message slot", () => {
+  assert.match(css, /\.chain-ended-stamp \{[\s\S]*?bottom: -34px;/);
+  assert.match(
+    css,
+    /\.messages-scroll\.timeline-scrolling \.message-timeline-slot \{[\s\S]*?overflow-clip-margin: 48px;/
+  );
+});
+
 test("a missing restore target falls back to the newest messages instead of stale pixels", () => {
   assert.doesNotMatch(app, /root\.scrollTop = position\.scrollTop/);
   assert.match(app, /function restoreSavedReadPosition[\s\S]*?loadUntilMessageVisible\(position\.messageId, token\)/);
