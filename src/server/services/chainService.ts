@@ -10,6 +10,8 @@ export const CHAIN_CUSTOM_TEXT_LIMIT = 40;
 
 type ChainActor = { id: number; displayName: string };
 
+type ChainEndActor = { actorId: number; displayName: string; at: string };
+
 export type ChainAppendResult =
   | { success: true; payload: ChainPayload }
   | { success: false; status: 400 | 409; message: string };
@@ -55,6 +57,21 @@ export function isRequiredChoiceChain(payload: ChainPayload) {
     && payload.participation.options.length > 0;
 }
 
+export function endChainPayload(source: ChainPayload, actor: ChainEndActor): ChainPayload {
+  return {
+    ...source,
+    participation: source.participation
+      ? { ...source.participation, options: source.participation.options.map((option) => ({ ...option })) }
+      : undefined,
+    participants: Array.isArray(source.participants) ? source.participants.map((participant) => ({ ...participant })) : [],
+    ended: {
+      at: actor.at,
+      byActorId: actor.actorId,
+      byName: actor.displayName
+    }
+  };
+}
+
 export function appendChainParticipant(
   source: ChainPayload,
   actor: ChainActor,
@@ -62,6 +79,7 @@ export function appendChainParticipant(
   at: string,
   legacyText = ""
 ): ChainAppendResult {
+  if (source.ended) return { success: false, status: 409, message: "接龙已结束，不能继续参与" };
   const payload: ChainPayload = {
     ...source,
     participation: source.participation

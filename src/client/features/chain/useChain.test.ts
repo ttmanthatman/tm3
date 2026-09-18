@@ -114,3 +114,29 @@ test("sends the selected project and preserves the picker after a failure", asyn
     restoreLocalStorage();
   }
 });
+
+test("ends a chain through its root id and keeps the dialog open after a failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreLocalStorage = installLocalStorage();
+  const requests: Array<{ url: string; method?: string }> = [];
+  let responseStatus = 500;
+  globalThis.fetch = async (input, init) => {
+    requests.push({ url: String(input), method: init?.method });
+    return responseStatus === 200 ? jsonResponse({ success: true }) : jsonResponse({ message: "终止失败" }, responseStatus);
+  };
+  try {
+    const chain = useChain({ currentChannelId: ref(9), getReplyToId: () => null });
+    chain.openEndDialog(chainMessage());
+    await chain.endPendingChain();
+    assert.equal(chain.pendingEndChain.value?.id, 12);
+    assert.equal(chain.endError.value, "终止失败");
+
+    responseStatus = 200;
+    await chain.endPendingChain();
+    assert.deepEqual(requests.at(-1), { url: "/api/chains/12/end", method: "POST" });
+    assert.equal(chain.pendingEndChain.value, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreLocalStorage();
+  }
+});

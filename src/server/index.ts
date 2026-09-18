@@ -33,6 +33,7 @@ import { registerReceptionRoutes } from "./routes/reception.js";
 import { normalizeWeChatRelayNasAccessUrl, registerWeChatRelayRoutes } from "./routes/wechatRelay.js";
 import { registerSermonRoutes } from "./routes/sermon.js";
 import { registerAdminDataRoutes } from "./routes/adminData.js";
+import { registerChainRoutes } from "./routes/chains.js";
 import { registerAdminLogRoutes } from "./routes/adminLogs.js";
 import { registerAdminUpdateRoutes, UPDATE_REPO_URL } from "./routes/adminUpdate.js";
 import { registerAiSettingsRoutes } from "./routes/aiSettings.js";
@@ -3696,6 +3697,13 @@ registerUnreadCountsRoutes(app, {
   prisma,
   channelListWhere,
   emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
+});
+
+registerChainRoutes(app, {
+  requireAuth,
+  prisma,
+  canAccessChannel,
+  refreshChannel: (channelId) => io.to(`ch:${channelId}`).emit("messages:refresh", { channelId })
 });
 
 registerChannelOwnershipRoutes(app, {

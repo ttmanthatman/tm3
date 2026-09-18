@@ -163,7 +163,8 @@ import { getSharedExclusiveAudio, stopAllMessageAudioPlayback } from "./features
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
 import ChainCreateDialog from "./features/chain/ChainCreateDialog.vue";
 import ChainJoinPopover from "./features/chain/ChainJoinPopover.vue";
-import { chainParticipantProject, chainPayload, chainRequiresSelection } from "./features/chain/chain";
+import ChainEndDialog from "./features/chain/ChainEndDialog.vue";
+import { canEndChain, chainEnded, chainParticipantProject, chainPayload, chainRequiresSelection } from "./features/chain/chain";
 import { useChain } from "./features/chain/useChain";
 import { useSermon } from "./features/sermon/useSermon";
 import { scheduleIdlePreload } from "./features/idlePreload";
@@ -770,12 +771,18 @@ const {
   pendingChain,
   joinBusy: chainJoinBusy,
   joinError: chainJoinError,
+  pendingEndChain,
+  endBusy: chainEndBusy,
+  endError: chainEndError,
   openCreateDialog: openChainModal,
   closeCreateDialog: closeChainModal,
   createChain,
   openJoin: openChainJoin,
   closeJoin: closeChainJoin,
   joinPendingChain,
+  openEndDialog: openChainEndDialog,
+  closeEndDialog: closeChainEndDialog,
+  endPendingChain,
   closeChainSurfaces
 } = useChain({
   currentChannelId: currentChainChannelId,
@@ -1954,15 +1961,15 @@ const {
   pendingRecall,
   recallPromptPosition,
   recallPromptStyle,
-  recallRemainingMs,
-  canRecallMessage,
+  canRemoveMessage,
+  removeActionText,
   recallRemainingText,
-  openRecallPrompt,
   recallPendingMessage,
   recallActionMessage
 } = useMessageRecall({
   pendingMessageActions,
   isMine,
+  isAdmin,
   positionPromptNearEvent,
   closeChainJoin,
   closeMessageActionMenu,
@@ -3660,12 +3667,20 @@ async function loadUntilMessageVisible(id: number, token = 0) {
 }
 
 function confirmJoinChain(message: MessageDTO, event?: MouseEvent) {
+  if (chainEnded(message)) return;
   chainPromptAnchor.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
   openChainJoin(message);
   pendingRecall.value = null;
   pendingPrayer.value = null;
   pendingMessageActions.value = null;
   selectedMember.value = null;
+}
+
+function requestEndChainFromAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !canEndChain(message, store.account?.actorId, isAdmin.value)) return;
+  closeMessageActionMenu();
+  openChainEndDialog(message);
 }
 
 function positionPromptNearEvent(event: MouseEvent | PointerEvent | undefined, size: { width: number; height: number }) {
@@ -5564,7 +5579,7 @@ const messageRowBindings = {
                   {{ row.message.replyTo.senderName }}：{{ row.message.replyTo.content || row.message.replyTo.type }}
                 </button>
                 <template v-if="row.message.type === 'chain'">
-                  <div class="chain-card">
+                  <div class="chain-card" :class="{ ended: chainEnded(row.message) }">
                     <h3 class="bible-rich-text">
                       <template v-for="segment in chainTopicRichTextSegments(row.message)" :key="segment.key">
                         <span v-if="segment.kind === 'html'" v-html="segment.html"></span>
@@ -5592,7 +5607,13 @@ const messageRowBindings = {
                         <small v-if="chainParticipantProject(p)">{{ chainParticipantProject(p) }}</small>
                       </li>
                     </ol>
-                    <button class="mini-btn" @click.stop="confirmJoinChain(row.message, $event)">参与接龙</button>
+                    <small v-if="chainEnded(row.message)" class="chain-ended-meta">
+                      {{ chainPayload(row.message).ended?.byName }} 已终止此接龙
+                    </small>
+                    <button v-else class="mini-btn" @click.stop="confirmJoinChain(row.message, $event)">参与接龙</button>
+                    <span v-if="chainEnded(row.message)" class="chain-ended-stamp" role="img" aria-label="已结束">
+                      <img src="/images/chain-ended-stamp.webp" alt="" />
+                    </span>
                   </div>
                 </template>
                 <template v-else-if="row.message.type === 'prayer'">
@@ -5923,6 +5944,14 @@ const messageRowBindings = {
       @join="joinPendingChain"
     />
 
+    <ChainEndDialog
+      :open="!!pendingEndChain"
+      :busy="chainEndBusy"
+      :error="chainEndError"
+      @close="closeChainEndDialog"
+      @confirm="endPendingChain"
+    />
+
     <section v-if="pendingDownload" class="tap-popover download-popover" :style="downloadPromptStyle" data-download-popover>
       <div class="tap-popover-card">
         <div class="compact-confirm">
@@ -5938,11 +5967,11 @@ const messageRowBindings = {
     <section v-if="pendingRecall" class="tap-popover recall-popover" :style="recallPromptStyle" data-recall-popover>
       <div class="tap-popover-card">
         <div class="compact-confirm">
-          <span>撤回这条消息？</span>
-          <small>{{ recallRemainingText(pendingRecall) }}</small>
+          <span>{{ removeActionText(pendingRecall) === "删除" ? "删除这条消息？" : "撤回这条消息？" }}</span>
+          <small v-if="removeActionText(pendingRecall) !== '删除'">{{ recallRemainingText(pendingRecall) }}</small>
           <div class="compact-actions">
             <button class="mini-btn secondary" @click="pendingRecall = null">取消</button>
-            <button class="mini-btn danger-soft" @click="recallPendingMessage">撤回</button>
+            <button class="mini-btn danger-soft" @click="recallPendingMessage">{{ removeActionText(pendingRecall) }}</button>
           </div>
         </div>
       </div>
@@ -5965,7 +5994,8 @@ const messageRowBindings = {
           <button v-if="isForwardableMessage(pendingMessageActions)" type="button" @click="openSingleForward"><Send :size="15" />转发</button>
           <button type="button" @click="startSelectionFromAction"><CheckCircle2 :size="15" />多选</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="openMusicTrackInManager"><AudioLines :size="15" />在音乐管理中打开</button>
-          <button v-if="canRecallMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />撤回</button>
+          <button v-if="canEndChain(pendingMessageActions, store.account?.actorId, isAdmin)" type="button" class="danger" @click="requestEndChainFromAction"><CircleOff :size="15" />终止接龙</button>
+          <button v-if="canRemoveMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />{{ removeActionText(pendingMessageActions) }}</button>
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>
         </div>
       </div>

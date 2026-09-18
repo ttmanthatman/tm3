@@ -6,6 +6,7 @@ import { useChatStore } from "../../store";
 interface UseMessageRecallOptions {
   pendingMessageActions: Ref<MessageDTO | null>;
   isMine: (message: MessageDTO) => boolean;
+  isAdmin: Ref<boolean>;
   positionPromptNearEvent: (event: MouseEvent | PointerEvent | undefined, size: { width: number; height: number }) => { x: number; y: number };
   closeChainJoin: () => void;
   closeMessageActionMenu: () => void;
@@ -30,6 +31,16 @@ export function useMessageRecall(options: UseMessageRecallOptions) {
     return message.id > 0 && message.type !== "system" && options.isMine(message) && recallRemainingMs(message) > 0;
   }
 
+  function canRemoveMessage(message: MessageDTO) {
+    return message.id > 0
+      && message.type !== "system"
+      && (options.isAdmin.value || canRecallMessage(message));
+  }
+
+  function removeActionText(message: MessageDTO) {
+    return options.isAdmin.value && !canRecallMessage(message) ? "删除" : "撤回";
+  }
+
   function recallRemainingText(message: MessageDTO) {
     const seconds = Math.max(0, Math.ceil(recallRemainingMs(message) / 1000));
     return `${seconds} 秒内可撤回`;
@@ -46,7 +57,11 @@ export function useMessageRecall(options: UseMessageRecallOptions) {
     const message = pendingRecall.value;
     if (!message) return;
     try {
-      await api(`/api/messages/${message.id}/recall`, { method: "POST", body: JSON.stringify({}) });
+      if (options.isAdmin.value && !canRecallMessage(message)) {
+        await api(`/api/admin/messages/${message.id}`, { method: "DELETE" });
+      } else {
+        await api(`/api/messages/${message.id}/recall`, { method: "POST", body: JSON.stringify({}) });
+      }
       pendingRecall.value = null;
       await store.loadMessages();
     } catch (error) {
@@ -56,7 +71,7 @@ export function useMessageRecall(options: UseMessageRecallOptions) {
 
   function recallActionMessage(event?: MouseEvent) {
     const message = options.pendingMessageActions.value;
-    if (!message || !canRecallMessage(message)) return;
+    if (!message || !canRemoveMessage(message)) return;
     options.closeMessageActionMenu();
     openRecallPrompt(message, event);
   }
@@ -67,6 +82,8 @@ export function useMessageRecall(options: UseMessageRecallOptions) {
     recallPromptStyle,
     recallRemainingMs,
     canRecallMessage,
+    canRemoveMessage,
+    removeActionText,
     recallRemainingText,
     openRecallPrompt,
     recallPendingMessage,

@@ -259,6 +259,33 @@ test("serializes a plain text message with empty reactions and no optional field
   assert.deepEqual(harness.queries, ["messageLike.findMany", "messageFavorite.findMany"]);
 });
 
+test("chain messages expose the root sender as the owner in batched serialization", async () => {
+  const harness = createHarness();
+  const root = makeMessage({
+    id: 100,
+    type: "chain",
+    content: "聚餐报名",
+    chainRootId: 100,
+    chainVersion: 1,
+    senderActorId: 33,
+    sender: makeActor({ id: 33, accountId: 7 })
+  });
+  const latest = makeMessage({
+    id: 101,
+    type: "chain",
+    content: "聚餐报名",
+    chainRootId: 100,
+    chainVersion: 2,
+    senderActorId: 44,
+    sender: makeActor({ id: 44, accountId: 8 })
+  });
+  harness.state.messagesById.set(root.id, root);
+
+  const batch = await harness.service.buildMessageSerializeBatch([latest], CHANNEL_ID, VIEWER);
+  const dto = await harness.service.serializeMessage(latest, VIEWER, batch);
+  assert.equal(dto.chainOwnerActorId, 33);
+});
+
 test("renders the reply preview as capped plain text with the sender name", async () => {
   const harness = createHarness();
   const replyTarget = makeMessage({

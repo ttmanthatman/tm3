@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { MessageDTO } from "../../../shared/types";
-import { chainParticipantProject, chainPayload, chainRequiresSelection } from "./chain";
+import { canEndChain, chainEnded, chainParticipantProject, chainPayload, chainRequiresSelection } from "./chain";
 
 function message(payload: unknown): MessageDTO {
   return {
@@ -74,4 +74,21 @@ test("reads multi-select chains and formats all selected projects", () => {
       customLabel: "带水"
     }
   }), "跑步、游泳、其他：带水");
+});
+
+test("recognizes ended chains and limits the end action to the owner or an administrator", () => {
+  const ended = message({
+    topic: "周六聚餐",
+    participants: [],
+    ended: { at: "2026-09-18T10:00:00.000Z", byActorId: 8, byName: "管理员" }
+  });
+  ended.chainOwnerActorId = 3;
+  assert.equal(chainEnded(ended), true);
+  assert.equal(canEndChain(ended, 3, false), false);
+
+  const active = message({ topic: "周六聚餐", participants: [] });
+  active.chainOwnerActorId = 3;
+  assert.equal(canEndChain(active, 3, false), true);
+  assert.equal(canEndChain(active, 4, false), false);
+  assert.equal(canEndChain(active, 4, true), true);
 });

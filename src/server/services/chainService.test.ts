@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   appendChainParticipant,
   createChainPayload,
+  endChainPayload,
   normalizeChainOptionLabels
 } from "./chainService.js";
 
@@ -132,5 +133,26 @@ test("does not accept multiple selections for a single-choice chain", () => {
     success: false,
     status: 400,
     message: "这个接龙只能选择一个项目"
+  });
+});
+
+test("ended chains reject new participants and retain termination details", () => {
+  const active = createChainPayload("周六聚餐");
+  const ended = endChainPayload(active, {
+    actorId: 8,
+    displayName: "管理员",
+    at: "2026-09-18T10:00:00.000Z"
+  });
+
+  assert.equal(active.ended, undefined);
+  assert.deepEqual(ended.ended, {
+    at: "2026-09-18T10:00:00.000Z",
+    byActorId: 8,
+    byName: "管理员"
+  });
+  assert.deepEqual(appendChainParticipant(ended, { id: 9, displayName: "小明" }, undefined, "2026-09-18T10:01:00.000Z"), {
+    success: false,
+    status: 409,
+    message: "接龙已结束，不能继续参与"
   });
 });

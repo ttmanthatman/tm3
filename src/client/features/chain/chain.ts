@@ -9,6 +9,12 @@ export function chainPayload(message: MessageDTO): ChainPayload {
   return {
     topic: typeof raw.topic === "string" ? raw.topic : message.content || "接龙",
     schemaVersion: raw.schemaVersion === 2 ? 2 : undefined,
+    ended: raw.ended
+      && typeof raw.ended.at === "string"
+      && typeof raw.ended.byActorId === "number"
+      && typeof raw.ended.byName === "string"
+      ? { at: raw.ended.at, byActorId: raw.ended.byActorId, byName: raw.ended.byName }
+      : undefined,
     participation: (raw.participation?.mode === "required_single_choice" || raw.participation?.mode === "required_multiple_choice")
       && Array.isArray(raw.participation.options)
       ? {
@@ -19,6 +25,16 @@ export function chainPayload(message: MessageDTO): ChainPayload {
       : undefined,
     participants: Array.isArray(raw.participants) ? raw.participants : []
   };
+}
+
+export function chainEnded(message: MessageDTO) {
+  return !!chainPayload(message).ended;
+}
+
+export function canEndChain(message: MessageDTO, actorId: number | undefined, isAdmin: boolean) {
+  return message.type === "chain"
+    && !chainEnded(message)
+    && (isAdmin || (!!actorId && message.chainOwnerActorId === actorId));
 }
 
 export function chainRequiresSelection(message: MessageDTO) {

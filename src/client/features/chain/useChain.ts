@@ -23,6 +23,9 @@ export function useChain(options: UseChainOptions) {
   const pendingChain = ref<MessageDTO | null>(null);
   const joinBusy = ref(false);
   const joinError = ref("");
+  const pendingEndChain = ref<MessageDTO | null>(null);
+  const endBusy = ref(false);
+  const endError = ref("");
 
   function openCreateDialog() {
     createError.value = "";
@@ -97,11 +100,43 @@ export function useChain(options: UseChainOptions) {
     }
   }
 
+  function openEndDialog(message: MessageDTO) {
+    pendingEndChain.value = message;
+    endError.value = "";
+  }
+
+  function closeEndDialog() {
+    if (endBusy.value) return;
+    pendingEndChain.value = null;
+    endError.value = "";
+  }
+
+  async function endPendingChain() {
+    const message = pendingEndChain.value;
+    if (!message || endBusy.value) return;
+    endBusy.value = true;
+    endError.value = "";
+    try {
+      await api(`/api/chains/${message.chainRootId || message.id}/end`, {
+        method: "POST",
+        body: JSON.stringify({})
+      });
+      pendingEndChain.value = null;
+      pendingChain.value = null;
+    } catch (error) {
+      endError.value = error instanceof Error ? error.message : "终止接龙失败";
+    } finally {
+      endBusy.value = false;
+    }
+  }
+
   function closeChainSurfaces() {
     if (!createBusy.value) showCreateDialog.value = false;
     if (!joinBusy.value) pendingChain.value = null;
+    if (!endBusy.value) pendingEndChain.value = null;
     createError.value = "";
     joinError.value = "";
+    endError.value = "";
   }
 
   return {
@@ -111,12 +146,18 @@ export function useChain(options: UseChainOptions) {
     pendingChain,
     joinBusy,
     joinError,
+    pendingEndChain,
+    endBusy,
+    endError,
     openCreateDialog,
     closeCreateDialog,
     createChain,
     openJoin,
     closeJoin,
     joinPendingChain,
+    openEndDialog,
+    closeEndDialog,
+    endPendingChain,
     closeChainSurfaces
   };
 }

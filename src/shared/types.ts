@@ -21,6 +21,11 @@ export interface ReplyPreviewDTO {
 export interface ChainPayload {
   topic: string;
   schemaVersion?: 2;
+  ended?: {
+    at: string;
+    byActorId: number;
+    byName: string;
+  };
   participation?: {
     mode: "required_single_choice" | "required_multiple_choice";
     options: ChainChoiceOption[];
@@ -137,6 +142,7 @@ export interface MessageDTO {
   replyTo?: ReplyPreviewDTO | null;
   chainRootId?: number | null;
   chainVersion?: number | null;
+  chainOwnerActorId?: number | null;
   createdAt: string;
   reactions?: MessageReactionsDTO;
   musicPlaylist?: MusicPlaylistDTO | null;

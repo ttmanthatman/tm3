@@ -38,6 +38,7 @@ export type MessageSerializationDependencies = {
 // (socket emits, mutations) omit it and keep the per-message lookups.
 export type MessageSerializeBatch = {
   voiceListenedMessageIds?: Set<number>;
+  chainOwnerActorIds?: Map<number, number>;
   prayer?: {
     aiSettings: Awaited<ReturnType<MessageSerializationDependencies["loadAiSettings"]>>;
     sourceMessages: Map<number, Message | null>;
@@ -299,6 +300,21 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         ? (batch.playlists.get(playlistId) ?? null)
         : await musicService.playlistDto(playlistId, viewerAccountId || 0)
       : undefined;
+    let chainOwnerActorId: number | null | undefined;
+    if (message.type === "chain") {
+      const rootId = message.chainRootId || message.id;
+      if (batch?.chainOwnerActorIds) {
+        chainOwnerActorId = batch.chainOwnerActorIds.get(rootId) ?? null;
+      } else if (rootId === message.id) {
+        chainOwnerActorId = message.senderActorId;
+      } else {
+        const root = await prisma.message.findFirst({
+          where: { id: rootId, channelId: message.channelId, type: "chain" },
+          select: { senderActorId: true }
+        });
+        chainOwnerActorId = root?.senderActorId ?? null;
+      }
+    }
     return {
       id: message.id,
       channelId: message.channelId,
@@ -343,6 +359,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         : null,
       chainRootId: message.chainRootId,
       chainVersion: message.chainVersion,
+      ...(message.type === "chain" ? { chainOwnerActorId } : {}),
       createdAt: message.createdAt.toISOString(),
       reactions: {
         likeCount: likes.length,
@@ -388,6 +405,9 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
     const audioRows = rows.filter((message) => message.type === "file" && isAudioFileName(message.fileName));
     const audioIds = audioRows.map((message) => message.id);
     const prayerRows = rows.filter((message) => message.type === "prayer");
+    const chainRootIds = [
+      ...new Set(rows.filter((message) => message.type === "chain").map((message) => message.chainRootId || message.id))
+    ];
     const playlistIds = [
       ...new Set(
         rows
@@ -400,16 +420,20 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       )
     ];
 
-    const [listenedRows, scoreRows, lyricRows] = await Promise.all([
+    const [listenedRows, scoreRows, lyricRows, chainRootRows] = await Promise.all([
       voiceIds.length
         ? prisma.voiceListen.findMany({ where: { accountId: viewerAccountId, messageId: { in: voiceIds } }, select: { messageId: true } })
         : Promise.resolve([]),
       audioIds.length
         ? prisma.musicScore.findMany({ where: { trackId: { in: audioIds } }, orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } })
         : Promise.resolve([]),
-      audioIds.length ? prisma.musicLyrics.findMany({ where: { trackId: { in: audioIds } } }) : Promise.resolve([])
+      audioIds.length ? prisma.musicLyrics.findMany({ where: { trackId: { in: audioIds } } }) : Promise.resolve([]),
+      chainRootIds.length
+        ? prisma.message.findMany({ where: { id: { in: chainRootIds }, channelId, type: "chain" }, select: { id: true, senderActorId: true } })
+        : Promise.resolve([])
     ]);
     batch.voiceListenedMessageIds = new Set(listenedRows.map((row) => row.messageId));
+    batch.chainOwnerActorIds = new Map(chainRootRows.map((row) => [row.id, row.senderActorId]));
 
     // Attach audio relations so serializeMessage's preloaded-relation branches
     // pick them up instead of querying per message.
