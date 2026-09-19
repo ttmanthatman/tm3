@@ -222,10 +222,21 @@ import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearance
 
 const store = useChatStore();
 const storyActorId = ref<number | null>(null);
-watch(() => store.account?.id, () => { storyActorId.value = null; });
+const storyInitialMode = ref<"feed" | "own" | "person">("person");
+watch(() => store.account?.id, () => { storyActorId.value = null; storyInitialMode.value = "person"; });
 function openOwnStory() {
   if (!store.account || store.account.isGuest) return;
+  storyInitialMode.value = "own";
   storyActorId.value = store.account.actorId;
+}
+function openSharedStories() {
+  if (!store.account || store.account.isGuest) return;
+  storyInitialMode.value = "feed";
+  storyActorId.value = store.account.actorId;
+}
+function openPersonStory(actorId: number) {
+  storyInitialMode.value = "person";
+  storyActorId.value = actorId;
 }
 const StoryWorkspace = defineAsyncComponent(() => import("./features/stories/StoryWorkspace.vue"));
 const {
@@ -710,7 +721,7 @@ let bibleSwipeStart: { x: number; y: number } | null = null;
 const chainPromptAnchor = ref<HTMLElement | null>(null);
 type TopNotice = {
   id: string;
-  kind: "mention" | "like" | "favorite";
+  kind: "mention" | "like" | "favorite" | "story";
   title: string;
   body: string;
   createdAt: string;
@@ -1689,8 +1700,17 @@ const favoriteNoticeItems = computed<TopNotice[]>(() =>
     createdAt: notification.createdAt
   }))
 );
+const storyNoticeItems = computed<TopNotice[]>(() =>
+  store.storyActivity.notifications.map((notification) => ({
+    id: `story-${notification.id}`,
+    kind: "story",
+    title: `${notification.actor.displayName}${notification.kind === "like" ? "赞了你的故事" : "评论了你的故事"}`,
+    body: notification.text || "点击查看我的故事",
+    createdAt: notification.createdAt
+  }))
+);
 const messageNoticeItems = computed<TopNotice[]>(() =>
-  [...mentionNoticeItems.value, ...likeNoticeItems.value, ...favoriteNoticeItems.value]
+  [...mentionNoticeItems.value, ...likeNoticeItems.value, ...favoriteNoticeItems.value, ...storyNoticeItems.value]
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
 );
 const activeMessageNotice = computed(() => messageNoticeItems.value[0] || null);
@@ -2728,6 +2748,7 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
 }
 
 async function openTopNotice(notice: TopNotice) {
+  if (notice.kind === "story") { openOwnStory(); return; }
   if (!notice.channelId || !notice.messageId) return;
   await jumpToMessageInChannel(notice.channelId, notice.messageId);
   if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
@@ -3282,6 +3303,7 @@ function handleDocumentVisibilityChange() {
     oopsPhysicsLayer.value?.reset();
   } else {
     handleRecordingVisibilityChange(true);
+    if (store.account && !store.account.isGuest) void store.loadStoryActivity();
     if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
     nextTick(() => {
       refreshMessageEffectObserver();
@@ -4587,6 +4609,7 @@ const chatHeaderBindings = computed(() => ({
   friendProgramsOpen: friendProgramsOpen.value,
   friendPlaying: friendPlaying.value,
   canOpenOwnStory: !!store.account && !store.account.isGuest,
+  storyAttention: store.storyActivity.hasUnreadStories || store.storyActivity.notifications.length > 0,
   musicScoreTriggerVisible: musicScoreTriggerVisible.value,
   musicScoreOpen: musicScoreOpen.value,
   canDeleteCurrentChannel: canDeleteCurrentChannel.value,
@@ -4612,6 +4635,7 @@ const chatHeaderBindings = computed(() => ({
   openMusicManagerFromMiniPanel,
   toggleFriendPrograms,
   openOwnStory,
+  openSharedStories,
   toggleMusicScore,
   requestCloseChannel,
   deleteChannel,
@@ -5179,7 +5203,7 @@ const messageRowBindings = {
         <span class="channel-row-label"><b>经文收藏</b><small>{{ bibleFavorites.length }} 节</small></span>
       </button>
       <footer class="profile-row">
-        <button class="avatar" type="button" aria-label="我的故事" :disabled="store.account.isGuest" @click="storyActorId = store.account.actorId">
+        <button class="avatar" type="button" aria-label="我的故事" :disabled="store.account.isGuest" @click="openOwnStory">
           <AvatarImage :path="store.account.avatarPath"><span>{{ avatarText(store.account.displayName) }}</span></AvatarImage>
         </button>
         <div>
@@ -5289,6 +5313,7 @@ const messageRowBindings = {
           <span class="message-notice-icon" aria-hidden="true">
             <AtSign v-if="activeMessageNotice.kind === 'mention'" :size="15" />
             <ThumbsUp v-else-if="activeMessageNotice.kind === 'like'" :size="15" />
+            <Sparkles v-else-if="activeMessageNotice.kind === 'story'" :size="15" />
             <Heart v-else :size="15" />
           </span>
           <span class="message-notice-copy">
@@ -6102,12 +6127,12 @@ const messageRowBindings = {
               <MessageCircle :size="15" />私聊
             </button>
           </div>
-          <StoryEntry v-if="selectedMember.kind === 'human' && !store.account.isGuest" :actor-id="selectedMember.id" @open="storyActorId = $event; selectedMember = null" />
+          <StoryEntry v-if="selectedMember.kind === 'human' && !store.account.isGuest" :actor-id="selectedMember.id" @open="openPersonStory($event); selectedMember = null" />
         </div>
       </div>
     </section>
 
-    <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}`" :actor-id="storyActorId" @close="storyActorId = null" />
+    <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}:${storyInitialMode}`" :actor-id="storyActorId" :initial-mode="storyInitialMode" :channel-id="currentChannel?.id" @activity-read="store.applyStoryActivity" @close="storyActorId = null" />
 
     <ChannelEditorDialog
       v-if="showChannelEditor"

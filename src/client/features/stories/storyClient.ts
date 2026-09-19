@@ -1,21 +1,30 @@
 import { api, getToken } from "../../api";
-import type { StoryDTO, StoryInteractionsDTO, StoryPageDTO } from "@shared/stories";
+import type { StoryActivityDTO, StoryDTO, StoryFeedPageDTO, StoryInteractionsDTO, StoryPageDTO } from "@shared/stories";
 
 export function loadStoryPage(actorId: number, before?: number | null, signal?: AbortSignal) {
   return api<StoryPageDTO>(`/api/stories?actorId=${actorId}${before ? `&before=${before}` : ""}`, { signal });
+}
+
+export function loadStoryFeed(before?: number | null, signal?: AbortSignal) {
+  return api<StoryFeedPageDTO>(`/api/stories/feed${before ? `?before=${before}` : ""}`, { signal });
 }
 
 export function storyMediaUrl(id: number, thumbnail = false) {
   return `/api/stories/media/${id}?token=${encodeURIComponent(getToken())}${thumbnail ? "&thumb=1" : ""}`;
 }
 
-export async function publishStory(requestId: string, text: string, images: File[], voice: File | null, signal?: AbortSignal) {
+export async function publishStory(requestId: string, text: string, images: File[], voice: File | null, channelId?: number | null, signal?: AbortSignal) {
   const body = new FormData();
   body.append("requestId", requestId);
   body.append("text", text);
+  if (channelId) body.append("channelId", String(channelId));
   for (const image of images) body.append("image", image);
   if (voice) body.append("voice", voice);
   return api<{ story: StoryDTO }>("/api/stories", { method: "POST", body, signal });
+}
+
+export function markStoryActivityRead(scope: "feed" | "interactions" | "all") {
+  return api<StoryActivityDTO>("/api/stories/activity/read", { method: "PATCH", body: JSON.stringify({ scope }) });
 }
 
 export function removeStory(id: number) {

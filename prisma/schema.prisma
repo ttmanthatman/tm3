@@ -94,6 +94,8 @@ model Account {
   avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
   gender                  String                          @default("unspecified") @db.VarChar(16)
   storyBio                String                          @default("小小的故事，大大的恩典") @map("story_bio") @db.VarChar(160)
+  storyFeedReadAt         DateTime                        @default(now()) @map("story_feed_read_at")
+  storyInteractionReadAt  DateTime                        @default(now()) @map("story_interaction_read_at")
   stories                 Story[]
   storyLikes              StoryLike[]
   storyComments           StoryComment[]

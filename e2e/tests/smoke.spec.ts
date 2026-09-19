@@ -384,6 +384,7 @@ test("管理员创建用户、修改资料并在刷新后确认持久化", async
   await page.getByRole("button", { name: "新增用户", exact: true }).click();
   await page.getByPlaceholder("例如 xiaoma").fill(E2E_MEMBER.username);
   await page.getByPlaceholder("用户看到的昵称").fill(E2E_MEMBER.displayName);
+  await page.getByLabel("新用户性别").selectOption("female");
   await page.getByPlaceholder("输入初始密码").fill(E2E_MEMBER.password);
   await page.getByRole("button", { name: "创建用户", exact: true }).click();
 
@@ -394,6 +395,7 @@ test("管理员创建用户、修改资料并在刷新后确认持久化", async
 
   const updatedDisplayName = `${E2E_MEMBER.displayName}已更新`;
   await page.getByPlaceholder("昵称").fill(updatedDisplayName);
+  await page.getByLabel(`${E2E_MEMBER.displayName}的性别`).selectOption("male");
   await page.getByLabel("频道置顶管理").check();
   await page.getByRole("button", { name: "保存修改", exact: true }).click();
   await expect(page.getByText("用户资料已更新", { exact: true })).toBeVisible();
@@ -405,6 +407,7 @@ test("管理员创建用户、修改资料并在刷新后确认持久化", async
   await expect(persistedMember).toContainText(updatedDisplayName);
   await persistedMember.click();
   await expect(page.getByPlaceholder("昵称")).toHaveValue(updatedDisplayName);
+  await expect(page.getByLabel(`${updatedDisplayName}的性别`)).toHaveValue("male");
   await expect(page.getByLabel("频道置顶管理")).toBeChecked();
 
   page.once("dialog", (dialog) => dialog.accept());

@@ -28,6 +28,7 @@ type AdminAccountAuth = {
   sessionId: string;
 };
 type AdminAccountRequest = FastifyRequest & { auth: AdminAccountAuth };
+const genderSchema = z.enum(["female", "male", "unspecified"]);
 
 export type AdminAccountRouteDependencies = {
   prisma: PrismaClient;
@@ -69,12 +70,14 @@ const createAccountSchema = z.object({
     .trim()
     .min(1, "显示名不能为空")
     .max(80, "显示名最长 80 个字符"),
+  gender: genderSchema.optional().default("unspecified"),
   isAdmin: z.boolean().optional(),
   canPinMessages: z.boolean().optional()
 });
 
 const updateAccountSchema = z.object({
   displayName: z.string().min(1).max(80).optional(),
+  gender: genderSchema.optional(),
   isAdmin: z.boolean().optional(),
   canPinMessages: z.boolean().optional(),
   password: z.string().min(10).max(128).optional(),
@@ -132,6 +135,7 @@ export function registerAdminAccountRoutes(
               username: body.username,
               passwordHash,
               displayName: body.displayName,
+              gender: body.gender,
               role: body.isAdmin ? "admin" : "user",
               canPinMessages: !!body.canPinMessages,
               actor: {
@@ -182,7 +186,15 @@ export function registerAdminAccountRoutes(
     async (request, reply) => {
       const auth = (request as AdminAccountRequest).auth;
       const id = Number((request.params as { id: string }).id);
-      const body = updateAccountSchema.parse(request.body);
+      const parsed = updateAccountSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({
+          success: false,
+          message: parsed.error.issues[0]?.message || "用户资料无效",
+          issues: parsed.error.issues
+        });
+      }
+      const body = parsed.data;
       const current = await deps.prisma.account.findUnique({
         where: { id },
         include: { actor: true }
@@ -211,6 +223,7 @@ export function registerAdminAccountRoutes(
         where: { id },
         data: {
           displayName: body.displayName,
+          gender: body.gender,
           avatarPath:
             body.avatarPath === undefined ? undefined : body.avatarPath || null,
           role:

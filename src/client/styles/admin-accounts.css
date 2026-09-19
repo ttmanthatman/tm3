@@ -334,7 +334,8 @@
   font-weight: 700;
 }
 
-.admin-account-field input {
+.admin-account-field input,
+.admin-account-field select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -344,7 +345,8 @@
   background: #fff;
 }
 
-.admin-account-field input:focus {
+.admin-account-field input:focus,
+.admin-account-field select:focus {
   outline: 0;
   border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
@@ -604,4 +606,3 @@
     flex: 1 1 auto;
   }
 }
-

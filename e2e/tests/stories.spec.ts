@@ -20,6 +20,9 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   const headers = { Authorization: `Bearer ${token}` };
   const me = (await (await request.get("/api/auth/me", { headers })).json()).account;
   await page.locator(".story-header-trigger").click();
+  await expect(page.getByRole("dialog", { name: "我们的故事" })).toBeVisible();
+  await page.getByRole("button", { name: "我们的故事，点击切换" }).click();
+  await expect(page.getByRole("dialog", { name: "我的故事" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "故事，从这一刻开始" })).toBeVisible();
   await expect(page.getByRole("button", { name: "编辑故事签名" })).toHaveText("小小的故事，大大的恩典");
   await page.getByRole("button", { name: "编辑故事签名" }).click();
@@ -138,6 +141,7 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   await page.reload();
   await expect(page.getByTestId("active-channel-name")).toBeVisible();
   await page.locator(".story-header-trigger").click();
+  await page.getByRole("button", { name: "我们的故事，点击切换" }).click();
   await expect(page.getByRole("button", { name: "编辑故事签名" })).toHaveText("平凡日子里的恩典，慢慢记下。");
   await expect(page.locator(".story-moment")).toHaveCount(1);
   await expect(page.getByText("愿平凡的日子常有喜乐。", { exact: true })).toBeVisible();

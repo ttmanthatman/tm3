@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from "vue";
+import { defineAsyncComponent, onBeforeUnmount } from "vue";
 import {
   BookOpen,
   CheckCircle2,
@@ -33,7 +33,7 @@ const showChannels = defineModel<boolean>("showChannels", { required: true });
 const channelsCollapsed = defineModel<boolean>("channelsCollapsed", { required: true });
 const musicPlayerExpanded = defineModel<boolean>("musicPlayerExpanded", { required: true });
 
-defineProps<{
+const props = defineProps<{
   otherChannelUnreadCount: number;
   notificationAttentionVisible: boolean;
   notificationNudgeCharacters: readonly string[];
@@ -54,6 +54,7 @@ defineProps<{
   friendProgramsOpen: boolean;
   friendPlaying: boolean;
   canOpenOwnStory: boolean;
+  storyAttention: boolean;
   musicScoreTriggerVisible: boolean;
   musicScoreOpen: boolean;
   canDeleteCurrentChannel: boolean;
@@ -79,6 +80,7 @@ defineProps<{
   openMusicManagerFromMiniPanel: () => void;
   toggleFriendPrograms: () => void;
   openOwnStory: () => void;
+  openSharedStories: () => void;
   toggleMusicScore: () => void;
   requestCloseChannel: () => void;
   deleteChannel: (channel: ChannelDTO) => void;
@@ -90,6 +92,29 @@ defineProps<{
   openPinnedFromTicker: () => void;
   openPinnedEditor: () => void;
 }>();
+
+let storyHoldTimer: number | null = null;
+let storyLongPressed = false;
+function clearStoryHold() {
+  if (storyHoldTimer !== null) window.clearTimeout(storyHoldTimer);
+  storyHoldTimer = null;
+}
+function beginStoryHold(event: PointerEvent) {
+  if (event.button !== 0 || !props.canOpenOwnStory) return;
+  clearStoryHold();
+  storyLongPressed = false;
+  storyHoldTimer = window.setTimeout(() => {
+    storyHoldTimer = null;
+    storyLongPressed = true;
+    props.openOwnStory();
+  }, 550);
+}
+function openStoryFromClick() {
+  clearStoryHold();
+  if (storyLongPressed) { storyLongPressed = false; return; }
+  props.openSharedStories();
+}
+onBeforeUnmount(clearStoryHold);
 </script>
 
 <template>
@@ -152,11 +177,17 @@ defineProps<{
     <button
       v-if="!showingFavoriteSurface"
       class="icon-btn story-header-trigger"
+      :class="{ 'has-story-attention': storyAttention }"
       type="button"
       :disabled="!canOpenOwnStory"
-      aria-label="我的故事"
-      title="我的故事"
-      @click.stop="openOwnStory"
+      aria-label="我们的故事，长按查看我的故事"
+      title="我们的故事（长按查看我的故事）"
+      @pointerdown.stop="beginStoryHold"
+      @pointerup.stop="clearStoryHold"
+      @pointercancel.stop="clearStoryHold"
+      @pointerleave="clearStoryHold"
+      @contextmenu.prevent
+      @click.stop="openStoryFromClick"
     ><Sparkles :size="20" /></button>
     <button
       v-if="!showingFavoriteSurface && musicScoreTriggerVisible"
@@ -229,3 +260,8 @@ defineProps<{
     </span>
   </section>
 </template>
+
+<style scoped>
+.story-header-trigger.has-story-attention { color: #d85f73; background: linear-gradient(135deg, #ffe16b55, #ff86ad44 52%, #72c7ff44); box-shadow: inset 0 0 0 1px #e985a966, 0 0 12px #f0af6380; }
+.story-header-trigger.has-story-attention :deep(svg) { fill: #ffd66b88; stroke: #d75678; }
+</style>

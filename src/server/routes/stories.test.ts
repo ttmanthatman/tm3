@@ -10,7 +10,7 @@ import type { PrismaClient, Story, StoryComment, StoryLike, StoryMedia } from "@
 import sharp from "sharp";
 import { registerStoryRoutes } from "./stories.js";
 
-type TestAccount = { id: number; isGuest: boolean; displayName: string; avatarPath: null; gender: string; storyBio?: string; role: "admin" | "user"; actor: { id: number } };
+type TestAccount = { id: number; isGuest: boolean; displayName: string; avatarPath: null; gender: string; storyBio?: string; storyFeedReadAt: Date; storyInteractionReadAt: Date; role: "admin" | "user"; actor: { id: number } };
 type LikeRow = StoryLike & { account: TestAccount };
 type CommentRow = StoryComment & { account: TestAccount };
 type Row = Story & { media: StoryMedia[]; likes: LikeRow[]; comments: CommentRow[] };
@@ -35,21 +35,38 @@ async function harness() {
   let nextLike = 1;
   let nextComment = 1;
   const bios = new Map<number, string>();
-  const account = (id: number): TestAccount => ({ id, isGuest: id === 3, displayName: `Person ${id}`, avatarPath: null, gender: id === 1 ? "female" : "unspecified", storyBio: bios.get(id), role: id === 1 || id === 4 ? "admin" : "user", actor: { id } });
+  const feedReads = new Map<number, Date>();
+  const interactionReads = new Map<number, Date>();
+  const account = (id: number): TestAccount => ({ id, isGuest: id === 3, displayName: `Person ${id}`, avatarPath: null, gender: id === 1 ? "female" : "unspecified", storyBio: bios.get(id), storyFeedReadAt: feedReads.get(id) || new Date(0), storyInteractionReadAt: interactionReads.get(id) || new Date(0), role: id === 1 || id === 4 ? "admin" : "user", actor: { id } });
+  const storyEvents: Array<{ accountIds: number[]; storyId: number }> = [];
+  const interactionEvents: Array<{ accountId: number; notification: { id: string; kind: string } }> = [];
+  const announcements: Array<{ channelId: number; actorId: number; storyId: number; displayName: string }> = [];
   const prisma = {
     account: {
       findUnique: async ({ where }: { where: { id: number } }) => account(where.id),
-      update: async ({ where, data }: { where: { id: number }; data: { storyBio: string } }) => { bios.set(where.id, data.storyBio); return account(where.id); }
+      findMany: async () => [1, 2, 4, 5].map(account),
+      update: async ({ where, data }: { where: { id: number }; data: { storyBio?: string; storyFeedReadAt?: Date; storyInteractionReadAt?: Date } }) => {
+        if (data.storyBio !== undefined) bios.set(where.id, data.storyBio);
+        if (data.storyFeedReadAt) feedReads.set(where.id, data.storyFeedReadAt);
+        if (data.storyInteractionReadAt) interactionReads.set(where.id, data.storyInteractionReadAt);
+        return account(where.id);
+      }
     },
     actor: { findUnique: async ({ where }: { where: { id: number } }) => ({ id: where.id, kind: "human", status: "active", account: account(where.id) }) },
-    channel: { findFirst: async () => shared ? { id: 1 } : null },
+    channel: { findFirst: async () => shared ? { id: 1 } : null, findMany: async () => [] },
     story: {
       findUnique: async ({ where }: { where: { id?: number; accountId_requestId?: { accountId: number; requestId: string } } }) => {
         const row = where.id ? rows.find((item) => item.id === where.id) : rows.find((item) => item.accountId === where.accountId_requestId?.accountId && item.requestId === where.accountId_requestId?.requestId);
         return row ? { ...row, account: account(row.accountId) } : null;
       },
-      findFirst: async ({ where }: { where: { id: number; accountId: number } }) => rows.find((row) => row.id === where.id && row.accountId === where.accountId) || null,
-      findMany: async ({ where, take }: { where: { accountId: number; id?: { lt: number } }; take: number }) => rows.filter((row) => row.accountId === where.accountId && (!where.id || row.id < where.id.lt)).sort((a, b) => b.id - a.id).slice(0, take),
+      findFirst: async ({ where }: { where: { id?: number; accountId: number | { in?: number[]; not?: number }; createdAt?: { gt: Date } } }) => rows.find((row) => {
+        const accountMatches = typeof where.accountId === "number" ? row.accountId === where.accountId : (!where.accountId.in || where.accountId.in.includes(row.accountId)) && row.accountId !== where.accountId.not;
+        return accountMatches && (!where.id || row.id === where.id) && (!where.createdAt || row.createdAt > where.createdAt.gt);
+      }) || null,
+      findMany: async ({ where, take }: { where: { accountId: number | { in: number[] }; id?: { lt: number } }; take: number }) => rows.filter((row) => {
+        const accountMatches = typeof where.accountId === "number" ? row.accountId === where.accountId : where.accountId.in.includes(row.accountId);
+        return accountMatches && (!where.id || row.id < where.id.lt);
+      }).sort((a, b) => b.id - a.id).slice(0, take).map((row) => ({ ...row, account: account(row.accountId) })),
       create: async ({ data }: { data: { accountId: number; requestId: string; text: string; media: { create: Omit<StoryMedia, "id" | "storyId">[] } } }) => {
         const id = nextId++;
         const row: Row = { id, accountId: data.accountId, requestId: data.requestId, text: data.text, createdAt: new Date(), media: data.media.create.map((item) => ({ ...item, storyId: id, id: nextMedia++ })), likes: [], comments: [] };
@@ -59,6 +76,8 @@ async function harness() {
       deleteMany: async ({ where }: { where: { id: number; accountId: number } }) => { const index = rows.findIndex((row) => row.id === where.id && row.accountId === where.accountId); if (index >= 0) rows.splice(index, 1); return { count: index >= 0 ? 1 : 0 }; }
     },
     storyLike: {
+      findUnique: async ({ where }: { where: { storyId_accountId: { storyId: number; accountId: number } } }) => rows.find((item) => item.id === where.storyId_accountId.storyId)?.likes.find((item) => item.accountId === where.storyId_accountId.accountId) || null,
+      findMany: async ({ where, take }: { where: { accountId: { not: number }; createdAt: { gt: Date }; story: { accountId: number } }; take: number }) => rows.filter((story) => story.accountId === where.story.accountId).flatMap((story) => story.likes).filter((like) => like.accountId !== where.accountId.not && like.createdAt > where.createdAt.gt).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take),
       upsert: async ({ where, create }: { where: { storyId_accountId: { storyId: number; accountId: number } }; create: { storyId: number; accountId: number } }) => {
         const row = rows.find((item) => item.id === where.storyId_accountId.storyId)!;
         let like = row.likes.find((item) => item.accountId === where.storyId_accountId.accountId);
@@ -73,6 +92,7 @@ async function harness() {
       }
     },
     storyComment: {
+      findMany: async ({ where, take }: { where: { accountId: { not: number }; createdAt: { gt: Date }; story: { accountId: number } }; take: number }) => rows.filter((story) => story.accountId === where.story.accountId).flatMap((story) => story.comments).filter((comment) => comment.accountId !== where.accountId.not && comment.createdAt > where.createdAt.gt).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take),
       create: async ({ data }: { data: { storyId: number; accountId: number; text: string } }) => {
         const row = rows.find((item) => item.id === data.storyId)!;
         const comment: CommentRow = { id: nextComment++, ...data, createdAt: new Date(), account: account(data.accountId) };
@@ -101,13 +121,21 @@ async function harness() {
     const id = Number(request.headers["x-account"] || 1);
     Object.assign(request, { auth: { accountId: id, actorId: id } });
   };
-  registerStoryRoutes(app, { prisma, directory, requireAuth, requireMediaAuth: requireAuth });
+  registerStoryRoutes(app, {
+    prisma,
+    directory,
+    requireAuth,
+    requireMediaAuth: requireAuth,
+    announceStory: async (event) => { announcements.push(event); },
+    notifyStoryPublished: (accountIds, event) => { storyEvents.push({ accountIds, storyId: event.storyId }); },
+    notifyStoryInteraction: (accountId, notification) => { interactionEvents.push({ accountId, notification }); }
+  });
   const image = await sharp({ create: { width: 12, height: 10, channels: 3, background: "#829979" } }).png().toBuffer();
   async function upload(requestId = crypto.randomUUID(), extras: Array<{ name: string; value: string | Buffer; mime?: string }> = [{ name: "image", value: image, mime: "image/png" }], headers?: Record<string, string>) {
     const body = payload([{ name: "requestId", value: requestId }, { name: "text", value: "留住这一刻" }, ...extras]);
     return app.inject({ method: "POST", url: "/api/stories", payload: body.payload, headers: { ...body.headers, ...headers } });
   }
-  return { app, rows, directory, upload, image, setShared: (value: boolean) => { shared = value; }, cleanup: async () => { await app.close(); await fs.rm(directory, { recursive: true, force: true }); } };
+  return { app, rows, directory, upload, image, storyEvents, interactionEvents, announcements, setShared: (value: boolean) => { shared = value; }, cleanup: async () => { await app.close(); await fs.rm(directory, { recursive: true, force: true }); } };
 }
 
 test("publish is atomic, text-only and invalid images are rejected without residual files", async () => {
@@ -252,5 +280,41 @@ test("guest viewing/publishing denied and newest-first pages use a stable id cur
     const older = (await h.app.inject({ url: `/api/stories?actorId=1&before=${page.nextCursor}` })).json();
     assert.deepEqual(older.stories.map((row: { id: number }) => row.id), [2, 1]);
     assert.equal(older.nextCursor, null);
+  } finally { await h.cleanup(); }
+});
+
+test("shared feed merges authors, story activity persists, and publishing announces in chat", async () => {
+  const h = await harness();
+  try {
+    const first = await h.upload(crypto.randomUUID(), [
+      { name: "channelId", value: "7" },
+      { name: "image", value: h.image, mime: "image/png" }
+    ]);
+    const second = await h.upload(crypto.randomUUID(), undefined, { "x-account": "2" });
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal(second.statusCode, 201, second.body);
+    assert.deepEqual(h.announcements, [{ channelId: 7, actorId: 1, storyId: 1, displayName: "Person 1" }]);
+    assert.equal(h.storyEvents.length, 2);
+    assert.ok(h.storyEvents[0].accountIds.includes(2));
+    assert.ok(!h.storyEvents[0].accountIds.includes(1));
+
+    const feed = (await h.app.inject({ url: "/api/stories/feed" })).json();
+    assert.deepEqual(feed.stories.map((story: { id: number }) => story.id), [2, 1]);
+    assert.deepEqual(feed.stories.map((story: { author: { displayName: string } }) => story.author.displayName), ["Person 2", "Person 1"]);
+    assert.equal(feed.viewer.own, true);
+    assert.equal((await h.app.inject({ url: "/api/stories/activity" })).json().hasUnreadStories, true);
+
+    const storyId = first.json().story.id;
+    await h.app.inject({ method: "PUT", url: `/api/stories/${storyId}/like`, headers: { "x-account": "2" }, payload: { liked: true } });
+    await h.app.inject({ method: "POST", url: `/api/stories/${storyId}/comments`, headers: { "x-account": "2" }, payload: { text: "真好" } });
+    assert.deepEqual(h.interactionEvents.map((event) => [event.accountId, event.notification.kind]), [[1, "like"], [1, "comment"]]);
+    const activity = (await h.app.inject({ url: "/api/stories/activity" })).json();
+    assert.equal(activity.notifications.length, 2);
+    assert.equal(activity.notifications[0].actor.displayName, "Person 2");
+
+    const read = await h.app.inject({ method: "PATCH", url: "/api/stories/activity/read", payload: { scope: "all" } });
+    assert.equal(read.statusCode, 200, read.body);
+    assert.equal(read.json().hasUnreadStories, false);
+    assert.deepEqual(read.json().notifications, []);
   } finally { await h.cleanup(); }
 });

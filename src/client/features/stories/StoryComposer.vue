@@ -7,6 +7,7 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import StoryVoice from "./StoryVoice.vue";
 import { useStoryRecording } from "./useStoryRecording";
 import { publishStory, prepareStoryPhoto } from "./storyClient";
+const props = defineProps<{ channelId?: number | null }>();
 const emit = defineEmits<{ close: []; published: [story: StoryDTO] }>();
 const text = ref("");
 const images = ref<Array<{ file: File; url: string }>>([]);
@@ -54,7 +55,7 @@ async function submit() {
   controller = new AbortController();
   const timeout = setTimeout(() => controller?.abort(), 180_000);
   try {
-    const result = await publishStory(requestId, text.value, images.value.map((image) => image.file), voice.value, controller.signal);
+    const result = await publishStory(requestId, text.value, images.value.map((image) => image.file), voice.value, props.channelId, controller.signal);
     emit("published", result.story);
   } catch (cause) { error.value = controller.signal.aborted ? "发布超时，内容已保留。请重试，重复提交不会重复发布。" : cause instanceof Error ? cause.message : "发布失败，请重试"; }
   finally { clearTimeout(timeout); busy.value = false; }

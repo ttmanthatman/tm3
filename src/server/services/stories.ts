@@ -1,5 +1,5 @@
 import { Prisma, type AccountRole, type PrismaClient } from "@prisma/client";
-import type { StoryAuthorDTO, StoryDTO, StoryInteractionsDTO, StoryPersonDTO } from "../../shared/stories.js";
+import type { StoryAuthorDTO, StoryDTO, StoryFeedItemDTO, StoryInteractionsDTO, StoryPersonDTO } from "../../shared/stories.js";
 import fs from "node:fs/promises";
 import { storyMediaPath } from "./storyMedia.js";
 import { STORY_DEFAULT_BIO } from "../../shared/stories.js";
@@ -28,7 +28,13 @@ export const storyInclude = Prisma.validator<Prisma.StoryInclude>()({
   comments: { include: { account: { select: interactionAccountSelect } }, orderBy: { id: "asc" } }
 });
 
+export const storyFeedInclude = Prisma.validator<Prisma.StoryInclude>()({
+  ...storyInclude,
+  account: { select: { ...interactionAccountSelect, gender: true, storyBio: true } }
+});
+
 export type StoryRow = Prisma.StoryGetPayload<{ include: typeof storyInclude }>;
+export type StoryFeedRow = Prisma.StoryGetPayload<{ include: typeof storyFeedInclude }>;
 
 function personDto(account: StoryRow["likes"][number]["account"]): StoryPersonDTO {
   return { accountId: account.id, actorId: account.actor?.id || 0, displayName: account.displayName, avatarPath: account.avatarPath };
@@ -51,6 +57,35 @@ export function storyInteractionsDto(story: Pick<StoryRow, "accountId" | "likes"
 }
 
 export function createStoryService(prisma: PrismaClient) {
+  async function visibleAuthorAccountIds(viewerId: number): Promise<number[]> {
+    const viewer = await prisma.account.findUnique({ where: { id: viewerId }, select: { isGuest: true } });
+    if (!viewer || viewer.isGuest) return [];
+    const regularAccountWhere = { isGuest: false, actor: { is: { kind: "human" as const, status: "active" as const } } };
+    const publicChannel = await prisma.channel.findFirst({
+      where: { kind: "standard", isPrivate: false, directKey: null },
+      select: { id: true }
+    });
+    if (publicChannel) {
+      return (await prisma.account.findMany({ where: regularAccountWhere, select: { id: true } })).map((account) => account.id);
+    }
+    const sharedChannels = await prisma.channel.findMany({
+      where: {
+        kind: { notIn: ["music", "aiLounge"] },
+        AND: [
+          { OR: [{ kind: { not: "reception" } }, { receptionExpiresAt: { gt: new Date() } }] },
+          { members: { some: { accountId: viewerId } } }
+        ]
+      },
+      select: { members: { select: { accountId: true } } }
+    });
+    const candidates = new Set<number>([viewerId]);
+    for (const channel of sharedChannels) for (const member of channel.members) candidates.add(member.accountId);
+    return (await prisma.account.findMany({
+      where: { ...regularAccountWhere, id: { in: [...candidates] } },
+      select: { id: true }
+    })).map((account) => account.id);
+  }
+
   async function authorFor(viewerId: number, actorId: number): Promise<StoryAuthorDTO | null> {
     const [viewer, actor] = await Promise.all([
       prisma.account.findUnique({ where: { id: viewerId }, select: { isGuest: true } }),
@@ -95,11 +130,26 @@ export function createStoryService(prisma: PrismaClient) {
     return (await prisma.account.findUnique({ where: { id: accountId }, select: { role: true } }))?.role || "user";
   }
 
-  return { authorFor, accessFor, viewerRole };
+  return { authorFor, accessFor, viewerRole, visibleAuthorAccountIds };
 }
 
 export function storyDto(story: StoryRow, viewerAccountId: number, viewerRole: AccountRole): StoryDTO {
   return { id: story.id, text: story.text, createdAt: story.createdAt.toISOString(), media: story.media.map((media) => ({
     id: media.id, kind: media.kind === "voice" ? "voice" : "image", width: media.width, height: media.height, durationMs: media.durationMs
   })), interactions: storyInteractionsDto(story, viewerAccountId, viewerRole) };
+}
+
+export function storyFeedDto(story: StoryFeedRow, viewerAccountId: number, viewerRole: AccountRole): StoryFeedItemDTO {
+  return {
+    ...storyDto(story, viewerAccountId, viewerRole),
+    author: {
+      accountId: story.account.id,
+      actorId: story.account.actor?.id || 0,
+      displayName: story.account.displayName,
+      avatarPath: story.account.avatarPath,
+      gender: story.account.gender === "female" || story.account.gender === "male" ? story.account.gender : "unspecified",
+      bio: story.account.storyBio || STORY_DEFAULT_BIO,
+      own: story.account.id === viewerAccountId
+    }
+  };
 }

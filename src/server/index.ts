@@ -2511,7 +2511,31 @@ const receptionService = createReceptionService({
   onError: (error, channelId) => app.log.error({ error, channelId }, "Failed to collect reception room")
 });
 
-registerStoryRoutes(app, { prisma, requireAuth, requireMediaAuth, directory: path.join(STORAGE_ROOT, "stories") });
+registerStoryRoutes(app, {
+  prisma,
+  requireAuth,
+  requireMediaAuth,
+  directory: path.join(STORAGE_ROOT, "stories"),
+  announceStory: async ({ channelId, actorId, storyId, displayName }) => {
+    const actor = await prisma.actor.findUnique({ where: { id: actorId }, select: { accountId: true } });
+    if (!actor?.accountId || !(await canWriteChannel(actor.accountId, channelId))) return;
+    await createMessageFromActor({
+      channelId,
+      actorId,
+      content: `${displayName}发了个故事`,
+      type: "system",
+      payload: { kind: "story_announcement", storyId },
+      skipEngineEvent: true,
+      skipQuestionAssistant: true
+    });
+  },
+  notifyStoryPublished: (accountIds, event) => {
+    for (const accountId of accountIds) io.to(`acct:${accountId}`).emit("story:new", event);
+  },
+  notifyStoryInteraction: (accountId, notification) => {
+    io.to(`acct:${accountId}`).emit("story:notification", notification);
+  }
+});
 
 registerReceptionRoutes(app, {
   prisma,

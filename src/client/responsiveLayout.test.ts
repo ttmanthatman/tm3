@@ -583,8 +583,8 @@ test("song, friend, and own-story controls stay ordered before the score and con
   assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="friend-player-control"'));
   assert.ok(header.indexOf('class="friend-player-control"') < header.indexOf('class="icon-btn story-header-trigger"'));
   assert.ok(header.indexOf('class="icon-btn story-header-trigger"') < header.indexOf('class="chat-tools-control"'));
-  assert.match(header, /class="icon-btn story-header-trigger"[\s\S]*?aria-label="我的故事"[\s\S]*?<Sparkles :size="20"/);
-  assert.match(app, /canOpenOwnStory: !!store\.account && !store\.account\.isGuest,[\s\S]*?openOwnStory/);
+  assert.match(header, /class="icon-btn story-header-trigger"[\s\S]*?aria-label="我们的故事，长按查看我的故事"[\s\S]*?@pointerdown\.stop="beginStoryHold"[\s\S]*?<Sparkles :size="20"/);
+  assert.match(app, /canOpenOwnStory: !!store\.account && !store\.account\.isGuest,[\s\S]*?storyAttention:[\s\S]*?openOwnStory,[\s\S]*?openSharedStories/);
   assert.match(header, /v-if="[^"]*musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
   assert.match(header, /'page-turning': musicPlaying/);
   assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);

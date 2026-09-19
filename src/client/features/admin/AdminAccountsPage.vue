@@ -293,6 +293,15 @@ onMounted(loadAccounts);
               </em>
             </label>
             <label class="admin-account-field">
+              <span>性别</span>
+              <select v-model="newUser.gender" aria-label="新用户性别">
+                <option value="unspecified">未指定</option>
+                <option value="female">女</option>
+                <option value="male">男</option>
+              </select>
+              <small>用于故事页显示「她 / 他 / TA」。</small>
+            </label>
+            <label class="admin-account-field">
               <span>初始密码</span>
               <input
                 ref="passwordInput"
@@ -387,6 +396,18 @@ onMounted(loadAccounts);
               <span>用户名</span>
               <strong>@{{ selectedAccount.username }}</strong>
             </div>
+            <label class="admin-account-field">
+              <span>性别</span>
+              <select
+                v-model="accountEdits[selectedAccount.id].gender"
+                :aria-label="`${selectedAccount.displayName}的性别`"
+              >
+                <option value="unspecified">未指定</option>
+                <option value="female">女</option>
+                <option value="male">男</option>
+              </select>
+              <small>用于故事页显示「她 / 他 / TA」。</small>
+            </label>
           </section>
 
           <section class="admin-account-section">

@@ -68,8 +68,32 @@ export interface StoryDTO {
   interactions: StoryInteractionsDTO;
 }
 
+export interface StoryFeedItemDTO extends StoryDTO {
+  author: StoryAuthorDTO;
+}
+
 export interface StoryPageDTO {
   author: StoryAuthorDTO;
   stories: StoryDTO[];
   nextCursor: number | null;
+}
+
+export interface StoryFeedPageDTO {
+  viewer: StoryAuthorDTO;
+  stories: StoryFeedItemDTO[];
+  nextCursor: number | null;
+}
+
+export interface StoryNotificationDTO {
+  id: string;
+  kind: "like" | "comment";
+  storyId: number;
+  actor: StoryPersonDTO;
+  text: string | null;
+  createdAt: string;
+}
+
+export interface StoryActivityDTO {
+  hasUnreadStories: boolean;
+  notifications: StoryNotificationDTO[];
 }

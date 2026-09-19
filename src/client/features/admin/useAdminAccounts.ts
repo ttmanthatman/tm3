@@ -1,9 +1,11 @@
 import { computed, ref } from "vue";
+import type { StoryGender } from "@shared/stories";
 import type { AccountDTO } from "@shared/types";
 import { api, authHeaders } from "../../api";
 
 export interface AdminAccountEdit {
   displayName: string;
+  gender: StoryGender;
   isAdmin: boolean;
   canPinMessages: boolean;
   password: string;
@@ -13,6 +15,7 @@ export interface NewAdminAccount {
   username: string;
   displayName: string;
   password: string;
+  gender: StoryGender;
   isAdmin: boolean;
   canPinMessages: boolean;
 }
@@ -29,6 +32,7 @@ interface UseAdminAccountsOptions {
 export function createAdminAccountEdit(account: AccountDTO): AdminAccountEdit {
   return {
     displayName: account.displayName,
+    gender: account.gender ?? "unspecified",
     isAdmin: account.isAdmin,
     canPinMessages: account.canPinMessages,
     password: ""
@@ -52,6 +56,7 @@ export function emptyNewAdminAccount(): NewAdminAccount {
     username: "",
     displayName: "",
     password: "",
+    gender: "unspecified",
     isAdmin: false,
     canPinMessages: false
   };
@@ -240,6 +245,7 @@ export function useAdminAccounts(options: UseAdminAccountsOptions) {
         method: "PATCH",
         body: JSON.stringify({
           displayName,
+          gender: edit.gender,
           isAdmin: edit.isAdmin,
           canPinMessages: edit.canPinMessages
         })

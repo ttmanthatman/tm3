@@ -7,8 +7,8 @@ import { pipeline } from "node:stream/promises";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
-import { STORY_LIMITS, STORY_BIO_MAX, STORY_DEFAULT_BIO, validStoryMedia } from "../../shared/stories.js";
-import { createStoryService, storyDto, storyInclude, storyInteractionsDto } from "../services/stories.js";
+import { STORY_LIMITS, STORY_BIO_MAX, STORY_DEFAULT_BIO, validStoryMedia, type StoryActivityDTO, type StoryNotificationDTO, type StoryPersonDTO } from "../../shared/stories.js";
+import { createStoryService, storyDto, storyFeedDto, storyFeedInclude, storyInclude, storyInteractionsDto } from "../services/stories.js";
 import { prepareStoryMedia, storyMediaPath, StoryInputError, type StoredStoryMedia } from "../services/storyMedia.js";
 
 type AuthRequest = FastifyRequest & { auth: { accountId: number; actorId: number } };
@@ -32,9 +32,56 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
   requireAuth: preHandlerHookHandler;
   requireMediaAuth: preHandlerHookHandler;
   directory: string;
+  announceStory?: (input: { channelId: number; actorId: number; storyId: number; displayName: string }) => Promise<void>;
+  notifyStoryPublished?: (accountIds: number[], event: { storyId: number; createdAt: string }) => void;
+  notifyStoryInteraction?: (accountId: number, notification: StoryNotificationDTO) => void;
 }) {
   const { prisma, requireAuth, requireMediaAuth, directory } = deps;
   const service = createStoryService(prisma);
+
+  async function notificationPerson(accountId: number): Promise<StoryPersonDTO> {
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { id: true, displayName: true, avatarPath: true, actor: { select: { id: true } } }
+    });
+    return { accountId, actorId: account?.actor?.id || 0, displayName: account?.displayName || "一位成员", avatarPath: account?.avatarPath || null };
+  }
+
+  async function storyActivity(accountId: number): Promise<StoryActivityDTO> {
+    const account = await prisma.account.findUnique({
+      where: { id: accountId },
+      select: { storyFeedReadAt: true, storyInteractionReadAt: true }
+    });
+    if (!account) return { hasUnreadStories: false, notifications: [] };
+    const visibleIds = await service.visibleAuthorAccountIds(accountId);
+    const [unreadStory, likes, comments] = await Promise.all([
+      prisma.story.findFirst({
+        where: { accountId: { in: visibleIds, not: accountId }, createdAt: { gt: account.storyFeedReadAt } },
+        select: { id: true }
+      }),
+      prisma.storyLike.findMany({
+        where: { accountId: { not: accountId }, createdAt: { gt: account.storyInteractionReadAt }, story: { accountId } },
+        include: { account: { select: { id: true, displayName: true, avatarPath: true, actor: { select: { id: true } } } } },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      }),
+      prisma.storyComment.findMany({
+        where: { accountId: { not: accountId }, createdAt: { gt: account.storyInteractionReadAt }, story: { accountId } },
+        include: { account: { select: { id: true, displayName: true, avatarPath: true, actor: { select: { id: true } } } } },
+        orderBy: { createdAt: "desc" },
+        take: 20
+      })
+    ]);
+    const notifications: StoryNotificationDTO[] = [
+      ...likes.map((like) => ({ id: `like:${like.id}`, kind: "like" as const, storyId: like.storyId, actor: {
+        accountId: like.account.id, actorId: like.account.actor?.id || 0, displayName: like.account.displayName, avatarPath: like.account.avatarPath
+      }, text: null, createdAt: like.createdAt.toISOString() })),
+      ...comments.map((comment) => ({ id: `comment:${comment.id}`, kind: "comment" as const, storyId: comment.storyId, actor: {
+        accountId: comment.account.id, actorId: comment.account.actor?.id || 0, displayName: comment.account.displayName, avatarPath: comment.account.avatarPath
+      }, text: comment.text, createdAt: comment.createdAt.toISOString() }))
+    ].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 20);
+    return { hasUnreadStories: !!unreadStory, notifications };
+  }
 
   async function currentInteractions(storyId: number, accountId: number) {
     const [story, role] = await Promise.all([
@@ -99,6 +146,43 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
     return { author, stories: rows.slice(0, 20).map((story) => storyDto(story, (request as AuthRequest).auth.accountId, role)), nextCursor: rows.length > 20 ? rows[19].id : null };
   });
 
+  app.get("/api/stories/feed", { preHandler: requireAuth }, async (request, reply) => {
+    const query = z.object({ before: positiveId.optional() }).safeParse(request.query);
+    if (!query.success) return reply.code(400).send({ message: "故事参数无效" });
+    const auth = (request as AuthRequest).auth;
+    const [viewer, role, visibleIds] = await Promise.all([
+      service.authorFor(auth.accountId, auth.actorId),
+      service.viewerRole(auth.accountId),
+      service.visibleAuthorAccountIds(auth.accountId)
+    ]);
+    if (!viewer) return reply.code(403).send({ message: "访客不能查看大家的故事" });
+    const rows = await prisma.story.findMany({
+      where: { accountId: { in: visibleIds }, ...(query.data.before ? { id: { lt: query.data.before } } : {}) },
+      include: storyFeedInclude,
+      orderBy: { id: "desc" },
+      take: 21
+    });
+    return { viewer, stories: rows.slice(0, 20).map((story) => storyFeedDto(story, auth.accountId, role)), nextCursor: rows.length > 20 ? rows[19].id : null };
+  });
+
+  app.get("/api/stories/activity", { preHandler: requireAuth }, async (request, reply) => {
+    const auth = (request as AuthRequest).auth;
+    if (!(await service.authorFor(auth.accountId, auth.actorId))) return reply.code(403).send({ message: "访客没有故事提醒" });
+    return storyActivity(auth.accountId);
+  });
+
+  app.patch("/api/stories/activity/read", { preHandler: requireAuth }, async (request, reply) => {
+    const auth = (request as AuthRequest).auth;
+    const body = z.object({ scope: z.enum(["feed", "interactions", "all"]) }).strict().safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ message: "故事已读参数无效" });
+    const now = new Date();
+    await prisma.account.update({ where: { id: auth.accountId }, data: {
+      ...(body.data.scope === "feed" || body.data.scope === "all" ? { storyFeedReadAt: now } : {}),
+      ...(body.data.scope === "interactions" || body.data.scope === "all" ? { storyInteractionReadAt: now } : {})
+    } });
+    return storyActivity(auth.accountId);
+  });
+
   app.post("/api/stories", { preHandler: requireAuth, config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
     const auth = (request as AuthRequest).auth;
     if (!(await service.authorFor(auth.accountId, auth.actorId))) return reply.code(403).send({ message: "访客不能发布故事" });
@@ -112,9 +196,9 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
     const lifetime = uploadLifetime(request, reply);
     try {
       lifetime.signal.throwIfAborted();
-      for await (const part of request.parts({ limits: { files: 10, fields: 2, parts: 12, fileSize: STORY_LIMITS.fileBytes, fieldSize: 12_000 } })) {
+      for await (const part of request.parts({ limits: { files: 10, fields: 3, parts: 13, fileSize: STORY_LIMITS.fileBytes, fieldSize: 12_000 } })) {
         if (part.type === "field") {
-          if ((part.fieldname !== "text" && part.fieldname !== "requestId") || typeof part.value !== "string" || part.valueTruncated || fields[part.fieldname] !== undefined) throw new StoryInputError("发布参数无效");
+          if (!(["text", "requestId", "channelId"] as string[]).includes(part.fieldname) || typeof part.value !== "string" || part.valueTruncated || fields[part.fieldname] !== undefined) throw new StoryInputError("发布参数无效");
           fields[part.fieldname] = part.value;
           continue;
         }
@@ -131,7 +215,7 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
         await fsp.unlink(input);
         media.push({ ...prepared, fileName: `${folder}/${prepared.fileName}` });
       }
-      const parsed = z.object({ requestId: z.string().uuid(), text: z.string().trim().max(STORY_LIMITS.text).default("") }).safeParse(fields);
+      const parsed = z.object({ requestId: z.string().uuid(), text: z.string().trim().max(STORY_LIMITS.text).default(""), channelId: positiveId.optional() }).safeParse(fields);
       if (!parsed.success) throw new StoryInputError("文字最多 2000 字，请检查后重试");
       if (!validStoryMedia(media.map((item) => item.kind))) throw new StoryInputError("请至少添加一张图片或一段语音，不能只发文字");
       lifetime.signal.throwIfAborted();
@@ -140,8 +224,20 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
       // Concurrent retries share a unique request key; their private upload
       // directories never overwrite or delete a successful request's files.
       try {
-        const story = await prisma.story.create({ data: { accountId: auth.accountId, ...parsed.data, media: { create: media } }, include: storyInclude });
+        const { channelId, ...storyData } = parsed.data;
+        const story = await prisma.story.create({ data: { accountId: auth.accountId, ...storyData, media: { create: media } }, include: storyInclude });
         committed = true;
+        const author = await service.authorFor(auth.accountId, auth.actorId);
+        if (author) {
+          if (channelId && deps.announceStory) {
+            await deps.announceStory({ channelId, actorId: auth.actorId, storyId: story.id, displayName: author.displayName })
+              .catch((error) => request.log.error({ error, storyId: story.id }, "story announcement failed"));
+          }
+          if (deps.notifyStoryPublished) {
+            const audience = (await service.visibleAuthorAccountIds(auth.accountId)).filter((accountId) => accountId !== auth.accountId);
+            deps.notifyStoryPublished(audience, { storyId: story.id, createdAt: story.createdAt.toISOString() });
+          }
+        }
         reply.code(201);
         return { story: storyDto(story, auth.accountId, await service.viewerRole(auth.accountId)) };
       } catch (error) {
@@ -164,10 +260,16 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
     const body = z.object({ liked: z.boolean() }).strict().safeParse(request.body);
     if (!id.success || !body.success) return reply.code(400).send({ message: "点赞参数无效" });
     const auth = (request as AuthRequest).auth;
-    if (!(await service.accessFor(auth.accountId, id.data))) return reply.code(404).send({ message: "故事不存在或不可见" });
+    const access = await service.accessFor(auth.accountId, id.data);
+    if (!access) return reply.code(404).send({ message: "故事不存在或不可见" });
     const key = { storyId_accountId: { storyId: id.data, accountId: auth.accountId } };
+    const existing = await prisma.storyLike.findUnique({ where: key });
     if (body.data.liked) {
-      await prisma.storyLike.upsert({ where: key, update: {}, create: key.storyId_accountId });
+      const like = await prisma.storyLike.upsert({ where: key, update: {}, create: key.storyId_accountId });
+      if (!existing && access.author.accountId !== auth.accountId && deps.notifyStoryInteraction) {
+        deps.notifyStoryInteraction(access.author.accountId, { id: `like:${like.id}`, kind: "like", storyId: id.data,
+          actor: await notificationPerson(auth.accountId), text: null, createdAt: like.createdAt.toISOString() });
+      }
     } else {
       await prisma.storyLike.deleteMany({ where: key.storyId_accountId });
     }
@@ -180,8 +282,13 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
     const body = z.object({ text: z.string().trim().min(1).max(STORY_LIMITS.comment) }).strict().safeParse(request.body);
     if (!id.success || !body.success) return reply.code(400).send({ message: "评论需为 1–500 字" });
     const auth = (request as AuthRequest).auth;
-    if (!(await service.accessFor(auth.accountId, id.data))) return reply.code(404).send({ message: "故事不存在或不可见" });
-    await prisma.storyComment.create({ data: { storyId: id.data, accountId: auth.accountId, text: body.data.text } });
+    const access = await service.accessFor(auth.accountId, id.data);
+    if (!access) return reply.code(404).send({ message: "故事不存在或不可见" });
+    const comment = await prisma.storyComment.create({ data: { storyId: id.data, accountId: auth.accountId, text: body.data.text } });
+    if (access.author.accountId !== auth.accountId && deps.notifyStoryInteraction) {
+      deps.notifyStoryInteraction(access.author.accountId, { id: `comment:${comment.id}`, kind: "comment", storyId: id.data,
+        actor: await notificationPerson(auth.accountId), text: comment.text, createdAt: comment.createdAt.toISOString() });
+    }
     const interactions = await currentInteractions(id.data, auth.accountId);
     reply.code(201);
     return interactions ? { interactions } : reply.code(404).send({ message: "故事不存在或不可见" });

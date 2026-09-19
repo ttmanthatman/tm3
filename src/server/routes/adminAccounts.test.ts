@@ -14,6 +14,7 @@ type StoredAccount = {
   id: number;
   username: string;
   displayName: string;
+  gender: "female" | "male" | "unspecified";
   passwordHash: string;
   role: "admin" | "user";
   canPinMessages: boolean;
@@ -29,6 +30,7 @@ function accountDto(account: StoredAccount): AccountDTO {
     id: account.id,
     username: account.username,
     displayName: account.displayName,
+    gender: account.gender,
     avatarPath: null,
     isAdmin: account.role === "admin",
     canPinMessages: account.canPinMessages,
@@ -46,9 +48,10 @@ function accountDto(account: StoredAccount): AccountDTO {
 function createAccountRouteHarness(options: {
   accountCreateError?: Error;
   membershipCreateError?: Error;
+  initialAccounts?: StoredAccount[];
 } = {}) {
   const state = {
-    accounts: [] as StoredAccount[],
+    accounts: [...(options.initialAccounts ?? [])],
     memberships: [] as Array<{ channelId: number; accountId: number; role: "member" }>,
     transactionCalls: 0
   };
@@ -64,6 +67,7 @@ function createAccountRouteHarness(options: {
             data: {
               username: string;
               displayName: string;
+              gender: "female" | "male" | "unspecified";
               passwordHash: string;
               role: "admin" | "user";
               canPinMessages: boolean;
@@ -74,6 +78,7 @@ function createAccountRouteHarness(options: {
               id: 3,
               username: data.username,
               displayName: data.displayName,
+              gender: data.gender,
               passwordHash: data.passwordHash,
               role: data.role,
               canPinMessages: data.canPinMessages,
@@ -104,6 +109,31 @@ function createAccountRouteHarness(options: {
       state.accounts = draftAccounts;
       state.memberships = draftMemberships;
       return result;
+    },
+    account: {
+      findUnique: async ({ where }: { where: { id: number } }) =>
+        state.accounts.find((account) => account.id === where.id) ?? null,
+      update: async ({ where, data }: {
+        where: { id: number };
+        data: {
+          displayName?: string;
+          gender?: "female" | "male" | "unspecified";
+          role?: "admin" | "user";
+          canPinMessages?: boolean;
+          actor?: { update: { displayName?: string } };
+        };
+      }) => {
+        const account = state.accounts.find((candidate) => candidate.id === where.id);
+        if (!account) throw new Error("account not found");
+        if (data.displayName !== undefined) account.displayName = data.displayName;
+        if (data.gender !== undefined) account.gender = data.gender;
+        if (data.role !== undefined) account.role = data.role;
+        if (data.canPinMessages !== undefined) account.canPinMessages = data.canPinMessages;
+        if (data.actor?.update.displayName !== undefined) {
+          account.actor.displayName = data.actor.update.displayName;
+        }
+        return account;
+      }
     }
   };
   const app = Fastify();
@@ -145,6 +175,7 @@ const validPayload = {
   username: "new-reader",
   displayName: "新读者",
   password: "StrongPass123",
+  gender: "female",
   isAdmin: false,
   canPinMessages: true
 };
@@ -162,6 +193,8 @@ test("admin creation returns the account and joins every public channel atomical
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().account.username, validPayload.username);
+  assert.equal(response.json().account.gender, "female");
+  assert.equal(state.accounts[0]?.gender, "female");
   assert.equal(state.transactionCalls, 1);
   assert.deepEqual(state.memberships, [
     { channelId: 10, accountId: 3, role: "member" },
@@ -242,6 +275,40 @@ test("invalid creation payloads return a clear 400 without starting a transactio
   assert.equal(response.statusCode, 400);
   assert.match(response.json().message, /用户名|显示名|密码/);
   assert.equal(state.transactionCalls, 0);
+});
+
+test("administrators can update gender and invalid values are rejected", async (context) => {
+  const storedAccount: StoredAccount = {
+    id: 3,
+    username: "reader",
+    displayName: "读者",
+    gender: "unspecified",
+    passwordHash: "hash",
+    role: "user",
+    canPinMessages: false,
+    actor: { id: 103, username: "reader", displayName: "读者" }
+  };
+  const { app, state } = createAccountRouteHarness({ initialAccounts: [storedAccount] });
+  context.after(() => app.close());
+
+  const response = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/accounts/3",
+    headers: { "x-test-auth": "admin" },
+    payload: { gender: "male" }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().account.gender, "male");
+  assert.equal(state.accounts[0]?.gender, "male");
+
+  const invalidResponse = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/accounts/3",
+    headers: { "x-test-auth": "admin" },
+    payload: { gender: "invalid" }
+  });
+  assert.equal(invalidResponse.statusCode, 400);
+  assert.equal(state.accounts[0]?.gender, "male");
 });
 
 test("non-admin requests cannot create, modify, or delete accounts", async (context) => {

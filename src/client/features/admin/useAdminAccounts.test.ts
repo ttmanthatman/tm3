@@ -16,6 +16,7 @@ function account(overrides: Partial<AccountDTO> = {}): AccountDTO {
     id: 1,
     username: "admin",
     displayName: "管理员",
+    gender: "unspecified",
     avatarPath: null,
     isAdmin: true,
     canPinMessages: true,
@@ -34,6 +35,7 @@ function account(overrides: Partial<AccountDTO> = {}): AccountDTO {
 test("admin account edits copy editable permissions and always clear password", () => {
   assert.deepEqual(createAdminAccountEdit(account()), {
     displayName: "管理员",
+    gender: "unspecified",
     isAdmin: true,
     canPinMessages: true,
     password: ""
@@ -43,8 +45,8 @@ test("admin account edits copy editable permissions and always clear password", 
     account(),
     account({ id: 2, username: "reader", displayName: "读者", isAdmin: false, canPinMessages: false })
   ]), {
-    1: { displayName: "管理员", isAdmin: true, canPinMessages: true, password: "" },
-    2: { displayName: "读者", isAdmin: false, canPinMessages: false, password: "" }
+    1: { displayName: "管理员", gender: "unspecified", isAdmin: true, canPinMessages: true, password: "" },
+    2: { displayName: "读者", gender: "unspecified", isAdmin: false, canPinMessages: false, password: "" }
   });
 });
 
@@ -100,6 +102,7 @@ test("valid account creation uses the POST response, selects the account, and pr
       username: "new-reader",
       displayName: "新读者",
       password: "StrongPass123",
+      gender: "female",
       isAdmin: false,
       canPinMessages: true
     };
@@ -115,6 +118,7 @@ test("valid account creation uses the POST response, selects the account, and pr
         id: 3,
         username: "new-reader",
         displayName: "新读者",
+        gender: "female",
         isAdmin: false,
         canPinMessages: true
       })
@@ -128,11 +132,13 @@ test("valid account creation uses the POST response, selects the account, and pr
       username: "",
       displayName: "",
       password: "",
+      gender: "unspecified",
       isAdmin: false,
       canPinMessages: false
     });
     assert.equal(manager.message.value, "用户已创建");
     assert.equal(messages.at(-1), "用户已创建");
+    assert.equal(JSON.parse(String(requests[0]?.init?.body)).gender, "female");
     assert.equal(requests.some((request) => request.init?.method === "GET"), false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -157,6 +163,7 @@ test("invalid account drafts expose field errors without sending a request", asy
       username: "不合规",
       displayName: "",
       password: "short",
+      gender: "unspecified",
       isAdmin: false,
       canPinMessages: false
     };
@@ -209,6 +216,7 @@ test("server and network creation errors remain visible and preserve the draft",
       username: "reader",
       displayName: "读者",
       password: "StrongPass123",
+      gender: "unspecified",
       isAdmin: false,
       canPinMessages: false
     };
@@ -225,6 +233,7 @@ test("server and network creation errors remain visible and preserve the draft",
       username: "network-reader",
       displayName: "网络读者",
       password: "StrongPass123",
+      gender: "unspecified",
       isAdmin: false,
       canPinMessages: false
     };
@@ -253,6 +262,7 @@ test("saving one selected account preserves another account's unsaved edit", asy
 
   try {
     const { manager } = createAccountsHarness();
+    let updateBody: Record<string, unknown> | undefined;
     const administrator = account();
     const reader = account({
       id: 2,
@@ -264,15 +274,21 @@ test("saving one selected account preserves another account's unsaved edit", asy
     manager.accounts.value = [administrator, reader];
     manager.accountEdits.value = createAdminAccountEdits([administrator, reader]);
     manager.accountEdits.value[2].displayName = "尚未保存的读者昵称";
-    globalThis.fetch = (async () => jsonResponse({
-      success: true,
-      account: account({ displayName: "管理员已更新" })
-    })) as typeof fetch;
+    globalThis.fetch = (async (_url, init) => {
+      updateBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return jsonResponse({
+        success: true,
+        account: account({ displayName: "管理员已更新", gender: "male" })
+      });
+    }) as typeof fetch;
 
     manager.accountEdits.value[1].displayName = "管理员已更新";
+    manager.accountEdits.value[1].gender = "male";
     assert.equal(await manager.updateAccount(administrator), true);
     assert.equal(manager.accountEdits.value[1].displayName, "管理员已更新");
+    assert.equal(manager.accountEdits.value[1].gender, "male");
     assert.equal(manager.accountEdits.value[2].displayName, "尚未保存的读者昵称");
+    assert.equal(updateBody?.gender, "male");
   } finally {
     globalThis.fetch = originalFetch;
     Object.defineProperty(globalThis, "localStorage", {
