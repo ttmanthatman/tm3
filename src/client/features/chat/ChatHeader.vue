@@ -8,6 +8,7 @@ import {
   Library,
   PanelLeftOpen,
   Pin,
+  Sparkles,
   Settings,
   Trash2,
   Users,
@@ -52,6 +53,7 @@ defineProps<{
   musicPanelFontSize: number;
   friendProgramsOpen: boolean;
   friendPlaying: boolean;
+  canOpenOwnStory: boolean;
   musicScoreTriggerVisible: boolean;
   musicScoreOpen: boolean;
   canDeleteCurrentChannel: boolean;
@@ -76,6 +78,7 @@ defineProps<{
   toggleCurrentMusicFavorite: () => void;
   openMusicManagerFromMiniPanel: () => void;
   toggleFriendPrograms: () => void;
+  openOwnStory: () => void;
   toggleMusicScore: () => void;
   requestCloseChannel: () => void;
   deleteChannel: (channel: ChannelDTO) => void;
@@ -146,6 +149,15 @@ defineProps<{
         <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
       </button>
     </div>
+    <button
+      v-if="!showingFavoriteSurface"
+      class="icon-btn story-header-trigger"
+      type="button"
+      :disabled="!canOpenOwnStory"
+      aria-label="我的故事"
+      title="我的故事"
+      @click.stop="openOwnStory"
+    ><Sparkles :size="20" /></button>
     <button
       v-if="!showingFavoriteSurface && musicScoreTriggerVisible"
       class="icon-btn message-font-trigger music-score-trigger"

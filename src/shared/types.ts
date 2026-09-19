@@ -463,6 +463,7 @@ export interface AdminChannelDTO extends ChannelDTO {
 }
 
 export interface AccountDTO {
+  gender?: import("./stories.js").StoryGender;
   id: number;
   username: string;
   displayName: string;

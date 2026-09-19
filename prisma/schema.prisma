@@ -92,6 +92,11 @@ model Account {
   passwordHash            String                          @map("password_hash") @db.VarChar(255)
   displayName             String                          @map("display_name") @db.VarChar(80)
   avatarPath              String?                         @map("avatar_path") @db.VarChar(255)
+  gender                  String                          @default("unspecified") @db.VarChar(16)
+  storyBio                String                          @default("小小的故事，大大的恩典") @map("story_bio") @db.VarChar(160)
+  stories                 Story[]
+  storyLikes              StoryLike[]
+  storyComments           StoryComment[]
   role                    AccountRole                     @default(user)
   isGuest                 Boolean                         @default(false) @map("is_guest")
   guestExpiresAt          DateTime?                       @map("guest_expires_at")
@@ -189,6 +194,66 @@ model AccountActivityLog {
   @@index([trackId, createdAt], map: "account_activity_logs_track_created_idx")
   @@index([playbackId, createdAt], map: "account_activity_logs_playback_created_idx")
   @@map("account_activity_logs")
+}
+
+model Story {
+  id        Int          @id @default(autoincrement())
+  accountId Int          @map("account_id")
+  requestId String       @map("request_id") @db.VarChar(36)
+  text      String       @db.Text
+  createdAt DateTime     @default(now()) @map("created_at")
+  account   Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  media     StoryMedia[]
+  likes     StoryLike[]
+  comments  StoryComment[]
+
+  @@unique([accountId, requestId])
+  @@index([accountId, id])
+  @@map("stories")
+}
+
+model StoryLike {
+  id        Int      @id @default(autoincrement())
+  storyId   Int      @map("story_id")
+  accountId Int      @map("account_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, accountId])
+  @@index([accountId, createdAt])
+  @@map("story_likes")
+}
+
+model StoryComment {
+  id        Int      @id @default(autoincrement())
+  storyId   Int      @map("story_id")
+  accountId Int      @map("account_id")
+  text      String   @db.VarChar(500)
+  createdAt DateTime @default(now()) @map("created_at")
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([storyId, id])
+  @@index([accountId, createdAt])
+  @@map("story_comments")
+}
+
+model StoryMedia {
+  id          Int    @id @default(autoincrement())
+  storyId     Int    @map("story_id")
+  position    Int
+  kind        String @db.VarChar(8)
+  fileName    String @map("file_name") @db.VarChar(255)
+  contentType String @map("content_type") @db.VarChar(80)
+  fileSize    Int    @map("file_size")
+  width       Int?
+  height      Int?
+  durationMs  Int?   @map("duration_ms")
+  story       Story  @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([storyId, position])
+  @@map("story_media")
 }
 
 model Actor {

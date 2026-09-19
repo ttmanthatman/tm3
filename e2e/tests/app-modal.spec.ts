@@ -111,7 +111,7 @@ test.beforeEach(async ({ page }) => {
 let memberCreatedByUs = false;
 
 async function adminApiToken(request: APIRequestContext) {
-  const login = await request.post("http://127.0.0.1:3003/api/auth/login", {
+  const login = await request.post("/api/auth/login", {
     data: { username: E2E_ADMIN.username, password: E2E_ADMIN.password }
   });
   if (!login.ok()) throw new Error("管理员登录失败");
@@ -121,7 +121,7 @@ async function adminApiToken(request: APIRequestContext) {
 
 test.beforeAll(async ({ request }) => {
   const token = await adminApiToken(request);
-  const created = await request.post("http://127.0.0.1:3003/api/admin/accounts", {
+  const created = await request.post("/api/admin/accounts", {
     headers: { Authorization: `Bearer ${token}` },
     data: { username: E2E_MEMBER.username, password: E2E_MEMBER.password, displayName: E2E_MEMBER.displayName }
   });
@@ -138,10 +138,10 @@ test.afterAll(async ({ request }) => {
   if (!memberCreatedByUs) return;
   const token = await adminApiToken(request);
   const headers = { Authorization: `Bearer ${token}` };
-  const list = await request.get("http://127.0.0.1:3003/api/admin/accounts", { headers });
+  const list = await request.get("/api/admin/accounts", { headers });
   const body = (await list.json()) as { accounts: Array<{ id: number; username: string }> };
   const member = body.accounts.find((entry) => entry.username === E2E_MEMBER.username);
-  if (member) await request.delete(`http://127.0.0.1:3003/api/admin/accounts/${member.id}`, { headers });
+  if (member) await request.delete(`/api/admin/accounts/${member.id}`, { headers });
 });
 
 test("退出频道确认弹窗：打开聚焦、Tab 约束在弹窗内、Escape 关闭、焦点安全回退", async ({ page, browser }) => {

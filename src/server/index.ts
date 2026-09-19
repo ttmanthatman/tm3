@@ -24,6 +24,9 @@ import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleRoutes } from "./routes/bible.js";
 import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
+import { registerStoryRoutes } from "./routes/stories.js";
+import { storyGender } from "../shared/stories.js";
+import { prepareAccountStoryCleanup } from "./services/stories.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -779,6 +782,7 @@ function authDto(account: AccountWithActor) {
     username: account.username,
     displayName: account.displayName,
     avatarPath: account.avatarPath,
+    gender: storyGender(account.gender),
     isAdmin: account.role === "admin",
     isGuest: account.isGuest,
     guestExpiresAt: account.guestExpiresAt?.toISOString() || null,
@@ -2507,6 +2511,8 @@ const receptionService = createReceptionService({
   onError: (error, channelId) => app.log.error({ error, channelId }, "Failed to collect reception room")
 });
 
+registerStoryRoutes(app, { prisma, requireAuth, requireMediaAuth, directory: path.join(STORAGE_ROOT, "stories") });
+
 registerReceptionRoutes(app, {
   prisma,
   tokenSecret: JWT_SECRET,
@@ -3965,18 +3971,23 @@ registerAdminAccountRoutes(app, {
   disconnectSessions,
   refreshAccountConnections,
   deleteAccount: async (input) => {
+    const cleanupStories = await prepareAccountStoryCleanup(prisma, path.join(STORAGE_ROOT, "stories"), input.targetAccountId);
     const ownedRooms = await prisma.channel.findMany({
       where: { kind: "reception", receptionOwnerAccountId: input.targetAccountId },
       select: { id: true }
     });
     for (const room of ownedRooms) await receptionService.deleteRoom(room.id);
-    return deleteAccountService(
+    const result = await deleteAccountService(
       {
         runTransaction: (operation) =>
           prisma.$transaction((tx) => operation(tx))
       },
       input
     );
+    if (result.deleted) {
+      try { await cleanupStories(); } catch (error) { app.log.error({ error, accountId: input.targetAccountId }, "deleted account story cleanup failed"); }
+    }
+    return result;
   },
   emitAccountDeleted: (payload) => {
     io.emit("channel:updated", payload);
@@ -3995,6 +4006,7 @@ registerSystemRoutes(app);
 registerAdminUpdateRoutes(app, { requireAdmin });
 
 registerAuthRoutes(app, {
+  prepareStoryCleanup: (accountId) => prepareAccountStoryCleanup(prisma, path.join(STORAGE_ROOT, "stories"), accountId),
   prisma,
   requireAuth,
   authLoginRateLimitMax: AUTH_LOGIN_RATE_LIMIT_MAX,

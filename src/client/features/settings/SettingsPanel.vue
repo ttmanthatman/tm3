@@ -81,6 +81,7 @@ const store = useChatStore();
 
 const {
   accountDisplayName,
+  accountGender,
   accountCurrentPassword,
   accountNewPassword,
   accountConfirmPassword,
@@ -233,8 +234,14 @@ function deviceIcon(kind: string) {
             <label for="account-display-name">昵称</label>
             <div class="account-inline-form">
               <input id="account-display-name" v-model="accountDisplayName" maxlength="80" autocomplete="nickname" />
-              <button class="primary-btn" :disabled="accountProfileBusy" @click="saveOwnProfile"><Save :size="16" />{{ accountProfileBusy ? "保存中" : "保存昵称" }}</button>
+              <button class="primary-btn" :disabled="accountProfileBusy" @click="saveOwnProfile"><Save :size="16" />{{ accountProfileBusy ? "保存中" : "保存资料" }}</button>
             </div>
+            <label for="account-gender">性别</label>
+            <select id="account-gender" v-model="accountGender" :disabled="accountProfileBusy">
+              <option value="unspecified">未确定（TA的故事）</option>
+              <option value="female">女（她的故事）</option>
+              <option value="male">男（他的故事）</option>
+            </select>
             <p v-if="accountProfileMsg" class="settings-note">{{ accountProfileMsg }}</p>
 
             <div class="account-security-grid">

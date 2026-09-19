@@ -36,6 +36,7 @@ export type AuthRouteDependencies = {
   refreshAccountConnections(account: AccountWithActor): void;
   updateAccountAvatarFromUpload(accountId: number, request: FastifyRequest, reply: FastifyReply): Promise<unknown>;
   deleteOwnedReceptionRooms(accountId: number): Promise<unknown>;
+  prepareStoryCleanup?(accountId: number): Promise<() => Promise<void>>;
 };
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependencies) {
@@ -115,12 +116,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
 
   app.patch("/api/me/profile", { preHandler: requireAuth }, async (request, reply) => {
     const auth = (request as AuthedAuthRequest).auth;
-    const body = z.object({ displayName: z.string().trim().min(1).max(80) }).safeParse(request.body);
+    const body = z.object({ displayName: z.string().trim().min(1).max(80), gender: z.enum(["female", "male", "unspecified"]).optional() }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ success: false, message: "昵称需为 1-80 个字符" });
     const updated = await prisma.account.update({
       where: { id: auth.accountId },
       data: {
         displayName: body.data.displayName,
+        gender: body.data.gender,
         actor: { update: { displayName: body.data.displayName } }
       },
       include: { actor: true }
@@ -166,6 +168,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
       if (!otherAdmins) return reply.code(400).send({ success: false, message: "至少需要保留一个管理员" });
     }
     await deleteOwnedReceptionRooms(account.id);
+    const cleanupStories = await deps.prepareStoryCleanup?.(account.id);
     const sessions = await prisma.accountSession.findMany({ where: { accountId: account.id }, select: { id: true } });
     await prisma.$transaction(async (tx) => {
       if (account.actor) {
@@ -183,6 +186,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
       await tx.account.delete({ where: { id: account.id } });
     });
     disconnectSessions(sessions.map((session) => session.id));
+    if (cleanupStories) {
+      try { await cleanupStories(); } catch (error) { request.log.error({ error, accountId: account.id }, "deleted account story cleanup failed"); }
+    }
     return { success: true };
   });
 
@@ -280,4 +286,3 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
     return { success: true, account: authDto(account) };
   });
 }
-

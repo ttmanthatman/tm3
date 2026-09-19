@@ -141,7 +141,7 @@ export function useChannelManagement(options: UseChannelManagementOptions) {
   }
 
   function openMemberActions(member: MemberActionTarget, event?: MouseEvent) {
-    memberPromptPosition.value = options.positionPromptNearEvent(event, { width: 178, height: 52 });
+    memberPromptPosition.value = options.positionPromptNearEvent(event, { width: 178, height: member.kind === "human" && !store.account?.isGuest ? 94 : 52 });
     selectedMember.value = member;
     options.pendingChain.value = null;
   }

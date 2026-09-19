@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import type { AccountDTO } from "@shared/types";
+import type { StoryGender } from "@shared/stories";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 
@@ -10,6 +11,7 @@ interface UseAccountSettingsOptions {
 export function useAccountSettings(options: UseAccountSettingsOptions) {
   const store = useChatStore();
   const accountDisplayName = ref("");
+  const accountGender = ref<StoryGender>("unspecified");
   const accountCurrentPassword = ref("");
   const accountNewPassword = ref("");
   const accountConfirmPassword = ref("");
@@ -24,6 +26,7 @@ export function useAccountSettings(options: UseAccountSettingsOptions) {
 
   function syncAccountSettings() {
     accountDisplayName.value = store.account?.displayName || "";
+    accountGender.value = store.account?.gender || "unspecified";
     accountCurrentPassword.value = "";
     accountNewPassword.value = "";
     accountConfirmPassword.value = "";
@@ -67,11 +70,11 @@ export function useAccountSettings(options: UseAccountSettingsOptions) {
     try {
       const result = await api<{ success: true; account: AccountDTO }>("/api/me/profile", {
         method: "PATCH",
-        body: JSON.stringify({ displayName: nextDisplayName })
+        body: JSON.stringify({ displayName: nextDisplayName, gender: accountGender.value })
       });
       store.account = result.account;
       accountDisplayName.value = result.account.displayName;
-      accountProfileMsg.value = "昵称已保存";
+      accountProfileMsg.value = "个人资料已保存";
     } catch (error) {
       accountProfileMsg.value = error instanceof Error ? error.message : "昵称保存失败";
     } finally {
@@ -133,6 +136,7 @@ export function useAccountSettings(options: UseAccountSettingsOptions) {
 
   return {
     accountDisplayName,
+    accountGender,
     accountCurrentPassword,
     accountNewPassword,
     accountConfirmPassword,

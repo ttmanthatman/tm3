@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandl
 import { z } from "zod";
 import type { AdminAttachmentDTO, AdminBackupDTO, AdminMessageDTO } from "../../shared/types.js";
 import { APP_VERSION } from "../../shared/release.js";
+import { storyGender } from "../../shared/stories.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
 import { cleanBiblePreferences, biblePreferencesJson } from "../biblePreferences.js";
 import { applyFileResponseHeaders } from "../fileResponses.js";
@@ -243,12 +244,13 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const stamp = createdAt.toISOString().replace(/[:.]/g, "-");
     const fileName = `liao-full-backup-${stamp}.zip`;
     const filePath = path.join(BACKUP_DIR, fileName);
-    const [chatData, userData, appearance, attachments, receptionFiles] = await Promise.all([
+    const [chatData, userData, appearance, attachments, receptionFiles, stories] = await Promise.all([
       chatExportPayload(),
       usersExportPayload(),
       appearanceDto(),
       adminAttachmentList(),
-      prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } })
+      prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } }),
+      prisma.story.findMany({ include: { media: { orderBy: { position: "asc" } }, likes: { orderBy: { id: "asc" } }, comments: { orderBy: { id: "asc" } } }, orderBy: { id: "asc" } })
     ]);
     const hiddenReceptionUploads = new Set(receptionFiles.map((message) => path.basename(message.filePath || "")).filter(Boolean));
     const entries = [...collectBackupProgramEntries(ROOT, hiddenReceptionUploads), ...collectExternalStorageEntries(hiddenReceptionUploads)];
@@ -275,6 +277,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     entries.unshift(
       { name: "manifest.json", data: Buffer.from(JSON.stringify(manifest, null, 2), "utf8"), date: createdAt },
       { name: "data/chat.json", data: Buffer.from(JSON.stringify(chatData, null, 2), "utf8"), date: createdAt },
+      { name: "data/stories.json", data: Buffer.from(JSON.stringify({ version: 1, stories }, null, 2), "utf8"), date: createdAt },
       { name: "data/users.json", data: Buffer.from(JSON.stringify(userData, null, 2), "utf8"), date: createdAt },
       { name: "data/appearance.json", data: Buffer.from(JSON.stringify(appearance, null, 2), "utf8"), date: createdAt }
     );
@@ -652,6 +655,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
         passwordHash: account.passwordHash,
         displayName: account.displayName,
         avatarPath: account.avatarPath,
+        gender: account.gender,
+        storyBio: account.storyBio,
         role: account.role,
         canPinMessages: account.canPinMessages,
         theme: account.theme,
@@ -1035,6 +1040,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
         update: {
           passwordHash,
           displayName: String(item.displayName || item.username).slice(0, 80),
+          ...(item.gender !== undefined ? { gender: storyGender(item.gender) } : {}),
+          ...(typeof item.storyBio === "string" ? { storyBio: item.storyBio.slice(0, 160) } : {}),
           avatarPath: item.avatarPath || null,
           role,
           canPinMessages: !!item.canPinMessages,
@@ -1045,6 +1052,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
           id: Number(item.id) || undefined,
           username: String(item.username).slice(0, 64),
           passwordHash,
+          gender: storyGender(item.gender),
+          ...(typeof item.storyBio === "string" ? { storyBio: item.storyBio.slice(0, 160) } : {}),
           displayName: String(item.displayName || item.username).slice(0, 80),
           avatarPath: item.avatarPath || null,
           role,

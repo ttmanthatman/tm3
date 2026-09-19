@@ -68,6 +68,7 @@ import type {
   ActorDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, joinReception, login, register } from "./api";
+import StoryEntry from "./features/stories/StoryEntry.vue";
 import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
@@ -220,6 +221,13 @@ import { useMessageSelection } from "./features/messages/useMessageSelection";
 import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearanceSettings";
 
 const store = useChatStore();
+const storyActorId = ref<number | null>(null);
+watch(() => store.account?.id, () => { storyActorId.value = null; });
+function openOwnStory() {
+  if (!store.account || store.account.isGuest) return;
+  storyActorId.value = store.account.actorId;
+}
+const StoryWorkspace = defineAsyncComponent(() => import("./features/stories/StoryWorkspace.vue"));
 const {
   pending: messageSendPending,
   statusMessage: messageSendStatus,
@@ -4578,6 +4586,7 @@ const chatHeaderBindings = computed(() => ({
   musicPanelFontSize: musicPanelFontSize.value,
   friendProgramsOpen: friendProgramsOpen.value,
   friendPlaying: friendPlaying.value,
+  canOpenOwnStory: !!store.account && !store.account.isGuest,
   musicScoreTriggerVisible: musicScoreTriggerVisible.value,
   musicScoreOpen: musicScoreOpen.value,
   canDeleteCurrentChannel: canDeleteCurrentChannel.value,
@@ -4602,6 +4611,7 @@ const chatHeaderBindings = computed(() => ({
   toggleCurrentMusicFavorite,
   openMusicManagerFromMiniPanel,
   toggleFriendPrograms,
+  openOwnStory,
   toggleMusicScore,
   requestCloseChannel,
   deleteChannel,
@@ -5169,9 +5179,9 @@ const messageRowBindings = {
         <span class="channel-row-label"><b>经文收藏</b><small>{{ bibleFavorites.length }} 节</small></span>
       </button>
       <footer class="profile-row">
-        <div class="avatar">
+        <button class="avatar" type="button" aria-label="我的故事" :disabled="store.account.isGuest" @click="storyActorId = store.account.actorId">
           <AvatarImage :path="store.account.avatarPath"><span>{{ avatarText(store.account.displayName) }}</span></AvatarImage>
-        </div>
+        </button>
         <div>
           <b>{{ store.account.displayName }}</b>
           <small>{{ store.account.isAdmin ? "管理员" : "成员" }}</small>
@@ -6092,9 +6102,12 @@ const messageRowBindings = {
               <MessageCircle :size="15" />私聊
             </button>
           </div>
+          <StoryEntry v-if="selectedMember.kind === 'human' && !store.account.isGuest" :actor-id="selectedMember.id" @open="storyActorId = $event; selectedMember = null" />
         </div>
       </div>
     </section>
+
+    <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}`" :actor-id="storyActorId" @close="storyActorId = null" />
 
     <ChannelEditorDialog
       v-if="showChannelEditor"
