@@ -2,7 +2,44 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildBookCSS, globalFraction, nudgeFromSectionBoundaries, readerLayoutMetrics, DEFAULT_READER_STYLE } from "./reader.js";
+import {
+  bookTapAction,
+  buildBookCSS,
+  globalFraction,
+  globalFractionFromSectionOffset,
+  nudgeFromSectionBoundaries,
+  readerLayoutMetrics,
+  sectionFractions,
+  sectionAtFraction,
+  DEFAULT_READER_STYLE
+} from "./reader.js";
+
+test("reader defaults to continuous scrolling", () => {
+  assert.equal(DEFAULT_READER_STYLE.flow, "scrolled");
+});
+
+test("paginated tap zones keep the whole right edge actionable", () => {
+  assert.equal(bookTapAction("paginated", 0.12), "previous");
+  assert.equal(bookTapAction("paginated", 0.5), "toggle-chrome");
+  assert.equal(bookTapAction("paginated", 0.88), "next");
+  assert.equal(bookTapAction("scrolled", 0.88), "toggle-chrome");
+});
+
+test("continuous reader maps section offsets to stable whole-book progress", () => {
+  const starts = [0, 0.2, 0.6, 1];
+  assert.deepEqual(sectionAtFraction(starts, 0.5), { index: 1, fraction: 0.75 });
+  assert.equal(globalFractionFromSectionOffset(starts, 1, 300, 400), 0.5);
+  assert.equal(globalFractionFromSectionOffset(starts, 2, 400, 400), 0.9999);
+});
+
+test("continuous reader derives section boundaries from EPUB sizes", () => {
+  assert.deepEqual(sectionFractions([{ size: 10, load: async () => null }, { size: 30, load: async () => null }]), [0, 0.25, 1]);
+  assert.deepEqual(sectionFractions([
+    { size: 10, load: async () => null },
+    { size: 80, linear: "no", load: async () => null },
+    { size: 30, load: async () => null }
+  ]), [0, 0.25, 0.25, 1]);
+});
 
 test("globalFraction converts section fraction to whole-book fraction", () => {
   const starts = [0, 0.25, 0.5, 0.75, 1];

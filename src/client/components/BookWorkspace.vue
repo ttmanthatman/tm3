@@ -2,23 +2,29 @@
 // 图书室负一屏：书架 + EPUB 阅读器。
 // 懒加载编排：本组件由 App.vue defineAsyncComponent 分包，进入聊天室不下载；
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
-// 用户点开某本书才通过 HTTP Range 流式下载该本（只拉取读到的章节）。
+// 未缓存的图书首次点按只下载到当前会话的 Cache Storage，完成后再次点按才打开。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ListTree, LoaderCircle, MessagesSquare, Minus, Plus, X } from "lucide-vue-next";
+import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, X } from "lucide-vue-next";
 import type { BookDTO } from "@shared/types";
 import { api, getToken } from "../api";
+import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState } from "../books/cache";
 import {
+  bookTapAction,
   buildBookCSS,
   bookCoverUrl,
   bookFileUrl,
   createEpubBook,
   createStreamingLoader,
+  ContinuousBookReader,
   DEFAULT_READER_STYLE,
   globalFraction,
   nudgeFromSectionBoundaries,
   preloadAdjacentSections,
   readerLayoutMetrics,
   READER_THEMES,
+  sectionFractions,
+  type ContinuousReaderLocation,
+  type EpubBook,
   type FoliateView,
   type ReaderStyle
 } from "../books/reader";
@@ -38,6 +44,9 @@ const LAST_READ_KEY = "book-last-read";
 const books = ref<BookDTO[]>([]);
 const shelfLoading = ref(true);
 const shelfError = ref("");
+const downloadError = ref("");
+const downloadStates = ref(new Map<number, BookDownloadState>());
+const downloadProgress = ref(new Map<number, number>());
 
 const readerOpen = ref(false);
 const openingBook = ref(false);
@@ -56,6 +65,9 @@ const coverUrls = new Map<number, string>();
 
 let foliatePromise: Promise<FoliateModule> | null = null;
 let view: FoliateView | null = null;
+let continuousReader: ContinuousBookReader | null = null;
+let epubBook: EpubBook | null = null;
+let tocSectionLabels = new Map<number, string>();
 let relocateHandler: ((event: Event) => void) | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSavedFraction = -1;
@@ -108,10 +120,61 @@ async function loadShelf() {
   try {
     const res = await api<{ success: boolean; books: BookDTO[] }>("/api/books");
     books.value = res.books;
+    for (const book of res.books) setDownloadState(book.id, "checking");
+    await Promise.all(res.books.map(async (book) => {
+      try {
+        setDownloadState(book.id, await isBookDownloaded(book.id) ? "ready" : "needed");
+      } catch {
+        setDownloadState(book.id, "needed");
+      }
+    }));
   } catch (error) {
     shelfError.value = error instanceof Error ? error.message : "书架加载失败";
   } finally {
     shelfLoading.value = false;
+  }
+}
+
+function setDownloadState(bookId: number, state: BookDownloadState) {
+  const next = new Map(downloadStates.value);
+  next.set(bookId, state);
+  downloadStates.value = next;
+}
+
+function setDownloadProgress(bookId: number, progress: number) {
+  const next = new Map(downloadProgress.value);
+  next.set(bookId, Math.max(0, Math.min(1, progress)));
+  downloadProgress.value = next;
+}
+
+function bookDownloadState(book: BookDTO): BookDownloadState {
+  return downloadStates.value.get(book.id) ?? "checking";
+}
+
+function bookDownloadPercent(book: BookDTO): number {
+  return Math.round((downloadProgress.value.get(book.id) ?? 0) * 100);
+}
+
+async function handleBookClick(book: BookDTO) {
+  const action = bookClickAction(bookDownloadState(book));
+  if (action === "open") {
+    await openBook(book);
+    return;
+  }
+  if (action === "wait") return;
+  downloadError.value = "";
+  setDownloadState(book.id, "downloading");
+  setDownloadProgress(book.id, 0);
+  try {
+    await downloadBook(book.id, (loaded, total) => {
+      const progress = total > 0 ? loaded / total : loaded / Math.max(1, book.fileSize);
+      if (Math.round(progress * 100) !== bookDownloadPercent(book)) setDownloadProgress(book.id, progress);
+    });
+    setDownloadProgress(book.id, 1);
+    setDownloadState(book.id, "ready");
+  } catch (error) {
+    setDownloadState(book.id, "error");
+    downloadError.value = error instanceof Error ? error.message : "图书下载失败，请重试";
   }
 }
 
@@ -154,6 +217,11 @@ function closeBookView() {
   lastPreloadIndex = -1;
   view?.remove();
   view = null;
+  continuousReader?.destroy();
+  continuousReader = null;
+  epubBook?.destroy?.();
+  epubBook = null;
+  tocSectionLabels = new Map();
   tocItems.value = [];
   chapterLabel.value = "";
   progressLabel.value = "0%";
@@ -168,67 +236,78 @@ async function openBook(book: BookDTO) {
   emit("reading-change", { active: true, bookTitle: book.title });
   try {
     await nextTick(); // 等阅读器容器渲染（openingBook 驱动 v-if）
-    const module = await (foliatePromise ??= import("foliate-js/view.js"));
-    await module; // 确保自定义元素已注册
     closeBookView();
 
     const stage = bookStage.value;
     if (!stage) throw new Error("阅读器容器不可用");
-    const element = document.createElement("foliate-view") as unknown as FoliateView;
-    stage.append(element as unknown as Node);
-    view = element;
-
-    // 流式打开：只下载中央目录 + 读到的章节，弱网下首屏更快
+    // 完整文件已由书架下载到私有 SW cache；阅读器仍走 Range 接口，
+    // 离线时由缓存切片响应，在线时也不会重复下载整本书。
     const loader = await createStreamingLoader(bookFileUrl(book.id));
     const bookObject = await createEpubBook(loader);
-    await element.open(bookObject);
+    epubBook = bookObject;
 
-    element.book?.transformTarget?.addEventListener("data", (event) => {
+    bookObject.transformTarget?.addEventListener("data", (event) => {
       const detail = (event as CustomEvent<{ data: Promise<unknown> }>).detail;
       detail.data = Promise.resolve(detail.data).catch(() => "");
     });
 
-    element.renderer.setAttribute("flow", style.value.flow);
-    applyLayout();
-    element.renderer.setStyles?.(buildBookCSS(style.value));
-
-    const restoreTarget = nudgeFromSectionBoundaries(element.getSectionFractions(), cachedProgress(book));
-    relocateHandler = (event) => onRelocate(event as CustomEvent<{ index: number; fraction: number; range: Range }>);
-    element.addEventListener("relocate", relocateHandler);
-    element.addEventListener("load", onViewLoad);
-
-    const metadata = element.book?.metadata ?? {};
+    const starts = sectionFractions(bookObject.sections);
+    const restoreTarget = nudgeFromSectionBoundaries(starts, cachedProgress(book));
+    const metadata = bookObject.metadata ?? {};
     activeBookTitle.value = formatLang(metadata.title) || book.title;
-    renderTOC(element.book?.toc ?? []);
-    applyStyle();
+    renderTOC(bookObject.toc ?? [], bookObject);
 
-    if (restoreTarget > 0.005) {
-      // 等首帧 relocate（首节渲染完成）再跳转；过早 goToFraction 会被吞掉
-      await new Promise<void>((resolve) => {
-        const done = () => {
-          element.removeEventListener("relocate", done);
-          resolve();
-        };
-        element.addEventListener("relocate", done);
-        setTimeout(() => {
-          element.removeEventListener("relocate", done);
-          resolve();
-        }, 4000);
+    if (style.value.flow === "scrolled") {
+      const continuous = new ContinuousBookReader(bookObject, starts, {
+        style: style.value,
+        onDocumentLoad: onContinuousDocumentLoad,
+        onRelocate: onContinuousRelocate
       });
-      try {
-        await element.goToFraction(restoreTarget);
-      } catch (error) {
-        console.error("restore failed", error);
-      }
+      continuousReader = continuous;
+      stage.append(continuous.element);
+      await continuous.open(restoreTarget);
     } else {
-      element.renderer.next(); // foliate 官方 demo 的初始化手法
+      const module = await (foliatePromise ??= import("foliate-js/view.js"));
+      await module; // 确保自定义元素已注册
+      const element = document.createElement("foliate-view") as unknown as FoliateView;
+      stage.append(element as unknown as Node);
+      view = element;
+      await element.open(bookObject);
+      element.renderer.setAttribute("flow", "paginated");
+      applyLayout();
+      element.renderer.setStyles?.(buildBookCSS(style.value));
+      relocateHandler = (event) => onRelocate(event as CustomEvent<RelocateDetail>);
+      element.addEventListener("relocate", relocateHandler);
+      element.addEventListener("load", onViewLoad);
+
+      if (restoreTarget > 0.005) {
+        // 等首帧 relocate（首节渲染完成）再跳转；过早 goToFraction 会被吞掉
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            element.removeEventListener("relocate", done);
+            resolve();
+          };
+          element.addEventListener("relocate", done);
+          setTimeout(() => {
+            element.removeEventListener("relocate", done);
+            resolve();
+          }, 4000);
+        });
+        try {
+          await element.goToFraction(restoreTarget);
+        } catch (error) {
+          console.error("restore failed", error);
+        }
+      } else {
+        element.renderer.next(); // foliate 官方 demo 的初始化手法
+      }
     }
-    chromeVisible.value = true;
+    chromeVisible.value = style.value.flow === "paginated";
     settingsOpen.value = false;
     tocOpen.value = false;
     readerOpen.value = true;
     localStorage.setItem(LAST_READ_KEY, String(book.id));
-    window.addEventListener("resize", onWindowResize);
+    if (style.value.flow === "paginated") window.addEventListener("resize", onWindowResize);
   } catch (error) {
     console.error(error);
     readerError.value = error instanceof Error ? error.message : "图书打开失败";
@@ -256,12 +335,17 @@ function formatLang(value: unknown): string {
 
 type RawTocItem = { label?: string; href?: string; subitems?: unknown[] };
 
-function renderTOC(toc: RawTocItem[]) {
+function renderTOC(toc: RawTocItem[], book?: EpubBook) {
   const items: { label: string; href: string; depth: number }[] = [];
+  tocSectionLabels = new Map();
   const walk = (list: unknown[], depth: number) => {
     for (const raw of list ?? []) {
       const item = raw as RawTocItem;
       items.push({ label: item.label ?? "（无题）", href: item.href ?? "", depth });
+      if (item.href && !tocSectionLabels.has(book?.resolveHref?.(item.href)?.index ?? -1)) {
+        const index = book?.resolveHref?.(item.href)?.index;
+        if (index !== undefined && index !== null) tocSectionLabels.set(index, item.label ?? "");
+      }
       walk(item.subitems ?? [], depth + 1);
     }
   };
@@ -271,7 +355,8 @@ function renderTOC(toc: RawTocItem[]) {
 
 function jumpTo(href: string) {
   tocOpen.value = false;
-  void (view as unknown as { goTo(target: string): Promise<void> })?.goTo?.(href);
+  if (continuousReader) void continuousReader.goToHref(href);
+  else void (view as unknown as { goTo(target: string): Promise<void> })?.goTo?.(href);
 }
 
 type RelocateDetail = {
@@ -305,6 +390,30 @@ function onRelocate(event: CustomEvent<RelocateDetail>) {
     lastPreloadIndex = index;
     preloadAdjacentSections(view, index);
   }
+}
+
+function onContinuousRelocate(location: ContinuousReaderLocation) {
+  sliderValue.value = location.globalFraction;
+  progressLabel.value = `${Math.round(location.globalFraction * 100)}%`;
+  chapterLabel.value = tocSectionLabels.get(location.index) ?? chapterLabel.value;
+  scheduleSave(location.globalFraction);
+}
+
+function onContinuousDocumentLoad(doc: Document, index: number) {
+  doc.addEventListener("click", (event) => {
+    const anchor = (event.target as Element | null)?.closest?.("a[href]");
+    if (anchor) {
+      const rawHref = anchor.getAttribute("href");
+      if (!rawHref) return;
+      event.preventDefault();
+      const href = epubBook?.sections[index]?.resolveHref?.(rawHref) ?? rawHref;
+      if (epubBook?.isExternal?.(href)) window.open(href, "_blank", "noopener");
+      else void continuousReader?.goToHref(href);
+      return;
+    }
+    if (hasTextSelection(doc)) return;
+    toggleChrome();
+  });
 }
 
 function scheduleSave(global: number) {
@@ -352,8 +461,8 @@ function onWindowResize() {
 
 function applyStyle() {
   persistStyle();
-  if (!view) return;
-  view.renderer.setStyles?.(buildBookCSS(style.value));
+  continuousReader?.setStyle(style.value);
+  view?.renderer.setStyles?.(buildBookCSS(style.value));
 }
 
 function setTheme(theme: ReaderStyle["theme"]) {
@@ -362,9 +471,8 @@ function setTheme(theme: ReaderStyle["theme"]) {
 }
 
 function setFlow(flow: ReaderStyle["flow"]) {
+  if (style.value.flow === flow) return;
   style.value = { ...style.value, flow };
-  view?.renderer.setAttribute("flow", flow);
-  applyLayout(); // 横屏栏数随版式变化，需要重算 max-inline-size
   persistStyle();
   // 滚动版式进入沉浸阅读：自动隐藏控制栏（之后向下滚动隐藏、向上滚动或点按中部显示）；
   // 切回分页则恢复显示，保持可发现性
@@ -374,6 +482,8 @@ function setFlow(flow: ReaderStyle["flow"]) {
   } else {
     chromeVisible.value = true;
   }
+  const book = activeBook.value;
+  if (book) void openBook(book);
 }
 
 function stepFont(delta: number) {
@@ -430,13 +540,10 @@ function onDocClick(doc: Document, event: MouseEvent) {
   if (hasTextSelection(doc)) return; // 选中文字后不翻页
   const width = doc.defaultView?.innerWidth ?? 1;
   const ratio = event.clientX / width;
-  if (style.value.flow === "paginated") {
-    if (ratio < 0.3) pageBy(-1);
-    else if (ratio > 0.7) pageBy(1);
-    else toggleChrome();
-  } else {
-    toggleChrome();
-  }
+  const action = bookTapAction(style.value.flow, ratio);
+  if (action === "previous") pageBy(-1);
+  else if (action === "next") pageBy(1);
+  else toggleChrome();
 }
 
 // 滚动版式跨节：原生滚动到本节底部/顶部就停住，越过边界时接管翻节。
@@ -510,13 +617,10 @@ function onStageZoneClick(event: MouseEvent) {
   if (!view || openingBook.value) return;
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
   const ratio = (event.clientX - rect.left) / rect.width;
-  if (style.value.flow === "paginated") {
-    if (ratio < 0.3) pageBy(-1);
-    else if (ratio > 0.7) pageBy(1);
-    else toggleChrome();
-  } else {
-    toggleChrome();
-  }
+  const action = bookTapAction(style.value.flow, ratio);
+  if (action === "previous") pageBy(-1);
+  else if (action === "next") pageBy(1);
+  else toggleChrome();
 }
 
 function onViewLoad(event: Event) {
@@ -530,14 +634,15 @@ function onViewLoad(event: Event) {
 
 function onSliderInput(event: Event) {
   const value = Number((event.target as HTMLInputElement).value);
-  void view?.goToFraction(value);
+  if (continuousReader) void continuousReader.goToFraction(value);
+  else void view?.goToFraction(value);
 }
 
 function onKeydown(event: KeyboardEvent) {
   if (!readerOpen.value) return;
-  const target = view as unknown as { goLeft?(): void; goRight?(): void };
-  if (event.key === "ArrowLeft") target.goLeft?.();
-  else if (event.key === "ArrowRight") target.goRight?.();
+  const target = view as unknown as { goLeft?(): void; goRight?(): void } | null;
+  if (event.key === "ArrowLeft") target?.goLeft?.();
+  else if (event.key === "ArrowRight") target?.goRight?.();
   else if (event.key === "Escape") {
     if (tocOpen.value) tocOpen.value = false;
     else backToShelf();
@@ -555,7 +660,7 @@ void loadShelf().then(() => {
   const raw = localStorage.getItem(LAST_READ_KEY);
   const id = raw == null ? Number.NaN : Number(raw);
   const book = Number.isFinite(id) ? books.value.find((b) => b.id === id) : undefined;
-  if (book) void openBook(book);
+  if (book && bookDownloadState(book) === "ready") void openBook(book);
 });
 void preloadFoliate();
 
@@ -585,12 +690,30 @@ defineExpose({ reload: loadShelf });
         <p>还没有图书</p>
         <p class="book-shelf-sub">管理员可在「管理 → 图书」上传 EPUB 图书</p>
       </div>
-      <div v-else class="book-shelf-grid">
-        <button v-for="book in sortedBooks" :key="book.id" class="book-card" type="button" @click="openBook(book)">
+      <p v-if="downloadError" class="book-download-error" role="alert">{{ downloadError }}</p>
+      <div v-if="!shelfLoading && !shelfError && books.length" class="book-shelf-grid">
+        <button
+          v-for="book in sortedBooks"
+          :key="book.id"
+          class="book-card"
+          type="button"
+          :aria-label="bookDownloadState(book) === 'ready' ? `阅读《${book.title}》` : `下载《${book.title}》`"
+          @click="handleBookClick(book)"
+        >
           <span class="book-cover">
             <img v-if="book.coverName" :src="coverUrl(book)" alt="" loading="lazy" />
             <span v-else class="book-cover-fallback">{{ book.title }}</span>
             <span v-if="cachedProgress(book) > 0.005" class="book-progress"><i :style="{ width: `${Math.round(cachedProgress(book) * 100)}%` }" /></span>
+            <span
+              v-if="bookDownloadState(book) !== 'ready'"
+              class="book-download-badge"
+              :class="{ error: bookDownloadState(book) === 'error' }"
+              aria-hidden="true"
+            >
+              <LoaderCircle v-if="bookDownloadState(book) === 'checking'" class="book-spin" :size="18" />
+              <span v-else-if="bookDownloadState(book) === 'downloading'" class="book-download-percent">{{ bookDownloadPercent(book) }}%</span>
+              <Download v-else :size="18" />
+            </span>
           </span>
           <span class="book-card-title">{{ book.title }}</span>
           <span class="book-card-author">{{ book.author || "佚名" }}</span>
@@ -605,6 +728,22 @@ defineExpose({ reload: loadShelf });
       :data-theme="style.theme"
     >
       <div ref="bookStage" class="book-stage" @click="onStageZoneClick" @wheel="onDocWheel"></div>
+      <button
+        v-if="style.flow === 'paginated'"
+        class="book-page-zone previous"
+        type="button"
+        tabindex="-1"
+        aria-label="上一页"
+        @click.stop="pageBy(-1)"
+      ></button>
+      <button
+        v-if="style.flow === 'paginated'"
+        class="book-page-zone next"
+        type="button"
+        tabindex="-1"
+        aria-label="下一页"
+        @click.stop="pageBy(1)"
+      ></button>
 
       <header class="book-bar book-top" :class="{ 'bar-hidden': !chromeVisible }">
         <button class="book-bar-btn" type="button" @click="backToShelf">‹ 书架</button>
@@ -734,6 +873,14 @@ defineExpose({ reload: loadShelf });
 }
 .book-shelf-state.error { color: #a33; }
 .book-shelf-sub { font-size: 12px; color: #a08c72; }
+.book-download-error {
+  margin: 12px max(16px, calc((100vw - 980px) / 2)) 0;
+  padding: 9px 12px;
+  border-radius: 9px;
+  color: #9b2c2c;
+  background: #fff0ed;
+  font-size: 13px;
+}
 .book-shelf-grid {
   flex: 1;
   min-height: 0;
@@ -758,6 +905,23 @@ defineExpose({ reload: loadShelf });
 }
 .book-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .book-cover-fallback { display: grid; place-items: center; height: 100%; padding: 10px; font-size: 14px; color: #77644c; text-align: center; }
+.book-download-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, .76);
+  border-radius: 50%;
+  background: rgba(51, 45, 37, .84);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(36, 27, 16, .28);
+  display: grid;
+  place-items: center;
+}
+.book-download-badge.error { background: rgba(153, 45, 45, .9); }
+.book-download-percent { font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .book-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255, 255, 255, .45); }
 .book-progress > i { display: block; height: 100%; background: #e0862a; }
 .book-card-title { margin-top: 8px; font-size: 13.5px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -770,6 +934,22 @@ defineExpose({ reload: loadShelf });
 .book-reader[data-theme="dark"] { background: #161617; color: #e5e5ea; }
 .book-stage { position: absolute; inset: 0; }
 .book-stage :deep(foliate-view) { width: 100%; height: 100%; display: block; }
+.book-stage :deep(.book-continuous-scroll) { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; }
+.book-stage :deep(.book-continuous-section) { width: 100%; min-height: 1px; }
+.book-stage :deep(.book-continuous-frame) { display: block; width: 100%; min-height: 1px; border: 0; }
+.book-page-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 10;
+  width: min(22vw, 220px);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.book-page-zone.previous { left: 0; }
+.book-page-zone.next { right: 0; }
 /* 阅读器控制条与书架顶栏同一套暖纸视觉：同底色、同分隔线、同按钮字色 */
 .book-bar {
   position: absolute;

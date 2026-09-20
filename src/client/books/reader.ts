@@ -24,8 +24,17 @@ export const DEFAULT_READER_STYLE: ReaderStyle = {
   fontPct: 100,
   spacing: 1.6,
   margin: 48,
-  flow: "paginated"
+  flow: "scrolled"
 };
+
+export type BookTapAction = "previous" | "next" | "toggle-chrome";
+
+export function bookTapAction(flow: ReaderStyle["flow"], horizontalRatio: number): BookTapAction {
+  if (flow !== "paginated") return "toggle-chrome";
+  if (horizontalRatio < 0.3) return "previous";
+  if (horizontalRatio > 0.7) return "next";
+  return "toggle-chrome";
+}
 
 export function buildBookCSS(style: ReaderStyle): string {
   const t = READER_THEMES[style.theme];
@@ -60,6 +69,30 @@ export function globalFraction(sectionStarts: number[], index: number, fractionI
   return Math.max(0, Math.min(0.9999, value));
 }
 
+export function sectionAtFraction(sectionStarts: number[], fraction: number): { index: number; fraction: number } {
+  if (sectionStarts.length < 2) return { index: 0, fraction: 0 };
+  const clamped = Math.max(0, Math.min(0.9999, fraction));
+  let index = sectionStarts.length - 2;
+  for (let i = 0; i < sectionStarts.length - 1; i += 1) {
+    if (clamped < (sectionStarts[i + 1] ?? 1)) {
+      index = i;
+      break;
+    }
+  }
+  const start = sectionStarts[index] ?? 0;
+  const end = sectionStarts[index + 1] ?? 1;
+  return { index, fraction: Math.max(0, Math.min(1, (clamped - start) / Math.max(Number.EPSILON, end - start))) };
+}
+
+export function globalFractionFromSectionOffset(
+  sectionStarts: number[],
+  index: number,
+  offset: number,
+  extent: number
+): number {
+  return globalFraction(sectionStarts, index, extent > 0 ? offset / extent : 0);
+}
+
 // 落点恰好贴在章节边界时，paginator 的边界判断会把恢复位置解析到章节末尾；
 // 向章节内侧轻推，避开浮点边界。
 export function nudgeFromSectionBoundaries(sectionStarts: number[], fraction: number, eps = 1e-4): number {
@@ -79,6 +112,39 @@ export function bookCoverUrl(bookId: number): string {
   return `/api/books/${bookId}/cover`;
 }
 
+export type EpubSection = {
+  id?: string;
+  linear?: string;
+  size?: number;
+  load(): Promise<string | null>;
+  unload?(): void;
+  resolveHref?(href: string): string;
+};
+
+export function sectionFractions(sections: EpubSection[]): number[] {
+  const declaredSizes = sections.map((section) => section.linear !== "no" && (section.size ?? 0) > 0 ? section.size ?? 0 : 0);
+  const hasDeclaredSizes = declaredSizes.some((size) => size > 0);
+  const sizes = hasDeclaredSizes
+    ? declaredSizes
+    : sections.map((section) => section.linear === "no" ? 0 : 1);
+  const total = sizes.reduce((sum, size) => sum + size, 0);
+  let consumed = 0;
+  const starts = [0];
+  for (const size of sizes) starts.push((consumed += size) / Math.max(1, total));
+  return starts;
+}
+
+export type EpubBook = {
+  metadata?: { title?: unknown; author?: unknown; language?: unknown };
+  toc?: { label?: string; href?: string; subitems?: unknown[] }[];
+  dir?: string;
+  transformTarget?: EventTarget;
+  sections: EpubSection[];
+  resolveHref?(href: string): { index: number; anchor?: (doc: Document) => Node | Range | number | null } | null;
+  isExternal?(href: string): boolean;
+  destroy?(): void;
+};
+
 type FoliateView = HTMLElement & {
   open(book: unknown): Promise<void>;
   goToFraction(fraction: number): Promise<void>;
@@ -93,13 +159,8 @@ type FoliateView = HTMLElement & {
     end: number;
     viewSize: number;
   };
-  book: {
-    metadata?: { title?: unknown; author?: unknown; language?: unknown };
-    toc?: { label?: string; href?: string; subitems?: unknown[] }[];
-    dir?: string;
-    transformTarget?: EventTarget;
+  book: EpubBook & {
     // foliate 的节对象；load() 预取该节内容（内部带缓存与引用计数，重复调用便宜）
-    sections?: { load?: () => Promise<unknown> }[];
   } | null;
 };
 
@@ -137,9 +198,9 @@ export async function createStreamingLoader(url: string): Promise<ZipLoader> {
   };
 }
 
-export async function createEpubBook(loader: ZipLoader): Promise<unknown> {
+export async function createEpubBook(loader: ZipLoader): Promise<EpubBook> {
   const { EPUB } = await import("foliate-js/epub.js");
-  return new EPUB(loader as never).init();
+  return new EPUB(loader as never).init() as Promise<EpubBook>;
 }
 
 export type ReaderLayoutMetrics = {
@@ -177,6 +238,234 @@ export function preloadAdjacentSections(view: FoliateView, index: number): void 
   for (const i of [index - 1, index + 1]) {
     const section = sections[i];
     if (section?.load) void section.load().catch(() => { /* 预取失败不影响当前阅读 */ });
+  }
+}
+
+export type ContinuousReaderLocation = {
+  index: number;
+  fraction: number;
+  globalFraction: number;
+};
+
+type ContinuousReaderOptions = {
+  style: ReaderStyle;
+  onDocumentLoad?: (doc: Document, index: number) => void;
+  onRelocate?: (location: ContinuousReaderLocation) => void;
+};
+
+// foliate 的 scrolled flow 仍只挂载一个 spine section，越过章末时会整章替换。
+// 这里用一组同源 iframe 顺序承载各 section，并按需加载相邻章，使章末和下一章
+// 开头真实存在于同一个原生滚动容器中。EPUB 资源 URL 仍由 foliate 的 loader 改写。
+export class ContinuousBookReader {
+  readonly element: HTMLDivElement;
+  private readonly book: EpubBook;
+  private readonly sectionStarts: number[];
+  private readonly wrappers: HTMLDivElement[];
+  private readonly frames: Array<HTMLIFrameElement | null>;
+  private readonly loading = new Map<number, Promise<void>>();
+  private readonly loaded = new Set<number>();
+  private readonly resizeObservers = new Map<number, ResizeObserver>();
+  private style: ReaderStyle;
+  private onDocumentLoad?: (doc: Document, index: number) => void;
+  private onRelocate?: (location: ContinuousReaderLocation) => void;
+  private scrollFrame = 0;
+  private destroyed = false;
+
+  constructor(book: EpubBook, sectionStarts: number[], options: ContinuousReaderOptions) {
+    this.book = book;
+    this.sectionStarts = sectionStarts;
+    this.style = options.style;
+    this.onDocumentLoad = options.onDocumentLoad;
+    this.onRelocate = options.onRelocate;
+    this.element = document.createElement("div");
+    this.element.className = "book-continuous-scroll";
+    this.element.setAttribute("data-continuous-reader", "");
+    this.wrappers = book.sections.map((section, index) => {
+      const wrapper = document.createElement("div");
+      wrapper.className = "book-continuous-section";
+      wrapper.dataset.sectionIndex = String(index);
+      if (section.linear === "no") wrapper.hidden = true;
+      this.element.append(wrapper);
+      return wrapper;
+    });
+    this.frames = book.sections.map(() => null);
+    this.element.addEventListener("scroll", this.handleScroll, { passive: true });
+  }
+
+  async open(fraction: number): Promise<void> {
+    const target = sectionAtFraction(this.sectionStarts, fraction);
+    await this.loadSection(target.index);
+    await Promise.all([this.loadSection(target.index - 1, true), this.loadSection(target.index + 1)]);
+    const wrapper = this.wrappers[target.index];
+    if (wrapper) {
+      this.element.scrollTop = wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1);
+    }
+    this.reportLocation();
+  }
+
+  async goToFraction(fraction: number): Promise<void> {
+    const target = sectionAtFraction(this.sectionStarts, fraction);
+    await this.loadSection(target.index);
+    const wrapper = this.wrappers[target.index];
+    if (!wrapper) return;
+    this.element.scrollTo({
+      top: wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1),
+      behavior: "auto"
+    });
+    void this.loadSection(target.index + 1);
+    this.reportLocation();
+  }
+
+  async goToHref(href: string): Promise<void> {
+    const resolved = this.book.resolveHref?.(href);
+    if (!resolved) return;
+    await this.loadSection(resolved.index);
+    const wrapper = this.wrappers[resolved.index];
+    const doc = this.frames[resolved.index]?.contentDocument;
+    if (!wrapper || !doc) return;
+    const anchor = resolved.anchor?.(doc);
+    const rect = anchor && typeof anchor !== "number" && "getBoundingClientRect" in anchor
+      ? anchor.getBoundingClientRect()
+      : null;
+    this.element.scrollTo({ top: wrapper.offsetTop + (rect?.top ?? 0), behavior: "auto" });
+    void this.loadSection(resolved.index + 1);
+  }
+
+  setStyle(style: ReaderStyle): void {
+    this.style = style;
+    for (let index = 0; index < this.frames.length; index += 1) {
+      const doc = this.frames[index]?.contentDocument;
+      if (doc) this.applyDocumentStyle(doc, index);
+    }
+  }
+
+  destroy(): void {
+    this.destroyed = true;
+    this.element.removeEventListener("scroll", this.handleScroll);
+    if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame);
+    for (const observer of this.resizeObservers.values()) observer.disconnect();
+    for (const index of this.loaded) this.book.sections[index]?.unload?.();
+    this.resizeObservers.clear();
+    this.loaded.clear();
+    this.element.remove();
+  }
+
+  private readonly handleScroll = () => {
+    if (this.scrollFrame) return;
+    this.scrollFrame = requestAnimationFrame(() => {
+      this.scrollFrame = 0;
+      this.reportLocation();
+      const index = this.visibleSectionIndex();
+      const viewportBottom = this.element.scrollTop + this.element.clientHeight;
+      const wrapper = this.wrappers[index];
+      if (wrapper && wrapper.offsetTop + wrapper.offsetHeight - viewportBottom < this.element.clientHeight) {
+        void this.loadSection(index + 1);
+      }
+      if (wrapper && this.element.scrollTop - wrapper.offsetTop < this.element.clientHeight / 2) {
+        void this.loadSection(index - 1, true);
+      }
+    });
+  };
+
+  private visibleSectionIndex(): number {
+    const center = this.element.scrollTop + this.element.clientHeight / 2;
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < this.wrappers.length; index += 1) {
+      const wrapper = this.wrappers[index];
+      if (wrapper.hidden || !this.loaded.has(index)) continue;
+      const start = wrapper.offsetTop;
+      const end = start + wrapper.offsetHeight;
+      if (center >= start && center <= end) return index;
+      const distance = Math.min(Math.abs(center - start), Math.abs(center - end));
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+    return bestIndex;
+  }
+
+  private reportLocation(): void {
+    const index = this.visibleSectionIndex();
+    const wrapper = this.wrappers[index];
+    if (!wrapper || !this.loaded.has(index)) return;
+    const center = this.element.scrollTop + this.element.clientHeight / 2;
+    const fraction = Math.max(0, Math.min(1, (center - wrapper.offsetTop) / Math.max(1, wrapper.offsetHeight)));
+    this.onRelocate?.({
+      index,
+      fraction,
+      globalFraction: globalFractionFromSectionOffset(this.sectionStarts, index, fraction, 1)
+    });
+  }
+
+  private loadSection(index: number, preserveScroll = false): Promise<void> {
+    if (index < 0 || index >= this.book.sections.length || this.book.sections[index]?.linear === "no") return Promise.resolve();
+    if (this.loaded.has(index)) return Promise.resolve();
+    const pending = this.loading.get(index);
+    if (pending) return pending;
+    const promise = this.loadSectionNow(index, preserveScroll).finally(() => this.loading.delete(index));
+    this.loading.set(index, promise);
+    return promise;
+  }
+
+  private async loadSectionNow(index: number, preserveScroll: boolean): Promise<void> {
+    const section = this.book.sections[index];
+    const wrapper = this.wrappers[index];
+    const previousHeight = wrapper.offsetHeight;
+    const previousTop = this.element.scrollTop;
+    const src = await section.load();
+    if (!src || this.destroyed) return;
+    const frame = document.createElement("iframe");
+    frame.className = "book-continuous-frame";
+    frame.setAttribute("scrolling", "no");
+    frame.setAttribute("sandbox", "allow-same-origin");
+    frame.title = `电子书第 ${index + 1} 节`;
+    this.frames[index] = frame;
+    wrapper.replaceChildren(frame);
+    await new Promise<void>((resolve, reject) => {
+      frame.addEventListener("load", () => resolve(), { once: true });
+      frame.addEventListener("error", () => reject(new Error(`图书第 ${index + 1} 节加载失败`)), { once: true });
+      frame.src = src;
+    });
+    if (this.destroyed) return;
+    const doc = frame.contentDocument;
+    if (!doc) throw new Error(`图书第 ${index + 1} 节不可访问`);
+    this.loaded.add(index);
+    this.applyDocumentStyle(doc, index);
+    this.onDocumentLoad?.(doc, index);
+    await doc.fonts?.ready?.catch(() => undefined);
+    this.measureFrame(index);
+    const observer = new ResizeObserver(() => this.measureFrame(index));
+    observer.observe(doc.documentElement);
+    if (doc.body) observer.observe(doc.body);
+    this.resizeObservers.set(index, observer);
+    if (preserveScroll && wrapper.offsetTop < previousTop) {
+      this.element.scrollTop = previousTop + wrapper.offsetHeight - previousHeight;
+    }
+  }
+
+  private applyDocumentStyle(doc: Document, index: number): void {
+    let style = doc.getElementById("team-chat-continuous-style") as HTMLStyleElement | null;
+    if (!style) {
+      style = doc.createElement("style");
+      style.id = "team-chat-continuous-style";
+      doc.head?.append(style);
+    }
+    const edge = Math.max(16, this.style.margin);
+    style.textContent = `${buildBookCSS(this.style)}
+      html { box-sizing: border-box !important; height: auto !important; min-height: 0 !important; overflow: hidden !important; padding: 24px ${edge}px !important; }
+      body { width: auto !important; max-width: 720px !important; min-height: 0 !important; margin: 0 auto !important; overflow: visible !important; }
+    `;
+    requestAnimationFrame(() => this.measureFrame(index));
+  }
+
+  private measureFrame(index: number): void {
+    const frame = this.frames[index];
+    const doc = frame?.contentDocument;
+    if (!frame || !doc) return;
+    const height = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0, 1);
+    frame.style.height = `${Math.ceil(height)}px`;
   }
 }
 
