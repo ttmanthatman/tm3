@@ -1,14 +1,14 @@
 import { ref, type Ref } from "vue";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./voiceRecording";
 
-type VoiceUploadOptions = { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean };
+type VoiceUploadOptions = { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number };
 type UploadFileFn = (file: File, options?: VoiceUploadOptions) => Promise<{ success: boolean; duplicate: boolean; skipped: boolean }>;
 
 interface UseVoiceRecordingOptions {
   composerPanel: Ref<"voice" | "more" | null>;
   // Pending-message creation and the XHR upload flow stay in App.vue (shared
   // with file/image uploads); the recording flow drives them through these.
-  pushPendingVoiceMessage: (file: File, options: { durationMs?: number; waveform?: number[] }) => number;
+  pushPendingVoiceMessage: (file: File, options: { durationMs?: number; waveform?: number[] }) => 0 | { id: number; channelId: number } | Promise<0 | { id: number; channelId: number }>;
   uploadFile: UploadFileFn;
 }
 
@@ -169,13 +169,13 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     if (!audioFile.value || voiceSending.value) return;
     const file = audioFile.value;
     const uploadOptions = { durationMs: audioPreviewDurationMs.value || recordingDuration.value, waveform: audioPreviewWaveform.value };
-    const pendingMessageId = options.pushPendingVoiceMessage(file, uploadOptions);
-    if (!pendingMessageId) return;
     voiceSending.value = true;
-    resetRecording();
-    options.composerPanel.value = null;
     try {
-      await options.uploadFile(file, { voice: true, ...uploadOptions, pendingMessageId });
+      const pending = await options.pushPendingVoiceMessage(file, uploadOptions);
+      if (!pending) return;
+      resetRecording();
+      options.composerPanel.value = null;
+      await options.uploadFile(file, { voice: true, ...uploadOptions, pendingMessageId: pending.id, channelId: pending.channelId });
     } finally {
       voiceSending.value = false;
     }

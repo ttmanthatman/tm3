@@ -817,10 +817,6 @@
   color: #c92a2a;
 }
 
-.upload-card:not(.failed) .upload-card-icon svg {
-  animation: uploadSpin 1s linear infinite;
-}
-
 .upload-card-body {
   min-width: 0;
   display: grid;

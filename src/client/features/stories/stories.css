@@ -67,8 +67,7 @@
 .story-social-icon svg { width: 28px; height: 28px; }
 .story-social-icon.active { color: #c45a58; }
 .story-like-people { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 12px; overflow-x: auto; scrollbar-width: thin; }
-.story-person-avatar, .story-comment-avatar { width: 38px; height: 38px; border-radius: 7px; overflow: hidden; flex: 0 0 auto; display: grid; place-items: center; background: #dde5d8; color: #597054; font-size: 13px; }
-.story-person-avatar img, .story-comment-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.story-person-avatar, .story-comment-avatar { background: #dde5d8; color: #597054; font-size: 13px; }
 .story-first-like { justify-self: start; border: 0; background: none; color: #6c7869; padding: 0 12px; font-size: var(--message-content-font-size) !important; }
 .story-like-count { align-self: center; color: #848b80; font-size: 12px; padding-right: 14px; font-variant-numeric: tabular-nums; }
 .story-comment-main { min-width: 0; padding: 0 12px 12px; }
@@ -163,7 +162,6 @@
   .story-social-icon { width: 44px; height: 46px; }
   .story-social-icon svg { width: 26px; height: 26px; }
   .story-like-people { gap: 5px; padding: 7px 9px; }
-  .story-person-avatar, .story-comment-avatar { width: 34px; height: 34px; }
   .story-comment-main { padding: 0 9px 10px; }
   .story-comment-list li { grid-template-columns: 34px minmax(0, 1fr) 26px; gap: 8px; padding: 9px 0; }
   .story-comment-list li:not(:last-child)::after { left: 42px; }

@@ -5,7 +5,7 @@ import type { MessageDTO } from "@shared/types";
 import { compactBytes } from "../time";
 import { resolveMessageWaveform } from "../audioWaveform";
 import ResponsiveAudioWaveform from "./ResponsiveAudioWaveform.vue";
-import { getSharedExclusiveAudio, registerMessageAudioStop } from "../features/audio/messageAudioPlayback";
+import { getSharedMessageAudioPlayback, type MessageAudioSnapshot } from "../features/audio/messageAudioPlayback";
 
 type VoicePayload = {
   kind?: string;
@@ -32,81 +32,31 @@ const payload = computed(() => {
 const isVoice = computed(() => payload.value.kind === "voice");
 const waveform = computed(() => resolveMessageWaveform(payload.value.waveform, props.message.id));
 
-const exclusiveAudio = getSharedExclusiveAudio();
-const participantId = `voice:message-${props.message.id}`;
-// 每个播放器实例独占一条消息的播放状态；timeupdate 的 ~4Hz 进度更新只触发
-// 本组件重渲染，不再冒泡到消息列表根部。
-const playing = ref(false);
-const progress = ref(0);
-const loadedDurationMs = ref(0);
-const durationMs = computed(() => loadedDurationMs.value || payload.value.durationMs || 0);
+// 播放实体由模块级控制器持有，虚拟列表把这一行卸载时只移除订阅，
+// 不会销毁正在流式读取的 HTMLAudioElement。
+const playbackController = getSharedMessageAudioPlayback();
+const playback = ref<MessageAudioSnapshot>(playbackController.snapshot(props.message.id, payload.value.durationMs || 0));
+const playing = computed(() => playback.value.playing);
+const progress = computed(() => playback.value.progress);
+const durationMs = computed(() => playback.value.durationMs || payload.value.durationMs || 0);
 const elapsedMs = computed(() => Math.round(durationMs.value * progress.value));
-let audio: HTMLAudioElement | null = null;
-
-function setProgress(value: number) {
-  progress.value = Math.min(1, Math.max(0, value));
-}
-
-function ensureAudio() {
-  if (audio) return audio;
-  const element = new Audio(props.src);
-  element.preload = "metadata";
-  element.setAttribute("playsinline", "true");
-  element.setAttribute("webkit-playsinline", "true");
-  element.addEventListener("loadedmetadata", () => {
-    if (Number.isFinite(element.duration) && element.duration > 0) loadedDurationMs.value = Math.round(element.duration * 1000);
-  });
-  element.addEventListener("timeupdate", () => {
-    if (element.duration) setProgress(element.currentTime / element.duration);
-  });
-  element.addEventListener("ended", () => {
-    setProgress(1);
-    playing.value = false;
-    exclusiveAudio.deactivate(participantId, { resumeSuspended: true });
-  });
-  element.addEventListener("pause", () => {
-    if (element.ended) return;
-    playing.value = false;
-    exclusiveAudio.deactivate(participantId);
-  });
-  audio = element;
-  return element;
-}
-
-function stopPlayback() {
-  if (!audio) return;
-  audio.pause();
-  audio.currentTime = 0;
-  setProgress(0);
-}
+const unsubscribe = playbackController.subscribe(
+  props.message.id,
+  props.src,
+  payload.value.durationMs || 0,
+  (snapshot) => { playback.value = snapshot; }
+);
 
 function toggle() {
-  const element = ensureAudio();
-  if (playing.value) {
-    element.pause();
-    return;
-  }
-  if (element.ended) {
-    element.currentTime = 0;
-    setProgress(0);
-  }
-  playing.value = true;
-  exclusiveAudio.activate(participantId);
-  const playAttempt = element.play();
-  emit("play");
-  playAttempt.catch(() => {
-    playing.value = false;
-  });
+  const wasPlaying = playing.value;
+  void playbackController.toggle(props.message.id, props.src, payload.value.durationMs || 0);
+  if (!wasPlaying) emit("play");
 }
 
 function seek(value: number) {
-  const element = ensureAudio();
-  const duration = Number.isFinite(element.duration) ? element.duration : durationMs.value / 1000;
-  if (!duration) return;
-  const normalized = Math.min(1, Math.max(0, value));
-  element.currentTime = duration * normalized;
-  setProgress(normalized);
-  if (element.paused) toggle();
+  const wasPlaying = playing.value;
+  void playbackController.seek(props.message.id, props.src, value, payload.value.durationMs || 0);
+  if (!wasPlaying) emit("play");
 }
 
 function voiceBarStyle(bar: number, index: number, total: number, value: number) {
@@ -121,14 +71,8 @@ function formatDuration(ms: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-exclusiveAudio.register({ id: participantId, resumable: false, suspend: stopPlayback, resume: () => undefined });
-const unregisterStop = registerMessageAudioStop(stopPlayback);
-
 onBeforeUnmount(() => {
-  unregisterStop();
-  stopPlayback();
-  exclusiveAudio.unregister(participantId);
-  if (audio) audio.src = "";
+  unsubscribe();
 });
 </script>
 

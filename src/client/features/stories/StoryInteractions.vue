@@ -72,7 +72,7 @@ async function replyToComment(item: StoryCommentDTO) {
         <Heart :size="28" :fill="story.interactions.liked ? 'currentColor' : 'none'" />
       </button>
       <div v-if="story.interactions.likes.length" class="story-like-people" aria-label="点赞成员">
-        <span v-for="person in story.interactions.likes" :key="person.accountId" class="story-person-avatar" :title="person.displayName">
+        <span v-for="person in story.interactions.likes" :key="person.accountId" class="avatar story-person-avatar" :title="person.displayName">
           <AvatarImage :path="person.avatarPath"><span>{{ person.displayName.slice(0, 1) }}</span></AvatarImage>
         </span>
       </div>
@@ -84,7 +84,7 @@ async function replyToComment(item: StoryCommentDTO) {
       <div class="story-comment-main">
         <ul v-if="story.interactions.comments.length" class="story-comment-list" aria-label="评论列表">
           <li v-for="item in story.interactions.comments" :key="item.id">
-            <span class="story-comment-avatar"><AvatarImage :path="item.author.avatarPath"><span>{{ item.author.displayName.slice(0, 1) }}</span></AvatarImage></span>
+            <span class="avatar story-comment-avatar"><AvatarImage :path="item.author.avatarPath"><span>{{ item.author.displayName.slice(0, 1) }}</span></AvatarImage></span>
             <div class="story-comment-content">
               <div class="story-comment-meta">
                 <strong>{{ item.author.displayName }}</strong>

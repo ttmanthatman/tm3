@@ -1,14 +1,25 @@
-import { nextTick, ref, type Ref } from "vue";
+import { nextTick, ref, watch, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
 import { useChatStore } from "../../store";
+import {
+  deletePendingUploadDraft,
+  listPendingUploadDrafts,
+  savePendingUploadDraft,
+  type PendingUploadDraft,
+  type PendingUploadDraftOptions
+} from "./pendingUploadDrafts";
 
 type UploadStatus = "uploading" | "processing" | "failed";
 export type PendingUpload = {
   file: File;
-  options: { voice?: boolean; durationMs?: number; waveform?: number[]; originalImage?: boolean };
+  options: PendingUploadDraftOptions;
+  accountId: number;
+  channelId: number;
+  createdAt: string;
   progress: number;
   status: UploadStatus;
   message?: string;
+  localDraftReady?: boolean;
 };
 
 interface UseUploadsOptions {
@@ -16,20 +27,28 @@ interface UseUploadsOptions {
   keepOriginalImages: Ref<boolean>;
   isMusicChannel: () => boolean;
   scrollBottom: (smooth?: boolean) => void;
-  uploadFile: (file: File, options?: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean }) => Promise<{ success: boolean; duplicate: boolean; skipped: boolean }>;
+  uploadFile: (file: File, options?: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number }) => Promise<{ success: boolean; duplicate: boolean; skipped: boolean }>;
 }
 
 export function useUploads(options: UseUploadsOptions) {
   const store = useChatStore();
   const pendingUploads = ref<Record<number, PendingUpload>>({});
-  let nextPendingMessageId = -1;
+  const draftWrites = new Map<number, Promise<void>>();
+  let nextPendingMessageId = -Date.now();
+  let restoreGeneration = 0;
+
+  function allocatePendingMessageId() {
+    const id = nextPendingMessageId;
+    nextPendingMessageId -= 1;
+    return id;
+  }
 
   function pendingUploadFor(message: MessageDTO) {
     return pendingUploads.value[message.id];
   }
 
   function pendingUploadLabel(upload: PendingUpload) {
-    if (upload.status === "failed") return upload.message || "发送失败";
+    if (upload.status === "failed") return `${upload.message || "发送失败"} · ${upload.localDraftReady ? "已暂存在本机" : "可重试"}`;
     if (upload.status === "processing") return upload.message || "正在发布";
     return `上传中 ${upload.progress}%`;
   }
@@ -52,33 +71,115 @@ export function useUploads(options: UseUploadsOptions) {
   }
 
   function removePendingUpload(id: number) {
+    const upload = pendingUploads.value[id];
     const next = { ...pendingUploads.value };
     delete next[id];
     pendingUploads.value = next;
+    if (upload) {
+      void (async () => {
+        await draftWrites.get(id)?.catch(() => undefined);
+        draftWrites.delete(id);
+        await deletePendingUploadDraft(upload.accountId, id).catch(() => undefined);
+      })();
+    }
   }
 
-  function pushPendingVoiceMessage(file: File, voiceOptions: { durationMs?: number; waveform?: number[] }) {
+  function persistPendingUpload(id: number, upload: PendingUpload) {
+    const write = savePendingUploadDraft({
+      id,
+      accountId: upload.accountId,
+      channelId: upload.channelId,
+      createdAt: upload.createdAt,
+      file: upload.file,
+      options: upload.options
+    }).then(() => {
+      setPendingUpload(id, { localDraftReady: true });
+    }).catch(() => {
+      setPendingUpload(id, { localDraftReady: false });
+    });
+    draftWrites.set(id, write);
+    return write;
+  }
+
+  function pendingMessageFromDraft(draft: PendingUploadDraft): MessageDTO {
+    const account = store.account!;
+    return {
+      id: draft.id,
+      channelId: draft.channelId,
+      sender: {
+        id: account.actorId,
+        kind: "human",
+        username: account.username,
+        displayName: account.displayName,
+        avatarPath: account.avatarPath
+      },
+      content: "",
+      type: draft.options.voice ? "file" : isImageFile(draft.file) ? "image" : "file",
+      ...(draft.options.voice ? { payload: { kind: "voice", durationMs: draft.options.durationMs, waveform: draft.options.waveform } } : {}),
+      fileName: draft.file.name,
+      fileSize: draft.file.size,
+      voiceListened: true,
+      createdAt: draft.createdAt
+    };
+  }
+
+  async function restorePendingUploads() {
+    const accountId = store.account?.actorId;
+    const channelId = store.currentChannelId;
+    if (!accountId || !channelId || store.prayerOnly || store.graceOnly || store.loadingInitialMessages) return;
+    const generation = ++restoreGeneration;
+    const drafts = await listPendingUploadDrafts(accountId, channelId).catch(() => []);
+    if (generation !== restoreGeneration || store.account?.actorId !== accountId || store.currentChannelId !== channelId || store.prayerOnly || store.graceOnly || store.loadingInitialMessages) return;
+    for (const draft of drafts) {
+      nextPendingMessageId = Math.min(nextPendingMessageId, draft.id - 1);
+      if (!pendingUploads.value[draft.id]) {
+        pendingUploads.value = {
+          ...pendingUploads.value,
+          [draft.id]: {
+            file: draft.file,
+            options: draft.options,
+            accountId: draft.accountId,
+            channelId: draft.channelId,
+            createdAt: draft.createdAt,
+            progress: 0,
+            status: "failed",
+            message: "上次发送未完成",
+            localDraftReady: true
+          }
+        };
+      }
+      if (!store.messages.some((message) => message.id === draft.id)) store.appendLocalMessage(pendingMessageFromDraft(draft));
+    }
+  }
+
+  async function pushPendingVoiceMessage(file: File, voiceOptions: { durationMs?: number; waveform?: number[] }) {
     if (!store.currentChannelId || !store.account) return 0;
-    const id = nextPendingMessageId;
-    nextPendingMessageId -= 1;
+    const account = store.account;
+    const channelId = store.currentChannelId;
+    const id = allocatePendingMessageId();
+    const createdAt = new Date().toISOString();
+    const upload: PendingUpload = {
+      file,
+      options: { voice: true, durationMs: voiceOptions.durationMs, waveform: voiceOptions.waveform },
+      accountId: account.actorId,
+      channelId,
+      createdAt,
+      progress: 0,
+      status: "uploading"
+    };
     pendingUploads.value = {
       ...pendingUploads.value,
-      [id]: {
-        file,
-        options: { voice: true, durationMs: voiceOptions.durationMs, waveform: voiceOptions.waveform },
-        progress: 0,
-        status: "uploading"
-      }
+      [id]: upload
     };
     store.appendLocalMessage({
       id,
-      channelId: store.currentChannelId,
+      channelId,
       sender: {
-        id: store.account.actorId,
+        id: account.actorId,
         kind: "human",
-        username: store.account.username,
-        displayName: store.account.displayName,
-        avatarPath: store.account.avatarPath
+        username: account.username,
+        displayName: account.displayName,
+        avatarPath: account.avatarPath
       },
       content: "",
       type: "file",
@@ -86,45 +187,53 @@ export function useUploads(options: UseUploadsOptions) {
       fileName: file.name,
       fileSize: file.size,
       voiceListened: true,
-      createdAt: new Date().toISOString()
+      createdAt
     });
+    await persistPendingUpload(id, upload);
     void nextTick(() => options.scrollBottom(true));
-    return id;
+    return { id, channelId };
   }
 
-  function pushPendingFileMessage(file: File, fileOptions: { originalImage?: boolean } = {}) {
+  async function pushPendingFileMessage(file: File, fileOptions: { originalImage?: boolean } = {}) {
     if (!store.currentChannelId || !store.account) return 0;
-    const id = nextPendingMessageId;
-    nextPendingMessageId -= 1;
+    const account = store.account;
+    const channelId = store.currentChannelId;
+    const id = allocatePendingMessageId();
     const type = isImageFile(file) ? "image" : "file";
+    const createdAt = new Date().toISOString();
+    const upload: PendingUpload = {
+      file,
+      options: fileOptions,
+      accountId: account.actorId,
+      channelId,
+      createdAt,
+      progress: 0,
+      status: "uploading"
+    };
     pendingUploads.value = {
       ...pendingUploads.value,
-      [id]: {
-        file,
-        options: fileOptions,
-        progress: 0,
-        status: "uploading"
-      }
+      [id]: upload
     };
     store.appendLocalMessage({
       id,
-      channelId: store.currentChannelId,
+      channelId,
       sender: {
-        id: store.account.actorId,
+        id: account.actorId,
         kind: "human",
-        username: store.account.username,
-        displayName: store.account.displayName,
-        avatarPath: store.account.avatarPath
+        username: account.username,
+        displayName: account.displayName,
+        avatarPath: account.avatarPath
       },
       content: "",
       type,
       fileName: file.name,
       fileSize: file.size,
       voiceListened: true,
-      createdAt: new Date().toISOString()
+      createdAt
     });
+    await persistPendingUpload(id, upload);
     void nextTick(() => options.scrollBottom(true));
-    return id;
+    return { id, channelId };
   }
 
   function replacePendingMessage(pendingId: number, message: MessageDTO) {
@@ -135,14 +244,15 @@ export function useUploads(options: UseUploadsOptions) {
     return options.keepOriginalImages.value && isImageFile(file);
   }
 
-  function uploadPickedFile(file: File) {
+  async function uploadPickedFile(file: File) {
     if (options.isMusicChannel() && !/\.(mp3|m4a)$/i.test(file.name)) {
       alert("音乐频道只支持上传 MP3 和 M4A 文件");
-      return Promise.resolve({ success: false, duplicate: false, skipped: false });
+      return { success: false, duplicate: false, skipped: false };
     }
     const uploadOptions = { originalImage: shouldKeepOriginalImage(file) };
-    const pendingMessageId = pushPendingFileMessage(file, uploadOptions);
-    return options.uploadFile(file, { ...uploadOptions, pendingMessageId });
+    const pending = await pushPendingFileMessage(file, uploadOptions);
+    if (!pending) return { success: false, duplicate: false, skipped: true };
+    return options.uploadFile(file, { ...uploadOptions, pendingMessageId: pending.id, channelId: pending.channelId });
   }
 
   function handlePickedFile(event: Event) {
@@ -202,8 +312,20 @@ export function useUploads(options: UseUploadsOptions) {
     const upload = pendingUploads.value[id];
     if (!upload || upload.status !== "failed") return;
     setPendingUpload(id, { status: "uploading", progress: 0, message: "" });
-    await options.uploadFile(upload.file, { ...upload.options, pendingMessageId: id });
+    await options.uploadFile(upload.file, { ...upload.options, pendingMessageId: id, channelId: upload.channelId });
   }
+
+  watch(
+    () => [
+      store.account?.actorId || 0,
+      store.currentChannelId,
+      store.prayerOnly,
+      store.graceOnly,
+      store.loadingInitialMessages
+    ] as const,
+    () => { void restorePendingUploads(); },
+    { immediate: true }
+  );
 
   return {
     pendingUploads,

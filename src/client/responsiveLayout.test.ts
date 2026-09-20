@@ -21,6 +21,8 @@ const appField = fs.readFileSync(new URL("./components/ui/AppField.vue", import.
 const avatarImage = fs.readFileSync(new URL("./components/ui/AvatarImage.vue", import.meta.url), "utf8");
 const channelIcon = fs.readFileSync(new URL("./components/ui/ChannelIcon.vue", import.meta.url), "utf8");
 const messageRow = fs.readFileSync(new URL("./features/messages/MessageRow.vue", import.meta.url), "utf8");
+const storyInteractions = fs.readFileSync(new URL("./features/stories/StoryInteractions.vue", import.meta.url), "utf8");
+const storiesCss = fs.readFileSync(new URL("./features/stories/stories.css", import.meta.url), "utf8");
 const composerBar = fs.readFileSync(new URL("./features/composer/ComposerBar.vue", import.meta.url), "utf8");
 const chatHeader = fs.readFileSync(new URL("./features/chat/ChatHeader.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
@@ -242,10 +244,21 @@ test("audio attachments render their waveform player immediately without a colla
 
 test("voice/audio per-tick playback state is contained in the InlineAudioPlayer leaf", () => {
   assert.doesNotMatch(app, /voiceProgress|setVoiceProgress|playingVoiceId|toggleVoicePlayback/);
-  assert.match(inlineAudioPlayer, /addEventListener\("timeupdate"/);
-  assert.match(inlineAudioPlayer, /const progress = ref\(0\)/);
-  assert.match(inlineAudioPlayer, /exclusiveAudio\.activate\(participantId\)/);
+  assert.match(inlineAudioPlayer, /getSharedMessageAudioPlayback/);
+  assert.match(inlineAudioPlayer, /playbackController\.subscribe/);
+  assert.doesNotMatch(inlineAudioPlayer, /stopPlayback\(\)/);
   assert.match(app, /stopAllMessageAudioPlayback\(\)/);
+});
+
+test("story interaction avatars reuse the chat avatar crop instead of intrinsic image sizing", () => {
+  assert.match(storyInteractions, /class="avatar story-person-avatar"/);
+  assert.match(storyInteractions, /class="avatar story-comment-avatar"/);
+  assert.doesNotMatch(storiesCss, /\.story-person-avatar img|\.story-comment-avatar img/);
+});
+
+test("pending upload icons stay still while the progress bar communicates activity", () => {
+  assert.doesNotMatch(css, /\.upload-card:not\(\.failed\) \.upload-card-icon svg[\s\S]*?animation:/);
+  assert.match(css, /\.voice-upload-bar span \{[\s\S]*?transition: width/);
 });
 
 test("audio attachment headers omit the redundant decorative audio icon", () => {
