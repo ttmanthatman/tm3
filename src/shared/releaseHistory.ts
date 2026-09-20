@@ -1019,11 +1019,21 @@ const RELEASE_2_1_0_NOTES = [
   "管理员可在创建或编辑用户时指定性别，用于故事页正确显示「她的故事 / 他的故事 / TA的故事」。"
 ] as const
 
+const RELEASE_2_2_0_NOTES = [
+  "发送恩典卡片时会自动在「我的故事」生成一条独立故事，纯文字或语音也可同步；照片、语音复制到故事自己的存储中，之后撤回恩典卡不会删除对应故事。",
+  "故事评论支持回复指定评论，时间线中显示「回复 某某：内容」；被回复者会收到故事评论提醒，原评论删除后回复内容仍保留。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.1",
+    date: "2026-09-20",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.0",
     date: "2026-09-20",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_0_NOTES
   },
   {
     version: "2.1.0",
