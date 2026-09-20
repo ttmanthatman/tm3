@@ -66,7 +66,14 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
         take: 20
       }),
       prisma.storyComment.findMany({
-        where: { accountId: { not: accountId }, createdAt: { gt: account.storyInteractionReadAt }, story: { accountId } },
+        where: {
+          accountId: { not: accountId },
+          createdAt: { gt: account.storyInteractionReadAt },
+          OR: [
+            { story: { accountId } },
+            { replyTo: { accountId } }
+          ]
+        },
         include: { account: { select: { id: true, displayName: true, avatarPath: true, actor: { select: { id: true } } } } },
         orderBy: { createdAt: "desc" },
         take: 20
@@ -279,15 +286,26 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
 
   app.post("/api/stories/:id/comments", { preHandler: requireAuth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
     const id = positiveId.safeParse((request.params as { id: string }).id);
-    const body = z.object({ text: z.string().trim().min(1).max(STORY_LIMITS.comment) }).strict().safeParse(request.body);
+    const body = z.object({
+      text: z.string().trim().min(1).max(STORY_LIMITS.comment),
+      replyToId: positiveId.optional()
+    }).strict().safeParse(request.body);
     if (!id.success || !body.success) return reply.code(400).send({ message: "评论需为 1–500 字" });
     const auth = (request as AuthRequest).auth;
     const access = await service.accessFor(auth.accountId, id.data);
     if (!access) return reply.code(404).send({ message: "故事不存在或不可见" });
-    const comment = await prisma.storyComment.create({ data: { storyId: id.data, accountId: auth.accountId, text: body.data.text } });
-    if (access.author.accountId !== auth.accountId && deps.notifyStoryInteraction) {
-      deps.notifyStoryInteraction(access.author.accountId, { id: `comment:${comment.id}`, kind: "comment", storyId: id.data,
-        actor: await notificationPerson(auth.accountId), text: comment.text, createdAt: comment.createdAt.toISOString() });
+    const replyTarget = body.data.replyToId
+      ? await prisma.storyComment.findFirst({ where: { id: body.data.replyToId, storyId: id.data } })
+      : null;
+    if (body.data.replyToId && !replyTarget) return reply.code(400).send({ message: "回复的评论不存在" });
+    const comment = await prisma.storyComment.create({
+      data: { storyId: id.data, accountId: auth.accountId, text: body.data.text, replyToId: replyTarget?.id }
+    });
+    if (deps.notifyStoryInteraction) {
+      const recipients = new Set([access.author.accountId, replyTarget?.accountId].filter((accountId): accountId is number => !!accountId && accountId !== auth.accountId));
+      const notification = { id: `comment:${comment.id}`, kind: "comment" as const, storyId: id.data,
+        actor: await notificationPerson(auth.accountId), text: comment.text, createdAt: comment.createdAt.toISOString() };
+      for (const accountId of recipients) deps.notifyStoryInteraction(accountId, notification);
     }
     const interactions = await currentInteractions(id.data, auth.accountId);
     reply.code(201);

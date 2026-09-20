@@ -26,7 +26,7 @@ import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerStoryRoutes } from "./routes/stories.js";
 import { storyGender } from "../shared/stories.js";
-import { prepareAccountStoryCleanup } from "./services/stories.js";
+import { createGraceStory, createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -2511,11 +2511,14 @@ const receptionService = createReceptionService({
   onError: (error, channelId) => app.log.error({ error, channelId }, "Failed to collect reception room")
 });
 
+const storyDirectory = path.join(STORAGE_ROOT, "stories");
+const storyService = createStoryService(prisma);
+
 registerStoryRoutes(app, {
   prisma,
   requireAuth,
   requireMediaAuth,
-  directory: path.join(STORAGE_ROOT, "stories"),
+  directory: storyDirectory,
   announceStory: async ({ channelId, actorId, storyId, displayName }) => {
     const actor = await prisma.actor.findUnique({ where: { id: actorId }, select: { accountId: true } });
     if (!actor?.accountId || !(await canWriteChannel(actor.accountId, channelId))) return;
@@ -4113,6 +4116,14 @@ registerGraceRoutes(app, {
   canAccessChannel,
   canWriteChannel,
   createMessageFromActor,
+  createStoryFromGrace: async (input) => {
+    const story = await createGraceStory(prisma, { stories: storyDirectory, uploads: UPLOAD_DIR }, input);
+    if (!story.created) return;
+    const audience = (await storyService.visibleAuthorAccountIds(input.accountId)).filter((accountId) => accountId !== input.accountId);
+    for (const accountId of audience) {
+      io.to(`acct:${accountId}`).emit("story:new", { storyId: story.id, createdAt: story.createdAt.toISOString() });
+    }
+  },
   hydrateMessage,
   deleteMessages,
   io,

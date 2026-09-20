@@ -38,7 +38,7 @@ function message(id: number, channelId: number, senderId = 22): MessageDTO {
   };
 }
 
-function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: number) => boolean } = {}) {
+function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: number) => boolean; storyFails?: boolean; isGuest?: boolean } = {}) {
   const sourceMessages: SourceMessage[] = [];
   const graceRows: GraceRow[] = [];
   const hydrated = new Map<number, MessageDTO>();
@@ -46,6 +46,7 @@ function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: nu
   const updates: Array<{ id: number; data: Record<string, unknown> }> = [];
   const deleted: number[] = [];
   const emitted: Array<{ room: string; event: string }> = [];
+  const createdStories: Array<{ accountId: number; graceMessageId: number; content: string; voiceMessageId?: number; imageMessageId?: number }> = [];
   const prisma = {
     message: {
       findFirst: async ({ where }: { where: { id: number; channelId: number; type: string } }) =>
@@ -77,7 +78,7 @@ function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: nu
       actorId: 22,
       username: "reader",
       isAdmin: false,
-      isGuest: false,
+      isGuest: options.isGuest === true,
       canPinMessages: false
     };
   };
@@ -93,6 +94,10 @@ function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: nu
       hydrated.set(id, message(id, input.channelId));
       return { id };
     },
+    createStoryFromGrace: async (input) => {
+      if (options.storyFails) throw new Error("story sync failed");
+      createdStories.push(input);
+    },
     hydrateMessage: async (id) => hydrated.get(id) || null,
     deleteMessages: async (messages) => {
       deleted.push(...messages.map((row) => row.id));
@@ -103,11 +108,11 @@ function createHarness(options: { canWrite?: boolean; canAccess?: (channelId: nu
     },
     cleanText: (input) => String(input || "").trim().slice(0, 10000)
   });
-  return { app, sourceMessages, graceRows, hydrated, createdMessages, actions, updates, deleted, emitted };
+  return { app, sourceMessages, graceRows, hydrated, createdMessages, createdStories, actions, updates, deleted, emitted };
 }
 
-test("POST /api/grace sends a grace card into the selected channel", async () => {
-  const { app, createdMessages } = createHarness();
+test("POST /api/grace sends a grace card and creates an independent story", async () => {
+  const { app, createdMessages, createdStories } = createHarness();
   await app.ready();
   try {
     const response = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "今天的恩典" } });
@@ -118,13 +123,27 @@ test("POST /api/grace sends a grace card into the selected channel", async () =>
       { ...createdMessages[0], pushOrigin: undefined },
       { channelId: 7, actorId: 22, content: "今天的恩典", type: "grace", payload: { kind: "grace" }, pushOrigin: undefined }
     );
+    assert.deepEqual(createdStories, [{ accountId: 2, graceMessageId: 1000, content: "今天的恩典", voiceMessageId: undefined, imageMessageId: undefined }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /api/grace keeps guest reception cards without creating inaccessible stories", async () => {
+  const { app, createdMessages, createdStories } = createHarness({ isGuest: true });
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "来访者的恩典" } });
+    assert.equal(response.statusCode, 200);
+    assert.equal(createdMessages.length, 1);
+    assert.deepEqual(createdStories, []);
   } finally {
     await app.close();
   }
 });
 
 test("POST /api/grace accepts voice-only cards and validates attachments in the same channel", async () => {
-  const { app, sourceMessages, createdMessages } = createHarness();
+  const { app, sourceMessages, createdMessages, createdStories } = createHarness();
   sourceMessages.push(
     { id: 501, channelId: 7, type: "file", payload: { kind: "voice", durationMs: 800 } },
     { id: 502, channelId: 7, type: "image", payload: null },
@@ -135,8 +154,21 @@ test("POST /api/grace accepts voice-only cards and validates attachments in the 
     const good = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, voiceMessageId: 501, imageMessageId: 502 } });
     assert.equal(good.statusCode, 200);
     assert.deepEqual(createdMessages[0].payload, { kind: "grace", voiceMessageId: 501, imageMessageId: 502 });
+    assert.deepEqual(createdStories[0], { accountId: 2, graceMessageId: 1000, content: "", voiceMessageId: 501, imageMessageId: 502 });
     const wrongChannel = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "带图", imageMessageId: 503 } });
     assert.equal(wrongChannel.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
+test("POST /api/grace rolls back the card when story synchronization fails", async () => {
+  const { app, deleted } = createHarness({ storyFails: true });
+  await app.ready();
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "今天的恩典" } });
+    assert.equal(response.statusCode, 500);
+    assert.deepEqual(deleted, [1000]);
   } finally {
     await app.close();
   }
@@ -236,10 +268,13 @@ test("POST /api/messages/:id/grace-update preserves history and creates a newest
   }
 });
 
-test("DELETE /api/messages/:id/grace reuses the shared message deletion path", async () => {
-  const { app, sourceMessages, deleted } = createHarness();
+test("deleting a grace card uses message deletion and leaves its created story untouched", async () => {
+  const { app, sourceMessages, createdStories, deleted } = createHarness();
+  await app.ready();
+  const created = await app.inject({ method: "POST", url: "/api/grace", payload: { channelId: 7, content: "见证" } });
+  assert.equal(created.statusCode, 200);
   sourceMessages.push({
-    id: 41,
+    id: 1000,
     channelId: 7,
     type: "grace",
     payload: { kind: "grace" },
@@ -249,11 +284,11 @@ test("DELETE /api/messages/:id/grace reuses the shared message deletion path", a
     sender: { accountId: 2 },
     filePath: null
   });
-  await app.ready();
   try {
-    const response = await app.inject({ method: "DELETE", url: "/api/messages/41/grace" });
+    const response = await app.inject({ method: "DELETE", url: "/api/messages/1000/grace" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(deleted, [41]);
+    assert.deepEqual(deleted, [1000]);
+    assert.equal(createdStories.length, 1);
   } finally {
     await app.close();
   }

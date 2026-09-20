@@ -228,16 +228,20 @@ model StoryLike {
 }
 
 model StoryComment {
-  id        Int      @id @default(autoincrement())
-  storyId   Int      @map("story_id")
-  accountId Int      @map("account_id")
-  text      String   @db.VarChar(500)
-  createdAt DateTime @default(now()) @map("created_at")
-  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
-  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  id        Int            @id @default(autoincrement())
+  storyId   Int            @map("story_id")
+  accountId Int            @map("account_id")
+  replyToId Int?           @map("reply_to_id")
+  text      String         @db.VarChar(500)
+  createdAt DateTime       @default(now()) @map("created_at")
+  story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  account   Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  replyTo   StoryComment?  @relation("story_comment_replies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies   StoryComment[] @relation("story_comment_replies")
 
   @@index([storyId, id])
   @@index([accountId, createdAt])
+  @@index([replyToId])
   @@map("story_comments")
 }
 

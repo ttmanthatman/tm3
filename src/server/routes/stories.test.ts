@@ -12,7 +12,8 @@ import { registerStoryRoutes } from "./stories.js";
 
 type TestAccount = { id: number; isGuest: boolean; displayName: string; avatarPath: null; gender: string; storyBio?: string; storyFeedReadAt: Date; storyInteractionReadAt: Date; role: "admin" | "user"; actor: { id: number } };
 type LikeRow = StoryLike & { account: TestAccount };
-type CommentRow = StoryComment & { account: TestAccount };
+type CommentReplyRow = StoryComment & { account: TestAccount };
+type CommentRow = CommentReplyRow & { replyTo: CommentReplyRow | null };
 type Row = Story & { media: StoryMedia[]; likes: LikeRow[]; comments: CommentRow[] };
 function payload(parts: Array<{ name: string; value: string | Buffer; mime?: string }>) {
   const boundary = `story-${crypto.randomUUID()}`;
@@ -92,10 +93,37 @@ async function harness() {
       }
     },
     storyComment: {
-      findMany: async ({ where, take }: { where: { accountId: { not: number }; createdAt: { gt: Date }; story: { accountId: number } }; take: number }) => rows.filter((story) => story.accountId === where.story.accountId).flatMap((story) => story.comments).filter((comment) => comment.accountId !== where.accountId.not && comment.createdAt > where.createdAt.gt).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take),
-      create: async ({ data }: { data: { storyId: number; accountId: number; text: string } }) => {
+      findMany: async ({ where, take }: {
+        where: {
+          accountId: { not: number };
+          createdAt: { gt: Date };
+          story?: { accountId: number };
+          OR?: Array<{ story?: { accountId: number }; replyTo?: { accountId: number } }>;
+        };
+        take: number;
+      }) => rows.flatMap((story) => story.comments.map((comment) => ({ story, comment }))).filter(({ story, comment }) => {
+        const visibleToRecipient = where.OR
+          ? where.OR.some((clause) => clause.story
+              ? clause.story.accountId === story.accountId
+              : clause.replyTo
+                ? clause.replyTo.accountId === comment.replyTo?.accountId
+                : false)
+          : where.story?.accountId === story.accountId;
+        return visibleToRecipient && comment.accountId !== where.accountId.not && comment.createdAt > where.createdAt.gt;
+      }).map(({ comment }) => comment).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take),
+      create: async ({ data }: { data: { storyId: number; accountId: number; text: string; replyToId?: number } }) => {
         const row = rows.find((item) => item.id === data.storyId)!;
-        const comment: CommentRow = { id: nextComment++, ...data, createdAt: new Date(), account: account(data.accountId) };
+        const replyTo = data.replyToId ? row.comments.find((item) => item.id === data.replyToId) || null : null;
+        const comment: CommentRow = {
+          id: nextComment++,
+          storyId: data.storyId,
+          accountId: data.accountId,
+          replyToId: replyTo?.id || null,
+          text: data.text,
+          createdAt: new Date(),
+          account: account(data.accountId),
+          replyTo
+        };
         row.comments.push(comment);
         return comment;
       },
@@ -103,7 +131,15 @@ async function harness() {
       deleteMany: async ({ where }: { where: { id: number; storyId: number } }) => {
         const row = rows.find((item) => item.id === where.storyId);
         const before = row?.comments.length || 0;
-        if (row) row.comments = row.comments.filter((item) => item.id !== where.id);
+        if (row) {
+          row.comments = row.comments.filter((item) => item.id !== where.id);
+          for (const item of row.comments) {
+            if (item.replyToId === where.id) {
+              item.replyToId = null;
+              item.replyTo = null;
+            }
+          }
+        }
         return { count: before - (row?.comments.length || 0) };
       }
     },
@@ -245,14 +281,27 @@ test("story likes and comments are persistent, idempotent and permission checked
     assert.equal(commented.statusCode, 201, commented.body);
     assert.equal(commented.json().interactions.comments[0].text, "愿你常有喜乐");
     assert.equal(commented.json().interactions.comments[0].canDelete, true);
+    assert.equal(commented.json().interactions.comments[0].replyTo, null);
     const commentId = commented.json().interactions.comments[0].id;
+    const replied = await h.app.inject({ method: "POST", url: commentUrl, payload: { text: "谢谢你的祝福", replyToId: commentId } });
+    assert.equal(replied.statusCode, 201, replied.body);
+    assert.equal(replied.json().interactions.comments[1].replyTo.id, commentId);
+    assert.equal(replied.json().interactions.comments[1].replyTo.author.displayName, "Person 2");
+    assert.deepEqual(h.interactionEvents.filter((event) => event.notification.kind === "comment").map((event) => event.accountId), [1, 2]);
+    const replyActivity = (await h.app.inject({ url: "/api/stories/activity", headers: asReader })).json();
+    assert.equal(replyActivity.notifications[0].text, "谢谢你的祝福");
+    assert.equal((await h.app.inject({ method: "POST", url: commentUrl, payload: { text: "无效回复", replyToId: 9999 } })).statusCode, 400);
     assert.equal((await h.app.inject({ method: "POST", url: commentUrl, headers: asReader, payload: { text: " " } })).statusCode, 400);
     assert.equal((await h.app.inject({ method: "POST", url: commentUrl, headers: asReader, payload: { text: "a".repeat(501) } })).statusCode, 400);
     assert.equal((await h.app.inject({ method: "POST", url: commentUrl, headers: { "x-account": "3" }, payload: { text: "访客评论" } })).statusCode, 404);
     assert.equal((await h.app.inject({ method: "DELETE", url: `/api/stories/${story.id}/comments/${commentId}`, headers: { "x-account": "5" } })).statusCode, 404);
     const ownerDelete = await h.app.inject({ method: "DELETE", url: `/api/stories/${story.id}/comments/${commentId}` });
     assert.equal(ownerDelete.statusCode, 200, ownerDelete.body);
-    assert.equal(ownerDelete.json().interactions.commentCount, 0);
+    assert.equal(ownerDelete.json().interactions.commentCount, 1);
+    assert.equal(ownerDelete.json().interactions.comments[0].replyTo, null);
+    const replyId = ownerDelete.json().interactions.comments[0].id;
+    const replyDelete = await h.app.inject({ method: "DELETE", url: `/api/stories/${story.id}/comments/${replyId}` });
+    assert.equal(replyDelete.json().interactions.commentCount, 0);
 
     const unliked = await h.app.inject({ method: "PUT", url: likeUrl, headers: asReader, payload: { liked: false } });
     assert.equal(unliked.json().interactions.likeCount, 0);

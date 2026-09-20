@@ -79,9 +79,16 @@
 .story-comment-meta { display: flex; align-items: baseline; gap: 9px; min-width: 0; margin-bottom: 3px; }
 .story-comment-meta strong { color: #526b4d; font-size: var(--message-content-font-size); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .story-comment-meta time { color: #999d96; font-size: calc(var(--message-content-font-size) * .78); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.story-comment-reply { border: 0; padding: 0 2px; background: transparent; color: #6b8066; font-size: calc(var(--message-content-font-size) * .78); }
+.story-comment-reply:hover { color: #3f5e39; text-decoration: underline; }
 .story-comment-content p { margin: 0; color: var(--story-ink); font-size: var(--message-content-font-size); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.story-comment-reply-prefix { color: #4f674a; }
+.story-comment-reply-prefix strong { font-weight: 600; }
 .story-comment-delete { align-self: center; width: 28px; height: 28px; border: 0; border-radius: 50%; background: transparent; color: #818b7d; display: grid; place-items: center; }
 .story-comment-delete:hover { background: #e1e5dc; color: #9c3d33; }
+.story-comment-replying { margin-top: 9px; min-height: 30px; padding: 5px 8px 5px 12px; border-radius: 8px; background: #edf1e9; color: #596753; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.story-comment-replying button { width: 24px; height: 24px; border: 0; border-radius: 50%; background: transparent; color: #778272; display: grid; place-items: center; }
+.story-comment-replying button:hover { background: #dde5d8; color: #40523c; }
 .story-comment-form { display: flex; align-items: center; gap: 6px; padding-top: 10px; }
 .story-comment-form input { flex: 1; min-width: 0; height: 36px; border: 1px solid #d9ddd3; border-radius: 18px; background: #fffefa; color: var(--story-ink); padding: 0 13px; font-size: 13px; }
 .story-comment-form button { width: 36px; height: 36px; flex: 0 0 auto; border: 0; border-radius: 50%; background: #678662; color: white; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0; }

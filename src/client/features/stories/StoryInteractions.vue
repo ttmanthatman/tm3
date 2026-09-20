@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
-import { Heart, MessageCircle, Send, Trash2 } from "lucide-vue-next";
-import { STORY_LIMITS, type StoryDTO, type StoryInteractionsDTO } from "@shared/stories";
+import { Heart, MessageCircle, Send, Trash2, X } from "lucide-vue-next";
+import { STORY_LIMITS, type StoryCommentDTO, type StoryDTO, type StoryInteractionsDTO } from "@shared/stories";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import { addStoryComment, removeStoryComment, toggleStoryLike } from "./storyClient";
 
@@ -11,6 +11,7 @@ const comment = ref("");
 const likeBusy = ref(false);
 const commentBusy = ref(false);
 const deletingId = ref<number | null>(null);
+const replyingTo = ref<StoryCommentDTO | null>(null);
 const error = ref("");
 const input = ref<HTMLInputElement | null>(null);
 
@@ -34,8 +35,9 @@ async function submitComment() {
   commentBusy.value = true;
   error.value = "";
   try {
-    emit("updated", (await addStoryComment(props.story.id, text)).interactions);
+    emit("updated", (await addStoryComment(props.story.id, text, replyingTo.value?.id)).interactions);
     comment.value = "";
+    replyingTo.value = null;
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "评论失败，请重试"; }
   finally { commentBusy.value = false; }
 }
@@ -44,7 +46,10 @@ async function remove(commentId: number) {
   if (deletingId.value !== null) return;
   deletingId.value = commentId;
   error.value = "";
-  try { emit("updated", (await removeStoryComment(props.story.id, commentId)).interactions); }
+  try {
+    emit("updated", (await removeStoryComment(props.story.id, commentId)).interactions);
+    if (replyingTo.value?.id === commentId) replyingTo.value = null;
+  }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "删除评论失败，请重试"; }
   finally { deletingId.value = null; }
 }
@@ -52,6 +57,11 @@ async function remove(commentId: number) {
 async function focusComment() {
   await nextTick();
   input.value?.focus();
+}
+
+async function replyToComment(item: StoryCommentDTO) {
+  replyingTo.value = item;
+  await focusComment();
 }
 </script>
 
@@ -76,14 +86,22 @@ async function focusComment() {
           <li v-for="item in story.interactions.comments" :key="item.id">
             <span class="story-comment-avatar"><AvatarImage :path="item.author.avatarPath"><span>{{ item.author.displayName.slice(0, 1) }}</span></AvatarImage></span>
             <div class="story-comment-content">
-              <div class="story-comment-meta"><strong>{{ item.author.displayName }}</strong><time :datetime="item.createdAt">{{ commentTime(item.createdAt) }}</time></div>
-              <p>{{ item.text }}</p>
+              <div class="story-comment-meta">
+                <strong>{{ item.author.displayName }}</strong>
+                <time :datetime="item.createdAt">{{ commentTime(item.createdAt) }}</time>
+                <button type="button" class="story-comment-reply" :aria-label="`回复 ${item.author.displayName} 的评论`" @click="replyToComment(item)">回复</button>
+              </div>
+              <p><span v-if="item.replyTo" class="story-comment-reply-prefix">回复 <strong>{{ item.replyTo.author.displayName }}</strong>：</span>{{ item.text }}</p>
             </div>
             <button v-if="item.canDelete" type="button" class="story-comment-delete" :disabled="deletingId === item.id" :aria-label="`删除 ${item.author.displayName} 的评论`" @click="remove(item.id)"><Trash2 :size="14" /></button>
           </li>
         </ul>
+        <div v-if="replyingTo" class="story-comment-replying" role="status">
+          <span>回复 <strong>{{ replyingTo.author.displayName }}</strong></span>
+          <button type="button" aria-label="取消回复" @click="replyingTo = null"><X :size="14" /></button>
+        </div>
         <form class="story-comment-form" @submit.prevent="submitComment">
-          <input ref="input" v-model="comment" type="text" :maxlength="STORY_LIMITS.comment" placeholder="写下祝福…" aria-label="评论内容" />
+          <input ref="input" v-model="comment" type="text" :maxlength="STORY_LIMITS.comment" :placeholder="replyingTo ? `回复 ${replyingTo.author.displayName}…` : '写下祝福…'" aria-label="评论内容" />
           <button type="submit" :disabled="!comment.trim() || commentBusy" aria-label="发表评论"><Send :size="17" /></button>
         </form>
       </div>

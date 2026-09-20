@@ -147,9 +147,12 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   await expect(page.getByText("愿平凡的日子常有喜乐。", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "点赞", exact: true }).click();
   await expect(page.getByRole("button", { name: "取消点赞", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "回复 故事读者 的评论", exact: true }).click();
+  await expect(page.getByText("回复 故事读者", { exact: true })).toBeVisible();
   await page.getByLabel("评论内容", { exact: true }).fill("谢谢你的祝福！");
   await page.getByRole("button", { name: "发表评论", exact: true }).click();
-  await expect(page.getByText("谢谢你的祝福！", { exact: true })).toBeVisible();
+  await expect(page.locator(".story-comment-list p", { hasText: "谢谢你的祝福！" })).toBeVisible();
+  await expect(page.locator(".story-comment-reply-prefix", { hasText: "回复 故事读者：" })).toBeVisible();
   await expect(page.locator(".story-interactions")).toHaveAttribute("aria-label", "故事互动，共 2 个赞、2 条评论");
   const socialGeometry = await page.locator(".story-interactions").evaluate((panel) => {
     const workspace = panel.closest(".story-workspace") as HTMLElement;

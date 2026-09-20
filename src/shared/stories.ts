@@ -47,6 +47,10 @@ export interface StoryPersonDTO {
 export interface StoryCommentDTO {
   id: number;
   author: StoryPersonDTO;
+  replyTo: {
+    id: number;
+    author: StoryPersonDTO;
+  } | null;
   text: string;
   createdAt: string;
   canDelete: boolean;

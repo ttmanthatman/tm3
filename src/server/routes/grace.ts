@@ -31,6 +31,13 @@ export type GraceRouteDependencies = {
     replyToId?: number | null;
     pushOrigin?: string;
   }): Promise<{ id: number }>;
+  createStoryFromGrace(input: {
+    accountId: number;
+    graceMessageId: number;
+    content: string;
+    voiceMessageId?: number;
+    imageMessageId?: number;
+  }): Promise<void>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
   deleteMessages(messages: Array<Pick<Message, "id" | "channelId" | "filePath">>): Promise<number>;
   io: { to(room: string): { emit(event: string, payload: unknown): unknown } };
@@ -48,7 +55,7 @@ function cleanGracePayload(input: { voiceMessageId?: number; imageMessageId?: nu
 }
 
 export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDependencies) {
-  const { prisma, requireAuth, canAccessChannel, canWriteChannel, createMessageFromActor, hydrateMessage, deleteMessages, io, cleanText } = deps;
+  const { prisma, requireAuth, canAccessChannel, canWriteChannel, createMessageFromActor, createStoryFromGrace, hydrateMessage, deleteMessages, io, cleanText } = deps;
 
   function gracePayloadRaw(input: unknown) {
     return input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
@@ -148,6 +155,24 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
       payload,
       pushOrigin
     });
+    if (!auth.isGuest) {
+      try {
+        await createStoryFromGrace({
+          accountId: auth.accountId,
+          graceMessageId: message.id,
+          content,
+          voiceMessageId: payload.voiceMessageId,
+          imageMessageId: payload.imageMessageId
+        });
+      } catch (error) {
+        try {
+          await deleteMessages([{ id: message.id, channelId, filePath: null }]);
+        } catch (rollbackError) {
+          request.log.error({ rollbackError, messageId: message.id }, "failed to roll back grace card after story sync failure");
+        }
+        throw error;
+      }
+    }
     return { success: true, message: await hydrateMessage(message.id, auth.accountId) };
   });
 

@@ -39,8 +39,11 @@ export function toggleStoryLike(id: number, liked: boolean) {
   return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${id}/like`, { method: "PUT", body: JSON.stringify({ liked }) });
 }
 
-export function addStoryComment(id: number, text: string) {
-  return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${id}/comments`, { method: "POST", body: JSON.stringify({ text }) });
+export function addStoryComment(id: number, text: string, replyToId?: number) {
+  return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${id}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ text, ...(replyToId ? { replyToId } : {}) })
+  });
 }
 
 export function removeStoryComment(storyId: number, commentId: number) {
