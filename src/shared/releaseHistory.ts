@@ -1024,11 +1024,22 @@ const RELEASE_2_2_0_NOTES = [
   "故事评论支持回复指定评论，时间线中显示「回复 某某：内容」；被回复者会收到故事评论提醒，原评论删除后回复内容仍保留。"
 ] as const
 
+const RELEASE_2_2_1_NOTES = [
+  "聊天语音和音频改为脱离消息行的持续流式播放：滚出可视区不会停止，意外中断或刷新后会从本机保存的位置续播。",
+  "语音发送失败后把录音暂存在当前设备，可在原消息位置重试或移除；发送中的上传图标不再旋转。",
+  "故事点赞和评论头像复用聊天室头像裁切，竖图不会再因固有比例撑高或错位。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.2",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.1",
     date: "2026-09-20",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_1_NOTES
   },
   {
     version: "2.2.0",
