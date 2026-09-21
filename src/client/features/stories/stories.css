@@ -61,16 +61,14 @@
 .story-text-button, .story-delete { border: 0; background: none; color: #6b7e61; display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; font-size: 12px !important; min-height: 34px; }
 .story-delete { padding: 8px; }
 .story-interactions { margin-top: 10px; border-radius: 7px; overflow: hidden; background: #f0f2ec; color: var(--story-ink); }
-.story-like-row, .story-comment-row { display: grid; grid-template-columns: 50px minmax(0, 1fr) auto; min-height: 52px; }
-.story-comment-row { grid-template-columns: 50px minmax(0, 1fr); }
+.story-like-row, .story-comment-row { display: grid; grid-template-columns: 50px minmax(0, 1fr); min-height: 52px; }
 .story-social-icon { align-self: start; width: 50px; height: 52px; border: 0; background: transparent; color: #61785c; display: grid; place-items: center; }
 .story-social-icon svg { width: 28px; height: 28px; }
 .story-social-icon.active { color: #c45a58; }
-.story-like-people { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 12px; overflow-x: auto; scrollbar-width: thin; }
+.story-like-people { display: flex; align-items: center; gap: 7px; min-width: 0; margin-left: -4px; padding: 9px 12px 9px 0; overflow-x: auto; scrollbar-width: thin; }
 .story-person-avatar, .story-comment-avatar { background: #dde5d8; color: #597054; font-size: 13px; }
 .story-first-like { justify-self: start; border: 0; background: none; color: #6c7869; padding: 0 12px; font-size: var(--message-content-font-size) !important; }
-.story-like-count { align-self: center; color: #848b80; font-size: 12px; padding-right: 14px; font-variant-numeric: tabular-nums; }
-.story-comment-main { min-width: 0; padding: 0 12px 12px; }
+.story-comment-main { min-width: 0; margin-left: -4px; padding: 0 12px 12px 0; }
 .story-comment-list { list-style: none; padding: 0; margin: 0; }
 .story-comment-list li { position: relative; display: grid; grid-template-columns: 38px minmax(0, 1fr) 28px; gap: 10px; padding: 11px 0; }
 .story-comment-list li:not(:last-child)::after { content: ""; position: absolute; right: 0; bottom: 0; left: 48px; height: 1px; background: #e1e4dc; }
@@ -90,8 +88,8 @@
 .story-comment-replying button:hover { background: #dde5d8; color: #40523c; }
 .story-comment-form { display: flex; align-items: center; gap: 6px; padding-top: 10px; }
 .story-comment-form input { flex: 1; min-width: 0; height: 36px; border: 1px solid #d9ddd3; border-radius: 18px; background: #fffefa; color: var(--story-ink); padding: 0 13px; font-size: 13px; }
-.story-comment-form button { width: 36px; height: 36px; flex: 0 0 auto; border: 0; border-radius: 50%; background: #678662; color: white; display: flex; align-items: center; justify-content: center; padding: 0; line-height: 0; }
-.story-comment-form button svg { display: block; transform: translate(1px, -1px); }
+.story-comment-form button { width: 36px; height: 36px; flex: 0 0 auto; border: 0; border-radius: 50%; background: #678662; color: white; display: grid; place-items: center; padding: 0; line-height: 0; }
+.story-comment-form button svg { display: block; }
 .story-social-error { margin: 0; padding: 0 12px 10px 62px; color: #9c3d33; font-size: 12px; }
 .story-empty { display: flex; align-items: center; flex-direction: column; text-align: center; padding: 56px 24px; color: #78836c; }
 .story-empty h3 { font-size: 18px; font-weight: 500; margin: 20px 0 0; }
@@ -157,12 +155,11 @@
   .story-voice > svg { width: 19px; }
   .story-voice > span { font-size: 11px; }
   .story-interactions { margin-top: 8px; }
-  .story-like-row, .story-comment-row { grid-template-columns: 44px minmax(0, 1fr) auto; min-height: 46px; }
-  .story-comment-row { grid-template-columns: 44px minmax(0, 1fr); }
+  .story-like-row, .story-comment-row { grid-template-columns: 44px minmax(0, 1fr); min-height: 46px; }
   .story-social-icon { width: 44px; height: 46px; }
   .story-social-icon svg { width: 26px; height: 26px; }
-  .story-like-people { gap: 5px; padding: 7px 9px; }
-  .story-comment-main { padding: 0 9px 10px; }
+  .story-like-people { gap: 5px; padding: 7px 9px 7px 0; }
+  .story-comment-main { padding: 0 9px 10px 0; }
   .story-comment-list li { grid-template-columns: 34px minmax(0, 1fr) 26px; gap: 8px; padding: 9px 0; }
   .story-comment-list li:not(:last-child)::after { left: 42px; }
   .story-comment-meta { flex-wrap: wrap; gap: 3px 7px; }

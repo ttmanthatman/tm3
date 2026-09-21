@@ -61,6 +61,11 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   await page.getByRole("button", { name: "发布故事", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "留下一段故事" })).toBeHidden();
   await expect(page.locator(".story-moment")).toHaveCount(1);
+  await expect(page.locator(".story-announcement-text").last()).toHaveText(/发了个故事$/);
+  expect(await page.locator(".story-announcement-text").last().evaluate((element) => {
+    const letters = [...element.querySelectorAll<HTMLElement>("span")];
+    return new Set(letters.map((letter) => getComputedStyle(letter).color)).size === letters.length;
+  })).toBeTruthy();
   await expect(page.getByText("我们的故事，都在祂的故事里。", { exact: true })).toBeVisible();
   expect(await page.locator(".story-caption").evaluate((el) => getComputedStyle(el).fontSize)).toBe(await page.locator(".story-workspace").evaluate((el) => getComputedStyle(el).getPropertyValue("--message-content-font-size").trim()));
   expect(await page.locator(".story-first-like").evaluate((el) => getComputedStyle(el).fontSize)).toBe(await page.locator(".story-workspace").evaluate((el) => getComputedStyle(el).getPropertyValue("--message-content-font-size").trim()));
@@ -163,6 +168,10 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
     const plane = submit.querySelector<SVGElement>("svg")!;
     const submitBox = submit.getBoundingClientRect();
     const planeBox = plane.getBoundingClientRect();
+    const likeIcon = panel.querySelector<HTMLElement>(".story-like-row .story-social-icon svg")!.getBoundingClientRect();
+    const likeAvatars = [...panel.querySelectorAll<HTMLElement>(".story-like-people .story-person-avatar")].map((avatar) => avatar.getBoundingClientRect());
+    const commentIcon = panel.querySelector<HTMLElement>(".story-comment-row .story-social-icon svg")!.getBoundingClientRect();
+    const commentAvatar = panel.querySelector<HTMLElement>(".story-comment-avatar")!.getBoundingClientRect();
     return {
       messageFontSize: getComputedStyle(workspace).getPropertyValue("--message-content-font-size").trim(),
       commentFontSizes: comments.map((comment) => ({
@@ -171,6 +180,10 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
       })),
       commentRowTopBorder: getComputedStyle(panel.querySelector(".story-comment-row")!).borderTopWidth,
       iconRightBorders: [...panel.querySelectorAll(".story-social-icon")].map((icon) => getComputedStyle(icon).borderRightWidth),
+      visibleLikeCount: panel.querySelectorAll(".story-like-count").length,
+      likeAvatarGap: likeAvatars[1].left - likeAvatars[0].right,
+      likeIconGap: likeAvatars[0].left - likeIcon.right,
+      commentIconGap: commentAvatar.left - commentIcon.right,
       firstSeparator: { content: firstSeparator.content, left: Number.parseFloat(firstSeparator.left), right: Number.parseFloat(firstSeparator.right) },
       lastSeparatorContent: lastSeparator.content,
       planeCenterOffset: {
@@ -185,13 +198,16 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   ]);
   expect(socialGeometry.commentRowTopBorder).toBe("0px");
   expect(socialGeometry.iconRightBorders).toEqual(["0px", "0px"]);
+  expect(socialGeometry.visibleLikeCount).toBe(0);
+  expect(socialGeometry.likeIconGap).toBeCloseTo(socialGeometry.likeAvatarGap, 0);
+  expect(socialGeometry.commentIconGap).toBeCloseTo(socialGeometry.likeAvatarGap, 0);
   expect(socialGeometry.firstSeparator.content).not.toBe("none");
   expect(socialGeometry.firstSeparator.left).toBeGreaterThan(0);
   expect(socialGeometry.firstSeparator.right).toBe(0);
   expect(socialGeometry.lastSeparatorContent).toBe("none");
-  expect(socialGeometry.planeCenterOffset.x).toBeCloseTo(1, 0);
-  expect(socialGeometry.planeCenterOffset.y).toBeCloseTo(-1, 0);
-  for (const width of [390, 1280]) {
+  expect(socialGeometry.planeCenterOffset.x).toBeCloseTo(0, 0);
+  expect(socialGeometry.planeCenterOffset.y).toBeCloseTo(0, 0);
+  for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 });
     await page.screenshot({ path: `output/e2e/stories-social-${width}.png` });
   }

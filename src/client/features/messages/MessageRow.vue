@@ -11,6 +11,7 @@ import {
   previewSiteName,
   type BibleRichTextSegment
 } from "./messageRendering";
+import { storyAnnouncementLetters } from "./storyAnnouncement";
 
 // Shared message-body renderer: the timeline bubble and the favorites card both
 // delegate their type branches here. Rendering differences between the two
@@ -208,6 +209,9 @@ const emit = defineEmits<{
       </template>
       <template v-else>
         <div v-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
+        <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
+          <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>
+        </div>
         <div v-else class="message-text bible-rich-text">
           <template v-for="segment in messageRichTextSegments(message)" :key="segment.key">
             <span v-if="segment.kind === 'html'" v-html="segment.html"></span>

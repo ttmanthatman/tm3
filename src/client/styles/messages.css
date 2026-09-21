@@ -758,6 +758,15 @@
   margin: 0;
 }
 
+.message-row.system .story-announcement-text {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 7px;
+  background: linear-gradient(110deg, #fff1a8, #ffe2b8);
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
 .sender-line em {
   padding: 1px 4px;
   border-radius: 3px;

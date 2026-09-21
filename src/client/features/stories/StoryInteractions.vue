@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
-import { Heart, MessageCircle, Send, Trash2, X } from "lucide-vue-next";
+import { Heart, MessageCircle, SendHorizontal, Trash2, X } from "lucide-vue-next";
 import { STORY_LIMITS, type StoryCommentDTO, type StoryDTO, type StoryInteractionsDTO } from "@shared/stories";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import { addStoryComment, removeStoryComment, toggleStoryLike } from "./storyClient";
@@ -77,7 +77,6 @@ async function replyToComment(item: StoryCommentDTO) {
         </span>
       </div>
       <button v-else type="button" class="story-first-like" :disabled="likeBusy" @click="like">成为第一个点赞的人</button>
-      <span v-if="story.interactions.likeCount" class="story-like-count">{{ story.interactions.likeCount }}</span>
     </div>
     <div class="story-comment-row">
       <button type="button" class="story-social-icon" aria-label="写评论" @click="focusComment"><MessageCircle :size="27" /></button>
@@ -102,7 +101,7 @@ async function replyToComment(item: StoryCommentDTO) {
         </div>
         <form class="story-comment-form" @submit.prevent="submitComment">
           <input ref="input" v-model="comment" type="text" :maxlength="STORY_LIMITS.comment" :placeholder="replyingTo ? `回复 ${replyingTo.author.displayName}…` : '写下祝福…'" aria-label="评论内容" />
-          <button type="submit" :disabled="!comment.trim() || commentBusy" aria-label="发表评论"><Send :size="17" /></button>
+          <button type="submit" :disabled="!comment.trim() || commentBusy" aria-label="发表评论"><SendHorizontal :size="18" /></button>
         </form>
       </div>
     </div>
