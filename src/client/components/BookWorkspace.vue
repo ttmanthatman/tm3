@@ -12,7 +12,6 @@ import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState
 import {
   bookTapAction,
   bookFootnoteTargetId,
-  bookTouchScrollAction,
   buildBookCSS,
   bookCoverUrl,
   bookFileUrl,
@@ -322,7 +321,8 @@ async function openBook(book: BookDTO) {
       const continuous = new ContinuousBookReader(bookObject, starts, {
         style: style.value,
         onDocumentLoad: onContinuousDocumentLoad,
-        onRelocate: onContinuousRelocate
+        onRelocate: onContinuousRelocate,
+        onScrollDirection: onContinuousScrollDirection
       });
       continuousReader = continuous;
       stage.append(continuous.element);
@@ -459,6 +459,15 @@ function onContinuousRelocate(location: ContinuousReaderLocation) {
   progressLabel.value = `${Math.round(location.globalFraction * 100)}%`;
   chapterLabel.value = tocSectionLabels.get(location.index) ?? chapterLabel.value;
   scheduleSave(location.globalFraction);
+}
+
+function onContinuousScrollDirection(direction: "down" | "up") {
+  if (direction === "down" && chromeVisible.value) {
+    chromeVisible.value = false;
+    settingsOpen.value = false;
+  } else if (direction === "up" && !chromeVisible.value) {
+    chromeVisible.value = true;
+  }
 }
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
@@ -663,7 +672,6 @@ let pageWheelLockUntil = 0;
 let docTouchY: number | null = null;
 let docTouchStartX: number | null = null;
 let docTouchStartY: number | null = null;
-let docTouchAccumulatedY = 0;
 let docTouchDragged = false;
 let suppressDocumentClickUntil = 0;
 
@@ -672,7 +680,6 @@ function onDocTouchStart(event: TouchEvent) {
   docTouchY = touch?.clientY ?? null;
   docTouchStartX = touch?.clientX ?? null;
   docTouchStartY = touch?.clientY ?? null;
-  docTouchAccumulatedY = 0;
   docTouchDragged = false;
   // 新的一次点按不应继承上一次滚动留下的点击抑制窗口。
   suppressDocumentClickUntil = 0;
@@ -686,18 +693,8 @@ function onDocTouchMove(event: TouchEvent) {
   const y = event.touches[0]?.clientY ?? docTouchY;
   const dy = docTouchY - y;
   docTouchY = y;
-  docTouchAccumulatedY += dy;
   if (isBookTouchDrag(x - docTouchStartX, y - docTouchStartY)) docTouchDragged = true;
-  if (style.value.flow !== "scrolled") return;
-  const scrollAction = bookTouchScrollAction(docTouchAccumulatedY);
-  if (scrollAction === "hide-chrome" && chromeVisible.value) {
-    chromeVisible.value = false;
-    settingsOpen.value = false;
-  } else if (scrollAction === "show-chrome" && !chromeVisible.value) {
-    chromeVisible.value = true;
-  }
-  if (scrollAction) docTouchAccumulatedY = 0;
-  if (!view) return;
+  if (style.value.flow !== "scrolled" || !view) return;
   const renderer = view.renderer;
   const nearBottom = renderer.viewSize - renderer.end <= 8;
   const nearTop = renderer.start <= 8;
@@ -710,7 +707,6 @@ function onDocTouchEnd() {
   docTouchY = null;
   docTouchStartX = null;
   docTouchStartY = null;
-  docTouchAccumulatedY = 0;
   docTouchDragged = false;
 }
 

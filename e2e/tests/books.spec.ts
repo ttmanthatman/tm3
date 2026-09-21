@@ -26,6 +26,7 @@ const CHAPTER = `<?xml version="1.0" encoding="utf-8"?>
     <h1>第一章</h1>
     <p id="tap-target">这是用于验证手机点按控制栏的正文。</p>
     <p>这里有一个脚注<a id="fnref" epub:type="noteref" href="#fn1">1</a>。</p>
+    <div style="height: 1800px"></div>
     <aside id="fn1" epub:type="footnote"><p>《大离婚》同类 EPUB 脚注内容。</p><a epub:type="backlink" href="#fnref">返回</a></aside>
   </body>
 </html>`;
@@ -41,8 +42,8 @@ async function buildEpub() {
 
 async function blockPublicNetwork(page: Page) {
   await page.route("**/*", async (route) => {
-    const hostname = new URL(route.request().url()).hostname;
-    if (hostname === "127.0.0.1" || hostname === "localhost") await route.continue();
+    const url = new URL(route.request().url());
+    if (url.protocol === "blob:" || url.protocol === "data:" || url.hostname === "127.0.0.1" || url.hostname === "localhost") await route.continue();
     else await route.abort("blockedbyclient");
   });
 }
@@ -95,26 +96,18 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
     const topBar = page.locator(".book-top");
     await expect(topBar).toHaveClass(/bar-hidden/);
 
-    const dispatchTouchMoves = (positions: number[]) => frame.locator("#tap-target").evaluate((target, ys) => {
-      const touch = (clientY: number) => new Touch({ identifier: 1, target, clientX: 120, clientY });
-      target.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [touch(ys[0])] }));
-      for (const clientY of ys.slice(1)) {
-        target.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [touch(clientY)] }));
-      }
-      target.dispatchEvent(new TouchEvent("touchend", { bubbles: true, changedTouches: [touch(ys.at(-1)!)] }));
-    }, positions);
-
-    // iPhone 把一个手势拆成许多不足阈值的小事件；向上滚仍要累计到显示控制栏。
-    await dispatchTouchMoves([260, 266, 272, 278, 284]);
-    await expect(topBar).not.toHaveClass(/bar-hidden/);
-    await expect(page.locator(".book-bottom")).not.toHaveClass(/bar-hidden/);
-
-    // 反向的小事件累计后隐藏，并留下点击抑制；紧接着真实点按仍必须重新显示。
-    await dispatchTouchMoves([284, 278, 272, 266, 260]);
-    await expect(topBar).toHaveClass(/bar-hidden/);
-    const paragraphBox = await frame.locator("#tap-target").boundingBox();
-    if (!paragraphBox) throw new Error("正文点按区域不可见");
-    await page.touchscreen.tap(paragraphBox.x + paragraphBox.width / 2, paragraphBox.y + paragraphBox.height / 2);
+    // 真机 Safari 的可靠信号是外层原生滚动容器的 scrollTop，而不是 iframe
+    // 文档里人工派发的 touchmove。先向下滚，再向上滚，后者必须显示控制栏。
+    const continuous = page.locator("[data-continuous-reader]");
+    const scrollTo = (top: number) => continuous.evaluate(async (element, nextTop) => {
+      element.scrollTop = nextTop;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    }, top);
+    await expect.poll(() => continuous.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await scrollTo(240);
+    await expect.poll(() => continuous.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
+    await scrollTo(80);
+    await expect.poll(() => continuous.evaluate((element) => element.scrollTop)).toBeLessThan(100);
     await expect(topBar).not.toHaveClass(/bar-hidden/);
     await expect(page.locator(".book-bottom")).not.toHaveClass(/bar-hidden/);
 

@@ -91,7 +91,7 @@ jobs:
     name: Browser smoke tests
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     services:
       mysql:
@@ -127,13 +127,18 @@ jobs:
       - name: Generate Prisma client
         run: npm run prisma:generate
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install browser engines
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Run browser smoke tests
         env:
           E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
         run: npm run test:e2e
+
+      - name: Run iPhone WebKit book smoke test
+        env:
+          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
+        run: npm run test:e2e -- --browser=webkit e2e/tests/books.spec.ts
 
       - name: Upload browser failure artifacts
         if: failure()

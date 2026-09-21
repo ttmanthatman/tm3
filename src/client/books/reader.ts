@@ -48,13 +48,11 @@ export function isBookTouchDrag(deltaX: number, deltaY: number, threshold = 18):
   return Math.hypot(deltaX, deltaY) > threshold;
 }
 
-export type BookTouchScrollAction = "hide-chrome" | "show-chrome" | null;
+export type BookScrollDirection = "down" | "up" | null;
 
-// iOS 会把一次手指滚动拆成许多很小的 touchmove；调用方应先累计相邻位移，
-// 再用这个阈值判断方向，而不能要求单个事件本身超过阈值。
-export function bookTouchScrollAction(accumulatedDeltaY: number, threshold = 18): BookTouchScrollAction {
-  if (accumulatedDeltaY > threshold) return "hide-chrome";
-  if (accumulatedDeltaY < -threshold) return "show-chrome";
+export function bookScrollDirection(previousScrollTop: number, currentScrollTop: number, threshold = 1): BookScrollDirection {
+  if (currentScrollTop - previousScrollTop > threshold) return "down";
+  if (previousScrollTop - currentScrollTop > threshold) return "up";
   return null;
 }
 
@@ -324,6 +322,7 @@ type ContinuousReaderOptions = {
   style: ReaderStyle;
   onDocumentLoad?: (doc: Document, index: number) => void;
   onRelocate?: (location: ContinuousReaderLocation) => void;
+  onScrollDirection?: (direction: Exclude<BookScrollDirection, null>) => void;
 };
 
 // foliate 的 scrolled flow 仍只挂载一个 spine section，越过章末时会整章替换。
@@ -341,7 +340,9 @@ export class ContinuousBookReader {
   private style: ReaderStyle;
   private onDocumentLoad?: (doc: Document, index: number) => void;
   private onRelocate?: (location: ContinuousReaderLocation) => void;
+  private onScrollDirection?: (direction: Exclude<BookScrollDirection, null>) => void;
   private scrollFrame = 0;
+  private lastScrollTop = 0;
   private destroyed = false;
 
   constructor(book: EpubBook, sectionStarts: number[], options: ContinuousReaderOptions) {
@@ -350,6 +351,7 @@ export class ContinuousBookReader {
     this.style = options.style;
     this.onDocumentLoad = options.onDocumentLoad;
     this.onRelocate = options.onRelocate;
+    this.onScrollDirection = options.onScrollDirection;
     this.element = document.createElement("div");
     this.element.className = "book-continuous-scroll";
     this.element.setAttribute("data-continuous-reader", "");
@@ -371,6 +373,7 @@ export class ContinuousBookReader {
     const wrapper = this.wrappers[target.index];
     if (wrapper) {
       this.element.scrollTop = wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1);
+      this.lastScrollTop = this.element.scrollTop;
     }
     // 相邻章节只是预载优化，不能阻塞当前章节打开；上一章随后插入时由
     // preserveScroll 保持当前阅读位置不跳动。
@@ -388,6 +391,7 @@ export class ContinuousBookReader {
       top: wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1),
       behavior: "auto"
     });
+    this.lastScrollTop = this.element.scrollTop;
     void this.loadSection(target.index + 1);
     this.reportLocation();
   }
@@ -404,6 +408,7 @@ export class ContinuousBookReader {
       ? anchor.getBoundingClientRect()
       : null;
     this.element.scrollTo({ top: wrapper.offsetTop + (rect?.top ?? 0), behavior: "auto" });
+    this.lastScrollTop = this.element.scrollTop;
     void this.loadSection(resolved.index + 1);
   }
 
@@ -430,6 +435,10 @@ export class ContinuousBookReader {
     if (this.scrollFrame) return;
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0;
+      const currentScrollTop = this.element.scrollTop;
+      const direction = bookScrollDirection(this.lastScrollTop, currentScrollTop);
+      this.lastScrollTop = currentScrollTop;
+      if (direction) this.onScrollDirection?.(direction);
       this.reportLocation();
       const index = this.visibleSectionIndex();
       const viewportBottom = this.element.scrollTop + this.element.clientHeight;
@@ -495,7 +504,10 @@ export class ContinuousBookReader {
     const frame = document.createElement("iframe");
     frame.className = "book-continuous-frame";
     frame.setAttribute("scrolling", "no");
-    frame.setAttribute("sandbox", "allow-same-origin");
+    // WebKit blocks even parent-installed event listeners in a sandboxed frame unless
+    // allow-scripts is present (WebKit 218086). The app CSP still limits scripts to
+    // 'self', matching foliate-js' own paginator/fixed-layout iframe policy.
+    frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
     frame.title = `电子书第 ${index + 1} 节`;
     this.frames[index] = frame;
     wrapper.replaceChildren(frame);
@@ -518,6 +530,7 @@ export class ContinuousBookReader {
     this.resizeObservers.set(index, observer);
     if (preserveScroll && wrapper.offsetTop < previousTop) {
       this.element.scrollTop = previousTop + wrapper.offsetHeight - previousHeight;
+      this.lastScrollTop = this.element.scrollTop;
     }
   }
 
