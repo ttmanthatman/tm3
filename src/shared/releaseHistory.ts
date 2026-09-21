@@ -1030,11 +1030,21 @@ const RELEASE_2_2_1_NOTES = [
   "故事点赞和评论头像复用聊天室头像裁切，竖图不会再因固有比例撑高或错位。"
 ] as const
 
+const RELEASE_2_2_2_NOTES = [
+  "图书室默认采用连续滚动阅读，章节结尾会直接衔接下一章开头；分页模式的左右点按区域可稳定翻页，包括章节最后一页。",
+  "书架会标出尚未离线缓存的图书：首次点击先下载并显示进度，下载完成后再次点击才打开阅读；已缓存图书仍可直接打开。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.3",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.2",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_2_NOTES
   },
   {
     version: "2.2.1",
