@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   bookTapAction,
+  bookFootnoteTargetId,
   buildBookCSS,
   globalFraction,
   globalFractionFromSectionOffset,
@@ -29,8 +30,24 @@ test("paginated tap zones keep the whole right edge actionable", () => {
 
 test("a touch scroll is not treated as a content tap", () => {
   assert.equal(isBookTouchDrag(3, 4), false);
-  assert.equal(isBookTouchDrag(0, 9), true);
-  assert.equal(isBookTouchDrag(12, 2), true);
+  assert.equal(isBookTouchDrag(0, 12), false);
+  assert.equal(isBookTouchDrag(0, 19), true);
+  assert.equal(isBookTouchDrag(18, 7), true);
+});
+
+test("standard EPUB noteref links expose their current-document target", () => {
+  const noteref = {
+    getAttributeNS: (_namespace: string, name: string) => name === "type" ? "noteref" : null,
+    getAttribute: () => null
+  } as unknown as Element;
+  const ordinaryLink = {
+    getAttributeNS: () => null,
+    getAttribute: () => null
+  } as unknown as Element;
+  assert.equal(bookFootnoteTargetId(noteref, "chapter.xhtml#fnfm01-1"), "fnfm01-1");
+  assert.equal(bookFootnoteTargetId(noteref, "#note%202"), "note 2");
+  assert.equal(bookFootnoteTargetId(ordinaryLink, "#fnfm01-1"), null);
+  assert.equal(bookFootnoteTargetId(noteref, "chapter.xhtml"), null);
 });
 
 test("footnote handling wins over chapter navigation", async () => {

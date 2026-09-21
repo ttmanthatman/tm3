@@ -11,6 +11,7 @@ import { api, getToken } from "../api";
 import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState } from "../books/cache";
 import {
   bookTapAction,
+  bookFootnoteTargetId,
   buildBookCSS,
   bookCoverUrl,
   bookFileUrl,
@@ -66,6 +67,7 @@ const progressLabel = ref("0%");
 const sliderValue = ref(0);
 const footnoteOpen = ref(false);
 const footnoteError = ref("");
+const footnoteText = ref("");
 const footnoteHost = ref<HTMLElement | null>(null);
 const coverUrls = new Map<number, string>();
 
@@ -88,6 +90,27 @@ function closeFootnote() {
   footnoteView = null;
   footnoteOpen.value = false;
   footnoteError.value = "";
+  footnoteText.value = "";
+}
+
+function openCurrentDocumentFootnote(doc: Document, anchor: Element, href: string): boolean {
+  const targetId = bookFootnoteTargetId(anchor, href);
+  const target = targetId ? doc.getElementById(targetId) : null;
+  if (!target) return false;
+  const copy = target.cloneNode(true) as Element;
+  for (const backlink of copy.querySelectorAll("a")) {
+    const types = backlink.getAttributeNS?.("http://www.idpf.org/2007/ops", "type")?.split(/\s+/) ?? [];
+    const roles = backlink.getAttribute("role")?.split(/\s+/) ?? [];
+    if (types.includes("backlink") || roles.includes("doc-backlink")) backlink.remove();
+  }
+  const text = copy.textContent?.replace(/\s+/g, " ").trim();
+  if (!text) return false;
+  footnoteView?.remove();
+  footnoteView = null;
+  footnoteText.value = text;
+  footnoteError.value = "";
+  footnoteOpen.value = true;
+  return true;
 }
 
 footnoteHandler.addEventListener("before-render", (event) => {
@@ -447,6 +470,7 @@ function onContinuousDocumentLoad(doc: Document, index: number) {
       const rawHref = anchor.getAttribute("href");
       if (!rawHref) return;
       event.preventDefault();
+      if (openCurrentDocumentFootnote(doc, anchor, rawHref)) return;
       const href = epubBook?.sections[index]?.resolveHref?.(rawHref) ?? rawHref;
       followBookLink(anchor, href);
       return;
@@ -645,6 +669,8 @@ function onDocTouchStart(event: TouchEvent) {
   docTouchStartX = touch?.clientX ?? null;
   docTouchStartY = touch?.clientY ?? null;
   docTouchDragged = false;
+  // 新的一次点按不应继承上一次滚动留下的点击抑制窗口。
+  suppressDocumentClickUntil = 0;
 }
 
 // 滚动版式的触摸跨节；分页的滑动手势由 foliate 分页器自带处理（带速度吸附）
@@ -710,6 +736,11 @@ function followBookLink(anchor: Element, href: string) {
 function onViewLink(event: Event) {
   if (!epubBook) return;
   const detail = (event as CustomEvent<{ a: Element; href: string }>).detail;
+  const ownerDocument = detail.a.ownerDocument;
+  if (ownerDocument && openCurrentDocumentFootnote(ownerDocument, detail.a, detail.href)) {
+    event.preventDefault();
+    return;
+  }
   const resolution = resolveBookLink(epubBook, footnoteHandler, detail.a, detail.href);
   if (resolution.kind !== "footnote") return;
   event.preventDefault();
@@ -877,6 +908,7 @@ defineExpose({ reload: loadShelf });
             <button class="book-bar-btn" type="button" aria-label="关闭脚注" @click="closeFootnote"><X :size="18" /></button>
           </header>
           <div v-if="footnoteError" class="book-footnote-error">{{ footnoteError }}</div>
+          <div v-else-if="footnoteText" class="book-footnote-text">{{ footnoteText }}</div>
           <div v-else ref="footnoteHost" class="book-footnote-content"></div>
         </section>
       </div>
@@ -1145,6 +1177,7 @@ defineExpose({ reload: loadShelf });
 .book-reader[data-theme="dark"] .book-footnote-head { border-bottom-color: rgba(232, 221, 201, .14); }
 .book-footnote-content { min-height: 110px; height: min(40vh, 360px); }
 .book-footnote-content :deep(foliate-view) { display: block; width: 100%; height: 100%; }
+.book-footnote-text { overflow-y: auto; padding: 18px; line-height: 1.65; white-space: pre-wrap; }
 .book-footnote-error { padding: 24px 18px; color: #a33; text-align: center; }
 
 .book-settings {

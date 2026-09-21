@@ -36,8 +36,26 @@ export function bookTapAction(flow: ReaderStyle["flow"], horizontalRatio: number
   return "toggle-chrome";
 }
 
-export function isBookTouchDrag(deltaX: number, deltaY: number, threshold = 8): boolean {
+export function isBookTouchDrag(deltaX: number, deltaY: number, threshold = 18): boolean {
   return Math.hypot(deltaX, deltaY) > threshold;
+}
+
+const EPUB_NAMESPACE = "http://www.idpf.org/2007/ops";
+
+// 标准 EPUB 脚注链接通常是 <a epub:type="noteref" href="#note-id">。
+// 优先读取当前已加载章节里的目标，避免为了一个同页脚注再启动第二个阅读器。
+export function bookFootnoteTargetId(anchor: Element, href: string): string | null {
+  const types = new Set(anchor.getAttributeNS?.(EPUB_NAMESPACE, "type")?.split(/\s+/).filter(Boolean) ?? []);
+  const roles = new Set(anchor.getAttribute?.("role")?.split(/\s+/).filter(Boolean) ?? []);
+  if (!types.has("noteref") && !roles.has("doc-noteref")) return null;
+  const hashIndex = href.indexOf("#");
+  if (hashIndex < 0 || hashIndex === href.length - 1) return null;
+  const fragment = href.slice(hashIndex + 1);
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
 }
 
 export function buildBookCSS(style: ReaderStyle): string {
@@ -332,11 +350,14 @@ export class ContinuousBookReader {
   async open(fraction: number): Promise<void> {
     const target = sectionAtFraction(this.sectionStarts, fraction);
     await this.loadSection(target.index);
-    await Promise.all([this.loadSection(target.index - 1, true), this.loadSection(target.index + 1)]);
     const wrapper = this.wrappers[target.index];
     if (wrapper) {
       this.element.scrollTop = wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1);
     }
+    // 相邻章节只是预载优化，不能阻塞当前章节打开；上一章随后插入时由
+    // preserveScroll 保持当前阅读位置不跳动。
+    void this.loadSection(target.index - 1, true);
+    void this.loadSection(target.index + 1);
     this.reportLocation();
   }
 
