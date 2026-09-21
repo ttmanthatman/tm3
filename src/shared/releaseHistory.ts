@@ -1047,11 +1047,20 @@ const RELEASE_2_2_5_NOTES = [
   "修复 iPhone 滚动版式把一次手势拆成多个小位移时，向上滚动无法重新显示顶部导航栏和底部进度条的问题。"
 ] as const
 
+const RELEASE_2_2_6_NOTES = [
+  "电子书滚动版式的默认左右边距改为最小 16px，并修复调整边距后正文没有立即变化的问题；旧版默认 48px 会自动迁移，主动选择的其他边距保留。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.7",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.6",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_6_NOTES
   },
   {
     version: "2.2.5",
