@@ -5,6 +5,7 @@
 // 未缓存的图书首次点按只下载到当前会话的 Cache Storage，完成后再次点按才打开。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, X } from "lucide-vue-next";
+import { FootnoteHandler } from "foliate-js/footnotes.js";
 import type { BookDTO } from "@shared/types";
 import { api, getToken } from "../api";
 import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState } from "../books/cache";
@@ -18,10 +19,12 @@ import {
   ContinuousBookReader,
   DEFAULT_READER_STYLE,
   globalFraction,
+  isBookTouchDrag,
   nudgeFromSectionBoundaries,
   preloadAdjacentSections,
   readerLayoutMetrics,
   READER_THEMES,
+  resolveBookLink,
   sectionFractions,
   type ContinuousReaderLocation,
   type EpubBook,
@@ -61,6 +64,9 @@ const chromeVisible = ref(true);
 const chapterLabel = ref("");
 const progressLabel = ref("0%");
 const sliderValue = ref(0);
+const footnoteOpen = ref(false);
+const footnoteError = ref("");
+const footnoteHost = ref<HTMLElement | null>(null);
 const coverUrls = new Map<number, string>();
 
 let foliatePromise: Promise<FoliateModule> | null = null;
@@ -71,6 +77,35 @@ let tocSectionLabels = new Map<number, string>();
 let relocateHandler: ((event: Event) => void) | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSavedFraction = -1;
+type FootnoteView = HTMLElement & {
+  renderer?: { setAttribute?(name: string, value: string): void; setStyles?(css: string): void };
+};
+const footnoteHandler = new FootnoteHandler();
+let footnoteView: FootnoteView | null = null;
+
+function closeFootnote() {
+  footnoteView?.remove();
+  footnoteView = null;
+  footnoteOpen.value = false;
+  footnoteError.value = "";
+}
+
+footnoteHandler.addEventListener("before-render", (event) => {
+  const nextView = (event as CustomEvent<{ view: FootnoteView }>).detail.view;
+  nextView.renderer?.setAttribute?.("flow", "scrolled");
+  nextView.renderer?.setStyles?.(buildBookCSS(style.value));
+});
+
+footnoteHandler.addEventListener("render", (event) => {
+  const nextView = (event as CustomEvent<{ view: FootnoteView }>).detail.view;
+  footnoteView?.remove();
+  footnoteView = nextView;
+  footnoteError.value = "";
+  footnoteOpen.value = true;
+  void nextTick(() => {
+    if (footnoteView === nextView) footnoteHost.value?.replaceChildren(nextView);
+  });
+});
 
 function loadStyle(): ReaderStyle {
   try {
@@ -202,6 +237,7 @@ function emitClose() {
 }
 
 function closeBookView() {
+  closeFootnote();
   if (saveTimer) {
     clearTimeout(saveTimer);
     saveTimer = null;
@@ -279,6 +315,7 @@ async function openBook(book: BookDTO) {
       relocateHandler = (event) => onRelocate(event as CustomEvent<RelocateDetail>);
       element.addEventListener("relocate", relocateHandler);
       element.addEventListener("load", onViewLoad);
+      element.addEventListener("link", onViewLink);
 
       if (restoreTarget > 0.005) {
         // 等首帧 relocate（首节渲染完成）再跳转；过早 goToFraction 会被吞掉
@@ -401,19 +438,23 @@ function onContinuousRelocate(location: ContinuousReaderLocation) {
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
   doc.addEventListener("click", (event) => {
+    if (consumeSuppressedDocumentClick()) {
+      event.preventDefault();
+      return;
+    }
     const anchor = (event.target as Element | null)?.closest?.("a[href]");
     if (anchor) {
       const rawHref = anchor.getAttribute("href");
       if (!rawHref) return;
       event.preventDefault();
       const href = epubBook?.sections[index]?.resolveHref?.(rawHref) ?? rawHref;
-      if (epubBook?.isExternal?.(href)) window.open(href, "_blank", "noopener");
-      else void continuousReader?.goToHref(href);
+      followBookLink(anchor, href);
       return;
     }
     if (hasTextSelection(doc)) return;
     toggleChrome();
   });
+  bindDocumentTouch(doc);
 }
 
 function scheduleSave(global: number) {
@@ -463,6 +504,7 @@ function applyStyle() {
   persistStyle();
   continuousReader?.setStyle(style.value);
   view?.renderer.setStyles?.(buildBookCSS(style.value));
+  footnoteView?.renderer?.setStyles?.(buildBookCSS(style.value));
 }
 
 function setTheme(theme: ReaderStyle["theme"]) {
@@ -536,6 +578,10 @@ function pageBy(direction: 1 | -1) {
 // 点按分区：分页时左右翻页、中间显示/隐藏控制栏；滚动时点按切换控制栏
 function onDocClick(doc: Document, event: MouseEvent) {
   if (!view || openingBook.value) return;
+  if (consumeSuppressedDocumentClick()) {
+    event.preventDefault();
+    return;
+  }
   if (isLinkClick(event)) return;
   if (hasTextSelection(doc)) return; // 选中文字后不翻页
   const width = doc.defaultView?.innerWidth ?? 1;
@@ -588,28 +634,89 @@ let lastPreloadIndex = -1;
 let pageWheelAccum = 0;
 let pageWheelLockUntil = 0;
 let docTouchY: number | null = null;
+let docTouchStartX: number | null = null;
+let docTouchStartY: number | null = null;
+let docTouchDragged = false;
+let suppressDocumentClickUntil = 0;
 
 function onDocTouchStart(event: TouchEvent) {
-  docTouchY = event.touches[0]?.clientY ?? null;
+  const touch = event.touches[0];
+  docTouchY = touch?.clientY ?? null;
+  docTouchStartX = touch?.clientX ?? null;
+  docTouchStartY = touch?.clientY ?? null;
+  docTouchDragged = false;
 }
 
 // 滚动版式的触摸跨节；分页的滑动手势由 foliate 分页器自带处理（带速度吸附）
 function onDocTouchMove(event: TouchEvent) {
-  if (!view || style.value.flow !== "scrolled" || docTouchY == null) return;
-  const renderer = view.renderer;
+  if (docTouchY == null || docTouchStartX == null || docTouchStartY == null) return;
+  const touch = event.touches[0];
+  const x = touch?.clientX ?? docTouchStartX;
   const y = event.touches[0]?.clientY ?? docTouchY;
   const dy = docTouchY - y;
   docTouchY = y;
+  if (isBookTouchDrag(x - docTouchStartX, y - docTouchStartY)) docTouchDragged = true;
+  if (style.value.flow !== "scrolled") return;
   if (dy > 8 && chromeVisible.value) {
     chromeVisible.value = false;
     settingsOpen.value = false;
   } else if (dy < -8 && !chromeVisible.value) {
     chromeVisible.value = true;
   }
+  if (!view) return;
+  const renderer = view.renderer;
   const nearBottom = renderer.viewSize - renderer.end <= 8;
   const nearTop = renderer.start <= 8;
   if (dy > 8 && nearBottom) chainScrolledSection(event, 1);
   else if (dy < -8 && nearTop) chainScrolledSection(event, -1);
+}
+
+function onDocTouchEnd() {
+  if (docTouchDragged) suppressDocumentClickUntil = performance.now() + 700;
+  docTouchY = null;
+  docTouchStartX = null;
+  docTouchStartY = null;
+  docTouchDragged = false;
+}
+
+function consumeSuppressedDocumentClick(): boolean {
+  if (performance.now() > suppressDocumentClickUntil) return false;
+  suppressDocumentClickUntil = 0;
+  return true;
+}
+
+function bindDocumentTouch(doc: Document) {
+  doc.addEventListener("touchstart", onDocTouchStart, { passive: true });
+  doc.addEventListener("touchmove", onDocTouchMove, { passive: false });
+  doc.addEventListener("touchend", onDocTouchEnd, { passive: true });
+  doc.addEventListener("touchcancel", onDocTouchEnd, { passive: true });
+}
+
+function followBookLink(anchor: Element, href: string) {
+  if (!epubBook) return;
+  const resolution = resolveBookLink(epubBook, footnoteHandler, anchor, href);
+  if (resolution.kind === "footnote") {
+    void resolution.task.catch(() => {
+      footnoteError.value = "这个脚注暂时无法显示";
+      footnoteOpen.value = true;
+    });
+  } else if (resolution.kind === "external") {
+    window.open(href, "_blank", "noopener");
+  } else if (continuousReader) {
+    void continuousReader.goToHref(href);
+  }
+}
+
+function onViewLink(event: Event) {
+  if (!epubBook) return;
+  const detail = (event as CustomEvent<{ a: Element; href: string }>).detail;
+  const resolution = resolveBookLink(epubBook, footnoteHandler, detail.a, detail.href);
+  if (resolution.kind !== "footnote") return;
+  event.preventDefault();
+  void resolution.task.catch(() => {
+    footnoteError.value = "这个脚注暂时无法显示";
+    footnoteOpen.value = true;
+  });
 }
 
 // iframe 之外的页边留白区：点按/滚轮同样生效（iframe 内事件不会冒泡到这里，两套监听互不重复）
@@ -628,8 +735,7 @@ function onViewLoad(event: Event) {
   if (!doc) return;
   doc.addEventListener("click", (e) => onDocClick(doc, e));
   doc.addEventListener("wheel", onDocWheel, { passive: false });
-  doc.addEventListener("touchstart", onDocTouchStart, { passive: true });
-  doc.addEventListener("touchmove", onDocTouchMove, { passive: false });
+  bindDocumentTouch(doc);
 }
 
 function onSliderInput(event: Event) {
@@ -644,7 +750,8 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === "ArrowLeft") target?.goLeft?.();
   else if (event.key === "ArrowRight") target?.goRight?.();
   else if (event.key === "Escape") {
-    if (tocOpen.value) tocOpen.value = false;
+    if (footnoteOpen.value) closeFootnote();
+    else if (tocOpen.value) tocOpen.value = false;
     else backToShelf();
   }
 }
@@ -762,6 +869,17 @@ defineExpose({ reload: loadShelf });
         <span class="book-progress-label">{{ progressLabel }}</span>
         <input type="range" min="0" max="1" step="0.001" :value="sliderValue" aria-label="阅读进度" @input="onSliderInput" />
       </footer>
+
+      <div v-if="footnoteOpen" class="book-footnote-backdrop" @click.self="closeFootnote">
+        <section class="book-footnote" role="dialog" aria-modal="true" aria-label="脚注">
+          <header class="book-footnote-head">
+            <strong>脚注</strong>
+            <button class="book-bar-btn" type="button" aria-label="关闭脚注" @click="closeFootnote"><X :size="18" /></button>
+          </header>
+          <div v-if="footnoteError" class="book-footnote-error">{{ footnoteError }}</div>
+          <div v-else ref="footnoteHost" class="book-footnote-content"></div>
+        </section>
+      </div>
 
       <div v-if="settingsOpen" class="book-settings" data-book-settings>
         <div class="book-settings-row">
@@ -999,6 +1117,35 @@ defineExpose({ reload: loadShelf });
 .book-progress-label { font-size: 12px; color: #97836a; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 .book-reader[data-theme="dark"] .book-progress-label { color: #a89a86; }
 .book-bottom input { flex: 1; }
+
+.book-footnote-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 20px 14px calc(20px + var(--safe-bottom, 0px));
+  background: rgba(0, 0, 0, .26);
+}
+.book-footnote {
+  width: min(560px, 100%);
+  max-height: min(62vh, 520px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(90, 72, 50, .14);
+  border-radius: 16px;
+  background: #faf7f0;
+  color: #2f2922;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, .24);
+}
+.book-reader[data-theme="dark"] .book-footnote { background: #26211c; color: #e8ddc9; border-color: rgba(232, 221, 201, .16); }
+.book-footnote-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 8px 16px; border-bottom: 1px solid rgba(90, 72, 50, .12); }
+.book-reader[data-theme="dark"] .book-footnote-head { border-bottom-color: rgba(232, 221, 201, .14); }
+.book-footnote-content { min-height: 110px; height: min(40vh, 360px); }
+.book-footnote-content :deep(foliate-view) { display: block; width: 100%; height: 100%; }
+.book-footnote-error { padding: 24px 18px; color: #a33; text-align: center; }
 
 .book-settings {
   position: absolute;

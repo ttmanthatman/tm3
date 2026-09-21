@@ -36,6 +36,10 @@ export function bookTapAction(flow: ReaderStyle["flow"], horizontalRatio: number
   return "toggle-chrome";
 }
 
+export function isBookTouchDrag(deltaX: number, deltaY: number, threshold = 8): boolean {
+  return Math.hypot(deltaX, deltaY) > threshold;
+}
+
 export function buildBookCSS(style: ReaderStyle): string {
   const t = READER_THEMES[style.theme];
   return `
@@ -144,6 +148,39 @@ export type EpubBook = {
   isExternal?(href: string): boolean;
   destroy?(): void;
 };
+
+export type FootnoteLinkHandler = {
+  handle(
+    book: EpubBook,
+    event: {
+      detail: { a: Element; href: string; follow: boolean };
+      preventDefault(): void;
+    }
+  ): Promise<void> | undefined;
+};
+
+export type BookLinkResolution =
+  | { kind: "footnote"; task: Promise<void> }
+  | { kind: "external" }
+  | { kind: "navigate" };
+
+// Foliate 的脚注识别同时覆盖标准 noteref 和“上标链接”启发式。
+// 外链沿用 Foliate 自身的优先级；内部链接必须先让脚注处理器尝试接管，
+// 否则 noteref 会被普通章节导航吞掉。
+export function resolveBookLink(
+  book: EpubBook,
+  footnotes: FootnoteLinkHandler,
+  anchor: Element,
+  href: string
+): BookLinkResolution {
+  if (book.isExternal?.(href)) return { kind: "external" };
+  const task = footnotes.handle(book, {
+    detail: { a: anchor, href, follow: false },
+    preventDefault() { /* 调用方负责阻止真实 click/link 事件 */ }
+  });
+  if (task) return { kind: "footnote", task: Promise.resolve(task) };
+  return { kind: "navigate" };
+}
 
 type FoliateView = HTMLElement & {
   open(book: unknown): Promise<void>;

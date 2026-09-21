@@ -10,3 +10,16 @@ declare module "foliate-js/epub.js" {
     init(): Promise<unknown>;
   }
 }
+
+declare module "foliate-js/footnotes.js" {
+  export class FootnoteHandler extends EventTarget {
+    detectFootnotes: boolean;
+    handle(
+      book: unknown,
+      event: {
+        detail: { a: Element; href: string; follow: boolean };
+        preventDefault(): void;
+      }
+    ): Promise<void> | undefined;
+  }
+}

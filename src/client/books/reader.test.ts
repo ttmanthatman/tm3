@@ -7,8 +7,10 @@ import {
   buildBookCSS,
   globalFraction,
   globalFractionFromSectionOffset,
+  isBookTouchDrag,
   nudgeFromSectionBoundaries,
   readerLayoutMetrics,
+  resolveBookLink,
   sectionFractions,
   sectionAtFraction,
   DEFAULT_READER_STYLE
@@ -23,6 +25,38 @@ test("paginated tap zones keep the whole right edge actionable", () => {
   assert.equal(bookTapAction("paginated", 0.5), "toggle-chrome");
   assert.equal(bookTapAction("paginated", 0.88), "next");
   assert.equal(bookTapAction("scrolled", 0.88), "toggle-chrome");
+});
+
+test("a touch scroll is not treated as a content tap", () => {
+  assert.equal(isBookTouchDrag(3, 4), false);
+  assert.equal(isBookTouchDrag(0, 9), true);
+  assert.equal(isBookTouchDrag(12, 2), true);
+});
+
+test("footnote handling wins over chapter navigation", async () => {
+  const anchor = {} as Element;
+  let footnoteCalls = 0;
+  const footnotes = {
+    handle(_book: unknown, event: { preventDefault(): void }) {
+      footnoteCalls += 1;
+      event.preventDefault();
+      return Promise.resolve();
+    }
+  };
+  const resolution = resolveBookLink({ sections: [], isExternal: () => false }, footnotes, anchor, "chapter.xhtml#note-1");
+  assert.equal(resolution.kind, "footnote");
+  assert.equal(footnoteCalls, 1);
+  await resolution.task;
+});
+
+test("ordinary internal and external links keep their normal destinations", () => {
+  let footnoteCalls = 0;
+  const footnotes = { handle: () => { footnoteCalls += 1; return undefined; } };
+  const internal = resolveBookLink({ sections: [], isExternal: () => false }, footnotes, {} as Element, "chapter-2.xhtml");
+  const external = resolveBookLink({ sections: [], isExternal: () => true }, footnotes, {} as Element, "https://example.com");
+  assert.equal(internal.kind, "navigate");
+  assert.equal(external.kind, "external");
+  assert.equal(footnoteCalls, 1);
 });
 
 test("continuous reader maps section offsets to stable whole-book progress", () => {
