@@ -130,15 +130,20 @@ jobs:
       - name: Install browser engines
         run: npx playwright install --with-deps chromium webkit
 
-      - name: Run browser smoke tests
-        env:
-          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
-        run: npm run test:e2e
-
       - name: Run iPhone WebKit book smoke test
         env:
           E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
         run: npm run test:e2e -- --browser=webkit e2e/tests/books.spec.ts
+
+      - name: Run browser smoke tests
+        env:
+          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
+        run: npm run test:e2e -- --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+
+      - name: Run isolated story smoke test
+        env:
+          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
+        run: npm run test:e2e -- e2e/tests/stories.spec.ts
 
       - name: Upload browser failure artifacts
         if: failure()
