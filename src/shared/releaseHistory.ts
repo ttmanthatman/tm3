@@ -1051,11 +1051,20 @@ const RELEASE_2_2_6_NOTES = [
   "电子书滚动版式的默认左右边距改为最小 16px，并修复调整边距后正文没有立即变化的问题；旧版默认 48px 会自动迁移，主动选择的其他边距保留。"
 ] as const
 
+const RELEASE_2_2_7_NOTES = [
+  "修复 iPhone 滚动版式依赖章节 iframe 的 `touchmove` 导致控制栏无法显示的问题，改为根据连续阅读器外层原生滚动位置判断上下方向；同时兼容 WebKit 的沙箱事件限制，使脚注点按由阅读器接管并正常弹出。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.3.0",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.7",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_7_NOTES
   },
   {
     version: "2.2.6",
