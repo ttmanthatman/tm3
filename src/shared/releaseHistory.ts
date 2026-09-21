@@ -1043,11 +1043,20 @@ const RELEASE_2_2_4_NOTES = [
   "修复 2.2.3 中滚动后立即点按会吞掉正文或脚注点击的问题；《大离婚》等同页 EPUB 脚注直接从当前章节弹出，相邻章节预载不再阻塞滚动版式打开。"
 ] as const
 
+const RELEASE_2_2_5_NOTES = [
+  "修复 iPhone 滚动版式把一次手势拆成多个小位移时，向上滚动无法重新显示顶部导航栏和底部进度条的问题。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.6",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.5",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_5_NOTES
   },
   {
     version: "2.2.4",
