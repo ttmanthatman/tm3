@@ -25,6 +25,7 @@ import {
   nudgeFromSectionBoundaries,
   preloadAdjacentSections,
   readerLayoutMetrics,
+  readerStyleFromStored,
   READER_THEMES,
   resolveBookLink,
   sectionFractions,
@@ -134,9 +135,9 @@ footnoteHandler.addEventListener("render", (event) => {
 function loadStyle(): ReaderStyle {
   try {
     const raw = localStorage.getItem(STYLE_KEY);
-    if (raw) return { ...DEFAULT_READER_STYLE, ...JSON.parse(raw) };
+    if (raw) return readerStyleFromStored(JSON.parse(raw) as Partial<ReaderStyle>);
   } catch { /* 忽略损坏的本地配置 */ }
-  return { ...DEFAULT_READER_STYLE };
+  return readerStyleFromStored(null);
 }
 
 function persistStyle() {
@@ -568,8 +569,9 @@ function stepSpacing(delta: number) {
 function stepMargin(delta: number) {
   const margin = Math.max(16, Math.min(96, style.value.margin + delta));
   style.value = { ...style.value, margin };
-  persistStyle();
-  // margin/max-inline-size/gap 是 foliate 分页器属性（不是注入 CSS），改动会触发其重排
+  // 滚动版式的边距来自注入 iframe 的 CSS，分页版式则来自 foliate 布局属性。
+  // 两条链路都要更新，不能只刷新分页器。
+  applyStyle();
   applyLayout();
 }
 

@@ -12,6 +12,7 @@ import {
   isBookTouchDrag,
   nudgeFromSectionBoundaries,
   readerLayoutMetrics,
+  readerStyleFromStored,
   resolveBookLink,
   sectionFractions,
   sectionAtFraction,
@@ -20,6 +21,13 @@ import {
 
 test("reader defaults to continuous scrolling", () => {
   assert.equal(DEFAULT_READER_STYLE.flow, "scrolled");
+  assert.equal(DEFAULT_READER_STYLE.margin, 16);
+});
+
+test("reader migrates the old 48px default but preserves user-selected margins", () => {
+  assert.equal(readerStyleFromStored(null).margin, 16);
+  assert.equal(readerStyleFromStored({ margin: 48 }).margin, 16);
+  assert.equal(readerStyleFromStored({ margin: 32 }).margin, 32);
 });
 
 test("paginated tap zones keep the whole right edge actionable", () => {
@@ -148,7 +156,7 @@ test("readerLayoutMetrics maps margin to foliate layout attributes", () => {
 
   // 舞台尺寸未知时回退 foliate 默认值
   const fallback = readerLayoutMetrics(DEFAULT_READER_STYLE, 0, 0);
-  assert.deepEqual(fallback, { margin: 48, maxInlineSize: 720, gapPct: 7 });
+  assert.deepEqual(fallback, { margin: 16, maxInlineSize: 720, gapPct: 7 });
 
   // 极小舞台：栏宽有下限，不会算出非法值
   const tiny = readerLayoutMetrics({ ...DEFAULT_READER_STYLE, margin: 96 }, 200, 100);

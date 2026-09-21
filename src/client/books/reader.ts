@@ -23,9 +23,17 @@ export const DEFAULT_READER_STYLE: ReaderStyle = {
   theme: "light",
   fontPct: 100,
   spacing: 1.6,
-  margin: 48,
+  margin: 16,
   flow: "scrolled"
 };
+
+export function readerStyleFromStored(stored: Partial<ReaderStyle> | null): ReaderStyle {
+  const merged = { ...DEFAULT_READER_STYLE, ...stored };
+  // 48px 是旧版写入本地配置的默认值，不代表用户主动选择；升级后迁移到新默认。
+  // 其他档位只能由用户点按边距按钮产生，因此继续保留。
+  if (stored?.margin === undefined || stored.margin === null || stored.margin === 48) merged.margin = DEFAULT_READER_STYLE.margin;
+  return merged;
+}
 
 export type BookTapAction = "previous" | "next" | "toggle-chrome";
 

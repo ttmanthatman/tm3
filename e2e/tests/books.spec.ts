@@ -55,7 +55,7 @@ async function login(page: Page) {
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
 
-test("iPhone 小幅连续滚动和点按可恢复控制栏并弹出同页 EPUB 脚注", async ({ browser, request }) => {
+test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async ({ browser, request }) => {
   test.setTimeout(60_000);
   const loginResponse = await request.post("/api/auth/login", { data: E2E_ADMIN });
   expect(loginResponse.ok()).toBe(true);
@@ -117,6 +117,15 @@ test("iPhone 小幅连续滚动和点按可恢复控制栏并弹出同页 EPUB �
     await page.touchscreen.tap(paragraphBox.x + paragraphBox.width / 2, paragraphBox.y + paragraphBox.height / 2);
     await expect(topBar).not.toHaveClass(/bar-hidden/);
     await expect(page.locator(".book-bottom")).not.toHaveClass(/bar-hidden/);
+
+    await page.getByRole("button", { name: "Aa 阅读设置" }).click();
+    const marginValue = page.locator(".book-settings .book-font-pct").nth(2);
+    await expect(marginValue).toHaveText("16");
+    await expect.poll(() => frame.locator("html").evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("16px");
+    await page.getByRole("button", { name: "增大边距" }).click();
+    await expect(marginValue).toHaveText("32");
+    await expect.poll(() => frame.locator("html").evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("32px");
+    await page.getByRole("button", { name: "Aa 阅读设置" }).click();
 
     const footnoteBox = await frame.locator("#fnref").boundingBox();
     if (!footnoteBox) throw new Error("脚注链接不可见");
