@@ -40,6 +40,16 @@ export function isBookTouchDrag(deltaX: number, deltaY: number, threshold = 18):
   return Math.hypot(deltaX, deltaY) > threshold;
 }
 
+export type BookTouchScrollAction = "hide-chrome" | "show-chrome" | null;
+
+// iOS 会把一次手指滚动拆成许多很小的 touchmove；调用方应先累计相邻位移，
+// 再用这个阈值判断方向，而不能要求单个事件本身超过阈值。
+export function bookTouchScrollAction(accumulatedDeltaY: number, threshold = 18): BookTouchScrollAction {
+  if (accumulatedDeltaY > threshold) return "hide-chrome";
+  if (accumulatedDeltaY < -threshold) return "show-chrome";
+  return null;
+}
+
 const EPUB_NAMESPACE = "http://www.idpf.org/2007/ops";
 
 // 标准 EPUB 脚注链接通常是 <a epub:type="noteref" href="#note-id">。

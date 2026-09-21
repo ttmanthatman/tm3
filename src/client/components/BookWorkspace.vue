@@ -12,6 +12,7 @@ import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState
 import {
   bookTapAction,
   bookFootnoteTargetId,
+  bookTouchScrollAction,
   buildBookCSS,
   bookCoverUrl,
   bookFileUrl,
@@ -660,6 +661,7 @@ let pageWheelLockUntil = 0;
 let docTouchY: number | null = null;
 let docTouchStartX: number | null = null;
 let docTouchStartY: number | null = null;
+let docTouchAccumulatedY = 0;
 let docTouchDragged = false;
 let suppressDocumentClickUntil = 0;
 
@@ -668,6 +670,7 @@ function onDocTouchStart(event: TouchEvent) {
   docTouchY = touch?.clientY ?? null;
   docTouchStartX = touch?.clientX ?? null;
   docTouchStartY = touch?.clientY ?? null;
+  docTouchAccumulatedY = 0;
   docTouchDragged = false;
   // 新的一次点按不应继承上一次滚动留下的点击抑制窗口。
   suppressDocumentClickUntil = 0;
@@ -681,14 +684,17 @@ function onDocTouchMove(event: TouchEvent) {
   const y = event.touches[0]?.clientY ?? docTouchY;
   const dy = docTouchY - y;
   docTouchY = y;
+  docTouchAccumulatedY += dy;
   if (isBookTouchDrag(x - docTouchStartX, y - docTouchStartY)) docTouchDragged = true;
   if (style.value.flow !== "scrolled") return;
-  if (dy > 8 && chromeVisible.value) {
+  const scrollAction = bookTouchScrollAction(docTouchAccumulatedY);
+  if (scrollAction === "hide-chrome" && chromeVisible.value) {
     chromeVisible.value = false;
     settingsOpen.value = false;
-  } else if (dy < -8 && !chromeVisible.value) {
+  } else if (scrollAction === "show-chrome" && !chromeVisible.value) {
     chromeVisible.value = true;
   }
+  if (scrollAction) docTouchAccumulatedY = 0;
   if (!view) return;
   const renderer = view.renderer;
   const nearBottom = renderer.viewSize - renderer.end <= 8;
@@ -702,6 +708,7 @@ function onDocTouchEnd() {
   docTouchY = null;
   docTouchStartX = null;
   docTouchStartY = null;
+  docTouchAccumulatedY = 0;
   docTouchDragged = false;
 }
 

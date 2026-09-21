@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   bookTapAction,
   bookFootnoteTargetId,
+  bookTouchScrollAction,
   buildBookCSS,
   globalFraction,
   globalFractionFromSectionOffset,
@@ -33,6 +34,12 @@ test("a touch scroll is not treated as a content tap", () => {
   assert.equal(isBookTouchDrag(0, 12), false);
   assert.equal(isBookTouchDrag(0, 19), true);
   assert.equal(isBookTouchDrag(18, 7), true);
+});
+
+test("small iPhone touchmove deltas trigger chrome after their accumulated threshold", () => {
+  assert.equal(bookTouchScrollAction(17), null);
+  assert.equal(bookTouchScrollAction(19), "hide-chrome");
+  assert.equal(bookTouchScrollAction(-19), "show-chrome");
 });
 
 test("standard EPUB noteref links expose their current-document target", () => {

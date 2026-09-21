@@ -55,7 +55,7 @@ async function login(page: Page) {
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
 
-test("iPhone 点按可恢复控制栏并弹出同页 EPUB 脚注", async ({ browser, request }) => {
+test("iPhone 小幅连续滚动和点按可恢复控制栏并弹出同页 EPUB 脚注", async ({ browser, request }) => {
   test.setTimeout(60_000);
   const loginResponse = await request.post("/api/auth/login", { data: E2E_ADMIN });
   expect(loginResponse.ok()).toBe(true);
@@ -95,13 +95,23 @@ test("iPhone 点按可恢复控制栏并弹出同页 EPUB 脚注", async ({ brow
     const topBar = page.locator(".book-top");
     await expect(topBar).toHaveClass(/bar-hidden/);
 
-    // 先模拟一次拖动留下点击抑制，再立刻执行真实触摸点按；新触摸必须清掉旧窗口。
-    await frame.locator("#tap-target").evaluate((target) => {
+    const dispatchTouchMoves = (positions: number[]) => frame.locator("#tap-target").evaluate((target, ys) => {
       const touch = (clientY: number) => new Touch({ identifier: 1, target, clientX: 120, clientY });
-      target.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [touch(320)] }));
-      target.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [touch(260)] }));
-      target.dispatchEvent(new TouchEvent("touchend", { bubbles: true, changedTouches: [touch(260)] }));
-    });
+      target.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [touch(ys[0])] }));
+      for (const clientY of ys.slice(1)) {
+        target.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [touch(clientY)] }));
+      }
+      target.dispatchEvent(new TouchEvent("touchend", { bubbles: true, changedTouches: [touch(ys.at(-1)!)] }));
+    }, positions);
+
+    // iPhone 把一个手势拆成许多不足阈值的小事件；向上滚仍要累计到显示控制栏。
+    await dispatchTouchMoves([260, 266, 272, 278, 284]);
+    await expect(topBar).not.toHaveClass(/bar-hidden/);
+    await expect(page.locator(".book-bottom")).not.toHaveClass(/bar-hidden/);
+
+    // 反向的小事件累计后隐藏，并留下点击抑制；紧接着真实点按仍必须重新显示。
+    await dispatchTouchMoves([284, 278, 272, 266, 260]);
+    await expect(topBar).toHaveClass(/bar-hidden/);
     const paragraphBox = await frame.locator("#tap-target").boundingBox();
     if (!paragraphBox) throw new Error("正文点按区域不可见");
     await page.touchscreen.tap(paragraphBox.x + paragraphBox.width / 2, paragraphBox.y + paragraphBox.height / 2);
