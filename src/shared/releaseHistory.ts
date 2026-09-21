@@ -1035,11 +1035,20 @@ const RELEASE_2_2_2_NOTES = [
   "书架会标出尚未离线缓存的图书：首次点击先下载并显示进度，下载完成后再次点击才打开阅读；已缓存图书仍可直接打开。"
 ] as const
 
+const RELEASE_2_2_3_NOTES = [
+  "修复 iPhone 连续滚动电子书时拖动正文会误弹出上下控制栏的问题；EPUB 脚注链接改为弹层阅读，不再跳到脚注所在章节顶部。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.4",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.3",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_3_NOTES
   },
   {
     version: "2.2.2",
