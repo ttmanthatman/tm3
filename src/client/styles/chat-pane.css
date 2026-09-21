@@ -759,9 +759,18 @@ button.pinned-ticker-action {
 .pinned-view-actions {
   padding: 10px 14px calc(10px + var(--safe-bottom));
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
   border-top: 1px solid #ead9aa;
   background: #fff7df;
+}
+
+.pinned-chain-status {
+  margin-right: auto;
+  color: #7a5b21;
+  font-size: 12px;
 }
 
 .pinned-ack-btn {
@@ -789,4 +798,3 @@ button.pinned-ticker-action {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-

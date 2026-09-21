@@ -1353,6 +1353,8 @@ test("pinned message viewer lives outside App.vue with the modal-shell contract 
   assert.match(pinnedMessageViewer, /class="pinned-view-head"[\s\S]*?\{\{ pinnedText \}\}[\s\S]*?\{\{ pinnedSummary \}\}/);
   assert.match(pinnedMessageViewer, /class="pin-card-body pinned-view-body"/);
   assert.match(pinnedMessageViewer, /class="primary-btn pinned-ack-btn"[\s\S]*?朕知道了/);
+  assert.match(app, /:chain="visiblePinned\.kind === 'message'[\s\S]*?@join="joinPinnedChain"/);
+  assert.match(pinnedMessageViewer, /chain && !chainEnded\(chain\)[\s\S]*?emit\('join'\)[\s\S]*?参与接龙/);
 });
 
 test("App.vue contains no modal-shell blocks; dialogs live in focused components", () => {

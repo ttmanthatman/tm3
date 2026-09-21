@@ -838,8 +838,12 @@ export const useChatStore = defineStore("chat", {
       socket.on("sermon:ended", (event: SermonEndedEvent) => applySermonEnded(event));
       socket.on("pinned:updated", (event: { channelId: number; pinned: PinnedDTO | null }) => {
         const ch = this.channels.find((c) => c.id === event.channelId);
-        if (ch) ch.pinned = event.pinned;
-        if (event.channelId === this.currentChannelId) this.pinned = event.pinned;
+        const previous = event.channelId === this.currentChannelId ? this.pinned : ch?.pinned;
+        const pinned = event.pinned && previous?.id === event.pinned.id && previous.version === event.pinned.version
+          ? { ...event.pinned, dismissed: previous.dismissed }
+          : event.pinned;
+        if (ch) ch.pinned = pinned;
+        if (event.channelId === this.currentChannelId) this.pinned = pinned;
       });
       socket.on("voice:listened", (event: { messageId: number }) => {
         const message = this.messages.find((m) => m.id === event.messageId);

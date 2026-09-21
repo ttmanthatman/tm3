@@ -14,7 +14,7 @@ export type ChainRouteDependencies = {
   prisma: PrismaClient;
   requireAuth: preHandlerHookHandler;
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
-  refreshChannel(channelId: number): void;
+  refreshChannel(channelId: number, rootId: number): void;
 };
 
 function storedChainPayload(message: Pick<Message, "content" | "payload">): ChainPayload {
@@ -76,7 +76,7 @@ export function registerChainRoutes(app: FastifyInstance, deps: ChainRouteDepend
         })
       )
     );
-    deps.refreshChannel(root.channelId);
+    deps.refreshChannel(root.channelId, root.id);
     return { success: true, ended: { at, byActorId: auth.actorId, byName: actor.displayName } };
   });
 }

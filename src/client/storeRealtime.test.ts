@@ -188,6 +188,14 @@ test("pinned:updated applies only to its own channel", async (context) => {
   await waitFor(() => store.channels.find((ch) => ch.id === 2)?.pinned?.id === pinnedTwo.id, "channel 2 pinned update");
   assert.equal(store.pinned?.id, pinnedOne.id);
 
+  // A live chain refresh must not undo a user's acknowledgement of this pin.
+  store.pinned = { ...pinnedOne, dismissed: true };
+  store.channels[0].pinned = store.pinned;
+  serverSocket!.emit("pinned:updated", { channelId: 1, pinned: { ...pinnedOne, message: message(42) } });
+  await waitFor(() => store.pinned?.message?.id === 42, "live pinned message refreshed");
+  assert.equal(store.pinned?.dismissed, true);
+  assert.equal(store.channels[0].pinned?.dismissed, true);
+
   // The current channel's update applies to both the view and the list entry.
   serverSocket!.emit("pinned:updated", { channelId: 1, pinned: null });
   await waitFor(() => store.pinned === null, "current channel pinned cleared");

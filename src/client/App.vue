@@ -3870,6 +3870,13 @@ function openPinnedFromTicker() {
   pinnedExpanded.value = true;
 }
 
+function joinPinnedChain() {
+  const message = visiblePinned.value?.message;
+  if (!message || message.type !== "chain" || chainEnded(message)) return;
+  pinnedExpanded.value = false;
+  confirmJoinChain(message);
+}
+
 function clonePinnedBlock(block: PinnedContentBlockDTO): PinnedContentBlockDTO {
   return block.type === "text" ? { id: block.id, type: "text", text: block.text } : { id: block.id, type: block.type, fileName: block.fileName, filePath: block.filePath, fileSize: block.fileSize };
 }
@@ -3900,7 +3907,7 @@ async function savePinnedEditor() {
   }
   const result = await api<{ pinned: NonNullable<typeof store.pinned> }>(`/api/channels/${store.currentChannelId}/pinned`, {
     method: "POST",
-    body: JSON.stringify({ title: pinnedEditTitle.value, body, active: true })
+    body: JSON.stringify({ title: pinnedEditTitle.value, body, messageId: visiblePinned.value?.kind === "message" ? visiblePinned.value.messageId : undefined, active: true })
   });
   store.pinned = result.pinned;
   const ch = store.channels.find((channel) => channel.id === store.currentChannelId);
@@ -5339,10 +5346,12 @@ const messageRowBindings = {
         :pinned-text="pinnedText"
         :pinned-summary="pinnedSummary"
         :blocks="pinnedBlocks"
+        :chain="visiblePinned.kind === 'message' && visiblePinned.message?.type === 'chain' ? visiblePinned.message : null"
         :text-content-html="textContentHtml"
         :pinned-file-url="pinnedFileUrl"
         @close="pinnedExpanded = false"
         @ack="collapsePinned"
+        @join="joinPinnedChain"
         @open-image="openPinnedImage"
       />
 

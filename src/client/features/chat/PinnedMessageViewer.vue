@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { CheckCircle2, FileUp, Pin } from "lucide-vue-next";
-import type { PinnedContentBlockDTO } from "@shared/types";
+import type { MessageDTO, PinnedContentBlockDTO } from "@shared/types";
 import type { PinnedMediaBlock } from "../messages/useMediaPreview";
+import { chainEnded, chainPayload } from "../chain/chain";
 import { compactBytes } from "../../time";
 
 defineProps<{
   pinnedText: string;
   pinnedSummary: string;
   blocks: PinnedContentBlockDTO[];
+  chain?: MessageDTO | null;
   textContentHtml: (text: string) => string;
   pinnedFileUrl: (block: PinnedMediaBlock) => string;
 }>();
@@ -15,6 +17,7 @@ defineProps<{
 const emit = defineEmits<{
   close: [];
   ack: [];
+  join: [];
   openImage: [block: PinnedMediaBlock];
 }>();
 </script>
@@ -68,6 +71,9 @@ const emit = defineEmits<{
         </template>
       </div>
       <footer class="pinned-view-actions">
+        <span v-if="chain && chainEnded(chain)" class="pinned-chain-status">接龙已结束</span>
+        <span v-else-if="chain" class="pinned-chain-status">已有 {{ chainPayload(chain).participants.length }} 人接龙</span>
+        <button v-if="chain && !chainEnded(chain)" class="primary-btn" @click="emit('join')">参与接龙</button>
         <button class="primary-btn pinned-ack-btn" @click="emit('ack')">
           <CheckCircle2 :size="17" />朕知道了
         </button>

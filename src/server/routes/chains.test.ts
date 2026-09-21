@@ -5,7 +5,7 @@ import type { PrismaClient } from "@prisma/client";
 import { registerChainRoutes } from "./chains.js";
 
 function harness(auth: { accountId: number; actorId: number; isAdmin: boolean }) {
-  const refreshed: number[] = [];
+  const refreshed: Array<{ channelId: number; rootId: number }> = [];
   const rows = [
     { id: 10, channelId: 3, senderActorId: 4, content: "聚餐报名", type: "chain", payload: { topic: "聚餐报名", participants: [] }, chainRootId: 10, sender: { accountId: 7 } },
     { id: 11, channelId: 3, senderActorId: 5, content: "聚餐报名", type: "chain", payload: { topic: "聚餐报名", participants: [{ actorId: 5, name: "成员", text: "", at: "now" }] }, chainRootId: 10 }
@@ -24,7 +24,7 @@ function harness(auth: { accountId: number; actorId: number; isAdmin: boolean })
     prisma,
     requireAuth: async (request) => Object.assign(request, { auth }),
     canAccessChannel: async () => true,
-    refreshChannel: (channelId) => refreshed.push(channelId)
+    refreshChannel: (channelId, rootId) => refreshed.push({ channelId, rootId })
   });
   return { app, rows, refreshed };
 }
@@ -36,7 +36,7 @@ test("the chain owner ends every stored version", async (context) => {
   assert.equal(response.statusCode, 200);
   assert.equal((rows[0].payload as { ended?: { byName: string } }).ended?.byName, "发起人");
   assert.equal((rows[1].payload as { ended?: { byActorId: number } }).ended?.byActorId, 4);
-  assert.deepEqual(refreshed, [3]);
+  assert.deepEqual(refreshed, [{ channelId: 3, rootId: 10 }]);
 });
 
 test("a regular participant cannot end another person's chain", async (context) => {

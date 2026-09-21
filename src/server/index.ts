@@ -1563,6 +1563,13 @@ async function pinnedBodyFromMessages(channelId: number, messageIds: number[]) {
 
 async function serializePinnedItem(pin: PinnedItem, viewer?: Pick<AuthContext, "accountId">) {
   const body = serializePinnedBody(pin.body, pin.content);
+  const latestChain = pin.kind === "message" && pin.messageId
+    ? await prisma.message.findFirst({
+        where: { channelId: pin.channelId, type: "chain", OR: [{ id: pin.messageId }, { chainRootId: pin.messageId }] },
+        orderBy: { id: "desc" },
+        select: { id: true }
+      })
+    : null;
   const dismissed = viewer
     ? !!(await prisma.pinnedSeen.findUnique({
         where: { accountId_pinnedItemId_pinnedVersion: { accountId: viewer.accountId, pinnedItemId: pin.id, pinnedVersion: pin.version } },
@@ -1576,10 +1583,18 @@ async function serializePinnedItem(pin: PinnedItem, viewer?: Pick<AuthContext, "
     content: pin.content,
     body,
     messageId: pin.messageId,
-    message: pin.messageId ? await hydrateMessage(pin.messageId, viewer?.accountId) : null,
+    message: pin.messageId ? await hydrateMessage(latestChain?.id || pin.messageId, viewer?.accountId) : null,
     version: pin.version,
     dismissed
   };
+}
+
+async function emitPinnedChainUpdate(channelId: number, rootId: number) {
+  const pin = await prisma.pinnedItem.findFirst({
+    where: { channelId, active: true, kind: "message", messageId: rootId },
+    orderBy: { updatedAt: "desc" }
+  });
+  if (pin) io.to(`ch:${channelId}`).emit("pinned:updated", { channelId, pinned: await serializePinnedItem(pin) });
 }
 
 async function emitMessage(messageId: number) {
@@ -3361,6 +3376,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       pushOrigin
     });
     if (!rootId) await prisma.message.update({ where: { id: created.id }, data: { chainRootId: created.id } });
+    else void emitPinnedChainUpdate(body.channelId, rootId).catch((error) => app.log.warn({ error, rootId }, "pinned chain refresh failed"));
     return { success: true, message: await hydrateMessage(created.id) };
   }
   const content = cleanText(body.content);
@@ -3736,7 +3752,10 @@ registerChainRoutes(app, {
   requireAuth,
   prisma,
   canAccessChannel,
-  refreshChannel: (channelId) => io.to(`ch:${channelId}`).emit("messages:refresh", { channelId })
+  refreshChannel: (channelId, rootId) => {
+    io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
+    void emitPinnedChainUpdate(channelId, rootId).catch((error) => app.log.warn({ error, rootId }, "pinned chain refresh failed"));
+  }
 });
 
 registerChannelOwnershipRoutes(app, {
@@ -3922,6 +3941,7 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
       title: z.string().max(160).optional(),
       content: z.string().optional(),
       body: z.unknown().optional(),
+      messageId: z.number().int().positive().optional(),
       messageIds: z.array(z.number().int().positive()).max(80).optional(),
       active: z.boolean().default(true)
     })
@@ -3930,6 +3950,10 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (!(await canPinChannel(auth, channelId))) return reply.code(403).send({ success: false, message: "无权置顶此频道" });
   if (body.active) {
+    if (body.messageId && body.messageIds?.length) return reply.code(400).send({ success: false, message: "置顶来源不能重复指定" });
+    const linkedId = body.messageId || (body.messageIds?.length === 1 ? body.messageIds[0] : null);
+    const linkedChain = linkedId ? await prisma.message.findFirst({ where: { id: linkedId, channelId, type: "chain" }, select: { id: true, chainRootId: true } }) : null;
+    if (body.messageId && !linkedChain) return reply.code(400).send({ success: false, message: "接龙不存在" });
     const pinnedBody = body.messageIds?.length ? await pinnedBodyFromMessages(channelId, body.messageIds) : serializePinnedBody(body.body, body.content);
     if (!pinnedBody.blocks.length) return reply.code(400).send({ success: false, message: "置顶内容不能为空" });
     const textContent = pinnedBody.blocks
@@ -3941,11 +3965,11 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
     const created = await prisma.pinnedItem.create({
       data: {
         channelId,
-        kind: "notice",
+        kind: linkedChain ? "message" : "notice",
         title: cleanPinnedTitle(body.title),
         content: textContent,
         body: pinnedBody as unknown as Prisma.InputJsonValue,
-        messageId: null,
+        messageId: linkedChain ? linkedChain.chainRootId || linkedChain.id : null,
         active: true
       }
     });
