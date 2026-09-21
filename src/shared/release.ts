@@ -1,9 +1,9 @@
-export const APP_VERSION = "2.3.0";
+export const APP_VERSION = "2.3.1";
 
 export const RELEASE_DATE = "2026-09-21";
 
 export const RELEASE_DEVELOPER = "Team Chat";
 
 export const RELEASE_NOTES = [
-  "单条接龙设为置顶后保留原接龙关联；用户打开置顶消息即可参与，参与人数和结束状态会同步更新。"
+  "故事发布提示改为逐字鲜艳配色；收紧点赞、评论图标与头像的间距，移除右侧点赞计数，并将评论发送纸飞机居中。"
 ] as const;

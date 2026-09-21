@@ -1055,11 +1055,20 @@ const RELEASE_2_2_7_NOTES = [
   "修复 iPhone 滚动版式依赖章节 iframe 的 `touchmove` 导致控制栏无法显示的问题，改为根据连续阅读器外层原生滚动位置判断上下方向；同时兼容 WebKit 的沙箱事件限制，使脚注点按由阅读器接管并正常弹出。"
 ] as const
 
+const RELEASE_2_3_0_NOTES = [
+  "单条接龙设为置顶后保留原接龙关联；用户打开置顶消息即可参与，参与人数和结束状态会同步更新。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.3.1",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.3.0",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_3_0_NOTES
   },
   {
     version: "2.2.7",
