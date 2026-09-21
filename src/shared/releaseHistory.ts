@@ -1039,11 +1039,20 @@ const RELEASE_2_2_3_NOTES = [
   "修复 iPhone 连续滚动电子书时拖动正文会误弹出上下控制栏的问题；EPUB 脚注链接改为弹层阅读，不再跳到脚注所在章节顶部。"
 ] as const
 
+const RELEASE_2_2_4_NOTES = [
+  "修复 2.2.3 中滚动后立即点按会吞掉正文或脚注点击的问题；《大离婚》等同页 EPUB 脚注直接从当前章节弹出，相邻章节预载不再阻塞滚动版式打开。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.2.5",
+    date: "2026-09-21",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.2.4",
     date: "2026-09-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_2_4_NOTES
   },
   {
     version: "2.2.3",
