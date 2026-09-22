@@ -542,9 +542,13 @@ export class ContinuousBookReader {
       doc.head?.append(style);
     }
     const edge = Math.max(16, this.style.margin);
+    // 窄屏由 html padding 决定两侧留白；宽屏正文原本固定在 720px，
+    // padding 变化只挤压空白区，视觉上完全不动。同步收窄居中的正文栏，
+    // 让每增加 16px 边距，桌面正文两侧也各增加 16px 留白。
+    const maxTextWidth = Math.max(320, 720 - 2 * (edge - DEFAULT_READER_STYLE.margin));
     style.textContent = `${buildBookCSS(this.style)}
       html { box-sizing: border-box !important; height: auto !important; min-height: 0 !important; overflow: hidden !important; padding: 24px ${edge}px !important; }
-      body { width: auto !important; max-width: 720px !important; min-height: 0 !important; margin: 0 auto !important; overflow: visible !important; }
+      body { width: auto !important; max-width: ${maxTextWidth}px !important; min-height: 0 !important; margin: 0 auto !important; overflow: visible !important; }
     `;
     requestAnimationFrame(() => this.measureFrame(index));
   }

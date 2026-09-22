@@ -115,9 +115,12 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
     const marginValue = page.locator(".book-settings .book-font-pct").nth(2);
     await expect(marginValue).toHaveText("16");
     await expect.poll(() => frame.locator("html").evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("16px");
+    const initialTextX = (await frame.locator("#tap-target").boundingBox())?.x;
+    expect(initialTextX).toBeDefined();
     await page.getByRole("button", { name: "增大边距" }).click();
     await expect(marginValue).toHaveText("32");
     await expect.poll(() => frame.locator("html").evaluate((element) => getComputedStyle(element).paddingLeft)).toBe("32px");
+    await expect.poll(async () => (await frame.locator("#tap-target").boundingBox())?.x ?? 0).toBeGreaterThan(initialTextX! + 12);
     await page.getByRole("button", { name: "Aa 阅读设置" }).click();
 
     const footnoteBox = await frame.locator("#fnref").boundingBox();
@@ -126,6 +129,48 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
     const footnote = page.getByRole("dialog", { name: "脚注" });
     await expect(footnote).toContainText("《大离婚》同类 EPUB 脚注内容。");
     await expect(footnote).not.toContainText("返回");
+  } finally {
+    await context.close();
+    await request.delete(`/api/admin/books/${book.id}`, { headers: { Authorization: `Bearer ${token}` } });
+  }
+});
+
+test("桌面滚动模式的边距改变正文实际位置", async ({ browser, request }) => {
+  const loginResponse = await request.post("/api/auth/login", { data: E2E_ADMIN });
+  expect(loginResponse.ok()).toBe(true);
+  const { token } = await loginResponse.json() as { token: string };
+  const uploadResponse = await request.post("/api/admin/books", {
+    headers: { Authorization: `Bearer ${token}` },
+    multipart: {
+      file: {
+        name: "desktop-reader-margin.epub",
+        mimeType: "application/epub+zip",
+        buffer: await buildEpub()
+      }
+    }
+  });
+  expect(uploadResponse.ok()).toBe(true);
+  const { book } = await uploadResponse.json() as { book: { id: number } };
+
+  const context = await browser.newContext({ viewport: { width: 1037, height: 895 } });
+  const page = await context.newPage();
+  await blockPublicNetwork(page);
+  try {
+    await login(page);
+    await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("button", { name: "下载《移动阅读回归》" }).click();
+    await page.getByRole("button", { name: "阅读《移动阅读回归》" }).click();
+    const frame = page.frameLocator('iframe[title="电子书第 1 节"]');
+    const text = frame.locator("#tap-target");
+    await expect(text).toBeVisible();
+    const initialTextX = (await text.boundingBox())?.x;
+    expect(initialTextX).toBeDefined();
+
+    await page.getByRole("button", { name: "Aa 阅读设置" }).click();
+    await expect(page.locator(".book-settings .book-font-pct").nth(2)).toHaveText("16");
+    await page.getByRole("button", { name: "增大边距" }).click();
+    await expect(page.locator(".book-settings .book-font-pct").nth(2)).toHaveText("32");
+    await expect.poll(async () => (await text.boundingBox())?.x ?? 0).toBeGreaterThan(initialTextX! + 12);
   } finally {
     await context.close();
     await request.delete(`/api/admin/books/${book.id}`, { headers: { Authorization: `Bearer ${token}` } });
