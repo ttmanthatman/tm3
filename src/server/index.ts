@@ -27,6 +27,7 @@ import { registerBooksRoutes } from "./routes/books.js";
 import { registerStoryRoutes } from "./routes/stories.js";
 import { storyGender } from "../shared/stories.js";
 import { createGraceStory, createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
+import { createMessageSendIdempotency, messageSendRequestHash } from "./services/messageSendIdempotency.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -2201,6 +2202,8 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
 async function createMessageFromActor(input: {
   channelId: number;
   actorId: number;
+  clientRequestId?: string;
+  clientRequestHash?: string;
   content?: string;
   type?: MessageType;
   payload?: unknown;
@@ -2219,6 +2222,8 @@ async function createMessageFromActor(input: {
     data: {
       channelId: input.channelId,
       senderActorId: input.actorId,
+      clientRequestId: input.clientRequestId,
+      clientRequestHash: input.clientRequestHash,
       content: input.content || "",
       type: input.type || "text",
       payload: input.payload as object | undefined,
@@ -2243,6 +2248,15 @@ async function createMessageFromActor(input: {
   }
   return message;
 }
+
+const messageSendIdempotency = createMessageSendIdempotency({
+  find: (actorId, clientRequestId) =>
+    prisma.message.findUnique({
+      where: { senderActorId_clientRequestId: { senderActorId: actorId, clientRequestId } },
+      select: { id: true, clientRequestHash: true }
+    }),
+  isUniqueConflict: (error) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
+});
 
 
 
@@ -4291,20 +4305,24 @@ io.on("connection", async (socket: Socket) => {
   socket.on("message:send", async (data: unknown, ack?: (payload: unknown) => void) => {
     try {
       const currentAuth = await refreshSocketAuth(socket);
-      if (!currentAuth) return ack?.({ success: false, message: "认证失败" });
+      if (!currentAuth) return ack?.({ success: false, code: "not_sent", message: "认证失败" });
       const body = z
         .object({
           channelId: z.number(),
           content: z.string(),
           type: z.enum(["text", "prayer", "sermon_request"]).default("text"),
           payload: z.unknown().optional(),
-          replyToId: z.number().nullable().optional()
+          replyToId: z.number().nullable().optional(),
+          clientRequestId: z.string().uuid().optional()
         })
         .parse(data);
-      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, message: "无权在此频道发言" });
-      if (await isMusicChannel(body.channelId)) return ack?.({ success: false, message: "音乐频道只能上传 MP3 和 M4A 文件" });
+      const requestHash = body.clientRequestId
+        ? messageSendRequestHash({ channelId: body.channelId, content: body.content, type: body.type, payload: body.payload, replyToId: body.replyToId || null })
+        : undefined;
+      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, code: "not_sent", message: "无权在此频道发言" });
+      if (await isMusicChannel(body.channelId)) return ack?.({ success: false, code: "not_sent", message: "音乐频道只能上传 MP3 和 M4A 文件" });
       const content = cleanText(body.content);
-      if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, message: "消息不能为空" });
+      if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, code: "not_sent", message: "消息不能为空" });
       const payload =
         body.type === "prayer"
           ? cleanPrayerPayload(body.payload)
@@ -4313,18 +4331,29 @@ io.on("connection", async (socket: Socket) => {
             : await cleanTextMessagePayload(body.payload);
       const prayerImageMessageId = body.type === "prayer" ? Number((payload as { imageMessageId?: unknown }).imageMessageId || 0) : 0;
       if (prayerImageMessageId && !(await isValidPrayerImageMessage(prayerImageMessageId, body.channelId))) {
-        return ack?.({ success: false, message: "附带照片无效" });
+        return ack?.({ success: false, code: "not_sent", message: "附带照片无效" });
       }
-      const message = await createMessageFromActor({
+      const create = () => createMessageFromActor({
         channelId: body.channelId,
         actorId: currentAuth.actorId,
+        clientRequestId: body.clientRequestId,
+        clientRequestHash: requestHash,
         content,
         type: body.type,
         payload,
         replyToId: body.replyToId || null,
         pushOrigin
       });
-      if (!currentAuth.isGuest) {
+      const result = body.clientRequestId && requestHash
+        ? await messageSendIdempotency.send({
+            actorId: currentAuth.actorId,
+            clientRequestId: body.clientRequestId,
+            hash: requestHash,
+            create
+          })
+        : { state: "created" as const, messageId: (await create()).id };
+      if (result.state === "conflict") return ack?.({ success: false, code: "conflict", message: "这次重试的内容与原消息不同，内容已保留" });
+      if (!currentAuth.isGuest && result.state === "created") {
         void writeActivityLog({
           kind: "message_sent",
           accountId: currentAuth.accountId,
@@ -4333,9 +4362,24 @@ io.on("connection", async (socket: Socket) => {
           state: body.type
         });
       }
-      ack?.({ success: true, messageId: message.id, message: await hydrateMessage(message.id, currentAuth.accountId) });
+      ack?.({ success: true, messageId: result.messageId, clientRequestId: body.clientRequestId, deduplicated: result.state === "replayed", message: await hydrateMessage(result.messageId, currentAuth.accountId) });
     } catch (error) {
       ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
+    }
+  });
+
+  socket.on("message:status", async (data: unknown, ack?: (payload: unknown) => void) => {
+    try {
+      const currentAuth = await refreshSocketAuth(socket);
+      if (!currentAuth) return ack?.({ state: "unknown" });
+      const { clientRequestId } = z.object({ clientRequestId: z.string().uuid() }).parse(data);
+      const existing = await prisma.message.findUnique({
+        where: { senderActorId_clientRequestId: { senderActorId: currentAuth.actorId, clientRequestId } },
+        select: { id: true }
+      });
+      ack?.(existing ? { state: "sent", messageId: existing.id } : { state: "unknown" });
+    } catch {
+      ack?.({ state: "unknown" });
     }
   });
 

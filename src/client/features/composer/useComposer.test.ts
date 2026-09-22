@@ -14,7 +14,7 @@ Object.defineProperty(globalThis, "localStorage", {
 
 setActivePinia(createPinia());
 
-function createComposerHarness() {
+function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: false; reason: "timeout"; message: string }> = async () => ({ ok: true })) {
   const sent: unknown[] = [];
   const gracePrefills: string[] = [];
   const input = ref("");
@@ -35,7 +35,7 @@ function createComposerHarness() {
     clearMessageSendStatus: () => undefined,
     sendMessage: async (payload: unknown) => {
       sent.push(payload);
-      return { ok: true as const };
+      return sendResult();
     },
     openGraceComposer: (prefill: string) => {
       gracePrefills.push(prefill);
@@ -99,6 +99,27 @@ test("sendText keeps plain text on the normal send path", async () => {
   await composer.sendText();
   assert.equal(sent.length, 1);
   assert.deepEqual(gracePrefills, []);
+});
+
+test("an unconfirmed send reuses its request id when the user retries", async () => {
+  let calls = 0;
+  const { composer, input, sent } = createComposerHarness(async () => {
+    calls += 1;
+    return calls === 1 ? { ok: false, reason: "timeout", message: "未确认" } : { ok: true };
+  });
+  const { useChatStore } = await import("../../store");
+  const store = useChatStore();
+  store.currentChannelId = 7;
+  store.account = { id: 1, actorId: 2 } as typeof store.account;
+  input.value = "平安";
+  await composer.sendText();
+  assert.equal(composer.unconfirmedSends.value.length, 1);
+  assert.equal(input.value, "平安");
+  await composer.sendText();
+  assert.equal(sent.length, 2);
+  assert.equal((sent[0] as { clientRequestId: string }).clientRequestId, (sent[1] as { clientRequestId: string }).clientRequestId);
+  assert.equal(composer.unconfirmedSends.value.length, 0);
+  assert.equal(input.value, "");
 });
 
 test("the grace subchannel opens the grace composer for typed text", async () => {

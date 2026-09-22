@@ -1,6 +1,7 @@
 # 消息发送 ACK 丢失恢复设计（S4）
 
-> 纯设计文档 + 可丢弃模拟。不修改生产 schema、不修改生产源码、不启用自动重发。
+> 设计基线与模拟记录。2026-09-22 已实现方案 B 的消息唯一键、请求哈希、Socket 重放/状态查询、广播回显和客户端手动重试；未启用自动重发。
+> 下文“现状”和“草案”段落保留实施前的分析语境，当前行为以源码和迁移为准。
 > 模拟脚本：`output/s4-ack-recovery-sim.ts`（`node --import tsx` 运行，结果摘要见文末）。
 
 ## 1. 问题
@@ -149,7 +150,7 @@ export interface MessageDTO {
 
 `MessageSendResult` 客户端侧增加 `reason: "unconfirmed"` 的细化（现超时分支），UI 上草稿旁显示「未确认 · 重试」而非仅状态文案。
 
-## 6. 最小实现文件清单（供后续实现任务参考，本任务不改）
+## 6. 最小实现文件清单（实施前草案）
 
 方案 A（无迁移，弱保证）：
 
@@ -164,7 +165,9 @@ export interface MessageDTO {
 
 - `prisma/schema.prisma` + 新迁移（见第 7 节）；去重存储改用 `messages.client_request_id`，`hydrateMessage` 直接从行读取；清理定时器删除。
 
-## 7. 迁移任务草案（方案 B）——需用户确认后才能执行，本任务未执行
+## 7. 方案 B 迁移与验证
+
+2026-09-22 新增 `20260922000000_message_client_request_id` 迁移，增加 `client_request_id`、`client_request_hash` 和 `(sender_actor_id, client_request_id)` 唯一索引。`prisma migrate dev` 在当前非交互执行环境中拒绝运行，迁移 SQL 由 Prisma `migrate diff` 在一次性本地开发库上生成，并已在该库用 `migrate deploy` 应用；schema diff 无差异。正式环境尚未执行迁移。
 
 - 变更：`messages` 表新增 `client_request_id VARCHAR(64) NULL`，复合唯一索引 `(sender_actor_id, client_request_id)`。MySQL 唯一索引允许多个 NULL，存量数据无需回填。
 - 创建方式：`prisma migrate dev --name message_client_request_id`，仅对一次性开发库执行；长期环境用 `prisma migrate deploy`。

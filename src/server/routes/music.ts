@@ -127,6 +127,17 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
     return musicService.serializeTrack(updated, 0, undefined, true);
   }
 
+  app.get("/api/music/tracks/:id/detail", { preHandler: requireAuth }, async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    if (!Number.isSafeInteger(id) || id <= 0) return reply.code(400).send({ message: "歌曲 ID 无效" });
+    const track = await prisma.message.findFirst({
+      where: { id, channel: { kind: "music" }, type: "file", filePath: { not: null } },
+      select: { id: true }
+    });
+    if (!track) return reply.code(404).send({ message: "歌曲不存在" });
+    return { track: await serializeTrackResponse(id) };
+  });
+
   app.get("/api/music/tracks", { preHandler: requireAuth }, async (request) => {
     const auth = (request as AuthedMusicRequest).auth;
     const messages = await prisma.message.findMany({
@@ -135,7 +146,7 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
       include: {
         sender: { select: { accountId: true, displayName: true } },
         musicScores: trackScoresInclude,
-        musicLyrics: true,
+        musicLyrics: { select: { id: true, fileName: true } },
         _count: { select: { musicPlays: true } }
       }
     });
@@ -145,7 +156,7 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
       tracks: messages
         .filter((message) => isMusicFileName(message.fileName))
         .map((message, index) =>
-          musicService.serializeTrack(message, index, favoriteTrackIds.has(message.id), canManageMusicAsset(auth, message.sender.accountId))
+          musicService.serializeTrack(message, index, favoriteTrackIds.has(message.id), canManageMusicAsset(auth, message.sender.accountId), false)
         )
     };
   });

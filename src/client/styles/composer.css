@@ -261,6 +261,38 @@
   color: var(--muted);
 }
 
+.composer-unconfirmed {
+  margin: 4px 42px 0;
+  display: grid;
+  gap: 4px;
+  max-height: 96px;
+  overflow-y: auto;
+}
+
+.composer-unconfirmed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #92400e;
+  font-size: 12px;
+}
+
+.composer-unconfirmed-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-unconfirmed-row button {
+  flex: none;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  padding: 2px 8px;
+}
+
 .icon-btn.active {
   background: rgba(0, 0, 0, 0.08);
 }
@@ -554,4 +586,3 @@
 .tool-tile small {
   font-size: 13px;
 }
-

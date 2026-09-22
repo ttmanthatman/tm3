@@ -1,9 +1,9 @@
 import { ref } from "vue";
 
-export type MessageSendAck = { success?: boolean; message?: string };
+export type MessageSendAck = { success?: boolean; message?: string; code?: "not_sent" | "conflict" };
 export type MessageSendResult =
   | { ok: true }
-  | { ok: false; reason: "disconnected" | "busy" | "timeout" | "rejected" | "transport"; message: string };
+  | { ok: false; reason: "disconnected" | "busy" | "timeout" | "rejected" | "transport"; message: string; code?: "not_sent" | "conflict" };
 
 export interface MessageSendSocket {
   connected: boolean;
@@ -45,7 +45,7 @@ export function useMessageSender(options: { getSocket: () => MessageSendSocket |
             return;
           }
           if (!ack?.success) {
-            finish({ ok: false, reason: "rejected", message: ack?.message || "发送失败，内容已保留，请重试" });
+            finish({ ok: false, reason: "rejected", message: ack?.message || "发送失败，内容已保留，请重试", ...(ack?.code ? { code: ack.code } : {}) });
             return;
           }
           finish({ ok: true });

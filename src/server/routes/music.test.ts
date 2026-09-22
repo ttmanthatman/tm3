@@ -325,6 +325,17 @@ test("music routes reject unauthenticated access", async (context) => {
   assert.deepEqual(response.json(), { success: false, message: "认证失败" });
 });
 
+test("single-track detail is authenticated and rejects invalid or missing tracks", async (context) => {
+  const { app } = await createRouteApp();
+  context.after(() => app.close());
+  assert.equal((await app.inject({ method: "GET", url: "/api/music/tracks/1/detail" })).statusCode, 401);
+  assert.equal((await app.inject({ method: "GET", url: "/api/music/tracks/nope/detail", headers: authHeader("owner") })).statusCode, 400);
+  assert.equal((await app.inject({ method: "GET", url: "/api/music/tracks/999/detail", headers: authHeader("owner") })).statusCode, 404);
+  const response = await app.inject({ method: "GET", url: "/api/music/tracks/1/detail", headers: authHeader("owner") });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json<{ track: MusicTrackDTO }>().track.id, 1);
+});
+
 test("regular accounts manage only their own tracks while music managers can manage all tracks", async (context) => {
   const { app } = await createRouteApp();
   context.after(() => app.close());

@@ -993,6 +993,8 @@ const {
   socketReadyToSend,
   composerSendStatus,
   composerSendState,
+  unconfirmedSends,
+  retryUnconfirmed,
   parseComposerText,
   syncComposerCaret,
   chooseSlashCommand,
@@ -1582,6 +1584,22 @@ const currentMusicScore = computed(
 );
 const currentMusicScorePages = computed(() => currentMusicScore.value?.pages || []);
 const currentMusicLyricCues = computed(() => currentMusicTrack.value?.lyrics?.cues || []);
+const loadingMusicLyricDetails = new Set<number>();
+watch(
+  () => [store.account?.id, currentMusicTrack.value?.id, musicPlaying.value, !!currentMusicTrack.value?.lyrics && !currentMusicTrack.value.lyrics.cues] as const,
+  ([accountId, trackId, playing, needsLyrics]) => {
+    if (!accountId || !trackId || !playing || !needsLyrics || loadingMusicLyricDetails.has(trackId)) return;
+    loadingMusicLyricDetails.add(trackId);
+    void api<{ track: MusicTrackDTO }>(`/api/music/tracks/${trackId}/detail`)
+      .then(({ track }) => {
+        if (store.account?.id !== accountId) return;
+        musicTracks.value = musicTracks.value.map((current) => current.id === trackId ? { ...current, lyrics: track.lyrics } : current);
+      })
+      .catch(() => console.warn("Could not load lyrics for the current track"))
+      .finally(() => loadingMusicLyricDetails.delete(trackId));
+  },
+  { immediate: true }
+);
 const musicLyricsHeaderVisible = computed(
   () =>
     musicPlaying.value &&
@@ -4665,9 +4683,12 @@ const composerBindings = computed(() => ({
   graceOnly: store.graceOnly,
   canSendText: canSendText.value,
   canSubmitText: canSubmitText.value,
+  socketReadyToSend: socketReadyToSend.value,
   messageSendPending: messageSendPending.value,
   composerSendStatus: composerSendStatus.value,
   composerSendState: composerSendState.value,
+  unconfirmedSends: unconfirmedSends.value,
+  retryUnconfirmed,
   showComposerSuggestionMenu: showComposerSuggestionMenu.value,
   activeComposerSuggestionKind: activeComposerSuggestionKind.value,
   matchingMusicMentionTracks: matchingMusicMentionTracks.value,

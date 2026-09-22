@@ -71,7 +71,7 @@ const {
   nav,
   activePlaylistId,
   activePlaylist,
-  selectedTrack,
+  selectedTrack: selectedTrackSummary,
   query,
   sort,
   selectionMode,
@@ -102,6 +102,32 @@ const {
   request: api,
   initialFocus: props.initialFocus
 });
+
+const selectedTrackDetail = ref<MusicTrackDTO | null>(null);
+const detailLoading = ref(false);
+const detailError = ref("");
+let detailRequestVersion = 0;
+const selectedTrack = computed(() => selectedTrackDetail.value?.id === selectedTrackSummary.value?.id ? selectedTrackDetail.value : selectedTrackSummary.value);
+async function loadSelectedTrackDetail(track = selectedTrackSummary.value) {
+  const version = ++detailRequestVersion;
+  if (selectedTrackDetail.value?.id !== track?.id) selectedTrackDetail.value = null;
+  if (!track) {
+    detailLoading.value = false;
+    detailError.value = "";
+    return;
+  }
+  detailLoading.value = true;
+  detailError.value = "";
+  try {
+    const result = await api<{ track: MusicTrackDTO }>(`/api/music/tracks/${track.id}/detail`);
+    if (version === detailRequestVersion && selectedTrackSummary.value?.id === track.id) selectedTrackDetail.value = result.track;
+  } catch {
+    if (version === detailRequestVersion && selectedTrackSummary.value?.id === track.id) detailError.value = "歌曲详情加载失败";
+  } finally {
+    if (version === detailRequestVersion && selectedTrackSummary.value?.id === track.id) detailLoading.value = false;
+  }
+}
+watch(() => selectedTrackSummary.value?.id, () => { void loadSelectedTrackDetail(); }, { immediate: true });
 
 defineExpose({ openFocus });
 
@@ -187,6 +213,7 @@ async function runAction(action: () => Promise<unknown>, options: RunOptions) {
   try {
     await action();
     if (options.refreshTracks) emit("refresh-tracks");
+    if (options.refreshTracks && selectedTrackSummary.value) void loadSelectedTrackDetail();
     if (options.refreshPlaylists) emit("refresh-playlists");
     if (options.reloadResources) await loadResources(true);
     if (options.done) showNotice(options.done);
@@ -392,6 +419,7 @@ watch(
 );
 
 async function saveTrackInfo(track: MusicTrackDTO) {
+  if (detailLoading.value || selectedTrackDetail.value?.id !== track.id) return;
   await runAction(
     () =>
       api(`/api/music/tracks/${track.id}/info`, {
@@ -418,6 +446,7 @@ async function runAiInfo(track: MusicTrackDTO, overwrite = false): Promise<void>
     if (response.ok) {
       const completed = payload.track;
       if (completed) {
+        if (selectedTrackSummary.value?.id === completed.id) selectedTrackDetail.value = completed;
         backgroundDraft.value = completed.background || "";
         lyricsTextDraft.value = completed.lyricsText || "";
       }
@@ -1102,6 +1131,8 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
             <button class="music-manager-icon-btn" aria-label="关闭详情" @click="closeTrackDetail"><X :size="18" /></button>
           </header>
           <div class="music-manager-detail-body">
+            <small v-if="detailLoading">正在加载歌曲详情…</small>
+            <button v-else-if="detailError" type="button" class="music-manager-btn" @click="loadSelectedTrackDetail()">{{ detailError }}，重试</button>
             <div class="music-manager-detail-play">
               <button class="music-manager-btn primary" @click="clickPlay(selectedTrack)">
                 <Pause v-if="selectedTrack.id === currentTrackId && playing" :size="16" />
@@ -1134,7 +1165,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
                 <h4>知识歌词</h4>
                 <textarea v-model="lyricsTextDraft" rows="6" maxlength="20000" placeholder="完整歌词纯文本（不含时间轴），供诗歌推荐等功能使用"></textarea>
                 <div class="music-manager-inline-form">
-                  <button class="music-manager-btn primary" :disabled="actionBusy || aiBusy" @click="saveTrackInfo(selectedTrack)">保存资料</button>
+                  <button class="music-manager-btn primary" :disabled="actionBusy || aiBusy || detailLoading || selectedTrackDetail?.id !== selectedTrack.id" @click="saveTrackInfo(selectedTrack)">保存资料</button>
                   <button class="music-manager-btn" :disabled="aiBusy || actionBusy" @click="runAiInfo(selectedTrack)">
                     <Sparkles :size="15" />{{ aiBusy ? "AI 生成中…" : "AI 补全资料" }}
                   </button>
@@ -1148,7 +1179,7 @@ const SORT_OPTIONS: Array<{ value: MusicPlaylistSort; label: string }> = [
                     <FileText :size="16" />
                     <div>
                       <strong>{{ selectedTrack.lyrics.fileName }}</strong>
-                      <small>{{ selectedTrack.lyrics.cues.length }} 句时间轴</small>
+                      <small v-if="selectedTrack.lyrics.cues">{{ selectedTrack.lyrics.cues.length }} 句时间轴</small>
                     </div>
                   </div>
                   <div class="music-manager-inline-form">

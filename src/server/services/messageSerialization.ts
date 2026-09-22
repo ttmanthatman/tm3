@@ -318,6 +318,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
     return {
       id: message.id,
       channelId: message.channelId,
+      clientRequestId: message.clientRequestId,
       sender: {
         id: message.sender.id,
         kind: message.sender.kind,

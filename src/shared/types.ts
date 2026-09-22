@@ -130,6 +130,7 @@ export interface VoicePayload {
 export interface MessageDTO {
   id: number;
   channelId: number;
+  clientRequestId?: string | null;
   sender: ActorDTO;
   content: string;
   type: MessageType;
@@ -325,7 +326,7 @@ export interface MusicTrackDTO {
   manualOrder: number;
   favorited?: boolean;
   scores: MusicScoreDTO[];
-  lyrics: MusicLyricsDTO | null;
+  lyrics: (Omit<MusicLyricsDTO, "cues"> & { cues?: MusicLyricsDTO["cues"] }) | null;
   background: string | null;
   lyricsText: string | null;
 }

@@ -21,6 +21,7 @@ import {
 import type { MessageDTO, MusicTrackDTO } from "@shared/types";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import type { SlashCommandSuggestion } from "./useComposer";
+import type { UnconfirmedSend } from "./unconfirmedSends";
 import type { ComposerPlaceholderPhase } from "./useComposerPlaceholder";
 
 // Presentation-only home of the chat composer: the textarea, voice/more
@@ -54,9 +55,12 @@ const props = defineProps<{
   graceOnly: boolean;
   canSendText: boolean;
   canSubmitText: boolean;
+  socketReadyToSend: boolean;
   messageSendPending: boolean;
   composerSendStatus: string;
   composerSendState: string | undefined;
+  unconfirmedSends: UnconfirmedSend[];
+  retryUnconfirmed: (row: UnconfirmedSend) => void;
   showComposerSuggestionMenu: boolean;
   activeComposerSuggestionKind: "music" | "mention" | "effect" | null;
   matchingMusicMentionTracks: MusicTrackDTO[];
@@ -186,6 +190,12 @@ defineExpose({ composerInput });
         role="status"
         aria-live="polite"
       >{{ composerSendStatus }}</small>
+      <div v-if="unconfirmedSends.length" class="composer-unconfirmed" role="status">
+        <div v-for="row in unconfirmedSends" :key="row.clientRequestId" class="composer-unconfirmed-row">
+          <span>未确认 · {{ row.draft.slice(0, 40) }}</span>
+          <button type="button" :disabled="messageSendPending || !socketReadyToSend" @click="retryUnconfirmed(row)">重试</button>
+        </div>
+      </div>
       <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
         <template v-if="activeComposerSuggestionKind === 'music'">
           <button

@@ -52,6 +52,9 @@
 
 ### 1. `/api/music/tracks` 与歌单接口的负载裁剪（服务端，中等收益）
 
+2026-09-22 进度：列表和歌单已不再读取/返回歌词全文与解析后的 cues，纯文本歌词也不再进入列表 DTO；播放中的歌词和歌曲详情改为按需读取单曲详情。歌谱页元数据仍随列表返回，分页/字段选择与真实设备耗时测量仍待处理。
+下列“现状”描述为优化前基线。
+
 - 位置：`src/server/routes/music.ts:130-161`、`src/server/services/musicService.ts`（`serializeTrack`、`playlistDto`）。
 - 现状：曲目列表无分页，`musicLyrics: true` 把每首歌词全文塞进 DTO，且每首 `parseLyrics` 解析全部 cues；`playlistDto` 对歌单内每首曲目 include 全部歌谱页 + 歌词全文。曲库 100 首约数 MB JSON。
 - 做法：列表 DTO 去掉歌词全文/cues（歌词查看时再单首拉取）；歌单 DTO 同样裁剪；评估加分页或字段选择。

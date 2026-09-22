@@ -1,4 +1,4 @@
-import { computed, nextTick, watch, type Ref } from "vue";
+import { computed, nextTick, ref, watch, type Ref } from "vue";
 import {
   ArrowDown,
   CloudRain,
@@ -12,6 +12,7 @@ import {
   WandSparkles
 } from "lucide-vue-next";
 import type { MessageDTO, MessageEffect, MessageEffectPayload, MusicTrackDTO } from "@shared/types";
+import { loadUnconfirmedSends, saveUnconfirmedSends, type UnconfirmedSend } from "./unconfirmedSends.js";
 import {
   composerDraftAfterSend,
   isComposerSendKey,
@@ -79,6 +80,65 @@ interface UseComposerOptions {
 
 export function useComposer(options: UseComposerOptions) {
   const store = useChatStore();
+  const unconfirmedSends = ref<UnconfirmedSend[]>([]);
+  const visibleUnconfirmedSends = computed(() => unconfirmedSends.value.filter((row) => row.channelId === store.currentChannelId));
+
+  function persistUnconfirmed() {
+    if (store.account?.id) saveUnconfirmedSends(store.account.id, unconfirmedSends.value);
+  }
+
+  function confirmUnconfirmed(clientRequestId: string, clearDraft = false) {
+    const row = unconfirmedSends.value.find((item) => item.clientRequestId === clientRequestId);
+    if (!row) return;
+    unconfirmedSends.value = unconfirmedSends.value.filter((item) => item.clientRequestId !== clientRequestId);
+    persistUnconfirmed();
+    if (clearDraft && input.value === row.draft && store.currentChannelId === row.channelId) {
+      input.value = "";
+      selectedMusicMention.value = null;
+      replyTo.value = null;
+      if (row.payload.type === "prayer") options.clearPrayerComposerPhoto();
+    }
+  }
+
+  watch(() => store.account?.id, (accountId, previousId) => {
+    if (previousId && previousId !== accountId) saveUnconfirmedSends(previousId, []);
+    unconfirmedSends.value = accountId ? loadUnconfirmedSends(accountId) : [];
+  }, { immediate: true, flush: "sync" });
+
+  watch(() => store.lastIncomingMessage, (message) => {
+    if (message?.clientRequestId && message.sender.id === store.account?.actorId) confirmUnconfirmed(message.clientRequestId, true);
+  });
+
+  async function checkUnconfirmedStatus() {
+    const socket = store.socket;
+    if (!socket?.connected) return;
+    for (const row of [...unconfirmedSends.value]) {
+      const response = await new Promise<{ state?: string }>((resolve) => {
+        socket.timeout(10_000).emit("message:status", { clientRequestId: row.clientRequestId }, (error: Error | null, result?: { state?: string }) => {
+          resolve(error ? {} : result || {});
+        });
+      });
+      if (response.state === "sent") confirmUnconfirmed(row.clientRequestId, true);
+    }
+  }
+
+  watch(
+    () => [store.connectionState, store.account?.id] as const,
+    ([state, accountId]) => {
+      if (state === "connected" && accountId) void checkUnconfirmedStatus();
+    },
+    { immediate: true }
+  );
+
+  async function retryUnconfirmed(row: UnconfirmedSend) {
+    if (!store.account?.id || options.messageSendPending.value) return;
+    const result = await options.sendMessage(row.payload);
+    if (result.ok) confirmUnconfirmed(row.clientRequestId, true);
+    else if (result.code === "not_sent" || result.code === "conflict") {
+      unconfirmedSends.value = unconfirmedSends.value.filter((item) => item.clientRequestId !== row.clientRequestId);
+      persistUnconfirmed();
+    }
+  }
   const input = options.input;
   const composerFocused = options.composerFocused;
   const selectedMusicMention = options.selectedMusicMention;
@@ -306,6 +366,9 @@ export function useComposer(options: UseComposerOptions) {
   }
 
   async function sendText() {
+    if (options.messageSendPending.value) return;
+    const retry = unconfirmedSends.value.find((item) => item.channelId === store.currentChannelId && item.draft === input.value);
+    if (retry) return retryUnconfirmed(retry);
     const parsed = parseComposerText(input.value);
     const musicMention = selectedMusicMention.value;
     // /恩典 不发文本消息：打开恩典记录弹窗，输入内容预填进弹窗。
@@ -343,9 +406,18 @@ export function useComposer(options: UseComposerOptions) {
       content,
       type: messageType,
       payload: Object.keys(messagePayload).length ? messagePayload : undefined,
-      replyToId: originalReply?.id || null
+      replyToId: originalReply?.id || null,
+      clientRequestId: crypto.randomUUID()
     };
+    const unconfirmed = { clientRequestId: payload.clientRequestId, channelId: payload.channelId, draft: originalInput, payload };
+    unconfirmedSends.value = [...unconfirmedSends.value, unconfirmed];
+    persistUnconfirmed();
     const result = await options.sendMessage(payload);
+    if (result.ok) confirmUnconfirmed(payload.clientRequestId);
+    else if (result.reason === "disconnected" || result.reason === "busy" || result.code === "not_sent" || result.code === "conflict") {
+      unconfirmedSends.value = unconfirmedSends.value.filter((item) => item.clientRequestId !== payload.clientRequestId);
+      persistUnconfirmed();
+    }
     const submittedComposerIsCurrent =
       input.value === originalInput &&
       selectedMusicMention.value === originalMusicMention &&
@@ -421,6 +493,8 @@ export function useComposer(options: UseComposerOptions) {
   }
 
   return {
+    unconfirmedSends: visibleUnconfirmedSends,
+    retryUnconfirmed,
     slashCommandToken,
     matchingSlashCommands,
     mentionToken,

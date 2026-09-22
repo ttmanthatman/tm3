@@ -111,6 +111,77 @@ test("管理员登录并进入默认频道", async ({ page }) => {
   await expect(chatTools).toBeHidden();
 });
 
+test("同一发送请求在 ACK 重试后只落一条消息", async ({ page }) => {
+  await loginAsAdmin(page);
+  const content = `ACK 重放回归 ${Date.now()}`;
+  const result = await page.evaluate(async (text) => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as
+      | { _s?: Map<string, Record<string, unknown>> }
+      | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => "connectionState" in candidate && "socket" in candidate);
+    const socket = store?.socket as { timeout: (ms: number) => { emit: (event: string, data: unknown, ack: (error: Error | null, result?: { success?: boolean; messageId?: number; deduplicated?: boolean; state?: string }) => void) => void } } | undefined;
+    if (!socket || typeof store?.currentChannelId !== "number") throw new Error("chat socket was not found");
+    const clientRequestId = crypto.randomUUID();
+    const send = () => new Promise<{ success?: boolean; messageId?: number; deduplicated?: boolean }>((resolve, reject) => {
+      socket.timeout(10_000).emit("message:send", { channelId: store.currentChannelId, content: text, type: "text", clientRequestId }, (error, ack) => error ? reject(error) : resolve(ack || {}));
+    });
+    const first = await send();
+    const replay = await send();
+    const status = await new Promise<{ state?: string; messageId?: number }>((resolve, reject) => {
+      socket.timeout(10_000).emit("message:status", { clientRequestId }, (error, ack) => error ? reject(error) : resolve(ack || {}));
+    });
+    return { first, replay, status };
+  }, content);
+  expect(result.first.success).toBe(true);
+  expect(result.replay).toMatchObject({ success: true, messageId: result.first.messageId, deduplicated: true });
+  expect(result.status).toMatchObject({ state: "sent", messageId: result.first.messageId });
+  await expect(page.locator("[data-message-id]").filter({ hasText: content })).toHaveCount(1);
+});
+
+test("未确认消息在刷新后仍可从窄屏和桌面重试", async ({ page }) => {
+  await loginAsAdmin(page);
+  await page.evaluate(() => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as
+      | { _s?: Map<string, Record<string, unknown>> }
+      | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => "connectionState" in candidate && "socket" in candidate);
+    const socket = store?.socket as { emit: (...args: unknown[]) => unknown } | undefined;
+    if (!socket) throw new Error("chat socket was not found");
+    const originalEmit = socket.emit.bind(socket);
+    let failNextSend = true;
+    socket.emit = (...args: unknown[]) => {
+      if (args[0] === "message:send" && failNextSend) {
+        failNextSend = false;
+        const ack = args.at(-1) as ((error: Error) => void) | undefined;
+        queueMicrotask(() => ack?.(new Error("simulated lost ACK")));
+        return socket;
+      }
+      return originalEmit(...args);
+    };
+  });
+  const content = `待确认重试 ${Date.now()}`;
+  await page.locator(".composer-main textarea").fill(content);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  const row = page.locator(".composer-unconfirmed-row");
+  await expect(row).toContainText(content);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect.poll(async () => {
+      const box = await row.boundingBox();
+      return box ? box.x >= 0 && box.x + box.width <= width : false;
+    }).toBe(true);
+  }
+  await page.reload();
+  await expect(row).toContainText(content);
+  await row.getByRole("button", { name: "重试" }).click();
+  await expect(row).toHaveCount(0);
+  await expect(page.locator("[data-message-id]").filter({ hasText: content })).toHaveCount(1);
+});
+
 test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   test.setTimeout(60_000);
   const roomName = "浏览器验收会客厅";

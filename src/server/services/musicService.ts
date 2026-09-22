@@ -8,7 +8,7 @@ type MusicScorePageRecord = Pick<MusicScorePage, "id" | "pageIndex" | "fileName"
 type MusicTrackRecord = Pick<Message, "id" | "fileName" | "fileSize" | "createdAt" | "musicOrder" | "payload"> & {
   sender?: { accountId: number | null; displayName?: string | null };
   musicScores?: Array<Pick<MusicScore, "id" | "title"> & { pages: MusicScorePageRecord[] }>;
-  musicLyrics?: Pick<MusicLyrics, "id" | "fileName" | "content"> | null;
+  musicLyrics?: Pick<MusicLyrics, "id" | "fileName"> & Partial<Pick<MusicLyrics, "content">> | null;
   _count?: { musicPlays: number };
 };
 
@@ -22,7 +22,7 @@ type MusicPlaybackStateRecord = {
 };
 
 export type MusicService = {
-  serializeTrack(message: MusicTrackRecord, fallbackOrder?: number, favorited?: boolean, canManage?: boolean): MusicTrackDTO;
+  serializeTrack(message: MusicTrackRecord, fallbackOrder?: number, favorited?: boolean, canManage?: boolean, includeDetail?: boolean): MusicTrackDTO;
   playlistDto(playlistId: number, viewerAccountId: number): Promise<MusicPlaylistDTO | null>;
   canAccessPlaylist(accountId: number, playlistId: number): Promise<boolean>;
   canManageAccount(accountId: number): Promise<boolean>;
@@ -39,7 +39,8 @@ export function createMusicService(deps: {
     message: MusicTrackRecord,
     fallbackOrder = 0,
     favorited?: boolean,
-    canManage = false
+    canManage = false,
+    includeDetail = true
   ): MusicTrackDTO {
     const fileName = message.fileName || "未命名歌曲.mp3";
     const info = musicTrackInfo(message.payload);
@@ -72,10 +73,16 @@ export function createMusicService(deps: {
         };
       }),
       lyrics: message.musicLyrics
-        ? { id: message.musicLyrics.id, fileName: message.musicLyrics.fileName, cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) }
+        ? {
+            id: message.musicLyrics.id,
+            fileName: message.musicLyrics.fileName,
+            ...(includeDetail && message.musicLyrics.content !== undefined
+              ? { cues: parseLyrics(message.musicLyrics.content, message.musicLyrics.fileName) }
+              : {})
+          }
         : null,
       background: info.background,
-      lyricsText: info.lyricsText
+      lyricsText: includeDetail ? info.lyricsText : null
     };
   }
 
@@ -96,7 +103,7 @@ export function createMusicService(deps: {
               include: {
                 sender: { select: { accountId: true, displayName: true } },
                 musicScores: { orderBy: { id: "asc" }, include: { pages: { orderBy: { pageIndex: "asc" } } } },
-                musicLyrics: true,
+                musicLyrics: { select: { id: true, fileName: true } },
                 _count: { select: { musicPlays: true } }
               }
             }
@@ -114,7 +121,7 @@ export function createMusicService(deps: {
     const tracks = playlist.tracks
       .filter((item) => item.track.channelId && item.track.type === "file" && isMusicFileName(item.track.fileName))
       .map((item, index) =>
-        serializeTrack(item.track, index, favoriteIds.has(item.trackId), viewerCanManageAll || item.track.sender.accountId === viewerAccountId)
+        serializeTrack(item.track, index, favoriteIds.has(item.trackId), viewerCanManageAll || item.track.sender.accountId === viewerAccountId, false)
       );
     return {
       id: playlist.id,

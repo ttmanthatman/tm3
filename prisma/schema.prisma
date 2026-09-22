@@ -349,6 +349,8 @@ model Message {
   id              Int                   @id @default(autoincrement())
   channelId       Int                   @map("channel_id")
   senderActorId   Int                   @map("sender_actor_id")
+  clientRequestId String?               @map("client_request_id") @db.VarChar(64)
+  clientRequestHash String?             @map("client_request_hash") @db.Char(64)
   content         String?               @db.Text
   type            MessageType           @default(text)
   payload         Json?
@@ -379,6 +381,7 @@ model Message {
   musicPlaybackStates MusicPlaybackState[]
 
   @@index([channelId, id])
+  @@unique([senderActorId, clientRequestId])
   @@index([replyToId])
   @@index([chainRootId])
   @@map("messages")
