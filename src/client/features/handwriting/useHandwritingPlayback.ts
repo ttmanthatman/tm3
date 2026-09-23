@@ -212,9 +212,10 @@ export function handwritingGridMetrics(payload: HandwritingPayload | null | unde
 }
 
 export function handwritingMessageEstimatedHeight(payload: unknown, viewportWidth = 1280) {
-  const { columns, rows } = handwritingGridMetrics(parseStoredHandwritingPayload(payload), viewportWidth);
+  const parsed = parseStoredHandwritingPayload(payload);
+  const { columns, rows } = handwritingGridMetrics(parsed, viewportWidth);
   const available = viewportWidth >= 768 ? 360 : Math.max(180, viewportWidth - 106);
   const gridWidth = Math.min(360, columns * 54, available);
   const cell = gridWidth / columns;
-  return Math.ceil(25 + rows * cell);
+  return Math.ceil(25 + rows * cell + (parsed?.paper ? 16 : 0));
 }

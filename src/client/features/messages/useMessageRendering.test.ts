@@ -3,6 +3,7 @@ import test from "node:test";
 import { nextTick } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 import type { AccountDTO, MessageDTO } from "../../../shared/types";
+import { HANDWRITING_DEFAULT_PREFERENCES } from "@shared/handwriting";
 
 class MemoryStorage implements Storage {
   private readonly values = new Map<string, string>();
@@ -40,6 +41,7 @@ const { useMessageRendering } = await import("./useMessageRendering");
 
 function account(id: number): AccountDTO {
   return {
+    handwritingPreferences: HANDWRITING_DEFAULT_PREFERENCES,
     id,
     username: `user-${id}`,
     displayName: `User ${id}`,

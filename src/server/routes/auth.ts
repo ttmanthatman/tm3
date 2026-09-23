@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { AdminLoginLogKind } from "../../shared/types.js";
 import { cleanBibleWorkspaceState } from "../bible/workspaceState.js";
 import { biblePreferencesJson } from "../biblePreferences.js";
+import { handwritingPreferencesJson } from "../handwritingPreferences.js";
 import { cleanThemeId } from "./appearance.js";
 
 export type AuthRouteAuthContext = {
@@ -256,7 +257,16 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
             quotationStyle: z.string().optional()
           })
           .optional(),
-        bibleWorkspace: z.unknown().nullable().optional()
+        bibleWorkspace: z.unknown().nullable().optional(),
+        handwritingPreferences: z
+          .object({
+            strokeColors: z.array(z.string()).length(7).optional(),
+            customColor: z.string().optional(),
+            selectedIndex: z.number().int().min(0).max(7).optional(),
+            paperEnabled: z.boolean().optional(),
+            paperColor: z.string().optional()
+          })
+          .optional()
       })
       .parse(request.body);
     const data: Prisma.AccountUpdateInput = {};
@@ -279,6 +289,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
         }
       }
       data.biblePreferences = biblePreferencesJson(merged);
+    }
+    if (body.handwritingPreferences !== undefined) {
+      const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { handwritingPreferences: true } });
+      data.handwritingPreferences = handwritingPreferencesJson({
+        ...(current?.handwritingPreferences as Record<string, unknown> | null | undefined),
+        ...body.handwritingPreferences
+      });
     }
     const account = Object.keys(data).length
       ? await prisma.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })

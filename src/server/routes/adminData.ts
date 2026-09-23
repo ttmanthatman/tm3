@@ -11,6 +11,7 @@ import { storyGender } from "../../shared/stories.js";
 import { HANDWRITING_CONTENT } from "../../shared/handwriting.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
 import { cleanBiblePreferences, biblePreferencesJson } from "../biblePreferences.js";
+import { cleanHandwritingPreferences, handwritingPreferencesJson } from "../handwritingPreferences.js";
 import { applyFileResponseHeaders } from "../fileResponses.js";
 import { compressImageFile, displayWebpFileName, isImageFileName } from "../imageProcessing.js";
 import { serializePinnedBody, pinnedBodyUploadFilePaths } from "../pinnedBody.js";
@@ -665,6 +666,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
         canPinMessages: account.canPinMessages,
         theme: account.theme,
         biblePreferences: cleanBiblePreferences(account.biblePreferences),
+        handwritingPreferences: cleanHandwritingPreferences(account.handwritingPreferences),
         createdAt: account.createdAt,
         updatedAt: account.updatedAt,
         actor: account.actor
@@ -1047,6 +1049,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       const role = item.role === "admin" ? "admin" : "user";
       const theme = THEMES.has(item.theme) ? item.theme : "wechat";
       const biblePreferences = biblePreferencesJson(item.biblePreferences);
+      const handwritingPreferences = handwritingPreferencesJson(item.handwritingPreferences);
       const passwordHash = String(item.passwordHash || (await bcrypt.hash(crypto.randomUUID(), 12)));
       const account = await prisma.account.upsert({
         where: { username: String(item.username) },
@@ -1061,7 +1064,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
           role,
           canPinMessages: !!item.canPinMessages,
           theme,
-          biblePreferences
+          biblePreferences,
+          handwritingPreferences
         },
         create: {
           id: Number(item.id) || undefined,
@@ -1077,6 +1081,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
           canPinMessages: !!item.canPinMessages,
           theme,
           biblePreferences,
+          handwritingPreferences,
           createdAt: parseDate(item.createdAt),
           actor: {
             create: {

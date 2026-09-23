@@ -301,6 +301,7 @@ async function rebuildDemoDatabase(prisma: PrismaClient, snapshot: DemoSnapshot,
           canPinMessages: account.canPinMessages === true,
           theme: account.theme || "wechat",
           biblePreferences: jsonValue(account.biblePreferences),
+          handwritingPreferences: jsonValue(account.handwritingPreferences),
           actor: {
             create: {
               kind: "human",

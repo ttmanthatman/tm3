@@ -218,6 +218,8 @@ import { useMessageForward } from "./features/messages/useMessageForward";
 import { useMediaPreview, type PinnedMediaBlock } from "./features/messages/useMediaPreview";
 import { useMessageRecall } from "./features/messages/useMessageRecall";
 import { useMessageSelection } from "./features/messages/useMessageSelection";
+import { HANDWRITING_DEFAULT_PREFERENCES, type HandwritingPreferencesDTO } from "@shared/handwriting";
+import type { AccountDTO } from "@shared/types";
 import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearanceSettings";
 import HandwritingComposer from "./features/handwriting/HandwritingComposer.vue";
 import { handwritingPlaybackRegistry } from "./features/handwriting/handwritingPlaybackRegistry";
@@ -349,6 +351,31 @@ async function saveHandwritingDraft(payload: HandwritingComposerSnapshot["payloa
   } catch {
     // useHandwritingMessaging reports draft failures; clearDraft is best-effort cleanup.
   }
+}
+
+let handwritingPreferencesSaveChain = Promise.resolve();
+let handwritingPreferencesRevision = 0;
+
+function saveHandwritingPreferences(preferences: HandwritingPreferencesDTO) {
+  if (!store.account) return;
+  const account = store.account;
+  const previous = account.handwritingPreferences;
+  account.handwritingPreferences = preferences;
+  const revision = ++handwritingPreferencesRevision;
+  handwritingPreferencesSaveChain = handwritingPreferencesSaveChain.then(async () => {
+    if (revision !== handwritingPreferencesRevision) return;
+    try {
+      const result = await api<{ account: AccountDTO }>("/api/me/preferences", {
+        method: "PATCH",
+        body: JSON.stringify({ handwritingPreferences: preferences })
+      });
+      if (result.account && revision === handwritingPreferencesRevision) store.account = result.account;
+    } catch {
+      if (revision === handwritingPreferencesRevision && store.account?.id === account.id) {
+        store.account.handwritingPreferences = previous;
+      }
+    }
+  });
 }
 
 async function submitHandwriting(payload: HandwritingComposerSnapshot["payload"], revision: number) {
@@ -6345,13 +6372,16 @@ const messageRowBindings = {
 
     <HandwritingComposer
       :open="handwritingComposerOpen"
+      :account-id="store.account?.id || 0"
       :draft-state="handwritingDraftState"
       :busy="handwritingComposerBusy"
       :status="handwritingComposerStatus"
       :socket-ready="socketReadyToSend"
       :reply-label="replyTo ? `${replyTo.sender.displayName}：${replyPreviewText(replyTo) || replyTo.type}` : ''"
+      :preferences="store.account?.handwritingPreferences || HANDWRITING_DEFAULT_PREFERENCES"
       @close="handwritingComposerOpen = false"
       @draft-change="saveHandwritingDraft"
+      @preferences-change="saveHandwritingPreferences"
       @submit="submitHandwriting"
     />
 

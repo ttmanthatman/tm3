@@ -176,7 +176,8 @@ try {
     ...(account.avatarPath ? { avatarAssetKey: addAsset("avatar", account.avatarPath) } : {}),
     canPinMessages: account.canPinMessages,
     theme: account.theme,
-    biblePreferences: account.biblePreferences
+    biblePreferences: account.biblePreferences,
+    handwritingPreferences: account.handwritingPreferences
   }));
 
   const snapshotCharacters = virtualCharacters.map((character) => ({

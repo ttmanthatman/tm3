@@ -88,6 +88,22 @@ async function drawStroke(page: Page, canvas: Locator, points: Array<[number, nu
   await page.mouse.up();
 }
 
+async function setNativeColor(dialog: Locator, label: string, color: string) {
+  const input = dialog.locator(`input[aria-label="${label}"]`);
+  await input.evaluate((element, value) => {
+    const field = element as HTMLInputElement;
+    field.value = value;
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+  }, color);
+}
+
+async function longPressColorButton(dialog: Locator, label: string) {
+  const button = dialog.getByRole("button", { name: label, exact: true });
+  await button.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "mouse", button: 0 });
+  await dialog.page().waitForTimeout(500);
+  await button.dispatchEvent("pointerup", { pointerId: 1, pointerType: "mouse", button: 0 });
+}
+
 async function composeTwoCharacters(page: Page, dialog: Locator) {
   const canvas = dialog.getByLabel("当前手写字格");
   await dialog.getByRole("button", { name: "选择朱红", exact: true }).click();
@@ -99,7 +115,7 @@ async function composeTwoCharacters(page: Page, dialog: Locator) {
   await dialog.getByRole("button", { name: "选择蓝色", exact: true }).click();
   await drawStroke(page, canvas, [[0.22, 0.3], [0.78, 0.3]]);
   await drawStroke(page, canvas, [[0.3, 0.2], [0.7, 0.78]]);
-  await expect(dialog.getByText("发送时会包含尚未点“完成此字”的最后一字。", { exact: true })).toBeVisible();
+  await expect(dialog.getByText(/发送时会包含尚未点“完成此字”的最后一字。/)).toBeVisible();
 }
 
 async function expectComposerInsideViewport(page: Page, dialog: Locator) {
@@ -181,6 +197,15 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     const dialog = await openHandwritingComposer(sender);
     await expect(dialog.getByText("已完成的字", { exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("group", { name: "笔画颜色", exact: true })).toBeVisible();
+    await expect(dialog.getByText("当前字格", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toHaveCount(0);
+    await expect(dialog.getByText("小秘密：长按调出调色盘", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "自定义颜色", exact: true })).toBeVisible();
+    await setNativeColor(dialog, "自定义笔画颜色", "#123456");
+    await longPressColorButton(dialog, "选择朱红");
+    await setNativeColor(dialog, "替换颜色按钮", "#ff2d55");
+    await dialog.getByRole("checkbox", { name: "显示纸张" }).check();
+    await setNativeColor(dialog, "纸张颜色", "#fff1d6");
     await expectComposerInsideViewport(sender, dialog);
     await composeTwoCharacters(sender, dialog);
     await dialog.getByRole("button", { name: "预览播放", exact: true }).click();
@@ -193,6 +218,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
 
     const receiverMessage = receiver.getByRole("button", { name: "手写消息，共 2 字，点击重新播放", exact: true }).last();
     await expect(receiverMessage).toBeVisible();
+    expect(await receiverMessage.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 241, 214)");
     await receiver.waitForTimeout(950);
     expect(await distinctSampleCount(receiver, "realtime")).toBeGreaterThan(1);
 
@@ -206,9 +232,10 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     });
     expect((receiverDto!.payload as { characters: unknown[] }).characters).toHaveLength(2);
     expect(receiverDto!.payload).toMatchObject({
+      paper: { color: "#fff1d6" },
       characters: [
-        { strokes: [{ color: "#c44536" }, { color: "#c44536" }] },
-        { strokes: [{ color: "#2f6fdd" }, { color: "#2f6fdd" }] }
+        { strokes: [{ color: "#ff2d55" }, { color: "#ff2d55" }] },
+        { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
       ]
     });
 
@@ -251,6 +278,14 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     expect(recall).toMatchObject({ ok: true, status: 200, body: { success: true } });
     await expect(receiver.locator(`[data-message-id="${senderDto!.id}"]`)).toContainText("撤回了一条消息");
     await expect(receiverMessage).toHaveCount(0);
+
+    await sender.reload();
+    await expect.poll(() => connectionState(sender)).toBe("connected");
+    const savedDialog = await openHandwritingComposer(sender);
+    await expect(savedDialog.locator('input[aria-label="自定义笔画颜色"]')).toHaveValue("#123456");
+    await expect(savedDialog.getByRole("checkbox", { name: "显示纸张" })).toBeChecked();
+    await expect(savedDialog.locator('input[aria-label="纸张颜色"]')).toHaveValue("#fff1d6");
+    await expect(savedDialog.getByRole("button", { name: "选择蓝色", exact: true })).toHaveAttribute("aria-pressed", "true");
   } finally {
     await Promise.all([senderSession.context.close(), receiverSession.context.close()]);
   }

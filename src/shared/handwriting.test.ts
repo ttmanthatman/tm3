@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   HANDWRITING_DEFAULT_COLOR,
+  HANDWRITING_DEFAULT_PREFERENCES,
   HANDWRITING_DRAFT_LIMITS,
+  HANDWRITING_PRESET_COLORS,
   HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
   HandwritingValidationError,
   handwritingPayloadBytes,
+  normalizeHandwritingPreferences,
   normalizeHandwritingPayload,
   parseStoredHandwritingPayload,
   type HandwritingPayload
@@ -30,18 +33,48 @@ test("accepts single-point strokes and resets time for each character", () => {
   assert.deepEqual(normalizeHandwritingPayload(input), input);
 });
 
-test("normalizes supported per-stroke colors while keeping legacy ink payloads canonical", () => {
+test("normalizes preset and custom per-stroke colors while keeping legacy ink payloads canonical", () => {
   const colored = payload();
   colored.characters[0].strokes[0].color = HANDWRITING_STROKE_COLORS[2];
   assert.deepEqual(normalizeHandwritingPayload(colored), colored);
+
+  const custom = payload();
+  custom.characters[0].strokes[0].color = "#AABBCC";
+  assert.equal(normalizeHandwritingPayload(custom).characters[0].strokes[0].color, "#aabbcc");
 
   const explicitDefault = payload();
   explicitDefault.characters[0].strokes[0].color = HANDWRITING_DEFAULT_COLOR;
   assert.deepEqual(normalizeHandwritingPayload(explicitDefault), payload());
 
   const unsupported = payload();
-  unsupported.characters[0].strokes[0].color = "#ffffff" as never;
+  unsupported.characters[0].strokes[0].color = "#ffff" as never;
   assert.throws(() => normalizeHandwritingPayload(unsupported), /颜色/);
+});
+
+test("keeps optional paper color in sent payloads and rejects malformed paper metadata", () => {
+  const paper = payload();
+  paper.paper = { color: "#FFF4D6" };
+  assert.deepEqual(normalizeHandwritingPayload(paper), { ...paper, paper: { color: "#fff4d6" } });
+  assert.throws(() => normalizeHandwritingPayload({ ...payload(), paper: {} }), HandwritingValidationError);
+  assert.throws(() => normalizeHandwritingPayload({ ...payload(), paper: { color: "white" } }), HandwritingValidationError);
+});
+
+test("normalizes account palette order, custom color, selection and paper preference", () => {
+  const preferences = normalizeHandwritingPreferences({
+    strokeColors: ["#112233", "#FFEEDD"],
+    customColor: "#ABCDEF",
+    selectedIndex: 7,
+    paperEnabled: true,
+    paperColor: "#123456"
+  });
+  assert.deepEqual(preferences.strokeColors, ["#112233", "#ffeedd", ...HANDWRITING_PRESET_COLORS.slice(2)]);
+  assert.equal(preferences.customColor, "#abcdef");
+  assert.equal(preferences.selectedIndex, 7);
+  assert.deepEqual({ paperEnabled: preferences.paperEnabled, paperColor: preferences.paperColor }, {
+    paperEnabled: true,
+    paperColor: "#123456"
+  });
+  assert.deepEqual(normalizeHandwritingPreferences(null), HANDWRITING_DEFAULT_PREFERENCES);
 });
 
 test("rejects unknown fields, versions, empty arrays, non-finite values, ranges and decreasing time", () => {

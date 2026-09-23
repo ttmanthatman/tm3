@@ -98,7 +98,8 @@ const accountSchema = z.object({
   avatarAssetKey: z.string().regex(KEY_PATTERN).optional(),
   canPinMessages: z.boolean().optional(),
   theme: z.string().max(32).optional(),
-  biblePreferences: z.unknown().optional()
+  biblePreferences: z.unknown().optional(),
+  handwritingPreferences: z.unknown().optional()
 }).strict();
 
 const virtualCharacterSchema = z.object({

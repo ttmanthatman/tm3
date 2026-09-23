@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AccountDTO } from "@shared/types";
+import { HANDWRITING_DEFAULT_PREFERENCES } from "@shared/handwriting";
 import {
   adminAccountDeleteConfirmation,
   canDeleteAdminAccount,
@@ -13,6 +14,7 @@ import {
 
 function account(overrides: Partial<AccountDTO> = {}): AccountDTO {
   return {
+    handwritingPreferences: HANDWRITING_DEFAULT_PREFERENCES,
     id: 1,
     username: "admin",
     displayName: "管理员",

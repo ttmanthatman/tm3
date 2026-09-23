@@ -49,6 +49,7 @@ export interface DemoAccountRecord {
   canPinMessages?: boolean;
   theme?: string;
   biblePreferences?: unknown;
+  handwritingPreferences?: unknown;
 }
 
 export interface DemoVirtualCharacterRecord {

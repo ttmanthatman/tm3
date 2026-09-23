@@ -8,6 +8,7 @@ const props = defineProps<{
   strokes: HandwritingStroke[];
   disabled?: boolean;
   ariaLabel?: string;
+  backgroundColor?: string;
 }>();
 
 const emit = defineEmits<{
@@ -120,7 +121,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="handwriting-pad">
+  <div class="handwriting-pad" :style="{ backgroundColor: backgroundColor || '#fff' }">
     <canvas
       ref="canvas"
       class="handwriting-pad-canvas"

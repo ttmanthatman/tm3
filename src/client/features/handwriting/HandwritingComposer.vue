@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { Check, Eraser, Play, RotateCcw, Send, Trash2, X } from "lucide-vue-next";
-import type { HandwritingPayload } from "@shared/handwriting";
+import { Check, Play, RotateCcw, Send, Trash2, X } from "lucide-vue-next";
+import {
+  HANDWRITING_CUSTOM_COLOR_INDEX,
+  normalizeHandwritingColor,
+  normalizeHandwritingPreferences,
+  type HandwritingColor,
+  type HandwritingPayload,
+  type HandwritingPreferencesDTO
+} from "@shared/handwriting";
 import AppModal from "../../components/ui/AppModal.vue";
+import HandwritingPalette from "./HandwritingPalette.vue";
 import HandwritingPad from "./HandwritingPad.vue";
 import { createHandwritingDraftScheduler } from "./handwritingDraftScheduler";
 import { drawHandwritingCharacter } from "./handwritingRenderer";
@@ -15,16 +23,19 @@ import {
 
 const props = defineProps<{
   open: boolean;
+  accountId: number;
   draftState: HandwritingComposerSnapshot;
   busy: boolean;
   status: string;
   socketReady: boolean;
   replyLabel?: string;
+  preferences: HandwritingPreferencesDTO;
 }>();
 
 const emit = defineEmits<{
   close: [];
   "draft-change": [payload: HandwritingPayload | null, revision: number];
+  "preferences-change": [preferences: HandwritingPreferencesDTO];
   submit: [payload: HandwritingPayload, revision: number];
 }>();
 
@@ -52,10 +63,45 @@ const displayCharacters = computed(() => currentCharacter.value.strokes.length
 );
 const canFinishCharacter = computed(() => !props.busy && currentCharacter.value.strokes.length > 0);
 const canSubmit = computed(() => !props.busy && props.socketReady && hasContent.value);
-const colorOptions = composer.palette.map((value, index) => ({
-  value,
-  label: ["墨色", "朱红", "橙色", "金色", "绿色", "蓝色", "紫色", "玫红"][index]
-}));
+const palettePreferences = ref(normalizeHandwritingPreferences(props.preferences));
+const activeColor = computed<HandwritingColor>(() => palettePreferences.value.selectedIndex === HANDWRITING_CUSTOM_COLOR_INDEX
+  ? palettePreferences.value.customColor
+  : palettePreferences.value.strokeColors[palettePreferences.value.selectedIndex]
+);
+const previewPaperStyle = computed(() => composer.paperEnabled.value
+  ? { backgroundColor: composer.paperColor.value }
+  : { backgroundColor: "#fff" }
+);
+
+function publishPreferences() {
+  emit("preferences-change", normalizeHandwritingPreferences(palettePreferences.value));
+}
+
+function selectPaletteColor(index: number) {
+  if (props.busy) return;
+  palettePreferences.value.selectedIndex = index;
+  composer.selectColor(activeColor.value);
+  publishPreferences();
+}
+
+function replacePaletteColor(index: number, color: HandwritingColor) {
+  palettePreferences.value.strokeColors[index] = normalizeHandwritingColor(color, palettePreferences.value.strokeColors[index]);
+  palettePreferences.value.selectedIndex = index;
+  composer.selectColor(palettePreferences.value.strokeColors[index]);
+}
+
+function replaceCustomColor(color: HandwritingColor) {
+  palettePreferences.value.customColor = normalizeHandwritingColor(color, palettePreferences.value.customColor);
+  palettePreferences.value.selectedIndex = HANDWRITING_CUSTOM_COLOR_INDEX;
+  composer.selectColor(palettePreferences.value.customColor);
+}
+
+function changePaper(enabled: boolean, color: HandwritingColor) {
+  palettePreferences.value.paperEnabled = enabled;
+  palettePreferences.value.paperColor = normalizeHandwritingColor(color, palettePreferences.value.paperColor);
+  updateAfter(() => composer.setPaper(enabled, palettePreferences.value.paperColor));
+  publishPreferences();
+}
 
 function persistDraft() {
   emit("draft-change", composer.draftSnapshot(), revision.value);
@@ -185,9 +231,18 @@ watch(
   { deep: true, immediate: true }
 );
 watch(() => props.open, (open) => {
-  if (open) return;
+  if (open) {
+    composer.selectColor(activeColor.value);
+    composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
+    return;
+  }
   draftScheduler.flush();
   stopPreview(true);
+});
+watch(() => props.accountId, () => {
+  palettePreferences.value = normalizeHandwritingPreferences(props.preferences);
+  composer.selectColor(activeColor.value);
+  composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
 });
 watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 onBeforeUnmount(() => {
@@ -207,29 +262,23 @@ onBeforeUnmount(() => {
     @close="emit('close')"
   >
     <div class="handwriting-composer-body">
-      <section class="handwriting-current" aria-labelledby="handwriting-current-title">
-        <header>
-          <strong id="handwriting-current-title">当前字格</strong>
-          <span>{{ displayCharacters.length }} / 30 · 写完后手动完成</span>
-        </header>
-        <div class="handwriting-palette" role="group" aria-label="笔画颜色">
-          <span>笔画颜色</span>
-          <button
-            v-for="option in colorOptions"
-            :key="option.value"
-            type="button"
-            class="handwriting-color"
-            :class="{ selected: composer.selectedColor.value === option.value }"
-            :style="{ '--swatch-color': option.value }"
-            :aria-label="`选择${option.label}`"
-            :aria-pressed="composer.selectedColor.value === option.value"
-            :title="option.label"
-            @click="composer.selectColor(option.value)"
-          ><Check v-if="composer.selectedColor.value === option.value" :size="14" /></button>
-        </div>
+      <section class="handwriting-current">
+        <HandwritingPalette
+          :colors="palettePreferences.strokeColors"
+          :custom-color="palettePreferences.customColor"
+          :selected-index="palettePreferences.selectedIndex"
+          :paper-enabled="palettePreferences.paperEnabled"
+          :paper-color="palettePreferences.paperColor"
+          :disabled="busy"
+          @select="selectPaletteColor"
+          @slot-change="replacePaletteColor"
+          @custom-change="replaceCustomColor"
+          @paper-change="changePaper"
+        />
         <HandwritingPad
           :strokes="currentCharacter.strokes"
           :disabled="busy"
+          :background-color="composer.paperEnabled.value ? composer.paperColor.value : '#ffffff'"
           aria-label="当前手写字格"
           @stroke-start="strokeStart"
           @stroke-point="point"
@@ -238,7 +287,6 @@ onBeforeUnmount(() => {
         />
         <div class="handwriting-pad-actions">
           <button type="button" :disabled="busy || !currentCharacter.strokes.length" @click="updateAfter(() => composer.undoStroke())"><RotateCcw :size="16" />撤销一笔</button>
-          <button type="button" :disabled="busy || !currentCharacter.strokes.length" @click="updateAfter(() => composer.clearCurrent())"><Eraser :size="16" />清空当前字</button>
           <button type="button" :disabled="!canFinishCharacter" @click="updateAfter(() => composer.finishCharacter())"><Check :size="16" />完成此字</button>
         </div>
         <p class="handwriting-status" :class="{ error: composer.errorMessage }" role="status">{{ composer.errorMessage || status }}</p>
@@ -263,11 +311,12 @@ onBeforeUnmount(() => {
               type="button"
               class="handwriting-preview-cell editable"
               :disabled="busy"
+              :style="previewPaperStyle"
               :aria-label="`删除第 ${index + 1} 个字格`"
               title="删除整个字并重写"
               @click="updateAfter(() => composer.deleteCharacter(index))"
             ><canvas aria-hidden="true"></canvas></button>
-            <div v-else class="handwriting-preview-cell current" aria-label="当前未完成字格"><canvas aria-hidden="true"></canvas></div>
+            <div v-else class="handwriting-preview-cell current" :style="previewPaperStyle" aria-label="当前未完成字格"><canvas aria-hidden="true"></canvas></div>
           </template>
         </div>
         <div v-else class="handwriting-empty">还没有可预览的字</div>
@@ -304,12 +353,7 @@ onBeforeUnmount(() => {
 .handwriting-text-action { margin-left: auto; border: 0; background: transparent; color: #47705a; padding: 6px; }
 .handwriting-text-action.danger { color: #a24e43; }
 .handwriting-empty { border: 1px dashed #d8ded5; padding: 14px; text-align: center; color: #929b91; font-size: 12px; }
-.handwriting-current > header span { margin-left: auto; }
-.handwriting-palette { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 0 auto 12px; }
-.handwriting-palette > span { color: #6f7e73; font-size: 12px; margin-right: 2px; }
-.handwriting-color { --swatch-color: #263b33; width: 30px; height: 30px; padding: 0; border: 3px solid #fff; border-radius: 50%; background: var(--swatch-color); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 1px #cfd8cf; }
-.handwriting-color.selected { box-shadow: 0 0 0 2px #355c48; }
-.handwriting-pad-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
+.handwriting-pad-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
 .handwriting-pad-actions button, .handwriting-replay, .handwriting-send { min-height: 38px; border: 1px solid #d7e0d5; border-radius: 7px; background: #f8faf7; color: #355c48; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .handwriting-status { min-height: 18px; margin: 7px 0 0; text-align: center; color: #7f8b80; font-size: 12px; }
 .handwriting-status.error { color: #a24e43; }
@@ -334,16 +378,9 @@ onBeforeUnmount(() => {
 button:disabled { opacity: .48; cursor: not-allowed; }
 @media (max-width: 600px) {
   .handwriting-composer-body { padding: 12px; }
-  .handwriting-palette { display: grid; grid-template-columns: repeat(8, 30px); justify-content: center; gap: 7px; }
-  .handwriting-palette > span { grid-column: 1 / -1; margin: 0; text-align: center; }
   .handwriting-preview-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
-  .handwriting-current > header { align-items: flex-start; }
-  .handwriting-current > header span { text-align: right; }
-  .handwriting-pad-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .handwriting-pad-actions button:last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 370px) {
-  .handwriting-palette { gap: 5px; }
   .handwriting-preview-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 </style>

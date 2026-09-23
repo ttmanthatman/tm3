@@ -5,6 +5,7 @@ import test from "node:test";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { AccountDTO } from "../../shared/types.js";
+import { HANDWRITING_DEFAULT_PREFERENCES } from "../../shared/handwriting.js";
 import {
   registerAdminAccountRoutes,
   type AdminAccountRouteDependencies
@@ -27,6 +28,7 @@ type StoredAccount = {
 
 function accountDto(account: StoredAccount): AccountDTO {
   return {
+    handwritingPreferences: HANDWRITING_DEFAULT_PREFERENCES,
     id: account.id,
     username: account.username,
     displayName: account.displayName,

@@ -2,9 +2,12 @@ import { computed, ref } from "vue";
 import {
   HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DRAFT_LIMITS,
+  HANDWRITING_DEFAULT_PAPER_COLOR,
+  HANDWRITING_PRESET_COLORS,
   HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
   isHandwritingStrokeColor,
+  normalizeHandwritingColor,
   normalizeHandwritingPayload,
   type HandwritingCharacter,
   type HandwritingPayload,
@@ -68,7 +71,9 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const revision = ref(initial?.revision || 0);
   const errorMessage = ref("");
   const activePointerId = ref<number | null>(null);
-  const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_COLOR);
+  const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_PRESET_COLORS[0]);
+  const paperEnabled = ref(false);
+  const paperColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_PAPER_COLOR);
   let timestampOrigin: number | null = null;
 
   const completedPointCount = computed(() => characters.value.reduce((sum, character) => sum + characterPointCount(character), 0));
@@ -97,6 +102,15 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   function selectColor(color: unknown) {
     if (!isHandwritingStrokeColor(color)) return false;
     selectedColor.value = color;
+    return true;
+  }
+
+  function setPaper(enabled: boolean, color?: unknown) {
+    const nextColor = normalizeHandwritingColor(color, paperColor.value);
+    if (paperEnabled.value === enabled && paperColor.value === nextColor) return false;
+    paperEnabled.value = enabled;
+    paperColor.value = nextColor;
+    touch();
     return true;
   }
 
@@ -214,7 +228,12 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const candidates = snapshotCharacters.value;
     if (!candidates.length) return null;
     try {
-      return normalizeHandwritingPayload({ kind: "handwriting", version: 1, characters: candidates }, HANDWRITING_SEND_LIMITS);
+      return normalizeHandwritingPayload({
+        kind: "handwriting",
+        version: 1,
+        characters: candidates,
+        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {})
+      }, HANDWRITING_SEND_LIMITS);
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : "手写内容暂无法发送";
       return null;
@@ -225,7 +244,12 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const candidates = snapshotCharacters.value;
     if (!candidates.length) return null;
     try {
-      return normalizeHandwritingPayload({ kind: "handwriting", version: 1, characters: candidates }, HANDWRITING_DRAFT_LIMITS);
+      return normalizeHandwritingPayload({
+        kind: "handwriting",
+        version: 1,
+        characters: candidates,
+        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {})
+      }, HANDWRITING_DRAFT_LIMITS);
     } catch {
       return null;
     }
@@ -240,7 +264,9 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     if (!next.payload) {
       characters.value = [];
       current.value = { strokes: [] };
-      selectedColor.value = HANDWRITING_DEFAULT_COLOR;
+      selectedColor.value = HANDWRITING_PRESET_COLORS[0];
+      paperEnabled.value = false;
+      paperColor.value = HANDWRITING_DEFAULT_PAPER_COLOR;
       return;
     }
     try {
@@ -249,10 +275,14 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       characters.value = normalized.characters.slice(0, -1).map(cloneCharacter);
       current.value = last ? cloneCharacter(last) : { strokes: [] };
       selectedColor.value = current.value.strokes.at(-1)?.color || HANDWRITING_DEFAULT_COLOR;
+      paperEnabled.value = !!normalized.paper;
+      paperColor.value = normalized.paper?.color || HANDWRITING_DEFAULT_PAPER_COLOR;
     } catch {
       characters.value = [];
       current.value = { strokes: [] };
-      selectedColor.value = HANDWRITING_DEFAULT_COLOR;
+      selectedColor.value = HANDWRITING_PRESET_COLORS[0];
+      paperEnabled.value = false;
+      paperColor.value = HANDWRITING_DEFAULT_PAPER_COLOR;
       errorMessage.value = "原手写草稿已损坏，已保留为新草稿";
     }
   }
@@ -267,6 +297,8 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     errorMessage,
     activePointerId,
     selectedColor,
+    paperEnabled,
+    paperColor,
     palette: HANDWRITING_STROKE_COLORS,
     completedPointCount,
     currentPointCount,
@@ -275,6 +307,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     hasContent,
     snapshotCharacters,
     selectColor,
+    setPaper,
     beginStroke,
     appendPoint,
     endStroke,

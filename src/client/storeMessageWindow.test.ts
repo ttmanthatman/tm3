@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { AccountDTO, ChannelDTO, MessageDTO } from "../shared/types";
+import { HANDWRITING_DEFAULT_PREFERENCES } from "../shared/handwriting";
 import { flushPendingPersists, messageWindowStorageKey, persistWindowNow } from "./messageWindowCache";
 
 class MemoryStorage implements Storage {
@@ -40,6 +41,7 @@ const { useChatStore } = await import("./store");
 
 function account(id: number): AccountDTO {
   return {
+    handwritingPreferences: HANDWRITING_DEFAULT_PREFERENCES,
     id,
     username: `user-${id}`,
     displayName: `User ${id}`,

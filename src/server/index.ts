@@ -70,6 +70,7 @@ import {
   parseAiVerseReferences
 } from "./aiSettings.js";
 import { cleanBiblePreferences } from "./biblePreferences.js";
+import { cleanHandwritingPreferences } from "./handwritingPreferences.js";
 import { applyFileResponseHeaders, applyFileValidation } from "./fileResponses.js";
 import {
   IMAGE_EXTENSIONS,
@@ -792,7 +793,8 @@ function authDto(account: AccountWithActor) {
     canPinMessages: account.canPinMessages,
     actorId: account.actor.id,
     theme: account.theme || "wechat",
-    biblePreferences: cleanBiblePreferences(account.biblePreferences)
+    biblePreferences: cleanBiblePreferences(account.biblePreferences),
+    handwritingPreferences: cleanHandwritingPreferences(account.handwritingPreferences)
   };
 }
 

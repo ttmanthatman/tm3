@@ -2,17 +2,44 @@ export const HANDWRITING_KIND = "handwriting" as const;
 export const HANDWRITING_VERSION = 1 as const;
 export const HANDWRITING_CONTENT = "[手写消息]" as const;
 export const HANDWRITING_DEFAULT_COLOR = "#263b33" as const;
-export const HANDWRITING_STROKE_COLORS = [
-  HANDWRITING_DEFAULT_COLOR,
-  "#c44536",
-  "#e07a3f",
-  "#c39218",
-  "#2f855a",
-  "#2f6fdd",
-  "#7656b5",
-  "#c04c82"
+export const HANDWRITING_PRESET_COLORS = [
+  "#ff4d6d",
+  "#ff8a3d",
+  "#f4c430",
+  "#24b86a",
+  "#268cff",
+  "#7557ff",
+  "#e84aa7"
 ] as const;
-export type HandwritingStrokeColor = (typeof HANDWRITING_STROKE_COLORS)[number];
+export const HANDWRITING_STROKE_COLORS = HANDWRITING_PRESET_COLORS;
+export const HANDWRITING_PRESET_LABELS = ["朱红", "橙色", "金黄", "绿色", "蓝色", "紫色", "玫红"] as const;
+export const HANDWRITING_PALETTE_SLOT_COUNT = HANDWRITING_PRESET_COLORS.length;
+export const HANDWRITING_CUSTOM_COLOR_INDEX = HANDWRITING_PALETTE_SLOT_COUNT;
+export const HANDWRITING_DEFAULT_CUSTOM_COLOR = HANDWRITING_DEFAULT_COLOR;
+export const HANDWRITING_DEFAULT_PAPER_COLOR = "#fffaf0" as const;
+
+export type HandwritingColor = `#${string}`;
+export type HandwritingStrokeColor = HandwritingColor;
+
+export type HandwritingPaper = {
+  color: HandwritingColor;
+};
+
+export type HandwritingPreferencesDTO = {
+  strokeColors: HandwritingColor[];
+  customColor: HandwritingColor;
+  selectedIndex: number;
+  paperEnabled: boolean;
+  paperColor: HandwritingColor;
+};
+
+export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
+  strokeColors: [...HANDWRITING_PRESET_COLORS],
+  customColor: HANDWRITING_DEFAULT_CUSTOM_COLOR,
+  selectedIndex: 0,
+  paperEnabled: false,
+  paperColor: HANDWRITING_DEFAULT_PAPER_COLOR
+};
 
 export type HandwritingPoint = readonly [x: number, y: number, t: number];
 export type HandwritingStroke = { points: HandwritingPoint[]; color?: HandwritingStrokeColor };
@@ -21,6 +48,7 @@ export type HandwritingPayload = {
   kind: typeof HANDWRITING_KIND;
   version: typeof HANDWRITING_VERSION;
   characters: HandwritingCharacter[];
+  paper?: HandwritingPaper;
 };
 
 export type HandwritingLimits = {
@@ -85,8 +113,41 @@ export function handwritingPayloadBytes(payload: HandwritingPayload): number {
   return new TextEncoder().encode(JSON.stringify(payload)).byteLength;
 }
 
+export function isHandwritingColor(value: unknown): value is HandwritingColor {
+  return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
+export function normalizeHandwritingColor(value: unknown, fallback: HandwritingColor): HandwritingColor {
+  return isHandwritingColor(value) ? value.toLowerCase() as HandwritingColor : fallback;
+}
+
 export function isHandwritingStrokeColor(value: unknown): value is HandwritingStrokeColor {
-  return typeof value === "string" && (HANDWRITING_STROKE_COLORS as readonly string[]).includes(value);
+  return isHandwritingColor(value);
+}
+
+export function normalizeHandwritingPreferences(value: unknown): HandwritingPreferencesDTO {
+  const row = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<HandwritingPreferencesDTO>
+    : {};
+  const strokeColors = Array.isArray(row.strokeColors)
+    ? row.strokeColors.slice(0, HANDWRITING_PALETTE_SLOT_COUNT).map((color, index) =>
+      normalizeHandwritingColor(color, HANDWRITING_PRESET_COLORS[index])
+    )
+    : [...HANDWRITING_PRESET_COLORS];
+  while (strokeColors.length < HANDWRITING_PALETTE_SLOT_COUNT) {
+    strokeColors.push(HANDWRITING_PRESET_COLORS[strokeColors.length]);
+  }
+  const rawIndex = Number(row.selectedIndex);
+  const selectedIndex = Number.isInteger(rawIndex) && rawIndex >= 0 && rawIndex <= HANDWRITING_CUSTOM_COLOR_INDEX
+    ? rawIndex
+    : 0;
+  return {
+    strokeColors,
+    customColor: normalizeHandwritingColor(row.customColor, HANDWRITING_DEFAULT_CUSTOM_COLOR),
+    selectedIndex,
+    paperEnabled: row.paperEnabled === true,
+    paperColor: normalizeHandwritingColor(row.paperColor, HANDWRITING_DEFAULT_PAPER_COLOR)
+  };
 }
 
 export function normalizeHandwritingPayload(
@@ -94,7 +155,7 @@ export function normalizeHandwritingPayload(
   limits: Readonly<HandwritingLimits> = HANDWRITING_SEND_LIMITS
 ): HandwritingPayload {
   if (!isPlainObject(input)) throw new HandwritingValidationError("invalid_shape", "手写数据格式无效");
-  assertFields(input, ["kind", "version", "characters"]);
+  assertFields(input, ["kind", "version", "characters", "paper"]);
   if (input.kind !== HANDWRITING_KIND) throw new HandwritingValidationError("invalid_shape", "手写数据类型无效");
   if (input.version !== HANDWRITING_VERSION) throw new HandwritingValidationError("unknown_version", "暂不支持此手写数据版本");
   if (!Array.isArray(input.characters) || input.characters.length === 0) {
@@ -102,6 +163,15 @@ export function normalizeHandwritingPayload(
   }
   if (input.characters.length > limits.maxCharacters) {
     throw new HandwritingValidationError("limit", `手写消息最多 ${limits.maxCharacters} 字`);
+  }
+  let paper: HandwritingPaper | undefined;
+  if (input.paper !== undefined) {
+    if (!isPlainObject(input.paper)) throw new HandwritingValidationError("invalid_shape", "手写纸张格式无效");
+    assertFields(input.paper, ["color"]);
+    if (!isHandwritingColor(input.paper.color)) {
+      throw new HandwritingValidationError("invalid_shape", "手写纸张颜色无效");
+    }
+    paper = { color: input.paper.color.toLowerCase() as HandwritingColor };
   }
 
   let strokeCount = 0;
@@ -163,12 +233,18 @@ export function normalizeHandwritingPayload(
         points.push([x, y, t]);
       }
       const color = rawStroke.color;
-      strokes.push(color && color !== HANDWRITING_DEFAULT_COLOR ? { points, color: color as HandwritingStrokeColor } : { points });
+      const normalizedColor = color === undefined ? HANDWRITING_DEFAULT_COLOR : normalizeHandwritingColor(color, HANDWRITING_DEFAULT_COLOR);
+      strokes.push(normalizedColor !== HANDWRITING_DEFAULT_COLOR ? { points, color: normalizedColor } : { points });
     }
     characters.push({ strokes });
   }
 
-  const normalized: HandwritingPayload = { kind: HANDWRITING_KIND, version: HANDWRITING_VERSION, characters };
+  const normalized: HandwritingPayload = {
+    kind: HANDWRITING_KIND,
+    version: HANDWRITING_VERSION,
+    characters,
+    ...(paper ? { paper } : {})
+  };
   if (handwritingPayloadBytes(normalized) > limits.maxBytes) {
     throw new HandwritingValidationError("too_large", "手写数据体积超出限制");
   }

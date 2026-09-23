@@ -24,6 +24,9 @@ const payload = ref<HandwritingPayload | null>(parseStoredHandwritingPayload(pro
 const viewportWidth = ref(typeof window === "undefined" ? 1280 : window.innerWidth);
 const metrics = computed(() => handwritingGridMetrics(payload.value, viewportWidth.value));
 const gridStyle = computed(() => ({ "--handwriting-columns": metrics.value.columns, "--handwriting-rows": metrics.value.rows }));
+const paperStyle = computed(() => payload.value?.paper
+  ? { backgroundColor: payload.value.paper.color, padding: "8px", borderRadius: "10px" }
+  : {});
 let timeline: HandwritingTimeline = { events: [], durationMs: 0 };
 let timelineCursor = 0;
 let renderedProgress = 0;
@@ -138,7 +141,8 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="handwriting-message"
-    :class="{ damaged: !payload }"
+    :class="{ damaged: !payload, 'has-paper': !!payload?.paper }"
+    :style="paperStyle"
     :role="payload ? 'button' : undefined"
     :tabindex="payload ? 0 : undefined"
     :aria-label="payload ? `手写消息，共 ${payload.characters.length} 字，点击重新播放` : undefined"

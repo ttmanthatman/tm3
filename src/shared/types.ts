@@ -1,3 +1,5 @@
+import type { HandwritingPreferencesDTO } from "./handwriting.js";
+
 export type ActorKind = "human" | "virtual" | "system";
 export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "chat_record" | "handwriting" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
@@ -476,6 +478,7 @@ export interface AccountDTO {
   actorId: number;
   theme: string;
   biblePreferences: BiblePreferencesDTO;
+  handwritingPreferences: HandwritingPreferencesDTO;
 }
 
 export interface AdminReceptionRoomDTO {
