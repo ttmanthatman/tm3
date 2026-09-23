@@ -12,7 +12,7 @@ const messageSchema = z.object({
     displayName: z.string()
   }).passthrough(),
   content: z.string(),
-  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "why_topic_card", "system"]),
+  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "why_topic_card", "handwriting", "system"]),
   createdAt: z.string(),
   fileName: z.string().nullable().optional(),
   fileSize: z.number().int().nonnegative().nullable().optional(),

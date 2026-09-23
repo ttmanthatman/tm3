@@ -219,6 +219,15 @@ import { useMediaPreview, type PinnedMediaBlock } from "./features/messages/useM
 import { useMessageRecall } from "./features/messages/useMessageRecall";
 import { useMessageSelection } from "./features/messages/useMessageSelection";
 import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearanceSettings";
+import HandwritingComposer from "./features/handwriting/HandwritingComposer.vue";
+import { handwritingPlaybackRegistry } from "./features/handwriting/handwritingPlaybackRegistry";
+import {
+  useHandwritingMessaging,
+  type HandwritingSendPayload,
+  type HandwritingStatusResult
+} from "./features/handwriting/useHandwritingMessaging";
+import type { HandwritingComposerSnapshot } from "./features/handwriting/useHandwritingComposer";
+import { handwritingMessageEstimatedHeight } from "./features/handwriting/useHandwritingPlayback";
 
 const store = useChatStore();
 const storyActorId = ref<number | null>(null);
@@ -245,6 +254,146 @@ const {
   send: sendMessage,
   clearStatus: clearMessageSendStatus
 } = useMessageSender({ getSocket: () => store.socket });
+const handwritingComposerOpen = ref(false);
+const handwritingDraftState = ref<HandwritingComposerSnapshot>({ key: "", payload: null, revision: 0 });
+const handwritingPendingSend = ref<{ clientRequestId: string } | null>(null);
+
+function checkHandwritingStatus(clientRequestId: string): Promise<HandwritingStatusResult> {
+  const socket = store.socket;
+  if (!socket?.connected) return Promise.resolve({ state: "unknown" });
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: HandwritingStatusResult) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    try {
+      socket.timeout(10_000).emit("message:status", { clientRequestId }, (error: Error | null, result?: HandwritingStatusResult) => {
+        if (error) finish({ state: "unknown" });
+        else finish(result || { state: "unknown" });
+      });
+    } catch {
+      finish({ state: "unknown" });
+    }
+  });
+}
+
+const handwriting = useHandwritingMessaging({
+  send: (payload: HandwritingSendPayload) => sendMessage(payload),
+  checkStatus: checkHandwritingStatus
+});
+const handwritingComposerBusy = computed(() => handwriting.pending.value || messageSendPending.value);
+const handwritingComposerStatus = computed(() => handwriting.statusMessage.value || messageSendStatus.value);
+
+function currentHandwritingScope() {
+  const accountId = store.account?.id || 0;
+  const actorId = store.account?.actorId || 0;
+  const channelId = store.currentChannelId || 0;
+  return accountId && actorId && channelId ? { accountId, actorId, channelId } : null;
+}
+
+async function recoverHandwritingPending(scope: { accountId: number; actorId: number; channelId: number }, clientRequestId: string) {
+  const result = await handwriting.checkStatus(scope, clientRequestId);
+  if (result.state !== "sent" || currentHandwritingScope()?.channelId !== scope.channelId) return;
+  handwritingPendingSend.value = null;
+  handwritingDraftState.value = { ...handwritingDraftState.value, payload: null, revision: handwritingDraftState.value.revision + 1 };
+}
+
+let handwritingScopeLoadToken = 0;
+watch(
+  () => {
+    const scope = currentHandwritingScope();
+    return scope ? `${scope.accountId}:${scope.actorId}:${scope.channelId}` : "";
+  },
+  () => {
+    const token = ++handwritingScopeLoadToken;
+    handwritingComposerOpen.value = false;
+    handwriting.stop();
+    handwritingPendingSend.value = null;
+    const scope = currentHandwritingScope();
+    if (!scope) {
+      handwritingDraftState.value = { key: "", payload: null, revision: 0 };
+      return;
+    }
+    void handwriting.repository.record(scope).then((record) => {
+      if (token !== handwritingScopeLoadToken) return;
+      handwritingPendingSend.value = record?.pending ? { clientRequestId: record.pending.clientRequestId } : null;
+      handwritingDraftState.value = {
+        key: `${scope.accountId}:${scope.actorId}:${scope.channelId}`,
+        payload: record?.draft?.payload || null,
+        revision: record?.draft?.revision || 0
+      };
+      if (record?.pending) void recoverHandwritingPending(scope, record.pending.clientRequestId);
+    });
+  },
+  { immediate: true }
+);
+
+watch(
+  () => store.connectionState,
+  (state) => {
+    if (state !== "connected") return;
+    const scope = currentHandwritingScope();
+    const pending = handwritingPendingSend.value;
+    if (scope && pending) void recoverHandwritingPending(scope, pending.clientRequestId);
+  }
+);
+
+async function saveHandwritingDraft(payload: HandwritingComposerSnapshot["payload"], revision: number) {
+  const scope = currentHandwritingScope();
+  if (!scope) return;
+  try {
+    if (!payload) await handwriting.repository.clearDraft(scope);
+    else await handwriting.saveDraft(scope, payload, revision);
+  } catch {
+    // useHandwritingMessaging reports draft failures; clearDraft is best-effort cleanup.
+  }
+}
+
+async function submitHandwriting(payload: HandwritingComposerSnapshot["payload"], revision: number) {
+  const scope = currentHandwritingScope();
+  if (!scope || !payload) return;
+  const result = await handwriting.submit({
+    scope,
+    payload,
+    revision,
+    replyToId: replyTo.value?.id || null
+  });
+  const record = await handwriting.repository.record(scope);
+  if (record?.pending) {
+    handwritingPendingSend.value = { clientRequestId: record.pending.clientRequestId };
+    handwritingComposerOpen.value = false;
+    return;
+  }
+  if (!result.ok) return;
+  handwritingComposerOpen.value = false;
+  handwritingPendingSend.value = null;
+  handwritingDraftState.value = { key: `${scope.accountId}:${scope.actorId}:${scope.channelId}`, payload: null, revision: revision + 1 };
+  replyTo.value = null;
+}
+
+async function retryHandwritingSend() {
+  const scope = currentHandwritingScope();
+  const pending = handwritingPendingSend.value;
+  if (!scope || !pending) return;
+  const result = await handwriting.retry(scope, pending.clientRequestId);
+  const record = await handwriting.repository.record(scope);
+  if (!record?.pending) handwritingPendingSend.value = null;
+  if (!result.ok) return;
+  handwritingDraftState.value = { ...handwritingDraftState.value, payload: null, revision: handwritingDraftState.value.revision + 1 };
+}
+
+async function confirmOwnHandwriting(message: MessageDTO) {
+  if (message.type !== "handwriting" || !message.clientRequestId || !isMine(message)) return;
+  const scope = currentHandwritingScope();
+  if (!scope || message.channelId !== scope.channelId) return;
+  const confirmed = await handwriting.confirm(scope, message.clientRequestId);
+  if (confirmed) {
+    handwritingPendingSend.value = null;
+    handwritingDraftState.value = { ...handwritingDraftState.value, payload: null, revision: handwritingDraftState.value.revision + 1 };
+  }
+}
 // Heavy or rarely-opened surfaces load on first use instead of inflating the
 // entry chunk (PdfScoreInline pulls in pdfjs-dist; the music manager
 // and Bible workspace are the largest feature components). PdfViewer is
@@ -1331,6 +1480,7 @@ watch(
   () => {
     if (store.lastIncomingMessage) {
       const incoming = store.lastIncomingMessage;
+      void confirmOwnHandwriting(incoming);
       queueMentionToast(incoming);
       if (shouldTriggerIncomingRainEffect({
         effect: messageEffect(incoming),
@@ -1373,7 +1523,8 @@ watch(
 
 watch(
   () => store.account?.id,
-  (accountId) => {
+  (accountId, previousAccountId) => {
+    if (previousAccountId && !accountId) void handwriting.clearAccount(previousAccountId);
     queuedMessageImagePreloads.clear();
     messageImagePreloadQueue.splice(0);
     mentionToasts.value = [];
@@ -1487,6 +1638,27 @@ onBeforeUnmount(() => {
 
 const currentChannel = computed(() => store.currentChannel);
 const isMusicChannel = computed(() => currentChannel.value?.kind === "music");
+const handwritingAvailable = computed(() =>
+  (currentChannel.value?.kind === "standard" || currentChannel.value?.kind === "direct") &&
+  currentChannel.value?.canWrite !== false &&
+  !store.prayerOnly &&
+  !store.graceOnly
+);
+function consumeHandwritingPlayback(message: MessageDTO) {
+  if (showingFavoriteSurface.value || message.channelId !== store.currentChannelId || !documentVisible.value) return false;
+  return handwritingPlaybackRegistry.claim({
+    accountId: store.account?.id || 0,
+    channelId: message.channelId,
+    messageId: message.id,
+    currentChannelId: store.currentChannelId,
+    visible: true,
+    documentVisible: documentVisible.value,
+    reducedMotion: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  });
+}
+function openHandwritingComposer() {
+  if (handwritingAvailable.value && !handwritingPendingSend.value) handwritingComposerOpen.value = true;
+}
 const exclusiveAudio = getSharedExclusiveAudio();
 const musicPlayer = useMusicPlayer({
   tracks: musicTracks,
@@ -2262,6 +2434,7 @@ const settingsPanelBindings = {
 function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.kind === "time" || row.kind === "version") return 52;
   if (row.message.type === "image") return estimatedImageTimelineRowHeight(row.message, timelineViewportWidth.value);
+  if (row.message.type === "handwriting") return handwritingMessageEstimatedHeight(row.message.payload, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "sermon_request") return 200;
   if (row.message.type === "bible_session") return 200;
@@ -4685,6 +4858,10 @@ const composerBindings = computed(() => ({
   canSubmitText: canSubmitText.value,
   socketReadyToSend: socketReadyToSend.value,
   messageSendPending: messageSendPending.value,
+  handwritingAvailable: handwritingAvailable.value,
+  handwritingPending: handwritingPendingSend.value,
+  retryHandwriting: retryHandwritingSend,
+  openHandwriting: openHandwritingComposer,
   composerSendStatus: composerSendStatus.value,
   composerSendState: composerSendState.value,
   unconfirmedSends: unconfirmedSends.value,
@@ -4771,6 +4948,7 @@ const messageRowBindings = {
   isBibleReferenceBusy,
   bibleReferenceLookup,
   formatBibleLookup,
+  consumeHandwritingPlayback,
   onOpenSharedPlaylist: openSharedMusicPlaylistFromTap,
   onLongpressBegin: beginMessageLongPress,
   onLongpressMove: moveMessageLongPress,
@@ -5829,6 +6007,7 @@ const messageRowBindings = {
                   variant="timeline"
                   :message="row.message"
                   :broken-attachment-ids="brokenAttachmentIds"
+                  :handwriting-surface-active="!showingFavoriteSurface && !bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen"
                   v-bind="messageRowBindings"
                 />
               </div>
@@ -6163,6 +6342,18 @@ const messageRowBindings = {
     </section>
 
     <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}:${storyInitialMode}`" :actor-id="storyActorId" :initial-mode="storyInitialMode" :channel-id="currentChannel?.id" @activity-read="store.applyStoryActivity" @close="storyActorId = null" />
+
+    <HandwritingComposer
+      :open="handwritingComposerOpen"
+      :draft-state="handwritingDraftState"
+      :busy="handwritingComposerBusy"
+      :status="handwritingComposerStatus"
+      :socket-ready="socketReadyToSend"
+      :reply-label="replyTo ? `${replyTo.sender.displayName}：${replyPreviewText(replyTo) || replyTo.type}` : ''"
+      @close="handwritingComposerOpen = false"
+      @draft-change="saveHandwritingDraft"
+      @submit="submitHandwriting"
+    />
 
     <ChannelEditorDialog
       v-if="showChannelEditor"

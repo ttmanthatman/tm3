@@ -236,6 +236,24 @@ test("managed source authenticates with its device token and reports control sta
   assert.deepEqual(requests.map((request) => request.method), ["GET", "GET", "POST"]);
 });
 
+test("managed source accepts mixed handwriting and ordinary messages in one batch", async () => {
+  const fakeFetch: typeof fetch = async (input) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url);
+    if (url.pathname.endsWith("/messages")) {
+      return Response.json({ messages: [
+        { ...message(21), type: "handwriting", content: "[手写消息]", payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0]] }] }] } },
+        message(22)
+      ] });
+    }
+    return Response.json({ success: true });
+  };
+  const source = new ManagedTeamChatSource("https://chat.example.com", "managed-token", fakeFetch);
+  const received = await source.fetchAfter(20);
+  assert.deepEqual(received.map((item) => [item.id, item.type]), [[21, "handwriting"], [22, "text"]]);
+  assert.equal(formatRelayMessage(received[0]), "发送者：[手写消息]");
+  source.close();
+});
+
 test("X11 geometry parser rejects incomplete window data", () => {
   assert.deepEqual(
     parseWindowGeometry("X=10\nY=20\nWIDTH=1280\nHEIGHT=720\n", "123"),

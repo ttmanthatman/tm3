@@ -31,6 +31,17 @@ test("classifies conversational relay events", () => {
   assert.equal(weChatRelayTemplateKey(message(9, { type: "system", payload: { systemKind: "versionUpdate" } })), "versionUpdate");
   assert.equal(weChatRelayTemplateKey(message(10, { type: "why_topic_card" })), "whyTopic");
   assert.equal(weChatRelayTemplateKey(message(14, { type: "bible_session" })), "bibleSession");
+  assert.equal(weChatRelayTemplateKey(message(15, { type: "handwriting" })), "handwriting");
+});
+
+test("handwriting relay output is only the fixed placeholder label", () => {
+  const rendered = renderWeChatRelayNotification(message(15, {
+    type: "handwriting",
+    content: "伪造正文",
+    payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0]] }] }] }
+  }));
+  assert.equal(rendered, "小夏：[手写消息]");
+  assert.doesNotMatch(rendered, /伪造正文|characters|points/);
 });
 
 test("bible session relay copy avoids book-of-origin wording", () => {

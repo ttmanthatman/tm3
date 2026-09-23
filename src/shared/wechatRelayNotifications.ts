@@ -1,8 +1,9 @@
+import { HANDWRITING_CONTENT } from "./handwriting.js";
 import type { MessageDTO } from "./types.js";
 
 export const WECHAT_RELAY_TEMPLATE_KEYS = [
   "message", "mention", "prayer", "prayerUpdate", "image", "file", "voice",
-  "musicPlaylist", "chain", "whyTopic", "bibleSession", "pinned", "versionUpdate", "system", "other"
+  "musicPlaylist", "chain", "whyTopic", "bibleSession", "handwriting", "pinned", "versionUpdate", "system", "other"
 ] as const;
 
 export type WeChatRelayTemplateKey = (typeof WECHAT_RELAY_TEMPLATE_KEYS)[number];
@@ -72,6 +73,7 @@ export const DEFAULT_WECHAT_RELAY_TEMPLATES: WeChatRelayTemplates = {
   chain: ["{name}发起了接龙：{content}", "{name}更新了接龙"],
   whyTopic: ["{name}分享了一个‘为什么’话题", "聊天室里有{name}分享的新话题"],
   bibleSession: ["{name}打开了一本书", "{name}坐到了书桌旁，邀请你一起读", "书房里{name}翻开了一本书，等你一起读"],
+  handwriting: ["{name}：{content}"],
   pinned: ["【{systemPrefix}】{channel}更新了置顶消息：{title}"],
   versionUpdate: ["【{systemPrefix}】聊天室已升级到 v{version}，更新内容：{changelog}"],
   system: ["【{systemPrefix}】{content}"],
@@ -124,6 +126,7 @@ export function weChatRelayTemplateKey(message: Pick<MessageDTO, "id" | "type" |
   if (message.type === "chain") return "chain";
   if (message.type === "why_topic_card") return "whyTopic";
   if (message.type === "bible_session") return "bibleSession";
+  if (message.type === "handwriting") return "handwriting";
   if (message.type === "text") return containsMention(message.content || "") ? "mention" : "message";
   if (message.type === "system") {
     const kind = recordPayload(message.payload).systemKind;
@@ -143,6 +146,7 @@ function attachmentKind(message: Pick<MessageDTO, "type" | "payload">) {
     case "musicPlaylist": return "一个歌单";
     case "chain": return "一条接龙";
     case "bibleSession": return "一本书";
+    case "handwriting": return HANDWRITING_CONTENT;
     default: return "新内容";
   }
 }
@@ -151,7 +155,7 @@ function typeLabel(key: WeChatRelayTemplateKey) {
   return ({
     message: "普通发言", mention: "@ 提醒", prayer: "新代祷", prayerUpdate: "代祷更新",
     image: "图片", file: "文件", voice: "语音", musicPlaylist: "歌单", chain: "接龙", whyTopic: "为什么话题",
-    bibleSession: "读书邀请",
+    bibleSession: "读书邀请", handwriting: "手写消息",
     pinned: "置顶消息", versionUpdate: "版本升级", system: "系统消息", other: "其他动态"
   } satisfies Record<WeChatRelayTemplateKey, string>)[key];
 }
@@ -182,7 +186,7 @@ export function weChatRelayTemplateVariables(
     group: context.group?.trim() || "微信群",
     type: typeLabel(key),
     kind: attachmentKind(message),
-    content: visibleText(message.content || "").slice(0, 200),
+    content: message.type === "handwriting" ? HANDWRITING_CONTENT : visibleText(message.content || "").slice(0, 200),
     fileName: message.fileName?.trim() || "",
     fileSize: compactBytes(message.fileSize),
     mentions: mentions.map((target) => target.displayName).join("、"),

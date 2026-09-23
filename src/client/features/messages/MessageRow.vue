@@ -4,6 +4,7 @@ import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
 import InlineAudioPlayer from "../../components/InlineAudioPlayer.vue";
 import VoiceTranscript from "../voice/VoiceTranscript.vue";
+import HandwritingMessage from "../handwriting/HandwritingMessage.vue";
 import {
   isMarkdownMessage,
   messageBibleReferenceScope,
@@ -50,6 +51,8 @@ defineProps<{
   isBibleReferenceBusy: (scope: string | number, reference: string) => boolean;
   bibleReferenceLookup: (scope: string | number, reference: string) => BibleLookupDTO | null | undefined;
   formatBibleLookup: (lookup: BibleLookupDTO | null | undefined, originalReference: string) => string;
+  consumeHandwritingPlayback?: (message: MessageDTO) => boolean;
+  handwritingSurfaceActive?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -72,7 +75,8 @@ const emit = defineEmits<{
 
 <template>
   <template v-if="variant === 'favorite'">
-    <img v-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
+    <HandwritingMessage v-if="message.type === 'handwriting'" :message="message" variant="favorite" />
+    <img v-else-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
     <div v-else-if="isVoiceMessage(message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(message)) }}</span></div>
     <div v-else-if="message.type === 'file'" class="favorite-message-file"><FileUp :size="19" /><span>{{ message.fileName || "附件" }}</span><small>{{ compactBytes(message.fileSize) }}</small></div>
     <button v-else-if="message.type === 'music_playlist'" class="music-playlist-message-card" type="button" @click="emit('open-shared-playlist', message)">
@@ -208,7 +212,14 @@ const emit = defineEmits<{
         >{{ musicMentionBackground(message) }}</div>
       </template>
       <template v-else>
-        <div v-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
+        <HandwritingMessage
+          v-if="message.type === 'handwriting'"
+          :message="message"
+          variant="timeline"
+          :surface-active="handwritingSurfaceActive ?? true"
+          :claim-auto-play="consumeHandwritingPlayback ? () => consumeHandwritingPlayback!(message) : undefined"
+        />
+        <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>
         </div>

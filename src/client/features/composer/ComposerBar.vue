@@ -9,6 +9,7 @@ import {
   Mic,
   Monitor,
   Pause,
+  PenLine,
   Play,
   Plus,
   Sparkles,
@@ -57,6 +58,10 @@ const props = defineProps<{
   canSubmitText: boolean;
   socketReadyToSend: boolean;
   messageSendPending: boolean;
+  handwritingAvailable: boolean;
+  handwritingPending: { clientRequestId: string } | null;
+  retryHandwriting: () => void;
+  openHandwriting: () => void;
   composerSendStatus: string;
   composerSendState: string | undefined;
   unconfirmedSends: UnconfirmedSend[];
@@ -196,6 +201,12 @@ defineExpose({ composerInput });
           <button type="button" :disabled="messageSendPending || !socketReadyToSend" @click="retryUnconfirmed(row)">重试</button>
         </div>
       </div>
+      <div v-if="handwritingPending" class="composer-unconfirmed" role="status">
+        <div class="composer-unconfirmed-row">
+          <span>未确认 · [手写消息]</span>
+          <button type="button" :disabled="messageSendPending || !socketReadyToSend" @click="retryHandwriting">重试</button>
+        </div>
+      </div>
       <div v-if="showComposerSuggestionMenu" class="composer-suggestion-menu">
         <template v-if="activeComposerSuggestionKind === 'music'">
           <button
@@ -287,6 +298,16 @@ defineExpose({ composerInput });
       </div>
     </div>
     <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
+      <button
+        v-if="handwritingAvailable"
+        class="tool-tile"
+        :disabled="!!handwritingPending"
+        :title="handwritingPending ? '先确认或重试未发送的手写消息' : '逐字手写'"
+        @click="toggleMorePanel(); openHandwriting()"
+      >
+        <span><PenLine :size="25" /></span>
+        <small>手写</small>
+      </button>
       <button class="tool-tile" @click="fileInput?.click()">
         <span><FileUp :size="25" /></span>
         <small>文件</small>

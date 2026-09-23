@@ -46,6 +46,20 @@ test("forwardableMessages skips empty text and optimistic messages", () => {
   assert.equal(isForwardableMessage(message({ id: 3, type: "text", content: "" })), false);
 });
 
+test("handwriting remains excluded from single and mixed forwarding", () => {
+  const handwriting = message({
+    id: 4,
+    type: "handwriting",
+    content: "[手写消息]",
+    payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0]] }] }] }
+  });
+  assert.equal(isForwardableMessage(handwriting), false);
+  assert.deepEqual(forwardableMessages([handwriting]), { supported: [], skippedCount: 1 });
+  const mixed = forwardableMessages([message({ id: 5, type: "text", content: "普通消息" }), handwriting]);
+  assert.deepEqual(mixed.supported.map((item) => item.id), [5]);
+  assert.equal(mixed.skippedCount, 1);
+});
+
 test("forwardTargetChannels keeps standard and direct channels the user can write in", () => {
   const channels = [
     channel({ id: 1, kind: "standard" }),
