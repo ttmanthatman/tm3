@@ -52,6 +52,7 @@ enum MessageType {
   why_topic_card
   bible_session
   chat_record
+  handwriting
   system
 }
 
