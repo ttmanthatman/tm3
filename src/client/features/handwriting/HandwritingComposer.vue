@@ -6,6 +6,7 @@ import {
   normalizeHandwritingColor,
   normalizeHandwritingPreferences,
   type HandwritingColor,
+  type HandwritingGlow,
   type HandwritingPayload,
   type HandwritingPreferencesDTO
 } from "@shared/handwriting";
@@ -72,6 +73,14 @@ const previewPaperStyle = computed(() => composer.paperEnabled.value
   ? { backgroundColor: composer.paperColor.value }
   : { backgroundColor: "#fff" }
 );
+const previewGlow = computed<HandwritingGlow | null>(() => composer.glowEnabled.value
+  ? {
+      color: composer.glowColor.value,
+      density: composer.glowDensity.value,
+      width: composer.glowWidth.value
+    }
+  : null
+);
 
 function publishPreferences() {
   emit("preferences-change", normalizeHandwritingPreferences(palettePreferences.value));
@@ -100,6 +109,15 @@ function changePaper(enabled: boolean, color: HandwritingColor) {
   palettePreferences.value.paperEnabled = enabled;
   palettePreferences.value.paperColor = normalizeHandwritingColor(color, palettePreferences.value.paperColor);
   updateAfter(() => composer.setPaper(enabled, palettePreferences.value.paperColor));
+  publishPreferences();
+}
+
+function changeGlow(enabled: boolean, color: HandwritingColor, density: number, width: number) {
+  palettePreferences.value.glowEnabled = enabled;
+  palettePreferences.value.glowColor = normalizeHandwritingColor(color, palettePreferences.value.glowColor);
+  palettePreferences.value.glowDensity = density;
+  palettePreferences.value.glowWidth = width;
+  updateAfter(() => composer.setGlow(enabled, palettePreferences.value.glowColor, density, width));
   publishPreferences();
 }
 
@@ -173,7 +191,7 @@ function drawPreviewProgress(elapsedMs: number) {
   const canvases = [...(previewGrid.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
   previewPayload.characters.forEach((_character, index) => {
     const canvas = canvases[index];
-    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(previewPayload!, index, previewVisibleCounts));
+    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(previewPayload!, index, previewVisibleCounts), { glow: previewPayload!.glow });
   });
 }
 
@@ -216,7 +234,7 @@ async function renderStatic() {
   const previewCanvases = [...(previewGrid.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
   displayCharacters.value.forEach((character, index) => {
     const canvas = previewCanvases[index];
-    if (canvas) drawHandwritingCharacter(canvas, character);
+    if (canvas) drawHandwritingCharacter(canvas, character, { glow: previewGlow.value });
   });
 }
 
@@ -234,6 +252,12 @@ watch(() => props.open, (open) => {
   if (open) {
     composer.selectColor(activeColor.value);
     composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
+    composer.setGlow(
+      palettePreferences.value.glowEnabled,
+      palettePreferences.value.glowColor,
+      palettePreferences.value.glowDensity,
+      palettePreferences.value.glowWidth
+    );
     return;
   }
   draftScheduler.flush();
@@ -243,6 +267,12 @@ watch(() => props.accountId, () => {
   palettePreferences.value = normalizeHandwritingPreferences(props.preferences);
   composer.selectColor(activeColor.value);
   composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
+  composer.setGlow(
+    palettePreferences.value.glowEnabled,
+    palettePreferences.value.glowColor,
+    palettePreferences.value.glowDensity,
+    palettePreferences.value.glowWidth
+  );
 });
 watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 onBeforeUnmount(() => {
@@ -269,16 +299,22 @@ onBeforeUnmount(() => {
           :selected-index="palettePreferences.selectedIndex"
           :paper-enabled="palettePreferences.paperEnabled"
           :paper-color="palettePreferences.paperColor"
+          :glow-enabled="palettePreferences.glowEnabled"
+          :glow-color="palettePreferences.glowColor"
+          :glow-density="palettePreferences.glowDensity"
+          :glow-width="palettePreferences.glowWidth"
           :disabled="busy"
           @select="selectPaletteColor"
           @slot-change="replacePaletteColor"
           @custom-change="replaceCustomColor"
           @paper-change="changePaper"
+          @glow-change="changeGlow"
         />
         <HandwritingPad
           :strokes="currentCharacter.strokes"
           :disabled="busy"
           :background-color="composer.paperEnabled.value ? composer.paperColor.value : '#ffffff'"
+          :glow="previewGlow"
           aria-label="当前手写字格"
           @stroke-start="strokeStart"
           @stroke-point="point"

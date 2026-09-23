@@ -17,6 +17,9 @@ export const HANDWRITING_PALETTE_SLOT_COUNT = HANDWRITING_PRESET_COLORS.length;
 export const HANDWRITING_CUSTOM_COLOR_INDEX = HANDWRITING_PALETTE_SLOT_COUNT;
 export const HANDWRITING_DEFAULT_CUSTOM_COLOR = HANDWRITING_DEFAULT_COLOR;
 export const HANDWRITING_DEFAULT_PAPER_COLOR = "#fffaf0" as const;
+export const HANDWRITING_DEFAULT_GLOW_COLOR = "#ffffff" as const;
+export const HANDWRITING_DEFAULT_GLOW_DENSITY = 65;
+export const HANDWRITING_DEFAULT_GLOW_WIDTH = 60;
 
 export type HandwritingColor = `#${string}`;
 export type HandwritingStrokeColor = HandwritingColor;
@@ -25,12 +28,22 @@ export type HandwritingPaper = {
   color: HandwritingColor;
 };
 
+export type HandwritingGlow = {
+  color: HandwritingColor;
+  density: number;
+  width: number;
+};
+
 export type HandwritingPreferencesDTO = {
   strokeColors: HandwritingColor[];
   customColor: HandwritingColor;
   selectedIndex: number;
   paperEnabled: boolean;
   paperColor: HandwritingColor;
+  glowEnabled: boolean;
+  glowColor: HandwritingColor;
+  glowDensity: number;
+  glowWidth: number;
 };
 
 export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
@@ -38,7 +51,11 @@ export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
   customColor: HANDWRITING_DEFAULT_CUSTOM_COLOR,
   selectedIndex: 0,
   paperEnabled: false,
-  paperColor: HANDWRITING_DEFAULT_PAPER_COLOR
+  paperColor: HANDWRITING_DEFAULT_PAPER_COLOR,
+  glowEnabled: false,
+  glowColor: HANDWRITING_DEFAULT_GLOW_COLOR,
+  glowDensity: HANDWRITING_DEFAULT_GLOW_DENSITY,
+  glowWidth: HANDWRITING_DEFAULT_GLOW_WIDTH
 };
 
 export type HandwritingPoint = readonly [x: number, y: number, t: number];
@@ -49,6 +66,7 @@ export type HandwritingPayload = {
   version: typeof HANDWRITING_VERSION;
   characters: HandwritingCharacter[];
   paper?: HandwritingPaper;
+  glow?: HandwritingGlow;
 };
 
 export type HandwritingLimits = {
@@ -121,6 +139,24 @@ export function normalizeHandwritingColor(value: unknown, fallback: HandwritingC
   return isHandwritingColor(value) ? value.toLowerCase() as HandwritingColor : fallback;
 }
 
+function normalizeHandwritingGlowAmount(value: unknown, fallback: number): number {
+  const amount = Number(value);
+  return Number.isInteger(amount) && amount >= 0 && amount <= 100 ? amount : fallback;
+}
+
+export function normalizeHandwritingGlow(value: unknown, fallback: HandwritingGlow = {
+  color: HANDWRITING_DEFAULT_GLOW_COLOR,
+  density: HANDWRITING_DEFAULT_GLOW_DENSITY,
+  width: HANDWRITING_DEFAULT_GLOW_WIDTH
+}): HandwritingGlow {
+  const row = isPlainObject(value) ? value : {};
+  return {
+    color: normalizeHandwritingColor(row.color, fallback.color),
+    density: normalizeHandwritingGlowAmount(row.density, fallback.density),
+    width: normalizeHandwritingGlowAmount(row.width, fallback.width)
+  };
+}
+
 export function isHandwritingStrokeColor(value: unknown): value is HandwritingStrokeColor {
   return isHandwritingColor(value);
 }
@@ -146,7 +182,11 @@ export function normalizeHandwritingPreferences(value: unknown): HandwritingPref
     customColor: normalizeHandwritingColor(row.customColor, HANDWRITING_DEFAULT_CUSTOM_COLOR),
     selectedIndex,
     paperEnabled: row.paperEnabled === true,
-    paperColor: normalizeHandwritingColor(row.paperColor, HANDWRITING_DEFAULT_PAPER_COLOR)
+    paperColor: normalizeHandwritingColor(row.paperColor, HANDWRITING_DEFAULT_PAPER_COLOR),
+    glowEnabled: row.glowEnabled === true,
+    glowColor: normalizeHandwritingColor(row.glowColor, HANDWRITING_DEFAULT_GLOW_COLOR),
+    glowDensity: normalizeHandwritingGlowAmount(row.glowDensity, HANDWRITING_DEFAULT_GLOW_DENSITY),
+    glowWidth: normalizeHandwritingGlowAmount(row.glowWidth, HANDWRITING_DEFAULT_GLOW_WIDTH)
   };
 }
 
@@ -155,7 +195,7 @@ export function normalizeHandwritingPayload(
   limits: Readonly<HandwritingLimits> = HANDWRITING_SEND_LIMITS
 ): HandwritingPayload {
   if (!isPlainObject(input)) throw new HandwritingValidationError("invalid_shape", "手写数据格式无效");
-  assertFields(input, ["kind", "version", "characters", "paper"]);
+  assertFields(input, ["kind", "version", "characters", "paper", "glow"]);
   if (input.kind !== HANDWRITING_KIND) throw new HandwritingValidationError("invalid_shape", "手写数据类型无效");
   if (input.version !== HANDWRITING_VERSION) throw new HandwritingValidationError("unknown_version", "暂不支持此手写数据版本");
   if (!Array.isArray(input.characters) || input.characters.length === 0) {
@@ -172,6 +212,21 @@ export function normalizeHandwritingPayload(
       throw new HandwritingValidationError("invalid_shape", "手写纸张颜色无效");
     }
     paper = { color: input.paper.color.toLowerCase() as HandwritingColor };
+  }
+  let glow: HandwritingGlow | undefined;
+  if (input.glow !== undefined) {
+    if (!isPlainObject(input.glow)) throw new HandwritingValidationError("invalid_shape", "手写光晕格式无效");
+    assertFields(input.glow, ["color", "density", "width"]);
+    if (input.glow.color !== undefined && !isHandwritingColor(input.glow.color)) {
+      throw new HandwritingValidationError("invalid_shape", "手写光晕颜色无效");
+    }
+    for (const key of ["density", "width"] as const) {
+      const amount = input.glow[key];
+      if (amount !== undefined && (typeof amount !== "number" || !Number.isInteger(amount) || amount < 0 || amount > 100)) {
+        throw new HandwritingValidationError("invalid_shape", "手写光晕参数无效");
+      }
+    }
+    glow = normalizeHandwritingGlow(input.glow);
   }
 
   let strokeCount = 0;
@@ -243,7 +298,8 @@ export function normalizeHandwritingPayload(
     kind: HANDWRITING_KIND,
     version: HANDWRITING_VERSION,
     characters,
-    ...(paper ? { paper } : {})
+    ...(paper ? { paper } : {}),
+    ...(glow ? { glow } : {})
   };
   if (handwritingPayloadBytes(normalized) > limits.maxBytes) {
     throw new HandwritingValidationError("too_large", "手写数据体积超出限制");

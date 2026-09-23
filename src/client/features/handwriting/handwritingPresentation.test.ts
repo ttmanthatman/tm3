@@ -28,8 +28,17 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   assert.match(palette, /aria-label="自定义颜色"/);
   assert.match(palette, /小秘密：长按调出调色盘/);
   assert.match(palette, /显示纸张/);
-  assert.match(palette, /setTimeout\(\(\) => \{\s*longPressTriggered = true;\s*openSlotPicker\(index\);\s*\}, 450\)/);
+  assert.match(palette, /aria-label="光晕"/);
+  assert.match(palette, /aria-label="光晕颜色"/);
+  assert.match(palette, /aria-label="光晕密度"/);
+  assert.match(palette, /aria-label="光晕宽度"/);
+  assert.match(palette, /setTimeout\(\(\) => \{\s*longPressTriggered = true;\s*openPicker\(index\);\s*\}, 450\)/);
+  assert.match(palette, /role="dialog" aria-label="调色盘"/);
+  assert.match(palette, /aria-label="调色盘颜色"[\s\S]*?type="color"|type="color"[\s\S]*?aria-label="调色盘颜色"/);
+  assert.doesNotMatch(palette, /showPicker|handwriting-color-input/);
   assert.match(component, /@select="selectPaletteColor"/);
+  assert.match(component, /@glow-change="changeGlow"/);
+  assert.match(message, /payload\.value\?\.glow/);
   assert.match(component, /draftScheduler\.request\(\)/);
   assert.match(component, /点已完成的字可删除/);
   assert.doesNotMatch(component, /composer\.snapshotCharacters\.value/);

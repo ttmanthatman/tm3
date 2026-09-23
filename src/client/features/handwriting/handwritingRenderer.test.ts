@@ -57,6 +57,18 @@ test("renders each stroke with its persisted palette color", () => {
   );
 });
 
+test("renders a configurable glow halo before the ink", () => {
+  const glowCanvas = fakeCanvas();
+  drawHandwritingCharacter(glowCanvas.canvas, {
+    strokes: [{ color: "#c44536", points: [[1, 2, 0], [100, 100, 20]] }]
+  }, {
+    glow: { color: "#ffffff", density: 50, width: 50 }
+  });
+  const fills = glowCanvas.operations.filter((operation) => operation.type === "fillStyle").map((operation) => operation.args[0]);
+  assert.deepEqual(fills, ["#263b33", "rgba(255, 255, 255, 0.140)", "rgba(255, 255, 255, 0.280)", "#c44536"]);
+  assert.ok(glowCanvas.operations.some((operation) => operation.type === "arc" && Number(operation.args[2]) > 360));
+});
+
 test("appending one sampled point performs constant drawing work", () => {
   const target = fakeCanvas();
   const stroke = { points: Array.from({ length: 101 }, (_, index) => [index, index, index] as const) };

@@ -264,7 +264,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
             customColor: z.string().optional(),
             selectedIndex: z.number().int().min(0).max(7).optional(),
             paperEnabled: z.boolean().optional(),
-            paperColor: z.string().optional()
+            paperColor: z.string().optional(),
+            glowEnabled: z.boolean().optional(),
+            glowColor: z.string().optional(),
+            glowDensity: z.number().int().min(0).max(100).optional(),
+            glowWidth: z.number().int().min(0).max(100).optional()
           })
           .optional()
       })

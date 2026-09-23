@@ -1,6 +1,7 @@
 import {
   HANDWRITING_DEFAULT_COLOR,
   type HandwritingCharacter,
+  type HandwritingGlow,
   type HandwritingPayload,
   type HandwritingPoint,
   type HandwritingStroke
@@ -14,6 +15,7 @@ export type HandwritingCanvas = HTMLCanvasElement | { width: number; height: num
 export type HandwritingRendererOptions = {
   lineWidth?: number;
   maxDevicePixelRatio?: number;
+  glow?: HandwritingGlow | null;
 };
 
 function configureCanvas(canvas: HandwritingCanvas, options: HandwritingRendererOptions) {
@@ -29,9 +31,27 @@ function configureCanvas(canvas: HandwritingCanvas, options: HandwritingRenderer
   if (!context) return null;
   context.setTransform(width / HANDWRITING_CANVAS_SCALE, 0, 0, height / HANDWRITING_CANVAS_SCALE, 0, 0);
   context.fillStyle = HANDWRITING_DEFAULT_COLOR;
+  context.globalCompositeOperation = "source-over";
   context.lineCap = "round";
   context.lineJoin = "round";
   return context;
+}
+
+function glowFillStyle(color: HandwritingGlow["color"], alpha: number) {
+  const value = color.slice(1);
+  const red = Number.parseInt(value.slice(0, 2), 16);
+  const green = Number.parseInt(value.slice(2, 4), 16);
+  const blue = Number.parseInt(value.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${Math.max(0, Math.min(1, alpha)).toFixed(3)})`;
+}
+
+function glowPasses(glow: HandwritingGlow, width: number) {
+  const density = Math.max(0, Math.min(100, glow.density)) / 100;
+  const expansion = width * (0.5 + 2.5 * (Math.max(0, Math.min(100, glow.width)) / 100));
+  return [
+    { width: width + expansion * 1.2, fillStyle: glowFillStyle(glow.color, density * 0.28) },
+    { width: width + expansion * 0.55, fillStyle: glowFillStyle(glow.color, density * 0.56) }
+  ];
 }
 
 function drawPoint(context: CanvasRenderingContext2D, point: HandwritingPoint, width: number) {
@@ -57,14 +77,41 @@ function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, 
   context.fill();
 }
 
-function drawStroke(context: CanvasRenderingContext2D, stroke: HandwritingStroke, visiblePoints = stroke.points.length, width = HANDWRITING_STROKE_WIDTH) {
-  context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
-  const points = stroke.points.slice(0, Math.max(0, visiblePoints));
-  if (!points.length) return;
-  drawPoint(context, points[0], width);
-  for (let index = 1; index < points.length; index += 1) {
-    drawSegment(context, points[index - 1], points[index], width);
-    drawPoint(context, points[index], width);
+function drawStrokeGeometry(
+  context: CanvasRenderingContext2D,
+  stroke: HandwritingStroke,
+  startPointIndex: number,
+  visiblePoints: number,
+  width: number
+) {
+  const end = Math.min(stroke.points.length, Math.max(0, visiblePoints));
+  let index = Math.max(0, startPointIndex);
+  if (index >= end) return;
+  if (index === 0) {
+    drawPoint(context, stroke.points[0], width);
+    index = 1;
+  }
+  for (; index < end; index += 1) {
+    drawSegment(context, stroke.points[index - 1], stroke.points[index], width);
+    drawPoint(context, stroke.points[index], width);
+  }
+}
+
+function drawStrokes(
+  context: CanvasRenderingContext2D,
+  strokes: Array<{ stroke: HandwritingStroke; visiblePoints: number }>,
+  width: number,
+  glow?: HandwritingGlow | null
+) {
+  if (glow) {
+    for (const pass of glowPasses(glow, width)) {
+      context.fillStyle = pass.fillStyle;
+      for (const entry of strokes) drawStrokeGeometry(context, entry.stroke, 0, entry.visiblePoints, pass.width);
+    }
+  }
+  for (const entry of strokes) {
+    context.fillStyle = entry.stroke.color || HANDWRITING_DEFAULT_COLOR;
+    drawStrokeGeometry(context, entry.stroke, 0, entry.visiblePoints, width);
   }
 }
 
@@ -77,16 +124,16 @@ export function appendHandwritingStroke(
   const context = configureCanvas(canvas, options);
   if (!context || startPointIndex >= stroke.points.length) return;
   const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
+  if (options.glow) {
+    context.globalCompositeOperation = "destination-over";
+    for (const pass of glowPasses(options.glow, width)) {
+      context.fillStyle = pass.fillStyle;
+      drawStrokeGeometry(context, stroke, startPointIndex, stroke.points.length, pass.width);
+    }
+    context.globalCompositeOperation = "source-over";
+  }
   context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
-  let index = Math.max(0, startPointIndex);
-  if (index === 0) {
-    drawPoint(context, stroke.points[0], width);
-    index = 1;
-  }
-  for (; index < stroke.points.length; index += 1) {
-    drawSegment(context, stroke.points[index - 1], stroke.points[index], width);
-    drawPoint(context, stroke.points[index], width);
-  }
+  drawStrokeGeometry(context, stroke, startPointIndex, stroke.points.length, width);
 }
 
 export function clearHandwritingCanvas(canvas: HandwritingCanvas) {
@@ -105,7 +152,12 @@ export function drawHandwritingCharacter(
   context.clearRect(0, 0, HANDWRITING_CANVAS_SCALE, HANDWRITING_CANVAS_SCALE);
   if (!character) return;
   const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
-  for (const stroke of character.strokes) drawStroke(context, stroke, stroke.points.length, width);
+  drawStrokes(
+    context,
+    character.strokes.map((stroke) => ({ stroke, visiblePoints: stroke.points.length })),
+    width,
+    options.glow
+  );
 }
 
 export function drawHandwritingPayload(canvas: HandwritingCanvas, payload: HandwritingPayload | null | undefined, options: HandwritingRendererOptions = {}) {
@@ -114,9 +166,13 @@ export function drawHandwritingPayload(canvas: HandwritingCanvas, payload: Handw
   context.clearRect(0, 0, HANDWRITING_CANVAS_SCALE, HANDWRITING_CANVAS_SCALE);
   if (!payload) return;
   const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
-  for (const character of payload.characters) {
-    for (const stroke of character.strokes) drawStroke(context, stroke, stroke.points.length, width);
-  }
+  const glow = options.glow === undefined ? payload.glow : options.glow;
+  drawStrokes(
+    context,
+    payload.characters.flatMap((character) => character.strokes.map((stroke) => ({ stroke, visiblePoints: stroke.points.length }))),
+    width,
+    glow
+  );
 }
 
 export function drawHandwritingTimelineAt(
@@ -130,6 +186,7 @@ export function drawHandwritingTimelineAt(
   if (!context) return;
   context.clearRect(0, 0, HANDWRITING_CANVAS_SCALE, HANDWRITING_CANVAS_SCALE);
   const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
+  const glow = options.glow === undefined ? payload.glow : options.glow;
   const visible = visiblePointCountAt(timeline, elapsedMs);
   const counts = new Map<string, number>();
   for (let index = 0; index < visible; index += 1) {
@@ -137,11 +194,13 @@ export function drawHandwritingTimelineAt(
     const key = `${event.characterIndex}:${event.strokeIndex}`;
     counts.set(key, (counts.get(key) || 0) + 1);
   }
+  const strokes: Array<{ stroke: HandwritingStroke; visiblePoints: number }> = [];
   for (const [key, count] of counts) {
     const [characterIndex, strokeIndex] = key.split(":").map(Number);
     const stroke = payload.characters[characterIndex]?.strokes[strokeIndex];
-    if (stroke) drawStroke(context, stroke, count, width);
+    if (stroke) strokes.push({ stroke, visiblePoints: count });
   }
+  drawStrokes(context, strokes, width, glow);
 }
 
 export function drawHandwritingProgress(canvas: HandwritingCanvas, payload: HandwritingPayload, timeline: HandwritingTimeline, elapsedMs: number, options?: HandwritingRendererOptions) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Check, Palette } from "lucide-vue-next";
-import { ref } from "vue";
+import { Check, Palette, X } from "lucide-vue-next";
+import { computed, nextTick, ref } from "vue";
 import {
   HANDWRITING_CUSTOM_COLOR_INDEX,
   HANDWRITING_PRESET_LABELS,
@@ -13,6 +13,10 @@ const props = defineProps<{
   selectedIndex: number;
   paperEnabled: boolean;
   paperColor: HandwritingColor;
+  glowEnabled: boolean;
+  glowColor: HandwritingColor;
+  glowDensity: number;
+  glowWidth: number;
   disabled?: boolean;
 }>();
 
@@ -21,38 +25,29 @@ const emit = defineEmits<{
   "slot-change": [index: number, color: HandwritingColor];
   "custom-change": [color: HandwritingColor];
   "paper-change": [enabled: boolean, color: HandwritingColor];
+  "glow-change": [enabled: boolean, color: HandwritingColor, density: number, width: number];
 }>();
 
-const slotColorInput = ref<HTMLInputElement | null>(null);
-const customColorInput = ref<HTMLInputElement | null>(null);
+const pickerInput = ref<HTMLInputElement | null>(null);
 const editingSlot = ref(-1);
+const pickerOpen = ref(false);
 let longPressTimer = 0;
 let longPressTriggered = false;
+const pickerColor = computed<HandwritingColor>(() => {
+  if (editingSlot.value === HANDWRITING_CUSTOM_COLOR_INDEX) return props.customColor;
+  return props.colors[editingSlot.value] || props.customColor;
+});
 
-function revealColorPicker(input: HTMLInputElement) {
-  try {
-    if (input.showPicker) input.showPicker();
-    else input.click();
-  } catch {
-    input.click();
-  }
-}
-
-function openSlotPicker(index: number) {
+function openPicker(index: number) {
   if (props.disabled) return;
   editingSlot.value = index;
-  const input = slotColorInput.value;
-  if (!input) return;
-  input.value = props.colors[index];
-  revealColorPicker(input);
+  pickerOpen.value = true;
+  void nextTick(() => pickerInput.value?.focus());
 }
 
-function openCustomPicker() {
-  if (props.disabled) return;
-  const input = customColorInput.value;
-  if (!input) return;
-  input.value = props.customColor;
-  revealColorPicker(input);
+function closePicker() {
+  pickerOpen.value = false;
+  editingSlot.value = -1;
 }
 
 function beginLongPress(index: number) {
@@ -61,7 +56,7 @@ function beginLongPress(index: number) {
   longPressTriggered = false;
   longPressTimer = window.setTimeout(() => {
     longPressTriggered = true;
-    openSlotPicker(index);
+    openPicker(index);
   }, 450);
 }
 
@@ -80,22 +75,37 @@ function selectSlot(index: number) {
   emit("select", index);
 }
 
-function handleSlotColor(event: Event) {
-  const value = (event.target as HTMLInputElement).value;
-  if (editingSlot.value < 0) return;
-  emit("slot-change", editingSlot.value, value.toLowerCase() as HandwritingColor);
-  emit("select", editingSlot.value);
-}
-
-function handleCustomColor(event: Event) {
+function handlePickerColor(event: Event) {
   const value = (event.target as HTMLInputElement).value.toLowerCase() as HandwritingColor;
-  emit("custom-change", value);
-  emit("select", HANDWRITING_CUSTOM_COLOR_INDEX);
+  if (editingSlot.value === HANDWRITING_CUSTOM_COLOR_INDEX) {
+    emit("custom-change", value);
+    emit("select", HANDWRITING_CUSTOM_COLOR_INDEX);
+  } else if (editingSlot.value >= 0) {
+    emit("slot-change", editingSlot.value, value);
+    emit("select", editingSlot.value);
+  }
+  closePicker();
 }
 
 function handlePaperColor(event: Event) {
   const value = (event.target as HTMLInputElement).value.toLowerCase() as HandwritingColor;
   emit("paper-change", props.paperEnabled, value);
+}
+
+function handleGlowColor(event: Event) {
+  const value = (event.target as HTMLInputElement).value.toLowerCase() as HandwritingColor;
+  emit("glow-change", props.glowEnabled, value, props.glowDensity, props.glowWidth);
+}
+
+function handleGlowAmount(kind: "density" | "width", event: Event) {
+  const value = Math.max(0, Math.min(100, Number((event.target as HTMLInputElement).value)));
+  emit(
+    "glow-change",
+    props.glowEnabled,
+    props.glowColor,
+    kind === "density" ? value : props.glowDensity,
+    kind === "width" ? value : props.glowWidth
+  );
 }
 </script>
 
@@ -121,7 +131,7 @@ function handlePaperColor(event: Event) {
         @pointerup="finishLongPress"
         @pointercancel="finishLongPress"
         @pointerleave="finishLongPress"
-        @contextmenu.prevent="openSlotPicker(index)"
+        @contextmenu.prevent="openPicker(index)"
         @click="selectSlot(index)"
       ><Check v-if="selectedIndex === index" :size="14" /></button>
       <button
@@ -133,28 +143,28 @@ function handlePaperColor(event: Event) {
         :aria-pressed="selectedIndex === HANDWRITING_CUSTOM_COLOR_INDEX"
         title="选择自定义颜色"
         :disabled="disabled"
-        @click="openCustomPicker"
+        @click="openPicker(HANDWRITING_CUSTOM_COLOR_INDEX)"
       >
         <Palette :size="16" />
         <Check v-if="selectedIndex === HANDWRITING_CUSTOM_COLOR_INDEX" class="custom-check" :size="11" />
       </button>
     </div>
-    <input
-      ref="slotColorInput"
-      class="handwriting-color-input"
-      type="color"
-      :value="editingSlot >= 0 ? colors[editingSlot] : colors[Math.min(selectedIndex, colors.length - 1)]"
-      aria-label="替换颜色按钮"
-      @input="handleSlotColor"
-    />
-    <input
-      ref="customColorInput"
-      class="handwriting-color-input"
-      type="color"
-      :value="customColor"
-      aria-label="自定义笔画颜色"
-      @input="handleCustomColor"
-    />
+    <div v-if="pickerOpen" class="handwriting-picker" role="dialog" aria-label="调色盘">
+      <header>
+        <strong>调色盘</strong>
+        <button type="button" aria-label="关闭调色盘" @click="closePicker"><X :size="15" /></button>
+      </header>
+      <label>
+        <input
+          ref="pickerInput"
+          type="color"
+          :value="pickerColor"
+          aria-label="调色盘颜色"
+          @input="handlePickerColor"
+        />
+        <span>点按选择颜色</span>
+      </label>
+    </div>
     <div class="handwriting-paper-options">
       <label class="handwriting-paper-toggle">
         <input
@@ -175,6 +185,58 @@ function handlePaperColor(event: Event) {
           @input="handlePaperColor"
         />
       </label>
+    </div>
+    <div class="handwriting-glow-options" :class="{ enabled: glowEnabled }">
+      <label class="handwriting-glow-toggle">
+        <input
+          type="checkbox"
+          :checked="glowEnabled"
+          :disabled="disabled"
+          aria-label="光晕"
+          @change="emit('glow-change', ($event.target as HTMLInputElement).checked, glowColor, glowDensity, glowWidth)"
+        />
+        <span>光晕</span>
+      </label>
+      <template v-if="glowEnabled">
+        <label class="handwriting-glow-color">
+          <span>光晕颜色</span>
+          <input
+            type="color"
+            :value="glowColor"
+            :disabled="disabled"
+            aria-label="光晕颜色"
+            @input="handleGlowColor"
+          />
+        </label>
+        <label class="handwriting-glow-range">
+          <span>光晕密度</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            :value="glowDensity"
+            :disabled="disabled"
+            aria-label="光晕密度"
+            @input="handleGlowAmount('density', $event)"
+          />
+          <output aria-label="光晕密度数值">{{ glowDensity }}</output>
+        </label>
+        <label class="handwriting-glow-range">
+          <span>光晕宽度</span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            :value="glowWidth"
+            :disabled="disabled"
+            aria-label="光晕宽度"
+            @input="handleGlowAmount('width', $event)"
+          />
+          <output aria-label="光晕宽度数值">{{ glowWidth }}</output>
+        </label>
+      </template>
     </div>
   </div>
 </template>
@@ -241,12 +303,55 @@ function handlePaperColor(event: Event) {
   background: #355c48;
 }
 
-.handwriting-color-input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-  pointer-events: none;
+.handwriting-picker {
+  display: grid;
+  gap: 8px;
+  width: min(220px, 100%);
+  margin-inline: auto;
+  padding: 10px 12px;
+  border: 1px solid #d7e0d5;
+  border-radius: 10px;
+  background: #f8faf7;
+  box-shadow: 0 8px 24px #1731261c;
+}
+
+.handwriting-picker header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #355c48;
+  font-size: 12px;
+}
+
+.handwriting-picker header button {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #65756a;
+  display: grid;
+  place-items: center;
+}
+
+.handwriting-picker label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #65756a;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.handwriting-picker input[type="color"] {
+  width: 52px;
+  height: 42px;
+  padding: 3px;
+  border: 1px solid #cfd8cf;
+  border-radius: 9px;
+  background: #fff;
 }
 
 .handwriting-paper-options {
@@ -257,6 +362,62 @@ function handlePaperColor(event: Event) {
   gap: 14px;
   color: #526259;
   font-size: 12px;
+}
+
+.handwriting-glow-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  padding: 9px 10px;
+  border: 1px solid #d7e0d5;
+  border-radius: 10px;
+  background: #f8faf7;
+  color: #526259;
+  font-size: 12px;
+}
+
+.handwriting-glow-options.enabled {
+  border-color: #b9cbbd;
+}
+
+.handwriting-glow-toggle,
+.handwriting-glow-color,
+.handwriting-glow-range {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.handwriting-glow-toggle {
+  grid-column: 1 / -1;
+  color: #355c48;
+  font-weight: 600;
+}
+
+.handwriting-glow-color input[type="color"] {
+  width: 38px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid #cfd8cf;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.handwriting-glow-range {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 24px;
+}
+
+.handwriting-glow-range input[type="range"] {
+  width: 100%;
+  accent-color: #47705a;
+}
+
+.handwriting-glow-range output {
+  color: #65756a;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .handwriting-paper-toggle,

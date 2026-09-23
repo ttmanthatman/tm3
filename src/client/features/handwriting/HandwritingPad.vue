@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { HandwritingStroke } from "@shared/handwriting";
+import type { HandwritingGlow, HandwritingStroke } from "@shared/handwriting";
 import { appendHandwritingStroke, drawHandwritingCharacter } from "./handwritingRenderer";
 import type { HandwritingInputPoint } from "./useHandwritingComposer";
 
@@ -9,6 +9,7 @@ const props = defineProps<{
   disabled?: boolean;
   ariaLabel?: string;
   backgroundColor?: string;
+  glow?: HandwritingGlow | null;
 }>();
 
 const emit = defineEmits<{
@@ -23,17 +24,20 @@ let activePointerId: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let renderedPointCounts: number[] = [];
 let renderedColors: Array<string | undefined> = [];
+let renderedGlow = "";
 
 function redraw() {
   if (!canvas.value) return;
-  drawHandwritingCharacter(canvas.value, { strokes: props.strokes });
+  drawHandwritingCharacter(canvas.value, { strokes: props.strokes }, { glow: props.glow });
   renderedPointCounts = props.strokes.map((stroke) => stroke.points.length);
   renderedColors = props.strokes.map((stroke) => stroke.color);
+  renderedGlow = JSON.stringify(props.glow || null);
 }
 
 function syncAppendedInk() {
   if (!canvas.value) return;
-  const requiresRedraw = renderedPointCounts.length > props.strokes.length || props.strokes.some((stroke, index) => {
+  const glowChanged = renderedGlow !== JSON.stringify(props.glow || null);
+  const requiresRedraw = glowChanged || renderedPointCounts.length > props.strokes.length || props.strokes.some((stroke, index) => {
     const renderedCount = renderedPointCounts[index] || 0;
     return renderedCount > stroke.points.length || (renderedCount > 0 && renderedColors[index] !== stroke.color);
   });
@@ -43,10 +47,11 @@ function syncAppendedInk() {
   }
   props.strokes.forEach((stroke, index) => {
     const renderedCount = renderedPointCounts[index] || 0;
-    if (stroke.points.length > renderedCount) appendHandwritingStroke(canvas.value!, stroke, renderedCount);
+    if (stroke.points.length > renderedCount) appendHandwritingStroke(canvas.value!, stroke, renderedCount, { glow: props.glow });
   });
   renderedPointCounts = props.strokes.map((stroke) => stroke.points.length);
   renderedColors = props.strokes.map((stroke) => stroke.color);
+  renderedGlow = JSON.stringify(props.glow || null);
 }
 
 function inputPoint(event: PointerEvent): HandwritingInputPoint {
@@ -103,6 +108,7 @@ function blur() {
 
 watch(() => props.strokes, redraw);
 watch(() => props.strokes, syncAppendedInk, { deep: true });
+watch(() => props.glow, redraw, { deep: true });
 watch(() => props.disabled, (disabled) => { if (disabled) blur(); });
 onMounted(() => {
   redraw();

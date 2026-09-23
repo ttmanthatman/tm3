@@ -52,7 +52,7 @@ function drawCurrent() {
   const elements = canvases();
   payload.value?.characters.forEach((_character, index) => {
     const canvas = elements[index];
-    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(index));
+    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(index), { glow: payload.value?.glow });
   });
 }
 
@@ -82,7 +82,7 @@ function renderStatic() {
   const elements = canvases();
   payload.value?.characters.forEach((character, index) => {
     const canvas = elements[index];
-    if (canvas) drawHandwritingCharacter(canvas, character);
+    if (canvas) drawHandwritingCharacter(canvas, character, { glow: payload.value?.glow });
   });
 }
 

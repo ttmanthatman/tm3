@@ -201,11 +201,22 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toHaveCount(0);
     await expect(dialog.getByText("小秘密：长按调出调色盘", { exact: true })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "自定义颜色", exact: true })).toBeVisible();
-    await setNativeColor(dialog, "自定义笔画颜色", "#123456");
+    await dialog.getByRole("button", { name: "自定义颜色", exact: true }).click();
+    const customPicker = dialog.getByRole("dialog", { name: "调色盘" });
+    await expect(customPicker).toBeVisible();
+    await expect(customPicker.locator('input[type="color"]')).toBeVisible();
+    await setNativeColor(customPicker, "调色盘颜色", "#123456");
     await longPressColorButton(dialog, "选择朱红");
-    await setNativeColor(dialog, "替换颜色按钮", "#ff2d55");
+    const slotPicker = dialog.getByRole("dialog", { name: "调色盘" });
+    await expect(slotPicker).toBeVisible();
+    await expect(slotPicker.locator('input[type="color"]')).toBeVisible();
+    await setNativeColor(slotPicker, "调色盘颜色", "#ff2d55");
     await dialog.getByRole("checkbox", { name: "显示纸张" }).check();
     await setNativeColor(dialog, "纸张颜色", "#fff1d6");
+    await dialog.getByRole("checkbox", { name: "光晕" }).check();
+    await setNativeColor(dialog, "光晕颜色", "#aabbcc");
+    await dialog.getByRole("slider", { name: "光晕密度" }).fill("72");
+    await dialog.getByRole("slider", { name: "光晕宽度" }).fill("48");
     await expectComposerInsideViewport(sender, dialog);
     await composeTwoCharacters(sender, dialog);
     await dialog.getByRole("button", { name: "预览播放", exact: true }).click();
@@ -233,6 +244,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     expect((receiverDto!.payload as { characters: unknown[] }).characters).toHaveLength(2);
     expect(receiverDto!.payload).toMatchObject({
       paper: { color: "#fff1d6" },
+      glow: { color: "#aabbcc", density: 72, width: 48 },
       characters: [
         { strokes: [{ color: "#ff2d55" }, { color: "#ff2d55" }] },
         { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
@@ -282,9 +294,16 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await sender.reload();
     await expect.poll(() => connectionState(sender)).toBe("connected");
     const savedDialog = await openHandwritingComposer(sender);
-    await expect(savedDialog.locator('input[aria-label="自定义笔画颜色"]')).toHaveValue("#123456");
+    await savedDialog.getByRole("button", { name: "自定义颜色", exact: true }).click();
+    const savedPicker = savedDialog.getByRole("dialog", { name: "调色盘" });
+    await expect(savedPicker.locator('input[aria-label="调色盘颜色"]')).toHaveValue("#123456");
+    await savedPicker.getByRole("button", { name: "关闭调色盘", exact: true }).click();
     await expect(savedDialog.getByRole("checkbox", { name: "显示纸张" })).toBeChecked();
     await expect(savedDialog.locator('input[aria-label="纸张颜色"]')).toHaveValue("#fff1d6");
+    await expect(savedDialog.getByRole("checkbox", { name: "光晕" })).toBeChecked();
+    await expect(savedDialog.locator('input[aria-label="光晕颜色"]')).toHaveValue("#aabbcc");
+    await expect(savedDialog.getByRole("slider", { name: "光晕密度" })).toHaveValue("72");
+    await expect(savedDialog.getByRole("slider", { name: "光晕宽度" })).toHaveValue("48");
     await expect(savedDialog.getByRole("button", { name: "选择蓝色", exact: true })).toHaveAttribute("aria-pressed", "true");
   } finally {
     await Promise.all([senderSession.context.close(), receiverSession.context.close()]);

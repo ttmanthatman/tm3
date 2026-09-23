@@ -3,13 +3,19 @@ import {
   HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DRAFT_LIMITS,
   HANDWRITING_DEFAULT_PAPER_COLOR,
+  HANDWRITING_DEFAULT_GLOW_COLOR,
+  HANDWRITING_DEFAULT_GLOW_DENSITY,
+  HANDWRITING_DEFAULT_GLOW_WIDTH,
   HANDWRITING_PRESET_COLORS,
   HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
   isHandwritingStrokeColor,
   normalizeHandwritingColor,
+  normalizeHandwritingGlow,
   normalizeHandwritingPayload,
+  type HandwritingColor,
   type HandwritingCharacter,
+  type HandwritingGlow,
   type HandwritingPayload,
   type HandwritingPoint,
   type HandwritingStroke,
@@ -74,6 +80,10 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_PRESET_COLORS[0]);
   const paperEnabled = ref(false);
   const paperColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_PAPER_COLOR);
+  const glowEnabled = ref(false);
+  const glowColor = ref<HandwritingColor>(HANDWRITING_DEFAULT_GLOW_COLOR);
+  const glowDensity = ref(HANDWRITING_DEFAULT_GLOW_DENSITY);
+  const glowWidth = ref(HANDWRITING_DEFAULT_GLOW_WIDTH);
   let timestampOrigin: number | null = null;
 
   const completedPointCount = computed(() => characters.value.reduce((sum, character) => sum + characterPointCount(character), 0));
@@ -112,6 +122,38 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     paperColor.value = nextColor;
     touch();
     return true;
+  }
+
+  function setGlow(enabled: boolean, color?: unknown, density?: unknown, width?: unknown) {
+    const next = normalizeHandwritingGlow({
+      color,
+      density,
+      width
+    }, {
+      color: glowColor.value,
+      density: glowDensity.value,
+      width: glowWidth.value
+    });
+    if (
+      glowEnabled.value === enabled &&
+      glowColor.value === next.color &&
+      glowDensity.value === next.density &&
+      glowWidth.value === next.width
+    ) return false;
+    glowEnabled.value = enabled;
+    glowColor.value = next.color;
+    glowDensity.value = next.density;
+    glowWidth.value = next.width;
+    touch();
+    return true;
+  }
+
+  function glowSettings(): HandwritingGlow {
+    return {
+      color: glowColor.value,
+      density: glowDensity.value,
+      width: glowWidth.value
+    };
   }
 
   function beginStroke(input: HandwritingInputPoint, pointerId: number) {
@@ -232,7 +274,8 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
         kind: "handwriting",
         version: 1,
         characters: candidates,
-        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {})
+        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {}),
+        ...(glowEnabled.value ? { glow: glowSettings() } : {})
       }, HANDWRITING_SEND_LIMITS);
     } catch (error) {
       errorMessage.value = error instanceof Error ? error.message : "手写内容暂无法发送";
@@ -248,7 +291,8 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
         kind: "handwriting",
         version: 1,
         characters: candidates,
-        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {})
+        ...(paperEnabled.value ? { paper: { color: paperColor.value } } : {}),
+        ...(glowEnabled.value ? { glow: glowSettings() } : {})
       }, HANDWRITING_DRAFT_LIMITS);
     } catch {
       return null;
@@ -267,6 +311,10 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       selectedColor.value = HANDWRITING_PRESET_COLORS[0];
       paperEnabled.value = false;
       paperColor.value = HANDWRITING_DEFAULT_PAPER_COLOR;
+      glowEnabled.value = false;
+      glowColor.value = HANDWRITING_DEFAULT_GLOW_COLOR;
+      glowDensity.value = HANDWRITING_DEFAULT_GLOW_DENSITY;
+      glowWidth.value = HANDWRITING_DEFAULT_GLOW_WIDTH;
       return;
     }
     try {
@@ -277,12 +325,20 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       selectedColor.value = current.value.strokes.at(-1)?.color || HANDWRITING_DEFAULT_COLOR;
       paperEnabled.value = !!normalized.paper;
       paperColor.value = normalized.paper?.color || HANDWRITING_DEFAULT_PAPER_COLOR;
+      glowEnabled.value = !!normalized.glow;
+      glowColor.value = normalized.glow?.color || HANDWRITING_DEFAULT_GLOW_COLOR;
+      glowDensity.value = normalized.glow?.density ?? HANDWRITING_DEFAULT_GLOW_DENSITY;
+      glowWidth.value = normalized.glow?.width ?? HANDWRITING_DEFAULT_GLOW_WIDTH;
     } catch {
       characters.value = [];
       current.value = { strokes: [] };
       selectedColor.value = HANDWRITING_PRESET_COLORS[0];
       paperEnabled.value = false;
       paperColor.value = HANDWRITING_DEFAULT_PAPER_COLOR;
+      glowEnabled.value = false;
+      glowColor.value = HANDWRITING_DEFAULT_GLOW_COLOR;
+      glowDensity.value = HANDWRITING_DEFAULT_GLOW_DENSITY;
+      glowWidth.value = HANDWRITING_DEFAULT_GLOW_WIDTH;
       errorMessage.value = "原手写草稿已损坏，已保留为新草稿";
     }
   }
@@ -299,6 +355,10 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     selectedColor,
     paperEnabled,
     paperColor,
+    glowEnabled,
+    glowColor,
+    glowDensity,
+    glowWidth,
     palette: HANDWRITING_STROKE_COLORS,
     completedPointCount,
     currentPointCount,
@@ -308,6 +368,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     snapshotCharacters,
     selectColor,
     setPaper,
+    setGlow,
     beginStroke,
     appendPoint,
     endStroke,

@@ -4,6 +4,9 @@ import {
   HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DEFAULT_PREFERENCES,
   HANDWRITING_DRAFT_LIMITS,
+  HANDWRITING_DEFAULT_GLOW_COLOR,
+  HANDWRITING_DEFAULT_GLOW_DENSITY,
+  HANDWRITING_DEFAULT_GLOW_WIDTH,
   HANDWRITING_PRESET_COLORS,
   HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
@@ -59,20 +62,55 @@ test("keeps optional paper color in sent payloads and rejects malformed paper me
   assert.throws(() => normalizeHandwritingPayload({ ...payload(), paper: { color: "white" } }), HandwritingValidationError);
 });
 
+test("keeps optional glow settings in sent payloads and defaults omitted glow values", () => {
+  const glow = payload();
+  glow.glow = { color: "#AABBCC", density: 72, width: 48 };
+  assert.deepEqual(normalizeHandwritingPayload(glow), {
+    ...glow,
+    glow: { color: "#aabbcc", density: 72, width: 48 }
+  });
+
+  const partial = payload();
+  partial.glow = { density: 20 } as never;
+  assert.deepEqual(normalizeHandwritingPayload(partial).glow, {
+    color: HANDWRITING_DEFAULT_GLOW_COLOR,
+    density: 20,
+    width: HANDWRITING_DEFAULT_GLOW_WIDTH
+  });
+
+  assert.throws(() => normalizeHandwritingPayload({ ...payload(), glow: { color: "white" } }), HandwritingValidationError);
+  assert.throws(() => normalizeHandwritingPayload({ ...payload(), glow: { density: 101 } }), HandwritingValidationError);
+});
+
 test("normalizes account palette order, custom color, selection and paper preference", () => {
   const preferences = normalizeHandwritingPreferences({
     strokeColors: ["#112233", "#FFEEDD"],
     customColor: "#ABCDEF",
     selectedIndex: 7,
     paperEnabled: true,
-    paperColor: "#123456"
+    paperColor: "#123456",
+    glowEnabled: true,
+    glowColor: "#ABCDEF",
+    glowDensity: 72,
+    glowWidth: 48
   });
   assert.deepEqual(preferences.strokeColors, ["#112233", "#ffeedd", ...HANDWRITING_PRESET_COLORS.slice(2)]);
   assert.equal(preferences.customColor, "#abcdef");
   assert.equal(preferences.selectedIndex, 7);
-  assert.deepEqual({ paperEnabled: preferences.paperEnabled, paperColor: preferences.paperColor }, {
+  assert.deepEqual({
+    paperEnabled: preferences.paperEnabled,
+    paperColor: preferences.paperColor,
+    glowEnabled: preferences.glowEnabled,
+    glowColor: preferences.glowColor,
+    glowDensity: preferences.glowDensity,
+    glowWidth: preferences.glowWidth
+  }, {
     paperEnabled: true,
-    paperColor: "#123456"
+    paperColor: "#123456",
+    glowEnabled: true,
+    glowColor: "#abcdef",
+    glowDensity: 72,
+    glowWidth: 48
   });
   assert.deepEqual(normalizeHandwritingPreferences(null), HANDWRITING_DEFAULT_PREFERENCES);
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { HANDWRITING_PRESET_COLORS, HANDWRITING_STROKE_COLORS } from "@shared/handwriting";
+import { HANDWRITING_PRESET_COLORS, HANDWRITING_STROKE_COLORS, HANDWRITING_DEFAULT_GLOW_COLOR } from "@shared/handwriting";
 import { shouldSampleHandwritingPoint, useHandwritingComposer } from "./useHandwritingComposer.js";
 
 test("explicit character completion preserves the final in-progress character in snapshots", () => {
@@ -78,5 +78,27 @@ test("custom stroke colors and paper metadata are included in draft and send sna
     version: 1,
     characters: [{ strokes: [{ points: [[1, 1, 0]], color: "#123456" }] }],
     paper: { color: "#abcdef" }
+  });
+});
+
+test("glow settings are persisted with a message and default to white when omitted", () => {
+  const composer = useHandwritingComposer();
+  assert.equal(composer.setGlow(true, "#AABBCC", 72, 48), true);
+  composer.beginStroke({ x: 1, y: 1, timestampMs: 0 }, 1);
+  composer.endStroke(1);
+  assert.deepEqual(composer.snapshot()?.glow, {
+    color: "#aabbcc",
+    density: 72,
+    width: 48
+  });
+
+  const defaults = useHandwritingComposer();
+  assert.equal(defaults.setGlow(true), true);
+  defaults.beginStroke({ x: 1, y: 1, timestampMs: 0 }, 1);
+  defaults.endStroke(1);
+  assert.deepEqual(defaults.snapshot()?.glow, {
+    color: HANDWRITING_DEFAULT_GLOW_COLOR,
+    density: 65,
+    width: 60
   });
 });
