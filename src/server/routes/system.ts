@@ -6,13 +6,23 @@ import { RELEASE_HISTORY } from "../../shared/releaseHistory.js";
 import { demoModeAvailable } from "../demo/config.js";
 import { currentBuildInfo } from "../buildInfo.js";
 import { applyFileResponseHeaders, applyFileValidation } from "../fileResponses.js";
-import { AVATAR_DIR, BG_DIR } from "../storageDirs.js";
+import { AVATAR_DIR, BG_DIR, DIST_CLIENT } from "../storageDirs.js";
 import { configuredUpdateBranch, UPDATE_PM2_APP, UPDATE_REPO_URL, UPDATE_RESTART_MODE } from "./adminUpdate.js";
 
 const RELEASE_DISPLAY_DEVELOPER = process.env.APP_RELEASE_DEVELOPER || process.env.RELEASE_DEVELOPER || RELEASE_DEVELOPER;
 const DEMO_MODE_AVAILABLE = demoModeAvailable();
 
-export function registerSystemRoutes(app: FastifyInstance) {
+export function registerSystemRoutes(app: FastifyInstance, handwritingIndexPath = path.join(DIST_CLIENT, "handwriting", "index.html")) {
+  if (DEMO_MODE_AVAILABLE) {
+    app.get("/handwriting", async (_request, reply) => {
+      if (!fs.existsSync(handwritingIndexPath)) return reply.code(404).send("Not found");
+      return reply.header("Cache-Control", "no-store")
+        .header("X-Robots-Tag", "noindex, nofollow")
+        .type("text/html")
+        .send(fs.createReadStream(handwritingIndexPath));
+    });
+  }
+
   app.get("/api/health", async () => ({ ok: true, name: "team-chat", time: new Date().toISOString() }));
 
   app.get("/api/version", async () => {

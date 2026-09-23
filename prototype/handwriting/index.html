@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <base href="/handwriting/" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f6f3ed" />
+    <link rel="icon" href="data:," />
+    <title>逐字手写 · 交互原型</title>
+    <link rel="stylesheet" href="./style.css?v=3" />
+    <script type="module" src="./app.js?v=3"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand-mark" aria-hidden="true">写</div>
+        <div class="topbar-copy"><strong>逐字手写</strong><span>交互原型 · 本地模拟</span></div>
+        <span class="prototype-badge">P0 原型</span>
+      </header>
+
+      <section class="intro" aria-labelledby="intro-title">
+        <div class="eyebrow">让一句话慢慢出现</div>
+        <h1 id="intro-title">亲手写下，<br /><em>再送给对方。</em></h1>
+        <p>一次写一字，手动完成字格。试写“你好”，再点发送，看看收件人如何逐笔读到它。</p>
+        <div class="intro-actions"><button class="button button-primary" id="open-composer" type="button">开始手写 <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M5 15 15 5M8 5h7v7" /></svg></button><span>最多 30 字 · 不识别文字</span></div>
+      </section>
+
+      <section class="conversation" aria-labelledby="conversation-title">
+        <div class="section-heading"><div><span class="eyebrow">模拟会话</span><h2 id="conversation-title">你和收件人</h2></div><span class="online-indicator">仅在此页面展示</span></div>
+        <div class="conversation-body" id="conversation-body">
+          <div class="day-divider">今天</div>
+          <div class="message message-incoming"><div class="avatar">收</div><div class="bubble bubble-incoming">想对我说什么？<span class="bubble-time">现在</span></div></div>
+          <div id="sent-messages" aria-live="polite"></div>
+          <div class="empty-hint" id="empty-hint">写完后，模拟发送的手写消息会出现在这里。</div>
+        </div>
+        <div class="mock-composer"><span>输入消息…</span><button type="button" id="open-more" aria-label="打开更多功能"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M10 3v14M3 10h14" /></svg><span>更多</span></button></div>
+        <div class="more-menu" id="more-menu" hidden><button type="button" id="open-from-more"><span class="more-icon" aria-hidden="true"><svg viewBox="0 0 20 20"><path d="m4 15 1-4L14.5 1.5l4 4L9 15l-5 1ZM4 18h13" /></svg></span><span>手写<small>逐字写给对方</small></span></button></div>
+      </section>
+
+      <section class="samples" aria-labelledby="samples-title">
+        <div class="section-heading"><div><span class="eyebrow">容量观察</span><h2 id="samples-title">合成样本</h2></div></div>
+        <p>下面是同一格式的 2、10、30 字合成数据。实际手写数据会在发送后显示。</p>
+        <div class="sample-grid" id="sample-grid"></div>
+      </section>
+      <footer>独立静态原型 · 没有账号、网络发送或持久化</footer>
+    </main>
+
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <header class="dialog-header"><div><span class="eyebrow">写给收件人</span><h2 id="dialog-title">逐字手写</h2></div><button class="icon-button" type="button" id="close-dialog" aria-label="关闭手写弹窗"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M4 4 16 16M16 4 4 16" /></svg></button></header>
+        <div class="dialog-scroll">
+          <div class="step-heading"><div><strong>已完成的字</strong><span id="character-count">0 / 30</span></div><button class="text-button danger" id="clear-all" type="button">清空全部</button></div>
+          <div class="character-strip" id="character-strip"><div class="strip-empty">写好一个字后，点“完成此字”</div></div>
+          <p class="helper">点已完成的字格，可删除整个字并重写。</p>
+
+          <div class="pad-heading"><div><strong>当前字格</strong><span>一个字写完后，手动切到下一格</span></div><span class="ink-label"><i></i>墨色</span></div>
+          <div class="pad-wrap"><canvas id="writing-pad" aria-label="手写画板" tabindex="0"></canvas><span class="pad-corner top-left"></span><span class="pad-corner top-right"></span><span class="pad-corner bottom-left"></span><span class="pad-corner bottom-right"></span></div>
+          <div class="pad-actions"><button class="button button-quiet" id="undo-stroke" type="button">撤销一笔</button><button class="button button-quiet" id="clear-current" type="button">清空当前字</button><button class="button button-secondary" id="finish-character" type="button">完成此字 <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 10h13m-5-5 5 5-5 5" /></svg></button></div>
+          <div class="hint-line" id="hint-line">用手指或鼠标在方格里书写，抬笔不会自动换字。</div>
+          <div class="draft-stats" id="draft-stats">草稿：0 字 · 0 笔 · 0 点</div>
+
+          <div class="preview-section"><div class="step-heading"><div><strong>发送前预览</strong><span>包含当前未完成的字</span></div><button class="text-button" id="preview-play" type="button">逐笔播放</button></div><div class="preview-grid" id="preview-grid"></div></div>
+        </div>
+        <footer class="dialog-footer"><p>模拟发送 · 不会传到服务器</p><button class="button button-primary" id="send-handwriting" type="button">发送给收件人 <svg aria-hidden="true" viewBox="0 0 20 20"><path d="M5 15 15 5M8 5h7v7" /></svg></button></footer>
+      </section>
+    </div>
+
+    <div class="confirm-backdrop" id="confirm-backdrop" hidden><section class="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description"><h2 id="confirm-title">清空全部手写？</h2><p id="confirm-description">已完成字格和当前字格都会删除，此操作无法撤销。</p><div><button class="button button-quiet" id="cancel-clear" type="button">保留草稿</button><button class="button button-danger" id="confirm-clear" type="button">清空全部</button></div></section></div>
+  </body>
+</html>
