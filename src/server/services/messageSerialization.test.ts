@@ -207,6 +207,22 @@ function createHarness() {
   };
 }
 
+test("handwriting payload and request identity survive the shared serializer unchanged", async () => {
+  const harness = createHarness();
+  const payload = { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0], [3, 4, 8]] }] }] };
+  const dto = await harness.service.serializeMessage(makeMessage({
+    id: 8,
+    type: "handwriting",
+    content: "[手写消息]",
+    payload,
+    clientRequestId: "123e4567-e89b-42d3-a456-426614174000"
+  }), VIEWER);
+  assert.equal(dto.type, "handwriting");
+  assert.equal(dto.content, "[手写消息]");
+  assert.equal(dto.clientRequestId, "123e4567-e89b-42d3-a456-426614174000");
+  assert.deepEqual(dto.payload, payload);
+});
+
 function makeScore(trackId: number, pageFileName: string): MusicScore & { pages: MusicScorePage[] } {
   return {
     id: trackId * 10,

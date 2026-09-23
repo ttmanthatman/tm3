@@ -28,6 +28,8 @@ import { registerStoryRoutes } from "./routes/stories.js";
 import { storyGender } from "../shared/stories.js";
 import { createGraceStory, createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
 import { createMessageSendIdempotency, messageSendRequestHash } from "./services/messageSendIdempotency.js";
+import { HANDWRITING_CONTENT, HandwritingValidationError } from "../shared/handwriting.js";
+import { prepareHandwritingMessage } from "./services/handwriting.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
@@ -1620,6 +1622,7 @@ function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
   if (message.type === "bible_session") return `${message.sender.displayName} 分享了打开的圣经：${stripPushText(message.content) || "一起阅读"}`;
   if (message.type === "chat_record") return `${message.sender.displayName} 转发了聊天记录：${stripPushText(message.content) || "聊天记录"}`;
+  if (message.type === "handwriting") return `${message.sender.displayName}：${HANDWRITING_CONTENT}`;
   if (message.type === "image") return `${message.sender.displayName} 发来一张图片`;
   if (isVoiceMessage(message)) return `${message.sender.displayName} 发来一条语音`;
   if (message.type === "file") return `${message.sender.displayName} 发来文件：${message.fileName || "文件"}`;
@@ -4309,26 +4312,31 @@ io.on("connection", async (socket: Socket) => {
       const body = z
         .object({
           channelId: z.number(),
-          content: z.string(),
-          type: z.enum(["text", "prayer", "sermon_request"]).default("text"),
+          content: z.string().optional(),
+          type: z.enum(["text", "prayer", "sermon_request", "handwriting"]).default("text"),
           payload: z.unknown().optional(),
           replyToId: z.number().nullable().optional(),
           clientRequestId: z.string().uuid().optional()
         })
         .parse(data);
-      const requestHash = body.clientRequestId
-        ? messageSendRequestHash({ channelId: body.channelId, content: body.content, type: body.type, payload: body.payload, replyToId: body.replyToId || null })
-        : undefined;
-      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, code: "not_sent", message: "无权在此频道发言" });
-      if (await isMusicChannel(body.channelId)) return ack?.({ success: false, code: "not_sent", message: "音乐频道只能上传 MP3 和 M4A 文件" });
-      const content = cleanText(body.content);
-      if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, code: "not_sent", message: "消息不能为空" });
-      const payload =
+      if (body.type !== "handwriting" && typeof body.content !== "string") {
+        return ack?.({ success: false, code: "not_sent", message: "消息内容无效" });
+      }
+      const handwriting = body.type === "handwriting" ? prepareHandwritingMessage(body.payload, body.clientRequestId) : null;
+      const content = handwriting?.content ?? cleanText(body.content || "");
+      const payload = handwriting?.payload ?? (
         body.type === "prayer"
           ? cleanPrayerPayload(body.payload)
           : body.type === "sermon_request"
             ? cleanSermonRequestPayload(body.payload)
-            : await cleanTextMessagePayload(body.payload);
+            : await cleanTextMessagePayload(body.payload)
+      );
+      const requestHash = body.clientRequestId
+        ? messageSendRequestHash({ channelId: body.channelId, content, type: body.type, payload, replyToId: body.replyToId ?? null })
+        : undefined;
+      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, code: "not_sent", message: "无权在此频道发言" });
+      if (await isMusicChannel(body.channelId)) return ack?.({ success: false, code: "not_sent", message: "音乐频道只能上传 MP3 和 M4A 文件" });
+      if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, code: "not_sent", message: "消息不能为空" });
       const prayerImageMessageId = body.type === "prayer" ? Number((payload as { imageMessageId?: unknown }).imageMessageId || 0) : 0;
       if (prayerImageMessageId && !(await isValidPrayerImageMessage(prayerImageMessageId, body.channelId))) {
         return ack?.({ success: false, code: "not_sent", message: "附带照片无效" });
@@ -4341,7 +4349,7 @@ io.on("connection", async (socket: Socket) => {
         content,
         type: body.type,
         payload,
-        replyToId: body.replyToId || null,
+        replyToId: body.replyToId ?? null,
         pushOrigin
       });
       const result = body.clientRequestId && requestHash
@@ -4364,7 +4372,11 @@ io.on("connection", async (socket: Socket) => {
       }
       ack?.({ success: true, messageId: result.messageId, clientRequestId: body.clientRequestId, deduplicated: result.state === "replayed", message: await hydrateMessage(result.messageId, currentAuth.accountId) });
     } catch (error) {
-      ack?.({ success: false, message: error instanceof Error ? error.message : "发送失败" });
+      ack?.({
+        success: false,
+        ...(error instanceof HandwritingValidationError || error instanceof z.ZodError ? { code: "not_sent" } : {}),
+        message: error instanceof Error ? error.message : "发送失败"
+      });
     }
   });
 

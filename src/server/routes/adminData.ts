@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { AdminAttachmentDTO, AdminBackupDTO, AdminMessageDTO } from "../../shared/types.js";
 import { APP_VERSION } from "../../shared/release.js";
 import { storyGender } from "../../shared/stories.js";
+import { HANDWRITING_CONTENT } from "../../shared/handwriting.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
 import { cleanBiblePreferences, biblePreferencesJson } from "../biblePreferences.js";
 import { applyFileResponseHeaders } from "../fileResponses.js";
@@ -17,6 +18,7 @@ import { stripMarkdownSyntax } from "../textUtils.js";
 import { isZipArchive, unzipArchive, zipArchive, type ZipArchiveEntry } from "../zipArchive.js";
 import { AVATAR_DIR, BACKUP_DIR, BG_DIR, ROOT, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore, storageFilePath } from "../storageDirs.js";
 import { THEMES } from "./appearance.js";
+import { normalizeHandwritingForStorage } from "../services/handwriting.js";
 
 // 导入的 ZIP 包含消息附件和头像，放宽单文件上限（全局 multipart 默认 80MB）。
 const IMPORT_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
@@ -315,7 +317,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
   }
 
   function messagePreview(message: Pick<Message, "content" | "fileName" | "type">) {
-    const raw = message.content || message.fileName || (message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "bible_session" ? "[圣经]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
+    const raw = message.content || message.fileName || (message.type === "handwriting" ? HANDWRITING_CONTENT : message.type === "prayer" ? "[代祷]" : message.type === "sermon_request" ? "[申请演讲]" : message.type === "bible_session" ? "[圣经]" : message.type === "image" ? "[图片]" : message.type === "file" ? "[文件]" : "");
     return stripMarkdownSyntax(raw.replace(/<[^>]*>/g, " ")).slice(0, 120);
   }
 
@@ -717,6 +719,15 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
     const prayerActions = Array.isArray(payload.prayerActions) ? payload.prayerActions : [];
     const messageAiSuggestions = Array.isArray(payload.messageAiSuggestions) ? payload.messageAiSuggestions : [];
+    for (const message of messages) {
+      if (message.type !== "handwriting") continue;
+      try {
+        message.payload = normalizeHandwritingForStorage(message.type, message.payload);
+        message.content = HANDWRITING_CONTENT;
+      } catch (error) {
+        badImportRequest(error instanceof Error ? error.message : "手写消息数据无效");
+      }
+    }
     await prisma.$transaction(async (tx) => {
       for (const channel of channels) {
         await tx.channel.upsert({

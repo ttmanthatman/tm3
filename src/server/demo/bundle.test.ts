@@ -69,3 +69,30 @@ test("accepts only whitelisted public settings in snapshots", () => {
     /不允许覆盖/
   );
 });
+
+test("normalizes valid handwriting demo records and rejects damaged payloads", () => {
+  const base = {
+    formatVersion: 1,
+    datasetVersion: "2026.08.1",
+    generatedAt: "2026-08-17T00:00:00.000Z",
+    assets: [],
+    accounts: [{ key: "user-a", username: "demo_a", passwordHash: "x".repeat(60), displayName: "演示用户" }],
+    channels: [{ key: "general", name: "大厅" }],
+    memberships: [],
+    messages: [{
+      key: "message-a",
+      channelKey: "general",
+      senderKey: "user-a",
+      content: "伪造标签",
+      type: "handwriting",
+      payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0]] }] }] }
+    }],
+    settings: {}
+  };
+  const normalized = assertDemoSnapshot(base, "2026.08.1");
+  assert.equal(normalized.messages[0]?.content, "[手写消息]");
+  assert.throws(
+    () => assertDemoSnapshot({ ...base, messages: [{ ...base.messages[0], payload: { kind: "handwriting", version: 2, characters: [] } }] }, "2026.08.1"),
+    /版本/
+  );
+});

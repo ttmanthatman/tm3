@@ -202,6 +202,30 @@ test("unsupported message types are skipped and reported", async () => {
   assert.equal(record.payload.itemCount, 1);
 });
 
+test("handwriting is excluded from pure and mixed forwarding", async () => {
+  const handwriting = {
+    ...textMessage(7, "[手写消息]"),
+    type: "handwriting",
+    payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[1, 2, 0]] }] }] }
+  } as Partial<ForwardSourceMessage> & { id: number; channelId: number };
+  const mixed = createForwardHarness({ messages: [textMessage(1, "你好"), handwriting] });
+  const mixedResponse = await mixed.app.inject({
+    method: "POST",
+    url: "/api/messages/forward",
+    payload: { messageIds: [1, 7], channelIds: [10], mode: "merged" }
+  });
+  assert.deepEqual(mixedResponse.json(), { success: true, forwarded: 1, skipped: 1 });
+  const record = mixed.state.created[0] as { payload: { itemCount: number } };
+  assert.equal(record.payload.itemCount, 1);
+
+  const pureResponse = await createForwardHarness({ messages: [handwriting] }).app.inject({
+    method: "POST",
+    url: "/api/messages/forward",
+    payload: { messageIds: [7], channelIds: [10], mode: "separate" }
+  });
+  assert.equal(pureResponse.statusCode, 400);
+});
+
 test("forward rejects when every message is unsupported", async () => {
   const prayer = { ...textMessage(5, "代祷"), type: "prayer" } as Partial<ForwardSourceMessage> & { id: number; channelId: number };
   const { app } = createForwardHarness({ messages: [prayer] });

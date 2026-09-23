@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { DEMO_BUNDLE_FORMAT_VERSION, type DemoManifestDTO, type DemoSnapshot } from "../../shared/demoMode.js";
+import { HANDWRITING_CONTENT } from "../../shared/handwriting.js";
+import { normalizeHandwritingForStorage } from "../services/handwriting.js";
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const KEY_PATTERN = /^[a-z0-9][a-z0-9_.-]{0,79}$/;
@@ -142,7 +144,7 @@ const messageSchema = z.object({
   channelKey: z.string().regex(KEY_PATTERN),
   senderKey: z.string().regex(KEY_PATTERN),
   content: z.string().nullable().optional(),
-  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "sermon_request", "why_topic_card", "bible_session", "system"]).optional(),
+  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request", "why_topic_card", "bible_session", "chat_record", "handwriting", "system"]).optional(),
   payload: z.unknown().optional(),
   assetKey: z.string().regex(KEY_PATTERN).optional(),
   fileName: z.string().max(255).nullable().optional(),
@@ -266,6 +268,12 @@ export function assertDemoSnapshot(value: unknown, datasetVersion: string): Demo
   assertUniqueKeys("独立角色", (snapshot.actors || []).map((item) => item.key));
   assertUniqueKeys("频道", snapshot.channels.map((item) => item.key));
   assertUniqueKeys("消息", snapshot.messages.map((item) => item.key));
+  for (const message of snapshot.messages) {
+    if (message.type === "handwriting") {
+      message.payload = normalizeHandwritingForStorage(message.type, message.payload);
+      message.content = HANDWRITING_CONTENT;
+    }
+  }
   assertUniqueKeys("虚拟角色", (snapshot.virtualCharacters || []).map((item) => item.key));
   return snapshot;
 }
