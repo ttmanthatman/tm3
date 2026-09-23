@@ -18,6 +18,7 @@ export type HandwritingPlaybackDependencies = {
   isDocumentVisible?: () => boolean;
   reducedMotion?: () => boolean;
   observeVisibility?: (element: Element, callback: (visible: boolean) => void) => () => void;
+  onAutoPlayDeclined?: () => void;
   onStateChange?: (state: HandwritingPlaybackState) => void;
 };
 
@@ -108,7 +109,8 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
   }
 
   function tryAutoPlay() {
-    if (!canAutoPlay() || playing) return false;
+    if (playing) return true;
+    if (!canAutoPlay()) return false;
     if (!dependencies.claimAutoPlay?.()) return false;
     return play(true);
   }
@@ -117,12 +119,14 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     visible = nextVisible;
     if (!visible) {
       pause(true);
+      return false;
     } else if (resumeOnVisibility && surfaceActive && isDocumentVisible()) {
-      play(false);
-    } else {
-      tryAutoPlay();
+      return play(false);
+    } else if (!tryAutoPlay()) {
+      dependencies.onAutoPlayDeclined?.();
+      return false;
     }
-    publish();
+    return playing;
   }
 
   function handleVisibilityChange() {
@@ -212,5 +216,5 @@ export function handwritingMessageEstimatedHeight(payload: unknown, viewportWidt
   const available = viewportWidth >= 768 ? 360 : Math.max(180, viewportWidth - 106);
   const gridWidth = Math.min(360, columns * 54, available);
   const cell = gridWidth / columns;
-  return Math.ceil(44 + rows * cell + 18);
+  return Math.ceil(25 + rows * cell);
 }

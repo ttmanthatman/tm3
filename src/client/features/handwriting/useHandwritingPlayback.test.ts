@@ -44,11 +44,24 @@ function harness(overrides: Partial<Parameters<typeof createHandwritingPlaybackC
 
 test("static mount has no frame loop and only an eligible real-time message can autoplay", () => {
   let claims = 0;
-  const test = harness({ claimAutoPlay: () => { claims += 1; return claims === 1; } });
+  let declined = 0;
+  const test = harness({
+    claimAutoPlay: () => { claims += 1; return claims === 1; },
+    onAutoPlayDeclined: () => { declined += 1; }
+  });
   test.controller.mount(test.element);
   assert.equal(test.hasFrame(), false);
   test.setVisible(true);
   assert.equal(test.hasFrame(), true);
+  assert.equal(declined, 0);
+  test.setVisible(true);
+  assert.equal(test.hasFrame(), true);
+  assert.equal(declined, 0);
+  test.controller.pause(false);
+  test.setVisible(false);
+  test.setVisible(true);
+  assert.equal(test.hasFrame(), false);
+  assert.equal(declined, 1);
   test.controller.destroy();
   assert.equal(test.hasFrame(), false);
 });
@@ -88,4 +101,5 @@ test("handwriting grid reserves complete rows and narrows columns on small scree
   assert.deepEqual(handwritingGridMetrics(seven, 1280), { columns: 6, rows: 2, count: 7, maxColumns: 6 });
   assert.deepEqual(handwritingGridMetrics(seven, 390), { columns: 5, rows: 2, count: 7, maxColumns: 6 });
   assert.equal(handwritingMessageEstimatedHeight(seven, 1280) > handwritingMessageEstimatedHeight(payload, 1280), true);
+  assert.equal(handwritingMessageEstimatedHeight(payload, 1280), 79);
 });

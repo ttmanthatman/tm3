@@ -787,7 +787,7 @@ export const useChatStore = defineStore("chat", {
         }, 500);
       });
       socket.on("message:new", (message: MessageDTO) => {
-        handwritingPlaybackRegistry.receive(message, this.account?.id || 0, this.account?.actorId);
+        handwritingPlaybackRegistry.receive(message, this.account?.id || 0);
         this.lastIncomingMessage = message;
         this.appendLocalMessage(message);
         this.noteUnreadMessage(message);

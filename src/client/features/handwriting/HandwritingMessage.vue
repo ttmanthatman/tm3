@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Pause, Play, RotateCcw } from "lucide-vue-next";
 import { parseStoredHandwritingPayload, type HandwritingCharacter, type HandwritingPayload } from "@shared/handwriting";
 import type { MessageDTO } from "@shared/types";
 import { drawHandwritingCharacter } from "./handwritingRenderer";
@@ -30,6 +29,7 @@ let timelineCursor = 0;
 let renderedProgress = 0;
 let visiblePointCounts = new Map<string, number>();
 let resizeObserver: ResizeObserver | null = null;
+let staticRendered = false;
 
 function partialCharacter(index: number): HandwritingCharacter | null {
   const character = payload.value?.characters[index];
@@ -61,6 +61,7 @@ function resetProgress() {
 
 function draw(progressMs: number) {
   if (!payload.value) return;
+  staticRendered = false;
   if (progressMs < renderedProgress) resetProgress();
   while (timelineCursor < timeline.events.length && timeline.events[timelineCursor].at <= progressMs) {
     const event = timeline.events[timelineCursor];
@@ -74,6 +75,7 @@ function draw(progressMs: number) {
 
 function renderStatic() {
   resetProgress();
+  staticRendered = true;
   const elements = canvases();
   payload.value?.characters.forEach((character, index) => {
     const canvas = elements[index];
@@ -82,26 +84,32 @@ function renderStatic() {
 }
 
 function rebuild() {
+  const restoreStatic = staticRendered && !playbackState.value.playing;
+  staticRendered = false;
   payload.value = parseStoredHandwritingPayload(props.message.payload);
   timeline = payload.value ? buildHandwritingTimeline(payload.value) : { events: [], durationMs: 0 };
   controller.setPayload();
-  void nextTick(renderStatic);
+  if (restoreStatic) void nextTick(renderStatic);
 }
 
 const controller = createHandwritingPlaybackController({
   getPayload: () => payload.value,
   draw,
   claimAutoPlay: () => props.variant === "timeline" && !!props.claimAutoPlay?.(),
+  onAutoPlayDeclined: renderStatic,
   onStateChange: (state) => { playbackState.value = state; }
 });
 
-function togglePlayback() {
-  if (playbackState.value.playing) {
-    controller.pause(false);
-    renderStatic();
-    return;
-  }
+function replayHandwriting() {
+  staticRendered = false;
   controller.play(true);
+}
+
+function handleReplayKey(event: KeyboardEvent) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  event.stopPropagation();
+  replayHandwriting();
 }
 
 watch(() => props.surfaceActive, (active) => controller.setSurfaceActive(active));
@@ -113,7 +121,8 @@ onMounted(() => {
     resizeObserver = new ResizeObserver(() => {
       viewportWidth.value = window.innerWidth;
       if (playbackState.value.playing || playbackState.value.progressMs > 0) draw(playbackState.value.progressMs);
-      else renderStatic();
+      else if (staticRendered) renderStatic();
+      else draw(playbackState.value.progressMs);
     });
     if (root.value) resizeObserver.observe(root.value);
   }
@@ -126,29 +135,22 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="root" class="handwriting-message" :class="{ damaged: !payload }">
+  <div
+    ref="root"
+    class="handwriting-message"
+    :class="{ damaged: !payload }"
+    :role="payload ? 'button' : undefined"
+    :tabindex="payload ? 0 : undefined"
+    :aria-label="payload ? `手写消息，共 ${payload.characters.length} 字，点击重新播放` : undefined"
+    @click.stop="payload && replayHandwriting()"
+    @keydown="handleReplayKey"
+  >
     <template v-if="payload">
-      <header class="handwriting-message-head">
-        <strong>手写消息 · {{ payload.characters.length }} 字</strong>
-        <button
-          type="button"
-          class="handwriting-message-replay"
-          :aria-label="playbackState.playing ? '暂停手写消息播放' : '重播手写消息'"
-          :title="playbackState.playing ? '暂停播放' : '重播'"
-          @pointerdown.stop
-          @click.stop="togglePlayback"
-        >
-          <Pause v-if="playbackState.playing" :size="15" />
-          <RotateCcw v-else :size="15" />
-          <span>{{ playbackState.playing ? "暂停" : "重播" }}</span>
-        </button>
-      </header>
       <div
         ref="grid"
         class="handwriting-message-grid"
         :style="gridStyle"
-        role="img"
-        :aria-label="`手写消息，共 ${payload.characters.length} 字`"
+        aria-hidden="true"
       >
         <div v-for="index in payload.characters.length" :key="index" class="handwriting-message-cell"><canvas aria-hidden="true"></canvas></div>
       </div>
@@ -164,28 +166,7 @@ onBeforeUnmount(() => {
   color: #294737;
   user-select: none;
   -webkit-user-select: none;
-}
-
-.handwriting-message-head {
-  min-height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 7px;
-  font-size: 12px;
-}
-
-.handwriting-message-replay {
-  min-height: 30px;
-  border: 1px solid #d4dfd4;
-  border-radius: 7px;
-  background: #fff;
-  color: #355c48;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 9px;
+  cursor: pointer;
 }
 
 .handwriting-message-grid {
@@ -197,16 +178,13 @@ onBeforeUnmount(() => {
   width: min(360px, calc(var(--handwriting-columns) * 54px), 100%);
   aspect-ratio: var(--handwriting-columns) / var(--handwriting-rows);
   margin-inline: auto;
-  background: #fff;
-  border: 1px solid #e1e7de;
+  background: transparent;
 }
 
 .handwriting-message-cell {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid #edf0eb;
-  border-bottom: 1px solid #edf0eb;
 }
 
 .handwriting-message-cell canvas {
@@ -222,7 +200,7 @@ onBeforeUnmount(() => {
   margin: 0;
   border: 1px dashed #d6ddd3;
   color: #8a5a53;
-  background: #fff;
+  background: transparent;
   font-size: 12px;
 }
 </style>

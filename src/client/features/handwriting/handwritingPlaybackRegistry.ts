@@ -51,9 +51,9 @@ export function createHandwritingPlaybackRegistry(options: { now?: () => number 
     return true;
   }
 
-  function receive(message: MessageDTO, accountId: number, ownActorId: number | null | undefined) {
+  function receive(message: MessageDTO, accountId: number) {
     pruneExpired();
-    if (!accountId || message.type !== "handwriting" || message.sender.id === ownActorId) return false;
+    if (!accountId || message.type !== "handwriting") return false;
     if (!parseStoredHandwritingPayload(message.payload)) return false;
     if (!noteSeen(accountId, message.channelId, message.id)) return false;
     if (queue.size >= HANDWRITING_PLAYBACK_QUEUE_LIMIT) return false;

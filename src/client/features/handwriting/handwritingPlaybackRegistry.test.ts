@@ -25,51 +25,51 @@ function claim(registry: ReturnType<typeof createHandwritingPlaybackRegistry>, m
 
 test("each real-time event is queued independently and can be consumed only once", () => {
   const registry = createHandwritingPlaybackRegistry();
-  assert.equal(registry.receive(message(10), 1, 2), true);
-  assert.equal(registry.receive(message(11), 1, 2), true);
+  assert.equal(registry.receive(message(10), 1), true);
+  assert.equal(registry.receive(message(11), 1), true);
   assert.equal(registry.size, 2);
   assert.equal(claim(registry, 10), true);
   assert.equal(claim(registry, 10), false);
   assert.equal(claim(registry, 11), true);
 });
 
-test("history-like duplicate/old events, own echoes and damaged payloads never gain eligibility", () => {
+test("history-like duplicate/old events and damaged payloads never gain eligibility", () => {
   const registry = createHandwritingPlaybackRegistry();
-  assert.equal(registry.receive(message(10), 1, 2), true);
-  assert.equal(registry.receive(message(10), 1, 2), false);
-  assert.equal(registry.receive(message(9), 1, 2), false);
-  assert.equal(registry.receive(message(11, 3, 2), 1, 2), false);
+  assert.equal(registry.receive(message(10), 1), true);
+  assert.equal(registry.receive(message(10), 1), false);
+  assert.equal(registry.receive(message(9), 1), false);
+  assert.equal(registry.receive(message(11, 3, 2), 1), true);
   const broken = message(12);
   broken.payload = { kind: "handwriting", version: 2 };
-  assert.equal(registry.receive(broken, 1, 2), false);
+  assert.equal(registry.receive(broken, 1), false);
 });
 
 test("visibility, current view and reduced-motion checks gate consumption", () => {
   const registry = createHandwritingPlaybackRegistry();
-  registry.receive(message(20), 1, 2);
+  registry.receive(message(20), 1);
   assert.equal(claim(registry, 20, { visible: false }), false);
   assert.equal(claim(registry, 20, { currentChannelId: 8 }), false);
   assert.equal(claim(registry, 20, { reducedMotion: true }), false);
   assert.equal(claim(registry, 20), false);
-  registry.receive(message(21), 1, 2);
+  registry.receive(message(21), 1);
   assert.equal(claim(registry, 21), true);
 });
 
 test("expired and over-capacity events stay static instead of building a backlog", () => {
   let time = 100;
   const registry = createHandwritingPlaybackRegistry({ now: () => time });
-  for (let id = 1; id <= HANDWRITING_PLAYBACK_QUEUE_LIMIT; id += 1) assert.equal(registry.receive(message(id), 1, 2), true);
-  assert.equal(registry.receive(message(100), 1, 2), false);
+  for (let id = 1; id <= HANDWRITING_PLAYBACK_QUEUE_LIMIT; id += 1) assert.equal(registry.receive(message(id), 1), true);
+  assert.equal(registry.receive(message(100), 1), false);
   time += HANDWRITING_PLAYBACK_TTL_MS + 1;
   assert.equal(registry.size, 0);
 });
 
 test("logout clears queue and seen watermarks for that account", () => {
   const registry = createHandwritingPlaybackRegistry();
-  registry.receive(message(10), 1, 2);
-  registry.receive(message(10), 2, 2);
+  registry.receive(message(10), 1);
+  registry.receive(message(10), 2);
   registry.clearAccount(1);
   assert.equal(claim(registry, 10), false);
-  assert.equal(registry.receive(message(10), 1, 2), true);
+  assert.equal(registry.receive(message(10), 1), true);
   assert.equal(registry.size, 2);
 });

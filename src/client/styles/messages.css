@@ -1115,3 +1115,9 @@
 .bubble p {
   margin: 0;
 }
+
+.message-row .bubble.handwriting-bubble,
+.message-row.mine .bubble.handwriting-bubble {
+  background: transparent;
+  color: #294737;
+}

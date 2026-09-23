@@ -5805,7 +5805,7 @@ const messageRowBindings = {
               >
               <div
                 class="bubble"
-                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'grace-bubble': row.message.type === 'grace', 'chain-bubble': row.message.type === 'chain', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
+                :class="[{ 'media-bubble': row.message.type === 'image' || row.message.type === 'file', 'handwriting-bubble': row.message.type === 'handwriting', 'link-preview-bubble': !!linkPreviewFor(row.message), 'prayer-bubble': row.message.type === 'prayer', 'grace-bubble': row.message.type === 'grace', 'chain-bubble': row.message.type === 'chain', 'music-playlist-bubble': row.message.type === 'music_playlist', 'text-selectable': textSelectableMessageId === row.message.id }, messageEffectClass(row.message)]"
                 :style="messageEffectStyle(row.message)"
                 :data-message-effect="messageEffect(row.message) || null"
                 :data-chain-bubble="row.message.type === 'chain' ? 'true' : null"
