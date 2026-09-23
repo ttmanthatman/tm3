@@ -30,6 +30,7 @@ import {
 } from "./messageWindowRequests";
 import { mergeChannelUpdate, mergeMessageUpdate } from "./messageUpdates";
 import { noteChannelMessage, orderChannels } from "./channelOrdering";
+import { handwritingPlaybackRegistry } from "./features/handwriting/handwritingPlaybackRegistry";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -331,6 +332,7 @@ export const useChatStore = defineStore("chat", {
     },
     async afterLogin(account: AccountDTO) {
       invalidateMessageWindowRequests();
+      if (this.account?.id && this.account.id !== account.id) handwritingPlaybackRegistry.clearAccount(this.account.id);
       this.account = account;
       rememberMsgwinAccount(account.id);
       this.initUnreadForAccount();
@@ -340,6 +342,7 @@ export const useChatStore = defineStore("chat", {
     },
     async logout(revoke = true) {
       if (revoke && getToken()) await api("/api/auth/logout", { method: "POST", body: JSON.stringify({}) }).catch(() => undefined);
+      if (this.account?.id) handwritingPlaybackRegistry.clearAccount(this.account.id);
       clearPersistedWindows(this.account?.id || lastMsgwinAccount());
       rememberMsgwinAccount(0);
       this.socket?.disconnect();
@@ -784,6 +787,7 @@ export const useChatStore = defineStore("chat", {
         }, 500);
       });
       socket.on("message:new", (message: MessageDTO) => {
+        handwritingPlaybackRegistry.receive(message, this.account?.id || 0, this.account?.actorId);
         this.lastIncomingMessage = message;
         this.appendLocalMessage(message);
         this.noteUnreadMessage(message);

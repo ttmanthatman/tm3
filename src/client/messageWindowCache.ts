@@ -76,12 +76,28 @@ function evictOldest(store: PersistedMessageStore) {
   if (stale) delete store.windows[stale];
 }
 
-function writeStore(accountId: number, store: PersistedMessageStore, storage: MessageWindowStorage) {
-  let json = JSON.stringify(store);
-  while (json.length > MESSAGE_WINDOW_CACHE_BYTES && store.order.length > 1) {
-    evictOldest(store);
-    json = JSON.stringify(store);
+function serializedBytes(value: unknown) {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function fitStoreToByteBudget(store: PersistedMessageStore) {
+  while (store.order.length && serializedBytes(store) > MESSAGE_WINDOW_CACHE_BYTES) {
+    const oldestKey = store.order.at(-1);
+    if (!oldestKey) break;
+    const window = store.windows[oldestKey];
+    if (!window?.messages.length) {
+      evictOldest(store);
+      continue;
+    }
+    window.messages.shift();
+    window.hasOlder = true;
+    if (!window.messages.length) evictOldest(store);
   }
+}
+
+function writeStore(accountId: number, store: PersistedMessageStore, storage: MessageWindowStorage) {
+  fitStoreToByteBudget(store);
+  const json = JSON.stringify(store);
   try {
     storage.setItem(messageWindowStorageKey(accountId), json);
   } catch {

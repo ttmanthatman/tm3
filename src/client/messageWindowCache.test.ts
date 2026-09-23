@@ -90,8 +90,39 @@ test("oversized payloads evict older windows until the byte budget fits", () => 
   persistWindowNow(7, "2:chat", [message(2, big)], true, storage);
   persistWindowNow(7, "3:chat", [message(3, big)], true, storage);
   const raw = storage.getItem(messageWindowStorageKey(7)) || "";
-  assert.equal(raw.length <= MESSAGE_WINDOW_CACHE_BYTES, true);
+  assert.equal(new TextEncoder().encode(raw).byteLength <= MESSAGE_WINDOW_CACHE_BYTES, true);
   assert.equal(loadPersistedWindow(7, "3:chat", storage)?.messages.length, 1);
+  assert.equal(loadPersistedWindow(7, "1:chat", storage), null);
+});
+
+test("one oversized window drops its oldest full messages and marks older history", () => {
+  const storage = new MemoryStorage();
+  const largePayload = {
+    kind: "handwriting",
+    version: 1,
+    characters: [{ strokes: [{ points: Array.from({ length: 2000 }, (_, index) => [index, index, index]) }] }]
+  };
+  const rows = Array.from({ length: 180 }, (_, index) => ({
+    ...message(index + 1, "[手写消息]"),
+    type: "handwriting" as const,
+    payload: largePayload
+  }));
+  persistWindowNow(7, "1:chat", rows, false, storage);
+  const raw = storage.getItem(messageWindowStorageKey(7)) || "";
+  const loaded = loadPersistedWindow(7, "1:chat", storage);
+  assert.equal(new TextEncoder().encode(raw).byteLength <= MESSAGE_WINDOW_CACHE_BYTES, true);
+  assert.equal((loaded?.messages.length || 0) < MESSAGE_WINDOW_CACHE_MESSAGES, true);
+  assert.equal(loaded?.hasOlder, true);
+  assert.deepEqual(loaded?.messages.at(-1)?.payload, largePayload);
+});
+
+test("a single message larger than the entire cache budget is not persisted partially", () => {
+  const storage = new MemoryStorage();
+  const huge = message(1, "你".repeat(MESSAGE_WINDOW_CACHE_BYTES));
+  huge.payload = { nested: "好".repeat(MESSAGE_WINDOW_CACHE_BYTES) };
+  persistWindowNow(7, "1:chat", [huge], false, storage);
+  const raw = storage.getItem(messageWindowStorageKey(7)) || "";
+  assert.equal(new TextEncoder().encode(raw).byteLength <= MESSAGE_WINDOW_CACHE_BYTES, true);
   assert.equal(loadPersistedWindow(7, "1:chat", storage), null);
 });
 
