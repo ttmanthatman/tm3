@@ -1,12 +1,16 @@
 import { computed, ref } from "vue";
 import {
+  HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DRAFT_LIMITS,
+  HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
+  isHandwritingStrokeColor,
   normalizeHandwritingPayload,
   type HandwritingCharacter,
   type HandwritingPayload,
   type HandwritingPoint,
-  type HandwritingStroke
+  type HandwritingStroke,
+  type HandwritingStrokeColor
 } from "@shared/handwriting";
 
 export type HandwritingInputPoint = {
@@ -42,7 +46,10 @@ export function shouldSampleHandwritingPoint(
 
 function cloneCharacter(character: HandwritingCharacter): HandwritingCharacter {
   return {
-    strokes: character.strokes.map((stroke) => ({ points: stroke.points.map((point) => [...point] as HandwritingPoint) }))
+    strokes: character.strokes.map((stroke) => ({
+      points: stroke.points.map((point) => [...point] as HandwritingPoint),
+      ...(stroke.color ? { color: stroke.color } : {})
+    }))
   };
 }
 
@@ -61,6 +68,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const revision = ref(initial?.revision || 0);
   const errorMessage = ref("");
   const activePointerId = ref<number | null>(null);
+  const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_COLOR);
   let timestampOrigin: number | null = null;
 
   const completedPointCount = computed(() => characters.value.reduce((sum, character) => sum + characterPointCount(character), 0));
@@ -86,6 +94,12 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     return [clampCoordinate(input.x), clampCoordinate(input.y), Math.max(time, last?.[2] ?? 0)];
   }
 
+  function selectColor(color: unknown) {
+    if (!isHandwritingStrokeColor(color)) return false;
+    selectedColor.value = color;
+    return true;
+  }
+
   function beginStroke(input: HandwritingInputPoint, pointerId: number) {
     if (activePointerId.value !== null || activePointerId.value === pointerId) return false;
     if (hasContent.value && characters.value.length >= HANDWRITING_DRAFT_LIMITS.maxCharacters && !current.value.strokes.length) {
@@ -102,7 +116,10 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     }
     activePointerId.value = pointerId;
     const point = pointFor(input);
-    const stroke: HandwritingStroke = { points: [point] };
+    const stroke: HandwritingStroke = {
+      points: [point],
+      ...(selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
+    };
     current.value.strokes.push(stroke);
     touch();
     errorMessage.value = "";
@@ -223,6 +240,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     if (!next.payload) {
       characters.value = [];
       current.value = { strokes: [] };
+      selectedColor.value = HANDWRITING_DEFAULT_COLOR;
       return;
     }
     try {
@@ -230,9 +248,11 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       const last = normalized.characters.at(-1);
       characters.value = normalized.characters.slice(0, -1).map(cloneCharacter);
       current.value = last ? cloneCharacter(last) : { strokes: [] };
+      selectedColor.value = current.value.strokes.at(-1)?.color || HANDWRITING_DEFAULT_COLOR;
     } catch {
       characters.value = [];
       current.value = { strokes: [] };
+      selectedColor.value = HANDWRITING_DEFAULT_COLOR;
       errorMessage.value = "原手写草稿已损坏，已保留为新草稿";
     }
   }
@@ -246,12 +266,15 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     revision,
     errorMessage,
     activePointerId,
+    selectedColor,
+    palette: HANDWRITING_STROKE_COLORS,
     completedPointCount,
     currentPointCount,
     totalPointCount,
     strokeCount,
     hasContent,
     snapshotCharacters,
+    selectColor,
     beginStroke,
     appendPoint,
     endStroke,

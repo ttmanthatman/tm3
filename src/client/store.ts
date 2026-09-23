@@ -754,6 +754,11 @@ export const useChatStore = defineStore("chat", {
       let connectedOnce = false;
       this.socket = socket;
       socket.on("connect", () => {
+        if (this.socket !== socket) return;
+        this.connectionState = "connecting";
+      });
+      socket.on("session:ready", () => {
+        if (this.socket !== socket || !socket.connected) return;
         const reconnecting = connectedOnce;
         connectedOnce = true;
         this.connectionState = "connected";

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { HandwritingStroke } from "@shared/handwriting";
-import { drawHandwritingCharacter } from "./handwritingRenderer";
+import { appendHandwritingStroke, drawHandwritingCharacter } from "./handwritingRenderer";
 import type { HandwritingInputPoint } from "./useHandwritingComposer";
 
 const props = defineProps<{
@@ -20,9 +20,32 @@ const emit = defineEmits<{
 const canvas = ref<HTMLCanvasElement | null>(null);
 let activePointerId: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let renderedPointCounts: number[] = [];
+let renderedColors: Array<string | undefined> = [];
 
 function redraw() {
-  if (canvas.value) drawHandwritingCharacter(canvas.value, { strokes: props.strokes });
+  if (!canvas.value) return;
+  drawHandwritingCharacter(canvas.value, { strokes: props.strokes });
+  renderedPointCounts = props.strokes.map((stroke) => stroke.points.length);
+  renderedColors = props.strokes.map((stroke) => stroke.color);
+}
+
+function syncAppendedInk() {
+  if (!canvas.value) return;
+  const requiresRedraw = renderedPointCounts.length > props.strokes.length || props.strokes.some((stroke, index) => {
+    const renderedCount = renderedPointCounts[index] || 0;
+    return renderedCount > stroke.points.length || (renderedCount > 0 && renderedColors[index] !== stroke.color);
+  });
+  if (requiresRedraw) {
+    redraw();
+    return;
+  }
+  props.strokes.forEach((stroke, index) => {
+    const renderedCount = renderedPointCounts[index] || 0;
+    if (stroke.points.length > renderedCount) appendHandwritingStroke(canvas.value!, stroke, renderedCount);
+  });
+  renderedPointCounts = props.strokes.map((stroke) => stroke.points.length);
+  renderedColors = props.strokes.map((stroke) => stroke.color);
 }
 
 function inputPoint(event: PointerEvent): HandwritingInputPoint {
@@ -77,7 +100,8 @@ function blur() {
   if (activePointerId !== null) cancel(activePointerId);
 }
 
-watch(() => props.strokes, redraw, { deep: true });
+watch(() => props.strokes, redraw);
+watch(() => props.strokes, syncAppendedInk, { deep: true });
 watch(() => props.disabled, (disabled) => { if (disabled) blur(); });
 onMounted(() => {
   redraw();

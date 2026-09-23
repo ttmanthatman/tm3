@@ -4566,6 +4566,12 @@ io.on("connection", async (socket: Socket) => {
     if (bookReaderChanged) broadcastBookReaders();
     if (friendListenerChanged) broadcastFriendListeners();
   });
+
+  // Socket.IO's transport-level `connect` reaches the browser before this
+  // async connection setup finishes. Announce application readiness only
+  // after every inbound listener above is registered, otherwise an immediate
+  // first send can be dropped without an ACK.
+  socket.emit("session:ready");
 });
 
 app.setNotFoundHandler((request, reply) => {

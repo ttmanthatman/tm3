@@ -15,3 +15,15 @@ test("handwriting messages expose only the drawing and retain transparent presen
   assert.match(styles, /\.message-row \.bubble\.handwriting-bubble[\s\S]*?background: transparent;/);
   assert.doesNotMatch(component, /\.handwriting-message-grid\s*\{[^}]*\b(?:background: #fff|border:)/);
 });
+
+test("the composer uses one editable preview, a per-stroke palette and coalesced draft persistence", () => {
+  const component = readFileSync(new URL("./HandwritingComposer.vue", import.meta.url), "utf8");
+  const message = readFileSync(new URL("./HandwritingMessage.vue", import.meta.url), "utf8");
+  assert.doesNotMatch(component, /<section class="handwriting-completed"/);
+  assert.match(component, /aria-label="笔画颜色"/);
+  assert.match(component, /composer\.selectColor\(option\.value\)/);
+  assert.match(component, /draftScheduler\.request\(\)/);
+  assert.match(component, /点已完成的字可删除/);
+  assert.doesNotMatch(component, /composer\.snapshotCharacters\.value/);
+  assert.match(message, /stroke\.color/);
+});

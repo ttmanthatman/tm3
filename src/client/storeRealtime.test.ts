@@ -54,9 +54,14 @@ async function waitFor(predicate: () => boolean, label: string) {
 test("transport reconnect reports offline state and reloads messages missed while disconnected", async (context) => {
   const httpServer = createServer();
   const ioServer = new SocketIOServer(httpServer);
+  let releaseInitialReady: (() => void) | undefined;
+  let connectionCount = 0;
   ioServer.on("connection", (socket) => {
+    connectionCount += 1;
     socket.join("ch:1");
     socket.on("channel:join", ({ channelId }: { channelId: number }) => socket.join(`ch:${channelId}`));
+    if (connectionCount === 1) releaseInitialReady = () => socket.emit("session:ready");
+    else socket.emit("session:ready");
   });
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const port = (httpServer.address() as AddressInfo).port;
@@ -88,6 +93,9 @@ test("transport reconnect reports offline state and reloads messages missed whil
   const store = useChatStore();
   store.messages = [...history];
   store.connectSocket();
+  await waitFor(() => Boolean(toRaw(store.socket)?.connected && releaseInitialReady), "transport connection before session readiness");
+  assert.equal(store.connectionState, "connecting");
+  releaseInitialReady!();
   await waitFor(() => store.connectionState === "connected", "initial socket connection");
 
   const socket = toRaw(store.socket)!;
@@ -144,6 +152,7 @@ test("pinned:updated applies only to its own channel", async (context) => {
   ioServer.on("connection", (socket) => {
     serverSocket = socket;
     socket.on("channel:join", ({ channelId }: { channelId: number }) => socket.join(`ch:${channelId}`));
+    socket.emit("session:ready");
   });
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const port = (httpServer.address() as AddressInfo).port;
@@ -210,6 +219,7 @@ test("transport reconnect reloads channels and backfills the pinned notice", asy
   const ioServer = new SocketIOServer(httpServer);
   ioServer.on("connection", (socket) => {
     socket.on("channel:join", ({ channelId }: { channelId: number }) => socket.join(`ch:${channelId}`));
+    socket.emit("session:ready");
   });
   await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
   const port = (httpServer.address() as AddressInfo).port;

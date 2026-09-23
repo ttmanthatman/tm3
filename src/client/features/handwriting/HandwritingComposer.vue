@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Check, Eraser, Play, RotateCcw, Send, Trash2, X } from "lucide-vue-next";
 import type { HandwritingPayload } from "@shared/handwriting";
 import AppModal from "../../components/ui/AppModal.vue";
 import HandwritingPad from "./HandwritingPad.vue";
+import { createHandwritingDraftScheduler } from "./handwritingDraftScheduler";
 import { drawHandwritingCharacter } from "./handwritingRenderer";
 import { buildHandwritingTimeline, type HandwritingTimeline } from "./handwritingTimeline";
 import {
@@ -36,7 +37,6 @@ const totalPointCount = computed(() => composer.totalPointCount.value);
 const clearConfirmOpen = ref(false);
 const previewPlaying = ref(false);
 const previewGrid = ref<HTMLElement | null>(null);
-const completedStrip = ref<HTMLElement | null>(null);
 let previewFrame = 0;
 let previewStartedAt = 0;
 let previewTimelineDuration = 0;
@@ -46,42 +46,52 @@ let previewCursor = 0;
 let previewRenderedProgress = 0;
 let previewVisibleCounts = new Map<string, number>();
 
-const displayCharacters = computed(() => composer.snapshotCharacters.value);
+const displayCharacters = computed(() => currentCharacter.value.strokes.length
+  ? [...characters.value, currentCharacter.value]
+  : characters.value
+);
 const canFinishCharacter = computed(() => !props.busy && currentCharacter.value.strokes.length > 0);
 const canSubmit = computed(() => !props.busy && props.socketReady && hasContent.value);
+const colorOptions = composer.palette.map((value, index) => ({
+  value,
+  label: ["墨色", "朱红", "橙色", "金色", "绿色", "蓝色", "紫色", "玫红"][index]
+}));
 
 function persistDraft() {
   emit("draft-change", composer.draftSnapshot(), revision.value);
 }
 
+const draftScheduler = createHandwritingDraftScheduler({ persist: persistDraft });
+
 function updateAfter(action: () => unknown) {
   if (props.busy) return;
-  action();
-  persistDraft();
+  if (action() === false) return;
+  draftScheduler.flush();
+  void renderStatic();
 }
 
 function point(pointerId: number, input: HandwritingInputPoint, force = false) {
   if (props.busy) return;
-  composer.appendPoint(pointerId, input, force);
-  persistDraft();
+  if (composer.appendPoint(pointerId, input, force)) draftScheduler.request();
 }
 
 function strokeStart(pointerId: number, input: HandwritingInputPoint) {
   if (props.busy) return;
-  composer.beginStroke(input, pointerId);
-  persistDraft();
+  if (composer.beginStroke(input, pointerId)) draftScheduler.request();
 }
 
 function strokeEnd(pointerId: number, input?: HandwritingInputPoint) {
   if (props.busy) return;
-  composer.endStroke(pointerId, input);
-  persistDraft();
+  if (!composer.endStroke(pointerId, input)) return;
+  draftScheduler.flush();
+  void renderStatic();
 }
 
 function strokeCancel(pointerId: number) {
   if (props.busy) return;
-  composer.cancelStroke(pointerId);
-  persistDraft();
+  if (!composer.cancelStroke(pointerId)) return;
+  draftScheduler.flush();
+  void renderStatic();
 }
 
 function submit() {
@@ -95,7 +105,7 @@ function partialCharacter(payload: HandwritingPayload, index: number, visibleByS
   if (!character) return null;
   const strokes = character.strokes.flatMap((stroke, strokeIndex) => {
     const count = visibleByStroke.get(`${index}:${strokeIndex}`) || 0;
-    return count > 0 ? [{ points: stroke.points.slice(0, count) }] : [];
+    return count > 0 ? [{ points: stroke.points.slice(0, count), ...(stroke.color ? { color: stroke.color } : {}) }] : [];
   });
   return strokes.length ? { strokes } : null;
 }
@@ -162,11 +172,6 @@ async function renderStatic() {
     const canvas = previewCanvases[index];
     if (canvas) drawHandwritingCharacter(canvas, character);
   });
-  const completedCanvases = [...(completedStrip.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
-  characters.value.forEach((character, index) => {
-    const canvas = completedCanvases[index];
-    if (canvas) drawHandwritingCharacter(canvas, character);
-  });
 }
 
 watch(
@@ -179,9 +184,17 @@ watch(
   },
   { deep: true, immediate: true }
 );
-watch(displayCharacters, () => { if (!previewPlaying.value) void renderStatic(); }, { deep: true });
-watch(() => props.open, (open) => { if (!open) stopPreview(true); });
+watch(() => props.open, (open) => {
+  if (open) return;
+  draftScheduler.flush();
+  stopPreview(true);
+});
 watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
+onBeforeUnmount(() => {
+  stopPreview(false);
+  if (props.open) draftScheduler.flush();
+  else draftScheduler.stop();
+});
 </script>
 
 <template>
@@ -194,35 +207,26 @@ watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
     @close="emit('close')"
   >
     <div class="handwriting-composer-body">
-      <section class="handwriting-completed" aria-labelledby="handwriting-completed-title">
-        <header>
-          <strong id="handwriting-completed-title">已完成的字</strong>
-          <span>{{ characters.length }} / 30</span>
-          <button type="button" class="handwriting-text-action danger" :disabled="busy || !hasContent" @click="clearConfirmOpen = true">清空全部</button>
-        </header>
-        <div v-if="!characters.length" class="handwriting-empty">写好一个字后，点“完成此字”</div>
-        <div v-else ref="completedStrip" class="handwriting-completed-strip">
-          <button
-            v-for="(character, index) in characters"
-            :key="`${revision}:${index}`"
-            type="button"
-            class="handwriting-completed-cell"
-            :disabled="busy"
-            :aria-label="`删除第 ${index + 1} 个字格`"
-            title="删除整个字并重写"
-            @click="updateAfter(() => composer.deleteCharacter(index))"
-          >
-            <canvas aria-hidden="true"></canvas>
-          </button>
-        </div>
-        <small>点已完成的字格可删除整个字，其余字保持顺序。</small>
-      </section>
-
       <section class="handwriting-current" aria-labelledby="handwriting-current-title">
         <header>
           <strong id="handwriting-current-title">当前字格</strong>
-          <span>写完后手动完成，不会因停顿自动切字</span>
+          <span>{{ displayCharacters.length }} / 30 · 写完后手动完成</span>
         </header>
+        <div class="handwriting-palette" role="group" aria-label="笔画颜色">
+          <span>笔画颜色</span>
+          <button
+            v-for="option in colorOptions"
+            :key="option.value"
+            type="button"
+            class="handwriting-color"
+            :class="{ selected: composer.selectedColor.value === option.value }"
+            :style="{ '--swatch-color': option.value }"
+            :aria-label="`选择${option.label}`"
+            :aria-pressed="composer.selectedColor.value === option.value"
+            :title="option.label"
+            @click="composer.selectColor(option.value)"
+          ><Check v-if="composer.selectedColor.value === option.value" :size="14" /></button>
+        </div>
         <HandwritingPad
           :strokes="currentCharacter.strokes"
           :disabled="busy"
@@ -242,18 +246,32 @@ watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 
       <section class="handwriting-preview" aria-labelledby="handwriting-preview-title">
         <header>
-          <strong id="handwriting-preview-title">发送预览</strong>
-          <button type="button" class="handwriting-replay" :disabled="!hasContent || busy" @click="previewPlaying ? stopPreview(true) : startPreview()">
-            <Play v-if="!previewPlaying" :size="15" />
-            <X v-else :size="15" />
-            {{ previewPlaying ? "停止预览" : "预览播放" }}
-          </button>
+          <strong id="handwriting-preview-title">发送预览</strong><span>{{ displayCharacters.length }} / 30</span>
+          <div class="handwriting-preview-actions">
+            <button type="button" class="handwriting-text-action danger" :disabled="busy || !hasContent" @click="clearConfirmOpen = true">清空全部</button>
+            <button type="button" class="handwriting-replay" :disabled="!hasContent || busy" @click="previewPlaying ? stopPreview(true) : startPreview()">
+              <Play v-if="!previewPlaying" :size="15" />
+              <X v-else :size="15" />
+              {{ previewPlaying ? "停止预览" : "预览播放" }}
+            </button>
+          </div>
         </header>
         <div v-if="displayCharacters.length" ref="previewGrid" class="handwriting-preview-grid">
-          <div v-for="(_character, index) in displayCharacters" :key="index" class="handwriting-preview-cell"><canvas aria-hidden="true"></canvas></div>
+          <template v-for="(_character, index) in displayCharacters" :key="index">
+            <button
+              v-if="index < characters.length"
+              type="button"
+              class="handwriting-preview-cell editable"
+              :disabled="busy"
+              :aria-label="`删除第 ${index + 1} 个字格`"
+              title="删除整个字并重写"
+              @click="updateAfter(() => composer.deleteCharacter(index))"
+            ><canvas aria-hidden="true"></canvas></button>
+            <div v-else class="handwriting-preview-cell current" aria-label="当前未完成字格"><canvas aria-hidden="true"></canvas></div>
+          </template>
         </div>
         <div v-else class="handwriting-empty">还没有可预览的字</div>
-        <small v-if="displayCharacters.length">发送时会包含尚未点“完成此字”的最后一字。</small>
+        <small v-if="displayCharacters.length">点已完成的字可删除；发送时会包含尚未点“完成此字”的最后一字。</small>
       </section>
     </div>
 
@@ -286,17 +304,23 @@ watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 .handwriting-text-action { margin-left: auto; border: 0; background: transparent; color: #47705a; padding: 6px; }
 .handwriting-text-action.danger { color: #a24e43; }
 .handwriting-empty { border: 1px dashed #d8ded5; padding: 14px; text-align: center; color: #929b91; font-size: 12px; }
-.handwriting-completed-strip { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
-.handwriting-completed-cell, .handwriting-preview-cell { aspect-ratio: 1; border: 1px solid #e2e7df; background: #fff; padding: 0; overflow: hidden; }
-.handwriting-completed-cell canvas, .handwriting-preview-cell canvas { display: block; width: 100%; height: 100%; }
-.handwriting-completed small, .handwriting-preview small { display: block; color: #929b91; margin-top: 7px; }
 .handwriting-current > header span { margin-left: auto; }
+.handwriting-palette { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 9px; margin: 0 auto 12px; }
+.handwriting-palette > span { color: #6f7e73; font-size: 12px; margin-right: 2px; }
+.handwriting-color { --swatch-color: #263b33; width: 30px; height: 30px; padding: 0; border: 3px solid #fff; border-radius: 50%; background: var(--swatch-color); color: #fff; display: grid; place-items: center; box-shadow: 0 0 0 1px #cfd8cf; }
+.handwriting-color.selected { box-shadow: 0 0 0 2px #355c48; }
 .handwriting-pad-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
 .handwriting-pad-actions button, .handwriting-replay, .handwriting-send { min-height: 38px; border: 1px solid #d7e0d5; border-radius: 7px; background: #f8faf7; color: #355c48; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .handwriting-status { min-height: 18px; margin: 7px 0 0; text-align: center; color: #7f8b80; font-size: 12px; }
 .handwriting-status.error { color: #a24e43; }
-.handwriting-preview > header { justify-content: space-between; }
+.handwriting-preview > header > span { margin-right: auto; }
+.handwriting-preview-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .handwriting-preview-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+.handwriting-preview-cell { aspect-ratio: 1; border: 1px solid #e2e7df; background: #fff; padding: 0; overflow: hidden; }
+.handwriting-preview-cell.editable { cursor: pointer; }
+.handwriting-preview-cell.current { border-style: dashed; }
+.handwriting-preview-cell canvas { display: block; width: 100%; height: 100%; }
+.handwriting-preview small { display: block; color: #929b91; margin-top: 7px; }
 .handwriting-composer-footer { padding: 12px 16px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid #e3e8df; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .handwriting-composer-footer p { color: #879388; font-size: 12px; }
 .handwriting-send { min-width: 112px; background: #355c48; border-color: #355c48; color: #fff; }
@@ -310,13 +334,16 @@ watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 button:disabled { opacity: .48; cursor: not-allowed; }
 @media (max-width: 600px) {
   .handwriting-composer-body { padding: 12px; }
-  .handwriting-completed-strip, .handwriting-preview-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .handwriting-palette { display: grid; grid-template-columns: repeat(8, 30px); justify-content: center; gap: 7px; }
+  .handwriting-palette > span { grid-column: 1 / -1; margin: 0; text-align: center; }
+  .handwriting-preview-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .handwriting-current > header { align-items: flex-start; }
   .handwriting-current > header span { text-align: right; }
   .handwriting-pad-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .handwriting-pad-actions button:last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 370px) {
-  .handwriting-completed-strip, .handwriting-preview-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .handwriting-palette { gap: 5px; }
+  .handwriting-preview-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 </style>

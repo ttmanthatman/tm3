@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DRAFT_LIMITS,
+  HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
   HandwritingValidationError,
   handwritingPayloadBytes,
@@ -26,6 +28,20 @@ test("accepts single-point strokes and resets time for each character", () => {
   const input = payload();
   input.characters.push({ strokes: [{ points: [[1, 1, 0]] }] });
   assert.deepEqual(normalizeHandwritingPayload(input), input);
+});
+
+test("normalizes supported per-stroke colors while keeping legacy ink payloads canonical", () => {
+  const colored = payload();
+  colored.characters[0].strokes[0].color = HANDWRITING_STROKE_COLORS[2];
+  assert.deepEqual(normalizeHandwritingPayload(colored), colored);
+
+  const explicitDefault = payload();
+  explicitDefault.characters[0].strokes[0].color = HANDWRITING_DEFAULT_COLOR;
+  assert.deepEqual(normalizeHandwritingPayload(explicitDefault), payload());
+
+  const unsupported = payload();
+  unsupported.characters[0].strokes[0].color = "#ffffff" as never;
+  assert.throws(() => normalizeHandwritingPayload(unsupported), /颜色/);
 });
 
 test("rejects unknown fields, versions, empty arrays, non-finite values, ranges and decreasing time", () => {

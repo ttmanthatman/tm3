@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { HANDWRITING_DEFAULT_COLOR, HANDWRITING_STROKE_COLORS } from "@shared/handwriting";
 import { shouldSampleHandwritingPoint, useHandwritingComposer } from "./useHandwritingComposer.js";
 
 test("explicit character completion preserves the final in-progress character in snapshots", () => {
@@ -49,4 +50,19 @@ test("sampling keeps first, corner, spaced and final points without filling dens
   assert.equal(shouldSampleHandwritingPoint([0, 0, 0], undefined, [2, 0, 1]), false);
   assert.equal(shouldSampleHandwritingPoint([0, 0, 0], undefined, [70, 0, 1]), true);
   assert.equal(shouldSampleHandwritingPoint([0, 0, 0], [-20, 0, 0], [0, 20, 1]), true);
+});
+
+test("the selected palette color is frozen onto each new stroke", () => {
+  const composer = useHandwritingComposer();
+  assert.equal(composer.selectedColor.value, HANDWRITING_DEFAULT_COLOR);
+  assert.equal(composer.selectColor(HANDWRITING_STROKE_COLORS[1]), true);
+  composer.beginStroke({ x: 1, y: 1, timestampMs: 0 }, 1);
+  composer.endStroke(1);
+  composer.selectColor(HANDWRITING_STROKE_COLORS[4]);
+  composer.beginStroke({ x: 2, y: 2, timestampMs: 10 }, 1);
+  composer.endStroke(1);
+  assert.deepEqual(composer.current.value.strokes.map((stroke) => stroke.color), [
+    HANDWRITING_STROKE_COLORS[1],
+    HANDWRITING_STROKE_COLORS[4]
+  ]);
 });

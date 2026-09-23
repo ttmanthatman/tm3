@@ -27,14 +27,14 @@ test("handwriting socket send validates, normalizes and deduplicates the real en
     if (!socket || typeof store?.currentChannelId !== "number") throw new Error("chat socket was not found");
     const requestId = crypto.randomUUID();
     const payload = { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[100, 200, 0], [300, 400, 20]] }] }] };
-    const emit = (data: unknown) => new Promise<Record<string, unknown>>((resolve, reject) => {
-      socket.timeout(10_000).emit("message:send", data, (error, response) => error ? reject(error) : resolve(response || {}));
+    const emit = (step: string, data: unknown) => new Promise<Record<string, unknown>>((resolve, reject) => {
+      socket.timeout(10_000).emit("message:send", data, (error, response) => error ? reject(new Error(`${step}: ${error.message}`)) : resolve(response || {}));
     });
     const base = { channelId: store.currentChannelId, type: "handwriting", content: "伪造标签", payload, clientRequestId: requestId, replyToId: null };
-    const first = await emit(base);
-    const replay = await emit(base);
-    const conflict = await emit({ ...base, payload: { ...payload, characters: [{ strokes: [{ points: [[101, 200, 0]] }] }] } });
-    const invalid = await emit({ ...base, clientRequestId: crypto.randomUUID(), payload: { ...payload, version: 2 } });
+    const first = await emit("first", base);
+    const replay = await emit("replay", base);
+    const conflict = await emit("conflict", { ...base, payload: { ...payload, characters: [{ strokes: [{ points: [[101, 200, 0]] }] }] } });
+    const invalid = await emit("invalid", { ...base, clientRequestId: crypto.randomUUID(), payload: { ...payload, version: 2 } });
     const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
       socket.timeout(10_000).emit("message:status", { clientRequestId: requestId }, (error, response) => error ? reject(error) : resolve(response || {}));
     });

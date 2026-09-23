@@ -1,4 +1,10 @@
-import type { HandwritingCharacter, HandwritingPayload, HandwritingPoint, HandwritingStroke } from "@shared/handwriting";
+import {
+  HANDWRITING_DEFAULT_COLOR,
+  type HandwritingCharacter,
+  type HandwritingPayload,
+  type HandwritingPoint,
+  type HandwritingStroke
+} from "@shared/handwriting";
 import { buildHandwritingTimeline, visiblePointCountAt, type HandwritingTimeline } from "./handwritingTimeline";
 
 export const HANDWRITING_CANVAS_SCALE = 10_000;
@@ -22,7 +28,7 @@ function configureCanvas(canvas: HandwritingCanvas, options: HandwritingRenderer
   const context = canvas.getContext("2d");
   if (!context) return null;
   context.setTransform(width / HANDWRITING_CANVAS_SCALE, 0, 0, height / HANDWRITING_CANVAS_SCALE, 0, 0);
-  context.fillStyle = "#263b33";
+  context.fillStyle = HANDWRITING_DEFAULT_COLOR;
   context.lineCap = "round";
   context.lineJoin = "round";
   return context;
@@ -52,12 +58,34 @@ function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, 
 }
 
 function drawStroke(context: CanvasRenderingContext2D, stroke: HandwritingStroke, visiblePoints = stroke.points.length, width = HANDWRITING_STROKE_WIDTH) {
+  context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
   const points = stroke.points.slice(0, Math.max(0, visiblePoints));
   if (!points.length) return;
   drawPoint(context, points[0], width);
   for (let index = 1; index < points.length; index += 1) {
     drawSegment(context, points[index - 1], points[index], width);
     drawPoint(context, points[index], width);
+  }
+}
+
+export function appendHandwritingStroke(
+  canvas: HandwritingCanvas,
+  stroke: HandwritingStroke,
+  startPointIndex: number,
+  options: HandwritingRendererOptions = {}
+) {
+  const context = configureCanvas(canvas, options);
+  if (!context || startPointIndex >= stroke.points.length) return;
+  const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
+  context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
+  let index = Math.max(0, startPointIndex);
+  if (index === 0) {
+    drawPoint(context, stroke.points[0], width);
+    index = 1;
+  }
+  for (; index < stroke.points.length; index += 1) {
+    drawSegment(context, stroke.points[index - 1], stroke.points[index], width);
+    drawPoint(context, stroke.points[index], width);
   }
 }
 
