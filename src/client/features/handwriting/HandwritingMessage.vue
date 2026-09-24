@@ -39,7 +39,11 @@ function partialCharacter(index: number): HandwritingCharacter | null {
   if (!character) return null;
   const strokes = character.strokes.flatMap((stroke, strokeIndex) => {
     const count = visiblePointCounts.get(`${index}:${strokeIndex}`) || 0;
-    return count > 0 ? [{ points: stroke.points.slice(0, count), ...(stroke.color ? { color: stroke.color } : {}) }] : [];
+    return count > 0 ? [{
+      points: stroke.points.slice(0, count),
+      ...(stroke.color ? { color: stroke.color } : {}),
+      ...(stroke.effect ? { effect: stroke.effect } : {})
+    }] : [];
   });
   return strokes.length ? { strokes } : null;
 }

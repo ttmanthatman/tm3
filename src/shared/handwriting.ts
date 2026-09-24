@@ -20,9 +20,11 @@ export const HANDWRITING_DEFAULT_PAPER_COLOR = "#fffaf0" as const;
 export const HANDWRITING_DEFAULT_GLOW_COLOR = "#ffffff" as const;
 export const HANDWRITING_DEFAULT_GLOW_DENSITY = 65;
 export const HANDWRITING_DEFAULT_GLOW_WIDTH = 60;
+export const HANDWRITING_EFFECT_METALLIC_PINK_GLITTER = "metallic-pink-glitter" as const;
 
 export type HandwritingColor = `#${string}`;
 export type HandwritingStrokeColor = HandwritingColor;
+export type HandwritingStrokeEffect = typeof HANDWRITING_EFFECT_METALLIC_PINK_GLITTER;
 
 export type HandwritingPaper = {
   color: HandwritingColor;
@@ -44,6 +46,7 @@ export type HandwritingPreferencesDTO = {
   glowColor: HandwritingColor;
   glowDensity: number;
   glowWidth: number;
+  effectEnabled: boolean;
 };
 
 export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
@@ -55,11 +58,16 @@ export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
   glowEnabled: false,
   glowColor: HANDWRITING_DEFAULT_GLOW_COLOR,
   glowDensity: HANDWRITING_DEFAULT_GLOW_DENSITY,
-  glowWidth: HANDWRITING_DEFAULT_GLOW_WIDTH
+  glowWidth: HANDWRITING_DEFAULT_GLOW_WIDTH,
+  effectEnabled: false
 };
 
 export type HandwritingPoint = readonly [x: number, y: number, t: number];
-export type HandwritingStroke = { points: HandwritingPoint[]; color?: HandwritingStrokeColor };
+export type HandwritingStroke = {
+  points: HandwritingPoint[];
+  color?: HandwritingStrokeColor;
+  effect?: HandwritingStrokeEffect;
+};
 export type HandwritingCharacter = { strokes: HandwritingStroke[] };
 export type HandwritingPayload = {
   kind: typeof HANDWRITING_KIND;
@@ -186,7 +194,8 @@ export function normalizeHandwritingPreferences(value: unknown): HandwritingPref
     glowEnabled: row.glowEnabled === true,
     glowColor: normalizeHandwritingColor(row.glowColor, HANDWRITING_DEFAULT_GLOW_COLOR),
     glowDensity: normalizeHandwritingGlowAmount(row.glowDensity, HANDWRITING_DEFAULT_GLOW_DENSITY),
-    glowWidth: normalizeHandwritingGlowAmount(row.glowWidth, HANDWRITING_DEFAULT_GLOW_WIDTH)
+    glowWidth: normalizeHandwritingGlowAmount(row.glowWidth, HANDWRITING_DEFAULT_GLOW_WIDTH),
+    effectEnabled: row.effectEnabled === true
   };
 }
 
@@ -244,9 +253,12 @@ export function normalizeHandwritingPayload(
     if (strokeCount > limits.maxStrokes) throw new HandwritingValidationError("limit", "手写消息笔画数量超出限制");
     for (const stroke of character.strokes) {
       if (!isPlainObject(stroke)) throw new HandwritingValidationError("invalid_shape", "手写笔画格式无效");
-      assertFields(stroke, ["points", "color"]);
+      assertFields(stroke, ["points", "color", "effect"]);
       if (stroke.color !== undefined && !isHandwritingStrokeColor(stroke.color)) {
         throw new HandwritingValidationError("invalid_shape", "手写笔画颜色无效");
+      }
+      if (stroke.effect !== undefined && stroke.effect !== HANDWRITING_EFFECT_METALLIC_PINK_GLITTER) {
+        throw new HandwritingValidationError("invalid_shape", "手写闪光笔效果无效");
       }
       if (!Array.isArray(stroke.points) || stroke.points.length === 0) {
         throw new HandwritingValidationError("empty", "手写笔画不能没有采样点");
@@ -266,7 +278,7 @@ export function normalizeHandwritingPayload(
     let firstPoint = true;
     const strokes: HandwritingStroke[] = [];
     for (const stroke of rawCharacter.strokes) {
-      const rawStroke = stroke as { points: unknown[]; color?: unknown };
+      const rawStroke = stroke as { points: unknown[]; color?: unknown; effect?: unknown };
       const points: HandwritingPoint[] = [];
       for (const point of rawStroke.points) {
         if (!Array.isArray(point) || point.length !== 3) {
@@ -289,7 +301,14 @@ export function normalizeHandwritingPayload(
       }
       const color = rawStroke.color;
       const normalizedColor = color === undefined ? HANDWRITING_DEFAULT_COLOR : normalizeHandwritingColor(color, HANDWRITING_DEFAULT_COLOR);
-      strokes.push(normalizedColor !== HANDWRITING_DEFAULT_COLOR ? { points, color: normalizedColor } : { points });
+      const effect = rawStroke.effect === HANDWRITING_EFFECT_METALLIC_PINK_GLITTER
+        ? HANDWRITING_EFFECT_METALLIC_PINK_GLITTER
+        : undefined;
+      strokes.push({
+        points,
+        ...(normalizedColor !== HANDWRITING_DEFAULT_COLOR ? { color: normalizedColor } : {}),
+        ...(effect ? { effect } : {})
+      });
     }
     characters.push({ strokes });
   }

@@ -17,6 +17,7 @@ test("handwriting account preferences are cleaned and serialized deterministical
     glowColor: "#AABBCC",
     glowDensity: 72,
     glowWidth: 48,
+    effectEnabled: true,
     unexpected: true
   });
   assert.deepEqual(cleaned, {
@@ -28,7 +29,8 @@ test("handwriting account preferences are cleaned and serialized deterministical
     glowEnabled: true,
     glowColor: "#aabbcc",
     glowDensity: 72,
-    glowWidth: 48
+    glowWidth: 48,
+    effectEnabled: true
   });
   assert.deepEqual(handwritingPreferencesJson(cleaned), cleaned);
   assert.deepEqual(cleanHandwritingPreferences(undefined), HANDWRITING_DEFAULT_PREFERENCES);

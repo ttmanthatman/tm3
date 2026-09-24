@@ -102,3 +102,17 @@ test("glow settings are persisted with a message and default to white when omitt
     width: 60
   });
 });
+
+test("the glitter pen freezes its effect onto each new stroke", () => {
+  const composer = useHandwritingComposer();
+  assert.equal(composer.setEffect(true), true);
+  composer.beginStroke({ x: 1, y: 1, timestampMs: 0 }, 1);
+  composer.endStroke(1);
+  assert.equal(composer.setEffect(false), true);
+  composer.beginStroke({ x: 2, y: 2, timestampMs: 10 }, 1);
+  composer.endStroke(1);
+  assert.deepEqual(composer.current.value.strokes.map((stroke) => stroke.effect), [
+    "metallic-pink-glitter",
+    undefined
+  ]);
+});

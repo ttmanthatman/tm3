@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Palette, X } from "lucide-vue-next";
+import { Check, Palette, Sparkles, X } from "lucide-vue-next";
 import { computed, nextTick, ref } from "vue";
 import {
   HANDWRITING_CUSTOM_COLOR_INDEX,
@@ -17,6 +17,7 @@ const props = defineProps<{
   glowColor: HandwritingColor;
   glowDensity: number;
   glowWidth: number;
+  effectEnabled: boolean;
   disabled?: boolean;
 }>();
 
@@ -26,6 +27,7 @@ const emit = defineEmits<{
   "custom-change": [color: HandwritingColor];
   "paper-change": [enabled: boolean, color: HandwritingColor];
   "glow-change": [enabled: boolean, color: HandwritingColor, density: number, width: number];
+  "effect-change": [enabled: boolean];
 }>();
 
 const pickerInput = ref<HTMLInputElement | null>(null);
@@ -84,7 +86,6 @@ function handlePickerColor(event: Event) {
     emit("slot-change", editingSlot.value, value);
     emit("select", editingSlot.value);
   }
-  closePicker();
 }
 
 function handlePaperColor(event: Event) {
@@ -165,7 +166,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
         <span>点按选择颜色</span>
       </label>
     </div>
-    <div class="handwriting-paper-options">
+    <div class="handwriting-effect-toggles">
       <label class="handwriting-paper-toggle">
         <input
           type="checkbox"
@@ -175,18 +176,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
         />
         <span>显示纸张</span>
       </label>
-      <label v-if="paperEnabled" class="handwriting-paper-color">
-        <span>纸张颜色</span>
-        <input
-          type="color"
-          :value="paperColor"
-          :disabled="disabled"
-          aria-label="纸张颜色"
-          @input="handlePaperColor"
-        />
-      </label>
-    </div>
-    <div class="handwriting-glow-options" :class="{ enabled: glowEnabled }">
       <label class="handwriting-glow-toggle">
         <input
           type="checkbox"
@@ -197,46 +186,69 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
         />
         <span>光晕</span>
       </label>
-      <template v-if="glowEnabled">
-        <label class="handwriting-glow-color">
-          <span>光晕颜色</span>
-          <input
-            type="color"
-            :value="glowColor"
-            :disabled="disabled"
-            aria-label="光晕颜色"
-            @input="handleGlowColor"
-          />
-        </label>
-        <label class="handwriting-glow-range">
-          <span>光晕密度</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            :value="glowDensity"
-            :disabled="disabled"
-            aria-label="光晕密度"
-            @input="handleGlowAmount('density', $event)"
-          />
-          <output aria-label="光晕密度数值">{{ glowDensity }}</output>
-        </label>
-        <label class="handwriting-glow-range">
-          <span>光晕宽度</span>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            step="1"
-            :value="glowWidth"
-            :disabled="disabled"
-            aria-label="光晕宽度"
-            @input="handleGlowAmount('width', $event)"
-          />
-          <output aria-label="光晕宽度数值">{{ glowWidth }}</output>
-        </label>
-      </template>
+      <label class="handwriting-sparkle-toggle">
+        <input
+          type="checkbox"
+          :checked="effectEnabled"
+          :disabled="disabled"
+          aria-label="闪光笔"
+          @change="emit('effect-change', ($event.target as HTMLInputElement).checked)"
+        />
+        <Sparkles :size="14" aria-hidden="true" />
+        <span>闪光笔</span>
+      </label>
+    </div>
+    <div v-if="paperEnabled" class="handwriting-paper-options">
+      <label class="handwriting-paper-color">
+        <span>纸张颜色</span>
+        <input
+          type="color"
+          :value="paperColor"
+          :disabled="disabled"
+          aria-label="纸张颜色"
+          @input="handlePaperColor"
+        />
+      </label>
+    </div>
+    <div v-if="glowEnabled" class="handwriting-glow-options enabled">
+      <label class="handwriting-glow-color">
+        <span>光晕颜色</span>
+        <input
+          type="color"
+          :value="glowColor"
+          :disabled="disabled"
+          aria-label="光晕颜色"
+          @input="handleGlowColor"
+        />
+      </label>
+      <label class="handwriting-glow-range">
+        <span>光晕密度</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          :value="glowDensity"
+          :disabled="disabled"
+          aria-label="光晕密度"
+          @input="handleGlowAmount('density', $event)"
+        />
+        <output aria-label="光晕密度数值">{{ glowDensity }}</output>
+      </label>
+      <label class="handwriting-glow-range">
+        <span>光晕宽度</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          :value="glowWidth"
+          :disabled="disabled"
+          aria-label="光晕宽度"
+          @input="handleGlowAmount('width', $event)"
+        />
+        <output aria-label="光晕宽度数值">{{ glowWidth }}</output>
+      </label>
     </div>
   </div>
 </template>
@@ -354,12 +366,21 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
   background: #fff;
 }
 
+.handwriting-effect-toggles {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  color: #526259;
+  font-size: 12px;
+}
+
 .handwriting-paper-options {
   min-height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
   color: #526259;
   font-size: 12px;
 }
@@ -381,6 +402,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 }
 
 .handwriting-glow-toggle,
+.handwriting-sparkle-toggle,
 .handwriting-glow-color,
 .handwriting-glow-range {
   display: flex;
@@ -389,10 +411,14 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
   min-width: 0;
 }
 
-.handwriting-glow-toggle {
-  grid-column: 1 / -1;
+.handwriting-glow-toggle,
+.handwriting-sparkle-toggle {
   color: #355c48;
   font-weight: 600;
+}
+
+.handwriting-sparkle-toggle {
+  color: #9a4775;
 }
 
 .handwriting-glow-color input[type="color"] {
@@ -421,6 +447,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 }
 
 .handwriting-paper-toggle,
+.handwriting-sparkle-toggle,
 .handwriting-paper-color {
   display: inline-flex;
   align-items: center;
@@ -444,5 +471,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 @media (max-width: 370px) {
   .handwriting-palette { gap: 5px; }
   .handwriting-palette-heading { flex-direction: column; align-items: center; gap: 2px; }
+  .handwriting-effect-toggles { gap: 12px; font-size: 11px; }
 }
 </style>
