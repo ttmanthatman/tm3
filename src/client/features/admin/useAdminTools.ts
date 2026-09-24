@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, onBeforeUnmount, ref, type Ref } from "vue";
 import type {
   AdminAttachmentDTO,
   AdminBackupDTO,
@@ -12,6 +12,7 @@ import type {
 import type { ActivityLogCategory } from "@shared/activityLog";
 import { api, authHeaders } from "../../api";
 import { compactBytes } from "../../time";
+import { fetchBlobWithProgress, saveBlob, type TransferProgress } from "../files/transfer";
 import { useChatStore } from "../../store";
 import {
   activityDuration,
@@ -105,6 +106,8 @@ export function useAdminTools(options: UseAdminToolsOptions) {
   const isAdmin = computed(() => !!store.account?.isAdmin);
 
   const adminPage = ref<AdminPage>("home");
+  const adminDownloadTransfer = ref<(TransferProgress & { label: string }) | null>(null);
+  let adminDownloadAbort: AbortController | null = null;
   const adminPageLoading = ref(false);
   const adminPageError = ref("");
   const adminMsg = ref("");
@@ -409,22 +412,35 @@ export function useAdminTools(options: UseAdminToolsOptions) {
     );
   }
 
+  function cancelAdminDownload() {
+    adminDownloadAbort?.abort();
+    adminDownloadAbort = null;
+    adminDownloadTransfer.value = null;
+  }
+
   async function downloadAdminFile(url: string, filename: string) {
-    const response = await fetch(url, { headers: authHeaders() });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({ message: "下载失败" }));
-      alert(result.message || "下载失败");
-      return;
+    adminDownloadAbort?.abort();
+    const controller = new AbortController();
+    adminDownloadAbort = controller;
+    const label = `正在下载 ${filename}`;
+    adminDownloadTransfer.value = { label, loaded: 0, total: null, percent: null };
+    try {
+      const blob = await fetchBlobWithProgress(url, {
+        headers: authHeaders(),
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (adminDownloadAbort === controller) adminDownloadTransfer.value = { ...progress, label };
+        }
+      });
+      if (adminDownloadAbort === controller) saveBlob(blob, filename);
+    } catch (error) {
+      if (!controller.signal.aborted) alert(error instanceof Error ? error.message : "下载失败");
+    } finally {
+      if (adminDownloadAbort === controller) {
+        adminDownloadAbort = null;
+        adminDownloadTransfer.value = null;
+      }
     }
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(objectUrl);
   }
 
   async function importAdminFile(url: string, event: Event) {
@@ -504,6 +520,8 @@ export function useAdminTools(options: UseAdminToolsOptions) {
     adminMsg.value = `私聊历史“${label}”已删除`;
   }
 
+  onBeforeUnmount(cancelAdminDownload);
+
   return {
     adminPage,
     adminPageLoading,
@@ -556,6 +574,8 @@ export function useAdminTools(options: UseAdminToolsOptions) {
     compressAdminAttachments,
     syncChannelEdits,
     downloadAdminFile,
+    adminDownloadTransfer,
+    cancelAdminDownload,
     importAdminFile,
     closeAdminPanel,
     updateChannel,

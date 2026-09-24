@@ -39,6 +39,7 @@ import { adminDate } from "./adminFormat";
 import { cleanParallaxSpeed, parallaxAssetUrl } from "../../parallax";
 import ParallaxBackground from "../../components/ParallaxBackground.vue";
 import ChannelIcon from "../../components/ui/ChannelIcon.vue";
+import TransferProgressBar from "../../components/ui/TransferProgressBar.vue";
 import { useChatStore } from "../../store";
 import { adminDirectPageSize, type AdminTools } from "./useAdminTools";
 import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields, wallpaperFitOptions } from "./useAppearanceSettings";
@@ -145,6 +146,8 @@ const {
   deleteAdminBackup,
   compressAdminAttachments,
   downloadAdminFile,
+  adminDownloadTransfer,
+  cancelAdminDownload,
   importAdminFile,
   closeAdminPanel,
   updateChannel,
@@ -814,9 +817,18 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
                 <strong>备份全部数据和程序</strong>
                 <small>生成 ZIP 后会自动下载。备份包含聊天/用户导出、storage 数据、源码、配置和静态资源，不包含依赖目录、Git 元数据和已有备份。</small>
               </div>
-              <button class="primary-btn" :disabled="adminBackupBusy" @click="createAdminBackup">
+              <button class="primary-btn" :disabled="adminBackupBusy || !!adminDownloadTransfer" @click="createAdminBackup">
                 <Download :size="16" />{{ adminBackupBusy ? "备份中" : "一键备份并下载" }}
               </button>
+            </div>
+            <div v-if="adminDownloadTransfer" class="admin-download-progress" role="status">
+              <TransferProgressBar
+                :label="adminDownloadTransfer.label"
+                :loaded="adminDownloadTransfer.loaded"
+                :total="adminDownloadTransfer.total"
+                :percent="adminDownloadTransfer.percent"
+              />
+              <button class="mini-btn secondary" type="button" @click="cancelAdminDownload">取消</button>
             </div>
             <div class="data-toolbar data-toolbar-compact">
               <button class="mini-btn secondary" :disabled="adminBackupBusy" @click="loadAdminBackups"><RotateCcw :size="15" />刷新备份</button>
@@ -828,7 +840,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
                   <small>{{ compactBytes(backup.size) }} · {{ adminDateTime(backup.createdAt) }}</small>
                 </div>
                 <div class="backup-actions">
-                  <button class="mini-btn secondary" @click="downloadAdminFile(backup.url, backup.fileName)"><Download :size="15" />下载</button>
+                  <button class="mini-btn secondary" :disabled="!!adminDownloadTransfer" @click="downloadAdminFile(backup.url, backup.fileName)"><Download :size="15" />下载</button>
                   <button class="mini-btn danger-action" @click="deleteAdminBackup(backup)"><Trash2 :size="15" />删除</button>
                 </div>
               </article>
@@ -836,7 +848,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
             </div>
             <label>聊天数据</label>
             <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.zip')"><Download :size="16" />导出聊天</button>
+              <button class="primary-btn" :disabled="!!adminDownloadTransfer" @click="downloadAdminFile('/api/admin/export/chat', 'team-chat-data.zip')"><Download :size="16" />导出聊天</button>
               <label class="mini-btn secondary">
                 <Upload :size="16" />导入聊天
                 <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/chat', $event)" />
@@ -844,7 +856,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
             </div>
             <label>用户数据</label>
             <div class="action-grid">
-              <button class="primary-btn" @click="downloadAdminFile('/api/admin/export/users', 'liao-users.zip')"><Download :size="16" />导出用户</button>
+              <button class="primary-btn" :disabled="!!adminDownloadTransfer" @click="downloadAdminFile('/api/admin/export/users', 'liao-users.zip')"><Download :size="16" />导出用户</button>
               <label class="mini-btn secondary">
                 <Upload :size="16" />导入用户
                 <input class="hidden" type="file" accept="application/zip,.zip,application/json,.json" @change="importAdminFile('/api/admin/import/users', $event)" />
@@ -950,3 +962,21 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
       </div>
     </section>
 </template>
+
+<style scoped>
+.admin-download-progress :deep(.transfer-progress) {
+  width: 100%;
+}
+
+.admin-download-progress {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+</style>

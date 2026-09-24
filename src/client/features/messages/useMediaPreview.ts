@@ -1,6 +1,7 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, onBeforeUnmount, ref, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
 import { authHeaders } from "../../api";
+import { fetchBlobWithProgress, saveBlob, type TransferProgress } from "../files/transfer";
 import { useChatStore } from "../../store";
 
 type PinnedMediaBlock = { type: "image" | "file"; fileName: string; filePath: string; fileSize?: number | null };
@@ -24,6 +25,12 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
   const imagePreviewOffset = ref({ x: 0, y: 0 });
   const downloadPromptPosition = ref({ x: 0, y: 0 });
   const pendingDownload = ref<MessageDTO | null>(null);
+  const mediaTransfer = ref<(TransferProgress & { kind: "preview" | "download"; label: string }) | null>(null);
+  const previewMediaUrl = ref("");
+  const previewError = ref("");
+  let previewAbort: AbortController | null = null;
+  let downloadAbort: AbortController | null = null;
+  let previewOwnedUrl = false;
   let imagePanStart = { x: 0, y: 0, offsetX: 0, offsetY: 0 };
   let imagePinchStart: { distance: number; scale: number } | null = null;
 
@@ -51,6 +58,7 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     previewPinnedImage.value = null;
     pendingDownload.value = null;
     resetImagePreviewTransform();
+    void loadPreviewMedia(options.fileUrl(message));
   }
 
   function openPinnedImage(block: PinnedMediaBlock) {
@@ -67,6 +75,7 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     };
     pendingDownload.value = null;
     resetImagePreviewTransform();
+    void loadPreviewMedia(previewPinnedImage.value.url);
   }
 
   function resetImagePreviewTransform() {
@@ -75,25 +84,100 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     imagePinchStart = null;
   }
 
+  function releasePreviewMedia() {
+    if (previewOwnedUrl && previewMediaUrl.value) URL.revokeObjectURL(previewMediaUrl.value);
+    previewMediaUrl.value = "";
+    previewOwnedUrl = false;
+  }
+
   function closePreviewMessage() {
+    previewAbort?.abort();
+    previewAbort = null;
+    releasePreviewMedia();
+    previewError.value = "";
+    if (mediaTransfer.value?.kind === "preview") mediaTransfer.value = null;
     previewMessage.value = null;
     previewPinnedImage.value = null;
     resetImagePreviewTransform();
   }
 
+  async function loadPreviewMedia(sourceUrl: string) {
+    previewAbort?.abort();
+    previewAbort = null;
+    releasePreviewMedia();
+    previewError.value = "";
+    if (!sourceUrl) return;
+    if (sourceUrl.startsWith("blob:") || sourceUrl.startsWith("data:")) {
+      previewMediaUrl.value = sourceUrl;
+      return;
+    }
+
+    const controller = new AbortController();
+    previewAbort = controller;
+    mediaTransfer.value = { kind: "preview", label: "正在下载预览", loaded: 0, total: null, percent: null };
+    try {
+      const blob = await fetchBlobWithProgress(sourceUrl, {
+        headers: authHeaders(),
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (previewAbort !== controller) return;
+          mediaTransfer.value = { ...progress, kind: "preview", label: "正在下载预览" };
+        }
+      });
+      if (previewAbort !== controller) return;
+      previewMediaUrl.value = URL.createObjectURL(blob);
+      previewOwnedUrl = true;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      previewError.value = error instanceof Error ? error.message : "预览下载失败";
+    } finally {
+      if (previewAbort === controller) {
+        previewAbort = null;
+        mediaTransfer.value = null;
+      }
+    }
+  }
+
   function previewImageSrc() {
-    return previewPinnedImage.value?.url || (previewMessage.value ? options.fileUrl(previewMessage.value) : "");
+    return previewMediaUrl.value;
+  }
+
+  function previewMediaSrc() {
+    return previewMediaUrl.value;
+  }
+
+  async function downloadFromUrl(url: string, fileName: string) {
+    downloadAbort?.abort();
+    const controller = new AbortController();
+    downloadAbort = controller;
+    mediaTransfer.value = { kind: "download", label: `正在下载 ${fileName}`, loaded: 0, total: null, percent: null };
+    try {
+      const blob = await fetchBlobWithProgress(url, {
+        headers: authHeaders(),
+        signal: controller.signal,
+        onProgress: (progress) => {
+          if (downloadAbort !== controller) return;
+          mediaTransfer.value = { ...progress, kind: "download", label: `正在下载 ${fileName}` };
+        }
+      });
+      if (downloadAbort !== controller) return;
+      saveBlob(blob, fileName || "附件");
+    } finally {
+      if (downloadAbort === controller) {
+        downloadAbort = null;
+        mediaTransfer.value = null;
+      }
+    }
   }
 
   function downloadPreviewImage() {
-    if (!previewPinnedImage.value) {
-      if (previewMessage.value) downloadFile(previewMessage.value);
+    if (previewPinnedImage.value) {
+      void downloadFromUrl(previewPinnedImage.value.url, previewPinnedImage.value.fileName || "图片").catch((error) => {
+        if ((error as Error).name !== "AbortError") alert(error instanceof Error ? error.message : "下载失败");
+      });
       return;
     }
-    const anchor = document.createElement("a");
-    anchor.href = previewPinnedImage.value.url;
-    anchor.download = previewPinnedImage.value.fileName || "image";
-    anchor.click();
+    if (previewMessage.value) void downloadFile(previewMessage.value);
   }
 
   function clampImageScale(value: number) {
@@ -183,23 +267,21 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
   }
 
   async function downloadFile(message: MessageDTO) {
-    const response = await fetch(fileDownloadUrl(message), { headers: authHeaders() });
-    if (!response.ok) {
-      const result = await response.json().catch(() => ({ message: "下载失败" }));
-      alert(result.message || "下载失败");
+    try {
+      await downloadFromUrl(fileDownloadUrl(message), message.fileName || "附件");
+    } catch (error) {
+      if ((error as Error).name !== "AbortError") alert(error instanceof Error ? error.message : "下载失败");
+    } finally {
       pendingDownload.value = null;
-      return;
     }
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = message.fileName || "附件";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
-    pendingDownload.value = null;
+  }
+
+  function cancelMediaTransfer() {
+    previewAbort?.abort();
+    previewAbort = null;
+    downloadAbort?.abort();
+    downloadAbort = null;
+    mediaTransfer.value = null;
   }
 
   function fileExtension(message: MessageDTO) {
@@ -243,8 +325,12 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     return "文件";
   }
 
+  onBeforeUnmount(cancelMediaTransfer);
+
   return {
     previewMessage,
+    mediaTransfer,
+    previewError,
     previewPinnedImage,
     imagePreviewScale,
     imagePreviewOffset,
@@ -256,7 +342,9 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     openPinnedImage,
     resetImagePreviewTransform,
     closePreviewMessage,
+    loadPreviewMedia,
     previewImageSrc,
+    previewMediaSrc,
     downloadPreviewImage,
     clampImageScale,
     imagePreviewTransform,
@@ -270,6 +358,7 @@ export function useMediaPreview(options: UseMediaPreviewOptions) {
     requestDownload,
     fileDownloadUrl,
     downloadFile,
+    cancelMediaTransfer,
     fileExtension,
     isPdfMessage,
     isVideoMessage,

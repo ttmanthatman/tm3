@@ -136,6 +136,7 @@ import { MUSIC_EXTENSIONS, canManageMusicRole, isMusicFileName, isStoredMusicFil
 import { analyzeAudioWaveform, mergeAudioWaveformPayload } from "./audioWaveform.js";
 import { activityLogCategory, friendlyDeviceName } from "../shared/activityLog.js";
 import { deduplicateStoredUpload, sha256File } from "./uploadDeduplication.js";
+import { multipartUploadOptions } from "./uploadLimits.js";
 import { imageDimensionsFromPayload, mergeImageDimensionsPayload, orientedImageDimensions, type ImageDimensions } from "../shared/imageDimensions.js";
 import { recalledMessageData } from "./messageRecall.js";
 import { prependPrayerUpdateHistory } from "./prayerUpdates.js";
@@ -302,7 +303,7 @@ await app.register(rateLimit, {
   keyGenerator: createRateLimitKeyGenerator(JWT_SECRET),
   allowList: (request) => isRateLimitExempt(request.method, request.url)
 });
-await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
+await app.register(multipart, multipartUploadOptions);
 // JSON APIs and text assets cross a high-latency link; only compressible
 // content types are transformed, so media streams and binaries pass through.
 await app.register(compress, { global: true, threshold: 1024 });

@@ -3,6 +3,8 @@ import { defineAsyncComponent } from "vue";
 import { ChevronLeft, ChevronRight, Download, X } from "lucide-vue-next";
 import type { MessageDTO, MusicScoreDTO, MusicScorePageDTO } from "@shared/types";
 import type { PinnedImagePreview } from "./useMediaPreview";
+import TransferProgressBar from "../../components/ui/TransferProgressBar.vue";
+import type { TransferProgress } from "../files/transfer";
 
 // Same lazy split as App.vue: PdfViewer pulls in pdfjs-dist.
 const PdfViewer = defineAsyncComponent(() => import("../../components/PdfViewer.vue"));
@@ -17,6 +19,8 @@ defineProps<{
   fileUrl: (message: MessageDTO) => string;
   imagePreviewTransform: () => { transform: string };
   previewImageSrc: () => string;
+  transfer: (TransferProgress & { kind: "preview" | "download"; label: string }) | null;
+  transferError?: string;
   isVideoMessage: (message: MessageDTO) => boolean;
   isPdfMessage: (message: MessageDTO) => boolean;
   imageTouchStart: (event: TouchEvent) => void;
@@ -32,6 +36,7 @@ const emit = defineEmits<{
   shiftScore: [delta: number];
   downloadPreview: [];
   downloadFile: [message: MessageDTO];
+  cancelTransfer: [];
 }>();
 </script>
 
@@ -56,6 +61,7 @@ const emit = defineEmits<{
       </button>
       <button
         class="preview-control preview-download"
+        :disabled="!!transfer"
         @click.stop="
           message.type === 'image' ? emit('downloadPreview') : emit('downloadFile', message)
         "
@@ -84,7 +90,7 @@ const emit = defineEmits<{
       </div>
       <div
         class="media-preview-body"
-        :class="{ 'image-preview-body': message.type === 'image' }"
+        :class="{ 'image-preview-body': message.type === 'image', 'has-transfer': !!transfer || !!transferError }"
         @touchstart="message.type === 'image' && imageTouchStart($event)"
         @touchmove="message.type === 'image' && imageTouchMove($event)"
         @touchend="imageTouchEnd"
@@ -94,8 +100,18 @@ const emit = defineEmits<{
         @wheel="message.type === 'image' && imageWheel($event)"
         @click.self="message.type === 'image' && emit('close')"
       >
+        <div v-if="transfer || transferError" class="media-transfer-overlay" role="status">
+          <TransferProgressBar
+            :label="transfer?.label || '预览下载失败'"
+            :loaded="transfer?.loaded || 0"
+            :total="transfer?.total ?? null"
+            :percent="transfer?.percent ?? null"
+            :error="transferError || ''"
+          />
+          <button v-if="transfer" class="media-transfer-cancel" type="button" @click="emit('cancelTransfer')">取消</button>
+        </div>
         <img
-          v-if="message.type === 'image'"
+          v-else-if="message.type === 'image'"
           class="media-preview-image"
           :style="imagePreviewTransform()"
           :src="previewImageSrc()"
@@ -105,7 +121,7 @@ const emit = defineEmits<{
         <video
           v-else-if="isVideoMessage(message)"
           class="media-preview-video"
-          :src="fileUrl(message)"
+          :src="previewImageSrc()"
           controls
           autoplay
           playsinline
@@ -113,7 +129,7 @@ const emit = defineEmits<{
         ></video>
         <PdfViewer
           v-else-if="isPdfMessage(message)"
-          :src="pinnedImage?.score ? pinnedImage.url : fileUrl(message)"
+          :src="previewImageSrc()"
           :file-name="message.fileName || undefined"
           @close="emit('close')"
         />
@@ -121,3 +137,38 @@ const emit = defineEmits<{
     </div>
   </section>
 </template>
+
+<style scoped>
+.media-preview-body.has-transfer {
+  position: relative;
+}
+
+.media-transfer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  color: #fff;
+  background: rgba(10, 10, 10, .72);
+  text-align: center;
+}
+
+.media-transfer-cancel {
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, .35);
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #fff;
+  background: rgba(255, 255, 255, .12);
+}
+
+.media-transfer-cancel:focus-visible,
+.preview-download:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+</style>

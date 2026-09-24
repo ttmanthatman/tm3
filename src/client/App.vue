@@ -211,6 +211,7 @@ import NotificationPromptDialog from "./features/settings/NotificationPromptDial
 import AppearanceImagePicker from "./features/admin/AppearanceImagePicker.vue";
 import ForwardActionSheet from "./features/messages/ForwardActionSheet.vue";
 import MediaPreviewModal from "./features/messages/MediaPreviewModal.vue";
+import TransferProgressBar from "./components/ui/TransferProgressBar.vue";
 import { usePrayer } from "./features/prayer/usePrayer";
 import { useChannelManagement } from "./features/channels/useChannelManagement";
 import { useMessageActions } from "./features/messages/useMessageActions";
@@ -2227,6 +2228,8 @@ const {
 });
 const {
   previewMessage,
+  mediaTransfer,
+  previewError,
   previewPinnedImage,
   imagePreviewScale,
   imagePreviewOffset,
@@ -2238,7 +2241,9 @@ const {
   openPinnedImage,
   resetImagePreviewTransform,
   closePreviewMessage,
+  loadPreviewMedia,
   previewImageSrc,
+  previewMediaSrc,
   downloadPreviewImage,
   clampImageScale,
   imagePreviewTransform,
@@ -2252,6 +2257,7 @@ const {
   requestDownload,
   fileDownloadUrl,
   downloadFile,
+  cancelMediaTransfer,
   fileExtension,
   isPdfMessage,
   isVideoMessage,
@@ -3681,6 +3687,7 @@ async function openMusicScorePreview(page: MusicScorePageDTO, trackId = currentM
   };
   pendingDownload.value = null;
   resetImagePreviewTransform();
+  void loadPreviewMedia(url);
 }
 
 function shiftMusicScorePreview(delta: number) {
@@ -6223,14 +6230,28 @@ const messageRowBindings = {
       @confirm="endPendingChain"
     />
 
-    <section v-if="pendingDownload" class="tap-popover download-popover" :style="downloadPromptStyle" data-download-popover>
+    <section
+      v-if="pendingDownload || (mediaTransfer?.kind === 'download' && !previewMessage)"
+      class="tap-popover download-popover"
+      :style="downloadPromptStyle"
+      data-download-popover
+    >
       <div class="tap-popover-card">
-        <div class="compact-confirm">
+        <div v-if="pendingDownload" class="compact-confirm">
           <span>确定下载？</span>
           <div class="compact-actions">
             <button class="mini-btn secondary" @click="pendingDownload = null">否</button>
-            <button class="mini-btn" @click="downloadFile(pendingDownload)">是</button>
+            <button class="mini-btn" :disabled="!!mediaTransfer" @click="downloadFile(pendingDownload)">是</button>
           </div>
+        </div>
+        <div v-else class="download-transfer">
+          <TransferProgressBar
+            :label="mediaTransfer?.label || '正在下载'"
+            :loaded="mediaTransfer?.loaded || 0"
+            :total="mediaTransfer?.total ?? null"
+            :percent="mediaTransfer?.percent ?? null"
+          />
+          <button class="mini-btn secondary" @click="cancelMediaTransfer">取消</button>
         </div>
       </div>
     </section>
@@ -6467,7 +6488,9 @@ const messageRowBindings = {
       :score-page-index="previewScorePageIndex"
       :file-url="fileUrl"
       :image-preview-transform="imagePreviewTransform"
-      :preview-image-src="previewImageSrc"
+      :preview-image-src="previewMediaSrc"
+      :transfer="mediaTransfer"
+      :transfer-error="previewError"
       :is-video-message="isVideoMessage"
       :is-pdf-message="isPdfMessage"
       :image-touch-start="onImagePreviewTouchStart"
@@ -6480,6 +6503,7 @@ const messageRowBindings = {
       @shift-score="shiftMusicScorePreview"
       @download-preview="downloadPreviewImage"
       @download-file="downloadFile"
+      @cancel-transfer="cancelMediaTransfer"
     />
 
     <PinnedMessageEditor

@@ -20,6 +20,8 @@ import {
 } from "lucide-vue-next";
 import type { AdminAttachmentDTO } from "@shared/types";
 import { getToken } from "../api";
+import TransferProgressBar from "./ui/TransferProgressBar.vue";
+import { fetchBlobWithProgress, saveBlob, type TransferProgress } from "../features/files/transfer";
 import { compactBytes } from "../time";
 
 const props = defineProps<{
@@ -53,7 +55,10 @@ const previewItem = ref<AdminAttachmentDTO | null>(null);
 const previewUrl = ref("");
 const previewLoading = ref(false);
 const previewError = ref("");
+const previewProgress = ref<TransferProgress | null>(null);
+const downloadTransfer = ref<(TransferProgress & { label: string }) | null>(null);
 let previewAbort: AbortController | null = null;
+let downloadAbort: AbortController | null = null;
 
 const thumbnailUrls = new WeakMap<HTMLImageElement, string>();
 const thumbnailObservers = new WeakMap<HTMLImageElement, IntersectionObserver>();
@@ -197,22 +202,27 @@ watch(previewItem, async (item) => {
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
   previewUrl.value = "";
   previewError.value = "";
+  previewProgress.value = null;
   if (!item || !canBrowserPreview(item) || !item.url) return;
   previewLoading.value = true;
   const controller = new AbortController();
   previewAbort = controller;
   try {
-    const response = await fetch(item.url, {
+    const blob = await fetchBlobWithProgress(item.url, {
       headers: { Authorization: `Bearer ${getToken()}` },
-      cache: "no-store",
-      signal: controller.signal
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (previewAbort === controller) previewProgress.value = progress;
+      }
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    previewUrl.value = URL.createObjectURL(await response.blob());
+    if (previewAbort === controller) previewUrl.value = URL.createObjectURL(blob);
   } catch (error) {
     if (!controller.signal.aborted) previewError.value = error instanceof Error ? error.message : "预览加载失败";
   } finally {
-    if (!controller.signal.aborted) previewLoading.value = false;
+    if (!controller.signal.aborted) {
+      previewLoading.value = false;
+      previewProgress.value = null;
+    }
   }
 });
 
@@ -227,6 +237,7 @@ onMounted(() => document.addEventListener("keydown", closePreviewOnEscape, true)
 onBeforeUnmount(() => {
   document.removeEventListener("keydown", closePreviewOnEscape, true);
   previewAbort?.abort();
+  downloadAbort?.abort();
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value);
 });
 
@@ -247,19 +258,36 @@ function togglePageSelection() {
   selectedIds.value = next;
 }
 
+function cancelDownload() {
+  downloadAbort?.abort();
+  downloadAbort = null;
+  downloadTransfer.value = null;
+}
+
 async function download(item: AdminAttachmentDTO) {
   if (!item.exists || !item.url) return;
-  const response = await fetch(`${item.url}${item.url.includes("?") ? "&" : "?"}download=1`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-    cache: "no-store"
-  });
-  if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
-  const url = URL.createObjectURL(await response.blob());
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = item.label || item.fileName;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadAbort?.abort();
+  const controller = new AbortController();
+  downloadAbort = controller;
+  const label = `正在下载 ${item.label || item.fileName}`;
+  downloadTransfer.value = { label, loaded: 0, total: null, percent: null };
+  try {
+    const blob = await fetchBlobWithProgress(`${item.url}${item.url.includes("?") ? "&" : "?"}download=1`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+      signal: controller.signal,
+      onProgress: (progress) => {
+        if (downloadAbort === controller) downloadTransfer.value = { ...progress, label };
+      }
+    });
+    if (downloadAbort === controller) saveBlob(blob, item.label || item.fileName);
+  } catch (error) {
+    if (!controller.signal.aborted) alert(error instanceof Error ? error.message : "下载失败");
+  } finally {
+    if (downloadAbort === controller) {
+      downloadAbort = null;
+      downloadTransfer.value = null;
+    }
+  }
 }
 
 function requestDelete(ids: string[]) {
@@ -365,6 +393,16 @@ function requestDelete(ids: string[]) {
       <button class="danger-quiet" :disabled="!attachments.length" @click="emit('deleteAll')">清理全部</button>
     </footer>
 
+    <section v-if="downloadTransfer" class="resource-download-progress" role="status">
+      <TransferProgressBar
+        :label="downloadTransfer.label"
+        :loaded="downloadTransfer.loaded"
+        :total="downloadTransfer.total"
+        :percent="downloadTransfer.percent"
+      />
+      <button type="button" @click="cancelDownload">取消</button>
+    </section>
+
     <section v-if="previewItem" class="resource-preview-shell" role="dialog" aria-modal="true" aria-label="资源预览" @click.self="previewItem = null">
       <div class="resource-preview">
         <header>
@@ -372,7 +410,14 @@ function requestDelete(ids: string[]) {
           <button aria-label="关闭预览" @click="previewItem = null"><X :size="20" /></button>
         </header>
         <div class="preview-stage">
-          <p v-if="previewLoading">正在安全读取文件…</p>
+          <TransferProgressBar
+            v-if="previewLoading"
+            class="resource-preview-progress"
+            label="正在安全读取文件"
+            :loaded="previewProgress?.loaded || 0"
+            :total="previewProgress?.total ?? null"
+            :percent="previewProgress?.percent ?? null"
+          />
           <p v-else-if="previewError" class="preview-error"><AlertTriangle :size="20" />{{ previewError }}</p>
           <img v-else-if="previewUrl && resourceType(previewItem) === 'image'" :src="previewUrl" alt="附件预览" />
           <audio v-else-if="previewUrl && resourceType(previewItem) === 'audio'" :src="previewUrl" controls autoplay />
@@ -415,6 +460,9 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .view-switch { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
 .view-switch button { width: 40px; border: 0; background: transparent; }
 .view-switch button.active { background: var(--accent); color: #fff; }
+.resource-preview-progress { width: min(360px, calc(100vw - 36px)); color: #fff; }
+.resource-download-progress { position: fixed; right: 18px; bottom: calc(var(--safe-bottom) + 74px); z-index: 32; display: grid; gap: 10px; width: min(380px, calc(100vw - 36px)); padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; box-shadow: 0 12px 36px rgba(15, 23, 42, .2); }
+.resource-download-progress > button { justify-self: end; min-height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 0 12px; background: #fff; }
 .resource-error, .resource-loading, .resource-empty { min-height: 160px; border: 1px dashed var(--line); border-radius: 10px; padding: 24px; display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); text-align: center; }
 .resource-error { min-height: 72px; color: #b42318; }
 .resource-error button { border: 0; background: transparent; color: inherit; text-decoration: underline; }

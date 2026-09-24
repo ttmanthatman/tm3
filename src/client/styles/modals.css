@@ -334,6 +334,16 @@
   max-width: calc(100vw - 24px);
 }
 
+.download-transfer {
+  width: min(360px, calc(100vw - 36px));
+  display: grid;
+  gap: 10px;
+}
+
+.download-transfer .mini-btn {
+  justify-self: end;
+}
+
 .tap-popover-card {
   overflow: hidden;
   border: 1px solid var(--line);
