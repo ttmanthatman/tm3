@@ -19,6 +19,7 @@ function fakeCanvas() {
     fill: () => operations.push({ type: "fill", args: [] }),
     moveTo: (...args: unknown[]) => operations.push({ type: "moveTo", args }),
     lineTo: (...args: unknown[]) => operations.push({ type: "lineTo", args }),
+    bezierCurveTo: (...args: unknown[]) => operations.push({ type: "bezierCurveTo", args }),
     closePath: () => operations.push({ type: "closePath", args: [] })
   };
   const canvas = { width: 0, height: 0, getContext: () => context };
@@ -37,7 +38,7 @@ test("static and timeline rendering share one fixed-width vector path and a sing
   const timelineCanvas = fakeCanvas();
   const timeline = buildHandwritingTimeline(payload);
   drawHandwritingTimelineAt(timelineCanvas.canvas, payload, timeline, timeline.durationMs);
-  const drawCalls = (operations: Operation[]) => operations.filter((operation) => operation.type === "arc" || operation.type === "lineTo");
+  const drawCalls = (operations: Operation[]) => operations.filter((operation) => ["arc", "lineTo", "bezierCurveTo"].includes(operation.type));
   assert.deepEqual(drawCalls(staticCanvas.operations), drawCalls(timelineCanvas.operations));
   const dotCanvas = fakeCanvas();
   drawHandwritingCharacter(dotCanvas.canvas, { strokes: [{ points: [[1, 2, 0]] }] });
@@ -80,7 +81,7 @@ test("appending one sampled point performs constant drawing work", () => {
   assert.equal(target.operations.filter((operation) => operation.type === "lineTo").length, 3);
 });
 
-test("brush body uses a ribbon path instead of circular sample dabs", () => {
+test("brush body sweeps oriented leaf footprints instead of ribbon quads or circular dabs", () => {
   const target = fakeCanvas();
   drawHandwritingCharacter(target.canvas, {
     strokes: [{
@@ -89,16 +90,19 @@ test("brush body uses a ribbon path instead of circular sample dabs", () => {
     }]
   });
   assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
-  assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 1);
-  assert.ok(target.operations.filter((operation) => operation.type === "lineTo").length >= 3);
+  assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "lineTo").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "fill").length, 1);
+  assert.ok(target.operations.filter((operation) => operation.type === "bezierCurveTo").length >= 12);
 });
 
-test("a single brush point uses one oriented elliptical cap", () => {
+test("a single brush point uses one sharp directional footprint", () => {
   const target = fakeCanvas();
   drawHandwritingCharacter(target.canvas, {
     strokes: [{ brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[10, 20, 0]] }]
   });
-  assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 1);
+  assert.equal(target.operations.filter((operation) => operation.type === "bezierCurveTo").length, 3);
+  assert.equal(target.operations.filter((operation) => operation.type === "moveTo").length, 1);
   assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
 });
 
@@ -112,11 +116,11 @@ test("brush live append advances the same deterministic geometry as full replay"
   drawHandwritingCharacter(staticCanvas.canvas, { strokes: [stroke] });
   const replay = fakeCanvas();
   drawHandwritingCharacter(replay.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
-  assert.ok(live.operations.some((operation) => operation.type === "lineTo"));
-  assert.ok(staticCanvas.operations.some((operation) => operation.type === "lineTo"));
+  assert.ok(live.operations.some((operation) => operation.type === "bezierCurveTo"));
+  assert.ok(staticCanvas.operations.some((operation) => operation.type === "bezierCurveTo"));
   assert.deepEqual(
-    replay.operations.filter((operation) => ["ellipse", "moveTo", "lineTo"].includes(operation.type)),
-    staticCanvas.operations.filter((operation) => ["ellipse", "moveTo", "lineTo"].includes(operation.type))
+    replay.operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type)),
+    staticCanvas.operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type))
   );
 });
 

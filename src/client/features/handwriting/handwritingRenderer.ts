@@ -56,51 +56,71 @@ function glowPasses(glow: HandwritingGlow, width: number) {
   ];
 }
 
-function brushEdge(sample: BrushSample, side: "left" | "right", expansion: number, along = 0) {
+function brushFootprintPoint(sample: BrushSample, along: number, side: number, expansion: number) {
   const tangentX = Math.cos(sample.angle);
   const tangentY = Math.sin(sample.angle);
   const normalX = -tangentY;
   const normalY = tangentX;
-  const halfWidth = Math.max(0.5, (sample.width + expansion) / 2) * (side === "left" ? 1 : -1);
   return {
-    x: sample.x + tangentX * along + normalX * halfWidth,
-    y: sample.y + tangentY * along + normalY * halfWidth
+    x: sample.x + tangentX * along + normalX * side,
+    y: sample.y + tangentY * along + normalY * side
   };
 }
 
-function drawBrushPoint(context: CanvasRenderingContext2D, sample: BrushSample, expansion: number) {
+export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sample: BrushSample, expansion = 0) {
   const width = Math.max(1, sample.width + expansion);
-  context.beginPath();
-  context.ellipse(sample.x, sample.y, width * 0.725, width * 0.5, sample.angle, 0, Math.PI * 2);
-  context.fill();
+  const spread = Math.max(0.12, Math.min(1, sample.spread));
+  const contact = Math.max(0.05, Math.min(1, sample.contact));
+  const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
+  const length = width * (0.42 + 0.28 * spread);
+  const front = length * (0.82 + 0.18 * contact);
+  const back = -length * (0.58 + 0.16 * (1 - spread));
+  const shoulder = -length * 0.04;
+  const points = [
+    brushFootprintPoint(sample, front, 0, expansion),
+    brushFootprintPoint(sample, front * 0.28, halfWidth * 0.72, expansion),
+    brushFootprintPoint(sample, shoulder, halfWidth, expansion),
+    brushFootprintPoint(sample, back * 0.68, halfWidth * 0.62, expansion),
+    brushFootprintPoint(sample, back, 0, expansion),
+    brushFootprintPoint(sample, back * 0.68, -halfWidth * 0.62, expansion),
+    brushFootprintPoint(sample, shoulder, -halfWidth, expansion),
+    brushFootprintPoint(sample, front * 0.28, -halfWidth * 0.72, expansion)
+  ];
+  context.moveTo(points[0].x, points[0].y);
+  context.bezierCurveTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y);
+  context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[5].x, points[5].y);
+  context.bezierCurveTo(points[6].x, points[6].y, points[7].x, points[7].y, points[0].x, points[0].y);
+  context.closePath();
 }
 
-function drawBrushQuad(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const distance = Math.hypot(dx, dy);
-  if (!distance) return;
-  // Adjacent incremental fills overlap slightly so canvas antialiasing cannot expose paper-colored seams.
-  const overlap = Math.min(24, Math.max(1, Math.min(from.width, to.width) * 0.08));
-  const fromLeft = brushEdge(from, "left", expansion, -overlap);
-  const toLeft = brushEdge(to, "left", expansion, overlap);
-  const toRight = brushEdge(to, "right", expansion, overlap);
-  const fromRight = brushEdge(from, "right", expansion, -overlap);
-  context.beginPath();
-  context.moveTo(fromLeft.x, fromLeft.y);
-  context.lineTo(toLeft.x, toLeft.y);
-  context.lineTo(toRight.x, toRight.y);
-  context.lineTo(fromRight.x, fromRight.y);
-  context.closePath();
-  context.fill();
+function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: number): BrushSample {
+  const angleDelta = Math.atan2(Math.sin(to.angle - from.angle), Math.cos(to.angle - from.angle));
+  return {
+    ...to,
+    x: from.x + (to.x - from.x) * amount,
+    y: from.y + (to.y - from.y) * amount,
+    width: from.width + (to.width - from.width) * amount,
+    angle: from.angle + angleDelta * amount,
+    contact: from.contact + (to.contact - from.contact) * amount,
+    spread: from.spread + (to.spread - from.spread) * amount
+  };
 }
 
 function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number) {
   if (from >= until) return;
-  if (from === 0) drawBrushPoint(context, samples[0], expansion);
+  context.beginPath();
+  if (from === 0) traceBrushFootprintPath(context, samples[0], expansion);
   for (let index = Math.max(1, from); index < until; index += 1) {
-    drawBrushQuad(context, samples[index - 1], samples[index], expansion);
+    const previous = samples[index - 1];
+    const sample = samples[index];
+    const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y);
+    const stampSpacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
+    const stampCount = Math.max(1, Math.ceil(distance / stampSpacing));
+    for (let stamp = 1; stamp <= stampCount; stamp += 1) {
+      traceBrushFootprintPath(context, interpolatedBrushSample(previous, sample, stamp / stampCount), expansion);
+    }
   }
+  context.fill();
 }
 
 function drawPoint(context: CanvasRenderingContext2D, point: HandwritingPoint, width: number) {

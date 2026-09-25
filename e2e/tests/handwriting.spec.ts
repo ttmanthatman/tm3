@@ -88,6 +88,39 @@ async function drawStroke(page: Page, canvas: Locator, points: Array<[number, nu
   await page.mouse.up();
 }
 
+async function drawTouchStroke(canvas: Locator, points: Array<[number, number]>) {
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("手写画板不可见");
+  const eventPoint = (point: [number, number]) => ({
+    clientX: box.x + box.width * point[0],
+    clientY: box.y + box.height * point[1]
+  });
+  const [first, ...rest] = points;
+  await canvas.dispatchEvent("pointerdown", {
+    pointerId: 17,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    ...eventPoint(first)
+  });
+  for (const point of rest) {
+    await canvas.dispatchEvent("pointermove", {
+      pointerId: 17,
+      pointerType: "touch",
+      isPrimary: true,
+      button: 0,
+      ...eventPoint(point)
+    });
+  }
+  await canvas.dispatchEvent("pointerup", {
+    pointerId: 17,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    ...eventPoint(points.at(-1)!)
+  });
+}
+
 async function setNativeColor(dialog: Locator, label: string, color: string) {
   const input = dialog.locator(`input[aria-label="${label}"]`);
   await input.evaluate((element, value) => {
@@ -109,6 +142,7 @@ async function composeTwoCharacters(page: Page, dialog: Locator) {
   await dialog.getByRole("button", { name: "选择朱红", exact: true }).click();
   await drawStroke(page, canvas, [[0.2, 0.25], [0.5, 0.2], [0.8, 0.3]]);
   await drawStroke(page, canvas, [[0.5, 0.2], [0.5, 0.75]]);
+  await expect(dialog.locator(".handwriting-tip-mirror-frame")).toBeHidden();
   await dialog.screenshot({ path: "output/playwright/handwriting-brush-ink.png" });
   await dialog.getByRole("button", { name: "完成此字", exact: true }).click();
   await expect(dialog.getByText("1 / 30", { exact: true }).first()).toBeVisible();
@@ -217,6 +251,53 @@ async function newLoggedInPage(browser: Browser, account: Account) {
   await login(page, account);
   return { context, page };
 }
+
+test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 844 });
+  await login(page, E2E_MEMBER);
+  const dialog = await openHandwritingComposer(page);
+  await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+  const canvas = dialog.getByLabel("当前手写字格");
+  const mirror = dialog.locator(".handwriting-tip-mirror-frame");
+  await drawTouchStroke(canvas, [[0.25, 0.35], [0.5, 0.5], [0.76, 0.32]]);
+  await expect(mirror).toBeHidden();
+
+  const box = await canvas.boundingBox();
+  if (!box) throw new Error("手写画板不可见");
+  await canvas.dispatchEvent("pointerdown", {
+    pointerId: 18,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: box.x + box.width * 0.3,
+    clientY: box.y + box.height * 0.3
+  });
+  await expect(mirror).toBeVisible();
+  const mobileMirror = await mirror.boundingBox();
+  expect(mobileMirror!.width).toBe(140);
+  expect(mobileMirror!.height).toBe(124);
+  expect(mobileMirror!.x).toBeGreaterThanOrEqual(box.x);
+  expect(mobileMirror!.x + mobileMirror!.width).toBeLessThanOrEqual(box.x + box.width);
+  await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-touch-mobile.png" });
+
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await expect.poll(async () => (await mirror.boundingBox())?.width).toBe(160);
+  const desktopMirror = await mirror.boundingBox();
+  const desktopCanvas = await canvas.boundingBox();
+  expect(desktopMirror!.height).toBe(140);
+  expect(desktopMirror!.x).toBeGreaterThanOrEqual(desktopCanvas!.x);
+  expect(desktopMirror!.x + desktopMirror!.width).toBeLessThanOrEqual(desktopCanvas!.x + desktopCanvas!.width);
+  await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-touch-desktop.png" });
+  await canvas.dispatchEvent("pointerup", {
+    pointerId: 18,
+    pointerType: "touch",
+    isPrimary: true,
+    button: 0,
+    clientX: desktopCanvas!.x + desktopCanvas!.width * 0.3,
+    clientY: desktopCanvas!.y + desktopCanvas!.height * 0.3
+  });
+  await expect(mirror).toBeHidden();
+});
 
 test("两账号真实收发、刷新静态、手动重播、重连与撤回", async ({ browser }) => {
   test.setTimeout(90_000);

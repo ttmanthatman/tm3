@@ -21,6 +21,65 @@ test("brush opens on slow motion and narrows on fast motion", () => {
   assert.ok(fast.width > 0);
 });
 
+test("immediate movement starts at a sharp tip and expands along travel", () => {
+  const stroke: HandwritingStroke = {
+    brush: { ...HANDWRITING_DEFAULT_BRUSH, size: 100, sensitivity: 0, lag: 0 },
+    points: [[0, 0, 0], [240, 0, 16], [900, 0, 72], [1800, 0, 144]]
+  };
+  const samples = handwritingBrushGeometry(stroke).samples;
+  const maxWidth = 120 + 100 * 12;
+  assert.ok(samples[0].width <= maxWidth * 0.08);
+  assert.ok(samples[0].contact <= 0.12);
+  assert.ok(samples.at(-1)!.width > samples[0].width * 4);
+  assert.ok(samples.at(-1)!.spread > samples[0].spread * 3);
+});
+
+test("three-hundred-millisecond initial dwell presses and spreads the footprint", () => {
+  const stroke: HandwritingStroke = {
+    brush: { ...HANDWRITING_DEFAULT_BRUSH, size: 80, sensitivity: 0, lag: 0 },
+    points: [[100, 100, 0], [100, 100, 300]]
+  };
+  const samples = handwritingBrushGeometry(stroke).samples;
+  const first = samples[0];
+  const pressed = samples.at(-1)!;
+  assert.equal(first.phase, "touching");
+  assert.equal(pressed.phase, "pressing");
+  assert.ok(pressed.width > first.width * 3);
+  assert.ok(pressed.contact > first.contact * 4);
+  assert.ok(pressed.spread > first.spread * 3);
+});
+
+test("adaptive input smoothing suppresses one-to-two-pixel line jitter", () => {
+  const points: HandwritingPoint[] = Array.from({ length: 81 }, (_, index): HandwritingPoint => [
+    index * 80,
+    3000 + (index % 4 === 0 ? 20 : index % 4 === 2 ? -20 : 0),
+    index * 8
+  ]);
+  const samples = handwritingBrushGeometry({ brush: { ...HANDWRITING_DEFAULT_BRUSH, lag: 0 }, points }).samples.slice(20);
+  const angleError = Math.max(...samples.map((sample) => Math.abs(Math.atan2(Math.sin(sample.angle), Math.cos(sample.angle)))));
+  const widths = samples.map((sample) => sample.width);
+  const widthSpread = Math.max(...widths) / Math.max(1, Math.min(...widths));
+  assert.ok(angleError < 0.08);
+  assert.ok(widthSpread < 1.35);
+});
+
+test("arc-length simulation keeps sample spacing bounded and density independent", () => {
+  const coarse = handwritingBrushGeometry(line(8));
+  for (let index = 1; index < coarse.samples.length; index += 1) {
+    const distance = Math.hypot(coarse.samples[index].x - coarse.samples[index - 1].x, coarse.samples[index].y - coarse.samples[index - 1].y);
+    assert.ok(distance <= 32.01);
+  }
+  const denseStroke: HandwritingStroke = {
+    brush: { ...HANDWRITING_DEFAULT_BRUSH },
+    points: Array.from({ length: 321 }, (_, index): HandwritingPoint => [1000 + index * 20, 3000, index * 2])
+  };
+  const dense = handwritingBrushGeometry(denseStroke);
+  const coarseEnd = coarse.samples.at(-1)!;
+  const denseEnd = dense.samples.at(-1)!;
+  assert.ok(Math.abs(coarseEnd.width - denseEnd.width) < 10);
+  assert.ok(Math.abs(coarseEnd.angle - denseEnd.angle) < 0.06);
+});
+
 test("tip trails a corner, and zero lag follows the input exactly", () => {
   const stroke = line(8);
   stroke.points.push([7400, 3400, 648]);
@@ -58,7 +117,9 @@ test("a long pause followed by straight travel does not trigger virtual lift", (
   assert.ok(geometry.state);
   assert.equal(geometry.state.phase, "writing");
   assert.ok(geometry.state.contact > 0.98);
-  assert.ok(geometry.samples.every((sample) => sample.phase === "writing"));
+  const writingIndex = geometry.samples.findIndex((sample) => sample.phase === "writing");
+  assert.ok(writingIndex > 0);
+  assert.ok(geometry.samples.slice(writingIndex).every((sample) => sample.phase === "writing"));
 });
 
 test("a ninety-degree turn rotates the brush gradually", () => {
@@ -88,7 +149,7 @@ test("pause plus a sharp turn lifts more than an immediate turn", () => {
     const last = stroke.points.at(-1)!;
     if (paused) stroke.points.push([last[0], last[1], last[2] + 2000]);
     for (let index = 1; index <= 8; index += 1) stroke.points.push([last[0], last[1] + index * 80, last[2] + (paused ? 2008 : 8) + index * 8]);
-    return Math.min(...handwritingBrushGeometry(stroke).samples.slice(-60).map((sample) => sample.contact));
+    return Math.min(...handwritingBrushGeometry(stroke).samples.slice(-40).map((sample) => sample.contact));
   }
   assert.ok(turn(true) < turn(false) - 0.15);
 });
