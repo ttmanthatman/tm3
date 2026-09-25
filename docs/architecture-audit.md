@@ -62,8 +62,9 @@ workflow, configuration, and unknown critical.
 - Workflow, dependency/build configuration, and unknown critical changes fall back to
   `npm run verify:full`.
 
-This command is an iteration shortcut. It does not replace E2E or migration verification,
-and final handoff/CI must continue to use `npm run verify:full`.
+This describes the original audit baseline. Current local completion requirements are in
+[development-workflow.md](development-workflow.md); focused checks do not replace E2E or
+migration verification, and CI continues to use `npm run verify:full`.
 
 ## CI checks
 

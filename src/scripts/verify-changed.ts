@@ -1,4 +1,6 @@
 import { execFileSync, spawn } from "node:child_process";
+import { closeSync, mkdtempSync, openSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,6 +61,7 @@ const RELEASE_FILES = new Set([
 ]);
 
 const FULL_CONFIGURATION_PATTERNS = [
+  /^src\/scripts\/(?:verify-changed|run-tests|test-file-groups)\.ts$/,
   /^(?:package|npm-shrinkwrap)(?:-lock)?\.json$/,
   /^tsconfig(?:\.[^/]+)?\.json$/,
   /^vite\.config\.[^/]+$/,
@@ -91,7 +94,7 @@ export function classifyChangedFile(file: string): FileClassification {
     return {
       domains,
       requiresFull: true,
-      fullReason: `${normalized} affects dependencies, TypeScript, or the build`,
+      fullReason: `${normalized} affects verification, dependencies, TypeScript, or the build`,
       requiresReleaseCheck: RELEASE_FILES.has(normalized)
     };
   }
@@ -202,9 +205,9 @@ export function createVerificationPlan(inputFiles: readonly string[]): Verificat
   return { files, domains, commands, fallbackReasons };
 }
 
-function gitOutput(args: string[]) {
+function gitOutput(args: string[], root = ROOT) {
   try {
-    return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" });
+    return execFileSync("git", args, { cwd: root, encoding: "utf8" });
   } catch (error) {
     if (error && typeof error === "object") {
       const output = error as { stdout?: string | Buffer; stderr?: string | Buffer };
@@ -215,15 +218,25 @@ function gitOutput(args: string[]) {
   }
 }
 
-export function detectChangedFiles(base = "HEAD") {
-  const diff = gitOutput(["diff", "--name-only", "-z", "--relative", "--no-ext-diff", base, "--"]);
-  const untracked = gitOutput(["ls-files", "--others", "--exclude-standard", "-z"]);
+export function detectChangedFiles(base = "HEAD", options: { staged?: boolean; root?: string } = {}) {
+  const root = options.root ?? ROOT;
+  if (options.staged) {
+    // Checks execute in the working tree, so tracked content must match the index.
+    const unstaged = gitOutput(["diff", "--name-only", "-z", "--no-ext-diff", "--"], root);
+    if (unstaged) {
+      throw new Error("--staged requires tracked files to match the index. Finish staging task-owned changes, or use an isolated worktree; do not stage unrelated work.");
+    }
+    return gitOutput(["diff", "--cached", "--name-only", "-z", "--relative", "--no-ext-diff", "--no-renames", base, "--"], root)
+      .split("\0").filter(Boolean).sort();
+  }
+  const diff = gitOutput(["diff", "--name-only", "-z", "--relative", "--no-ext-diff", "--no-renames", base, "--"], root);
+  const untracked = gitOutput(["ls-files", "--others", "--exclude-standard", "-z"], root);
   return [...new Set(`${diff}${untracked}`.split("\0").filter(Boolean))].sort();
 }
 
-function printPlan(plan: VerificationPlan, base: string) {
-  console.log(`Changed files (${plan.files.length}, base ${base}):`);
-  for (const file of plan.files) console.log(`  - ${file}`);
+function printPlan(plan: VerificationPlan, base: string, quiet: boolean) {
+  console.log(`Changed files (${plan.files.length}, ${base}):`);
+  if (!quiet) for (const file of plan.files) console.log(`  - ${file}`);
   if (!plan.files.length) console.log("  (none)");
   console.log(`Domains: ${plan.domains.length ? plan.domains.join(", ") : "none"}`);
   if (plan.fallbackReasons.length) {
@@ -241,44 +254,66 @@ function npmExecutable() {
 
 async function runNpmCommand(command: string) {
   const script = command.replace(/^npm run /, "");
-  return new Promise<number>((resolve, reject) => {
-    const child = spawn(npmExecutable(), ["run", script], {
-      cwd: ROOT,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"]
+  const logFile = path.join(mkdtempSync(path.join(tmpdir(), "teamchat-verify-")), "output.log");
+  const logFd = openSync(logFile, "w", 0o600);
+  console.log(`Running: ${command} (log: ${logFile})`);
+  try {
+    return await new Promise<number>((resolve, reject) => {
+      const child = spawn(npmExecutable(), ["run", script], {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", logFd, logFd]
+      });
+      child.on("error", reject);
+      child.on("close", (code, signal) => {
+        if (code !== 0) {
+          const output = readFileSync(logFile, "utf8");
+          console.error(output.slice(-6000));
+          console.error(`Full failure log: ${logFile}`);
+          if (signal) console.error(`${command} terminated by ${signal}.`);
+        }
+        resolve(code ?? 1);
+      });
     });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
-    child.on("error", reject);
-    child.on("close", (code, signal) => {
-      if (code !== 0) {
-        for (const chunk of stdout) process.stdout.write(chunk);
-        for (const chunk of stderr) process.stderr.write(chunk);
-        if (signal) console.error(`${command} terminated by ${signal}.`);
-      }
-      resolve(code ?? 1);
-    });
-  });
+  } finally {
+    closeSync(logFd);
+  }
 }
 
-function parseBase(args: string[]) {
+export function parseOptions(args: string[]) {
   let base = "HEAD";
+  let explicitBase = false;
+  let staged = false;
+  let dryRun = false;
+  let quiet = false;
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] !== "--base" || !args[index + 1]) {
-      throw new Error(`Unknown or incomplete argument "${args[index]}". Usage: verify:changed -- [--base <ref>]`);
+    const arg = args[index];
+    if (arg === "--staged") staged = true;
+    else if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--quiet") quiet = true;
+    else if (arg === "--base" && args[index + 1] && !args[index + 1].startsWith("-")) {
+      base = args[++index];
+      explicitBase = true;
+    } else {
+      throw new Error(`Unknown or incomplete argument "${arg}". Usage: verify:changed -- [--base <ref> | --staged] [--dry-run] [--quiet]`);
     }
-    base = args[index + 1];
-    index += 1;
   }
-  return base;
+  if (staged && explicitBase) throw new Error("--staged and --base cannot be combined.");
+  return { base, staged, dryRun, quiet };
 }
 
 async function main() {
-  const base = parseBase(process.argv.slice(2));
-  const plan = createVerificationPlan(detectChangedFiles(base));
-  printPlan(plan, base);
+  const options = parseOptions(process.argv.slice(2));
+  const plan = createVerificationPlan(detectChangedFiles(options.base, options));
+  printPlan(plan, options.staged ? "staged against HEAD; untracked files excluded" : `base ${options.base}`, options.quiet);
+  if (options.dryRun) {
+    console.log("Dry run: no checks executed.");
+    return 0;
+  }
+  if (!plan.commands.length) {
+    console.error("No checks selected; this is not a verification pass. Use --base <task-baseline> for committed changes.");
+    return 1;
+  }
 
   for (const command of plan.commands) {
     const status = await runNpmCommand(command);

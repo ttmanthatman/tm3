@@ -258,9 +258,15 @@ npm run test:migrations
 ```bash
 npm run verify:changed
 npm run verify:changed -- --base origin/main
+# 只预览检查计划，不运行检查
+npm run verify:changed -- --dry-run --quiet
+# 已显式暂存本次完整改动时，排除无关未跟踪文件的影响
+npm run verify:changed -- --staged --quiet
 ```
 
-该命令会列出检测到的文件、领域和将运行的命令；遇到依赖、锁文件、TypeScript/构建配置、工作流或无法安全分类的关键文件时，会自动回退到完整验证。提交前和 CI 始终运行：
+该命令会列出检测到的文件、领域和将运行的命令；遇到验证基础设施、依赖、锁文件、TypeScript/构建配置、工作流或无法安全分类的关键文件时，会自动回退到完整验证。`--staged` 要求已跟踪文件与暂存区一致，且不能与 `--base` 同用；检查仍在当前工作目录执行。没有选中检查时不会报告通过。完整日志保留在系统临时目录，失败只打印相关尾部。
+
+普通低风险本地提交按[开发流程](docs/development-workflow.md)完成相关检查和必要构建即可。高风险改动、推送、发布准备和 CI 运行：
 
 ```bash
 npm run verify:full

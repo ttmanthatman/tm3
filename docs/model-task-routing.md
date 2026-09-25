@@ -5,77 +5,34 @@ This document defines the repository's task-size and risk routing rules. Use it 
 any nested `AGENTS.md` in the files being changed. The development index remains the
 canonical module map and validation reference; this document does not duplicate it.
 
-Routing priority is **Sol > Terra > Luna**. File count never lowers the model required by
-the risk. If any Sol rule applies, route the whole task to Sol or split out a genuinely
-independent lower-risk task with its own acceptance criteria.
+## 默认由执行者选择流程
 
-**When Sol is unavailable, work does not stop — risk ownership moves to the user.** In
-order: (1) split out and finish the genuinely independent lower-risk parts; (2) defer the
-high-risk part until Sol is available; or (3) the user explicitly authorizes a lighter
-model to proceed — record the authorization on the task card, tighten acceptance (more
-targeted failure cases plus an independent review), and never deliver a downgraded task
-against the original standard silently. The Sol-only list below still defines what counts
-as high risk; unavailability does not reclassify it.
+用户负责描述想要的结果，执行者负责确定范围、实现和验收。普通小改动在当前会话由一个执行者完成，不要求用户选择模型、理解代码或填写任务卡。模型名称不是正确性的保证；按风险和已观察到的能力升级，不为一个小改动默认启动多模型协作。
 
-## Luna 可处理
+| 级别 | 典型任务 | 执行要求 |
+| --- | --- | --- |
+| 小改动 | 文案、单组件样式、明确的单点修复、文档同步 | 就近定位，最小修改，针对性验收；不做全仓审计或另起评审任务 |
+| 常规开发 | 一个领域的组件、composable、普通路由或功能 | 跟踪相关调用者，完成领域检查和受影响构建 |
+| 高风险 | schema/迁移、认证权限、账号删除、Socket 并发和消息一致性、文件访问/上传/删除/SSRF、Service Worker、凭据加密、AI 写入顺序、跨领域共享契约、架构拆分、验证基础设施 | 先列不变量和失败场景，再实现；完成全量验证及相关 E2E/迁移检查，必要时独立复核 |
 
-- 单一纯函数。
-- 已有明确失败测试的简单 bug。
-- 文案、类型、测试补充。
-- 单组件小范围样式。
-- 机械配置与文档同步。
-- 不超过 1—3 个紧密相关文件。
+单文件也可能高风险。AI 激活及虚拟角色授权属于高风险；不改变激活、权限、持久化或共享契约的纯提示词文案可按小改动处理。具体检查以[开发流程](development-workflow.md)为准，不能仅凭 `verify:changed` 的路径分类判断风险。
 
-Luna tasks must have a narrow interface, an established local pattern, and a deterministic
-targeted check. Luna must stop and escalate when the change crosses a domain seam, exposes
-an unstated invariant, or reaches any Sol area.
-
-## Terra 可处理
-
-- 单一领域功能。
-- 3—8 个紧密相关文件。
-- 普通客户端组件和 composable。
-- 单一路由模块。
-- 有明确验收和测试的重构。
-- 一般 UI 和 API bug。
-
-Terra is the default implementation model for normal repository work. Keep the task inside
-one domain where possible, trace consumers before changing a shared interface, and use the
-targeted and full checks declared in the task. Two failed attempts against the same failure
-are a mandatory Sol escalation, not permission for a broad rewrite.
-
-## Sol 必须处理
-
-- Prisma schema 和数据迁移。
-- 认证、权限和账号删除。
-- Socket 并发、重连和消息一致性。
-- 文件访问、上传、删除和 SSRF。
-- Service Worker 缓存一致性。
-- 跨三个以上领域的改动。
-- Terra 连续失败两次的任务。
-- 架构拆分和高风险 PR 审查。
-
-Sol is also required when work changes AI credential encryption, assistant activation and
-message-writing order, or virtual-role authorization across the main application and the
-multichar engine. Pure prompt copy that does not alter activation, permissions, persistence,
-or shared contracts may still follow the ordinary Luna/Terra limits.
+保留当前会话的模型设置，不声称已经自动切换模型或推理强度。若当前执行者连续两次无法解决同一故障，保留证据和可复核改动，说明阻碍与下一步；需要交接时才创建简短任务卡，不把技术风险转交给不会编程的用户判断。
 
 ## 统一任务模板
 
 A task card ([docs/task-cards.md](task-cards.md)) is required only for tasks that cross a
 boundary: delegated to another model or session, run in parallel with other work, or
-touching a Sol-risk area. Routine single-session fixes inside one domain do not need one.
+touching a high-risk area. Routine single-session fixes inside one domain do not need one.
 The card carries baseline, goal, owner, dependencies, allowed/forbidden files,
 reproduction, acceptance, targeted/full checks, and unverified items. Fill every field;
 write "none" with a reason instead of deleting a field.
 
 ## 多模型协作规则
 
-- **Ownership:** Sol owns high-risk areas (schema/migrations, auth, Socket concurrency,
-  file storage, Service Worker caching, architecture). Kimi takes bounded client, test,
-  and documentation tasks with an explicit file scope. File count never lowers the model
-  required by the risk, and Sol unavailability follows the downgrade rule at the top of
-  this document — it never silently reclassifies a task.
+- **Ownership:** one executor owns the complete task by default. When delegation is
+  justified, assign independent scopes and acceptance criteria. High-risk work requires
+  adequate capability and evidence, regardless of model branding; file count never lowers risk.
 - **Shared files serialize:** tasks that write `App.vue`, `store.ts`, or `api.ts` run one
   at a time, never in parallel. Independent tasks use separate worktrees; a separate
   worktree prevents tree pollution but not logical conflicts, so the integration order is

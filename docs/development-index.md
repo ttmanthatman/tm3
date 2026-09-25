@@ -12,7 +12,7 @@ This index is the canonical module map and checklist reference for Team Chat. Re
 
 ## Start Every Work Session
 
-1. Run `git status --short` and `git log --oneline -n 5`. Record the task baseline (HEAD commit) in the task card.
+1. Run `git status --short` and `git log --oneline -n 5`. Keep the task baseline (HEAD commit) in working context; write a task card only when required by the routing guide.
 2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
 3. Read only the sections of this index the task touches: module-map entries for the files being changed and any checklist the change triggers.
 4. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
@@ -21,7 +21,7 @@ This index is the canonical module map and checklist reference for Team Chat. Re
 
 ### Baseline Health Check
 
-Run these before trusting any check result, and record the outcome in the task card:
+Check these once when relevant to the task; reuse current evidence instead of reinstalling dependencies or rebuilding an unchanged index. Record them in a task card only when one is required:
 
 - **Environment:** confirm Node version, lockfile integrity, and dependency availability (`npm ci` state). If a check fails because packages are missing or stale, treat it as an environment problem and repair the install first — do not report it as a source regression or change source code to work around it.
 - **Code graph:** a clean Git diff does not prove the knowledge-graph index is fresh. Verify a known symbol before relying on graph results; re-index when the graph looks stale, and fall back to targeted source reading for files the index could not fully parse.
@@ -37,7 +37,7 @@ After `verify` succeeds, the independent migration job starts a disposable MySQL
 
 After `verify` succeeds, the independent `e2e` job starts a disposable MySQL service and installs Chromium and WebKit. It runs the iPhone ebook regression in WebKit first so Safari-specific iframe event behavior cannot be skipped by a later failure, then resets and seeds the dedicated `tm3_e2e` database for the remaining Chromium flows. The media-heavy story flow runs last in its own reset database and fresh browser/server processes so long-lived state from the rest of the suite cannot contaminate its upload-retry check. That job also installs the system `ffmpeg` and `ffprobe` commands used by story voice transcoding; Playwright's private FFmpeg download is not exposed on `PATH` and does not supply `ffprobe`. The Playwright web servers are process-managed and shut down with each test invocation. Screenshots, traces, videos, and the HTML report are retained only when the job fails; local artifacts live under ignored `output/e2e/`.
 
-During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included. CI and final pre-commit validation must continue to use `verify:full`.
+During local iteration, `npm run verify:changed` inspects the working tree against `HEAD`, reports changed files, mapped domains, and selected commands, then runs only the conservative checks required by those domains. Use `npm run verify:changed -- --base origin/main` to include all branch changes against another baseline. Client, server, shared, Prisma, Service Worker, scripts, documentation/release, and GitHub workflow changes have explicit mappings; dependency, lockfile, TypeScript, build, workflow, and unknown critical changes fall back to `verify:full`. Untracked files are included by default. `--staged` selects the complete task after explicit staging and refuses tracked unstaged changes; it cannot be combined with `--base`. `--dry-run` prints the plan without executing it, and `--quiet` omits the per-file listing. Empty execution plans fail instead of reporting a pass. Logs are retained in a system temporary directory; failures show a bounded tail and the full log path. The [development workflow](development-workflow.md) defines when local commits use focused checks and when full verification is mandatory. CI continues to use `verify:full`.
 
 ## Database Migrations
 

@@ -7,7 +7,7 @@ checks the delivered diff against the card, not against a verbal summary.
 
 Keep cards short. One card covers one behavior goal in one domain; do not bundle unrelated
 cleanup. High-risk areas (schema/migrations, auth, Socket concurrency, file storage,
-Service Worker caching) are owned by Sol; bounded client, test, and documentation tasks may
+Service Worker caching) require high-risk validation; bounded client, test, and documentation tasks may
 be delegated to a lighter model within the declared file scope.
 
 ## Template
@@ -45,7 +45,7 @@ be delegated to a lighter model within the declared file scope.
 
 ## 检查
 - 定向检查命令：
-- 完整检查：`npm run verify:full`（跨提交时 verify:changed 须显式 `--base`）
+- 完整检查：按 [开发流程](development-workflow.md) 判断是否需要 `npm run verify:full`；无需时说明风险级别与替代检查（跨提交时 verify:changed 须显式 `--base`）
 - 任务需要的浏览器 / 迁移 / E2E 检查：
 
 ## 未验证项

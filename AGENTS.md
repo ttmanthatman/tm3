@@ -7,7 +7,7 @@ Instructions in a nested `AGENTS.md` also apply within that directory.
 ## Start Every Session
 
 1. Run `git status --short` and `git log --oneline -n 5`.
-2. Stop if the worktree contains changes that are not understood.
+2. Identify existing changes. Preserve unrelated work and continue when its boundary is clear; stop only for unexplained overlap with the task.
 3. Check for a more specific `AGENTS.md` in the target directory and read it before editing there.
 4. If `AGENTS.local.md` exists, read it and apply its private local guidance; never commit it.
 
@@ -16,13 +16,20 @@ Read reference documents on demand, not at startup:
 - `docs/development-index.md`: read only the sections the task touches (module-map entries for the files being changed, plus any triggered checklist). Locate sections with a heading search instead of reading the whole file.
 - `docs/model-task-routing.md`: consult its routing and escalation rules when sizing or escalating a task; audit background lives in `docs/architecture-audit.md`.
 
+## Requirement-Driven Work
+
+- The user describes the desired result; the agent owns technical discovery, implementation, and validation. Do not ask the user to choose files, commands, or testing strategy.
+- For a routine task, state the expected result and scope briefly, then implement it. Ask only about a product decision that materially changes the result or authorization that is actually missing.
+- Treat small follow-up requests as adjustments to the existing work; reuse relevant findings and successful checks when the code and environment have not changed.
+- Use [development-workflow.md](docs/development-workflow.md) for risk-based local completion. Ordinary work needs no task card, multi-agent review, or written design proposal.
+
 ## Token Economy
 
-- Discover code with the knowledge-graph tools (`search_graph`, `trace_path`, `get_code_snippet`) before opening files; fall back to text search only for literals, configuration, and non-code files.
+- Discover code with graph tools first; index if needed. If unavailable or insufficient, use narrow text search and source regions without repeatedly trying to recover the tool.
 - Read the smallest useful region around a symbol. Never read a large file end to end when symbol-level inspection works, and do not re-read files that have not changed.
-- Delegate broad exploration and commands with large output to subagents so intermediate dumps stay out of the main context.
-- Iterate with the narrowest relevant test command and `npm run verify:changed`; reserve `npm run verify:full` for final verification.
-- Keep reports short; do not paste large diffs, logs, or file dumps into the conversation.
+- Use one agent by default. Delegate only substantial independent work when useful and authorized; never spawn reviewers or parallel researchers for a small fix.
+- Choose checks once by risk. Run the narrow regression during iteration, then one final appropriate verification; do not stack domain suites, `verify:changed`, and `verify:full` on unchanged code.
+- Keep reports and tool output short. Use `verify:changed -- --dry-run --quiet` to inspect the plan; retain long logs outside the repository and return exit status plus relevant failures. Read the full diff locally without pasting it into chat.
 
 ## Scope Discipline
 
@@ -100,9 +107,9 @@ Read reference documents on demand, not at startup:
 - Run `npm run test:migrations` only with `MIGRATION_VERIFY_RUN=1` and a fresh local MySQL database named exactly `tm3_migration_verify`.
 - Run `npm run test:e2e` with the isolated `tm3_e2e` database when UI changes affect login, channel navigation, message persistence, Bible reading, or administrator account workflows.
 - Run `npm run test:all` for complete test coverage without duplicate file execution.
-- Run `npm run verify:full` before a commit or handoff that requires complete verification.
-- Keep CI and final pre-commit verification on `npm run verify:full`; `verify:changed` is only a local iteration shortcut.
-- Run a production build when code paths or build configuration change.
+- Ordinary low-risk local commits may use `verify:changed` plus the applicable build, public-tree and behavioral checks; see the workflow matrix. Full verification is required for high-risk changes, verification infrastructure, release preparation, push, CI, and handoffs explicitly requiring it.
+- Run `verify:full` only once on the final tree when required. It already includes type checks, all source test groups, lint and builds; E2E and migration checks remain separate.
+- Run the affected production build when code paths change; build/configuration changes require full verification. Pure documentation and isolated static prototypes do not need production builds.
 - For UI behavior, use the existing isolated local Playwright suite; any retained-environment browser check must be a separate, non-destructive runner with an exact approved hostname and ignored local credentials.
 - Run `npm run check:public-tree` for tracked-file or publication-safety changes.
 - Run `git diff --check` before committing.
@@ -110,7 +117,7 @@ Read reference documents on demand, not at startup:
 
 ## Review and Git
 
-- Review the complete `git diff` before the final commit.
+- Review the complete task diff before committing. Stage explicit task-owned paths only; never use `git add -A`. When using `verify:changed -- --staged`, stage the complete task (including new files) first; unrelated untracked files are excluded from selection, not isolated from execution.
 - Confirm the diff contains only files needed for the current domain.
 - Confirm tracked guidance and docs contain no private or machine-specific information.
 - Follow the requested branch and commit conventions.
@@ -121,7 +128,7 @@ Read reference documents on demand, not at startup:
 
 - After two unsuccessful fix attempts for the same failure, stop iterating.
 - Report the observed failure, likely root cause, and evidence gathered.
-- Recommend an upgraded model suited to the unresolved work.
+- Explain the blocker and a concrete next step in plain language; use capability-based escalation from the routing guide instead of making the user diagnose it.
 - Do not conceal failures with broad rewrites or unrelated changes.
 - Leave the worktree in a reviewable state.
 - The final report must include only changed files, test results, and remaining risks.

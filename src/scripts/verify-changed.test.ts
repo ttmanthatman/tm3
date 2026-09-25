@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createVerificationPlan } from "./verify-changed.js";
+import { execFileSync, spawnSync } from "node:child_process";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createVerificationPlan, detectChangedFiles, parseOptions } from "./verify-changed.js";
 
 function summary(files: string[]) {
   const plan = createVerificationPlan(files);
@@ -120,4 +125,104 @@ test("GitHub workflow changes are recognized and conservatively run everything",
   assert.deepEqual(plan.domains, ["GitHub workflow"]);
   assert.deepEqual(plan.commands, ["npm run verify:full"]);
   assert.equal(plan.fallbackReasons.length, 1);
+});
+
+test("verification infrastructure cannot select only its own focused checks", () => {
+  for (const name of ["verify-changed", "run-tests", "test-file-groups"]) {
+    assert.deepEqual(createVerificationPlan([`src/scripts/${name}.ts`]).commands, ["npm run verify:full"]);
+  }
+});
+
+test("CLI scope options reject ambiguous or incomplete input", () => {
+  assert.deepEqual(parseOptions(["--staged", "--quiet", "--dry-run"]), {
+    base: "HEAD", staged: true, quiet: true, dryRun: true
+  });
+  assert.equal(parseOptions(["--base", "main"]).base, "main");
+  for (const args of [["--base"], ["--base", "--quiet"], ["--staged", "--base", "HEAD"], ["--typo"]]) {
+    assert.throws(() => parseOptions(args));
+  }
+});
+
+test("staged scope preserves unrelated untracked work and refuses a mismatched working tree", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "verify-scope-test-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    git("init");
+    writeFileSync(path.join(root, "tracked.txt"), "baseline");
+    git("add", "tracked.txt");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "baseline");
+    mkdirSync(path.join(root, "docs"));
+    writeFileSync(path.join(root, "docs/task notes.md"), "task");
+    git("add", "docs/task notes.md");
+    mkdirSync(path.join(root, "prototype"));
+    writeFileSync(path.join(root, "prototype/unrelated.html"), "existing work");
+    assert.deepEqual(detectChangedFiles("HEAD", { root, staged: true }), ["docs/task notes.md"]);
+    assert.deepEqual(detectChangedFiles("HEAD", { root }), ["docs/task notes.md", "prototype/unrelated.html"]);
+    assert.deepEqual(createVerificationPlan(detectChangedFiles("HEAD", { root, staged: true })).commands, ["npm run check:public-tree"]);
+    writeFileSync(path.join(root, "docs/task notes.md"), "edited after staging");
+    assert.throws(() => detectChangedFiles("HEAD", { root, staged: true }), /match the index/);
+    git("add", "docs/task notes.md");
+    writeFileSync(path.join(root, "tracked.txt"), "unrelated tracked edits");
+    assert.throws(() => detectChangedFiles("HEAD", { root, staged: true }), /do not stage unrelated work/);
+    git("restore", "tracked.txt");
+    git("mv", "tracked.txt", "renamed.txt");
+    assert.deepEqual(detectChangedFiles("HEAD", { root, staged: true }), ["docs/task notes.md", "renamed.txt", "tracked.txt"]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("CLI distinguishes preview, empty scope, success and failure while retaining bounded logs", () => {
+  const root = realpathSync(mkdtempSync(path.join(tmpdir(), "verify-cli-test-")));
+  const logDirs = new Set<string>();
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, stdio: "pipe" });
+  try {
+    mkdirSync(path.join(root, "src/scripts"), { recursive: true });
+    const script = path.join(root, "src/scripts/verify-changed.ts");
+    copyFileSync(fileURLToPath(new URL("./verify-changed.ts", import.meta.url)), script);
+    writeFileSync(path.join(root, "package.json"), JSON.stringify({
+      type: "module",
+      scripts: { "check:public-tree": "node fixture.cjs" }
+    }));
+    writeFileSync(path.join(root, "fixture.cjs"), 'console.log("log-start:" + "x".repeat(9000)); console.error("log-end"); process.exit(process.env.VERIFY_FIXTURE_FAIL ? 7 : 0);');
+    git("init");
+    git("add", "src", "package.json", "fixture.cjs");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "baseline");
+    const run = (args: string[], fail = false) => {
+      const result = spawnSync(process.execPath, ["--import", "tsx", script, ...args], {
+        encoding: "utf8", env: { ...process.env, VERIFY_FIXTURE_FAIL: fail ? "1" : "" }
+      });
+      for (const match of result.stdout.matchAll(/\(log: (.+)\)/g)) logDirs.add(path.dirname(match[1]));
+      return result;
+    };
+    const empty = run(["--staged"]);
+    assert.equal(empty.status, 1);
+    assert.match(empty.stderr, /No checks selected/);
+    mkdirSync(path.join(root, "docs"));
+    writeFileSync(path.join(root, "docs/task.md"), "task");
+    git("add", "docs/task.md");
+    const preview = run(["--staged", "--dry-run", "--quiet"]);
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.match(preview.stdout, /Dry run: no checks executed/);
+    assert.doesNotMatch(preview.stdout, /Running:|Passed:|docs\/task.md/);
+    const success = run(["--staged", "--quiet"]);
+    assert.equal(success.status, 0, success.stderr);
+    assert.match(success.stdout, /Passed: npm run check:public-tree/);
+    assert.doesNotMatch(success.stdout, /log-start/);
+    const failure = run(["--staged", "--quiet"], true);
+    assert.equal(failure.status, 7);
+    assert.match(failure.stderr, /log-end/);
+    assert.match(failure.stderr, /Failed: npm run check:public-tree/);
+    assert.doesNotMatch(failure.stderr, /log-start/);
+    assert.ok(failure.stderr.length < 7000);
+    assert.equal(logDirs.size, 2);
+    for (const dir of logDirs) {
+      const log = readFileSync(path.join(dir, "output.log"), "utf8");
+      assert.match(log, /log-start/);
+      assert.match(log, /log-end/);
+    }
+  } finally {
+    for (const dir of logDirs) rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
