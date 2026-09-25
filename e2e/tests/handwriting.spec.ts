@@ -127,6 +127,7 @@ async function setNativeColor(dialog: Locator, label: string, color: string) {
     const field = element as HTMLInputElement;
     field.value = value;
     field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
   }, color);
 }
 
@@ -261,6 +262,8 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
   const mirror = dialog.locator(".handwriting-tip-mirror-frame");
   await drawTouchStroke(canvas, [[0.25, 0.35], [0.5, 0.5], [0.76, 0.32]]);
   await expect(mirror).toBeHidden();
+  await dialog.getByRole("button", { name: "清空当前字", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toBeDisabled();
 
   const box = await canvas.boundingBox();
   if (!box) throw new Error("手写画板不可见");
@@ -276,8 +279,8 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
   const mobileMirror = await mirror.boundingBox();
   expect(mobileMirror!.width).toBe(140);
   expect(mobileMirror!.height).toBe(124);
-  expect(mobileMirror!.x).toBeGreaterThanOrEqual(box.x);
-  expect(mobileMirror!.x + mobileMirror!.width).toBeLessThanOrEqual(box.x + box.width);
+  expect(mobileMirror!.y + mobileMirror!.height).toBeLessThanOrEqual(box.y);
+  expect(mobileMirror!.x).toBeLessThanOrEqual(box.x + 20);
   await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-touch-mobile.png" });
 
   await page.setViewportSize({ width: 1280, height: 844 });
@@ -317,7 +320,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await expect(dialog.getByText("已完成的字", { exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("group", { name: "笔画颜色", exact: true })).toBeVisible();
     await expect(dialog.getByText("当前字格", { exact: true })).toHaveCount(0);
-    await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toBeDisabled();
     await expect(dialog.getByText("小秘密：长按调出调色盘", { exact: true })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "自定义颜色", exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: "自定义颜色", exact: true }).click();
@@ -343,6 +346,15 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await setNativeColor(dialog, "光晕颜色", "#aabbcc");
     await dialog.getByRole("slider", { name: "光晕密度" }).fill("72");
     await dialog.getByRole("slider", { name: "光晕宽度" }).fill("48");
+    const memberDialog = await openHandwritingComposer(receiver);
+    await memberDialog.getByRole("button", { name: "毛笔", exact: true }).click();
+    await memberDialog.getByText("毛笔参数", { exact: true }).click();
+    await expect(memberDialog.getByRole("slider", { name: "毛笔粗细" })).toBeVisible();
+    await expect(memberDialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveCount(0);
+    await expect(memberDialog.getByRole("slider", { name: "毛笔笔头滞后" })).toHaveCount(0);
+    await memberDialog.getByRole("checkbox", { name: "光晕" }).check();
+    await expect(memberDialog.getByRole("slider", { name: "光晕密度" })).toHaveCount(0);
+    await memberDialog.getByRole("button", { name: "关闭", exact: true }).click();
     await expectComposerInsideViewport(sender, dialog);
     await composeTwoCharacters(sender, dialog);
     await dialog.getByRole("button", { name: "预览播放", exact: true }).click();

@@ -23,7 +23,9 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   const palette = readFileSync(new URL("./HandwritingPalette.vue", import.meta.url), "utf8");
   const message = readFileSync(new URL("./HandwritingMessage.vue", import.meta.url), "utf8");
   assert.doesNotMatch(component, /<section class="handwriting-completed"/);
-  assert.doesNotMatch(component, /清空当前字|当前字格[\s\S]*?写完后手动完成/);
+  assert.match(component, /aria-label="清空当前字"/);
+  assert.match(component, /composer\.clearCurrent\(\)/);
+  assert.doesNotMatch(component, /当前字格[\s\S]*?写完后手动完成/);
   assert.match(palette, /aria-label="笔画颜色"/);
   assert.match(palette, /aria-label="自定义颜色"/);
   assert.match(palette, /小秘密：长按调出调色盘/);
@@ -32,6 +34,7 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   assert.match(palette, /aria-label="光晕颜色"/);
   assert.match(palette, /aria-label="光晕密度"/);
   assert.match(palette, /aria-label="光晕宽度"/);
+  assert.match(palette, /v-if="glowEnabled && isAdmin"/);
   assert.match(palette, /class="handwriting-presentation-toggles"/);
   assert.doesNotMatch(palette, /闪光笔/);
   assert.match(palette, /setTimeout\(\(\) => \{\s*longPressTriggered = true;\s*openPicker\(index\);\s*\}, 450\)/);

@@ -31,6 +31,7 @@ import {
 import { mergeChannelUpdate, mergeMessageUpdate } from "./messageUpdates";
 import { noteChannelMessage, orderChannels } from "./channelOrdering";
 import { handwritingPlaybackRegistry } from "./features/handwriting/handwritingPlaybackRegistry";
+import { HANDWRITING_DEFAULT_GLOBAL_SETTINGS } from "@shared/handwriting";
 
 type TypingState = Record<string, { displayName: string; timer: number }>;
 type MemberRow = {
@@ -93,6 +94,7 @@ function loadInitialPersistedWindow(): { accountId: number; messages: MessageDTO
   }
 }
 const defaultAppearance: AppearanceDTO = {
+  handwritingSettings: HANDWRITING_DEFAULT_GLOBAL_SETTINGS,
   appTitle: "Team Chat",
   appIconPath: null,
   wallpaperPath: null,

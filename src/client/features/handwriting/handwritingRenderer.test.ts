@@ -90,27 +90,36 @@ test("brush body sweeps oriented leaf footprints instead of ribbon quads or circ
       points: [[1000, 1000, 0], [2000, 1000, 100], [2000, 1800, 110]]
     }]
   });
-  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 1);
   assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 0);
   assert.equal(target.operations.filter((operation) => operation.type === "lineTo").length, 0);
   assert.equal(target.operations.filter((operation) => operation.type === "fill").length, 1);
   assert.ok(target.operations.filter((operation) => operation.type === "bezierCurveTo").length >= 12);
 });
 
-test("a single brush point uses one sharp directional footprint", () => {
+test("a single brush point starts as a directionless contact dot", () => {
   const target = fakeCanvas();
   drawHandwritingCharacter(target.canvas, {
     strokes: [{ brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[10, 20, 0]] }]
   });
-  assert.equal(target.operations.filter((operation) => operation.type === "bezierCurveTo").length, 3);
-  assert.equal(target.operations.filter((operation) => operation.type === "moveTo").length, 1);
-  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "bezierCurveTo").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "moveTo").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 1);
+});
+
+test("an initial dwell expands the contact without choosing a direction", () => {
+  const target = fakeCanvas();
+  drawHandwritingCharacter(target.canvas, {
+    strokes: [{ brush: { size: 80, sensitivity: 0, lag: 35 }, points: [[10, 20, 0], [10, 20, 300]] }]
+  });
+  assert.equal(target.operations.filter((operation) => operation.type === "bezierCurveTo").length, 0);
+  assert.ok(target.operations.filter((operation) => operation.type === "arc").length >= 2);
 });
 
 test("brush footprint places its sharp cusp behind the direction of travel", () => {
   const target = fakeCanvas();
   const sample: BrushSample = {
-    x: 1000, y: 2000, width: 400, angle: 0, contact: 0.8, spread: 0.7,
+    x: 1000, y: 2000, width: 400, angle: 0, contact: 0.8, spread: 0.7, directional: true,
     trailX: 30, trailY: 0, phase: "writing", rawX: 1030, rawY: 2000,
     inputX: 1030, inputY: 2000, handleX: 1030, handleY: 2000, speed: 1
   };
@@ -122,9 +131,11 @@ test("brush footprint places its sharp cusp behind the direction of travel", () 
 });
 
 test("brush turn adds intermediate footprints when angle changes faster than position", () => {
+  const straight = Array.from({ length: 26 }, (_, index) => [1000 + index * 120, 3000, index * 8] as [number, number, number]);
+  const turn = Array.from({ length: 20 }, (_, index) => [4000 - (index + 1) * 45, 3000 + (index + 1) * 100, (index + 26) * 8] as [number, number, number]);
   const stroke = {
-    brush: { size: 50, sensitivity: 70, lag: 40 },
-    points: [[1000, 3000, 0], [5000, 3000, 320], [5000, 4400, 432]] as [number, number, number][]
+    brush: { size: 100, sensitivity: 0, lag: 40 },
+    points: [...straight, ...turn]
   };
   const samples = handwritingBrushGeometry(stroke).samples;
   const distanceOnlyCount = 1 + samples.slice(1).reduce((total, sample, index) => {

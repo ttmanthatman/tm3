@@ -401,9 +401,17 @@ onBeforeUnmount(() => {
 
 @media (max-width: 420px) {
   .handwriting-tip-mirror-frame {
-    top: 8px;
     width: 140px;
     height: 124px;
+  }
+}
+@media (max-width: 600px) {
+  .handwriting-tip-mirror-frame {
+    position: fixed;
+    z-index: 10;
+    top: calc(env(safe-area-inset-top) + 100px);
+    left: max(8px, env(safe-area-inset-left));
+    transform: none;
   }
 }
 </style>

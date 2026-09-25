@@ -18,6 +18,8 @@ const props = defineProps<{
   glowDensity: number;
   glowWidth: number;
   disabled?: boolean;
+  isAdmin: boolean;
+  globalDisabled: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -25,7 +27,8 @@ const emit = defineEmits<{
   "slot-change": [index: number, color: HandwritingColor];
   "custom-change": [color: HandwritingColor];
   "paper-change": [enabled: boolean, color: HandwritingColor];
-  "glow-change": [enabled: boolean, color: HandwritingColor, density: number, width: number];
+  "glow-change": [enabled: boolean];
+  "global-glow-change": [glow: { color: HandwritingColor; density: number; width: number }];
 }>();
 
 const pickerInput = ref<HTMLInputElement | null>(null);
@@ -93,18 +96,16 @@ function handlePaperColor(event: Event) {
 
 function handleGlowColor(event: Event) {
   const value = (event.target as HTMLInputElement).value.toLowerCase() as HandwritingColor;
-  emit("glow-change", props.glowEnabled, value, props.glowDensity, props.glowWidth);
+  emit("global-glow-change", { color: value, density: props.glowDensity, width: props.glowWidth });
 }
 
 function handleGlowAmount(kind: "density" | "width", event: Event) {
   const value = Math.max(0, Math.min(100, Number((event.target as HTMLInputElement).value)));
-  emit(
-    "glow-change",
-    props.glowEnabled,
-    props.glowColor,
-    kind === "density" ? value : props.glowDensity,
-    kind === "width" ? value : props.glowWidth
-  );
+  emit("global-glow-change", {
+    color: props.glowColor,
+    density: kind === "density" ? value : props.glowDensity,
+    width: kind === "width" ? value : props.glowWidth
+  });
 }
 </script>
 
@@ -180,7 +181,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
           :checked="glowEnabled"
           :disabled="disabled"
           aria-label="光晕"
-          @change="emit('glow-change', ($event.target as HTMLInputElement).checked, glowColor, glowDensity, glowWidth)"
+          @change="emit('glow-change', ($event.target as HTMLInputElement).checked)"
         />
         <span>光晕</span>
       </label>
@@ -197,15 +198,15 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
         />
       </label>
     </div>
-    <div v-if="glowEnabled" class="handwriting-glow-options enabled">
+    <div v-if="glowEnabled && isAdmin" class="handwriting-glow-options enabled">
       <label class="handwriting-glow-color">
         <span>光晕颜色</span>
         <input
           type="color"
           :value="glowColor"
-          :disabled="disabled"
+          :disabled="disabled || globalDisabled"
           aria-label="光晕颜色"
-          @input="handleGlowColor"
+          @change="handleGlowColor"
         />
       </label>
       <label class="handwriting-glow-range">
@@ -216,9 +217,9 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
           max="100"
           step="1"
           :value="glowDensity"
-          :disabled="disabled"
+          :disabled="disabled || globalDisabled"
           aria-label="光晕密度"
-          @input="handleGlowAmount('density', $event)"
+          @change="handleGlowAmount('density', $event)"
         />
         <output aria-label="光晕密度数值">{{ glowDensity }}</output>
       </label>
@@ -230,9 +231,9 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
           max="100"
           step="1"
           :value="glowWidth"
-          :disabled="disabled"
+          :disabled="disabled || globalDisabled"
           aria-label="光晕宽度"
-          @input="handleGlowAmount('width', $event)"
+          @change="handleGlowAmount('width', $event)"
         />
         <output aria-label="光晕宽度数值">{{ glowWidth }}</output>
       </label>

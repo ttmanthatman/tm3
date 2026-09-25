@@ -38,6 +38,30 @@ export type HandwritingPen = "hard" | "brush";
 export type HandwritingBrush = { size: number; sensitivity: number; lag: number };
 export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
 
+export type HandwritingGlobalSettings = { sensitivity: number; lag: number; glow: HandwritingGlow };
+export const HANDWRITING_DEFAULT_GLOBAL_SETTINGS: Readonly<HandwritingGlobalSettings> = Object.freeze({
+  sensitivity: HANDWRITING_DEFAULT_BRUSH.sensitivity,
+  lag: HANDWRITING_DEFAULT_BRUSH.lag,
+  glow: {
+    color: HANDWRITING_DEFAULT_GLOW_COLOR,
+    density: HANDWRITING_DEFAULT_GLOW_DENSITY,
+    width: HANDWRITING_DEFAULT_GLOW_WIDTH
+  }
+});
+
+export function normalizeHandwritingGlobalSettings(value: unknown): HandwritingGlobalSettings {
+  const row = isPlainObject(value) ? value : {};
+  return {
+    sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_GLOBAL_SETTINGS.sensitivity),
+    lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_GLOBAL_SETTINGS.lag),
+    glow: normalizeHandwritingGlow(row.glow, HANDWRITING_DEFAULT_GLOBAL_SETTINGS.glow)
+  };
+}
+
+export function handwritingBrushWithGlobalSettings(brush: HandwritingBrush, settings: HandwritingGlobalSettings): HandwritingBrush {
+  return { size: brush.size, sensitivity: settings.sensitivity, lag: settings.lag };
+}
+
 export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
   const row = isPlainObject(value) ? value : {};
   return {

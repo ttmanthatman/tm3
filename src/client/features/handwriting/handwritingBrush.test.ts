@@ -34,6 +34,20 @@ test("immediate movement starts at a sharp tip and expands along travel", () => 
   assert.ok(samples.at(-1)!.spread > samples[0].spread * 3);
 });
 
+test("brush contact has no heading until travel establishes its initial direction", () => {
+  for (const [dx, dy, expectedAngle] of [[500, 0, 0], [0, 500, Math.PI / 2], [-500, 0, Math.PI]] as const) {
+    const stroke: HandwritingStroke = {
+      brush: { ...HANDWRITING_DEFAULT_BRUSH, lag: 0 },
+      points: [[1000, 1000, 0], [1000 + dx, 1000 + dy, 50]]
+    };
+    const samples = handwritingBrushGeometry(stroke).samples;
+    assert.equal(samples[0].directional, false);
+    assert.ok(samples.slice(1).every((sample) => sample.directional));
+    const error = Math.atan2(Math.sin(samples[1].angle - expectedAngle), Math.cos(samples[1].angle - expectedAngle));
+    assert.ok(Math.abs(error) < 0.01);
+  }
+});
+
 test("three-hundred-millisecond initial dwell presses and spreads the footprint", () => {
   const stroke: HandwritingStroke = {
     brush: { ...HANDWRITING_DEFAULT_BRUSH, size: 80, sensitivity: 0, lag: 0 },

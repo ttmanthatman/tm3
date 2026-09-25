@@ -3,15 +3,20 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Check, Play, RotateCcw, Send, Trash2, X } from "lucide-vue-next";
 import {
   HANDWRITING_CUSTOM_COLOR_INDEX,
+  handwritingBrushWithGlobalSettings,
+  normalizeHandwritingGlobalSettings,
   normalizeHandwritingColor,
   normalizeHandwritingPreferences,
   type HandwritingColor,
   type HandwritingPen,
   type HandwritingBrush,
   type HandwritingGlow,
+  type HandwritingGlobalSettings,
   type HandwritingPayload,
   type HandwritingPreferencesDTO
 } from "@shared/handwriting";
+import type { AppearanceDTO } from "@shared/types";
+import { api } from "../../api";
 import AppModal from "../../components/ui/AppModal.vue";
 import HandwritingPenControls from "./HandwritingPenControls.vue";
 import HandwritingPalette from "./HandwritingPalette.vue";
@@ -34,6 +39,8 @@ const props = defineProps<{
   socketReady: boolean;
   replyLabel?: string;
   preferences: HandwritingPreferencesDTO;
+  globalSettings: HandwritingGlobalSettings;
+  isAdmin: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -68,6 +75,10 @@ const displayCharacters = computed(() => currentCharacter.value.strokes.length
 const canFinishCharacter = computed(() => !props.busy && currentCharacter.value.strokes.length > 0);
 const canSubmit = computed(() => !props.busy && props.socketReady && hasContent.value);
 const palettePreferences = ref(normalizeHandwritingPreferences(props.preferences));
+const globalSettings = ref(normalizeHandwritingGlobalSettings(props.globalSettings));
+const globalSettingsBusy = ref(false);
+const globalSettingsError = ref("");
+const effectiveBrush = computed<HandwritingBrush>(() => handwritingBrushWithGlobalSettings(palettePreferences.value.brush, globalSettings.value));
 const activeColor = computed<HandwritingColor>(() => palettePreferences.value.selectedIndex === HANDWRITING_CUSTOM_COLOR_INDEX
   ? palettePreferences.value.customColor
   : palettePreferences.value.strokeColors[palettePreferences.value.selectedIndex]
@@ -92,9 +103,41 @@ function publishPreferences() {
 function changePen(pen: HandwritingPen, brush: HandwritingBrush) {
   if (props.busy) return;
   palettePreferences.value.pen = pen;
-  palettePreferences.value.brush = { ...brush };
-  composer.setPen(pen, brush);
+  palettePreferences.value.brush.size = brush.size;
+  composer.setPen(pen, { ...effectiveBrush.value, size: brush.size });
   publishPreferences();
+}
+
+async function saveGlobalSettings(next: HandwritingGlobalSettings) {
+  if (!props.isAdmin || props.busy || globalSettingsBusy.value) return;
+  const previous = globalSettings.value;
+  globalSettings.value = normalizeHandwritingGlobalSettings(next);
+  globalSettingsBusy.value = true;
+  globalSettingsError.value = "";
+  composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
+  updateAfter(() => composer.setGlow(composer.glowEnabled.value, globalSettings.value.glow.color, globalSettings.value.glow.density, globalSettings.value.glow.width));
+  try {
+    const result = await api<{ appearance: AppearanceDTO }>("/api/admin/appearance", {
+      method: "POST",
+      body: JSON.stringify({ handwritingSettings: globalSettings.value })
+    });
+    globalSettings.value = normalizeHandwritingGlobalSettings(result.appearance.handwritingSettings);
+  } catch {
+    globalSettings.value = previous;
+    composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
+    updateAfter(() => composer.setGlow(composer.glowEnabled.value, previous.glow.color, previous.glow.density, previous.glow.width));
+    globalSettingsError.value = "全局毛笔参数保存失败，请重试";
+  } finally {
+    globalSettingsBusy.value = false;
+  }
+}
+
+function changeGlobalBrush(key: "sensitivity" | "lag", value: number) {
+  void saveGlobalSettings({ ...globalSettings.value, [key]: value });
+}
+
+function changeGlobalGlow(glow: HandwritingGlow) {
+  void saveGlobalSettings({ ...globalSettings.value, glow });
 }
 
 function selectPaletteColor(index: number) {
@@ -123,12 +166,10 @@ function changePaper(enabled: boolean, color: HandwritingColor) {
   publishPreferences();
 }
 
-function changeGlow(enabled: boolean, color: HandwritingColor, density: number, width: number) {
+function changeGlow(enabled: boolean) {
   palettePreferences.value.glowEnabled = enabled;
-  palettePreferences.value.glowColor = normalizeHandwritingColor(color, palettePreferences.value.glowColor);
-  palettePreferences.value.glowDensity = density;
-  palettePreferences.value.glowWidth = width;
-  updateAfter(() => composer.setGlow(enabled, palettePreferences.value.glowColor, density, width));
+  const glow = globalSettings.value.glow;
+  updateAfter(() => composer.setGlow(enabled, glow.color, glow.density, glow.width));
   publishPreferences();
 }
 
@@ -247,6 +288,10 @@ watch(
   (state) => {
     stopPreview(false);
     composer.load(state);
+    if (props.open) {
+      composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
+      composer.setGlow(composer.glowEnabled.value, globalSettings.value.glow.color, globalSettings.value.glow.density, globalSettings.value.glow.width);
+    }
     clearConfirmOpen.value = false;
     void renderStatic();
   },
@@ -254,14 +299,14 @@ watch(
 );
 watch(() => props.open, (open) => {
   if (open) {
-    composer.setPen(palettePreferences.value.pen, palettePreferences.value.brush);
+    composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
     composer.selectColor(activeColor.value);
     composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
     composer.setGlow(
       palettePreferences.value.glowEnabled,
-      palettePreferences.value.glowColor,
-      palettePreferences.value.glowDensity,
-      palettePreferences.value.glowWidth
+      globalSettings.value.glow.color,
+      globalSettings.value.glow.density,
+      globalSettings.value.glow.width
     );
     return;
   }
@@ -270,15 +315,21 @@ watch(() => props.open, (open) => {
 });
 watch(() => props.accountId, () => {
   palettePreferences.value = normalizeHandwritingPreferences(props.preferences);
-  composer.setPen(palettePreferences.value.pen, palettePreferences.value.brush);
+  composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
   composer.selectColor(activeColor.value);
   composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
   composer.setGlow(
     palettePreferences.value.glowEnabled,
-    palettePreferences.value.glowColor,
-    palettePreferences.value.glowDensity,
-    palettePreferences.value.glowWidth
+    globalSettings.value.glow.color,
+    globalSettings.value.glow.density,
+    globalSettings.value.glow.width
   );
+});
+watch(() => props.globalSettings, (next) => {
+  globalSettings.value = normalizeHandwritingGlobalSettings(next);
+  if (!props.open) return;
+  composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
+  updateAfter(() => composer.setGlow(composer.glowEnabled.value, globalSettings.value.glow.color, globalSettings.value.glow.density, globalSettings.value.glow.width));
 });
 watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 onBeforeUnmount(() => {
@@ -303,9 +354,12 @@ onBeforeUnmount(() => {
         <div class="handwriting-tools">
         <HandwritingPenControls
           :pen="palettePreferences.pen"
-          :brush="palettePreferences.brush"
+          :brush="effectiveBrush"
           :disabled="busy"
+          :is-admin="isAdmin"
+          :global-disabled="globalSettingsBusy"
           @change="changePen"
+          @global-change="changeGlobalBrush"
         />
         <HandwritingPalette
           :colors="palettePreferences.strokeColors"
@@ -314,15 +368,18 @@ onBeforeUnmount(() => {
           :paper-enabled="palettePreferences.paperEnabled"
           :paper-color="palettePreferences.paperColor"
           :glow-enabled="palettePreferences.glowEnabled"
-          :glow-color="palettePreferences.glowColor"
-          :glow-density="palettePreferences.glowDensity"
-          :glow-width="palettePreferences.glowWidth"
+          :glow-color="globalSettings.glow.color"
+          :glow-density="globalSettings.glow.density"
+          :glow-width="globalSettings.glow.width"
           :disabled="busy"
+          :is-admin="isAdmin"
+          :global-disabled="globalSettingsBusy"
           @select="selectPaletteColor"
           @slot-change="replacePaletteColor"
           @custom-change="replaceCustomColor"
           @paper-change="changePaper"
           @glow-change="changeGlow"
+          @global-glow-change="changeGlobalGlow"
         />
         </div>
         <div class="handwriting-writing">
@@ -338,10 +395,11 @@ onBeforeUnmount(() => {
           @stroke-cancel="strokeCancel"
         />
         <div class="handwriting-pad-actions">
+          <button type="button" class="clear-current" :disabled="busy || !currentCharacter.strokes.length" aria-label="清空当前字" title="清空当前字" @click="updateAfter(() => composer.clearCurrent())"><Trash2 :size="17" /></button>
           <button type="button" :disabled="busy || !currentCharacter.strokes.length" @click="updateAfter(() => composer.undoStroke())"><RotateCcw :size="16" />撤销一笔</button>
           <button type="button" :disabled="!canFinishCharacter" @click="updateAfter(() => composer.finishCharacter())"><Check :size="16" />完成此字</button>
         </div>
-        <p class="handwriting-status" :class="{ error: composer.errorMessage.value }" role="status">{{ composer.errorMessage.value || status }}</p>
+        <p class="handwriting-status" :class="{ error: composer.errorMessage.value || globalSettingsError }" role="status">{{ composer.errorMessage.value || globalSettingsError || status }}</p>
         </div>
       </section>
 
@@ -412,7 +470,8 @@ onBeforeUnmount(() => {
 .handwriting-text-action { margin-left: auto; border: 0; background: transparent; color: #47705a; padding: 6px; }
 .handwriting-text-action.danger { color: #a24e43; }
 .handwriting-empty { border: 1px dashed #d8ded5; padding: 14px; text-align: center; color: #929b91; font-size: 12px; }
-.handwriting-pad-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
+.handwriting-pad-actions { display: grid; grid-template-columns: 40px repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 10px; }
+.handwriting-pad-actions .clear-current { padding: 0; color: #a24e43; }
 .handwriting-pad-actions button, .handwriting-replay, .handwriting-send { min-height: 38px; border: 1px solid #d7e0d5; border-radius: 7px; background: #f8faf7; color: #355c48; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .handwriting-status { min-height: 18px; margin: 7px 0 0; text-align: center; color: #7f8b80; font-size: 12px; }
 .handwriting-status.error { color: #a24e43; }

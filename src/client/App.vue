@@ -219,7 +219,7 @@ import { useMessageForward } from "./features/messages/useMessageForward";
 import { useMediaPreview, type PinnedMediaBlock } from "./features/messages/useMediaPreview";
 import { useMessageRecall } from "./features/messages/useMessageRecall";
 import { useMessageSelection } from "./features/messages/useMessageSelection";
-import { HANDWRITING_DEFAULT_PREFERENCES, type HandwritingPreferencesDTO } from "@shared/handwriting";
+import { HANDWRITING_DEFAULT_GLOBAL_SETTINGS, HANDWRITING_DEFAULT_PREFERENCES, type HandwritingPreferencesDTO } from "@shared/handwriting";
 import type { AccountDTO } from "@shared/types";
 import { builtInThemes, type WallpaperFit } from "./features/admin/useAppearanceSettings";
 import HandwritingComposer from "./features/handwriting/HandwritingComposer.vue";
@@ -6400,6 +6400,8 @@ const messageRowBindings = {
       :socket-ready="socketReadyToSend"
       :reply-label="replyTo ? `${replyTo.sender.displayName}：${replyPreviewText(replyTo) || replyTo.type}` : ''"
       :preferences="store.account?.handwritingPreferences || HANDWRITING_DEFAULT_PREFERENCES"
+      :global-settings="store.appearance.handwritingSettings || HANDWRITING_DEFAULT_GLOBAL_SETTINGS"
+      :is-admin="store.account?.isAdmin || false"
       @close="handwritingComposerOpen = false"
       @draft-change="saveHandwritingDraft"
       @preferences-change="saveHandwritingPreferences"

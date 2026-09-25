@@ -45,6 +45,20 @@ test("undo, delete and clear operate on the intended scope and increment revisio
   assert.equal(composer.clearCurrent(), false);
 });
 
+test("clear current character keeps completed characters and resets the writing cell", () => {
+  const composer = useHandwritingComposer();
+  composer.beginStroke({ x: 1, y: 1, timestampMs: 0 }, 1);
+  composer.endStroke(1);
+  composer.finishCharacter();
+  composer.beginStroke({ x: 2, y: 2, timestampMs: 10 }, 1);
+  composer.endStroke(1);
+  const revision = composer.revision.value;
+  assert.equal(composer.clearCurrent(), true);
+  assert.equal(composer.current.value.strokes.length, 0);
+  assert.equal(composer.characters.value.length, 1);
+  assert.ok(composer.revision.value > revision);
+});
+
 test("sampling keeps first, corner, spaced and final points without filling dense input", () => {
   assert.equal(shouldSampleHandwritingPoint(undefined, undefined, [0, 0, 0]), true);
   assert.equal(shouldSampleHandwritingPoint([0, 0, 0], undefined, [2, 0, 1]), false);

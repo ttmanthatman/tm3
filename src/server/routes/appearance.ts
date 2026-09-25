@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandl
 import sharp from "sharp";
 import { z } from "zod";
 import type { FlashEffectSettingsDTO, ThemeDTO, ThemePaletteDTO } from "../../shared/types.js";
+import { normalizeHandwritingGlobalSettings } from "../../shared/handwriting.js";
 import {
   COMPOSER_PROMPT_ANIM_MAX,
   COMPOSER_PROMPT_ANIM_MIN,
@@ -173,7 +174,8 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
             "composerPromptAnimSeconds",
             "composerPromptAppearSeconds",
             "composerPromptDisappearSeconds",
-            "composerPromptGapSeconds"
+            "composerPromptGapSeconds",
+            "handwritingSettings"
           ]
         }
       }
@@ -209,6 +211,7 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
       prayerBubbleMineColor: cleanHexColor(settings.get("prayerBubbleMineColor"), "#f0fbf1"),
       prayerBubbleOtherColor: cleanHexColor(settings.get("prayerBubbleOtherColor"), "#fffaf0"),
       flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
+      handwritingSettings: normalizeHandwritingGlobalSettings(parseJsonField(settings.get("handwritingSettings"), null)),
       customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), [])),
       composerPrompts: settings.has("composerPrompts")
         ? cleanComposerPrompts(parseJsonField(settings.get("composerPrompts"), []))
@@ -405,7 +408,16 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
         composerPromptIntervalSeconds: z.number().min(1).max(30).optional(),
         composerPromptAppearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
         composerPromptDisappearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
-        composerPromptGapSeconds: z.number().min(COMPOSER_PROMPT_GAP_MIN).max(COMPOSER_PROMPT_GAP_MAX).optional()
+        composerPromptGapSeconds: z.number().min(COMPOSER_PROMPT_GAP_MIN).max(COMPOSER_PROMPT_GAP_MAX).optional(),
+        handwritingSettings: z.object({
+          sensitivity: z.number().int().min(0).max(100),
+          lag: z.number().int().min(0).max(100),
+          glow: z.object({
+            color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+            density: z.number().int().min(0).max(100),
+            width: z.number().int().min(0).max(100)
+          }).strict()
+        }).strict().optional()
       })
       .parse(request.body);
     if (Object.prototype.hasOwnProperty.call(body, "appTitle")) await setSetting("appTitle", (body.appTitle || "").trim() || DEFAULT_APP_TITLE);
@@ -437,6 +449,7 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
     if (Object.prototype.hasOwnProperty.call(body, "composerPromptAppearSeconds")) await setSetting("composerPromptAppearSeconds", String(cleanComposerPromptAppearSeconds(body.composerPromptAppearSeconds)));
     if (Object.prototype.hasOwnProperty.call(body, "composerPromptDisappearSeconds")) await setSetting("composerPromptDisappearSeconds", String(cleanComposerPromptDisappearSeconds(body.composerPromptDisappearSeconds)));
     if (Object.prototype.hasOwnProperty.call(body, "composerPromptGapSeconds")) await setSetting("composerPromptGapSeconds", String(cleanComposerPromptGapSeconds(body.composerPromptGapSeconds)));
+    if (body.handwritingSettings) await setSetting("handwritingSettings", JSON.stringify(normalizeHandwritingGlobalSettings(body.handwritingSettings)));
     const appearance = await appearanceDto();
     io.emit("appearance:updated", appearance);
     return { success: true, appearance };

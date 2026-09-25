@@ -1,4 +1,4 @@
-import type { HandwritingPreferencesDTO } from "./handwriting.js";
+import type { HandwritingGlobalSettings, HandwritingPreferencesDTO } from "./handwriting.js";
 
 export type ActorKind = "human" | "virtual" | "system";
 export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "chat_record" | "handwriting" | "system";
@@ -1068,6 +1068,7 @@ export interface ParallaxKitDTO {
 }
 
 export interface AppearanceDTO {
+  handwritingSettings?: HandwritingGlobalSettings;
   appTitle: string;
   appIconPath?: string | null;
   wallpaperPath?: string | null;

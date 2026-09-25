@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { HANDWRITING_DEFAULT_BRUSH, type HandwritingBrush, type HandwritingPen } from "@shared/handwriting";
-const props = defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean }>();
-const emit = defineEmits<{ change: [pen: HandwritingPen, brush: HandwritingBrush] }>();
-const fields = [
-  { key: "size", label: "粗细" },
+const props = defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean; isAdmin: boolean; globalDisabled: boolean }>();
+const emit = defineEmits<{
+  change: [pen: HandwritingPen, brush: HandwritingBrush];
+  "global-change": [key: "sensitivity" | "lag", value: number];
+}>();
+const globalFields = [
   { key: "sensitivity", label: "速度响应" },
   { key: "lag", label: "笔头滞后" }
 ] as const;
-function adjust(key: keyof HandwritingBrush, event: Event) {
-  emit("change", props.pen, { ...props.brush, [key]: Number((event.target as HTMLInputElement).value) });
-}
 </script>
 
 <template>
@@ -22,12 +21,19 @@ function adjust(key: keyof HandwritingBrush, event: Event) {
     <details v-if="pen === 'brush'" class="handwriting-brush-settings">
       <summary>毛笔参数</summary>
       <div class="handwriting-brush-sliders">
-        <label v-for="field in fields" :key="field.key">
-          <span>{{ field.label }} <output>{{ brush[field.key] }}</output></span>
-          <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled" @input="adjust(field.key, $event)">
+        <label>
+          <span>粗细 <output>{{ brush.size }}</output></span>
+          <input type="range" min="0" max="100" step="1" aria-label="毛笔粗细" :value="brush.size" :disabled="disabled" @input="emit('change', pen, { ...brush, size: Number(($event.target as HTMLInputElement).value) })">
         </label>
-        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_BRUSH })">恢复默认</button>
-        <small>随账号保存，对下一笔生效。速度响应越高，快慢粗细差异越明显；笔头滞后越高，毛锋越柔软，转锋需要更长的行程。停笔不会自动回锋。</small>
+        <template v-if="isAdmin">
+          <label v-for="field in globalFields" :key="field.key">
+            <span>{{ field.label }} <output>{{ brush[field.key] }}</output></span>
+            <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled || globalDisabled" @change="emit('global-change', field.key, Number(($event.target as HTMLInputElement).value))">
+          </label>
+        </template>
+        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...brush, size: HANDWRITING_DEFAULT_BRUSH.size })">恢复默认粗细</button>
+        <small v-if="isAdmin">粗细随账号保存；速度响应和笔头滞后由管理员设置，对所有人下一笔生效。停笔不会自动回锋。</small>
+        <small v-else>粗细随账号保存，对下一笔生效。</small>
       </div>
     </details>
   </div>

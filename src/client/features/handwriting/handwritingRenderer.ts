@@ -76,6 +76,10 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
   const spread = Math.max(0.12, Math.min(1, sample.spread));
   const contact = Math.max(0.05, Math.min(1, sample.contact));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
+  if (!sample.directional) {
+    context.arc(sample.x, sample.y, halfWidth, 0, Math.PI * 2);
+    return;
+  }
   const length = width * (0.42 + 0.28 * spread);
   const trailingTip = -length * (0.82 + 0.18 * contact);
   const leadingNose = length * (0.58 + 0.16 * (1 - spread));

@@ -8,6 +8,7 @@ export type BrushSample = {
   y: number;
   width: number;
   angle: number;
+  directional: boolean;
   contact: number;
   spread: number;
   trailX: number;
@@ -121,6 +122,7 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
     y: point[1],
     width: state.width,
     angle: state.angle,
+    directional: false,
     contact: state.contact,
     spread: state.spread,
     trailX: 0,
@@ -218,7 +220,7 @@ function spatialHeading(state: BrushState, fallback: number) {
   const latest = state.motionPath.at(-1);
   if (!latest) return fallback;
   const targetArc = latest.arcLength - HEADING_WINDOW;
-  let index = state.motionPath.length - 1;
+  let index = Math.max(0, state.motionPath.length - 2);
   while (index > 0 && state.motionPath[index - 1].arcLength > targetArc) index -= 1;
   const from = state.motionPath[index];
   const dx = latest.x - from.x;
@@ -319,6 +321,7 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
     y: state.tipY,
     width: state.width,
     angle: state.angle,
+    directional: state.hasHeading,
     contact: state.contact,
     spread: state.spread,
     trailX: state.handleX - state.tipX,
@@ -499,6 +502,12 @@ export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeomet
         ? state.movementHeading
         : Math.atan2(point[1] - previousMotion.y, point[0] - previousMotion.x)
     );
+    if (!state.hasHeading) {
+      state.angle = heading;
+      state.tangentAngle = heading;
+      state.movementHeading = heading;
+      geometry.samples.at(-1)!.angle = heading;
+    }
     const speed = windowedSpeed(state, distance / elapsed);
     const pauseDuration = state.stationaryMs + elapsed;
     state.pauseEvidence = Math.max(state.pauseEvidence, smoothstep(80, 300, pauseDuration));

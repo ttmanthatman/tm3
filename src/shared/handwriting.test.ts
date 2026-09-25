@@ -12,11 +12,35 @@ import {
   HANDWRITING_SEND_LIMITS,
   HandwritingValidationError,
   handwritingPayloadBytes,
+  handwritingBrushWithGlobalSettings,
+  normalizeHandwritingGlobalSettings,
   normalizeHandwritingPreferences,
   normalizeHandwritingPayload,
   parseStoredHandwritingPayload,
   type HandwritingPayload
 } from "./handwriting.js";
+
+test("global handwriting settings normalize invalid stored values to safe defaults", () => {
+  assert.deepEqual(normalizeHandwritingGlobalSettings({
+    sensitivity: 75,
+    lag: 101,
+    glow: { color: "invalid", density: 72, width: -1 }
+  }), {
+    sensitivity: 75,
+    lag: 35,
+    glow: { color: "#ffffff", density: 72, width: 60 }
+  });
+});
+
+test("global brush response overrides legacy account values while retaining personal size", () => {
+  assert.deepEqual(
+    handwritingBrushWithGlobalSettings(
+      { size: 82, sensitivity: 5, lag: 95 },
+      { sensitivity: 75, lag: 40, glow: { color: "#ffffff", density: 65, width: 60 } }
+    ),
+    { size: 82, sensitivity: 75, lag: 40 }
+  );
+});
 
 function payload(points: number[][] = [[100, 200, 0]]): HandwritingPayload {
   return { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: points as [number, number, number][] }] }] };
