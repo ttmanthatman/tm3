@@ -109,9 +109,11 @@ async function composeTwoCharacters(page: Page, dialog: Locator) {
   await dialog.getByRole("button", { name: "选择朱红", exact: true }).click();
   await drawStroke(page, canvas, [[0.2, 0.25], [0.5, 0.2], [0.8, 0.3]]);
   await drawStroke(page, canvas, [[0.5, 0.2], [0.5, 0.75]]);
+  await dialog.screenshot({ path: "output/playwright/handwriting-brush-ink.png" });
   await dialog.getByRole("button", { name: "完成此字", exact: true }).click();
   await expect(dialog.getByText("1 / 30", { exact: true }).first()).toBeVisible();
 
+  await dialog.getByRole("button", { name: "硬笔", exact: true }).click();
   await dialog.getByRole("button", { name: "选择蓝色", exact: true }).click();
   await drawStroke(page, canvas, [[0.22, 0.3], [0.78, 0.3]]);
   await drawStroke(page, canvas, [[0.3, 0.2], [0.7, 0.78]]);
@@ -125,6 +127,12 @@ async function expectComposerInsideViewport(page: Page, dialog: Locator) {
       const box = await dialog.boundingBox();
       return box ? box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= 844 : false;
     }).toBe(true);
+    const panel = await dialog.locator(".handwriting-composer-modal").boundingBox();
+    expect(panel!.width).toBe(width);
+    // WebKit rounds viewport CSS units to fractional pixels.
+    expect(Math.abs(panel!.height - 844)).toBeLessThan(1);
+    const pad = await dialog.getByLabel("当前手写字格").boundingBox();
+    expect(pad!.width).toBeGreaterThanOrEqual(width < 600 ? width - 12 : 500);
   }
   await page.setViewportSize({ width: 390, height: 844 });
 }
@@ -142,6 +150,12 @@ async function expectPaperAndGlowShareRow(page: Page, dialog: Locator) {
     expect(Math.abs((paperBox!.y + paperBox!.height / 2) - (glowBox!.y + glowBox!.height / 2))).toBeLessThanOrEqual(2);
     expect(paperBox!.x).toBeLessThan(glowBox!.x);
     expect(paperBox!.x + paperBox!.width).toBeLessThanOrEqual(glowBox!.x);
+    const toolsBox = await dialog.locator(".handwriting-tools").boundingBox();
+    for (const button of await dialog.getByRole("group", { name: "笔画颜色" }).getByRole("button").all()) {
+      const box = await button.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(toolsBox!.x);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(toolsBox!.x + toolsBox!.width);
+    }
     await dialog.screenshot({ path: `output/playwright/handwriting-composer-${width}-dialog.png` });
   }
   await page.setViewportSize({ width: 390, height: 844 });
@@ -213,6 +227,12 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
 
   try {
     const dialog = await openHandwritingComposer(sender);
+    await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+    await dialog.getByText("毛笔参数", { exact: true }).click();
+    await dialog.getByRole("slider", { name: "毛笔粗细" }).fill("55");
+    await dialog.getByRole("slider", { name: "毛笔速度响应" }).fill("75");
+    await dialog.getByRole("slider", { name: "毛笔笔头滞后" }).fill("40");
+    await dialog.getByText("毛笔参数", { exact: true }).click();
     await expect(dialog.getByText("已完成的字", { exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("group", { name: "笔画颜色", exact: true })).toBeVisible();
     await expect(dialog.getByText("当前字格", { exact: true })).toHaveCount(0);
@@ -271,7 +291,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
       paper: { color: "#fff1d6" },
       glow: { color: "#aabbcc", density: 72, width: 48 },
       characters: [
-        { strokes: [{ color: "#ff2d55" }, { color: "#ff2d55" }] },
+        { strokes: [{ color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40 } }, { color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40 } }] },
         { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
       ]
     });
@@ -323,6 +343,12 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     const savedPicker = savedDialog.getByRole("dialog", { name: "调色盘" });
     await expect(savedPicker.locator('input[aria-label="调色盘颜色"]')).toHaveValue("#123456");
     await savedPicker.getByRole("button", { name: "关闭调色盘", exact: true }).click();
+    await expect(savedDialog.getByRole("button", { name: "硬笔", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await savedDialog.getByRole("button", { name: "毛笔", exact: true }).click();
+    await savedDialog.getByText("毛笔参数", { exact: true }).click();
+    await expect(savedDialog.getByRole("slider", { name: "毛笔粗细" })).toHaveValue("55");
+    await expect(savedDialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("75");
+    await expect(savedDialog.getByRole("slider", { name: "毛笔笔头滞后" })).toHaveValue("40");
     await expect(savedDialog.getByRole("checkbox", { name: "显示纸张" })).toBeChecked();
     await expect(savedDialog.locator('input[aria-label="纸张颜色"]')).toHaveValue("#fff1d6");
     await expect(savedDialog.getByRole("checkbox", { name: "光晕" })).toBeChecked();

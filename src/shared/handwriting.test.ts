@@ -164,3 +164,29 @@ test("stored unknown or corrupt payloads degrade to null", () => {
   assert.equal(parseStoredHandwritingPayload({ kind: "handwriting", version: 1, characters: "bad" }), null);
   assert.deepEqual(parseStoredHandwritingPayload(payload()), payload());
 });
+
+test("brush settings survive normalization and malformed settings are rejected", () => {
+  const brush = { size: 45, sensitivity: 65, lag: 35 };
+  const input = payload();
+  input.characters[0].strokes[0].brush = brush;
+  assert.deepEqual(normalizeHandwritingPayload(input), input);
+  assert.deepEqual(normalizeHandwritingPreferences({ pen: "brush", brush }).brush, brush);
+  for (const bad of [null, {}, { ...brush, size: 101 }, { ...brush, lag: -1 }, { ...brush, sensitivity: 1.2 }, { ...brush, texture: true }]) {
+    const invalid = payload();
+    Object.assign(invalid.characters[0].strokes[0], { brush: bad });
+    assert.throws(() => normalizeHandwritingPayload(invalid), HandwritingValidationError);
+  }
+});
+
+test("accepts tenfold stroke and message budgets and enforces the character point budget", () => {
+  const expanded = payload(Array.from({ length: 10_240 }, (_, i) => [i % 10_000, 5000, i]));
+  assert.equal(normalizeHandwritingPayload(expanded).characters[0].strokes[0].points.length, 10_240);
+  const manyStrokes = payload();
+  manyStrokes.characters[0].strokes = Array.from({ length: 640 }, () => ({ points: [[0, 0, 0]] }));
+  assert.equal(normalizeHandwritingPayload(manyStrokes).characters[0].strokes.length, 640);
+  const dense = payload();
+  dense.characters[0].strokes = Array.from({ length: 6 }, () => ({ points: Array.from({ length: 10_000 }, () => [9999, 9999, 0] as const) }));
+  assert.equal(normalizeHandwritingPayload(dense).characters[0].strokes.length, 6);
+  dense.characters[0].strokes.push({ points: [[0, 0, 0]] });
+  assert.throws(() => normalizeHandwritingPayload(dense, HANDWRITING_DRAFT_LIMITS), /单字采样/);
+});

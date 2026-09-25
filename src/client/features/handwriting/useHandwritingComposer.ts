@@ -1,6 +1,10 @@
 import { computed, ref } from "vue";
 import {
   HANDWRITING_DEFAULT_COLOR,
+  HANDWRITING_DEFAULT_BRUSH,
+  normalizeHandwritingBrush,
+  type HandwritingBrush,
+  type HandwritingPen,
   HANDWRITING_DRAFT_LIMITS,
   HANDWRITING_DEFAULT_PAPER_COLOR,
   HANDWRITING_DEFAULT_GLOW_COLOR,
@@ -57,6 +61,7 @@ function cloneCharacter(character: HandwritingCharacter): HandwritingCharacter {
   return {
     strokes: character.strokes.map((stroke) => ({
       points: stroke.points.map((point) => [...point] as HandwritingPoint),
+      ...(stroke.brush ? { brush: { ...stroke.brush } } : {}),
       ...(stroke.color ? { color: stroke.color } : {})
     }))
   };
@@ -77,6 +82,8 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const revision = ref(initial?.revision || 0);
   const errorMessage = ref("");
   const activePointerId = ref<number | null>(null);
+  const selectedPen = ref<HandwritingPen>("hard");
+  const brush = ref<HandwritingBrush>({ ...HANDWRITING_DEFAULT_BRUSH });
   const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_PRESET_COLORS[0]);
   const paperEnabled = ref(false);
   const paperColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_PAPER_COLOR);
@@ -102,11 +109,16 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   }
 
   function pointFor(input: HandwritingInputPoint): HandwritingPoint {
-    if (timestampOrigin === null) timestampOrigin = input.timestampMs;
+    if (timestampOrigin === null) timestampOrigin = input.timestampMs - (current.value.strokes.at(-1)?.points.at(-1)?.[2] ?? 0);
     const time = Math.max(0, Math.min(HANDWRITING_DRAFT_LIMITS.maxCharacterDurationMs, Math.round(input.timestampMs - timestampOrigin)));
     const strokes = current.value.strokes;
     const last = strokes.at(-1)?.points.at(-1);
     return [clampCoordinate(input.x), clampCoordinate(input.y), Math.max(time, last?.[2] ?? 0)];
+  }
+
+  function setPen(pen: HandwritingPen, settings: HandwritingBrush) {
+    selectedPen.value = pen;
+    brush.value = normalizeHandwritingBrush(settings);
   }
 
   function selectColor(color: unknown) {
@@ -166,14 +178,15 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       errorMessage.value = "手写数据已达保护上限，请撤销一笔或删除一个字";
       return false;
     }
-    if (current.value.strokes.length >= HANDWRITING_DRAFT_LIMITS.maxStrokesPerCharacter) {
-      errorMessage.value = "单字笔画数量已达上限，请删除一个字或撤销一笔";
+    if (currentPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPointsPerCharacter || current.value.strokes.length >= HANDWRITING_DRAFT_LIMITS.maxStrokesPerCharacter) {
+      errorMessage.value = "单字笔画或采样点已达上限，请完成此字或撤销一笔";
       return false;
     }
     activePointerId.value = pointerId;
     const point = pointFor(input);
     const stroke: HandwritingStroke = {
       points: [point],
+      ...(selectedPen.value === "brush" ? { brush: { ...brush.value } } : {}),
       ...(selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
     };
     current.value.strokes.push(stroke);
@@ -190,8 +203,12 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const previous = stroke.points.at(-1);
     if (previous && previous[0] === point[0] && previous[1] === point[1] && previous[2] === point[2]) return false;
     if (!force && !shouldSampleHandwritingPoint(previous, stroke.points.at(-2), point)) return false;
-    if (stroke.points.length >= HANDWRITING_DRAFT_LIMITS.maxPointsPerStroke || totalPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPoints) {
-      errorMessage.value = "这一笔已达采样点上限，请抬笔后继续";
+    if (stroke.points.length >= HANDWRITING_DRAFT_LIMITS.maxPointsPerStroke || currentPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPointsPerCharacter || totalPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPoints) {
+      errorMessage.value = totalPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPoints
+        ? "手写采样点已达上限，请删除一个字或撤销一笔"
+        : currentPointCount.value >= HANDWRITING_DRAFT_LIMITS.maxPointsPerCharacter
+          ? "单字采样点已达上限，请完成此字或撤销一笔"
+          : "这一笔已达采样点上限，请抬笔后继续";
       return false;
     }
     stroke.points.push(point);
@@ -352,6 +369,9 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     revision,
     errorMessage,
     activePointerId,
+    selectedPen,
+    brush,
+    setPen,
     selectedColor,
     paperEnabled,
     paperColor,

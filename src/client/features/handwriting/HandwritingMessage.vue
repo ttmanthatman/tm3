@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { parseStoredHandwritingPayload, type HandwritingCharacter, type HandwritingPayload } from "@shared/handwriting";
+import { parseStoredHandwritingPayload, type HandwritingPayload } from "@shared/handwriting";
 import type { MessageDTO } from "@shared/types";
 import { drawHandwritingCharacter } from "./handwritingRenderer";
 import { buildHandwritingTimeline, type HandwritingTimeline } from "./handwritingTimeline";
@@ -34,25 +34,18 @@ let visiblePointCounts = new Map<string, number>();
 let resizeObserver: ResizeObserver | null = null;
 let staticRendered = false;
 
-function partialCharacter(index: number): HandwritingCharacter | null {
-  const character = payload.value?.characters[index];
-  if (!character) return null;
-  const strokes = character.strokes.flatMap((stroke, strokeIndex) => {
-    const count = visiblePointCounts.get(`${index}:${strokeIndex}`) || 0;
-    return count > 0 ? [{ points: stroke.points.slice(0, count), ...(stroke.color ? { color: stroke.color } : {}) }] : [];
-  });
-  return strokes.length ? { strokes } : null;
-}
-
 function canvases() {
   return [...(grid.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
 }
 
 function drawCurrent() {
   const elements = canvases();
-  payload.value?.characters.forEach((_character, index) => {
+  payload.value?.characters.forEach((character, index) => {
     const canvas = elements[index];
-    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(index), { glow: payload.value?.glow });
+    if (canvas) drawHandwritingCharacter(canvas, character, {
+      glow: payload.value?.glow,
+      visiblePointCounts: character.strokes.map((_stroke, strokeIndex) => visiblePointCounts.get(`${index}:${strokeIndex}`) || 0)
+    });
   });
 }
 

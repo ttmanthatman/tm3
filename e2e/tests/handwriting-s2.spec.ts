@@ -17,6 +17,7 @@ async function login(page: Page) {
 }
 
 test("handwriting socket send validates, normalizes and deduplicates the real entry path", async ({ page }) => {
+  test.setTimeout(60_000);
   await login(page);
   const result = await page.evaluate(async () => {
     const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
@@ -26,14 +27,21 @@ test("handwriting socket send validates, normalizes and deduplicates the real en
     const socket = store?.socket as { timeout(ms: number): { emit(event: string, data: unknown, ack: (error: Error | null, response?: Record<string, unknown>) => void): void } } | undefined;
     if (!socket || typeof store?.currentChannelId !== "number") throw new Error("chat socket was not found");
     const requestId = crypto.randomUUID();
-    const payload = { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[100, 200, 0], [300, 400, 20]] }] }] };
+    const brush = { size: 45, sensitivity: 65, lag: 35 };
+    const payload = { kind: "handwriting", version: 1, characters: [{ strokes: Array.from({ length: 6 }, (_, strokeIndex) => ({
+      brush,
+      points: Array.from({ length: 10_000 }, (_, index) => [9999, 9999, strokeIndex === 0 && index === 0 ? 0 : 100_000 + strokeIndex * 10_000 + index])
+    })) }] };
+    if (new TextEncoder().encode(JSON.stringify(payload)).byteLength <= 1_000_000) throw new Error("Expected payload above the old transport limit");
     const emit = (step: string, data: unknown) => new Promise<Record<string, unknown>>((resolve, reject) => {
       socket.timeout(10_000).emit("message:send", data, (error, response) => error ? reject(new Error(`${step}: ${error.message}`)) : resolve(response || {}));
     });
     const base = { channelId: store.currentChannelId, type: "handwriting", content: "伪造标签", payload, clientRequestId: requestId, replyToId: null };
     const first = await emit("first", base);
     const replay = await emit("replay", base);
-    const conflict = await emit("conflict", { ...base, payload: { ...payload, characters: [{ strokes: [{ points: [[101, 200, 0]] }] }] } });
+    const changedBrush = structuredClone(payload);
+    changedBrush.characters[0].strokes[0].brush.size = 46;
+    const conflict = await emit("conflict", { ...base, payload: changedBrush });
     const invalid = await emit("invalid", { ...base, clientRequestId: crypto.randomUUID(), payload: { ...payload, version: 2 } });
     const status = await new Promise<Record<string, unknown>>((resolve, reject) => {
       socket.timeout(10_000).emit("message:status", { clientRequestId: requestId }, (error, response) => error ? reject(error) : resolve(response || {}));
@@ -51,7 +59,7 @@ test("handwriting socket send validates, normalizes and deduplicates the real en
     message: {
       content: "[手写消息]",
       type: "handwriting",
-      payload: { kind: "handwriting", version: 1 }
+      payload: { kind: "handwriting", version: 1, characters: [{ strokes: expect.arrayContaining([expect.objectContaining({ brush: { size: 45, sensitivity: 65, lag: 35 } })]) }] }
     }
   });
   expect(result.replay).toMatchObject({ success: true, messageId: result.first.messageId, deduplicated: true });

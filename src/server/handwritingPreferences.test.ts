@@ -20,6 +20,8 @@ test("handwriting account preferences are cleaned and serialized deterministical
     unexpected: true
   });
   assert.deepEqual(cleaned, {
+    pen: "hard",
+    brush: { ...HANDWRITING_DEFAULT_PREFERENCES.brush },
     strokeColors: ["#abcdef", ...HANDWRITING_PRESET_COLORS.slice(1)],
     customColor: "#123456",
     selectedIndex: 7,
@@ -32,4 +34,13 @@ test("handwriting account preferences are cleaned and serialized deterministical
   });
   assert.deepEqual(handwritingPreferencesJson(cleaned), cleaned);
   assert.deepEqual(cleanHandwritingPreferences(undefined), HANDWRITING_DEFAULT_PREFERENCES);
+});
+
+test("account brush preferences round-trip and invalid stored values recover safely", () => {
+  const preferences = { pen: "brush", brush: { size: 55, sensitivity: 75, lag: 40 } };
+  const clean = cleanHandwritingPreferences(handwritingPreferencesJson(preferences));
+  assert.equal(clean.pen, "brush");
+  assert.deepEqual(clean.brush, preferences.brush);
+  assert.equal(cleanHandwritingPreferences({ pen: "unknown" }).pen, "hard");
+  assert.deepEqual(cleanHandwritingPreferences({ brush: { size: -1, sensitivity: 101, lag: "bad" } }).brush, HANDWRITING_DEFAULT_PREFERENCES.brush);
 });

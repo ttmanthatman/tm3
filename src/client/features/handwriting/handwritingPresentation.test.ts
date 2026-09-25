@@ -45,6 +45,8 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   assert.match(component, /draftScheduler\.request\(\)/);
   assert.match(component, /点已完成的字可删除/);
   assert.doesNotMatch(component, /composer\.snapshotCharacters\.value/);
-  assert.match(message, /stroke\.color/);
+  // Forward the complete character so color and brush metadata reach the shared renderer.
+  assert.match(message, /drawHandwritingCharacter\(canvas, character,\s*\{/);
+  assert.match(message, /visiblePointCounts: character\.strokes\.map/);
   assert.doesNotMatch(message, /stroke\.effect/);
 });

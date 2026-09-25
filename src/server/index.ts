@@ -28,7 +28,7 @@ import { registerStoryRoutes } from "./routes/stories.js";
 import { storyGender } from "../shared/stories.js";
 import { createGraceStory, createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
 import { createMessageSendIdempotency, messageSendRequestHash } from "./services/messageSendIdempotency.js";
-import { HANDWRITING_CONTENT, HandwritingValidationError } from "../shared/handwriting.js";
+import { HANDWRITING_SEND_LIMITS, HANDWRITING_CONTENT, HandwritingValidationError } from "../shared/handwriting.js";
 import { prepareHandwritingMessage } from "./services/handwriting.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { registerMusicRoutes } from "./routes/music.js";
@@ -324,7 +324,7 @@ if (fs.existsSync(DIST_CLIENT)) {
 
 const io = new SocketIOServer(app.server, {
   cors: { origin: socketCorsOrigin, credentials: true },
-  maxHttpBufferSize: 1e6
+  maxHttpBufferSize: HANDWRITING_SEND_LIMITS.maxBytes + 64 * 1024
 });
 
 type AuthContext = {

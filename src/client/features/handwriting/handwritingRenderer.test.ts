@@ -78,3 +78,30 @@ test("appending one sampled point performs constant drawing work", () => {
   assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 1);
   assert.equal(target.operations.filter((operation) => operation.type === "lineTo").length, 3);
 });
+
+test("brush live append, static rendering and completed replay produce the same geometry", () => {
+  const stroke = { brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[1000, 1000, 0], [2000, 1000, 100], [2000, 1800, 110]] as [number, number, number][] };
+  const live = fakeCanvas();
+  for (let index = 0; index < stroke.points.length; index++) {
+    appendHandwritingStroke(live.canvas, { ...stroke, points: stroke.points.slice(0, index + 1) }, index);
+  }
+  const staticCanvas = fakeCanvas();
+  drawHandwritingCharacter(staticCanvas.canvas, { strokes: [stroke] });
+  const replay = fakeCanvas();
+  drawHandwritingCharacter(replay.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
+  const geometry = (operations: Operation[]) => operations.filter((op) => ["arc", "moveTo", "lineTo"].includes(op.type));
+  assert.deepEqual(geometry(live.operations), geometry(staticCanvas.operations));
+  assert.deepEqual(geometry(replay.operations), geometry(staticCanvas.operations));
+});
+
+test("partial replay preserves brush and color while hiding future points without copying strokes", () => {
+  const stroke = { color: "#123456" as const, brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[1000, 1000, 0], [2000, 1000, 100], [9000, 8000, 110]] as [number, number, number][] };
+  const input = JSON.stringify(stroke);
+  const partial = fakeCanvas();
+  drawHandwritingCharacter(partial.canvas, { strokes: [stroke] }, { visiblePointCounts: [2] });
+  const prefix = fakeCanvas();
+  drawHandwritingCharacter(prefix.canvas, { strokes: [{ ...stroke, points: stroke.points.slice(0, 2) }] });
+  assert.deepEqual(partial.operations, prefix.operations);
+  assert.ok(partial.operations.some((op) => op.type === "fillStyle" && op.args[0] === stroke.color));
+  assert.equal(JSON.stringify(stroke), input);
+});

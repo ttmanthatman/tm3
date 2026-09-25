@@ -6,11 +6,14 @@ import {
   normalizeHandwritingColor,
   normalizeHandwritingPreferences,
   type HandwritingColor,
+  type HandwritingPen,
+  type HandwritingBrush,
   type HandwritingGlow,
   type HandwritingPayload,
   type HandwritingPreferencesDTO
 } from "@shared/handwriting";
 import AppModal from "../../components/ui/AppModal.vue";
+import HandwritingPenControls from "./HandwritingPenControls.vue";
 import HandwritingPalette from "./HandwritingPalette.vue";
 import HandwritingPad from "./HandwritingPad.vue";
 import { createHandwritingDraftScheduler } from "./handwritingDraftScheduler";
@@ -84,6 +87,14 @@ const previewGlow = computed<HandwritingGlow | null>(() => composer.glowEnabled.
 
 function publishPreferences() {
   emit("preferences-change", normalizeHandwritingPreferences(palettePreferences.value));
+}
+
+function changePen(pen: HandwritingPen, brush: HandwritingBrush) {
+  if (props.busy) return;
+  palettePreferences.value.pen = pen;
+  palettePreferences.value.brush = { ...brush };
+  composer.setPen(pen, brush);
+  publishPreferences();
 }
 
 function selectPaletteColor(index: number) {
@@ -164,16 +175,6 @@ function submit() {
   if (payload) emit("submit", payload, composer.revision.value);
 }
 
-function partialCharacter(payload: HandwritingPayload, index: number, visibleByStroke: Map<string, number>) {
-  const character = payload.characters[index];
-  if (!character) return null;
-  const strokes = character.strokes.flatMap((stroke, strokeIndex) => {
-    const count = visibleByStroke.get(`${index}:${strokeIndex}`) || 0;
-    return count > 0 ? [{ points: stroke.points.slice(0, count), ...(stroke.color ? { color: stroke.color } : {}) }] : [];
-  });
-  return strokes.length ? { strokes } : null;
-}
-
 function drawPreviewProgress(elapsedMs: number) {
   if (!previewPayload || !previewTimeline) return;
   if (elapsedMs < previewRenderedProgress) {
@@ -189,9 +190,12 @@ function drawPreviewProgress(elapsedMs: number) {
   }
   previewRenderedProgress = elapsedMs;
   const canvases = [...(previewGrid.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
-  previewPayload.characters.forEach((_character, index) => {
+  previewPayload.characters.forEach((character, index) => {
     const canvas = canvases[index];
-    if (canvas) drawHandwritingCharacter(canvas, partialCharacter(previewPayload!, index, previewVisibleCounts), { glow: previewPayload!.glow });
+    if (canvas) drawHandwritingCharacter(canvas, character, {
+      glow: previewPayload!.glow,
+      visiblePointCounts: character.strokes.map((_stroke, strokeIndex) => previewVisibleCounts.get(`${index}:${strokeIndex}`) || 0)
+    });
   });
 }
 
@@ -250,6 +254,7 @@ watch(
 );
 watch(() => props.open, (open) => {
   if (open) {
+    composer.setPen(palettePreferences.value.pen, palettePreferences.value.brush);
     composer.selectColor(activeColor.value);
     composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
     composer.setGlow(
@@ -265,6 +270,7 @@ watch(() => props.open, (open) => {
 });
 watch(() => props.accountId, () => {
   palettePreferences.value = normalizeHandwritingPreferences(props.preferences);
+  composer.setPen(palettePreferences.value.pen, palettePreferences.value.brush);
   composer.selectColor(activeColor.value);
   composer.setPaper(palettePreferences.value.paperEnabled, palettePreferences.value.paperColor);
   composer.setGlow(
@@ -284,6 +290,7 @@ onBeforeUnmount(() => {
 
 <template>
   <AppModal
+    class="handwriting-fullscreen"
     :open="open"
     :busy="busy"
     size="medium"
@@ -293,6 +300,13 @@ onBeforeUnmount(() => {
   >
     <div class="handwriting-composer-body">
       <section class="handwriting-current">
+        <div class="handwriting-tools">
+        <HandwritingPenControls
+          :pen="palettePreferences.pen"
+          :brush="palettePreferences.brush"
+          :disabled="busy"
+          @change="changePen"
+        />
         <HandwritingPalette
           :colors="palettePreferences.strokeColors"
           :custom-color="palettePreferences.customColor"
@@ -310,6 +324,8 @@ onBeforeUnmount(() => {
           @paper-change="changePaper"
           @glow-change="changeGlow"
         />
+        </div>
+        <div class="handwriting-writing">
         <HandwritingPad
           :strokes="currentCharacter.strokes"
           :disabled="busy"
@@ -325,7 +341,8 @@ onBeforeUnmount(() => {
           <button type="button" :disabled="busy || !currentCharacter.strokes.length" @click="updateAfter(() => composer.undoStroke())"><RotateCcw :size="16" />撤销一笔</button>
           <button type="button" :disabled="!canFinishCharacter" @click="updateAfter(() => composer.finishCharacter())"><Check :size="16" />完成此字</button>
         </div>
-        <p class="handwriting-status" :class="{ error: composer.errorMessage }" role="status">{{ composer.errorMessage || status }}</p>
+        <p class="handwriting-status" :class="{ error: composer.errorMessage.value }" role="status">{{ composer.errorMessage.value || status }}</p>
+        </div>
       </section>
 
       <section class="handwriting-preview" aria-labelledby="handwriting-preview-title">
@@ -381,8 +398,14 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-:deep(.handwriting-composer-modal.app-modal-medium) { position: relative; grid-template-rows: auto minmax(0, 1fr) 56px !important; }
-.handwriting-composer-body { min-height: 0; overflow: auto; padding: 16px; display: grid; gap: 18px; }
+.handwriting-fullscreen.modal-shell { padding: 0; }
+:deep(.handwriting-composer-modal.app-modal-medium) {
+  position: relative; width: 100%; height: var(--app-height, 100dvh); max-height: 100dvh;
+  border-radius: 0; padding-top: env(safe-area-inset-top);
+  padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+}
+.handwriting-composer-body { min-height: 0; overflow: auto; padding: 12px 16px; display: grid; align-content: start; gap: 12px; }
 .handwriting-composer-body section > header { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
 .handwriting-composer-body section > header strong { color: #294737; }
 .handwriting-composer-body section > header > span { color: #879388; font-size: 12px; }
@@ -412,8 +435,17 @@ onBeforeUnmount(() => {
 .handwriting-confirm button { border: 1px solid #d7e0d5; border-radius: 7px; min-height: 36px; padding: 0 14px; }
 .handwriting-confirm button.danger { background: #a24e43; border-color: #a24e43; color: #fff; }
 button:disabled { opacity: .48; cursor: not-allowed; }
+@media (min-width: 900px) {
+  .handwriting-composer-body { grid-template-columns: minmax(0, 1fr) 300px; gap: 24px; }
+  .handwriting-current { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px; align-items: start; }
+  .handwriting-tools, .handwriting-writing { min-width: 0; }
+  .handwriting-tools :deep(.handwriting-palette) { grid-template-columns: repeat(4, 30px); }
+  .handwriting-tools :deep(.handwriting-palette-heading) { flex-direction: column; gap: 2px; }
+  .handwriting-tools :deep(.handwriting-glow-options) { grid-template-columns: minmax(0, 1fr); }
+  .handwriting-writing :deep(.handwriting-pad) { width: min(100%, calc(100dvh - 220px)); }
+}
 @media (max-width: 600px) {
-  .handwriting-composer-body { padding: 12px; }
+  .handwriting-composer-body { padding: 8px 4px; }
   .handwriting-preview-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
 @media (max-width: 370px) {

@@ -1,3 +1,4 @@
+import { handwritingBrushGeometry } from "./handwritingBrush";
 import {
   HANDWRITING_DEFAULT_COLOR,
   type HandwritingCharacter,
@@ -16,6 +17,7 @@ export type HandwritingRendererOptions = {
   lineWidth?: number;
   maxDevicePixelRatio?: number;
   glow?: HandwritingGlow | null;
+  visiblePointCounts?: number[];
 };
 
 function configureCanvas(canvas: HandwritingCanvas, options: HandwritingRendererOptions) {
@@ -60,7 +62,7 @@ function drawPoint(context: CanvasRenderingContext2D, point: HandwritingPoint, w
   context.fill();
 }
 
-function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, to: HandwritingPoint, width: number) {
+function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, to: HandwritingPoint, width: number, endWidth = width) {
   const dx = to[0] - from[0];
   const dy = to[1] - from[1];
   const distance = Math.hypot(dx, dy);
@@ -68,10 +70,11 @@ function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, 
   const nx = -dy / distance;
   const ny = dx / distance;
   const half = width / 2;
+  const endHalf = endWidth / 2;
   context.beginPath();
   context.moveTo(from[0] + nx * half, from[1] + ny * half);
-  context.lineTo(to[0] + nx * half, to[1] + ny * half);
-  context.lineTo(to[0] - nx * half, to[1] - ny * half);
+  context.lineTo(to[0] + nx * endHalf, to[1] + ny * endHalf);
+  context.lineTo(to[0] - nx * endHalf, to[1] - ny * endHalf);
   context.lineTo(from[0] - nx * half, from[1] - ny * half);
   context.closePath();
   context.fill();
@@ -85,6 +88,22 @@ function drawStrokeGeometry(
   width: number
 ) {
   const end = Math.min(stroke.points.length, Math.max(0, visiblePoints));
+  if (stroke.brush) {
+    const geometry = handwritingBrushGeometry(stroke);
+    const from = startPointIndex === 0 ? 0 : geometry.ends[startPointIndex - 1];
+    const until = end === 0 ? 0 : geometry.ends[end - 1];
+    const expansion = width - HANDWRITING_STROKE_WIDTH;
+    for (let i = from; i < until; i += 1) {
+      const dab = geometry.dabs[i];
+      const point: HandwritingPoint = [dab.x, dab.y, 0];
+      if (i > 0) {
+        const previous = geometry.dabs[i - 1];
+        drawSegment(context, [previous.x, previous.y, 0], point, Math.max(1, previous.width + expansion), Math.max(1, dab.width + expansion));
+      }
+      drawPoint(context, point, Math.max(1, dab.width + expansion));
+    }
+    return;
+  }
   let index = Math.max(0, startPointIndex);
   if (index >= end) return;
   if (index === 0) {
@@ -154,7 +173,7 @@ export function drawHandwritingCharacter(
   const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
   drawStrokes(
     context,
-    character.strokes.map((stroke) => ({ stroke, visiblePoints: stroke.points.length })),
+    character.strokes.map((stroke, index) => ({ stroke, visiblePoints: options.visiblePointCounts?.[index] ?? stroke.points.length })),
     width,
     options.glow
   );

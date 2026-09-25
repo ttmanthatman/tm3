@@ -102,3 +102,27 @@ test("glow settings are persisted with a message and default to white when omitt
     width: 60
   });
 });
+
+test("pen changes affect only new strokes and survive draft recovery", () => {
+  const composer = useHandwritingComposer();
+  composer.beginStroke({ x: 100, y: 100, timestampMs: 0 }, 1);
+  composer.endStroke(1);
+  const brush = { size: 40, sensitivity: 70, lag: 30 };
+  composer.setPen("brush", brush);
+  composer.beginStroke({ x: 200, y: 200, timestampMs: 50 }, 1);
+  composer.endStroke(1, { x: 500, y: 500, timestampMs: 150 });
+  composer.setPen("brush", { ...brush, size: 90 });
+  const snapshot = composer.draftSnapshot()!;
+  assert.equal(snapshot.characters[0].strokes[0].brush, undefined);
+  assert.deepEqual(snapshot.characters[0].strokes[1].brush, brush);
+  const restored = useHandwritingComposer({ payload: snapshot });
+  assert.deepEqual(restored.snapshot(), snapshot);
+});
+
+test("continuing a restored character preserves elapsed sampling times for brush velocity", () => {
+  const composer = useHandwritingComposer({ payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[0, 0, 0], [500, 500, 5000]] }] }] } });
+  composer.setPen("brush", { size: 45, sensitivity: 65, lag: 35 });
+  composer.beginStroke({ x: 500, y: 500, timestampMs: 100 }, 1);
+  composer.endStroke(1, { x: 800, y: 800, timestampMs: 140 });
+  assert.deepEqual(composer.current.value.strokes[1].points.map((point) => point[2]), [5000, 5040]);
+});

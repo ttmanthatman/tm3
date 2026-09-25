@@ -260,6 +260,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
         bibleWorkspace: z.unknown().nullable().optional(),
         handwritingPreferences: z
           .object({
+            pen: z.enum(["hard", "brush"]).optional(),
+            brush: z.object({
+              size: z.number().int().min(0).max(100),
+              sensitivity: z.number().int().min(0).max(100),
+              lag: z.number().int().min(0).max(100)
+            }).strict().optional(),
             strokeColors: z.array(z.string()).length(7).optional(),
             customColor: z.string().optional(),
             selectedIndex: z.number().int().min(0).max(7).optional(),

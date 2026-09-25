@@ -34,7 +34,22 @@ export type HandwritingGlow = {
   width: number;
 };
 
+export type HandwritingPen = "hard" | "brush";
+export type HandwritingBrush = { size: number; sensitivity: number; lag: number };
+export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
+
+export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
+  const row = isPlainObject(value) ? value : {};
+  return {
+    size: normalizeHandwritingGlowAmount(row.size, HANDWRITING_DEFAULT_BRUSH.size),
+    sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_BRUSH.sensitivity),
+    lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag)
+  };
+}
+
 export type HandwritingPreferencesDTO = {
+  pen: HandwritingPen;
+  brush: HandwritingBrush;
   strokeColors: HandwritingColor[];
   customColor: HandwritingColor;
   selectedIndex: number;
@@ -47,6 +62,8 @@ export type HandwritingPreferencesDTO = {
 };
 
 export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
+  pen: "hard",
+  brush: { ...HANDWRITING_DEFAULT_BRUSH },
   strokeColors: [...HANDWRITING_PRESET_COLORS],
   customColor: HANDWRITING_DEFAULT_CUSTOM_COLOR,
   selectedIndex: 0,
@@ -59,7 +76,7 @@ export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
 };
 
 export type HandwritingPoint = readonly [x: number, y: number, t: number];
-export type HandwritingStroke = { points: HandwritingPoint[]; color?: HandwritingStrokeColor };
+export type HandwritingStroke = { points: HandwritingPoint[]; color?: HandwritingStrokeColor; brush?: HandwritingBrush };
 export type HandwritingCharacter = { strokes: HandwritingStroke[] };
 export type HandwritingPayload = {
   kind: typeof HANDWRITING_KIND;
@@ -74,6 +91,7 @@ export type HandwritingLimits = {
   maxStrokesPerCharacter: number;
   maxStrokes: number;
   maxPointsPerStroke: number;
+  maxPointsPerCharacter: number;
   maxPoints: number;
   maxCharacterDurationMs: number;
   maxBytes: number;
@@ -81,18 +99,19 @@ export type HandwritingLimits = {
 
 export const HANDWRITING_SEND_LIMITS: Readonly<HandwritingLimits> = Object.freeze({
   maxCharacters: 30,
-  maxStrokesPerCharacter: 64,
-  maxStrokes: 600,
-  maxPointsPerStroke: 1024,
-  maxPoints: 6000,
+  maxStrokesPerCharacter: 640,
+  maxStrokes: 6000,
+  maxPointsPerStroke: 10_240,
+  maxPointsPerCharacter: 60_000,
+  maxPoints: 60_000,
   maxCharacterDurationMs: 600_000,
-  maxBytes: 131_072
+  maxBytes: 1_310_720
 });
 
 export const HANDWRITING_DRAFT_LIMITS: Readonly<HandwritingLimits> = Object.freeze({
   ...HANDWRITING_SEND_LIMITS,
-  maxPoints: 12_000,
-  maxBytes: 262_144
+  maxPoints: 120_000,
+  maxBytes: 2_621_440
 });
 
 export type HandwritingValidationCode =
@@ -178,6 +197,8 @@ export function normalizeHandwritingPreferences(value: unknown): HandwritingPref
     ? rawIndex
     : 0;
   return {
+    pen: row.pen === "brush" ? "brush" : "hard",
+    brush: normalizeHandwritingBrush(row.brush),
     strokeColors,
     customColor: normalizeHandwritingColor(row.customColor, HANDWRITING_DEFAULT_CUSTOM_COLOR),
     selectedIndex,
@@ -242,9 +263,20 @@ export function normalizeHandwritingPayload(
     }
     strokeCount += character.strokes.length;
     if (strokeCount > limits.maxStrokes) throw new HandwritingValidationError("limit", "手写消息笔画数量超出限制");
+    let characterPoints = 0;
     for (const stroke of character.strokes) {
       if (!isPlainObject(stroke)) throw new HandwritingValidationError("invalid_shape", "手写笔画格式无效");
-      assertFields(stroke, ["points", "color", "effect"]);
+      assertFields(stroke, ["points", "color", "effect", "brush"]);
+      if (stroke.brush !== undefined) {
+        if (!isPlainObject(stroke.brush)) throw new HandwritingValidationError("invalid_shape", "毛笔参数格式无效");
+        assertFields(stroke.brush, ["size", "sensitivity", "lag"]);
+        for (const key of ["size", "sensitivity", "lag"] as const) {
+          const value = stroke.brush[key];
+          if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
+            throw new HandwritingValidationError("invalid_shape", "毛笔参数必须为 0 至 100 的整数");
+          }
+        }
+      }
       if (stroke.color !== undefined && !isHandwritingStrokeColor(stroke.color)) {
         throw new HandwritingValidationError("invalid_shape", "手写笔画颜色无效");
       }
@@ -257,6 +289,8 @@ export function normalizeHandwritingPayload(
       if (stroke.points.length > limits.maxPointsPerStroke) {
         throw new HandwritingValidationError("limit", "单笔采样点数量超出限制");
       }
+      characterPoints += stroke.points.length;
+      if (characterPoints > limits.maxPointsPerCharacter) throw new HandwritingValidationError("limit", "单字采样点数量超出限制");
       pointCount += stroke.points.length;
       if (pointCount > limits.maxPoints) throw new HandwritingValidationError("limit", "手写消息采样点数量超出限制");
     }
@@ -269,7 +303,7 @@ export function normalizeHandwritingPayload(
     let firstPoint = true;
     const strokes: HandwritingStroke[] = [];
     for (const stroke of rawCharacter.strokes) {
-      const rawStroke = stroke as { points: unknown[]; color?: unknown; effect?: unknown };
+      const rawStroke = stroke as { points: unknown[]; color?: unknown; effect?: unknown; brush?: unknown };
       const points: HandwritingPoint[] = [];
       for (const point of rawStroke.points) {
         if (!Array.isArray(point) || point.length !== 3) {
@@ -294,6 +328,7 @@ export function normalizeHandwritingPayload(
       const normalizedColor = color === undefined ? HANDWRITING_DEFAULT_COLOR : normalizeHandwritingColor(color, HANDWRITING_DEFAULT_COLOR);
       strokes.push({
         points,
+        ...(rawStroke.brush !== undefined ? { brush: normalizeHandwritingBrush(rawStroke.brush) } : {}),
         ...(normalizedColor !== HANDWRITING_DEFAULT_COLOR ? { color: normalizedColor } : {})
       });
     }

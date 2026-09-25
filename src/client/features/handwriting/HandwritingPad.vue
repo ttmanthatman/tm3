@@ -107,7 +107,7 @@ function blur() {
 }
 
 watch(() => props.strokes, redraw);
-watch(() => props.strokes, syncAppendedInk, { deep: true });
+watch(() => props.strokes.map((stroke) => stroke.points.length), syncAppendedInk);
 watch(() => props.glow, redraw, { deep: true });
 watch(() => props.disabled, (disabled) => { if (disabled) blur(); });
 onMounted(() => {
@@ -149,7 +149,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .handwriting-pad {
   position: relative;
-  width: min(100%, 340px);
+  width: min(100%, max(320px, calc(100dvh - 300px)));
   aspect-ratio: 1;
   margin-inline: auto;
   background: #fff;
