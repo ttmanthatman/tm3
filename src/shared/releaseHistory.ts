@@ -1069,11 +1069,21 @@ const RELEASE_2_4_0_NOTES = [
   "引用、推送、频道预览和微信读取统一显示 `[手写消息]` 标签；首版继续不支持转发手写笔迹。"
 ] as const
 
+const RELEASE_2_4_1_NOTES = [
+  "手写画板新增 8 色调色盘，颜色按笔画保存并在发送预览、实时播放和历史重播中保留。",
+  "手写编辑器移除重复的顶部成品区，改用底部预览删除整字；触控绘制改为增量渲染并合并草稿保存，减少长内容在手机上的重复 Canvas 绘制与 IndexedDB 写入。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.4.2",
+    date: "2026-09-25",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.4.1",
     date: "2026-09-23",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_4_1_NOTES
   },
   {
     version: "2.4.0",
