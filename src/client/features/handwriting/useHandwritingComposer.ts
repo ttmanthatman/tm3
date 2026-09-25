@@ -6,7 +6,6 @@ import {
   HANDWRITING_DEFAULT_GLOW_COLOR,
   HANDWRITING_DEFAULT_GLOW_DENSITY,
   HANDWRITING_DEFAULT_GLOW_WIDTH,
-  HANDWRITING_EFFECT_METALLIC_PINK_GLITTER,
   HANDWRITING_PRESET_COLORS,
   HANDWRITING_STROKE_COLORS,
   HANDWRITING_SEND_LIMITS,
@@ -58,8 +57,7 @@ function cloneCharacter(character: HandwritingCharacter): HandwritingCharacter {
   return {
     strokes: character.strokes.map((stroke) => ({
       points: stroke.points.map((point) => [...point] as HandwritingPoint),
-      ...(stroke.color ? { color: stroke.color } : {}),
-      ...(stroke.effect ? { effect: stroke.effect } : {})
+      ...(stroke.color ? { color: stroke.color } : {})
     }))
   };
 }
@@ -86,7 +84,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const glowColor = ref<HandwritingColor>(HANDWRITING_DEFAULT_GLOW_COLOR);
   const glowDensity = ref(HANDWRITING_DEFAULT_GLOW_DENSITY);
   const glowWidth = ref(HANDWRITING_DEFAULT_GLOW_WIDTH);
-  const effectEnabled = ref(false);
   let timestampOrigin: number | null = null;
 
   const completedPointCount = computed(() => characters.value.reduce((sum, character) => sum + characterPointCount(character), 0));
@@ -159,13 +156,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     };
   }
 
-  function setEffect(enabled: boolean) {
-    if (effectEnabled.value === enabled) return false;
-    effectEnabled.value = enabled;
-    touch();
-    return true;
-  }
-
   function beginStroke(input: HandwritingInputPoint, pointerId: number) {
     if (activePointerId.value !== null || activePointerId.value === pointerId) return false;
     if (hasContent.value && characters.value.length >= HANDWRITING_DRAFT_LIMITS.maxCharacters && !current.value.strokes.length) {
@@ -184,9 +174,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const point = pointFor(input);
     const stroke: HandwritingStroke = {
       points: [point],
-      ...(effectEnabled.value
-        ? { effect: HANDWRITING_EFFECT_METALLIC_PINK_GLITTER }
-        : selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
+      ...(selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
     };
     current.value.strokes.push(stroke);
     touch();
@@ -327,7 +315,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       glowColor.value = HANDWRITING_DEFAULT_GLOW_COLOR;
       glowDensity.value = HANDWRITING_DEFAULT_GLOW_DENSITY;
       glowWidth.value = HANDWRITING_DEFAULT_GLOW_WIDTH;
-      effectEnabled.value = false;
       return;
     }
     try {
@@ -342,7 +329,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       glowColor.value = normalized.glow?.color || HANDWRITING_DEFAULT_GLOW_COLOR;
       glowDensity.value = normalized.glow?.density ?? HANDWRITING_DEFAULT_GLOW_DENSITY;
       glowWidth.value = normalized.glow?.width ?? HANDWRITING_DEFAULT_GLOW_WIDTH;
-      effectEnabled.value = current.value.strokes.at(-1)?.effect === HANDWRITING_EFFECT_METALLIC_PINK_GLITTER;
     } catch {
       characters.value = [];
       current.value = { strokes: [] };
@@ -353,7 +339,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
       glowColor.value = HANDWRITING_DEFAULT_GLOW_COLOR;
       glowDensity.value = HANDWRITING_DEFAULT_GLOW_DENSITY;
       glowWidth.value = HANDWRITING_DEFAULT_GLOW_WIDTH;
-      effectEnabled.value = false;
       errorMessage.value = "原手写草稿已损坏，已保留为新草稿";
     }
   }
@@ -374,7 +359,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     glowColor,
     glowDensity,
     glowWidth,
-    effectEnabled,
     palette: HANDWRITING_STROKE_COLORS,
     completedPointCount,
     currentPointCount,
@@ -385,7 +369,6 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     selectColor,
     setPaper,
     setGlow,
-    setEffect,
     beginStroke,
     appendPoint,
     endStroke,

@@ -69,22 +69,6 @@ test("renders a configurable glow halo before the ink", () => {
   assert.ok(glowCanvas.operations.some((operation) => operation.type === "arc" && Number(operation.args[2]) > 360));
 });
 
-test("renders metallic pink ink and deterministic glitter highlights for the sparkle pen", () => {
-  const glitterCanvas = fakeCanvas();
-  drawHandwritingCharacter(glitterCanvas.canvas, {
-    strokes: [{
-      effect: "metallic-pink-glitter",
-      points: [[500, 1200, 0], [2500, 2500, 20], [5200, 1600, 40], [8200, 3600, 60]]
-    }]
-  });
-  const fills = glitterCanvas.operations.filter((operation) => operation.type === "fillStyle").map((operation) => String(operation.args[0]));
-  assert.ok(fills.includes("#c4528c"));
-  assert.ok(fills.includes("#f3a6ce"));
-  assert.ok(fills.includes("#fff3fa"));
-  assert.ok(fills.includes("#ffd0e8"));
-  assert.ok(glitterCanvas.operations.filter((operation) => operation.type === "arc").length > 8);
-});
-
 test("appending one sampled point performs constant drawing work", () => {
   const target = fakeCanvas();
   const stroke = { points: Array.from({ length: 101 }, (_, index) => [index, index, index] as const) };

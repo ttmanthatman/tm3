@@ -30,10 +30,10 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   assert.match(palette, /显示纸张/);
   assert.match(palette, /aria-label="光晕"/);
   assert.match(palette, /aria-label="光晕颜色"/);
-    assert.match(palette, /aria-label="光晕密度"/);
-    assert.match(palette, /aria-label="光晕宽度"/);
-  assert.match(palette, /aria-label="闪光笔"/);
-  assert.match(palette, /class="handwriting-effect-toggles"/);
+  assert.match(palette, /aria-label="光晕密度"/);
+  assert.match(palette, /aria-label="光晕宽度"/);
+  assert.match(palette, /class="handwriting-presentation-toggles"/);
+  assert.doesNotMatch(palette, /闪光笔/);
   assert.match(palette, /setTimeout\(\(\) => \{\s*longPressTriggered = true;\s*openPicker\(index\);\s*\}, 450\)/);
   assert.match(palette, /role="dialog" aria-label="调色盘"/);
   assert.match(palette, /aria-label="调色盘颜色"[\s\S]*?type="color"|type="color"[\s\S]*?aria-label="调色盘颜色"/);
@@ -41,11 +41,10 @@ test("the composer uses one editable preview, a per-stroke palette and coalesced
   assert.doesNotMatch(palette, /showPicker|handwriting-color-input/);
   assert.match(component, /@select="selectPaletteColor"/);
   assert.match(component, /@glow-change="changeGlow"/);
-  assert.match(component, /@effect-change="changeEffect"/);
   assert.match(message, /payload\.value\?\.glow/);
   assert.match(component, /draftScheduler\.request\(\)/);
   assert.match(component, /点已完成的字可删除/);
   assert.doesNotMatch(component, /composer\.snapshotCharacters\.value/);
   assert.match(message, /stroke\.color/);
-  assert.match(message, /stroke\.effect/);
+  assert.doesNotMatch(message, /stroke\.effect/);
 });

@@ -82,14 +82,14 @@ test("keeps optional glow settings in sent payloads and defaults omitted glow va
   assert.throws(() => normalizeHandwritingPayload({ ...payload(), glow: { density: 101 } }), HandwritingValidationError);
 });
 
-test("keeps the metallic pink glitter effect on individual strokes and rejects unknown effects", () => {
-  const glitter = payload();
-  glitter.characters[0].strokes[0].effect = "metallic-pink-glitter";
-  assert.deepEqual(normalizeHandwritingPayload(glitter), glitter);
+test("drops the retired glitter effect from stored strokes without hiding legacy messages", () => {
+  const legacy = payload();
+  Object.assign(legacy.characters[0].strokes[0], { effect: "metallic-pink-glitter" });
+  assert.deepEqual(normalizeHandwritingPayload(legacy), payload());
 
   const unsupported = payload();
-  unsupported.characters[0].strokes[0].effect = "rainbow" as never;
-  assert.throws(() => normalizeHandwritingPayload(unsupported), /闪光笔/);
+  Object.assign(unsupported.characters[0].strokes[0], { effect: "rainbow" });
+  assert.throws(() => normalizeHandwritingPayload(unsupported), HandwritingValidationError);
 });
 
 test("normalizes account palette order, custom color, selection and paper preference", () => {
@@ -102,8 +102,7 @@ test("normalizes account palette order, custom color, selection and paper prefer
     glowEnabled: true,
     glowColor: "#ABCDEF",
     glowDensity: 72,
-    glowWidth: 48,
-    effectEnabled: true
+    glowWidth: 48
   });
   assert.deepEqual(preferences.strokeColors, ["#112233", "#ffeedd", ...HANDWRITING_PRESET_COLORS.slice(2)]);
   assert.equal(preferences.customColor, "#abcdef");
@@ -114,16 +113,14 @@ test("normalizes account palette order, custom color, selection and paper prefer
     glowEnabled: preferences.glowEnabled,
     glowColor: preferences.glowColor,
     glowDensity: preferences.glowDensity,
-    glowWidth: preferences.glowWidth,
-    effectEnabled: preferences.effectEnabled
+    glowWidth: preferences.glowWidth
   }, {
     paperEnabled: true,
     paperColor: "#123456",
     glowEnabled: true,
     glowColor: "#abcdef",
     glowDensity: 72,
-    glowWidth: 48,
-    effectEnabled: true
+    glowWidth: 48
   });
   assert.deepEqual(normalizeHandwritingPreferences(null), HANDWRITING_DEFAULT_PREFERENCES);
 });

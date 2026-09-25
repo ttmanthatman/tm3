@@ -121,12 +121,6 @@ function changeGlow(enabled: boolean, color: HandwritingColor, density: number, 
   publishPreferences();
 }
 
-function changeEffect(enabled: boolean) {
-  palettePreferences.value.effectEnabled = enabled;
-  updateAfter(() => composer.setEffect(enabled));
-  publishPreferences();
-}
-
 function persistDraft() {
   emit("draft-change", composer.draftSnapshot(), revision.value);
 }
@@ -264,7 +258,6 @@ watch(() => props.open, (open) => {
       palettePreferences.value.glowDensity,
       palettePreferences.value.glowWidth
     );
-    composer.setEffect(palettePreferences.value.effectEnabled);
     return;
   }
   draftScheduler.flush();
@@ -280,7 +273,6 @@ watch(() => props.accountId, () => {
     palettePreferences.value.glowDensity,
     palettePreferences.value.glowWidth
   );
-  composer.setEffect(palettePreferences.value.effectEnabled);
 });
 watch(() => props.busy, (busy) => { if (busy) stopPreview(false); });
 onBeforeUnmount(() => {
@@ -311,14 +303,12 @@ onBeforeUnmount(() => {
           :glow-color="palettePreferences.glowColor"
           :glow-density="palettePreferences.glowDensity"
           :glow-width="palettePreferences.glowWidth"
-          :effect-enabled="palettePreferences.effectEnabled"
           :disabled="busy"
           @select="selectPaletteColor"
           @slot-change="replacePaletteColor"
           @custom-change="replaceCustomColor"
           @paper-change="changePaper"
           @glow-change="changeGlow"
-          @effect-change="changeEffect"
         />
         <HandwritingPad
           :strokes="currentCharacter.strokes"

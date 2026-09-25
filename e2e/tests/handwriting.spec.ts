@@ -196,27 +196,6 @@ async function canvasSignature(message: Locator) {
   return message.evaluate((element) => [...element.querySelectorAll<HTMLCanvasElement>("canvas")].map((canvas) => canvas.toDataURL()).join("|"));
 }
 
-async function glitterPixelCounts(message: Locator) {
-  return message.evaluate((element) => {
-    const counts = { darkPink: 0, lightPink: 0, whiteSparkle: 0 };
-    for (const canvas of element.querySelectorAll<HTMLCanvasElement>("canvas")) {
-      const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
-      if (!pixels) continue;
-      for (let index = 0; index < pixels.length; index += 4) {
-        const red = pixels[index];
-        const green = pixels[index + 1];
-        const blue = pixels[index + 2];
-        const alpha = pixels[index + 3];
-        if (alpha < 220) continue;
-        if (red >= 150 && red <= 225 && green >= 45 && green <= 145 && blue >= 105 && blue <= 190) counts.darkPink += 1;
-        if (red >= 225 && green >= 135 && green <= 220 && blue >= 180) counts.lightPink += 1;
-        if (red >= 245 && green >= 225 && blue >= 240) counts.whiteSparkle += 1;
-      }
-    }
-    return counts;
-  });
-}
-
 async function newLoggedInPage(browser: Browser, account: Account) {
   const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await context.newPage();
@@ -263,7 +242,6 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await setNativeColor(dialog, "光晕颜色", "#aabbcc");
     await dialog.getByRole("slider", { name: "光晕密度" }).fill("72");
     await dialog.getByRole("slider", { name: "光晕宽度" }).fill("48");
-    await dialog.getByRole("checkbox", { name: "闪光笔" }).check();
     await expectComposerInsideViewport(sender, dialog);
     await composeTwoCharacters(sender, dialog);
     await dialog.getByRole("button", { name: "预览播放", exact: true }).click();
@@ -293,8 +271,8 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
       paper: { color: "#fff1d6" },
       glow: { color: "#aabbcc", density: 72, width: 48 },
       characters: [
-        { strokes: [{ effect: "metallic-pink-glitter" }, { effect: "metallic-pink-glitter" }] },
-        { strokes: [{ effect: "metallic-pink-glitter" }, { effect: "metallic-pink-glitter" }] }
+        { strokes: [{ color: "#ff2d55" }, { color: "#ff2d55" }] },
+        { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
       ]
     });
 
@@ -304,11 +282,6 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await expect(historyMessage).toBeVisible();
     const staticSignature = await canvasSignature(historyMessage);
     expect(staticSignature).toContain("data:image/png;base64,");
-    const glitterPixels = await glitterPixelCounts(historyMessage);
-    await historyMessage.screenshot({ path: "output/playwright/handwriting-glitter-message-card.png" });
-    expect(glitterPixels.darkPink).toBeGreaterThan(20);
-    expect(glitterPixels.lightPink).toBeGreaterThan(20);
-    expect(glitterPixels.whiteSparkle).toBeGreaterThan(10);
 
     await startCanvasSampling(receiver, "manual-replay");
     await historyMessage.click();
@@ -356,7 +329,6 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await expect(savedDialog.locator('input[aria-label="光晕颜色"]')).toHaveValue("#aabbcc");
     await expect(savedDialog.getByRole("slider", { name: "光晕密度" })).toHaveValue("72");
     await expect(savedDialog.getByRole("slider", { name: "光晕宽度" })).toHaveValue("48");
-    await expect(savedDialog.getByRole("checkbox", { name: "闪光笔" })).toBeChecked();
     await expect(savedDialog.getByRole("button", { name: "选择蓝色", exact: true })).toHaveAttribute("aria-pressed", "true");
   } finally {
     await Promise.all([senderSession.context.close(), receiverSession.context.close()]);

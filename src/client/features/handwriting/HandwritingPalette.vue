@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, Palette, Sparkles, X } from "lucide-vue-next";
+import { Check, Palette, X } from "lucide-vue-next";
 import { computed, nextTick, ref } from "vue";
 import {
   HANDWRITING_CUSTOM_COLOR_INDEX,
@@ -17,7 +17,6 @@ const props = defineProps<{
   glowColor: HandwritingColor;
   glowDensity: number;
   glowWidth: number;
-  effectEnabled: boolean;
   disabled?: boolean;
 }>();
 
@@ -27,7 +26,6 @@ const emit = defineEmits<{
   "custom-change": [color: HandwritingColor];
   "paper-change": [enabled: boolean, color: HandwritingColor];
   "glow-change": [enabled: boolean, color: HandwritingColor, density: number, width: number];
-  "effect-change": [enabled: boolean];
 }>();
 
 const pickerInput = ref<HTMLInputElement | null>(null);
@@ -166,7 +164,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
         <span>点按选择颜色</span>
       </label>
     </div>
-    <div class="handwriting-effect-toggles">
+    <div class="handwriting-presentation-toggles">
       <label class="handwriting-paper-toggle">
         <input
           type="checkbox"
@@ -185,17 +183,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
           @change="emit('glow-change', ($event.target as HTMLInputElement).checked, glowColor, glowDensity, glowWidth)"
         />
         <span>光晕</span>
-      </label>
-      <label class="handwriting-sparkle-toggle">
-        <input
-          type="checkbox"
-          :checked="effectEnabled"
-          :disabled="disabled"
-          aria-label="闪光笔"
-          @change="emit('effect-change', ($event.target as HTMLInputElement).checked)"
-        />
-        <Sparkles :size="14" aria-hidden="true" />
-        <span>闪光笔</span>
       </label>
     </div>
     <div v-if="paperEnabled" class="handwriting-paper-options">
@@ -366,7 +353,7 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
   background: #fff;
 }
 
-.handwriting-effect-toggles {
+.handwriting-presentation-toggles {
   min-height: 28px;
   display: flex;
   align-items: center;
@@ -402,7 +389,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 }
 
 .handwriting-glow-toggle,
-.handwriting-sparkle-toggle,
 .handwriting-glow-color,
 .handwriting-glow-range {
   display: flex;
@@ -411,14 +397,9 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
   min-width: 0;
 }
 
-.handwriting-glow-toggle,
-.handwriting-sparkle-toggle {
+.handwriting-glow-toggle {
   color: #355c48;
   font-weight: 600;
-}
-
-.handwriting-sparkle-toggle {
-  color: #9a4775;
 }
 
 .handwriting-glow-color input[type="color"] {
@@ -447,7 +428,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 }
 
 .handwriting-paper-toggle,
-.handwriting-sparkle-toggle,
 .handwriting-paper-color {
   display: inline-flex;
   align-items: center;
@@ -471,6 +451,6 @@ function handleGlowAmount(kind: "density" | "width", event: Event) {
 @media (max-width: 370px) {
   .handwriting-palette { gap: 5px; }
   .handwriting-palette-heading { flex-direction: column; align-items: center; gap: 2px; }
-  .handwriting-effect-toggles { gap: 12px; font-size: 11px; }
+  .handwriting-presentation-toggles { gap: 12px; font-size: 11px; }
 }
 </style>
