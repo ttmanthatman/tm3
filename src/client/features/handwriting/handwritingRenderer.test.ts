@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HandwritingPayload } from "@shared/handwriting";
-import { appendHandwritingStroke, drawHandwritingCharacter, drawHandwritingPayload, drawHandwritingTimelineAt, buildHandwritingTimeline } from "./handwritingRenderer.js";
+import { handwritingBrushGeometry, type BrushSample } from "./handwritingBrush.js";
+import { appendHandwritingStroke, drawHandwritingCharacter, drawHandwritingPayload, drawHandwritingTimelineAt, buildHandwritingTimeline, traceBrushFootprintPath } from "./handwritingRenderer.js";
 
 type Operation = { type: string; args: unknown[] };
 
@@ -106,6 +107,38 @@ test("a single brush point uses one sharp directional footprint", () => {
   assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
 });
 
+test("brush footprint places its sharp cusp behind the direction of travel", () => {
+  const target = fakeCanvas();
+  const sample: BrushSample = {
+    x: 1000, y: 2000, width: 400, angle: 0, contact: 0.8, spread: 0.7,
+    trailX: 30, trailY: 0, phase: "writing", rawX: 1030, rawY: 2000,
+    inputX: 1030, inputY: 2000, handleX: 1030, handleY: 2000, speed: 1
+  };
+  traceBrushFootprintPath(target.canvas.getContext("2d")!, sample);
+  const cusp = target.operations.find((operation) => operation.type === "moveTo")!;
+  const curves = target.operations.filter((operation) => operation.type === "bezierCurveTo");
+  assert.ok(Number(cusp.args[0]) < sample.x, "the sharp cusp trails the tip position");
+  assert.ok(Number(curves[1].args[2]) > sample.x, "the rounded nose leads the tip position");
+});
+
+test("brush turn adds intermediate footprints when angle changes faster than position", () => {
+  const stroke = {
+    brush: { size: 50, sensitivity: 70, lag: 40 },
+    points: [[1000, 3000, 0], [5000, 3000, 320], [5000, 4400, 432]] as [number, number, number][]
+  };
+  const samples = handwritingBrushGeometry(stroke).samples;
+  const distanceOnlyCount = 1 + samples.slice(1).reduce((total, sample, index) => {
+    const previous = samples[index];
+    const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y);
+    const spacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
+    return total + Math.max(1, Math.ceil(distance / spacing));
+  }, 0);
+  const target = fakeCanvas();
+  drawHandwritingCharacter(target.canvas, { strokes: [stroke] });
+  const renderedCount = target.operations.filter((operation) => operation.type === "moveTo").length;
+  assert.ok(renderedCount > distanceOnlyCount, "turning inserts footprints beyond distance-only sampling");
+});
+
 test("brush live append advances the same deterministic geometry as full replay", () => {
   const stroke = { brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[1000, 1000, 0], [2000, 1000, 100], [2000, 1800, 110]] as [number, number, number][] };
   const live = fakeCanvas();
@@ -118,6 +151,8 @@ test("brush live append advances the same deterministic geometry as full replay"
   drawHandwritingCharacter(replay.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
   assert.ok(live.operations.some((operation) => operation.type === "bezierCurveTo"));
   assert.ok(staticCanvas.operations.some((operation) => operation.type === "bezierCurveTo"));
+  const pathOperations = (operations: Operation[]) => operations.filter((operation) => ["moveTo", "bezierCurveTo", "closePath"].includes(operation.type));
+  assert.deepEqual(pathOperations(live.operations), pathOperations(staticCanvas.operations));
   assert.deepEqual(
     replay.operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type)),
     staticCanvas.operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type))

@@ -11,6 +11,10 @@ import { buildHandwritingTimeline, visiblePointCountAt, type HandwritingTimeline
 
 export const HANDWRITING_CANVAS_SCALE = 10_000;
 export const HANDWRITING_STROKE_WIDTH = 360;
+// Broad turning footprints need a finer angle step so rotating cusps do not
+// leave visible teeth along the outside edge. Settled straight runs keep their
+// distance-based stamp count.
+const MAX_BRUSH_STAMP_ANGLE = Math.PI / 90;
 
 export type HandwritingCanvas = HTMLCanvasElement | { width: number; height: number; getContext(type: "2d"): CanvasRenderingContext2D | null };
 export type HandwritingRendererOptions = {
@@ -73,18 +77,18 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
   const contact = Math.max(0.05, Math.min(1, sample.contact));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
   const length = width * (0.42 + 0.28 * spread);
-  const front = length * (0.82 + 0.18 * contact);
-  const back = -length * (0.58 + 0.16 * (1 - spread));
-  const shoulder = -length * 0.04;
+  const trailingTip = -length * (0.82 + 0.18 * contact);
+  const leadingNose = length * (0.58 + 0.16 * (1 - spread));
+  const shoulder = length * 0.04;
   const points = [
-    brushFootprintPoint(sample, front, 0, expansion),
-    brushFootprintPoint(sample, front * 0.28, halfWidth * 0.72, expansion),
+    brushFootprintPoint(sample, trailingTip, 0, expansion),
+    brushFootprintPoint(sample, trailingTip * 0.28, halfWidth * 0.72, expansion),
     brushFootprintPoint(sample, shoulder, halfWidth, expansion),
-    brushFootprintPoint(sample, back * 0.68, halfWidth * 0.62, expansion),
-    brushFootprintPoint(sample, back, 0, expansion),
-    brushFootprintPoint(sample, back * 0.68, -halfWidth * 0.62, expansion),
+    brushFootprintPoint(sample, leadingNose * 0.68, halfWidth * 0.62, expansion),
+    brushFootprintPoint(sample, leadingNose, 0, expansion),
+    brushFootprintPoint(sample, leadingNose * 0.68, -halfWidth * 0.62, expansion),
     brushFootprintPoint(sample, shoulder, -halfWidth, expansion),
-    brushFootprintPoint(sample, front * 0.28, -halfWidth * 0.72, expansion)
+    brushFootprintPoint(sample, trailingTip * 0.28, -halfWidth * 0.72, expansion)
   ];
   context.moveTo(points[0].x, points[0].y);
   context.bezierCurveTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y);
@@ -115,7 +119,8 @@ function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly B
     const sample = samples[index];
     const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y);
     const stampSpacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
-    const stampCount = Math.max(1, Math.ceil(distance / stampSpacing));
+    const angleDelta = Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
+    const stampCount = Math.max(1, Math.ceil(distance / stampSpacing), Math.ceil(Math.abs(angleDelta) / MAX_BRUSH_STAMP_ANGLE));
     for (let stamp = 1; stamp <= stampCount; stamp += 1) {
       traceBrushFootprintPath(context, interpolatedBrushSample(previous, sample, stamp / stampCount), expansion);
     }
