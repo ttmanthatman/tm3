@@ -1074,11 +1074,23 @@ const RELEASE_2_4_1_NOTES = [
   "手写编辑器移除重复的顶部成品区，改用底部预览删除整字；触控绘制改为增量渲染并合并草稿保存，减少长内容在手机上的重复 Canvas 绘制与 IndexedDB 写入。"
 ] as const
 
+const RELEASE_2_4_2_NOTES = [
+  "手写新增毛笔笔触，支持慢写变宽、快写收细、转弯滞后、账号级参数保存、全屏书写和扩大采样上限。",
+  "手写调色盘选色后保持打开，只有点关闭按钮才收起；“显示纸张”和“光晕”合并到同一行。",
+  "聊天附件不再限制上传文件大小，应用层和 VPS Nginx 请求体均取消大小上限。",
+  "聊天媒体、聊天记录附件、资源管理和管理端备份/导出在预览或下载时显示实时进度，并支持取消。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.4.3",
+    date: "2026-09-25",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.4.2",
     date: "2026-09-25",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_4_2_NOTES
   },
   {
     version: "2.4.1",
