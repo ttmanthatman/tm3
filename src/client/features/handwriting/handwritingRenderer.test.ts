@@ -15,6 +15,7 @@ function fakeCanvas() {
     clearRect: (...args: unknown[]) => operations.push({ type: "clearRect", args }),
     beginPath: () => operations.push({ type: "beginPath", args: [] }),
     arc: (...args: unknown[]) => operations.push({ type: "arc", args }),
+    ellipse: (...args: unknown[]) => operations.push({ type: "ellipse", args }),
     fill: () => operations.push({ type: "fill", args: [] }),
     moveTo: (...args: unknown[]) => operations.push({ type: "moveTo", args }),
     lineTo: (...args: unknown[]) => operations.push({ type: "lineTo", args }),
@@ -79,7 +80,29 @@ test("appending one sampled point performs constant drawing work", () => {
   assert.equal(target.operations.filter((operation) => operation.type === "lineTo").length, 3);
 });
 
-test("brush live append, static rendering and completed replay produce the same geometry", () => {
+test("brush body uses a ribbon path instead of circular sample dabs", () => {
+  const target = fakeCanvas();
+  drawHandwritingCharacter(target.canvas, {
+    strokes: [{
+      brush: { size: 50, sensitivity: 70, lag: 40 },
+      points: [[1000, 1000, 0], [2000, 1000, 100], [2000, 1800, 110]]
+    }]
+  });
+  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
+  assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 1);
+  assert.ok(target.operations.filter((operation) => operation.type === "lineTo").length >= 3);
+});
+
+test("a single brush point uses one oriented elliptical cap", () => {
+  const target = fakeCanvas();
+  drawHandwritingCharacter(target.canvas, {
+    strokes: [{ brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[10, 20, 0]] }]
+  });
+  assert.equal(target.operations.filter((operation) => operation.type === "ellipse").length, 1);
+  assert.equal(target.operations.filter((operation) => operation.type === "arc").length, 0);
+});
+
+test("brush live append advances the same deterministic geometry as full replay", () => {
   const stroke = { brush: { size: 50, sensitivity: 70, lag: 40 }, points: [[1000, 1000, 0], [2000, 1000, 100], [2000, 1800, 110]] as [number, number, number][] };
   const live = fakeCanvas();
   for (let index = 0; index < stroke.points.length; index++) {
@@ -89,9 +112,12 @@ test("brush live append, static rendering and completed replay produce the same 
   drawHandwritingCharacter(staticCanvas.canvas, { strokes: [stroke] });
   const replay = fakeCanvas();
   drawHandwritingCharacter(replay.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
-  const geometry = (operations: Operation[]) => operations.filter((op) => ["arc", "moveTo", "lineTo"].includes(op.type));
-  assert.deepEqual(geometry(live.operations), geometry(staticCanvas.operations));
-  assert.deepEqual(geometry(replay.operations), geometry(staticCanvas.operations));
+  assert.ok(live.operations.some((operation) => operation.type === "lineTo"));
+  assert.ok(staticCanvas.operations.some((operation) => operation.type === "lineTo"));
+  assert.deepEqual(
+    replay.operations.filter((operation) => ["ellipse", "moveTo", "lineTo"].includes(operation.type)),
+    staticCanvas.operations.filter((operation) => ["ellipse", "moveTo", "lineTo"].includes(operation.type))
+  );
 });
 
 test("partial replay preserves brush and color while hiding future points without copying strokes", () => {

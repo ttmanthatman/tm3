@@ -27,7 +27,7 @@ function adjust(key: keyof HandwritingBrush, event: Event) {
           <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled" @input="adjust(field.key, $event)">
         </label>
         <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_BRUSH })">恢复默认</button>
-        <small>随账号保存，对下一笔生效。速度响应越高，快慢粗细差异越大；滞后越高，转弯越柔和。</small>
+        <small>随账号保存，对下一笔生效。速度响应越高，快慢粗细差异越明显；笔头滞后越高，毛锋越柔软，转锋需要更长的行程。停笔不会自动回锋。</small>
       </div>
     </details>
   </div>

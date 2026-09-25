@@ -1,4 +1,4 @@
-import { handwritingBrushGeometry } from "./handwritingBrush";
+import { handwritingBrushGeometry, type BrushSample } from "./handwritingBrush";
 import {
   HANDWRITING_DEFAULT_COLOR,
   type HandwritingCharacter,
@@ -56,6 +56,53 @@ function glowPasses(glow: HandwritingGlow, width: number) {
   ];
 }
 
+function brushEdge(sample: BrushSample, side: "left" | "right", expansion: number, along = 0) {
+  const tangentX = Math.cos(sample.angle);
+  const tangentY = Math.sin(sample.angle);
+  const normalX = -tangentY;
+  const normalY = tangentX;
+  const halfWidth = Math.max(0.5, (sample.width + expansion) / 2) * (side === "left" ? 1 : -1);
+  return {
+    x: sample.x + tangentX * along + normalX * halfWidth,
+    y: sample.y + tangentY * along + normalY * halfWidth
+  };
+}
+
+function drawBrushPoint(context: CanvasRenderingContext2D, sample: BrushSample, expansion: number) {
+  const width = Math.max(1, sample.width + expansion);
+  context.beginPath();
+  context.ellipse(sample.x, sample.y, width * 0.725, width * 0.5, sample.angle, 0, Math.PI * 2);
+  context.fill();
+}
+
+function drawBrushQuad(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy);
+  if (!distance) return;
+  // Adjacent incremental fills overlap slightly so canvas antialiasing cannot expose paper-colored seams.
+  const overlap = Math.min(24, Math.max(1, Math.min(from.width, to.width) * 0.08));
+  const fromLeft = brushEdge(from, "left", expansion, -overlap);
+  const toLeft = brushEdge(to, "left", expansion, overlap);
+  const toRight = brushEdge(to, "right", expansion, overlap);
+  const fromRight = brushEdge(from, "right", expansion, -overlap);
+  context.beginPath();
+  context.moveTo(fromLeft.x, fromLeft.y);
+  context.lineTo(toLeft.x, toLeft.y);
+  context.lineTo(toRight.x, toRight.y);
+  context.lineTo(fromRight.x, fromRight.y);
+  context.closePath();
+  context.fill();
+}
+
+function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number) {
+  if (from >= until) return;
+  if (from === 0) drawBrushPoint(context, samples[0], expansion);
+  for (let index = Math.max(1, from); index < until; index += 1) {
+    drawBrushQuad(context, samples[index - 1], samples[index], expansion);
+  }
+}
+
 function drawPoint(context: CanvasRenderingContext2D, point: HandwritingPoint, width: number) {
   context.beginPath();
   context.arc(point[0], point[1], Math.max(1, width / 2), 0, Math.PI * 2);
@@ -92,16 +139,7 @@ function drawStrokeGeometry(
     const geometry = handwritingBrushGeometry(stroke);
     const from = startPointIndex === 0 ? 0 : geometry.ends[startPointIndex - 1];
     const until = end === 0 ? 0 : geometry.ends[end - 1];
-    const expansion = width - HANDWRITING_STROKE_WIDTH;
-    for (let i = from; i < until; i += 1) {
-      const dab = geometry.dabs[i];
-      const point: HandwritingPoint = [dab.x, dab.y, 0];
-      if (i > 0) {
-        const previous = geometry.dabs[i - 1];
-        drawSegment(context, [previous.x, previous.y, 0], point, Math.max(1, previous.width + expansion), Math.max(1, dab.width + expansion));
-      }
-      drawPoint(context, point, Math.max(1, dab.width + expansion));
-    }
+    drawBrushOutline(context, geometry.samples, from, until, width - HANDWRITING_STROKE_WIDTH);
     return;
   }
   let index = Math.max(0, startPointIndex);
