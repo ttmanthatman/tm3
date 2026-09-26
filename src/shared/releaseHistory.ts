@@ -1081,11 +1081,21 @@ const RELEASE_2_4_2_NOTES = [
   "聊天媒体、聊天记录附件、资源管理和管理端备份/导出在预览或下载时显示实时进度，并支持取消。"
 ] as const
 
+const RELEASE_2_4_3_NOTES = [
+  "手写毛笔增加自适应输入稳定、无方向点状起笔与停留按笔、独立角度惯性和基于曲率/停顿/减速的转锋判断；笔锋随首段运笔确定方向，转折轮廓更平滑，停笔不再自动回正。",
+  "手机触屏的笔锋放大镜移到字格外左上方；当前字格新增一键清空。毛笔速度响应、笔头滞后及光晕参数改由管理员全局设置，个人仍可选择笔粗和是否启用光晕。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.4.4",
+    date: "2026-09-27",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.4.3",
     date: "2026-09-25",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_4_3_NOTES
   },
   {
     version: "2.4.2",
