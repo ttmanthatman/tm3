@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandl
 import { z } from "zod";
 import type { AdminAttachmentDTO, AdminBackupDTO, AdminMessageDTO } from "../../shared/types.js";
 import { APP_VERSION } from "../../shared/release.js";
+import { graceImageFiles } from "../../shared/grace.js";
 import { storyGender } from "../../shared/stories.js";
 import { HANDWRITING_CONTENT } from "../../shared/handwriting.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
@@ -252,10 +253,10 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       usersExportPayload(),
       appearanceDto(),
       adminAttachmentList(),
-      prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } }),
+      prisma.message.findMany({ where: { OR: [{ filePath: { not: null } }, { type: "grace" }], channel: { kind: "reception" } }, select: { filePath: true, payload: true } }),
       prisma.story.findMany({ include: { media: { orderBy: { position: "asc" } }, likes: { orderBy: { id: "asc" } }, comments: { orderBy: { id: "asc" } } }, orderBy: { id: "asc" } })
     ]);
-    const hiddenReceptionUploads = new Set(receptionFiles.map((message) => path.basename(message.filePath || "")).filter(Boolean));
+    const hiddenReceptionUploads = new Set(receptionFiles.flatMap((message) => [...graceImageFiles(message.payload), ...(message.filePath ? [path.basename(message.filePath)] : [])]));
     const entries = [...collectBackupProgramEntries(ROOT, hiddenReceptionUploads), ...collectExternalStorageEntries(hiddenReceptionUploads)];
     entries.push(...collectExternalDatabaseEntry(entries));
     const manifest = {
@@ -351,11 +352,11 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
   async function adminAttachmentList(): Promise<AdminAttachmentDTO[]> {
     const [messages, receptionMessages, accounts, channels, pinnedItems, appearance] = await Promise.all([
       prisma.message.findMany({
-        where: { filePath: { not: null }, channel: { kind: { not: "reception" } } },
+        where: { OR: [{ filePath: { not: null } }, { type: "grace" }], channel: { kind: { not: "reception" } } },
         include: { channel: true, sender: true },
         orderBy: { id: "desc" }
       }),
-      prisma.message.findMany({ where: { filePath: { not: null }, channel: { kind: "reception" } }, select: { filePath: true } }),
+      prisma.message.findMany({ where: { OR: [{ filePath: { not: null } }, { type: "grace" }], channel: { kind: "reception" } }, select: { filePath: true, payload: true } }),
       prisma.account.findMany({ where: { isGuest: false }, select: { displayName: true, avatarPath: true } }),
       prisma.channel.findMany({ where: { kind: { not: "reception" } }, select: { name: true, icon: true } }),
       prisma.pinnedItem.findMany({ where: { active: true, channel: { kind: { not: "reception" } } }, include: { channel: true }, orderBy: { id: "desc" } }),
@@ -363,7 +364,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     ]);
 
     const rows = new Map<string, AdminAttachmentDTO>();
-    const hiddenReceptionUploads = new Set(receptionMessages.map((message) => path.basename(message.filePath || "")).filter(Boolean));
+    const hiddenReceptionUploads = new Set(receptionMessages.flatMap((message) => [...graceImageFiles(message.payload), ...(message.filePath ? [path.basename(message.filePath)] : [])]));
     for (const file of listStorageFiles(UPLOAD_DIR)) {
       if (hiddenReceptionUploads.has(file.name)) continue;
       rows.set(attachmentId("upload", file.name), {
@@ -379,24 +380,24 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       });
     }
     for (const message of messages) {
-      if (!message.filePath) continue;
-      const fileName = path.basename(message.filePath);
-      const id = attachmentId("upload", fileName);
-      const current = rows.get(id);
-      rows.set(id, {
-        id,
-        kind: "upload",
-        fileName,
-        label: message.fileName || fileName,
-        size: current?.size || message.fileSize || 0,
-        createdAt: message.createdAt.toISOString(),
-        url: current?.exists ? current.url : undefined,
-        messageId: message.id,
-        channelName: message.channel.name,
-        ownerName: message.sender.displayName,
-        usage: [...new Set([...(current?.usage || []), `消息 #${message.id}`, message.channel.name, message.sender.displayName])],
-        exists: current?.exists || false
-      });
+      for (const fileName of [...graceImageFiles(message.payload), ...(message.filePath ? [path.basename(message.filePath)] : [])]) {
+        const id = attachmentId("upload", fileName);
+        const current = rows.get(id);
+        rows.set(id, {
+          id,
+          kind: "upload",
+          fileName,
+          label: message.fileName || fileName,
+          size: current?.size || message.fileSize || 0,
+          createdAt: message.createdAt.toISOString(),
+          url: current?.exists ? current.url : undefined,
+          messageId: message.id,
+          channelName: message.channel.name,
+          ownerName: message.sender.displayName,
+          usage: [...new Set([...(current?.usage || []), `消息 #${message.id}`, message.channel.name, message.sender.displayName])],
+          exists: current?.exists || false
+        });
+      }
     }
     for (const pin of pinnedItems) {
       const body = serializePinnedBody(pin.body, pin.content);
@@ -470,7 +471,9 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
   async function isReceptionUpload(fileName: string) {
     const target = path.basename(fileName);
     if (!target) return false;
-    return (await prisma.message.count({ where: { filePath: target, channel: { kind: "reception" } } })) > 0;
+    if ((await prisma.message.count({ where: { filePath: target, channel: { kind: "reception" } } })) > 0) return true;
+    const cards = await prisma.message.findMany({ where: { type: "grace", channel: { kind: "reception" } }, select: { payload: true } });
+    return cards.some((card) => graceImageFiles(card.payload).includes(target));
   }
 
   async function deleteAttachmentTargets(targets: Array<{ kind: AdminAttachmentDTO["kind"]; fileName: string }>) {
@@ -485,6 +488,17 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       const existed = fs.existsSync(filePath);
       const keepForPinned = target.kind === "upload" && (await activePinnedUsesUpload(fileName));
       if (target.kind === "upload") {
+        const cards = await prisma.message.findMany({ where: { type: "grace" }, select: { id: true, channelId: true, payload: true } });
+        for (const card of cards) {
+          if (!graceImageFiles(card.payload).includes(fileName)) continue;
+          const payload = card.payload as Prisma.JsonObject;
+          const withoutPhoto = (value: Prisma.JsonValue) => {
+            const record = value as Prisma.JsonObject;
+            return { ...record, images: Array.isArray(record.images) ? record.images.filter((image) => (image as Prisma.JsonObject)?.fileName !== fileName) : [] };
+          };
+          await prisma.message.update({ where: { id: card.id }, data: { payload: { ...withoutPhoto(payload), updates: Array.isArray(payload.updates) ? payload.updates.map(withoutPhoto) : [] } as Prisma.InputJsonObject } });
+          refreshChannels.add(card.channelId);
+        }
         const messages = await prisma.message.findMany({ where: { filePath: fileName }, select: { id: true, channelId: true, filePath: true } });
         for (const message of messages) refreshChannels.add(message.channelId);
         if (messages.length) await detachMessageAttachments(messages);
@@ -602,6 +616,10 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const filePath = storageFilePath(target.kind, fileName);
     if (!fs.existsSync(filePath)) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "文件不存在" };
     const shortName = target.kind === "background" && (await prisma.channel.count({ where: { icon: fileName } })) > 0;
+    if (target.kind === "upload") {
+      const cards = await prisma.message.findMany({ where: { type: "grace" }, select: { payload: true } });
+      if (cards.some((card) => graceImageFiles(card.payload).includes(fileName))) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "恩典照片已在上传时压缩" };
+    }
     const compressed = await compressImageFile(filePath, path.dirname(filePath), { shortName });
     if (!compressed) return { id: attachmentId(target.kind, fileName), status: "skipped" as const, reason: "压缩后没有更小" };
 
@@ -681,6 +699,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const fileNames = new Set<string>();
     for (const message of payload.messages) {
       if (message.filePath) fileNames.add(path.basename(message.filePath));
+      for (const file of graceImageFiles(message.payload)) fileNames.add(file);
     }
     for (const pin of payload.pinnedItems) {
       for (const fileName of pinnedBodyUploadFilePaths(serializePinnedBody(pin.body, pin.content))) fileNames.add(fileName);

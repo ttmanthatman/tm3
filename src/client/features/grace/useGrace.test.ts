@@ -40,7 +40,7 @@ interface GraceHarness {
   requests: Array<{ url: string; init?: RequestInit }>;
 }
 
-function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHarness {
+function createGraceHarness(options: { uploadSucceeds?: boolean; currentMessage?: MessageDTO } = {}): GraceHarness {
   const uploads: GraceHarness["uploads"] = [];
   const submitted: MessageDTO[] = [];
   const notices: string[] = [];
@@ -66,6 +66,7 @@ function createGraceHarness(options: { uploadSucceeds?: boolean } = {}): GraceHa
         : { success: true, duplicate: false, skipped: false, messageId: 77 };
     },
     currentChannelId: () => 9,
+    currentMessage: (id) => options.currentMessage?.id === id ? options.currentMessage : undefined,
     onSubmitted: (message) => submitted.push(message),
     onUpdated: (message) => updated.push(message),
     onDeleted: () => { deleted.push(1); },
@@ -162,14 +163,82 @@ test("gratitude records against the grace card and replaces the rendered message
 test("updating a testimony reuses the update editor flow and appends the pushed card", async () => {
   const { grace, submitted, scrolls, requests } = createGraceHarness();
   grace.openGraceUpdateEditor(graceMessage());
+  assert.equal(grace.graceUpdateContent.value, "谢谢今天的平安");
   grace.graceUpdateContent.value = "后来身体恢复了";
   await grace.publishGraceUpdate();
 
   const update = requests.find((request) => request.url.endsWith("/api/messages/55/grace-update"));
   assert.ok(update);
   assert.equal(update.init?.method, "POST");
-  assert.deepEqual(JSON.parse(String(update.init?.body)), { content: "后来身体恢复了", imageMessageId: null });
+  assert.deepEqual(JSON.parse(String(update.init?.body)), { content: "后来身体恢复了", imageMessageId: null, retainedImages: [], expectedUpdateAt: null });
   assert.deepEqual(submitted.map((message) => message.id), [57]);
   assert.deepEqual(scrolls, [true]);
   assert.equal(grace.pendingGraceUpdate.value, null);
+});
+
+test("multiple grace photos submit with the card and never call the chat upload function", async () => {
+  const { grace, uploads, requests } = createGraceHarness();
+  grace.openGraceComposer("照片见证");
+  const first = new File(["first"], "first.webp", { type: "image/webp" });
+  const second = new File(["second"], "second.webp", { type: "image/webp" });
+  grace.gracePhotos.value = [first, second].map((file) => ({ file, url: URL.createObjectURL(file) }));
+  await grace.submitGrace();
+  assert.equal(uploads.length, 0);
+  const request = requests.find((item) => item.url.endsWith("/api/grace"));
+  assert.ok(request?.init?.body instanceof FormData);
+  assert.equal(request.init.body.getAll("image").length, 2);
+  assert.deepEqual(JSON.parse(String(request.init.body.get("data"))), { channelId: 9, content: "照片见证" });
+  assert.equal(grace.gracePhotos.value.length, 0);
+});
+
+test("editing preloads legacy and multiple images and preserves them unless explicitly removed", async () => {
+  const { grace, requests, uploads } = createGraceHarness();
+  const image = { fileName: "00000000-0000-0000-0000-000000000000.webp", width: 8, height: 8 };
+  const message = { ...graceMessage(), payload: { kind: "grace", imageMessageId: 99, images: [image], latestUpdateAt: "2026-09-20" } };
+  grace.openGraceUpdateEditor(message);
+  assert.equal(grace.graceUpdateContent.value, "谢谢今天的平安");
+  assert.equal(grace.graceUpdateImageMessageId.value, 99);
+  assert.deepEqual(grace.graceUpdateImages.value, [image]);
+  grace.graceUpdateContent.value += "\n后来有新恩典";
+  await grace.publishGraceUpdate();
+  assert.equal(uploads.length, 0);
+  const request = requests.find((item) => item.url.endsWith("/grace-update"));
+  assert.deepEqual(JSON.parse(String(request?.init?.body)), { content: "谢谢今天的平安<br />后来有新恩典", imageMessageId: 99, retainedImages: [image.fileName], expectedUpdateAt: "2026-09-20" });
+});
+
+test("failed card submission retains all draft photos and text", async () => {
+  const { grace } = createGraceHarness();
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => jsonResponse({ message: "同步失败" }, 500);
+  try {
+    grace.openGraceComposer("保留草稿");
+    const file = new File(["photo"], "photo.webp", { type: "image/webp" });
+    grace.gracePhotos.value.push({ file, url: URL.createObjectURL(file) });
+    await grace.submitGrace();
+    assert.equal(grace.graceComposerOpen.value, true);
+    assert.equal(grace.graceContent.value, "保留草稿");
+    assert.equal(grace.gracePhotos.value.length, 1);
+    assert.equal(grace.graceError.value, "同步失败");
+    grace.closeGraceComposer();
+  } finally { globalThis.fetch = original; }
+});
+
+test("photo preparation disables save and closing the composer clears the draft", () => {
+  const { grace, requests } = createGraceHarness();
+  grace.openGraceComposer("准备照片");
+  grace.gracePhotoBusy.value = true;
+  assert.equal(grace.graceCanSubmit.value, false);
+  grace.submitGrace();
+  assert.equal(requests.length, 0);
+  grace.closeGraceComposer();
+  assert.equal(grace.gracePhotoBusy.value, false);
+});
+
+test("editing an older pushed card uses the latest source revision already received from the socket", () => {
+  const current = { ...graceMessage(55), content: "最新的见证", payload: { kind: "grace", latestUpdateAt: "2026-09-25" } };
+  const { grace } = createGraceHarness({ currentMessage: current });
+  grace.openGraceUpdateEditor({ ...graceMessage(60), content: "早先的副本", payload: { kind: "grace", sourceGraceMessageId: 55, latestUpdateAt: "2026-09-20" } });
+  assert.equal(grace.pendingGraceUpdate.value?.id, 55);
+  assert.equal(grace.graceUpdateContent.value, "最新的见证");
+  assert.equal(gracePayload(grace.pendingGraceUpdate.value!).latestUpdateAt, "2026-09-25");
 });

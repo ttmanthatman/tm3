@@ -751,3 +751,16 @@ test("voice message payloads keep transcript fields through serialization", asyn
   assert.equal(payload.transcript, "保留的文字");
   assert.equal(payload.transcriptAt, "2026-09-17T02:00:00.000Z");
 });
+
+
+test("old grace update cards expose the canonical text, photos and edit revision together", async () => {
+  const harness = createHarness();
+  const image = { fileName: "00000000-0000-0000-0000-000000000001.webp", width: 8, height: 8 };
+  const source = makeMessage({ id: 400, type: "grace", content: "现在的见证", payload: { kind: "grace", images: [image], latestUpdateAt: "2026-09-21", latestUpdateBy: "Alice" } });
+  harness.state.messagesById.set(source.id, source);
+  const oldCopy = makeMessage({ id: 401, type: "grace", content: "旧见证", payload: { kind: "grace", sourceGraceMessageId: 400, latestUpdateAt: "2026-09-20" } });
+  const dto = await harness.service.serializeMessage(oldCopy, VIEWER);
+  assert.equal(dto.content, "现在的见证");
+  assert.deepEqual((dto.payload as Record<string, unknown>).images, [image]);
+  assert.equal((dto.payload as Record<string, unknown>).latestUpdateAt, "2026-09-21");
+});

@@ -199,6 +199,7 @@ import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import RelatedVersesPanel from "./features/prayer/RelatedVersesPanel.vue";
 import AiAsrSettingsPanel from "./features/admin/AiAsrSettingsPanel.vue";
 import GraceComposer from "./features/grace/GraceComposer.vue";
+import GraceUpdateEditor from "./features/grace/GraceUpdateEditor.vue";
 import GraceCard from "./features/grace/GraceCard.vue";
 import GraceFavorites from "./features/grace/GraceFavorites.vue";
 import { useGrace } from "./features/grace/useGrace";
@@ -1130,6 +1131,7 @@ function showGraceToast(text: string) {
 const grace = useGrace({
   uploadFile,
   currentChannelId: () => store.currentChannelId || null,
+  currentMessage: (id) => store.messages.find((message) => message.id === id),
   onSubmitted: (message) => {
     const channel = store.channels.find((row) => row.id === message.channelId);
     if (channel) channel.hasGraceItems = true;
@@ -1141,20 +1143,10 @@ const grace = useGrace({
   notify: showGraceToast
 });
 const {
-  pendingGraceUpdate,
-  graceUpdateContent,
-  graceUpdateBusy,
-  graceUpdateError,
-  graceUpdatePhotoPreview,
-  graceUpdateCanPublish,
   graceActionText,
   graceLatestTime,
   markGraceGrateful,
-  clearGraceUpdatePhoto,
   openGraceUpdateEditor,
-  closeGraceUpdateEditor,
-  handleGraceUpdatePhotoPick,
-  publishGraceUpdate,
   withdrawGrace
 } = grace;
 const {
@@ -6194,21 +6186,7 @@ const messageRowBindings = {
       @photo-pick="handlePrayerUpdatePhotoPick"
     />
 
-    <PrayerUpdateEditor
-      v-if="pendingGraceUpdate"
-      v-model:content="graceUpdateContent"
-      :busy="graceUpdateBusy"
-      :error="graceUpdateError"
-      :photo-preview="graceUpdatePhotoPreview"
-      :can-publish="graceUpdateCanPublish"
-      title="更新恩典见证"
-      close-label="关闭恩典见证编辑"
-      placeholder="写下新的恩典见证…"
-      @close="closeGraceUpdateEditor"
-      @submit="publishGraceUpdate"
-      @clear-photo="clearGraceUpdatePhoto"
-      @photo-pick="handleGraceUpdatePhotoPick"
-    />
+    <GraceUpdateEditor :grace="grace" />
 
     <GraceComposer :grace="grace" />
 

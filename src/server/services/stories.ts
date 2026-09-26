@@ -6,17 +6,19 @@ import path from "node:path";
 import { prepareStoryMedia, storyMediaPath, StoryInputError, type StoredStoryMedia } from "./storyMedia.js";
 import { STORY_DEFAULT_BIO, STORY_LIMITS, validStoryMedia } from "../../shared/stories.js";
 import { plainTextFromHtml } from "../textUtils.js";
+import { GRACE_IMAGE_LIMIT, GRACE_IMAGE_NAME } from "../../shared/grace.js";
 
 export type GraceStoryInput = {
   accountId: number;
   graceMessageId: number;
   content: string;
   imageMessageId?: number;
+  imageFileNames?: string[];
   voiceMessageId?: number;
 };
 
 export async function createGraceStory(
-  prisma: PrismaClient,
+  prisma: PrismaClient | Prisma.TransactionClient,
   directories: { stories: string; uploads: string },
   input: GraceStoryInput
 ) {
@@ -49,6 +51,10 @@ export async function createGraceStory(
     if (!source?.filePath || source.type !== "file" || payload.kind !== "voice") throw new StoryInputError("恩典语音无法同步到故事");
     orderedSources.push({ kind: "voice", filePath: source.filePath });
   }
+
+  const imageFiles = input.imageFileNames || [];
+  if (imageFiles.length + (input.imageMessageId ? 1 : 0) > GRACE_IMAGE_LIMIT || imageFiles.some((name) => !GRACE_IMAGE_NAME.test(name))) throw new StoryInputError("恩典照片无效");
+  for (const fileName of imageFiles) orderedSources.push({ kind: "image", filePath: fileName });
 
   const text = plainTextFromHtml(input.content, STORY_LIMITS.text);
   if (!text && !validStoryMedia(orderedSources.map((source) => source.kind))) {
@@ -83,7 +89,7 @@ export async function createGraceStory(
         select: { id: true, createdAt: true }
       });
       committed = true;
-      return { ...story, created: true };
+      return { ...story, created: true, storageFolder: orderedSources.length ? folder : undefined };
     } catch (error) {
       if ((error as { code?: string }).code !== "P2002") throw error;
       const concurrent = await prisma.story.findUnique({

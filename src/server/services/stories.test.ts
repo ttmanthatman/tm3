@@ -77,3 +77,20 @@ test("grace stories allow text-only entries and copy attached media independentl
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+test("new grace photos are copied independently without chat image messages", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "grace-multi-story-"));
+  const uploads = path.join(root, "uploads");
+  const stories = path.join(root, "stories");
+  await fs.mkdir(uploads);
+  const names = ["00000000-0000-0000-0000-000000000001.webp", "00000000-0000-0000-0000-000000000002.webp"];
+  for (const name of names) await sharp({ create: { width: 8, height: 8, channels: 3, background: "red" } }).webp().toFile(path.join(uploads, name));
+  let data: { media?: { create: Array<{ fileName: string }> } } | undefined;
+  const prisma = { story: { findUnique: async () => null, create: async (input: { data: typeof data }) => { data = input.data; return { id: 1, createdAt: new Date() }; } } } as unknown as PrismaClient;
+  try {
+    await createGraceStory(prisma, { stories, uploads }, { accountId: 2, graceMessageId: 41, content: "照片见证", imageFileNames: names });
+    assert.equal(data?.media?.create.length, 2);
+    await fs.rm(uploads, { recursive: true });
+    for (const media of data!.media!.create) assert.equal((await sharp(path.join(stories, media.fileName)).metadata()).format, "webp");
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});

@@ -15,10 +15,11 @@ const {
   graceBusy,
   graceError,
   graceContent,
-  gracePhotoPreview,
+  gracePhotos,
+  gracePhotoBusy,
+  removeGracePhoto,
   graceCanSubmit,
   handleGracePhotoPick,
-  clearGracePhoto,
   closeGraceComposer,
   submitGrace,
   isRecording,
@@ -115,17 +116,18 @@ function handlePhotoPick(event: Event) {
       </div>
 
       <div class="grace-attach-row">
-        <button class="mini-btn secondary" type="button" :disabled="graceBusy" @click="gracePhotoInput?.click()">
-          <ImageIcon :size="15" />附上照片
+        <button class="mini-btn secondary" type="button" :disabled="graceBusy || gracePhotoBusy" @click="gracePhotoInput?.click()">
+          <ImageIcon :size="15" />附上照片（最多 9 张）
         </button>
-        <span v-if="gracePhotoPreview" class="grace-photo-chip">
-          <img :src="gracePhotoPreview" alt="已选照片预览" />
-          <button class="icon-btn" type="button" :disabled="graceBusy" aria-label="移除照片" @click="clearGracePhoto">
+        <span v-for="(photo, index) in gracePhotos" :key="photo.url" class="grace-photo-chip">
+          <img :src="photo.url" alt="已选照片预览" />
+          <button class="icon-btn" type="button" :disabled="graceBusy" :aria-label="`移除照片 ${index + 1}`" @click="removeGracePhoto(index)">
             <X :size="14" />
           </button>
         </span>
       </div>
-      <input ref="gracePhotoInput" class="hidden" type="file" accept="image/*" @change="handlePhotoPick" />
+      <p v-if="gracePhotoBusy" role="status">正在处理照片…</p>
+      <input ref="gracePhotoInput" class="hidden" type="file" multiple accept="image/*,.heic,.heif" aria-label="添加恩典照片" :disabled="graceBusy || gracePhotoBusy" @change="handlePhotoPick" />
 
       <p v-if="graceError" class="form-error">{{ graceError }}</p>
       <div class="confirm-actions">

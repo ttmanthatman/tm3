@@ -96,6 +96,12 @@ export interface PrayerPayload extends MessageEffectPayload {
   aiSuggestionMaxSuccess?: number;
 }
 
+export interface GraceImage {
+  fileName: string;
+  width: number | null;
+  height: number | null;
+}
+
 export interface GracePayload extends MessageEffectPayload {
   kind: "grace";
   sourceGraceMessageId?: number | null;
@@ -104,7 +110,8 @@ export interface GracePayload extends MessageEffectPayload {
   voiceMessageId?: number | null;
   imageMessageId?: number | null;
   voice?: VoicePayload | null;
-  updates?: Array<{ content: string; at: string; by?: string; imageMessageId?: number }>;
+  images?: GraceImage[];
+  updates?: Array<{ content: string; at: string; by?: string; imageMessageId?: number; images?: GraceImage[] }>;
   gratitudeCount: number;
   gratitudeActionCount: number;
   currentUserGrateful: boolean;

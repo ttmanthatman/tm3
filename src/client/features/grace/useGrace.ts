@@ -1,5 +1,8 @@
 import { computed, nextTick, ref } from "vue";
-import type { GracePayload, MessageDTO } from "@shared/types";
+import type { GraceImage, GracePayload, MessageDTO } from "@shared/types";
+import { useGracePhotos } from "./useGracePhotos";
+import { graceEditText, graceRequestBody } from "./graceImages";
+import { graceImages } from "@shared/grace";
 import { api } from "../../api";
 import { adminDate } from "../admin/adminFormat";
 import { escapeHtmlText } from "../messages/messageRendering";
@@ -17,6 +20,7 @@ export type GraceUploadOptions = {
 interface UseGraceOptions {
   uploadFile: (file: File, options?: GraceUploadOptions) => Promise<GraceUploadResult>;
   currentChannelId: () => number | null;
+  currentMessage?: (id: number) => MessageDTO | undefined;
   onSubmitted: (message: MessageDTO) => void;
   onUpdated?: (message: MessageDTO) => void;
   onDeleted?: () => void | Promise<void>;
@@ -30,6 +34,7 @@ export function gracePayload(message: MessageDTO): GracePayload {
     kind: "grace",
     voiceMessageId: Number(raw.voiceMessageId || 0) > 0 ? Number(raw.voiceMessageId) : null,
     imageMessageId: Number(raw.imageMessageId || 0) > 0 ? Number(raw.imageMessageId) : null,
+    images: graceImages(raw),
     sourceGraceMessageId: Number(raw.sourceGraceMessageId || 0) > 0 ? Number(raw.sourceGraceMessageId) : null,
     latestUpdateAt: raw.latestUpdateAt,
     latestUpdateBy: raw.latestUpdateBy,
@@ -56,15 +61,15 @@ export function useGrace(options: UseGraceOptions) {
   const graceBusy = ref(false);
   const graceError = ref("");
   const graceContent = ref("");
-  const gracePhoto = ref<File | null>(null);
-  const gracePhotoPreview = ref("");
   const graceTargetChannelId = ref<number | null>(null);
   const pendingGraceUpdate = ref<MessageDTO | null>(null);
   const graceUpdateContent = ref("");
   const graceUpdateBusy = ref(false);
   const graceUpdateError = ref("");
-  const graceUpdatePhoto = ref<File | null>(null);
-  const graceUpdatePhotoPreview = ref("");
+  const graceUpdateImages = ref<GraceImage[]>([]);
+  const graceUpdateImageMessageId = ref<number | null>(null);
+  const composerPhotos = useGracePhotos(() => graceTargetChannelId.value, () => 0, (error) => { graceError.value = error; });
+  const updatePhotos = useGracePhotos(() => pendingGraceUpdate.value?.channelId || null, () => graceUpdateImages.value.length + (graceUpdateImageMessageId.value ? 1 : 0), (error) => { graceUpdateError.value = error; });
   // The recording flow is reused from the composer; its pending-message/send
   // path stays unused here because grace voice uploads go through submitGrace.
   const graceRecordingPanel = ref<"voice" | "more" | null>(null);
@@ -74,8 +79,8 @@ export function useGrace(options: UseGraceOptions) {
     uploadFile: (file, uploadOptions) => options.uploadFile(file, uploadOptions)
   });
 
-  const graceCanSubmit = computed(() => graceSubmissionReady(graceContent.value, !!recording.audioFile.value));
-  const graceUpdateCanPublish = computed(() => !!graceUpdateContent.value.trim());
+  const graceCanSubmit = computed(() => !composerPhotos.photoBusy.value && !recording.isRecording.value && graceSubmissionReady(graceContent.value, !!recording.audioFile.value));
+  const graceUpdateCanPublish = computed(() => !updatePhotos.photoBusy.value && graceSubmissionReady(graceUpdateContent.value, !!(pendingGraceUpdate.value && gracePayload(pendingGraceUpdate.value).voiceMessageId)));
 
   function graceActionText(message: MessageDTO) {
     const payload = gracePayload(message);
@@ -89,21 +94,8 @@ export function useGrace(options: UseGraceOptions) {
     return latest ? adminDate(latest) : "";
   }
 
-  function clearGracePhoto() {
-    if (gracePhotoPreview.value) URL.revokeObjectURL(gracePhotoPreview.value);
-    gracePhoto.value = null;
-    gracePhotoPreview.value = "";
-  }
-
-  function handleGracePhotoPick(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    clearGracePhoto();
-    gracePhoto.value = file;
-    gracePhotoPreview.value = URL.createObjectURL(file);
-    graceError.value = "";
-  }
+  const clearGracePhoto = composerPhotos.clear;
+  const handleGracePhotoPick = composerPhotos.pick;
 
   function openGraceComposer(prefill = "") {
     graceTargetChannelId.value = options.currentChannelId();
@@ -129,7 +121,7 @@ export function useGrace(options: UseGraceOptions) {
     const content = graceContent.value.trim();
     const voiceFile = recording.audioFile.value;
     const channelId = graceTargetChannelId.value;
-    if (graceBusy.value) return;
+    if (graceBusy.value || composerPhotos.photoBusy.value) return;
     if (!graceSubmissionReady(content, !!voiceFile)) {
       graceError.value = "写下一段文字或录一段语音，再存入恩典册";
       return;
@@ -142,7 +134,6 @@ export function useGrace(options: UseGraceOptions) {
     graceError.value = "";
     try {
       let voiceMessageId: number | undefined;
-      let imageMessageId: number | undefined;
       if (voiceFile) {
         const upload = await options.uploadFile(voiceFile, {
           voice: true,
@@ -154,14 +145,9 @@ export function useGrace(options: UseGraceOptions) {
         if (!upload.success || !upload.messageId) throw new Error("语音上传失败，请重试");
         voiceMessageId = upload.messageId;
       }
-      if (gracePhoto.value) {
-        const upload = await options.uploadFile(gracePhoto.value, { channelId, suppressAlert: true });
-        if (!upload.success || !upload.messageId) throw new Error("照片上传失败，请重试");
-        imageMessageId = upload.messageId;
-      }
       const result = await api<{ success: boolean; message: MessageDTO }>("/api/grace", {
         method: "POST",
-        body: JSON.stringify({ channelId, content: content || undefined, voiceMessageId, imageMessageId })
+        body: graceRequestBody({ channelId, content: content || undefined, voiceMessageId }, composerPhotos.photos.value)
       });
       if (result.message) options.onSubmitted(result.message);
       closeGraceComposer(true);
@@ -182,17 +168,21 @@ export function useGrace(options: UseGraceOptions) {
   }
 
   function clearGraceUpdatePhoto() {
-    if (graceUpdatePhotoPreview.value) URL.revokeObjectURL(graceUpdatePhotoPreview.value);
-    graceUpdatePhoto.value = null;
-    graceUpdatePhotoPreview.value = "";
+    updatePhotos.clear();
+    graceUpdateImages.value = [];
+    graceUpdateImageMessageId.value = null;
   }
 
   function openGraceUpdateEditor(message: MessageDTO) {
+    const sourceId = gracePayload(message).sourceGraceMessageId || message.id;
+    message = options.currentMessage?.(sourceId) || message;
     pendingGraceUpdate.value = message;
-    graceUpdateContent.value = "";
+    graceUpdateContent.value = graceEditText(message.content || "");
     graceUpdateError.value = "";
     graceUpdateBusy.value = false;
     clearGraceUpdatePhoto();
+    graceUpdateImages.value = [...graceImages(message.payload)];
+    graceUpdateImageMessageId.value = gracePayload(message).imageMessageId || null;
   }
 
   function closeGraceUpdateEditor(force = false) {
@@ -203,15 +193,7 @@ export function useGrace(options: UseGraceOptions) {
     clearGraceUpdatePhoto();
   }
 
-  function handleGraceUpdatePhotoPick(event: Event) {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    clearGraceUpdatePhoto();
-    graceUpdatePhoto.value = file;
-    graceUpdatePhotoPreview.value = URL.createObjectURL(file);
-    graceUpdateError.value = "";
-  }
+  const handleGraceUpdatePhotoPick = updatePhotos.pick;
 
   async function publishGraceUpdate() {
     const message = pendingGraceUpdate.value;
@@ -220,17 +202,14 @@ export function useGrace(options: UseGraceOptions) {
     graceUpdateBusy.value = true;
     graceUpdateError.value = "";
     try {
-      let imageMessageId: number | null = null;
-      if (graceUpdatePhoto.value) {
-        const upload = await options.uploadFile(graceUpdatePhoto.value, { channelId: message.channelId, suppressAlert: true });
-        if (!upload.success || !upload.messageId) throw new Error("照片上传失败，请重试");
-        imageMessageId = upload.messageId;
-      }
-      const result = await api<{ success: boolean; message: MessageDTO }>(`/api/messages/${message.id}/grace-update`, {
+      const result = await api<{ success: boolean; message: MessageDTO; unchanged?: boolean }>(`/api/messages/${message.id}/grace-update`, {
         method: "POST",
-        body: JSON.stringify({ content, imageMessageId })
+        body: graceRequestBody({ content, imageMessageId: graceUpdateImageMessageId.value, retainedImages: graceUpdateImages.value.map((image) => image.fileName), expectedUpdateAt: gracePayload(message).latestUpdateAt || null }, updatePhotos.photos.value)
       });
-      if (result.message) options.onSubmitted(result.message);
+      if (result.message) {
+        if (result.unchanged) options.onUpdated?.(result.message);
+        else options.onSubmitted(result.message);
+      }
       closeGraceUpdateEditor(true);
       await nextTick();
       options.scrollBottom?.(true);
@@ -252,14 +231,19 @@ export function useGrace(options: UseGraceOptions) {
     graceBusy,
     graceError,
     graceContent,
-    gracePhoto,
-    gracePhotoPreview,
+    gracePhotos: composerPhotos.photos,
+    gracePhotoBusy: composerPhotos.photoBusy,
+    removeGracePhoto: composerPhotos.remove,
     graceCanSubmit,
     pendingGraceUpdate,
     graceUpdateContent,
     graceUpdateBusy,
     graceUpdateError,
-    graceUpdatePhotoPreview,
+    graceUpdatePhotos: updatePhotos.photos,
+    graceUpdatePhotoBusy: updatePhotos.photoBusy,
+    removeGraceUpdatePhoto: updatePhotos.remove,
+    graceUpdateImages,
+    graceUpdateImageMessageId,
     graceUpdateCanPublish,
     graceActionText,
     graceLatestTime,

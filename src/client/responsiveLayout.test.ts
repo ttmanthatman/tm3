@@ -65,7 +65,7 @@ test("narrow viewports always switch the chat shell to one column", () => {
 test("grace cards reuse prayer-card structure and expose the requested actions without the old footer", () => {
   assert.match(graceCard, /class="prayer-card grace-card"/);
   assert.match(graceCard, />为此感恩<\/button>/);
-  assert.match(graceCard, />更新见证<\/button>/);
+  assert.match(graceCard, />编辑卡片<\/button>/);
   assert.match(graceCard, />撤回<\/button>/);
   assert.doesNotMatch(graceCard, /收藏这一份恩典，也把盼望留给彼此/);
   assert.match(graceCard, /<RelatedVersesPanel/);

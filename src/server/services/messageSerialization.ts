@@ -117,6 +117,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       }
     }
     let payload: unknown = message.payload || undefined;
+    let content = message.content || "";
     const loadedReactions = message as typeof message & {
       likes?: Array<{ accountId: number; account: Pick<Account, "displayName" | "avatarPath"> }>;
       favorites?: Array<{ accountId: number }>;
@@ -222,10 +223,11 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
             ? (batch.grace.sourceMessages.get(sourceId) ?? null)
             : await prisma.message.findFirst({ where: { id: sourceId, channelId: message.channelId, type: "grace" } })
           : null;
+      if (sourceMessage) content = sourceMessage.content || "";
       const actionMessageId = sourceMessage?.id || message.id;
       const sourceRaw = gracePayloadRaw(sourceMessage?.payload);
       const displayRaw = sourceMessage
-        ? { ...raw, ...sourceRaw, sourceGraceMessageId: sourceMessage.id, latestUpdateAt: raw.latestUpdateAt, latestUpdateBy: raw.latestUpdateBy }
+        ? { ...raw, ...sourceRaw, sourceGraceMessageId: sourceMessage.id }
         : raw;
       const [actions, aiSuggestionRows, aiSuggestionSuccessCount] = batch?.grace
         ? [
@@ -326,7 +328,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         displayName: message.sender.displayName,
         avatarPath: message.sender.avatarPath
       },
-      content: message.content || "",
+      content,
       type: message.type,
       payload,
       fileName: message.fileName,

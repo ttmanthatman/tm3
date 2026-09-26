@@ -50,14 +50,15 @@ export function removeStoryComment(storyId: number, commentId: number) {
   return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${storyId}/comments/${commentId}`, { method: "DELETE" });
 }
 
-export async function prepareStoryPhoto(file: File, signal: AbortSignal): Promise<File> {
+export async function prepareStoryPhoto(file: File, signal: AbortSignal, preparation?: { url: string; data: unknown }): Promise<File> {
   // Browsers may give iPhone files an empty MIME type. Decode before showing
   // an <img>; never leave an unsupported original as a broken draft preview.
   const needsConversion = /\.(heic|heif|tiff?)$/i.test(file.name) || /image\/(heic|heif|tiff)/i.test(file.type);
   if (!needsConversion && await browserCanDecode(file, signal)) return file;
   const body = new FormData();
+  if (preparation) body.append("data", JSON.stringify(preparation.data));
   body.append("image", file);
-  const result = await api<{ base64: string; contentType: string }>("/api/stories/prepare-image", { method: "POST", body, signal });
+  const result = await api<{ base64: string; contentType: string }>(preparation?.url || "/api/stories/prepare-image", { method: "POST", body, signal });
   const bytes = Uint8Array.from(atob(result.base64), (char) => char.charCodeAt(0));
   const normalized = new File([bytes], `${file.name.replace(/\.[^.]+$/, "")}.webp`, { type: "image/webp" });
   if (!(await browserCanDecode(normalized, signal))) throw new Error("照片预览失败，请重新选择");

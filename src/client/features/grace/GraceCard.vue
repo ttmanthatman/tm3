@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import GracePhotos from "./GracePhotos.vue";
 import { computed } from "vue";
 import { Bell, CheckCircle2, Sparkles, Trash2 } from "lucide-vue-next";
 import type { AiSuggestionDTO, BibleLookupDTO, MessageDTO } from "@shared/types";
@@ -112,10 +113,12 @@ function avatarText(name: string) {
     >
       <img class="chat-image" :src="imageUrl" alt="恩典记录附带照片" loading="lazy" />
     </button>
+    <GracePhotos :message-id="message.id" :images="payload.images || []" />
     <div v-if="payload.updates?.length" class="prayer-updates grace-updates">
       <div v-for="(entry, index) in payload.updates" :key="index" class="prayer-update-entry">
         <small>{{ adminDate(entry.at) }}<template v-if="entry.by"> · {{ entry.by }}</template></small>
         <div class="prayer-text grace-card-text" v-html="entry.content"></div>
+        <GracePhotos :message-id="message.id" :images="entry.images || []" />
         <button v-if="entry.imageMessageId" class="image-preview-button prayer-image grace-card-photo" type="button" @click.stop="emit('open-image', entry.imageMessageId, $event)">
           <img class="chat-image" :src="imageUrlFor(entry.imageMessageId)" alt="历史见证附带照片" loading="lazy" />
         </button>
@@ -132,7 +135,7 @@ function avatarText(name: string) {
     </div>
     <div v-if="interactive" class="prayer-actions">
       <button class="mini-btn" @click.stop="emit('grateful')"><CheckCircle2 :size="15" />为此感恩</button>
-      <button v-if="canUpdate" class="mini-btn secondary" @click.stop="emit('update')"><Bell :size="15" />更新见证</button>
+      <button v-if="canUpdate" class="mini-btn secondary" @click.stop="emit('update')"><Bell :size="15" />编辑卡片</button>
       <button v-if="mine" class="mini-btn danger-soft" @click.stop="emit('withdraw')"><Trash2 :size="15" />撤回</button>
     </div>
     <RelatedVersesPanel

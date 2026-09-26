@@ -1,3 +1,5 @@
+import { saveGraceCard } from "./services/gracePersistence.js";
+import { graceImageFiles } from "../shared/grace.js";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -26,7 +28,7 @@ import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerStoryRoutes } from "./routes/stories.js";
 import { storyGender } from "../shared/stories.js";
-import { createGraceStory, createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
+import { createStoryService, prepareAccountStoryCleanup } from "./services/stories.js";
 import { createMessageSendIdempotency, messageSendRequestHash } from "./services/messageSendIdempotency.js";
 import { HANDWRITING_SEND_LIMITS, HANDWRITING_CONTENT, HandwritingValidationError } from "../shared/handwriting.js";
 import { prepareHandwritingMessage } from "./services/handwriting.js";
@@ -2523,7 +2525,7 @@ app.post("/api/channels/:id/icon", { preHandler: requireAuth }, async (request, 
 });
 
 async function deleteChannelWithAttachments(channelId: number) {
-  const messages = await prisma.message.findMany({ where: { channelId }, select: { id: true, filePath: true } });
+  const messages = await prisma.message.findMany({ where: { channelId }, select: { id: true, filePath: true, payload: true } });
   const messageIds = messages.map((message) => message.id);
   if (messageIds.length) {
     await prisma.message.updateMany({ where: { replyToId: { in: messageIds } }, data: { replyToId: null } });
@@ -2531,8 +2533,8 @@ async function deleteChannelWithAttachments(channelId: number) {
   await prisma.channel.delete({ where: { id: channelId } });
 
   for (const attachment of messages) {
-    if (!attachment.filePath) continue;
-    if (!(await uploadIsStillReferenced(attachment.filePath))) safeUnlink("upload", attachment.filePath);
+    const files = [...graceImageFiles(attachment.payload), ...(attachment.filePath ? [attachment.filePath] : [])];
+    for (const file of files) if (!(await uploadIsStillReferenced(file))) safeUnlink("upload", file);
   }
   io.emit("channel:updated", { action: "deleted", channelId });
 }
@@ -3913,7 +3915,9 @@ async function activePinnedUsesUpload(fileName: string) {
 
 async function uploadIsStillReferenced(fileName: string) {
   const target = path.basename(fileName);
-  return (await prisma.message.count({ where: { filePath: target } })) > 0 || (await activePinnedUsesUpload(target));
+  if ((await prisma.message.count({ where: { filePath: target } })) > 0 || (await activePinnedUsesUpload(target))) return true;
+  const cards = await prisma.message.findMany({ where: { type: "grace" }, select: { payload: true } });
+  return cards.some((card) => graceImageFiles(card.payload).includes(target));
 }
 
 
@@ -3921,6 +3925,8 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
   const ids = messages.map((message) => message.id);
   const channelIds = [...new Set(messages.map((message) => message.channelId))];
   if (!ids.length) return 0;
+  const graceCards = await prisma.message.findMany({ where: { id: { in: ids }, type: "grace" }, select: { payload: true } });
+  const graceFiles = new Set(graceCards.flatMap((card) => graceImageFiles(card.payload)));
   const scorePages = await prisma.musicScorePage.findMany({ where: { score: { trackId: { in: ids } } }, select: { filePath: true } });
   await prisma.$transaction([
     prisma.pinnedItem.updateMany({ where: { messageId: { in: ids } }, data: { active: false, messageId: null } }),
@@ -3933,6 +3939,7 @@ async function deleteMessages(messages: Array<Pick<Message, "id" | "channelId" |
   for (const message of messages) {
     if (message.filePath && !(await uploadIsStillReferenced(message.filePath))) safeUnlink("upload", message.filePath);
   }
+  for (const file of graceFiles) if (!(await uploadIsStillReferenced(file))) safeUnlink("upload", file);
   for (const page of scorePages) safeUnlinkMusicScore(page.filePath);
   for (const channelId of channelIds) io.to(`ch:${channelId}`).emit("messages:refresh", { channelId });
   if (await prisma.channel.count({ where: { id: { in: channelIds }, kind: "music" } })) io.emit("music:updated", { action: "deleted" });
@@ -4157,16 +4164,22 @@ registerTranscribeRoutes(app, {
 registerGraceRoutes(app, {
   prisma,
   requireAuth,
+  requireMediaAuth,
+  uploadDirectory: UPLOAD_DIR,
   canAccessChannel,
   canWriteChannel,
-  createMessageFromActor,
-  createStoryFromGrace: async (input) => {
-    const story = await createGraceStory(prisma, { stories: storyDirectory, uploads: UPLOAD_DIR }, input);
-    if (!story.created) return;
-    const audience = (await storyService.visibleAuthorAccountIds(input.accountId)).filter((accountId) => accountId !== input.accountId);
-    for (const accountId of audience) {
-      io.to(`acct:${accountId}`).emit("story:new", { storyId: story.id, createdAt: story.createdAt.toISOString() });
+  saveGrace: async (input, pushOrigin) => {
+    const saved = await saveGraceCard(prisma, { stories: storyDirectory, uploads: UPLOAD_DIR }, input);
+    await emitMessage(saved.message.id).catch((error) => app.log.error({ error, messageId: saved.message.id }, "grace broadcast failed"));
+    void sendMessagePush(saved.message.id, pushOrigin).catch((error) => app.log.warn({ error }, "message push failed"));
+    if (saved.story?.created && input.story) {
+      const story = saved.story;
+      const ownerId = input.story.accountId;
+      void storyService.visibleAuthorAccountIds(ownerId).then((audience) => {
+        for (const accountId of audience.filter((id) => id !== ownerId)) io.to(`acct:${accountId}`).emit("story:new", { storyId: story.id, createdAt: story.createdAt.toISOString() });
+      }).catch((error) => app.log.error({ error, storyId: story.id }, "grace story notification failed"));
     }
+    return { id: saved.message.id };
   },
   hydrateMessage,
   deleteMessages,
