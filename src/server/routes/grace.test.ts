@@ -420,3 +420,50 @@ test("a story sync failure leaves the original testimony unchanged", async () =>
     assert.equal(createdMessages.length, 0);
   } finally { await app.close(); }
 });
+
+test("independent grace voice streams support ranges and enforce channel access", async () => {
+  for (const allowed of [true, false]) {
+    const { app, sourceMessages, uploadDirectory } = createHarness({ canAccess: () => allowed });
+    const nativeVoice = { fileName: "00000000-0000-0000-0000-000000000001.m4a", durationMs: 1500, mimeType: "audio/mp4" };
+    sourceMessages.push(editableSource({ nativeVoice }));
+    fs.writeFileSync(path.join(uploadDirectory, nativeVoice.fileName), "0123456789");
+    try {
+      const response = await app.inject({ method: "GET", url: "/api/grace/31/voice" });
+      assert.equal(response.statusCode, allowed ? 200 : 403);
+      if (!allowed) continue;
+      assert.equal(response.headers["cache-control"], "private, no-store");
+      assert.equal(response.headers["content-type"], "audio/mp4");
+      for (const [range, text] of [["bytes=2-4", "234"], ["bytes=-3", "789"], ["bytes=8-", "89"]]) {
+        const partial = await app.inject({ method: "GET", url: "/api/grace/31/voice", headers: { range } });
+        assert.equal(partial.statusCode, 206);
+        assert.equal(partial.body, text);
+      }
+      for (const range of ["bytes=99-", "bytes=-", "bytes=-0", "bytes=4-2", "bytes=0-1,2-3"]) {
+        assert.equal((await app.inject({ method: "GET", url: "/api/grace/31/voice", headers: { range } })).statusCode, 416);
+      }
+      assert.equal((await app.inject({ method: "GET", url: "/api/grace/999/voice" })).statusCode, 404);
+      sourceMessages[0].payload = { nativeVoice: { fileName: "../private.m4a" } };
+      assert.equal((await app.inject({ method: "GET", url: "/api/grace/31/voice" })).statusCode, 404);
+    } finally { await app.close(); }
+  }
+});
+
+test("voice-only story cards retain native voice on edit and photo-only cards remain valid", async () => {
+  const { app, sourceMessages, updates, createdStories } = createHarness();
+  const nativeVoice = { fileName: "00000000-0000-0000-0000-000000000001.m4a", durationMs: 1500, mimeType: "audio/mp4" };
+  const image = { fileName: "00000000-0000-0000-0000-000000000002.webp", width: 8, height: 8 };
+  sourceMessages.push({ ...editableSource({ nativeVoice, sourceStoryId: 17 }), content: "" });
+  sourceMessages.push({ ...editableSource({ images: [image] }), id: 32, content: "" });
+  try {
+    assert.equal((await app.inject({ method: "POST", url: "/api/messages/31/grace-update", payload: { content: "补充见证" } })).statusCode, 200);
+    assert.deepEqual((updates[0].data.payload as Record<string, unknown>).nativeVoice, nativeVoice);
+    assert.equal((updates[0].data.payload as Record<string, unknown>).sourceStoryId, 17);
+    assert.equal(createdStories.length, 1);
+    const unchanged = await app.inject({ method: "POST", url: "/api/messages/32/grace-update", payload: { content: "" } });
+    assert.equal(unchanged.statusCode, 200);
+    assert.equal(unchanged.json().unchanged, true);
+    assert.equal((await app.inject({ method: "POST", url: "/api/messages/32/grace-update", payload: { content: "", retainedImages: [] } })).statusCode, 400);
+    const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: "red" } }).png().toBuffer();
+    assert.equal((await app.inject({ method: "POST", url: "/api/grace", ...photoUpload({ channelId: 7 }, [png]) })).statusCode, 200);
+  } finally { await app.close(); }
+});

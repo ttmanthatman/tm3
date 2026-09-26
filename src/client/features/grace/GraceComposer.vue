@@ -4,7 +4,7 @@ import { ref, type ComponentPublicInstance } from "vue";
 import AppModal from "../../components/ui/AppModal.vue";
 import type { useGrace } from "./useGrace";
 
-// 「记录恩典」提交弹窗：文字（可选）+ 录音 + 可选照片，文字或语音至少其一。
+// 「记录恩典」提交弹窗：文字、录音和照片至少有一项。
 // 交互模式复用 ComposerBar 的 voice-drawer；全部状态由 useGrace 持有。
 const props = defineProps<{
   grace: ReturnType<typeof useGrace>;

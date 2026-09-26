@@ -2,7 +2,7 @@ import { computed, nextTick, ref } from "vue";
 import type { GraceImage, GracePayload, MessageDTO } from "@shared/types";
 import { useGracePhotos } from "./useGracePhotos";
 import { graceEditText, graceRequestBody } from "./graceImages";
-import { graceImages } from "@shared/grace";
+import { graceImages, graceNativeVoice } from "@shared/grace";
 import { api } from "../../api";
 import { adminDate } from "../admin/adminFormat";
 import { escapeHtmlText } from "../messages/messageRendering";
@@ -32,6 +32,8 @@ export function gracePayload(message: MessageDTO): GracePayload {
   const raw = (message.payload || {}) as Partial<GracePayload>;
   return {
     kind: "grace",
+    sourceStoryId: raw.sourceStoryId,
+    nativeVoice: graceNativeVoice(raw),
     voiceMessageId: Number(raw.voiceMessageId || 0) > 0 ? Number(raw.voiceMessageId) : null,
     imageMessageId: Number(raw.imageMessageId || 0) > 0 ? Number(raw.imageMessageId) : null,
     images: graceImages(raw),
@@ -51,9 +53,9 @@ export function gracePayload(message: MessageDTO): GracePayload {
   };
 }
 
-// 纯语音也允许存入：文字与语音至少其一。
-export function graceSubmissionReady(content: string, hasVoice: boolean): boolean {
-  return !!content.trim() || hasVoice;
+// 文字、语音和照片至少有一项，包括转发来的纯媒体故事。
+export function graceSubmissionReady(content: string, hasVoice: boolean, hasPhotos = false): boolean {
+  return !!content.trim() || hasVoice || hasPhotos;
 }
 
 export function useGrace(options: UseGraceOptions) {
@@ -79,8 +81,10 @@ export function useGrace(options: UseGraceOptions) {
     uploadFile: (file, uploadOptions) => options.uploadFile(file, uploadOptions)
   });
 
-  const graceCanSubmit = computed(() => !composerPhotos.photoBusy.value && !recording.isRecording.value && graceSubmissionReady(graceContent.value, !!recording.audioFile.value));
-  const graceUpdateCanPublish = computed(() => !updatePhotos.photoBusy.value && graceSubmissionReady(graceUpdateContent.value, !!(pendingGraceUpdate.value && gracePayload(pendingGraceUpdate.value).voiceMessageId)));
+  const graceCanSubmit = computed(() => !composerPhotos.photoBusy.value && !recording.isRecording.value && graceSubmissionReady(graceContent.value, !!recording.audioFile.value, composerPhotos.photos.value.length > 0));
+  const graceUpdateCanPublish = computed(() => !updatePhotos.photoBusy.value && graceSubmissionReady(graceUpdateContent.value,
+    !!(pendingGraceUpdate.value && (gracePayload(pendingGraceUpdate.value).voiceMessageId || gracePayload(pendingGraceUpdate.value).nativeVoice)),
+    graceUpdateImages.value.length + updatePhotos.photos.value.length + (graceUpdateImageMessageId.value ? 1 : 0) > 0));
 
   function graceActionText(message: MessageDTO) {
     const payload = gracePayload(message);
@@ -122,8 +126,8 @@ export function useGrace(options: UseGraceOptions) {
     const voiceFile = recording.audioFile.value;
     const channelId = graceTargetChannelId.value;
     if (graceBusy.value || composerPhotos.photoBusy.value) return;
-    if (!graceSubmissionReady(content, !!voiceFile)) {
-      graceError.value = "写下一段文字或录一段语音，再存入恩典册";
+    if (!graceSubmissionReady(content, !!voiceFile, composerPhotos.photos.value.length > 0)) {
+      graceError.value = "写下文字、附上照片或录一段语音，再存入恩典册";
       return;
     }
     if (!channelId) {

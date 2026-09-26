@@ -104,6 +104,8 @@ export interface GraceImage {
 
 export interface GracePayload extends MessageEffectPayload {
   kind: "grace";
+  sourceStoryId?: number;
+  nativeVoice?: GraceVoice | null;
   sourceGraceMessageId?: number | null;
   latestUpdateAt?: string;
   latestUpdateBy?: string;
@@ -125,6 +127,12 @@ export interface GracePayload extends MessageEffectPayload {
   aiSuggestions?: AiSuggestionDTO[];
   aiSuggestionSuccessCount?: number;
   aiSuggestionMaxSuccess?: number;
+}
+
+export interface GraceVoice {
+  fileName: string;
+  durationMs: number | null;
+  mimeType: "audio/mp4";
 }
 
 export interface VoicePayload {

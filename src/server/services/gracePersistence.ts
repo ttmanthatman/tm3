@@ -8,6 +8,8 @@ export interface GraceSaveInput {
   actorId: number;
   content: string;
   payload: Prisma.InputJsonObject;
+  clientRequestId?: string;
+  clientRequestHash?: string;
   story?: Omit<GraceStoryInput, "graceMessageId">;
   source?: { id: number; content: string; payload: Prisma.JsonValue };
 }
@@ -32,6 +34,7 @@ export async function saveGraceCard(prisma: PrismaClient, directories: { stories
       }
       const message = await transaction.message.create({ data: {
         channelId: input.channelId, senderActorId: input.actorId, type: "grace", content: input.content,
+        clientRequestId: input.clientRequestId, clientRequestHash: input.clientRequestHash,
         payload: input.source ? { ...input.payload, sourceGraceMessageId: input.source.id } : input.payload
       } });
       const story = input.story ? await createGraceStory(transaction, directories, { ...input.story, graceMessageId: message.id }) : null;

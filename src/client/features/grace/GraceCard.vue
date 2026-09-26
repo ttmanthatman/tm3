@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import GracePhotos from "./GracePhotos.vue";
+import StoryVoice from "../stories/StoryVoice.vue";
+import { graceVoiceUrl } from "./graceImages";
 import { computed } from "vue";
 import { Bell, CheckCircle2, Sparkles, Trash2 } from "lucide-vue-next";
 import type { AiSuggestionDTO, BibleLookupDTO, MessageDTO } from "@shared/types";
@@ -104,6 +106,7 @@ function avatarText(name: string) {
       <InlineAudioPlayer :message="voiceMessage" :src="voiceSrc" />
       <VoiceTranscript :message="voiceMessage" />
     </div>
+    <StoryVoice v-else-if="payload.nativeVoice" :src="graceVoiceUrl(message.id)" :duration-ms="payload.nativeVoice.durationMs" label="恩典语音" />
     <button
       v-if="payload.imageMessageId"
       class="image-preview-button grace-card-photo"

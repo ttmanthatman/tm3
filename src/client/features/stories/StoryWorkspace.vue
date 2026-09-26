@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ArrowLeft, ArrowRight, Feather, Image, Trash2, BookOpen, RefreshCw, Pencil } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, Feather, Image, Trash2, BookOpen, RefreshCw, Pencil, Send } from "lucide-vue-next";
+import type { MessageDTO } from "@shared/types";
+import { useChatStore } from "../../store";
+import { useStoryGraceForward } from "./useStoryGraceForward";
+import StoryGraceForwardDialog from "./StoryGraceForwardDialog.vue";
 import { storyTitle, type StoryActivityDTO, type StoryAuthorDTO, type StoryDTO, type StoryInteractionsDTO, type StoryMediaDTO } from "@shared/stories";
 import AppModal from "../../components/ui/AppModal.vue";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
@@ -13,7 +17,18 @@ import { loadStoryFeed, loadStoryPage, markStoryActivityRead, removeStory, story
 type StoryWorkspaceMode = "feed" | "own" | "person";
 type DisplayStory = StoryDTO & { author?: StoryAuthorDTO };
 const props = withDefaults(defineProps<{ actorId: number; initialMode?: StoryWorkspaceMode; channelId?: number | null }>(), { initialMode: "person", channelId: null });
-const emit = defineEmits<{ close: []; activityRead: [activity: StoryActivityDTO] }>();
+const emit = defineEmits<{ close: []; activityRead: [activity: StoryActivityDTO]; viewGrace: [message: MessageDTO] }>();
+const store = useChatStore();
+const forwarding = useStoryGraceForward({
+  channels: () => store.channels,
+  currentChannelId: () => props.channelId,
+  onForwarded: (message) => {
+    const channel = store.channels.find((row) => row.id === message.channelId);
+    if (channel) channel.hasGraceItems = true;
+    store.appendLocalMessage(message);
+  }
+});
+const { forwardOpen, forwardBusy } = forwarding;
 const mode = ref<StoryWorkspaceMode>(props.initialMode);
 const author = ref<StoryAuthorDTO | null>(null);
 const stories = ref<DisplayStory[]>([]);
@@ -113,7 +128,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
 </script>
 
 <template>
-  <AppModal open :title="title" size="medium" content-class="story-workspace story-surface" close-label="关闭故事" @close="emit('close')">
+  <AppModal open :title="title" :busy="forwardBusy" size="medium" content-class="story-workspace story-surface" close-label="关闭故事" @close="emit('close')">
     <template #header><button type="button" class="story-back" aria-label="返回聊天" @click="emit('close')"><ArrowLeft :size="21" /></button><button v-if="canToggle" type="button" class="story-title-toggle" :aria-label="`${title}，点击切换`" @click="toggleMode"><strong>{{ title }}</strong></button><strong v-else>{{ title }}</strong></template>
     <div class="story-scroll">
       <template v-if="author">
@@ -141,8 +156,8 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
                   <span v-if="index === 2 && photos(story).length > 3" class="story-photo-more">+{{ photos(story).length - 3 }}</span>
                 </button>
               </div>
-              <StoryVoice v-if="voice(story) && !detail && !composerOpen && !image" :src="storyMediaUrl(voice(story)!.id)" :duration-ms="voice(story)!.durationMs" />
-              <div class="story-moment-footer"><button type="button" class="story-text-button" @click="detail = story">展开故事 <ArrowRight :size="13" /></button><button v-if="canDelete(story)" type="button" class="story-delete" aria-label="删除故事" @click="requestDelete(story)"><Trash2 :size="15" /></button></div>
+              <StoryVoice v-if="voice(story) && !detail && !composerOpen && !image && !forwardOpen" :src="storyMediaUrl(voice(story)!.id)" :duration-ms="voice(story)!.durationMs" />
+              <div class="story-moment-footer"><button type="button" class="story-text-button" @click="detail = story">展开故事 <ArrowRight :size="13" /></button><button v-if="canDelete(story)" type="button" class="story-text-button" @click="forwarding.open(story)"><Send :size="13" />转发为恩典卡片</button><button v-if="canDelete(story)" type="button" class="story-delete" aria-label="删除故事" @click="requestDelete(story)"><Trash2 :size="15" /></button></div>
               <StoryInteractions :story="story" @updated="updateInteractions(story.id, $event)" />
             </article>
           </li>
@@ -156,13 +171,14 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
     </div>
   </AppModal>
 
-  <AppModal v-if="detail" open title="故事详情" size="medium" content-class="story-detail story-surface" @close="detail = null">
+  <AppModal v-if="detail" open title="故事详情" :busy="forwardBusy" size="medium" content-class="story-detail story-surface" @close="detail = null">
     <div class="story-detail-body">
       <p class="story-muted">{{ storyAuthor(detail)?.displayName }} · {{ storyDate(detail.createdAt).full }}</p>
       <p class="story-detail-text">{{ detail.text }}</p>
       <div class="story-detail-photos"><button v-for="media in photos(detail)" :key="media.id" type="button" aria-label="放大故事照片" @click="openImage(detail, media)"><img :src="storyMediaUrl(media.id, true)" alt="故事照片" loading="lazy" /></button></div>
-      <StoryVoice v-if="voice(detail) && !image" :src="storyMediaUrl(voice(detail)!.id)" :duration-ms="voice(detail)!.durationMs" />
+      <StoryVoice v-if="voice(detail) && !image && !forwardOpen" :src="storyMediaUrl(voice(detail)!.id)" :duration-ms="voice(detail)!.durationMs" />
       <StoryInteractions :story="detail" @updated="updateInteractions(detail.id, $event)" />
+      <button v-if="canDelete(detail)" type="button" class="story-text-button" @click="forwarding.open(detail)"><Send :size="16" />转发为恩典卡片</button>
       <button v-if="canDelete(detail)" type="button" class="story-text-button" @click="requestDelete(detail)"><Trash2 :size="16" />删除这段故事</button>
     </div>
   </AppModal>
@@ -170,6 +186,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
   <AppModal v-if="image && imageMedia" open :title="`照片 ${image.index + 1} / ${photos(image.story).length}`" size="medium" content-class="story-lightbox story-surface" @close="image = null">
     <div class="story-lightbox-body"><img :src="storyMediaUrl(imageMedia.id)" alt="故事原图" /><nav aria-label="照片翻页"><button type="button" class="story-secondary-button" :disabled="image.index === 0" aria-label="上一张照片" @click="image.index--"><ArrowLeft :size="20" /></button><Image :size="18" /><button type="button" class="story-secondary-button" :disabled="image.index === photos(image.story).length - 1" aria-label="下一张照片" @click="image.index++"><ArrowRight :size="20" /></button></nav></div>
   </AppModal>
+  <StoryGraceForwardDialog :forwarding="forwarding" @view-card="emit('viewGrace', $event)" />
   <StoryComposer v-if="composerOpen" :channel-id="channelId" @close="composerOpen = false" @published="published" />
   <StoryProfileEditor v-if="profileOpen && author?.own" :bio="author.bio" @close="profileOpen = false" @saved="author.bio = $event; profileOpen = false" />
   <ConfirmDialog :open="!!deleteTarget" title="删除这段故事？" message="照片、语音和文字将一起删除，删除后无法恢复。" confirm-text="删除故事" danger :busy="deleteBusy" :error="deleteError" @close="deleteTarget = null" @confirm="confirmDelete" />

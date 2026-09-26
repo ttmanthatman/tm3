@@ -242,3 +242,24 @@ test("editing an older pushed card uses the latest source revision already recei
   assert.equal(grace.graceUpdateContent.value, "最新的见证");
   assert.equal(gracePayload(grace.pendingGraceUpdate.value!).latestUpdateAt, "2026-09-25");
 });
+
+test("photo-only and independent voice-only cards can be saved without adding text", async () => {
+  const { grace, requests } = createGraceHarness();
+  const image = { fileName: "00000000-0000-0000-0000-000000000001.webp", width: 8, height: 8 };
+  const nativeVoice = { fileName: "00000000-0000-0000-0000-000000000002.m4a", durationMs: 1500, mimeType: "audio/mp4" };
+  grace.openGraceUpdateEditor({ ...graceMessage(), content: "", payload: { kind: "grace", images: [image] } });
+  assert.equal(grace.graceUpdateCanPublish.value, true);
+  grace.graceUpdateImages.value = [];
+  assert.equal(grace.graceUpdateCanPublish.value, false);
+  grace.openGraceUpdateEditor({ ...graceMessage(), content: "", payload: { kind: "grace", nativeVoice, sourceStoryId: 17 } });
+  assert.equal(grace.graceUpdateCanPublish.value, true);
+  assert.equal(gracePayload(grace.pendingGraceUpdate.value!).sourceStoryId, 17);
+  await grace.publishGraceUpdate();
+  assert.ok(requests.some((request) => request.url.endsWith("/grace-update")));
+  grace.openGraceComposer();
+  const file = new File(["photo"], "photo.webp", { type: "image/webp" });
+  grace.gracePhotos.value = [{ file, url: URL.createObjectURL(file) }];
+  assert.equal(grace.graceCanSubmit.value, true);
+  await grace.submitGrace();
+  assert.ok(requests.some((request) => request.url.endsWith("/api/grace")));
+});

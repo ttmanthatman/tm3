@@ -6367,7 +6367,7 @@ const messageRowBindings = {
       </div>
     </section>
 
-    <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}:${storyInitialMode}`" :actor-id="storyActorId" :initial-mode="storyInitialMode" :channel-id="currentChannel?.id" @activity-read="store.applyStoryActivity" @close="storyActorId = null" />
+    <StoryWorkspace v-if="storyActorId && store.account" :key="`${store.account.id}:${storyActorId}:${storyInitialMode}`" :actor-id="storyActorId" :initial-mode="storyInitialMode" :channel-id="currentChannel?.id" @activity-read="store.applyStoryActivity" @view-grace="(message) => { storyActorId = null; void jumpToMessageInChannel(message.channelId, message.id); }" @close="storyActorId = null" />
 
     <HandwritingComposer
       :open="handwritingComposerOpen"

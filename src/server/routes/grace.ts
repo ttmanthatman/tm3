@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fas
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
-import { GRACE_IMAGE_LIMIT, GRACE_IMAGE_NAME, graceImages, graceImageFiles } from "../../shared/grace.js";
+import { GRACE_IMAGE_LIMIT, GRACE_IMAGE_NAME, graceImages, graceImageFiles, graceNativeVoice } from "../../shared/grace.js";
 import { readGraceUpload } from "../services/graceUploads.js";
 import { graceUpdateStoryText, prependGraceUpdateHistory } from "../services/graceUpdates.js";
 import type { GraceSaveInput } from "../services/gracePersistence.js";
@@ -107,6 +107,36 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
     return reply.send(fs.createReadStream(file));
   });
 
+  app.get("/api/grace/:messageId/voice", { preHandler: deps.requireMediaAuth }, async (request, reply) => {
+    const messageId = z.coerce.number().int().positive().safeParse((request.params as { messageId: string }).messageId);
+    if (!messageId.success) return reply.code(404).send({ message: "语音不存在" });
+    const message = await prisma.message.findUnique({ where: { id: messageId.data } });
+    if (!message || message.type !== "grace") return reply.code(404).send({ message: "语音不存在" });
+    if (!(await canAccessChannel((request as AuthedGraceRequest).auth.accountId, message.channelId))) return reply.code(403).send({ message: "无权查看语音" });
+    const source = await canonicalGraceMessage(message);
+    const voice = graceNativeVoice(source.payload);
+    if (!voice) return reply.code(404).send({ message: "语音不存在" });
+    const file = path.join(deps.uploadDirectory, voice.fileName);
+    let stat: fs.Stats;
+    try { stat = await fs.promises.stat(file); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return reply.code(404).send({ message: "语音不存在" });
+      throw error;
+    }
+    reply.header("Cache-Control", "private, no-store").header("X-Content-Type-Options", "nosniff").header("Accept-Ranges", "bytes").type(voice.mimeType);
+    if (request.headers.range) {
+      const match = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range);
+      const suffix = match && !match[1] ? Number(match[2]) : null;
+      const start = suffix !== null ? Math.max(0, stat.size - suffix) : match ? Number(match[1]) : NaN;
+      const end = match?.[1] && match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
+      if (!match || (!match[1] && !match[2]) || (suffix !== null && (!Number.isSafeInteger(suffix) || suffix <= 0))
+        || !Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start > end || start >= stat.size) {
+        return reply.code(416).header("Content-Range", `bytes */${stat.size}`).send();
+      }
+      return reply.code(206).header("Content-Range", `bytes ${start}-${end}/${stat.size}`).header("Content-Length", end - start + 1).send(fs.createReadStream(file, { start, end }));
+    }
+    return reply.header("Content-Length", stat.size).send(fs.createReadStream(file));
+  });
+
   app.get("/api/grace/favorites", { preHandler: requireAuth }, async (request) => {
     const auth = (request as AuthedGraceRequest).auth;
     const rows = await prisma.message.findMany({
@@ -162,7 +192,7 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
       if (!(await canWriteChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权在此频道发言" });
       const content = cleanText(body.content);
       const hasContent = !!content.replace(/<[^>]*>/g, "").trim() || /<br\s*\/?>/i.test(content);
-      if (!hasContent && !body.voiceMessageId) return reply.code(400).send({ success: false, message: "恩典内容不能为空" });
+      if (!hasContent && !body.voiceMessageId && !upload.images.length && !body.imageMessageId) return reply.code(400).send({ success: false, message: "恩典内容不能为空" });
       if (upload.images.length + (body.imageMessageId ? 1 : 0) > GRACE_IMAGE_LIMIT) return reply.code(400).send({ message: "最多附上 9 张照片" });
       const payload = { ...cleanGracePayload(body), ...(upload.images.length ? { images: upload.images } : {}) };
       if (payload.voiceMessageId && !(await isValidGraceVoiceMessage(payload.voiceMessageId, channelId))) {
@@ -221,9 +251,6 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
       if (sourceSender?.accountId !== auth.accountId && !auth.isAdmin) return reply.code(403).send({ success: false, message: "只有记录者可以更新此恩典见证" });
       const raw = gracePayloadRaw(source.payload);
       const content = cleanText(body.content);
-      if (!raw.voiceMessageId && !content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) {
-        return reply.code(400).send({ success: false, message: "恩典见证不能为空" });
-      }
       if (body.expectedUpdateAt !== undefined && body.expectedUpdateAt !== (raw.latestUpdateAt || null)) {
         return reply.code(409).send({ success: false, message: "这张恩典卡片已被更新，请重新打开编辑" });
       }
@@ -234,6 +261,9 @@ export function registerGraceRoutes(app: FastifyInstance, deps: GraceRouteDepend
       }
       const images = [...existingImages.filter((image) => retainedNames.includes(image.fileName)), ...upload.images];
       const newImageMessageId = body.imageMessageId === undefined ? Number(raw.imageMessageId || 0) : Number(body.imageMessageId || 0);
+      if (!raw.voiceMessageId && !graceNativeVoice(raw) && !images.length && !newImageMessageId && !content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) {
+        return reply.code(400).send({ success: false, message: "恩典见证不能为空" });
+      }
       if (images.length + (newImageMessageId > 0 ? 1 : 0) > GRACE_IMAGE_LIMIT) return reply.code(400).send({ success: false, message: "最多附上 9 张照片" });
       if (content === source.content && newImageMessageId === Number(raw.imageMessageId || 0) && images.map((image) => image.fileName).join() === existingImages.map((image) => image.fileName).join()) {
         return { success: true, message: await hydrateMessage(source.id, auth.accountId), unchanged: true };

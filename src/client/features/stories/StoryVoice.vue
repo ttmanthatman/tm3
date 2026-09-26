@@ -2,7 +2,7 @@
 import { onBeforeUnmount, ref } from "vue";
 import { Pause, Play, AudioLines } from "lucide-vue-next";
 import { getSharedExclusiveAudio } from "../audio/messageAudioPlayback";
-const props = defineProps<{ src: string; durationMs?: number | null }>();
+const props = withDefaults(defineProps<{ src: string; durationMs?: number | null; label?: string }>(), { label: "故事语音" });
 const audio = ref<HTMLAudioElement | null>(null);
 const playing = ref(false);
 const progress = ref(0);
@@ -37,11 +37,13 @@ onBeforeUnmount(() => { pause(); coordinator.unregister(id); });
   <div class="story-voice-group">
     <div class="story-voice">
       <audio ref="audio" :src="src" preload="none" @timeupdate="time" @ended="ended" @error="error = '语音暂时无法播放，请重试'" />
-      <button type="button" class="story-voice-play" :aria-label="playing ? '暂停故事语音' : '播放故事语音'" @click="toggle"><Pause v-if="playing" :size="20" /><Play v-else :size="20" /></button>
+      <button type="button" class="story-voice-play" :aria-label="`${playing ? '暂停' : '播放'}${label}`" @click="toggle"><Pause v-if="playing" :size="20" /><Play v-else :size="20" /></button>
       <AudioLines :size="26" aria-hidden="true" />
-      <input type="range" min="0" max="1" step="0.01" :value="progress" aria-label="故事语音进度" @input="seek" />
+      <input type="range" min="0" max="1" step="0.01" :value="progress" :aria-label="`${label}进度`" @input="seek" />
       <span>{{ duration() }}</span>
     </div>
     <p v-if="error" class="story-error" role="alert">{{ error }}</p>
   </div>
 </template>
+
+<style src="./stories.css"></style>

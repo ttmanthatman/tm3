@@ -1,5 +1,12 @@
 import { api, getToken } from "../../api";
 import type { StoryActivityDTO, StoryDTO, StoryFeedPageDTO, StoryInteractionsDTO, StoryPageDTO } from "@shared/stories";
+import type { MessageDTO } from "@shared/types";
+
+export function forwardStoryGrace(storyId: number, channelId: number, clientRequestId: string, signal: AbortSignal) {
+  return api<{ success: true; message: MessageDTO }>(`/api/stories/${storyId}/forward-grace`, {
+    method: "POST", body: JSON.stringify({ channelId, clientRequestId }), signal
+  });
+}
 
 export function loadStoryPage(actorId: number, before?: number | null, signal?: AbortSignal) {
   return api<StoryPageDTO>(`/api/stories?actorId=${actorId}${before ? `&before=${before}` : ""}`, { signal });

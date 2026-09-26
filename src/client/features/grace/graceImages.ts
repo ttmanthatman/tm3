@@ -4,6 +4,10 @@ export function graceImageUrl(messageId: number, fileName: string) {
   return `/api/grace/${messageId}/images/${encodeURIComponent(fileName)}?token=${encodeURIComponent(getToken())}`;
 }
 
+export function graceVoiceUrl(messageId: number) {
+  return `/api/grace/${messageId}/voice?token=${encodeURIComponent(getToken())}`;
+}
+
 export function graceEditText(html: string) {
   if (!/[<&]/.test(html)) return html;
   const element = document.createElement("div");

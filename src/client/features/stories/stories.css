@@ -57,7 +57,7 @@
 .story-voice input { flex: 1; width: 0; min-width: 20px; accent-color: #678662; }
 .story-voice > span { font-size: 13px; font-variant-numeric: tabular-nums; }
 .story-voice > svg { flex-shrink: 0; }
-.story-moment-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 7px; }
+.story-moment-footer { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; align-items: center; margin-top: 7px; }
 .story-text-button, .story-delete { border: 0; background: none; color: #6b7e61; display: inline-flex; align-items: center; gap: 6px; padding: 8px 0; font-size: 12px !important; min-height: 34px; }
 .story-delete { padding: 8px; }
 .story-interactions { margin-top: 10px; border-radius: 7px; overflow: hidden; background: #f0f2ec; color: var(--story-ink); }
