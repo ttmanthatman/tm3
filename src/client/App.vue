@@ -2940,7 +2940,7 @@ async function restoreChatSurface() {
   reconcileReadPositionAfterLayout();
 }
 
-async function jumpToMessageInChannel(channelId: number, messageId: number) {
+async function jumpToMessageInChannel(channelId: number, messageId: number, centerMissingMessage = false) {
   pendingMessageJumpId = messageId;
   readPositionRestoreToken += 1;
   activeReadAnchor = null;
@@ -2956,11 +2956,19 @@ async function jumpToMessageInChannel(channelId: number, messageId: number) {
     showBibleFavorites.value = false;
     showChannels.value = false;
     await nextTick();
+    if (centerMissingMessage && !store.messages.some((message) => message.id === messageId)) {
+      await store.loadMessageWindowAround(messageId);
+      await nextTick();
+    }
     await jumpToReply(messageId);
   } finally {
     pendingMessageJumpId = null;
     pendingReadPositionRestore.value = false;
   }
+}
+
+async function jumpToSearchMessage(channelId: number, messageId: number) {
+  await jumpToMessageInChannel(channelId, messageId, true);
 }
 
 async function openTopNotice(notice: TopNotice) {
@@ -4869,7 +4877,8 @@ const chatHeaderBindings = computed(() => ({
   toggleMessageSelectionMode,
   loadAdmin,
   openPinnedFromTicker,
-  openPinnedEditor
+  openPinnedEditor,
+  jumpToMessageInChannel: jumpToSearchMessage
 }));
 const composerBindings = computed(() => ({
   selectedMusicMention: selectedMusicMention.value,

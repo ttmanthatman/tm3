@@ -48,6 +48,7 @@ import { registerAdminUpdateRoutes, UPDATE_REPO_URL } from "./routes/adminUpdate
 import { registerAiSettingsRoutes } from "./routes/aiSettings.js";
 import { registerGraceRoutes } from "./routes/grace.js";
 import { registerTranscribeRoutes } from "./routes/transcribe.js";
+import { registerMessageSearchRoutes } from "./routes/messageSearch.js";
 import { createMimoAsrService } from "./mimoAsr.js";
 import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
 import { registerAuthRoutes } from "./routes/auth.js";
@@ -4162,6 +4163,8 @@ registerTranscribeRoutes(app, {
   hydrateMessage,
   isVoiceMessage
 });
+
+registerMessageSearchRoutes(app, { prisma, requireAuth });
 
 registerStoryGraceRoutes(app, {
   prisma, requireAuth, directories: { stories: storyDirectory, uploads: UPLOAD_DIR },

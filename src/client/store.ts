@@ -710,6 +710,47 @@ export const useChatStore = defineStore("chat", {
         if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly, graceOnly)) this.loadingNewerMessages = false;
       }
     },
+    async loadMessageWindowAround(messageId: number) {
+      if (!this.currentChannelId || messageId <= 0) return false;
+      const channelId = this.currentChannelId;
+      const prayerOnly = this.prayerOnly;
+      const graceOnly = this.graceOnly;
+      invalidateMessageWindowRequests();
+      const ticket = beginMessageWindowRequest("initial");
+      const knownIds = new Set(this.messages.map((message) => message.id));
+      this.loading = true;
+      this.loadingInitialMessages = true;
+      this.messageLoadError = "";
+      try {
+        const [older, newer] = await Promise.all([
+          api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, graceOnly, { before: messageId + 1 })),
+          api<{ messages: MessageDTO[] }>(this.messageQuery(channelId, prayerOnly, graceOnly, { after: messageId }))
+        ]);
+        if (!this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly, graceOnly)) return false;
+        if (!older.messages.some((message) => message.id === messageId)) return false;
+        const receivedDuringLoad = this.messages.filter((message) => !knownIds.has(message.id));
+        this.messages = this.dedupeMessages([...older.messages, ...newer.messages, ...receivedDuringLoad]);
+        this.prefetchedOlderMessages = [];
+        this.hasOlderMessages = older.messages.length >= MESSAGE_PAGE_SIZE;
+        this.hasNewerMessages = newer.messages.length >= MESSAGE_PAGE_SIZE;
+        this.oldestMessageReached = !this.hasOlderMessages;
+        invalidateMessageWindowKind("prefetch");
+        this.prefetchingOlderMessages = false;
+        this.cacheCurrentMessages();
+        if (this.hasOlderMessages) void this.prefetchOlderMessages();
+        return true;
+      } catch (error) {
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly, graceOnly)) {
+          this.messageLoadError = error instanceof Error ? error.message : "消息加载失败";
+        }
+        return false;
+      } finally {
+        if (this.isMessageWindowTicketCurrent(ticket, channelId, prayerOnly, graceOnly)) {
+          this.loading = false;
+          this.loadingInitialMessages = false;
+        }
+      }
+    },
     appendLocalMessage(message: MessageDTO) {
       if (message.channelId !== this.currentChannelId || (this.prayerOnly && message.type !== "prayer") || (this.graceOnly && message.type !== "grace")) return;
       if (this.messages.some((row) => row.id === message.id)) return;

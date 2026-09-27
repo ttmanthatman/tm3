@@ -225,6 +225,33 @@ function installFetchMock() {
   return { gates, restore: () => { globalThis.fetch = originalFetch; } };
 }
 
+test("store can load a timeline window directly around an older search result", async () => {
+  storage.clear();
+  seedSession(1);
+  const { gates, restore } = installFetchMock();
+  try {
+    const store = freshStore();
+    store.channels = [channel(1)];
+    store.currentChannelId = 1;
+    store.messages = [message(900), message(901)];
+    const load = store.loadMessageWindowAround(100);
+    await waitFor(() => gates.length === 2, "centered message pages");
+    const before = gates.find((entry) => entry.url.includes("before=101"));
+    const after = gates.find((entry) => entry.url.includes("after=100"));
+    assert.ok(before);
+    assert.ok(after);
+    before.gate.resolve(jsonResponse({ messages: [message(98), message(99), message(100)] }));
+    after.gate.resolve(jsonResponse({ messages: [message(101), message(102)] }));
+    assert.equal(await load, true);
+    assert.deepEqual(store.messages.map((row) => row.id), [98, 99, 100, 101, 102]);
+    assert.equal(store.messages.some((row) => row.id === 900), false);
+    assert.equal(store.hasOlderMessages, false);
+    assert.equal(store.hasNewerMessages, false);
+  } finally {
+    restore();
+  }
+});
+
 function messageGates(gates: MessageGate[], channelId: number, prayers: boolean) {
   return gates.filter((entry) => entry.url.includes(`channelId=${channelId}`) && entry.url.includes("prayers=1") === prayers && (prayers || !entry.url.includes("grace=1")) && !entry.url.includes("before=") && !entry.url.includes("after="));
 }

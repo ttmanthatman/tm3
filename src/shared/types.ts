@@ -168,6 +168,25 @@ export interface MessageDTO {
   relayMentions?: string[];
 }
 
+export interface MessageSearchResultDTO {
+  id: number;
+  channelId: number;
+  channelName: string;
+  senderName: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface MessageSearchCursorDTO {
+  id: number;
+  createdAt: string;
+}
+
+export interface MessageSearchPageDTO {
+  results: MessageSearchResultDTO[];
+  nextCursor: MessageSearchCursorDTO | null;
+}
+
 export interface ChatRecordItemDTO {
   senderName: string;
   senderAvatarPath?: string | null;

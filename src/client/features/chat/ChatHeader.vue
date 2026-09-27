@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount } from "vue";
+import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
 import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
   Ellipsis,
   Library,
+  Search,
   PanelLeftOpen,
   Pin,
   Sparkles,
@@ -14,11 +15,12 @@ import {
   Users,
   X
 } from "lucide-vue-next";
-import type { ChannelDTO, MusicPlaylistDTO, MusicTrackDTO, PinnedDTO } from "@shared/types";
+import type { ChannelDTO, MessageSearchResultDTO, MusicPlaylistDTO, MusicTrackDTO, PinnedDTO } from "@shared/types";
 import OverflowMarquee from "../../components/OverflowMarquee.vue";
 import ActivityTicker from "../../components/ActivityTicker.vue";
 import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
+import MessageSearchWindow from "./MessageSearchWindow.vue";
 import SermonHub from "../sermon/SermonHub.vue";
 import type { MusicPlayer } from "../music/useMusicPlayer";
 import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
@@ -91,7 +93,19 @@ const props = defineProps<{
   loadAdmin: () => void;
   openPinnedFromTicker: () => void;
   openPinnedEditor: () => void;
+  jumpToMessageInChannel: (channelId: number, messageId: number) => void | Promise<void>;
 }>();
+
+const messageSearchOpen = ref(false);
+
+function openMessageSearch() {
+  messageSearchOpen.value = true;
+  props.toggleChatToolsMenu();
+}
+
+function jumpToSearchResult(result: MessageSearchResultDTO) {
+  void props.jumpToMessageInChannel(result.channelId, result.id);
+}
 
 let storyHoldTimer: number | null = null;
 let storyLongPressed = false;
@@ -218,12 +232,19 @@ onBeforeUnmount(clearStoryHold);
           <output :aria-label="`当前消息字号 ${messageFontSize} 像素`" aria-live="polite">{{ messageFontSize }}</output>
           <button type="button" :disabled="messageFontSize >= maxMessageFontSize" aria-label="增大消息字体" @click="adjustMessageFontSize(1)">大</button>
         </div>
+        <AppMenuItem @click="openMessageSearch"><Search :size="17" /><span>查找聊天记录</span></AppMenuItem>
         <AppMenuItem @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></AppMenuItem>
         <AppMenuItem :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
         <AppMenuItem v-if="isAdmin" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></AppMenuItem>
       </AppMenu>
     </div>
   </header>
+
+  <MessageSearchWindow
+    v-if="messageSearchOpen"
+    @close="messageSearchOpen = false"
+    @jump="jumpToSearchResult"
+  />
 
   <section
     v-if="!showingFavoriteSurface && (visiblePinned || activityTickerText)"
