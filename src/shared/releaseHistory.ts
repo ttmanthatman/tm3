@@ -1086,11 +1086,22 @@ const RELEASE_2_4_3_NOTES = [
   "手机触屏的笔锋放大镜移到字格外左上方；当前字格新增一键清空。毛笔速度响应、笔头滞后及光晕参数改由管理员全局设置，个人仍可选择笔粗和是否启用光晕。"
 ] as const
 
+const RELEASE_2_4_4_NOTES = [
+  "数算恩典支持多张照片、照片预览与编辑历史，编辑内容增量同步到我的故事。",
+  "我的故事中的本人故事可转发到聊天室或私聊成为恩典卡片，发送前可预览并选择目标，发送后可直接查看卡片。",
+  "转发卡片保留故事的全部照片和语音，独立保存媒体，删除互不影响，失败重试不会重复发布。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.4.5",
+    date: "2026-09-27",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.4.4",
     date: "2026-09-27",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_4_4_NOTES
   },
   {
     version: "2.4.3",
