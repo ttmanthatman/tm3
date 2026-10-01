@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ArrowLeft, ArrowRight, Feather, Image, Trash2, BookOpen, RefreshCw, Pencil, Send } from "lucide-vue-next";
+import { ArrowLeft, ArrowRight, Feather, Trash2, BookOpen, RefreshCw, Pencil, Send } from "lucide-vue-next";
 import type { MessageDTO } from "@shared/types";
 import { useChatStore } from "../../store";
 import { useStoryGraceForward } from "./useStoryGraceForward";
@@ -11,6 +11,7 @@ import AvatarImage from "../../components/ui/AvatarImage.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import StoryComposer from "./StoryComposer.vue";
 import StoryVoice from "./StoryVoice.vue";
+import StoryPhotoViewer from "./StoryPhotoViewer.vue";
 import StoryProfileEditor from "./StoryProfileEditor.vue";
 import StoryInteractions from "./StoryInteractions.vue";
 import { loadStoryFeed, loadStoryPage, markStoryActivityRead, removeStory, storyDate, storyMediaUrl } from "./storyClient";
@@ -184,7 +185,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
   </AppModal>
 
   <AppModal v-if="image && imageMedia" open :title="`照片 ${image.index + 1} / ${photos(image.story).length}`" size="medium" content-class="story-lightbox story-surface" @close="image = null">
-    <div class="story-lightbox-body"><img :src="storyMediaUrl(imageMedia.id)" alt="故事原图" /><nav aria-label="照片翻页"><button type="button" class="story-secondary-button" :disabled="image.index === 0" aria-label="上一张照片" @click="image.index--"><ArrowLeft :size="20" /></button><Image :size="18" /><button type="button" class="story-secondary-button" :disabled="image.index === photos(image.story).length - 1" aria-label="下一张照片" @click="image.index++"><ArrowRight :size="20" /></button></nav></div>
+    <div class="story-lightbox-body"><StoryPhotoViewer :src="storyMediaUrl(imageMedia.id)" /><nav aria-label="照片翻页"><button type="button" class="story-secondary-button" :disabled="image.index === 0" aria-label="上一张照片" @click="image.index--"><ArrowLeft :size="20" /></button><button type="button" class="story-secondary-button" :disabled="image.index === photos(image.story).length - 1" aria-label="下一张照片" @click="image.index++"><ArrowRight :size="20" /></button></nav></div>
   </AppModal>
   <StoryGraceForwardDialog :forwarding="forwarding" @view-card="emit('viewGrace', $event)" />
   <StoryComposer v-if="composerOpen" :channel-id="channelId" @close="composerOpen = false" @published="published" />

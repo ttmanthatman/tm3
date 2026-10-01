@@ -44,13 +44,9 @@
 .story-feed-author strong { color: #526b4d; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .story-feed-author small { color: var(--story-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .story-caption { border: 0; background: none; color: var(--story-ink); text-align: left; padding: 0; margin: 0 0 12px; line-height: 1.55; font-size: var(--message-content-font-size) !important; font-weight: 400 !important; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.story-photos { display: flex; gap: 4px; margin-bottom: 12px; }
-.story-photos button { position: relative; display: block; flex: 1; min-width: 0; height: 135px; padding: 0; border: 0; background: #eeeee7; border-radius: 3px; overflow: hidden; }
-.story-photos button:first-child { flex: 1.45; }
-.story-photos img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.story-photos.single { display: block; }
-.story-photos.single button { width: fit-content; max-width: 100%; height: auto; background: transparent; }
-.story-photos.single img { width: auto; max-width: 100%; height: auto; max-height: 310px; }
+.story-photos, .story-detail-photos { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain; margin-bottom: 12px; }
+.story-photos button, .story-detail-photos button { position: relative; display: block; flex: 0 0 auto; height: 202.5px; padding: 0; border: 0; background: transparent; border-radius: 3px; overflow: hidden; }
+.story-photos img, .story-detail-photos img { display: block; width: auto; height: 100%; }
 .story-photo-more { position: absolute; inset: 0; display: grid; place-items: center; background: #14231380; color: white; font-size: 20px; }
 .story-voice { background: #eef0e9; border-radius: 10px; display: flex; gap: 11px; align-items: center; padding: 9px 12px; color: #688361; min-width: 0; }
 .story-voice-play { flex: 0 0 36px; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: #678662; color: white; }
@@ -120,15 +116,9 @@
 .story-detail.app-modal-medium, .story-lightbox.app-modal-medium { display: flex; flex-direction: column; }
 .story-detail-body { padding: 12px 24px 28px; overflow-y: auto; }
 .story-detail-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: var(--message-content-font-size); }
-.story-detail-photos { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; margin: 18px 0; }
-.story-detail-photos button { border: 0; padding: 0; background: none; }
-.story-detail-photos img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 4px; }
-.story-detail-photos:has(> :only-child) { display: block; }
-.story-detail-photos:has(> :only-child) button { display: block; width: fit-content; max-width: 100%; }
-.story-detail-photos:has(> :only-child) img { display: block; width: auto; max-width: 100%; height: auto; aspect-ratio: auto; max-height: 440px; }
-.story-lightbox-body { min-height: 0; display: flex; flex-direction: column; padding: 10px; }
-.story-lightbox-body > img { min-height: 0; max-height: 65dvh; max-width: 100%; object-fit: contain; }
-.story-lightbox-body nav { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; }
+.story-detail-photos { margin: 18px 0; }
+.story-lightbox-body { min-height: 0; display: flex; flex: 1; flex-direction: column; padding: 10px; }
+.story-lightbox-body nav { display: flex; flex-shrink: 0; justify-content: space-between; align-items: center; margin-top: 12px; }
 @media (max-width: 640px) {
   .modal-shell:has(> .story-surface) { padding: 0; }
   .story-workspace.app-modal-medium, .story-composer.small-modal, .story-detail.app-modal-medium, .story-lightbox.app-modal-medium { width: 100%; height: var(--app-height, 100dvh); max-height: var(--app-height, 100dvh); border-radius: 0; padding-top: var(--safe-top, 0px); padding-bottom: var(--safe-bottom, 0px); }
@@ -148,8 +138,7 @@
   .story-moment-content { padding: 0 0 23px 16px; }
   .story-caption { margin-bottom: 9px; }
   .story-photos { gap: 3px; margin-bottom: 9px; }
-  .story-photos button { height: 76px; }
-  .story-photos.single img, .story-photos.single button { max-height: 240px; }
+  .story-photos button, .story-detail-photos button { height: 114px; }
   .story-voice { padding: 7px 9px; gap: 7px; }
   .story-voice-play { width: 32px; height: 32px; flex-basis: 32px; }
   .story-voice > svg { width: 19px; }

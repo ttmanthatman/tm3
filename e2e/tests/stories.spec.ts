@@ -74,8 +74,23 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   expect(own.media).toHaveLength(4);
   await page.getByRole("button", { name: "查看照片 1，共 3 张" }).click();
   await expect(page.getByRole("dialog", { name: "照片 1 / 3" })).toBeVisible();
+  const zoom = page.locator(".story-photo-zoom");
+  const fitted = await zoom.boundingBox();
+  await zoom.click();
+  await expect(zoom).toHaveAttribute("aria-pressed", "true");
+  const enlarged = await zoom.boundingBox();
+  expect(enlarged!.width / fitted!.width).toBeCloseTo(2, 1);
+  expect(enlarged!.height / fitted!.height).toBeCloseTo(2, 1);
+  expect(await page.locator(".story-photo-viewport").evaluate((el) => el.scrollWidth > el.clientWidth && el.scrollHeight > el.clientHeight)).toBeTruthy();
+  await page.getByRole("button", { name: "还原故事照片" }).last().click();
+  await expect(zoom).toHaveAttribute("aria-pressed", "false");
+  await zoom.focus();
+  await page.keyboard.press("Enter");
+  await expect(zoom).toHaveAttribute("aria-pressed", "true");
   await page.getByRole("button", { name: "下一张照片" }).click();
   await expect(page.getByRole("dialog", { name: "照片 2 / 3" })).toBeVisible();
+  await expect(zoom).toHaveAttribute("aria-pressed", "false");
+  expect(await page.locator(".story-photo-viewport").evaluate((el) => el.scrollLeft === 0 && el.scrollTop === 0)).toBeTruthy();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "照片 2 / 3" })).toBeHidden();
 
@@ -83,8 +98,37 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
     await page.setViewportSize({ width, height: width === 1280 ? 900 : 844 });
     await expect(page.getByRole("button", { name: "关闭故事" })).toBeVisible();
     expect(await page.locator(".story-workspace").evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBeTruthy();
+    const thumbnails = page.locator(".story-photos img");
+    await expect.poll(() => thumbnails.evaluateAll((images) => images.every((img) => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0))).toBeTruthy();
+    const sizes = await thumbnails.evaluateAll((images) => images.map((element) => {
+      const img = element as HTMLImageElement;
+      const box = img.getBoundingClientRect();
+      return { height: box.height, ratio: box.width / box.height, natural: img.naturalWidth / img.naturalHeight };
+    }));
+    for (const size of sizes) {
+      expect(size.height).toBeCloseTo(width <= 640 ? 114 : 202.5, 1);
+      expect(size.ratio).toBeCloseTo(size.natural, 1);
+    }
+    if ([360, 390, 1280].includes(width)) {
+      await page.getByRole("button", { name: "查看照片 1，共 3 张" }).click();
+      await zoom.click();
+      await expect(zoom).toHaveAttribute("aria-pressed", "true");
+      await expect(page.getByRole("button", { name: "下一张照片" })).toBeInViewport();
+      await expect(page.getByRole("dialog", { name: "照片 1 / 3" }).getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+      await page.screenshot({ path: `output/e2e/stories-zoom-${width}.png` });
+      await page.keyboard.press("Escape");
+    }
     await page.screenshot({ path: `output/e2e/stories-${width}.png` });
   }
+  await page.getByRole("button", { name: "我的故事，点击切换" }).click();
+  await expect(page.getByRole("dialog", { name: "我们的故事" })).toBeVisible();
+  await page.getByRole("button", { name: "查看照片 1，共 3 张" }).click();
+  await expect(zoom).toHaveAttribute("aria-pressed", "false");
+  await zoom.click();
+  await expect(zoom).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "我们的故事，点击切换" }).click();
+  await expect(page.getByRole("dialog", { name: "我的故事" })).toBeVisible();
   await page.getByRole("button", { name: "展开故事" }).click();
   await expect(page.getByRole("dialog", { name: "故事详情" })).toBeVisible();
   await page.keyboard.press("Escape");
