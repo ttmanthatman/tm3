@@ -1096,11 +1096,21 @@ const RELEASE_2_4_5_NOTES = [
   "聊天管理菜单新增跨频道聊天记录搜索，支持关键词高亮、结果跳转、分页，以及可最小化和恢复的搜索浮窗。"
 ] as const
 
+const RELEASE_2_4_6_NOTES = [
+  "我的故事和我们的故事照片支持点击放大、还原及滚动查看细节，翻页自动还原。",
+  "故事照片缩略图保留原图比例、统一高度并增加 50%，超出一行时可横向滑动。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.0",
+    date: "2026-10-03",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.4.6",
     date: "2026-10-01",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_4_6_NOTES
   },
   {
     version: "2.4.5",
