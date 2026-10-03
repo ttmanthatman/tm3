@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
+import { HANDWRITING_DEFAULT_BRUSH_ALGORITHM } from "../../src/shared/handwriting.js";
 
 type Account = { username: string; password: string };
 
@@ -367,6 +368,45 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
     clientY: desktopCanvas!.y + desktopCanvas!.height * 0.3
   });
   await expect(mirror).toBeHidden();
+});
+
+test("毛笔算法和颜色保存后保持选择并在刷新后恢复", async ({ page }) => {
+  await blockPublicNetwork(page);
+  await login(page, E2E_MEMBER);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    const dialog = await openHandwritingComposer(page);
+    await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+    await dialog.getByText("毛笔参数", { exact: true }).click();
+    const algorithm = dialog.getByLabel("毛笔算法");
+    for (const value of ["slanted", "follow"] as const) {
+      const saved = page.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.algorithm === value && response.ok());
+      await algorithm.selectOption(value);
+      await saved;
+      await expect(algorithm).toHaveValue(value);
+    }
+    const resetSaved = page.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.algorithm === HANDWRITING_DEFAULT_BRUSH_ALGORITHM && response.ok());
+    await dialog.getByRole("button", { name: "恢复默认参数", exact: true }).click();
+    await resetSaved;
+    await expect(algorithm).toHaveValue(HANDWRITING_DEFAULT_BRUSH_ALGORITHM);
+    const followSaved = page.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.algorithm === "follow" && response.ok());
+    await algorithm.selectOption("follow");
+    await followSaved;
+    await expect(algorithm).toHaveValue("follow");
+    const colorSaved = page.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.selectedIndex === 5 && response.ok());
+    await dialog.getByRole("button", { name: "选择紫色", exact: true }).click();
+    await colorSaved;
+    await expect(algorithm).toHaveValue("follow");
+    await expect(dialog.getByRole("button", { name: "选择紫色", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(dialog.locator(".handwriting-status")).not.toContainText("保存失败");
+    await page.reload();
+    await expect.poll(() => connectionState(page)).toBe("connected");
+    const restored = await openHandwritingComposer(page);
+    await restored.getByText("毛笔参数", { exact: true }).click();
+    await expect(restored.getByLabel("毛笔算法")).toHaveValue("follow");
+    await expect(restored.getByRole("button", { name: "选择紫色", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await restored.getByRole("button", { name: "关闭", exact: true }).click();
+  }
 });
 
 test("两账号真实收发、刷新静态、手动重播、重连与撤回", async ({ browser }) => {

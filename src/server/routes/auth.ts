@@ -265,6 +265,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
               size: z.number().int().min(0).max(100),
               sensitivity: z.number().int().min(0).max(100),
               lag: z.number().int().min(0).max(100),
+              rotationLag: z.number().int().min(0).max(100).optional(),
               algorithm: z.enum(["follow", "slanted"]).optional()
             }).strict().optional(),
             strokeColors: z.array(z.string()).length(7).optional(),
