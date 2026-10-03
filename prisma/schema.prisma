@@ -51,6 +51,7 @@ enum MessageType {
   sermon_request
   why_topic_card
   bible_session
+  bible_copywork
   chat_record
   handwriting
   system
@@ -124,6 +125,7 @@ model Account {
   pinnedSeens             PinnedSeen[]
   messageLikes            MessageLike[]
   messageFavorites        MessageFavorite[]
+  bibleCopyworks          BibleCopywork[]
   bibleFavorites          BibleFavorite[]
   musicFavorites          MusicFavorite[]
   musicPlays              MusicPlay[]
@@ -373,6 +375,7 @@ model Message {
   aiSuggestions   MessageAiSuggestion[]
   whyReads        WhyTopicRead[]
   likes           MessageLike[]
+  copyworkShare   BibleCopyworkShare?
   favorites       MessageFavorite[]
   musicScores     MusicScore[]
   musicLyrics     MusicLyrics?
@@ -860,4 +863,43 @@ model AuditLog {
 
   @@index([accountId, createdAt])
   @@map("audit_logs")
+}
+
+model BibleCopywork {
+  id           String   @id @db.VarChar(64)
+  accountId    Int      @map("account_id")
+  source       Json
+  translation  String   @db.VarChar(30)
+  bookCode     String   @map("book_code") @db.Char(3)
+  chapter      Int
+  verseStart   Int      @map("verse_start")
+  verseEnd     Int      @map("verse_end")
+  spacing      String   @default("normal") @db.VarChar(16)
+  completedAt  DateTime? @map("completed_at")
+  publishedAt  DateTime? @map("published_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  account      Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  glyphs       BibleCopyworkGlyph[]
+  shares       BibleCopyworkShare[]
+  @@index([translation, bookCode, chapter, publishedAt])
+  @@index([accountId, completedAt])
+  @@map("bible_copyworks")
+}
+
+model BibleCopyworkGlyph {
+  workId String @map("work_id") @db.VarChar(64)
+  position Int
+  ink Json
+  work BibleCopywork @relation(fields: [workId], references: [id], onDelete: Cascade)
+  @@id([workId, position])
+  @@map("bible_copywork_glyphs")
+}
+
+model BibleCopyworkShare {
+  messageId Int @id @map("message_id")
+  workId String @map("work_id") @db.VarChar(64)
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  work BibleCopywork @relation(fields: [workId], references: [id], onDelete: Cascade)
+  @@index([workId])
+  @@map("bible_copywork_shares")
 }

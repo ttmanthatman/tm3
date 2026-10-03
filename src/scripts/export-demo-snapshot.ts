@@ -260,6 +260,11 @@ try {
     channels: snapshotChannels,
     memberships,
     messages: snapshotMessages,
+    copyworks: (await prisma.bibleCopywork.findMany({ where: { completedAt: { not: null }, accountId: { in: [...accountKeys.keys()] } }, include: { glyphs: true, shares: true } })).map((work) => ({
+      accountKey: relationAccountKey(work.accountId),
+      record: { ...work, shares: [] },
+      shareMessageKeys: work.shares.filter((share) => messageKeys.has(share.messageId)).map((share) => relationMessageKey(share.messageId))
+    })),
     pinnedItems: pinnedItems.map((pin) => ({
       key: `pin-${pin.id}`,
       channelKey: channelKeys.get(pin.channelId)!,

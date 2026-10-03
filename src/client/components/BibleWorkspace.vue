@@ -35,6 +35,8 @@ import {
   type BibleWorkspaceState,
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
+import CopyworkManager from "../features/bible/copywork/CopyworkManager.vue";
+import CopyworkLibrary from "../features/bible/copywork/CopyworkLibrary.vue";
 import BibleReaderPane from "./BibleReaderPane.vue";
 import { DEFAULT_BIBLE_TRANSLATION_ID } from "../bibleChapterCache";
 import {
@@ -84,11 +86,13 @@ type BibleReaderPaneExpose = {
 
 type TextSegment = { text: string; highlighted: boolean };
 
+const copyworkManager = ref<InstanceType<typeof CopyworkManager> | null>(null);
+const copyworkRevision = ref(0);
 const catalog = ref<BibleCatalogDTO | null>(null);
 const catalogBusy = ref(false);
 const catalogError = ref("");
 const view = ref<BibleWorkspaceView>("home");
-const homeSection = ref<"catalog" | "search" | "favorites">("catalog");
+const homeSection = ref<"catalog" | "search" | "favorites" | "copyworks">("catalog");
 const searchMode = ref<BibleWorkspaceSearchMode>("topic");
 const topicQuery = ref("");
 const textQuery = ref("");
@@ -1010,6 +1014,7 @@ function handleTouchEnd(event: TouchEvent) {
       <nav class="bible-home-tabs" role="tablist" aria-label="书房功能">
         <button type="button" role="tab" :aria-selected="homeSection === 'catalog'" :class="{ active: homeSection === 'catalog' }" @click="homeSection = 'catalog'"><BookOpen :size="18" />经卷目录</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'search'" :class="{ active: homeSection === 'search' }" @click="homeSection = 'search'"><Search :size="18" />经文检索</button>
+        <button type="button" role="tab" :aria-selected="homeSection === 'copyworks'" :class="{ active: homeSection === 'copyworks' }" @click="homeSection = 'copyworks'">我的抄写</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'favorites'" :class="{ active: homeSection === 'favorites' }" @click="homeSection = 'favorites'"><Bookmark :size="18" />经文收藏<span>{{ favorites.length }}</span></button>
       </nav>
 
@@ -1075,6 +1080,7 @@ function handleTouchEnd(event: TouchEvent) {
         </section>
       </section>
 
+      <CopyworkLibrary v-else-if="homeSection === 'copyworks'" :account-id="accountId" :revision="copyworkRevision" @resume="copyworkManager?.resume($event)" />
       <section v-else-if="homeSection === 'favorites'" class="bible-favorites" aria-label="经文收藏夹">
         <header>
           <Bookmark :size="24" />
@@ -1109,6 +1115,9 @@ function handleTouchEnd(event: TouchEvent) {
       <template v-for="(pane, index) in panes" :key="pane.id">
         <BibleReaderPane
           :ref="(element) => setPaneRef(pane.id, element)"
+          :copywork-revision="copyworkRevision"
+          @copy-start="copyworkManager?.start($event)"
+          @copy-browse="copyworkManager?.browse($event)"
           :pane-id="pane.id"
           :label="biblePaneLabel(index)"
           :initial-state="pane"
@@ -1148,6 +1157,7 @@ function handleTouchEnd(event: TouchEvent) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <CopyworkManager ref="copyworkManager" :account-id="accountId" @changed="copyworkRevision++" @chat="emit('close')" />
     <div v-if="showShareDialog" class="bible-share-backdrop" @click.self="showShareDialog = false" @keydown.esc="showShareDialog = false">
       <div class="bible-share-dialog" role="dialog" aria-modal="true" aria-label="分享打开的圣经">
         <h2>分享打开的圣经</h2>
@@ -1212,7 +1222,7 @@ function handleTouchEnd(event: TouchEvent) {
 .bible-split-reader.rows .bible-pane-separator { cursor: row-resize; }
 .bible-split-reader.rows .bible-pane-separator span { width: 34px; height: 3px; }
 .bible-home { padding: 26px max(16px, calc((100vw - 1120px) / 2)) calc(44px + var(--safe-bottom)); }
-.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
+.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
 .bible-home-tabs button { min-height: 46px; border: 0; border-radius: 10px; color: #765b40; background: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: inherit; font-weight: 800; cursor: pointer; }
 .bible-home-tabs button.active { color: #fffaf1; background: #80613f; box-shadow: 0 4px 12px rgba(87, 60, 31, .18); }
 .bible-home-tabs button span { min-width: 22px; padding: 2px 6px; border-radius: 999px; color: inherit; background: rgba(255, 255, 255, .2); font-size: 11px; }
@@ -1316,7 +1326,7 @@ function handleTouchEnd(event: TouchEvent) {
   .bible-topbar-title strong { font-size: 17px; }
   .bible-topbar-title small { gap: 3px; font-size: 10px; }
   .bible-home { padding: 15px 12px calc(34px + var(--safe-bottom)); }
-  .bible-home-tabs { margin-bottom: 9px; }
+  .bible-home-tabs { margin-bottom: 9px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bible-home-tabs button { gap: 4px; font-size: 14px; }
   .bible-home-tabs button svg { display: none; }
   .bible-home-tabs button span { min-width: 18px; padding: 2px 4px; }

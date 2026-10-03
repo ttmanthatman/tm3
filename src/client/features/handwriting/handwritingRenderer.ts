@@ -294,3 +294,8 @@ export function drawHandwritingProgress(canvas: HandwritingCanvas, payload: Hand
 }
 
 export { buildHandwritingTimeline };
+
+/** Draw in the caller's coordinate system without clearing or resizing its surface. */
+export function drawHandwritingInk(context: CanvasRenderingContext2D, character: HandwritingCharacter, visiblePointCounts?: number[]) {
+  drawStrokes(context, character.strokes.map((stroke, index) => ({ stroke, visiblePoints: visiblePointCounts?.[index] ?? stroke.points.length })), HANDWRITING_STROKE_WIDTH, null);
+}

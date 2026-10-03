@@ -1,3 +1,4 @@
+import { importCopyworkBackup, parseCopyworkBackup } from "../services/bibleCopyworkBackup.js";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -656,6 +657,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       version: 1,
       exportedAt: new Date().toISOString(),
       channels,
+      copyworks: await prisma.bibleCopywork.findMany({ where: { completedAt: { not: null } }, include: { glyphs: true, shares: { where: { message: { channelId: { in: channelIds }, type: "bible_copywork" } } } } }),
       channelMembers,
       messages,
       pinnedItems,
@@ -740,6 +742,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const voiceListens = Array.isArray(payload.voiceListens) ? payload.voiceListens : [];
     const prayerActions = Array.isArray(payload.prayerActions) ? payload.prayerActions : [];
     const messageAiSuggestions = Array.isArray(payload.messageAiSuggestions) ? payload.messageAiSuggestions : [];
+    let copyworks: ReturnType<typeof parseCopyworkBackup> = [];
+    try { copyworks = parseCopyworkBackup(payload.copyworks || []); } catch (error) { badImportRequest(error instanceof Error ? error.message : "抄写备份无效"); }
     for (const message of messages) {
       if (message.type !== "handwriting") continue;
       try {
@@ -883,7 +887,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
           await tx.messageAiSuggestion.create({ data });
         }
       }
-    });
+      await importCopyworkBackup(tx, copyworks);
+    }, { timeout: 30000 });
     const attachments = restoreExportFiles(entries, "uploads/", UPLOAD_DIR);
     return { success: true, imported: { channels: channels.length, messages: messages.length, attachments } };
   });

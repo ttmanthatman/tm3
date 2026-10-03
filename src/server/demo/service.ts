@@ -1,3 +1,4 @@
+import { importCopyworkBackup, parseCopyworkBackup } from "../services/bibleCopyworkBackup.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -274,6 +275,7 @@ async function rebuildDemoDatabase(prisma: PrismaClient, snapshot: DemoSnapshot,
     await tx.voiceListen.deleteMany();
     await tx.message.deleteMany();
     await tx.friendPlayback.deleteMany();
+    await tx.bibleCopywork.deleteMany();
     await tx.bibleFavorite.deleteMany();
     await tx.pushSubscription.deleteMany();
     await tx.channelNotificationPreference.deleteMany();
@@ -411,6 +413,11 @@ async function rebuildDemoDatabase(prisma: PrismaClient, snapshot: DemoSnapshot,
           payload: jsonValue(restoredPayload)
         }
       });
+    }
+
+    for (const work of snapshot.copyworks || []) {
+      const records = parseCopyworkBackup([{ ...work.record, accountId: requiredMapValue(accountIds, work.accountKey, "抄写作者"), shares: work.shareMessageKeys.map((key) => ({ messageId: requiredMapValue(messageIds, key, "抄写分享") })) }]);
+      await importCopyworkBackup(tx, records);
     }
 
     for (const pin of snapshot.pinnedItems || []) {

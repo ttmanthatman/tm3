@@ -409,7 +409,8 @@ test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => 
   const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });
   const searchTab = homeTabs.getByRole("tab", { name: "经文检索", exact: true });
   const favoritesTab = homeTabs.getByRole("tab", { name: /^经文收藏/ });
-  await expect(homeTabs.getByRole("tab")).toHaveCount(3);
+  await expect(homeTabs.getByRole("tab")).toHaveCount(4);
+  await expect(homeTabs.getByRole("tab", { name: "我的抄写", exact: true })).toBeVisible();
   await expect(catalogTab).toHaveAttribute("aria-selected", "true");
   await expect(page.getByRole("heading", { name: "经卷目录", exact: true })).toBeVisible();
 

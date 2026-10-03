@@ -441,6 +441,7 @@ const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/Sermo
 const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
 const SermonEntryDialog = defineAsyncComponent(() => import("./features/sermon/SermonEntryDialog.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
+const CopyworkViewerHost = defineAsyncComponent(() => import("./features/bible/copywork/CopyworkViewerHost.vue"));
 const BibleSessionCard = defineAsyncComponent(() => import("./features/bible/BibleSessionCard.vue"));
 const ChatRecordCard = defineAsyncComponent(() => import("./features/chat/ChatRecordCard.vue"));
 const ChatRecordView = defineAsyncComponent(() => import("./features/chat/ChatRecordView.vue"));
@@ -2462,6 +2463,7 @@ function estimatedTimelineRowHeight(row: TimelineRow) {
   if (row.message.type === "handwriting") return handwritingMessageEstimatedHeight(row.message.payload, timelineViewportWidth.value);
   if (row.message.type === "prayer") return 280;
   if (row.message.type === "sermon_request") return 200;
+  if (row.message.type === "bible_copywork") return 420;
   if (row.message.type === "bible_session") return 200;
   if (row.message.type === "chat_record") return 200;
   if (row.message.type === "chain") return 190;
@@ -5325,6 +5327,7 @@ const messageRowBindings = {
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
     </section>
 
+    <CopyworkViewerHost @chat="closeBibleWorkspace" />
     <BibleWorkspace
       ref="bibleWorkspace"
       :open="bibleOpen"

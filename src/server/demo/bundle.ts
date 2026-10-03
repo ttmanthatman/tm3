@@ -1,3 +1,4 @@
+import { parseCopyworkBackup } from "../services/bibleCopyworkBackup.js";
 import { z } from "zod";
 import { DEMO_BUNDLE_FORMAT_VERSION, type DemoManifestDTO, type DemoSnapshot } from "../../shared/demoMode.js";
 import { HANDWRITING_CONTENT } from "../../shared/handwriting.js";
@@ -145,7 +146,7 @@ const messageSchema = z.object({
   channelKey: z.string().regex(KEY_PATTERN),
   senderKey: z.string().regex(KEY_PATTERN),
   content: z.string().nullable().optional(),
-  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request", "why_topic_card", "bible_session", "chat_record", "handwriting", "system"]).optional(),
+  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request", "why_topic_card", "bible_session", "bible_copywork", "chat_record", "handwriting", "system"]).optional(),
   payload: z.unknown().optional(),
   assetKey: z.string().regex(KEY_PATTERN).optional(),
   fileName: z.string().max(255).nullable().optional(),
@@ -221,6 +222,7 @@ const snapshotSchema = z.object({
   channels: z.array(channelSchema).min(1).max(200),
   memberships: z.array(membershipSchema).max(20_000),
   messages: z.array(messageSchema).max(100_000),
+  copyworks: z.array(z.object({ accountKey: z.string().regex(KEY_PATTERN), record: z.record(z.unknown()), shareMessageKeys: z.array(z.string().regex(KEY_PATTERN)) }).strict()).max(10000).optional(),
   pinnedItems: z.array(pinnedSchema).max(2_000).optional(),
   messageLikes: z.array(accountMessageRelationSchema).max(100_000).optional(),
   messageFavorites: z.array(accountMessageRelationSchema).max(100_000).optional(),
@@ -275,6 +277,7 @@ export function assertDemoSnapshot(value: unknown, datasetVersion: string): Demo
       message.content = HANDWRITING_CONTENT;
     }
   }
+  for (const work of snapshot.copyworks || []) parseCopyworkBackup([work.record]);
   assertUniqueKeys("虚拟角色", (snapshot.virtualCharacters || []).map((item) => item.key));
   return snapshot;
 }

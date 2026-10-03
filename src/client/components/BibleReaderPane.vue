@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
+import { Brush, ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -21,6 +21,7 @@ import {
 } from "../bibleVerseActions";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import { bibleParallelReferenceSegments } from "../bibleParallelReferences";
+import { useCopyworkMarkers } from "../features/bible/copywork/useCopyworkMarkers";
 import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../bibleChapterCache";
 import type { BiblePaneLocationState, BiblePaneState, BibleReaderTarget } from "../bibleWorkspaceState";
 import {
@@ -30,6 +31,7 @@ import {
 } from "@shared/bibleFavoriteColors";
 
 const props = defineProps<{
+  copyworkRevision?: number;
   paneId: string;
   label: string;
   initialState: BiblePaneState;
@@ -54,6 +56,8 @@ const emit = defineEmits<{
   "open-reference": [sourcePaneId: string, reference: string];
   "state-change": [paneId: string, state: BiblePaneState];
   toast: [message: string];
+  "copy-start": [selection: { translation: string; bookCode: string; verses: BibleVerseLineDTO[] }];
+  "copy-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
 }>();
 
 type TextSegment = { text: string; highlighted: boolean };
@@ -109,6 +113,13 @@ const selectedPassageLookups = computed<BibleLookupDTO[]>(() => groupContinuousB
     verses: group
   };
 }));
+const { markers: copyworkMarkers, error: copyworkMarkerError, reload: reloadCopyworkMarkers } = useCopyworkMarkers(translation, () => readerBook.value.code, loadedChapters, () => props.copyworkRevision || 0);
+function isFinalFragment(fragment: BibleChapterVerseFragmentDTO) {
+  const blocks = readerChapters.value[fragment.verse.chapter]?.blocks || [];
+  const fragments = blocks.flatMap((block) => block.type === "paragraph" ? block.fragments : []).filter((f) => f.verse.verse === fragment.verse.verse);
+  return fragments.at(-1) === fragment;
+}
+
 const selectedVerseSummary = computed(() => selectedPassageLookups.value.length === 1
   ? selectedPassageLookups.value[0].normalizedReference
   : `已选 ${selectedVerses.value.length} 节经文`);
@@ -556,9 +567,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
             <p v-else-if="block.type === 'speaker'" class="bible-structure-speaker">{{ block.text }}</p>
             <div v-else-if="block.type === 'spacing'" class="bible-structure-spacing" aria-hidden="true"></div>
             <p v-else-if="block.type === 'paragraph'" class="bible-structure-paragraph" :class="block.style">
-              <span
-                v-for="fragment in block.fragments"
-                :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"
+              <template v-for="fragment in block.fragments" :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"><span
                 class="bible-reader-verse"
                 :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse) }"
                 :style="favoriteVerseStyle(fragment.verse)"
@@ -571,11 +580,12 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
                 :aria-pressed="isSelectedVerse(fragment.verse)"
                 @click="selectVerse(fragment.verse, $event.shiftKey)"
                 @keydown.enter.prevent="selectVerse(fragment.verse, $event.shiftKey)"
-              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span>
+              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span><button v-if="isFinalFragment(fragment) && copyworkMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的抄写" @click.stop="emit('copy-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><Brush :size="16" /></button></template>
             </p>
           </template>
         </div>
       </section>
+      <div v-if="copyworkMarkerError" class="bible-state"><button type="button" @click="reloadCopyworkMarkers">{{ copyworkMarkerError }}</button></div>
       <div v-if="readerError" class="bible-state error">{{ readerError }}</div>
       <div v-if="loadedChapters.at(-1) === readerBook.chapterCount" class="bible-book-boundary">本卷结束</div>
       <div v-else class="bible-reader-loading">继续向下阅读下一章</div>
@@ -600,6 +610,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
         </span>
       </div>
       <div class="bible-pane-action-buttons">
+        <button type="button" @click="emit('copy-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><Brush :size="16" /><span>抄写</span></button>
         <button type="button" @click="writeClipboard(formatBibleVersesForCopy(selectedVerses, translationName))"><ClipboardCopy :size="16" /><span>复制</span></button>
         <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="16" /><Bookmark v-else :size="16" /><span>{{ allSelectedFavorited ? "取消" : "收藏" }}</span></button>
         <button type="button" :disabled="!canSend || sendBusy" :title="canSend ? '' : sendUnavailableReason" @click="sendSelectedVerses"><Send :size="16" /><span>发送</span></button>
@@ -610,6 +621,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
 </template>
 
 <style scoped>
+.bible-copywork-marker { display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; background: transparent; color: #806741; cursor: pointer; }
 .bible-reader-pane { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #f3ecde; box-shadow: inset 0 0 0 1px transparent; }
 .bible-reader-pane.active { box-shadow: inset 0 0 0 1px rgba(205, 126, 42, .5); }
 .bible-reader-pane.receiving { box-shadow: inset 0 0 0 2px rgba(220, 125, 31, .72); }

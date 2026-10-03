@@ -4,6 +4,8 @@ import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
 import InlineAudioPlayer from "../../components/InlineAudioPlayer.vue";
 import VoiceTranscript from "../voice/VoiceTranscript.vue";
+import CopyworkCard from "../bible/copywork/CopyworkCard.vue";
+import { copyworkPayload } from "@shared/bibleCopywork";
 import HandwritingMessage from "../handwriting/HandwritingMessage.vue";
 import {
   isMarkdownMessage,
@@ -75,7 +77,8 @@ const emit = defineEmits<{
 
 <template>
   <template v-if="variant === 'favorite'">
-    <HandwritingMessage v-if="message.type === 'handwriting'" :message="message" variant="favorite" />
+    <CopyworkCard v-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" />
+    <HandwritingMessage v-else-if="message.type === 'handwriting'" :message="message" variant="favorite" />
     <img v-else-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
     <div v-else-if="isVoiceMessage(message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(message)) }}</span></div>
     <div v-else-if="message.type === 'file'" class="favorite-message-file"><FileUp :size="19" /><span>{{ message.fileName || "附件" }}</span><small>{{ compactBytes(message.fileSize) }}</small></div>
@@ -212,8 +215,9 @@ const emit = defineEmits<{
         >{{ musicMentionBackground(message) }}</div>
       </template>
       <template v-else>
+        <CopyworkCard v-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" />
         <HandwritingMessage
-          v-if="message.type === 'handwriting'"
+          v-else-if="message.type === 'handwriting'"
           :message="message"
           variant="timeline"
           :surface-active="handwritingSurfaceActive ?? true"
