@@ -1101,11 +1101,22 @@ const RELEASE_2_4_6_NOTES = [
   "故事照片缩略图保留原图比例、统一高度并增加 50%，超出一行时可横向滑动。"
 ] as const
 
+const RELEASE_2_5_0_NOTES = [
+  "圣经新增逐字抄写：支持同章连续经文、本机草稿续写、原位重写，以及按真实墨迹字距排版的素雅书法册页。",
+  "抄写作品可私人保存、公开到对应经文下，或独立分享到聊天室；支持经节毛笔标记、分册页查看、放大与笔迹回放。",
+  "新增抄写作品的权限控制、幂等保存与分享，以及备份和演示数据导入导出兼容。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.1",
+    date: "2026-10-03",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.0",
     date: "2026-10-03",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_0_NOTES
   },
   {
     version: "2.4.6",
