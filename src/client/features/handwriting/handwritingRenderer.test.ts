@@ -33,6 +33,38 @@ const payload: HandwritingPayload = {
   characters: [{ strokes: [{ points: [[0, 0, 0], [100, 100, 20]] }] }]
 };
 
+test("natural ink sweeps rounded cross-sections and incremental/partial replay use identical paths", () => {
+  for (const algorithm of ["follow", "slanted"] as const) {
+    const stroke = {
+      brush: { size: 84, sensitivity: 50, lag: 100, algorithm, version: 2 as const },
+      points: [[1000, 1000, 0], [1020, 990, 100], [1000, 1010, 300], [1400, 1000, 310], [2000, 1100, 350], [2200, 1800, 400]] as [number, number, number][]
+    };
+    const liveStroke = { ...stroke, points: [] as [number, number, number][] };
+    const live = fakeCanvas();
+    for (const point of stroke.points) {
+      const previousCount = liveStroke.points.length;
+      liveStroke.points.push(point);
+      appendHandwritingStroke(live.canvas, liveStroke, previousCount);
+    }
+    const full = fakeCanvas();
+    drawHandwritingCharacter(full.canvas, { strokes: [stroke] });
+    const paths = (operations: Operation[]) => operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "closePath"].includes(operation.type));
+    assert.deepEqual(paths(live.operations), paths(full.operations));
+    assert.ok(full.operations.some((operation) => operation.type === "lineTo"));
+    assert.equal(full.operations.filter((operation) => operation.type === "bezierCurveTo").length, 0);
+    const partial = fakeCanvas();
+    drawHandwritingCharacter(partial.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
+    const prefix = fakeCanvas();
+    drawHandwritingCharacter(prefix.canvas, { strokes: [{ ...stroke, points: stroke.points.slice(0, 3) }] });
+    assert.deepEqual(paths(partial.operations), paths(prefix.operations));
+    const last = handwritingBrushGeometry(stroke).samples.at(-1)!;
+    const footprint = fakeCanvas();
+    traceBrushFootprintPath(footprint.canvas.getContext("2d")!, last);
+    const radii = footprint.operations.find((operation) => operation.type === "ellipse")!.args.slice(2, 4) as number[];
+    assert.ok(Math.max(...radii) / Math.min(...radii) > 3, "end cap is a shallow cross-section, not a full leaf-shaped nib");
+  }
+});
+
 test("static and timeline rendering share one fixed-width vector path and a single-point dot", () => {
   const staticCanvas = fakeCanvas();
   drawHandwritingPayload(staticCanvas.canvas, payload);

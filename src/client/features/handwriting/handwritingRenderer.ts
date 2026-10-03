@@ -76,6 +76,14 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
   const spread = Math.max(0.12, Math.min(1, sample.spread));
   const contact = Math.max(0.05, Math.min(1, sample.contact));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
+  if (sample.version === 2) {
+    const { along, side } = naturalFootprintRadii(sample, expansion);
+    const start = brushFootprintPoint(sample, along, 0, expansion);
+    context.moveTo(start.x, start.y);
+    context.ellipse(sample.x, sample.y, along, side, sample.angle, 0, Math.PI * 2);
+    context.closePath();
+    return;
+  }
   if (sample.algorithm === "slanted") {
     // A flat chisel brush keeps its broad edge at 45 degrees at every stamp.
     const halfDepth = width * 0.12;
@@ -128,6 +136,48 @@ function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: num
   };
 }
 
+function naturalFootprintRadii(sample: BrushSample, expansion: number) {
+  const width = Math.max(1, sample.width + expansion);
+  const halfWidth = width * 0.5 * (0.78 + 0.22 * Math.max(0.12, Math.min(1, sample.spread)));
+  if (!sample.directional) return { along: halfWidth, side: halfWidth };
+  const depth = width * 0.11;
+  return sample.algorithm === "slanted" ? { along: halfWidth, side: depth } : { along: depth, side: halfWidth };
+}
+
+type OutlinePoint = { x: number; y: number };
+
+function naturalFootprintPoints(sample: BrushSample, expansion: number): OutlinePoint[] {
+  const { along, side } = naturalFootprintRadii(sample, expansion);
+  return Array.from({ length: 16 }, (_, index) => {
+    const angle = (index * Math.PI) / 8;
+    return brushFootprintPoint(sample, along * Math.cos(angle), side * Math.sin(angle), expansion);
+  });
+}
+
+function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
+  // Connect the support envelopes of consecutive nib cross-sections. The
+  // swept body fills the space between them instead of exposing leaf/chisel
+  // stamps at the endpoints or during sudden changes of speed.
+  const points = [...naturalFootprintPoints(from, expansion), ...naturalFootprintPoints(to, expansion)]
+    .sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (a: OutlinePoint, b: OutlinePoint, c: OutlinePoint) =>
+    (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  const half = (ordered: OutlinePoint[]) => {
+    const hull: OutlinePoint[] = [];
+    for (const point of ordered) {
+      while (hull.length > 1 && cross(hull[hull.length - 2], hull[hull.length - 1], point) <= 0) hull.pop();
+      hull.push(point);
+    }
+    hull.pop();
+    return hull;
+  };
+  const hull = [...half(points), ...half([...points].reverse())];
+  context.moveTo(hull[0].x, hull[0].y);
+  for (const point of hull.slice(1)) context.lineTo(point.x, point.y);
+  context.closePath();
+  traceBrushFootprintPath(context, to, expansion);
+}
+
 function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number) {
   if (from >= until) return;
   context.beginPath();
@@ -139,8 +189,12 @@ function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly B
     const stampSpacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
     const angleDelta = Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
     const stampCount = Math.max(1, Math.ceil(distance / stampSpacing), Math.ceil(Math.abs(angleDelta) / MAX_BRUSH_STAMP_ANGLE));
+    let previousStamp = previous;
     for (let stamp = 1; stamp <= stampCount; stamp += 1) {
-      traceBrushFootprintPath(context, interpolatedBrushSample(previous, sample, stamp / stampCount), expansion);
+      const nextStamp = interpolatedBrushSample(previous, sample, stamp / stampCount);
+      if (sample.version === 2) traceNaturalSweep(context, previousStamp, nextStamp, expansion);
+      else traceBrushFootprintPath(context, nextStamp, expansion);
+      previousStamp = nextStamp;
     }
   }
   context.fill();

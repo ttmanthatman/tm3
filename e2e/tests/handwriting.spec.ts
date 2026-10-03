@@ -253,6 +253,73 @@ async function newLoggedInPage(browser: Browser, account: Account) {
   return { context, page };
 }
 
+test("手机毛笔微晃后加速不会留下大头且重绘轮廓一致", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page, E2E_MEMBER);
+  const dialog = await openHandwritingComposer(page);
+  await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+  await dialog.locator("summary").filter({ hasText: "毛笔参数" }).click();
+  for (const [label, value] of [["毛笔粗细", "84"], ["毛笔速度响应", "50"], ["毛笔笔头滞后", "100"]]) {
+    await dialog.getByLabel(label, { exact: true }).evaluate((element, next) => {
+      (element as HTMLInputElement).value = next;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+    }, value);
+  }
+  await dialog.getByRole("button", { name: "选择紫色", exact: true }).click();
+  const glow = dialog.getByRole("checkbox", { name: "光晕", exact: true });
+  if (await glow.isChecked()) await glow.uncheck();
+  const canvas = dialog.getByLabel("当前手写字格");
+  const profile = () => canvas.evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    const heightIn = (left: number, right: number) => {
+      let largest = 0;
+      for (let x = Math.floor(canvas.width * left); x < canvas.width * right; x++) {
+        let count = 0;
+        for (let y = 0; y < canvas.height; y++) if (pixels[(y * canvas.width + x) * 4 + 3] > 80) count++;
+        largest = Math.max(largest, count);
+      }
+      return largest;
+    };
+    return { head: heightIn(0.18, 0.215), body: heightIn(0.35, 0.65) };
+  });
+  for (const algorithm of ["follow", "slanted"]) {
+    const clear = dialog.getByRole("button", { name: "清空当前字", exact: true });
+    if (await clear.isEnabled()) await clear.click();
+    await dialog.getByLabel("毛笔算法", { exact: true }).selectOption(algorithm);
+    await canvas.scrollIntoViewIfNeeded();
+    await canvas.evaluate(async (element) => {
+      const startTime = performance.now();
+      const dispatch = async (type: string, x: number, y: number, time: number) => {
+        // Viewport changes can still adjust modal scrolling. Synthetic input
+        // describes points within the pad, so map against its current rect.
+        const box = element.getBoundingClientRect();
+        const event = new PointerEvent(type, {
+          bubbles: true, pointerId: 41, pointerType: "touch", isPrimary: true,
+          button: 0, buttons: type === "pointerup" ? 0 : 1,
+          clientX: box.x + (box.width * x) / 10000,
+          clientY: box.y + (box.height * y) / 10000
+        });
+        Object.defineProperty(event, "timeStamp", { value: startTime + time });
+        element.dispatchEvent(event);
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      };
+      await dispatch("pointerdown", 2000, 3000, 0);
+      for (let index = 1; index <= 16; index++) await dispatch("pointermove", 2000 + (index % 2 ? 30 : -30), 3000 + (index % 3 ? 20 : -20), index * 20);
+      for (let index = 1; index <= 40; index++) await dispatch("pointermove", 2000 + index * 150, 3000, 320 + index * 8);
+      await dispatch("pointerup", 8000, 3000, 650);
+    });
+    const live = await profile();
+    await canvas.screenshot({ path: `output/playwright/handwriting-natural-${algorithm}-390.png` });
+    expect(live.head).toBeGreaterThan(0);
+    expect(live.body).toBeGreaterThan(live.head);
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect.poll(profile).toEqual(live);
+  }
+});
+
 test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 844 });
   await login(page, E2E_MEMBER);
@@ -398,7 +465,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
       paper: { color: "#fff1d6" },
       glow: { color: "#aabbcc", density: 72, width: 48 },
       characters: [
-        { strokes: [{ color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted" } }, { color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted" } }] },
+        { strokes: [{ color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted", version: 2 } }, { color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted", version: 2 } }] },
         { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
       ]
     });

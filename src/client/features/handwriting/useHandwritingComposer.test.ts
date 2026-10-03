@@ -128,7 +128,7 @@ test("pen changes affect only new strokes and survive draft recovery", () => {
   composer.setPen("brush", { ...brush, size: 90 });
   const snapshot = composer.draftSnapshot()!;
   assert.equal(snapshot.characters[0].strokes[0].brush, undefined);
-  assert.deepEqual(snapshot.characters[0].strokes[1].brush, brush);
+  assert.deepEqual(snapshot.characters[0].strokes[1].brush, { ...brush, version: 2 });
   const restored = useHandwritingComposer({ payload: snapshot });
   assert.deepEqual(restored.snapshot(), snapshot);
 });
@@ -139,4 +139,15 @@ test("continuing a restored character preserves elapsed sampling times for brush
   composer.beginStroke({ x: 500, y: 500, timestampMs: 100 }, 1);
   composer.endStroke(1, { x: 800, y: 800, timestampMs: 140 });
   assert.deepEqual(composer.current.value.strokes[1].points.map((point) => point[2]), [5000, 5040]);
+});
+
+test("restored legacy brush strokes keep their model when new natural strokes are added", () => {
+  const oldBrush = { size: 84, sensitivity: 50, lag: 100 };
+  const composer = useHandwritingComposer({ payload: { kind: "handwriting", version: 1, characters: [{ strokes: [{ brush: oldBrush, points: [[1000, 1000, 0], [1000, 1000, 300], [2000, 1000, 320]] }] }] } });
+  composer.setPen("brush", oldBrush);
+  composer.beginStroke({ x: 1000, y: 2000, timestampMs: 500 }, 9);
+  composer.endStroke(9, { x: 2000, y: 2000, timestampMs: 550 });
+  const strokes = composer.snapshot()!.characters[0].strokes;
+  assert.deepEqual(strokes[0].brush, oldBrush);
+  assert.deepEqual(strokes[1].brush, { ...oldBrush, version: 2 });
 });

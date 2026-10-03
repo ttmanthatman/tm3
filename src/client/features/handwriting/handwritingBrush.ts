@@ -10,6 +10,7 @@ export type BrushSample = {
   angle: number;
   directional: boolean;
   algorithm?: HandwritingBrushAlgorithm;
+  version?: 2;
   contact: number;
   spread: number;
   trailX: number;
@@ -35,6 +36,9 @@ type MotionPoint = {
 
 type BrushState = {
   algorithm: HandwritingBrushAlgorithm;
+  version?: 2;
+  originX: number;
+  originY: number;
   handleX: number;
   handleY: number;
   tipX: number;
@@ -107,6 +111,7 @@ function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
   const lag = clamp(brush.lag, 0, 100);
   return {
     algorithm: brush.algorithm || "follow",
+    version: brush.version,
     maxWidth: 120 + clamp(brush.size, 0, 100) * 12,
     speedSensitivity: clamp(brush.sensitivity, 0, 100),
     maxDeflection: lag === 0 ? 0 : 34 + lag * 1.45,
@@ -125,7 +130,8 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
     y: point[1],
     width: state.width,
     angle: state.angle,
-    directional: state.algorithm === "slanted",
+    directional: state.version !== 2 && state.algorithm === "slanted",
+    ...(state.version === 2 ? { version: 2 as const } : {}),
     ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
@@ -142,10 +148,13 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
   };
 }
 
-function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: HandwritingBrushAlgorithm): BrushGeometry {
+function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: HandwritingBrushAlgorithm, version?: 2): BrushGeometry {
   const width = maxWidth * 0.06;
   const state: BrushState = {
     algorithm,
+    version,
+    originX: point[0],
+    originY: point[1],
     handleX: point[0],
     handleY: point[1],
     tipX: point[0],
@@ -185,14 +194,15 @@ function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: H
 }
 
 function updateInputPoint(state: BrushState, x: number, y: number, timestampMs: number) {
-  const elapsed = Math.max(1, timestampMs - state.inputTimeMs);
+  const timeDelta = timestampMs - state.inputTimeMs;
+  const elapsed = timeDelta > 0 ? timeDelta : state.version === 2 ? 4 : 1;
   const derivativeX = (x - state.rawX) / elapsed;
   const derivativeY = (y - state.rawY) / elapsed;
   const derivativeAlpha = smoothingFactor(1, elapsed);
   state.inputVelocityX += (derivativeX - state.inputVelocityX) * derivativeAlpha;
   state.inputVelocityY += (derivativeY - state.inputVelocityY) * derivativeAlpha;
   const speed = Math.hypot(state.inputVelocityX, state.inputVelocityY);
-  const cutoff = 0.75 + 0.12 * speed;
+  const cutoff = state.version === 2 ? 6 + 1.5 * speed : 0.75 + 0.12 * speed;
   const alpha = smoothingFactor(cutoff, elapsed);
   const previousX = state.inputX;
   const previousY = state.inputY;
@@ -302,6 +312,7 @@ function advancePhase(
 
 function targetContact(state: BrushState, parameters: ReturnType<typeof brushParameters>) {
   if (state.startPhase) {
+    if (state.version === 2) return 0.12 + 0.8 * smoothstep(0, parameters.maxWidth * 0.45, state.startTravel);
     if (state.phase === "touching") return 0.08;
     return 0.08 + 0.64 * smoothstep(50, 350, state.startElapsedMs);
   }
@@ -326,7 +337,8 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
     y: state.tipY,
     width: state.width,
     angle: state.angle,
-    directional: state.hasHeading || state.algorithm === "slanted",
+    directional: state.hasHeading || (state.version !== 2 && state.algorithm === "slanted"),
+    ...(state.version === 2 ? { version: 2 as const } : {}),
     ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
@@ -343,16 +355,16 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
   });
 }
 
-function advanceStartPhase(state: BrushState, distance: number, elapsed: number) {
+function advanceStartPhase(state: BrushState, distance: number, elapsed: number, parameters: ReturnType<typeof brushParameters>) {
   state.startElapsedMs += elapsed;
   state.startTravel += distance;
   if (state.phase === "touching" && state.startElapsedMs >= 50) state.phase = "pressing";
-  const transitionDistance = state.phase === "pressing" ? 96 : 56;
+  const transitionDistance = state.version === 2 ? Math.max(96, parameters.maxWidth * 0.45) : state.phase === "pressing" ? 96 : 56;
   if (state.startTravel >= transitionDistance) {
     state.phase = "writing";
     state.startPhase = false;
     state.startTravel = 0;
-    state.contact = Math.max(state.contact, 0.72);
+    if (state.version !== 2) state.contact = Math.max(state.contact, 0.72);
   }
 }
 
@@ -378,7 +390,7 @@ function advanceBrushState(
     const amount = step / steps;
     state.handleX = startHandleX + (x - startHandleX) * amount;
     state.handleY = startHandleY + (y - startHandleY) * amount;
-    if (state.startPhase) advanceStartPhase(state, stepDistance, stepElapsed);
+    if (state.startPhase) advanceStartPhase(state, stepDistance, stepElapsed, parameters);
 
     state.speed += (speed - state.speed) * (1 - Math.exp(-stepDistance / 72));
 
@@ -427,19 +439,28 @@ function advanceBrushState(
     const contactFollow =
       1 -
       Math.exp(
-        -stepDistance / (state.phase === "lifting" ? 12 : state.phase === "turning" ? 20 : 24)
+        -stepDistance / (state.phase === "lifting" ? 12 : state.phase === "turning" ? 20 : state.version === 2 ? Math.max(24, parameters.maxWidth * 0.09) : 24)
       );
     state.contact += (nextContact - state.contact) * contactFollow;
-    const startSpread = 0.12 + 0.78 * smoothstep(50, 350, state.startElapsedMs);
+    const startSpread = 0.12 + 0.78 * (state.version === 2
+      ? smoothstep(0, parameters.maxWidth * 0.45, state.startTravel)
+      : smoothstep(50, 350, state.startElapsedMs));
     const spreadTarget = state.startPhase
       ? startSpread
       : clamp(0.34 + 0.66 * state.contact - clamp(state.speed / 120, 0, 0.16), 0, 1);
     state.spread += (spreadTarget - state.spread) * (1 - Math.exp(-stepDistance / 16));
 
-    const speedWidth =
-      parameters.maxWidth * (0.12 + 0.88 / (1 + (state.speed * parameters.speedSensitivity) / 250));
-    const widthTarget = speedWidth * (0.62 + 0.38 * state.contact) * (0.7 + 0.3 * state.spread);
-    state.width += (widthTarget - state.width) * (1 - Math.exp(-stepDistance / 30));
+    if (state.version === 2) {
+      const speedWidth = parameters.maxWidth * (0.16 + 0.68 / (1 + (state.speed * parameters.speedSensitivity) / 450));
+      const widthTarget = speedWidth * (0.12 + 0.88 * state.contact) * (0.8 + 0.2 * state.spread);
+      const widthChange = (widthTarget - state.width) * (1 - Math.exp(-stepDistance / 50));
+      // Limit the slope of the outline through a sudden acceleration or press.
+      state.width += clamp(widthChange, -stepDistance * 0.45, stepDistance * 0.6);
+    } else {
+      const speedWidth = parameters.maxWidth * (0.12 + 0.88 / (1 + (state.speed * parameters.speedSensitivity) / 250));
+      const widthTarget = speedWidth * (0.62 + 0.38 * state.contact) * (0.7 + 0.3 * state.spread);
+      state.width += (widthTarget - state.width) * (1 - Math.exp(-stepDistance / 30));
+    }
 
     advancePhase(state, stepDistance, parameters);
     state.movementHeading = heading;
@@ -450,13 +471,69 @@ function advanceBrushState(
 
 // Geometry depends only on persisted coordinates, relative time and this
 // stroke's settings. Extending a stroke computes only its new samples.
+function advanceNaturalInput(
+  geometry: BrushGeometry,
+  state: BrushState,
+  point: HandwritingPoint,
+  rawDistance: number,
+  elapsed: number,
+  parameters: ReturnType<typeof brushParameters>
+) {
+  // Read the previous raw position before replacing it: otherwise the input
+  // derivative is always zero and the adaptive filter never speeds up.
+  if (rawDistance > 0) updateInputPoint(state, point[0], point[1], point[2]);
+  else state.inputTimeMs = point[2];
+  state.rawX = point[0];
+  state.rawY = point[1];
+
+  const startDistance = Math.hypot(state.inputX - state.originX, state.inputY - state.originY);
+  if (!state.hasHeading && startDistance < 60) {
+    state.stationaryMs += elapsed;
+    state.startElapsedMs += elapsed;
+    state.phase = state.startElapsedMs >= 50 ? "pressing" : "touching";
+    state.contact = 0.12;
+    // A contact dot is useful feedback, but dwelling and oscillating cannot
+    // create a fully spread nib or accumulate travel toward a false start.
+    const dotWidth = parameters.maxWidth * (0.1 + 0.04 * smoothstep(80, 500, state.startElapsedMs));
+    state.width += (dotWidth - state.width) * (1 - Math.exp(-elapsed / 70));
+    pushBrushSample(geometry, state);
+    return;
+  }
+  if (rawDistance === 0) {
+    state.stationaryMs += elapsed;
+    return;
+  }
+
+  const distance = Math.hypot(state.inputX - state.handleX, state.inputY - state.handleY);
+  if (distance < 8) {
+    state.stationaryMs += elapsed;
+    return;
+  }
+  if (!state.hasHeading) {
+    const heading = Math.atan2(state.inputY - state.originY, state.inputX - state.originX);
+    if (parameters.algorithm === "follow") state.angle = heading;
+    state.tangentAngle = heading;
+    state.movementHeading = heading;
+    state.turnReferenceHeading = heading;
+    // Initial hesitation is not part of the speed window for the first pull.
+    state.motionPath = [{ x: state.originX, y: state.originY, timestampMs: point[2] - elapsed, arcLength: 0 }];
+  }
+  appendMotionPoint(state, state.inputX, state.inputY, point[2]);
+  const heading = spatialHeading(state, state.movementHeading);
+  const speed = windowedSpeed(state, distance / elapsed);
+  const pauseDuration = state.stationaryMs + elapsed;
+  state.pauseEvidence = Math.max(state.pauseEvidence, smoothstep(80, 300, pauseDuration));
+  advanceBrushState(geometry, state, state.inputX, state.inputY, heading, distance, elapsed, pauseDuration, speed, parameters);
+  state.stationaryMs = 0;
+}
+
 export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeometry {
   const brush = stroke.brush;
   if (!brush || stroke.points.length === 0) return { samples: [], ends: [], state: null };
   const parameters = brushParameters(brush);
   let geometry = cache.get(stroke);
   if (!geometry || geometry.state === null || geometry.ends.length > stroke.points.length) {
-    geometry = initialGeometry(stroke.points[0], parameters.maxWidth, parameters.algorithm);
+    geometry = initialGeometry(stroke.points[0], parameters.maxWidth, parameters.algorithm, parameters.version);
     cache.set(stroke, geometry);
   }
   const state = geometry.state;
@@ -472,12 +549,17 @@ export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeomet
     const previous: HandwritingPoint = stroke.points[index - 1];
     const rawDistance = Math.hypot(point[0] - previous[0], point[1] - previous[1]);
     const elapsed = Math.max(1, point[2] - previous[2]);
+    if (parameters.version === 2) {
+      advanceNaturalInput(geometry, state, point, rawDistance, elapsed, parameters);
+      geometry.ends.push(geometry.samples.length);
+      continue;
+    }
     state.rawX = point[0];
     state.rawY = point[1];
     if (rawDistance === 0) {
       state.stationaryMs += elapsed;
       if (state.startPhase) {
-        advanceStartPhase(state, 0, elapsed);
+        advanceStartPhase(state, 0, elapsed, parameters);
         const nextContact = targetContact(state, parameters);
         state.contact += (nextContact - state.contact) * (1 - Math.exp(-elapsed / 24));
         const nextSpread = 0.12 + 0.78 * smoothstep(50, 350, state.startElapsedMs);

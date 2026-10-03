@@ -186,7 +186,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const point = pointFor(input);
     const stroke: HandwritingStroke = {
       points: [point],
-      ...(selectedPen.value === "brush" ? { brush: { ...brush.value } } : {}),
+      ...(selectedPen.value === "brush" ? { brush: { ...brush.value, version: 2 as const } } : {}),
       ...(selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
     };
     current.value.strokes.push(stroke);

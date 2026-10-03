@@ -36,7 +36,14 @@ export type HandwritingGlow = {
 
 export type HandwritingPen = "hard" | "brush";
 export type HandwritingBrushAlgorithm = "follow" | "slanted";
-export type HandwritingBrush = { size: number; sensitivity: number; lag: number; algorithm?: HandwritingBrushAlgorithm };
+export type HandwritingBrush = {
+  size: number;
+  sensitivity: number;
+  lag: number;
+  algorithm?: HandwritingBrushAlgorithm;
+  // Omission retains the original rendering of stored messages and drafts.
+  version?: 2;
+};
 export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
 
 export type HandwritingGlobalSettings = { sensitivity: number; lag: number; glow: HandwritingGlow };
@@ -65,7 +72,8 @@ export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
     size: normalizeHandwritingGlowAmount(row.size, HANDWRITING_DEFAULT_BRUSH.size),
     sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_BRUSH.sensitivity),
     lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag),
-    ...(row.algorithm === "slanted" ? { algorithm: "slanted" as const } : {})
+    ...(row.algorithm === "slanted" ? { algorithm: "slanted" as const } : {}),
+    ...(row.version === 2 ? { version: 2 as const } : {})
   };
 }
 
@@ -291,7 +299,10 @@ export function normalizeHandwritingPayload(
       assertFields(stroke, ["points", "color", "effect", "brush"]);
       if (stroke.brush !== undefined) {
         if (!isPlainObject(stroke.brush)) throw new HandwritingValidationError("invalid_shape", "毛笔参数格式无效");
-        assertFields(stroke.brush, ["size", "sensitivity", "lag", "algorithm"]);
+        assertFields(stroke.brush, ["size", "sensitivity", "lag", "algorithm", "version"]);
+        if (stroke.brush.version !== undefined && stroke.brush.version !== 2) {
+          throw new HandwritingValidationError("invalid_shape", "毛笔笔迹版本无效");
+        }
         if (stroke.brush.algorithm !== undefined && stroke.brush.algorithm !== "follow" && stroke.brush.algorithm !== "slanted") {
           throw new HandwritingValidationError("invalid_shape", "毛笔算法无效");
         }

@@ -210,6 +210,17 @@ test("accepts tenfold stroke and message budgets and enforces the character poin
   assert.throws(() => normalizeHandwritingPayload(dense, HANDWRITING_DRAFT_LIMITS), /单字采样/);
 });
 
+test("natural brush version survives strict storage while unsupported versions are rejected", () => {
+  const input = payload() as unknown as { characters: { strokes: { points: [number, number, number][]; brush?: unknown }[] }[] };
+  const brush = { size: 84, sensitivity: 50, lag: 100, algorithm: "slanted", version: 2 };
+  input.characters[0].strokes[0].brush = brush;
+  assert.deepEqual(normalizeHandwritingPayload(input).characters[0].strokes[0].brush, brush);
+  for (const version of [0, 1, 3, "2", null, 2.5]) {
+    input.characters[0].strokes[0].brush = { ...brush, version };
+    assert.throws(() => normalizeHandwritingPayload(input), /版本/);
+  }
+});
+
 test("fixed-angle algorithm survives payload storage while legacy brush hashes remain unchanged", () => {
   const input = payload();
   input.characters[0].strokes[0].brush = { size: 45, sensitivity: 65, lag: 35, algorithm: "slanted" };
