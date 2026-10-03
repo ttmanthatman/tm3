@@ -111,3 +111,28 @@ test("natural ink stays comparable across coalesced sampling densities and times
   assert.ok(Math.abs(coarse.angle - dense.angle) < 0.02);
   assert.deepEqual(geometryAt(60).samples, geometryAt(60, 10000).samples);
 });
+
+test("rotation lag slows turning independently of tip position and stays fixed during a pause", () => {
+  const points: HandwritingPoint[] = Array.from({ length: 31 }, (_, index) => [1000 + index * 120, 3000, index * 8]);
+  for (let index = 1; index <= 6; index++) points.push([4600, 3000 + index * 120, 240 + index * 8]);
+  const strokeAt = (rotationLag: number) => {
+    const stroke = naturalStroke(structuredClone(points), "follow", 100);
+    stroke.brush = { ...stroke.brush!, rotationLag };
+    return stroke;
+  };
+  const strokes = [0, 35, 100].map(strokeAt);
+  const tips = strokes.map((stroke) => handwritingBrushGeometry(stroke).samples.at(-1)!);
+  assert.ok(tips[0].angle > tips[1].angle && tips[1].angle > tips[2].angle);
+  assert.ok(tips[0].angle - tips[2].angle > 0.5);
+  for (const tip of tips.slice(1)) {
+    assert.deepEqual([tip.x, tip.y, tip.width, tip.trailX, tip.trailY], [tips[0].x, tips[0].y, tips[0].width, tips[0].trailX, tips[0].trailY]);
+  }
+  const last = points.at(-1)!;
+  strokes[2].points.push([last[0], last[1], last[2] + 1000]);
+  assert.equal(handwritingBrushGeometry(strokes[2]).samples.at(-1)!.angle, tips[2].angle);
+  const noPositionLag = strokeAt(100);
+  noPositionLag.brush!.lag = 0;
+  const direct = handwritingBrushGeometry(noPositionLag).samples.at(-1)!;
+  assert.equal(direct.angle, tips[2].angle);
+  assert.notEqual(direct.x, tips[2].x);
+});

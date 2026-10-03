@@ -40,11 +40,14 @@ export type HandwritingBrush = {
   size: number;
   sensitivity: number;
   lag: number;
+  rotationLag?: number;
   algorithm?: HandwritingBrushAlgorithm;
   // Omission retains the original rendering of stored messages and drafts.
   version?: 2;
 };
 export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
+export const HANDWRITING_DEFAULT_BRUSH_ALGORITHM: HandwritingBrushAlgorithm = "slanted";
+export const HANDWRITING_DEFAULT_ROTATION_LAG = 35;
 
 export type HandwritingGlobalSettings = { sensitivity: number; lag: number; glow: HandwritingGlow };
 export const HANDWRITING_DEFAULT_GLOBAL_SETTINGS: Readonly<HandwritingGlobalSettings> = Object.freeze({
@@ -72,7 +75,8 @@ export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
     size: normalizeHandwritingGlowAmount(row.size, HANDWRITING_DEFAULT_BRUSH.size),
     sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_BRUSH.sensitivity),
     lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag),
-    ...(row.algorithm === "slanted" ? { algorithm: "slanted" as const } : {}),
+    ...(row.algorithm === "slanted" || row.algorithm === "follow" ? { algorithm: row.algorithm } : {}),
+    ...(row.rotationLag !== undefined ? { rotationLag: normalizeHandwritingGlowAmount(row.rotationLag, HANDWRITING_DEFAULT_ROTATION_LAG) } : {}),
     ...(row.version === 2 ? { version: 2 as const } : {})
   };
 }
@@ -93,7 +97,7 @@ export type HandwritingPreferencesDTO = {
 
 export const HANDWRITING_DEFAULT_PREFERENCES: HandwritingPreferencesDTO = {
   pen: "hard",
-  brush: { ...HANDWRITING_DEFAULT_BRUSH },
+  brush: { ...HANDWRITING_DEFAULT_BRUSH, algorithm: HANDWRITING_DEFAULT_BRUSH_ALGORITHM, rotationLag: HANDWRITING_DEFAULT_ROTATION_LAG },
   strokeColors: [...HANDWRITING_PRESET_COLORS],
   customColor: HANDWRITING_DEFAULT_CUSTOM_COLOR,
   selectedIndex: 0,
@@ -226,9 +230,14 @@ export function normalizeHandwritingPreferences(value: unknown): HandwritingPref
   const selectedIndex = Number.isInteger(rawIndex) && rawIndex >= 0 && rawIndex <= HANDWRITING_CUSTOM_COLOR_INDEX
     ? rawIndex
     : 0;
+  const brush = normalizeHandwritingBrush(row.brush);
   return {
     pen: row.pen === "brush" ? "brush" : "hard",
-    brush: normalizeHandwritingBrush(row.brush),
+    brush: {
+      ...brush,
+      algorithm: brush.algorithm ?? HANDWRITING_DEFAULT_BRUSH_ALGORITHM,
+      rotationLag: brush.rotationLag ?? HANDWRITING_DEFAULT_ROTATION_LAG
+    },
     strokeColors,
     customColor: normalizeHandwritingColor(row.customColor, HANDWRITING_DEFAULT_CUSTOM_COLOR),
     selectedIndex,
@@ -299,7 +308,10 @@ export function normalizeHandwritingPayload(
       assertFields(stroke, ["points", "color", "effect", "brush"]);
       if (stroke.brush !== undefined) {
         if (!isPlainObject(stroke.brush)) throw new HandwritingValidationError("invalid_shape", "毛笔参数格式无效");
-        assertFields(stroke.brush, ["size", "sensitivity", "lag", "algorithm", "version"]);
+        assertFields(stroke.brush, ["size", "sensitivity", "lag", "rotationLag", "algorithm", "version"]);
+        if (stroke.brush.rotationLag !== undefined && (typeof stroke.brush.rotationLag !== "number" || !Number.isInteger(stroke.brush.rotationLag) || stroke.brush.rotationLag < 0 || stroke.brush.rotationLag > 100)) {
+          throw new HandwritingValidationError("invalid_shape", "毛笔旋转滞后必须为 0 至 100 的整数");
+        }
         if (stroke.brush.version !== undefined && stroke.brush.version !== 2) {
           throw new HandwritingValidationError("invalid_shape", "毛笔笔迹版本无效");
         }

@@ -128,7 +128,7 @@ test("pen changes affect only new strokes and survive draft recovery", () => {
   composer.setPen("brush", { ...brush, size: 90 });
   const snapshot = composer.draftSnapshot()!;
   assert.equal(snapshot.characters[0].strokes[0].brush, undefined);
-  assert.deepEqual(snapshot.characters[0].strokes[1].brush, { ...brush, version: 2 });
+  assert.deepEqual(snapshot.characters[0].strokes[1].brush, { ...brush, algorithm: "slanted", rotationLag: 35, version: 2 });
   const restored = useHandwritingComposer({ payload: snapshot });
   assert.deepEqual(restored.snapshot(), snapshot);
 });
@@ -149,5 +149,21 @@ test("restored legacy brush strokes keep their model when new natural strokes ar
   composer.endStroke(9, { x: 2000, y: 2000, timestampMs: 550 });
   const strokes = composer.snapshot()!.characters[0].strokes;
   assert.deepEqual(strokes[0].brush, oldBrush);
-  assert.deepEqual(strokes[1].brush, { ...oldBrush, version: 2 });
+  assert.deepEqual(strokes[1].brush, { ...oldBrush, algorithm: "slanted", rotationLag: 35, version: 2 });
+});
+
+test("a chosen follow nib freezes rotation lag per stroke and survives draft recovery", () => {
+  const composer = useHandwritingComposer();
+  const settings = { size: 84, sensitivity: 50, lag: 100, algorithm: "follow" as const, rotationLag: 80 };
+  composer.setPen("brush", settings);
+  composer.beginStroke({ x: 1000, y: 1000, timestampMs: 0 }, 1);
+  composer.endStroke(1, { x: 2000, y: 1000, timestampMs: 100 });
+  composer.setPen("brush", { ...settings, rotationLag: 0 });
+  composer.beginStroke({ x: 1000, y: 2000, timestampMs: 120 }, 1);
+  composer.endStroke(1, { x: 2000, y: 2000, timestampMs: 200 });
+  const payload = composer.draftSnapshot()!;
+  assert.equal(payload.characters[0].strokes[0].brush!.rotationLag, 80);
+  assert.equal(payload.characters[0].strokes[1].brush!.rotationLag, 0);
+  assert.equal(payload.characters[0].strokes[0].brush!.algorithm, "follow");
+  assert.deepEqual(useHandwritingComposer({ payload }).snapshot(), payload);
 });

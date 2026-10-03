@@ -33,7 +33,7 @@ const payload: HandwritingPayload = {
   characters: [{ strokes: [{ points: [[0, 0, 0], [100, 100, 20]] }] }]
 };
 
-test("natural ink sweeps rounded cross-sections and incremental/partial replay use identical paths", () => {
+test("natural ink sweeps algorithm-specific nibs and incremental/partial replay use identical paths", () => {
   for (const algorithm of ["follow", "slanted"] as const) {
     const stroke = {
       brush: { size: 84, sensitivity: 50, lag: 100, algorithm, version: 2 as const },
@@ -48,10 +48,10 @@ test("natural ink sweeps rounded cross-sections and incremental/partial replay u
     }
     const full = fakeCanvas();
     drawHandwritingCharacter(full.canvas, { strokes: [stroke] });
-    const paths = (operations: Operation[]) => operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "closePath"].includes(operation.type));
+    const paths = (operations: Operation[]) => operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type));
     assert.deepEqual(paths(live.operations), paths(full.operations));
     assert.ok(full.operations.some((operation) => operation.type === "lineTo"));
-    assert.equal(full.operations.filter((operation) => operation.type === "bezierCurveTo").length, 0);
+    assert.equal(full.operations.some((operation) => operation.type === "bezierCurveTo"), algorithm === "follow");
     const partial = fakeCanvas();
     drawHandwritingCharacter(partial.canvas, { strokes: [stroke] }, { visiblePointCounts: [3] });
     const prefix = fakeCanvas();
@@ -60,8 +60,15 @@ test("natural ink sweeps rounded cross-sections and incremental/partial replay u
     const last = handwritingBrushGeometry(stroke).samples.at(-1)!;
     const footprint = fakeCanvas();
     traceBrushFootprintPath(footprint.canvas.getContext("2d")!, last);
-    const radii = footprint.operations.find((operation) => operation.type === "ellipse")!.args.slice(2, 4) as number[];
-    assert.ok(Math.max(...radii) / Math.min(...radii) > 3, "end cap is a shallow cross-section, not a full leaf-shaped nib");
+    if (algorithm === "follow") {
+      const original = fakeCanvas();
+      traceBrushFootprintPath(original.canvas.getContext("2d")!, { ...last, version: undefined });
+      assert.deepEqual(paths(footprint.operations), paths(original.operations), "the original waterdrop brush shape is preserved");
+      assert.equal(footprint.operations.filter((operation) => operation.type === "bezierCurveTo").length, 3);
+    } else {
+      const radii = footprint.operations.find((operation) => operation.type === "ellipse")!.args.slice(2, 4) as number[];
+      assert.ok(Math.max(...radii) / Math.min(...radii) > 3, "fixed slanted nib keeps a shallow cross-section");
+    }
   }
 });
 

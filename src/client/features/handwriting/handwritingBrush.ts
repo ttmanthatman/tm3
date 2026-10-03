@@ -109,6 +109,7 @@ function smoothingFactor(cutoffHz: number, elapsedMs: number) {
 
 function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
   const lag = clamp(brush.lag, 0, 100);
+  const rotationLag = brush.version === 2 && brush.rotationLag !== undefined ? clamp(brush.rotationLag, 0, 100) : undefined;
   return {
     algorithm: brush.algorithm || "follow",
     version: brush.version,
@@ -118,7 +119,8 @@ function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
     stickRadius: lag === 0 ? 0 : 5 + lag * 0.32,
     // Positional lag and angular inertia are separate controls. Even with lag
     // zero, the brush keeps a short spatial memory for its cross-section.
-    angleResponseLength: 84 + lag * 0.62,
+    angleResponseLength: rotationLag === undefined ? 84 + lag * 0.62 : rotationLag === 0 ? 0 : 12 + rotationLag * 5,
+    tangentResponseLength: rotationLag === 0 ? 0 : 140,
     turnReorientDistance: 72 + lag * 0.72,
     pressDistance: 82 + lag * 0.68
   };
@@ -420,7 +422,7 @@ function advanceBrushState(
     // cross-section keeps its own angular inertia and follows a separately
     // smoothed spatial tangent rather than the instantaneous trail vector.
     if (parameters.algorithm === "follow") {
-      const tangentFollow = 1 - Math.exp(-stepDistance / 140);
+      const tangentFollow = parameters.tangentResponseLength === 0 ? 1 : 1 - Math.exp(-stepDistance / parameters.tangentResponseLength);
       state.tangentAngle = normalizeAngle(
         state.tangentAngle + shortestAngleDelta(state.tangentAngle, heading) * tangentFollow
       );
@@ -429,7 +431,7 @@ function advanceBrushState(
         state.phase === "lifting" || state.phase === "turning"
           ? parameters.angleResponseLength * 1.16
           : parameters.angleResponseLength;
-      const angleFollow = 1 - Math.exp(-stepDistance / Math.max(1, angleResponse));
+      const angleFollow = angleResponse === 0 ? 1 : 1 - Math.exp(-stepDistance / Math.max(1, angleResponse));
       state.angle = normalizeAngle(
         state.angle + shortestAngleDelta(state.angle, desiredAngle) * angleFollow
       );

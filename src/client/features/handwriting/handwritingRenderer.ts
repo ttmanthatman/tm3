@@ -74,9 +74,8 @@ function brushFootprintPoint(sample: BrushSample, along: number, side: number, e
 export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sample: BrushSample, expansion = 0) {
   const width = Math.max(1, sample.width + expansion);
   const spread = Math.max(0.12, Math.min(1, sample.spread));
-  const contact = Math.max(0.05, Math.min(1, sample.contact));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
-  if (sample.version === 2) {
+  if (sample.version === 2 && (sample.algorithm === "slanted" || !sample.directional)) {
     const { along, side } = naturalFootprintRadii(sample, expansion);
     const start = brushFootprintPoint(sample, along, 0, expansion);
     context.moveTo(start.x, start.y);
@@ -102,11 +101,24 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     context.arc(sample.x, sample.y, halfWidth, 0, Math.PI * 2);
     return;
   }
+  const points = brushLeafControlPoints(sample, expansion);
+  context.moveTo(points[0].x, points[0].y);
+  context.bezierCurveTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y);
+  context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[5].x, points[5].y);
+  context.bezierCurveTo(points[6].x, points[6].y, points[7].x, points[7].y, points[0].x, points[0].y);
+  context.closePath();
+}
+
+function brushLeafControlPoints(sample: BrushSample, expansion: number) {
+  const width = Math.max(1, sample.width + expansion);
+  const spread = Math.max(0.12, Math.min(1, sample.spread));
+  const contact = Math.max(0.05, Math.min(1, sample.contact));
+  const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
   const length = width * (0.42 + 0.28 * spread);
   const trailingTip = -length * (0.82 + 0.18 * contact);
   const leadingNose = length * (0.58 + 0.16 * (1 - spread));
   const shoulder = length * 0.04;
-  const points = [
+  return [
     brushFootprintPoint(sample, trailingTip, 0, expansion),
     brushFootprintPoint(sample, trailingTip * 0.28, halfWidth * 0.72, expansion),
     brushFootprintPoint(sample, shoulder, halfWidth, expansion),
@@ -116,11 +128,6 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     brushFootprintPoint(sample, shoulder, -halfWidth, expansion),
     brushFootprintPoint(sample, trailingTip * 0.28, -halfWidth * 0.72, expansion)
   ];
-  context.moveTo(points[0].x, points[0].y);
-  context.bezierCurveTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y);
-  context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[5].x, points[5].y);
-  context.bezierCurveTo(points[6].x, points[6].y, points[7].x, points[7].y, points[0].x, points[0].y);
-  context.closePath();
 }
 
 function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: number): BrushSample {
@@ -147,6 +154,19 @@ function naturalFootprintRadii(sample: BrushSample, expansion: number) {
 type OutlinePoint = { x: number; y: number };
 
 function naturalFootprintPoints(sample: BrushSample, expansion: number): OutlinePoint[] {
+  if (sample.directional && sample.algorithm !== "slanted") {
+    const points = brushLeafControlPoints(sample, expansion);
+    return [[0, 1, 2, 3], [3, 4, 4, 5], [5, 6, 7, 0]].flatMap((indices) =>
+      Array.from({ length: 12 }, (_, index) => {
+        const t = index / 12;
+        const weights = [(1 - t) ** 3, 3 * (1 - t) ** 2 * t, 3 * (1 - t) * t ** 2, t ** 3];
+        return {
+          x: indices.reduce((sum, pointIndex, i) => sum + points[pointIndex].x * weights[i], 0),
+          y: indices.reduce((sum, pointIndex, i) => sum + points[pointIndex].y * weights[i], 0)
+        };
+      })
+    );
+  }
   const { along, side } = naturalFootprintRadii(sample, expansion);
   return Array.from({ length: 16 }, (_, index) => {
     const angle = (index * Math.PI) / 8;
@@ -156,8 +176,8 @@ function naturalFootprintPoints(sample: BrushSample, expansion: number): Outline
 
 function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
   // Connect the support envelopes of consecutive nib cross-sections. The
-  // swept body fills the space between them instead of exposing leaf/chisel
-  // stamps at the endpoints or during sudden changes of speed.
+  // swept body fills the space between them, retaining the rotating waterdrop
+  // nib for follow and the fixed shallow cross-section for slanted.
   const points = [...naturalFootprintPoints(from, expansion), ...naturalFootprintPoints(to, expansion)]
     .sort((a, b) => a.x - b.x || a.y - b.y);
   const cross = (a: OutlinePoint, b: OutlinePoint, c: OutlinePoint) =>

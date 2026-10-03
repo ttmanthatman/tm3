@@ -37,7 +37,7 @@ test("handwriting account preferences are cleaned and serialized deterministical
 });
 
 test("account brush preferences round-trip and invalid stored values recover safely", () => {
-  const preferences = { pen: "brush", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted" } };
+  const preferences = { pen: "brush", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "follow", rotationLag: 70 } };
   const clean = cleanHandwritingPreferences(handwritingPreferencesJson(preferences));
   assert.equal(clean.pen, "brush");
   assert.deepEqual(clean.brush, preferences.brush);

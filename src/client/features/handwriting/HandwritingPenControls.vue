@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { HANDWRITING_DEFAULT_BRUSH, type HandwritingBrush, type HandwritingPen } from "@shared/handwriting";
-defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean }>();
+import { computed } from "vue";
+import { HANDWRITING_DEFAULT_PREFERENCES, HANDWRITING_DEFAULT_BRUSH_ALGORITHM, HANDWRITING_DEFAULT_ROTATION_LAG, type HandwritingBrush, type HandwritingPen } from "@shared/handwriting";
+const props = defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean }>();
 const emit = defineEmits<{
   change: [pen: HandwritingPen, brush: HandwritingBrush];
 }>();
-const brushFields = [
+const brushFields = computed(() => [
   { key: "sensitivity", label: "速度响应" },
-  { key: "lag", label: "笔头滞后" }
-] as const;
+  { key: "lag", label: "笔头滞后" },
+  ...(props.brush.algorithm === "follow" ? [{ key: "rotationLag", label: "旋转滞后" } as const] : [])
+] as const);
 </script>
 
 <template>
@@ -26,17 +28,17 @@ const brushFields = [
         </label>
         <label>
           <span>算法</span>
-          <select aria-label="毛笔算法" :value="brush.algorithm || 'follow'" :disabled="disabled" @change="emit('change', pen, { ...brush, algorithm: ($event.target as HTMLSelectElement).value as HandwritingBrush['algorithm'] })">
+          <select aria-label="毛笔算法" :value="brush.algorithm || HANDWRITING_DEFAULT_BRUSH_ALGORITHM" :disabled="disabled" @change="emit('change', pen, { ...brush, algorithm: ($event.target as HTMLSelectElement).value as HandwritingBrush['algorithm'] })">
             <option value="follow">峰随路转</option>
             <option value="slanted">石径斜</option>
           </select>
         </label>
         <label v-for="field in brushFields" :key="field.key">
-          <span>{{ field.label }} <output>{{ brush[field.key] }}</output></span>
-          <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled" @change="emit('change', pen, { ...brush, [field.key]: Number(($event.target as HTMLInputElement).value) })">
+          <span>{{ field.label }} <output>{{ brush[field.key] ?? HANDWRITING_DEFAULT_ROTATION_LAG }}</output></span>
+          <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key] ?? HANDWRITING_DEFAULT_ROTATION_LAG" :disabled="disabled" @change="emit('change', pen, { ...brush, [field.key]: Number(($event.target as HTMLInputElement).value) })">
         </label>
-        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_BRUSH })">恢复默认参数</button>
-        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'slanted' ? '石径斜：笔锋固定斜 45°。' : '峰随路转：笔锋随行笔方向转动，停笔不会自动回锋。' }}</small>
+        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_PREFERENCES.brush })">恢复默认参数</button>
+        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'follow' ? '峰随路转：水滴形笔锋随行笔转动，旋转滞后越大，转锋越慢；停笔不会自动回锋。' : '石径斜：笔锋固定斜 45°。' }}</small>
       </div>
     </details>
   </div>

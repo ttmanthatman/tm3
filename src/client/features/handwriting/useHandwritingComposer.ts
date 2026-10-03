@@ -2,6 +2,8 @@ import { computed, ref } from "vue";
 import {
   HANDWRITING_DEFAULT_COLOR,
   HANDWRITING_DEFAULT_BRUSH,
+  HANDWRITING_DEFAULT_BRUSH_ALGORITHM,
+  HANDWRITING_DEFAULT_ROTATION_LAG,
   normalizeHandwritingBrush,
   type HandwritingBrush,
   type HandwritingPen,
@@ -83,7 +85,7 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
   const errorMessage = ref("");
   const activePointerId = ref<number | null>(null);
   const selectedPen = ref<HandwritingPen>("hard");
-  const brush = ref<HandwritingBrush>({ ...HANDWRITING_DEFAULT_BRUSH });
+  const brush = ref<HandwritingBrush>({ ...HANDWRITING_DEFAULT_BRUSH, algorithm: HANDWRITING_DEFAULT_BRUSH_ALGORITHM, rotationLag: HANDWRITING_DEFAULT_ROTATION_LAG });
   const selectedColor = ref<HandwritingStrokeColor>(HANDWRITING_PRESET_COLORS[0]);
   const paperEnabled = ref(false);
   const paperColor = ref<HandwritingStrokeColor>(HANDWRITING_DEFAULT_PAPER_COLOR);
@@ -186,7 +188,12 @@ export function useHandwritingComposer(initial?: Partial<HandwritingComposerSnap
     const point = pointFor(input);
     const stroke: HandwritingStroke = {
       points: [point],
-      ...(selectedPen.value === "brush" ? { brush: { ...brush.value, version: 2 as const } } : {}),
+      ...(selectedPen.value === "brush" ? { brush: {
+        ...brush.value,
+        algorithm: brush.value.algorithm ?? HANDWRITING_DEFAULT_BRUSH_ALGORITHM,
+        rotationLag: brush.value.rotationLag ?? HANDWRITING_DEFAULT_ROTATION_LAG,
+        version: 2 as const
+      } } : {}),
       ...(selectedColor.value !== HANDWRITING_DEFAULT_COLOR ? { color: selectedColor.value } : {})
     };
     current.value.strokes.push(stroke);

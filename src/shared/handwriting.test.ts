@@ -32,9 +32,26 @@ test("global handwriting settings normalize invalid stored values to safe defaul
 });
 
 test("personal brush options retain response and normalize the optional algorithm", () => {
-  const brush = { size: 82, sensitivity: 5, lag: 95, algorithm: "slanted" as const };
+  const brush = { size: 82, sensitivity: 5, lag: 95, algorithm: "slanted" as const, rotationLag: 35 };
   assert.deepEqual(normalizeHandwritingPreferences({ brush }).brush, brush);
-  assert.deepEqual(normalizeHandwritingPreferences({ brush: { ...brush, algorithm: "unknown" } }).brush, { size: 82, sensitivity: 5, lag: 95 });
+  assert.deepEqual(normalizeHandwritingPreferences({ brush: { ...brush, algorithm: "unknown" } }).brush, brush);
+});
+
+test("default preferences use slanted ink while explicit follow and rotation lag survive storage", () => {
+  const defaults = normalizeHandwritingPreferences(undefined).brush;
+  assert.equal(defaults.algorithm, "slanted");
+  assert.equal(defaults.rotationLag, 35);
+  const brush = { size: 84, sensitivity: 50, lag: 100, rotationLag: 80, algorithm: "follow", version: 2 };
+  assert.deepEqual(normalizeHandwritingPreferences({ pen: "brush", brush }).brush, brush);
+  const input = payload();
+  Object.assign(input.characters[0].strokes[0], { brush });
+  assert.deepEqual(normalizeHandwritingPayload(input).characters[0].strokes[0].brush, brush);
+  for (const rotationLag of [-1, 101, 1.5, "50", null]) {
+    Object.assign(input.characters[0].strokes[0], { brush: { ...brush, rotationLag } });
+    assert.throws(() => normalizeHandwritingPayload(input), /旋转滞后/);
+  }
+  Object.assign(input.characters[0].strokes[0], { brush: { size: 84, sensitivity: 50, lag: 100 } });
+  assert.deepEqual(normalizeHandwritingPayload(input).characters[0].strokes[0].brush, { size: 84, sensitivity: 50, lag: 100 });
 });
 
 function payload(points: number[][] = [[100, 200, 0]]): HandwritingPayload {
@@ -189,7 +206,7 @@ test("brush settings survive normalization and malformed settings are rejected",
   const input = payload();
   input.characters[0].strokes[0].brush = brush;
   assert.deepEqual(normalizeHandwritingPayload(input), input);
-  assert.deepEqual(normalizeHandwritingPreferences({ pen: "brush", brush }).brush, brush);
+  assert.deepEqual(normalizeHandwritingPreferences({ pen: "brush", brush }).brush, { ...brush, algorithm: "slanted", rotationLag: 35 });
   for (const bad of [null, {}, { ...brush, size: 101 }, { ...brush, lag: -1 }, { ...brush, sensitivity: 1.2 }, { ...brush, texture: true }, { ...brush, algorithm: "unknown" }, { ...brush, algorithm: null }]) {
     const invalid = payload();
     Object.assign(invalid.characters[0].strokes[0], { brush: bad });
