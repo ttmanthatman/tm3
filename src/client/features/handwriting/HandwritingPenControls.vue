@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { HANDWRITING_DEFAULT_BRUSH, type HandwritingBrush, type HandwritingPen } from "@shared/handwriting";
-const props = defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean; isAdmin: boolean; globalDisabled: boolean }>();
+defineProps<{ pen: HandwritingPen; brush: HandwritingBrush; disabled: boolean }>();
 const emit = defineEmits<{
   change: [pen: HandwritingPen, brush: HandwritingBrush];
-  "global-change": [key: "sensitivity" | "lag", value: number];
 }>();
-const globalFields = [
+const brushFields = [
   { key: "sensitivity", label: "速度响应" },
   { key: "lag", label: "笔头滞后" }
 ] as const;
@@ -25,15 +24,19 @@ const globalFields = [
           <span>粗细 <output>{{ brush.size }}</output></span>
           <input type="range" min="0" max="100" step="1" aria-label="毛笔粗细" :value="brush.size" :disabled="disabled" @input="emit('change', pen, { ...brush, size: Number(($event.target as HTMLInputElement).value) })">
         </label>
-        <template v-if="isAdmin">
-          <label v-for="field in globalFields" :key="field.key">
-            <span>{{ field.label }} <output>{{ brush[field.key] }}</output></span>
-            <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled || globalDisabled" @change="emit('global-change', field.key, Number(($event.target as HTMLInputElement).value))">
-          </label>
-        </template>
-        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...brush, size: HANDWRITING_DEFAULT_BRUSH.size })">恢复默认粗细</button>
-        <small v-if="isAdmin">粗细随账号保存；速度响应和笔头滞后由管理员设置，对所有人下一笔生效。停笔不会自动回锋。</small>
-        <small v-else>粗细随账号保存，对下一笔生效。</small>
+        <label>
+          <span>算法</span>
+          <select aria-label="毛笔算法" :value="brush.algorithm || 'follow'" :disabled="disabled" @change="emit('change', pen, { ...brush, algorithm: ($event.target as HTMLSelectElement).value as HandwritingBrush['algorithm'] })">
+            <option value="follow">峰随路转</option>
+            <option value="slanted">石径斜</option>
+          </select>
+        </label>
+        <label v-for="field in brushFields" :key="field.key">
+          <span>{{ field.label }} <output>{{ brush[field.key] }}</output></span>
+          <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key]" :disabled="disabled" @change="emit('change', pen, { ...brush, [field.key]: Number(($event.target as HTMLInputElement).value) })">
+        </label>
+        <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_BRUSH })">恢复默认参数</button>
+        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'slanted' ? '石径斜：笔锋固定斜 45°。' : '峰随路转：笔锋随行笔方向转动，停笔不会自动回锋。' }}</small>
       </div>
     </details>
   </div>
@@ -49,6 +52,7 @@ summary { cursor: pointer; padding: 8px 0 2px; }
 .handwriting-brush-sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; padding: 8px 0; }
 label { min-width: 0; }
 label span { display: flex; justify-content: space-between; }
+select { width: 100%; min-height: 34px; border: 1px solid #d7e0d5; border-radius: 7px; background: #f8faf7; color: inherit; margin-top: 8px; }
 input { width: 100%; margin: 8px 0; accent-color: #355c48; }
 small { grid-column: 1 / -1; color: #788279; line-height: 1.5; }
 button:disabled { opacity: .48; }

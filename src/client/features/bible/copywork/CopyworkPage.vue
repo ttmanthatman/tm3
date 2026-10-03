@@ -7,6 +7,7 @@ import {
   type CopyworkPlacement,
   type CopyworkSource
 } from "@shared/bibleCopywork";
+import { copyworkPageHeight } from "./copyworkPageLayout";
 import { drawHandwritingInk } from "../../handwriting/handwritingRenderer";
 import { buildHandwritingTimeline } from "../../handwriting/handwritingTimeline";
 const props = defineProps<{
@@ -25,6 +26,12 @@ const playing = ref(false);
 let frame = 0;
 let observer: IntersectionObserver | null = null;
 let resizeObserver: ResizeObserver | null = null;
+const pageHeight = computed(() => copyworkPageHeight(props.glyphs, props.placements));
+const paperStyle = computed(() => ({
+  aspectRatio: `${COPYWORK_PAGE.width} / ${pageHeight.value}`,
+  "--folio-heading-top": `${48 / pageHeight.value * 100}%`,
+  "--folio-caption-bottom": `${38 / pageHeight.value * 100}%`
+}));
 const characters = computed(() => copyworkCharacters(props.source.text));
 const glyphMap = computed(() => new Map(props.glyphs.map((g) => [g.index, g])));
 function draw(counts?: Map<number, number[]>) {
@@ -32,14 +39,14 @@ function draw(counts?: Map<number, number[]>) {
   if (!ctx || !canvas.value) return;
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.value.getBoundingClientRect().width * ratio));
-  const height = Math.round((width * COPYWORK_PAGE.height) / COPYWORK_PAGE.width);
+  const height = Math.round((width * pageHeight.value) / COPYWORK_PAGE.width);
   if (canvas.value.width !== width || canvas.value.height !== height) {
     canvas.value.width = width;
     canvas.value.height = height;
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  ctx.scale(width / COPYWORK_PAGE.width, height / COPYWORK_PAGE.height);
+  ctx.scale(width / COPYWORK_PAGE.width, width / COPYWORK_PAGE.width);
   for (const p of props.placements) {
     const glyph = glyphMap.value.get(p.index);
     if (!glyph) continue;
@@ -98,10 +105,10 @@ function editStyle(p: CopyworkPlacement) {
   const b = glyphMap.value.get(p.index)?.bounds;
   const scale = COPYWORK_PAGE.font / 10000;
   return {
-    left: `${(p.x + (b?.left || 0) * scale) / 7.2}%`,
-    top: `${(p.y + (b?.top || 0) * scale) / 9.6}%`,
-    width: `${Math.max(20, ((b?.right || 10000) - (b?.left || 0)) * scale) / 7.2}%`,
-    height: `${Math.max(30, ((b?.bottom || 10000) - (b?.top || 0)) * scale) / 9.6}%`
+    left: `${(p.x + (b?.left || 0) * scale) / (COPYWORK_PAGE.width / 100)}%`,
+    top: `${(p.y + (b?.top || 0) * scale) / (pageHeight.value / 100)}%`,
+    width: `${Math.max(20, ((b?.right || 10000) - (b?.left || 0)) * scale) / (COPYWORK_PAGE.width / 100)}%`,
+    height: `${Math.max(30, ((b?.bottom || 10000) - (b?.top || 0)) * scale) / (pageHeight.value / 100)}%`
   };
 }
 watch(
@@ -142,7 +149,7 @@ defineExpose({ play, stop, playing });
 </script>
 <template>
   <figure ref="root" class="copywork-mount" aria-label="经文抄写册页">
-    <div class="copywork-paper">
+    <div class="copywork-paper" :style="paperStyle">
       <div class="folio-heading">{{ source.reference }}</div>
       <canvas ref="canvas" aria-label="用户手写笔迹"></canvas>
       <template v-if="editable"
@@ -177,7 +184,6 @@ defineExpose({ play, stop, playing });
 }
 .copywork-paper {
   position: relative;
-  aspect-ratio: 3 / 4;
   background: #fffaf0;
   border: 1px solid #dfd3bf;
   color: #756652;
@@ -191,7 +197,7 @@ canvas {
 }
 .folio-heading {
   position: absolute;
-  top: 5%;
+  top: var(--folio-heading-top);
   left: 9.4%;
   font-family: "Songti SC", serif;
   font-size: clamp(10px, 1.4vw, 16px);
@@ -199,7 +205,7 @@ canvas {
 }
 .folio-caption {
   position: absolute;
-  bottom: 4%;
+  bottom: var(--folio-caption-bottom);
   left: 9.4%;
   right: 9.4%;
   display: flex;

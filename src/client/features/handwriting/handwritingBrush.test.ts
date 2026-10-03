@@ -260,3 +260,17 @@ test("brush edge generation stays inside the configured width envelope", () => {
     assert.ok(width <= samples[index].width * 1.2 + 1);
   }
 });
+
+test("石径斜 varies width with speed and keeps every footprint at 45 degrees through corners and dwell", () => {
+  const slowStroke = line(32);
+  const fastStroke = line(2);
+  slowStroke.brush!.algorithm = "slanted";
+  fastStroke.brush!.algorithm = "slanted";
+  const slow = handwritingBrushGeometry(slowStroke).samples.at(-1)!;
+  const fast = handwritingBrushGeometry(fastStroke).samples.at(-1)!;
+  assert.ok(slow.width > fast.width * 2);
+  slowStroke.points.push([7400, 4000, 2600], [6500, 5000, 2800], [6500, 5000, 3100], [6000, 3000, 3300]);
+  const samples = handwritingBrushGeometry(slowStroke).samples;
+  assert.ok(samples.every((sample) => sample.angle === Math.PI / 4 && sample.algorithm === "slanted"));
+  assert.ok(samples.every((sample) => sample.directional));
+});

@@ -78,6 +78,11 @@ test("copywork lifecycle isolates private ink, retries saves and shares, publish
   });
   expect(created.ok()).toBeTruthy();
   const readerHeaders = { Authorization: `Bearer ${await token(request, username, password)}` };
+  const badPreferences = await request.patch("/api/me/preferences", {
+    headers: readerHeaders,
+    data: { handwritingPreferences: { brush: { size: 45, sensitivity: 65, lag: 35, algorithm: "unknown" } } }
+  });
+  expect(badPreferences.status()).toBe(400);
   const id = randomUUID();
   const path = `/api/bible/copyworks/${id}`;
   const sourceResponse = await request.post("/api/bible/copyworks/source", {
@@ -190,6 +195,11 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
     ).toBeTruthy();
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
+  await dialog.getByText("毛笔参数", { exact: true }).click();
+  await dialog.getByLabel("毛笔算法").selectOption("slanted");
+  await dialog.getByRole("slider", { name: "毛笔速度响应" }).fill("70");
+  await dialog.getByText("毛笔参数", { exact: true }).click();
   await stroke(page);
   await dialog.getByRole("button", { name: "下次继续写" }).click();
   await expect(dialog).toBeHidden();
@@ -202,6 +212,11 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
     .first()
     .click();
   await expect(dialog.getByRole("button", { name: "写好了" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
+  await dialog.getByText("毛笔参数", { exact: true }).click();
+  await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
+  await expect(dialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("70");
+  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
   await page.screenshot({ path: "output/e2e/copywork-writing-390.png", fullPage: true });
   await dialog.getByRole("button", { name: "写好了" }).click();
   await stroke(page);
@@ -228,6 +243,23 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await dialog.getByRole("button", { name: "存入我的圣经" }).click();
   const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
   await expect(viewer).toBeVisible();
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.evaluate(() => document.documentElement.style.setProperty("--safe-top", "47px"));
+    const close = viewer.getByRole("button", { name: "关闭", exact: true });
+    const closeBox = await close.boundingBox();
+    expect(closeBox!.y).toBeGreaterThanOrEqual(47);
+    if (width < 700) {
+      expect(closeBox!.width).toBeGreaterThanOrEqual(44);
+      expect(closeBox!.height).toBeGreaterThanOrEqual(44);
+    }
+    const paper = await viewer.locator(".copywork-paper").boundingBox();
+    expect(paper!.height / paper!.width).toBeLessThan(1);
+    expect(await viewer.locator(".viewer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: `output/e2e/copywork-viewer-${width}.png`, fullPage: true });
+  }
+  await page.evaluate(() => document.documentElement.style.removeProperty("--safe-top"));
+  await page.setViewportSize({ width: 390, height: 844 });
   await expect(viewer.getByText(/已保存/)).toBeVisible();
   await viewer.getByRole("button", { name: "公开到经文下" }).click();
   await viewer.getByRole("button", { name: "确认公开" }).click();

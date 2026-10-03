@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Check, Play, RotateCcw, Send, Trash2, X } from "lucide-vue-next";
 import {
   HANDWRITING_CUSTOM_COLOR_INDEX,
-  handwritingBrushWithGlobalSettings,
   normalizeHandwritingGlobalSettings,
+  normalizeHandwritingBrush,
   normalizeHandwritingColor,
   normalizeHandwritingPreferences,
   type HandwritingColor,
@@ -39,6 +39,7 @@ const props = defineProps<{
   socketReady: boolean;
   replyLabel?: string;
   preferences: HandwritingPreferencesDTO;
+  preferencesError?: string;
   globalSettings: HandwritingGlobalSettings;
   isAdmin: boolean;
 }>();
@@ -78,7 +79,7 @@ const palettePreferences = ref(normalizeHandwritingPreferences(props.preferences
 const globalSettings = ref(normalizeHandwritingGlobalSettings(props.globalSettings));
 const globalSettingsBusy = ref(false);
 const globalSettingsError = ref("");
-const effectiveBrush = computed<HandwritingBrush>(() => handwritingBrushWithGlobalSettings(palettePreferences.value.brush, globalSettings.value));
+const effectiveBrush = computed<HandwritingBrush>(() => normalizeHandwritingBrush(palettePreferences.value.brush));
 const activeColor = computed<HandwritingColor>(() => palettePreferences.value.selectedIndex === HANDWRITING_CUSTOM_COLOR_INDEX
   ? palettePreferences.value.customColor
   : palettePreferences.value.strokeColors[palettePreferences.value.selectedIndex]
@@ -103,8 +104,8 @@ function publishPreferences() {
 function changePen(pen: HandwritingPen, brush: HandwritingBrush) {
   if (props.busy) return;
   palettePreferences.value.pen = pen;
-  palettePreferences.value.brush.size = brush.size;
-  composer.setPen(pen, { ...effectiveBrush.value, size: brush.size });
+  palettePreferences.value.brush = normalizeHandwritingBrush(brush);
+  composer.setPen(pen, effectiveBrush.value);
   publishPreferences();
 }
 
@@ -126,14 +127,10 @@ async function saveGlobalSettings(next: HandwritingGlobalSettings) {
     globalSettings.value = previous;
     composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
     updateAfter(() => composer.setGlow(composer.glowEnabled.value, previous.glow.color, previous.glow.density, previous.glow.width));
-    globalSettingsError.value = "全局毛笔参数保存失败，请重试";
+    globalSettingsError.value = "光晕参数保存失败，请重试";
   } finally {
     globalSettingsBusy.value = false;
   }
-}
-
-function changeGlobalBrush(key: "sensitivity" | "lag", value: number) {
-  void saveGlobalSettings({ ...globalSettings.value, [key]: value });
 }
 
 function changeGlobalGlow(glow: HandwritingGlow) {
@@ -325,6 +322,10 @@ watch(() => props.accountId, () => {
     globalSettings.value.glow.width
   );
 });
+watch(() => props.preferences, (next) => {
+  palettePreferences.value = normalizeHandwritingPreferences(next);
+  composer.setPen(palettePreferences.value.pen, effectiveBrush.value);
+});
 watch(() => props.globalSettings, (next) => {
   globalSettings.value = normalizeHandwritingGlobalSettings(next);
   if (!props.open) return;
@@ -356,10 +357,7 @@ onBeforeUnmount(() => {
           :pen="palettePreferences.pen"
           :brush="effectiveBrush"
           :disabled="busy"
-          :is-admin="isAdmin"
-          :global-disabled="globalSettingsBusy"
           @change="changePen"
-          @global-change="changeGlobalBrush"
         />
         <HandwritingPalette
           :colors="palettePreferences.strokeColors"
@@ -399,7 +397,7 @@ onBeforeUnmount(() => {
           <button type="button" :disabled="busy || !currentCharacter.strokes.length" @click="updateAfter(() => composer.undoStroke())"><RotateCcw :size="16" />撤销一笔</button>
           <button type="button" :disabled="!canFinishCharacter" @click="updateAfter(() => composer.finishCharacter())"><Check :size="16" />完成此字</button>
         </div>
-        <p class="handwriting-status" :class="{ error: composer.errorMessage.value || globalSettingsError }" role="status">{{ composer.errorMessage.value || globalSettingsError || status }}</p>
+        <p class="handwriting-status" :class="{ error: composer.errorMessage.value || preferencesError || globalSettingsError }" role="status">{{ composer.errorMessage.value || preferencesError || globalSettingsError || status }}</p>
         </div>
       </section>
 

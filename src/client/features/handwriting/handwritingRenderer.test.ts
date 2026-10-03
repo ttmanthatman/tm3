@@ -181,3 +181,24 @@ test("partial replay preserves brush and color while hiding future points withou
   assert.ok(partial.operations.some((op) => op.type === "fillStyle" && op.args[0] === stroke.color));
   assert.equal(JSON.stringify(stroke), input);
 });
+
+test("石径斜 renders a flat 45-degree edge and uses identical live and replay footprints", () => {
+  const stroke = { brush: { size: 50, sensitivity: 70, lag: 40, algorithm: "slanted" as const }, points: [[1000, 1000, 0], [3000, 1000, 100], [3000, 3500, 220]] as [number, number, number][] };
+  const sample = handwritingBrushGeometry(stroke).samples.at(-1)!;
+  const footprint = fakeCanvas();
+  traceBrushFootprintPath(footprint.canvas.getContext("2d")!, sample);
+  assert.equal(footprint.operations.filter((op) => op.type === "lineTo").length, 3);
+  assert.equal(footprint.operations.filter((op) => op.type === "bezierCurveTo" || op.type === "arc").length, 0);
+  const [first, second] = footprint.operations.filter((op) => op.type === "moveTo" || op.type === "lineTo").map((op) => op.args as number[]);
+  assert.ok(Math.abs((second[1] - first[1]) - (second[0] - first[0])) < 0.000001);
+  const live = fakeCanvas();
+  for (let index = 0; index < stroke.points.length; index++) {
+    appendHandwritingStroke(live.canvas, { ...stroke, points: stroke.points.slice(0, index + 1) }, index);
+  }
+  const replay = fakeCanvas();
+  const data: HandwritingPayload = { kind: "handwriting", version: 1, characters: [{ strokes: [stroke] }] };
+  const timeline = buildHandwritingTimeline(data);
+  drawHandwritingTimelineAt(replay.canvas, data, timeline, timeline.durationMs);
+  const paths = (ops: Operation[]) => ops.filter((op) => ["moveTo", "lineTo", "closePath"].includes(op.type));
+  assert.deepEqual(paths(live.operations), paths(replay.operations));
+});

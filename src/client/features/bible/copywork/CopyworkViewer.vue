@@ -312,8 +312,21 @@ small {
   color: #82715d;
 }
 @media (max-width: 700px) {
+  .copywork-viewer-shell {
+    padding: max(12px, var(--safe-top)) max(8px, env(safe-area-inset-right)) max(12px, var(--safe-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  :deep(.modal-head) {
+    flex-shrink: 0;
+    min-height: 56px;
+    padding: 4px 12px;
+  }
+  :deep(.modal-head .icon-btn) {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+  }
   :deep(.copywork-viewer) {
-    max-height: 100dvh;
+    max-height: calc(var(--app-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom)));
     width: 100%;
     border-radius: 0;
   }

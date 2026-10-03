@@ -316,6 +316,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await dialog.getByRole("slider", { name: "毛笔粗细" }).fill("55");
     await dialog.getByRole("slider", { name: "毛笔速度响应" }).fill("75");
     await dialog.getByRole("slider", { name: "毛笔笔头滞后" }).fill("40");
+    await dialog.getByLabel("毛笔算法").selectOption("slanted");
     await dialog.getByText("毛笔参数", { exact: true }).click();
     await expect(dialog.getByText("已完成的字", { exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("group", { name: "笔画颜色", exact: true })).toBeVisible();
@@ -350,11 +351,24 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await memberDialog.getByRole("button", { name: "毛笔", exact: true }).click();
     await memberDialog.getByText("毛笔参数", { exact: true }).click();
     await expect(memberDialog.getByRole("slider", { name: "毛笔粗细" })).toBeVisible();
-    await expect(memberDialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveCount(0);
-    await expect(memberDialog.getByRole("slider", { name: "毛笔笔头滞后" })).toHaveCount(0);
-    await memberDialog.getByRole("checkbox", { name: "光晕" }).check();
-    await expect(memberDialog.getByRole("slider", { name: "光晕密度" })).toHaveCount(0);
-    await memberDialog.getByRole("button", { name: "关闭", exact: true }).click();
+    await expect(memberDialog.getByRole("slider", { name: "毛笔速度响应" })).toBeVisible();
+    await expect(memberDialog.getByRole("slider", { name: "毛笔笔头滞后" })).toBeVisible();
+    await memberDialog.getByRole("slider", { name: "毛笔速度响应" }).fill("20");
+    await memberDialog.getByRole("slider", { name: "毛笔笔头滞后" }).fill("15");
+    const memberSaved = receiver.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.algorithm === "slanted" && response.ok());
+    await memberDialog.getByLabel("毛笔算法").selectOption("slanted");
+    await memberSaved;
+    await receiver.reload();
+    await expect.poll(() => connectionState(receiver)).toBe("connected");
+    const restoredMember = await openHandwritingComposer(receiver);
+    await restoredMember.getByText("毛笔参数", { exact: true }).click();
+    await expect(restoredMember.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("20");
+    await expect(restoredMember.getByRole("slider", { name: "毛笔笔头滞后" })).toHaveValue("15");
+    await expect(restoredMember.getByLabel("毛笔算法")).toHaveValue("slanted");
+    await expect(dialog.getByRole("button", { name: "毛笔", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await restoredMember.getByRole("checkbox", { name: "光晕" }).check();
+    await expect(restoredMember.getByRole("slider", { name: "光晕密度" })).toHaveCount(0);
+    await restoredMember.getByRole("button", { name: "关闭", exact: true }).click();
     await expectComposerInsideViewport(sender, dialog);
     await composeTwoCharacters(sender, dialog);
     await dialog.getByRole("button", { name: "预览播放", exact: true }).click();
@@ -384,7 +398,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
       paper: { color: "#fff1d6" },
       glow: { color: "#aabbcc", density: 72, width: 48 },
       characters: [
-        { strokes: [{ color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40 } }, { color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40 } }] },
+        { strokes: [{ color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted" } }, { color: "#ff2d55", brush: { size: 55, sensitivity: 75, lag: 40, algorithm: "slanted" } }] },
         { strokes: [{ color: "#268cff" }, { color: "#268cff" }] }
       ]
     });
@@ -442,6 +456,7 @@ test("两账号真实收发、刷新静态、手动重播、重连与撤回", as
     await expect(savedDialog.getByRole("slider", { name: "毛笔粗细" })).toHaveValue("55");
     await expect(savedDialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("75");
     await expect(savedDialog.getByRole("slider", { name: "毛笔笔头滞后" })).toHaveValue("40");
+    await expect(savedDialog.getByLabel("毛笔算法")).toHaveValue("slanted");
     await expect(savedDialog.getByRole("checkbox", { name: "显示纸张" })).toBeChecked();
     await expect(savedDialog.locator('input[aria-label="纸张颜色"]')).toHaveValue("#fff1d6");
     await expect(savedDialog.getByRole("checkbox", { name: "光晕" })).toBeChecked();

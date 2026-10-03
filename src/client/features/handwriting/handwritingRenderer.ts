@@ -76,6 +76,20 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
   const spread = Math.max(0.12, Math.min(1, sample.spread));
   const contact = Math.max(0.05, Math.min(1, sample.contact));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
+  if (sample.algorithm === "slanted") {
+    // A flat chisel brush keeps its broad edge at 45 degrees at every stamp.
+    const halfDepth = width * 0.12;
+    const corners = [
+      brushFootprintPoint(sample, -halfWidth, -halfDepth, expansion),
+      brushFootprintPoint(sample, halfWidth, -halfDepth, expansion),
+      brushFootprintPoint(sample, halfWidth, halfDepth, expansion),
+      brushFootprintPoint(sample, -halfWidth, halfDepth, expansion)
+    ];
+    context.moveTo(corners[0].x, corners[0].y);
+    for (const corner of corners.slice(1)) context.lineTo(corner.x, corner.y);
+    context.closePath();
+    return;
+  }
   if (!sample.directional) {
     context.arc(sample.x, sample.y, halfWidth, 0, Math.PI * 2);
     return;

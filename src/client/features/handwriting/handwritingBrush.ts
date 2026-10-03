@@ -1,4 +1,4 @@
-import type { HandwritingPoint, HandwritingStroke } from "@shared/handwriting";
+import type { HandwritingBrushAlgorithm, HandwritingPoint, HandwritingStroke } from "@shared/handwriting";
 
 // Brush dynamics are driven by stable path distance. Stationary time may
 // inform turn/lift inference and the initial press, but it never relaxes an
@@ -9,6 +9,7 @@ export type BrushSample = {
   width: number;
   angle: number;
   directional: boolean;
+  algorithm?: HandwritingBrushAlgorithm;
   contact: number;
   spread: number;
   trailX: number;
@@ -33,6 +34,7 @@ type MotionPoint = {
 };
 
 type BrushState = {
+  algorithm: HandwritingBrushAlgorithm;
   handleX: number;
   handleY: number;
   tipX: number;
@@ -104,6 +106,7 @@ function smoothingFactor(cutoffHz: number, elapsedMs: number) {
 function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
   const lag = clamp(brush.lag, 0, 100);
   return {
+    algorithm: brush.algorithm || "follow",
     maxWidth: 120 + clamp(brush.size, 0, 100) * 12,
     speedSensitivity: clamp(brush.sensitivity, 0, 100),
     maxDeflection: lag === 0 ? 0 : 34 + lag * 1.45,
@@ -122,7 +125,8 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
     y: point[1],
     width: state.width,
     angle: state.angle,
-    directional: false,
+    directional: state.algorithm === "slanted",
+    ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
     trailX: 0,
@@ -138,9 +142,10 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
   };
 }
 
-function initialGeometry(point: HandwritingPoint, maxWidth: number): BrushGeometry {
+function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: HandwritingBrushAlgorithm): BrushGeometry {
   const width = maxWidth * 0.06;
   const state: BrushState = {
+    algorithm,
     handleX: point[0],
     handleY: point[1],
     tipX: point[0],
@@ -321,7 +326,8 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
     y: state.tipY,
     width: state.width,
     angle: state.angle,
-    directional: state.hasHeading,
+    directional: state.hasHeading || state.algorithm === "slanted",
+    ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
     trailX: state.handleX - state.tipX,
@@ -401,19 +407,21 @@ function advanceBrushState(
     // Positional lag may move the handle away from the tip, but the brush
     // cross-section keeps its own angular inertia and follows a separately
     // smoothed spatial tangent rather than the instantaneous trail vector.
-    const tangentFollow = 1 - Math.exp(-stepDistance / 140);
-    state.tangentAngle = normalizeAngle(
-      state.tangentAngle + shortestAngleDelta(state.tangentAngle, heading) * tangentFollow
-    );
-    const desiredAngle = state.tangentAngle;
-    const angleResponse =
-      state.phase === "lifting" || state.phase === "turning"
-        ? parameters.angleResponseLength * 1.16
-        : parameters.angleResponseLength;
-    const angleFollow = 1 - Math.exp(-stepDistance / Math.max(1, angleResponse));
-    state.angle = normalizeAngle(
-      state.angle + shortestAngleDelta(state.angle, desiredAngle) * angleFollow
-    );
+    if (parameters.algorithm === "follow") {
+      const tangentFollow = 1 - Math.exp(-stepDistance / 140);
+      state.tangentAngle = normalizeAngle(
+        state.tangentAngle + shortestAngleDelta(state.tangentAngle, heading) * tangentFollow
+      );
+      const desiredAngle = state.tangentAngle;
+      const angleResponse =
+        state.phase === "lifting" || state.phase === "turning"
+          ? parameters.angleResponseLength * 1.16
+          : parameters.angleResponseLength;
+      const angleFollow = 1 - Math.exp(-stepDistance / Math.max(1, angleResponse));
+      state.angle = normalizeAngle(
+        state.angle + shortestAngleDelta(state.angle, desiredAngle) * angleFollow
+      );
+    }
 
     const nextContact = targetContact(state, parameters);
     const contactFollow =
@@ -448,7 +456,7 @@ export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeomet
   const parameters = brushParameters(brush);
   let geometry = cache.get(stroke);
   if (!geometry || geometry.state === null || geometry.ends.length > stroke.points.length) {
-    geometry = initialGeometry(stroke.points[0], parameters.maxWidth);
+    geometry = initialGeometry(stroke.points[0], parameters.maxWidth, parameters.algorithm);
     cache.set(stroke, geometry);
   }
   const state = geometry.state;
@@ -503,10 +511,10 @@ export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeomet
         : Math.atan2(point[1] - previousMotion.y, point[0] - previousMotion.x)
     );
     if (!state.hasHeading) {
-      state.angle = heading;
+      if (parameters.algorithm === "follow") state.angle = heading;
       state.tangentAngle = heading;
       state.movementHeading = heading;
-      geometry.samples.at(-1)!.angle = heading;
+      if (parameters.algorithm === "follow") geometry.samples.at(-1)!.angle = heading;
     }
     const speed = windowedSpeed(state, distance / elapsed);
     const pauseDuration = state.stationaryMs + elapsed;

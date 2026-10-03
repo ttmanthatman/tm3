@@ -11,13 +11,14 @@ import {
   type CopyworkSpacing
 } from "@shared/bibleCopywork";
 import {
-  HANDWRITING_DEFAULT_BRUSH,
-  handwritingBrushWithGlobalSettings,
-  normalizeHandwritingGlobalSettings,
+  normalizeHandwritingPreferences,
+  type HandwritingBrush,
   type HandwritingCharacter,
   type HandwritingPen
 } from "@shared/handwriting";
 import AppModal from "../../../components/ui/AppModal.vue";
+import HandwritingPenControls from "../../handwriting/HandwritingPenControls.vue";
+import { useHandwritingPreferences } from "../../handwriting/handwritingPreferences";
 import HandwritingPad from "../../handwriting/HandwritingPad.vue";
 import {
   useHandwritingComposer,
@@ -37,17 +38,17 @@ const store = useChatStore();
 const pendingCharacters = ref<Record<number, HandwritingCharacter>>(
   props.draft.pendingCharacters || {}
 );
-const brush = computed(() =>
-  handwritingBrushWithGlobalSettings(
-    { ...HANDWRITING_DEFAULT_BRUSH, size: size.value },
-    normalizeHandwritingGlobalSettings(store.appearance.handwritingSettings)
-  )
-);
+const { save: savePreferences, error: preferencesError } = useHandwritingPreferences(store);
+const preferences = computed(() => normalizeHandwritingPreferences(store.account?.handwritingPreferences));
+const brush = computed(() => preferences.value.brush);
+function changePen(nextPen: HandwritingPen, nextBrush: HandwritingBrush) {
+  pen.value = nextPen;
+  void savePreferences({ ...preferences.value, pen: nextPen, brush: nextBrush });
+}
 const glyphs = ref<CopyworkGlyph[]>(props.draft.glyphs);
 const index = ref(props.draft.index);
 const spacing = ref<CopyworkSpacing>(props.draft.spacing);
 const pen = ref<HandwritingPen>("brush");
-const size = ref(45);
 const color = ref("#263b33");
 const toolsOpen = ref(false);
 const guides = ref(false);
@@ -246,7 +247,7 @@ async function save() {
 function visibility() {
   if (document.hidden) scheduler.flush();
 }
-watch([pen, size, color, brush], () => {
+watch([pen, color, brush], () => {
   composer.setPen(pen.value, brush.value);
   composer.selectColor(color.value);
 });
@@ -319,14 +320,8 @@ onBeforeUnmount(() => {
           笔与纸
         </button>
         <div v-if="toolsOpen" class="writing-tools">
-          <label
-            >笔型
-            <select v-model="pen">
-              <option value="brush">毛笔</option>
-              <option value="hard">硬笔</option>
-            </select></label
-          >
-          <label>粗细 <input v-model.number="size" type="range" min="0" max="100" /></label>
+          <HandwritingPenControls :pen="pen" :brush="brush" :disabled="busy" @change="changePen" />
+          <p v-if="preferencesError" role="alert">{{ preferencesError }}</p>
           <label>墨色 <input v-model="color" type="color" /></label>
           <label><input v-model="guides" type="checkbox" />辅助线</label>
         </div>
@@ -479,6 +474,10 @@ button.primary {
   gap: 14px;
   align-items: center;
   font-size: 13px;
+}
+.writing-tools > .handwriting-pen-controls,
+.writing-tools > [role="alert"] {
+  flex-basis: 100%;
 }
 .writing-tools label {
   display: flex;

@@ -35,7 +35,8 @@ export type HandwritingGlow = {
 };
 
 export type HandwritingPen = "hard" | "brush";
-export type HandwritingBrush = { size: number; sensitivity: number; lag: number };
+export type HandwritingBrushAlgorithm = "follow" | "slanted";
+export type HandwritingBrush = { size: number; sensitivity: number; lag: number; algorithm?: HandwritingBrushAlgorithm };
 export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
 
 export type HandwritingGlobalSettings = { sensitivity: number; lag: number; glow: HandwritingGlow };
@@ -58,16 +59,13 @@ export function normalizeHandwritingGlobalSettings(value: unknown): HandwritingG
   };
 }
 
-export function handwritingBrushWithGlobalSettings(brush: HandwritingBrush, settings: HandwritingGlobalSettings): HandwritingBrush {
-  return { size: brush.size, sensitivity: settings.sensitivity, lag: settings.lag };
-}
-
 export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
   const row = isPlainObject(value) ? value : {};
   return {
     size: normalizeHandwritingGlowAmount(row.size, HANDWRITING_DEFAULT_BRUSH.size),
     sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_BRUSH.sensitivity),
-    lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag)
+    lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag),
+    ...(row.algorithm === "slanted" ? { algorithm: "slanted" as const } : {})
   };
 }
 
@@ -293,7 +291,10 @@ export function normalizeHandwritingPayload(
       assertFields(stroke, ["points", "color", "effect", "brush"]);
       if (stroke.brush !== undefined) {
         if (!isPlainObject(stroke.brush)) throw new HandwritingValidationError("invalid_shape", "毛笔参数格式无效");
-        assertFields(stroke.brush, ["size", "sensitivity", "lag"]);
+        assertFields(stroke.brush, ["size", "sensitivity", "lag", "algorithm"]);
+        if (stroke.brush.algorithm !== undefined && stroke.brush.algorithm !== "follow" && stroke.brush.algorithm !== "slanted") {
+          throw new HandwritingValidationError("invalid_shape", "毛笔算法无效");
+        }
         for (const key of ["size", "sensitivity", "lag"] as const) {
           const value = stroke.brush[key];
           if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {

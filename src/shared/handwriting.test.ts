@@ -12,7 +12,6 @@ import {
   HANDWRITING_SEND_LIMITS,
   HandwritingValidationError,
   handwritingPayloadBytes,
-  handwritingBrushWithGlobalSettings,
   normalizeHandwritingGlobalSettings,
   normalizeHandwritingPreferences,
   normalizeHandwritingPayload,
@@ -32,14 +31,10 @@ test("global handwriting settings normalize invalid stored values to safe defaul
   });
 });
 
-test("global brush response overrides legacy account values while retaining personal size", () => {
-  assert.deepEqual(
-    handwritingBrushWithGlobalSettings(
-      { size: 82, sensitivity: 5, lag: 95 },
-      { sensitivity: 75, lag: 40, glow: { color: "#ffffff", density: 65, width: 60 } }
-    ),
-    { size: 82, sensitivity: 75, lag: 40 }
-  );
+test("personal brush options retain response and normalize the optional algorithm", () => {
+  const brush = { size: 82, sensitivity: 5, lag: 95, algorithm: "slanted" as const };
+  assert.deepEqual(normalizeHandwritingPreferences({ brush }).brush, brush);
+  assert.deepEqual(normalizeHandwritingPreferences({ brush: { ...brush, algorithm: "unknown" } }).brush, { size: 82, sensitivity: 5, lag: 95 });
 });
 
 function payload(points: number[][] = [[100, 200, 0]]): HandwritingPayload {
@@ -195,7 +190,7 @@ test("brush settings survive normalization and malformed settings are rejected",
   input.characters[0].strokes[0].brush = brush;
   assert.deepEqual(normalizeHandwritingPayload(input), input);
   assert.deepEqual(normalizeHandwritingPreferences({ pen: "brush", brush }).brush, brush);
-  for (const bad of [null, {}, { ...brush, size: 101 }, { ...brush, lag: -1 }, { ...brush, sensitivity: 1.2 }, { ...brush, texture: true }]) {
+  for (const bad of [null, {}, { ...brush, size: 101 }, { ...brush, lag: -1 }, { ...brush, sensitivity: 1.2 }, { ...brush, texture: true }, { ...brush, algorithm: "unknown" }, { ...brush, algorithm: null }]) {
     const invalid = payload();
     Object.assign(invalid.characters[0].strokes[0], { brush: bad });
     assert.throws(() => normalizeHandwritingPayload(invalid), HandwritingValidationError);
@@ -213,4 +208,14 @@ test("accepts tenfold stroke and message budgets and enforces the character poin
   assert.equal(normalizeHandwritingPayload(dense).characters[0].strokes.length, 6);
   dense.characters[0].strokes.push({ points: [[0, 0, 0]] });
   assert.throws(() => normalizeHandwritingPayload(dense, HANDWRITING_DRAFT_LIMITS), /单字采样/);
+});
+
+test("fixed-angle algorithm survives payload storage while legacy brush hashes remain unchanged", () => {
+  const input = payload();
+  input.characters[0].strokes[0].brush = { size: 45, sensitivity: 65, lag: 35, algorithm: "slanted" };
+  assert.deepEqual(normalizeHandwritingPayload(input), input);
+  assert.deepEqual(parseStoredHandwritingPayload(input), input);
+  const legacy = payload();
+  legacy.characters[0].strokes[0].brush = { size: 45, sensitivity: 65, lag: 35 };
+  assert.equal(JSON.stringify(normalizeHandwritingPayload(legacy)), JSON.stringify(legacy));
 });
