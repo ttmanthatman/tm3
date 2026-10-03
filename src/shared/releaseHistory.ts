@@ -1113,11 +1113,21 @@ const RELEASE_2_5_1_NOTES = [
   "手机抄写作品预览的关闭按钮避开顶部安全区，并扩大点击区域。"
 ] as const
 
+const RELEASE_2_5_2_NOTES = [
+  "手机毛笔起笔过滤轻微晃动，限制停留铺开，并让突然加速时的粗细变化更连贯；两种毛笔采用连续圆润轮廓，减少起收笔露出完整笔刷形状的问题。",
+  "新笔画保存毛笔渲染版本，实时书写、预览和回放使用相同算法；已保存的旧笔迹保留原有外观。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.3",
+    date: "2026-10-04",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.2",
     date: "2026-10-03",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_2_NOTES
   },
   {
     version: "2.5.1",
