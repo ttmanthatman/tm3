@@ -175,15 +175,24 @@ test("copywork lifecycle isolates private ink, retries saves and shares, publish
   if (account) await request.delete(`/api/admin/accounts/${account.id}`, { headers });
 });
 test("guided copywork writes, resumes an unfinished glyph, frames, saves and marks the verse", async ({
-  page
+  page, request
 }) => {
   test.setTimeout(90000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  const preferencesResponse = await request.patch("/api/me/preferences", {
+    headers: { Authorization: `Bearer ${await token(request)}` },
+    data: { handwritingPreferences: { brush: { size: 45, sensitivity: 65, lag: 35, algorithm: "follow" } } }
+  });
+  expect(preferencesResponse.ok()).toBeTruthy();
   await login(page);
   await openVerse(page);
   const dialog = page.getByRole("dialog", { name: "经文抄写", exact: true });
   await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "毛笔", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("button", { name: "硬笔", exact: true })).toBeVisible();
+  await dialog.getByText("毛笔参数", { exact: true }).click();
+  await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
     const box = await dialog.getByRole("button", { name: "下次继续写" }).boundingBox();
@@ -193,10 +202,20 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
         .locator(".copywork-composer-body")
         .evaluate((el) => el.scrollWidth <= el.clientWidth)
     ).toBeTruthy();
+    await expect(dialog.getByLabel("毛笔算法")).toBeVisible();
+    await page.screenshot({ path: `output/e2e/copywork-pen-controls-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
-  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
+  await dialog.getByRole("button", { name: "硬笔", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "硬笔", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await stroke(page);
+  await dialog.getByRole("button", { name: "撤销", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "写好了", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
   await dialog.getByText("毛笔参数", { exact: true }).click();
+  await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
+  await dialog.getByLabel("毛笔算法").selectOption("follow");
+  await expect(dialog.getByRole("slider", { name: "毛笔旋转滞后" })).toBeVisible();
   await dialog.getByLabel("毛笔算法").selectOption("slanted");
   await dialog.getByRole("slider", { name: "毛笔速度响应" }).fill("70");
   await dialog.getByText("毛笔参数", { exact: true }).click();
@@ -212,11 +231,10 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
     .first()
     .click();
   await expect(dialog.getByRole("button", { name: "写好了" })).toBeEnabled();
-  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
   await dialog.getByText("毛笔参数", { exact: true }).click();
   await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
   await expect(dialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("70");
-  await dialog.getByRole("button", { name: "笔与纸", exact: true }).click();
+  await dialog.getByText("毛笔参数", { exact: true }).click();
   await page.screenshot({ path: "output/e2e/copywork-writing-390.png", fullPage: true });
   await dialog.getByRole("button", { name: "写好了" }).click();
   await stroke(page);

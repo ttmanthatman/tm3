@@ -11,6 +11,7 @@ import {
   type CopyworkSpacing
 } from "@shared/bibleCopywork";
 import {
+  HANDWRITING_DEFAULT_BRUSH_ALGORITHM,
   normalizeHandwritingPreferences,
   type HandwritingBrush,
   type HandwritingCharacter,
@@ -40,10 +41,15 @@ const pendingCharacters = ref<Record<number, HandwritingCharacter>>(
 );
 const { save: savePreferences, error: preferencesError } = useHandwritingPreferences(store);
 const preferences = computed(() => normalizeHandwritingPreferences(store.account?.handwritingPreferences));
-const brush = computed(() => preferences.value.brush);
-function changePen(nextPen: HandwritingPen, nextBrush: HandwritingBrush) {
+const brush = ref<HandwritingBrush>({
+  ...preferences.value.brush,
+  algorithm: HANDWRITING_DEFAULT_BRUSH_ALGORITHM
+});
+async function changePen(nextPen: HandwritingPen, nextBrush: HandwritingBrush) {
   pen.value = nextPen;
-  void savePreferences({ ...preferences.value, pen: nextPen, brush: nextBrush });
+  brush.value = nextBrush;
+  await savePreferences({ ...preferences.value, pen: nextPen, brush: nextBrush });
+  brush.value = { ...preferences.value.brush };
 }
 const glyphs = ref<CopyworkGlyph[]>(props.draft.glyphs);
 const index = ref(props.draft.index);
@@ -294,6 +300,8 @@ onBeforeUnmount(() => {
           <p>{{ draft.source.text }}</p>
           <small>抄写来源，未识别或核对手写内容。</small>
         </details>
+        <HandwritingPenControls :pen="pen" :brush="brush" :disabled="busy" @change="changePen" />
+        <p v-if="preferencesError" role="alert">{{ preferencesError }}</p>
         <div class="writing-surface" :class="{ guides }">
           <HandwritingPad
             :strokes="composer.current.value.strokes"
@@ -320,8 +328,6 @@ onBeforeUnmount(() => {
           笔与纸
         </button>
         <div v-if="toolsOpen" class="writing-tools">
-          <HandwritingPenControls :pen="pen" :brush="brush" :disabled="busy" @change="changePen" />
-          <p v-if="preferencesError" role="alert">{{ preferencesError }}</p>
           <label>墨色 <input v-model="color" type="color" /></label>
           <label><input v-model="guides" type="checkbox" />辅助线</label>
         </div>

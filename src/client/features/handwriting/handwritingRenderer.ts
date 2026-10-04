@@ -102,10 +102,13 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     return;
   }
   const points = brushLeafControlPoints(sample, expansion);
+  // Match the positive winding of ellipses and sweep hulls. Opposite winding
+  // cancels overlapping subpaths in a single fill, leaving hollow end nibs
+  // and fine scale-shaped seams inside the swept ink.
   context.moveTo(points[0].x, points[0].y);
-  context.bezierCurveTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y);
-  context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[5].x, points[5].y);
-  context.bezierCurveTo(points[6].x, points[6].y, points[7].x, points[7].y, points[0].x, points[0].y);
+  context.bezierCurveTo(points[7].x, points[7].y, points[6].x, points[6].y, points[5].x, points[5].y);
+  context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[3].x, points[3].y);
+  context.bezierCurveTo(points[2].x, points[2].y, points[1].x, points[1].y, points[0].x, points[0].y);
   context.closePath();
 }
 
