@@ -33,6 +33,37 @@ const payload: HandwritingPayload = {
   characters: [{ strokes: [{ points: [[0, 0, 0], [100, 100, 20]] }] }]
 };
 
+test("flexible follow nib bends its trailing tip and uses identical live, static and prefix paths", () => {
+  const stroke = {
+    brush: { size: 84, sensitivity: 50, lag: 100, algorithm: "follow" as const, rotationLag: 100, version: 2 as const },
+    points: Array.from({ length: 31 }, (_, index) => [1000 + index * 120, 3000, index * 8] as [number, number, number])
+  };
+  stroke.points.push([4600, 3000, 1240]);
+  for (let index = 1; index <= 8; index++) stroke.points.push([4600, 3000 + index * 80, 1240 + index * 16]);
+  const sample = handwritingBrushGeometry(stroke).samples.at(-1)!;
+  assert.ok(Math.abs(sample.bend ?? 0) > 0.1);
+  const bent = fakeCanvas();
+  const rigid = fakeCanvas();
+  traceBrushFootprintPath(bent.canvas.getContext("2d")!, sample);
+  traceBrushFootprintPath(rigid.canvas.getContext("2d")!, { ...sample, bend: 0 });
+  assert.notDeepEqual(bent.operations.find((operation) => operation.type === "moveTo"), rigid.operations.find((operation) => operation.type === "moveTo"));
+  assert.deepEqual(bent.operations.filter((operation) => operation.type === "bezierCurveTo")[1], rigid.operations.filter((operation) => operation.type === "bezierCurveTo")[1], "the leading body retains its orientation");
+  const liveStroke = { ...stroke, points: [] as [number, number, number][] };
+  const live = fakeCanvas();
+  const paths = (operations: Operation[]) => operations.filter((operation) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(operation.type));
+  for (const point of stroke.points) {
+    const previousCount = liveStroke.points.length;
+    liveStroke.points.push(point);
+    appendHandwritingStroke(live.canvas, liveStroke, previousCount);
+    const replay = fakeCanvas();
+    drawHandwritingCharacter(replay.canvas, { strokes: [stroke] }, { visiblePointCounts: [liveStroke.points.length] });
+    assert.deepEqual(paths(live.operations), paths(replay.operations));
+  }
+  const full = fakeCanvas();
+  drawHandwritingCharacter(full.canvas, { strokes: [stroke] });
+  assert.deepEqual(paths(live.operations), paths(full.operations));
+});
+
 test("natural ink sweeps algorithm-specific nibs and incremental/partial replay use identical paths", () => {
   for (const algorithm of ["follow", "slanted"] as const) {
     const stroke = {

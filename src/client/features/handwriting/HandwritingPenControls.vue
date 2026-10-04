@@ -38,7 +38,7 @@ const brushFields = computed(() => [
           <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key] ?? HANDWRITING_DEFAULT_ROTATION_LAG" :disabled="disabled" @change="emit('change', pen, { ...brush, [field.key]: Number(($event.target as HTMLInputElement).value) })">
         </label>
         <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_PREFERENCES.brush })">恢复默认参数</button>
-        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'follow' ? '峰随路转：水滴形笔锋随行笔转动，旋转滞后越大，转锋越慢；停笔不会自动回锋。' : '石径斜：笔锋固定斜 45°。' }}</small>
+        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'follow' ? '峰随路转：转折时笔毛先弯折，再随运笔逐渐转锋；旋转滞后越大，转锋越慢。停顿保持锋向，继续运笔后恢复。' : '石径斜：笔锋固定斜 45°。' }}</small>
       </div>
     </details>
   </div>

@@ -136,3 +136,27 @@ test("rotation lag slows turning independently of tip position and stays fixed d
   assert.equal(direct.angle, tips[2].angle);
   assert.notEqual(direct.x, tips[2].x);
 });
+
+test("a paused follow corner bends the nib without inventing a lift and relaxes only with travel", () => {
+  for (const direction of [-1, 1]) {
+    const stroke = naturalStroke(Array.from({ length: 31 }, (_, index) => [1000 + index * 120, 3000, index * 8]));
+    stroke.brush!.rotationLag = 100;
+    const before = structuredClone(handwritingBrushGeometry(stroke).samples);
+    stroke.points.push([4600, 3000, 1240]);
+    assert.deepEqual(handwritingBrushGeometry(stroke).samples, before);
+    const start = before.length;
+    for (let index = 1; index <= 8; index++) stroke.points.push([4600, 3000 + direction * index * 80, 1240 + index * 16]);
+    const samples = handwritingBrushGeometry(stroke).samples.slice(start);
+    assert.ok(samples.every((sample) => sample.contact > 0.98), "a mouse pause cannot establish a physical lift");
+    assert.ok(samples.some((sample) => (sample.bend ?? 0) * direction < -0.1), "tip flexes against the pull while the body retains its heading");
+    assert.ok(samples.every((sample) => Math.abs(sample.bend ?? 0) <= 0.38));
+    const corner = structuredClone(samples.at(-1)!);
+    const last = stroke.points.at(-1)!;
+    stroke.points.push([last[0], last[1], last[2] + 2000]);
+    assert.deepEqual(handwritingBrushGeometry(stroke).samples.at(-1), corner);
+    for (let index = 1; index <= 40; index++) stroke.points.push([last[0], last[1] + direction * index * 80, last[2] + 2000 + index * 16]);
+    const end = handwritingBrushGeometry(stroke).samples.at(-1)!;
+    assert.ok(Math.abs(end.bend ?? 0) < 0.01, "straight travel gradually releases the lateral bend");
+    assert.deepEqual(handwritingBrushGeometry(stroke), handwritingBrushGeometry(structuredClone(stroke)));
+  }
+});

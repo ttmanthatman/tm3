@@ -321,6 +321,32 @@ test("手机毛笔微晃后加速不会留下大头且重绘轮廓一致", async
   }
 });
 
+test("桌面鼠标和手写笔显示笔尖镜并在结束或取消后隐藏", async ({ page }) => {
+  await blockPublicNetwork(page);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await login(page, E2E_MEMBER);
+  const dialog = await openHandwritingComposer(page);
+  await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+  const canvas = dialog.getByLabel("当前手写字格");
+  const mirror = dialog.locator(".handwriting-tip-mirror-frame");
+  const box = (await canvas.boundingBox())!;
+  await expect(mirror).toBeHidden();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.6, box.y + box.height * 0.4, { steps: 8 });
+  await expect(mirror).toBeVisible();
+  await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-mouse-desktop.png" });
+  await page.mouse.up();
+  await expect(mirror).toBeHidden();
+  for (const endEvent of ["pointerup", "pointercancel", "lostpointercapture"]) {
+    const pointer = { pointerId: 19, pointerType: "pen", isPrimary: true, button: 0, clientX: box.x + box.width * 0.4, clientY: box.y + box.height * 0.5 };
+    await canvas.dispatchEvent("pointerdown", pointer);
+    await expect(mirror).toBeVisible();
+    await canvas.dispatchEvent(endEvent, pointer);
+    await expect(mirror).toBeHidden();
+  }
+});
+
 test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 844 });
   await login(page, E2E_MEMBER);
@@ -350,6 +376,13 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
   expect(mobileMirror!.y + mobileMirror!.height).toBeLessThanOrEqual(box.y);
   expect(mobileMirror!.x).toBeLessThanOrEqual(box.x + 20);
   await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-touch-mobile.png" });
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile390 = (await mirror.boundingBox())!;
+  const pad390 = (await canvas.boundingBox())!;
+  expect(mobile390.y + mobile390.height).toBeLessThanOrEqual(pad390.y);
+  expect(mobile390.x).toBeGreaterThanOrEqual(0);
+  expect(mobile390.x + mobile390.width).toBeLessThanOrEqual(390);
 
   await page.setViewportSize({ width: 1280, height: 844 });
   await expect.poll(async () => (await mirror.boundingBox())?.width).toBe(160);

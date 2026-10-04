@@ -8,6 +8,8 @@ export type BrushSample = {
   y: number;
   width: number;
   angle: number;
+  // Lateral flex of the trailing bristles, in units of nib width.
+  bend?: number;
   directional: boolean;
   algorithm?: HandwritingBrushAlgorithm;
   version?: 2;
@@ -53,6 +55,7 @@ type BrushState = {
   motionPath: MotionPoint[];
   width: number;
   angle: number;
+  bend?: number;
   tangentAngle: number;
   movementHeading: number;
   turnReferenceHeading: number;
@@ -113,6 +116,7 @@ function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
   return {
     algorithm: brush.algorithm || "follow",
     version: brush.version,
+    flexible: brush.version === 2 && brush.rotationLag !== undefined && brush.algorithm === "follow",
     maxWidth: 120 + clamp(brush.size, 0, 100) * 12,
     speedSensitivity: clamp(brush.sensitivity, 0, 100),
     maxDeflection: lag === 0 ? 0 : 34 + lag * 1.45,
@@ -132,6 +136,7 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
     y: point[1],
     width: state.width,
     angle: state.angle,
+    ...(state.bend !== undefined ? { bend: state.bend } : {}),
     directional: state.version !== 2 && state.algorithm === "slanted",
     ...(state.version === 2 ? { version: 2 as const } : {}),
     ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
@@ -150,7 +155,7 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
   };
 }
 
-function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: HandwritingBrushAlgorithm, version?: 2): BrushGeometry {
+function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: HandwritingBrushAlgorithm, version?: 2, flexible = false): BrushGeometry {
   const width = maxWidth * 0.06;
   const state: BrushState = {
     algorithm,
@@ -171,6 +176,7 @@ function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: H
     motionPath: [{ x: point[0], y: point[1], timestampMs: point[2], arcLength: 0 }],
     width,
     angle: Math.PI / 4,
+    ...(flexible ? { bend: 0 } : {}),
     tangentAngle: Math.PI / 4,
     movementHeading: Math.PI / 4,
     turnReferenceHeading: Math.PI / 4,
@@ -281,10 +287,12 @@ function turnInference(
   const evidence = Math.max(pauseScore, slowdownScore);
   const confidence = angleScore * (0.38 + 0.62 * evidence);
   if (state.turnCandidateTravel < 72 || evidence < 0.28 || confidence < 0.42) return;
-  state.phase = "lifting";
+  // Coordinates and a pause alone cannot prove a physical lift. For the
+  // flexible follow nib retain contact and let the bristles bend instead.
+  state.phase = state.bend !== undefined ? "turning" : "lifting";
   state.turnTravel = 0;
   state.turnCandidateTravel = 0;
-  state.liftContact = clamp(1 - confidence * 0.76, 0.24, 0.72);
+  state.liftContact = state.bend !== undefined ? 1 : clamp(1 - confidence * 0.76, 0.24, 0.72);
 }
 
 function advancePhase(
@@ -339,6 +347,7 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
     y: state.tipY,
     width: state.width,
     angle: state.angle,
+    ...(state.bend !== undefined ? { bend: state.bend } : {}),
     directional: state.hasHeading || (state.version !== 2 && state.algorithm === "slanted"),
     ...(state.version === 2 ? { version: 2 as const } : {}),
     ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
@@ -435,6 +444,15 @@ function advanceBrushState(
       state.angle = normalizeAngle(
         state.angle + shortestAngleDelta(state.angle, desiredAngle) * angleFollow
       );
+      if (state.bend !== undefined) {
+        // The compliant trailing tip bends against the new pull before the
+        // whole tuft reorients. Friction retains this deformation at rest;
+        // only further travel can relax it. Angular lag remains independent
+        // of positional lag, including when positional lag is zero.
+        const bendTarget = -0.38 * Math.sin(shortestAngleDelta(state.angle, heading)) * state.contact;
+        const bendFollow = 1 - Math.exp(-stepDistance / Math.max(24, parameters.maxWidth * 0.045));
+        state.bend += (bendTarget - state.bend) * bendFollow;
+      }
     }
 
     const nextContact = targetContact(state, parameters);
@@ -535,7 +553,7 @@ export function handwritingBrushGeometry(stroke: HandwritingStroke): BrushGeomet
   const parameters = brushParameters(brush);
   let geometry = cache.get(stroke);
   if (!geometry || geometry.state === null || geometry.ends.length > stroke.points.length) {
-    geometry = initialGeometry(stroke.points[0], parameters.maxWidth, parameters.algorithm, parameters.version);
+    geometry = initialGeometry(stroke.points[0], parameters.maxWidth, parameters.algorithm, parameters.version, parameters.flexible);
     cache.set(stroke, geometry);
   }
   const state = geometry.state;

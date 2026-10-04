@@ -29,7 +29,6 @@ const tipMirror = ref<HTMLCanvasElement | null>(null);
 const mirrorVisible = ref(false);
 const diagnosticsEnabled = import.meta.env.DEV;
 let activePointerId: number | null = null;
-let activePointerType: "touch" | "other" | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let mirrorFrame: number | null = null;
 let renderedPointCounts: number[] = [];
@@ -218,7 +217,6 @@ function finish(event: PointerEvent) {
   if (activePointerId !== event.pointerId) return;
   const pointerId = event.pointerId;
   activePointerId = null;
-  activePointerType = null;
   mirrorVisible.value = false;
   releasePointer(pointerId);
   emit("stroke-end", pointerId, inputPoint(event));
@@ -227,7 +225,6 @@ function finish(event: PointerEvent) {
 function cancel(pointerId: number) {
   if (activePointerId !== pointerId) return;
   activePointerId = null;
-  activePointerType = null;
   mirrorVisible.value = false;
   releasePointer(pointerId);
   emit("stroke-cancel", pointerId);
@@ -242,8 +239,7 @@ function pointerDown(event: PointerEvent) {
     return;
   event.preventDefault();
   activePointerId = event.pointerId;
-  activePointerType = event.pointerType === "touch" ? "touch" : "other";
-  mirrorVisible.value = activePointerType === "touch";
+  mirrorVisible.value = true;
   try {
     canvas.value?.setPointerCapture?.(event.pointerId);
   } catch {
@@ -409,7 +405,7 @@ onBeforeUnmount(() => {
   .handwriting-tip-mirror-frame {
     position: fixed;
     z-index: 10;
-    top: calc(env(safe-area-inset-top) + 100px);
+    top: calc(env(safe-area-inset-top) + 86px);
     left: max(8px, env(safe-area-inset-left));
     transform: none;
   }

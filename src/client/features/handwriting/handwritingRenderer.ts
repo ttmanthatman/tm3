@@ -121,15 +121,16 @@ function brushLeafControlPoints(sample: BrushSample, expansion: number) {
   const trailingTip = -length * (0.82 + 0.18 * contact);
   const leadingNose = length * (0.58 + 0.16 * (1 - spread));
   const shoulder = length * 0.04;
+  const tipSide = width * (sample.bend ?? 0);
   return [
-    brushFootprintPoint(sample, trailingTip, 0, expansion),
-    brushFootprintPoint(sample, trailingTip * 0.28, halfWidth * 0.72, expansion),
+    brushFootprintPoint(sample, trailingTip, tipSide, expansion),
+    brushFootprintPoint(sample, trailingTip * 0.28, halfWidth * 0.72 + tipSide * 0.45, expansion),
     brushFootprintPoint(sample, shoulder, halfWidth, expansion),
     brushFootprintPoint(sample, leadingNose * 0.68, halfWidth * 0.62, expansion),
     brushFootprintPoint(sample, leadingNose, 0, expansion),
     brushFootprintPoint(sample, leadingNose * 0.68, -halfWidth * 0.62, expansion),
     brushFootprintPoint(sample, shoulder, -halfWidth, expansion),
-    brushFootprintPoint(sample, trailingTip * 0.28, -halfWidth * 0.72, expansion)
+    brushFootprintPoint(sample, trailingTip * 0.28, -halfWidth * 0.72 + tipSide * 0.45, expansion)
   ];
 }
 
@@ -141,6 +142,7 @@ function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: num
     y: from.y + (to.y - from.y) * amount,
     width: from.width + (to.width - from.width) * amount,
     angle: from.angle + angleDelta * amount,
+    ...(to.bend !== undefined ? { bend: (from.bend ?? 0) + (to.bend - (from.bend ?? 0)) * amount } : {}),
     contact: from.contact + (to.contact - from.contact) * amount,
     spread: from.spread + (to.spread - from.spread) * amount
   };
