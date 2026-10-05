@@ -103,3 +103,54 @@ test("handwriting grid reserves complete rows and narrows columns on small scree
   assert.equal(handwritingMessageEstimatedHeight(seven, 1280) > handwritingMessageEstimatedHeight(payload, 1280), true);
   assert.equal(handwritingMessageEstimatedHeight(payload, 1280), 79);
 });
+
+test("hidden and inactive surfaces neither draw static ink nor start manual replay", () => {
+  let staticDraws = 0;
+  const h = harness({ onAutoPlayDeclined: () => staticDraws++ });
+  h.controller.mount(h.element);
+  h.controller.setPayload();
+  assert.deepEqual(h.draws, []);
+  assert.equal(h.controller.play(), false);
+  h.controller.setSurfaceActive(false);
+  h.setVisible(true);
+  assert.equal(staticDraws, 0);
+  assert.equal(h.controller.state().visible, true);
+  h.controller.setSurfaceActive(true);
+  assert.equal(staticDraws, 1);
+  h.setDocumentVisible(false);
+  h.setVisible(true);
+  assert.equal(staticDraws, 1);
+  assert.equal(h.controller.play(), false);
+  h.controller.destroy();
+});
+
+test("finishing replay draws the final frame once and unmount clears visibility", () => {
+  const h = harness();
+  h.controller.mount(h.element);
+  h.setVisible(true);
+  h.controller.play();
+  h.advance(20);
+  assert.deepEqual(h.draws, [0, 20]);
+  h.controller.destroy();
+  assert.equal(h.controller.state().visible, false);
+});
+
+test("static history avoids timeline construction and manual replay reuses its timeline", () => {
+  let reads = 0;
+  const h = harness({ getPayload: () => { reads++; return payload; } });
+  h.controller.mount(h.element);
+  h.setVisible(true);
+  h.controller.setPayload();
+  assert.equal(reads, 0);
+  h.controller.play();
+  assert.equal(reads, 1);
+  h.controller.pause();
+  h.controller.play();
+  assert.equal(reads, 1);
+  h.setDocumentVisible(false);
+  const before = [...h.draws];
+  h.advance(10);
+  assert.deepEqual(h.draws, before);
+  assert.equal(h.hasFrame(), false);
+  h.controller.destroy();
+});

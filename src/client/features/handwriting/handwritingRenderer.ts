@@ -71,7 +71,7 @@ function brushFootprintPoint(sample: BrushSample, along: number, side: number, e
   };
 }
 
-export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sample: BrushSample, expansion = 0) {
+export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sample: BrushSample, expansion = 0, closePath = true) {
   const width = Math.max(1, sample.width + expansion);
   const spread = Math.max(0.12, Math.min(1, sample.spread));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
@@ -80,7 +80,7 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     const start = brushFootprintPoint(sample, along, 0, expansion);
     context.moveTo(start.x, start.y);
     context.ellipse(sample.x, sample.y, along, side, sample.angle, 0, Math.PI * 2);
-    context.closePath();
+    if (closePath) context.closePath();
     return;
   }
   if (sample.algorithm === "slanted") {
@@ -94,7 +94,7 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     ];
     context.moveTo(corners[0].x, corners[0].y);
     for (const corner of corners.slice(1)) context.lineTo(corner.x, corner.y);
-    context.closePath();
+    if (closePath) context.closePath();
     return;
   }
   if (!sample.directional) {
@@ -109,7 +109,7 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
   context.bezierCurveTo(points[7].x, points[7].y, points[6].x, points[6].y, points[5].x, points[5].y);
   context.bezierCurveTo(points[4].x, points[4].y, points[4].x, points[4].y, points[3].x, points[3].y);
   context.bezierCurveTo(points[2].x, points[2].y, points[1].x, points[1].y, points[0].x, points[0].y);
-  context.closePath();
+  if (closePath) context.closePath();
 }
 
 function brushLeafControlPoints(sample: BrushSample, expansion: number) {
@@ -199,14 +199,17 @@ function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample,
   const hull = [...half(points), ...half([...points].reverse())];
   context.moveTo(hull[0].x, hull[0].y);
   for (const point of hull.slice(1)) context.lineTo(point.x, point.y);
-  context.closePath();
-  traceBrushFootprintPath(context, to, expansion);
+  traceBrushFootprintPath(context, to, expansion, false);
 }
 
-function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number) {
+function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number): Generator<void> {
   if (from >= until) return;
   context.beginPath();
-  if (from === 0) traceBrushFootprintPath(context, samples[0], expansion);
+  // fill() closes each subpath implicitly. Repeated explicit closure scans
+  // growing paths in some browsers and can stall dense drawings for seconds.
+  // Keep one fill per pass to preserve overlapping glow opacity.
+  if (from === 0) traceBrushFootprintPath(context, samples[0], expansion, false);
+  let stamps = 0;
   for (let index = Math.max(1, from); index < until; index += 1) {
     const previous = samples[index - 1];
     const sample = samples[index];
@@ -218,8 +221,9 @@ function drawBrushOutline(context: CanvasRenderingContext2D, samples: readonly B
     for (let stamp = 1; stamp <= stampCount; stamp += 1) {
       const nextStamp = interpolatedBrushSample(previous, sample, stamp / stampCount);
       if (sample.version === 2) traceNaturalSweep(context, previousStamp, nextStamp, expansion);
-      else traceBrushFootprintPath(context, nextStamp, expansion);
+      else traceBrushFootprintPath(context, nextStamp, expansion, false);
       previousStamp = nextStamp;
+      if (++stamps % 512 === 0) yield;
     }
   }
   context.fill();
@@ -249,19 +253,20 @@ function drawSegment(context: CanvasRenderingContext2D, from: HandwritingPoint, 
   context.fill();
 }
 
-function drawStrokeGeometry(
+function* drawStrokeGeometrySteps(
   context: CanvasRenderingContext2D,
   stroke: HandwritingStroke,
   startPointIndex: number,
   visiblePoints: number,
   width: number
-) {
+): Generator<void> {
   const end = Math.min(stroke.points.length, Math.max(0, visiblePoints));
+  if (startPointIndex >= end) return;
   if (stroke.brush) {
     const geometry = handwritingBrushGeometry(stroke);
     const from = startPointIndex === 0 ? 0 : geometry.ends[startPointIndex - 1];
     const until = end === 0 ? 0 : geometry.ends[end - 1];
-    drawBrushOutline(context, geometry.samples, from, until, width - HANDWRITING_STROKE_WIDTH);
+    yield* drawBrushOutlineSteps(context, geometry.samples, from, until, width - HANDWRITING_STROKE_WIDTH);
     return;
   }
   let index = Math.max(0, startPointIndex);
@@ -273,7 +278,13 @@ function drawStrokeGeometry(
   for (; index < end; index += 1) {
     drawSegment(context, stroke.points[index - 1], stroke.points[index], width);
     drawPoint(context, stroke.points[index], width);
+    if (index % 512 === 0) yield;
   }
+}
+
+function drawStrokeGeometry(context: CanvasRenderingContext2D, stroke: HandwritingStroke, start: number, end: number, width: number) {
+  const drawing = drawStrokeGeometrySteps(context, stroke, start, end, width);
+  while (!drawing.next().done) { /* Synchronous composer and replay entry points. */ }
 }
 
 function drawStrokes(
@@ -337,6 +348,33 @@ export function drawHandwritingCharacter(
     width,
     options.glow
   );
+}
+
+// Static message rendering can yield within a large stroke without splitting
+// its fill, so dense paths stay responsive and glow overlaps stay identical.
+export function* drawHandwritingCharacterSteps(
+  canvas: HandwritingCanvas,
+  character: HandwritingCharacter,
+  options: HandwritingRendererOptions = {}
+): Generator<void> {
+  const context = configureCanvas(canvas, options);
+  if (!context) return;
+  context.clearRect(0, 0, HANDWRITING_CANVAS_SCALE, HANDWRITING_CANVAS_SCALE);
+  const width = Math.max(1, options.lineWidth ?? HANDWRITING_STROKE_WIDTH);
+  if (options.glow) {
+    for (const pass of glowPasses(options.glow, width)) {
+      for (const stroke of character.strokes) {
+        context.fillStyle = pass.fillStyle;
+        yield* drawStrokeGeometrySteps(context, stroke, 0, stroke.points.length, pass.width);
+        yield;
+      }
+    }
+  }
+  for (const stroke of character.strokes) {
+    context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
+    yield* drawStrokeGeometrySteps(context, stroke, 0, stroke.points.length, width);
+    yield;
+  }
 }
 
 export function drawHandwritingPayload(canvas: HandwritingCanvas, payload: HandwritingPayload | null | undefined, options: HandwritingRendererOptions = {}) {

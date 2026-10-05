@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { parseStoredHandwritingPayload, type HandwritingPayload } from "@shared/handwriting";
 import type { MessageDTO } from "@shared/types";
-import { drawHandwritingCharacter } from "./handwritingRenderer";
+import { drawHandwritingCharacter, drawHandwritingCharacterSteps } from "./handwritingRenderer";
 import { buildHandwritingTimeline, type HandwritingTimeline } from "./handwritingTimeline";
+import { handwritingRenderQueue } from "./handwritingRenderQueue";
 import {
   createHandwritingPlaybackController,
   handwritingGridMetrics,
@@ -20,32 +21,89 @@ const props = withDefaults(defineProps<{
 const root = ref<HTMLElement | null>(null);
 const grid = ref<HTMLElement | null>(null);
 const playbackState = ref<HandwritingPlaybackState>({ playing: false, progressMs: 0, visible: false, surfaceActive: true });
-const payload = ref<HandwritingPayload | null>(parseStoredHandwritingPayload(props.message.payload));
+// Stored DTOs replace their payload as a whole. Keep their thousands of points
+// out of Vue's deep proxy/dependency traversal during each canvas draw.
+const payload = shallowRef<HandwritingPayload | null>(parseStoredHandwritingPayload(props.message.payload));
 const viewportWidth = ref(typeof window === "undefined" ? 1280 : window.innerWidth);
 const metrics = computed(() => handwritingGridMetrics(payload.value, viewportWidth.value));
 const gridStyle = computed(() => ({ "--handwriting-columns": metrics.value.columns, "--handwriting-rows": metrics.value.rows }));
 const paperStyle = computed(() => payload.value?.paper
   ? { backgroundColor: payload.value.paper.color, padding: "8px", borderRadius: "10px" }
   : {});
-let timeline: HandwritingTimeline = { events: [], durationMs: 0 };
+let timeline: HandwritingTimeline | null = null;
 let timelineCursor = 0;
 let renderedProgress = 0;
 let visiblePointCounts = new Map<string, number>();
 let resizeObserver: ResizeObserver | null = null;
-let staticRendered = false;
+let desiredStatic = true;
+let mounted = false;
+let resizeScheduled = false;
+let lastGridSize = "";
+const renderedCharacters = new Map<HTMLCanvasElement, string>();
+const pendingCanvases = new Set<HTMLCanvasElement>();
+const pendingSignatures = new Map<HTMLCanvasElement, string>();
 
 function canvases() {
   return [...(grid.value?.querySelectorAll<HTMLCanvasElement>("canvas") || [])];
 }
 
+function canRender() {
+  return mounted && playbackState.value.visible && props.surfaceActive && document.visibilityState === "visible";
+}
+
+function cancelPendingRenders() {
+  for (const canvas of pendingCanvases) handwritingRenderQueue.cancel(canvas);
+  pendingCanvases.clear();
+  pendingSignatures.clear();
+}
+
+function gridSize() {
+  const rect = grid.value?.getBoundingClientRect();
+  return `${rect?.width || 0}:${rect?.height || 0}:${window.devicePixelRatio}`;
+}
+
 function drawCurrent() {
+  if (!canRender()) return;
+  if (!lastGridSize) lastGridSize = gridSize();
   const elements = canvases();
   payload.value?.characters.forEach((character, index) => {
     const canvas = elements[index];
-    if (canvas) drawHandwritingCharacter(canvas, character, {
+    if (!canvas) return;
+    const options = {
       glow: payload.value?.glow,
-      visiblePointCounts: character.strokes.map((_stroke, strokeIndex) => visiblePointCounts.get(`${index}:${strokeIndex}`) || 0)
-    });
+      ...(desiredStatic ? {} : {
+        visiblePointCounts: character.strokes.map((_stroke, strokeIndex) => visiblePointCounts.get(`${index}:${strokeIndex}`) || 0)
+      })
+    };
+    const pointCounts = options.visiblePointCounts;
+    const signature = !pointCounts || pointCounts.every((count, i) => count === character.strokes[i].points.length)
+      ? "static" : pointCounts.join(",");
+    if (renderedCharacters.get(canvas) === signature) {
+      handwritingRenderQueue.cancel(canvas);
+      pendingCanvases.delete(canvas);
+      pendingSignatures.delete(canvas);
+      return;
+    }
+    if (pendingSignatures.get(canvas) === signature) return;
+    pendingCanvases.add(canvas);
+    pendingSignatures.set(canvas, signature);
+    const drawing = signature === "static" ? drawHandwritingCharacterSteps(canvas, character, options) : null;
+    const render = () => {
+      if (!canRender() || !canvas.isConnected || !grid.value?.contains(canvas)) {
+        pendingCanvases.delete(canvas);
+        pendingSignatures.delete(canvas);
+        return;
+      }
+      if (drawing && !drawing.next().done) {
+        handwritingRenderQueue.enqueue(canvas, render);
+        return;
+      }
+      if (!drawing) drawHandwritingCharacter(canvas, character, { ...options });
+      pendingCanvases.delete(canvas);
+      pendingSignatures.delete(canvas);
+      renderedCharacters.set(canvas, signature);
+    };
+    handwritingRenderQueue.enqueue(canvas, render);
   });
 }
 
@@ -57,9 +115,10 @@ function resetProgress() {
 
 function draw(progressMs: number) {
   if (!payload.value) return;
-  staticRendered = false;
+  desiredStatic = false;
   if (progressMs < renderedProgress) resetProgress();
-  while (timelineCursor < timeline.events.length && timeline.events[timelineCursor].at <= progressMs) {
+  if (progressMs > 0 && !timeline) timeline = buildHandwritingTimeline(payload.value);
+  while (timeline && timelineCursor < timeline.events.length && timeline.events[timelineCursor].at <= progressMs) {
     const event = timeline.events[timelineCursor];
     const key = `${event.characterIndex}:${event.strokeIndex}`;
     visiblePointCounts.set(key, (visiblePointCounts.get(key) || 0) + 1);
@@ -71,21 +130,20 @@ function draw(progressMs: number) {
 
 function renderStatic() {
   resetProgress();
-  staticRendered = true;
-  const elements = canvases();
-  payload.value?.characters.forEach((character, index) => {
-    const canvas = elements[index];
-    if (canvas) drawHandwritingCharacter(canvas, character, { glow: payload.value?.glow });
-  });
+  desiredStatic = true;
+  drawCurrent();
 }
 
 function rebuild() {
-  const restoreStatic = staticRendered && !playbackState.value.playing;
-  staticRendered = false;
+  cancelPendingRenders();
+  renderedCharacters.clear();
+  resetProgress();
+  desiredStatic = true;
+  lastGridSize = "";
   payload.value = parseStoredHandwritingPayload(props.message.payload);
-  timeline = payload.value ? buildHandwritingTimeline(payload.value) : { events: [], durationMs: 0 };
+  timeline = null;
   controller.setPayload();
-  if (restoreStatic) void nextTick(renderStatic);
+  void nextTick(drawCurrent);
 }
 
 const controller = createHandwritingPlaybackController({
@@ -93,11 +151,14 @@ const controller = createHandwritingPlaybackController({
   draw,
   claimAutoPlay: () => props.variant === "timeline" && !!props.claimAutoPlay?.(),
   onAutoPlayDeclined: renderStatic,
-  onStateChange: (state) => { playbackState.value = state; }
+  onStateChange: (state) => {
+    playbackState.value = state;
+    if (canRender()) drawCurrent();
+    else cancelPendingRenders();
+  }
 });
 
 function replayHandwriting() {
-  staticRendered = false;
   controller.play(true);
 }
 
@@ -108,22 +169,39 @@ function handleReplayKey(event: KeyboardEvent) {
   replayHandwriting();
 }
 
+function handleResize() {
+  viewportWidth.value = window.innerWidth;
+  if (resizeScheduled) return;
+  resizeScheduled = true;
+  void nextTick(() => {
+    resizeScheduled = false;
+    if (!mounted) return;
+    const size = gridSize();
+    if (size === lastGridSize) return;
+    lastGridSize = size;
+    cancelPendingRenders();
+    renderedCharacters.clear();
+    drawCurrent();
+  });
+}
+
 watch(() => props.surfaceActive, (active) => controller.setSurfaceActive(active));
-watch(() => props.message.payload, rebuild, { deep: true });
+watch(() => props.message.payload, rebuild);
 onMounted(() => {
-  rebuild();
-  if (root.value) controller.mount(root.value);
+  mounted = true;
+  controller.setSurfaceActive(props.surfaceActive);
+  if (root.value) controller.mount(root.value.closest(".message-row") || root.value);
+  window.addEventListener("resize", handleResize, { passive: true });
   if (typeof ResizeObserver !== "undefined") {
-    resizeObserver = new ResizeObserver(() => {
-      viewportWidth.value = window.innerWidth;
-      if (playbackState.value.playing || playbackState.value.progressMs > 0) draw(playbackState.value.progressMs);
-      else if (staticRendered) renderStatic();
-      else draw(playbackState.value.progressMs);
-    });
-    if (root.value) resizeObserver.observe(root.value);
+    resizeObserver = new ResizeObserver(handleResize);
+    if (grid.value) resizeObserver.observe(grid.value);
   }
 });
 onBeforeUnmount(() => {
+  mounted = false;
+  window.removeEventListener("resize", handleResize);
+  cancelPendingRenders();
+  renderedCharacters.clear();
   resizeObserver?.disconnect();
   resizeObserver = null;
   controller.destroy();

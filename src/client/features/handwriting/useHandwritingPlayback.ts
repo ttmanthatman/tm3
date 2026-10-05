@@ -29,6 +29,7 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
   const isDocumentVisible = dependencies.isDocumentVisible || (() => document.visibilityState === "visible");
   const reducedMotion = dependencies.reducedMotion || (() => window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   let timeline: HandwritingTimeline = { events: [], durationMs: 0 };
+  let timelineDirty = true;
   let frame = 0;
   let lastFrameAt = 0;
   let playing = false;
@@ -48,8 +49,10 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
   }
 
   function rebuildTimeline() {
+    if (!timelineDirty) return;
     const payload = dependencies.getPayload();
     timeline = payload ? buildHandwritingTimeline(payload) : { events: [], durationMs: 0 };
+    timelineDirty = false;
   }
 
   function cancelFrameLoop() {
@@ -67,20 +70,25 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
 
   function frameStep() {
     if (!playing) return;
+    if (!canRender()) {
+      pause(true);
+      return;
+    }
     const current = now();
     const delta = Math.max(0, current - lastFrameAt);
     lastFrameAt = current;
     progressMs = Math.min(timeline.durationMs, progressMs + delta);
-    dependencies.draw(progressMs);
     if (progressMs >= timeline.durationMs) {
       finish();
       return;
     }
+    dependencies.draw(progressMs);
     frame = requestFrame(frameStep);
     publish();
   }
 
   function play(fromStart = true) {
+    if (!canRender()) return false;
     rebuildTimeline();
     if (!timeline.durationMs) {
       dependencies.draw(0);
@@ -105,7 +113,11 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
   }
 
   function canAutoPlay() {
-    return visible && surfaceActive && isDocumentVisible() && !reducedMotion();
+    return canRender() && !reducedMotion();
+  }
+
+  function canRender() {
+    return visible && surfaceActive && isDocumentVisible();
   }
 
   function tryAutoPlay() {
@@ -117,12 +129,13 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
 
   function visibilityChanged(nextVisible: boolean) {
     visible = nextVisible;
+    publish();
     if (!visible) {
       pause(true);
       return false;
     } else if (resumeOnVisibility && surfaceActive && isDocumentVisible()) {
       return play(false);
-    } else if (!tryAutoPlay()) {
+    } else if (canRender() && !tryAutoPlay()) {
       dependencies.onAutoPlayDeclined?.();
       return false;
     }
@@ -143,6 +156,7 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     surfaceActive = active;
     if (!active) pause(true);
     else if (visible && resumeOnVisibility && isDocumentVisible()) play(false);
+    else if (canRender() && !playing) dependencies.onAutoPlayDeclined?.();
     publish();
   }
 
@@ -152,9 +166,9 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     playing = false;
     progressMs = 0;
     resumeOnVisibility = false;
-    rebuildTimeline();
-    dependencies.draw(0);
+    timelineDirty = true;
     if (wasPlaying) play(true);
+    else if (canRender()) dependencies.onAutoPlayDeclined?.();
     publish();
   }
 
@@ -178,6 +192,7 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
   function destroy() {
     cancelFrameLoop();
     playing = false;
+    visible = false;
     resumeOnVisibility = false;
     unobserve?.();
     unobserve = null;
@@ -189,7 +204,6 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     publish();
   }
 
-  rebuildTimeline();
   return {
     state,
     play,
