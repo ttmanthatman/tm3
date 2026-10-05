@@ -229,6 +229,61 @@ test("replay redraws only changing characters and pauses when the message leaves
   await page.evaluate(() => (window as unknown as { handwritingHarness: Harness }).handwritingHarness.unmount());
 });
 
+test("restarting replay cancels partial static ink without reusing the previous frame cache", async ({ page }) => {
+  await mountHarness(page, true, 1);
+  await expectInkReady(page);
+  await page.waitForTimeout(100);
+  const result = await page.evaluate(async () => {
+    const queuePath = "/src/client/features/handwriting/handwritingRenderQueue.ts";
+    const { handwritingRenderQueue: queue } = await import(queuePath) as typeof import("../../src/client/features/handwriting/handwritingRenderQueue");
+    const jobs = new Map<object, () => void>();
+    queue.enqueue = (key, draw) => { jobs.set(key, draw); };
+    queue.cancel = (key) => { jobs.delete(key); };
+    const frames = new Map<number, FrameRequestCallback>();
+    let frameId = 0;
+    let time = 0;
+    window.requestAnimationFrame = (callback) => { frames.set(++frameId, callback); return frameId; };
+    window.cancelAnimationFrame = (handle) => { frames.delete(handle); };
+    performance.now = () => time;
+    const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
+    const painted = () => canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data
+      .filter((value, index) => index % 4 === 3 && value > 0).length;
+    const flushDrawing = () => {
+      const next = jobs.entries().next().value;
+      if (!next) return false;
+      jobs.delete(next[0]);
+      next[1]();
+      return true;
+    };
+    const replay = document.querySelector<HTMLButtonElement>("[role=button]")!;
+    replay.click();
+    flushDrawing();
+    const blank = painted();
+    time = 1;
+    for (const [id, callback] of [...frames]) {
+      frames.delete(id);
+      callback(time);
+    }
+    flushDrawing();
+    const firstFrame = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    time = 10000;
+    for (const [id, callback] of [...frames]) {
+      frames.delete(id);
+      callback(time);
+    }
+    // Stop as soon as the stepped renderer paints, before its completion is cached.
+    do { if (!flushDrawing()) break; } while (!painted());
+    const partial = painted();
+    replay.click();
+    flushDrawing();
+    const restarted = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
+    return { blank, partial, differences: restarted.filter((value, index) => value !== firstFrame[index]).length };
+  });
+  expect(result.blank).toBe(0);
+  expect(result.partial).toBeGreaterThan(0);
+  expect(result.differences).toBe(0);
+});
+
 test("resizing a multi-row message invalidates the raster cache and rebuilds the grid", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await mountHarness(page, true, 16);

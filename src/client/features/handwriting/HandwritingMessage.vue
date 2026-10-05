@@ -94,6 +94,9 @@ function drawCurrent() {
         pendingSignatures.delete(canvas);
         return;
       }
+      // A yielded draw has already changed pixels, so its previous completed
+      // signature cannot be reused if playback or visibility interrupts it.
+      renderedCharacters.delete(canvas);
       if (drawing && !drawing.next().done) {
         handwritingRenderQueue.enqueue(canvas, render);
         return;
