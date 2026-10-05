@@ -1123,11 +1123,21 @@ const RELEASE_2_5_3_NOTES = [
   "毛笔默认算法及恢复默认参数改为“石径斜”，手动选择的算法继续保留，历史未指定算法的笔迹仍按原算法回放。"
 ] as const
 
+const RELEASE_2_5_4_NOTES = [
+  "修复毛笔轮廓填充方向不一致造成的白色鳞片状细缝和收笔水滴空洞；“峰随路转”和“石径斜”的实时笔迹、预览及回放均连续填实笔锋扫过的外轮廓。",
+  "经文抄写打开时默认使用“石径斜”，直接显示硬笔、毛笔选择和可展开的毛笔参数，保留账号已保存的粗细、速度响应及笔头滞后设置。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.5",
+    date: "2026-10-05",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.4",
     date: "2026-10-04",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_4_NOTES
   },
   {
     version: "2.5.3",
