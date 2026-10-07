@@ -1139,11 +1139,21 @@ const RELEASE_2_5_6_NOTES = [
   "抄写支持单击播放或暂停、双击从头播放、按住左右拖动调整进度；精简阅览层，仅在左右边缘翻页，顶部提供手势提示。"
 ] as const
 
+const RELEASE_2_5_7_NOTES = [
+  "点击经文旁的毛笔图标直接打开抄写册页，作品详情、其他抄写选择及分享操作收进右上角菜单，移除中间的作品列表窗口。",
+  "管理员可全局开关聊天室与圣经的左右滑动切换，并单独设置在手写、拖动抄写进度时屏蔽切换，默认保留快捷切换并开启冲突保护。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.8",
+    date: "2026-10-07",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.7",
     date: "2026-10-07",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_7_NOTES
   },
   {
     version: "2.5.6",
