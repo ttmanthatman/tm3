@@ -6,7 +6,7 @@ import { copyworkWrite as api } from "./copyworkApi";
 import AppModal from "../../../components/ui/AppModal.vue";
 import CopyworkComposer from "./CopyworkComposer.vue";
 import CopyworkViewer from "./CopyworkViewer.vue";
-import CopyworkLibrary from "./CopyworkLibrary.vue";
+import type { CopyworkVerseFilter } from "./copyworkViewerState";
 import type { CopyworkDraft } from "./copyworkDrafts";
 const props = defineProps<{ accountId: number }>();
 const emit = defineEmits<{ changed: []; chat: [] }>();
@@ -16,12 +16,7 @@ const error = ref("");
 const setupOpen = ref(false);
 const draft = ref<CopyworkDraft | null>(null);
 const workId = ref("");
-const filter = ref<{
-  translation: string;
-  bookCode: string;
-  chapter: number;
-  verse: number;
-} | null>(null);
+const filter = ref<CopyworkVerseFilter | null>(null);
 async function start(selection: {
   translation: string;
   bookCode: string;
@@ -79,6 +74,7 @@ function resume(value: CopyworkDraft) {
 }
 function saved(work: CopyworkDTO) {
   draft.value = null;
+  filter.value = null;
   workId.value = work.id;
   changed();
 }
@@ -87,6 +83,7 @@ function changed() {
   window.dispatchEvent(new Event("bible-copyworks-changed"));
 }
 function browse(value: NonNullable<typeof filter.value>) {
+  workId.value = "";
   filter.value = value;
 }
 defineExpose({ start, resume, browse });
@@ -124,30 +121,17 @@ defineExpose({ start, resume, browse });
     @saved="saved"
   />
   <CopyworkViewer
-    v-if="workId"
-    :id="workId"
-    @close="workId = ''"
+    v-if="workId || filter"
+    :key="workId || JSON.stringify(filter)"
+    :id="workId || undefined"
+    :filter="filter || undefined"
+    @close="workId = ''; filter = null"
     @changed="changed"
     @chat="emit('chat')"
   />
-  <AppModal
-    :open="!!filter"
-    title="经文下的抄写"
-    size="medium"
-    content-class="copywork-browser"
-    @close="filter = null"
-    ><div class="library-scroll">
-      <CopyworkLibrary
-        v-if="filter"
-        :account-id="accountId"
-        :filter="filter"
-        @resume="resume"
-      /></div
-  ></AppModal>
 </template>
 <style scoped>
-:deep(.copywork-setup),
-:deep(.copywork-browser) {
+:deep(.copywork-setup) {
   background: #f8f3e9;
   color: #63513b;
 }
@@ -174,9 +158,5 @@ small {
   border: 0;
   border-radius: 8px;
   font: inherit;
-}
-.library-scroll {
-  overflow: auto;
-  min-height: 0;
 }
 </style>

@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import type { CopyworkSource } from "@shared/bibleCopywork";
+export type CopyworkVerseFilter = { translation: string; bookCode: string; chapter: number; verse: number };
 // The viewer outlives virtualized message rows and is cleared on account changes.
 export const viewedCopyworkId = ref("");
 export function openCopyworkViewer(id: string) {

@@ -7,11 +7,19 @@ import { api } from "../../../api";
 import { copyworkWrite } from "./copyworkApi";
 import { useChatStore } from "../../../store";
 import CopyworkPage from "./CopyworkPage.vue";
-import { openCopyworkSource } from "./copyworkViewerState";
-const props = defineProps<{ id: string }>();
+import { openCopyworkSource, type CopyworkVerseFilter } from "./copyworkViewerState";
+const props = defineProps<{ id?: string; filter?: CopyworkVerseFilter }>();
 const emit = defineEmits<{ close: []; changed: []; chat: [] }>();
 const store = useChatStore();
 const work = ref<CopyworkDTO | null>(null);
+const selectedId = ref("");
+const choices = shallowRef<CopyworkDTO[]>([]);
+const choiceScope = ref<"public" | "mine">("public");
+const choiceBusy = ref(false);
+const choiceError = ref("");
+const hasMoreChoices = ref(false);
+const choicesOpen = ref(false);
+const detailsOpen = ref(false);
 const pages = shallowRef<CopyworkPlacement[][]>([]);
 const glyphs = shallowRef<Array<CopyworkGlyph & { index: number }>>([]);
 const page = ref(0);
@@ -27,6 +35,8 @@ const channelId = ref<number | null>(null);
 const sharedChannel = ref<number | null>(null);
 const folio = ref<InstanceType<typeof CopyworkPage> | null>(null);
 let sequence = 0;
+let workSequence = 0;
+let choiceSequence = 0;
 let shareRequestId = crypto.randomUUID();
 const mine = computed(() => work.value?.accountId === store.account?.id);
 const channels = computed(() =>
@@ -39,7 +49,7 @@ async function loadPage() {
   error.value = "";
   try {
     const data = await api<{ glyphs: Array<CopyworkGlyph & { index: number }> }>(
-      `/api/bible/copyworks/${props.id}/pages/${page.value}`
+      `/api/bible/copyworks/${selectedId.value}/pages/${page.value}`
     );
     if (request === sequence) glyphs.value = data.glyphs;
   } catch (e) {
@@ -49,17 +59,61 @@ async function loadPage() {
   }
 }
 async function load() {
+  const request = ++workSequence;
   error.value = "";
   try {
     const data = await api<{ work: CopyworkDTO; pages: CopyworkPlacement[][] }>(
-      `/api/bible/copyworks/${props.id}`
+      `/api/bible/copyworks/${selectedId.value}`
     );
+    if (request !== workSequence) return;
     work.value = data.work;
     pages.value = data.pages;
     await loadPage();
   } catch (e) {
-    error.value = e instanceof Error ? e.message : "作品加载失败";
+    if (request === workSequence) error.value = e instanceof Error ? e.message : "作品加载失败";
   }
+}
+async function loadChoices(scope: "public" | "mine", more = false) {
+  if (!props.filter) return;
+  const request = ++choiceSequence;
+  choiceScope.value = scope;
+  choiceBusy.value = true;
+  choiceError.value = "";
+  if (!more) {
+    choices.value = [];
+    hasMoreChoices.value = false;
+  }
+  const params = new URLSearchParams({ scope, offset: String(choices.value.length) });
+  Object.entries(props.filter).forEach(([key, value]) => params.set(key, String(value)));
+  try {
+    const data = await api<{ works: CopyworkDTO[]; hasMore: boolean }>(`/api/bible/copyworks?${params}`);
+    if (request !== choiceSequence) return;
+    choices.value = more ? [...choices.value, ...data.works] : data.works;
+    hasMoreChoices.value = data.hasMore;
+    return data.works;
+  } catch (e) {
+    if (request === choiceSequence) choiceError.value = e instanceof Error ? e.message : "作品加载失败";
+  } finally {
+    if (request === choiceSequence) choiceBusy.value = false;
+  }
+}
+async function openVerse() {
+  error.value = "";
+  let available = await loadChoices("public");
+  if (available && !available.length) available = await loadChoices("mine");
+  if (available?.length) selectedId.value = available[0].id;
+  else if (choiceError.value) error.value = choiceError.value;
+}
+function selectWork(id: string) {
+  if (busy.value) return;
+  selectedId.value = id;
+  toolsOpen.value = false;
+  choicesOpen.value = false;
+  detailsOpen.value = false;
+}
+function retry() {
+  if (selectedId.value) void load();
+  else void openVerse();
 }
 function turnPage(direction: -1 | 1) {
   if (loading.value) return;
@@ -71,6 +125,7 @@ async function openSource() {
   folio.value?.stop();
   try {
     await openCopyworkSource(work.value.source);
+    emit("close");
   } catch (e) {
     error.value = e instanceof Error ? e.message : "经文跳转失败";
   }
@@ -84,7 +139,7 @@ async function publish() {
   busy.value = true;
   error.value = "";
   try {
-    await copyworkWrite(`/api/bible/copyworks/${props.id}`, {
+    await copyworkWrite(`/api/bible/copyworks/${selectedId.value}`, {
       method: "PATCH",
       body: JSON.stringify({ published: !work.value.publishedAt })
     });
@@ -101,7 +156,7 @@ async function remove() {
   busy.value = true;
   error.value = "";
   try {
-    await copyworkWrite(`/api/bible/copyworks/${props.id}`, { method: "DELETE" });
+    await copyworkWrite(`/api/bible/copyworks/${selectedId.value}`, { method: "DELETE" });
     changed();
     emit("close");
   } catch (e) {
@@ -120,7 +175,7 @@ async function share() {
   busy.value = true;
   error.value = "";
   try {
-    await copyworkWrite(`/api/bible/copyworks/${props.id}/share`, {
+    await copyworkWrite(`/api/bible/copyworks/${selectedId.value}/share`, {
       method: "POST",
       body: JSON.stringify({ channelId: channelId.value, clientRequestId: shareRequestId })
     });
@@ -140,22 +195,40 @@ async function goToChat() {
   }
 }
 watch(page, () => {
+  if (!work.value || work.value.id !== selectedId.value) return;
   folio.value?.stop();
   void loadPage();
 });
 watch(channelId, () => {
   shareRequestId = crypto.randomUUID();
 });
-watch(
-  () => props.id,
-  () => {
+watch(selectedId, (id) => {
+    folio.value?.stop();
+    sequence++;
+    workSequence++;
+    work.value = null;
+    pages.value = [];
+    glyphs.value = [];
+    loading.value = false;
     page.value = 0;
-    void load();
+    shareOpen.value = false;
+    publicOpen.value = false;
+    deleteOpen.value = false;
+    sharedChannel.value = null;
+    if (id) void load();
+});
+watch(
+  () => [props.id, props.filter],
+  () => {
+    selectedId.value = props.id || "";
+    if (!props.id && props.filter) void openVerse();
   },
   { immediate: true }
 );
 onBeforeUnmount(() => {
   sequence++;
+  workSequence++;
+  choiceSequence++;
 });
 </script>
 <template>
@@ -180,7 +253,7 @@ onBeforeUnmount(() => {
           >
             {{ work.source.reference }}
           </button>
-          <span v-else class="viewer-loading" role="status">正在铺开册页…</span>
+          <span v-else class="viewer-loading" role="status">{{ error || (!selectedId && !choiceBusy) ? "抄写册页" : "正在铺开册页…" }}</span>
           <span v-if="pages.length > 1" class="viewer-page-count" aria-label="当前册页"
             >{{ page + 1 }} / {{ pages.length }}</span
           >
@@ -198,7 +271,7 @@ onBeforeUnmount(() => {
             <CircleHelp :size="20" />
           </button>
           <button
-            v-if="mine"
+            v-if="work || filter"
             type="button"
             class="viewer-icon"
             aria-label="作品操作"
@@ -222,13 +295,38 @@ onBeforeUnmount(() => {
           <small>也可用空格播放 / 暂停，方向键翻页。</small>
         </aside>
         <div
-          v-if="mine && toolsOpen && work"
+          v-if="toolsOpen"
           id="copywork-tools"
           class="viewer-popover viewer-tools"
           role="group"
           aria-label="作品操作"
         >
+          <button v-if="work" :aria-expanded="detailsOpen" @click="detailsOpen = !detailsOpen; choicesOpen = false">作品详情</button>
+          <dl v-if="work && detailsOpen" class="viewer-details">
+            <dt>经文</dt><dd>{{ work.source.reference }}</dd>
+            <dt>版本</dt><dd>{{ work.source.translationName }}</dd>
+            <dt>抄写人</dt><dd>{{ work.author }}</dd>
+            <dt>完成日期</dt><dd>{{ new Date(work.completedAt).toLocaleDateString() }}</dd>
+            <dt>公开状态</dt><dd>{{ work.publishedAt ? "已公开 · 站内可见" : "私人保存" }}</dd>
+          </dl>
+          <template v-if="filter">
+            <button :aria-expanded="choicesOpen" @click="choicesOpen = !choicesOpen; detailsOpen = false; choicesOpen && loadChoices(choiceScope)">选择其他抄写</button>
+            <section v-if="choicesOpen" class="viewer-choices" aria-label="此节经文的其他抄写">
+              <nav aria-label="抄写作品分类">
+                <button :aria-pressed="choiceScope === 'public'" @click="loadChoices('public')">公开作品</button>
+                <button :aria-pressed="choiceScope === 'mine'" @click="loadChoices('mine')">我的抄写</button>
+              </nav>
+              <p v-if="choiceError" role="alert">{{ choiceError }} <button @click="loadChoices(choiceScope)">重试</button></p>
+              <button v-for="choice in choices" :key="choice.id" class="viewer-choice" :disabled="busy" :aria-pressed="choice.id === selectedId" @click="selectWork(choice.id)">
+                <strong>{{ choice.source.reference }}</strong><span>{{ choice.author }} · {{ new Date(choice.completedAt).toLocaleDateString() }}</span>
+              </button>
+              <p v-if="choiceBusy" role="status">正在寻找册页…</p>
+              <p v-else-if="!choices.length && !choiceError">这里还没有{{ choiceScope === 'public' ? '公开的' : '我的' }}抄写。</p>
+              <button v-if="hasMoreChoices" :disabled="choiceBusy" @click="loadChoices(choiceScope, true)">更多作品</button>
+            </section>
+          </template>
           <button
+            v-if="mine && work"
             :disabled="busy"
             @click="
               work.publishedAt ? publish() : (publicOpen = true);
@@ -238,6 +336,7 @@ onBeforeUnmount(() => {
             {{ work.publishedAt ? "取消公开" : "公开到经文下" }}
           </button>
           <button
+            v-if="mine"
             :disabled="busy"
             @click="
               openShare();
@@ -247,6 +346,7 @@ onBeforeUnmount(() => {
             分享到聊天室
           </button>
           <button
+            v-if="mine"
             class="danger"
             :disabled="busy"
             @click="
@@ -257,7 +357,8 @@ onBeforeUnmount(() => {
             删除作品
           </button>
         </div>
-        <p v-if="error" role="alert">{{ error }} <button @click="load">重试</button></p>
+        <p v-if="error" role="alert">{{ error }} <button @click="retry">重试</button></p>
+        <p v-else-if="!work && !selectedId && !choiceBusy" class="viewer-empty">此节经文暂无可查看的抄写。</p>
         <template v-if="work">
           <div class="folio-scroll" :aria-busy="loading">
             <div class="folio-size" :data-page-index="page">
@@ -386,6 +487,8 @@ onBeforeUnmount(() => {
   top: 52px;
   right: 12px;
   max-width: calc(100% - 24px);
+  max-height: calc(var(--app-height) - 110px);
+  overflow: auto;
   padding: 14px;
   border: 1px solid #e3dfd6;
   border-radius: 8px;
@@ -402,9 +505,24 @@ onBeforeUnmount(() => {
   color: #6c756e;
 }
 .viewer-tools {
+  position: relative;
+  top: auto;
+  right: auto;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0 12px auto;
   display: grid;
   gap: 4px;
 }
+.viewer-choices { width: min(300px, 100%); }
+.viewer-choices nav { display: flex; gap: 6px; margin: 8px 0; }
+.viewer-choice { display: grid; gap: 4px; width: 100%; text-align: left; margin: 6px 0; }
+.viewer-choice span { font-size: 12px; color: #6c756e; }
+.viewer-choice[aria-pressed="true"], .viewer-choices nav button[aria-pressed="true"] { border-color: #315b4e; }
+.viewer-details { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; margin: 8px 0; }
+.viewer-details dt { color: #6c756e; }
+.viewer-details dd { margin: 0; overflow-wrap: anywhere; }
+.viewer-empty { font-size: 14px; color: #6c756e; }
 button,
 select {
   min-height: 40px;

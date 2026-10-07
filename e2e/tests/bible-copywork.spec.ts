@@ -433,7 +433,40 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
     .locator("xpath=following-sibling::button[1]");
   await expect(marker).toHaveAttribute("aria-label", "查看此节经文的抄写");
   await marker.click();
-  await expect(page.getByRole("dialog", { name: "经文下的抄写", exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "经文下的抄写", exact: true })).toHaveCount(0);
+  const directViewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
+  await expect(directViewer.locator(".copywork-paper")).toBeVisible();
+  await expect(directViewer.getByRole("button", { name: "作品详情", exact: true })).toHaveCount(0);
+  await directViewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  await directViewer.getByRole("button", { name: "作品详情", exact: true }).click();
+  await expect(directViewer.locator(".viewer-details")).toContainText("约翰福音 11:35");
+  await directViewer.getByRole("button", { name: "选择其他抄写", exact: true }).click();
+  await expect(directViewer.getByRole("button", { name: "公开作品", exact: true })).toBeVisible();
+  await expect(directViewer.locator(".viewer-choice")).not.toHaveCount(0);
+  await directViewer.getByRole("button", { name: "我的抄写", exact: true }).click();
+  await expect(directViewer.locator(".viewer-choice")).not.toHaveCount(0);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await directViewer.locator(".viewer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: `output/e2e/copywork-direct-menu-${width}.png`, fullPage: true });
+  }
+  await directViewer.locator(".viewer-choice").last().click();
+  await expect(directViewer.locator(".copywork-paper")).toBeVisible();
+  await expect(directViewer.locator("#copywork-tools")).toHaveCount(0);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(directViewer.getByRole("button", { name: "关闭", exact: true })).toBeVisible();
+    expect(await directViewer.locator(".viewer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: `output/e2e/copywork-direct-viewer-${width}.png`, fullPage: true });
+  }
+  await directViewer.getByRole("button", { name: "在圣经中阅读：约翰福音 11:35", exact: true }).click();
+  await expect(directViewer).toHaveCount(0);
+  await expect(page.locator('[data-verse-key="JHN-11-35"]')).toBeVisible();
+  await page.route("**/api/bible/copyworks?**", (route) => route.fulfill({ json: { works: [], hasMore: false } }));
+  await marker.click();
+  await expect(directViewer.getByText("此节经文暂无可查看的抄写。", { exact: true })).toBeVisible();
+  await directViewer.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.unroute("**/api/bible/copyworks?**");
   expect(pageErrors).toEqual([]);
 });
 test("WebKit touch input retains unfinished ink and shows natural narrow glyph bounds", async () => {
@@ -553,6 +586,13 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   await expect(page.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
   await expect(page.getByLabel("选择经节")).toHaveValue("9");
   await expect(paper).toHaveCount(0);
+  await page.locator('[data-verse-key="JOS-1-9"]').locator("xpath=following-sibling::button[1]").click();
+  const privateViewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
+  await expect(privateViewer.locator(".copywork-paper")).toBeVisible();
+  await privateViewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  await privateViewer.getByRole("button", { name: "作品详情", exact: true }).click();
+  await expect(privateViewer.locator(".viewer-details")).toContainText("私人保存");
+  await privateViewer.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "目录", exact: true }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
   await page.getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).click();
@@ -621,6 +661,20 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
     expect(Number(await receivedPaper.getAttribute("data-progress"))).toBeLessThan(scrubbed);
     await receivedCard.getByRole("button", { name: `在圣经中阅读：${source.reference}`, exact: true }).click();
     await expect(receiver.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
+    await receiver.getByRole("button", { name: "目录", exact: true }).click();
+    await receiver.getByRole("tab", { name: "经卷目录", exact: true }).click();
+    await receiver.getByRole("button", { name: /^约翰福音/ }).click();
+    await receiver.getByRole("button", { name: "11", exact: true }).click();
+    await receiver.getByLabel("选择经节").selectOption("35");
+    await receiver.locator('[data-verse-key="JHN-11-35"]').locator("xpath=following-sibling::button[1]").click();
+    const receivedViewer = receiver.getByRole("dialog", { name: "抄写册页", exact: true });
+    await expect(receivedViewer.locator(".copywork-paper")).toBeVisible();
+    await receivedViewer.getByRole("button", { name: "作品操作", exact: true }).click();
+    await expect(receivedViewer.getByRole("button", { name: "作品详情", exact: true })).toBeVisible();
+    await expect(receivedViewer.getByRole("button", { name: "分享到聊天室", exact: true })).toHaveCount(0);
+    await expect(receivedViewer.getByRole("button", { name: "删除作品", exact: true })).toHaveCount(0);
+    await receivedViewer.getByRole("button", { name: "作品详情", exact: true }).click();
+    await expect(receivedViewer.locator(".viewer-details")).toContainText("已公开 · 站内可见");
     expect(pageErrors).toEqual([]);
   } finally { await context.close(); await browser.close(); }
 });
