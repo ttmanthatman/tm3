@@ -112,6 +112,22 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     publish();
   }
 
+  function duration() {
+    rebuildTimeline();
+    return timeline.durationMs;
+  }
+
+  function seek(progress: number) {
+    if (!canRender() || !Number.isFinite(progress)) return false;
+    rebuildTimeline();
+    pause();
+    resumeOnVisibility = false;
+    progressMs = Math.max(0, Math.min(timeline.durationMs, progress));
+    dependencies.draw(progressMs);
+    publish();
+    return true;
+  }
+
   function canAutoPlay() {
     return canRender() && !reducedMotion();
   }
@@ -208,6 +224,8 @@ export function createHandwritingPlaybackController(dependencies: HandwritingPla
     state,
     play,
     pause,
+    duration,
+    seek,
     tryAutoPlay,
     visibilityChanged,
     setSurfaceActive,

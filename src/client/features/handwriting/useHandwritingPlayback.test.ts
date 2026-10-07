@@ -94,6 +94,31 @@ test("manual replay starts once from zero and reduced motion blocks only automat
   test.controller.destroy();
 });
 
+test("scrubbing cancels frames, clamps progress, and resumes from the selected point", () => {
+  const h = harness();
+  h.controller.mount(h.element);
+  h.setVisible(true);
+  assert.equal(h.controller.duration(), 20);
+  h.controller.play();
+  h.advance(5);
+  assert.equal(h.controller.seek(12), true);
+  assert.equal(h.hasFrame(), false);
+  assert.equal(h.controller.state().progressMs, 12);
+  h.controller.play(false);
+  h.advance(3);
+  assert.equal(h.controller.state().progressMs, 15);
+  h.controller.seek(-50);
+  assert.equal(h.controller.state().progressMs, 0);
+  h.controller.seek(50);
+  assert.equal(h.controller.state().progressMs, 20);
+  h.setVisible(false);
+  assert.equal(h.controller.seek(4), false);
+  h.setVisible(true);
+  assert.equal(h.hasFrame(), false);
+  assert.equal(h.controller.seek(Number.NaN), false);
+  h.controller.destroy();
+});
+
 test("handwriting grid reserves complete rows and narrows columns on small screens", () => {
   assert.deepEqual(handwritingGridMetrics(payload, 1280), { columns: 1, rows: 1, count: 1, maxColumns: 6 });
   assert.deepEqual(handwritingGridMetrics(payload, 390), { columns: 1, rows: 1, count: 1, maxColumns: 6 });

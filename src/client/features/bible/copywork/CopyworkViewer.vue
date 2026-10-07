@@ -1,22 +1,25 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import type { CopyworkDTO, CopyworkGlyph, CopyworkPlacement } from "@shared/bibleCopywork";
+import { Ellipsis, CircleHelp } from "lucide-vue-next";
 import AppModal from "../../../components/ui/AppModal.vue";
 import { api } from "../../../api";
 import { copyworkWrite } from "./copyworkApi";
 import { useChatStore } from "../../../store";
 import CopyworkPage from "./CopyworkPage.vue";
+import { openCopyworkSource } from "./copyworkViewerState";
 const props = defineProps<{ id: string }>();
 const emit = defineEmits<{ close: []; changed: []; chat: [] }>();
 const store = useChatStore();
 const work = ref<CopyworkDTO | null>(null);
-const pages = ref<CopyworkPlacement[][]>([]);
-const glyphs = ref<Array<CopyworkGlyph & { index: number }>>([]);
+const pages = shallowRef<CopyworkPlacement[][]>([]);
+const glyphs = shallowRef<Array<CopyworkGlyph & { index: number }>>([]);
 const page = ref(0);
 const error = ref("");
 const busy = ref(false);
 const loading = ref(false);
-const zoom = ref(false);
+const tipsOpen = ref(false);
+const toolsOpen = ref(false);
 const shareOpen = ref(false);
 const deleteOpen = ref(false);
 const publicOpen = ref(false);
@@ -56,6 +59,20 @@ async function load() {
     await loadPage();
   } catch (e) {
     error.value = e instanceof Error ? e.message : "作品加载失败";
+  }
+}
+function turnPage(direction: -1 | 1) {
+  if (loading.value) return;
+  const next = page.value + direction;
+  if (next >= 0 && next < pages.value.length) page.value = next;
+}
+async function openSource() {
+  if (!work.value) return;
+  folio.value?.stop();
+  try {
+    await openCopyworkSource(work.value.source);
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : "经文跳转失败";
   }
 }
 function changed() {
@@ -147,58 +164,117 @@ onBeforeUnmount(() => {
       class="copywork-viewer-shell"
       :open="true"
       :busy="busy"
-      title="抄写册页"
+      aria-label="抄写册页"
       size="medium"
       content-class="copywork-viewer"
       @close="emit('close')"
     >
+      <template #header>
+        <div class="viewer-header">
+          <button
+            v-if="work"
+            type="button"
+            class="viewer-reference"
+            :aria-label="`在圣经中阅读：${work.source.reference}`"
+            @click="openSource"
+          >
+            {{ work.source.reference }}
+          </button>
+          <span v-else class="viewer-loading" role="status">正在铺开册页…</span>
+          <span v-if="pages.length > 1" class="viewer-page-count" aria-label="当前册页"
+            >{{ page + 1 }} / {{ pages.length }}</span
+          >
+          <button
+            type="button"
+            class="viewer-icon"
+            aria-label="抄写操作提示"
+            :aria-expanded="tipsOpen"
+            aria-controls="copywork-tips"
+            @click="
+              tipsOpen = !tipsOpen;
+              toolsOpen = false;
+            "
+          >
+            <CircleHelp :size="20" />
+          </button>
+          <button
+            v-if="mine"
+            type="button"
+            class="viewer-icon"
+            aria-label="作品操作"
+            :aria-expanded="toolsOpen"
+            aria-controls="copywork-tools"
+            @click="
+              toolsOpen = !toolsOpen;
+              tipsOpen = false;
+            "
+          >
+            <Ellipsis :size="20" />
+          </button>
+        </div>
+      </template>
       <div class="viewer-body">
+        <aside v-if="tipsOpen" id="copywork-tips" class="viewer-popover" aria-label="抄写操作提示">
+          <strong>操作提示</strong>
+          <p>
+            左边缘：上一页<br />右边缘：下一页<br />中间单击：播放 / 暂停<br />中间双击：从头播放<br />按住左右拖动：调整进度
+          </p>
+          <small>也可用空格播放 / 暂停，方向键翻页。</small>
+        </aside>
+        <div
+          v-if="mine && toolsOpen && work"
+          id="copywork-tools"
+          class="viewer-popover viewer-tools"
+          role="group"
+          aria-label="作品操作"
+        >
+          <button
+            :disabled="busy"
+            @click="
+              work.publishedAt ? publish() : (publicOpen = true);
+              toolsOpen = false;
+            "
+          >
+            {{ work.publishedAt ? "取消公开" : "公开到经文下" }}
+          </button>
+          <button
+            :disabled="busy"
+            @click="
+              openShare();
+              toolsOpen = false;
+            "
+          >
+            分享到聊天室
+          </button>
+          <button
+            class="danger"
+            :disabled="busy"
+            @click="
+              deleteOpen = true;
+              toolsOpen = false;
+            "
+          >
+            删除作品
+          </button>
+        </div>
         <p v-if="error" role="alert">{{ error }} <button @click="load">重试</button></p>
         <template v-if="work">
-          <header class="viewer-heading">
-            <h2>{{ work.source.reference }}</h2>
-            <span>{{
-              mine
-                ? work.publishedAt
-                  ? "已公开 · 站内可见"
-                  : "已保存 · 仅自己及已分享聊天室可见"
-                : work.author + "的抄写"
-            }}</span>
-          </header>
-          <div class="folio-scroll">
-            <div class="folio-size" :class="{ zoomed: zoom }">
+          <div class="folio-scroll" :aria-busy="loading">
+            <div class="folio-size" :data-page-index="page">
               <CopyworkPage
                 ref="folio"
                 :glyphs="glyphs"
                 :placements="pages[page] || []"
                 :source="work.source"
-                :author="work.author"
-                :date="work.completedAt"
+                compact
+                interactive
+                paging
+                :disabled="loading"
+                @turn="turnPage"
               />
             </div>
           </div>
           <p v-if="loading" role="status">正在铺开册页…</p>
-          <nav class="viewer-actions" aria-label="册页操作">
-            <button :disabled="page === 0 || loading" @click="page--">上一页</button
-            ><span>{{ page + 1 }} / {{ pages.length }}</span
-            ><button :disabled="page >= pages.length - 1 || loading" @click="page++">下一页</button
-            ><button :disabled="loading" @click="folio?.play()">回放本页</button
-            ><button @click="folio?.stop()">停止回放</button
-            ><button :aria-pressed="zoom" @click="zoom = !zoom">
-              {{ zoom ? "适合屏幕" : "放大" }}
-            </button>
-          </nav>
-          <details>
-            <summary>抄写来源</summary>
-            <p>{{ work.source.text }}</p>
-            <small>{{ work.source.copyright }} · 原文仅供对照，未识别或核对手写内容。</small>
-          </details>
-          <div v-if="mine" class="viewer-actions">
-            <button :disabled="busy" @click="work.publishedAt ? publish() : (publicOpen = true)">
-              {{ work.publishedAt ? "取消公开" : "公开到经文下" }}</button
-            ><button :disabled="busy" @click="openShare">分享到聊天室</button
-            ><button class="danger" :disabled="busy" @click="deleteOpen = true">删除作品</button>
-          </div>
           <div v-if="sharedChannel" class="notice" role="status">
             分享成功 <button @click="goToChat">前往聊天室</button>
           </div>
@@ -233,50 +309,101 @@ onBeforeUnmount(() => {
 <style scoped>
 .copywork-viewer-shell {
   z-index: 160;
+  padding: max(12px, var(--safe-top)) max(8px, env(safe-area-inset-right))
+    max(12px, var(--safe-bottom)) max(8px, env(safe-area-inset-left));
 }
 :deep(.copywork-viewer) {
+  position: relative;
   display: flex;
   flex-direction: column;
-  background: #f5f0e7;
-  color: #5c4e3b;
+  width: min(560px, 100%);
+  max-height: calc(var(--app-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom)));
+  background: #fffaf0;
+  color: #315b4e;
+}
+:deep(.modal-head) {
+  flex-shrink: 0;
+  min-height: 52px;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 0;
+  background: transparent;
+  gap: 0;
+}
+:deep(.modal-head .icon-btn) {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+}
+.viewer-header {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+}
+.viewer-reference {
+  margin-right: auto;
+  padding: 4px 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font-size: 14px;
+}
+.viewer-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.viewer-page-count {
+  white-space: nowrap;
+  font-size: 12px;
+  color: #7b7b7b;
 }
 .viewer-body {
-  padding: 20px;
+  padding: 0 16px 16px;
   overflow: auto;
   min-height: 0;
 }
-.viewer-heading {
-  text-align: center;
-  margin-bottom: 22px;
-}
-.viewer-heading h2 {
-  font:
-    25px "Songti SC",
-    serif;
-  margin: 0 0 10px;
-}
-.viewer-heading span {
-  font-size: 12px;
-  color: #88765e;
-}
-.folio-scroll {
-  overflow: auto;
-}
 .folio-size {
-  max-width: 440px;
-  margin: auto;
+  width: 100%;
 }
-.folio-size.zoomed {
-  width: 720px;
-  max-width: none;
+/* The only citation is in the fixed header. */
+.folio-size :deep(.copywork-reference) {
+  display: none;
 }
-.viewer-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  margin: 16px 0;
+.viewer-popover {
+  position: absolute;
+  z-index: 2;
+  top: 52px;
+  right: 12px;
+  max-width: calc(100% - 24px);
+  padding: 14px;
+  border: 1px solid #e3dfd6;
+  border-radius: 8px;
+  background: #fff;
+  color: #48514d;
+  box-shadow: 0 6px 20px #0002;
+  font-size: 13px;
+}
+.viewer-popover p {
+  margin: 8px 0;
+  line-height: 1.9;
+}
+.viewer-popover small {
+  color: #6c756e;
+}
+.viewer-tools {
+  display: grid;
+  gap: 4px;
 }
 button,
 select {
@@ -292,46 +419,30 @@ select {
 button:disabled {
   opacity: 0.5;
 }
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.viewer-reference,
+.viewer-icon {
+  border: 0;
+  background: transparent;
+}
 .danger {
   color: #9b4130;
 }
 .notice {
   padding: 16px;
-  margin: 12px 0;
-  background: #e9e1d1;
+  margin: 12px 0 0;
+  background: #f1ece1;
   border-radius: 9px;
 }
 .notice button {
   margin: 4px;
 }
-details {
-  font-size: 13px;
-  line-height: 1.8;
-}
-small {
-  color: #82715d;
-}
 @media (max-width: 700px) {
-  .copywork-viewer-shell {
-    padding: max(12px, var(--safe-top)) max(8px, env(safe-area-inset-right)) max(12px, var(--safe-bottom)) max(8px, env(safe-area-inset-left));
-  }
-  :deep(.modal-head) {
-    flex-shrink: 0;
-    min-height: 56px;
-    padding: 4px 12px;
-  }
-  :deep(.modal-head .icon-btn) {
-    width: 44px;
-    height: 44px;
-    flex: 0 0 44px;
-  }
   :deep(.copywork-viewer) {
-    max-height: calc(var(--app-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom)));
     width: 100%;
-    border-radius: 0;
-  }
-  .viewer-body {
-    padding: 16px;
   }
 }
 </style>

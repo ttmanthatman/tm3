@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
 import type { CopyworkDTO, CopyworkGlyph, CopyworkPlacement } from "@shared/bibleCopywork";
 import { api } from "../../../api";
 import CopyworkPage from "./CopyworkPage.vue";
 import { openCopyworkViewer } from "./copyworkViewerState";
-const props = defineProps<{ id: string; reference?: string }>();
+const props = withDefaults(defineProps<{ id: string; reference?: string; message?: boolean; surfaceActive?: boolean }>(), { surfaceActive: true });
 const root = ref<HTMLElement | null>(null);
 const work = ref<CopyworkDTO | null>(null);
-const placements = ref<CopyworkPlacement[]>([]);
-const glyphs = ref<Array<CopyworkGlyph & { index: number }>>([]);
+const placements = shallowRef<CopyworkPlacement[]>([]);
+const glyphs = shallowRef<Array<CopyworkGlyph & { index: number }>>([]);
 const error = ref("");
 let observer: IntersectionObserver | null = null;
 let alive = true;
@@ -56,8 +56,16 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <div ref="root" class="copywork-card" @click.stop>
+  <div ref="root" class="copywork-card" :class="{ message }" @click.stop>
+    <template v-if="message">
+      <CopyworkPage v-if="work" :glyphs="glyphs" :placements="placements" :source="work.source"
+        compact interactive :active="surfaceActive" />
+      <div v-else class="card-state" :role="error ? 'alert' : 'status'">
+        {{ error || "正在铺开册页…" }}<button v-if="error" type="button" @click="load">重试</button>
+      </div>
+    </template>
     <button
+      v-else
       class="card-open"
       :aria-label="`查看抄写：${work?.source.reference || reference || '经文'}`"
       @click="openCopyworkViewer(id)"
@@ -82,6 +90,7 @@ onBeforeUnmount(() => {
 .copywork-card {
   width: min(270px, 100%);
 }
+.copywork-card.message { width: 280px; max-width: 100%; }
 .card-open {
   display: grid;
   gap: 9px;

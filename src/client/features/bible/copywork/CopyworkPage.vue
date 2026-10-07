@@ -7,46 +7,82 @@ import {
   type CopyworkPlacement,
   type CopyworkSource
 } from "@shared/bibleCopywork";
-import { copyworkPageHeight } from "./copyworkPageLayout";
+import { copyworkInkViewport, copyworkPageHeight } from "./copyworkPageLayout";
 import { drawHandwritingInk } from "../../handwriting/handwritingRenderer";
-import { buildHandwritingTimeline } from "../../handwriting/handwritingTimeline";
-const props = defineProps<{
-  glyphs: Array<CopyworkGlyph & { index: number }>;
-  placements: CopyworkPlacement[];
-  source: CopyworkSource;
-  author?: string;
-  date?: string;
-  editable?: boolean;
-  active?: boolean;
-}>();
-const emit = defineEmits<{ edit: [index: number] }>();
+import {
+  buildHandwritingTimeline,
+  type HandwritingTimeline
+} from "../../handwriting/handwritingTimeline";
+import { createHandwritingPlaybackController } from "../../handwriting/useHandwritingPlayback";
+import { createCopyworkGestures } from "./copyworkGestures";
+import { openCopyworkSource } from "./copyworkViewerState";
+const props = withDefaults(
+  defineProps<{
+    glyphs: Array<CopyworkGlyph & { index: number }>;
+    placements: CopyworkPlacement[];
+    source: CopyworkSource;
+    author?: string;
+    date?: string;
+    editable?: boolean;
+    active?: boolean;
+    compact?: boolean;
+    interactive?: boolean;
+    paging?: boolean;
+    disabled?: boolean;
+  }>(),
+  { active: true }
+);
+const emit = defineEmits<{ edit: [index: number]; turn: [direction: -1 | 1] }>();
 const canvas = ref<HTMLCanvasElement | null>(null);
 const root = ref<HTMLElement | null>(null);
 const playing = ref(false);
-let frame = 0;
-let observer: IntersectionObserver | null = null;
+const progress = ref(1);
+const sourceError = ref("");
 let resizeObserver: ResizeObserver | null = null;
+let replayStarted = false;
+let timeline: HandwritingTimeline | null = null;
+let cursor = 0;
+let renderedProgress = -1;
+let counts = new Map<number, number[]>();
 const pageHeight = computed(() => copyworkPageHeight(props.glyphs, props.placements));
+const viewport = computed(() =>
+  props.compact
+    ? copyworkInkViewport(props.glyphs, props.placements)
+    : { x: 0, y: 0, width: COPYWORK_PAGE.width, height: pageHeight.value }
+);
 const paperStyle = computed(() => ({
-  aspectRatio: `${COPYWORK_PAGE.width} / ${pageHeight.value}`,
-  "--folio-heading-top": `${48 / pageHeight.value * 100}%`,
-  "--folio-caption-bottom": `${38 / pageHeight.value * 100}%`
+  aspectRatio: `${viewport.value.width} / ${viewport.value.height}`,
+  "--folio-heading-top": `${(48 / pageHeight.value) * 100}%`,
+  "--folio-caption-bottom": `${(38 / pageHeight.value) * 100}%`
 }));
 const characters = computed(() => copyworkCharacters(props.source.text));
 const glyphMap = computed(() => new Map(props.glyphs.map((g) => [g.index, g])));
-function draw(counts?: Map<number, number[]>) {
+const orderedGlyphs = computed(() =>
+  props.placements
+    .map((p) => glyphMap.value.get(p.index))
+    .filter((g): g is CopyworkGlyph & { index: number } => !!g)
+);
+function payload() {
+  return {
+    kind: "handwriting" as const,
+    version: 1 as const,
+    characters: orderedGlyphs.value.map((g) => g.character)
+  };
+}
+function draw(visibleCounts?: Map<number, number[]>) {
   const ctx = canvas.value?.getContext("2d");
   if (!ctx || !canvas.value) return;
   const ratio = Math.min(window.devicePixelRatio || 1, 2);
   const width = Math.max(1, Math.round(canvas.value.getBoundingClientRect().width * ratio));
-  const height = Math.round((width * pageHeight.value) / COPYWORK_PAGE.width);
+  const height = Math.max(1, Math.round((width * viewport.value.height) / viewport.value.width));
   if (canvas.value.width !== width || canvas.value.height !== height) {
     canvas.value.width = width;
     canvas.value.height = height;
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, width, height);
-  ctx.scale(width / COPYWORK_PAGE.width, width / COPYWORK_PAGE.width);
+  ctx.scale(width / viewport.value.width, width / viewport.value.width);
+  ctx.translate(-viewport.value.x, -viewport.value.y);
   for (const p of props.placements) {
     const glyph = glyphMap.value.get(p.index);
     if (!glyph) continue;
@@ -56,50 +92,114 @@ function draw(counts?: Map<number, number[]>) {
     drawHandwritingInk(
       ctx,
       glyph.character,
-      counts ? counts.get(p.index) || glyph.character.strokes.map(() => 0) : undefined
+      visibleCounts ? visibleCounts.get(p.index) || glyph.character.strokes.map(() => 0) : undefined
     );
     ctx.restore();
   }
 }
+function drawProgress(elapsed: number) {
+  replayStarted = true;
+  timeline ||= buildHandwritingTimeline(payload());
+  if (elapsed < renderedProgress) {
+    counts = new Map();
+    cursor = 0;
+  }
+  while (cursor < timeline.events.length && timeline.events[cursor].at <= elapsed) {
+    const event = timeline.events[cursor++];
+    const glyph = orderedGlyphs.value[event.characterIndex];
+    const values = counts.get(glyph.index) || glyph.character.strokes.map(() => 0);
+    values[event.strokeIndex] = event.pointIndex + 1;
+    counts.set(glyph.index, values);
+  }
+  renderedProgress = elapsed;
+  progress.value = timeline.durationMs ? elapsed / timeline.durationMs : 1;
+  draw(counts);
+}
+const controller = createHandwritingPlaybackController({
+  getPayload: payload,
+  draw: drawProgress,
+  onStateChange: (state) => {
+    playing.value = state.playing;
+    if (!state.visible || !state.surfaceActive || document.hidden) gestures.cancel();
+  }
+});
+function play() {
+  controller.play(true);
+}
+function toggle() {
+  if (props.disabled) return;
+  if (playing.value) controller.pause();
+  else controller.play(!replayStarted || progress.value >= 1);
+}
 function stop() {
-  cancelAnimationFrame(frame);
-  frame = 0;
-  playing.value = false;
+  controller.pause();
+  gestures.cancel();
+  replayStarted = false;
+  progress.value = 1;
+  counts = new Map();
+  cursor = 0;
+  renderedProgress = -1;
   draw();
 }
-function play() {
-  stop();
-  const glyphs = props.placements
-    .map((p) => glyphMap.value.get(p.index))
-    .filter((g): g is CopyworkGlyph & { index: number } => !!g);
-  const timeline = buildHandwritingTimeline({
-    kind: "handwriting",
-    version: 1,
-    characters: glyphs.map((g) => g.character)
-  });
-  let cursor = 0;
-  const counts = new Map<number, number[]>();
-  const start = performance.now();
-  playing.value = true;
-  function tick(now: number) {
-    while (cursor < timeline.events.length && timeline.events[cursor].at <= now - start) {
-      const event = timeline.events[cursor++];
-      const glyph = glyphs[event.characterIndex];
-      const values = counts.get(glyph.index) || glyph.character.strokes.map(() => 0);
-      values[event.strokeIndex] = event.pointIndex + 1;
-      counts.set(glyph.index, values);
-    }
-    draw(counts);
-    if (cursor < timeline.events.length) frame = requestAnimationFrame(tick);
-    else {
-      playing.value = false;
-      frame = 0;
-    }
-  }
-  frame = requestAnimationFrame(tick);
+const gestures = createCopyworkGestures({
+  paging: () => !!props.paging,
+  playing: () => playing.value,
+  progress: () => (replayStarted ? controller.state().progressMs : controller.duration()),
+  duration: controller.duration,
+  toggle,
+  restart: play,
+  pause: controller.pause,
+  resume: () => controller.play(false),
+  seek: (elapsed) => {
+    controller.seek(elapsed);
+  },
+  turn: (direction) => emit("turn", direction)
+});
+function contact(event: PointerEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  return {
+    id: event.pointerId,
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+    width: rect.width
+  };
 }
-function visibility() {
-  if (document.hidden) stop();
+function pointerDown(event: PointerEvent) {
+  if (!props.interactive || props.disabled || event.button !== 0 || !event.isPrimary) return;
+  gestures.down(contact(event));
+}
+function pointerMove(event: PointerEvent) {
+  if (!props.interactive || props.disabled) return;
+  if (gestures.move(contact(event))) {
+    event.preventDefault();
+    const element = event.currentTarget as HTMLElement;
+    if (event.isTrusted && !element.hasPointerCapture(event.pointerId)) element.setPointerCapture(event.pointerId);
+  }
+}
+function pointerUp(event: PointerEvent) {
+  if (!props.interactive || props.disabled) return;
+  gestures.up(contact(event));
+}
+function keydown(event: KeyboardEvent) {
+  if (!props.interactive || props.disabled) return;
+  if (event.key === " " || event.key === "Enter") {
+    event.preventDefault();
+    toggle();
+  }
+  if (props.paging && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+    event.preventDefault();
+    emit("turn", event.key === "ArrowLeft" ? -1 : 1);
+  }
+}
+async function openSource() {
+  sourceError.value = "";
+  controller.pause();
+  gestures.cancel();
+  try {
+    await openCopyworkSource(props.source);
+  } catch (error) {
+    sourceError.value = error instanceof Error ? error.message : "经文跳转失败";
+  }
 }
 function editStyle(p: CopyworkPlacement) {
   const b = glyphMap.value.get(p.index)?.bounds;
@@ -112,45 +212,72 @@ function editStyle(p: CopyworkPlacement) {
   };
 }
 watch(
-  () => [props.glyphs, props.placements],
+  () => [props.glyphs, props.placements, props.compact],
   () => {
+    timeline = null;
+    controller.setPayload();
     stop();
     void nextTick(() => draw());
-  },
-  { deep: true }
+  }
 );
 watch(
   () => props.active,
   (active) => {
-    if (active === false) stop();
+    controller.setSurfaceActive(active);
+    if (!active) gestures.cancel();
   }
 );
 onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (!playing.value) draw();
-  });
+  controller.mount(root.value!.closest(".message-row") || root.value!);
+  controller.setSurfaceActive(props.active);
+  resizeObserver = new ResizeObserver(() => draw(replayStarted ? counts : undefined));
   if (canvas.value) resizeObserver.observe(canvas.value);
   draw();
-  document.addEventListener("visibilitychange", visibility);
-  window.addEventListener("pagehide", stop);
-  observer = new IntersectionObserver((entries) => {
-    if (!entries[0]?.isIntersecting) stop();
-  });
-  if (root.value) observer.observe(root.value);
 });
 onBeforeUnmount(() => {
-  cancelAnimationFrame(frame);
-  observer?.disconnect();
+  gestures.cancel();
+  controller.destroy();
   resizeObserver?.disconnect();
-  document.removeEventListener("visibilitychange", visibility);
-  window.removeEventListener("pagehide", stop);
 });
 defineExpose({ play, stop, playing });
 </script>
 <template>
-  <figure ref="root" class="copywork-mount" aria-label="经文抄写册页">
-    <div class="copywork-paper" :style="paperStyle">
-      <div class="folio-heading">{{ source.reference }}</div>
+  <figure ref="root" class="copywork-mount" :class="{ compact }" aria-label="经文抄写册页">
+    <button
+      v-if="compact"
+      class="copywork-reference"
+      type="button"
+      :aria-label="`在圣经中阅读：${source.reference}`"
+      @pointerdown.stop
+      @click.stop="openSource"
+    >
+      {{ source.reference }}
+    </button>
+    <div
+      class="copywork-paper"
+      :class="{ interactive }"
+      :style="paperStyle"
+      :role="interactive ? 'button' : undefined"
+      :tabindex="interactive ? 0 : undefined"
+      :aria-label="
+        interactive ? `${playing ? '暂停' : '播放'}抄写：${source.reference}` : undefined
+      "
+      :aria-disabled="interactive ? !!disabled : undefined"
+      :aria-pressed="interactive ? playing : undefined"
+      :data-playing="playing"
+      :data-progress="progress"
+      @pointerdown.stop="pointerDown"
+      @pointermove.stop="pointerMove"
+      @pointerup.stop="pointerUp"
+      @pointercancel.stop="gestures.cancel()"
+      @pointerleave="gestures.lostCapture()"
+      @lostpointercapture="gestures.lostCapture()"
+      @contextmenu.prevent.stop
+      @dblclick.prevent.stop
+      @click="interactive && $event.stopPropagation()"
+      @keydown.stop="keydown"
+    >
+      <div v-if="!compact" class="folio-heading">{{ source.reference }}</div>
       <canvas ref="canvas" aria-label="用户手写笔迹"></canvas>
       <template v-if="editable"
         ><button
@@ -162,7 +289,7 @@ defineExpose({ play, stop, playing });
           @click="emit('edit', p.index)"
         ></button
       ></template>
-      <div class="folio-caption">
+      <div v-if="!compact" class="folio-caption">
         <span>{{ source.translationName }}</span
         ><span
           >{{ author || "我的抄写"
@@ -172,6 +299,7 @@ defineExpose({ play, stop, playing });
         >
       </div>
     </div>
+    <p v-if="sourceError" class="source-error" role="alert">{{ sourceError }}</p>
   </figure>
 </template>
 <style scoped>
@@ -224,5 +352,44 @@ canvas {
 .ink-edit:focus-visible {
   outline: 1px solid #998269;
   background: #987a4510;
+}
+.copywork-mount.compact {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.compact .copywork-paper {
+  background: transparent;
+  border: 0;
+}
+.copywork-reference {
+  display: block;
+  width: fit-content;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--copywork-reference-color, #315b4e);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.interactive {
+  cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.interactive:focus-visible,
+.copywork-reference:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.source-error {
+  color: #9b4130;
+  font-size: 13px;
 }
 </style>

@@ -17,6 +17,7 @@ import type {
   ChannelDTO
 } from "@shared/types";
 import { api } from "../api";
+import type { CopyworkSource } from "@shared/bibleCopywork";
 import {
   bibleWorkspaceSnapshot,
   bibleWorkspaceStateFromSnapshot,
@@ -710,7 +711,20 @@ async function openLookupContext(lookup: BibleLookupDTO) {
   await routeLookup(lookup, activePaneId.value);
 }
 
-defineExpose({ openLookupContext, openSession });
+async function openCopyworkContext(source: CopyworkSource) {
+  await ensureCatalog();
+  const book = allBooks.value.find((item) => item.code === source.bookCode);
+  if (!book) throw new Error("暂时无法定位这处经文");
+  await routeLookup({
+    reference: source.reference,
+    normalizedReference: source.reference,
+    translation: source.translationName,
+    sourceId: source.translation,
+    verses: [{ book: book.name, chapter: source.chapter, verse: source.verseStart, endVerse: source.verseEnd, reference: source.reference, text: source.text }]
+  }, activePaneId.value, [], source.translation);
+}
+
+defineExpose({ openLookupContext, openSession, openCopyworkContext });
 
 function singleVerseLookup(verse: BibleVerseLineDTO): BibleLookupDTO {
   return {

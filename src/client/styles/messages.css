@@ -810,6 +810,15 @@
   color: var(--bubble-mine-text);
 }
 
+.bubble:has(.copywork-card.message) {
+  background: #fffaf0;
+  padding: 14px;
+}
+.message-row.mine .bubble:has(.copywork-card.message) {
+  background: var(--bubble-mine);
+  --copywork-reference-color: var(--bubble-mine-text);
+}
+
 .prayer-bubble {
   width: min(430px, 72vw);
   max-width: 100%;

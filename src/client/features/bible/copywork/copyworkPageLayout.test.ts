@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { COPYWORK_PAGE, layoutCopywork, type CopyworkGlyph } from "@shared/bibleCopywork";
-import { copyworkPageHeight } from "./copyworkPageLayout";
+import { copyworkInkViewport, copyworkPageHeight } from "./copyworkPageLayout";
 
 function glyph(index: number, bottom = 9000): CopyworkGlyph & { index: number } {
   return { index, character: { strokes: [{ points: [[0, 0, 0]] }] }, bounds: { left: 0, right: 9000, top: 0, bottom } };
@@ -27,4 +27,19 @@ test("height follows full ink bounds on this page without modifying placements d
   assert.equal(copyworkPageHeight(glyphs, [placements[1]]), Math.ceil(730 + 64.8 + 120));
   assert.equal(copyworkPageHeight([], [placements[1]]), 730 + 72 + 120);
   assert.deepEqual(placements, before);
+});
+
+test("minimal presentation includes outlying ink and reserves stable full line width", () => {
+  const glyphs = [glyph(0, 15000), glyph(1)];
+  glyphs[0].bounds.left = -5000;
+  glyphs[1].bounds.right = 15000;
+  const placements = [{ index: 0, x: 68, y: 110 }, { index: 1, x: 610, y: 730 }];
+  const before = structuredClone(placements);
+  const viewport = copyworkInkViewport(glyphs, placements);
+  assert.equal(viewport.x, 68 - 36 - 16);
+  assert.equal(viewport.y, 110 - 16);
+  assert.equal(viewport.x + viewport.width, 610 + 108 + 16);
+  assert.equal(viewport.y + viewport.height, 730 + 64.8 + 16);
+  assert.deepEqual(placements, before);
+  assert.ok(copyworkInkViewport([], []).height > 0);
 });

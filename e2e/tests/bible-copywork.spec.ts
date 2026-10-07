@@ -34,10 +34,10 @@ async function token(
   expect(response.ok()).toBeTruthy();
   return (await response.json()).token as string;
 }
-async function login(page: Page) {
+async function login(page: Page, username = E2E_ADMIN.username as string, password = E2E_ADMIN.password as string) {
   await page.goto("/");
-  await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
-  await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
+  await page.getByPlaceholder("用户名").fill(username);
+  await page.getByPlaceholder("密码").fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
@@ -278,29 +278,27 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   }
   await page.evaluate(() => document.documentElement.style.removeProperty("--safe-top"));
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(viewer.getByText(/已保存/)).toBeVisible();
+  await expect(viewer.locator(".viewer-heading, .folio-caption, details")).toHaveCount(0);
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
   await viewer.getByRole("button", { name: "公开到经文下" }).click();
   await viewer.getByRole("button", { name: "确认公开" }).click();
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
   await expect(viewer.getByRole("button", { name: "取消公开" })).toBeVisible();
-  await viewer.getByRole("button", { name: "回放本页" }).click();
-  await viewer.getByRole("button", { name: "停止回放" }).click();
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  await viewer.locator(".copywork-paper").focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Space");
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
   await viewer.getByRole("button", { name: "分享到聊天室", exact: true }).click();
   await viewer.getByRole("button", { name: "发送作品", exact: true }).click();
   await viewer.getByRole("button", { name: "前往聊天室", exact: true }).click();
-  const card = page.getByRole("button", { name: "查看抄写：约翰福音 11:35", exact: true }).last();
+  const card = page.locator(".copywork-card.message").last();
   await expect(card).toBeVisible();
-  await card.click();
-  await expect(page.getByRole("dialog", { name: "抄写册页", exact: true })).toBeVisible();
-  await page.screenshot({ path: "output/e2e/copywork-viewer-390.png", fullPage: true });
-  await page
-    .getByRole("dialog", { name: "抄写册页", exact: true })
-    .getByRole("button", { name: "关闭", exact: true })
-    .click();
-  await page.getByRole("button", { name: "打开圣经" }).click();
-  await page.getByRole("tab", { name: "经卷目录", exact: true }).click();
-  await page.getByRole("button", { name: /^约翰福音/ }).click();
-  await page.getByRole("button", { name: "11", exact: true }).click();
-  await page.getByLabel("选择经节").selectOption("35");
+  await expect(card.locator(".folio-caption, strong, small")).toHaveCount(0);
+  await card.locator(".copywork-paper").click();
+  await expect(card.locator(".copywork-paper")).toHaveAttribute("data-playing", "true");
+  await card.getByRole("button", { name: "在圣经中阅读：约翰福音 11:35", exact: true }).click();
+  await expect(page.locator('[data-verse-key="JHN-11-35"]')).toBeVisible();
   const marker = page
     .locator('[data-verse-key="JHN-11-35"]')
     .locator("xpath=following-sibling::button[1]");
@@ -354,4 +352,146 @@ test("WebKit touch input retains unfinished ink and shows natural narrow glyph b
     await context.close();
     await browser.close();
   }
+});
+
+test("minimal copywork bubbles replay in place, link context, and turn only at viewer edges", async ({ page, request }) => {
+  test.setTimeout(120000);
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const headers = { Authorization: `Bearer ${await token(request)}` };
+  const id = randomUUID();
+  const passage = { translation: "cmn-cu89s", bookCode: "JOS", chapter: 1, verseStart: 9, verseEnd: 10 };
+  const sourceResponse = await request.post("/api/bible/copyworks/source", { headers, data: passage });
+  expect(sourceResponse.ok()).toBeTruthy();
+  const { source } = await sourceResponse.json();
+  expect((await request.post("/api/bible/copyworks", { headers, data: { id, spacing: "loose", ...passage } })).ok()).toBeTruthy();
+  const length = Array.from(source.text as string).filter((character) => !/\s/u.test(character)).length;
+  for (let index = 0; index < length; index++) {
+    expect((await request.put(`/api/bible/copyworks/${id}/glyphs/${index}`, { headers, data: glyph })).ok()).toBeTruthy();
+  }
+  const completed = await request.post(`/api/bible/copyworks/${id}/complete`, { headers });
+  expect(completed.ok()).toBeTruthy();
+  const completeData = await request.get(`/api/bible/copyworks/${id}`, { headers });
+  const work = (await completeData.json()).work;
+  expect(work.pageCount).toBeGreaterThan(1);
+  const channelResponse = await request.get("/api/channels", { headers });
+  const channels = (await channelResponse.json()).channels as Array<{ id: number; name: string }>;
+  const channel = channels.find((item) => item.name === E2E_CHANNELS.default)!;
+  expect((await request.post(`/api/bible/copyworks/${id}/share`, { headers, data: { channelId: channel.id, clientRequestId: randomUUID() } })).ok()).toBeTruthy();
+  await login(page);
+  const card = page.locator(".copywork-card.message").last();
+  const paper = card.locator(".copywork-paper");
+  await expect(paper).toBeVisible();
+  await expect(card.locator(".folio-caption, strong, small")).toHaveCount(0);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    const cardBox = (await card.boundingBox())!;
+    expect(cardBox.width).toBeGreaterThan(220);
+    expect(cardBox.width).toBeLessThanOrEqual(280);
+    expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: `output/e2e/copywork-own-${width}.png`, fullPage: true });
+  }
+  const bubble = card.locator("xpath=..");
+  const outgoing = await bubble.evaluate((el) => ({
+    actual: getComputedStyle(el).backgroundColor,
+    theme: getComputedStyle(el).getPropertyValue("--bubble-mine").trim()
+  }));
+  expect(outgoing.actual).toBe("rgb(149, 236, 105)");
+  expect(outgoing.theme).toBe("#95ec69");
+  await bubble.evaluate((el) => (el as HTMLElement).style.setProperty("--bubble-mine", "#bfead8"));
+  expect(await bubble.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(191, 234, 216)");
+  await bubble.evaluate((el) => (el as HTMLElement).style.removeProperty("--bubble-mine"));
+  await paper.click();
+  await expect(paper).toHaveAttribute("data-playing", "true");
+  await paper.click();
+  await expect(paper).toHaveAttribute("data-playing", "false");
+  const pausedProgress = Number(await paper.getAttribute("data-progress"));
+  await paper.dblclick();
+  await expect(paper).toHaveAttribute("data-playing", "true");
+  expect(Number(await paper.getAttribute("data-progress"))).toBeLessThan(pausedProgress);
+  await paper.click();
+  await expect(paper).toHaveAttribute("data-playing", "false");
+  const box = (await paper.boundingBox())!;
+  const beforeDrag = Number(await paper.getAttribute("data-progress"));
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.5);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.5, { steps: 5 });
+  await page.mouse.up();
+  expect(Number(await paper.getAttribute("data-progress"))).toBeGreaterThan(beforeDrag + 0.3);
+  await expect(paper).toHaveAttribute("data-playing", "false");
+  await expect(page.getByRole("dialog", { name: "抄写册页", exact: true })).toHaveCount(0);
+  await card.getByRole("button", { name: `在圣经中阅读：${source.reference}`, exact: true }).click();
+  await expect(page.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
+  await expect(page.getByLabel("选择经节")).toHaveValue("9");
+  await expect(paper).toHaveCount(0);
+  await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
+  await page.getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).click();
+  const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
+  const viewerPaper = viewer.locator(".copywork-paper");
+  await expect(viewerPaper).toBeVisible();
+  await expect(viewer.locator(".viewer-heading, .folio-caption, details, .viewer-actions")).toHaveCount(0);
+  const viewerBox = (await viewerPaper.boundingBox())!;
+  // The right half replays; only the actual edge turns a page.
+  await viewerPaper.click({ position: { x: viewerBox.width * 0.75, y: viewerBox.height * 0.5 } });
+  await expect(viewerPaper).toHaveAttribute("data-playing", "true");
+  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "0");
+  await viewerPaper.click({ position: { x: viewerBox.width - 2, y: viewerBox.height * 0.5 } });
+  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "1");
+  await expect(viewerPaper).toHaveAttribute("aria-disabled", "false");
+  const nextBox = (await viewerPaper.boundingBox())!;
+  await viewerPaper.click({ position: { x: 2, y: nextBox.height * 0.5 } });
+  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "0");
+  await viewer.getByRole("button", { name: "抄写操作提示", exact: true }).click();
+  await expect(viewer.getByText("右边缘：下一页", { exact: false })).toBeVisible();
+  await expect(viewer.getByText("抄写来源", { exact: true })).toHaveCount(0);
+  await viewer.getByRole("button", { name: "抄写操作提示", exact: true }).click();
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect(viewer.getByRole("button", { name: "关闭", exact: true })).toBeVisible();
+    expect(await viewer.locator(".viewer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await page.screenshot({ path: `output/e2e/copywork-minimal-${width}.png`, fullPage: true });
+  }
+  await viewer.getByRole("button", { name: "关闭", exact: true }).click();
+  expect(pageErrors).toEqual([]);
+
+  // Receive the same message in WebKit, using real touch taps and pointer drags.
+  const username = `cw-reader-${Date.now()}`;
+  const password = "CopyworkReader123!";
+  const adminHeaders = { Authorization: `Bearer ${await token(request)}` };
+  const readerAccount = await request.post("/api/admin/accounts", { headers: adminHeaders, data: { username, password, displayName: "抄写读者" } });
+  expect(readerAccount.ok(), await readerAccount.text()).toBeTruthy();
+  const browser = await webkit.launch();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, baseURL: "http://127.0.0.1:4173" });
+  const receiver = await context.newPage();
+  receiver.on("pageerror", (error) => pageErrors.push(error.message));
+  try {
+    await login(receiver, username, password);
+    const receivedCard = receiver.locator(".copywork-card.message").last();
+    const receivedPaper = receivedCard.locator(".copywork-paper");
+    await expect(receivedPaper).toBeVisible();
+    expect(await receivedCard.locator("xpath=..").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(255, 250, 240)");
+    expect((await receivedCard.boundingBox())!.width).toBeGreaterThan(220);
+    await receiver.screenshot({ path: "output/e2e/copywork-received-static-webkit-390.png", fullPage: true });
+    await receivedPaper.tap();
+    await expect(receivedPaper).toHaveAttribute("data-playing", "true");
+    await receivedPaper.tap();
+    await expect(receivedPaper).toHaveAttribute("data-playing", "false");
+    const touchBox = (await receivedPaper.boundingBox())!;
+    const point = { pointerId: 12, pointerType: "touch", isPrimary: true, clientX: touchBox.x + touchBox.width * 0.2, clientY: touchBox.y + touchBox.height * 0.5, button: 0 };
+    await receivedPaper.dispatchEvent("pointerdown", { ...point, buttons: 1 });
+    await receivedPaper.dispatchEvent("pointermove", { ...point, clientX: touchBox.x + touchBox.width * 0.7, buttons: 1 });
+    await receivedPaper.dispatchEvent("pointerup", { ...point, clientX: touchBox.x + touchBox.width * 0.7, buttons: 0 });
+    const scrubbed = Number(await receivedPaper.getAttribute("data-progress"));
+    expect(scrubbed).toBeGreaterThan(0.4);
+    await expect(receivedPaper).toHaveAttribute("data-playing", "false");
+    await receiver.screenshot({ path: "output/e2e/copywork-received-webkit-390.png", fullPage: true });
+    await receivedPaper.tap();
+    await receivedPaper.tap();
+    await expect(receivedPaper).toHaveAttribute("data-playing", "true");
+    expect(Number(await receivedPaper.getAttribute("data-progress"))).toBeLessThan(scrubbed);
+    await receivedCard.getByRole("button", { name: `在圣经中阅读：${source.reference}`, exact: true }).click();
+    await expect(receiver.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  } finally { await context.close(); await browser.close(); }
 });

@@ -1,4 +1,6 @@
-import { computed, nextTick, ref, type Ref } from "vue";
+import { computed, nextTick, onScopeDispose, ref, type Ref } from "vue";
+import type { CopyworkSource } from "@shared/bibleCopywork";
+import { registerCopyworkNavigation, viewedCopyworkId } from "./copywork/copyworkViewerState";
 import type {
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
@@ -15,6 +17,7 @@ import { escapeHtmlText } from "../messages/messageRendering";
 
 export type BibleWorkspaceHandle = {
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
+  openCopyworkContext: (source: CopyworkSource) => Promise<void>;
   openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
 };
 
@@ -39,6 +42,13 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   const bibleOpen = ref(false);
   const bibleTargetChannelId = ref<number | null>(null);
   const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
+  onScopeDispose(registerCopyworkNavigation(async (source) => {
+    viewedCopyworkId.value = "";
+    openBibleWorkspace();
+    await nextTick();
+    if (!bibleWorkspace.value) throw new Error("圣经阅读器未能打开，请重试");
+    await bibleWorkspace.value.openCopyworkContext(source);
+  }));
   const bibleReadingActivity = ref<{ active: boolean; bookName: string | null }>({ active: false, bookName: null });
   const bookReadingActivity = ref<{ active: boolean; bookTitle: string | null }>({ active: false, bookTitle: null });
   const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
