@@ -1,5 +1,7 @@
 import { test, expect, type APIRequestContext, type Locator, type Page, webkit } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import sharp from "sharp";
 import { unzipArchive } from "../../src/server/zipArchive.js";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
 const selection = {
@@ -371,10 +373,11 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await dialog.getByRole("button", { name: "写好了" }).click();
   await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
   await expect(dialog.getByRole("button", { name: "写好了" })).toBeEnabled();
-  for (let i = 1; i < 5; i++) {
+  for (let i = 1; i < 4; i++) {
     await stroke(page);
     await dialog.getByRole("button", { name: "写好了" }).click();
   }
+  await dialog.getByRole("button", { name: "跳过此字", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "存入我的圣经" })).toBeVisible();
   await page.screenshot({ path: "output/e2e/copywork-finished-390.png", fullPage: true });
   let loseCompleteResponse = true;
@@ -390,6 +393,40 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await dialog.getByRole("button", { name: "存入我的圣经" }).click();
   const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
   await expect(viewer).toBeVisible();
+  let exportedPageReads = 0;
+  page.on("request", (request) => { if (/\/api\/bible\/copyworks\/[^/]+\/pages\/\d+$/.test(request.url())) exportedPageReads++; });
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  const firstDownload = page.waitForEvent("download");
+  await viewer.getByRole("button", { name: "下载透明 PNG", exact: true }).click();
+  const download = await firstDownload;
+  expect(download.suggestedFilename()).toMatch(/\.png$/);
+  const png = sharp(await readFile((await download.path())!));
+  expect((await png.metadata()).hasAlpha).toBeTruthy();
+  const { data: pixels } = await png.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const alpha = pixels.filter((_, index) => index % 4 === 3);
+  expect(alpha.some((value) => value === 0)).toBeTruthy();
+  expect(alpha.some((value) => value > 0)).toBeTruthy();
+  expect(exportedPageReads).toBeGreaterThan(0);
+  const readsAfterFirstDownload = exportedPageReads;
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  const nextDownload = page.waitForEvent("download");
+  await viewer.getByRole("button", { name: "下载透明 PNG", exact: true }).click();
+  await nextDownload;
+  expect(exportedPageReads).toBe(readsAfterFirstDownload);
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  await viewer.getByRole("button", { name: "分享到我的故事", exact: true }).click();
+  const storyComposer = page.getByRole("dialog", { name: "留下一段故事", exact: true });
+  await expect(storyComposer.locator(".story-draft-images img")).toBeVisible();
+  await expect(storyComposer.locator(".story-draft-images img")).toHaveJSProperty("complete", true);
+  await expect(storyComposer.getByLabel("这一刻，想说些什么")).toHaveValue("约翰福音 11:35");
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await storyComposer.locator(".story-composer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await expect(storyComposer.getByRole("button", { name: "关闭", exact: true })).toBeVisible();
+    await page.screenshot({ path: `output/e2e/copywork-story-${width}.png`, fullPage: true });
+  }
+  await storyComposer.getByRole("button", { name: "发布故事", exact: true }).click();
+  await expect(viewer.getByText("已分享到我的故事。", { exact: true })).toBeVisible();
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
     await page.evaluate(() => document.documentElement.style.setProperty("--safe-top", "47px"));
@@ -436,18 +473,39 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await expect(page.getByRole("dialog", { name: "经文下的抄写", exact: true })).toHaveCount(0);
   const directViewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
   await expect(directViewer.locator(".copywork-paper")).toBeVisible();
-  await expect(directViewer.getByRole("button", { name: "作品详情", exact: true })).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "打开圣经", exact: true }).click();
+  await expect(marker).toBeVisible();
+  await marker.click();
+  await expect(directViewer.locator(".copywork-paper")).toBeVisible();
+  await expect(directViewer.locator(".folio-scroll")).toHaveAttribute("aria-busy", "false");
+  const readsBeforeCachedDownload = exportedPageReads;
   await directViewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  const cachedDownload = page.waitForEvent("download");
+  await directViewer.getByRole("button", { name: "下载透明 PNG", exact: true }).click();
+  await cachedDownload;
+  expect(exportedPageReads).toBe(readsBeforeCachedDownload);
+  await expect(directViewer.getByRole("button", { name: "作品详情", exact: true })).toHaveCount(0);
+  const paperBeforeMenu = await directViewer.locator(".copywork-paper").boundingBox();
+  await directViewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  expect((await directViewer.locator(".copywork-paper").boundingBox())!.y).toBe(paperBeforeMenu!.y);
   await directViewer.getByRole("button", { name: "作品详情", exact: true }).click();
   await expect(directViewer.locator(".viewer-details")).toContainText("约翰福音 11:35");
   await directViewer.getByRole("button", { name: "选择其他抄写", exact: true }).click();
   await expect(directViewer.getByRole("button", { name: "公开作品", exact: true })).toBeVisible();
   await expect(directViewer.locator(".viewer-choice")).not.toHaveCount(0);
+  await expect(directViewer.locator(".viewer-choice").first()).not.toContainText("约翰福音 11:35");
   await directViewer.getByRole("button", { name: "我的抄写", exact: true }).click();
   await expect(directViewer.locator(".viewer-choice")).not.toHaveCount(0);
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
     expect(await directViewer.locator(".viewer-body").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+    await expect(directViewer.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+    const popover = await directViewer.locator("#copywork-tools").boundingBox();
+    expect(popover!.y + popover!.height).toBeLessThanOrEqual(844);
+    await directViewer.getByRole("button", { name: "删除作品", exact: true }).scrollIntoViewIfNeeded();
+    await expect(directViewer.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+    await directViewer.getByRole("button", { name: "作品详情", exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: `output/e2e/copywork-direct-menu-${width}.png`, fullPage: true });
   }
   await directViewer.locator(".viewer-choice").last().click();
@@ -468,6 +526,79 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await directViewer.getByRole("button", { name: "关闭", exact: true }).click();
   await page.unroute("**/api/bible/copyworks?**");
   expect(pageErrors).toEqual([]);
+});
+test("multi-page copywork downloads reuse a transparent PNG and seed a cancellable story", async ({ page, request }) => {
+  test.setTimeout(60000);
+  const headers = { Authorization: `Bearer ${await token(request)}` };
+  const id = randomUUID();
+  const passage = { translation: "cmn-cu89s", bookCode: "JOS", chapter: 1, verseStart: 9, verseEnd: 10 };
+  const { source } = await (await request.post("/api/bible/copyworks/source", { headers, data: passage })).json();
+  expect((await request.post("/api/bible/copyworks", { headers, data: { id, spacing: "loose", ...passage } })).ok()).toBeTruthy();
+  const characters = Array.from(source.text as string).filter((character) => !/\s/u.test(character));
+  for (let index = 0; index < characters.length; index++)
+    expect((await request.put(`/api/bible/copyworks/${id}/glyphs/${index}`, { headers, data: index === 1
+      ? { skipped: true, character: { strokes: [] }, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 } }
+      : glyph })).ok()).toBeTruthy();
+  const completed = await request.post(`/api/bible/copyworks/${id}/complete`, { headers });
+  expect(completed.ok()).toBeTruthy();
+  const { work } = await completed.json();
+  expect(work.pageCount).toBeGreaterThan(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await page.getByRole("button", { name: "打开圣经", exact: true }).click();
+  if (await page.getByRole("button", { name: "目录", exact: true }).isVisible())
+    await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
+  await page.getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).first().click();
+  const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
+  await expect(viewer.locator(".folio-scroll")).toHaveAttribute("aria-busy", "false");
+  let pageReads = 0;
+  page.on("request", (request) => { if (request.url().includes(`/api/bible/copyworks/${id}/pages/`)) pageReads++; });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+    const downloaded = page.waitForEvent("download");
+    await viewer.getByRole("button", { name: "下载透明 PNG", exact: true }).click();
+    const file = await downloaded;
+    const metadata = await sharp(await readFile((await file.path())!)).metadata();
+    expect(metadata.hasAlpha).toBeTruthy();
+    expect(metadata.height!).toBeGreaterThan(metadata.width!);
+    expect(pageReads).toBe(work.pageCount);
+  }
+  await viewer.getByRole("button", { name: "作品操作", exact: true }).click();
+  await viewer.getByRole("button", { name: "分享到我的故事", exact: true }).click();
+  const story = page.getByRole("dialog", { name: "留下一段故事", exact: true });
+  await expect(story.getByLabel("这一刻，想说些什么")).toHaveValue(source.reference);
+  await expect(story.locator(".story-copywork-image")).toHaveJSProperty("complete", true);
+  expect(pageReads).toBe(work.pageCount);
+  await story.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("button", { name: "放弃", exact: true }).click();
+  await expect(story).toHaveCount(0);
+  await expect(viewer.getByRole("button", { name: "作品操作", exact: true })).toBeVisible();
+});
+test("skipped slots survive draft reload and can be filled before completion", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await openVerse(page);
+  const dialog = page.getByRole("dialog", { name: "经文抄写", exact: true });
+  await expect(dialog.getByRole("button", { name: "写好了", exact: true })).toBeDisabled();
+  await dialog.getByRole("button", { name: "跳过此字", exact: true }).click();
+  await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
+  await dialog.getByRole("button", { name: "下次继续写", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: "打开圣经", exact: true }).click();
+  await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
+  await page.getByRole("button", { name: /本机草稿/ }).first().click();
+  await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
+  await dialog.getByRole("button", { name: /重写第 1 字/ }).click();
+  await expect(dialog.getByRole("button", { name: "写好了", exact: true })).toBeDisabled();
+  await stroke(page);
+  await dialog.getByRole("button", { name: "写好了", exact: true }).click();
+  await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
+  for (let index = 1; index < 5; index++)
+    await dialog.getByRole("button", { name: "跳过此字", exact: true }).click();
+  await dialog.getByRole("button", { name: "存入我的圣经", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "抄写册页", exact: true }).locator(".copywork-paper")).toBeVisible();
 });
 test("WebKit touch input retains unfinished ink and shows natural narrow glyph bounds", async () => {
   test.setTimeout(60000);
@@ -509,6 +640,9 @@ test("WebKit touch input retains unfinished ink and shows natural narrow glyph b
     await expect(page.getByRole("button", { name: "写好了" })).toBeEnabled();
     await page.getByRole("button", { name: "写好了" }).click();
     await expect(page.getByRole("button", { name: /重写第 1 字/ })).toBeVisible();
+    await page.getByRole("button", { name: "跳过此字", exact: true }).click();
+    await expect(page.locator(".writing-heading")).toContainText("3 / 5");
+    await expect(page.getByRole("button", { name: /重写第 2 字/ })).toBeVisible();
     await page.getByRole("button", { name: "下次继续写" }).click();
   } finally {
     await context.close();

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import type { CopyworkDTO, CopyworkGlyph, CopyworkPlacement } from "@shared/bibleCopywork";
 import { Ellipsis, CircleHelp } from "lucide-vue-next";
 import AppModal from "../../../components/ui/AppModal.vue";
@@ -7,6 +7,8 @@ import { api } from "../../../api";
 import { copyworkWrite } from "./copyworkApi";
 import { useChatStore } from "../../../store";
 import CopyworkPage from "./CopyworkPage.vue";
+import StoryComposer from "../../stories/StoryComposer.vue";
+import { downloadCopywork, exportCopywork } from "./copyworkExport";
 import { openCopyworkSource, type CopyworkVerseFilter } from "./copyworkViewerState";
 const props = defineProps<{ id?: string; filter?: CopyworkVerseFilter }>();
 const emit = defineEmits<{ close: []; changed: []; chat: [] }>();
@@ -28,7 +30,19 @@ const busy = ref(false);
 const loading = ref(false);
 const tipsOpen = ref(false);
 const toolsOpen = ref(false);
+const header = ref<HTMLElement | null>(null);
+const popoverHeight = ref("300px");
+function sizePopover() {
+  const bottom = header.value?.closest(".modal-head")?.getBoundingClientRect().bottom;
+  if (bottom !== undefined) popoverHeight.value = `max(80px, calc(var(--app-height) - ${Math.ceil(bottom + 16)}px - var(--safe-bottom)))`;
+}
+watch([toolsOpen, tipsOpen], () => { void nextTick(sizePopover); });
+onMounted(() => window.addEventListener("resize", sizePopover));
 const shareOpen = ref(false);
+const storyImage = shallowRef<File | null>(null);
+const storyShared = ref(false);
+const exportStatus = ref("");
+const actionError = ref("");
 const deleteOpen = ref(false);
 const publicOpen = ref(false);
 const channelId = ref<number | null>(null);
@@ -194,6 +208,25 @@ async function goToChat() {
     emit("close");
   }
 }
+async function prepareImage(target: "download" | "story") {
+  if (!work.value || !store.account || busy.value) return;
+  busy.value = true;
+  actionError.value = "";
+  exportStatus.value = "正在准备手写图片…";
+  folio.value?.stop();
+  toolsOpen.value = false;
+  try {
+    const result = await exportCopywork(store.account.id, work.value.id);
+    if (target === "download") downloadCopywork(result.blob, work.value.source.reference);
+    else storyImage.value = new File([result.blob], "经文抄写.png", { type: "image/png" });
+    exportStatus.value = result.cacheWarning || (target === "download" ? "透明 PNG 已准备好，再次下载将复用图片。" : "");
+  } catch (cause) {
+    exportStatus.value = "";
+    actionError.value = cause instanceof Error ? cause.message : "图片生成失败，请重试";
+  } finally {
+    busy.value = false;
+  }
+}
 watch(page, () => {
   if (!work.value || work.value.id !== selectedId.value) return;
   folio.value?.stop();
@@ -215,6 +248,10 @@ watch(selectedId, (id) => {
     publicOpen.value = false;
     deleteOpen.value = false;
     sharedChannel.value = null;
+    storyImage.value = null;
+    storyShared.value = false;
+    exportStatus.value = "";
+    actionError.value = "";
     if (id) void load();
 });
 watch(
@@ -226,6 +263,7 @@ watch(
   { immediate: true }
 );
 onBeforeUnmount(() => {
+  window.removeEventListener("resize", sizePopover);
   sequence++;
   workSequence++;
   choiceSequence++;
@@ -243,7 +281,7 @@ onBeforeUnmount(() => {
       @close="emit('close')"
     >
       <template #header>
-        <div class="viewer-header">
+        <div ref="header" class="viewer-header">
           <button
             v-if="work"
             type="button"
@@ -286,8 +324,7 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </template>
-      <div class="viewer-body">
-        <aside v-if="tipsOpen" id="copywork-tips" class="viewer-popover" aria-label="抄写操作提示">
+        <aside v-if="tipsOpen" id="copywork-tips" class="viewer-popover" :style="{ maxHeight: popoverHeight }" aria-label="抄写操作提示">
           <strong>操作提示</strong>
           <p>
             左边缘：上一页<br />右边缘：下一页<br />中间单击：播放 / 暂停<br />中间双击：从头播放<br />按住左右拖动：调整进度
@@ -298,6 +335,7 @@ onBeforeUnmount(() => {
           v-if="toolsOpen"
           id="copywork-tools"
           class="viewer-popover viewer-tools"
+          :style="{ maxHeight: popoverHeight }"
           role="group"
           aria-label="作品操作"
         >
@@ -318,7 +356,7 @@ onBeforeUnmount(() => {
               </nav>
               <p v-if="choiceError" role="alert">{{ choiceError }} <button @click="loadChoices(choiceScope)">重试</button></p>
               <button v-for="choice in choices" :key="choice.id" class="viewer-choice" :disabled="busy" :aria-pressed="choice.id === selectedId" @click="selectWork(choice.id)">
-                <strong>{{ choice.source.reference }}</strong><span>{{ choice.author }} · {{ new Date(choice.completedAt).toLocaleDateString() }}</span>
+                <strong>{{ choice.author }}</strong><span>{{ new Date(choice.completedAt).toLocaleDateString() }}</span>
               </button>
               <p v-if="choiceBusy" role="status">正在寻找册页…</p>
               <p v-else-if="!choices.length && !choiceError">这里还没有{{ choiceScope === 'public' ? '公开的' : '我的' }}抄写。</p>
@@ -345,6 +383,8 @@ onBeforeUnmount(() => {
           >
             分享到聊天室
           </button>
+          <button v-if="mine" :disabled="busy" @click="prepareImage('story')">分享到我的故事</button>
+          <button v-if="work" :disabled="busy" @click="prepareImage('download')">下载透明 PNG</button>
           <button
             v-if="mine"
             class="danger"
@@ -357,6 +397,7 @@ onBeforeUnmount(() => {
             删除作品
           </button>
         </div>
+      <div class="viewer-body">
         <p v-if="error" role="alert">{{ error }} <button @click="retry">重试</button></p>
         <p v-else-if="!work && !selectedId && !choiceBusy" class="viewer-empty">此节经文暂无可查看的抄写。</p>
         <template v-if="work">
@@ -376,6 +417,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
           <p v-if="loading" role="status">正在铺开册页…</p>
+          <p v-if="exportStatus" role="status">{{ exportStatus }}</p>
+          <p v-if="actionError" role="alert">{{ actionError }}</p>
+          <p v-if="storyShared" role="status">已分享到我的故事。</p>
           <div v-if="sharedChannel" class="notice" role="status">
             分享成功 <button @click="goToChat">前往聊天室</button>
           </div>
@@ -402,6 +446,7 @@ onBeforeUnmount(() => {
             <button class="danger" :disabled="busy" @click="remove">确认删除作品</button
             ><button @click="deleteOpen = false">保留作品</button>
           </section>
+          <Teleport to="body"><div v-if="storyImage" class="copywork-story-host"><StoryComposer :initial-image="storyImage" :initial-text="work.source.reference" @close="storyImage = null" @published="storyImage = null; storyShared = true" /></div></Teleport>
         </template>
       </div>
     </AppModal></Teleport
@@ -421,8 +466,9 @@ onBeforeUnmount(() => {
   max-height: calc(var(--app-height) - max(12px, var(--safe-top)) - max(12px, var(--safe-bottom)));
   background: #fffaf0;
   color: #315b4e;
+  overflow: visible;
 }
-:deep(.modal-head) {
+:deep(.copywork-viewer > .modal-head) {
   flex-shrink: 0;
   min-height: 52px;
   padding: 4px 8px 4px 16px;
@@ -430,11 +476,12 @@ onBeforeUnmount(() => {
   background: transparent;
   gap: 0;
 }
-:deep(.modal-head .icon-btn) {
+:deep(.copywork-viewer > .modal-head .icon-btn) {
   width: 44px;
   height: 44px;
   flex: 0 0 44px;
 }
+.copywork-story-host :deep(.modal-shell) { z-index: 170; }
 .viewer-header {
   display: flex;
   flex: 1;
@@ -505,12 +552,7 @@ onBeforeUnmount(() => {
   color: #6c756e;
 }
 .viewer-tools {
-  position: relative;
-  top: auto;
-  right: auto;
   width: fit-content;
-  max-width: 100%;
-  margin: 0 0 12px auto;
   display: grid;
   gap: 4px;
 }

@@ -9,7 +9,10 @@ export const COPYWORK_MAX_POINTS = 2_000_000;
 export const COPYWORK_MAX_BYTES = 32 * 1024 * 1024;
 export type CopyworkSpacing = "compact" | "normal" | "loose";
 export type InkBounds = { left: number; top: number; right: number; bottom: number };
-export type CopyworkGlyph = { character: HandwritingCharacter; bounds: InkBounds };
+export type CopyworkGlyph = { character: HandwritingCharacter; bounds: InkBounds; skipped?: true };
+export function skippedCopyworkGlyph(): CopyworkGlyph {
+  return { skipped: true, character: { strokes: [] }, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 } };
+}
 export type CopyworkSource = {
   translation: string;
   translationName: string;
@@ -40,6 +43,12 @@ export function copyworkCharacters(text: string): string[] {
 export function normalizeCopyworkGlyph(value: unknown): CopyworkGlyph {
   if (!value || typeof value !== "object") throw new Error("字迹格式无效");
   const glyph = value as Record<string, unknown>;
+  if (glyph.skipped !== undefined) {
+    const character = glyph.character as HandwritingCharacter | undefined;
+    if (glyph.skipped !== true || !Array.isArray(character?.strokes) || character.strokes.length)
+      throw new Error("跳过的字不能包含笔迹");
+    return skippedCopyworkGlyph();
+  }
   const payload = normalizeHandwritingPayload(
     { kind: "handwriting", version: 1, characters: [glyph.character] },
     { ...HANDWRITING_SEND_LIMITS, maxCharacters: 1, maxPoints: 4000, maxBytes: 65536 }

@@ -4,6 +4,7 @@ import {
   copyworkCharacters,
   layoutCopywork,
   normalizeCopyworkGlyph,
+  skippedCopyworkGlyph,
   COPYWORK_PAGE
 } from "./bibleCopywork.js";
 const wide = { left: 500, right: 9500, top: 700, bottom: 9500 };
@@ -18,6 +19,16 @@ test("ink spacing follows actual edges without stretching narrow or offset glyph
   );
   assert.equal(line[0].y, line[1].y);
   assert.ok(line[2].x - line[1].x < COPYWORK_PAGE.font);
+});
+test("explicit skipped characters reserve a rewritable blank slot without weakening ink validation", () => {
+  const skipped = skippedCopyworkGlyph();
+  assert.deepEqual(normalizeCopyworkGlyph(JSON.parse(JSON.stringify(skipped))), skipped);
+  assert.throws(() => normalizeCopyworkGlyph({ character: { strokes: [] }, bounds: wide }));
+  assert.throws(() => normalizeCopyworkGlyph({ ...skipped, skipped: false }));
+  assert.throws(() => normalizeCopyworkGlyph({ ...skipped, character: { strokes: [{ points: [[0, 0, 0]] }] } }));
+  const placements = layoutCopywork([wide, skipped.bounds, narrow], "神爱人", "normal").flat();
+  assert.deepEqual(placements.map((placement) => placement.index), [0, 1, 2]);
+  assert.ok(placements[2].x + narrow.left * COPYWORK_PAGE.font / 10000 > placements[1].x + COPYWORK_PAGE.font);
 });
 test("500 characters paginate at a fixed scale and punctuation stays with preceding text", () => {
   const chars = Array.from({ length: 500 }, (_, i) => (i % 8 === 7 ? "，" : "爱")).join("");

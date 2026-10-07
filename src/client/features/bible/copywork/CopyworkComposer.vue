@@ -6,6 +6,7 @@ import {
   copyworkCharacters,
   layoutCopywork,
   normalizeCopyworkGlyph,
+  skippedCopyworkGlyph,
   type CopyworkDTO,
   type CopyworkGlyph,
   type CopyworkSpacing
@@ -156,11 +157,12 @@ function edit(i: number) {
   void nextTick(() => body.value?.scrollTo({ top: 0 }));
   scheduler.flush();
 }
-function finish() {
+function finish(skip = false) {
+  if (busy.value || complete.value) return;
   error.value = "";
   try {
     const character = JSON.parse(JSON.stringify(composer.current.value)) as HandwritingCharacter;
-    const glyph = normalizeCopyworkGlyph({ character, bounds: measureCopyworkInk(character) });
+    const glyph = skip ? skippedCopyworkGlyph() : normalizeCopyworkGlyph({ character, bounds: measureCopyworkInk(character) });
     const next = [...glyphs.value];
     next[index.value] = glyph;
     const points = next.reduce(
@@ -316,9 +318,10 @@ onBeforeUnmount(() => {
         </div>
         <div class="writing-actions">
           <button @click="undo">撤销</button><button @click="clear">重写本字</button
+          ><button :disabled="busy" @click="finish(true)">跳过此字</button
           ><button
             class="primary"
-            :disabled="!composer.current.value.strokes.length"
+            :disabled="busy || !composer.current.value.strokes.length"
             @click="finish()"
           >
             写好了
@@ -449,6 +452,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   margin: 12px 0;
 }
+.writing-actions { flex-wrap: wrap; }
 button,
 select {
   min-height: 42px;

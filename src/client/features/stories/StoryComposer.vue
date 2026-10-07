@@ -7,10 +7,10 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import StoryVoice from "./StoryVoice.vue";
 import { useStoryRecording } from "./useStoryRecording";
 import { publishStory, prepareStoryPhoto } from "./storyClient";
-const props = defineProps<{ channelId?: number | null }>();
+const props = defineProps<{ channelId?: number | null; initialImage?: File; initialText?: string }>();
 const emit = defineEmits<{ close: []; published: [story: StoryDTO] }>();
-const text = ref("");
-const images = ref<Array<{ file: File; url: string }>>([]);
+const text = ref(props.initialText || "");
+const images = ref<Array<{ file: File; url: string }>>(props.initialImage ? [{ file: props.initialImage, url: URL.createObjectURL(props.initialImage) }] : []);
 const busy = ref(false);
 const error = ref("");
 const discardOpen = ref(false);
@@ -72,7 +72,7 @@ onBeforeUnmount(() => { controller?.abort(); photoController?.abort(); for (cons
       <small class="story-count">{{ text.length }} / {{ STORY_LIMITS.text }}</small>
       <div v-if="images.length" class="story-draft-images">
         <div v-for="(image, index) in images" :key="image.url" class="story-draft-image">
-          <img :src="image.url" :alt="`待发布照片 ${index + 1}`" />
+          <img :src="image.url" :class="{ 'story-copywork-image': image.file === initialImage }" :alt="`待发布照片 ${index + 1}`" />
           <button type="button" class="story-remove-image" :disabled="busy" :aria-label="`移除照片 ${index + 1}`" @click="remove(index)"><X :size="16" /></button>
           <div class="story-image-order">
             <button type="button" :disabled="busy || index === 0" :aria-label="`照片 ${index + 1} 前移`" @click="move(index, -1)"><ChevronLeft :size="17" /></button>
@@ -103,3 +103,6 @@ onBeforeUnmount(() => { controller?.abort(); photoController?.abort(); for (cons
   </AppModal>
   <ConfirmDialog :open="discardOpen" title="放弃这段故事？" message="尚未发布的文字、照片和录音将被丢弃。" confirm-text="放弃" cancel-text="继续编辑" danger @close="discardOpen = false" @confirm="emit('close')" />
 </template>
+<style scoped>
+.story-copywork-image { object-fit: contain; background: #fffaf0; }
+</style>
