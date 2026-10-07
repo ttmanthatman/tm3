@@ -18,12 +18,10 @@ async function load() {
   loading = true;
   error.value = "";
   try {
-    const data = await api<{ work: CopyworkDTO; pages: CopyworkPlacement[][] }>(
-      `/api/bible/copyworks/${props.id}`
-    );
-    const ink = await api<{ glyphs: Array<CopyworkGlyph & { index: number }> }>(
-      `/api/bible/copyworks/${props.id}/pages/0`
-    );
+    const [data, ink] = await Promise.all([
+      api<{ work: CopyworkDTO; pages: CopyworkPlacement[][] }>(`/api/bible/copyworks/${props.id}`),
+      api<{ glyphs: Array<CopyworkGlyph & { index: number }> }>(`/api/bible/copyworks/${props.id}/pages/0`)
+    ]);
     if (alive) {
       work.value = data.work;
       placements.value = data.pages[0];
@@ -45,7 +43,7 @@ onMounted(() => {
       void load();
       observer?.disconnect();
     }
-  });
+  }, { rootMargin: "400px 0px" });
   if (root.value) observer.observe(root.value);
   window.addEventListener("bible-copyworks-changed", load);
 });
@@ -56,7 +54,7 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <div ref="root" class="copywork-card" :class="{ message }" @click.stop>
+  <div ref="root" class="copywork-card" :class="{ message }" :data-copywork-id="id" @click.stop>
     <template v-if="message">
       <CopyworkPage v-if="work" :glyphs="glyphs" :placements="placements" :source="work.source"
         compact interactive :active="surfaceActive" />

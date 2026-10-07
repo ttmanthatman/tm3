@@ -8,7 +8,7 @@ import {
   type CopyworkSource
 } from "@shared/bibleCopywork";
 import { copyworkInkViewport, copyworkPageHeight } from "./copyworkPageLayout";
-import { drawHandwritingInk } from "../../handwriting/handwritingRenderer";
+import { createCopyworkPlaybackRenderer } from "./copyworkPlaybackRenderer";
 import {
   buildHandwritingTimeline,
   type HandwritingTimeline
@@ -69,34 +69,15 @@ function payload() {
     characters: orderedGlyphs.value.map((g) => g.character)
   };
 }
-function draw(visibleCounts?: Map<number, number[]>) {
-  const ctx = canvas.value?.getContext("2d");
-  if (!ctx || !canvas.value) return;
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  const width = Math.max(1, Math.round(canvas.value.getBoundingClientRect().width * ratio));
-  const height = Math.max(1, Math.round((width * viewport.value.height) / viewport.value.width));
-  if (canvas.value.width !== width || canvas.value.height !== height) {
-    canvas.value.width = width;
-    canvas.value.height = height;
-  }
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-  ctx.scale(width / viewport.value.width, width / viewport.value.width);
-  ctx.translate(-viewport.value.x, -viewport.value.y);
-  for (const p of props.placements) {
-    const glyph = glyphMap.value.get(p.index);
-    if (!glyph) continue;
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.scale(COPYWORK_PAGE.font / 10000, COPYWORK_PAGE.font / 10000);
-    drawHandwritingInk(
-      ctx,
-      glyph.character,
-      visibleCounts ? visibleCounts.get(p.index) || glyph.character.strokes.map(() => 0) : undefined
-    );
-    ctx.restore();
-  }
-}
+const renderer = createCopyworkPlaybackRenderer({
+  canvas: () => canvas.value,
+  viewport: () => viewport.value,
+  glyphs: () => props.glyphs,
+  placements: () => props.placements,
+  active: () => renderActive && props.active && !document.hidden
+});
+let renderActive = false;
+function draw(visibleCounts?: Map<number, number[]>) { renderer.draw(visibleCounts); }
 function drawProgress(elapsed: number) {
   replayStarted = true;
   timeline ||= buildHandwritingTimeline(payload());
@@ -120,6 +101,10 @@ const controller = createHandwritingPlaybackController({
   draw: drawProgress,
   onStateChange: (state) => {
     playing.value = state.playing;
+    const wasActive = renderActive;
+    renderActive = state.visible && state.surfaceActive && !document.hidden;
+    if (!renderActive) renderer.cancel();
+    else if (!wasActive) draw(replayStarted ? counts : undefined);
     if (!state.visible || !state.surfaceActive || document.hidden) gestures.cancel();
   }
 });
@@ -167,6 +152,8 @@ function contact(event: PointerEvent) {
 function pointerDown(event: PointerEvent) {
   if (!props.interactive || props.disabled || event.button !== 0 || !event.isPrimary) return;
   gestures.down(contact(event));
+  const element = event.currentTarget as HTMLElement;
+  if (event.isTrusted) element.setPointerCapture(event.pointerId);
 }
 function pointerMove(event: PointerEvent) {
   if (!props.interactive || props.disabled) return;
@@ -179,6 +166,9 @@ function pointerMove(event: PointerEvent) {
 function pointerUp(event: PointerEvent) {
   if (!props.interactive || props.disabled) return;
   gestures.up(contact(event));
+}
+function pointerLeave(event: PointerEvent) {
+  if (!(event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) gestures.lostCapture();
 }
 function keydown(event: KeyboardEvent) {
   if (!props.interactive || props.disabled) return;
@@ -214,6 +204,7 @@ function editStyle(p: CopyworkPlacement) {
 watch(
   () => [props.glyphs, props.placements, props.compact],
   () => {
+    renderer.reset();
     timeline = null;
     controller.setPayload();
     stop();
@@ -237,6 +228,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   gestures.cancel();
   controller.destroy();
+  renderer.destroy();
   resizeObserver?.disconnect();
 });
 defineExpose({ play, stop, playing });
@@ -271,7 +263,7 @@ defineExpose({ play, stop, playing });
       @pointermove.stop="pointerMove"
       @pointerup.stop="pointerUp"
       @pointercancel.stop="gestures.cancel()"
-      @pointerleave="gestures.lostCapture()"
+      @pointerleave="pointerLeave"
       @lostpointercapture="gestures.lostCapture()"
       @contextmenu.prevent.stop
       @dblclick.prevent.stop

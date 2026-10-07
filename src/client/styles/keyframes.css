@@ -251,6 +251,10 @@
     animation: none;
   }
 
+  .chat-activity-track.scrolling {
+    animation: none;
+  }
+
   .chat-activity-copy + .chat-activity-copy {
     display: none;
   }
@@ -326,4 +330,3 @@
     transform: rotate(360deg);
   }
 }
-

@@ -586,7 +586,7 @@ test("long music titles scroll inside the mini panel", () => {
 test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /const MUSIC_FADE_OUT_MS = 900;/);
   assert.match(musicPlayer, /function pause\(immediate = false\)[\s\S]*?musicFadeVolume[\s\S]*?targetAudio\.pause\(\)/);
-  assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn \? 0 : 1;/);
+  assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn \? 0 : 1;/);
 });
 
 test("song, friend, and own-story controls stay ordered before the score and consolidated chat tools", () => {
@@ -656,7 +656,7 @@ test("pinned content and live activity share one ordered notice stack", () => {
   assert.match(css, /\.message-notice-bar\.below-music-lyrics \{\s*margin-top: calc\(56px \+ var\(--notice-stack-clearance, 0px\)\);/);
   const activityTickerRule = css.match(/\.chat-activity-ticker \{([^}]*)\}/)?.[1] ?? "";
   assert.doesNotMatch(activityTickerRule, /position: absolute;/);
-  assert.match(css, /\.chat-activity-track \{[\s\S]*?padding-left: 100%;/, "ticker entries scroll in from the right edge");
+  assert.match(css, /@keyframes chatActivityTickerScroll \{\s*from \{ transform: translateX\(var\(--activity-ticker-start\)\);/, "ticker entries scroll in from the viewport's right edge");
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.chat-activity-track \{\s*padding-left: 0;\s*animation: none;/);
   assert.match(css, /\.chat-activity-item \{[\s\S]*?background: linear-gradient/);
   assert.match(css, /\.chat-head \{[\s\S]*?height: calc\(56px \+ var\(--safe-top\)\);/);

@@ -729,7 +729,7 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   await privateViewer.getByRole("button", { name: "关闭", exact: true }).click();
   await page.getByRole("button", { name: "目录", exact: true }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
-  await page.getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).click();
+  await page.locator(`.copywork-card[data-copywork-id="${id}"]`).getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).click();
   const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
   const viewerPaper = viewer.locator(".copywork-paper");
   await expect(viewerPaper).toBeVisible();

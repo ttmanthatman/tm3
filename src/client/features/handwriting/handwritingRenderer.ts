@@ -430,3 +430,12 @@ export { buildHandwritingTimeline };
 export function drawHandwritingInk(context: CanvasRenderingContext2D, character: HandwritingCharacter, visiblePointCounts?: number[]) {
   drawStrokes(context, character.strokes.map((stroke, index) => ({ stroke, visiblePoints: visiblePointCounts?.[index] ?? stroke.points.length })), HANDWRITING_STROKE_WIDTH, null);
 }
+
+/** Yield dense folio paths using the same ink geometry and coordinate system. */
+export function* drawHandwritingInkSteps(context: CanvasRenderingContext2D, character: HandwritingCharacter, visiblePointCounts?: number[]): Generator<void> {
+  for (const [index, stroke] of character.strokes.entries()) {
+    context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
+    yield* drawStrokeGeometrySteps(context, stroke, 0, visiblePointCounts?.[index] ?? stroke.points.length, HANDWRITING_STROKE_WIDTH);
+    yield;
+  }
+}

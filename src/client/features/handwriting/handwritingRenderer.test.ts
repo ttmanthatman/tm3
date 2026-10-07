@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { HandwritingPayload } from "@shared/handwriting";
 import { handwritingBrushGeometry, type BrushSample } from "./handwritingBrush.js";
-import { appendHandwritingStroke, drawHandwritingCharacter, drawHandwritingPayload, drawHandwritingTimelineAt, buildHandwritingTimeline, traceBrushFootprintPath } from "./handwritingRenderer.js";
+import { appendHandwritingStroke, drawHandwritingCharacter, drawHandwritingPayload, drawHandwritingTimelineAt, buildHandwritingTimeline, traceBrushFootprintPath, drawHandwritingInk, drawHandwritingInkSteps } from "./handwritingRenderer.js";
 
 type Operation = { type: string; args: unknown[] };
 
@@ -32,6 +32,24 @@ const payload: HandwritingPayload = {
   version: 1,
   characters: [{ strokes: [{ points: [[0, 0, 0], [100, 100, 20]] }] }]
 };
+
+test("yielded folio ink retains the full and partial paths, including empty skipped strokes", () => {
+  const character: HandwritingPayload["characters"][number] = {
+    strokes: [{ color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },
+      points: Array.from({ length: 1500 }, (_, i) => [1000 + i * 4, 3000 + Math.sin(i / 40) * 1500, i * 8] as [number, number, number]) }]
+  };
+  for (const counts of [undefined, [0], [735], [1500]]) {
+    const direct = fakeCanvas();
+    const yielded = fakeCanvas();
+    drawHandwritingInk(direct.canvas.getContext("2d")!, character, counts);
+    const steps = [...drawHandwritingInkSteps(yielded.canvas.getContext("2d")!, character, counts)];
+    assert.deepEqual(yielded.operations, direct.operations);
+    if (!counts) assert.ok(steps.length > 1, "dense paths must yield within a stroke");
+  }
+  const skipped = fakeCanvas();
+  assert.deepEqual([...drawHandwritingInkSteps(skipped.canvas.getContext("2d")!, { strokes: [] })], []);
+  assert.deepEqual(skipped.operations, []);
+});
 
 test("flexible follow nib bends its trailing tip and uses identical live, static and prefix paths", () => {
   const stroke = {

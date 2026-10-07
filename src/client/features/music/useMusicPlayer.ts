@@ -25,6 +25,8 @@ import {
 
 const MUSIC_FADE_OUT_MS = 900;
 const MUSIC_STATE_SYNC_INTERVAL_MS = 30_000;
+const MUSIC_STALL_TIMEOUT_MS = 15_000;
+const MUSIC_RECOVERY_LIMIT = 2;
 
 type MusicPlayerRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 
@@ -156,11 +158,9 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   const runtime = options.runtime || browserRuntime();
   const streamUrl = options.streamUrl || ((track: MusicTrackDTO) =>
     `/api/music/tracks/${track.id}/stream?token=${encodeURIComponent(getToken())}`);
-  const primeTrackCache = options.primeTrackCache || (async (track: MusicTrackDTO) => {
-    if (!("serviceWorker" in navigator)) return;
-    const registration = await navigator.serviceWorker.ready.catch(() => null);
-    registration?.active?.postMessage({ type: "CACHE_RESOURCE", url: streamUrl(track) });
-  });
+  // Range requests already trigger the worker's complete-file cache fill.
+  // A second CACHE_RESOURCE download competes with playback on a weak link.
+  const primeTrackCache = options.primeTrackCache;
 
   const currentTrackId = ref<number | null>(null);
   const playbackMode = ref<MusicPlaybackMode>("shuffle");
@@ -206,6 +206,43 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   let removeVisibilityListener: (() => void) | null = null;
   let mounted = false;
   let disposed = false;
+  let playbackIntended = false;
+  let playAttempt = 0;
+  let recoveryAttempts = 0;
+  let recoveryTimer: number | undefined;
+  let recoveringSource = false;
+
+  function clearRecovery() {
+    if (recoveryTimer !== undefined) runtime.clearTimeout(recoveryTimer);
+    recoveryTimer = undefined;
+  }
+
+  function scheduleRecovery(delay: number) {
+    if (!playbackIntended || disposed || recoveryTimer !== undefined) return;
+    const target = audio;
+    const trackId = currentTrackId.value;
+    const generation = accountGeneration;
+    const progress = target?.currentTime || 0;
+    recoveryTimer = runtime.setTimeout(() => {
+      recoveryTimer = undefined;
+      if (!target || target !== audio || generation !== accountGeneration ||
+          trackId !== currentTrackId.value || !playbackIntended || disposed) return;
+      if (!target.error && !target.paused && target.currentTime > progress + 0.1) return;
+      if (recoveryAttempts >= MUSIC_RECOVERY_LIMIT) {
+        pause(true);
+        error.value = "网络中断，请点击播放继续";
+        return;
+      }
+      const track = currentTrack.value;
+      if (!track) return;
+      recoveryAttempts++;
+      pendingRestoredProgressMs = Math.max(0, target.currentTime * 1000);
+      recoveringSource = true;
+      target.src = streamUrl(track);
+      target.load();
+      void play({ recovering: true });
+    }, delay);
+  }
 
   function notifyCurrentTrackChanged() {
     options.onCurrentTrackChanged?.();
@@ -317,6 +354,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function resetAccountState() {
+    playbackIntended = false;
+    playAttempt++;
+    recoveringSource = false;
+    clearRecovery();
     stopStateSyncTimer();
     clearFade();
     audio?.pause();
@@ -496,6 +537,12 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
 
   function handlePause() {
     if (disposed) return;
+    // load()/play() may have queued a pause for the previous source.
+    if (audio && !audio.paused) return;
+    if (recoveringSource && playbackIntended) return;
+    playbackIntended = false;
+    playAttempt++;
+    clearRecovery();
     playing.value = false;
     loading.value = false;
     if (playSession && audio) void reportProgress(playSession, audio, "paused");
@@ -516,7 +563,8 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
 
   function handleWaiting() {
     if (disposed) return;
-    loading.value = true;
+    loading.value = playbackIntended;
+    scheduleRecovery(MUSIC_STALL_TIMEOUT_MS);
     resetPlayObservation();
   }
 
@@ -542,6 +590,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     if (disposed || !session || !targetAudio || session.trackId !== currentTrack.value?.id) return;
     const now = runtime.now();
     const currentMediaMs = Math.max(0, Math.round(targetAudio.currentTime * 1000));
+    if (!targetAudio.paused && !targetAudio.seeking && currentMediaMs > session.lastMediaMs) {
+      clearRecovery();
+      loading.value = false;
+    }
     if (!targetAudio.paused && !targetAudio.seeking && targetAudio.readyState >= 2) {
       session.listenedMs += creditedMusicListenMs(
         session.lastMediaMs,
@@ -558,16 +610,31 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   function handleError() {
     if (disposed) return;
     if (playSession && audio) void reportProgress(playSession, audio, "error");
+    const code = audio?.error?.code;
+    if (playbackIntended && (code === 1 || code === 2) && recoveryAttempts < MUSIC_RECOVERY_LIMIT) {
+      loading.value = true;
+      scheduleRecovery(1_000 * (recoveryAttempts + 1));
+      return;
+    }
+    playbackIntended = false;
+    recoveringSource = false;
+    clearRecovery();
     playing.value = false;
     loading.value = false;
-    error.value = "歌曲暂时无法播放";
+    error.value = code === 3 || code === 4
+      ? "歌曲文件无法解码或格式不支持，请切换歌曲"
+      : "歌曲加载中断，请点击播放继续";
     notifyListeningChanged();
   }
 
   function setAudioTrack(track: MusicTrackDTO) {
     initializeAudio();
-    void primeTrackCache(track);
     if (!audio || audio.dataset.trackId === String(track.id)) return;
+    void primeTrackCache?.(track);
+    clearRecovery();
+    recoveryAttempts = 0;
+    recoveringSource = false;
+    playAttempt++;
     if (playSession && audio.dataset.trackId) void reportProgress(playSession, audio, "changed");
     clearFade();
     audio.src = streamUrl(track);
@@ -576,7 +643,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     beginPlaySession(track);
   }
 
-  async function play(playOptions?: { fadeIn?: boolean }) {
+  async function play(playOptions?: { fadeIn?: boolean; recovering?: boolean }) {
     const track = currentTrack.value;
     if (!track) {
       error.value = "歌单还是空的";
@@ -586,6 +653,18 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     if (!audio) return;
     const targetAudio = audio;
     const generation = accountGeneration;
+    const attempt = ++playAttempt;
+    playbackIntended = true;
+    if (!playOptions?.recovering) {
+      recoveryAttempts = 0;
+      clearRecovery();
+      if (targetAudio.error) {
+        pendingRestoredProgressMs = Math.max(0, targetAudio.currentTime * 1000);
+        recoveringSource = true;
+        targetAudio.src = streamUrl(track);
+        targetAudio.load();
+      }
+    }
     clearFade();
     targetAudio.volume = playOptions?.fadeIn ? 0 : 1;
     preparePlaySession();
@@ -598,11 +677,11 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
         disposed ||
         generation !== accountGeneration ||
         targetAudio !== audio ||
-        currentTrackId.value !== track.id
+        currentTrackId.value !== track.id || attempt !== playAttempt || !playbackIntended
       ) {
-        targetAudio.pause();
         return;
       }
+      recoveringSource = false;
       playing.value = true;
       loading.value = false;
       if (playOptions?.fadeIn) {
@@ -620,7 +699,15 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
         }, MUSIC_FADE_OUT_MS);
       }
     } catch (playError) {
-      if (disposed || generation !== accountGeneration || targetAudio !== audio) return;
+      if (disposed || generation !== accountGeneration || targetAudio !== audio ||
+          currentTrackId.value !== track.id || attempt !== playAttempt || !playbackIntended) return;
+      recoveringSource = false;
+      if (targetAudio.error) {
+        handleError();
+        return;
+      }
+      playbackIntended = false;
+      clearRecovery();
       loading.value = false;
       playing.value = false;
       error.value = playError instanceof Error && playError.name === "NotAllowedError"
@@ -630,6 +717,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function pause(immediate = false) {
+    playbackIntended = false;
+    playAttempt++;
+    recoveringSource = false;
+    clearRecovery();
     const targetAudio = audio;
     if (!targetAudio) return;
     clearFade();
@@ -731,6 +822,8 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   function handleEnded() {
     if (disposed) return;
     clearFade();
+    playbackIntended = false;
+    clearRecovery();
     playing.value = false;
     if (playSession && audio) void reportProgress(playSession, audio, "ended");
     notifyListeningChanged();
@@ -881,12 +974,13 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   function initializeAudio() {
     if (audio || disposed) return;
     audio = runtime.createAudio();
-    audio.preload = "metadata";
+    audio.preload = "auto";
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("ended", handleEnded);
     audio.addEventListener("error", handleError);
     audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("stalled", handleWaiting);
     audio.addEventListener("canplay", handleCanPlay);
     audio.addEventListener("timeupdate", handleTimeUpdate);
     audio.addEventListener("seeking", handleSeeking);
@@ -896,6 +990,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function disposeAudio() {
+    playbackIntended = false;
+    playAttempt++;
+    recoveringSource = false;
+    clearRecovery();
     if (!audio) return;
     const targetAudio = audio;
     unbindMediaSession?.();
@@ -911,6 +1009,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     targetAudio.removeEventListener("ended", handleEnded);
     targetAudio.removeEventListener("error", handleError);
     targetAudio.removeEventListener("waiting", handleWaiting);
+    targetAudio.removeEventListener("stalled", handleWaiting);
     targetAudio.removeEventListener("canplay", handleCanPlay);
     targetAudio.removeEventListener("timeupdate", handleTimeUpdate);
     targetAudio.removeEventListener("seeking", handleSeeking);

@@ -16,6 +16,8 @@ class FakeAudio extends EventTarget {
   dataset: Record<string, string> = {};
   src = "";
   playCalls = 0;
+  loadCalls = 0;
+  error: { code: number } | null = null;
 
   async play() {
     this.playCalls += 1;
@@ -29,7 +31,7 @@ class FakeAudio extends EventTarget {
     if (wasPlaying) this.dispatchEvent(new Event("pause"));
   }
 
-  load() {}
+  load() { this.loadCalls++; this.error = null; }
 
   removeAttribute(name: string) {
     if (name === "src") this.src = "";
@@ -196,6 +198,85 @@ async function activate(harness: ReturnType<typeof createHarness>, accountId = 1
   harness.player.controls.mount();
   await harness.player.controls.activateAccount(accountId);
 }
+
+test("network errors reload the same track at the interrupted progress with bounded retries", async () => {
+  const h = createHarness();
+  await activate(h);
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.audio.currentTime = 42;
+  const loads = h.audio.loadCalls;
+  for (let i = 0; i < 2; i++) {
+    h.audio.error = { code: 2 };
+    h.audio.dispatchEvent(new Event("error"));
+    assert.equal(h.player.state.loading.value, true);
+    const [id, retry] = [...h.timeouts][0];
+    h.timeouts.delete(id);
+    retry();
+    h.audio.dispatchEvent(new Event("loadedmetadata"));
+    await Promise.resolve();
+    assert.equal(h.audio.currentTime, 42);
+    assert.equal(h.audio.src, "/stream/1");
+  }
+  h.audio.error = { code: 2 };
+  h.audio.dispatchEvent(new Event("error"));
+  assert.equal(h.timeouts.size, 0);
+  assert.equal(h.audio.loadCalls, loads + 2);
+  assert.equal(h.player.state.playing.value, false);
+  assert.match(h.player.state.error.value, /中断/);
+  h.player.controls.dispose();
+});
+
+test("stalls recover only while playback remains intended; pause, switches and dispose cancel", async () => {
+  const h = createHarness();
+  await activate(h);
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.audio.dispatchEvent(new Event("stalled"));
+  assert.equal(h.timeouts.size, 1);
+  const staleRetry = [...h.timeouts.values()][0];
+  h.player.controls.pause(true);
+  assert.equal(h.timeouts.size, 0);
+  staleRetry();
+  assert.equal(h.audio.playCalls, 1);
+  await h.player.controls.play();
+  h.audio.dispatchEvent(new Event("waiting"));
+  h.player.controls.selectTrack(h.tracks.value[1]);
+  assert.equal(h.timeouts.size, 0);
+  await Promise.resolve();
+  h.audio.dispatchEvent(new Event("stalled"));
+  h.player.controls.dispose();
+  assert.equal(h.timeouts.size, 0);
+});
+
+test("decode failures are explained without retrying damaged or unsupported media", async () => {
+  const h = createHarness();
+  await activate(h);
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.audio.error = { code: 3 };
+  h.audio.dispatchEvent(new Event("error"));
+  assert.equal(h.timeouts.size, 0);
+  assert.match(h.player.state.error.value, /解码/);
+  h.player.controls.dispose();
+});
+
+test("an old play promise cannot pause a newer track or replace its playback state", async () => {
+  const h = createHarness();
+  await activate(h);
+  let rejectOld: (error: Error) => void = () => {};
+  h.audio.play = () => new Promise<void>((_resolve, reject) => { rejectOld = reject; });
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  h.audio.play = FakeAudio.prototype.play;
+  h.player.controls.selectTrack(h.tracks.value[1]);
+  await Promise.resolve();
+  rejectOld(new Error("aborted old source"));
+  await Promise.resolve();
+  assert.equal(h.player.state.playing.value, true);
+  assert.equal(h.player.state.error.value, "");
+  assert.equal(h.audio.paused, false);
+  h.player.controls.dispose();
+});
 
 test("switching playback source swaps the queue and updates the source name", async () => {
   const playlist: MusicPlaylistDTO = {

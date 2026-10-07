@@ -291,7 +291,7 @@ button.pinned-ticker-action {
   display: inline-flex;
   align-items: center;
   gap: 12px;
-  padding-left: 100%;
+  padding-left: 0;
 }
 
 .chat-activity-track.scrolling {
@@ -306,8 +306,12 @@ button.pinned-ticker-action {
   flex-shrink: 0;
 }
 
+.chat-activity-viewport.paused .chat-activity-item {
+  animation-play-state: paused;
+}
+
 @keyframes chatActivityTickerScroll {
-  from { transform: translateX(0); }
+  from { transform: translateX(var(--activity-ticker-start)); }
   to { transform: translateX(calc(0px - var(--activity-ticker-distance))); }
 }
 
