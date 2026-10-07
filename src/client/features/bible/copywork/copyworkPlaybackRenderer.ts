@@ -70,16 +70,22 @@ export function createCopyworkPlaybackRenderer(deps: {
       wanted.add(key);
       let image = images.get(key);
       if (!image) {
-        // One pixel of bleed covers antialiasing beyond the measured ink bounds.
-        const left = Math.floor(glyph.bounds.left * inkScale) - 1;
-        const top = Math.floor(glyph.bounds.top * inkScale) - 1;
+        // Rasterize at the final page's pixel phase, then copy at integer pixels.
+        // Fractional drawImage positions would smooth the ink a second time.
+        const originX = (placement.x - view.x) * scale;
+        const originY = (placement.y - view.y) * scale;
+        const left = Math.floor(originX + glyph.bounds.left * inkScale) - 1;
+        const top = Math.floor(originY + glyph.bounds.top * inkScale) - 1;
         const buffer = document.createElement("canvas");
-        buffer.width = Math.max(1, Math.ceil(glyph.bounds.right * inkScale) - left + 1);
-        buffer.height = Math.max(1, Math.ceil(glyph.bounds.bottom * inkScale) - top + 1);
+        buffer.width = Math.max(1, Math.ceil(originX + glyph.bounds.right * inkScale) - left + 1);
+        buffer.height = Math.max(1, Math.ceil(originY + glyph.bounds.bottom * inkScale) - top + 1);
         const ink = buffer.getContext("2d");
         if (!ink) continue;
         ink.translate(-left, -top);
-        ink.scale(inkScale, inkScale);
+        ink.scale(scale, scale);
+        ink.translate(-view.x, -view.y);
+        ink.translate(placement.x, placement.y);
+        ink.scale(COPYWORK_PAGE.font / 10000, COPYWORK_PAGE.font / 10000);
         image = { canvas: buffer, left, top, ready: false };
         images.set(key, image);
         pending.add(image);
@@ -97,7 +103,7 @@ export function createCopyworkPlaybackRenderer(deps: {
         };
         handwritingRenderQueue.enqueue(target, step);
       }
-      if (image.ready) ctx.drawImage(image.canvas, (placement.x - view.x) * scale + image.left, (placement.y - view.y) * scale + image.top);
+      if (image.ready) ctx.drawImage(image.canvas, image.left, image.top);
     }
     for (const [key, image] of images) {
       if (!key.endsWith(":full") && !wanted.has(key)) {

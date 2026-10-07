@@ -113,3 +113,66 @@ test("dense folio seeking coalesces renders, reuses completed ink and retains po
   await page.waitForTimeout(100);
   expect(await fills()).toBe(paused);
 });
+
+test("cached folio ink matches direct drawing at fractional placements and screen scales", async ({ page }) => {
+  await harness(page);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    const results = await page.evaluate(async (width) => {
+      const rendererPath = "/src/client/features/bible/copywork/copyworkPlaybackRenderer.ts";
+      const inkPath = "/src/client/features/handwriting/handwritingRenderer.ts";
+      const sharedPath = "/src/shared/bibleCopywork.ts";
+      const { createCopyworkPlaybackRenderer } = await import(rendererPath) as typeof import("../../src/client/features/bible/copywork/copyworkPlaybackRenderer");
+      const { drawHandwritingInk } = await import(inkPath) as typeof import("../../src/client/features/handwriting/handwritingRenderer");
+      const { COPYWORK_PAGE } = await import(sharedPath) as typeof import("../../src/shared/bibleCopywork");
+      const glyph = { index: 0, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 }, character: { strokes: [{
+        color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },
+        points: Array.from({ length: 300 }, (_, i) => [1000 + i * 25, 5000 + Math.sin(i / 15) * 3000, i * 8] as [number, number, number])
+      }] } };
+      const placement = { index: 0, x: 77.35, y: 100.65 };
+      const view = { x: 13.7, y: 29.2, width: 704, height: 320 };
+      const originalRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+      const comparisons = [];
+      try {
+        for (const ratio of [1, 2]) {
+          Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: ratio });
+          for (const count of [300, 137]) {
+            const cached = document.createElement("canvas");
+            cached.style.width = `${width - 40.25}px`;
+            document.body.append(cached);
+            const renderer = createCopyworkPlaybackRenderer({ canvas: () => cached, viewport: () => view,
+              glyphs: () => [glyph], placements: () => [placement], active: () => true });
+            renderer.draw(new Map([[0, [count]]]));
+            const ctx = cached.getContext("2d")!;
+            const deadline = performance.now() + 5000;
+            while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
+              if (performance.now() > deadline) throw new Error("cached ink did not finish drawing");
+              await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            }
+            const direct = document.createElement("canvas");
+            direct.width = cached.width;
+            direct.height = cached.height;
+            const reference = direct.getContext("2d")!;
+            const scale = direct.width / view.width;
+            reference.scale(scale, scale);
+            reference.translate(-view.x, -view.y);
+            reference.translate(placement.x, placement.y);
+            reference.scale(COPYWORK_PAGE.font / 10000, COPYWORK_PAGE.font / 10000);
+            drawHandwritingInk(reference, glyph.character, [count]);
+            const expected = reference.getImageData(0, 0, direct.width, direct.height).data;
+            const actual = ctx.getImageData(0, 0, cached.width, cached.height).data;
+            let alphaDifference = 0;
+            for (let i = 3; i < actual.length; i += 4) alphaDifference = Math.max(alphaDifference, Math.abs(actual[i] - expected[i]));
+            comparisons.push({ ratio, count, alphaDifference });
+            renderer.destroy();
+            cached.remove();
+          }
+        }
+      } finally {
+        if (originalRatio) Object.defineProperty(window, "devicePixelRatio", originalRatio);
+      }
+      return comparisons;
+    }, width);
+    for (const result of results) expect(result.alphaDifference, `${width}px, DPR ${result.ratio}, ${result.count} points`).toBeLessThanOrEqual(2);
+  }
+});
