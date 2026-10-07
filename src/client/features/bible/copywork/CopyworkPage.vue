@@ -266,6 +266,7 @@ defineExpose({ play, stop, playing });
       :aria-pressed="interactive ? playing : undefined"
       :data-playing="playing"
       :data-progress="progress"
+      :data-bible-swipe-interaction="interactive ? 'copywork-playback' : undefined"
       @pointerdown.stop="pointerDown"
       @pointermove.stop="pointerMove"
       @pointerup.stop="pointerUp"

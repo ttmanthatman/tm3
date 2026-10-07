@@ -1102,6 +1102,8 @@ export interface ParallaxKitDTO {
 }
 
 export interface AppearanceDTO {
+  bibleSwipeEnabled?: boolean;
+  bibleSwipeProtectInteractions?: boolean;
   handwritingSettings?: HandwritingGlobalSettings;
   appTitle: string;
   appIconPath?: string | null;

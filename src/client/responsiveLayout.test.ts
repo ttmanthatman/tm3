@@ -109,7 +109,8 @@ test("the message viewport and composer occupy separate chat grid rows", () => {
 
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
   assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
-  assert.match(app, /handleBibleSwipeStart[\s\S]*?deltaX >= 64/);
+  assert.match(app, /createBibleSwipeNavigation\([\s\S]*?direction: "right"[\s\S]*?navigate: openBibleWorkspace/);
+  assert.match(bibleWorkspace, /createBibleSwipeNavigation\([\s\S]*?direction: "left"[\s\S]*?navigate: \(\) => emit\("close"\)/);
   assert.match(chatHeader, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
   assert.doesNotMatch(css, /@media \(max-width: 760px\) \{[\s\S]*?\.bible-header-trigger \{[\s\S]*?display: none;/);
   assert.match(bibleWorkspace, />主题检索<[\s\S]*?>文本检索</);

@@ -164,6 +164,8 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
             "loginBackgroundFit",
             "loginFormPosition",
             "registrationEnabled",
+            "bibleSwipeEnabled",
+            "bibleSwipeProtectInteractions",
             "musicPanelFontSize",
             "prayerBubbleMineColor",
             "prayerBubbleOtherColor",
@@ -207,6 +209,8 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
       loginBackgroundFit: LOGIN_BACKGROUND_FITS.has(loginBackgroundFit) ? loginBackgroundFit : "cover",
       loginFormPosition: LOGIN_FORM_POSITIONS.has(loginFormPosition) ? loginFormPosition : "middle",
       registrationEnabled: settings.get("registrationEnabled") === "true",
+      bibleSwipeEnabled: settings.get("bibleSwipeEnabled") !== "false",
+      bibleSwipeProtectInteractions: settings.get("bibleSwipeProtectInteractions") !== "false",
       musicPanelFontSize: cleanMusicPanelFontSize(settings.get("musicPanelFontSize")),
       prayerBubbleMineColor: cleanHexColor(settings.get("prayerBubbleMineColor"), "#f0fbf1"),
       prayerBubbleOtherColor: cleanHexColor(settings.get("prayerBubbleOtherColor"), "#fffaf0"),
@@ -399,6 +403,8 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
         loginBackgroundFit: z.enum(["cover", "contain", "stretch", "repeat"]).optional(),
         loginFormPosition: z.enum(["top", "middle", "bottom"]).optional(),
         registrationEnabled: z.boolean().optional(),
+        bibleSwipeEnabled: z.boolean().optional(),
+        bibleSwipeProtectInteractions: z.boolean().optional(),
         musicPanelFontSize: z.number().min(MUSIC_PANEL_FONT_SIZE_MIN).max(MUSIC_PANEL_FONT_SIZE_MAX).optional(),
         prayerBubbleMineColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         prayerBubbleOtherColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
@@ -439,6 +445,8 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
     if (Object.prototype.hasOwnProperty.call(body, "loginBackgroundFit")) await setSetting("loginBackgroundFit", body.loginBackgroundFit || "cover");
     if (Object.prototype.hasOwnProperty.call(body, "loginFormPosition")) await setSetting("loginFormPosition", body.loginFormPosition || "middle");
     if (Object.prototype.hasOwnProperty.call(body, "registrationEnabled")) await setSetting("registrationEnabled", body.registrationEnabled ? "true" : "false");
+    if (Object.prototype.hasOwnProperty.call(body, "bibleSwipeEnabled")) await setSetting("bibleSwipeEnabled", body.bibleSwipeEnabled ? "true" : "false");
+    if (Object.prototype.hasOwnProperty.call(body, "bibleSwipeProtectInteractions")) await setSetting("bibleSwipeProtectInteractions", body.bibleSwipeProtectInteractions ? "true" : "false");
     if (Object.prototype.hasOwnProperty.call(body, "musicPanelFontSize")) await setSetting("musicPanelFontSize", String(cleanMusicPanelFontSize(body.musicPanelFontSize)));
     if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleMineColor")) await setSetting("prayerBubbleMineColor", cleanHexColor(body.prayerBubbleMineColor, "#f0fbf1"));
     if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleOtherColor")) await setSetting("prayerBubbleOtherColor", cleanHexColor(body.prayerBubbleOtherColor, "#fffaf0"));

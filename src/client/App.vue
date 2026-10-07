@@ -90,6 +90,7 @@ import { useUploads } from "./features/uploads/useUploads";
 import { messageEffect, useComposer } from "./features/composer/useComposer";
 import { useAuth } from "./features/auth/useAuth";
 import { useBibleWorkspaceIntegration } from "./features/bible/useBibleWorkspaceIntegration";
+import { createBibleSwipeNavigation } from "./features/bible/bibleSwipeNavigation";
 import { useMusicLibraryIntegration } from "./features/music/useMusicLibraryIntegration";
 import { useRainEffect } from "./features/effects/useRainEffect";
 import { useDripEffect } from "./features/effects/useDripEffect";
@@ -873,7 +874,12 @@ const {
   publishBookReading,
   jumpToMessageInChannel
 });
-let bibleSwipeStart: { x: number; y: number } | null = null;
+const { start: handleBibleSwipeStart, end: handleBibleSwipeEnd, cancel: cancelBibleSwipe } = createBibleSwipeNavigation({
+  appearance: () => store.appearance,
+  blocked: () => bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value || showAdmin.value || showSettings.value || !!previewMessage.value,
+  direction: "right",
+  navigate: openBibleWorkspace
+});
 const chainPromptAnchor = ref<HTMLElement | null>(null);
 type TopNotice = {
   id: string;
@@ -3373,26 +3379,6 @@ watch(() => bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.va
   syncFlashEffectTimer();
 });
 
-function handleBibleSwipeStart(event: TouchEvent) {
-  if (bibleOpen.value || sermonWorkspaceOpen.value || showAdmin.value || showSettings.value || previewMessage.value) return;
-  const touch = event.touches[0];
-  const target = event.target as HTMLElement | null;
-  if (!touch || touch.clientX <= 20 || target?.closest("button, input, textarea, select, a, video, audio, [contenteditable='true'], [role='button'], [data-no-bible-swipe]")) {
-    bibleSwipeStart = null;
-    return;
-  }
-  bibleSwipeStart = { x: touch.clientX, y: touch.clientY };
-}
-
-function handleBibleSwipeEnd(event: TouchEvent) {
-  const touch = event.changedTouches[0];
-  if (!touch || !bibleSwipeStart) return;
-  const deltaX = touch.clientX - bibleSwipeStart.x;
-  const deltaY = touch.clientY - bibleSwipeStart.y;
-  bibleSwipeStart = null;
-  if (deltaX >= 64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) openBibleWorkspace();
-}
-
 function replaceChannelSnapshot(channel?: ChannelDTO | null, options: { addToStore?: boolean; addToAdmin?: boolean } = {}) {
   if (!channel) return;
   const storeIndex = store.channels.findIndex((row) => row.id === channel.id);
@@ -5436,7 +5422,7 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd">
+    <section v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"

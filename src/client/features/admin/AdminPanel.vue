@@ -495,6 +495,11 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
                     </label>
                   </div>
                 </section>
+                <label>圣经滑动切换</label>
+                <label class="check-row"><input v-model="loginAppearanceEdit.bibleSwipeEnabled" type="checkbox" role="switch" /> 左右滑动切换聊天室与圣经</label>
+                <small>聊天室右滑进入圣经，圣经左滑返回聊天室；关闭后仍可通过按钮切换。</small>
+                <label class="check-row"><input v-model="loginAppearanceEdit.bibleSwipeProtectInteractions" type="checkbox" role="switch" :disabled="!loginAppearanceEdit.bibleSwipeEnabled" /> 书写、拖动进度时屏蔽滑动切换</label>
+                <small>在手写画布或抄写播放区域开始的手势只用于书写、播放和调整进度。保存后对所有成员生效。</small>
                 <label>音乐小窗</label>
                 <div class="wallpaper-pan-controls">
                   <label>

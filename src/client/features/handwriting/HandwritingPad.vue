@@ -292,7 +292,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="handwriting-pad" :style="{ backgroundColor: backgroundColor || '#fff' }">
+  <div class="handwriting-pad" data-bible-swipe-interaction="handwriting" :style="{ backgroundColor: backgroundColor || '#fff' }">
     <canvas
       ref="canvas"
       class="handwriting-pad-canvas"

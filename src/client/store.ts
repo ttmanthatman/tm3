@@ -94,6 +94,8 @@ function loadInitialPersistedWindow(): { accountId: number; messages: MessageDTO
   }
 }
 const defaultAppearance: AppearanceDTO = {
+  bibleSwipeEnabled: true,
+  bibleSwipeProtectInteractions: true,
   handwritingSettings: HANDWRITING_DEFAULT_GLOBAL_SETTINGS,
   appTitle: "Team Chat",
   appIconPath: null,

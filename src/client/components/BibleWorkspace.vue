@@ -17,6 +17,8 @@ import type {
   ChannelDTO
 } from "@shared/types";
 import { api } from "../api";
+import { useChatStore } from "../store";
+import { createBibleSwipeNavigation } from "../features/bible/bibleSwipeNavigation";
 import type { CopyworkSource } from "@shared/bibleCopywork";
 import {
   bibleWorkspaceSnapshot,
@@ -130,7 +132,13 @@ let persistTimer = 0;
 let catalogLoadPromise: Promise<void> | null = null;
 let componentMounted = false;
 let stateRestored = false;
-let swipeStart: { x: number; y: number } | null = null;
+const store = useChatStore();
+const { start: handleTouchStart, end: handleTouchEnd, cancel: cancelSwipe } = createBibleSwipeNavigation({
+  appearance: () => store.appearance,
+  blocked: () => !props.open,
+  direction: "left",
+  navigate: () => emit("close")
+});
 let catalogPreloadTimer = 0;
 let serverSyncTimer = 0;
 let pendingWorkspaceSyncJson = "";
@@ -939,24 +947,6 @@ function showToast(message: string) {
   }, 2600);
 }
 
-function handleTouchStart(event: TouchEvent) {
-  const touch = event.touches[0];
-  const target = event.target as HTMLElement | null;
-  if (!touch || touch.clientX <= 20 || target?.closest("button, input, textarea, select, a, video, audio, [contenteditable='true'], [role='button'], [data-no-bible-swipe]")) {
-    swipeStart = null;
-    return;
-  }
-  swipeStart = { x: touch.clientX, y: touch.clientY };
-}
-
-function handleTouchEnd(event: TouchEvent) {
-  const touch = event.changedTouches[0];
-  if (!touch || !swipeStart) return;
-  const deltaX = touch.clientX - swipeStart.x;
-  const deltaY = touch.clientY - swipeStart.y;
-  swipeStart = null;
-  if (deltaX <= -64 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) emit("close");
-}
 </script>
 
 <template>
@@ -968,6 +958,7 @@ function handleTouchEnd(event: TouchEvent) {
     :inert="!open"
     @touchstart.passive="handleTouchStart"
     @touchend.passive="handleTouchEnd"
+    @touchcancel.passive="cancelSwipe"
   >
     <header class="bible-topbar">
       <div class="bible-topbar-leading">

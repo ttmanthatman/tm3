@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page, webkit } from "@playwright/test";
+import { test, expect, type APIRequestContext, type Locator, type Page, webkit } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unzipArchive } from "../../src/server/zipArchive.js";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
@@ -66,6 +66,135 @@ async function stroke(page: Page) {
   await page.mouse.move(box.x + box.width * 0.8, box.y + box.height * 0.3, { steps: 10 });
   await page.mouse.up();
 }
+
+async function swipe(target: Locator, direction: "left" | "right") {
+  await target.evaluate((element, sign) => {
+    // WebKit does not expose a constructible Touch. Supply the same touch lists
+    // to DOM events so both engines exercise the real bubbling handlers.
+    function dispatch(type: string, x: number, ending: boolean) {
+      const touch = { identifier: 1, target: element, clientX: x, clientY: 200 };
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperties(event, {
+        touches: { value: ending ? [] : [touch] },
+        changedTouches: { value: [touch] }
+      });
+      element.dispatchEvent(event);
+    }
+    dispatch("touchstart", 160, false);
+    dispatch("touchend", 160 + sign * 100, true);
+  }, direction === "right" ? 1 : -1);
+}
+
+test("admin swipe switches persist and protect copywork dragging and writing in both browsers", async ({ page, request }) => {
+  test.setTimeout(120000);
+  const headers = { Authorization: `Bearer ${await token(request)}` };
+  const id = randomUUID();
+  const passage = { translation: "cmn-cu89s", bookCode: "JHN", chapter: 11, verseStart: 35, verseEnd: 35 };
+  const sourceResponse = await request.post("/api/bible/copyworks/source", { headers, data: passage });
+  expect(sourceResponse.ok()).toBeTruthy();
+  const { source } = await sourceResponse.json();
+  expect((await request.post("/api/bible/copyworks", { headers, data: { id, spacing: "normal", ...passage } })).ok()).toBeTruthy();
+  const length = Array.from(source.text as string).filter((character) => !/\s/u.test(character)).length;
+  for (let index = 0; index < length; index++) {
+    expect((await request.put(`/api/bible/copyworks/${id}/glyphs/${index}`, { headers, data: glyph })).ok()).toBeTruthy();
+  }
+  expect((await request.post(`/api/bible/copyworks/${id}/complete`, { headers })).ok()).toBeTruthy();
+  const channels = (await (await request.get("/api/channels", { headers })).json()).channels as Array<{ id: number; name: string }>;
+  const channel = channels.find((item) => item.name === E2E_CHANNELS.default)!;
+  expect((await request.post(`/api/bible/copyworks/${id}/share`, { headers, data: { channelId: channel.id, clientRequestId: randomUUID() } })).ok()).toBeTruthy();
+
+  async function scenario(current: Page, engine: string) {
+    const pageErrors: string[] = [];
+    current.on("pageerror", (error) => pageErrors.push(error.message));
+    await login(current);
+    let bible = current.locator(".bible-workspace");
+    let chat = current.locator(".chat-pane");
+    async function settings(enabled: boolean, protectedInteractions: boolean, inspect = false) {
+      await current.getByRole("button", { name: "更多管理功能", exact: true }).click();
+      await current.getByRole("menuitem", { name: "系统设置", exact: true }).click();
+      const admin = current.getByRole("dialog", { name: "管理面板", exact: true });
+      await admin.getByRole("button", { name: /外观与体验/ }).click();
+      await admin.getByRole("button", { name: /聊天室外观/ }).click();
+      const master = admin.getByRole("switch", { name: "左右滑动切换聊天室与圣经", exact: true });
+      const protection = admin.getByRole("switch", { name: "书写、拖动进度时屏蔽滑动切换", exact: true });
+      if (inspect) {
+        await expect(master).toBeChecked();
+        await expect(protection).toBeChecked();
+        for (const width of [360, 390, 1280]) {
+          await current.setViewportSize({ width, height: 844 });
+          await master.scrollIntoViewIfNeeded();
+          await expect(protection).toBeVisible();
+          expect(await admin.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
+          await current.screenshot({ path: `output/e2e/bible-swipe-settings-${engine}-${width}.png`, fullPage: true });
+        }
+        await current.setViewportSize({ width: 390, height: 844 });
+      }
+      await master.check();
+      await protection.setChecked(protectedInteractions);
+      await master.setChecked(enabled);
+      if (!enabled) await expect(protection).toBeDisabled();
+      await admin.getByRole("button", { name: "保存外观", exact: false }).click();
+      await expect(admin.getByText("所有外观设置都已保存。", { exact: true })).toBeVisible();
+      await admin.getByRole("button", { name: "关闭管理", exact: true }).click();
+    }
+    await settings(false, true, true);
+    expect(pageErrors).toEqual([]);
+    // Reopen to verify persistence without aborting unrelated beforeunload
+    // music-state PUTs, which WebKit reports as access-control page errors.
+    current = await current.context().newPage();
+    current.on("pageerror", (error) => pageErrors.push(error.message));
+    await current.setViewportSize({ width: 390, height: 844 });
+    await current.goto("/");
+    bible = current.locator(".bible-workspace");
+    chat = current.locator(".chat-pane");
+    await expect(chat).toBeVisible();
+    await swipe(chat, "right");
+    await expect(bible).toBeHidden();
+    await current.getByRole("button", { name: "打开圣经" }).click();
+    await expect(bible).toBeVisible();
+    await swipe(bible, "left");
+    await expect(bible).toBeVisible();
+    await bible.getByRole("button", { name: "聊天", exact: true }).click();
+    await settings(true, true);
+    await swipe(chat, "right");
+    await expect(bible).toBeVisible();
+    await swipe(bible, "left");
+    await expect(chat).toBeVisible();
+    const paper = current.locator(".copywork-card.message .copywork-paper").last();
+    await expect(paper).toBeVisible();
+    await swipe(paper, "right");
+    await expect(chat).toBeVisible();
+    const box = (await paper.boundingBox())!;
+    const point = { pointerId: 10, pointerType: "touch", isPrimary: true, clientX: box.x + box.width * 0.7, clientY: box.y + box.height * 0.5, button: 0 };
+    await paper.dispatchEvent("pointerdown", { ...point, buttons: 1 });
+    await paper.dispatchEvent("pointermove", { ...point, clientX: box.x + box.width * 0.3, buttons: 1 });
+    await paper.dispatchEvent("pointerup", { ...point, clientX: box.x + box.width * 0.3, buttons: 0 });
+    expect(Number(await paper.getAttribute("data-progress"))).toBeLessThan(0.7);
+    await expect(chat).toBeVisible();
+    await openVerse(current);
+    const composer = current.getByRole("dialog", { name: "经文抄写", exact: true });
+    await stroke(current);
+    await swipe(current.getByLabel("经文抄写手写板"), "left");
+    await expect(composer).toBeVisible();
+    await expect(bible).toBeVisible();
+    await composer.getByRole("button", { name: "下次继续写", exact: true }).click();
+    await swipe(bible, "left");
+    await expect(chat).toBeVisible();
+    await settings(true, false);
+    await swipe(paper, "right");
+    await expect(bible).toBeVisible();
+    await swipe(bible, "left");
+    await expect(chat).toBeVisible();
+    await settings(true, true);
+    expect(pageErrors).toEqual([]);
+  }
+  await scenario(page, "chromium");
+  const browser = await webkit.launch();
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, baseURL: "http://127.0.0.1:4173" });
+  try { await scenario(await context.newPage(), "webkit"); }
+  finally { await context.close(); await browser.close(); }
+});
+
 test("copywork lifecycle isolates private ink, retries saves and shares, publishes and recalls", async ({
   request
 }) => {
