@@ -1128,11 +1128,22 @@ const RELEASE_2_5_4_NOTES = [
   "经文抄写打开时默认使用“石径斜”，直接显示硬笔、毛笔选择和可展开的毛笔参数，保留账号已保存的粗细、速度响应及笔头滞后设置。"
 ] as const
 
+const RELEASE_2_5_5_NOTES = [
+  "修复进入含复杂手写画作的频道时长时间卡住的问题，保留历史笔迹、颜色及光晕外观。",
+  "手写历史消息按可见区域分批绘制，切换频道、移出屏幕和后台停留时取消无效任务；静态笔迹重复出现时复用，回放只更新变化中的字。",
+  "减少手写消息初始化、重复回放及结束时的重复计算，改善手机和桌面的频道切换响应。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.6",
+    date: "2026-10-07",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.5",
     date: "2026-10-05",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_5_NOTES
   },
   {
     version: "2.5.4",
