@@ -95,7 +95,7 @@ export interface DemoMessageRecord {
   channelKey: string;
   senderKey: string;
   content?: string | null;
-  type?: "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "bible_copywork" | "chat_record" | "handwriting" | "system";
+  type?: "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "bible_copywork" | "bible_note" | "chat_record" | "handwriting" | "system";
   payload?: unknown;
   assetKey?: string;
   fileName?: string | null;

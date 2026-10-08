@@ -21,6 +21,7 @@ export function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
     referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
     combinedPassageMode: BIBLE_COMBINED_PASSAGE_MODES.has(String(row.combinedPassageMode)) ? (row.combinedPassageMode as BiblePreferencesDTO["combinedPassageMode"]) : DEFAULT_BIBLE_PREFERENCES.combinedPassageMode,
     quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle,
+    ...(typeof row.notesAlwaysPublic === "boolean" ? { notesAlwaysPublic: row.notesAlwaysPublic } : {}),
     ...(workspace ? { workspace } : {})
   };
 }
@@ -32,6 +33,7 @@ export function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
     referenceLabelMode: preferences.referenceLabelMode,
     combinedPassageMode: preferences.combinedPassageMode,
     quotationStyle: preferences.quotationStyle,
+    ...(preferences.notesAlwaysPublic !== undefined ? { notesAlwaysPublic: preferences.notesAlwaysPublic } : {}),
     ...(preferences.workspace ? { workspace: preferences.workspace as unknown as Prisma.InputJsonValue } : {})
   };
 }

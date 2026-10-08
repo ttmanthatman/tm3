@@ -7,6 +7,7 @@ import { buildHandwritingTimeline, type HandwritingTimeline } from "./handwritin
 import { handwritingRenderQueue } from "./handwritingRenderQueue";
 import {
   createHandwritingPlaybackController,
+  createHandwritingPlaybackGestures,
   handwritingGridMetrics,
   type HandwritingPlaybackState
 } from "./useHandwritingPlayback";
@@ -15,8 +16,9 @@ const props = withDefaults(defineProps<{
   message: MessageDTO;
   variant: "timeline" | "favorite";
   surfaceActive?: boolean;
+  interactive?: boolean;
   claimAutoPlay?: () => boolean;
-}>(), { surfaceActive: true });
+}>(), { surfaceActive: true, interactive: false });
 
 const root = ref<HTMLElement | null>(null);
 const grid = ref<HTMLElement | null>(null);
@@ -138,6 +140,7 @@ function renderStatic() {
 }
 
 function rebuild() {
+  gestures.cancel();
   cancelPendingRenders();
   renderedCharacters.clear();
   resetProgress();
@@ -153,11 +156,15 @@ const controller = createHandwritingPlaybackController({
   getPayload: () => payload.value,
   draw,
   claimAutoPlay: () => props.variant === "timeline" && !!props.claimAutoPlay?.(),
-  onAutoPlayDeclined: renderStatic,
+  onAutoPlayDeclined: () => {
+    if (props.interactive && !desiredStatic) drawCurrent();
+    else renderStatic();
+  },
   onStateChange: (state) => {
     playbackState.value = state;
     if (canRender()) drawCurrent();
     else cancelPendingRenders();
+    if (!state.visible || !state.surfaceActive || document.hidden) gestures.cancel();
   }
 });
 
@@ -165,11 +172,33 @@ function replayHandwriting() {
   controller.play(true);
 }
 
+function toggleHandwriting() {
+  if (playbackState.value.playing) controller.pause();
+  else controller.play(desiredStatic || playbackState.value.progressMs >= controller.duration());
+}
+
+const gestures = createHandwritingPlaybackGestures({ toggle: toggleHandwriting, restart: replayHandwriting });
+function contact(event: PointerEvent) { return { id: event.pointerId, x: event.clientX, y: event.clientY }; }
+function pointerDown(event: PointerEvent) {
+  if (!props.interactive || !payload.value) return;
+  event.stopPropagation();
+  if (event.button === 0 && event.isPrimary) gestures.down(contact(event));
+  else gestures.cancel();
+}
+function pointerMove(event: PointerEvent) { if (props.interactive) { event.stopPropagation(); gestures.move(contact(event)); } }
+function pointerUp(event: PointerEvent) { if (props.interactive) { event.stopPropagation(); gestures.up(contact(event)); } }
+function handleClick(event: MouseEvent) {
+  if (!payload.value) return;
+  if (!props.interactive) replayHandwriting();
+  else if (event.detail === 0) toggleHandwriting();
+}
+
 function handleReplayKey(event: KeyboardEvent) {
   if (event.key !== "Enter" && event.key !== " ") return;
   event.preventDefault();
   event.stopPropagation();
-  replayHandwriting();
+  if (props.interactive && !event.shiftKey) toggleHandwriting();
+  else replayHandwriting();
 }
 
 function handleResize() {
@@ -208,6 +237,7 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   resizeObserver = null;
   controller.destroy();
+  gestures.cancel();
 });
 </script>
 
@@ -215,12 +245,23 @@ onBeforeUnmount(() => {
   <div
     ref="root"
     class="handwriting-message"
-    :class="{ damaged: !payload, 'has-paper': !!payload?.paper }"
+    :class="{ damaged: !payload, 'has-paper': !!payload?.paper, interactive }"
     :style="paperStyle"
     :role="payload ? 'button' : undefined"
     :tabindex="payload ? 0 : undefined"
-    :aria-label="payload ? `手写消息，共 ${payload.characters.length} 字，点击重新播放` : undefined"
-    @click.stop="payload && replayHandwriting()"
+    :aria-label="payload ? interactive ? `${playbackState.playing ? '暂停' : '播放'}手写回复，共 ${payload.characters.length} 字，长按或双击重新播放` : `手写消息，共 ${payload.characters.length} 字，点击重新播放` : undefined"
+    :aria-pressed="interactive ? playbackState.playing : undefined"
+    :data-playing="interactive ? playbackState.playing : undefined"
+    :data-bible-swipe-interaction="interactive ? 'handwriting-playback' : undefined"
+    @click.stop="handleClick"
+    @dblclick.stop="interactive && payload && replayHandwriting()"
+    @pointerdown="pointerDown"
+    @pointermove="pointerMove"
+    @pointerup="pointerUp"
+    @pointercancel="gestures.cancel()"
+    @pointerleave="gestures.cancel()"
+    @lostpointercapture="gestures.cancel()"
+    @contextmenu="interactive && $event.preventDefault()"
     @keydown="handleReplayKey"
   >
     <template v-if="payload">
@@ -258,6 +299,8 @@ onBeforeUnmount(() => {
   margin-inline: auto;
   background: transparent;
 }
+
+.handwriting-message.interactive { touch-action: pan-y; }
 
 .handwriting-message-cell {
   min-width: 0;

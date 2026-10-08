@@ -707,15 +707,17 @@ test("chat images correct EXIF dimensions, cache privately, and preload offscree
   assert.match(server, /function applyFileValidation[\s\S]*?Cache-Control", "private, no-cache"/);
 });
 
-test("Bible workspace includes copyworks beside catalog, search and favorites", () => {
-  assert.match(bibleWorkspace, /const homeSection = ref<"catalog" \| "search" \| "favorites" \| "copyworks">\("catalog"\)/);
+test("Bible workspace includes copyworks and notes beside catalog, search and favorites", () => {
+  assert.match(bibleWorkspace, /const homeSection = ref<"catalog" \| "search" \| "favorites" \| "copyworks" \| "notes">\("catalog"\)/);
   assert.match(bibleWorkspace, /aria-label="书房功能"[\s\S]*?>经卷目录<[\s\S]*?>经文检索<[\s\S]*?>经文收藏</);
   assert.match(bibleWorkspace, /homeSection === 'copyworks'[\s\S]*?我的抄写/);
+  assert.match(bibleWorkspace, /homeSection === 'notes'[\s\S]*?我的笔记/);
+  assert.match(bibleWorkspace, /<NoteLibrary v-else-if="homeSection === 'notes'"/);
   // 进入时保留已恢复的窗格状态（直接回到上次阅读视图），退出时保存并同步账号级状态
   assert.match(bibleWorkspace, /\(open\) => \{[\s\S]*?void ensureCatalog\(\);[\s\S]*?persistWorkspaceState\(\);[\s\S]*?flushWorkspaceServerSync\(\)/);
   assert.match(bibleWorkspace, /function returnHome\(\) \{[\s\S]*?homeSection\.value = "catalog";/);
   assert.match(bibleWorkspace, /v-if="homeSection === 'catalog' && catalog" class="bible-catalog"/);
-  assert.match(bibleWorkspace, /grid-template-columns: repeat\(4, minmax\(0, 1fr\)\)/);
+  assert.match(bibleWorkspace, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
   assert.match(bibleWorkspace, /groupBibleFavoritePassages\(props\.favorites\)/);
   assert.match(bibleWorkspace, /v-for="passage in favoritePassages"[\s\S]*?passage\.lookup\.normalizedReference/);
   assert.match(bibleWorkspace, /removeBibleFavoritePassage\(passage\)/);

@@ -1,12 +1,24 @@
 <script setup lang="ts">
-import { nextTick, ref } from "vue";
-import { Heart, MessageCircle, SendHorizontal, Trash2, X } from "lucide-vue-next";
+import { nextTick, ref, watch } from "vue";
+import { Brush, Heart, SendHorizontal, Trash2, X } from "lucide-vue-next";
 import { STORY_LIMITS, type StoryCommentDTO, type StoryDTO, type StoryInteractionsDTO } from "@shared/stories";
+import { HANDWRITING_DEFAULT_GLOBAL_SETTINGS, HANDWRITING_DEFAULT_PREFERENCES } from "@shared/handwriting";
+import type { MessageDTO } from "@shared/types";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
+import { useChatStore } from "../../store";
+import HandwritingComposer from "../handwriting/HandwritingComposer.vue";
+import HandwritingMessage from "../handwriting/HandwritingMessage.vue";
+import { useHandwritingPreferences } from "../handwriting/handwritingPreferences";
 import { addStoryComment, removeStoryComment, toggleStoryLike } from "./storyClient";
+import { useStoryHandwritingReply } from "./useStoryHandwritingReply";
 
-const props = defineProps<{ story: StoryDTO }>();
-const emit = defineEmits<{ updated: [interactions: StoryInteractionsDTO] }>();
+const props = withDefaults(defineProps<{ story: StoryDTO; surfaceActive?: boolean }>(), { surfaceActive: true });
+const emit = defineEmits<{ updated: [interactions: StoryInteractionsDTO]; handwritingOpen: [open: boolean] }>();
+const store = useChatStore();
+const { save: savePreferences, error: preferencesError } = useHandwritingPreferences(store);
+const handwriting = useStoryHandwritingReply({ accountId: () => store.account?.id || 0, storyId: () => props.story.id, onUpdated: (interactions) => { emit("updated", interactions); replyingTo.value = null; } });
+const { handwritingOpen, handwritingBusy, handwritingError, persistenceError, draftState, replyLabel } = handwriting;
+watch(handwritingOpen, (open) => emit("handwritingOpen", open));
 const comment = ref("");
 const likeBusy = ref(false);
 const commentBusy = ref(false);
@@ -32,10 +44,14 @@ async function like() {
 async function submitComment() {
   const text = comment.value.trim();
   if (!text || commentBusy.value) return;
+  const storyId = props.story.id;
+  const accountId = store.account?.id;
   commentBusy.value = true;
   error.value = "";
   try {
-    emit("updated", (await addStoryComment(props.story.id, text, replyingTo.value?.id)).interactions);
+    const response = await addStoryComment(storyId, text, replyingTo.value?.id);
+    if (props.story.id !== storyId || store.account?.id !== accountId) return;
+    emit("updated", response.interactions);
     comment.value = "";
     replyingTo.value = null;
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "评论失败，请重试"; }
@@ -63,6 +79,16 @@ async function replyToComment(item: StoryCommentDTO) {
   replyingTo.value = item;
   await focusComment();
 }
+
+function handwritingMessage(item: StoryCommentDTO): MessageDTO {
+  return { id: item.id, channelId: 0, type: "handwriting", content: "手写回复", payload: item.handwriting, sender: { id: item.author.actorId, kind: "human", username: "", displayName: item.author.displayName, avatarPath: item.author.avatarPath }, createdAt: item.createdAt };
+}
+
+watch([() => props.story.id, () => store.account?.id], () => {
+  comment.value = "";
+  replyingTo.value = null;
+  error.value = "";
+});
 </script>
 
 <template>
@@ -79,7 +105,7 @@ async function replyToComment(item: StoryCommentDTO) {
       <button v-else type="button" class="story-first-like" :disabled="likeBusy" @click="like">成为第一个点赞的人</button>
     </div>
     <div class="story-comment-row">
-      <button type="button" class="story-social-icon" aria-label="写评论" @click="focusComment"><MessageCircle :size="27" /></button>
+      <button type="button" class="story-social-icon" aria-label="手写回复" title="手写回复" :disabled="handwritingBusy" @click="handwriting.open(replyingTo)"><Brush :size="27" /></button>
       <div class="story-comment-main">
         <ul v-if="story.interactions.comments.length" class="story-comment-list" aria-label="评论列表">
           <li v-for="item in story.interactions.comments" :key="item.id">
@@ -90,7 +116,8 @@ async function replyToComment(item: StoryCommentDTO) {
                 <time :datetime="item.createdAt">{{ commentTime(item.createdAt) }}</time>
                 <button type="button" class="story-comment-reply" :aria-label="`回复 ${item.author.displayName} 的评论`" @click="replyToComment(item)">回复</button>
               </div>
-              <p><span v-if="item.replyTo" class="story-comment-reply-prefix">回复 <strong>{{ item.replyTo.author.displayName }}</strong>：</span>{{ item.text }}</p>
+              <p v-if="item.replyTo || item.text"><span v-if="item.replyTo" class="story-comment-reply-prefix">回复 <strong>{{ item.replyTo.author.displayName }}</strong>：</span>{{ item.text }}</p>
+              <HandwritingMessage v-if="item.handwriting" :message="handwritingMessage(item)" variant="favorite" interactive :surface-active="surfaceActive && !handwritingOpen" />
             </div>
             <button v-if="item.canDelete" type="button" class="story-comment-delete" :disabled="deletingId === item.id" :aria-label="`删除 ${item.author.displayName} 的评论`" @click="remove(item.id)"><Trash2 :size="14" /></button>
           </li>
@@ -106,5 +133,24 @@ async function replyToComment(item: StoryCommentDTO) {
       </div>
     </div>
     <p v-if="error" class="story-social-error" role="alert">{{ error }}</p>
+    <p v-if="!handwritingOpen && (handwritingError || persistenceError)" class="story-social-error" role="alert">{{ handwritingError || persistenceError }}</p>
   </section>
+  <HandwritingComposer
+    v-if="draftState.key"
+    :open="handwritingOpen"
+    :account-id="store.account?.id || 0"
+    :draft-state="draftState"
+    :busy="handwritingBusy"
+    :status="handwritingError || persistenceError || '手写回复，草稿保存在本机'"
+    :socket-ready="!!store.account"
+    :reply-label="replyLabel"
+    :preferences="store.account?.handwritingPreferences || HANDWRITING_DEFAULT_PREFERENCES"
+    :preferences-error="preferencesError"
+    :global-settings="store.appearance.handwritingSettings || HANDWRITING_DEFAULT_GLOBAL_SETTINGS"
+    :is-admin="store.account?.isAdmin || false"
+    @close="handwriting.close"
+    @draft-change="handwriting.saveDraft"
+    @preferences-change="savePreferences"
+    @submit="handwriting.submit"
+  />
 </template>

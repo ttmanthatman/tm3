@@ -8,6 +8,54 @@ export type HandwritingPlaybackState = {
   surfaceActive: boolean;
 };
 
+type HandwritingPlaybackContact = { id: number; x: number; y: number };
+
+export function createHandwritingPlaybackGestures(dependencies: {
+  toggle(): void;
+  restart(): void;
+  schedule?: (callback: () => void) => ReturnType<typeof setTimeout>;
+  unschedule?: (timer: ReturnType<typeof setTimeout>) => void;
+}) {
+  const schedule = dependencies.schedule || ((callback) => setTimeout(callback, 500));
+  const unschedule = dependencies.unschedule || clearTimeout;
+  let contact: HandwritingPlaybackContact | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let moved = false;
+  let restarted = false;
+  function cancel() {
+    if (timer !== null) unschedule(timer);
+    timer = null;
+    contact = null;
+  }
+  function down(point: HandwritingPlaybackContact) {
+    cancel();
+    contact = point;
+    moved = false;
+    restarted = false;
+    timer = schedule(() => {
+      timer = null;
+      if (!contact || moved) return;
+      restarted = true;
+      dependencies.restart();
+    });
+  }
+  function move(point: HandwritingPlaybackContact) {
+    if (!contact || point.id !== contact.id) return;
+    if (Math.hypot(point.x - contact.x, point.y - contact.y) <= 8) return;
+    moved = true;
+    if (timer !== null) unschedule(timer);
+    timer = null;
+  }
+  function up(point: HandwritingPlaybackContact) {
+    if (!contact || point.id !== contact.id) return;
+    move(point);
+    const shouldToggle = !moved && !restarted;
+    cancel();
+    if (shouldToggle) dependencies.toggle();
+  }
+  return { down, move, up, cancel };
+}
+
 export type HandwritingPlaybackDependencies = {
   getPayload: () => HandwritingPayload | null;
   draw: (progressMs: number) => void;

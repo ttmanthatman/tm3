@@ -38,6 +38,8 @@ import {
   type BibleWorkspaceState,
   type BibleWorkspaceView
 } from "../bibleWorkspaceState";
+import NoteManager from "../features/bible/notes/NoteManager.vue";
+import NoteLibrary from "../features/bible/notes/NoteLibrary.vue";
 import CopyworkManager from "../features/bible/copywork/CopyworkManager.vue";
 import CopyworkLibrary from "../features/bible/copywork/CopyworkLibrary.vue";
 import BibleReaderPane from "./BibleReaderPane.vue";
@@ -89,13 +91,14 @@ type BibleReaderPaneExpose = {
 
 type TextSegment = { text: string; highlighted: boolean };
 
+const noteManager = ref<InstanceType<typeof NoteManager> | null>(null);
 const copyworkManager = ref<InstanceType<typeof CopyworkManager> | null>(null);
 const copyworkRevision = ref(0);
 const catalog = ref<BibleCatalogDTO | null>(null);
 const catalogBusy = ref(false);
 const catalogError = ref("");
 const view = ref<BibleWorkspaceView>("home");
-const homeSection = ref<"catalog" | "search" | "favorites" | "copyworks">("catalog");
+const homeSection = ref<"catalog" | "search" | "favorites" | "copyworks" | "notes">("catalog");
 const searchMode = ref<BibleWorkspaceSearchMode>("topic");
 const topicQuery = ref("");
 const textQuery = ref("");
@@ -1020,6 +1023,7 @@ function showToast(message: string) {
         <button type="button" role="tab" :aria-selected="homeSection === 'catalog'" :class="{ active: homeSection === 'catalog' }" @click="homeSection = 'catalog'"><BookOpen :size="18" />经卷目录</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'search'" :class="{ active: homeSection === 'search' }" @click="homeSection = 'search'"><Search :size="18" />经文检索</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'copyworks'" :class="{ active: homeSection === 'copyworks' }" @click="homeSection = 'copyworks'">我的抄写</button>
+        <button type="button" role="tab" :aria-selected="homeSection === 'notes'" :class="{ active: homeSection === 'notes' }" @click="homeSection = 'notes'">我的笔记</button>
         <button type="button" role="tab" :aria-selected="homeSection === 'favorites'" :class="{ active: homeSection === 'favorites' }" @click="homeSection = 'favorites'"><Bookmark :size="18" />经文收藏<span>{{ favorites.length }}</span></button>
       </nav>
 
@@ -1085,6 +1089,7 @@ function showToast(message: string) {
         </section>
       </section>
 
+      <NoteLibrary v-else-if="homeSection === 'notes'" :key="accountId" :account-id="accountId" />
       <CopyworkLibrary v-else-if="homeSection === 'copyworks'" :account-id="accountId" :revision="copyworkRevision" @resume="copyworkManager?.resume($event)" />
       <section v-else-if="homeSection === 'favorites'" class="bible-favorites" aria-label="经文收藏夹">
         <header>
@@ -1121,6 +1126,8 @@ function showToast(message: string) {
         <BibleReaderPane
           :ref="(element) => setPaneRef(pane.id, element)"
           :copywork-revision="copyworkRevision"
+          @note-start="noteManager?.start($event)"
+          @note-browse="noteManager?.browse($event)"
           @copy-start="copyworkManager?.start($event)"
           @copy-browse="copyworkManager?.browse($event)"
           :pane-id="pane.id"
@@ -1162,6 +1169,7 @@ function showToast(message: string) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <NoteManager ref="noteManager" :key="accountId" :account-id="accountId" :active="open" />
     <CopyworkManager ref="copyworkManager" :account-id="accountId" @changed="copyworkRevision++" @chat="emit('close')" />
     <div v-if="showShareDialog" class="bible-share-backdrop" @click.self="showShareDialog = false" @keydown.esc="showShareDialog = false">
       <div class="bible-share-dialog" role="dialog" aria-modal="true" aria-label="分享打开的圣经">
@@ -1227,7 +1235,7 @@ function showToast(message: string) {
 .bible-split-reader.rows .bible-pane-separator { cursor: row-resize; }
 .bible-split-reader.rows .bible-pane-separator span { width: 34px; height: 3px; }
 .bible-home { padding: 26px max(16px, calc((100vw - 1120px) / 2)) calc(44px + var(--safe-bottom)); }
-.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
+.bible-home-tabs { max-width: 820px; margin: 0 auto 12px; padding: 5px; border: 1px solid rgba(116, 84, 48, .14); border-radius: 14px; background: rgba(233, 223, 207, .86); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; box-shadow: 0 8px 24px rgba(75, 51, 25, .06); }
 .bible-home-tabs button { min-height: 46px; border: 0; border-radius: 10px; color: #765b40; background: transparent; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: inherit; font-weight: 800; cursor: pointer; }
 .bible-home-tabs button.active { color: #fffaf1; background: #80613f; box-shadow: 0 4px 12px rgba(87, 60, 31, .18); }
 .bible-home-tabs button span { min-width: 22px; padding: 2px 6px; border-radius: 999px; color: inherit; background: rgba(255, 255, 255, .2); font-size: 11px; }

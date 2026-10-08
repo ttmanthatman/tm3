@@ -6,7 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import Fastify, { type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
-import type { PrismaClient, Story, StoryComment, StoryLike, StoryMedia } from "@prisma/client";
+import type { PrismaClient, Prisma, Story, StoryComment, StoryLike, StoryMedia } from "@prisma/client";
 import sharp from "sharp";
 import { registerStoryRoutes } from "./stories.js";
 
@@ -93,6 +93,7 @@ async function harness() {
       }
     },
     storyComment: {
+      findUnique: async ({ where }: { where: { accountId_clientRequestId: { accountId: number; clientRequestId: string } } }) => rows.flatMap((row) => row.comments).find((comment) => comment.accountId === where.accountId_clientRequestId.accountId && comment.clientRequestId === where.accountId_clientRequestId.clientRequestId) || null,
       findMany: async ({ where, take }: {
         where: {
           accountId: { not: number };
@@ -111,7 +112,7 @@ async function harness() {
           : where.story?.accountId === story.accountId;
         return visibleToRecipient && comment.accountId !== where.accountId.not && comment.createdAt > where.createdAt.gt;
       }).map(({ comment }) => comment).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime()).slice(0, take),
-      create: async ({ data }: { data: { storyId: number; accountId: number; text: string; replyToId?: number } }) => {
+      create: async ({ data }: { data: { storyId: number; accountId: number; text: string; replyToId?: number; handwriting?: Prisma.JsonValue; clientRequestId?: string } }) => {
         const row = rows.find((item) => item.id === data.storyId)!;
         const replyTo = data.replyToId ? row.comments.find((item) => item.id === data.replyToId) || null : null;
         const comment: CommentRow = {
@@ -120,6 +121,8 @@ async function harness() {
           accountId: data.accountId,
           replyToId: replyTo?.id || null,
           text: data.text,
+          handwriting: data.handwriting || null,
+          clientRequestId: data.clientRequestId || null,
           createdAt: new Date(),
           account: account(data.accountId),
           replyTo
@@ -365,5 +368,46 @@ test("shared feed merges authors, story activity persists, and publishing announ
     assert.equal(read.statusCode, 200, read.body);
     assert.equal(read.json().hasUnreadStories, false);
     assert.deepEqual(read.json().notifications, []);
+  } finally { await h.cleanup(); }
+});
+
+test("handwritten story replies preserve normalized ink, deduplicate retries, and retain visibility and deletion checks", async () => {
+  const h = await harness();
+  try {
+    const story = (await h.upload()).json().story;
+    const url = `/api/stories/${story.id}/comments`;
+    const handwriting = { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: [[100, 100, 0], [200, 200, 20]] }] }] };
+    const asReader = { "x-account": "2" };
+    const clientRequestId = crypto.randomUUID();
+    const first = await h.app.inject({ method: "POST", url, headers: asReader, payload: { handwriting, clientRequestId } });
+    assert.equal(first.statusCode, 201, first.body);
+    const comment = first.json().interactions.comments[0];
+    assert.deepEqual(comment.handwriting, handwriting);
+    assert.equal(comment.text, "");
+    assert.equal(h.rows[0].comments.length, 1);
+    const retry = await h.app.inject({ method: "POST", url, headers: asReader, payload: { handwriting, clientRequestId } });
+    assert.equal(retry.statusCode, 201, retry.body);
+    assert.equal(h.rows[0].comments.length, 1);
+    assert.equal(h.interactionEvents.length, 1);
+    const storedInk = h.rows[0].comments[0].handwriting as Prisma.JsonObject;
+    h.rows[0].comments[0].handwriting = { characters: storedInk.characters, version: storedInk.version, kind: storedInk.kind };
+    assert.equal((await h.app.inject({ method: "POST", url, headers: asReader, payload: { handwriting, clientRequestId } })).statusCode, 201);
+    assert.equal(h.rows[0].comments.length, 1);
+    assert.equal((await h.app.inject({ method: "POST", url, headers: asReader, payload: { text: "different", clientRequestId } })).statusCode, 409);
+    const reply = await h.app.inject({ method: "POST", url, payload: { handwriting, replyToId: comment.id } });
+    assert.equal(reply.statusCode, 201, reply.body);
+    assert.equal(reply.json().interactions.comments[1].replyTo.id, comment.id);
+    const activity = (await h.app.inject({ url: "/api/stories/activity" })).json();
+    assert.equal(activity.notifications[0].text, "");
+    assert.equal(JSON.stringify(activity).includes("characters"), false);
+    for (const payload of [{ handwriting: {} }, { handwriting, text: "mixed" }, { handwriting: { ...handwriting, injected: true } }]) {
+      assert.equal((await h.app.inject({ method: "POST", url, payload })).statusCode, 400);
+    }
+    assert.equal((await h.app.inject({ method: "POST", url, headers: { "x-account": "3" }, payload: { handwriting } })).statusCode, 404);
+    assert.equal((await h.app.inject({ method: "DELETE", url: `${url}/${comment.id}`, headers: { "x-account": "5" } })).statusCode, 404);
+    assert.equal((await h.app.inject({ method: "DELETE", url: `${url}/${comment.id}`, headers: asReader })).statusCode, 200);
+    assert.equal(h.rows[0].comments[0].replyTo, null);
+    h.setShared(false);
+    assert.equal((await h.app.inject({ method: "POST", url, headers: asReader, payload: { handwriting } })).statusCode, 404);
   } finally { await h.cleanup(); }
 });

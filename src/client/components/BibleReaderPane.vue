@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Brush, ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
+import { Brush, StickyNote, ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -21,6 +21,7 @@ import {
 } from "../bibleVerseActions";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import { bibleParallelReferenceSegments } from "../bibleParallelReferences";
+import { useNoteMarkers } from "../features/bible/notes/useNoteMarkers";
 import { useCopyworkMarkers } from "../features/bible/copywork/useCopyworkMarkers";
 import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../bibleChapterCache";
 import type { BiblePaneLocationState, BiblePaneState, BibleReaderTarget } from "../bibleWorkspaceState";
@@ -56,6 +57,8 @@ const emit = defineEmits<{
   "open-reference": [sourcePaneId: string, reference: string];
   "state-change": [paneId: string, state: BiblePaneState];
   toast: [message: string];
+  "note-start": [selection: { translation: string; bookCode: string; verses: BibleVerseLineDTO[] }];
+  "note-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
   "copy-start": [selection: { translation: string; bookCode: string; verses: BibleVerseLineDTO[] }];
   "copy-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
 }>();
@@ -114,6 +117,7 @@ const selectedPassageLookups = computed<BibleLookupDTO[]>(() => groupContinuousB
   };
 }));
 const { markers: copyworkMarkers, error: copyworkMarkerError, reload: reloadCopyworkMarkers } = useCopyworkMarkers(translation, () => readerBook.value.code, loadedChapters, () => props.copyworkRevision || 0);
+const { markers: noteMarkers, error: noteMarkerError, reload: reloadNoteMarkers } = useNoteMarkers(translation, () => readerBook.value.code, loadedChapters);
 function isFinalFragment(fragment: BibleChapterVerseFragmentDTO) {
   const blocks = readerChapters.value[fragment.verse.chapter]?.blocks || [];
   const fragments = blocks.flatMap((block) => block.type === "paragraph" ? block.fragments : []).filter((f) => f.verse.verse === fragment.verse.verse);
@@ -585,12 +589,13 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
                 :aria-pressed="isSelectedVerse(fragment.verse)"
                 @click="selectVerse(fragment.verse, $event.shiftKey)"
                 @keydown.enter.prevent="selectVerse(fragment.verse, $event.shiftKey)"
-              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span><button v-if="isFinalFragment(fragment) && copyworkMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的抄写" @click.stop="emit('copy-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><Brush :size="16" /></button></template>
+              ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span><button v-if="isFinalFragment(fragment) && copyworkMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的抄写" @click.stop="emit('copy-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><Brush :size="16" /></button><button v-if="isFinalFragment(fragment) && noteMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的笔记" @click.stop="emit('note-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><StickyNote :size="16" /></button></template>
             </p>
           </template>
         </div>
       </section>
       <div v-if="copyworkMarkerError" class="bible-state"><button type="button" @click="reloadCopyworkMarkers">{{ copyworkMarkerError }}</button></div>
+      <div v-if="noteMarkerError" class="bible-state"><button type="button" @click="reloadNoteMarkers">{{ noteMarkerError }}</button></div>
       <div v-if="readerError" class="bible-state error">{{ readerError }}</div>
       <div v-if="loadedChapters.at(-1) === readerBook.chapterCount" class="bible-book-boundary">本卷结束</div>
       <div v-else class="bible-reader-loading">继续向下阅读下一章</div>
@@ -615,6 +620,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
         </span>
       </div>
       <div class="bible-pane-action-buttons">
+        <button type="button" :disabled="selectedVerses.length !== 1 || selectedVerses[0].endVerse !== selectedVerses[0].verse" title="选中一节经文后写笔记" @click="emit('note-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><StickyNote :size="16" /><span>笔记</span></button>
         <button type="button" @click="emit('copy-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><Brush :size="16" /><span>抄写</span></button>
         <button type="button" @click="writeClipboard(formatBibleVersesForCopy(selectedVerses, translationName))"><ClipboardCopy :size="16" /><span>复制</span></button>
         <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="16" /><Bookmark v-else :size="16" /><span>{{ allSelectedFavorited ? "取消" : "收藏" }}</span></button>
@@ -668,10 +674,11 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
 .bible-translation-copyright { padding: 0 0 24px; color: #b39a80; text-align: center; font-size: 11px; line-height: 1.6; }
 .bible-state { display: grid; place-items: center; min-height: 150px; color: #80674e; }
 .bible-state.error { color: #a33d30; }
-.bible-pane-verse-action { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 8px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 12px; background: rgba(255, 252, 245, .97); box-shadow: 0 10px 28px rgba(58, 39, 20, .2); display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.bible-pane-verse-action { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 3; padding: 8px; border: 1px solid rgba(102, 70, 39, .2); border-radius: 12px; background: rgba(255, 252, 245, .97); box-shadow: 0 10px 28px rgba(58, 39, 20, .2); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 7px; }
 .bible-pane-selection-copy { min-width: 0; display: grid; gap: 4px; }
 .bible-pane-selection-copy > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .bible-favorite-color-picker, .bible-pane-action-buttons { display: flex; align-items: center; gap: 4px; }
+.bible-pane-action-buttons { flex-wrap: wrap; }
 .bible-favorite-color-swatch { width: 17px; height: 17px; border: 2px solid #fff; border-radius: 999px; padding: 0; background: var(--swatch-color); box-shadow: 0 0 0 1px rgba(84, 57, 31, .2); }
 .bible-favorite-color-swatch.active { outline: 2px solid #6f5133; outline-offset: 1px; }
 .bible-pane-action-buttons button { min-height: 34px; border: 0; border-radius: 8px; padding: 0 8px; color: white; background: #80613f; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font: inherit; font-size: 12px; font-weight: 700; }
@@ -685,7 +692,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
   .bible-pane-scroll { padding: 18px 13px 94px; }
   .bible-pane-verse-action { align-items: stretch; flex-direction: column; }
   .bible-pane-selection-copy { display: none; }
-  .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; }
+  .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; }
   .bible-pane-action-buttons button { padding: 0 5px; }
 }
 @media (prefers-reduced-motion: reduce) { .bible-pane-scroll { scroll-behavior: auto; } }

@@ -24,6 +24,7 @@ import { registerMulticharRoutes } from "./multichar/routes.js";
 import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleCopyworkRoutes } from "./routes/bibleCopyworks.js";
+import { registerBibleNoteRoutes } from "./routes/bibleNotes.js";
 import { registerBibleRoutes } from "./routes/bible.js";
 import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
@@ -1628,7 +1629,7 @@ function messagePushBody(message: Message & { sender: Actor }) {
   if (message.type === "prayer") return `${message.sender.displayName} 发起代祷：${stripPushText(message.content) || "代祷事项"}`;
   if (message.type === "grace") return `${message.sender.displayName} 存入一条恩典：${stripPushText(message.content) || "恩典记录"}`;
   if (message.type === "sermon_request") return `${message.sender.displayName} 申请讲道权限：${stripPushText(message.content) || "申请演讲"}`;
-  if (message.type === "bible_copywork") return `${message.sender.displayName} 分享了${stripPushText(message.content)}`;
+  if (message.type === "bible_copywork" || message.type === "bible_note") return `${message.sender.displayName} 分享了${stripPushText(message.content)}`;
   if (message.type === "bible_session") return `${message.sender.displayName} 分享了打开的圣经：${stripPushText(message.content) || "一起阅读"}`;
   if (message.type === "chat_record") return `${message.sender.displayName} 转发了聊天记录：${stripPushText(message.content) || "聊天记录"}`;
   if (message.type === "handwriting") return `${message.sender.displayName}：${HANDWRITING_CONTENT}`;
@@ -3733,6 +3734,7 @@ const musicProgressTracker = registerMusicRoutes(app, {
 });
 
 registerBibleCopyworkRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage });
+registerBibleNoteRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage });
 
 registerBibleRoutes(app, {
   prisma,

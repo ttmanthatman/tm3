@@ -52,6 +52,7 @@ enum MessageType {
   why_topic_card
   bible_session
   bible_copywork
+  bible_note
   chat_record
   handwriting
   system
@@ -126,6 +127,7 @@ model Account {
   messageLikes            MessageLike[]
   messageFavorites        MessageFavorite[]
   bibleCopyworks          BibleCopywork[]
+  bibleNotes              BibleNote[]
   bibleFavorites          BibleFavorite[]
   musicFavorites          MusicFavorite[]
   musicPlays              MusicPlay[]
@@ -237,6 +239,8 @@ model StoryComment {
   accountId Int            @map("account_id")
   replyToId Int?           @map("reply_to_id")
   text      String         @db.VarChar(500)
+  handwriting Json?
+  clientRequestId String? @map("client_request_id") @db.VarChar(36)
   createdAt DateTime       @default(now()) @map("created_at")
   story     Story          @relation(fields: [storyId], references: [id], onDelete: Cascade)
   account   Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
@@ -246,6 +250,7 @@ model StoryComment {
   @@index([storyId, id])
   @@index([accountId, createdAt])
   @@index([replyToId])
+  @@unique([accountId, clientRequestId])
   @@map("story_comments")
 }
 
@@ -376,6 +381,7 @@ model Message {
   whyReads        WhyTopicRead[]
   likes           MessageLike[]
   copyworkShare   BibleCopyworkShare?
+  bibleNoteShare  BibleNoteShare?
   favorites       MessageFavorite[]
   musicScores     MusicScore[]
   musicLyrics     MusicLyrics?
@@ -902,4 +908,34 @@ model BibleCopyworkShare {
   work BibleCopywork @relation(fields: [workId], references: [id], onDelete: Cascade)
   @@index([workId])
   @@map("bible_copywork_shares")
+}
+
+model BibleNote {
+  id          String           @id @db.VarChar(64)
+  accountId   Int              @map("account_id")
+  source      Json
+  translation String           @db.VarChar(30)
+  bookCode    String           @map("book_code") @db.Char(3)
+  chapter     Int
+  verse       Int
+  text        String           @db.Text
+  publishedAt DateTime?        @map("published_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  account     Account          @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  shares      BibleNoteShare[]
+
+  @@index([translation, bookCode, chapter, publishedAt])
+  @@index([accountId, updatedAt])
+  @@map("bible_notes")
+}
+
+model BibleNoteShare {
+  messageId Int       @id @map("message_id")
+  noteId    String    @map("note_id") @db.VarChar(64)
+  message   Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  note      BibleNote @relation(fields: [noteId], references: [id], onDelete: Cascade)
+
+  @@index([noteId])
+  @@map("bible_note_shares")
 }

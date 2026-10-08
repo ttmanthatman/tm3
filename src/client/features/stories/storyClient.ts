@@ -1,6 +1,7 @@
 import { api, getToken } from "../../api";
 import type { StoryActivityDTO, StoryDTO, StoryFeedPageDTO, StoryInteractionsDTO, StoryPageDTO } from "@shared/stories";
 import type { MessageDTO } from "@shared/types";
+import type { HandwritingPayload } from "@shared/handwriting";
 
 export function forwardStoryGrace(storyId: number, channelId: number, clientRequestId: string, signal: AbortSignal) {
   return api<{ success: true; message: MessageDTO }>(`/api/stories/${storyId}/forward-grace`, {
@@ -46,10 +47,13 @@ export function toggleStoryLike(id: number, liked: boolean) {
   return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${id}/like`, { method: "PUT", body: JSON.stringify({ liked }) });
 }
 
-export function addStoryComment(id: number, text: string, replyToId?: number) {
+export type StoryCommentInput = { text?: string; handwriting?: HandwritingPayload; replyToId?: number; clientRequestId?: string };
+
+export function addStoryComment(id: number, content: string | StoryCommentInput, replyToId?: number, signal?: AbortSignal) {
+  const body = typeof content === "string" ? { text: content, ...(replyToId ? { replyToId } : {}) } : content;
   return api<{ interactions: StoryInteractionsDTO }>(`/api/stories/${id}/comments`, {
     method: "POST",
-    body: JSON.stringify({ text, ...(replyToId ? { replyToId } : {}) })
+    body: JSON.stringify(body), signal
   });
 }
 

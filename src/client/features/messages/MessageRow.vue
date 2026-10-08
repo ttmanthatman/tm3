@@ -4,6 +4,8 @@ import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
 import InlineAudioPlayer from "../../components/InlineAudioPlayer.vue";
 import VoiceTranscript from "../voice/VoiceTranscript.vue";
+import NoteCard from "../bible/notes/NoteCard.vue";
+import { bibleNotePayload } from "@shared/bibleNotes";
 import CopyworkCard from "../bible/copywork/CopyworkCard.vue";
 import { copyworkPayload } from "@shared/bibleCopywork";
 import HandwritingMessage from "../handwriting/HandwritingMessage.vue";
@@ -77,7 +79,8 @@ const emit = defineEmits<{
 
 <template>
   <template v-if="variant === 'favorite'">
-    <CopyworkCard v-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
+    <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+    <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
     <HandwritingMessage v-else-if="message.type === 'handwriting'" :message="message" variant="favorite" />
     <img v-else-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
     <div v-else-if="isVoiceMessage(message)" class="favorite-message-file"><Mic :size="19" /><span>语音消息 · {{ formatDuration(voiceDurationMs(message)) }}</span></div>
@@ -215,7 +218,8 @@ const emit = defineEmits<{
         >{{ musicMentionBackground(message) }}</div>
       </template>
       <template v-else>
-        <CopyworkCard v-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
+        <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+        <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
         <HandwritingMessage
           v-else-if="message.type === 'handwriting'"
           :message="message"

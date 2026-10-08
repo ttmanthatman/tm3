@@ -7,6 +7,8 @@ import { pipeline } from "node:stream/promises";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, FastifyReply, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
+import { Prisma } from "@prisma/client";
+import { HANDWRITING_SEND_LIMITS, normalizeHandwritingPayload, type HandwritingPayload } from "../../shared/handwriting.js";
 import { STORY_LIMITS, STORY_BIO_MAX, STORY_DEFAULT_BIO, validStoryMedia, type StoryActivityDTO, type StoryNotificationDTO, type StoryPersonDTO } from "../../shared/stories.js";
 import { createStoryService, storyDto, storyFeedDto, storyFeedInclude, storyInclude, storyInteractionsDto } from "../services/stories.js";
 import { prepareStoryMedia, storyMediaPath, StoryInputError, type StoredStoryMedia } from "../services/storyMedia.js";
@@ -284,13 +286,20 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
     return interactions ? { interactions } : reply.code(404).send({ message: "故事不存在或不可见" });
   });
 
-  app.post("/api/stories/:id/comments", { preHandler: requireAuth, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
+  app.post("/api/stories/:id/comments", { preHandler: requireAuth, bodyLimit: HANDWRITING_SEND_LIMITS.maxBytes + 4096, config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (request, reply) => {
     const id = positiveId.safeParse((request.params as { id: string }).id);
     const body = z.object({
-      text: z.string().trim().min(1).max(STORY_LIMITS.comment),
+      text: z.string().trim().min(1).max(STORY_LIMITS.comment).optional(),
+      handwriting: z.unknown().optional(),
+      clientRequestId: z.string().uuid().optional(),
       replyToId: positiveId.optional()
     }).strict().safeParse(request.body);
-    if (!id.success || !body.success) return reply.code(400).send({ message: "评论需为 1–500 字" });
+    if (!id.success || !body.success || (body.data.text !== undefined) === (body.data.handwriting !== undefined)) return reply.code(400).send({ message: "请填写 1–500 字评论或手写回复" });
+    let handwriting: HandwritingPayload | undefined;
+    if (body.data.handwriting !== undefined) {
+      try { handwriting = normalizeHandwritingPayload(body.data.handwriting); }
+      catch (error) { return reply.code(400).send({ message: error instanceof Error ? error.message : "手写回复无效" }); }
+    }
     const auth = (request as AuthRequest).auth;
     const access = await service.accessFor(auth.accountId, id.data);
     if (!access) return reply.code(404).send({ message: "故事不存在或不可见" });
@@ -298,10 +307,22 @@ export function registerStoryRoutes(app: FastifyInstance, deps: {
       ? await prisma.storyComment.findFirst({ where: { id: body.data.replyToId, storyId: id.data } })
       : null;
     if (body.data.replyToId && !replyTarget) return reply.code(400).send({ message: "回复的评论不存在" });
-    const comment = await prisma.storyComment.create({
-      data: { storyId: id.data, accountId: auth.accountId, text: body.data.text, replyToId: replyTarget?.id }
-    });
-    if (deps.notifyStoryInteraction) {
+    const data = { storyId: id.data, accountId: auth.accountId, text: body.data.text || "", replyToId: replyTarget?.id,
+      clientRequestId: body.data.clientRequestId,
+      ...(handwriting ? { handwriting: handwriting as unknown as Prisma.InputJsonValue } : {}) };
+    const requestKey = body.data.clientRequestId ? { accountId_clientRequestId: { accountId: auth.accountId, clientRequestId: body.data.clientRequestId } } : null;
+    let comment = requestKey ? await prisma.storyComment.findUnique({ where: requestKey }) : null;
+    let created = false;
+    if (!comment) {
+      try { comment = await prisma.storyComment.create({ data }); created = true; }
+      catch (error) {
+        if (!requestKey || !(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+        comment = await prisma.storyComment.findUniqueOrThrow({ where: requestKey });
+      }
+    }
+    const storedHandwriting = comment.handwriting ? normalizeHandwritingPayload(comment.handwriting) : null;
+    if (comment.storyId !== id.data || comment.replyToId !== (replyTarget?.id || null) || comment.text !== data.text || JSON.stringify(storedHandwriting) !== JSON.stringify(handwriting || null)) return reply.code(409).send({ message: "该请求已用于另一条评论" });
+    if (created && deps.notifyStoryInteraction) {
       const recipients = new Set([access.author.accountId, replyTarget?.accountId].filter((accountId): accountId is number => !!accountId && accountId !== auth.accountId));
       const notification = { id: `comment:${comment.id}`, kind: "comment" as const, storyId: id.data,
         actor: await notificationPerson(auth.accountId), text: comment.text, createdAt: comment.createdAt.toISOString() };

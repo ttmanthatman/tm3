@@ -7,6 +7,7 @@ import { prepareStoryMedia, storyMediaPath, StoryInputError, type StoredStoryMed
 import { STORY_DEFAULT_BIO, STORY_LIMITS, validStoryMedia } from "../../shared/stories.js";
 import { plainTextFromHtml } from "../textUtils.js";
 import { GRACE_IMAGE_LIMIT, GRACE_IMAGE_NAME } from "../../shared/grace.js";
+import { parseStoredHandwritingPayload } from "../../shared/handwriting.js";
 
 export type GraceStoryInput = {
   accountId: number;
@@ -157,6 +158,7 @@ export function storyInteractionsDto(story: Pick<StoryRow, "accountId" | "likes"
       author: personDto(comment.account),
       replyTo: comment.replyTo ? { id: comment.replyTo.id, author: personDto(comment.replyTo.account) } : null,
       text: comment.text,
+      handwriting: comment.handwriting ? parseStoredHandwritingPayload(comment.handwriting) : null,
       createdAt: comment.createdAt.toISOString(),
       canDelete: comment.accountId === viewerAccountId || story.accountId === viewerAccountId || viewerRole === "admin"
     }))

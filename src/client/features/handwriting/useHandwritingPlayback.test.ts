@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { HandwritingPayload } from "@shared/handwriting";
-import { createHandwritingPlaybackController, handwritingGridMetrics, handwritingMessageEstimatedHeight } from "./useHandwritingPlayback.js";
+import { createHandwritingPlaybackController, createHandwritingPlaybackGestures, handwritingGridMetrics, handwritingMessageEstimatedHeight } from "./useHandwritingPlayback.js";
 
 const payload: HandwritingPayload = {
   kind: "handwriting",
@@ -178,4 +178,64 @@ test("static history avoids timeline construction and manual replay reuses its t
   assert.deepEqual(h.draws, before);
   assert.equal(h.hasFrame(), false);
   h.controller.destroy();
+});
+
+test("manual pause resumes at the same ink point and replay resets to the first point", () => {
+  const h = harness();
+  h.controller.mount(h.element);
+  h.setVisible(true);
+  h.controller.play(true);
+  h.advance(7);
+  h.controller.pause();
+  assert.equal(h.hasFrame(), false);
+  assert.equal(h.controller.state().progressMs, 7);
+  h.controller.play(false);
+  h.advance(3);
+  assert.equal(h.controller.state().progressMs, 10);
+  h.controller.play(true);
+  assert.equal(h.controller.state().progressMs, 0);
+  h.controller.destroy();
+  assert.equal(h.hasFrame(), false);
+});
+
+test("a tap toggles playback while a long press replays once without toggling on release", () => {
+  let callback: (() => void) | null = null;
+  let toggles = 0;
+  let replays = 0;
+  const gestures = createHandwritingPlaybackGestures({
+    toggle: () => toggles++, restart: () => replays++,
+    schedule: (next) => { callback = next; return 1 as unknown as ReturnType<typeof setTimeout>; },
+    unschedule: () => { callback = null; }
+  });
+  const point = { id: 1, x: 5, y: 10 };
+  gestures.down(point);
+  gestures.up(point);
+  assert.equal(toggles, 1);
+  assert.equal(callback, null);
+  gestures.down(point);
+  callback!();
+  gestures.up(point);
+  assert.equal(replays, 1);
+  assert.equal(toggles, 1);
+});
+
+test("scrolling, pointer cancellation, and inactive lifecycle cancel pending long presses", () => {
+  let callback: (() => void) | null = null;
+  let actions = 0;
+  const gestures = createHandwritingPlaybackGestures({
+    toggle: () => actions++, restart: () => actions++,
+    schedule: (next) => { callback = next; return 1 as unknown as ReturnType<typeof setTimeout>; },
+    unschedule: () => { callback = null; }
+  });
+  const point = { id: 1, x: 5, y: 10 };
+  gestures.down(point);
+  gestures.move({ ...point, y: 30 });
+  assert.equal(callback, null);
+  gestures.up({ ...point, y: 30 });
+  assert.equal(actions, 0);
+  gestures.down(point);
+  gestures.cancel();
+  assert.equal(callback, null);
+  gestures.up(point);
+  assert.equal(actions, 0);
 });

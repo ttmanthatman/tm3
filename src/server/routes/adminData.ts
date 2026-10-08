@@ -1,4 +1,5 @@
 import { importCopyworkBackup, parseCopyworkBackup } from "../services/bibleCopyworkBackup.js";
+import { importBibleNoteBackup, parseBibleNoteBackup } from "../services/bibleNoteBackup.js";
 import bcrypt from "bcryptjs";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -658,6 +659,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
       exportedAt: new Date().toISOString(),
       channels,
       copyworks: await prisma.bibleCopywork.findMany({ where: { completedAt: { not: null } }, include: { glyphs: true, shares: { where: { message: { channelId: { in: channelIds }, type: "bible_copywork" } } } } }),
+      bibleNotes: await prisma.bibleNote.findMany({ include: { shares: { where: { message: { channelId: { in: channelIds }, type: "bible_note" } } } } }),
       channelMembers,
       messages,
       pinnedItems,
@@ -744,6 +746,8 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const messageAiSuggestions = Array.isArray(payload.messageAiSuggestions) ? payload.messageAiSuggestions : [];
     let copyworks: ReturnType<typeof parseCopyworkBackup> = [];
     try { copyworks = parseCopyworkBackup(payload.copyworks || []); } catch (error) { badImportRequest(error instanceof Error ? error.message : "抄写备份无效"); }
+    let bibleNotes: ReturnType<typeof parseBibleNoteBackup> = [];
+    try { bibleNotes = parseBibleNoteBackup(payload.bibleNotes ?? []); } catch (error) { badImportRequest(error instanceof Error ? error.message : "笔记备份无效"); }
     for (const message of messages) {
       if (message.type !== "handwriting") continue;
       try {
@@ -888,6 +892,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
         }
       }
       await importCopyworkBackup(tx, copyworks);
+      await importBibleNoteBackup(tx, bibleNotes);
     }, { timeout: 30000 });
     const attachments = restoreExportFiles(entries, "uploads/", UPLOAD_DIR);
     return { success: true, imported: { channels: channels.length, messages: messages.length, attachments } };

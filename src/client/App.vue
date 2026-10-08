@@ -90,6 +90,7 @@ import { useUploads } from "./features/uploads/useUploads";
 import { messageEffect, useComposer } from "./features/composer/useComposer";
 import { useAuth } from "./features/auth/useAuth";
 import { useBibleWorkspaceIntegration } from "./features/bible/useBibleWorkspaceIntegration";
+import { viewedBibleNoteId } from "./features/bible/notes/noteViewerState";
 import { createBibleSwipeNavigation } from "./features/bible/bibleSwipeNavigation";
 import { useMusicLibraryIntegration } from "./features/music/useMusicLibraryIntegration";
 import { useRainEffect } from "./features/effects/useRainEffect";
@@ -419,6 +420,7 @@ const SermonOverlay = defineAsyncComponent(() => import("./features/sermon/Sermo
 const SermonWorkspace = defineAsyncComponent(() => import("./features/sermon/SermonWorkspace.vue"));
 const SermonEntryDialog = defineAsyncComponent(() => import("./features/sermon/SermonEntryDialog.vue"));
 const SermonRequestCard = defineAsyncComponent(() => import("./features/sermon/SermonRequestCard.vue"));
+const NoteViewerHost = defineAsyncComponent(() => import("./features/bible/notes/NoteViewerHost.vue"));
 const CopyworkViewerHost = defineAsyncComponent(() => import("./features/bible/copywork/CopyworkViewerHost.vue"));
 const BibleSessionCard = defineAsyncComponent(() => import("./features/bible/BibleSessionCard.vue"));
 const ChatRecordCard = defineAsyncComponent(() => import("./features/chat/ChatRecordCard.vue"));
@@ -5290,6 +5292,7 @@ const messageRowBindings = {
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
     </section>
 
+    <NoteViewerHost @chat="closeBibleWorkspace" />
     <CopyworkViewerHost @chat="closeBibleWorkspace" />
     <BibleWorkspace
       ref="bibleWorkspace"
@@ -6008,7 +6011,7 @@ const messageRowBindings = {
                   variant="timeline"
                   :message="row.message"
                   :broken-attachment-ids="brokenAttachmentIds"
-                  :handwriting-surface-active="!showingFavoriteSurface && !bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen"
+                  :handwriting-surface-active="!showingFavoriteSurface && !bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen && !viewedBibleNoteId"
                   v-bind="messageRowBindings"
                 />
               </div>

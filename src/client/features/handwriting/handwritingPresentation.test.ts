@@ -9,7 +9,11 @@ test("handwriting messages expose only the drawing and retain transparent presen
   const styles = readClientStyles();
 
   assert.doesNotMatch(component, /手写消息 ·|重播|handwriting-message-head|handwriting-message-replay/);
-  assert.match(component, /@click\.stop="payload && replayHandwriting\(\)"/);
+  assert.match(component, /@click\.stop="handleClick"/);
+  assert.match(component, /interactive: false/);
+  assert.match(component, /function handleClick\(event: MouseEvent\)\s*\{\s*if \(!payload\.value\) return;\s*if \(!props\.interactive\) replayHandwriting\(\);\s*else if \(event\.detail === 0\) toggleHandwriting\(\);/);
+  assert.match(component, /if \(playbackState\.value\.playing\) controller\.pause\(\);\s*else controller\.play\(desiredStatic \|\| playbackState\.value\.progressMs >= controller\.duration\(\)\);/);
+  assert.match(component, /createHandwritingPlaybackGestures\(\{ toggle: toggleHandwriting, restart: replayHandwriting \}\)/);
   assert.match(component, /@keydown="handleReplayKey"/);
   assert.match(app, /'handwriting-bubble': row\.message\.type === 'handwriting'/);
   assert.match(styles, /\.message-row \.bubble\.handwriting-bubble[\s\S]*?background: transparent;/);

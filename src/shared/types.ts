@@ -1,7 +1,7 @@
 import type { HandwritingGlobalSettings, HandwritingPreferencesDTO } from "./handwriting.js";
 
 export type ActorKind = "human" | "virtual" | "system";
-export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "bible_copywork" | "chat_record" | "handwriting" | "system";
+export type MessageType = "text" | "image" | "file" | "music_playlist" | "chain" | "prayer" | "grace" | "sermon_request" | "why_topic_card" | "bible_session" | "bible_copywork" | "bible_note" | "chat_record" | "handwriting" | "system";
 export type MessageEffect = "flash" | "shine" | "shake" | "fly" | "drip" | "rain" | "oops" | "sunburst" | "marquee" | "water" | "dripGooey";
 export type PrayerStatus = "active" | "closed" | "answered";
 
@@ -992,6 +992,7 @@ export interface BiblePreferencesDTO {
   quotationStyle: BibleQuotationStyle;
   /** 账号级保存的阅读窗格快照；缺省表示从未同步 */
   workspace?: BibleWorkspaceSnapshotDTO | null;
+  notesAlwaysPublic?: boolean;
 }
 
 /** 阅读器窗格定位目标（节范围 + 文本匹配区间） */

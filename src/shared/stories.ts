@@ -1,3 +1,5 @@
+import type { HandwritingPayload } from "./handwriting.js";
+
 export type StoryGender = "female" | "male" | "unspecified";
 export const STORY_DEFAULT_BIO = "小小的故事，大大的恩典";
 export const STORY_BIO_MAX = 160;
@@ -52,6 +54,7 @@ export interface StoryCommentDTO {
     author: StoryPersonDTO;
   } | null;
   text: string;
+  handwriting?: HandwritingPayload | null;
   createdAt: string;
   canDelete: boolean;
 }

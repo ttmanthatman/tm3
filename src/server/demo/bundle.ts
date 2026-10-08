@@ -146,7 +146,7 @@ const messageSchema = z.object({
   channelKey: z.string().regex(KEY_PATTERN),
   senderKey: z.string().regex(KEY_PATTERN),
   content: z.string().nullable().optional(),
-  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request", "why_topic_card", "bible_session", "bible_copywork", "chat_record", "handwriting", "system"]).optional(),
+  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request", "why_topic_card", "bible_session", "bible_copywork", "bible_note", "chat_record", "handwriting", "system"]).optional(),
   payload: z.unknown().optional(),
   assetKey: z.string().regex(KEY_PATTERN).optional(),
   fileName: z.string().max(255).nullable().optional(),

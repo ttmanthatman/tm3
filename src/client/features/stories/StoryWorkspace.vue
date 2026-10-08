@@ -20,6 +20,7 @@ type DisplayStory = StoryDTO & { author?: StoryAuthorDTO };
 const props = withDefaults(defineProps<{ actorId: number; initialMode?: StoryWorkspaceMode; channelId?: number | null }>(), { initialMode: "person", channelId: null });
 const emit = defineEmits<{ close: []; activityRead: [activity: StoryActivityDTO]; viewGrace: [message: MessageDTO] }>();
 const store = useChatStore();
+const handwritingReplyOpen = ref(false);
 const forwarding = useStoryGraceForward({
   channels: () => store.channels,
   currentChannelId: () => props.channelId,
@@ -159,7 +160,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
               </div>
               <StoryVoice v-if="voice(story) && !detail && !composerOpen && !image && !forwardOpen" :src="storyMediaUrl(voice(story)!.id)" :duration-ms="voice(story)!.durationMs" />
               <div class="story-moment-footer"><button type="button" class="story-text-button" @click="detail = story">展开故事 <ArrowRight :size="13" /></button><button v-if="canDelete(story)" type="button" class="story-text-button" @click="forwarding.open(story)"><Send :size="13" />转发为恩典卡片</button><button v-if="canDelete(story)" type="button" class="story-delete" aria-label="删除故事" @click="requestDelete(story)"><Trash2 :size="15" /></button></div>
-              <StoryInteractions :story="story" @updated="updateInteractions(story.id, $event)" />
+              <StoryInteractions :story="story" :surface-active="!detail && !composerOpen && !image && !forwardOpen && !handwritingReplyOpen" @handwriting-open="handwritingReplyOpen = $event" @updated="updateInteractions(story.id, $event)" />
             </article>
           </li>
         </ol>
@@ -178,7 +179,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
       <p class="story-detail-text">{{ detail.text }}</p>
       <div class="story-detail-photos"><button v-for="media in photos(detail)" :key="media.id" type="button" aria-label="放大故事照片" @click="openImage(detail, media)"><img :src="storyMediaUrl(media.id, true)" alt="故事照片" loading="lazy" /></button></div>
       <StoryVoice v-if="voice(detail) && !image && !forwardOpen" :src="storyMediaUrl(voice(detail)!.id)" :duration-ms="voice(detail)!.durationMs" />
-      <StoryInteractions :story="detail" @updated="updateInteractions(detail.id, $event)" />
+      <StoryInteractions :story="detail" :surface-active="!image && !forwardOpen && !handwritingReplyOpen" @handwriting-open="handwritingReplyOpen = $event" @updated="updateInteractions(detail.id, $event)" />
       <button v-if="canDelete(detail)" type="button" class="story-text-button" @click="forwarding.open(detail)"><Send :size="16" />转发为恩典卡片</button>
       <button v-if="canDelete(detail)" type="button" class="story-text-button" @click="requestDelete(detail)"><Trash2 :size="16" />删除这段故事</button>
     </div>
