@@ -222,12 +222,13 @@ test("new-message jump is a compact translucent arrow centered above the compose
   assert.doesNotMatch(css, /\.chat-pane > :not\([^\n]+\) \{/);
 });
 
-test("all file previews keep close at the upper right and download at the lower right", () => {
+test("all file previews keep download immediately left of close above the safe area", () => {
   assert.match(mediaPreviewModal, /class="preview-control preview-close"[\s\S]*?aria-label="关闭预览"[\s\S]*?<X/);
   assert.match(mediaPreviewModal, /class="preview-control preview-download"[\s\S]*?aria-label="下载"[\s\S]*?<Download/);
   assert.doesNotMatch(mediaPreviewModal, /class="image-preview-download"/);
   assert.match(css, /\.preview-close \{[\s\S]*?top: calc\(var\(--safe-top\) \+ 12px\);/);
-  assert.match(css, /\.preview-download \{[\s\S]*?bottom: calc\(var\(--safe-bottom\) \+ 12px\);/);
+  assert.match(css, /\.preview-control \{[\s\S]*?right: calc\(var\(--safe-right\) \+ 14px\);/);
+  assert.match(css, /\.preview-download \{[\s\S]*?top: calc\(var\(--safe-top\) \+ 12px\);[\s\S]*?right: calc\(var\(--safe-right\) \+ 66px\);/);
 });
 
 test("audio attachments render their waveform player immediately without a collapsed state", () => {

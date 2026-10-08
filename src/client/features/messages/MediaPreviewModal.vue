@@ -50,6 +50,7 @@ const emit = defineEmits<{
       class="media-preview-modal"
       :class="{
         'image-preview-modal': message.type === 'image',
+        'video-preview-modal': isVideoMessage(message),
         'score-preview-modal': pinnedImage?.score
       }"
     >

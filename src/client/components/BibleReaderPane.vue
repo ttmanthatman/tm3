@@ -137,6 +137,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  readerGeneration += 1;
   if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   if (stateTimer) window.clearTimeout(stateTimer);
 });
@@ -330,26 +331,30 @@ function scheduleNearbyChapterPreloads(book: BibleBookCatalogDTO, chapter: numbe
 async function loadChapter(chapter: number, prepend = false) {
   const book = readerBook.value;
   const translationId = translation.value;
+  const generation = readerGeneration;
   if (chapter < 1 || chapter > book.chapterCount || readerChapters.value[chapter] || readerBusyChapters.value.has(chapter)) return;
   readerBusyChapters.value = new Set(readerBusyChapters.value).add(chapter);
-  const scroller = readerScroll.value;
-  const anchorChapter = prepend ? loadedChapters.value[0] : undefined;
-  const anchorBefore = anchorChapter
-    ? scroller?.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top
-    : undefined;
   try {
     const result = await fetchBibleChapter(book, chapter, translationId);
-    if (readerBook.value.code !== book.code || translation.value !== translationId) return;
+    if (generation !== readerGeneration) return;
+    // Capture at insertion time: the reader can keep moving while the request
+    // is pending. A pre-request anchor would undo that native scrolling.
+    const scroller = readerScroll.value;
+    const anchorChapter = prepend ? loadedChapters.value[0] : undefined;
+    const anchorBefore = anchorChapter
+      ? scroller?.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top
+      : undefined;
     readerChapters.value = { ...readerChapters.value, [chapter]: result };
     await nextTick();
+    if (generation !== readerGeneration) return;
     if (scroller && anchorChapter && anchorBefore !== undefined) {
       const anchorAfter = scroller.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top;
       if (anchorAfter !== undefined) scroller.scrollTop = preservedScrollTop(scroller.scrollTop, anchorBefore, anchorAfter);
     }
   } catch (error) {
-    if (readerBook.value.code === book.code && translation.value === translationId) readerError.value = error instanceof Error ? error.message : "章节加载失败";
+    if (generation === readerGeneration) readerError.value = error instanceof Error ? error.message : "章节加载失败";
   } finally {
-    if (readerBook.value.code === book.code && translation.value === translationId) {
+    if (generation === readerGeneration) {
       const busy = new Set(readerBusyChapters.value);
       busy.delete(chapter);
       readerBusyChapters.value = busy;
@@ -633,7 +638,9 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
 .bible-pane-icon.receiver.selected { color: #fff8ed; background: #d97718; }
 .bible-pane-icon.close { color: #976044; }
 .bible-pane-label { width: 25px; height: 21px; border-radius: 6px; color: #fff8ed; background: #de7d1e; display: grid; place-items: center; font-size: 12px; font-weight: 900; box-shadow: 0 2px 6px rgba(164, 83, 12, .25); }
-.bible-pane-scroll { min-width: 0; min-height: 0; overflow: auto; padding: 24px max(16px, calc((100% - 760px) / 2)) 100px; overscroll-behavior: contain; scroll-behavior: smooth; }
+/* Prepend correction must finish before painting, with a single anchor owner.
+   Smooth correction otherwise fights the active native touch scroll. */
+.bible-pane-scroll { min-width: 0; min-height: 0; overflow: auto; padding: 24px max(16px, calc((100% - 760px) / 2)) 100px; overscroll-behavior: contain; overflow-anchor: none; scroll-behavior: auto; }
 .bible-reader-chapter { scroll-margin-top: 54px; padding: 10px 0 40px; }
 .bible-reader-chapter > header { margin-bottom: 20px; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-reader-chapter > header span { color: #947657; letter-spacing: .14em; }
