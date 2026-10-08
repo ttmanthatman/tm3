@@ -33,6 +33,41 @@ const payload: HandwritingPayload = {
   characters: [{ strokes: [{ points: [[0, 0, 0], [100, 100, 20]] }] }]
 };
 
+test("true-v1 sweeps moving fold layers and keeps live, prefix, static and yielded ink identical", () => {
+  const stroke = {
+    brush: { size: 84, sensitivity: 50, lag: 0, algorithm: "true-v1" as const, rotationLag: 35, version: 2 as const, pauseThresholdMs: 200, pausedRotationScale: 0.1 },
+    points: Array.from({ length: 31 }, (_, i) => [1500 + i * 120, 3500, i * 8] as [number, number, number])
+  };
+  stroke.points.push([5100, 3500, 1240]);
+  for (let i = 1; i <= 24; i++) stroke.points.push([Math.round(5100 - i * 80 * Math.cos(Math.PI / 6)), 3500 + i * 40, 1240 + i * 16]);
+  const samples = handwritingBrushGeometry(stroke).samples;
+  const midFold = samples.find((sample) => sample.fold && sample.fold.travel > sample.fold.distance * 0.3 && sample.fold.travel < sample.fold.distance * 0.7)!;
+  assert.ok(midFold);
+  const contact = fakeCanvas();
+  traceBrushFootprintPath(contact.canvas.getContext("2d")!, midFold);
+  assert.equal(contact.operations.filter((op) => op.type === "moveTo").length, 2, "both original and reflected contact layers remain visible");
+  const advanced = fakeCanvas();
+  traceBrushFootprintPath(advanced.canvas.getContext("2d")!, { ...midFold, fold: { ...midFold.fold!, travel: midFold.fold!.travel + 20 } });
+  assert.notDeepEqual(advanced.operations, contact.operations, "moving crease sweeps new contact edges while the cusp stays fixed");
+  const liveStroke = { ...stroke, points: [] as [number, number, number][] };
+  const live = fakeCanvas();
+  const paths = (operations: Operation[]) => operations.filter((op) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(op.type));
+  for (const point of stroke.points) {
+    const start = liveStroke.points.length;
+    liveStroke.points.push(point);
+    appendHandwritingStroke(live.canvas, liveStroke, start);
+    const prefix = fakeCanvas();
+    drawHandwritingCharacter(prefix.canvas, { strokes: [stroke] }, { visiblePointCounts: [liveStroke.points.length] });
+    assert.deepEqual(paths(live.operations), paths(prefix.operations));
+  }
+  const full = fakeCanvas();
+  drawHandwritingCharacter(full.canvas, { strokes: [stroke] });
+  assert.deepEqual(paths(live.operations), paths(full.operations));
+  const yielded = fakeCanvas();
+  [...drawHandwritingInkSteps(yielded.canvas.getContext("2d")!, { strokes: [stroke] })];
+  assert.deepEqual(paths(yielded.operations), paths(full.operations));
+});
+
 test("yielded folio ink retains the full and partial paths, including empty skipped strokes", () => {
   const character: HandwritingPayload["characters"][number] = {
     strokes: [{ color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },

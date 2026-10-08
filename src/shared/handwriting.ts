@@ -35,12 +35,14 @@ export type HandwritingGlow = {
 };
 
 export type HandwritingPen = "hard" | "brush";
-export type HandwritingBrushAlgorithm = "follow" | "slanted";
+export type HandwritingBrushAlgorithm = "follow" | "slanted" | "true-v1";
 export type HandwritingBrush = {
   size: number;
   sensitivity: number;
   lag: number;
   rotationLag?: number;
+  pauseThresholdMs?: number;
+  pausedRotationScale?: number;
   algorithm?: HandwritingBrushAlgorithm;
   // Omission retains the original rendering of stored messages and drafts.
   version?: 2;
@@ -48,6 +50,13 @@ export type HandwritingBrush = {
 export const HANDWRITING_DEFAULT_BRUSH: Readonly<HandwritingBrush> = Object.freeze({ size: 45, sensitivity: 65, lag: 35 });
 export const HANDWRITING_DEFAULT_BRUSH_ALGORITHM: HandwritingBrushAlgorithm = "slanted";
 export const HANDWRITING_DEFAULT_ROTATION_LAG = 35;
+export const HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS = 200;
+export const HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE = 0.1;
+
+function normalizeBrushNumber(value: unknown, fallback: number, maximum: number, integer = false) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) return fallback;
+  return integer ? Math.round(value) : value;
+}
 
 export type HandwritingGlobalSettings = { sensitivity: number; lag: number; glow: HandwritingGlow };
 export const HANDWRITING_DEFAULT_GLOBAL_SETTINGS: Readonly<HandwritingGlobalSettings> = Object.freeze({
@@ -75,8 +84,10 @@ export function normalizeHandwritingBrush(value: unknown): HandwritingBrush {
     size: normalizeHandwritingGlowAmount(row.size, HANDWRITING_DEFAULT_BRUSH.size),
     sensitivity: normalizeHandwritingGlowAmount(row.sensitivity, HANDWRITING_DEFAULT_BRUSH.sensitivity),
     lag: normalizeHandwritingGlowAmount(row.lag, HANDWRITING_DEFAULT_BRUSH.lag),
-    ...(row.algorithm === "slanted" || row.algorithm === "follow" ? { algorithm: row.algorithm } : {}),
+    ...(row.algorithm === "slanted" || row.algorithm === "follow" || row.algorithm === "true-v1" ? { algorithm: row.algorithm } : {}),
     ...(row.rotationLag !== undefined ? { rotationLag: normalizeHandwritingGlowAmount(row.rotationLag, HANDWRITING_DEFAULT_ROTATION_LAG) } : {}),
+    ...(row.pauseThresholdMs !== undefined || row.algorithm === "true-v1" ? { pauseThresholdMs: normalizeBrushNumber(row.pauseThresholdMs, HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS, 60_000, true) } : {}),
+    ...(row.pausedRotationScale !== undefined || row.algorithm === "true-v1" ? { pausedRotationScale: normalizeBrushNumber(row.pausedRotationScale, HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE, 10) } : {}),
     ...(row.version === 2 ? { version: 2 as const } : {})
   };
 }
@@ -308,14 +319,20 @@ export function normalizeHandwritingPayload(
       assertFields(stroke, ["points", "color", "effect", "brush"]);
       if (stroke.brush !== undefined) {
         if (!isPlainObject(stroke.brush)) throw new HandwritingValidationError("invalid_shape", "毛笔参数格式无效");
-        assertFields(stroke.brush, ["size", "sensitivity", "lag", "rotationLag", "algorithm", "version"]);
+        assertFields(stroke.brush, ["size", "sensitivity", "lag", "rotationLag", "pauseThresholdMs", "pausedRotationScale", "algorithm", "version"]);
         if (stroke.brush.rotationLag !== undefined && (typeof stroke.brush.rotationLag !== "number" || !Number.isInteger(stroke.brush.rotationLag) || stroke.brush.rotationLag < 0 || stroke.brush.rotationLag > 100)) {
           throw new HandwritingValidationError("invalid_shape", "毛笔旋转滞后必须为 0 至 100 的整数");
         }
         if (stroke.brush.version !== undefined && stroke.brush.version !== 2) {
           throw new HandwritingValidationError("invalid_shape", "毛笔笔迹版本无效");
         }
-        if (stroke.brush.algorithm !== undefined && stroke.brush.algorithm !== "follow" && stroke.brush.algorithm !== "slanted") {
+        if (stroke.brush.pauseThresholdMs !== undefined && (typeof stroke.brush.pauseThresholdMs !== "number" || !Number.isInteger(stroke.brush.pauseThresholdMs) || stroke.brush.pauseThresholdMs < 0 || stroke.brush.pauseThresholdMs > 60_000)) {
+          throw new HandwritingValidationError("invalid_shape", "毛笔停顿阈值必须为 0 至 60000 的整数毫秒");
+        }
+        if (stroke.brush.pausedRotationScale !== undefined && (typeof stroke.brush.pausedRotationScale !== "number" || !Number.isFinite(stroke.brush.pausedRotationScale) || stroke.brush.pausedRotationScale < 0 || stroke.brush.pausedRotationScale > 10)) {
+          throw new HandwritingValidationError("invalid_shape", "毛笔停顿转向倍率必须为 0 至 10 的有限数字");
+        }
+        if (stroke.brush.algorithm !== undefined && stroke.brush.algorithm !== "follow" && stroke.brush.algorithm !== "slanted" && stroke.brush.algorithm !== "true-v1") {
           throw new HandwritingValidationError("invalid_shape", "毛笔算法无效");
         }
         for (const key of ["size", "sensitivity", "lag"] as const) {

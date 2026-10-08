@@ -58,6 +58,26 @@ function payload(points: number[][] = [[100, 200, 0]]): HandwritingPayload {
   return { kind: "handwriting", version: 1, characters: [{ strokes: [{ points: points as [number, number, number][] }] }] };
 }
 
+test("true-v1 settings survive account and message normalization without changing legacy metadata", () => {
+  const brush = { size: 55, sensitivity: 50, lag: 30, rotationLag: 70, algorithm: "true-v1" as const, version: 2 as const, pauseThresholdMs: 275, pausedRotationScale: 0.025 };
+  assert.deepEqual(normalizeHandwritingPreferences({ brush }).brush, brush);
+  const input = payload();
+  input.characters[0].strokes[0].brush = brush;
+  assert.deepEqual(normalizeHandwritingPayload(input).characters[0].strokes[0].brush, brush);
+  const defaults = normalizeHandwritingPreferences({ brush: { ...brush, pauseThresholdMs: undefined, pausedRotationScale: undefined } }).brush;
+  assert.equal(defaults.pauseThresholdMs, 200);
+  assert.equal(defaults.pausedRotationScale, 0.1);
+  assert.equal(normalizeHandwritingPreferences({ brush: { ...brush, pausedRotationScale: Number.NaN } }).brush.pausedRotationScale, 0.1);
+  for (const pauseThresholdMs of [-1, 60001, 1.5, "200", Number.NaN, Infinity]) {
+    input.characters[0].strokes[0].brush = { ...brush, pauseThresholdMs: pauseThresholdMs as number };
+    assert.throws(() => normalizeHandwritingPayload(input), /停顿阈值/);
+  }
+  for (const pausedRotationScale of [-1, 10.1, "0.1", Number.NaN, Infinity]) {
+    input.characters[0].strokes[0].brush = { ...brush, pausedRotationScale: pausedRotationScale as number };
+    assert.throws(() => normalizeHandwritingPayload(input), /转向倍率/);
+  }
+});
+
 test("normalizes a deterministic strict handwriting payload without mutating input", () => {
   const input = payload([[1, 2, 0], [3, 4, 0], [5, 6, 10]]);
   const normalized = normalizeHandwritingPayload(input);

@@ -46,16 +46,16 @@ function createHarness() {
   return { app, writes: () => writes, preferences: () => preferences };
 }
 
-test("handwriting preferences save both algorithms, rotation lag bounds and selected color", async () => {
+test("handwriting preferences save all algorithms, rotation lag bounds and selected color", async () => {
   const { app, preferences } = createHarness();
   try {
-    for (const algorithm of ["follow", "slanted"] as const) {
+    for (const algorithm of ["follow", "slanted", "true-v1"] as const) {
       for (const rotationLag of [0, 35, 100]) {
         const next = normalizeHandwritingPreferences({
           ...HANDWRITING_DEFAULT_PREFERENCES,
           pen: "brush",
           selectedIndex: 4,
-          brush: { ...HANDWRITING_DEFAULT_PREFERENCES.brush, algorithm, rotationLag }
+          brush: { ...HANDWRITING_DEFAULT_PREFERENCES.brush, algorithm, rotationLag, ...(algorithm === "true-v1" ? { pauseThresholdMs: 275, pausedRotationScale: 0.025 } : {}) }
         });
         const response = await app.inject({
           method: "PATCH", url: "/api/me/preferences", headers: { authorization: "member" },
@@ -86,6 +86,8 @@ test("handwriting preferences reject unauthenticated, malformed and unknown brus
     assert.equal(denied.statusCode, 401);
     const invalidBrushes = [
       ...[-1, 101, 1.5, "35", null].map((rotationLag) => ({ ...HANDWRITING_DEFAULT_PREFERENCES.brush, rotationLag })),
+      ...[-1, 60001, 1.5, "200", null].map((pauseThresholdMs) => ({ ...HANDWRITING_DEFAULT_PREFERENCES.brush, algorithm: "true-v1", pauseThresholdMs })),
+      ...[-1, 10.1, "0.1", null].map((pausedRotationScale) => ({ ...HANDWRITING_DEFAULT_PREFERENCES.brush, algorithm: "true-v1", pausedRotationScale })),
       { ...HANDWRITING_DEFAULT_PREFERENCES.brush, unknown: true }
     ];
     for (const brush of invalidBrushes) {

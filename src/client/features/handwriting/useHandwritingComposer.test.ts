@@ -3,6 +3,19 @@ import test from "node:test";
 import { HANDWRITING_PRESET_COLORS, HANDWRITING_STROKE_COLORS, HANDWRITING_DEFAULT_GLOW_COLOR } from "@shared/handwriting";
 import { shouldSampleHandwritingPoint, useHandwritingComposer } from "./useHandwritingComposer.js";
 
+test("true-v1 pause options and pointer contact positions are frozen per stroke and retained in snapshots", () => {
+  const composer = useHandwritingComposer();
+  composer.setPen("brush", { size: 45, sensitivity: 65, lag: 35, algorithm: "true-v1", pauseThresholdMs: 300, pausedRotationScale: 0.05 });
+  composer.beginStroke({ x: 2000, y: 3000, timestampMs: 0 }, 7);
+  composer.setPen("brush", { size: 45, sensitivity: 65, lag: 35, algorithm: "true-v1", pauseThresholdMs: 200, pausedRotationScale: 0.1 });
+  composer.endStroke(7);
+  composer.beginStroke({ x: 4000, y: 5000, timestampMs: 100 }, 8);
+  composer.endStroke(8);
+  const strokes = composer.snapshot()!.characters[0].strokes;
+  assert.deepEqual(strokes.map((stroke) => stroke.points[0].slice(0, 2)), [[2000, 3000], [4000, 5000]]);
+  assert.deepEqual(strokes.map((stroke) => [stroke.brush!.algorithm, stroke.brush!.pauseThresholdMs, stroke.brush!.pausedRotationScale]), [["true-v1", 300, 0.05], ["true-v1", 200, 0.1]]);
+});
+
 test("explicit character completion preserves the final in-progress character in snapshots", () => {
   const composer = useHandwritingComposer({ key: "1:2:3" });
   assert.equal(composer.beginStroke({ x: 100, y: 100, timestampMs: 10 }, 7), true);

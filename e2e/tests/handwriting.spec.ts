@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
+import { expect, test, webkit, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import { HANDWRITING_DEFAULT_BRUSH_ALGORITHM } from "../../src/shared/handwriting.js";
 
@@ -439,6 +439,86 @@ test("毛笔算法和颜色保存后保持选择并在刷新后恢复", async ({
     await expect(restored.getByLabel("毛笔算法")).toHaveValue("follow");
     await expect(restored.getByRole("button", { name: "选择紫色", exact: true })).toHaveAttribute("aria-pressed", "true");
     await restored.getByRole("button", { name: "关闭", exact: true }).click();
+  }
+});
+
+test("真迹壹在 Chromium 与 WebKit 保存参数、鼠标触摸书写并发送持久化", async ({ page }) => {
+  test.setTimeout(90000);
+  const safari = await webkit.launch();
+  const safariPage = await safari.newPage();
+  try {
+    for (const [name, target] of [["chromium", page], ["webkit", safariPage]] as const) {
+      const threshold = name === "chromium" ? "240" : "260";
+      const scale = name === "chromium" ? "0.07" : "0.08";
+      await blockPublicNetwork(target);
+      await target.setViewportSize({ width: 390, height: 844 });
+      await login(target, E2E_MEMBER);
+      const dialog = await openHandwritingComposer(target);
+      await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
+      await dialog.getByText("毛笔参数", { exact: true }).click();
+      const algorithmSaved = target.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.algorithm === "true-v1" && response.ok());
+      await dialog.getByLabel("毛笔算法").selectOption("true-v1");
+      await algorithmSaved;
+      for (const [label, key, value] of [["毛笔停顿阈值（毫秒）", "pauseThresholdMs", threshold], ["毛笔停顿后转向倍率", "pausedRotationScale", scale]] as const) {
+        const saved = target.waitForResponse((response) => response.url().endsWith("/api/me/preferences") && response.request().method() === "PATCH" && response.request().postDataJSON()?.handwritingPreferences?.brush?.[key] === Number(value) && response.ok());
+        await dialog.getByLabel(label, { exact: true }).fill(value);
+        await dialog.getByLabel(label, { exact: true }).press("Tab");
+        await saved;
+      }
+      for (const width of [360, 390, 1280]) {
+        await target.setViewportSize({ width, height: 844 });
+        for (const label of ["毛笔算法", "毛笔停顿阈值（毫秒）", "毛笔停顿后转向倍率"]) {
+          const field = dialog.getByLabel(label, { exact: true });
+          await expect(field).toBeVisible();
+          const box = await field.boundingBox();
+          expect(box!.x).toBeGreaterThanOrEqual(0);
+          expect(box!.x + box!.width).toBeLessThanOrEqual(width + 1);
+        }
+      }
+      await target.setViewportSize({ width: 390, height: 844 });
+      await target.reload();
+      await expect.poll(() => connectionState(target)).toBe("connected");
+      const restored = await openHandwritingComposer(target);
+      await restored.getByText("毛笔参数", { exact: true }).click();
+      await expect(restored.getByLabel("毛笔算法")).toHaveValue("true-v1");
+      await expect(restored.getByLabel("毛笔停顿阈值（毫秒）", { exact: true })).toHaveValue(threshold);
+      await expect(restored.getByLabel("毛笔停顿后转向倍率", { exact: true })).toHaveValue(scale);
+      const clear = restored.getByRole("button", { name: "清空当前字", exact: true });
+      if (await clear.isEnabled()) await clear.click();
+      const canvas = restored.getByLabel("当前手写字格");
+      await restored.getByText("毛笔参数", { exact: true }).click();
+      await drawStroke(target, canvas, [[0.2, 0.3], [0.65, 0.3], [0.3, 0.5]]);
+      await canvas.evaluate(async (element) => {
+        const start = performance.now();
+        const dispatch = async (type: string, x: number, y: number, time: number) => {
+          const box = element.getBoundingClientRect();
+          const event = new PointerEvent(type, { bubbles: true, pointerId: 41, pointerType: "touch", isPrimary: true, button: 0, buttons: type === "pointerup" ? 0 : 1, clientX: box.x + box.width * x / 10000, clientY: box.y + box.height * y / 10000 });
+          Object.defineProperty(event, "timeStamp", { value: start + time });
+          element.dispatchEvent(event);
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        };
+        await dispatch("pointerdown", 1500, 5000, 0);
+        for (let i = 1; i <= 30; i++) await dispatch("pointermove", 1500 + i * 120, 5000, i * 8);
+        await dispatch("pointermove", 5100, 5000, 540);
+        for (let i = 1; i <= 18; i++) await dispatch("pointermove", Math.round(5100 - i * 80 * Math.cos(Math.PI / 6)), 5000 + i * 40, 540 + i * 16);
+        await dispatch("pointerup", Math.round(5100 - 18 * 80 * Math.cos(Math.PI / 6)), 5720, 840);
+      });
+      await canvas.screenshot({ path: `output/playwright/handwriting-true-v1-${name}-390.png` });
+      await restored.getByRole("button", { name: "发送", exact: true }).click();
+      await expect(restored).toBeHidden();
+      const expected = { characters: [{ strokes: [
+        { brush: { algorithm: "true-v1", pauseThresholdMs: Number(threshold), pausedRotationScale: Number(scale) } },
+        { brush: { algorithm: "true-v1", pauseThresholdMs: Number(threshold), pausedRotationScale: Number(scale) } }
+      ] }] };
+      await expect.poll(async () => (await latestHandwriting(target))?.payload).toMatchObject(expected);
+      const sent = await latestHandwriting(target);
+      await target.reload();
+      await expect.poll(() => connectionState(target)).toBe("connected");
+      await expect.poll(async () => (await latestHandwriting(target))?.id).toBe(sent!.id);
+      expect((await latestHandwriting(target))!.payload).toMatchObject(expected);
+    }
+  } finally {
+    await safari.close();
   }
 });
 

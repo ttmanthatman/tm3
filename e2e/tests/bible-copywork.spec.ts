@@ -384,6 +384,9 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
   await dialog.getByLabel("毛笔算法").selectOption("follow");
   await expect(dialog.getByRole("slider", { name: "毛笔旋转滞后" })).toBeVisible();
+  await dialog.getByLabel("毛笔算法").selectOption("true-v1");
+  await expect(dialog.getByLabel("毛笔停顿阈值（毫秒）", { exact: true })).toHaveValue("200");
+  await expect(dialog.getByLabel("毛笔停顿后转向倍率", { exact: true })).toHaveValue("0.1");
   await dialog.getByLabel("毛笔算法").selectOption("slanted");
   await dialog.getByRole("slider", { name: "毛笔速度响应" }).fill("70");
   await dialog.getByText("毛笔参数", { exact: true }).click();

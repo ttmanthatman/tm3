@@ -1,4 +1,5 @@
 import { handwritingBrushGeometry, type BrushSample } from "./handwritingBrush";
+import { trueBrushContours, trueBrushControlPoints, type NibPoint } from "./handwritingTrueBrush";
 import {
   HANDWRITING_DEFAULT_COLOR,
   type HandwritingCharacter,
@@ -101,7 +102,16 @@ export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sampl
     context.arc(sample.x, sample.y, halfWidth, 0, Math.PI * 2);
     return;
   }
-  const points = brushLeafControlPoints(sample, expansion);
+  if (sample.fold) {
+    for (const contour of trueBrushContours(sample, sample.fold, expansion)) {
+      if (contour.length < 3) continue;
+      context.moveTo(contour[0].x, contour[0].y);
+      for (const point of contour.slice(1)) context.lineTo(point.x, point.y);
+      if (closePath) context.closePath();
+    }
+    return;
+  }
+  const points = sample.algorithm === "true-v1" ? trueBrushControlPoints(sample, expansion) : brushLeafControlPoints(sample, expansion);
   // Match the positive winding of ellipses and sweep hulls. Opposite winding
   // cancels overlapping subpaths in a single fill, leaving hollow end nibs
   // and fine scale-shaped seams inside the swept ink.
@@ -135,6 +145,10 @@ function brushLeafControlPoints(sample: BrushSample, expansion: number) {
 }
 
 function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: number): BrushSample {
+  // A completed paper reflection is already the released nib's shape. Its
+  // stored angle changes at release; interpolating that angle would invent
+  // the rigid rotation the fold deliberately replaces.
+  if (from.fold && !to.fold) return to;
   const angleDelta = Math.atan2(Math.sin(to.angle - from.angle), Math.cos(to.angle - from.angle));
   return {
     ...to,
@@ -143,6 +157,7 @@ function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: num
     width: from.width + (to.width - from.width) * amount,
     angle: from.angle + angleDelta * amount,
     ...(to.bend !== undefined ? { bend: (from.bend ?? 0) + (to.bend - (from.bend ?? 0)) * amount } : {}),
+    ...(to.fold ? { fold: { ...to.fold, travel: (from.fold?.travel ?? 0) + (to.fold.travel - (from.fold?.travel ?? 0)) * amount } } : {}),
     contact: from.contact + (to.contact - from.contact) * amount,
     spread: from.spread + (to.spread - from.spread) * amount
   };
@@ -159,6 +174,7 @@ function naturalFootprintRadii(sample: BrushSample, expansion: number) {
 type OutlinePoint = { x: number; y: number };
 
 function naturalFootprintPoints(sample: BrushSample, expansion: number): OutlinePoint[] {
+  if (sample.algorithm === "true-v1" && sample.directional) return trueBrushContours(sample, sample.fold, expansion).flat();
   if (sample.directional && sample.algorithm !== "slanted") {
     const points = brushLeafControlPoints(sample, expansion);
     return [[0, 1, 2, 3], [3, 4, 4, 5], [5, 6, 7, 0]].flatMap((indices) =>
@@ -179,12 +195,12 @@ function naturalFootprintPoints(sample: BrushSample, expansion: number): Outline
   });
 }
 
-function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
+function tracePointHull(context: CanvasRenderingContext2D, outline: NibPoint[]) {
   // Connect the support envelopes of consecutive nib cross-sections. The
   // swept body fills the space between them, retaining the rotating waterdrop
   // nib for follow and the fixed shallow cross-section for slanted.
-  const points = [...naturalFootprintPoints(from, expansion), ...naturalFootprintPoints(to, expansion)]
-    .sort((a, b) => a.x - b.x || a.y - b.y);
+  const points = outline.sort((a, b) => a.x - b.x || a.y - b.y);
+  if (points.length < 3) return;
   const cross = (a: OutlinePoint, b: OutlinePoint, c: OutlinePoint) =>
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
   const half = (ordered: OutlinePoint[]) => {
@@ -197,8 +213,24 @@ function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample,
     return hull;
   };
   const hull = [...half(points), ...half([...points].reverse())];
+  if (hull.length < 3) return;
   context.moveTo(hull[0].x, hull[0].y);
   for (const point of hull.slice(1)) context.lineTo(point.x, point.y);
+}
+
+function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
+  if (from.fold || to.fold) {
+    const layers = (sample: BrushSample) => {
+      if (sample.fold) return trueBrushContours(sample, sample.fold, expansion);
+      const contour = naturalFootprintPoints(sample, expansion);
+      return from.fold && !to.fold ? [[], contour] : [contour, []];
+    };
+    const before = layers(from);
+    const after = layers(to);
+    // Sweep each contact layer separately. A single hull around both folded
+    // layers would fill areas that no bristle actually touched.
+    for (let layer = 0; layer < 2; layer++) tracePointHull(context, [...before[layer], ...after[layer]]);
+  } else tracePointHull(context, [...naturalFootprintPoints(from, expansion), ...naturalFootprintPoints(to, expansion)]);
   traceBrushFootprintPath(context, to, expansion, false);
 }
 
@@ -215,8 +247,9 @@ function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: read
     const sample = samples[index];
     const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y);
     const stampSpacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
-    const angleDelta = Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
-    const stampCount = Math.max(1, Math.ceil(distance / stampSpacing), Math.ceil(Math.abs(angleDelta) / MAX_BRUSH_STAMP_ANGLE));
+    const angleDelta = sample.fold || previous.fold ? 0 : Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
+    const foldTravel = sample.fold ? Math.abs(sample.fold.travel - (previous.fold?.travel ?? 0)) * 2 : 0;
+    const stampCount = Math.max(1, Math.ceil(Math.max(distance, foldTravel) / stampSpacing), Math.ceil(Math.abs(angleDelta) / MAX_BRUSH_STAMP_ANGLE));
     let previousStamp = previous;
     for (let stamp = 1; stamp <= stampCount; stamp += 1) {
       const nextStamp = interpolatedBrushSample(previous, sample, stamp / stampCount);

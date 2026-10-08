@@ -1,4 +1,5 @@
-import type { HandwritingBrushAlgorithm, HandwritingPoint, HandwritingStroke } from "@shared/handwriting";
+import { HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS, HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE, HANDWRITING_DEFAULT_ROTATION_LAG, type HandwritingBrushAlgorithm, type HandwritingPoint, type HandwritingStroke } from "@shared/handwriting";
+import { beginTrueBrushFold, foldProjection, reflectFoldPoint, trueBrushCrease, type TrueBrushFold } from "./handwritingTrueBrush";
 
 // Brush dynamics are driven by stable path distance. Stationary time may
 // inform turn/lift inference and the initial press, but it never relaxes an
@@ -10,6 +11,7 @@ export type BrushSample = {
   angle: number;
   // Lateral flex of the trailing bristles, in units of nib width.
   bend?: number;
+  fold?: TrueBrushFold;
   directional: boolean;
   algorithm?: HandwritingBrushAlgorithm;
   version?: 2;
@@ -72,6 +74,8 @@ type BrushState = {
   liftContact: number;
   stationaryMs: number;
   hasHeading: boolean;
+  trueRotationScale?: number;
+  trueFold?: TrueBrushFold;
 };
 
 export type BrushGeometry = {
@@ -112,10 +116,14 @@ function smoothingFactor(cutoffHz: number, elapsedMs: number) {
 
 function brushParameters(brush: NonNullable<HandwritingStroke["brush"]>) {
   const lag = clamp(brush.lag, 0, 100);
-  const rotationLag = brush.version === 2 && brush.rotationLag !== undefined ? clamp(brush.rotationLag, 0, 100) : undefined;
+  const trueBrush = brush.algorithm === "true-v1";
+  const rotationLag = trueBrush ? clamp(brush.rotationLag ?? HANDWRITING_DEFAULT_ROTATION_LAG, 0, 100) : brush.version === 2 && brush.rotationLag !== undefined ? clamp(brush.rotationLag, 0, 100) : undefined;
   return {
     algorithm: brush.algorithm || "follow",
-    version: brush.version,
+    version: trueBrush ? 2 as const : brush.version,
+    trueBrush,
+    pauseThresholdMs: brush.pauseThresholdMs ?? HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS,
+    pausedRotationScale: brush.pausedRotationScale ?? HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE,
     flexible: brush.version === 2 && brush.rotationLag !== undefined && brush.algorithm === "follow",
     maxWidth: 120 + clamp(brush.size, 0, 100) * 12,
     speedSensitivity: clamp(brush.sensitivity, 0, 100),
@@ -139,7 +147,7 @@ function initialSample(point: HandwritingPoint, state: BrushState): BrushSample 
     ...(state.bend !== undefined ? { bend: state.bend } : {}),
     directional: state.version !== 2 && state.algorithm === "slanted",
     ...(state.version === 2 ? { version: 2 as const } : {}),
-    ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
+    ...(state.algorithm !== "follow" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
     trailX: 0,
@@ -192,7 +200,8 @@ function initialGeometry(point: HandwritingPoint, maxWidth: number, algorithm: H
     pauseEvidence: 0,
     liftContact: 1,
     stationaryMs: 0,
-    hasHeading: false
+    hasHeading: false,
+    ...(algorithm === "true-v1" ? { trueRotationScale: 1 } : {})
   };
   return {
     samples: [initialSample(point, state)],
@@ -348,9 +357,10 @@ function pushBrushSample(geometry: BrushGeometry, state: BrushState) {
     width: state.width,
     angle: state.angle,
     ...(state.bend !== undefined ? { bend: state.bend } : {}),
+    ...(state.trueFold ? { fold: { ...state.trueFold } } : {}),
     directional: state.hasHeading || (state.version !== 2 && state.algorithm === "slanted"),
     ...(state.version === 2 ? { version: 2 as const } : {}),
-    ...(state.algorithm === "slanted" ? { algorithm: state.algorithm } : {}),
+    ...(state.algorithm !== "follow" ? { algorithm: state.algorithm } : {}),
     contact: state.contact,
     spread: state.spread,
     trailX: state.handleX - state.tipX,
@@ -396,7 +406,15 @@ function advanceBrushState(
   const stepElapsed = elapsed / steps;
   const startHandleX = state.handleX;
   const startHandleY = state.handleY;
-  turnInference(state, heading, distance, speed, pauseDuration);
+  if (parameters.trueBrush) {
+    if (pauseDuration > parameters.pauseThresholdMs) state.trueRotationScale = parameters.pausedRotationScale;
+    if (state.hasHeading && !state.trueFold && Math.abs(shortestAngleDelta(state.movementHeading, heading)) > Math.PI * 0.75) {
+      state.trueFold = beginTrueBrushFold({ x: state.tipX, y: state.tipY, width: state.width, angle: state.angle, spread: state.spread, contact: state.contact }, heading);
+      state.phase = "turning";
+      state.startPhase = false;
+      pushBrushSample(geometry, state);
+    }
+  } else turnInference(state, heading, distance, speed, pauseDuration);
   for (let step = 1; step <= steps; step += 1) {
     const amount = step / steps;
     state.handleX = startHandleX + (x - startHandleX) * amount;
@@ -404,6 +422,30 @@ function advanceBrushState(
     if (state.startPhase) advanceStartPhase(state, stepDistance, stepElapsed, parameters);
 
     state.speed += (speed - state.speed) * (1 - Math.exp(-stepDistance / 72));
+
+    if (state.trueFold) {
+      const fold = state.trueFold;
+      fold.travel = Math.min(fold.distance, fold.travel + stepDistance);
+      // The crease normal is the new travel direction. The source cusp stays
+      // at its original paper coordinate; only the part beyond the crease
+      // reflects. Contact, spread and width are frozen during this fold.
+      const centre = fold.travel === fold.distance || (foldProjection(fold, fold.source) - trueBrushCrease(fold)) * fold.reflectedSide > 0
+        ? reflectFoldPoint(fold, fold.source) : fold.source;
+      state.tipX = centre.x;
+      state.tipY = centre.y;
+      state.movementHeading = heading;
+      state.hasHeading = true;
+      pushBrushSample(geometry, state);
+      if (fold.travel === fold.distance) {
+        state.angle = normalizeAngle(2 * fold.heading + Math.PI - fold.source.angle);
+        state.tangentAngle = heading;
+        state.trueFold = undefined;
+        state.phase = "writing";
+        state.startPhase = false;
+        pushBrushSample(geometry, state);
+      }
+      continue;
+    }
 
     const deflectionX = state.handleX - state.tipX;
     const deflectionY = state.handleY - state.tipY;
@@ -430,7 +472,15 @@ function advanceBrushState(
     // Positional lag may move the handle away from the tip, but the brush
     // cross-section keeps its own angular inertia and follows a separately
     // smoothed spatial tangent rather than the instantaneous trail vector.
-    if (parameters.algorithm === "follow") {
+    if (parameters.trueBrush) {
+      // Follow the latest direction from the CURRENT nib angle, without the
+      // old tangent memory or lateral bristle twist. A pause latches this
+      // response multiplier for the rest of the stroke, including after folds.
+      const response = parameters.angleResponseLength;
+      const follow = (response === 0 ? 1 : 1 - Math.exp(-stepDistance / response)) * (state.trueRotationScale ?? 1);
+      state.angle = normalizeAngle(state.angle + shortestAngleDelta(state.angle, heading) * Math.min(1, follow));
+      state.tangentAngle = heading;
+    } else if (parameters.algorithm === "follow") {
       const tangentFollow = parameters.tangentResponseLength === 0 ? 1 : 1 - Math.exp(-stepDistance / parameters.tangentResponseLength);
       state.tangentAngle = normalizeAngle(
         state.tangentAngle + shortestAngleDelta(state.tangentAngle, heading) * tangentFollow
@@ -482,7 +532,7 @@ function advanceBrushState(
       state.width += (widthTarget - state.width) * (1 - Math.exp(-stepDistance / 30));
     }
 
-    advancePhase(state, stepDistance, parameters);
+    if (!parameters.trueBrush) advancePhase(state, stepDistance, parameters);
     state.movementHeading = heading;
     state.hasHeading = true;
     pushBrushSample(geometry, state);
@@ -501,6 +551,7 @@ function advanceNaturalInput(
 ) {
   // Read the previous raw position before replacing it: otherwise the input
   // derivative is always zero and the adaptive filter never speeds up.
+  const latestHeading = Math.atan2(point[1] - state.rawY, point[0] - state.rawX);
   if (rawDistance > 0) updateInputPoint(state, point[0], point[1], point[2]);
   else state.inputTimeMs = point[2];
   state.rawX = point[0];
@@ -531,7 +582,7 @@ function advanceNaturalInput(
   }
   if (!state.hasHeading) {
     const heading = Math.atan2(state.inputY - state.originY, state.inputX - state.originX);
-    if (parameters.algorithm === "follow") state.angle = heading;
+    if (parameters.algorithm !== "slanted") state.angle = heading;
     state.tangentAngle = heading;
     state.movementHeading = heading;
     state.turnReferenceHeading = heading;
@@ -539,7 +590,7 @@ function advanceNaturalInput(
     state.motionPath = [{ x: state.originX, y: state.originY, timestampMs: point[2] - elapsed, arcLength: 0 }];
   }
   appendMotionPoint(state, state.inputX, state.inputY, point[2]);
-  const heading = spatialHeading(state, state.movementHeading);
+  const heading = parameters.trueBrush ? latestHeading : spatialHeading(state, state.movementHeading);
   const speed = windowedSpeed(state, distance / elapsed);
   const pauseDuration = state.stationaryMs + elapsed;
   state.pauseEvidence = Math.max(state.pauseEvidence, smoothstep(80, 300, pauseDuration));
