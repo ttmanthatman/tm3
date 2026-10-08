@@ -324,10 +324,18 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await expect(dialog.getByRole("button", { name: "硬笔", exact: true })).toBeVisible();
   await dialog.getByText("毛笔参数", { exact: true }).click();
   await expect(dialog.getByLabel("毛笔算法")).toHaveValue("slanted");
-  for (const width of [360, 390, 1280]) {
-    await page.setViewportSize({ width, height: 844 });
+  for (const width of [360, 390, 642, 1280]) {
+    const height = width === 642 ? 1057 : 844;
+    await page.setViewportSize({ width, height });
     const box = await dialog.getByRole("button", { name: "下次继续写" }).boundingBox();
-    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(height);
+    const brushButton = await dialog.getByRole("button", { name: "毛笔", exact: true }).boundingBox();
+    const settings = await dialog.locator(".handwriting-brush-settings > summary").boundingBox();
+    expect(settings!.x).toBeGreaterThanOrEqual(brushButton!.x + brushButton!.width);
+    expect(Math.abs(settings!.y + settings!.height / 2 - brushButton!.y - brushButton!.height / 2)).toBeLessThan(2);
+    const writingColumn = await dialog.locator(".writing-column").boundingBox();
+    const writingPad = await dialog.locator(".handwriting-pad").boundingBox();
+    expect(Math.abs(writingPad!.width - writingColumn!.width)).toBeLessThan(2);
     expect(
       await dialog
         .locator(".copywork-composer-body")
@@ -337,6 +345,11 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
     await page.screenshot({ path: `output/e2e/copywork-pen-controls-${width}.png`, fullPage: true });
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await expect(dialog.getByRole("button", { name: "笔与纸", exact: true })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "墨色与辅助线", exact: true }).click();
+  await expect(dialog.getByLabel("墨色", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("辅助线", { exact: true })).toBeVisible();
+  await dialog.getByRole("button", { name: "墨色与辅助线", exact: true }).click();
   await dialog.getByRole("button", { name: "硬笔", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "硬笔", exact: true })).toHaveAttribute("aria-pressed", "true");
   await stroke(page);

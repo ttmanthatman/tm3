@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { nextTick, computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { SlidersHorizontal } from "lucide-vue-next";
 import {
   COPYWORK_MAX_BYTES,
   COPYWORK_MAX_POINTS,
@@ -327,8 +328,8 @@ onBeforeUnmount(() => {
             写好了
           </button>
         </div>
-        <button class="quiet" :aria-expanded="toolsOpen" @click="toolsOpen = !toolsOpen">
-          笔与纸
+        <button class="quiet writing-tools-toggle" aria-label="墨色与辅助线" title="墨色与辅助线" :aria-expanded="toolsOpen" @click="toolsOpen = !toolsOpen">
+          <SlidersHorizontal :size="18" aria-hidden="true" />
         </button>
         <div v-if="toolsOpen" class="writing-tools">
           <label>墨色 <input v-model="color" type="color" /></label>
@@ -428,10 +429,10 @@ onBeforeUnmount(() => {
   color: #827461;
 }
 .writing-surface {
-  max-width: 440px;
-  margin: auto;
+  width: 100%;
 }
 .writing-surface :deep(.handwriting-pad) {
+  width: 100%;
   border: 0;
   background: #fffaf0;
   border-radius: 3px;
@@ -477,6 +478,11 @@ button.primary {
 .quiet {
   border: 0;
   background: transparent;
+}
+.writing-tools-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .writing-tools {
   display: flex;
@@ -564,9 +570,6 @@ button.primary {
   .preview-column {
     max-width: 320px;
     margin: 24px auto;
-  }
-  .writing-surface {
-    max-width: min(100%, 40dvh);
   }
   .copywork-composer-footer {
     padding-inline: 16px;
