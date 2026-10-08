@@ -427,6 +427,28 @@ test("dispose removes timers, page listeners, audio callbacks, and media handler
   assert.ok([...harness.mediaHandlers.values()].every((handler) => handler === null));
 });
 
+test("page exit preserves progress locally and keeps music writes alive through navigation", async () => {
+  const harness = createHarness();
+  await activate(harness);
+  harness.player.controls.selectTrack(harness.tracks.value[0]);
+  await Promise.resolve();
+  harness.audio.currentTime = 42;
+  harness.setVisible(false);
+  for (const handler of harness.visibilityListeners) handler();
+  for (const handler of harness.pageHideListeners) handler();
+  harness.audio.pause();
+  await Promise.resolve();
+
+  const stored = JSON.parse(harness.storageValues.get("team-chat-music-playback-state:1")!);
+  assert.equal(stored.trackId, 1);
+  assert.equal(stored.progressMs, 42_000);
+  const writes = harness.requests.filter((call) => call.options?.method);
+  assert.ok(writes.some((call) => call.path.endsWith("/progress")));
+  assert.ok(writes.some((call) => call.path.endsWith("/playback-state")));
+  assert.ok(writes.every((call) => call.options?.keepalive === true));
+  harness.player.controls.dispose();
+});
+
 test("account changes discard prior playback state and ignore stale responses", async () => {
   let resolveFirstAccount: (value: { state: MusicPlaybackStateDTO | null }) => void = () => {
     assert.fail("first account request was not started");

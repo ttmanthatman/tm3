@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
 .copywork-card {
   width: min(270px, 100%);
 }
-.copywork-card.message { width: 280px; max-width: 100%; }
+.copywork-card.message { width: 100%; max-width: 100%; }
 .card-open {
   display: grid;
   gap: 9px;

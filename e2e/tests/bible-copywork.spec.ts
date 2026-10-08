@@ -141,8 +141,7 @@ test("admin swipe switches persist and protect copywork dragging and writing in 
     }
     await settings(false, true, true);
     expect(pageErrors).toEqual([]);
-    // Reopen to verify persistence without aborting unrelated beforeunload
-    // music-state PUTs, which WebKit reports as access-control page errors.
+    // Keep this swipe scenario independent of in-flight reader GETs on reload.
     current = await current.context().newPage();
     current.on("pageerror", (error) => pageErrors.push(error.message));
     await current.setViewportSize({ width: 390, height: 844 });
@@ -195,6 +194,31 @@ test("admin swipe switches persist and protect copywork dragging and writing in 
   const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, baseURL: "http://127.0.0.1:4173" });
   try { await scenario(await context.newPage(), "webkit"); }
   finally { await context.close(); await browser.close(); }
+});
+
+test("WebKit reload keeps music state writes alive without interface errors", async () => {
+  const browser = await webkit.launch();
+  const page = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
+  const musicErrors: string[] = [];
+  let stateWrites = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/music/playback-state") && request.method() === "PUT") stateWrites++;
+  });
+  page.on("pageerror", (error) => {
+    if (error.message.includes("/api/music/")) musicErrors.push(error.message);
+  });
+  try {
+    await login(page);
+    for (let i = 0; i < 3; i++) {
+      await page.waitForLoadState("networkidle");
+      // The mounted player's pagehide and visibility handlers save even when
+      // no track is selected; exercise real navigation, not synthetic events.
+      await page.reload();
+      await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+    }
+    expect(stateWrites).toBeGreaterThanOrEqual(3);
+    expect(musicErrors).toEqual([]);
+  } finally { await browser.close(); }
 });
 
 test("copywork lifecycle isolates private ink, retries saves and shares, publishes and recalls", async ({
@@ -696,7 +720,11 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
     await page.setViewportSize({ width, height: 844 });
     const cardBox = (await card.boundingBox())!;
     expect(cardBox.width).toBeGreaterThan(220);
-    expect(cardBox.width).toBeLessThanOrEqual(280);
+    const wrap = card.locator("xpath=ancestor::div[contains(@class, 'bubble-wrap')]");
+    const rowWidth = await card.evaluate((el) => el.closest(".message-row")!.getBoundingClientRect().width);
+    const maximum = width <= 768 ? width - 94 : Math.min(620, rowWidth * 0.72);
+    expect((await wrap.boundingBox())!.width).toBeCloseTo(maximum, 0);
+    expect(cardBox.width).toBeCloseTo(maximum - 28, 0);
     expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
     await page.screenshot({ path: `output/e2e/copywork-own-${width}.png`, fullPage: true });
   }

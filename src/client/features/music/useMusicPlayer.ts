@@ -300,6 +300,9 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     if (!state || !accountId) return;
     const result = await request<{ accepted: boolean; state: MusicPlaybackStateDTO }>("/api/music/playback-state", {
       method: "PUT",
+      // Small writes can already be in flight when WebKit starts a reload.
+      // Keep them alive so page exit does not abort them as access-control errors.
+      keepalive: true,
       body: JSON.stringify({ ...state, knownUpdatedAt: playbackServerUpdatedAt.value || undefined })
     }).catch(() => null);
     if (!result?.state || activeAccountId !== accountId || accountGeneration !== generation || disposed) return;
@@ -489,6 +492,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     const listenedMs = Math.min(durationMs, Math.max(0, Math.ceil(session.listenedMs)));
     await request(`/api/music/tracks/${session.trackId}/progress`, {
       method: "POST",
+      keepalive: true,
       body: JSON.stringify({
         playbackId: session.playbackId,
         state,
@@ -509,6 +513,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     try {
       const result = await request<{ heat: number }>(`/api/music/tracks/${session.trackId}/play`, {
         method: "POST",
+        keepalive: true,
         body: JSON.stringify({ playbackId: session.playbackId, durationMs, listenedMs })
       });
       if (

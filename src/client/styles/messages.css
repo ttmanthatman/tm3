@@ -452,6 +452,10 @@
   min-width: 0;
 }
 
+.bubble-wrap:has(.copywork-card.message) {
+  width: 100%;
+}
+
 .message-bubble-cluster {
   min-width: 0;
   max-width: 100%;
