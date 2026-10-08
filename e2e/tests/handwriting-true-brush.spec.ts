@@ -54,6 +54,46 @@ test("true brush folded frontier deposits ink and raster replay agrees in Chromi
         const newPixels = afterMask.reduce((sum, value, i) => sum + Number(value === 1 && beforeMask[i] === 0), 0);
         const lostPixels = beforeMask.reduce((sum, value, i) => sum + Number(value === 1 && afterMask[i] === 0), 0);
 
+        const gestures = [];
+        for (const name of ["right-angle-jitter", "bridged-reversal", "curved-fold"] as const) {
+          const gesture: HandwritingStroke = {
+            brush: { ...stroke.brush!, size: 100, sensitivity: 10 },
+            points: Array.from({ length: 31 }, (_, i) => name === "right-angle-jitter" ? [3000, 1500 + i * 100, i * 8] : [1500 + i * 120, 3500, i * 8])
+          };
+          const turn = (angle: number, count: number) => {
+            const [x, y, time] = gesture.points.at(-1)!;
+            for (let i = 1; i <= count; i++) gesture.points.push([Math.round(x + i * 80 * Math.cos(angle)), Math.round(y + i * 80 * Math.sin(angle)), time + i * 16]);
+          };
+          if (name === "right-angle-jitter") {
+            gesture.points.push([3000, 4420, 256]);
+            turn(0, 20);
+          } else if (name === "bridged-reversal") {
+            turn(Math.PI / 3, 1);
+            turn(Math.PI * 2 / 3, 1);
+            turn(Math.PI * 5 / 6, 24);
+          } else {
+            turn(Math.PI * 5 / 6, 2);
+            turn(Math.PI * 11 / 12, 24);
+          }
+          const samples = handwritingBrushGeometry(gesture).samples;
+          const folds = samples.filter((sample) => sample.fold);
+          const release = samples.findIndex((sample, i) => i > 0 && samples[i - 1].fold && !sample.fold);
+          const releaseStep = release >= 0 && samples[release + 1] ? Math.hypot(samples[release + 1].x - samples[release].x, samples[release + 1].y - samples[release].y) : 0;
+          const incremental = makeCanvas();
+          const active: HandwritingStroke = { ...gesture, points: [] };
+          for (const point of gesture.points) {
+            const start = active.points.length;
+            active.points.push(point);
+            appendHandwritingStroke(incremental, active, start);
+          }
+          const staticInk = makeCanvas();
+          drawHandwritingCharacter(staticInk, { strokes: [gesture] });
+          const incrementalMask = mask(incremental), staticMask = mask(staticInk);
+          const pixels = staticMask.reduce((sum, value) => sum + value, 0);
+          const difference = staticMask.reduce((sum, value, i) => sum + Number(value !== incrementalMask[i]), 0);
+          gestures.push({ name, folded: folds.length > 0, lastFoldHeading: folds.at(-1)?.fold?.heading ?? 0, releaseStep, pixels, mismatchRatio: difference / pixels });
+        }
+
         // Draw a preview directly from the same footprint/fold functions used
         // by live ink, rather than an independent illustration of the rules.
         document.body.innerHTML = "";
@@ -114,12 +154,19 @@ test("true brush folded frontier deposits ink and raster replay agrees in Chromi
         ctx.fillText("停顿阈值：200 ms      转向倍率：0.1      触发后保持到抬笔，持续从当前锋向追随最新运笔方向", 45, 643);
         ctx.font = "18px sans-serif"; ctx.fillStyle = "#687b73";
         ctx.fillText("上排显示当前接触轮廓；实际笔迹保留所有扫过区域。图中急转方向差为 145°。", 45, 684);
-        return { mismatches, inkPixels, newPixels, lostPixels };
+        return { mismatches, inkPixels, newPixels, lostPixels, gestures };
       });
       expect(result.inkPixels).toBeGreaterThan(1000);
       expect(result.mismatches / result.inkPixels).toBeLessThan(0.025);
       expect(result.newPixels).toBeGreaterThan(100);
       expect(result.lostPixels).toBe(0);
+      for (const gesture of result.gestures) {
+        expect(gesture.folded, gesture.name).toBe(gesture.name !== "right-angle-jitter");
+        if (gesture.name === "curved-fold") expect(Math.abs(gesture.lastFoldHeading - Math.PI * 11 / 12)).toBeLessThan(0.08);
+        expect(gesture.releaseStep, gesture.name).toBeLessThanOrEqual(65);
+        expect(gesture.pixels, gesture.name).toBeGreaterThan(1000);
+        expect(gesture.mismatchRatio, gesture.name).toBeLessThan(0.025);
+      }
       await target.setViewportSize({ width: 1560, height: 750 });
       await target.locator("#true-brush-preview").screenshot({ path: `output/playwright/true-brush-fold-${name}.png` });
     }

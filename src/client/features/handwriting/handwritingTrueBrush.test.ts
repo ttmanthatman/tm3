@@ -16,6 +16,66 @@ function turn(target: HandwritingStroke, angle: number, count: number, pause = 0
   for (let i = 1; i <= count; i++) target.points.push([Math.round(x + i * 80 * Math.cos(angle)), Math.round(y + i * 80 * Math.sin(angle)), t + pause + i * 16]);
 }
 
+test("down then right does not fold when a short upward jitter occurs at the corner", () => {
+  for (const lag of [0, 35, 100]) {
+    for (const jitter of [0, 40, 80, 120]) {
+      const target = stroke({ lag });
+      target.points = Array.from({ length: 31 }, (_, i) => [3000, 1500 + i * 100, i * 8]);
+      target.points.push([3000, 4500 - jitter, 256]);
+      for (let i = 1; i <= 20; i++) target.points.push([3000 + i * 80, 4500 - jitter, 256 + i * 8]);
+      assert.ok(handwritingBrushGeometry(target).samples.every((sample) => !sample.fold), `a short upward jitter (${jitter}, lag ${lag}) must not turn a 90° corner into an upward fold`);
+    }
+  }
+});
+
+test("slow curves and stationary oscillation do not become abrupt reversals", () => {
+  const curve = stroke();
+  for (let i = 1; i <= 36; i++) turn(curve, i * Math.PI / 36, 2);
+  assert.ok(handwritingBrushGeometry(curve).samples.every((sample) => !sample.fold));
+  const jitter = stroke();
+  const [x, y, time] = jitter.points.at(-1)!;
+  for (let i = 1; i <= 50; i++) jitter.points.push([x + (i % 2 ? -40 : 0), y, time + i * 8]);
+  assert.ok(handwritingBrushGeometry(jitter).samples.every((sample) => !sample.fold));
+});
+
+test("reversal detection tolerates dense sampling and a large outgoing event", () => {
+  for (const step of [16, 40, 80, 500]) {
+    const target = stroke();
+    const [x, y, time] = target.points.at(-1)!;
+    for (let i = 1; i <= Math.ceil(1600 / step); i++) {
+      target.points.push([Math.round(x - i * step * Math.cos(Math.PI / 6)), Math.round(y + i * step / 2), time + i * 8]);
+    }
+    assert.ok(handwritingBrushGeometry(target).samples.some((sample) => sample.fold), `outgoing step ${step} must preserve the reversal`);
+  }
+});
+
+test("a tight reversal through short intermediate directions still folds along the outgoing path", () => {
+  const target = stroke();
+  turn(target, Math.PI / 3, 1);
+  turn(target, Math.PI * 2 / 3, 1);
+  turn(target, Math.PI * 5 / 6, 18);
+  const folds = handwritingBrushGeometry(target).samples.filter((sample) => sample.fold);
+  assert.ok(folds.length, "the reversal must compare against the incoming path across the short transition");
+  assert.ok(folds.every((sample) => Math.abs(sample.fold!.heading - Math.PI * 5 / 6) < 0.08));
+});
+
+test("an active fold follows a sustained change of outgoing direction and releases without a contact jump", () => {
+  const target = stroke({ size: 100 });
+  turn(target, Math.PI * 5 / 6, 2);
+  turn(target, Math.PI * 11 / 12, 3);
+  const geometry = handwritingBrushGeometry(target);
+  const latestFold = geometry.samples.filter((sample) => sample.fold).at(-1)!;
+  assert.ok(latestFold?.fold);
+  assert.ok(Math.abs(latestFold.fold.heading - Math.PI * 11 / 12) < 0.08, "the crease normal follows the current outgoing path rather than the first reversal event");
+  turn(target, Math.PI * 11 / 12, 20);
+  const samples = handwritingBrushGeometry(target).samples;
+  const release = samples.findIndex((sample, index) => index > 0 && samples[index - 1].fold && !sample.fold);
+  assert.ok(release > 0);
+  const after = samples[release + 1];
+  const before = samples[release];
+  assert.ok(Math.hypot(after.x - before.x, after.y - before.y) <= 65, "releasing the pin must not teleport the contact back to the handle");
+});
+
 test("true-v1 preserves the pointer-down contact centre and has a slender, longer tail without lateral twisting", () => {
   const dot = handwritingBrushGeometry({ brush: stroke().brush, points: [[2000, 3000, 0], [2000, 3000, 500]] });
   assert.ok(dot.samples.every((sample) => !sample.directional && sample.x === 2000 && sample.y === 3000));
@@ -121,7 +181,9 @@ test("complete paper reflection preserves shape area and releases with the same 
 
 test("live incremental geometry equals fresh replay at every prefix including pause, fold, release and a later target", () => {
   const target = stroke();
-  turn(target, Math.PI * 5 / 6, 18, 400);
+  turn(target, Math.PI * 5 / 6, 2, 400);
+  turn(target, Math.PI * 11 / 12, 4);
+  turn(target, Math.PI * 5 / 6, 18);
   turn(target, Math.PI / 2, 8);
   const points = [...target.points];
   target.points = [];

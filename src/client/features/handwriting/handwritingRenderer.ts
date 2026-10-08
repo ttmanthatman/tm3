@@ -1,5 +1,5 @@
 import { handwritingBrushGeometry, type BrushSample } from "./handwritingBrush";
-import { trueBrushContours, trueBrushControlPoints, type NibPoint } from "./handwritingTrueBrush";
+import { retargetTrueBrushFold, trueBrushContours, trueBrushControlPoints, type NibPoint } from "./handwritingTrueBrush";
 import {
   HANDWRITING_DEFAULT_COLOR,
   type HandwritingCharacter,
@@ -150,6 +150,11 @@ function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: num
   // the rigid rotation the fold deliberately replaces.
   if (from.fold && !to.fold) return to;
   const angleDelta = Math.atan2(Math.sin(to.angle - from.angle), Math.cos(to.angle - from.angle));
+  const fold = to.fold ? { ...to.fold, travel: (from.fold?.travel ?? 0) + (to.fold.travel - (from.fold?.travel ?? 0)) * amount } : undefined;
+  if (fold && from.fold) {
+    const delta = Math.atan2(Math.sin(fold.heading - from.fold.heading), Math.cos(fold.heading - from.fold.heading));
+    retargetTrueBrushFold(fold, from.fold.heading + delta * amount);
+  }
   return {
     ...to,
     x: from.x + (to.x - from.x) * amount,
@@ -157,7 +162,7 @@ function interpolatedBrushSample(from: BrushSample, to: BrushSample, amount: num
     width: from.width + (to.width - from.width) * amount,
     angle: from.angle + angleDelta * amount,
     ...(to.bend !== undefined ? { bend: (from.bend ?? 0) + (to.bend - (from.bend ?? 0)) * amount } : {}),
-    ...(to.fold ? { fold: { ...to.fold, travel: (from.fold?.travel ?? 0) + (to.fold.travel - (from.fold?.travel ?? 0)) * amount } } : {}),
+    ...(fold ? { fold } : {}),
     contact: from.contact + (to.contact - from.contact) * amount,
     spread: from.spread + (to.spread - from.spread) * amount
   };

@@ -39,7 +39,11 @@ test("true-v1 sweeps moving fold layers and keeps live, prefix, static and yield
     points: Array.from({ length: 31 }, (_, i) => [1500 + i * 120, 3500, i * 8] as [number, number, number])
   };
   stroke.points.push([5100, 3500, 1240]);
-  for (let i = 1; i <= 24; i++) stroke.points.push([Math.round(5100 - i * 80 * Math.cos(Math.PI / 6)), 3500 + i * 40, 1240 + i * 16]);
+  for (let i = 1; i <= 24; i++) {
+    const [x, y] = stroke.points.at(-1)!;
+    const heading = i <= 2 ? Math.PI * 5 / 6 : Math.PI * 11 / 12;
+    stroke.points.push([Math.round(x + 80 * Math.cos(heading)), Math.round(y + 80 * Math.sin(heading)), 1240 + i * 16]);
+  }
   const samples = handwritingBrushGeometry(stroke).samples;
   const midFold = samples.find((sample) => sample.fold && sample.fold.travel > sample.fold.distance * 0.3 && sample.fold.travel < sample.fold.distance * 0.7)!;
   assert.ok(midFold);

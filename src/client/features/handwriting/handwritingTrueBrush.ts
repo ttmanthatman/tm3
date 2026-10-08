@@ -72,6 +72,12 @@ export function beginTrueBrushFold(source: TrueBrushShape, heading: number): Tru
   return fold;
 }
 
+export function retargetTrueBrushFold(fold: TrueBrushFold, heading: number) {
+  fold.heading = heading;
+  const projections = shapeOutline(fold.source).map((point) => foldProjection(fold, point));
+  fold.creaseStart = fold.reflectedSide === -1 ? Math.min(...projections) : Math.max(...projections);
+}
+
 function clipFold(points: NibPoint[], fold: TrueBrushFold, reflected: boolean): NibPoint[] {
   const crease = trueBrushCrease(fold);
   const inside = (projection: number) => reflected ? (projection - crease) * fold.reflectedSide >= 0 : (projection - crease) * fold.reflectedSide <= 0;
