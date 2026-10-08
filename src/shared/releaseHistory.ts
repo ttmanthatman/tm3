@@ -1144,11 +1144,22 @@ const RELEASE_2_5_7_NOTES = [
   "管理员可全局开关聊天室与圣经的左右滑动切换，并单独设置在手写、拖动抄写进度时屏蔽切换，默认保留快捷切换并开启冲突保护。"
 ] as const
 
+const RELEASE_2_5_8_NOTES = [
+  "听歌、读圣经和输入状态提示完整滚过可见区域后再循环，离屏或后台时暂停动画。",
+  "音乐播放减少重复下载，网络中断时有限重试并保留播放进度，避免切歌时旧播放请求干扰新歌曲。",
+  "抄写消息提前加载笔迹，回放复用已绘制的字并分帧处理复杂笔画，按住左右拖动移出气泡仍可调整进度。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.5.9",
+    date: "2026-10-08",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.5.8",
     date: "2026-10-07",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_5_8_NOTES
   },
   {
     version: "2.5.7",
