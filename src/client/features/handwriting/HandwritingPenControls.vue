@@ -44,7 +44,7 @@ function changeNumber(event: Event, key: "pauseThresholdMs" | "pausedRotationSca
             <input type="number" min="0" max="60000" step="1" aria-label="毛笔停顿阈值（毫秒）" :value="brush.pauseThresholdMs ?? HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS" :disabled="disabled" @change="changeNumber($event, 'pauseThresholdMs')">
           </label>
           <label>
-            <span>停顿后转向倍率</span>
+            <span>翻折前停顿转向倍率</span>
             <input type="number" min="0" max="10" step="any" aria-label="毛笔停顿后转向倍率" :value="brush.pausedRotationScale ?? HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE" :disabled="disabled" @change="changeNumber($event, 'pausedRotationScale')">
           </label>
         </template>
@@ -53,7 +53,7 @@ function changeNumber(event: Event, key: "pauseThresholdMs" | "pausedRotationSca
           <input type="range" min="0" max="100" step="1" :aria-label="`毛笔${field.label}`" :value="brush[field.key] ?? HANDWRITING_DEFAULT_ROTATION_LAG" :disabled="disabled" @change="emit('change', pen, { ...brush, [field.key]: Number(($event.target as HTMLInputElement).value) })">
         </label>
         <button type="button" :disabled="disabled" @click="emit('change', pen, { ...HANDWRITING_DEFAULT_PREFERENCES.brush })">恢复默认参数</button>
-        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'true-v1' ? '真迹壹：停顿超时后，转向减速保持到抬笔，持续追随最新运笔方向；方向突变超过 135° 时固定尾尖，沿垂直于新轨迹的折线翻折，扫过的边缘仍留下墨迹。' : brush.algorithm === 'follow' ? '峰回路转：转折时笔毛先弯折，再随运笔逐渐转锋；旋转滞后越大，转锋越慢。停顿保持锋向，继续运笔后恢复。' : '石径斜：笔锋固定斜 45°。' }}</small>
+        <small>参数随账号保存，对下一笔生效。{{ brush.algorithm === 'true-v1' ? '真迹壹：停顿后慢行按住，顺势加速收细出锋；顶肩转折保持接触。急转超过 135° 时尾尖带住笔毛连续翻折，方向随运笔调整，翻折后解除停顿转向倍率，继续跟随行笔。' : brush.algorithm === 'follow' ? '峰回路转：转折时笔毛先弯折，再随运笔逐渐转锋；旋转滞后越大，转锋越慢。停顿保持锋向，继续运笔后恢复。' : '石径斜：笔锋固定斜 45°。' }}</small>
       </div>
     </details>
     <span class="handwriting-pen-hint">{{ pen === 'brush' ? '慢写铺开 · 快写收细' : '圆头 · 均匀粗细' }}</span>

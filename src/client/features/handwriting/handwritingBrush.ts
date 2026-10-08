@@ -1,5 +1,5 @@
 import { HANDWRITING_DEFAULT_PAUSE_THRESHOLD_MS, HANDWRITING_DEFAULT_PAUSED_ROTATION_SCALE, HANDWRITING_DEFAULT_ROTATION_LAG, type HandwritingBrushAlgorithm, type HandwritingPoint, type HandwritingStroke } from "@shared/handwriting";
-import { beginTrueBrushFold, foldProjection, reflectFoldPoint, retargetTrueBrushFold, trueBrushCrease, type TrueBrushFold } from "./handwritingTrueBrush";
+import { advanceTrueBrushFold, beginTrueBrushFold, foldProjection, reflectFoldPoint, trueBrushCrease, type TrueBrushFold } from "./handwritingTrueBrush";
 import { advanceTrueBrushMotion, type TrueBrushMotion } from "./handwritingTrueMotion";
 
 // Brush dynamics are driven by stable path distance. Stationary time may
@@ -79,6 +79,8 @@ type BrushState = {
   trueFold?: TrueBrushFold;
   trueMotion?: TrueBrushMotion;
   trueReleasePending?: boolean;
+  trueFolded?: boolean;
+  trueDepartureHeading?: number;
 };
 
 export type BrushGeometry = {
@@ -338,7 +340,17 @@ function targetContact(state: BrushState, parameters: ReturnType<typeof brushPar
     if (state.phase === "touching") return 0.08;
     return 0.08 + 0.64 * smoothstep(50, 350, state.startElapsedMs);
   }
-  if (state.phase === "writing") return 1;
+  if (state.phase === "writing") {
+    if (parameters.trueBrush && state.trueDepartureHeading !== undefined) {
+      // Finger input has no pressure channel. Infer a lift only on a fast
+      // departure after pressing; a perpendicular shoulder retains contact.
+      const turn = Math.abs(shortestAngleDelta(state.trueDepartureHeading, state.tangentAngle));
+      const departure = 1 - smoothstep(Math.PI / 3, Math.PI / 2, turn);
+      const lift = smoothstep(0.35, 1, state.speed * parameters.speedSensitivity / 450);
+      return 1 - 0.97 * departure * lift;
+    }
+    return 1;
+  }
   if (state.phase === "pressing") {
     const pressTravel = clamp(
       state.turnTravel - parameters.turnReorientDistance,
@@ -411,9 +423,18 @@ function advanceBrushState(
   const startHandleX = state.handleX;
   const startHandleY = state.handleY;
   if (parameters.trueBrush) {
-    if (pauseDuration > parameters.pauseThresholdMs) state.trueRotationScale = parameters.pausedRotationScale;
+    if (!state.trueFolded && pauseDuration > parameters.pauseThresholdMs) state.trueRotationScale = parameters.pausedRotationScale;
+    if (state.hasHeading && !state.startPhase && !state.trueFold && pauseDuration > parameters.pauseThresholdMs) {
+      state.trueDepartureHeading = state.movementHeading;
+      // A genuine press ended the incoming motion; stale approach speed must
+      // not lift the bristles when the finger resumes slowly.
+      state.speed = Math.min(state.speed, speed);
+    }
     if (state.hasHeading && !state.trueFold && trueReversal) {
       state.trueFold = beginTrueBrushFold({ x: state.tipX, y: state.tipY, width: state.width, angle: state.angle, spread: state.spread, contact: state.contact }, heading);
+      state.trueFolded = true;
+      state.trueRotationScale = 1;
+      state.trueDepartureHeading = undefined;
       state.phase = "turning";
       state.startPhase = false;
       pushBrushSample(geometry, state);
@@ -429,11 +450,9 @@ function advanceBrushState(
 
     if (state.trueFold) {
       const fold = state.trueFold;
-      retargetTrueBrushFold(fold, heading);
-      fold.travel = Math.min(fold.distance, fold.travel + stepDistance);
-      // The crease normal is the new travel direction. The source cusp stays
-      // at its original paper coordinate; only the part beyond the crease
-      // reflects. Contact, spread and width are frozen during this fold.
+      advanceTrueBrushFold(fold, heading, stepDistance);
+      // The contact bends continuously onto the latest outgoing direction.
+      // Keep width and spread stable while the shoulder is being formed.
       const centre = fold.travel === fold.distance || (foldProjection(fold, fold.source) - trueBrushCrease(fold)) * fold.reflectedSide > 0
         ? reflectFoldPoint(fold, fold.source) : fold.source;
       state.tipX = centre.x;
@@ -442,7 +461,7 @@ function advanceBrushState(
       state.hasHeading = true;
       pushBrushSample(geometry, state);
       if (fold.travel === fold.distance) {
-        state.angle = normalizeAngle(2 * fold.heading + Math.PI - fold.source.angle);
+        state.angle = normalizeAngle(fold.heading);
         state.tangentAngle = heading;
         state.trueFold = undefined;
         state.trueReleasePending = true;
@@ -496,11 +515,14 @@ function advanceBrushState(
     if (parameters.trueBrush) {
       // Follow the latest direction from the CURRENT nib angle, without the
       // old tangent memory or lateral bristle twist. A pause latches this
-      // response multiplier for the rest of the stroke, including after folds.
+      // response multiplier until lift or a fold releases the pinned bristles.
       const response = parameters.angleResponseLength;
       const follow = (response === 0 ? 1 : 1 - Math.exp(-stepDistance / response)) * (state.trueRotationScale ?? 1);
-      state.angle = normalizeAngle(state.angle + shortestAngleDelta(state.angle, heading) * Math.min(1, follow));
+      const turn = shortestAngleDelta(state.angle, heading) * Math.min(1, follow);
+      const limit = state.trueFolded ? stepDistance * 2 / Math.max(1, state.width) : Math.PI;
+      state.angle = normalizeAngle(state.angle + clamp(turn, -limit, limit));
       state.tangentAngle = heading;
+      if (state.trueDepartureHeading !== undefined && Math.abs(shortestAngleDelta(state.trueDepartureHeading, heading)) >= Math.PI / 2) state.trueDepartureHeading = undefined;
     } else if (parameters.algorithm === "follow") {
       const tangentFollow = parameters.tangentResponseLength === 0 ? 1 : 1 - Math.exp(-stepDistance / parameters.tangentResponseLength);
       state.tangentAngle = normalizeAngle(
@@ -530,7 +552,7 @@ function advanceBrushState(
     const contactFollow =
       1 -
       Math.exp(
-        -stepDistance / (state.phase === "lifting" ? 12 : state.phase === "turning" ? 20 : state.version === 2 ? Math.max(24, parameters.maxWidth * 0.09) : 24)
+        -stepDistance / (state.phase === "lifting" ? 12 : state.phase === "turning" ? 20 : parameters.trueBrush && nextContact < state.contact ? 24 : state.version === 2 ? Math.max(24, parameters.maxWidth * 0.09) : 24)
       );
     state.contact += (nextContact - state.contact) * contactFollow;
     const startSpread = 0.12 + 0.78 * (state.version === 2

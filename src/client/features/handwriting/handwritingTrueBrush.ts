@@ -1,5 +1,5 @@
 // The true-v1 nib uses the same contact centre as the other natural brushes.
-// Only its tail profile and distance-driven paper fold differ.
+// Folding bends the leading contact toward the outgoing path around the tail.
 export type NibPoint = { x: number; y: number };
 export type TrueBrushShape = NibPoint & { width: number; angle: number; spread: number; contact: number };
 export type TrueBrushFold = {
@@ -8,6 +8,7 @@ export type TrueBrushFold = {
   heading: number;
   reflectedSide: -1 | 1;
   creaseStart: number;
+  creaseEnd: number;
   distance: number;
   travel: number;
 };
@@ -47,39 +48,67 @@ function shapeOutline(shape: TrueBrushShape, expansion = 0): NibPoint[] {
   );
 }
 
+export function trueBrushFoldNormal(fold: TrueBrushFold) {
+  // Reflection about this bisector turns the incoming nib onto the outgoing
+  // heading, rather than doubling every change of the movement direction.
+  return (fold.source.angle + fold.heading - Math.PI) / 2;
+}
+
 export function foldProjection(fold: TrueBrushFold, point: NibPoint) {
-  return (point.x - fold.pin.x) * Math.cos(fold.heading) + (point.y - fold.pin.y) * Math.sin(fold.heading);
+  const normal = trueBrushFoldNormal(fold);
+  return (point.x - fold.pin.x) * Math.cos(normal) + (point.y - fold.pin.y) * Math.sin(normal);
 }
 
 export function trueBrushCrease(fold: TrueBrushFold) {
-  return fold.creaseStart * (1 - Math.min(1, fold.travel / fold.distance));
+  const progress = Math.min(1, fold.travel / fold.distance);
+  return fold.creaseStart + (fold.creaseEnd - fold.creaseStart) * progress;
 }
 
 export function reflectFoldPoint(fold: TrueBrushFold, point: NibPoint): NibPoint {
   const displacement = 2 * (trueBrushCrease(fold) - foldProjection(fold, point));
-  return { x: point.x + displacement * Math.cos(fold.heading), y: point.y + displacement * Math.sin(fold.heading) };
+  const normal = trueBrushFoldNormal(fold);
+  return { x: point.x + displacement * Math.cos(normal), y: point.y + displacement * Math.sin(normal) };
 }
 
 export function beginTrueBrushFold(source: TrueBrushShape, heading: number): TrueBrushFold {
   const pin = trueBrushControlPoints(source)[0];
-  const fold: TrueBrushFold = { source: { ...source }, pin, heading, reflectedSide: -1, creaseStart: 0, distance: 1, travel: 0 };
+  const fold: TrueBrushFold = { source: { ...source }, pin, heading: source.angle, reflectedSide: -1, creaseStart: 0, creaseEnd: 0, distance: 1, travel: 0 };
+  fold.heading += Math.atan2(Math.sin(heading - source.angle), Math.cos(heading - source.angle));
   // Slow angular following can leave the nib facing away from the preceding
   // travel heading. Start at the far edge of whichever side holds the body.
   fold.reflectedSide = foldProjection(fold, source) <= 0 ? -1 : 1;
-  const projections = shapeOutline(source).map((point) => foldProjection(fold, point));
-  fold.creaseStart = fold.reflectedSide === -1 ? Math.min(...projections) : Math.max(...projections);
-  fold.distance = Math.max(64, Math.abs(fold.creaseStart));
+  retargetTrueBrushFold(fold, heading);
+  fold.distance = Math.max(64, Math.abs(fold.creaseStart - fold.creaseEnd));
   return fold;
 }
 
 export function retargetTrueBrushFold(fold: TrueBrushFold, heading: number) {
-  fold.heading = heading;
+  // Keep the plane continuous through +/-pi: choosing an equivalent normal
+  // with the opposite sign would swap the two clipped contact layers.
+  fold.heading += Math.atan2(Math.sin(heading - fold.heading), Math.cos(heading - fold.heading));
   const projections = shapeOutline(fold.source).map((point) => foldProjection(fold, point));
   fold.creaseStart = fold.reflectedSide === -1 ? Math.min(...projections) : Math.max(...projections);
+  fold.creaseEnd = fold.reflectedSide === -1 ? Math.max(...projections) : Math.min(...projections);
 }
 
-function clipFold(points: NibPoint[], fold: TrueBrushFold, reflected: boolean): NibPoint[] {
-  const crease = trueBrushCrease(fold);
+export function advanceTrueBrushFold(fold: TrueBrushFold, heading: number, distance: number) {
+  const radius = Math.max(1, ...trueBrushControlPoints(fold.source).map((point) => Math.hypot(point.x - fold.pin.x, point.y - fold.pin.y)));
+  const delta = Math.atan2(Math.sin(heading - fold.heading), Math.cos(heading - fold.heading));
+  const limit = distance / radius;
+  retargetTrueBrushFold(fold, fold.heading + Math.max(-limit, Math.min(limit, delta)));
+  fold.travel = Math.min(fold.distance, fold.travel + distance);
+}
+
+function clipFold(points: NibPoint[], fold: TrueBrushFold, reflected: boolean, expansion: number): NibPoint[] {
+  let crease = trueBrushCrease(fold);
+  if (expansion) {
+    // Clip the glow across its own support envelope, but deform it about the
+    // physical ink crease. It must also finish continuously at full reflection.
+    const projections = points.map((point) => foldProjection(fold, point));
+    const start = fold.reflectedSide === -1 ? Math.min(...projections) : Math.max(...projections);
+    const end = fold.reflectedSide === -1 ? Math.max(...projections) : Math.min(...projections);
+    crease = start + (end - start) * Math.min(1, fold.travel / fold.distance);
+  }
   const inside = (projection: number) => reflected ? (projection - crease) * fold.reflectedSide >= 0 : (projection - crease) * fold.reflectedSide <= 0;
   const clipped: NibPoint[] = [];
   for (let index = 0; index < points.length; index++) {
@@ -104,5 +133,5 @@ export function trueBrushContours(shape: TrueBrushShape, fold?: TrueBrushFold, e
   // its expanded tail onto the pin would make glow jump at fold release.
   const points = shapeOutline(fold.source, expansion);
   if (fold.travel >= fold.distance) return [[], points.map((point) => reflectFoldPoint(fold, point)).reverse()];
-  return [clipFold(points, fold, false), clipFold(points, fold, true)];
+  return [clipFold(points, fold, false, expansion), clipFold(points, fold, true, expansion)];
 }

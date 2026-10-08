@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { HandwritingBrush, HandwritingPoint, HandwritingStroke } from "@shared/handwriting";
 import { handwritingBrushGeometry } from "./handwritingBrush.js";
-import { beginTrueBrushFold, foldProjection, reflectFoldPoint, trueBrushContours, trueBrushControlPoints, trueBrushCrease } from "./handwritingTrueBrush.js";
+import { beginTrueBrushFold, foldProjection, reflectFoldPoint, retargetTrueBrushFold, trueBrushContours, trueBrushControlPoints, trueBrushCrease, trueBrushFoldNormal } from "./handwritingTrueBrush.js";
 
 function stroke(brush: Partial<HandwritingBrush> = {}): HandwritingStroke {
   return {
@@ -15,6 +15,122 @@ function turn(target: HandwritingStroke, angle: number, count: number, pause = 0
   if (pause) target.points.push([x, y, t + pause]);
   for (let i = 1; i <= count; i++) target.points.push([Math.round(x + i * 80 * Math.cos(angle)), Math.round(y + i * 80 * Math.sin(angle)), t + pause + i * 16]);
 }
+
+function contourDistance(a: ReturnType<typeof trueBrushContours>, b: ReturnType<typeof trueBrushContours>) {
+  const from = a.flat(), to = b.flat();
+  const distanceToLayer = (point: typeof from[number], layer: typeof from) => {
+    let inside = false, distance = Infinity;
+    for (let i = 0; i < layer.length; i++) {
+      const p = layer[i], q = layer[(i + 1) % layer.length];
+      if ((p.y > point.y) !== (q.y > point.y) && point.x < p.x + (q.x - p.x) * (point.y - p.y) / (q.y - p.y)) inside = !inside;
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const t = Math.max(0, Math.min(1, ((point.x - p.x) * dx + (point.y - p.y) * dy) / (dx * dx + dy * dy || 1)));
+      distance = Math.min(distance, Math.hypot(point.x - p.x - dx * t, point.y - p.y - dy * t));
+    }
+    return inside ? 0 : distance;
+  };
+  const directed = (points: typeof from, layers: typeof a) => Math.max(...points.map((point) => Math.min(...layers.map((layer) => distanceToLayer(point, layer)))));
+  return Math.max(directed(from, b), directed(to, a));
+}
+
+test("folded nib unfolds along the outgoing heading instead of doubling its turn", () => {
+  const source = { x: 2000, y: 3000, width: 800, spread: 0.9, contact: 1, angle: 0.3 };
+  for (const heading of [Math.PI * 5 / 6, Math.PI, -Math.PI * 5 / 6]) {
+    const fold = beginTrueBrushFold(source, heading);
+    fold.travel = fold.distance;
+    const tail = reflectFoldPoint(fold, fold.pin);
+    const centre = reflectFoldPoint(fold, source);
+    const releasedHeading = Math.atan2(centre.y - tail.y, centre.x - tail.x);
+    assert.ok(Math.abs(Math.atan2(Math.sin(releasedHeading - heading), Math.cos(releasedHeading - heading))) < 1e-9);
+  }
+});
+
+test("retargeted fold has no footprint switch at completion, including wrap, sideways and return travel", () => {
+  const source = { x: 2000, y: 3000, width: 800, spread: 0.9, contact: 1, angle: 0 };
+  for (const heading of [Math.PI * 11 / 12, Math.PI / 2, 0, -Math.PI * 5 / 6]) {
+    const fold = beginTrueBrushFold(source, Math.PI * 5 / 6);
+    retargetTrueBrushFold(fold, heading);
+    for (const expansion of [0, 180]) {
+      fold.travel = fold.distance * (1 - 1e-8);
+      const before = trueBrushContours(source, fold, expansion);
+      fold.travel = fold.distance;
+      assert.ok(contourDistance([before[1]], trueBrushContours(source, fold, expansion)) < 0.01, `reflected contact at ${heading}, glow ${expansion} must be continuous`);
+      const remaining = before[0], origin = remaining[0];
+      const area = origin ? Math.abs(remaining.reduce((sum, p, i) => { const q = remaining[(i + 1) % remaining.length]; return sum + (p.x - origin.x) * (q.y - origin.y) - (p.y - origin.y) * (q.x - origin.x); }, 0)) / 2 : 0;
+      assert.ok(area < 1e-6, "the disappearing contact must have zero painted area at release, including glow");
+    }
+  }
+});
+
+test("changing direction during a fold bounds contact-edge travel and bypasses the pause multiplier", () => {
+  for (const pausedRotationScale of [0, 0.1, 1]) {
+    const target = stroke({ size: 100, pausedRotationScale });
+    turn(target, Math.PI * 5 / 6, 3, 400);
+    turn(target, Math.PI * 11 / 12, 3);
+    turn(target, Math.PI / 2, 30);
+    const geometry = handwritingBrushGeometry(target);
+    const samples = geometry.samples;
+    for (let i = 1; i < samples.length; i++) {
+      const previous = samples[i - 1], sample = samples[i];
+      if (!previous.fold || !sample.fold) continue;
+      const travel = Math.hypot(sample.handleX - previous.handleX, sample.handleY - previous.handleY);
+      assert.ok(contourDistance(trueBrushContours(previous, previous.fold), trueBrushContours(sample, sample.fold)) <= travel * 3 + 1, "fold direction must advance with travel rather than teleporting an entire contact layer");
+    }
+    assert.equal(geometry.state?.trueRotationScale, 1, "a fold releases the pause latch for the rest of this stroke");
+    assert.ok(Math.abs(samples.at(-1)!.angle - Math.PI / 2) < 0.02);
+    turn(target, Math.PI / 2, 3, 400);
+    assert.equal(handwritingBrushGeometry(target).state?.trueRotationScale, 1, "a later pause cannot restore the pre-fold multiplier");
+  }
+});
+
+test("a paused finger na presses slowly then lifts into a narrow accelerated departure", () => {
+  for (const angle of [0, Math.PI / 4]) {
+    const target = stroke();
+    target.points = Array.from({ length: 31 }, (_, i) => [1500 + i * 80, 3500, i * 80]);
+    const [startX, startY, startTime] = target.points.at(-1)!;
+    target.points.push([startX, startY, startTime + 400]);
+    for (let i = 1; i <= 8; i++) target.points.push([Math.round(startX + i * 80 * Math.cos(angle)), Math.round(startY + i * 80 * Math.sin(angle)), startTime + 400 + i * 80]);
+    const pressed = handwritingBrushGeometry(target).samples.at(-1)!;
+    const [x, y, time] = target.points.at(-1)!;
+    for (let i = 1; i <= 16; i++) target.points.push([Math.round(x + i * 160 * Math.cos(angle)), Math.round(y + i * 160 * Math.sin(angle)), time + i * 8]);
+    const lifted = handwritingBrushGeometry(target).samples.at(-1)!;
+    assert.ok(pressed.contact > 0.9, "slow departure keeps the shoulder in full contact");
+    assert.ok(lifted.contact < 0.08, "accelerated departure progressively lifts the simulated bristles");
+    assert.ok(lifted.width < pressed.width * 0.2, "a lifted na must narrow beyond the always-contacting speed floor");
+  }
+  const corner = stroke();
+  turn(corner, Math.PI / 2, 16, 400);
+  assert.ok(handwritingBrushGeometry(corner).samples.at(-1)!.contact > 0.9, "a perpendicular shoulder turn must retain pressing contact");
+});
+
+test("zero rotation lag cannot snap the released nib onto a new direction", () => {
+  const target = stroke({ rotationLag: 0, size: 100 });
+  turn(target, Math.PI * 5 / 6, 3, 400);
+  turn(target, Math.PI / 2, 30);
+  const samples = handwritingBrushGeometry(target).samples;
+  const release = samples.findIndex((sample, index) => index > 0 && samples[index - 1].fold && !sample.fold);
+  assert.ok(release > 0);
+  for (let i = release + 1; i < samples.length; i++) {
+    const previous = samples[i - 1], sample = samples[i];
+    const distance = Math.hypot(sample.handleX - previous.handleX, sample.handleY - previous.handleY);
+    assert.ok(contourDistance(trueBrushContours(previous), trueBrushContours(sample)) <= distance * 4 + 1, "release and subsequent turning must respect contact travel even at zero angular lag");
+  }
+});
+
+test("a pause removes incoming speed from finger lift inference without disturbing stationary ink", () => {
+  const target = stroke();
+  const [x, y, time] = target.points.at(-1)!;
+  const before = structuredClone(handwritingBrushGeometry(target).samples);
+  target.points.push([x, y, time + 400]);
+  assert.deepEqual(handwritingBrushGeometry(target).samples, before);
+  for (let i = 1; i <= 6; i++) {
+    target.points.push([x + i * 20, y, time + 400 + i * 40]);
+    assert.ok(handwritingBrushGeometry(target).samples.at(-1)!.contact > 0.9, "the previous fast approach must not lift a slowly resumed press");
+  }
+  const insensitive = stroke({ sensitivity: 0 });
+  turn(insensitive, 0, 20, 400);
+  assert.ok(handwritingBrushGeometry(insensitive).samples.at(-1)!.contact > 0.9, "zero speed sensitivity disables inferred lift");
+});
 
 test("down then right does not fold when a short upward jitter occurs at the corner", () => {
   for (const lag of [0, 35, 100]) {
@@ -66,7 +182,7 @@ test("an active fold follows a sustained change of outgoing direction and releas
   const geometry = handwritingBrushGeometry(target);
   const latestFold = geometry.samples.filter((sample) => sample.fold).at(-1)!;
   assert.ok(latestFold?.fold);
-  assert.ok(Math.abs(latestFold.fold.heading - Math.PI * 11 / 12) < 0.08, "the crease normal follows the current outgoing path rather than the first reversal event");
+  assert.ok(latestFold.fold.heading > Math.PI * 5 / 6 && latestFold.fold.heading <= Math.PI * 11 / 12 + 0.01, "the fold continuously turns toward the current outgoing path rather than jumping to it");
   turn(target, Math.PI * 11 / 12, 20);
   const samples = handwritingBrushGeometry(target).samples;
   const release = samples.findIndex((sample, index) => index > 0 && samples[index - 1].fold && !sample.fold);
@@ -88,7 +204,7 @@ test("true-v1 preserves the pointer-down contact centre and has a slender, longe
   assert.ok(handwritingBrushGeometry(corner).samples.every((sample) => sample.bend === undefined));
 });
 
-test("a configurable pause latches response until lift and always targets the newest direction", () => {
+test("before folding, a configurable pause latches response until lift and targets the newest direction", () => {
   const slowed = stroke({ pauseThresholdMs: 200, pausedRotationScale: 0.1 });
   const normal = stroke({ pauseThresholdMs: 2000 });
   turn(slowed, Math.PI / 2, 4, 300);
@@ -136,7 +252,7 @@ test("135 degrees does not fold but a sudden greater turn does, in both directio
   assert.ok(handwritingBrushGeometry(wrapped).samples.every((sample) => !sample.fold));
 });
 
-test("fold keeps the physical cusp pinned, crease perpendicular to new travel, and stops at rest", () => {
+test("fold keeps the physical cusp pinned, bends onto new travel, and stops at rest", () => {
   const target = stroke();
   turn(target, Math.PI * 5 / 6, 4, 400);
   const geometry = handwritingBrushGeometry(target);
@@ -147,7 +263,7 @@ test("fold keeps the physical cusp pinned, crease perpendicular to new travel, a
     const fold = sample.fold!;
     assert.deepEqual(fold.pin, first.pin);
     assert.equal(sample.angle, first.source.angle, "body does not rigidly rotate during folding");
-    const normal = { x: Math.cos(fold.heading), y: Math.sin(fold.heading) };
+    const normal = { x: Math.cos(trueBrushFoldNormal(fold)), y: Math.sin(trueBrushFoldNormal(fold)) };
     const creaseTangent = { x: -normal.y, y: normal.x };
     assert.ok(Math.abs(normal.x * creaseTangent.x + normal.y * creaseTangent.y) < 1e-12);
     const onCrease = { x: fold.pin.x + normal.x * trueBrushCrease(fold) + creaseTangent.x * 100, y: fold.pin.y + normal.y * trueBrushCrease(fold) + creaseTangent.y * 100 };
@@ -162,7 +278,7 @@ test("fold keeps the physical cusp pinned, crease perpendicular to new travel, a
   turn(target, Math.PI * 5 / 6, 20);
   const finished = handwritingBrushGeometry(target);
   assert.ok(!finished.samples.at(-1)!.fold);
-  assert.equal(finished.state?.trueRotationScale, 0.1, "fold release does not clear the pause latch");
+  assert.equal(finished.state?.trueRotationScale, 1, "fold release clears the pause latch");
 });
 
 test("complete paper reflection preserves shape area and releases with the same footprint", () => {
@@ -172,7 +288,7 @@ test("complete paper reflection preserves shape area and releases with the same 
   const centre = reflectFoldPoint(fold, source);
   for (const expansion of [0, 180]) {
     const unfolded = trueBrushContours(source, fold, expansion)[1];
-    const released = trueBrushContours({ ...source, ...centre, angle: 2 * fold.heading + Math.PI - source.angle }, undefined, expansion)[0];
+    const released = trueBrushContours({ ...source, ...centre, angle: fold.heading }, undefined, expansion)[0];
     for (const point of unfolded) assert.ok(released.some((other) => Math.hypot(point.x - other.x, point.y - other.y) < 1e-8), "ink and glow must not jump at release");
     const area = (points: typeof unfolded) => Math.abs(points.reduce((sum, p, i) => { const q = points[(i + 1) % points.length]; return sum + p.x * q.y - p.y * q.x; }, 0) / 2);
     assert.ok(Math.abs(area(unfolded) - area(trueBrushContours(source, undefined, expansion)[0])) < 1e-6);

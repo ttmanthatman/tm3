@@ -252,7 +252,9 @@ function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: read
     const sample = samples[index];
     const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y);
     const stampSpacing = Math.max(6, Math.min(previous.width, sample.width) * 0.42);
-    const angleDelta = sample.fold || previous.fold ? 0 : Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
+    const angleDelta = sample.fold && previous.fold
+      ? Math.atan2(Math.sin(sample.fold.heading - previous.fold.heading), Math.cos(sample.fold.heading - previous.fold.heading))
+      : sample.fold || previous.fold ? 0 : Math.atan2(Math.sin(sample.angle - previous.angle), Math.cos(sample.angle - previous.angle));
     const foldTravel = sample.fold ? Math.abs(sample.fold.travel - (previous.fold?.travel ?? 0)) * 2 : 0;
     const stampCount = Math.max(1, Math.ceil(Math.max(distance, foldTravel) / stampSpacing), Math.ceil(Math.abs(angleDelta) / MAX_BRUSH_STAMP_ANGLE));
     let previousStamp = previous;
