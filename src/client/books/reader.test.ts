@@ -12,6 +12,7 @@ import {
   globalFractionFromSectionOffset,
   isBookTouchDrag,
   nudgeFromSectionBoundaries,
+  paginatedBookFraction,
   readerLayoutMetrics,
   readerStyleFromStored,
   resolveBookLink,
@@ -171,4 +172,14 @@ test("continuous invitations restore the recorded viewport center instead of dri
     assert.equal(globalFractionFromSectionOffset([0, 1], 0, top + viewport / 2 - 1000, 2400), .4);
   }
   assert.equal(continuousScrollTopForFraction(0, 2400, 0, 600), 0);
+});
+
+test("paginated positions round trip through Foliate's first-to-last page anchor", () => {
+  for (const textPages of [1, 2, 3, 12]) {
+    for (let page = 1; page <= textPages; page++) {
+      const fraction = paginatedBookFraction([0, 1], 0, page, textPages + 2);
+      assert.equal(Math.round(fraction * (textPages - 1)) + 1, page);
+    }
+  }
+  assert.ok(Math.abs(paginatedBookFraction([0, .3, 1], 1, 2, 5) - .65) < 1e-12);
 });

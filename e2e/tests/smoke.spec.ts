@@ -1,3 +1,4 @@
+import { ensureBibleOpen } from "../helpers/bible.js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import { APP_VERSION } from "../../src/shared/release.js";
@@ -244,7 +245,7 @@ test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   await expect(page.getByTestId("active-channel-name")).toHaveText(roomName);
   await expect(page.locator(".channel-list").getByText(roomName, { exact: true })).toBeVisible();
   await expect(page.locator(".channel-list").getByText(E2E_CHANNELS.default, { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "打开圣经" })).toBeVisible();
+  await expect(page.locator(".bible-header-trigger")).toBeVisible();
   await page.locator(".composer-main textarea").fill(message);
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator("[data-message-id]").filter({ hasText: message })).toHaveCount(1);
@@ -435,7 +436,7 @@ test("390px 手机视口打开频道列表并切换频道", async ({ page }) => 
 
 test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => {
   await loginAsAdmin(page);
-  await page.getByRole("button", { name: "打开圣经" }).click();
+  await ensureBibleOpen(page);
 
   const homeTabs = page.getByRole("tablist", { name: "书房功能" });
   const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });

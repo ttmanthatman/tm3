@@ -1,3 +1,4 @@
+import { ensureBibleOpen } from "../helpers/bible.js";
 import { expect, test, webkit, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
@@ -22,7 +23,7 @@ async function openPsalm66(page: Page) {
   await page.getByPlaceholder("密码").fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
-  await page.getByRole("button", { name: "打开圣经" }).click();
+  await ensureBibleOpen(page);
   if (await page.getByRole("button", { name: "目录", exact: true }).isVisible()) {
     await page.getByRole("button", { name: "目录", exact: true }).click();
   }

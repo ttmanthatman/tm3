@@ -1173,11 +1173,23 @@ const RELEASE_2_7_0_NOTES = [
   "分屏时经文发送跟随当前聊天室，导航列表以抽屉展开，圣经工具栏和阅读窗格按实际面板宽度适配。"
 ] as const
 
+const RELEASE_2_8_0_NOTES = [
+  "修正 iPad 和 Safari 上固定尺寸按钮的文字与图标居中，统一清除浏览器默认按钮留白。",
+  "全屏阅读圣经、书籍或讲道时暂停隐藏聊天室的消息渲染、滚动计算、特效与手写动画；返回时恢复聊天位置，继续接收新消息。",
+  "书籍阅读支持选中文字做私人笔记、分享到聊天室和“我的故事”，笔记可跨设备查看、编辑并跳回原文。",
+  "书架与阅读器支持发送共读邀请，打开邀请可直接定位到分享的阅读位置。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.0",
+    date: "2026-10-10",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.8.0",
     date: "2026-10-09",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_8_0_NOTES
   },
   {
     version: "2.7.0",

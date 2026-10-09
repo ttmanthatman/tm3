@@ -1,14 +1,14 @@
 import { onScopeDispose, ref } from "vue";
 import type { BookReadingContext } from "./bookReading";
 
-export function useBookSelection(context: () => BookReadingContext | null) {
+export function useBookSelection(context: (doc: Document) => BookReadingContext | null) {
   const selection = ref<BookReadingContext | null>(null);
   let selectedDocument: Document | null = null;
   let controller = new AbortController();
   function bind(doc: Document) {
     const update = () => {
       const quote = doc.getSelection()?.toString().trim() || "";
-      const source = context();
+      const source = context(doc);
       if (quote && source) { selectedDocument = doc; selection.value = { ...source, quote }; }
       else if (selectedDocument === doc) { selectedDocument = null; selection.value = null; }
     };

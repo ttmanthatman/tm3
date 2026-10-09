@@ -6,7 +6,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
-import type { BookDTO } from "@shared/types";
+import type { BookDTO, BookReaderPresenceDTO } from "@shared/types";
 import { api, getToken } from "../api";
 import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState } from "../books/cache";
 import {
@@ -22,6 +22,7 @@ import {
   globalFraction,
   isBookTouchDrag,
   nudgeFromSectionBoundaries,
+  paginatedBookFraction,
   preloadAdjacentSections,
   readerLayoutMetrics,
   readerStyleFromStored,
@@ -35,18 +36,34 @@ import {
 } from "../books/reader";
 
 import BookReadingActions from "../features/books/BookReadingActions.vue";
+import BookReaderPresence from "../features/books/BookReaderPresence.vue";
 import { useBookSelection } from "../features/books/useBookSelection";
+import { useBookNoteHighlights } from "../features/books/useBookNoteHighlights";
+import { useChatStore } from "../store";
+import NotesTransfer from "../features/notes/NotesTransfer.vue";
 import type { BookLocation, BookReadingContext } from "../features/books/bookReading";
 
-const props = defineProps<{ initialLocation?: BookLocation | null; activeChannelId?: number | null }>();
+const props = defineProps<{ initialLocation?: BookLocation | null; activeChannelId?: number | null; readers?: BookReaderPresenceDTO[] }>();
 const actions = ref<InstanceType<typeof BookReadingActions> | null>(null);
 const invitation = ref<BookLocation | null>(props.initialLocation ?? null);
 const invitationNotice = ref("");
+const store = useChatStore();
+const noteHighlights = useBookNoteHighlights({
+  bookId: () => activeBook.value?.id,
+  accountId: () => store.account?.isGuest ? undefined : store.account?.id,
+  sectionFractions: () => epubBook ? sectionFractions(epubBook.sections) : [0, 1],
+  chapter: (index) => tocSectionLabels.get(index) ?? "",
+  openNote: (note) => actions.value?.openNote(note)
+});
+const noteHighlightsError = noteHighlights.error;
 function currentContext(book = activeBook.value, fraction = sliderValue.value): BookReadingContext | null {
   return book ? { bookId: book.id, title: book.title, chapter: chapterLabel.value.slice(0, 300), fraction, quote: "" } : null;
 }
-const { selection, bind: bindSelection, clear: clearSelection, reset: resetSelection } = useBookSelection(currentContext);
-function inviteBook(book: BookDTO, fraction = 0) {
+const { selection, bind: bindSelection, clear: clearSelection, reset: resetSelection } = useBookSelection((doc) => {
+  const context = currentContext();
+  return context ? noteHighlights.selectionContext(doc, context) : null;
+});
+function inviteBook(book: BookDTO, fraction = book.id === activeBook.value?.id ? sliderValue.value : cachedProgress(book)) {
   const context = currentContext(book, fraction);
   if (context) { if (book.id !== activeBook.value?.id) context.chapter = ""; actions.value?.share(context); }
 }
@@ -298,6 +315,7 @@ function emitClose() {
 }
 
 function closeBookView() {
+  noteHighlights.reset();
   resetSelection();
   closeFootnote();
   if (saveTimer) {
@@ -344,6 +362,7 @@ async function openBook(book: BookDTO) {
     const loader = await createStreamingLoader(bookFileUrl(book.id));
     const bookObject = await createEpubBook(loader);
     epubBook = bookObject;
+    void noteHighlights.reload(book.id);
 
     bookObject.transformTarget?.addEventListener("data", (event) => {
       const detail = (event as CustomEvent<{ data: Promise<unknown> }>).detail;
@@ -476,7 +495,9 @@ function onRelocate(event: CustomEvent<RelocateDetail>) {
   const index = detail.section?.current ?? detail.index ?? 0;
   const { range } = detail;
   const starts = view.getSectionFractions();
-  const global = detail.section?.current != null
+  const global = style.value.flow === "paginated" && view.renderer.page !== undefined && view.renderer.pages !== undefined
+    ? paginatedBookFraction(starts, index, view.renderer.page, view.renderer.pages)
+    : detail.section?.current != null
     ? Math.max(0, Math.min(0.9999, detail.fraction))
     : globalFraction(starts, index, detail.fraction);
   sliderValue.value = global;
@@ -488,6 +509,7 @@ function onRelocate(event: CustomEvent<RelocateDetail>) {
     chapterLabel.value = tocItem?.label ?? "";
   } catch { /* 章节定位失败不阻塞阅读 */ }
   scheduleSave(global);
+  noteHighlights.refresh();
   // 预取相邻章：滚动/翻节进入下一章时内容已在缓存里，避免白屏闪烁
   if (index !== lastPreloadIndex) {
     lastPreloadIndex = index;
@@ -512,6 +534,7 @@ function onContinuousScrollDirection(direction: "down" | "up") {
 }
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
+  noteHighlights.bind(doc, index);
   bindSelection(doc);
   doc.addEventListener("click", (event) => {
     if (consumeSuppressedDocumentClick()) {
@@ -568,6 +591,7 @@ function applyLayout() {
   view.renderer.setAttribute("margin", `${metrics.margin}px`);
   view.renderer.setAttribute("max-inline-size", `${metrics.maxInlineSize}px`);
   view.renderer.setAttribute("gap", `${metrics.gapPct}%`);
+  noteHighlights.refresh();
 }
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
@@ -582,6 +606,7 @@ function applyStyle() {
   continuousReader?.setStyle(style.value);
   view?.renderer.setStyles?.(buildBookCSS(style.value));
   footnoteView?.renderer?.setStyles?.(buildBookCSS(style.value));
+  noteHighlights.refresh();
 }
 
 function setTheme(theme: ReaderStyle["theme"]) {
@@ -809,8 +834,10 @@ function onStageZoneClick(event: MouseEvent) {
 }
 
 function onViewLoad(event: Event) {
-  const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
+  const detail = (event as CustomEvent<{ doc?: Document; index?: number }>).detail;
+  const doc = detail?.doc;
   if (!doc) return;
+  noteHighlights.bind(doc, detail.index ?? 0);
   bindSelection(doc);
   doc.addEventListener("click", (e) => onDocClick(doc, e));
   doc.addEventListener("wheel", onDocWheel, { passive: false });
@@ -868,6 +895,7 @@ defineExpose({ reload: loadShelf });
         <strong class="book-topbar-title">图书室</strong>
         <span class="book-topbar-hint">{{ books.length ? `${books.length} 本` : "" }}</span>
       </header>
+      <NotesTransfer v-if="store.account && !store.account.isGuest" class="book-shelf-transfer" domain="books" :account-id="store.account.id" @imported="noteHighlights.reload()" />
       <div v-if="shelfLoading" class="book-shelf-state"><LoaderCircle class="book-spin" :size="22" /> 正在打开书架…</div>
       <div v-else-if="shelfError" class="book-shelf-state error">
         <p>{{ shelfError }}</p>
@@ -935,6 +963,7 @@ defineExpose({ reload: loadShelf });
       ></button>
 
       <header class="book-bar book-top" :class="{ 'bar-hidden': !chromeVisible }">
+        <div class="book-top-main">
         <button class="book-bar-btn" type="button" @click="backToShelf">‹ 书架</button>
         <div class="book-reader-title">
           <strong>{{ activeBookTitle }}</strong>
@@ -945,6 +974,8 @@ defineExpose({ reload: loadShelf });
           <button class="book-bar-btn" type="button" :aria-label="'目录'" @click="tocOpen = true"><ListTree :size="17" /></button>
           <button class="book-bar-btn" type="button" @click="emitClose"><MessagesSquare :size="17" /> 聊天室</button>
         </div>
+        </div>
+        <BookReaderPresence v-if="activeBook" :book-title="activeBook.title" :readers="readers ?? []" />
       </header>
 
       <footer class="book-bar book-bottom" :class="{ 'bar-hidden': !chromeVisible }">
@@ -1023,8 +1054,9 @@ defineExpose({ reload: loadShelf });
         <p>{{ readerError }}</p>
         <button class="book-btn" type="button" @click="activeBook && openBook(activeBook)">重试</button>
       </div>
+      <p v-if="noteHighlightsError" class="book-note-load-error" role="alert">{{ noteHighlightsError }} <button @click="noteHighlights.reload()">重试读取笔记</button></p>
     </div>
-    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToFraction" />
+    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToFraction" @notes-changed="noteHighlights.reload" />
   </section>
 </template>
 
@@ -1133,14 +1165,16 @@ defineExpose({ reload: loadShelf });
 
 .book-shelf-item { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .book-shelf-item .book-card { width: 100%; }
-.book-shelf-invite { display: inline-flex; justify-content: center; align-items: center; gap: 5px; padding: 6px; min-height: 32px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
+.book-shelf-invite { display: inline-flex; justify-content: center; align-items: center; gap: 5px; margin-top: auto; padding: 6px; min-height: 32px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
+.book-shelf-transfer { padding: 12px max(16px, calc((100vw - 980px) / 2)) 0; }
 .book-invitation-notice { padding: 12px; background: #f7efdf; color: #70583b; }
 /* ---------- 阅读器 ---------- */
 .book-reader { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .book-reader[data-theme="light"] { background: #ffffff; color: #1c1c1e; }
 .book-reader[data-theme="sepia"] { background: #f7f0e0; color: #3f3222; }
 .book-reader[data-theme="dark"] { background: #161617; color: #e5e5ea; }
-.book-stage { position: absolute; inset: 0; }
+.book-stage { position: absolute; inset: var(--safe-top, 0px) var(--safe-right, 0px) var(--safe-bottom, 0px) var(--safe-left, 0px); }
+.book-note-load-error { position: absolute; z-index: 40; top: calc(64px + var(--safe-top, 0px)); left: 12px; right: 12px; padding: 8px; border-radius: 6px; background: #fff0ed; color: #9b2c2c; }
 .book-stage :deep(foliate-view) { width: 100%; height: 100%; display: block; }
 .book-stage :deep(.book-continuous-scroll) { position: absolute; inset: 0; overflow-y: auto; overscroll-behavior: contain; }
 .book-stage :deep(.book-continuous-section) { width: 100%; min-height: 1px; }
@@ -1150,7 +1184,7 @@ defineExpose({ reload: loadShelf });
   top: 0;
   bottom: 0;
   z-index: 10;
-  width: min(22vw, 220px);
+  width: 16px;
   border: 0;
   padding: 0;
   background: transparent;
@@ -1171,7 +1205,8 @@ defineExpose({ reload: loadShelf });
   backdrop-filter: blur(14px);
   transition: transform .2s ease, opacity .2s ease;
 }
-.book-top { top: 0; padding: calc(8px + var(--safe-top, 0px)) 12px 8px; border-bottom: 1px solid rgba(90, 72, 50, .14); }
+.book-top { top: 0; flex-direction: column; align-items: stretch; padding: calc(8px + var(--safe-top, 0px)) 12px 8px; border-bottom: 1px solid rgba(90, 72, 50, .14); }
+.book-top-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .book-bottom { bottom: 0; padding: 8px 12px calc(8px + var(--safe-bottom, 0px)); border-top: 1px solid rgba(90, 72, 50, .14); }
 .book-reader[data-theme="dark"] .book-bar { background: rgba(38, 33, 28, .94); }
 .book-reader[data-theme="dark"] .book-top { border-bottom-color: rgba(232, 221, 201, .16); }

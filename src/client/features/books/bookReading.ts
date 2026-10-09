@@ -1,6 +1,15 @@
 export type BookLocation = { bookId: number; fraction: number };
 export type BookReadingContext = BookLocation & { title: string; chapter: string; quote: string };
 
+export function bookChapterLabel(chapter: string): string {
+  const value = chapter.trim();
+  return /^\d+$/.test(value) ? `第${value}章` : value;
+}
+
+export function bookPositionLabel(chapter: string, fraction: number): string {
+  return [bookChapterLabel(chapter), `${Math.round(fraction * 100)}%`].filter(Boolean).join(" · ");
+}
+
 export function bookReadingUrl(location: BookLocation, origin: string): string {
   const url = new URL("/", origin);
   url.searchParams.set("bookId", String(location.bookId));
@@ -27,8 +36,7 @@ function html(value: string) {
 
 export function bookShareContent(context: BookReadingContext, origin: string): string {
   const heading = context.quote ? `摘录自《${context.title}》` : `邀请你一起读《${context.title}》`;
-  const location = context.chapter ? `${context.chapter} · ` : "";
-  return `${html(heading)}<br>${html(location)}${Math.round(context.fraction * 100)}%${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl(context, origin))}">${context.quote ? "打开书中位置" : "从这里一起读"}</a>`;
+  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl(context, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>`;
 }
 
 export function wrapBookCardText(text: string, measure: (value: string) => number, width: number): string[] {

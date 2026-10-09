@@ -3,6 +3,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { BibleNoteDTO, BibleNoteSelection } from "@shared/bibleNotes";
 import { noteApi } from "./noteApi";
 import { openBibleNote } from "./noteViewerState";
+import NotesTransfer from "../../notes/NotesTransfer.vue";
 const props = defineProps<{ accountId: number; filter?: BibleNoteSelection }>();
 const scope = ref<"mine" | "public">(props.filter ? "public" : "mine");
 const notes = ref<BibleNoteDTO[]>([]);
@@ -32,7 +33,10 @@ onBeforeUnmount(() => { sequence++; window.removeEventListener("bible-notes-chan
 </script>
 <template>
   <section class="note-library" aria-label="经文笔记列表">
-    <nav aria-label="笔记分类"><button :aria-pressed="scope === 'mine'" @click="scope = 'mine'">我的笔记</button><button :aria-pressed="scope === 'public'" @click="scope = 'public'">公开笔记</button></nav>
+    <div class="library-toolbar">
+      <nav aria-label="笔记分类"><button :aria-pressed="scope === 'mine'" @click="scope = 'mine'">我的笔记</button><button :aria-pressed="scope === 'public'" @click="scope = 'public'">公开笔记</button></nav>
+      <NotesTransfer v-if="scope === 'mine'" domain="bible" :account-id="accountId" />
+    </div>
     <p v-if="error" role="alert">{{ error }} <button @click="load()">重试</button></p>
     <div class="notes"><button v-for="note in notes" :key="note.id" class="note-preview" :aria-label="`查看笔记：${note.source.reference}`" @click="openBibleNote(note.id)">
       <strong>{{ note.source.reference }}</strong><p>{{ note.text }}</p><small>{{ note.author }} · {{ new Date(note.updatedAt).toLocaleDateString('zh-CN') }}<span v-if="scope === 'mine'"> · {{ note.publishedAt ? '已公开' : '仅自己可见' }}</span></small>
@@ -44,7 +48,8 @@ onBeforeUnmount(() => { sequence++; window.removeEventListener("bible-notes-chan
 </template>
 <style scoped>
 .note-library { min-height: 0; overflow: auto; max-width: 1080px; margin: auto; padding: 20px; color: #69553c; }
-nav { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+.library-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+nav { display: flex; flex-wrap: wrap; gap: 10px; }
 button { font: inherit; color: inherit; cursor: pointer; }
 nav button, .note-library > button, [role=alert] button { min-height: 42px; padding: 9px 16px; border: 1px solid #d9cdb8; background: #fffaf1; border-radius: 6px; }
 nav button[aria-pressed=true] { background: #647d61; border-color: #647d61; color: white; }

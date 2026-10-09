@@ -14,6 +14,7 @@ import {
   type LinkifyMessageHtml
 } from "./messageRendering";
 import { createLinkPreviewQueue, type LinkPreviewState } from "./linkPreviewQueue";
+import { parseBookReadingUrl } from "../books/bookReading";
 
 export type { LinkPreviewState } from "./linkPreviewQueue";
 export type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string; createdAt: string };
@@ -54,7 +55,7 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
 
   const messagePreviewUrl = memoizeMessage((message: MessageDTO) => {
     if (message.type !== "text" && message.type !== "prayer") return "";
-    return extractMessageUrls(message.content)[0] || "";
+    return extractMessageUrls(message.content).find((url) => !parseBookReadingUrl(url, window.location.origin)) || "";
   });
 
   const previewUrlFor = options.previewUrlFor || messagePreviewUrl;

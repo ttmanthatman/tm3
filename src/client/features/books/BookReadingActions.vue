@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import "../stories/stories.css";
-import { computed, defineAsyncComponent, ref, watch } from "vue";
+import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import { BookOpen, NotebookPen, Send, Sparkles, X } from "lucide-vue-next";
 import { BOOK_NOTE_TEXT_MAX, BOOK_QUOTE_MAX, type BookNoteDTO } from "@shared/bookNotes";
 import AppModal from "../../components/ui/AppModal.vue";
@@ -9,9 +9,10 @@ import { useChatStore } from "../../store";
 import { useMessageSender } from "../../messageSending";
 import { bookNotesClient } from "./bookNotesClient";
 import { bookExcerptImage, bookShareContent, type BookReadingContext } from "./bookReading";
+import NotesTransfer from "../notes/NotesTransfer.vue";
 
 const props = defineProps<{ selection: BookReadingContext | null; activeChannelId: number | null }>();
-const emit = defineEmits<{ clear: []; jump: [fraction: number] }>();
+const emit = defineEmits<{ clear: []; jump: [fraction: number]; 'notes-changed': [bookId: number] }>();
 const store = useChatStore();
 const available = computed(() => !!store.account && !store.account.isGuest);
 const StoryComposer = defineAsyncComponent(() => import("../stories/StoryComposer.vue"));
@@ -34,6 +35,7 @@ const libraryContext = ref<BookReadingContext | null>(null);
 const notes = ref<BookNoteDTO[]>([]);
 const notesBusy = ref(false);
 const notesError = ref("");
+let notesSequence = 0;
 const deleteNote = ref<BookNoteDTO | null>(null);
 const storyImage = ref<File | null>(null);
 const storyContext = ref<BookReadingContext | null>(null);
@@ -52,8 +54,8 @@ async function sendShare() {
   if (!channels.value.some((channel) => channel.id === channelId)) { shareError.value = "当前聊天室不可发送，请重新选择"; return; }
   const result = await send({ channelId, type: "text", content: bookShareContent(context, window.location.origin), replyToId: null, clientRequestId: shareRequestId });
   if (!result.ok) { shareError.value = result.message; return; }
-  notice.value = `已发送到 ${channels.value.find((channel) => channel.id === channelId)?.name || "聊天室"}`;
   shareContext.value = null;
+  emit('clear');
 }
 function edit(context: BookReadingContext, existing?: BookNoteDTO) {
   editorContext.value = { ...context }; noteText.value = existing?.text || "";
@@ -70,19 +72,30 @@ async function saveNote() {
   noteBusy.value = true; noteError.value = "";
   try {
     await bookNotesClient.save(context.bookId, noteId.value, { quote: context.quote, text: noteText.value, chapter: context.chapter, fraction: context.fraction });
-    editorContext.value = null; notice.value = "笔记已保存到我的账号";
+    editorContext.value = null;
+    emit('clear'); emit('notes-changed', context.bookId);
     if (libraryContext.value) await loadNotes(libraryContext.value);
   } catch (error) { noteError.value = error instanceof Error ? error.message : "笔记保存失败，内容已保留"; }
   finally { noteBusy.value = false; }
 }
 async function loadNotes(context: BookReadingContext) {
+  if (!available.value) return;
+  const request = ++notesSequence, accountId = store.account?.id;
+  const current = () => request === notesSequence && libraryContext.value?.bookId === context.bookId && store.account?.id === accountId;
   libraryContext.value = context; notesBusy.value = true; notesError.value = ""; notes.value = [];
   try {
     const result = await bookNotesClient.list(context.bookId);
-    if (libraryContext.value?.bookId === context.bookId) notes.value = result.notes;
-  } catch (error) { notesError.value = error instanceof Error ? error.message : "笔记读取失败"; }
-  finally { notesBusy.value = false; }
+    if (current()) notes.value = result.notes;
+  } catch (error) { if (current()) notesError.value = error instanceof Error ? error.message : "笔记读取失败"; }
+  finally { if (current()) notesBusy.value = false; }
 }
+function closeLibrary() {
+  notesSequence++;
+  libraryContext.value = null;
+  notes.value = []; notesError.value = ""; notesBusy.value = false;
+}
+watch(() => store.account?.id, closeLibrary);
+onBeforeUnmount(() => { notesSequence++; });
 function noteContext(note: BookNoteDTO): BookReadingContext {
   return { bookId: note.bookId, title: note.bookTitle, chapter: note.chapter, fraction: note.fraction, quote: note.quote };
 }
@@ -90,9 +103,15 @@ async function removeNote() {
   const note = deleteNote.value;
   if (!note || noteBusy.value) return;
   noteBusy.value = true;
-  try { await bookNotesClient.remove(note.bookId, note.id); notes.value = notes.value.filter((item) => item.id !== note.id); deleteNote.value = null; }
+  try { await bookNotesClient.remove(note.bookId, note.id); notes.value = notes.value.filter((item) => item.id !== note.id); deleteNote.value = null; emit('notes-changed', note.bookId); }
   catch (error) { notesError.value = error instanceof Error ? error.message : "笔记删除失败"; deleteNote.value = null; }
   finally { noteBusy.value = false; }
+}
+function notesImported() {
+  if (libraryContext.value) {
+    emit('notes-changed', libraryContext.value.bookId);
+    void loadNotes(libraryContext.value);
+  }
 }
 async function shareStory(context: BookReadingContext) {
   if (storyBusy.value) return;
@@ -101,7 +120,7 @@ async function shareStory(context: BookReadingContext) {
   catch (error) { notice.value = error instanceof Error ? error.message : "摘录卡片生成失败"; }
   finally { storyBusy.value = false; }
 }
-defineExpose({ share, showNotes: loadNotes });
+defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edit(noteContext(note), note) });
 </script>
 
 <template>
@@ -113,14 +132,15 @@ defineExpose({ share, showNotes: loadNotes });
     <button type="button" aria-label="取消选择" @click="emit('clear')"><X :size="16" /></button>
   </aside>
   <div v-if="notice" class="book-action-notice" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''"><X :size="14" /></button></div>
-  <AppModal :open="!!libraryContext" title="我的阅读笔记" content-class="book-action-dialog" @close="libraryContext = null">
+  <AppModal :open="!!libraryContext" title="我的阅读笔记" content-class="book-action-dialog" @close="closeLibrary">
+    <NotesTransfer v-if="available && store.account" domain="books" :account-id="store.account.id" @imported="notesImported" />
     <p v-if="notesBusy" role="status">正在读取笔记…</p>
     <p v-else-if="notesError" role="alert">{{ notesError }} <button v-if="libraryContext" @click="loadNotes(libraryContext)">重试</button></p>
     <p v-else-if="!notes.length">还没有笔记。长按或拖动选择正文，再点“做笔记”。</p>
     <article v-for="note in notes" :key="note.id" class="book-note-entry">
       <small>{{ note.chapter }} · {{ Math.round(note.fraction * 100) }}%</small><blockquote>{{ note.quote }}</blockquote><p class="book-note-text">{{ note.text }}</p>
       <footer>
-        <button @click="emit('jump', note.fraction); libraryContext = null"><BookOpen :size="15" />回到原文</button>
+        <button @click="emit('jump', note.fraction); closeLibrary()"><BookOpen :size="15" />回到原文</button>
         <button @click="edit(noteContext(note), note)">编辑</button>
         <button @click="share(noteContext(note))">聊天室</button>
         <button :disabled="storyBusy" @click="shareStory(noteContext(note))">我的故事</button>
@@ -156,10 +176,10 @@ defineExpose({ share, showNotes: loadNotes });
 </template>
 
 <style scoped>
-.book-selection-actions { position: absolute; z-index: 35; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; justify-content: center; align-items: center; gap: 6px; padding: 8px; background: #fffaf0; color: #604b32; border: 1px solid #d8c6a9; border-radius: 12px; box-shadow: 0 5px 24px #0002; }
+.book-selection-actions { position: absolute; z-index: 35; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; justify-content: center; align-items: center; gap: 6px; padding: 8px; background: #493b2e; color: #fff7e8; border: 1px solid #7b6248; border-radius: 12px; box-shadow: 0 5px 24px #0005; }
 .book-selection-actions span { grid-column: 1 / -1; font-size: 12px; }
 .book-selection-actions button, :deep(.book-action-dialog) button, .book-action-notice button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; border: 1px solid #d8c6a9; border-radius: 7px; padding: 6px 10px; color: #604b32; background: #f7efdf; font: inherit; cursor: pointer; }
-.book-selection-actions button { font-size: 14px; padding: 6px; }
+.book-selection-actions button { font-size: 14px; padding: 6px; background: #6b543e; border-color: #a68b6a; color: #fff7e8; }
 button:disabled { opacity: .5; cursor: default; }
 :deep(.book-action-dialog .modal-head) { position: sticky; top: -20px; z-index: 1; background: #fff; padding-bottom: 12px; }
 :deep(.book-action-dialog) { width: min(580px, 100%); max-height: 88dvh; overflow-y: auto; padding: 20px; color: #493b2c; }

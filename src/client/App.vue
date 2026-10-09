@@ -4830,6 +4830,7 @@ const chatHeaderBindings = computed(() => ({
   currentChannel: currentChannel.value,
   chatSubtitleText: chatSubtitleText.value,
   showingFavoriteSurface: showingFavoriteSurface.value,
+  bibleOpen: bibleOpen.value,
   musicPlaying: musicPlaying.value,
   musicPlayer,
   favoriteMusicTracks: favoriteMusicTracks.value,
@@ -4858,7 +4859,7 @@ const chatHeaderBindings = computed(() => ({
   handleChatHeaderInteraction,
   formatUnreadCount,
   openNotificationPrompt,
-  openBibleWorkspace,
+  openBibleWorkspace: () => bibleOpen.value ? closeBibleWorkspace() : openBibleWorkspace(),
   openBookWorkspace,
   openMusicPlayer,
   toggleCurrentMusicFavorite,
@@ -5350,7 +5351,7 @@ const messageRowBindings = {
 
     <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" @resize="resizeBible" />
 
-    <BookWorkspace v-if="bookWorkspaceOpen" :initial-location="bookLocation" :active-channel-id="bibleTargetChannelId" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
+    <BookWorkspace v-if="bookWorkspaceOpen" :initial-location="bookLocation" :active-channel-id="bibleTargetChannelId" :readers="bookReaders" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
 
     <SermonWorkspace
       v-if="sermonWorkspaceMounted"

@@ -1,5 +1,7 @@
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
 import JSZip from "jszip";
+import { randomUUID } from "node:crypto";
+import { io } from "socket.io-client";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
 
 const CONTAINER = `<?xml version="1.0"?>
@@ -15,7 +17,7 @@ const OPF = `<?xml version="1.0"?>
     <dc:creator>测试作者</dc:creator>
     <dc:language>zh</dc:language>
   </metadata>
-  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <manifest><item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/><item id="cover" href="cover.png" media-type="image/png" properties="cover-image"/></manifest>
   <spine><itemref idref="ch1"/></spine>
 </package>`;
 
@@ -31,11 +33,12 @@ const CHAPTER = `<?xml version="1.0" encoding="utf-8"?>
   </body>
 </html>`;
 
-async function buildEpub() {
+async function buildEpub(title = "移动阅读回归") {
   const zip = new JSZip();
   zip.file("mimetype", "application/epub+zip");
   zip.file("META-INF/container.xml", CONTAINER);
-  zip.file("OEBPS/content.opf", OPF);
+  zip.file("OEBPS/content.opf", OPF.replace("<dc:title>移动阅读回归</dc:title>", `<dc:title>${title}</dc:title>`));
+  zip.file("OEBPS/cover.png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN1cAAAAASUVORK5CYII=", "base64"));
   zip.file("OEBPS/ch1.xhtml", CHAPTER);
   return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
 }
@@ -55,6 +58,61 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
+
+test("书架共读按钮对齐、邀请包含已有进度、读者名称和头像显示在阅读栏下", async ({ page, request }) => {
+  const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
+  const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
+  const books: Array<{ id: number; title: string }> = [];
+  const username = `book-reader-${randomUUID().slice(0, 8)}`;
+  let readerId = 0;
+  const socket = io("http://127.0.0.1:3003", { autoConnect: false });
+  try {
+    for (const title of ["短书名", "用于验证多行图书名称以及邀请按钮行内对齐的较长书名"]) {
+      const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "shelf.epub", mimeType: "application/epub+zip", buffer: await buildEpub(title) } } });
+      expect(upload.ok()).toBe(true); books.push((await upload.json()).book);
+    }
+    await request.put(`/api/books/${books[0].id}/progress`, { headers, data: { fraction: .61 } });
+    const created = await request.post("/api/admin/accounts", { headers, data: { username, password: "BookReaderTest123!", displayName: "同读的朋友" } });
+    expect(created.ok()).toBe(true);
+    const readerAuth = await request.post("/api/auth/login", { data: { username, password: "BookReaderTest123!" } });
+    const reader = await readerAuth.json() as { token: string; account: { id: number } };
+    readerId = reader.account.id;
+    socket.auth = { token: reader.token };
+    await new Promise<void>((resolve, reject) => { socket.once("session:ready", resolve); socket.once("connect_error", reject); socket.connect(); });
+    socket.emit("book:reading", { active: true, bookTitle: books[0].title });
+    await blockPublicNetwork(page);
+    await login(page);
+    headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
+    await page.getByRole("button", { name: "打开图书室" }).click();
+    await expect(page.locator(".book-shelf-invite")).toHaveCount(2);
+    for (const width of [360, 390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      const buttons = await page.locator(".book-shelf-invite").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().top));
+      expect(Math.abs(buttons[0] - buttons[1])).toBeLessThan(1);
+    }
+    await page.getByRole("button", { name: "邀请共读《短书名》" }).click();
+    const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
+    await expect(invitation).toContainText("61%");
+    await invitation.getByRole("button", { name: "关闭" }).click();
+    await page.getByRole("button", { name: "下载《短书名》" }).click();
+    await page.getByRole("button", { name: "阅读《短书名》" }).click();
+    const frame = await readingFrame(page);
+    await expect(frame.locator("#tap-target")).toBeVisible();
+    await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);
+    const continuous = page.locator("[data-continuous-reader]");
+    await expect.poll(() => continuous.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
+    // Restoring 61% opens mid-chapter; scrolling back to the first paragraph shows the reading bar.
+    await frame.locator("#tap-target").scrollIntoViewIfNeeded();
+    await expect(page.locator(".book-top")).not.toHaveClass(/bar-hidden/);
+    await expect(page.getByLabel("正在共读")).toContainText("同读的朋友");
+    await expect(page.locator(".book-reader-avatar")).toBeVisible();
+  } finally {
+    socket.disconnect();
+    for (const book of books) await request.delete(`/api/admin/books/${book.id}`, { headers });
+    if (readerId) await request.delete(`/api/admin/accounts/${readerId}`, { headers });
+  }
+});
+
 
 test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async ({ browser, request }) => {
   test.setTimeout(60_000);
@@ -191,6 +249,7 @@ async function readingFrame(page: Page): Promise<Frame> {
   return match!;
 }
 
+
 for (const flow of ["scrolled", "paginated"] as const) {
   test(`阅读摘录笔记、聊天室、故事与共读邀请（${flow}）`, async ({ browser, request }) => {
     test.setTimeout(90_000);
@@ -219,6 +278,8 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.locator(".book-topbar").getByRole("button", { name: "关闭" }).click();
       const link = page.locator(`.message-row a[href*="bookId=${book.id}&"]`).last();
       await expect(link).toBeVisible();
+      await expect(link.locator('img[alt="《移动阅读回归》封面"]')).toBeVisible();
+      await expect(link).toContainText("邀请人已读");
       await link.click();
       await expect(page.locator(".book-invitation-notice")).toContainText("共读邀请");
       await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "下载《移动阅读回归》" }).click();
@@ -226,6 +287,23 @@ for (const flow of ["scrolled", "paginated"] as const) {
       let frame = await readingFrame(page);
       await expect(frame.locator("#tap-target")).toBeVisible();
       await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);
+      if (flow === "paginated") {
+        await page.evaluate(() => {
+          document.documentElement.style.setProperty("--safe-top", "44px");
+          document.documentElement.style.setProperty("--safe-bottom", "34px");
+        });
+        for (const width of [360, 390, 414, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          const stage = await page.locator(".book-stage").boundingBox();
+          expect(stage!.y).toBe(44);
+          expect(stage!.y + stage!.height).toBe(866);
+          await expect.poll(async () => (await frame.locator("#tap-target").boundingBox())?.y ?? 0).toBeGreaterThanOrEqual(44);
+        }
+        await page.evaluate(() => {
+          document.documentElement.style.removeProperty("--safe-top");
+          document.documentElement.style.removeProperty("--safe-bottom");
+        });
+      }
       const selectText = () => frame.locator("#tap-target").evaluate((element) => {
         const doc = element.ownerDocument;
         const range = doc.createRange(); range.selectNodeContents(element);
@@ -235,6 +313,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await selectText();
       const toolbar = page.getByRole("complementary", { name: "摘录操作" });
       await expect(toolbar).toBeVisible();
+      expect(await toolbar.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(73, 59, 46)");
       if (flow === "scrolled") {
         for (const width of [360, 390]) {
           await page.setViewportSize({ width, height: 844 });
@@ -251,18 +330,26 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await editor.getByLabel("笔记内容").fill(`摘录笔记 ${flow}`);
       await editor.getByRole("button", { name: "保存笔记" }).click();
       await expect(editor).toHaveCount(0);
+      await expect(page.getByText("笔记已保存到我的账号", { exact: true })).toHaveCount(0);
       const response = await request.get(`/api/books/${book.id}/notes`, { headers });
       expect(response.ok()).toBe(true);
       const { notes } = await response.json() as { notes: Array<{ id: string; text: string; quote: string }> };
       expect(notes).toHaveLength(1); noteId = notes[0].id;
       expect(notes[0].text).toBe(`摘录笔记 ${flow}`);
       expect(notes[0].quote).toBe("这是用于验证手机点按控制栏的正文。");
+      if (flow === "paginated") await page.setViewportSize({ width: 390, height: 844 });
+      await expect(frame.locator(`[data-book-note-id="${noteId}"]`)).toBeVisible();
+      await frame.locator(`[data-book-note-id="${noteId}"]`).click();
+      await expect(editor.getByLabel("笔记内容")).toHaveValue(`摘录笔记 ${flow}`);
+      await editor.getByRole("button", { name: "关闭" }).click();
+      if (flow === "paginated") await page.setViewportSize({ width: 1280, height: 900 });
       await selectText();
       await toolbar.getByRole("button", { name: "聊天室", exact: true }).click();
       const share = page.getByRole("dialog", { name: "分享阅读摘录" });
       await expect(share).toContainText(notes[0].quote);
       await share.getByRole("button", { name: "发送到聊天室", exact: true }).click();
       await expect(share).toHaveCount(0);
+      await expect(page.getByRole("status").filter({ hasText: "已发送到" })).toHaveCount(0);
       await selectText();
       await toolbar.getByRole("button", { name: "我的故事" }).click();
       const story = page.getByRole("dialog", { name: "留下一段故事" });
@@ -298,6 +385,22 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await editor.getByLabel("笔记内容").fill(`已修改 ${flow}`);
       await editor.getByRole("button", { name: "保存笔记" }).click();
       await expect(library).toContainText(`已修改 ${flow}`);
+      const downloadEvent = page.waitForEvent("download");
+      await library.getByRole("button", { name: "导出笔记" }).click();
+      const download = await downloadEvent;
+      const backupPath = await download.path();
+      expect(backupPath).toBeTruthy();
+      await request.delete(`/api/books/${book.id}/notes/${noteId}`, { headers });
+      await library.locator('input[type="file"]').setInputFiles(backupPath!);
+      const importDialog = page.getByRole("dialog", { name: "导入电子书笔记" });
+      await importDialog.getByRole("button", { name: "开始导入" }).click();
+      await expect(importDialog).toContainText("本次导入 1 条");
+      await importDialog.getByRole("button", { name: "完成", exact: true }).click();
+      const restored = await (await request.get(`/api/books/${book.id}/notes`, { headers })).json() as { notes: Array<{ id: string; text: string; quote: string }> };
+      expect(restored.notes).toHaveLength(1);
+      noteId = restored.notes[0].id;
+      expect(restored.notes[0].text).toBe(`已修改 ${flow}`);
+      await expect(frame.locator(`[data-book-note-id="${noteId}"]`)).toBeVisible();
       await library.getByRole("button", { name: "回到原文" }).click();
       await expect(library).toHaveCount(0);
       const sharedFraction = Number(await page.getByRole("slider", { name: "阅读进度" }).inputValue());

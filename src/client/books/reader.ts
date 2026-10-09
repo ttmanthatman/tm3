@@ -235,6 +235,8 @@ type FoliateView = HTMLElement & {
     start: number;
     end: number;
     viewSize: number;
+    page?: number;
+    pages?: number;
   };
   book: EpubBook & {
     // foliate 的节对象；load() 预取该节内容（内部带缓存与引用计数，重复调用便宜）
@@ -305,6 +307,14 @@ export function readerLayoutMetrics(style: ReaderStyle, stageWidth: number, stag
   const maxInlineSize = Math.round(textWidth / spread);
   const gapPct = Math.round((margin / Math.max(1, stageWidth - margin)) * 1000) / 10;
   return { margin, maxInlineSize, gapPct };
+}
+
+// Foliate reports the end of the visible page. Its numeric navigation anchor
+// instead spans the first through last page, excluding two blank edge pages.
+export function paginatedBookFraction(starts: number[], index: number, page: number, pages: number): number {
+  const local = pages > 3 ? Math.max(0, Math.min(1, (page - 1) / (pages - 3))) : 0;
+  const start = starts[index] ?? 0, end = starts[index + 1] ?? 1;
+  return start + (end - start) * local;
 }
 
 // 提前加载相邻节：滚动/翻节进入下一章时内容已在缓存里（引用计数保证

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
 import {
+  Book,
   BookOpen,
   CheckCircle2,
   ChevronLeft,
@@ -47,6 +48,7 @@ const props = defineProps<{
   currentChannel: ChannelDTO | null;
   chatSubtitleText: string;
   showingFavoriteSurface: boolean;
+  bibleOpen: boolean;
   musicPlaying: boolean;
   musicPlayer: MusicPlayer;
   favoriteMusicTracks: MusicTrackDTO[];
@@ -164,7 +166,7 @@ onBeforeUnmount(clearStoryHold);
       </div>
       <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
     </div>
-    <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" aria-label="打开圣经" title="圣经"><BookOpen :size="20" /></button>
+    <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BookOpen v-if="bibleOpen" :size="30" /><Book v-else :size="30" /></button>
     <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
     <SermonHub v-if="!showingFavoriteSurface" />
     <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
@@ -283,6 +285,7 @@ onBeforeUnmount(clearStoryHold);
 </template>
 
 <style scoped>
+.bible-header-trigger { padding: 0; }
 .story-header-trigger.has-story-attention { color: #d85f73; background: linear-gradient(135deg, #ffe16b55, #ff86ad44 52%, #72c7ff44); box-shadow: inset 0 0 0 1px #e985a966, 0 0 12px #f0af6380; }
 .story-header-trigger.has-story-attention :deep(svg) { fill: #ffd66b88; stroke: #d75678; }
 </style>

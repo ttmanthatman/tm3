@@ -1,3 +1,4 @@
+import { ensureBibleOpen } from "../helpers/bible.js";
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
@@ -6,6 +7,44 @@ import type { BibleNoteDTO } from "../../src/shared/bibleNotes.js";
 // Keep injected transport failures in the page context; a service worker can
 // handle fetches before Playwright's page routes on WebKit.
 test.use({ serviceWorkers: "block" });
+
+test("自己的圣经笔记可以下载、导入为私密笔记并跳过重复内容", async ({ page, request }) => {
+  const headers = await login(page);
+  const text = `备份领受 ${randomUUID()}`;
+  const response = await request.post("/api/bible/notes", { headers, data: {
+    id: randomUUID(), translation: "cmn-cu89s", bookCode: "JHN", chapter: 11, verse: 35, text, public: true
+  } });
+  expect(response.ok()).toBeTruthy();
+  let note = (await response.json()).note as BibleNoteDTO;
+  try {
+    await ensureBibleOpen(page);
+    const home = page.getByRole("button", { name: "目录", exact: true });
+    if (await home.isVisible()) await home.click();
+    await page.getByRole("tab", { name: "我的笔记", exact: true }).click();
+    const library = page.getByRole("region", { name: "经文笔记列表" });
+    await expect(library).toContainText(text);
+    const downloaded = page.waitForEvent("download");
+    await library.getByRole("button", { name: "导出笔记" }).click();
+    const file = await downloaded;
+    const path = (await file.path())!;
+    const backup = JSON.parse(await fs.readFile(path, "utf8")) as { domain: string; notes: Array<{ text: string }> };
+    expect(backup.domain).toBe("bible");
+    expect(backup.notes.some((item) => item.text === text)).toBe(true);
+    await request.delete(`/api/bible/notes/${note.id}`, { headers });
+    await library.locator('input[type="file"]').setInputFiles(path);
+    const dialog = page.getByRole("dialog", { name: "导入圣经笔记" });
+    await dialog.getByRole("button", { name: "开始导入" }).click();
+    await expect(dialog).toContainText("本次导入 1 条");
+    await dialog.getByRole("button", { name: "完成", exact: true }).click();
+    const own = await (await request.get("/api/bible/notes?scope=mine", { headers })).json() as { notes: BibleNoteDTO[] };
+    note = own.notes.find((item) => item.text === text)!;
+    expect(note).toBeTruthy(); expect(note.publishedAt).toBeNull();
+    await expect(library).toContainText(text);
+    await library.locator('input[type="file"]').setInputFiles(path);
+    await dialog.getByRole("button", { name: "开始导入" }).click();
+    await expect(dialog).toContainText("本次导入 0 条");
+  } finally { await request.delete(`/api/bible/notes/${note.id}`, { headers }); }
+});
 
 async function login(page: Page) {
   await page.route("**/*", (route) => ["127.0.0.1", "localhost"].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
@@ -17,7 +56,7 @@ async function login(page: Page) {
   return { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}` };
 }
 async function openVerse(page: Page) {
-  await page.getByRole("button", { name: "打开圣经", exact: true }).click();
+  await ensureBibleOpen(page);
   // Restoring the saved reader after reload is asynchronous.
   await expect(async () => {
     const home = page.getByRole("button", { name: "目录", exact: true });
@@ -134,7 +173,7 @@ test("经文笔记默认公开、失败保留内容、便签展示、私密分�
   expect((await request.delete(`/api/admin/accounts/${account.id}`, { headers })).ok()).toBeTruthy();
   expect(errors).toEqual([]);
   // Selection stays usable after writing, browsing and sharing.
-  await page.getByRole("button", { name: "打开圣经", exact: true }).click();
+  await ensureBibleOpen(page);
   await expect(verse).toBeVisible();
 });
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { AudioLines, BookOpen, ChevronDown, ChevronRight, Download, FileUp, Mic, Pause, Play, Square } from "lucide-vue-next";
 import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
@@ -17,13 +18,15 @@ import {
   type BibleRichTextSegment
 } from "./messageRendering";
 import { storyAnnouncementLetters } from "./storyAnnouncement";
+import BookShareCard from "../books/BookShareCard.vue";
+import { parseBookShareMessage } from "../books/bookShareMessage";
 
 // Shared message-body renderer: the timeline bubble and the favorites card both
 // delegate their type branches here. Rendering differences between the two
 // surfaces are parameterized by `variant`; interactive state (long press,
 // previews, playback, bible references) stays in App.vue and arrives through
 // props/emits.
-defineProps<{
+const props = defineProps<{
   message: MessageDTO;
   variant: "timeline" | "favorite";
   fileUrl: (message: MessageDTO) => string;
@@ -59,6 +62,8 @@ defineProps<{
   handwritingSurfaceActive?: boolean;
 }>();
 
+const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
+
 const emit = defineEmits<{
   "open-shared-playlist": [message: MessageDTO];
   "longpress-begin": [message: MessageDTO, event: PointerEvent];
@@ -91,6 +96,7 @@ const emit = defineEmits<{
       <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
       <ChevronRight :size="18" />
     </button>
+    <BookShareCard v-else-if="bookShare" :context="bookShare" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -227,6 +233,7 @@ const emit = defineEmits<{
           :surface-active="handwritingSurfaceActive ?? true"
           :claim-auto-play="consumeHandwritingPlayback ? () => consumeHandwritingPlayback!(message) : undefined"
         />
+        <BookShareCard v-else-if="bookShare" :context="bookShare" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>
@@ -249,7 +256,7 @@ const emit = defineEmits<{
             </span>
           </template>
         </div>
-        <a v-if="linkPreviewFor(message)" class="link-preview-card" :href="linkPreviewFor(message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
+        <a v-if="!bookShare && linkPreviewFor(message)" class="link-preview-card" :href="linkPreviewFor(message)?.url" target="_blank" rel="noopener noreferrer" @click.stop>
           <span class="link-preview-copy">
             <small>{{ previewSiteName(linkPreviewFor(message)) }}</small>
             <strong>{{ linkPreviewFor(message)?.title }}</strong>
