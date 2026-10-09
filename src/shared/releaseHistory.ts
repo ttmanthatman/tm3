@@ -1167,11 +1167,22 @@ const RELEASE_2_6_0_NOTES = [
   "圣经经文支持逐节写笔记、便签式查看，以及分享到圣经或聊天室；关闭编辑器时可选择公开笔记并记住默认公开设置。"
 ] as const
 
+const RELEASE_2_7_0_NOTES = [
+  "桌面与 iPad 默认同时显示圣经和聊天室，频道与好友列表默认折叠；可拖动分隔线调整宽度，并吸附到四分之一、二分之一和四分之三比例。",
+  "圣经支持全屏、恢复分屏和关闭，切换时保留阅读位置、分屏比例、聊天草稿与聊天历史位置；手机继续使用单面板。",
+  "分屏时经文发送跟随当前聊天室，导航列表以抽屉展开，圣经工具栏和阅读窗格按实际面板宽度适配。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.8.0",
+    date: "2026-10-09",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.7.0",
     date: "2026-10-09",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_7_0_NOTES
   },
   {
     version: "2.6.0",
