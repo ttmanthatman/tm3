@@ -24,6 +24,11 @@ export interface ManagedQueueEvent {
   message: MessageDTO | null;
 }
 
+export interface ManagedActionResult {
+  success: boolean;
+  message: string;
+}
+
 interface QueueRow {
   source_id: number;
   channel_id: number;
@@ -112,6 +117,28 @@ export class RelayQueue {
       INSERT INTO relay_meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(key, value);
+  }
+
+  managedActionResult(actionId: string): ManagedActionResult | undefined {
+    const value = this.metaValue(`managed_action:${actionId}`);
+    return value ? JSON.parse(value) as ManagedActionResult : undefined;
+  }
+
+  recordManagedActionResult(actionId: string, result: ManagedActionResult) {
+    this.setMetaValue(`managed_action:${actionId}`, JSON.stringify(result));
+  }
+
+  discardBacklogThrough(cursor: number, now = Date.now()) {
+    if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error("Invalid backlog cursor");
+    return this.database.transaction(() => {
+      const result = this.database.prepare(`
+        UPDATE relay_outbox SET state = 'expired',
+          last_error = 'Backlog discarded by operator', updated_at = ?
+        WHERE state IN ('pending', 'processing', 'uncertain', 'failed')
+      `).run(now);
+      this.setMetaValue("source_cursor", String(Math.max(cursor, this.cursor())));
+      return result.changes;
+    })();
   }
 
   syncManagedEvent(event: ManagedQueueEvent, enabled: boolean, format: (message: MessageDTO) => string) {

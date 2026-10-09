@@ -1,6 +1,12 @@
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 import type { MessageDTO } from "../../shared/types.js";
 import type { RelaySource } from "./source.js";
+
+const knownMessageType = z.enum([
+  "text", "image", "file", "music_playlist", "chain", "prayer", "grace", "sermon_request",
+  "why_topic_card", "bible_session", "bible_copywork", "bible_note", "chat_record", "handwriting", "system"
+]);
 
 const messageSchema = z.object({
   id: z.number().int().positive(),
@@ -12,7 +18,12 @@ const messageSchema = z.object({
     displayName: z.string()
   }).passthrough(),
   content: z.string(),
-  type: z.enum(["text", "image", "file", "music_playlist", "chain", "prayer", "why_topic_card", "bible_copywork", "handwriting", "system"]),
+  // The server already renders relayText. A newer site's message kind must not
+  // block every later reminder while this device waits for its next update.
+  type: z.string().trim().min(1).max(80).transform((value) => {
+    const known = knownMessageType.safeParse(value);
+    return known.success ? known.data : "text";
+  }),
   createdAt: z.string(),
   fileName: z.string().nullable().optional(),
   fileSize: z.number().int().nonnegative().nullable().optional(),
@@ -47,20 +58,33 @@ export type ManagedRelaySystemEvent = ManagedRelayControl["systemEvents"][number
 
 export class ManagedTeamChatSource implements RelaySource {
   private stopped = false;
+  private enabled = false;
+  private readonly shutdown = new AbortController();
 
   constructor(
     private readonly baseUrl: string,
     private readonly token: string,
-    private readonly fetchImplementation: typeof fetch = fetch
+    private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly requestTimeoutMs = 15000
   ) {}
 
   close() {
     this.stopped = true;
+    this.shutdown.abort();
+  }
+
+  async waitForNextPoll(ms: number) {
+    try {
+      await delay(ms, undefined, { signal: this.shutdown.signal });
+    } catch (error) {
+      if (!this.stopped) throw error;
+    }
   }
 
   private async request(path: string, init: RequestInit = {}) {
     const response = await this.fetchImplementation(`${this.baseUrl}${path}`, {
       ...init,
+      signal: AbortSignal.any([this.shutdown.signal, AbortSignal.timeout(this.requestTimeoutMs)]),
       headers: {
         ...(init.body ? { "content-type": "application/json" } : {}),
         ...(init.headers || {}),
@@ -73,7 +97,13 @@ export class ManagedTeamChatSource implements RelaySource {
 
   async control() {
     const response = await this.request("/api/wechat-relay/agent/config");
-    return controlSchema.parse(await response.json()).config;
+    const config = controlSchema.parse(await response.json()).config;
+    this.enabled = config.enabled && config.channelId !== null;
+    return config;
+  }
+
+  deliveryEnabled() {
+    return !this.stopped && this.enabled;
   }
 
   async fetchAfter(after: number, limit = 200) {
@@ -89,14 +119,18 @@ export class ManagedTeamChatSource implements RelaySource {
   async catchUp(after: number, onBatch: (messages: MessageDTO[]) => void | Promise<void>) {
     let cursor = after;
     let total = 0;
-    for (;;) {
+    while (!this.stopped) {
       const messages = await this.fetchAfter(cursor, 200);
+      if (this.stopped) return { cursor, total };
       if (!messages.length) return { cursor, total };
+      const nextCursor = Math.max(cursor, ...messages.map((message) => message.id));
+      if (nextCursor === cursor) throw new Error("Relay source returned a batch without advancing its cursor");
       await onBatch(messages);
       total += messages.length;
-      cursor = Math.max(cursor, ...messages.map((message) => message.id));
+      cursor = nextCursor;
       if (messages.length < 200) return { cursor, total };
     }
+    return { cursor, total };
   }
 
   async ensureSubscription(_onMessage: (message: MessageDTO) => void) {

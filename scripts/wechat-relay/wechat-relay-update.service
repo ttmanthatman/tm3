@@ -1,0 +1,13 @@
+[Unit]
+Description=Build and safely update the WeChat relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=%h/.config/wechat-relay/update.env
+ExecStart=/usr/bin/env node %h/.local/share/wechat-relay/current/scripts/wechat-relay/update.mjs
+TimeoutStartSec=45min
+UMask=0077
+NoNewPrivileges=true

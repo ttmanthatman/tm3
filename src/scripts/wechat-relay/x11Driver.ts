@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import sharp from "sharp";
 import type { Rectangle, X11DriverConfig } from "./config.js";
-import type { DeliveryEvidence, WeChatDriver } from "./driver.js";
+import { RelayDriverOperations, type DeliveryEvidence, type WeChatDriver } from "./driver.js";
 import { AmbiguousDeliveryError, SafeRelayError } from "./errors.js";
 import type { QueueItem } from "./queue.js";
 
@@ -162,9 +162,15 @@ async function imageDifference(leftPath: string, rightPath: string) {
 
 export class X11WeChatDriver implements WeChatDriver {
   private readonly environment: NodeJS.ProcessEnv;
+  private readonly operations = new RelayDriverOperations();
+  private stopping = false;
 
   constructor(private readonly config: X11DriverConfig) {
     this.environment = { ...process.env, DISPLAY: config.display };
+  }
+
+  stop() {
+    this.stopping = true;
   }
 
   private execute(command: string, args: string[]) {
@@ -286,6 +292,10 @@ export class X11WeChatDriver implements WeChatDriver {
   }
 
   async doctor() {
+    return this.operations.run(() => this.checkDesktop());
+  }
+
+  private async checkDesktop() {
     const findings: string[] = [];
     for (const command of ["xdotool", "xclip", "scrot"]) {
       try {
@@ -305,6 +315,10 @@ export class X11WeChatDriver implements WeChatDriver {
   }
 
   async calibrate() {
+    return this.operations.run(() => this.captureAnchor());
+  }
+
+  private async captureAnchor() {
     const window = await this.findWindow();
     fs.mkdirSync(path.dirname(this.config.anchorPath), { recursive: true });
     await this.screenshot(this.absoluteRegion(window, this.config.anchorRegion), this.config.anchorPath);
@@ -312,6 +326,11 @@ export class X11WeChatDriver implements WeChatDriver {
   }
 
   async send(item: QueueItem): Promise<DeliveryEvidence> {
+    return this.operations.run(() => this.sendToDesktop(item));
+  }
+
+  private async sendToDesktop(item: QueueItem): Promise<DeliveryEvidence> {
+    if (this.stopping) throw new SafeRelayError("Relay stopped before desktop delivery began");
     const window = await this.findWindow();
     if (this.config.inputPoint.x >= window.width || this.config.inputPoint.y >= window.height) {
       throw new SafeRelayError("Configured input point falls outside the WeChat window");

@@ -19,6 +19,7 @@ function usage() {
   wechat-relay calibrate
   wechat-relay setup
   wechat-relay status
+  wechat-relay discard-backlog
   wechat-relay resolve <source-id> <sent|retry>`);
 }
 
@@ -30,22 +31,18 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function delay(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function runManagedControl(
+export async function runManagedControl(
   source: ManagedTeamChatSource,
   driver: WeChatDriver,
   queue: RelayQueue,
   intervalMs: number,
-  calibratedTargetPath: string
+  calibratedTargetPath: string,
+  relay: WeChatRelay
 ) {
   let driverReady = false;
   let calibratedTarget: string | null = null;
   let driverError: string | null = null;
   let controlError: string | null = null;
-  const completed = new Map<string, { success: boolean; message: string }>();
 
   try {
     await driver.doctor();
@@ -60,14 +57,21 @@ async function runManagedControl(
   while (!source.isStopped()) {
     try {
       const control = await source.control();
+      if (source.isStopped()) break;
       for (const event of control.systemEvents) {
         const synced = queue.syncManagedEvent(event, control.enabled, formatRelayMessage);
         if (synced.inserted) console.log(`queued managed system event ${event.slot}`);
       }
       const action = control.pendingAction;
       if (action) {
-        let result = completed.get(action.id);
+        let result = queue.managedActionResult(action.id);
         if (!result) {
+          // Persist before touching the desktop: an update or a lost result
+          // acknowledgement must never repeat a potentially sent test.
+          queue.recordManagedActionResult(action.id, {
+            success: false,
+            message: "设备在操作期间停止；请确认微信群状态后重新发起操作"
+          });
           try {
             if (action.type === "calibrate") {
               if (!(driver instanceof X11WeChatDriver)) throw new Error("Only the X11 driver can bind a WeChat group");
@@ -89,7 +93,7 @@ async function runManagedControl(
             result = { success: false, message: errorMessage(error) };
             controlError = result.message;
           }
-          completed.set(action.id, result);
+          queue.recordManagedActionResult(action.id, result);
         }
         await source.reportAction(action.id, result.success, result.message);
         if (result.success) controlError = null;
@@ -100,14 +104,14 @@ async function runManagedControl(
         calibratedTarget,
         queue: queue.counts() as Record<string, number>,
         attention: queue.attention().length,
-        lastError: controlError ?? driverError
+        lastError: controlError ?? relay.lastError() ?? queue.attention()[0]?.lastError ?? driverError
       });
       controlError = null;
     } catch (error) {
       controlError = errorMessage(error);
-      console.error(`managed relay control failed: ${controlError}`);
+      if (!source.isStopped()) console.error(`managed relay control failed: ${controlError}`);
     }
-    if (!source.isStopped()) await delay(Math.max(5000, intervalMs));
+    if (!source.isStopped()) await source.waitForNextPoll(Math.max(5000, intervalMs));
   }
 }
 
@@ -186,6 +190,29 @@ async function main() {
       console.log(`Source message ${sourceId} resolved as ${resolution}`);
       return 0;
     }
+    if (command === "discard-backlog") {
+      const lock = new RelayProcessLock(config.databasePath);
+      lock.acquire();
+      const source = config.agentToken
+        ? new ManagedTeamChatSource(config.baseUrl, config.agentToken)
+        : new TeamChatSource(config);
+      try {
+        const latest = await source.catchUp(queue.cursor(), () => undefined);
+        if (source instanceof ManagedTeamChatSource) {
+          const control = await source.control();
+          for (const event of control.systemEvents) queue.syncManagedEvent(event, false, formatRelayMessage);
+          if (control.pendingAction) {
+            await source.reportAction(control.pendingAction.id, false, "旧操作已随待发送消息一起取消");
+          }
+        }
+        const discarded = queue.discardBacklogThrough(latest.cursor);
+        console.log(JSON.stringify({ discarded, skippedSourceMessages: latest.total, cursor: queue.cursor() }));
+        return 0;
+      } finally {
+        source.close();
+        lock.release();
+      }
+    }
     if (command !== "run") {
       usage();
       return 2;
@@ -204,7 +231,7 @@ async function main() {
       await Promise.all([
         relay.run(),
         source instanceof ManagedTeamChatSource
-          ? runManagedControl(source, driver, queue, config.pollIntervalMs, `${config.x11.anchorPath}.target`)
+          ? runManagedControl(source, driver, queue, config.pollIntervalMs, `${config.x11.anchorPath}.target`, relay)
           : Promise.resolve()
       ]);
       return 0;
@@ -216,7 +243,7 @@ async function main() {
   }
 }
 
-const entryPoint = process.argv[1] ? path.resolve(process.argv[1]) : "";
+const entryPoint = process.argv[1] ? fs.realpathSync(path.resolve(process.argv[1])) : "";
 if (entryPoint === fileURLToPath(import.meta.url)) {
   main().then(
     (code) => process.exit(code),

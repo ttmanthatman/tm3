@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import type { MessageDTO } from "../../shared/types.js";
 import { loadRelayConfig, parsePoint, parseRectangle } from "./config.js";
@@ -11,6 +12,9 @@ import { formatRelayMessage } from "./formatter.js";
 import { RelayProcessLock } from "./processLock.js";
 import { RelayQueue } from "./queue.js";
 import { ManagedTeamChatSource } from "./managedSource.js";
+import { runManagedControl } from "./main.js";
+import { WeChatRelay } from "./relay.js";
+import { RelayDriverOperations, type WeChatDriver } from "./driver.js";
 import { TeamChatSource } from "./source.js";
 import { pasteClipboardText, parseWindowGeometry, selectUsableWindow } from "./x11Driver.js";
 
@@ -40,6 +44,19 @@ function validEnvironment(): NodeJS.ProcessEnv {
     RELAY_TARGET_GROUP: "测试通知群"
   };
 }
+
+test("relay CLI runs through the managed current symlink", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "wechat-relay-cli-test-"));
+  try {
+    const entry = path.join(directory, "main.ts");
+    fs.symlinkSync(path.resolve("src/scripts/wechat-relay/main.ts"), entry);
+    const result = spawnSync(process.execPath, ["--import", "tsx", entry, "--help"], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Usage:[\s\S]*discard-backlog/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
 
 test("configuration parses coordinates and protects source transport", () => {
   assert.deepEqual(parsePoint("12,34"), { x: 12, y: 34 });
@@ -252,6 +269,204 @@ test("managed source accepts mixed handwriting and ordinary messages in one batc
   assert.deepEqual(received.map((item) => [item.id, item.type]), [[21, "handwriting"], [22, "text"]]);
   assert.equal(formatRelayMessage(received[0]), "发送者：[手写消息]");
   source.close();
+});
+
+test("managed source accepts current and future reminder types without blocking the batch", async () => {
+  const types = ["grace", "sermon_request", "bible_session", "bible_copywork", "bible_note", "chat_record", "future_type"];
+  const source = new ManagedTeamChatSource("https://chat.example.com", "token", async () => Response.json({
+    messages: types.map((type, index) => ({ ...message(index + 1), type, relayText: `reminder ${index + 1}` }))
+  }));
+  try {
+    const received = await source.fetchAfter(0);
+    assert.equal(received.length, types.length);
+    assert.deepEqual(received.slice(0, -1).map((item) => item.type), types.slice(0, -1));
+    assert.equal(received.at(-1)?.type, "text");
+    assert.deepEqual(received.map(formatRelayMessage), types.map((_, index) => `reminder ${index + 1}`));
+  } finally {
+    source.close();
+  }
+});
+
+test("discarding backlog preserves sent records and advances the cursor past all old work", () => {
+  const temporary = temporaryDatabase();
+  const queue = new RelayQueue(temporary.databasePath);
+  try {
+    queue.ingest([message(1), message(2), message(3), message(4)], formatRelayMessage);
+    queue.claimNext();
+    queue.markSent(1);
+    queue.claimNext();
+    queue.markUncertain(2, "send outcome unknown");
+    queue.claimNext();
+    assert.equal(queue.discardBacklogThrough(100), 3);
+    assert.equal(queue.cursor(), 100);
+    assert.deepEqual(queue.counts(), { expired: 3, sent: 1 });
+    assert.equal(queue.claimNext(), null);
+    assert.equal(queue.hasUncertain(), false);
+    assert.equal(queue.discardBacklogThrough(50), 0);
+    assert.equal(queue.cursor(), 100);
+    assert.throws(() => queue.discardBacklogThrough(-1), /cursor/);
+    queue.ingest([message(101)], formatRelayMessage);
+    assert.equal(queue.claimNext()?.sourceId, 101);
+  } finally {
+    queue.close();
+    fs.rmSync(temporary.directory, { recursive: true, force: true });
+  }
+});
+
+test("stopping cancels a hanging managed request and never ingests its response", async () => {
+  let requestStarted: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => { requestStarted = resolve; });
+  const source = new ManagedTeamChatSource("https://chat.example.com", "token", async (_input, init) => {
+    requestStarted?.();
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    });
+  });
+  let ingested = false;
+  const running = source.catchUp(0, () => { ingested = true; });
+  await started;
+  source.close();
+  await assert.rejects(running, /abort/i);
+  assert.equal(ingested, false);
+});
+
+test("managed source rejects a non-advancing full batch instead of polling forever", async () => {
+  const source = new ManagedTeamChatSource("https://chat.example.com", "token", async () => Response.json({
+    messages: Array.from({ length: 200 }, () => message(10))
+  }));
+  try {
+    await assert.rejects(source.catchUp(10, () => undefined), /without advancing/);
+  } finally {
+    source.close();
+  }
+});
+
+test("shutdown wakes polling and returns a throttled message without sending it", async () => {
+  const temporary = temporaryDatabase();
+  const queue = new RelayQueue(temporary.databasePath);
+  const sent: number[] = [];
+  const config = { ...loadRelayConfig(validEnvironment()), pollIntervalMs: 60000, idleIntervalMs: 10 };
+  const relay = new WeChatRelay(config, queue, {
+    close() {},
+    async ensureSubscription() {},
+    async catchUp(after) { return { cursor: after, total: 0 }; }
+  }, {
+    async doctor() { return []; },
+    async send(item) { sent.push(item.sourceId); return { summary: "verified" }; }
+  }, { info() {}, warn() {}, error() {} });
+  queue.ingest([message(1, { createdAt: new Date().toISOString() }), message(2, { createdAt: new Date().toISOString() })], formatRelayMessage);
+  const running = relay.run();
+  try {
+    const deadline = Date.now() + 500;
+    while (queue.item(2)?.state !== "processing" && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(queue.item(2)?.state, "processing");
+    const stoppedAt = Date.now();
+    relay.stop();
+    await running;
+    assert.ok(Date.now() - stoppedAt < 400);
+    assert.deepEqual(sent, [1]);
+    assert.equal(queue.item(2)?.state, "pending");
+    assert.equal(queue.item(2)?.attemptCount, 0);
+  } finally {
+    relay.stop();
+    await running;
+    queue.close();
+    fs.rmSync(temporary.directory, { recursive: true, force: true });
+  }
+});
+
+test("disabled forwarding also pauses the local outbox", async () => {
+  const temporary = temporaryDatabase();
+  const queue = new RelayQueue(temporary.databasePath);
+  let enabled = false;
+  let sent = 0;
+  const relay = new WeChatRelay({ ...loadRelayConfig(validEnvironment()), idleIntervalMs: 5 }, queue, {
+    close() {},
+    deliveryEnabled() { return enabled; },
+    async ensureSubscription() {},
+    async catchUp(after) { return { cursor: after, total: 0 }; }
+  }, {
+    async doctor() { return []; },
+    async send() { sent += 1; relay.stop(); return { summary: "verified" }; }
+  }, { info() {}, warn() {}, error() {} });
+  queue.ingest([message(1, { createdAt: new Date().toISOString() })], formatRelayMessage);
+  const running = relay.run();
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.equal(sent, 0);
+    assert.equal(queue.item(1)?.attemptCount, 0);
+    enabled = true;
+    await running;
+    assert.equal(sent, 1);
+    assert.equal(queue.item(1)?.state, "sent");
+  } finally {
+    relay.stop();
+    await running;
+    queue.close();
+    fs.rmSync(temporary.directory, { recursive: true, force: true });
+  }
+});
+
+test("desktop operations serialize and recover after an operation fails", async () => {
+  const gate = new RelayDriverOperations();
+  const calls: string[] = [];
+  let finishFirst: (() => void) | undefined;
+  const first = gate.run(async () => {
+    calls.push("send");
+    await new Promise<void>((resolve) => { finishFirst = resolve; });
+    calls.push("sent");
+  });
+  const second = gate.run(async () => { calls.push("calibrate"); throw new Error("not ready"); });
+  const rejected = assert.rejects(second, /not ready/);
+  const third = gate.run(async () => { calls.push("doctor"); });
+  await Promise.resolve();
+  assert.deepEqual(calls, ["send"]);
+  finishFirst?.();
+  await Promise.all([first, rejected, third]);
+  assert.deepEqual(calls, ["send", "sent", "calibrate", "doctor"]);
+});
+
+test("a sent control test is not repeated after restart when its acknowledgement failed", async () => {
+  const temporary = temporaryDatabase();
+  const targetPath = path.join(temporary.directory, "target");
+  fs.writeFileSync(targetPath, "Target");
+  let sendCount = 0;
+  const driver: WeChatDriver = {
+    async doctor() { return []; },
+    async send() { sendCount += 1; return { summary: "verified" }; }
+  };
+  const actionId = "a721f781-71ee-4229-90c7-b019cf97f503";
+  try {
+    for (const failAcknowledgement of [true, false]) {
+      const queue = new RelayQueue(temporary.databasePath);
+      let source: ManagedTeamChatSource;
+      source = new ManagedTeamChatSource("https://chat.example.com", "token", async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/config")) return Response.json({ config: {
+          enabled: true, channelId: 7, targetGroup: "Target", startAfterId: 0,
+          pendingAction: { id: actionId, type: "test", targetGroup: "Target", text: "test", createdAt: new Date().toISOString() }
+        } });
+        if (url.pathname.endsWith("/action-result")) {
+          source.close();
+          return Response.json({ success: !failAcknowledgement }, { status: failAcknowledgement ? 503 : 200 });
+        }
+        return Response.json({ success: true });
+      });
+      const relay = new WeChatRelay(loadRelayConfig(validEnvironment()), queue, source, driver);
+      try {
+        await runManagedControl(source, driver, queue, 5000, targetPath, relay);
+        assert.equal(queue.managedActionResult(actionId)?.success, true);
+      } finally {
+        source.close();
+        queue.close();
+      }
+    }
+    assert.equal(sendCount, 1);
+  } finally {
+    fs.rmSync(temporary.directory, { recursive: true, force: true });
+  }
 });
 
 test("X11 geometry parser rejects incomplete window data", () => {

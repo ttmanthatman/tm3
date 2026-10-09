@@ -11,6 +11,7 @@ export interface TeamChatSourceConfig {
 
 export interface RelaySource {
   close(): void;
+  deliveryEnabled?(): boolean;
   catchUp(after: number, onBatch: (messages: MessageDTO[]) => void | Promise<void>): Promise<{ cursor: number; total: number }>;
   ensureSubscription(onMessage: (message: MessageDTO) => void): Promise<void>;
 }

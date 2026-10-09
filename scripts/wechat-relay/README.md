@@ -52,6 +52,27 @@ The image anchor is a fail-closed target check. If WeChat changes its layout, th
 
 ## Operations
 
+### Automatic updates for a user service
+
+The optional updater uses a separate user service and checks the operator-selected public HTTPS repository and fixed branch every 15 minutes, with a randomized startup delay. It does not read the relay token or modify the message queue. Keep the relay configuration, SQLite database, and calibration files outside release directories. An interrupted or uncertain delivery still requires explicit resolution; an update never retries it automatically.
+
+Bootstrap a tested release under `~/.local/share/wechat-relay/releases/<commit-sha>` and point `~/.local/share/wechat-relay/current` to it. Set the relay user unit's `WorkingDirectory` to `%h/.local/share/wechat-relay/current` and its `ExecStart` to the installed Node executable followed by `%h/.local/share/wechat-relay/current/dist/server/scripts/wechat-relay/main.js run`. The release may contain a `.relay-revision` file with the full 40-character upstream commit SHA; this preserves a locally repaired bootstrap release until that upstream revision changes. Only bootstrap and unit installation need to be done once.
+
+Copy `update.example.env` to `~/.config/wechat-relay/update.env`, set its permissions to `0600`, and select the trusted repository and branch. This is a separate configuration file and must contain no device token. Copy `wechat-relay-update.service` and `wechat-relay-update.timer` to `~/.config/systemd/user/`, then run:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now wechat-relay-update.timer
+systemctl --user start wechat-relay-update.service
+journalctl --user -u wechat-relay-update.service -n 100 --no-pager
+```
+
+The VM needs Git, npm, Node.js 22 or later, and a persistent user systemd session. Unit templates use a PATH that includes `/usr/local/bin`. An administrator can enable user lingering during initial installation when needed; the updater itself requires no sudo access.
+
+The updater holds an exclusive local lock, downloads and builds a separate release while forwarding continues, runs Prisma Client generation without applying migrations, runs all relay tests, checks future-message compatibility, and loads the compiled CLI in help mode. Only a passing candidate stops the relay, atomically switches the current symlink, and starts it again. Activation requires a new process to remain active for five seconds. Failed activation restores the previous release and quarantines that candidate with `.relay-update-failed`; after fixing its reported cause, remove the marker to allow full revalidation, or publish a newer revision. An interrupted switch is recovered on the next update attempt. Build failures leave the running release untouched. Health checks validate process startup; official WeChat login and target-group calibration remain operator tasks.
+
+Old releases are retained for recovery. Inspect `~/.local/share/wechat-relay/update-transaction.json` and the user service logs if rollback fails. Do not remove a release that is current or referenced by an update transaction.
+
 Use `status` to inspect the source cursor, queue counts, and the source IDs of items needing attention. If a crash or visual verification failure happens after the send key was pressed, the affected message enters `uncertain` state and all further delivery pauses. Inspect the target group, then resolve it explicitly:
 
 ```bash

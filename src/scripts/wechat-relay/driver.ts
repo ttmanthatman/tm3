@@ -6,6 +6,17 @@ export interface DeliveryEvidence {
 export interface WeChatDriver {
   doctor(): Promise<string[]>;
   send(item: QueueItem): Promise<DeliveryEvidence>;
+  stop?(): void;
+}
+
+export class RelayDriverOperations {
+  private tail: Promise<void> = Promise.resolve();
+
+  run<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(operation);
+    this.tail = result.then(() => undefined, () => undefined);
+    return result;
+  }
 }
 
 export class DryRunDriver implements WeChatDriver {
