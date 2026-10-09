@@ -474,7 +474,10 @@
 }
 
 @media (max-width: 760px) {
-  .app-shell {
+  .app-shell,
+  .app-shell.channels-collapsed,
+  .app-shell.members-collapsed,
+  .app-shell.channels-collapsed.members-collapsed {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
@@ -508,4 +511,34 @@
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+
+/* A split reader owns the left track; navigation drawers stay inside chat. */
+.app-shell.bible-split,
+.app-shell.bible-split.channels-collapsed,
+.app-shell.bible-split.members-collapsed {
+  grid-template-columns: var(--bible-width) 12px minmax(0, 1fr);
+}
+.app-shell.bible-split > .chat-pane { grid-column: 3; grid-row: 1; container-type: inline-size; }
+.app-shell.bible-split > .channel-pane,
+.app-shell.bible-split > .member-pane {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: min(310px, calc(100% - var(--bible-width) - 36px));
+  z-index: 23;
+  transform: none;
+  transition: none;
+}
+.app-shell.bible-split > .channel-pane { left: calc(var(--bible-width) + 12px); }
+.app-shell.bible-split > .member-pane { right: 0; visibility: hidden; }
+.app-shell.bible-split > .member-pane.open { visibility: visible; opacity: 1; pointer-events: auto; }
+.app-shell.bible-split > .channel-pane.collapsed { visibility: hidden; }
+.app-shell.bible-split > .scrim { display: block; left: calc(var(--bible-width) + 12px); }
+@container (max-width: 600px) {
+  .chat-head { padding-inline: 6px; gap: 2px; }
+  .chat-head .icon-btn { width: 32px; flex-basis: 32px; }
+  .messages-scroll { padding: 8px 10px 12px; }
+  .bubble-wrap { max-width: calc(100cqw - 94px); }
 }

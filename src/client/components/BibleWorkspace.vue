@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, Columns2, History, Home, PanelsTopLeft, Plus, Rows2, Search, Send, Share2, Sparkles, Trash2 } from "lucide-vue-next";
+import { Bookmark, BookmarkCheck, BookOpen, ChevronRight, ClipboardCopy, Columns2, History, Home, Maximize2, Minimize2, PanelsTopLeft, Plus, Rows2, Search, Send, Share2, Sparkles, Trash2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -61,6 +61,9 @@ import { buildBibleSessionSharePayload } from "../bibleSessionShare";
 
 const props = defineProps<{
   open: boolean;
+  split?: boolean;
+  splitAvailable?: boolean;
+  layoutWidth?: number;
   accountId: number;
   channelName: string;
   canSend: boolean;
@@ -79,6 +82,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: [];
+  expand: [];
+  shrink: [];
   "reading-change": [activity: { active: boolean; bookName: string | null }];
 }>();
 
@@ -86,6 +91,7 @@ type BibleReaderPaneExpose = {
   openLookup: (lookup: BibleLookupDTO, pushCurrent?: boolean) => Promise<void>;
   openLocation: (location: BiblePaneLocationState, pushCurrent?: boolean) => Promise<void>;
   snapshot: () => BiblePaneState;
+  restoreReadingAnchor: (anchor: NonNullable<BiblePaneLocationState["scrollAnchor"]>) => void;
   applyTranslation: (translationId: string) => void;
 };
 
@@ -138,7 +144,7 @@ let stateRestored = false;
 const store = useChatStore();
 const { start: handleTouchStart, end: handleTouchEnd, cancel: cancelSwipe } = createBibleSwipeNavigation({
   appearance: () => store.appearance,
-  blocked: () => !props.open,
+  blocked: () => !props.open || !!props.splitAvailable,
   direction: "left",
   navigate: () => emit("close")
 });
@@ -185,7 +191,13 @@ const readingBookName = computed(() => {
   if (view.value === "chapters") return selectedBook.value?.name || null;
   return null;
 });
-const effectiveSplitOrientation = computed<BibleSplitOrientation>(() => splitOrientation.value || (viewportWidth.value <= 700 ? "rows" : "columns"));
+const workspaceWidth = computed(() => props.layoutWidth || viewportWidth.value);
+const effectiveSplitOrientation = computed<BibleSplitOrientation>(() => workspaceWidth.value <= 700 ? "rows" : splitOrientation.value || "columns");
+watch(workspaceWidth, async () => {
+  const anchors = [...paneRefs].map(([id, pane]) => [id, pane.snapshot().scrollAnchor] as const);
+  await nextTick();
+  for (const [id, anchor] of anchors) if (anchor) paneRefs.get(id)?.restoreReadingAnchor(anchor);
+});
 const splitGridStyle = computed(() => {
   const tracks = paneSizes.value.map((size) => `minmax(0, ${size}fr)`).join(" 8px ");
   return effectiveSplitOrientation.value === "columns"
@@ -954,8 +966,10 @@ function showToast(message: string) {
 
 <template>
   <section
+    id="bible-workspace"
+    aria-label="圣经"
     class="bible-workspace"
-    :class="{ open }"
+    :class="{ open, split, compact: workspaceWidth <= 600, medium: workspaceWidth <= 900 }"
     :style="{ '--bible-font-size': `${bibleFontSize}px` }"
     :aria-hidden="!open"
     :inert="!open"
@@ -1011,7 +1025,9 @@ function showToast(message: string) {
           title="分享打开的圣经"
           @click="openShareDialog"
         ><Share2 :size="19" /></button>
-        <button type="button" class="bible-topbar-button chat" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
+        <button v-if="splitAvailable" type="button" class="bible-topbar-button layout-control" :aria-label="split ? '圣经全屏' : '缩小圣经，恢复分屏'" :title="split ? '圣经全屏' : '恢复分屏'" @click="split ? emit('expand') : emit('shrink')"><Maximize2 v-if="split" :size="20" /><Minimize2 v-else :size="20" /></button>
+        <button v-if="splitAvailable" type="button" class="bible-topbar-button layout-control" aria-label="关闭圣经" title="关闭圣经" @click="emit('close')"><X :size="20" /></button>
+        <button v-else type="button" class="bible-topbar-button chat" @click="emit('close')">聊天<ChevronRight :size="20" /></button>
       </div>
     </header>
 
@@ -1207,6 +1223,10 @@ function showToast(message: string) {
   isolation: isolate;
 }
 .bible-workspace.open { transform: translateX(0); pointer-events: auto; visibility: visible; }
+.bible-workspace.split { position: relative; inset: auto; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; z-index: 5; transition: none; }
+.bible-workspace.split.compact .bible-topbar { grid-template-columns: minmax(0, 1fr) auto; }
+.bible-workspace.split.compact .bible-topbar-title { display: none; }
+.bible-topbar-button.layout-control { min-width: 32px; min-height: 44px; justify-content: center; }
 .bible-topbar { position: relative; min-height: calc(58px + var(--safe-top)); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: minmax(78px, 1fr) minmax(0, 2fr) minmax(112px, 1fr); align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); }
 .bible-topbar-button { border: 0; background: transparent; color: #725537; display: inline-flex; align-items: center; gap: 3px; font: inherit; font-weight: 700; padding: 10px 0; cursor: pointer; }
 .bible-topbar-leading { justify-self: start; display: flex; align-items: center; }
@@ -1329,32 +1349,30 @@ function showToast(message: string) {
 .bible-share-actions button { min-height: 36px; padding: 0 14px; border: 1px solid #cbb797; border-radius: 9px; color: #6d5135; background: transparent; font: inherit; cursor: pointer; }
 .bible-share-actions button.primary { color: white; border-color: #80613f; background: #80613f; }
 .bible-share-actions button:disabled { opacity: .45; cursor: default; }
-@media (max-width: 900px) { .bible-book-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (max-width: 600px) {
-  .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: 62px minmax(0, 1fr) auto; }
-  .bible-topbar-actions { gap: 5px; }
-  .bible-topbar-button.home { font-size: 0; }
-  .bible-topbar-button.home svg { width: 20px; height: 20px; }
-  .bible-font-stepper { position: absolute; right: 10px; top: calc(var(--safe-top) + 10px); z-index: 2; padding: 3px; border-radius: 10px; background: rgba(250, 246, 237, .98); box-shadow: 0 8px 24px rgba(74, 52, 29, .18); }
-  .bible-topbar-title strong { font-size: 17px; }
-  .bible-topbar-title small { gap: 3px; font-size: 10px; }
-  .bible-home { padding: 15px 12px calc(34px + var(--safe-bottom)); }
-  .bible-home-tabs { margin-bottom: 9px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .bible-home-tabs button { gap: 4px; font-size: 14px; }
-  .bible-home-tabs button svg { display: none; }
-  .bible-home-tabs button span { min-width: 18px; padding: 2px 4px; }
-  .bible-search-panel { padding: 13px; border-radius: 14px; }
-  .bible-results > header { flex-wrap: wrap; gap: 8px; }
-  .bible-search-form > div { grid-template-columns: minmax(0, 1fr); }
-  .bible-search-form button { min-height: 44px; }
-  .bible-book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .bible-favorites { padding: 13px; border-radius: 14px; }
-  .bible-favorites > header { grid-template-columns: auto minmax(0, 1fr); }
-  .bible-favorites > header > span { grid-column: 2; }
-  .bible-favorite-grid { grid-template-columns: minmax(0, 1fr); }
-  .bible-book-grid button { min-height: 66px; }
-  .bible-chapter-picker { padding-top: 32px; }
-  .bible-chapter-grid { grid-template-columns: repeat(5, 1fr); gap: 9px; }
-}
+.bible-workspace.medium .bible-book-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.bible-workspace.compact .bible-topbar { padding-left: 10px; padding-right: 10px; grid-template-columns: auto minmax(0, 1fr) auto; }
+.bible-workspace.compact .bible-topbar-actions { gap: 5px; }
+.bible-workspace.compact .bible-topbar-button.home { font-size: 0; }
+.bible-workspace.compact .bible-topbar-button.home svg { width: 20px; height: 20px; }
+.bible-workspace.compact .bible-font-stepper { position: absolute; right: 10px; top: calc(var(--safe-top) + 10px); z-index: 2; padding: 3px; border-radius: 10px; background: rgba(250, 246, 237, .98); box-shadow: 0 8px 24px rgba(74, 52, 29, .18); }
+.bible-workspace.compact .bible-topbar-title strong { font-size: 17px; }
+.bible-workspace.compact .bible-topbar-title small { gap: 3px; font-size: 10px; }
+.bible-workspace.compact .bible-home { padding: 15px 12px calc(34px + var(--safe-bottom)); }
+.bible-workspace.compact .bible-home-tabs { margin-bottom: 9px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.bible-workspace.compact .bible-home-tabs button { gap: 4px; font-size: 14px; }
+.bible-workspace.compact .bible-home-tabs button svg { display: none; }
+.bible-workspace.compact .bible-home-tabs button span { min-width: 18px; padding: 2px 4px; }
+.bible-workspace.compact .bible-search-panel { padding: 13px; border-radius: 14px; }
+.bible-workspace.compact .bible-results > header { flex-wrap: wrap; gap: 8px; }
+.bible-workspace.compact .bible-search-form > div { grid-template-columns: minmax(0, 1fr); }
+.bible-workspace.compact .bible-search-form button { min-height: 44px; }
+.bible-workspace.compact .bible-book-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bible-workspace.compact .bible-favorites { padding: 13px; border-radius: 14px; }
+.bible-workspace.compact .bible-favorites > header { grid-template-columns: auto minmax(0, 1fr); }
+.bible-workspace.compact .bible-favorites > header > span { grid-column: 2; }
+.bible-workspace.compact .bible-favorite-grid { grid-template-columns: minmax(0, 1fr); }
+.bible-workspace.compact .bible-book-grid button { min-height: 66px; }
+.bible-workspace.compact .bible-chapter-picker { padding-top: 32px; }
+.bible-workspace.compact .bible-chapter-grid { grid-template-columns: repeat(5, 1fr); gap: 9px; }
 @media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } }
 </style>

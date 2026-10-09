@@ -1,4 +1,4 @@
-import { computed, nextTick, onScopeDispose, ref, type Ref } from "vue";
+import { computed, nextTick, onScopeDispose, ref, watch, type Ref } from "vue";
 import type { CopyworkSource } from "@shared/bibleCopywork";
 import { registerCopyworkNavigation, viewedCopyworkId } from "./copywork/copyworkViewerState";
 import type {
@@ -10,6 +10,7 @@ import type {
   MessageDTO
 } from "@shared/types";
 import { api } from "../../api";
+import { useBibleDisplayLayout } from "./useBibleDisplayLayout";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import { parseBibleSessionPayload } from "../../bibleSessionShare";
 import { useChatStore } from "../../store";
@@ -24,6 +25,8 @@ export type BibleWorkspaceHandle = {
 interface UseBibleWorkspaceIntegrationOptions {
   showChannels: Ref<boolean>;
   showMembers: Ref<boolean>;
+  channelsCollapsed: Ref<boolean>;
+  membersCollapsed: Ref<boolean>;
   showFavorites: Ref<boolean>;
   showGraceFavorites: Ref<boolean>;
   showBibleFavorites: Ref<boolean>;
@@ -39,8 +42,16 @@ interface UseBibleWorkspaceIntegrationOptions {
 
 export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrationOptions) {
   const store = useChatStore();
-  const bibleOpen = ref(false);
-  const bibleTargetChannelId = ref<number | null>(null);
+  const layout = useBibleDisplayLayout(() => store.account?.id);
+  const { bibleOpen } = layout;
+  const bibleTargetChannelId = computed(() => options.currentChannelId());
+  function collapseNavigation() {
+    options.showChannels.value = false;
+    options.showMembers.value = false;
+    options.channelsCollapsed.value = true;
+    options.membersCollapsed.value = true;
+  }
+  watch(() => store.account?.id, collapseNavigation);
   const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
   onScopeDispose(registerCopyworkNavigation(async (source) => {
     viewedCopyworkId.value = "";
@@ -59,7 +70,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   const bibleTargetChannel = computed(() => store.channels.find((channel) => channel.id === bibleTargetChannelId.value) || null);
   const bibleCanSend = computed(() => !!bibleTargetChannel.value && bibleTargetChannel.value.kind !== "music" && bibleTargetChannel.value.canWrite !== false);
   const bibleSendUnavailableReason = computed(() => {
-    if (!bibleTargetChannel.value) return "进入圣经前的聊天室已不可用";
+    if (!bibleTargetChannel.value) return "当前聊天室不可用";
     if (bibleTargetChannel.value.kind === "music") return "音乐频道不能发送文字经文";
     if (bibleTargetChannel.value.canWrite === false) return "你在当前频道没有发送权限";
     return "";
@@ -112,15 +123,14 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
 
   function openBibleWorkspace() {
     if (!bibleOpen.value) options.saveReadPosition();
-    options.showChannels.value = false;
-    options.showMembers.value = false;
+    collapseNavigation();
     options.sermonWorkspaceOpen.value = false;
     options.bookWorkspaceOpen.value = false;
-    bibleTargetChannelId.value = options.currentChannelId();
-    bibleOpen.value = true;
+    layout.openBible();
   }
 
   function closeBibleWorkspace() {
+    collapseNavigation();
     bibleOpen.value = false;
   }
 
@@ -159,7 +169,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
 
   async function sendBiblePassage(lookup: BibleLookupDTO) {
     const channel = bibleTargetChannel.value;
-    if (!channel) throw new Error("进入圣经前的聊天室已不可用");
+    if (!channel) throw new Error("当前聊天室不可用");
     if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
     if (!store.socket?.connected) throw new Error("聊天室连接尚未恢复，请稍后重试");
     const body = lookup.verses.map((verse) => verse.text).join("");
@@ -177,7 +187,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   }
 
   return {
-    bibleOpen,
+    ...layout,
     bibleTargetChannelId,
     bibleWorkspace,
     bibleReadingActivity,

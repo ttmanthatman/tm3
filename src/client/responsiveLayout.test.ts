@@ -415,10 +415,10 @@ test("avatar and channel images are pinned to their square masks without clippin
   assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
 });
 
-test("opening a negative-one-screen workspace unmounts every chat pane instead of only hiding it", () => {
-  assert.match(app, /<aside v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" class="channel-pane"/);
-  assert.match(app, /<section v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" ref="chatPane" class="chat-pane"/);
-  assert.match(app, /<aside v-if="!bibleOpen && !sermonWorkspaceOpen && !bookWorkspaceOpen" class="member-pane"/);
+test("fullscreen workspaces hide chat panes while preserving their mounted state", () => {
+  assert.match(app, /<aside v-show="!chatWorkspaceHidden" class="channel-pane"/);
+  assert.match(app, /<section v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane"/);
+  assert.match(app, /<aside v-show="!chatWorkspaceHidden" class="member-pane"/);
 });
 
 test("explicit context jumps win over saved read-position restoration", () => {

@@ -190,7 +190,12 @@ function captureScrollAnchor() {
   if (!scroller) return null;
   const scrollerTop = scroller.getBoundingClientRect().top;
   const anchors = Array.from(scroller.querySelectorAll<HTMLElement>("[data-scroll-anchor]"));
-  const anchor = anchors.find((element) => element.getBoundingClientRect().bottom > scrollerTop + 44) || anchors[0];
+  // A chapter section spans all its verses. Only its heading may act as a
+  // chapter anchor; otherwise it would always win over the verse being read.
+  const anchor = anchors.find((element) => {
+    const visiblePart = element.dataset.anchorVerse ? element : element.querySelector("header");
+    return visiblePart && visiblePart.getBoundingClientRect().bottom > scrollerTop + 44;
+  }) || anchors[0];
   if (!anchor) return { chapter: visibleChapter.value, verse: null, offset: 0 };
   return {
     chapter: Number(anchor.dataset.anchorChapter || visibleChapter.value),
@@ -519,7 +524,7 @@ async function sendSelectedVerses() {
   }
 }
 
-defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
+defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor });
 </script>
 
 <template>
@@ -633,7 +638,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
 
 <style scoped>
 .bible-copywork-marker { display: inline-flex; vertical-align: middle; align-items: center; justify-content: center; width: 36px; height: 36px; padding: 8px; border: 0; background: transparent; color: #806741; cursor: pointer; }
-.bible-reader-pane { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #f3ecde; box-shadow: inset 0 0 0 1px transparent; }
+.bible-reader-pane { container-type: inline-size; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #f3ecde; box-shadow: inset 0 0 0 1px transparent; }
 .bible-reader-pane.active { box-shadow: inset 0 0 0 1px rgba(205, 126, 42, .5); }
 .bible-reader-pane.receiving { box-shadow: inset 0 0 0 2px rgba(220, 125, 31, .72); }
 .bible-pane-toolbar { min-width: 0; min-height: 44px; padding: 5px 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px; border-bottom: 1px solid rgba(104, 76, 45, .16); background: rgba(250, 246, 237, .98); }
@@ -684,7 +689,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation });
 .bible-pane-action-buttons button { min-height: 34px; border: 0; border-radius: 8px; padding: 0 8px; color: white; background: #80613f; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font: inherit; font-size: 12px; font-weight: 700; }
 .bible-pane-action-buttons button.secondary { color: #74583b; background: #eee3d2; }
 .bible-pane-action-buttons button:disabled { opacity: .45; }
-@media (max-width: 600px) {
+@container (max-width: 600px) {
   .bible-pane-toolbar { grid-template-columns: auto minmax(0, 1fr) auto auto auto; padding: 4px; }
   .bible-pane-icon { width: 29px; height: 30px; }
   .bible-pane-jumps select { height: 30px; padding: 0 2px; font-size: 11px; }
