@@ -1162,11 +1162,21 @@ const RELEASE_2_5_10_NOTES = [
   "修复“真迹壹”将转角抖动误判为翻折、经过短暂中间方向时漏判急转的问题；翻折随当前运笔方向调整折线，展开后平滑恢复跟随，避免笔迹偏移和跳动。"
 ] as const
 
+const RELEASE_2_6_0_NOTES = [
+  "“我的故事”和“我们的故事”支持手写回复，沿用聊天室手写消息的播放、暂停和重播交互。",
+  "圣经经文支持逐节写笔记、便签式查看，以及分享到圣经或聊天室；关闭编辑器时可选择公开笔记并记住默认公开设置。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.7.0",
+    date: "2026-10-09",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.6.0",
     date: "2026-10-08",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_6_0_NOTES
   },
   {
     version: "2.5.10",
