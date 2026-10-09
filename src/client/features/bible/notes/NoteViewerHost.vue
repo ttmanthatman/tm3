@@ -2,10 +2,10 @@
 import { onBeforeUnmount, watch } from "vue";
 import { useChatStore } from "../../../store";
 import NoteViewer from "./NoteViewer.vue";
-import { viewedBibleNoteId } from "./noteViewerState";
+import { closeBibleNote, viewedBibleNoteFilter, viewedBibleNoteId } from "./noteViewerState";
 const emit = defineEmits<{ chat: [] }>();
 const store = useChatStore();
-watch(() => store.account?.id, () => { viewedBibleNoteId.value = ""; });
-onBeforeUnmount(() => { viewedBibleNoteId.value = ""; });
+watch(() => store.account?.id, closeBibleNote);
+onBeforeUnmount(closeBibleNote);
 </script>
-<template><NoteViewer v-if="viewedBibleNoteId && store.account" :key="viewedBibleNoteId" :id="viewedBibleNoteId" @close="viewedBibleNoteId = ''" @chat="emit('chat')" /></template>
+<template><NoteViewer v-if="(viewedBibleNoteId || viewedBibleNoteFilter) && store.account" :key="viewedBibleNoteId || JSON.stringify(viewedBibleNoteFilter)" :id="viewedBibleNoteId || undefined" :filter="viewedBibleNoteFilter || undefined" @close="closeBibleNote" @chat="emit('chat')" /></template>

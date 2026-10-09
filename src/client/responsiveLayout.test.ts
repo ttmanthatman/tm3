@@ -694,10 +694,10 @@ test("mention highlights glow and shake until the message or its notice is opene
   assert.match(css, /\.message-row\.mention-alert \.message-bubble-cluster \{[\s\S]*?mentionBubbleShake/);
 });
 
-test("version changes add one clickable timeline-style update notice", () => {
-  assert.match(app, /previousVersion !== APP_VERSION[\s\S]*?聊天室刚刚更新到版本 \$\{APP_VERSION\}/);
+test("version timeline notices open release details without being dismissed", () => {
   assert.match(app, /row\.kind === 'version'[\s\S]*?class="time-separator version-update-separator"[\s\S]*?@click="openVersionUpdateNotice"/);
-  assert.match(app, /openVersionUpdateNotice[\s\S]*?openSettings\("release"\)/);
+  assert.match(app, /async function openVersionUpdateNotice\(\) \{\s*await openSettings\("release"\);\s*\}/);
+  assert.doesNotMatch(app, /team-chat-last-noticed-version|versionUpdateNotice\.value/);
   assert.match(css, /\.version-update-separator \{[\s\S]*?display: block;[\s\S]*?text-align: center;/);
 });
 
@@ -717,7 +717,9 @@ test("Bible workspace includes copyworks and notes beside catalog, search and fa
   assert.match(bibleWorkspace, /\(open\) => \{[\s\S]*?void ensureCatalog\(\);[\s\S]*?persistWorkspaceState\(\);[\s\S]*?flushWorkspaceServerSync\(\)/);
   assert.match(bibleWorkspace, /function returnHome\(\) \{[\s\S]*?homeSection\.value = "catalog";/);
   assert.match(bibleWorkspace, /v-if="homeSection === 'catalog' && catalog" class="bible-catalog"/);
-  assert.match(bibleWorkspace, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
+  assert.match(bibleWorkspace, /\.bible-home-tabs \{[^}]*grid-template-columns: repeat\(5, minmax\(max-content, 1fr\)\)[^}]*overflow-x: auto/);
+  assert.match(bibleWorkspace, /\.bible-home-tabs button \{[^}]*white-space: nowrap/);
+  assert.doesNotMatch(bibleWorkspace, /\.bible-(?:home|chapter-picker) \{[^}]*100vw/);
   assert.match(bibleWorkspace, /groupBibleFavoritePassages\(props\.favorites\)/);
   assert.match(bibleWorkspace, /v-for="passage in favoritePassages"[\s\S]*?passage\.lookup\.normalizedReference/);
   assert.match(bibleWorkspace, /removeBibleFavoritePassage\(passage\)/);

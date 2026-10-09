@@ -202,3 +202,50 @@ for (const width of [360, 390]) {
     } finally { await context.close(); }
   });
 }
+
+for (const engine of ["chromium", "webkit"] as const) {
+  test(`Bible allocated width keeps catalog, chapters and narrow pane controls usable (${engine})`, async ({ browser, baseURL }) => {
+    const owned = engine === "webkit" ? await webkit.launch() : null;
+    const context = await (owned || browser).newContext({ baseURL, viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
+    try {
+      const page = await context.newPage();
+      await login(page);
+      const home = page.locator(".bible-home");
+      expect(await home.evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft))).toBeLessThanOrEqual(24);
+      const tabs = page.getByRole("tablist", { name: "书房功能" });
+      expect(await tabs.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBeTruthy();
+      for (const width of [1280, 1378, 1600]) {
+        await page.setViewportSize({ width, height: 1000 });
+        if (width === 1378) await page.screenshot({ path: `output/e2e/bible-catalog-${engine}.png` });
+        await page.getByRole("button", { name: /^创世记/ }).click();
+        const chapter = page.locator(".bible-chapter-grid button").first();
+        expect((await chapter.boundingBox())!.width).toBeGreaterThanOrEqual(40);
+        expect(await page.locator(".bible-chapter-picker").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
+        if (width === 1378) await page.screenshot({ path: `output/e2e/bible-chapters-${engine}.png` });
+        await page.getByRole("button", { name: "目录", exact: true }).click();
+      }
+      await openReading(page);
+      for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "添加圣经阅读窗格", exact: true }).click();
+      const pane = page.locator(".bible-reader-pane").first();
+      const trigger = pane.getByRole("button", { name: "展开 A 窗格导航" });
+      await expect(trigger).toBeVisible();
+      await trigger.click();
+      const controls = pane.locator(".bible-pane-toolbar select, .bible-pane-toolbar button:visible");
+      const boxes = await controls.evaluateAll((els) => els.map((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width }; }));
+      const bounds = (await pane.boundingBox())!;
+      for (const [i, box] of boxes.entries()) {
+        expect(box.width).toBeGreaterThanOrEqual(28);
+        expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+        expect(box.right).toBeLessThanOrEqual(bounds.x + bounds.width + 1);
+        for (const other of boxes.slice(i + 1)) expect(box.right <= other.x + 1 || other.right <= box.x + 1 || box.bottom <= other.y + 1 || other.bottom <= box.y + 1).toBeTruthy();
+      }
+      await pane.getByLabel("选择圣经书卷").selectOption("GEN");
+      await pane.getByLabel("选择章节", { exact: true }).selectOption("2");
+      await expect(pane.locator('[data-verse-key="GEN-2-1"]')).toBeVisible();
+      await page.screenshot({ path: `output/e2e/bible-expanded-navigation-${engine}.png` });
+      await pane.getByRole("button", { name: "收起 A 窗格导航" }).click();
+      await expect(pane.getByLabel("选择圣经书卷")).toBeHidden();
+      await page.screenshot({ path: `output/e2e/bible-narrow-panes-${engine}.png` });
+    } finally { await context.close(); await owned?.close(); }
+  });
+}

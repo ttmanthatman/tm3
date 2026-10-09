@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Brush, StickyNote, ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
+import { MoreHorizontal, Brush, StickyNote, ArrowLeft, Bookmark, BookmarkCheck, ClipboardCopy, Link2, Send, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -65,6 +65,7 @@ const emit = defineEmits<{
 
 type TextSegment = { text: string; highlighted: boolean };
 
+const navigationOpen = ref(false);
 const readerBook = ref<BibleBookCatalogDTO>(props.initialState.book);
 const translation = ref(props.initialState.translation || DEFAULT_BIBLE_TRANSLATION_ID);
 const readerChapters = ref<Record<number, BibleChapterDTO>>({});
@@ -534,7 +535,8 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
     :style="{ '--bible-font-size': `${fontSize}px` }"
     @pointerdown="emit('activate', paneId)"
   >
-    <header class="bible-pane-toolbar" data-no-bible-swipe>
+    <header class="bible-pane-toolbar" :class="{ expanded: navigationOpen }" data-no-bible-swipe @keydown.esc.stop="navigationOpen = false">
+      <button type="button" class="bible-pane-navigation" :aria-label="`${navigationOpen ? '收起' : '展开'} ${label} 窗格导航`" :aria-expanded="navigationOpen" @click="navigationOpen = !navigationOpen"><span>{{ readerBook.name }} {{ visibleChapter }}章</span><MoreHorizontal :size="18" /></button>
       <button type="button" class="bible-pane-icon" :disabled="!backStack.length" aria-label="返回跳转前的阅读点" title="返回阅读点" @click.stop="goBack"><ArrowLeft :size="17" /></button>
       <nav class="bible-pane-jumps" :aria-label="`${label} 窗格经文跳转`">
         <select :value="translation" aria-label="选择圣经译本" title="选择译本" @change="changeTranslation">
@@ -641,6 +643,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
 .bible-reader-pane { container-type: inline-size; position: relative; min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; background: #f3ecde; box-shadow: inset 0 0 0 1px transparent; }
 .bible-reader-pane.active { box-shadow: inset 0 0 0 1px rgba(205, 126, 42, .5); }
 .bible-reader-pane.receiving { box-shadow: inset 0 0 0 2px rgba(220, 125, 31, .72); }
+.bible-pane-navigation { display: none; }
 .bible-pane-toolbar { min-width: 0; min-height: 44px; padding: 5px 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px; border-bottom: 1px solid rgba(104, 76, 45, .16); background: rgba(250, 246, 237, .98); }
 .bible-pane-jumps { min-width: 0; display: grid; grid-template-columns: minmax(62px, .85fr) minmax(0, 1.3fr) minmax(48px, .7fr) minmax(43px, .62fr); gap: 3px; }
 .bible-pane-jumps select { min-width: 0; height: 32px; border: 1px solid rgba(128, 97, 63, .24); border-radius: 7px; padding: 0 4px; color: #5e452f; background: #fffaf1; font: inherit; font-size: 12px; font-weight: 700; }
@@ -699,6 +702,19 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
   .bible-pane-selection-copy { display: none; }
   .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; }
   .bible-pane-action-buttons button { padding: 0 5px; }
+}
+@container (max-width: 420px) {
+  .bible-pane-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 5px; }
+  .bible-pane-navigation { grid-column: 1 / 4; grid-row: 1; min-width: 0; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 4px; border: 0; border-radius: 7px; padding: 0 6px; color: #5e452f; background: rgba(128, 97, 63, .09); font: inherit; font-size: 12px; cursor: pointer; }
+  .bible-pane-navigation span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bible-pane-navigation svg { flex-shrink: 0; }
+  .bible-pane-label { grid-column: 4; grid-row: 1; }
+  .bible-pane-toolbar:not(.expanded) .bible-pane-jumps, .bible-pane-toolbar:not(.expanded) .bible-pane-icon { display: none; }
+  .bible-pane-jumps { grid-column: 1 / -1; grid-row: 2; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .bible-pane-jumps select { height: 36px; font-size: 12px; }
+  .bible-pane-icon { grid-row: 3; width: 100%; height: 32px; }
+  .bible-pane-action-buttons { display: flex; flex-wrap: wrap; }
+  .bible-pane-action-buttons button { flex: 1 0 auto; white-space: nowrap; min-height: 36px; }
 }
 @media (prefers-reduced-motion: reduce) { .bible-pane-scroll { scroll-behavior: auto; } }
 </style>

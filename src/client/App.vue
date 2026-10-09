@@ -1202,7 +1202,6 @@ const {
   chooseActiveSuggestion: () => chooseActiveComposerSuggestion()
 });
 const serverVersion = ref<VersionDTO | null>(null);
-const versionUpdateNotice = ref("");
 const staleVersionVisible = ref(false);
 const staleVersionMessage = ref("");
 const updateCheck = ref<UpdateCheckDTO | null>(null);
@@ -1235,7 +1234,6 @@ const {
   pumpMessageImagePreloads
 } = useVirtualTimeline({
   scroller,
-  versionUpdateNotice,
   estimateRowHeight: estimatedTimelineRowHeight,
   computeWindow: computeVirtualTimelineWindow,
   imagePreloadQueue: messageImagePreloadQueue,
@@ -1551,11 +1549,9 @@ watch(
     messageFontSize.value = loadMessageFontSizePreference(accountId);
     notificationPermissionAttempts.value = loadNotificationPermissionAttempts(accountId);
     if (accountId) {
-      initializeVersionUpdateNotice(accountId);
       void loadNotificationSettings();
       void loadBibleFavorites();
     } else {
-      versionUpdateNotice.value = "";
       bibleFavorites.value = [];
       graceFavoriteMessages.value = [];
       bibleFavoritesError.value = "";
@@ -3032,21 +3028,7 @@ async function openSettings(tab: SettingsTab = "account") {
   await selectSettingsTab(tab);
 }
 
-function versionNoticeStorageKey(accountId: number) {
-  return `team-chat-last-noticed-version:${accountId}`;
-}
-
-function initializeVersionUpdateNotice(accountId: number) {
-  const key = versionNoticeStorageKey(accountId);
-  const previousVersion = localStorage.getItem(key);
-  versionUpdateNotice.value = previousVersion !== APP_VERSION
-    ? `聊天室刚刚更新到版本 ${APP_VERSION}`
-    : "";
-}
-
 async function openVersionUpdateNotice() {
-  if (store.account?.id) localStorage.setItem(versionNoticeStorageKey(store.account.id), APP_VERSION);
-  versionUpdateNotice.value = "";
   await openSettings("release");
 }
 

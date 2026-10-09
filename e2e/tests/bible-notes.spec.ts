@@ -18,7 +18,12 @@ async function login(page: Page) {
 }
 async function openVerse(page: Page) {
   await page.getByRole("button", { name: "打开圣经", exact: true }).click();
-  if (await page.getByRole("button", { name: "目录", exact: true }).isVisible()) await page.getByRole("button", { name: "目录", exact: true }).click();
+  // Restoring the saved reader after reload is asynchronous.
+  await expect(async () => {
+    const home = page.getByRole("button", { name: "目录", exact: true });
+    if (await home.isVisible()) await home.click();
+    await expect(page.getByRole("tab", { name: "经卷目录", exact: true })).toBeVisible({ timeout: 500 });
+  }).toPass({ timeout: 10_000 });
   await page.getByRole("tab", { name: "经卷目录", exact: true }).click();
   await page.getByRole("button", { name: /^约翰福音/ }).click();
   await page.getByRole("button", { name: "11", exact: true }).click();
@@ -74,6 +79,8 @@ test("经文笔记默认公开、失败保留内容、便签展示、私密分�
   await publication.getByRole("button", { name: "保存笔记", exact: true }).click();
   const sheet = page.getByRole("dialog", { name: "经文笔记便签" });
   await expect(sheet.locator(".note-writing")).toHaveText(text);
+  await expect(sheet.locator(".note-signature")).toHaveCount(0);
+  expect((await sheet.locator(".bible-note-sheet").boundingBox())!.height).toBeLessThan(260);
   const mine: { notes: BibleNoteDTO[] } = await (await request.get("/api/bible/notes?scope=mine", { headers })).json();
   const note = mine.notes.find((item) => item.text === text)!;
   expect(note.publishedAt).toBeTruthy();
@@ -90,10 +97,16 @@ test("经文笔记默认公开、失败保留内容、便签展示、私密分�
   await sheet.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("button", { name: "查看此节经文的笔记" }).first()).toBeVisible();
   await page.getByRole("button", { name: "查看此节经文的笔记" }).first().click();
-  await page.getByRole("button", { name: /查看笔记：约翰福音 11:35/ }).click();
+  await expect(sheet.locator(".note-writing")).toHaveText(text);
+  await expect(page.locator(".bible-note-browser")).toHaveCount(0);
+  await expect(sheet.getByRole("navigation", { name: "笔记分类" })).toHaveCount(0);
   await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await sheet.getByRole("button", { name: "取消公开", exact: true }).click();
+  await expect(sheet.locator(".note-signature")).toHaveCount(0);
+  await expect(sheet.getByRole("button", { name: "更多笔记操作" })).toBeEnabled();
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await expect(sheet).toContainText("仅自己可见");
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   expect((await request.get(`/api/bible/notes/${note.id}`, { headers: memberHeaders })).status()).toBe(404);
   await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await sheet.getByRole("button", { name: "分享到聊天室", exact: true }).click();
@@ -189,11 +202,75 @@ test("不再提示的公开偏好跨刷新保留，私密笔记可重新分享�
   await editor.getByRole("button", { name: "完成笔记" }).click();
   await publication.getByLabel("仅自己可见", { exact: true }).check();
   await publication.getByRole("button", { name: "保存笔记" }).click();
+  await expect(sheet.locator(".note-signature")).toHaveCount(0);
+  await expect(sheet.getByRole("button", { name: "更多笔记操作" })).toBeEnabled();
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await expect(sheet).toContainText("仅自己可见");
   await sheet.getByRole("button", { name: "更多笔记操作" }).click();
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await sheet.getByRole("button", { name: "分享到圣经", exact: true }).click();
+  await expect(sheet.getByRole("button", { name: "更多笔记操作" })).toBeEnabled();
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
   await expect(sheet).toContainText("已公开");
   const mine: { notes: BibleNoteDTO[] } = await (await request.get("/api/bible/notes?scope=mine", { headers })).json();
   for (const note of mine.notes.filter((item) => item.text.startsWith(text) || item.text.startsWith(nextText))) await request.delete(`/api/bible/notes/${note.id}`, { headers });
   await request.patch("/api/bible/notes/preferences", { headers, data: { alwaysPublic: false } });
+});
+
+test("经节直接打开便签，菜单合并私密和公开笔记并支持分页、重试和长文", async ({ page, request }) => {
+  const headers = await login(page);
+  const username = `note-reader-${randomUUID().slice(0, 8)}`;
+  const password = "BibleNotesTest123!";
+  expect((await request.post("/api/admin/accounts", { headers, data: { username, password, displayName: "另一位笔记作者" } })).ok()).toBeTruthy();
+  const member = await request.post("/api/auth/login", { data: { username, password } });
+  const otherHeaders = { Authorization: `Bearer ${(await member.json()).token}` };
+  const selection = { translation: "cmn-cu89s", bookCode: "JHN", chapter: 11, verse: 35 };
+  async function create(text: string, isPublic: boolean, authorization = headers) {
+    const response = await request.post("/api/bible/notes", { headers: authorization, data: { id: randomUUID(), ...selection, text, public: isPublic } });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).note as BibleNoteDTO;
+  }
+  const privateNote = await create("只留给自己的笔记", false);
+  const publicNote = await create("我的公开笔记", true);
+  const otherNote = await create("来自另一位作者的领受。\n".repeat(180), true, otherHeaders);
+  let fail = true;
+  await page.route("**/api/bible/notes?*", (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    if (!params.has("verse")) return route.continue();
+    if (fail) { fail = false; return route.fulfill({ status: 503, json: { message: "笔记暂未加载" } }); }
+    const offset = Number(params.get("offset"));
+    const items = params.get("scope") === "mine" ? [privateNote, publicNote] : [publicNote, otherNote];
+    return route.fulfill({ json: { notes: [items[offset]], nextOffset: offset === 0 ? 1 : null } });
+  });
+  await openVerse(page);
+  await page.getByRole("button", { name: "查看此节经文的笔记" }).first().click();
+  const sheet = page.getByRole("dialog", { name: "经文笔记便签" });
+  await expect(sheet.getByRole("alert")).toBeVisible();
+  await sheet.getByRole("button", { name: "重试", exact: true }).click();
+  await expect(sheet.locator(".note-writing")).toHaveText(privateNote.text);
+  await expect(sheet.locator(".note-signature")).toHaveCount(0);
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
+  await sheet.getByRole("button", { name: "切换笔记", exact: true }).click();
+  const choices = sheet.locator(".note-choices");
+  await choices.getByRole("button", { name: "更多笔记", exact: true }).click();
+  await expect(choices.getByRole("button")).toHaveCount(3);
+  await choices.getByRole("button", { name: /来自另一位作者/ }).click();
+  await expect(sheet.locator(".note-signature")).toContainText("另一位笔记作者");
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
+  await expect(sheet.getByRole("button", { name: "编辑笔记", exact: true })).toHaveCount(0);
+  await expect(sheet.getByRole("button", { name: "删除笔记", exact: true })).toHaveCount(0);
+  await sheet.getByRole("button", { name: "更多笔记操作" }).click();
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    expect(await sheet.locator(".note-sheet-body").evaluate((el) => el.scrollHeight > el.clientHeight && el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
+    const close = (await sheet.getByRole("button", { name: "关闭", exact: true }).boundingBox())!;
+    expect(close.y).toBeGreaterThanOrEqual(0);
+    expect(close.x + close.width).toBeLessThanOrEqual(width);
+  }
+  await page.keyboard.press("Escape");
+  await expect(sheet).toHaveCount(0);
+  await request.delete(`/api/bible/notes/${privateNote.id}`, { headers });
+  await request.delete(`/api/bible/notes/${publicNote.id}`, { headers });
+  await request.delete(`/api/bible/notes/${otherNote.id}`, { headers: otherHeaders });
 });

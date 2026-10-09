@@ -2,15 +2,13 @@
 import type { BibleNoteDTO, BibleNoteSelection } from "@shared/bibleNotes";
 import { BIBLE_NOTE_TEXT_MAX } from "@shared/bibleNotes";
 import type { BibleVerseLineDTO } from "@shared/types";
-import { ref, watch } from "vue";
+import { watch } from "vue";
 import AppModal from "../../../components/ui/AppModal.vue";
-import NoteLibrary from "./NoteLibrary.vue";
 import { useBibleNoteEditor } from "./useBibleNoteEditor";
-import { bibleNotesChanged, openBibleNote } from "./noteViewerState";
+import { bibleNotesChanged, closeBibleNote, openBibleNote, openVerseNotes, viewedBibleNoteFilter } from "./noteViewerState";
 
 const props = withDefaults(defineProps<{ accountId: number; active?: boolean }>(), { active: true });
 const emit = defineEmits<{ changed: [] }>();
-const filter = ref<BibleNoteSelection | null>(null);
 const editor = useBibleNoteEditor();
 const { editorOpen, publicationOpen, editorBusy, text, error, source, publish, skipPrompt } = editor;
 function start(selection: { translation: string; bookCode: string; verses: BibleVerseLineDTO[] }) {
@@ -29,10 +27,10 @@ function saved(note: BibleNoteDTO | null) {
 }
 async function finish() { saved(await editor.finish()); }
 async function save() { saved(await editor.save()); }
-function browse(selection: BibleNoteSelection) { filter.value = selection; }
+function browse(selection: BibleNoteSelection) { openVerseNotes(selection); }
 watch(() => props.active, (active) => {
   if (active) return;
-  filter.value = null;
+  if (viewedBibleNoteFilter.value) closeBibleNote();
   editorOpen.value = false;
   publicationOpen.value = false;
 });
@@ -61,15 +59,11 @@ defineExpose({ start, edit, browse });
         <div class="publication-actions"><button type="button" :disabled="editorBusy" @click="publicationOpen = false">继续写</button><button type="button" :disabled="editorBusy" @click="save">{{ editorBusy ? '保存中…' : '保存笔记' }}</button></div>
       </div>
     </AppModal>
-    <AppModal :open="!!filter" title="这节经文的笔记" size="medium" content-class="bible-note-browser" @close="filter = null">
-      <NoteLibrary v-if="filter" :key="JSON.stringify(filter)" :account-id="accountId" :filter="filter" />
-    </AppModal>
   </Teleport>
 </template>
 <style scoped>
-:deep(.bible-note-editor), :deep(.bible-note-publication), :deep(.bible-note-browser) { background: #fbf6e7; color: #62533e; }
+:deep(.bible-note-editor), :deep(.bible-note-publication) { background: #fbf6e7; color: #62533e; }
 :deep(.bible-note-editor) { grid-template-rows: auto minmax(0, 1fr) auto; }
-:deep(.bible-note-browser) { grid-template-rows: auto minmax(0, 1fr); }
 .note-editor-body { padding: 20px; overflow: auto; min-height: 0; }
 blockquote { margin: 0 0 20px; padding-left: 14px; border-left: 2px solid #d8c99e; line-height: 1.8; }
 blockquote p { margin: 6px 0; }

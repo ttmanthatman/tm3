@@ -1,9 +1,10 @@
-import { computed, ref, type Ref } from "vue";
+import { computed, ref, watch, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
 import { APP_VERSION } from "@shared/release";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
 import { useChatStore } from "../../store";
 import { formatSeparator, shouldShowSeparator } from "../../time";
+import { rememberVersionTimelineNotice, versionTimelineInsertions, versionTimelineStorageKey, type VersionTimelineNotice } from "./versionTimelineNotices";
 import {
   estimatedImageTimelineHeight,
   virtualItemOffset,
@@ -25,7 +26,6 @@ export const TIMELINE_SCROLL_IDLE_MS = 500;
 
 interface UseVirtualTimelineOptions {
   scroller: Ref<HTMLElement | null>;
-  versionUpdateNotice: Ref<string>;
   // Kept in App.vue (pinned by a responsiveLayout.test.ts literal) and passed in
   // so virtualTimelineItems shares one row-height estimate.
   estimateRowHeight: (row: TimelineRow) => number;
@@ -47,18 +47,32 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
   const timelineScrollActive = ref(false);
   const pendingTimelineHeights = new Map<string, number>();
   let activeMessageImagePreloads = 0;
+  const versionNotices = ref<VersionTimelineNotice[]>([]);
+  watch(() => store.account?.id, (accountId) => {
+    versionNotices.value = [];
+    if (!accountId) return;
+    const key = versionTimelineStorageKey(accountId);
+    versionNotices.value = rememberVersionTimelineNotice(localStorage.getItem(key), APP_VERSION, Date.now());
+    localStorage.setItem(key, JSON.stringify(versionNotices.value));
+  }, { immediate: true });
 
   const timeline = computed<TimelineRow[]>(() => {
     const rows: TimelineRow[] = [];
+    const insertions = store.loadingInitialMessages ? new Map<number, VersionTimelineNotice[]>()
+      : versionTimelineInsertions(versionNotices.value, store.messages, store.hasOlderMessages, store.hasNewerMessages);
+    function insertNotices(index: number) {
+      for (const notice of insertions.get(index) || []) {
+        rows.push({ kind: "version", label: `聊天室刚刚更新到版本 ${notice.version}`, id: `version-${notice.version}` });
+      }
+    }
     let prev: string | undefined;
-    for (const message of store.messages) {
+    for (const [index, message] of store.messages.entries()) {
+      insertNotices(index);
       if (shouldShowSeparator(prev, message.createdAt)) rows.push({ kind: "time", label: formatSeparator(message.createdAt), id: `t-${message.id}` });
       rows.push({ kind: "message", message });
       prev = message.createdAt;
     }
-    if (options.versionUpdateNotice.value && !store.loadingInitialMessages) {
-      rows.push({ kind: "version", label: options.versionUpdateNotice.value, id: `version-${APP_VERSION}` });
-    }
+    insertNotices(store.messages.length);
     return rows;
   });
 

@@ -1,20 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { BookOpen, MoreHorizontal, Send, Share2 } from "lucide-vue-next";
-import type { BibleNoteDTO } from "@shared/bibleNotes";
+import type { BibleNoteDTO, BibleNoteSelection } from "@shared/bibleNotes";
 import { useChatStore } from "../../../store";
 import AppModal from "../../../components/ui/AppModal.vue";
 import { openCopyworkSource } from "../copywork/copyworkViewerState";
 import { noteApi } from "./noteApi";
 import NoteManager from "./NoteManager.vue";
 import { bibleNotesChanged } from "./noteViewerState";
-const props = defineProps<{ id: string }>();
+const props = defineProps<{ id?: string; filter?: BibleNoteSelection }>();
 const emit = defineEmits<{ close: []; chat: [] }>();
 const store = useChatStore();
 const note = ref<BibleNoteDTO | null>(null);
 const noteBusy = ref(false);
 const error = ref("");
 const toolsOpen = ref(false);
+const choicesOpen = ref(false);
+const choices = ref<BibleNoteDTO[]>([]);
+const offsets = ref<{ mine: number | null; public: number | null }>({ mine: null, public: null });
+const hasMore = computed(() => offsets.value.mine !== null || offsets.value.public !== null);
 const shareOpen = ref(false);
 const deleteOpen = ref(false);
 const channelId = ref<number | null>(null);
@@ -26,16 +30,42 @@ let shareRequestId = "";
 let shareTarget: number | null = null;
 let sequence = 0;
 let alive = true;
-async function load() {
+async function load(more = false) {
+  if (more && (noteBusy.value || !hasMore.value)) return;
   const request = ++sequence;
   noteBusy.value = true;
   error.value = "";
   try {
-    const response = await noteApi.get(props.id);
-    if (request === sequence && alive) note.value = response.note;
+    if (props.filter) {
+      const scopes = ["mine", "public"] as const;
+      const pages = await Promise.all(scopes.map((scope) => more && offsets.value[scope] === null
+        ? Promise.resolve({ notes: [], nextOffset: null })
+        : noteApi.list(scope, props.filter, more ? offsets.value[scope]! : 0)));
+      if (request !== sequence || !alive) return;
+      const merged = new Map((more ? choices.value : []).map((item) => [item.id, item]));
+      for (const page of pages) for (const item of page.notes) merged.set(item.id, item);
+      choices.value = [...merged.values()];
+      offsets.value = { mine: pages[0].nextOffset, public: pages[1].nextOffset };
+      note.value = choices.value.find((item) => item.id === note.value?.id) || choices.value[0] || null;
+    } else if (props.id) {
+      const response = await noteApi.get(props.id);
+      if (request === sequence && alive) note.value = response.note;
+    }
   } catch (cause) {
-    if (request === sequence && alive) { note.value = null; error.value = cause instanceof Error ? cause.message : "笔记加载失败"; }
+    if (request === sequence && alive) {
+      if (!more) note.value = null;
+      error.value = cause instanceof Error ? cause.message : "笔记加载失败";
+    }
   } finally { if (request === sequence && alive) noteBusy.value = false; }
+}
+function selectNote(item: BibleNoteDTO) {
+  note.value = item;
+  toolsOpen.value = false;
+  choicesOpen.value = false;
+  sharedChannel.value = null;
+  shareRequestId = "";
+  shareTarget = null;
+  error.value = "";
 }
 function refresh() { void load(); }
 async function publication() {
@@ -43,7 +73,7 @@ async function publication() {
   noteBusy.value = true;
   error.value = "";
   try {
-    note.value = (await noteApi.update(props.id, { public: !note.value.publishedAt })).note;
+    note.value = (await noteApi.update(note.value.id, { public: !note.value.publishedAt })).note;
     toolsOpen.value = false;
     bibleNotesChanged();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "公开状态保存失败"; }
@@ -56,13 +86,13 @@ function openShare() {
   shareOpen.value = true;
 }
 async function share() {
-  if (!channelId.value || noteBusy.value) return;
+  if (!note.value || !own.value || !channelId.value || noteBusy.value) return;
   if (shareTarget !== channelId.value || !shareRequestId) { shareTarget = channelId.value; shareRequestId = crypto.randomUUID(); }
   const target = channelId.value;
   noteBusy.value = true;
   error.value = "";
   try {
-    await noteApi.share(props.id, target, shareRequestId);
+    await noteApi.share(note.value.id, target, shareRequestId);
     sharedChannel.value = target;
     shareRequestId = "";
     shareOpen.value = false;
@@ -82,10 +112,10 @@ async function openSource() {
   catch (cause) { error.value = cause instanceof Error ? cause.message : "经文打开失败"; }
 }
 async function remove() {
-  if (!own.value || noteBusy.value) return;
+  if (!note.value || !own.value || noteBusy.value) return;
   noteBusy.value = true;
   error.value = "";
-  try { await noteApi.remove(props.id); bibleNotesChanged(); emit("close"); }
+  try { await noteApi.remove(note.value.id); bibleNotesChanged(); emit("close"); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "删除失败"; }
   finally { noteBusy.value = false; }
 }
@@ -103,22 +133,30 @@ onBeforeUnmount(() => { alive = false; sequence++; window.removeEventListener("b
       <template #header>
         <button v-if="note" class="note-reference" :aria-label="`在圣经中阅读：${note.source.reference}`" @click="openSource"><BookOpen :size="16" />{{ note.source.reference }}</button>
         <span v-else>经文笔记</span>
-        <button v-if="note && own" class="note-tools" aria-label="更多笔记操作" :aria-expanded="toolsOpen" :disabled="noteBusy" @click="toolsOpen = !toolsOpen"><MoreHorizontal :size="20" /></button>
+        <button v-if="note" class="note-tools" aria-label="更多笔记操作" :aria-expanded="toolsOpen" :disabled="noteBusy" @click="toolsOpen = !toolsOpen"><MoreHorizontal :size="20" /></button>
       </template>
       <div class="note-sheet-body">
         <div v-if="toolsOpen && note" class="note-menu" aria-label="笔记操作">
+          <small class="note-details">{{ new Date(note.updatedAt).toLocaleDateString('zh-CN') }} · {{ note.source.translationName }}<span v-if="own"> · {{ note.publishedAt ? '已公开' : '仅自己可见' }}</span></small>
+          <button @click="openSource">在圣经中阅读</button>
+          <button v-if="filter && (choices.length > 1 || hasMore)" :aria-expanded="choicesOpen" @click="choicesOpen = !choicesOpen">切换笔记</button>
           <button v-if="own" :disabled="noteBusy" @click="publication"><Share2 :size="16" />{{ note.publishedAt ? '取消公开' : '分享到圣经' }}</button>
-          <button :disabled="noteBusy || !channels.length" @click="openShare"><Send :size="16" />分享到聊天室</button>
+          <button v-if="own" :disabled="noteBusy || !channels.length" @click="openShare"><Send :size="16" />分享到聊天室</button>
           <button v-if="own" :disabled="noteBusy" @click="edit">编辑笔记</button>
           <button v-if="own" :disabled="noteBusy" @click="toolsOpen = false; deleteOpen = true">删除笔记</button>
+          <div v-if="choicesOpen" class="note-choices" aria-label="此节经文的其他笔记">
+            <button v-for="item in choices" :key="item.id" :aria-pressed="item.id === note.id" :disabled="noteBusy" @click="selectNote(item)"><span>{{ item.text }}</span><small>{{ item.accountId === store.account?.id ? '我' : item.author }}</small></button>
+            <button v-if="hasMore" :disabled="noteBusy" @click="load(true)">更多笔记</button>
+          </div>
         </div>
         <template v-if="note">
           <blockquote class="note-verse">{{ note.source.text }}</blockquote>
           <p class="note-writing">{{ note.text }}</p>
-          <footer class="note-signature">{{ note.author }} · {{ new Date(note.updatedAt).toLocaleDateString('zh-CN') }}<span>{{ own ? (note.publishedAt ? '已公开' : '仅自己可见') : '' }}</span><small>{{ note.source.translationName }}</small></footer>
+          <footer v-if="!own" class="note-signature">{{ note.author }} · {{ new Date(note.updatedAt).toLocaleDateString('zh-CN') }}<small>{{ note.source.translationName }}</small></footer>
         </template>
         <p v-else-if="noteBusy" role="status">正在展开便签…</p>
-        <p v-if="error" role="alert">{{ error }} <button v-if="!note" :disabled="noteBusy" @click="load">重试</button></p>
+        <p v-else-if="!error" role="status">这节经文还没有可查看的笔记。</p>
+        <p v-if="error" role="alert">{{ error }} <button :disabled="noteBusy" @click="load()">重试</button></p>
         <p v-if="sharedChannel" class="note-shared" role="status">已分享到聊天室。<button :disabled="noteBusy" @click="goToChat">前往查看</button></p>
       </div>
     </AppModal>
@@ -131,21 +169,28 @@ onBeforeUnmount(() => { alive = false; sequence++; window.removeEventListener("b
 </template>
 <style scoped>
 :deep(.bible-note-sheet) { width: min(680px, 100%); grid-template-rows: auto minmax(0, 1fr); color: #5e513b; background: #fff6d5; border-radius: 2px; box-shadow: 0 12px 40px #201b1833; }
-:deep(.bible-note-sheet > .modal-head) { gap: 10px; border: 0; background: transparent; padding: 14px 18px; }
+:deep(.bible-note-sheet > .modal-head) { gap: 10px; border: 0; background: transparent; padding: 8px 18px; }
 .note-reference { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 0; background: transparent; border: 0; color: inherit; font: inherit; font-size: 14px; cursor: pointer; }
 .note-tools { display: grid; place-items: center; margin-left: auto; width: 36px; height: 36px; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
-.note-sheet-body { overflow: auto; min-height: 0; padding: 12px 32px 28px; }
-.note-verse { margin: 0 0 22px; padding: 0 0 18px; border-bottom: 1px solid #d8c99b70; color: #9a8760; font-size: 14px; line-height: 1.9; }
-.note-writing { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 2; font-size: var(--message-content-font-size, 18px); margin: 0; min-height: 140px; }
-.note-signature { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 28px; color: #978360; font-size: 11px; }
+.note-sheet-body { overflow: auto; min-height: 0; padding: 4px 24px 20px; }
+.note-verse { margin: 0 0 12px; padding: 0 0 10px; border-bottom: 1px solid #d8c99b70; color: #9a8760; font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.note-writing { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: var(--message-content-font-size, 18px); margin: 0; }
+.note-signature { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; color: #978360; font-size: 11px; }
 .note-signature small { flex-basis: 100%; font-size: inherit; }
 .note-menu { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #d8c99b70; }
 .note-menu button { display: flex; justify-content: center; align-items: center; gap: 7px; min-height: 44px; border: 1px solid #d5c69c; border-radius: 5px; padding: 8px; background: #fffaf0; font: inherit; color: inherit; font-size: 13px; cursor: pointer; }
+.note-details, .note-choices { grid-column: 1 / -1; }
+.note-details { color: #978360; font-size: 11px; }
+.note-choices { display: grid; gap: 6px; }
+.note-choices button { min-width: 0; justify-content: space-between; text-align: left; }
+.note-choices button[aria-pressed=true] { border-color: #80613f; }
+.note-choices span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-choices small { flex-shrink: 0; }
 .note-dialog-body { display: grid; gap: 16px; padding: 20px; }
 .note-dialog-body label { display: grid; gap: 10px; }
 .note-dialog-body select, .note-dialog-body button, .note-shared button { min-height: 44px; border: 1px solid #d5c69c; border-radius: 5px; padding: 8px 12px; background: #fffaf0; font: inherit; color: #62533e; }
 .note-dialog-body p, .note-shared { font-size: 13px; line-height: 1.8; margin: 0; }
 [role=alert] { color: #a14d38; font-size: 13px; overflow-wrap: anywhere; }
 .note-shared { margin-top: 20px; }
-@media (max-width: 480px) { .note-sheet-body { padding: 12px 20px 24px; } }
+@media (max-width: 480px) { .note-sheet-body { padding: 4px 18px 18px; } }
 </style>

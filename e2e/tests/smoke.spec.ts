@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
+import { APP_VERSION } from "../../src/shared/release.js";
 
 async function blockPublicNetwork(page: Page) {
   await page.route("**/*", async (route) => {
@@ -94,6 +95,37 @@ async function openAccountsAdmin(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await blockPublicNetwork(page);
+});
+
+test("版本更新分隔提示在点击、后续消息和刷新后保留", async ({ page }) => {
+  await page.setViewportSize({ width: 1378, height: 1118 });
+  await loginAsAdmin(page);
+  const notice = page.locator(".version-update-separator").filter({ hasText: `聊天室刚刚更新到版本 ${APP_VERSION}` });
+  await expect(notice).toBeVisible();
+  const key = await notice.getAttribute("data-timeline-key");
+  await notice.click();
+  const settings = page.getByRole("dialog", { name: "个人设置" });
+  await expect(settings).toBeVisible();
+  await settings.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await expect(notice).toBeVisible();
+  const content = `版本标记之后的消息 ${Date.now()}`;
+  await page.locator(".composer textarea").fill(content);
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  const message = page.locator(".message-row").filter({ hasText: content });
+  await expect(message).toBeVisible();
+  const id = await message.getAttribute("data-message-id");
+  const expectMarkerBeforeMessage = async () => {
+    await expect(notice).toHaveAttribute("data-timeline-key", key!);
+    await expect(page.locator(`[data-message-id="${id}"]`)).toBeVisible();
+    expect(await notice.evaluate((element, messageId) => {
+      const next = document.querySelector(`[data-message-id="${messageId}"]`);
+      return !!next && !!(element.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING);
+    }, id)).toBeTruthy();
+  };
+  await expectMarkerBeforeMessage();
+  await page.reload();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await expectMarkerBeforeMessage();
 });
 
 test("管理员登录并进入默认频道", async ({ page }) => {
