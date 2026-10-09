@@ -26,6 +26,7 @@ export const TIMELINE_SCROLL_IDLE_MS = 500;
 
 interface UseVirtualTimelineOptions {
   scroller: Ref<HTMLElement | null>;
+  isActive: () => boolean;
   // Kept in App.vue (pinned by a responsiveLayout.test.ts literal) and passed in
   // so virtualTimelineItems shares one row-height estimate.
   estimateRowHeight: (row: TimelineRow) => number;
@@ -56,7 +57,9 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
     localStorage.setItem(key, JSON.stringify(versionNotices.value));
   }, { immediate: true });
 
-  const timeline = computed<TimelineRow[]>(() => {
+  const timeline = computed<TimelineRow[]>((previous) => {
+    // Retain the saved window without reading live messages while the chat is occluded.
+    if (!options.isActive()) return previous || [];
     const rows: TimelineRow[] = [];
     const insertions = store.loadingInitialMessages ? new Map<number, VersionTimelineNotice[]>()
       : versionTimelineInsertions(versionNotices.value, store.messages, store.hasOlderMessages, store.hasNewerMessages);
@@ -98,10 +101,13 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
     return estimatedImageTimelineHeight(messageImageDimensions(message), viewportWidth);
   }
 
-  const virtualTimelineItems = computed<VirtualTimelineItem[]>(() => timeline.value.map((row) => ({
-    key: timelineRowKey(row),
-    estimatedHeight: options.estimateRowHeight(row)
-  })));
+  const virtualTimelineItems = computed<VirtualTimelineItem[]>((previous) => {
+    if (!options.isActive()) return previous || [];
+    return timeline.value.map((row) => ({
+      key: timelineRowKey(row),
+      estimatedHeight: options.estimateRowHeight(row)
+    }));
+  });
   const virtualTimelineActive = computed(() => timeline.value.length > VIRTUAL_TIMELINE_THRESHOLD);
   const virtualTimelineWindow = computed(() => {
     if (!virtualTimelineActive.value) {
@@ -119,7 +125,7 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
   }
 
   function syncVirtualTimelineViewport(root = options.scroller.value) {
-    if (!root) return;
+    if (!options.isActive() || !root) return;
     const nextScrollTop = root.scrollTop;
     if (virtualTimelineActive.value && nextScrollTop !== timelineScrollTop.value) {
       const current = virtualTimelineWindow.value;
@@ -153,6 +159,7 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
   }
 
   function pumpMessageImagePreloads() {
+    if (!options.isActive()) return;
     while (activeMessageImagePreloads < 2 && options.imagePreloadQueue.length) {
       const message = options.imagePreloadQueue.shift();
       if (!message) return;

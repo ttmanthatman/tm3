@@ -1,9 +1,10 @@
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { composerPromptCharTiming } from "@shared/composerPrompts";
 
 export type ComposerPlaceholderPhase = "idle" | "appear" | "hold" | "disappear";
 
 export type ComposerPlaceholderSources = {
+  isActive?: () => boolean;
   getPrompts: () => string[];
   getHoldSeconds: () => number;
   getAppearSeconds: () => number;
@@ -16,7 +17,7 @@ export type ComposerPlaceholderSources = {
  * The client renders `text` letter by letter: characters light up left to
  * right during "appear" and dim left to right during "disappear", each phase
  * paced by its own configured duration. The timer pauses while the document
- * is hidden and must be stopped via stop() on unmount.
+ * or its chat surface is hidden and must be stopped via stop() on unmount.
  */
 export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
   const text = ref("");
@@ -35,6 +36,7 @@ export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
 
   function schedule(next: () => void, seconds: number) {
     clearTimer();
+    if (document.hidden || sources.isActive?.() === false) return;
     timer = window.setTimeout(next, Math.max(0, seconds) * 1000);
   }
 
@@ -82,9 +84,13 @@ export function useComposerPlaceholder(sources: ComposerPlaceholderSources) {
   }
 
   document.addEventListener("visibilitychange", onVisibilityChange);
-  schedule(beginPrompt, sources.getGapSeconds());
+  const stopActiveWatch = watch(() => sources.isActive?.() !== false, (active) => {
+    if (active) restart();
+    else clearTimer();
+  }, { immediate: true, flush: "sync" });
 
   function stop() {
+    stopActiveWatch();
     clearTimer();
     document.removeEventListener("visibilitychange", onVisibilityChange);
   }

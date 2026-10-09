@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandl
 import { z } from "zod";
 import type { BookDTO } from "../../shared/types.js";
 import { BOOK_UPLOAD_MAX_BYTES, EpubRejectedError, readEpubMeta } from "../books/epub.js";
+import { registerBookNotesRoutes } from "./bookNotes.js";
 
 export type BooksAuth = {
   accountId: number;
@@ -124,6 +125,8 @@ async function renderGeneratedCover(title: string, author: string, targetPath: s
 
 export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) {
   const { prisma, booksDir, requireAuth, requireMediaAuth, requireAdmin, authFor } = deps;
+
+  registerBookNotesRoutes(app, deps);
 
   fs.mkdirSync(booksDir, { recursive: true });
 

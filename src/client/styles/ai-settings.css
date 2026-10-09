@@ -468,7 +468,11 @@ textarea {
   font-size: 16px;
 }
 
+/* Custom buttons must not inherit platform-specific control padding or chrome. */
 button {
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 0;
   border: 0;
   background: none;
   color: inherit;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { ref } from "vue";
 import { useComposerPlaceholder } from "./useComposerPlaceholder.js";
 
 type PendingTimer = { fn: () => void; delay: number };
@@ -31,6 +32,10 @@ function installDomStubs() {
     }
   };
   return {
+    visibility(hidden: boolean) {
+      Object.assign(document, { hidden });
+      for (const listener of listeners.get("visibilitychange") || []) listener();
+    },
     fire() {
       const timer = pending;
       pending = null;
@@ -109,4 +114,38 @@ test("stop clears the timer and removes the visibility listener", () => {
   assert.equal(dom.hasPending(), false);
   assert.equal(dom.listenerCount("visibilitychange"), 0);
   dom.restore();
+});
+
+
+test("fullscreen chat suspension cancels prompt timers and document visibility cannot restart them", () => {
+  const dom = installDomStubs();
+  const active = ref(true);
+  const placeholder = useComposerPlaceholder({
+    isActive: () => active.value,
+    getPrompts: () => ["提示"],
+    getHoldSeconds: () => 3,
+    getAppearSeconds: () => 1,
+    getDisappearSeconds: () => 2,
+    getGapSeconds: () => 6
+  });
+  try {
+    dom.fire();
+    assert.equal(placeholder.phase.value, "appear");
+    active.value = false;
+    assert.equal(dom.hasPending(), false);
+    dom.visibility(true);
+    dom.visibility(false);
+    assert.equal(dom.hasPending(), false);
+    active.value = true;
+    assert.equal(dom.pendingDelay(), 6000);
+    dom.fire();
+    assert.equal(placeholder.phase.value, "appear");
+    placeholder.stop();
+    active.value = false;
+    active.value = true;
+    assert.equal(dom.hasPending(), false);
+  } finally {
+    placeholder.stop();
+    dom.restore();
+  }
 });

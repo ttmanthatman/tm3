@@ -1236,7 +1236,7 @@ function showToast(message: string) {
 .bible-topbar-title small { margin-top: 3px; color: #92775b; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; white-space: nowrap; }
 .bible-topbar-title small svg { color: #ad875a; }
 .bible-font-control { flex: 0 0 auto; }
-.bible-resource-link, .bible-font-trigger { width: 36px; height: 36px; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
+.bible-resource-link, .bible-font-trigger { flex: 0 0 auto; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
 .bible-resource-link { display: grid; place-items: center; padding: 0; text-decoration: none; cursor: pointer; }
 .bible-resource-link:disabled { opacity: .36; cursor: not-allowed; }
 .bible-resource-link:hover, .bible-font-trigger:hover { background: rgba(128, 97, 63, .16); }

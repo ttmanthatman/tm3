@@ -130,6 +130,7 @@ import {
 import { canOpenChannelSettings } from "./channelManagement";
 import { memberRoleLabel } from "./memberManagement";
 import { composerHeightForContent } from "./composerLayout";
+import { useBookNavigation } from "./features/books/useBookNavigation";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
 import { favoriteNotificationToTopNotice, likeNotificationToTopNotice } from "./likeNotification";
@@ -547,6 +548,7 @@ const {
 } = useSermon({ getSocket: () => store.socket });
 const sermonWorkspaceOpen = ref(false);
 const bookWorkspaceOpen = ref(false);
+const { bookLocation } = useBookNavigation(() => store.account?.id, openBookWorkspace);
 const sermonEntryOpen = ref(false);
 // 首次打开后才挂载讲道台 chunk（懒加载），之后保持挂载以保留滑入滑出过渡。
 const sermonWorkspaceMounted = ref(false);
@@ -929,7 +931,7 @@ const {
   stopDripPhysics
 } = useDripEffect({
   scroller,
-  messages: () => store.messages,
+  messages: () => chatWorkspaceHidden.value ? [] : store.messages,
   messageEffect,
   isMessageEffectPaused
 });
@@ -940,7 +942,7 @@ const {
   settleWaterMessage,
   getDeviceGravity
 } = useWaterRippleEffect({
-  messages: () => store.messages,
+  messages: () => chatWorkspaceHidden.value ? [] : store.messages,
   messageEffect,
   isMessageEffectPaused,
   documentVisible
@@ -953,7 +955,7 @@ const {
   stopGooeyDripPhysics
 } = useGooeyDripEffect({
   scroller,
-  messages: () => store.messages,
+  messages: () => chatWorkspaceHidden.value ? [] : store.messages,
   messageEffect,
   isMessageEffectPaused,
   gravity: getDeviceGravity
@@ -1234,6 +1236,7 @@ const {
   pumpMessageImagePreloads
 } = useVirtualTimeline({
   scroller,
+  isActive: () => !chatWorkspaceHidden.value,
   estimateRowHeight: estimatedTimelineRowHeight,
   computeWindow: computeVirtualTimelineWindow,
   imagePreloadQueue: messageImagePreloadQueue,
@@ -1262,7 +1265,7 @@ const {
   isMine,
   reconcileReadPositionAfterLayout,
   // 只预取虚拟时间线实际渲染窗口内的消息链接（窗口本身含 overscan，即可见区加小预算）。
-  visibleMessages: () =>
+  visibleMessages: () => chatWorkspaceHidden.value ? [] :
     timeline.value
       .slice(virtualTimelineWindow.value.start, virtualTimelineWindow.value.end)
       .flatMap((row) => (row.kind === "message" ? [row.message] : []))
@@ -1468,6 +1471,7 @@ watch(
 watch(
   () => store.messages.length,
   (length, previousLength) => {
+    if (chatWorkspaceHidden.value) return;
     const latest = store.messages[store.messages.length - 1];
     const shouldFollow = shouldFollowMessageListChange({
       restoring: pendingReadPositionRestore.value,
@@ -1484,7 +1488,7 @@ watch(
 );
 
 watch(
-  () => store.messages.map((message) => `${message.id}:${message.type}:${message.content}`).join("|"),
+  () => chatWorkspaceHidden.value ? "" : store.messages.map((message) => `${message.id}:${message.type}:${message.content}`).join("|"),
   () => {
     void ensureVisibleLinkPreviews();
     preloadMessageImages(store.messages);
@@ -1518,7 +1522,7 @@ watch(
 );
 
 watch(
-  () => [store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, chatWorkspaceHidden.value] as const,
+  () => [chatWorkspaceHidden.value ? "" : store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, chatWorkspaceHidden.value] as const,
   () => {
     if (chatWorkspaceHidden.value) {
       messageEffectObserver?.disconnect();
@@ -2528,7 +2532,7 @@ const renderedTimelineRows = computed(() => timeline.value
   })));
 
 function scheduleVirtualTimelineViewport(root = scroller.value) {
-  if (!root || timelineScrollFrame !== undefined) return;
+  if (chatWorkspaceHidden.value || !root || timelineScrollFrame !== undefined) return;
   timelineScrollFrame = window.requestAnimationFrame(() => {
     timelineScrollFrame = undefined;
     syncVirtualTimelineViewport(root);
@@ -2541,12 +2545,13 @@ function scheduleVirtualTimelineViewport(root = scroller.value) {
 }
 
 function handleTimelineViewportResize() {
+  if (chatWorkspaceHidden.value) return;
   syncVirtualTimelineViewport();
   reconcileReadPositionAfterLayout();
 }
 
 async function flushPendingTimelineMeasurements() {
-  if (timelineScrollActive.value) return;
+  if (chatWorkspaceHidden.value || timelineScrollActive.value) return;
   if (!pendingTimelineHeights.size) {
     pendingTimelineAnchor = null;
     return;
@@ -2572,7 +2577,7 @@ async function flushPendingTimelineMeasurements() {
     : null;
   measuredTimelineHeights.value = next;
   await nextTick();
-  if (root && anchoredScrollTop !== null && activeReadAnchor?.kind !== "newest" && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
+  if (!chatWorkspaceHidden.value && root && anchoredScrollTop !== null && activeReadAnchor?.kind !== "newest" && !pendingReadPositionRestore.value && !timelineScrollActive.value) {
     root.scrollTop = anchoredScrollTop;
   }
   syncVirtualTimelineViewport(root);
@@ -2580,7 +2585,7 @@ async function flushPendingTimelineMeasurements() {
 }
 
 function scheduleTimelineMeasurementFlush() {
-  if (timelineScrollActive.value || timelineMeasurementFrame !== undefined) return;
+  if (chatWorkspaceHidden.value || timelineScrollActive.value || timelineMeasurementFrame !== undefined) return;
   timelineMeasurementFrame = window.requestAnimationFrame(() => {
     timelineMeasurementFrame = undefined;
     void flushPendingTimelineMeasurements();
@@ -2600,7 +2605,7 @@ function handleTimelineResize(entries: ResizeObserverEntry[]) {
 
 function refreshTimelineMeasurements() {
   timelineResizeObserver?.disconnect();
-  if (typeof ResizeObserver === "undefined") return;
+  if (chatWorkspaceHidden.value || typeof ResizeObserver === "undefined") return;
   if (!timelineResizeObserver) timelineResizeObserver = new ResizeObserver(handleTimelineResize);
   for (const row of scroller.value?.querySelectorAll<HTMLElement>("[data-timeline-key]") || []) {
     timelineResizeObserver.observe(row, { box: "border-box" });
@@ -2697,6 +2702,7 @@ const otherChannelUnreadCount = computed(() => store.channels.reduce((total, cha
 }, 0));
 
 const { text: composerPromptText, phase: composerPromptPhase, chars: composerPromptChars, charStyle: composerPromptCharStyle, stop: stopComposerPlaceholder } = useComposerPlaceholder({
+  isActive: () => !chatWorkspaceHidden.value,
   getPrompts: () => store.appearance.composerPrompts || [],
   getHoldSeconds: () => cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
   getAppearSeconds: () => cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
@@ -2705,6 +2711,7 @@ const { text: composerPromptText, phase: composerPromptPhase, chars: composerPro
 });
 
 function isNearMessageBottom(distance = 96) {
+  if (chatWorkspaceHidden.value) return false;
   const el = scroller.value;
   if (!el) return true;
   return el.scrollHeight - el.scrollTop - el.clientHeight < distance;
@@ -2875,6 +2882,7 @@ async function restoreSavedReadPosition(options?: { forceNewest?: boolean }) {
 }
 
 function reconcileReadPositionAfterLayout() {
+  if (chatWorkspaceHidden.value) return;
   const anchor = activeReadAnchor;
   if (!anchor) {
     syncNewestIndicators();
@@ -2887,7 +2895,7 @@ function reconcileReadPositionAfterLayout() {
   }
   requestAnimationFrame(() => {
     const root = scroller.value;
-    if (!root || !shouldApplyChatReadAnchor(anchor, activeReadAnchor, readPositionRestoreToken)) {
+    if (chatWorkspaceHidden.value || !root || !shouldApplyChatReadAnchor(anchor, activeReadAnchor, readPositionRestoreToken)) {
       syncNewestIndicators(root);
       return;
     }
@@ -3350,12 +3358,27 @@ function openBookWorkspace() {
 
 function closeBookWorkspace() {
   bookWorkspaceOpen.value = false;
+  bookLocation.value = null;
 }
 
 // 只在聊天被全屏工作区遮住时暂停，分屏仍保持聊天动效和阅读位置。
 watch(chatWorkspaceHidden, async (open) => {
   if (open) {
     saveReadPosition();
+    if (timelineScrollFrame !== undefined) window.cancelAnimationFrame(timelineScrollFrame);
+    timelineScrollFrame = undefined;
+    if (timelineMeasurementFrame !== undefined) window.cancelAnimationFrame(timelineMeasurementFrame);
+    timelineMeasurementFrame = undefined;
+    if (timelineScrollIdleTimer !== undefined) window.clearTimeout(timelineScrollIdleTimer);
+    timelineScrollIdleTimer = undefined;
+    if (readPositionSaveTimer !== undefined) window.clearTimeout(readPositionSaveTimer);
+    readPositionSaveTimer = undefined;
+    if (wallpaperPanRetryTimer !== undefined) window.clearTimeout(wallpaperPanRetryTimer);
+    wallpaperPanRetryTimer = undefined;
+    timelineScrollActive.value = false;
+    pendingTimelineHeights.clear();
+    pendingTimelineAnchor = null;
+    chatScrollIntentTracker.reset();
     if (parallaxFrame) window.cancelAnimationFrame(parallaxFrame);
     parallaxFrame = 0;
     pendingParallaxDelta = 0;
@@ -3369,10 +3392,14 @@ watch(chatWorkspaceHidden, async (open) => {
     syncFlashEffectTimer();
     return;
   }
+  const unreadWhileHidden = hasUnreadMessages.value;
   await nextTick();
+  if (chatWorkspaceHidden.value) return;
   observeWallpaperPanViewport();
   await resetWallpaperPan();
   await restoreChatSurface();
+  if (chatWorkspaceHidden.value) return;
+  if (unreadWhileHidden && awayFromNewest.value) hasUnreadMessages.value = true;
   refreshTimelineMeasurements();
   refreshMessageEffectObserver();
   preloadMessageImages(store.messages);
@@ -3426,7 +3453,7 @@ watch(sermonRequestDecision, (event) => {
 });
 
 function isMessageEffectPaused(message: MessageDTO) {
-  return !shouldRenderMessageEffect({
+  return chatWorkspaceHidden.value || !shouldRenderMessageEffect({
     manuallyPaused: pausedEffectIds.value.has(message.id),
     visibilityKnown: observedEffectIds.value.has(message.id),
     visible: visibleEffectIds.value.has(message.id),
@@ -3435,6 +3462,7 @@ function isMessageEffectPaused(message: MessageDTO) {
 }
 
 function handleMessageEffectIntersections(entries: IntersectionObserverEntry[]) {
+  if (chatWorkspaceHidden.value) return;
   const observed = new Set(observedEffectIds.value);
   const visible = new Set(visibleEffectIds.value);
   for (const entry of entries) {
@@ -3454,7 +3482,7 @@ function refreshMessageEffectObserver() {
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
   const root = scroller.value;
-  if (!root || typeof IntersectionObserver === "undefined") {
+  if (chatWorkspaceHidden.value || !root || typeof IntersectionObserver === "undefined") {
     updateEffectVisibility(new Set(), new Set());
     return;
   }
@@ -4241,6 +4269,7 @@ async function markVoiceListened(message: MessageDTO) {
 }
 
 function scrollBottom(smooth = true) {
+  if (chatWorkspaceHidden.value) return;
   const el = scroller.value;
   if (!el) return;
   pendingTimelineAnchor = null;
@@ -4256,7 +4285,7 @@ function observeWallpaperPanViewport() {
   wallpaperPanResizeObserver?.disconnect();
   wallpaperPanResizeObserver = null;
   const pane = chatPane.value;
-  if (!pane || typeof ResizeObserver === "undefined") return;
+  if (chatWorkspaceHidden.value || !pane || typeof ResizeObserver === "undefined") return;
   wallpaperPanResizeObserver = new ResizeObserver(() => resizeWallpaperPan());
   wallpaperPanResizeObserver.observe(pane);
 }
@@ -4411,6 +4440,7 @@ function focusComposer() {
 }
 
 async function loadTimelineEdgesAfterScroll() {
+  if (chatWorkspaceHidden.value) return;
   const el = scroller.value;
   if (!el) return;
   if (el.scrollTop < 180 && !loadingHistoryFromScroll && (store.hasOlderMessages || store.prefetchedOlderMessages.length)) {
@@ -4418,7 +4448,7 @@ async function loadTimelineEdgesAfterScroll() {
     const edgeAnchor = visibleTimelineAnchor(el);
     const loaded = await store.loadOlderMessages();
     await nextTick();
-    if (loaded && scroller.value === el) {
+    if (!chatWorkspaceHidden.value && loaded && scroller.value === el) {
       const anchoredScrollTop = edgeAnchor
         ? scrollTopForVirtualAnchor(virtualTimelineItems.value, measuredTimelineHeights.value, edgeAnchor)
         : null;
@@ -4428,7 +4458,7 @@ async function loadTimelineEdgesAfterScroll() {
     }
     loadingHistoryFromScroll = false;
   }
-  if (isNearMessageBottom(180) && store.hasNewerMessages && !loadingNewerFromScroll) {
+  if (!chatWorkspaceHidden.value && isNearMessageBottom(180) && store.hasNewerMessages && !loadingNewerFromScroll) {
     loadingNewerFromScroll = true;
     const loaded = await store.loadNewerMessages();
     await nextTick();
@@ -4441,12 +4471,14 @@ async function loadTimelineEdgesAfterScroll() {
 }
 
 function markTimelineScrolling() {
+  if (chatWorkspaceHidden.value) return;
   timelineScrollActive.value = true;
   if (timelineMeasurementFrame !== undefined) window.cancelAnimationFrame(timelineMeasurementFrame);
   timelineMeasurementFrame = undefined;
   if (timelineScrollIdleTimer !== undefined) window.clearTimeout(timelineScrollIdleTimer);
   timelineScrollIdleTimer = window.setTimeout(async () => {
     timelineScrollIdleTimer = undefined;
+    if (chatWorkspaceHidden.value) return;
     timelineScrollActive.value = false;
     if (chatScrollIntentTracker.shouldFollowNewestAfterIdle()) {
       activeReadAnchor = newestChatReadAnchor(readPositionRestoreToken);
@@ -4461,6 +4493,7 @@ function markTimelineScrolling() {
 }
 
 function handleMessagesScroll() {
+  if (chatWorkspaceHidden.value) return;
   const el = scroller.value;
   if (!el) return;
   markTimelineScrolling();
@@ -5317,7 +5350,7 @@ const messageRowBindings = {
 
     <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" @resize="resizeBible" />
 
-    <BookWorkspace v-if="bookWorkspaceOpen" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
+    <BookWorkspace v-if="bookWorkspaceOpen" :initial-location="bookLocation" :active-channel-id="bibleTargetChannelId" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
 
     <SermonWorkspace
       v-if="sermonWorkspaceMounted"
@@ -5331,7 +5364,7 @@ const messageRowBindings = {
       @own="openOwnSermonWorkspace"
     />
 
-    <aside v-show="!chatWorkspaceHidden" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
+    <aside v-if="!chatWorkspaceHidden" class="channel-pane" :class="{ open: showChannels, collapsed: channelsCollapsed }">
       <header class="pane-head">
         <strong>聊天室</strong>
         <button v-if="!store.account?.isGuest" class="icon-btn" @click="showReceptionManager = true" aria-label="会客厅" title="会客厅"><DoorOpen :size="20" /></button>
@@ -5430,7 +5463,7 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe">
+    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -6083,7 +6116,7 @@ const messageRowBindings = {
       />
     </section>
 
-    <aside v-show="!chatWorkspaceHidden" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed && !showMembers }">
+    <aside v-if="!chatWorkspaceHidden" class="member-pane" :class="{ open: showMembers, collapsed: membersCollapsed && !showMembers }">
       <header class="pane-head member-pane-head">
         <div class="member-pane-title">
           <strong>{{ memberPaneTitle }}</strong>

@@ -131,6 +131,11 @@ export function globalFractionFromSectionOffset(
   return globalFraction(sectionStarts, index, extent > 0 ? offset / extent : 0);
 }
 
+// Stored progress identifies the viewport center; restoration must use the same anchor.
+export function continuousScrollTopForFraction(sectionTop: number, sectionHeight: number, fraction: number, viewportHeight: number): number {
+  return Math.max(0, sectionTop + fraction * sectionHeight - viewportHeight / 2);
+}
+
 // 落点恰好贴在章节边界时，paginator 的边界判断会把恢复位置解析到章节末尾；
 // 向章节内侧轻推，避开浮点边界。
 export function nudgeFromSectionBoundaries(sectionStarts: number[], fraction: number, eps = 1e-4): number {
@@ -218,6 +223,7 @@ export function resolveBookLink(
 
 type FoliateView = HTMLElement & {
   open(book: unknown): Promise<void>;
+  close(): void;
   goToFraction(fraction: number): Promise<void>;
   getSectionFractions(): number[];
   renderer: {
@@ -372,7 +378,7 @@ export class ContinuousBookReader {
     await this.loadSection(target.index);
     const wrapper = this.wrappers[target.index];
     if (wrapper) {
-      this.element.scrollTop = wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1);
+      this.element.scrollTop = continuousScrollTopForFraction(wrapper.offsetTop, wrapper.offsetHeight, target.fraction, this.element.clientHeight);
       this.lastScrollTop = this.element.scrollTop;
     }
     // 相邻章节只是预载优化，不能阻塞当前章节打开；上一章随后插入时由
@@ -388,7 +394,7 @@ export class ContinuousBookReader {
     const wrapper = this.wrappers[target.index];
     if (!wrapper) return;
     this.element.scrollTo({
-      top: wrapper.offsetTop + target.fraction * Math.max(0, wrapper.offsetHeight - 1),
+      top: continuousScrollTopForFraction(wrapper.offsetTop, wrapper.offsetHeight, target.fraction, this.element.clientHeight),
       behavior: "auto"
     });
     this.lastScrollTop = this.element.scrollTop;

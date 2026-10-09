@@ -4,7 +4,7 @@
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
 // 未缓存的图书首次点按只下载到当前会话的 Cache Storage，完成后再次点按才打开。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, X } from "lucide-vue-next";
+import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
 import type { BookDTO } from "@shared/types";
 import { api, getToken } from "../api";
@@ -33,6 +33,43 @@ import {
   type FoliateView,
   type ReaderStyle
 } from "../books/reader";
+
+import BookReadingActions from "../features/books/BookReadingActions.vue";
+import { useBookSelection } from "../features/books/useBookSelection";
+import type { BookLocation, BookReadingContext } from "../features/books/bookReading";
+
+const props = defineProps<{ initialLocation?: BookLocation | null; activeChannelId?: number | null }>();
+const actions = ref<InstanceType<typeof BookReadingActions> | null>(null);
+const invitation = ref<BookLocation | null>(props.initialLocation ?? null);
+const invitationNotice = ref("");
+function currentContext(book = activeBook.value, fraction = sliderValue.value): BookReadingContext | null {
+  return book ? { bookId: book.id, title: book.title, chapter: chapterLabel.value.slice(0, 300), fraction, quote: "" } : null;
+}
+const { selection, bind: bindSelection, clear: clearSelection, reset: resetSelection } = useBookSelection(currentContext);
+function inviteBook(book: BookDTO, fraction = 0) {
+  const context = currentContext(book, fraction);
+  if (context) { if (book.id !== activeBook.value?.id) context.chapter = ""; actions.value?.share(context); }
+}
+function showBookNotes() { const context = currentContext(); if (context) void actions.value?.showNotes(context); }
+function jumpToFraction(fraction: number) {
+  clearSelection();
+  if (continuousReader) void continuousReader.goToFraction(fraction);
+  else void view?.goToFraction(fraction);
+}
+async function openInvitation() {
+  const target = invitation.value;
+  if (!target) return;
+  const book = books.value.find((item) => item.id === target.bookId);
+  if (!book) { invitationNotice.value = "这本书已不在书架中"; return; }
+  if (bookDownloadState(book) !== "ready") { invitationNotice.value = `共读邀请：《${book.title}》。请先下载，再点开，自动到达分享位置。`; return; }
+  invitationNotice.value = "";
+  if (activeBook.value?.id === book.id && readerOpen.value) { jumpToFraction(target.fraction); invitation.value = null; }
+  else await openBook(book);
+}
+watch(() => props.initialLocation, (value) => {
+  invitation.value = value ?? null;
+  if (!shelfLoading.value) void openInvitation();
+});
 
 const emit = defineEmits<{
   (e: "close"): void;
@@ -261,6 +298,7 @@ function emitClose() {
 }
 
 function closeBookView() {
+  resetSelection();
   closeFootnote();
   if (saveTimer) {
     clearTimeout(saveTimer);
@@ -275,6 +313,7 @@ function closeBookView() {
   if (view && relocateHandler) view.removeEventListener("relocate", relocateHandler);
   relocateHandler = null;
   lastPreloadIndex = -1;
+  if (view?.renderer?.getContents().length) view.close();
   view?.remove();
   view = null;
   continuousReader?.destroy();
@@ -312,7 +351,7 @@ async function openBook(book: BookDTO) {
     });
 
     const starts = sectionFractions(bookObject.sections);
-    const restoreTarget = nudgeFromSectionBoundaries(starts, cachedProgress(book));
+    const restoreTarget = nudgeFromSectionBoundaries(starts, invitation.value?.bookId === book.id ? invitation.value.fraction : cachedProgress(book));
     const metadata = bookObject.metadata ?? {};
     activeBookTitle.value = formatLang(metadata.title) || book.title;
     renderTOC(bookObject.toc ?? [], bookObject);
@@ -361,13 +400,15 @@ async function openBook(book: BookDTO) {
           console.error("restore failed", error);
         }
       } else {
-        element.renderer.next(); // foliate 官方 demo 的初始化手法
+        await element.renderer.next(); // 首页就绪后再开放阅读操作
       }
     }
     chromeVisible.value = style.value.flow === "paginated";
     settingsOpen.value = false;
     tocOpen.value = false;
     readerOpen.value = true;
+    invitation.value = null;
+    invitationNotice.value = "";
     localStorage.setItem(LAST_READ_KEY, String(book.id));
     if (style.value.flow === "paginated") window.addEventListener("resize", onWindowResize);
   } catch (error) {
@@ -471,6 +512,7 @@ function onContinuousScrollDirection(direction: "down" | "up") {
 }
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
+  bindSelection(doc);
   doc.addEventListener("click", (event) => {
     if (consumeSuppressedDocumentClick()) {
       event.preventDefault();
@@ -769,6 +811,7 @@ function onStageZoneClick(event: MouseEvent) {
 function onViewLoad(event: Event) {
   const doc = (event as CustomEvent<{ doc?: Document }>).detail?.doc;
   if (!doc) return;
+  bindSelection(doc);
   doc.addEventListener("click", (e) => onDocClick(doc, e));
   doc.addEventListener("wheel", onDocWheel, { passive: false });
   bindDocumentTouch(doc);
@@ -781,7 +824,7 @@ function onSliderInput(event: Event) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (!readerOpen.value) return;
+  if (!readerOpen.value || document.querySelector(".modal-shell") || (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]"))) return;
   const target = view as unknown as { goLeft?(): void; goRight?(): void } | null;
   if (event.key === "ArrowLeft") target?.goLeft?.();
   else if (event.key === "ArrowRight") target?.goRight?.();
@@ -798,6 +841,7 @@ watch(readerOpen, (open) => {
 });
 
 void loadShelf().then(() => {
+  if (invitation.value) { void openInvitation(); return; }
   // 返回图书室自动打开上次读的书；进度恢复走既有 cachedProgress 逻辑。
   // 书被删除（不在书架）时留在书架页。
   const raw = localStorage.getItem(LAST_READ_KEY);
@@ -834,10 +878,10 @@ defineExpose({ reload: loadShelf });
         <p class="book-shelf-sub">管理员可在「管理 → 图书」上传 EPUB 图书</p>
       </div>
       <p v-if="downloadError" class="book-download-error" role="alert">{{ downloadError }}</p>
+      <p v-if="invitationNotice" class="book-invitation-notice" role="status">{{ invitationNotice }}</p>
       <div v-if="!shelfLoading && !shelfError && books.length" class="book-shelf-grid">
+        <article v-for="book in sortedBooks" :key="book.id" class="book-shelf-item" :data-book-id="book.id">
         <button
-          v-for="book in sortedBooks"
-          :key="book.id"
           class="book-card"
           type="button"
           :aria-label="bookDownloadState(book) === 'ready' ? `阅读《${book.title}》` : `下载《${book.title}》`"
@@ -861,6 +905,8 @@ defineExpose({ reload: loadShelf });
           <span class="book-card-title">{{ book.title }}</span>
           <span class="book-card-author">{{ book.author || "佚名" }}</span>
         </button>
+        <button class="book-shelf-invite" type="button" :aria-label="`邀请共读《${book.title}》`" @click="inviteBook(book)"><Send :size="14" />邀请共读</button>
+        </article>
       </div>
     </div>
 
@@ -902,6 +948,8 @@ defineExpose({ reload: loadShelf });
       </header>
 
       <footer class="book-bar book-bottom" :class="{ 'bar-hidden': !chromeVisible }">
+          <button class="book-bar-btn" type="button" aria-label="我的阅读笔记" @click="showBookNotes"><NotebookPen :size="17" /></button>
+          <button class="book-bar-btn" type="button" aria-label="从这里邀请共读" @click="activeBook && inviteBook(activeBook, sliderValue)"><Send :size="17" /></button>
         <span class="book-progress-label">{{ progressLabel }}</span>
         <input type="range" min="0" max="1" step="0.001" :value="sliderValue" aria-label="阅读进度" @input="onSliderInput" />
       </footer>
@@ -976,6 +1024,7 @@ defineExpose({ reload: loadShelf });
         <button class="book-btn" type="button" @click="activeBook && openBook(activeBook)">重试</button>
       </div>
     </div>
+    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToFraction" />
   </section>
 </template>
 
@@ -1082,6 +1131,10 @@ defineExpose({ reload: loadShelf });
 .book-card-title { margin-top: 8px; font-size: 13.5px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .book-card-author { display: block; margin-top: 2px; font-size: 11.5px; color: #97836a; }
 
+.book-shelf-item { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.book-shelf-item .book-card { width: 100%; }
+.book-shelf-invite { display: inline-flex; justify-content: center; align-items: center; gap: 5px; padding: 6px; min-height: 32px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
+.book-invitation-notice { padding: 12px; background: #f7efdf; color: #70583b; }
 /* ---------- 阅读器 ---------- */
 .book-reader { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .book-reader[data-theme="light"] { background: #ffffff; color: #1c1c1e; }
@@ -1153,7 +1206,7 @@ defineExpose({ reload: loadShelf });
 .book-bar-group { display: flex; align-items: center; gap: 4px; }
 .book-progress-label { font-size: 12px; color: #97836a; width: 42px; text-align: right; font-variant-numeric: tabular-nums; }
 .book-reader[data-theme="dark"] .book-progress-label { color: #a89a86; }
-.book-bottom input { flex: 1; }
+.book-bottom input { flex: 1; min-width: 0; }
 
 .book-footnote-backdrop {
   position: absolute;

@@ -19,6 +19,18 @@ async function login(page: Page) {
   await page.getByPlaceholder("密码").fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  return { adminToken: token };
+}
+
+async function chatState(page: Page) {
+  return page.evaluate(() => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map((key) => provides?.[key]).find((value) => value && typeof value === "object" && "_s" in value) as { _s?: Map<string, Record<string, unknown>> } | undefined;
+    const store = [...(pinia?._s?.values() || [])].find((candidate) => "connectionState" in candidate && "messages" in candidate);
+    if (!store || typeof store.currentChannelId !== "number" || !Array.isArray(store.messages)) throw new Error("chat state missing");
+    return { channelId: store.currentChannelId, contents: (store.messages as { content: string }[]).map((message) => message.content) };
+  });
 }
 
 async function expectRatio(page: Page, ratio: number) {
@@ -76,7 +88,8 @@ test("desktop split supports snapping, keyboard, drawers, fullscreen and drafts"
   await separator.press("ArrowRight");
   await expectRatio(page, 0.52);
   await page.getByRole("button", { name: "圣经全屏", exact: true }).click();
-  await expect(page.locator(".chat-pane")).toBeHidden();
+  await expect(page.locator(".chat-pane")).toHaveCount(0);
+  await expect(page.locator(".messages-scroll, .handwriting-message, .drip-layer, .drip-gooey-layer")).toHaveCount(0);
   expect((await page.locator(".bible-workspace").boundingBox())!.width).toBe(1600);
   await page.getByRole("button", { name: "缩小圣经，恢复分屏", exact: true }).click();
   await expectRatio(page, 0.52);
@@ -116,9 +129,9 @@ test("split Bible sends a verse to the newly selected chat channel", async ({ pa
   await expect(page.locator(".bible-toast")).toContainText(E2E_CHANNELS.secondary);
 });
 
-test("fullscreen Bible preserves the current chat history position", async ({ page }) => {
+test("fullscreen Bible suspends chat visuals, receives messages and preserves the history position", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await login(page);
+  const { adminToken } = await login(page);
   await page.getByRole("button", { name: "展开频道", exact: true }).click();
   await page.locator(".channel-row").filter({ hasText: E2E_PERF.channel }).first().click();
   await page.getByRole("button", { name: "收起频道", exact: true }).click();
@@ -135,13 +148,26 @@ test("fullscreen Bible preserves the current chat history position", async ({ pa
     return { id: message.dataset.messageId!, offset: message.getBoundingClientRect().top - top };
   });
   await page.getByRole("button", { name: "圣经全屏", exact: true }).click();
-  await expect(scroller).toBeHidden();
+  await expect(scroller).toHaveCount(0);
+  const { channelId } = await chatState(page);
+  const hiddenMessage = `全屏时接收消息 ${randomUUID()}`;
+  const sent = await page.request.post("/api/messages", {
+    headers: { Authorization: `Bearer ${adminToken}` },
+    data: { channelId, content: hiddenMessage, type: "text", payload: { effect: "drip" } }
+  });
+  expect(sent.ok()).toBeTruthy();
+  await expect.poll(async () => (await chatState(page)).contents.some((content) => content.includes(hiddenMessage))).toBe(true);
+  // Pending scroll-idle work and incoming effects must not reattach chat visuals.
+  await page.waitForTimeout(700);
+  await expect(page.locator(".chat-pane, .messages-scroll, .handwriting-message, .drip-layer, .drip-gooey-layer")).toHaveCount(0);
   await page.getByRole("button", { name: "缩小圣经，恢复分屏", exact: true }).click();
   await expect.poll(async () => {
     const top = await scroller.evaluate((element) => element.getBoundingClientRect().top);
     const message = page.locator(`[data-message-id="${anchor.id}"]`).first();
     return Math.abs(await message.evaluate((element) => element.getBoundingClientRect().top) - top - anchor.offset);
   }).toBeLessThan(4);
+  await page.getByRole("button", { name: "跳到最新消息", exact: true }).click();
+  await expect(scroller).toContainText(hiddenMessage);
 });
 
 for (const engine of ["chromium", "webkit"] as const) {

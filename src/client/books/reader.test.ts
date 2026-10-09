@@ -8,6 +8,7 @@ import {
   bookScrollDirection,
   buildBookCSS,
   globalFraction,
+  continuousScrollTopForFraction,
   globalFractionFromSectionOffset,
   isBookTouchDrag,
   nudgeFromSectionBoundaries,
@@ -161,4 +162,13 @@ test("readerLayoutMetrics maps margin to foliate layout attributes", () => {
   // 极小舞台：栏宽有下限，不会算出非法值
   const tiny = readerLayoutMetrics({ ...DEFAULT_READER_STYLE, margin: 96 }, 200, 100);
   assert.ok(tiny.maxInlineSize >= 120);
+});
+
+
+test("continuous invitations restore the recorded viewport center instead of drifting half a screen", () => {
+  for (const viewport of [600, 900]) {
+    const top = continuousScrollTopForFraction(1000, 2400, .4, viewport);
+    assert.equal(globalFractionFromSectionOffset([0, 1], 0, top + viewport / 2 - 1000, 2400), .4);
+  }
+  assert.equal(continuousScrollTopForFraction(0, 2400, 0, 600), 0);
 });
