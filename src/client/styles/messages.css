@@ -456,6 +456,14 @@
   width: 100%;
 }
 
+.bubble-wrap:has(.bible-note-card) {
+  width: 322px;
+}
+
+.bubble:has(.bible-note-card) {
+  padding-inline: 11px;
+}
+
 .message-bubble-cluster {
   min-width: 0;
   max-width: 100%;

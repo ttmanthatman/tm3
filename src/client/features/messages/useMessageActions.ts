@@ -1,8 +1,7 @@
-import { computed, nextTick, ref, type Ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import type { ChannelDTO, FavoriteMessageDTO, MessageDTO, MessageEffect, MessageReactionsDTO } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
-import { isForwardableMessage } from "../../messageForward";
 import { canOpenChannelSettings } from "../../channelManagement";
 
 interface UseMessageActionsOptions {
@@ -13,7 +12,6 @@ interface UseMessageActionsOptions {
   requestDeviceOrientationPermissionOnce: () => void;
   stirWaterMessage: (message: MessageDTO, event: PointerEvent) => void;
   settleWaterMessage: (message: MessageDTO, event: PointerEvent) => void;
-  positionPromptNearEvent: (event: MouseEvent | PointerEvent | undefined, size: { width: number; height: number }) => { x: number; y: number };
   suppressNextTap: () => void;
   openFavoriteMessage: (favorite: FavoriteMessageDTO) => Promise<void>;
   openFavorites: () => Promise<void>;
@@ -32,13 +30,72 @@ export function useMessageActions(options: UseMessageActionsOptions) {
   let channelLongPressTimer: number | undefined;
   let channelLongPressStartedAt = { x: 0, y: 0 };
   const pendingMessageActions = ref<MessageDTO | null>(null);
-  const messageActionPromptPosition = ref({ x: 0, y: 0 });
+  const messageActionPopoverElement = ref<HTMLElement | null>(null);
+  const messageActionPromptStyle = ref<Record<string, string>>({ visibility: "hidden" });
+  let menuAnchor = { x: 0, y: 0 };
+  let positionFrame: number | undefined;
+  let resizeObserver: ResizeObserver | undefined;
   const textSelectableMessageId = ref<number | null>(null);
 
-  const messageActionPromptStyle = computed(() => ({
-    left: `${messageActionPromptPosition.value.x}px`,
-    top: `${messageActionPromptPosition.value.y}px`
-  }));
+  async function updateMenuPosition() {
+    const element = messageActionPopoverElement.value;
+    if (!element) return;
+    const viewport = window.visualViewport;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const safeTop = parseFloat(rootStyle.getPropertyValue("--safe-top")) || 0;
+    const safeBottom = parseFloat(rootStyle.getPropertyValue("--safe-bottom")) || 0;
+    const left = (viewport?.offsetLeft || 0) + 12;
+    const top = (viewport?.offsetTop || 0) + safeTop + 12;
+    const right = (viewport?.offsetLeft || 0) + (viewport?.width || window.innerWidth) - 12;
+    const bottom = (viewport?.offsetTop || 0) + (viewport?.height || window.innerHeight) - safeBottom - 12;
+    messageActionPromptStyle.value = {
+      ...messageActionPromptStyle.value,
+      maxWidth: `${Math.max(0, right - left)}px`,
+      maxHeight: `${Math.max(0, bottom - top)}px`
+    };
+    await nextTick();
+    if (element !== messageActionPopoverElement.value) return;
+    const rect = element.getBoundingClientRect();
+    messageActionPromptStyle.value = {
+      ...messageActionPromptStyle.value,
+      left: `${Math.min(Math.max(menuAnchor.x + 10, left), Math.max(left, right - rect.width))}px`,
+      top: `${Math.min(Math.max(menuAnchor.y + 10, top), Math.max(top, bottom - rect.height))}px`,
+      visibility: "visible"
+    };
+  }
+
+  function scheduleMenuPosition() {
+    if (positionFrame !== undefined) window.cancelAnimationFrame(positionFrame);
+    positionFrame = window.requestAnimationFrame(() => {
+      positionFrame = undefined;
+      void updateMenuPosition();
+    });
+  }
+
+  watch(messageActionPopoverElement, (element, previous) => {
+    if (previous) resizeObserver?.unobserve(previous);
+    if (element) {
+      resizeObserver?.observe(element);
+      scheduleMenuPosition();
+    } else if (positionFrame !== undefined) {
+      window.cancelAnimationFrame(positionFrame);
+      positionFrame = undefined;
+    }
+  }, { flush: "post" });
+
+  onMounted(() => {
+    resizeObserver = new ResizeObserver(scheduleMenuPosition);
+    window.addEventListener("resize", scheduleMenuPosition, { passive: true });
+    window.visualViewport?.addEventListener("resize", scheduleMenuPosition, { passive: true });
+    window.visualViewport?.addEventListener("scroll", scheduleMenuPosition, { passive: true });
+  });
+  onBeforeUnmount(() => {
+    if (positionFrame !== undefined) window.cancelAnimationFrame(positionFrame);
+    resizeObserver?.disconnect();
+    window.removeEventListener("resize", scheduleMenuPosition);
+    window.visualViewport?.removeEventListener("resize", scheduleMenuPosition);
+    window.visualViewport?.removeEventListener("scroll", scheduleMenuPosition);
+  });
 
   function handleBubblePointerMove(message: MessageDTO, event: PointerEvent) {
     moveMessageLongPress(event);
@@ -134,9 +191,11 @@ export function useMessageActions(options: UseMessageActionsOptions) {
 
   function openMessageActionMenu(message: MessageDTO, event: PointerEvent) {
     clearMessageLongPress();
-    messageActionPromptPosition.value = options.positionPromptNearEvent(event, { width: 190, height: 200 + (isForwardableMessage(message) ? 36 : 0) });
+    menuAnchor = { x: event.clientX, y: event.clientY };
+    messageActionPromptStyle.value = { visibility: "hidden" };
     pendingMessageActions.value = message;
     options.closeCompetingPrompts();
+    nextTick(scheduleMenuPosition);
   }
 
   function defaultMessageReactions(): MessageReactionsDTO {
@@ -247,7 +306,7 @@ export function useMessageActions(options: UseMessageActionsOptions) {
 
   return {
     pendingMessageActions,
-    messageActionPromptPosition,
+    messageActionPopoverElement,
     messageActionPromptStyle,
     textSelectableMessageId,
     handleBubblePointerMove,

@@ -2118,7 +2118,7 @@ const {
 });
 const {
   pendingMessageActions,
-  messageActionPromptPosition,
+  messageActionPopoverElement,
   messageActionPromptStyle,
   textSelectableMessageId,
   handleBubblePointerMove,
@@ -2153,7 +2153,6 @@ const {
   requestDeviceOrientationPermissionOnce,
   stirWaterMessage,
   settleWaterMessage,
-  positionPromptNearEvent,
   suppressNextTap: () => { suppressNextTapUntil = Date.now() + 650; },
   openFavoriteMessage,
   openFavorites,
@@ -6266,7 +6265,7 @@ const messageRowBindings = {
       </div>
     </section>
 
-    <section v-if="pendingMessageActions" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
+    <section v-if="pendingMessageActions" ref="messageActionPopoverElement" class="tap-popover message-actions-popover" :style="messageActionPromptStyle" data-message-actions-popover>
       <div class="tap-popover-card">
         <div class="message-quick-reactions">
           <button type="button" :class="{ active: pendingMessageActions.reactions?.currentUserLiked }" @click="likeActionMessage" aria-label="点赞">

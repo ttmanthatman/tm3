@@ -56,11 +56,11 @@ test("desktop split supports snapping, keyboard, drawers, fullscreen and drafts"
   await expectRatio(page, 0.5);
   const toggle = page.locator(".bible-header-trigger");
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await expect(toggle.locator("svg")).toHaveClass(/lucide-book-open/);
+  await expect(toggle.locator("svg")).toHaveAttribute("data-bible-icon", "open");
   await toggle.click();
   await expect(page.locator(".bible-workspace")).toBeHidden();
   await expect(toggle).toHaveAttribute("aria-label", "打开圣经");
-  await expect(toggle.locator("svg")).toHaveClass(/lucide-book-icon/);
+  await expect(toggle.locator("svg")).toHaveAttribute("data-bible-icon", "closed");
   await toggle.click();
   await expectRatio(page, 0.5);
   await expect(page.locator(".app-shell")).toHaveClass(/channels-collapsed/);

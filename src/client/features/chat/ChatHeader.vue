@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
 import {
-  Book,
-  BookOpen,
   CheckCircle2,
   ChevronLeft,
   Ellipsis,
@@ -22,6 +20,7 @@ import ActivityTicker from "../../components/ActivityTicker.vue";
 import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
 import MessageSearchWindow from "./MessageSearchWindow.vue";
+import BibleIcon from "../bible/BibleIcon.vue";
 import SermonHub from "../sermon/SermonHub.vue";
 import type { MusicPlayer } from "../music/useMusicPlayer";
 import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
@@ -166,7 +165,7 @@ onBeforeUnmount(clearStoryHold);
       </div>
       <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
     </div>
-    <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BookOpen v-if="bibleOpen" :size="30" /><Book v-else :size="30" /></button>
+    <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BibleIcon :open="bibleOpen" /></button>
     <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
     <SermonHub v-if="!showingFavoriteSurface" />
     <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>

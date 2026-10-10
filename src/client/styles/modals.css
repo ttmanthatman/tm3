@@ -397,6 +397,12 @@
   gap: 4px;
 }
 
+.message-actions-popover > .tap-popover-card {
+  max-height: inherit;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
 .message-quick-reactions {
   padding: 7px 7px 5px;
   display: grid;
