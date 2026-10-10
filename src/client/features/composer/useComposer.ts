@@ -71,6 +71,7 @@ interface UseComposerOptions {
   uploadPrayerImage: (file: File, channelId: number) => Promise<number>;
   clearPrayerComposerPhoto: () => void;
   isRecording: Ref<boolean>;
+  recordingBusy?: Ref<boolean>;
   startRecording: () => Promise<void>;
   stopRecording: () => void;
   audioFile: Ref<File | null>;
@@ -436,18 +437,17 @@ export function useComposer(options: UseComposerOptions) {
   }
 
   async function toggleVoicePanel() {
+    if (options.recordingBusy?.value) return;
     if (options.isRecording.value) {
       options.stopRecording();
       return;
     }
     if (options.composerPanel.value !== "voice") {
       options.composerPanel.value = "voice";
-      await options.startRecording();
+      if (!options.audioFile.value) await options.startRecording();
       return;
     }
-    if (!options.audioFile.value) {
-      await options.startRecording();
-    }
+    if (!options.audioFile.value) options.composerPanel.value = null;
   }
 
   function onInput() {

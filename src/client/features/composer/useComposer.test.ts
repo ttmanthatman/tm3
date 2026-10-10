@@ -19,6 +19,11 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
   const gracePrefills: string[] = [];
   const input = ref("");
   const composerCaret = ref(0);
+  const panel = ref<"voice" | "more" | null>(null);
+  const recording = ref(false);
+  const file = ref<File | null>(null);
+  let starts = 0;
+  let stops = 0;
   const composer = useComposer({
     input,
     composerFocused: ref(false),
@@ -29,7 +34,7 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
     replyTo: ref<MessageDTO | null>(null),
     musicMentionToken: ref<ComposerMentionToken | null>(null),
     composerInput: ref<HTMLTextAreaElement | null>(null),
-    composerPanel: ref<"voice" | "more" | null>(null),
+    composerPanel: panel,
     messageSendPending: ref(false),
     messageSendStatus: ref(""),
     clearMessageSendStatus: () => undefined,
@@ -43,14 +48,14 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
     prayerComposerPhoto: ref<File | null>(null),
     uploadPrayerImage: async () => 0,
     clearPrayerComposerPhoto: () => undefined,
-    isRecording: ref(false),
-    startRecording: async () => undefined,
-    stopRecording: () => undefined,
-    audioFile: ref<File | null>(null),
+    isRecording: recording,
+    startRecording: async () => { starts++; recording.value = true; },
+    stopRecording: () => { stops++; recording.value = false; file.value = new File(["voice"], "voice.m4a"); },
+    audioFile: file,
     sortedMusicTracks: () => [],
     chooseActiveSuggestion: () => undefined
   });
-  return { composer, input, composerCaret, sent, gracePrefills };
+  return { composer, input, composerCaret, sent, gracePrefills, panel, recording, file, starts: () => starts, stops: () => stops };
 }
 
 test("parseComposerText recognizes /恩典 with and without inline content", () => {
@@ -136,4 +141,33 @@ test("the grace subchannel opens the grace composer for typed text", async () =>
   } finally {
     store.graceOnly = false;
   }
+});
+
+
+test("microphone starts once, stops into a retained preview, and closes the empty panel after deletion", async () => {
+  const h = createComposerHarness();
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.starts(), 1);
+  assert.equal(h.recording.value, true);
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.stops(), 1);
+  assert.ok(h.file.value);
+  assert.equal(h.panel.value, "voice");
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.starts(), 1);
+  assert.equal(h.panel.value, "voice");
+  h.file.value = null;
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.panel.value, null);
+  assert.equal(h.starts(), 1);
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.starts(), 2);
+});
+
+test("opening a retained preview never starts a replacement recording", async () => {
+  const h = createComposerHarness();
+  h.file.value = new File(["saved"], "voice.m4a");
+  await h.composer.toggleVoicePanel();
+  assert.equal(h.panel.value, "voice");
+  assert.equal(h.starts(), 0);
 });

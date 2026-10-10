@@ -77,6 +77,7 @@ const props = defineProps<{
   matchingMentionMembers: MentionMember[];
   matchingSlashCommands: SlashCommandSuggestion[];
   recordingNotice: string;
+  recordingBusy: boolean;
   audioPreviewUrl: string;
   isRecording: boolean;
   recordingStatus: string;
@@ -162,7 +163,7 @@ defineExpose({ composerInput });
     </div>
     <div class="composer-input-shell">
       <div class="composer-main" :class="{ raised: composerPanel }">
-        <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" @click="toggleVoicePanel" aria-label="语音消息"><Mic :size="22" /></button>
+        <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" data-voice-toggle @click="toggleVoicePanel" :disabled="recordingBusy || voiceSending" aria-label="语音消息"><Mic :size="22" /></button>
         <div class="composer-glow-shell" :class="{ on: composerFocused }">
           <textarea
             ref="composerInput"
@@ -285,7 +286,7 @@ defineExpose({ composerInput });
         <strong>{{ recordingStatus || "点击麦克风开始录音" }}</strong>
         <small>{{ formatDuration(recordingDuration) }}</small>
         <button v-if="isRecording" class="icon-btn" @click="stopRecording" aria-label="停止录音"><Square :size="18" /></button>
-        <button v-else class="icon-btn" @click="startRecording" aria-label="重新录音"><RotateCcw :size="18" /></button>
+        <button v-else class="icon-btn" :disabled="recordingBusy || voiceSending" @click="startRecording" aria-label="重新录音"><RotateCcw :size="18" /></button>
       </div>
       <div v-if="audioPreviewUrl" class="voice-preview">
         <audio

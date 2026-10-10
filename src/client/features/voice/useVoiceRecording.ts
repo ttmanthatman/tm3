@@ -1,4 +1,5 @@
-import { ref, type Ref } from "vue";
+import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from "vue";
+import { voiceDraftStorage, type VoiceDraftStorage } from "./voiceDrafts";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./voiceRecording";
 
 type VoiceUploadOptions = { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number };
@@ -6,6 +7,8 @@ type UploadFileFn = (file: File, options?: VoiceUploadOptions) => Promise<{ succ
 
 interface UseVoiceRecordingOptions {
   composerPanel: Ref<"voice" | "more" | null>;
+  accountId?: () => number | null;
+  draftStorage?: VoiceDraftStorage;
   // Pending-message creation and the XHR upload flow stay in App.vue (shared
   // with file/image uploads); the recording flow drives them through these.
   pushPendingVoiceMessage: (file: File, options: { durationMs?: number; waveform?: number[] }) => 0 | { id: number; channelId: number } | Promise<0 | { id: number; channelId: number }>;
@@ -15,6 +18,10 @@ interface UseVoiceRecordingOptions {
 export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   const mediaRecorder = ref<MediaRecorder | null>(null);
   const isRecording = ref(false);
+  const recordingStarting = ref(false);
+  const recordingFinalizing = ref(false);
+  const draftLoading = ref(false);
+  const recordingBusy = computed(() => recordingStarting.value || recordingFinalizing.value || draftLoading.value);
   const audioPreviewUrl = ref("");
   const audioFile = ref<File | null>(null);
   const audioPreviewWaveform = ref<number[]>([]);
@@ -27,12 +34,37 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   const recordingStatus = ref("");
   const recordingNotice = ref("");
   let recordingTimer: number | undefined;
+  let recordingStartedAt = 0;
+  let revision = 0;
+  let disposed = false;
+  const storage = options.draftStorage || voiceDraftStorage;
+  let storageQueue = Promise.resolve();
+  const panelPinned = computed(() => recordingBusy.value || isRecording.value || !!audioFile.value);
+  watch(options.composerPanel, (panel) => {
+    if (panelPinned.value && panel !== "voice") options.composerPanel.value = "voice";
+  }, { flush: "sync" });
+
+  function queueStorage(operation: () => Promise<void>) {
+    const ticket = revision;
+    storageQueue = storageQueue.then(operation).catch((error: unknown) => {
+      if (!disposed && ticket === revision) recordingNotice.value = `无法保存或清除本机录音草稿：${error instanceof Error ? error.message : "存储失败"}。请保持页面打开并发送录音。`;
+    });
+    return storageQueue;
+  }
+
+  function persistDraft() {
+    const accountId = options.accountId?.();
+    const file = audioFile.value;
+    if (!accountId || !file) return Promise.resolve();
+    const draft = { accountId, file, name: file.name, durationMs: audioPreviewDurationMs.value, waveform: [...audioPreviewWaveform.value], notice: recordingNotice.value };
+    return queueStorage(() => storage.save(draft));
+  }
   let activeVoiceRecordingSession: VoiceRecordingSession | null = null;
   const recordingWakeLock = createRecordingWakeLock(navigator);
 
   function pickAudioMimeType() {
     const recorder = window.MediaRecorder;
-    const candidates = ["audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+    const candidates = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
     return candidates.find((type) => recorder.isTypeSupported?.(type)) || "";
   }
 
@@ -45,11 +77,17 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   }
 
   function clearRecordingTimer() {
-    if (recordingTimer) window.clearInterval(recordingTimer);
+    if (recordingTimer !== undefined) window.clearInterval(recordingTimer);
     recordingTimer = undefined;
   }
 
-  function resetRecording() {
+  function clearRecording(clearDraft: boolean) {
+    revision += 1;
+    recordingStarting.value = false;
+    recordingFinalizing.value = false;
+    draftLoading.value = false;
+    const accountId = options.accountId?.();
+    if (clearDraft && accountId) void queueStorage(() => storage.delete(accountId));
     const recorder = mediaRecorder.value;
     const session = activeVoiceRecordingSession;
     if (recorder && session) session.stop(recorder, "discard");
@@ -72,12 +110,18 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     audioPreviewUrl.value = "";
   }
 
+  function resetRecording() { clearRecording(true); }
+
   async function startRecording() {
+    if (disposed || recordingBusy.value || isRecording.value || audioFile.value || voiceSending.value) return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       alert("当前浏览器不支持录音");
       return;
     }
-    resetRecording();
+    clearRecording(false);
+    const ticket = revision;
+    recordingStarting.value = true;
+    options.composerPanel.value = "voice";
     recordingStatus.value = "准备录音…";
     let stream: MediaStream | undefined;
     try {
@@ -89,6 +133,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
           autoGainControl: true
         }
       });
+      if (disposed || ticket !== revision) { stream.getTracks().forEach((track) => track.stop()); return; }
       const activeStream = stream;
       const mimeType = pickAudioMimeType();
       const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: 16000 };
@@ -97,6 +142,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
       const session = createVoiceRecordingSession();
       const chunks: Blob[] = [];
       const startedAt = Date.now();
+      recordingStartedAt = startedAt;
       mediaRecorder.value = recorder;
       activeVoiceRecordingSession = session;
       recorder.ondataavailable = (event) => {
@@ -107,9 +153,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         const isActiveSession = activeVoiceRecordingSession === session;
         activeStream.getTracks().forEach((track) => track.stop());
         if (isActiveSession) {
-          recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
+          if (!recordingFinalizing.value) recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
           clearRecordingTimer();
           isRecording.value = false;
+          recordingFinalizing.value = false;
           mediaRecorder.value = null;
           activeVoiceRecordingSession = null;
           void recordingWakeLock.release();
@@ -127,19 +174,26 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         audioPreviewUrl.value = URL.createObjectURL(blob);
         audioPreviewDurationMs.value = recordingDuration.value;
         audioPreviewWaveform.value = fallbackWaveform(Date.now());
+        const file = audioFile.value;
         void analyzeAudioBlob(blob).then((result) => {
-          audioPreviewDurationMs.value = result.durationMs || recordingDuration.value;
+          if (disposed || ticket !== revision || audioFile.value !== file) return;
+          if (outcome.reason === "interrupted" || audioPreviewDurationMs.value <= 0) {
+            audioPreviewDurationMs.value = result.durationMs || recordingDuration.value;
+          }
           audioPreviewWaveform.value = result.waveform;
+          void persistDraft();
         });
         recordingStatus.value = "录音已完成";
         recordingNotice.value = outcome.reason === "interrupted"
           ? "录音被系统提前中断，下面只保留了中断前的部分。请保持屏幕亮起并停留在聊天室后重录。"
           : "";
+        void persistDraft();
       };
       recorder.onerror = () => {
         if (activeVoiceRecordingSession === session) recordingStatus.value = "录音发生错误，正在保留已录部分";
       };
       session.start(recorder);
+      recordingStarting.value = false;
       isRecording.value = true;
       recordingStatus.value = "正在录音";
       recordingTimer = window.setInterval(() => {
@@ -152,6 +206,8 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
       });
     } catch {
       stream?.getTracks().forEach((track) => track.stop());
+      if (disposed || ticket !== revision) return;
+      clearRecording(false);
       recordingStatus.value = "";
       options.composerPanel.value = null;
       alert("无法开始录音，请允许麦克风权限");
@@ -161,6 +217,11 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   function stopRecording() {
     const recorder = mediaRecorder.value;
     if (!recorder || recorder.state === "inactive") return;
+    recordingDuration.value = Math.max(recordingDuration.value, Date.now() - recordingStartedAt);
+    clearRecordingTimer();
+    recordingFinalizing.value = true;
+    recordingStatus.value = "正在保留录音…";
+    void recordingWakeLock.release();
     if (activeVoiceRecordingSession) activeVoiceRecordingSession.stop(recorder, "user");
     else recorder.stop();
   }
@@ -244,7 +305,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
 
   function syncPreviewMetadata() {
     const audio = previewAudioEl.value;
-    if (audio?.duration) audioPreviewDurationMs.value = Math.round(audio.duration * 1000);
+    if (audioPreviewDurationMs.value <= 0 && audio && Number.isFinite(audio.duration) && audio.duration > 0) audioPreviewDurationMs.value = Math.round(audio.duration * 1000);
   }
 
   function endPreviewPlayback() {
@@ -261,13 +322,60 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     }
     if (isRecording.value) {
       void recordingWakeLock.acquire().then((held) => {
-        recordingStatus.value = held ? "正在录音" : "正在录音，请保持屏幕亮起";
+        if (isRecording.value) recordingStatus.value = held ? "正在录音" : "正在录音，请保持屏幕亮起";
       });
     }
   }
 
+  if (options.accountId) {
+    watch(options.accountId, async (accountId) => {
+      clearRecording(false);
+      options.composerPanel.value = null;
+      if (!accountId) return;
+      const ticket = revision;
+      draftLoading.value = true;
+      try {
+        await storageQueue;
+        const draft = await storage.load(accountId);
+        if (disposed || ticket !== revision || !draft || !(draft.file instanceof Blob)) return;
+        audioFile.value = new File([draft.file], draft.name, { type: draft.file.type });
+        audioPreviewUrl.value = URL.createObjectURL(audioFile.value);
+        recordingDuration.value = audioPreviewDurationMs.value = draft.durationMs;
+        audioPreviewWaveform.value = draft.waveform;
+        recordingStatus.value = "录音已完成";
+        recordingNotice.value = draft.notice;
+        options.composerPanel.value = "voice";
+      } catch (error) {
+        if (ticket === revision) recordingNotice.value = `无法读取本机录音草稿：${error instanceof Error ? error.message : "存储失败"}`;
+      } finally {
+        if (ticket === revision) draftLoading.value = false;
+      }
+    }, { immediate: true, flush: "sync" });
+  }
+
+  function handleOutsidePointer(event: PointerEvent) {
+    if (options.composerPanel.value !== "voice" || panelPinned.value) return;
+    const target = event.target;
+    if (target instanceof Element && !target.closest(".voice-drawer, [data-voice-toggle]")) options.composerPanel.value = null;
+  }
+  // A stopped draft is already saved; leaving the page must not delete it.
+  function disposeRecording() {
+    disposed = true;
+    clearRecording(false);
+  }
+  function handlePageHide() { if (isRecording.value) stopRecording(); }
+  if (typeof document !== "undefined") document.addEventListener("pointerdown", handleOutsidePointer);
+  if (typeof window !== "undefined") window.addEventListener("pagehide", handlePageHide);
+  if (getCurrentScope()) onScopeDispose(() => {
+    if (typeof document !== "undefined") document.removeEventListener("pointerdown", handleOutsidePointer);
+    if (typeof window !== "undefined") window.removeEventListener("pagehide", handlePageHide);
+    disposeRecording();
+  });
+
   return {
     isRecording,
+    recordingBusy,
+    disposeRecording,
     audioPreviewUrl,
     audioFile,
     audioPreviewWaveform,

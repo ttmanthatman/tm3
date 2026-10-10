@@ -1108,6 +1108,8 @@ const {
   recordingDuration,
   recordingStatus,
   recordingNotice,
+  recordingBusy,
+  disposeRecording,
   resetRecording,
   startRecording,
   stopRecording,
@@ -1119,7 +1121,7 @@ const {
   syncPreviewMetadata,
   endPreviewPlayback,
   handleRecordingVisibilityChange
-} = useVoiceRecording({ composerPanel, pushPendingVoiceMessage, uploadFile });
+} = useVoiceRecording({ composerPanel, pushPendingVoiceMessage, uploadFile, accountId: () => store.account?.id || null });
 const graceToast = ref("");
 let graceToastTimer: number | undefined;
 function showGraceToast(text: string) {
@@ -1197,6 +1199,7 @@ const {
   uploadPrayerImage,
   clearPrayerComposerPhoto,
   isRecording,
+  recordingBusy,
   startRecording,
   stopRecording,
   audioFile,
@@ -1638,7 +1641,7 @@ onBeforeUnmount(() => {
   clearChannelLongPress();
   oopsPhysicsLayer.value?.reset();
   stopAllMessageAudioPlayback();
-  resetRecording();
+  disposeRecording();
   stopPublishingMusicListening();
   stopPublishingBibleReading();
   stopPublishingFriendListening();
@@ -4908,6 +4911,7 @@ const composerBindings = computed(() => ({
   matchingMentionMembers: matchingMentionMembers.value,
   matchingSlashCommands: matchingSlashCommands.value,
   recordingNotice: recordingNotice.value,
+  recordingBusy: recordingBusy.value,
   audioPreviewUrl: audioPreviewUrl.value,
   isRecording: isRecording.value,
   recordingStatus: recordingStatus.value,
