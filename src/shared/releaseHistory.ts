@@ -1180,11 +1180,23 @@ const RELEASE_2_8_0_NOTES = [
   "书架与阅读器支持发送共读邀请，打开邀请可直接定位到分享的阅读位置。"
 ] as const
 
+const RELEASE_2_9_0_NOTES = [
+  "修正手机 PWA 分页阅读的安全区域与阅读位置恢复；选中文字后的操作栏使用更深的颜色。",
+  "电子书笔记自动高亮原文并显示可打开笔记的图标；圣经和电子书的个人笔记支持下载备份、导入和重复检测。",
+  "阅读分享和共读邀请显示图书封面、章节与进度，书架邀请按钮对齐，阅读栏显示正在共读的头像和名称。",
+  "圣经入口以合上和打开的书表示状态，再次点击可关闭；移除电子书笔记保存和发送到聊天室后的提示。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.1",
+    date: "2026-10-10",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.0",
     date: "2026-10-10",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_0_NOTES
   },
   {
     version: "2.8.0",
