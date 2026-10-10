@@ -1187,11 +1187,20 @@ const RELEASE_2_9_0_NOTES = [
   "圣经入口以合上和打开的书表示状态，再次点击可关闭；移除电子书笔记保存和发送到聊天室后的提示。"
 ] as const
 
+const RELEASE_2_9_1_NOTES = [
+  "聊天输入框新增微信表情选择器，提供 109 个本地表情，支持搜索、光标位置插入与文字混合发送，聊天记录刷新后仍显示对应表情。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.2",
+    date: "2026-10-10",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.1",
     date: "2026-10-10",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_1_NOTES
   },
   {
     version: "2.9.0",
