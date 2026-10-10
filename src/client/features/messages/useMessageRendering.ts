@@ -15,6 +15,7 @@ import {
 } from "./messageRendering";
 import { createLinkPreviewQueue, type LinkPreviewState } from "./linkPreviewQueue";
 import { parseBookReadingUrl } from "../books/bookReading";
+import { renderWechatEmojiHtml } from "./wechatEmojiHtml";
 
 export type { LinkPreviewState } from "./linkPreviewQueue";
 export type MentionToast = { id: number; channelId: number; channelName: string; senderName: string; text: string; createdAt: string };
@@ -61,21 +62,23 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
   const previewUrlFor = options.previewUrlFor || messagePreviewUrl;
 
   function messageContentHtml(message: MessageDTO) {
-    return options.linkifyMessageHtml(message.content);
+    return renderWechatEmojiHtml(options.linkifyMessageHtml(message.content));
   }
 
-  const markdownMessageHtml = memoizeMessage((message: MessageDTO) => options.linkifyMessageHtml(renderMarkdownToHtml(message.content || "")));
+  const markdownMessageHtml = memoizeMessage((message: MessageDTO) => renderWechatEmojiHtml(options.linkifyMessageHtml(renderMarkdownToHtml(message.content || ""))));
 
   function aiMessageHtml(message: MessageDTO) {
     return markdownMessageHtml(message);
   }
 
   function textContentHtml(text: string) {
-    return textContentHtmlPure(text, options.linkifyMessageHtml);
+    return renderWechatEmojiHtml(textContentHtmlPure(text, options.linkifyMessageHtml));
   }
 
   function bibleRichTextSegmentsFromHtml(html: string, keyPrefix: string): BibleRichTextSegment[] {
-    return bibleRichTextSegmentsFromHtmlPure(html, keyPrefix, options.linkifyMessageHtml);
+    return bibleRichTextSegmentsFromHtmlPure(html, keyPrefix, options.linkifyMessageHtml).map((segment) =>
+      segment.kind === "html" ? { ...segment, html: renderWechatEmojiHtml(segment.html) } : segment
+    );
   }
 
   // Message rows re-render whenever any reactive input changes (effect ticks,

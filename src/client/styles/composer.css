@@ -178,7 +178,7 @@
 .composer-prompt-overlay {
   position: absolute;
   left: 48px;
-  right: 48px;
+  right: 90px;
   bottom: 10px;
   height: 22px;
   line-height: 22px;
@@ -246,6 +246,15 @@
 .composer-main .composer-send-btn:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+img.wechat-emoji {
+  display: inline-block;
+  width: 1.5em;
+  height: 1.5em;
+  max-width: none;
+  vertical-align: -0.35em;
+  object-fit: contain;
 }
 
 .composer-send-status {

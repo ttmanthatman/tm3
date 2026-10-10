@@ -4880,6 +4880,8 @@ const chatHeaderBindings = computed(() => ({
   jumpToMessageInChannel: jumpToSearchMessage
 }));
 const composerBindings = computed(() => ({
+  emojiContextKey: `${store.account?.id}:${store.currentChannelId}:${store.prayerOnly}:${store.graceOnly}`,
+  closeComposerPanels: () => { composerPanel.value = null; },
   selectedMusicMention: selectedMusicMention.value,
   prayerComposerPhotoPreview: prayerComposerPhotoPreview.value,
   composerPanel: composerPanel.value,

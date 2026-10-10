@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, type CSSProperties, type ComponentPublicInstance, type Ref } from "vue";
+import { nextTick, ref, type CSSProperties, type ComponentPublicInstance, type Ref } from "vue";
 import {
   AudioLines,
   CheckCircle2,
@@ -24,6 +24,8 @@ import AvatarImage from "../../components/ui/AvatarImage.vue";
 import type { SlashCommandSuggestion } from "./useComposer";
 import type { UnconfirmedSend } from "./unconfirmedSends";
 import type { ComposerPlaceholderPhase } from "./useComposerPlaceholder";
+import EmojiPicker from "./EmojiPicker.vue";
+import { insertWechatEmoji, type WechatEmoji } from "./wechatEmoji";
 
 // Presentation-only home of the chat composer: the textarea, voice/more
 // drawers and the suggestion menu moved here verbatim from App.vue. All state
@@ -46,6 +48,8 @@ const keepOriginalImages = defineModel<boolean>("keepOriginalImages", { required
 const previewPlaying = defineModel<boolean>("previewPlaying", { required: true });
 
 const props = defineProps<{
+  emojiContextKey: string;
+  closeComposerPanels: () => void;
   selectedMusicMention: MusicTrackDTO | null;
   prayerComposerPhotoPreview: string;
   composerPanel: "voice" | "more" | null;
@@ -123,6 +127,16 @@ const composerInput = ref<HTMLTextAreaElement | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 const photoInput = ref<HTMLInputElement | null>(null);
 
+async function chooseEmoji(emoji: WechatEmoji) {
+  const textarea = composerInput.value;
+  const inserted = insertWechatEmoji(input.value, emoji.token, textarea?.selectionStart ?? input.value.length, textarea?.selectionEnd ?? input.value.length);
+  input.value = inserted.value;
+  await nextTick();
+  textarea?.focus({ preventScroll: true });
+  textarea?.setSelectionRange(inserted.caret, inserted.caret);
+  props.onInput();
+}
+
 function bindPreviewAudioEl(el: Element | ComponentPublicInstance | null) {
   props.previewAudioEl.value = (el as HTMLAudioElement | null) ?? null;
 }
@@ -176,6 +190,13 @@ defineExpose({ composerInput });
             class="composer-prompt-char"
             :style="composerPromptCharStyle(index)"
           >{{ char }}</span></span>
+        <EmojiPicker
+          :context-key="emojiContextKey"
+          :composer-panel="composerPanel"
+          :disabled="isRecording"
+          @open="closeComposerPanels"
+          @choose="chooseEmoji"
+        />
         <button
           v-if="canSendText"
           class="send-btn composer-edge-btn composer-send-btn"
