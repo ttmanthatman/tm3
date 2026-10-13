@@ -6,7 +6,7 @@ import test from "node:test";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type { Message, PrismaClient } from "@prisma/client";
 import type { MessageDTO } from "../../shared/types.js";
-import type { MimoAsrService } from "../mimoAsr.js";
+import type { VoiceAsrService } from "../voiceAsr.js";
 
 const storageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tm3-transcribe-test-"));
 process.env.STORAGE_ROOT = storageRoot;
@@ -36,29 +36,34 @@ function voiceMessageStub(overrides: Partial<MessageStub> = {}): MessageStub {
   };
 }
 
-function createHarness(options: { asrConfigured?: boolean; canAccess?: boolean; isAdmin?: boolean; message?: MessageStub | null } = {}) {
+function createHarness(options: { asrConfigured?: boolean; canAccess?: boolean; isAdmin?: boolean; message?: MessageStub | null; provider?: "mimo" | "paraformer"; fail?: boolean; delay?: Promise<void>; beforeSave?: (message: MessageStub) => void } = {}) {
   const message = options.message === undefined ? voiceMessageStub() : options.message;
   const messageUpdates: Array<{ id: number; payload: unknown }> = [];
   const prisma = {
     message: {
       findUnique: async ({ where }: { where: { id: number } }) => (message && where.id === message.id ? message : null),
-      update: async ({ where, data }: { where: { id: number }; data: { payload: unknown } }) => {
+      updateMany: async ({ where, data }: { where: { id: number; type: string }; data: { payload: unknown } }) => {
+        if (!message || message.type !== where.type) return { count: 0 };
         messageUpdates.push({ id: where.id, payload: data.payload });
         if (message && where.id === message.id) message.payload = data.payload;
-        return message;
+        return { count: 1 };
       }
     }
   } as unknown as PrismaClient;
 
   const transcribeCalls: string[] = [];
-  const asr: MimoAsrService = {
+  const asr: VoiceAsrService = {
     loadAsrConfig: async () =>
       options.asrConfigured === false
         ? null
-        : { settings: { enabled: true, apiKeyConfigured: true, baseUrl: "https://asr.test/v1", model: "mimo-v2.5-asr", language: "auto" }, apiKey: "sk-fake" },
+        : { provider: options.provider || "mimo", settings: { enabled: true, apiKeyConfigured: true, baseUrl: "https://asr.test/v1", model: "mimo-v2.5-asr", language: "auto" }, apiKey: "sk-fake" },
     transcribeWavDataUrl: async (audioDataUrl: string) => {
       transcribeCalls.push(audioDataUrl);
-      return "这是识别结果";
+      await options.delay;
+      if (options.fail) throw new Error("upstream failed");
+      if (message) options.beforeSave?.(message);
+      return { transcript: "这是识别结果", transcriptProvider: options.provider || "mimo",
+        ...(options.provider === "paraformer" ? { transcriptWords: [{ text: "这是识别结果", beginMs: 100, endMs: 1100 }] } : {}) };
     }
   };
 
@@ -207,7 +212,7 @@ test("capability endpoint reflects ASR configuration", async () => {
   try {
     const response = await configured.app.inject({ method: "GET", url: "/api/asr/capability" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { enabled: true });
+    assert.deepEqual(response.json(), { enabled: true, timestamps: false });
   } finally {
     await configured.app.close();
   }
@@ -216,8 +221,59 @@ test("capability endpoint reflects ASR configuration", async () => {
   try {
     const response = await unconfigured.app.inject({ method: "GET", url: "/api/asr/capability" });
     assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { enabled: false });
+    assert.deepEqual(response.json(), { enabled: false, timestamps: false });
   } finally {
     await unconfigured.app.close();
   }
+});
+
+test("Paraformer upgrades old text only on request and later users reuse its timing", async () => {
+  const { app, transcribeCalls, messageUpdates } = createHarness({ provider: "paraformer",
+    message: voiceMessageStub({ payload: { kind: "voice", durationMs: 1200, transcript: "旧文字" } }) });
+  try {
+    const cached = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    assert.equal(cached.json().transcript, "旧文字");
+    assert.equal(transcribeCalls.length, 0);
+    const upgraded = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", payload: { timestamps: true } });
+    assert.equal(upgraded.statusCode, 200);
+    assert.deepEqual(upgraded.json().transcriptWords, [{ text: "这是识别结果", beginMs: 100, endMs: 1100 }]);
+    const reused = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", payload: { timestamps: true } });
+    assert.equal(reused.json().cached, true);
+    assert.deepEqual(reused.json().transcriptWords, upgraded.json().transcriptWords);
+    assert.equal(transcribeCalls.length, 1);
+    assert.equal(messageUpdates.length, 1);
+  } finally { await app.close(); }
+});
+
+test("simultaneous requests share one recognition and one persisted broadcast", async () => {
+  let release!: () => void;
+  const delay = new Promise<void>((resolve) => { release = resolve; });
+  const { app, transcribeCalls, messageUpdates, emissions } = createHarness({ provider: "paraformer", delay });
+  try {
+    const first = app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    const second = app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    const responses = await Promise.all([first, second]);
+    assert.ok(responses.every((response) => response.statusCode === 200));
+    assert.equal(transcribeCalls.length, 1);
+    assert.equal(messageUpdates.length, 1);
+    assert.equal(emissions.length, 1);
+  } finally { release(); await app.close(); }
+});
+
+test("failed upgrades and recalled messages never overwrite the saved message", async () => {
+  const old = voiceMessageStub({ payload: { kind: "voice", transcript: "保留文字" } });
+  const failed = createHarness({ provider: "paraformer", fail: true, message: old });
+  try {
+    assert.equal((await failed.app.inject({ method: "POST", url: "/api/messages/42/transcribe", payload: { timestamps: true } })).statusCode, 502);
+    assert.equal((old.payload as { transcript: string }).transcript, "保留文字");
+    assert.equal(failed.messageUpdates.length, 0);
+  } finally { await failed.app.close(); }
+  const recalled = createHarness({ beforeSave: (message) => { message.type = "system"; message.filePath = null; } });
+  try {
+    assert.equal((await recalled.app.inject({ method: "POST", url: "/api/messages/42/transcribe" })).statusCode, 502);
+    assert.equal(recalled.messageUpdates.length, 0);
+    assert.equal(recalled.emissions.length, 0);
+  } finally { await recalled.app.close(); }
 });

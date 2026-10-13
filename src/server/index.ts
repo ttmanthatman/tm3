@@ -51,7 +51,7 @@ import { registerAiSettingsRoutes } from "./routes/aiSettings.js";
 import { registerGraceRoutes } from "./routes/grace.js";
 import { registerTranscribeRoutes } from "./routes/transcribe.js";
 import { registerMessageSearchRoutes } from "./routes/messageSearch.js";
-import { createMimoAsrService } from "./mimoAsr.js";
+import { createVoiceAsrService } from "./voiceAsr.js";
 import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBibleLookupRoutes } from "./routes/bibleLookup.js";
@@ -225,7 +225,7 @@ function socketCorsOrigin(origin: string | undefined, callback: (error: Error | 
 const prisma = new PrismaClient();
 const appearanceService = createAppearanceService({ prisma });
 const aiSettingsStore = createAiSettingsStore({ prisma, secret: AI_SETTINGS_SECRET });
-const mimoAsrService = createMimoAsrService({ aiSettings: aiSettingsStore });
+const voiceAsrService = createVoiceAsrService({ aiSettings: aiSettingsStore });
 
 function redactRequestUrl(rawUrl?: string) {
   if (!rawUrl || !rawUrl.includes("token=")) return rawUrl || "";
@@ -4165,7 +4165,7 @@ registerTranscribeRoutes(app, {
   prisma,
   requireAuth,
   io,
-  asr: mimoAsrService,
+  asr: voiceAsrService,
   canAccessChannel,
   hydrateMessage,
   isVoiceMessage

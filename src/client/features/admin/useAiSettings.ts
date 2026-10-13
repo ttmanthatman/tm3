@@ -2,6 +2,7 @@ import { ref, type Ref } from "vue";
 import type { AiRoleDTO, AiSettingsDTO } from "@shared/types";
 import { api, authHeaders } from "../../api";
 import { useChatStore } from "../../store";
+import { invalidateAsrCapability } from "../voice/useVoiceTranscript";
 
 interface UseAiSettingsOptions {
   showAdmin: Ref<boolean>;
@@ -42,6 +43,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     userLimitPerMinute: 3,
     maxSuccessPerMessage: 7,
     asr: {
+      provider: "mimo" as "mimo" | "paraformer",
+      paraformer: { apiKey: "", clearApiKey: false, baseUrl: "wss://dashscope.aliyuncs.com/api-ws/v1/inference", language: "auto" as "auto" | "zh" | "en" },
       enabled: false,
       apiKey: "",
       clearApiKey: false,
@@ -89,6 +92,12 @@ export function useAiSettings(options: UseAiSettingsOptions) {
       userLimitPerMinute: settings.userLimitPerMinute,
       maxSuccessPerMessage: settings.maxSuccessPerMessage,
       asr: {
+        provider: settings.asr?.provider || "mimo",
+        paraformer: {
+          apiKey: "", clearApiKey: false,
+          baseUrl: settings.asr?.paraformer?.baseUrl || "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+          language: settings.asr?.paraformer?.language || "auto"
+        },
         enabled: !!settings.asr?.enabled,
         apiKey: "",
         clearApiKey: false,
@@ -504,6 +513,13 @@ export function useAiSettings(options: UseAiSettingsOptions) {
         userLimitPerMinute: Number(aiSettingsEdit.value.userLimitPerMinute),
         maxSuccessPerMessage: Number(aiSettingsEdit.value.maxSuccessPerMessage),
         asr: {
+          provider: aiSettingsEdit.value.asr.provider,
+          paraformer: {
+            apiKey: aiSettingsEdit.value.asr.paraformer.apiKey.trim() || undefined,
+            clearApiKey: aiSettingsEdit.value.asr.paraformer.clearApiKey || undefined,
+            baseUrl: aiSettingsEdit.value.asr.paraformer.baseUrl.trim(),
+            language: aiSettingsEdit.value.asr.paraformer.language
+          },
           enabled: aiSettingsEdit.value.asr.enabled,
           apiKey: aiSettingsEdit.value.asr.apiKey.trim() || undefined,
           clearApiKey: aiSettingsEdit.value.asr.clearApiKey || undefined,
@@ -513,6 +529,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
         }
       };
       syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
+      invalidateAsrCapability();
       if (virtuals.value.length) await loadVirtualCharacters();
       aiSettingsMsg.value = "AI 设置已保存";
     } catch (error) {

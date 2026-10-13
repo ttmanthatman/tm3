@@ -4,7 +4,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { Actor, Message, PrismaClient } from "@prisma/client";
 import type { MessageDTO } from "../../shared/types.js";
-import { createAiSettingsStore } from "../aiSettings.js";
+import { DEFAULT_PARAFORMER_BASE_URL, DEFAULT_PARAFORMER_MODEL, createAiSettingsStore } from "../aiSettings.js";
 import { registerAiSettingsRoutes } from "./aiSettings.js";
 
 const FAKE_ASR_KEY = "sk-fake-asr-test-key";
@@ -78,7 +78,9 @@ test("GET /api/admin/ai-settings always returns asr defaults without a key", asy
       apiKeyConfigured: false,
       baseUrl: "https://api.xiaomimimo.com/v1",
       model: "mimo-v2.5-asr",
-      language: "auto"
+      language: "auto",
+      provider: "mimo",
+      paraformer: { apiKeyConfigured: false, baseUrl: DEFAULT_PARAFORMER_BASE_URL, model: DEFAULT_PARAFORMER_MODEL, language: "auto" }
     });
   } finally {
     await app.close();
@@ -109,7 +111,9 @@ test("POST /api/admin/ai-settings stores asr settings and never returns the api 
       apiKeyConfigured: true,
       baseUrl: "https://asr.example.com/v1",
       model: "mimo-custom",
-      language: "zh"
+      language: "zh",
+      provider: "mimo",
+      paraformer: { apiKeyConfigured: false, baseUrl: DEFAULT_PARAFORMER_BASE_URL, model: DEFAULT_PARAFORMER_MODEL, language: "auto" }
     });
     assert.ok(!JSON.stringify(posted).includes(FAKE_ASR_KEY));
     const stored = settings.get("aiAsrApiKeyEncrypted") || "";
@@ -149,4 +153,36 @@ test("POST /api/admin/ai-settings rejects an unsupported asr language", async ()
   } finally {
     await app.close();
   }
+});
+
+test("provider switching retains both encrypted keys and clears only the selected key", async () => {
+  const { app, settings } = createHarness();
+  try {
+    await app.inject({ method: "POST", url: "/api/admin/ai-settings", payload: { asr: { apiKey: FAKE_ASR_KEY } } });
+    const configured = await app.inject({ method: "POST", url: "/api/admin/ai-settings", payload: { asr: {
+      provider: "paraformer", paraformer: { apiKey: "fake-paraformer-key", language: "zh" }
+    } } });
+    assert.equal(configured.statusCode, 200);
+    assert.equal(configured.json().asr.provider, "paraformer");
+    assert.equal(configured.json().asr.apiKeyConfigured, true);
+    assert.equal(configured.json().asr.paraformer.apiKeyConfigured, true);
+    assert.ok(settings.get("aiParaformerApiKeyEncrypted")?.startsWith("v1:"));
+    assert.ok(!configured.body.includes("fake-paraformer-key"));
+    const switched = await app.inject({ method: "POST", url: "/api/admin/ai-settings", payload: { asr: { provider: "mimo" } } });
+    assert.equal(switched.json().asr.paraformer.apiKeyConfigured, true);
+    const cleared = await app.inject({ method: "POST", url: "/api/admin/ai-settings", payload: { asr: { paraformer: { clearApiKey: true } } } });
+    assert.equal(cleared.json().asr.apiKeyConfigured, true);
+    assert.equal(cleared.json().asr.paraformer.apiKeyConfigured, false);
+  } finally { await app.close(); }
+});
+
+test("invalid providers and credential destinations are rejected before saving settings", async () => {
+  const { app, settings } = createHarness();
+  try {
+    for (const asr of [{ provider: "invalid" }, { paraformer: { baseUrl: "wss://evil.test/api-ws/v1/inference", apiKey: "fake-key" } }]) {
+      const response = await app.inject({ method: "POST", url: "/api/admin/ai-settings", payload: { asr } });
+      assert.equal(response.statusCode, 400);
+      assert.equal(settings.size, 0);
+    }
+  } finally { await app.close(); }
 });

@@ -8,7 +8,7 @@ export type MimoAsrConfig = {
 
 export type MimoAsrService = {
   loadAsrConfig(): Promise<MimoAsrConfig | null>;
-  transcribeWavDataUrl(audioDataUrl: string): Promise<string>;
+  transcribeWavDataUrl(audioDataUrl: string, config?: MimoAsrConfig): Promise<string>;
 };
 
 type MimoChatCompletionResponse = {
@@ -32,8 +32,8 @@ export function createMimoAsrService(deps: { aiSettings: AiSettingsStore; fetchI
     return { settings, apiKey };
   }
 
-  async function transcribeWavDataUrl(audioDataUrl: string): Promise<string> {
-    const config = await loadAsrConfig();
+  async function transcribeWavDataUrl(audioDataUrl: string, selectedConfig?: MimoAsrConfig): Promise<string> {
+    const config = selectedConfig || await loadAsrConfig();
     if (!config) throw new Error("MiMo ASR is not configured");
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 60_000);

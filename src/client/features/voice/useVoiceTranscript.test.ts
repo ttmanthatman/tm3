@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createPinia, setActivePinia } from "pinia";
 import type { MessageDTO } from "@shared/types";
-import { canShowTranscriptChip, useVoiceTranscript, voiceTranscript } from "./useVoiceTranscript";
+import { canShowTranscriptChip, invalidateAsrCapability, useVoiceTranscript, voiceTranscript } from "./useVoiceTranscript";
 
 Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
@@ -88,4 +88,50 @@ test("a 409 response hides the chip for the rest of the session", async () => {
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Paraformer upgrade requests timestamps and keeps the reusable word timing in the store", async () => {
+  setActivePinia(createPinia());
+  const originalFetch = globalThis.fetch;
+  const words = [{ text: "字幕", beginMs: 100, endMs: 800 }];
+  globalThis.fetch = ((_url: string | URL | Request, init?: RequestInit) => {
+    assert.equal(JSON.parse(String(init?.body)).timestamps, true);
+    return Promise.resolve(jsonResponse({ transcript: "字幕", transcriptWords: words, transcriptProvider: "paraformer" }));
+  }) as typeof fetch;
+  try {
+    const { useChatStore } = await import("../../store");
+    const store = useChatStore();
+    store.currentChannelId = 9;
+    const transcript = useVoiceTranscript();
+    transcript.asrCapability.value = true;
+    transcript.asrTimestamps.value = true;
+    const message = voiceMessage({ kind: "voice", transcript: "旧文字" });
+    assert.equal(canShowTranscriptChip(true, message, true), true);
+    await transcript.transcribeVoice(message);
+    const stored = store.messages.find((row) => row.id === message.id)!;
+    assert.deepEqual((stored.payload as { transcriptWords: unknown }).transcriptWords, words);
+    assert.equal(canShowTranscriptChip(true, stored, true), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a delayed capability response cannot overwrite an administrator's new selection", async () => {
+  setActivePinia(createPinia());
+  const originalFetch = globalThis.fetch;
+  const responses: Array<(response: Response) => void> = [];
+  globalThis.fetch = (() => new Promise<Response>((resolve) => responses.push(resolve))) as typeof fetch;
+  try {
+    const transcript = useVoiceTranscript();
+    transcript.asrCapability.value = null;
+    const oldRequest = transcript.ensureAsrCapability();
+    invalidateAsrCapability();
+    const newRequest = transcript.ensureAsrCapability();
+    responses[1](jsonResponse({ enabled: false, timestamps: false }));
+    await newRequest;
+    responses[0](jsonResponse({ enabled: true, timestamps: true }));
+    await oldRequest;
+    assert.equal(transcript.asrCapability.value, false);
+    assert.equal(transcript.asrTimestamps.value, false);
+  } finally { globalThis.fetch = originalFetch; }
 });

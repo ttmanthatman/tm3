@@ -5,7 +5,8 @@ import { spawn } from "node:child_process";
 import { Prisma, type Message, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import type { MessageDTO } from "../../shared/types.js";
-import type { MimoAsrService } from "../mimoAsr.js";
+import type { VoiceAsrService, VoiceTranscription } from "../voiceAsr.js";
+import { z } from "zod";
 import { UPLOAD_DIR } from "../storageDirs.js";
 
 export type TranscribeAuthContext = {
@@ -19,7 +20,7 @@ export type TranscribeRouteDependencies = {
   prisma: PrismaClient;
   requireAuth: preHandlerHookHandler;
   io: { to(room: string): { emit(event: string, payload: unknown): unknown } };
-  asr: MimoAsrService;
+  asr: VoiceAsrService;
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
   isVoiceMessage(message: Pick<Message, "type" | "fileName" | "payload">): boolean;
@@ -83,10 +84,11 @@ function voiceTranscriptAt(input: unknown) {
 export function registerTranscribeRoutes(app: FastifyInstance, deps: TranscribeRouteDependencies) {
   const { prisma, requireAuth, io, asr, canAccessChannel, hydrateMessage, isVoiceMessage } = deps;
   const convertVoiceToWavDataUrl = deps.convertVoiceToWavDataUrl || voiceFileToWavDataUrl;
+  const inFlight = new Map<number, Promise<VoiceTranscription & { transcriptAt: string; cached: boolean }>>();
 
   app.get("/api/asr/capability", { preHandler: requireAuth }, async () => {
     const config = await asr.loadAsrConfig();
-    return { enabled: !!config };
+    return { enabled: !!config, timestamps: config?.provider === "paraformer" };
   });
 
   app.post(
@@ -100,46 +102,77 @@ export function registerTranscribeRoutes(app: FastifyInstance, deps: TranscribeR
       if (!message) return reply.code(404).send({ success: false, message: "消息不存在" });
       if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此语音" });
       if (!isVoiceMessage(message)) return reply.code(400).send({ success: false, message: "该消息不是语音消息" });
+      const body = z.object({ timestamps: z.boolean().optional() }).safeParse(request.body || {});
+      if (!body.success) return reply.code(400).send({ success: false, message: "识别参数无效" });
       const existingTranscript = voiceTranscript(message.payload);
-      if (existingTranscript) {
+      const existingPayload = voicePayloadRaw(message.payload);
+      const existingWords = existingPayload.transcriptWords;
+      if (existingTranscript && (!body.data.timestamps || (Array.isArray(existingWords) && existingWords.length))) {
         return {
           success: true,
           transcript: existingTranscript,
           transcriptAt: voiceTranscriptAt(message.payload),
-          cached: true
+          cached: true,
+          ...(Array.isArray(existingWords) && existingWords.length ? { transcriptWords: existingWords, transcriptProvider: existingPayload.transcriptProvider } : {})
         };
       }
       const config = await asr.loadAsrConfig();
+      if (existingTranscript && config?.provider !== "paraformer") {
+        return { success: true, transcript: existingTranscript, transcriptAt: voiceTranscriptAt(message.payload), cached: true };
+      }
       if (!config) {
         return reply.code(409).send({ success: false, message: auth.isAdmin ? "语音识别尚未配置，请前往 /ai-settings 填写 ASR API Key。" : "暂时还不能识别语音，请稍后再试。" });
       }
       if (!message.filePath) return reply.code(404).send({ success: false, message: "语音文件不存在" });
       const inputPath = path.join(UPLOAD_DIR, path.basename(message.filePath));
       if (!fs.existsSync(inputPath)) return reply.code(404).send({ success: false, message: "语音文件不存在" });
-      let audioDataUrl = "";
-      try {
-        audioDataUrl = await convertVoiceToWavDataUrl(inputPath);
-      } catch (error) {
-        if (error instanceof AsrAudioTooLongError) return reply.code(413).send({ success: false, message: "语音太长，无法识别" });
-        request.log.warn({ error, messageId }, "voice transcode for ASR failed");
-        return reply.code(502).send({ success: false, message: "语音转码失败，请稍后再试" });
+      const pending = inFlight.get(messageId);
+      if (pending) {
+        try { return { success: true, ...await pending, cached: true }; }
+        catch (error) {
+          if (error instanceof AsrAudioTooLongError) return reply.code(413).send({ success: false, message: "语音太长，无法识别" });
+          return reply.code(502).send({ success: false, message: "识别失败，可以稍后重试。" });
+        }
       }
-      try {
-        const transcript = await asr.transcribeWavDataUrl(audioDataUrl);
+      const work = async () => {
+        let audioDataUrl: string;
+        try {
+          audioDataUrl = await convertVoiceToWavDataUrl(inputPath);
+        } catch (error) {
+          throw error instanceof AsrAudioTooLongError ? error : new Error("语音转码失败，请稍后再试");
+        }
+        const result = await asr.transcribeWavDataUrl(audioDataUrl, config);
+        const { transcript } = result;
         const transcriptAt = new Date().toISOString();
+        const current = await prisma.message.findUnique({ where: { id: messageId } });
+        if (!current || !isVoiceMessage(current) || current.filePath !== message.filePath || current.channelId !== message.channelId) throw new Error("语音消息已删除或撤回");
         const payload = {
-          ...voicePayloadRaw(message.payload),
+          ...voicePayloadRaw(current.payload),
           kind: "voice",
           transcript,
-          transcriptAt
+          transcriptAt,
+          transcriptProvider: result.transcriptProvider,
+          ...(result.transcriptWords ? { transcriptWords: result.transcriptWords.map(({ text, beginMs, endMs }) => ({ text, beginMs, endMs })) } : {})
         };
-        await prisma.message.update({ where: { id: message.id }, data: { payload: payload as Prisma.InputJsonObject } });
+        const saved = await prisma.message.updateMany({
+          where: { id: message.id, type: "file", filePath: message.filePath, channelId: message.channelId },
+          data: { payload: payload as Prisma.InputJsonObject }
+        });
+        if (saved.count !== 1) throw new Error("语音消息已删除或撤回");
         const dto = await hydrateMessage(message.id, auth.accountId);
         if (dto) io.to(`ch:${message.channelId}`).emit("message:updated", dto);
-        return { success: true, transcript, transcriptAt, cached: false };
+        return { ...result, transcriptAt, cached: false };
+      };
+      const task = work();
+      inFlight.set(messageId, task);
+      try {
+        return { success: true, ...await task };
       } catch (error) {
+        if (error instanceof AsrAudioTooLongError) return reply.code(413).send({ success: false, message: "语音太长，无法识别" });
         request.log.warn({ error, messageId }, "voice transcription failed");
         return reply.code(502).send({ success: false, message: auth.isAdmin ? `语音识别失败：${String(error instanceof Error ? error.message : error).slice(0, 200)}` : "识别失败，可以稍后重试。" });
+      } finally {
+        inFlight.delete(messageId);
       }
     }
   );

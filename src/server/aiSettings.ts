@@ -23,12 +23,21 @@ export const DEFAULT_AI_PROMPT_COMMAND = [
 ].join("\n");
 export const DEFAULT_ASR_BASE_URL = "https://api.xiaomimimo.com/v1";
 export const DEFAULT_ASR_MODEL = "mimo-v2.5-asr";
+export const DEFAULT_PARAFORMER_BASE_URL = "wss://dashscope.aliyuncs.com/api-ws/v1/inference";
+export const DEFAULT_PARAFORMER_MODEL = "paraformer-realtime-v2";
 export const DEFAULT_AI_ASR_SETTINGS: AsrSettingsDTO = {
   enabled: true,
   apiKeyConfigured: false,
   baseUrl: DEFAULT_ASR_BASE_URL,
   model: DEFAULT_ASR_MODEL,
-  language: "auto"
+  language: "auto",
+  provider: "mimo",
+  paraformer: {
+    apiKeyConfigured: false,
+    baseUrl: DEFAULT_PARAFORMER_BASE_URL,
+    model: DEFAULT_PARAFORMER_MODEL,
+    language: "auto"
+  }
 };
 export const DEFAULT_AI_SETTINGS: AiSettingsDTO = {
   enabled: true,
@@ -125,7 +134,7 @@ export function cleanAsrLanguage(input: unknown): AsrSettingsDTO["language"] {
 
 export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: string }) {
   const { prisma, secret } = deps;
-  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; encryptedAsrApiKey: string; loadedAt: number } | null = null;
+  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; encryptedAsrApiKey: string; encryptedParaformerApiKey: string; loadedAt: number } | null = null;
 
   function aiEncryptionKey() {
     return crypto.createHash("sha256").update(secret).digest();
@@ -168,7 +177,11 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
             "aiAsrApiKeyEncrypted",
             "aiAsrBaseUrl",
             "aiAsrModel",
-            "aiAsrLanguage"
+            "aiAsrLanguage",
+            "aiAsrProvider",
+            "aiParaformerApiKeyEncrypted",
+            "aiParaformerBaseUrl",
+            "aiParaformerLanguage"
           ]
         }
       }
@@ -176,6 +189,7 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
     const settings = new Map(rows.map((row) => [row.key, row.value]));
     const encryptedApiKey = settings.get("aiDeepSeekApiKeyEncrypted") || "";
     const encryptedAsrApiKey = settings.get("aiAsrApiKeyEncrypted") || "";
+    const encryptedParaformerApiKey = settings.get("aiParaformerApiKeyEncrypted") || "";
     const value: AiSettingsDTO = {
       ...DEFAULT_AI_SETTINGS,
       enabled: settings.get("aiRelatedVersesEnabled") !== "false",
@@ -189,10 +203,17 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
         apiKeyConfigured: !!decryptAiApiKey(encryptedAsrApiKey),
         baseUrl: (settings.get("aiAsrBaseUrl") || "").trim() || DEFAULT_ASR_BASE_URL,
         model: (settings.get("aiAsrModel") || "").trim() || DEFAULT_ASR_MODEL,
-        language: cleanAsrLanguage(settings.get("aiAsrLanguage"))
+        language: cleanAsrLanguage(settings.get("aiAsrLanguage")),
+        provider: settings.get("aiAsrProvider") === "paraformer" ? "paraformer" : "mimo",
+        paraformer: {
+          apiKeyConfigured: !!decryptAiApiKey(encryptedParaformerApiKey),
+          baseUrl: (settings.get("aiParaformerBaseUrl") || "").trim() || DEFAULT_PARAFORMER_BASE_URL,
+          model: DEFAULT_PARAFORMER_MODEL,
+          language: cleanAsrLanguage(settings.get("aiParaformerLanguage"))
+        }
       }
     };
-    aiSettingsCache = { value, encryptedApiKey, encryptedAsrApiKey, loadedAt: Date.now() };
+    aiSettingsCache = { value, encryptedApiKey, encryptedAsrApiKey, encryptedParaformerApiKey, loadedAt: Date.now() };
     return aiSettingsCache;
   }
 

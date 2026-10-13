@@ -1,0 +1,142 @@
+import { randomUUID } from "node:crypto";
+import WebSocket from "ws";
+import { z } from "zod";
+import type { VoiceTranscriptWord } from "../shared/types.js";
+import type { MimoAsrConfig } from "./mimoAsr.js";
+
+// Keys are sent only to the documented Beijing endpoints, never arbitrary hosts.
+export function paraformerEndpoint(input: string): string {
+  const url = new URL(input);
+  if (url.protocol !== "wss:" || url.username || url.password || url.port || url.search || url.hash
+    || url.pathname !== "/api-ws/v1/inference"
+    || !(url.hostname === "dashscope.aliyuncs.com" || /^[a-z0-9-]+\.cn-beijing\.maas\.aliyuncs\.com$/.test(url.hostname))) {
+    throw new Error("请填写阿里云北京地域的 Paraformer WebSocket 地址");
+  }
+  return url.href;
+}
+
+const wordSchema = z.object({
+  text: z.string(), punctuation: z.string().optional(),
+  begin_time: z.number().finite().nonnegative(), end_time: z.number().finite().nonnegative()
+}).refine((word) => word.end_time >= word.begin_time);
+const sentenceSchema = z.object({
+  text: z.string(), begin_time: z.number().finite().nonnegative(),
+  end_time: z.number().finite().nonnegative().nullable(),
+  sentence_end: z.boolean(), heartbeat: z.boolean().optional(),
+  words: z.array(wordSchema)
+});
+const eventSchema = z.object({
+  header: z.object({ event: z.string(), task_id: z.string() }),
+  payload: z.object({ output: z.object({ sentence: z.unknown().optional() }).optional() }).optional()
+});
+
+export type ParaformerSocket = Pick<WebSocket, "on" | "send" | "close" | "terminate">;
+export type ParaformerSocketFactory = (url: string, apiKey: string) => ParaformerSocket;
+
+export async function transcribeParaformerWav(
+  audioDataUrl: string,
+  config: MimoAsrConfig,
+  options: { socketFactory?: ParaformerSocketFactory; timeoutMs?: number } = {}
+): Promise<{ transcript: string; transcriptWords: VoiceTranscriptWord[] }> {
+  const endpoint = paraformerEndpoint(config.settings.baseUrl);
+  if (config.settings.model !== "paraformer-realtime-v2") throw new Error("不支持的 Paraformer 模型");
+  if (!/^data:audio\/wav;base64,[A-Za-z0-9+/=]+$/.test(audioDataUrl)) throw new Error("Paraformer 音频格式无效");
+  const audio = Buffer.from(audioDataUrl.slice(audioDataUrl.indexOf(",") + 1), "base64");
+  const taskId = randomUUID();
+  const factory: ParaformerSocketFactory = options.socketFactory || ((url, apiKey) => new WebSocket(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    handshakeTimeout: 20_000,
+    maxPayload: 4 * 1024 * 1024,
+    followRedirects: false
+  }));
+  return new Promise((resolve, reject) => {
+    const socket = factory(endpoint, config.apiKey);
+    const sentences = new Map<number, z.infer<typeof sentenceSchema>>();
+    let settled = false;
+    let started = false;
+    let finishedSending = false;
+    let offset = 0;
+    const timeout = setTimeout(() => fail(new Error("Paraformer 识别超时，请稍后重试")), options.timeoutMs ?? 180_000);
+    function fail(error: Error) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.terminate();
+      reject(error);
+    }
+    function sendNext() {
+      if (settled) return;
+      if (offset >= audio.length) {
+        finishedSending = true;
+        socket.send(JSON.stringify({ header: { action: "finish-task", task_id: taskId, streaming: "duplex" }, payload: { input: {} } }),
+          (error) => { if (error) fail(new Error("Paraformer 音频发送失败")); });
+        return;
+      }
+      const chunk = audio.subarray(offset, offset + 32 * 1024);
+      offset += chunk.length;
+      // One outstanding frame at a time bounds the socket buffer for long files.
+      socket.send(chunk, (error) => {
+        if (error) fail(new Error("Paraformer 音频发送失败"));
+        else setImmediate(sendNext);
+      });
+    }
+    socket.on("open", () => {
+      socket.send(JSON.stringify({
+        header: { action: "run-task", task_id: taskId, streaming: "duplex" },
+        payload: { task_group: "audio", task: "asr", function: "recognition", model: config.settings.model,
+          parameters: { format: "wav", sample_rate: 16000,
+            ...(config.settings.language === "auto" ? {} : { language_hints: [config.settings.language] }) }, input: {} }
+      }), (error) => { if (error) fail(new Error("Paraformer 任务启动失败")); });
+    });
+    socket.on("message", (data) => {
+      if (settled) return;
+      try {
+        const event = eventSchema.parse(JSON.parse(data.toString()));
+        if (event.header.task_id !== taskId) throw new Error("task mismatch");
+        switch (event.header.event) {
+          case "task-started":
+            if (!started) { started = true; sendNext(); }
+            break;
+          case "result-generated": {
+            const raw = event.payload?.output?.sentence;
+            const status = z.object({ heartbeat: z.boolean().optional(), sentence_end: z.boolean().optional() }).parse(raw);
+            if (status.heartbeat || !status.sentence_end) break;
+            const sentence = sentenceSchema.parse(raw);
+            if (sentence.text.trim() && !sentence.words.length) throw new Error("missing word timestamps");
+            if (!sentence.heartbeat && sentence.sentence_end) sentences.set(sentence.begin_time, sentence);
+            break;
+          }
+          case "task-failed":
+            fail(new Error("Paraformer 识别失败，请检查 API Key、额度和模型权限"));
+            break;
+          case "task-finished": {
+            if (!finishedSending) throw new Error("unfinished upload");
+            const ordered = [...sentences.values()].sort((a, b) => a.begin_time - b.begin_time);
+            const transcriptWords = ordered.flatMap((sentence) => {
+              let cursor = 0;
+              return sentence.words.map((word) => {
+                const token = word.text + (word.punctuation || "");
+                const position = sentence.text.indexOf(token, cursor);
+                const gap = position >= cursor ? sentence.text.slice(cursor, position) : "";
+                if (position >= cursor) cursor = position + token.length;
+                // Preserve spaces between English words without inventing timings.
+                return { text: (gap.trim() ? "" : gap) + token, beginMs: word.begin_time, endMs: word.end_time };
+              });
+            });
+            const transcript = transcriptWords.map((word) => word.text).join("").trim();
+            if (!transcript || !transcriptWords.length) throw new Error("missing transcript timestamps");
+            settled = true;
+            clearTimeout(timeout);
+            socket.close();
+            resolve({ transcript, transcriptWords });
+            break;
+          }
+        }
+      } catch {
+        fail(new Error("Paraformer 返回的文字或时间戳无效"));
+      }
+    });
+    socket.on("error", () => fail(new Error("Paraformer 连接失败，请检查地址、API Key 和网络")));
+    socket.on("close", () => { if (!settled) fail(new Error("Paraformer 连接中断，请稍后重试")); });
+  });
+}

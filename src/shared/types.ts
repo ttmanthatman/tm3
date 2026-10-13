@@ -135,6 +135,12 @@ export interface GraceVoice {
   mimeType: "audio/mp4";
 }
 
+export interface VoiceTranscriptWord {
+  text: string;
+  beginMs: number;
+  endMs: number;
+}
+
 export interface VoicePayload {
   kind: "voice";
   durationMs?: number;
@@ -142,6 +148,8 @@ export interface VoicePayload {
   mimeType?: string;
   transcript?: string;
   transcriptAt?: string;
+  transcriptWords?: VoiceTranscriptWord[];
+  transcriptProvider?: "mimo" | "paraformer";
 }
 
 export interface MessageDTO {
@@ -1060,6 +1068,13 @@ export interface AsrSettingsDTO {
   baseUrl: string;
   model: string;
   language: "auto" | "zh" | "en";
+  provider?: "mimo" | "paraformer";
+  paraformer?: {
+    apiKeyConfigured: boolean;
+    baseUrl: string;
+    model: string;
+    language: "auto" | "zh" | "en";
+  };
 }
 
 export interface AiSettingsDTO {

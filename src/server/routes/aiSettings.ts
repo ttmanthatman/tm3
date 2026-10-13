@@ -26,11 +26,13 @@ import {
   cleanAsrLanguage,
   DEFAULT_ASR_BASE_URL,
   DEFAULT_ASR_MODEL,
+  DEFAULT_PARAFORMER_BASE_URL,
   type AiSettingsStore
 } from "../aiSettings.js";
 import { compressImageFile, IMAGE_EXTENSIONS, validateStoredImage } from "../imageProcessing.js";
 import { AVATAR_DIR, safeUnlink } from "../storageDirs.js";
 import { plainTextFromHtml } from "../textUtils.js";
+import { paraformerEndpoint } from "../paraformerAsr.js";
 
 type AiSettingsAuthContext = {
   accountId: number;
@@ -220,7 +222,17 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
             model: z.string().max(120).optional(),
             language: z.enum(["auto", "zh", "en"]).optional(),
             apiKey: z.string().max(400).optional(),
-            clearApiKey: z.boolean().optional()
+            clearApiKey: z.boolean().optional(),
+            provider: z.enum(["mimo", "paraformer"]).optional(),
+            paraformer: z.object({
+              apiKey: z.string().max(400).optional(),
+              clearApiKey: z.boolean().optional(),
+              baseUrl: z.string().max(400).refine((value) => {
+                try { paraformerEndpoint(value.trim() || DEFAULT_PARAFORMER_BASE_URL); return true; }
+                catch { return false; }
+              }, "请填写阿里云北京地域的 Paraformer WebSocket 地址").optional(),
+              language: z.enum(["auto", "zh", "en"]).optional()
+            }).optional()
           })
           .optional(),
         aiRoles: z
@@ -257,12 +269,20 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
     if (Object.prototype.hasOwnProperty.call(body, "whyAssistantWebSearchEnabled")) await setSetting("whyAssistantWebSearchEnabled", body.whyAssistantWebSearchEnabled ? "true" : "false");
     if (Object.prototype.hasOwnProperty.call(body, "whyAssistantPromptCommand")) await setSetting("whyAssistantPromptCommand", (body.whyAssistantPromptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
     if (body.asr) {
+      if (body.asr.provider) await setSetting("aiAsrProvider", body.asr.provider);
       if (Object.prototype.hasOwnProperty.call(body.asr, "enabled")) await setSetting("aiAsrEnabled", body.asr.enabled ? "true" : "false");
       if (body.asr.clearApiKey) await setSetting("aiAsrApiKeyEncrypted", "");
       if (body.asr.apiKey?.trim()) await setSetting("aiAsrApiKeyEncrypted", aiSettings.encryptAiApiKey(body.asr.apiKey.trim()));
       if (Object.prototype.hasOwnProperty.call(body.asr, "baseUrl")) await setSetting("aiAsrBaseUrl", (body.asr.baseUrl || "").trim() || DEFAULT_ASR_BASE_URL);
       if (Object.prototype.hasOwnProperty.call(body.asr, "model")) await setSetting("aiAsrModel", (body.asr.model || "").trim() || DEFAULT_ASR_MODEL);
       if (Object.prototype.hasOwnProperty.call(body.asr, "language")) await setSetting("aiAsrLanguage", cleanAsrLanguage(body.asr.language));
+      const paraformer = body.asr.paraformer;
+      if (paraformer) {
+        if (paraformer.clearApiKey) await setSetting("aiParaformerApiKeyEncrypted", "");
+        if (paraformer.apiKey?.trim()) await setSetting("aiParaformerApiKeyEncrypted", aiSettings.encryptAiApiKey(paraformer.apiKey.trim()));
+        if (Object.prototype.hasOwnProperty.call(paraformer, "baseUrl")) await setSetting("aiParaformerBaseUrl", paraformer.baseUrl?.trim() || DEFAULT_PARAFORMER_BASE_URL);
+        if (Object.prototype.hasOwnProperty.call(paraformer, "language")) await setSetting("aiParaformerLanguage", cleanAsrLanguage(paraformer.language));
+      }
     }
     for (const role of body.aiRoles || []) {
       if (role.username === WHY_ASSISTANT_USERNAME) {
