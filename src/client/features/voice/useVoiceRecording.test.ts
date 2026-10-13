@@ -4,14 +4,14 @@ import { effectScope, ref } from "vue";
 import type { VoiceDraft, VoiceDraftStorage } from "./voiceDrafts";
 import { useVoiceRecording } from "./useVoiceRecording";
 
-function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountId?: () => number | null) {
+function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountId?: () => number | null, delayedStart = false) {
   let now = 0;
   let resolveStream!: (stream: MediaStream) => void;
   let requests = 0;
-  type Track = { enabled: boolean; readyState: "live" | "ended"; stop(): void };
+  type Track = EventTarget & { enabled: boolean; muted: boolean; readyState: "live" | "ended"; stop(): void };
   const tracks: Track[] = [];
   function createStream(enabled = true): MediaStream {
-    const track: Track = { enabled, readyState: "live", stop() { this.readyState = "ended"; } };
+    const track = Object.assign(new EventTarget(), { enabled, muted: false, readyState: "live" as "live" | "ended", stop() { this.readyState = "ended"; } });
     tracks.push(track);
     return { getTracks: () => [track], getAudioTracks: () => [track], clone: () => createStream(track.enabled) } as unknown as MediaStream;
   }
@@ -21,6 +21,7 @@ function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountI
     static isTypeSupported() { return true; }
     state = "inactive";
     mimeType = "audio/mp4";
+    onstart: (() => void) | null = null;
     onstop: (() => void) | null = null;
     ondataavailable: ((event: { data: Blob }) => void) | null = null;
     onerror: (() => void) | null = null;
@@ -28,7 +29,7 @@ function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountI
       assert.equal(options.mimeType, "audio/mp4", "let the browser choose its working MP4 codec");
       recorders.push(this);
     }
-    start() { this.state = "recording"; }
+    start() { this.state = "recording"; if (!delayedStart) this.onstart?.(); }
     stop() { this.state = "inactive"; }
     finish() { this.ondataavailable?.({ data: new Blob(["voice"]) }); this.onstop?.(); }
   }
@@ -52,23 +53,25 @@ function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountI
       if (old) Object.defineProperty(globalThis, key, old); else Reflect.deleteProperty(globalThis, key);
     }
   });
-  return { scope, voice, panel, recorders, tracks, requests: () => requests, resolve: () => resolveStream(createStream()), tick: (ms: number) => { now = ms; for (const fn of timers.values()) fn(); } };
+  return { scope, voice, panel, recorders, tracks, requests: () => requests, resolve: (muted = false) => { const stream = createStream(); tracks.at(-1)!.muted = muted; resolveStream(stream); }, tick: (ms: number) => { now = ms; for (const fn of timers.values()) fn(); } };
 }
 
-test("sending one recording retains silent authorization for the next recording", async (t) => {
+test("stopping releases every microphone track before finalization and sending reacquires", async (t) => {
   const h = harness(t);
   const first = h.voice.startRecording(); h.resolve(); await first;
-  h.tick(1000); h.voice.stopRecording(); h.recorders[0]!.finish();
+  h.tick(1000); h.voice.stopRecording();
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0, "stop must release the hardware before the async stop event");
+  h.recorders[0]!.finish();
   await h.voice.sendVoice();
   const second = h.voice.startRecording();
   if (h.requests() > 1) h.resolve();
   await second;
-  assert.equal(h.requests(), 1, "a second recording must reuse the authorized source");
+  assert.equal(h.requests(), 2, "each recording must acquire a fresh source");
   assert.equal(h.recorders.length, 2);
   assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 1);
   h.voice.stopRecording(); h.recorders[1]!.finish();
   assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 0);
-  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 1);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
   h.voice.disposeRecording();
   assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
 });
@@ -77,9 +80,9 @@ test("a delayed stop from a deleted recording cannot stop its successor", async 
   const h = harness(t);
   const first = h.voice.startRecording(); h.resolve(); await first;
   h.voice.resetRecording();
-  await h.voice.startRecording();
+  const next = h.voice.startRecording(); h.resolve(); await next;
   h.recorders[0]!.finish();
-  assert.equal(h.requests(), 1);
+  assert.equal(h.requests(), 2);
   assert.equal(h.voice.isRecording.value, true);
   assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 1);
 });
@@ -98,7 +101,7 @@ test("a browser-ended authorized source is reacquired instead of producing silen
   const h = harness(t);
   const first = h.voice.startRecording(); h.resolve(); await first;
   h.voice.stopRecording(); h.recorders[0]!.finish(); h.voice.resetRecording();
-  h.tracks.find((track) => track.readyState === "live")!.stop();
+  h.tracks.forEach((track) => track.stop());
   const next = h.voice.startRecording(); h.resolve(); await next;
   assert.equal(h.requests(), 2);
 });
@@ -250,4 +253,124 @@ test("late audio metadata cannot change the duration frozen by the stop button",
   h.voice.syncPreviewMetadata();
   assert.equal(h.voice.audioPreviewDurationMs.value, 1200);
   assert.equal(h.voice.recordingDuration.value, 1200);
+});
+
+
+test("permission and recorder startup do not count as recording time", async (t) => {
+  const h = harness(t, undefined, undefined, true);
+  const start = h.voice.startRecording();
+  h.tick(4000);
+  assert.equal(h.voice.recordingDuration.value, 0);
+  assert.equal(h.voice.isRecording.value, false);
+  h.resolve(); await start;
+  h.tick(6000);
+  assert.equal(h.voice.isRecording.value, false);
+  assert.equal(h.voice.recordingBusy.value, true);
+  assert.equal(h.voice.recordingDuration.value, 0);
+  h.recorders[0]!.onstart?.(); h.tick(7000);
+  assert.equal(h.voice.recordingDuration.value, 1000);
+  assert.equal(h.voice.isRecording.value, true);
+});
+
+test("a muted source waits for input, and cancellation releases it", async (t) => {
+  const h = harness(t);
+  const start = h.voice.startRecording(); h.resolve(true); await flush();
+  assert.equal(h.recorders.length, 0);
+  assert.equal(h.voice.isRecording.value, false);
+  h.voice.resetRecording(); await start;
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  const next = h.voice.startRecording(); h.resolve(); await next;
+  assert.equal(h.voice.isRecording.value, true);
+});
+
+test("an initially muted source starts only after unmute", async (t) => {
+  const h = harness(t);
+  const start = h.voice.startRecording(); h.resolve(true); await flush();
+  assert.equal(h.recorders.length, 0);
+  h.tracks[0]!.muted = false; h.tracks[0]!.dispatchEvent(new Event("unmute")); await start;
+  assert.equal(h.voice.isRecording.value, true);
+});
+
+for (const event of ["mute", "ended"] as const) {
+  test(`system ${event} freezes the timer, releases capture and keeps partial audio`, async (t) => {
+    const h = harness(t);
+    const start = h.voice.startRecording(); h.resolve(); await start;
+    h.tick(2000);
+    if (event === "mute") h.tracks[0]!.muted = true;
+    else h.tracks[0]!.readyState = "ended";
+    h.tracks[0]!.dispatchEvent(new Event(event));
+    h.tick(6000);
+    assert.equal(h.voice.isRecording.value, false);
+    assert.equal(h.voice.recordingDuration.value, 2000);
+    assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+    h.recorders[0]!.finish();
+    assert.ok(h.voice.audioFile.value);
+    assert.match(h.voice.recordingNotice.value, /中断/);
+  });
+}
+
+
+test("a stalled recorder startup times out, releases capture, and can be retried", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const h = harness(t, undefined, undefined, true);
+  const start = h.voice.startRecording(); h.resolve(); await start;
+  t.mock.timers.tick(10_000);
+  assert.equal(h.voice.recordingBusy.value, false);
+  assert.equal(h.voice.isRecording.value, false);
+  assert.match(h.voice.recordingStatus.value, /未能启动/);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  const next = h.voice.startRecording(); h.resolve(); await next;
+  h.recorders[0]!.onstart?.(); h.recorders[0]!.finish();
+  assert.equal(h.voice.isRecording.value, false);
+  assert.equal(h.voice.recordingBusy.value, true);
+  h.recorders[1]!.onstart?.();
+  assert.equal(h.voice.isRecording.value, true);
+});
+
+test("a persistently muted input times out visibly without starting a recorder", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const h = harness(t);
+  const start = h.voice.startRecording(); h.resolve(true); await flush();
+  t.mock.timers.tick(10_000); await start;
+  assert.equal(h.voice.recordingBusy.value, false);
+  assert.equal(h.recorders.length, 0);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  assert.match(h.voice.recordingNotice.value, /可用输入/);
+});
+
+test("backgrounding stops capture and preserves an interrupted preview", async (t) => {
+  const h = harness(t);
+  const start = h.voice.startRecording(); h.resolve(); await start;
+  h.tick(1400); h.voice.handleRecordingVisibilityChange(false); h.tick(3000);
+  assert.equal(h.voice.isRecording.value, false);
+  assert.equal(h.voice.recordingDuration.value, 1400);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  h.recorders[0]!.finish();
+  assert.match(h.voice.recordingNotice.value, /中断/);
+  assert.ok(h.voice.audioFile.value);
+});
+
+
+test("recorder errors stop capture instead of continuing a misleading timer", async (t) => {
+  const h = harness(t);
+  const start = h.voice.startRecording(); h.resolve(); await start;
+  h.tick(900); h.recorders[0]!.onerror?.(); h.tick(5000);
+  assert.equal(h.voice.isRecording.value, false);
+  assert.equal(h.voice.recordingDuration.value, 900);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  h.recorders[0]!.finish();
+  assert.match(h.voice.recordingNotice.value, /中断/);
+});
+
+test("waveform decode failures also close their audio context", async (t) => {
+  const h = harness(t);
+  let closed = 0;
+  window.AudioContext = class {
+    async decodeAudioData() { throw new Error("unsupported codec"); }
+    async close() { closed++; }
+  } as unknown as typeof AudioContext;
+  const start = h.voice.startRecording(); h.resolve(); await start;
+  h.tick(1000); h.voice.stopRecording(); h.recorders[0]!.finish(); await flush();
+  assert.equal(closed, 1);
+  assert.ok(h.voice.audioFile.value);
 });

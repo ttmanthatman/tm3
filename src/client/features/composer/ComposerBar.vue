@@ -286,6 +286,7 @@ defineExpose({ composerInput });
         <strong>{{ recordingStatus || "点击麦克风开始录音" }}</strong>
         <small>{{ formatDuration(recordingDuration) }}</small>
         <button v-if="isRecording" class="icon-btn" @click="stopRecording" aria-label="停止录音"><Square :size="18" /></button>
+        <button v-else-if="recordingBusy" class="icon-btn" @click="resetRecording" aria-label="取消录音"><X :size="18" /></button>
         <button v-else class="icon-btn" :disabled="recordingBusy || voiceSending" @click="startRecording" aria-label="重新录音"><RotateCcw :size="18" /></button>
       </div>
       <div v-if="audioPreviewUrl" class="voice-preview">

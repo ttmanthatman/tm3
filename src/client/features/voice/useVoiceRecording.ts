@@ -35,7 +35,9 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   const recordingStatus = ref("");
   const recordingNotice = ref("");
   let recordingTimer: number | undefined;
-  let recordingStartedAt = 0;
+  let startupTimer: ReturnType<typeof setTimeout> | undefined;
+  let detachInputListeners: (() => void) | null = null;
+  let finalizeActiveRecording: ((reason: "user" | "interrupted") => void) | null = null;
   let revision = 0;
   let disposed = false;
   const storage = options.draftStorage || voiceDraftStorage;
@@ -86,8 +88,16 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     recordingTimer = undefined;
   }
 
+  function clearCaptureListeners() {
+    clearTimeout(startupTimer);
+    startupTimer = undefined;
+    detachInputListeners?.();
+    detachInputListeners = null;
+  }
+
   function clearRecording(clearDraft: boolean) {
     revision += 1;
+    clearCaptureListeners();
     if (recordingStarting.value) microphone.release();
     recordingStarting.value = false;
     recordingFinalizing.value = false;
@@ -103,6 +113,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     previewAudioEl.value?.pause();
     mediaRecorder.value = null;
     activeVoiceRecordingSession = null;
+    finalizeActiveRecording = null;
     isRecording.value = false;
     recordingDuration.value = 0;
     recordingStatus.value = "";
@@ -130,7 +141,8 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     const ticket = revision;
     recordingStarting.value = true;
     options.composerPanel.value = "voice";
-    recordingStatus.value = "准备录音…";
+    recordingStatus.value = "正在申请麦克风…";
+    recordingNotice.value = "若出现系统提示，请允许麦克风访问。开始计时后再说话。";
     let stream: MediaStream | undefined;
     try {
       stream = await microphone.acquire();
@@ -143,12 +155,39 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
       const recorder = new MediaRecorder(stream, recorderOptions);
       const session = createVoiceRecordingSession();
       const chunks: Blob[] = [];
-      const startedAt = Date.now();
-      recordingStartedAt = startedAt;
+      let startedAt = 0;
       mediaRecorder.value = recorder;
       activeVoiceRecordingSession = session;
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
+      };
+      const finalize = (reason: "user" | "interrupted") => {
+        if (activeVoiceRecordingSession !== session || recordingFinalizing.value) return;
+        clearCaptureListeners();
+        if (isRecording.value) recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
+        clearRecordingTimer();
+        recordingStarting.value = false;
+        isRecording.value = false;
+        recordingFinalizing.value = true;
+        recordingStatus.value = reason === "user" ? "正在保留录音…" : "麦克风访问已中断，正在保留已录部分…";
+        void recordingWakeLock.release();
+        session.stop(recorder, reason);
+        // stop() queues final data; capture can be released immediately.
+        microphone.finish(activeStream);
+        if (activeMicrophoneStream === activeStream) activeMicrophoneStream = null;
+      };
+      finalizeActiveRecording = finalize;
+      const interrupted = () => finalize("interrupted");
+      const tracks = activeStream.getAudioTracks();
+      for (const track of tracks) {
+        track.addEventListener("mute", interrupted);
+        track.addEventListener("ended", interrupted);
+      }
+      detachInputListeners = () => {
+        for (const track of tracks) {
+          track.removeEventListener("mute", interrupted);
+          track.removeEventListener("ended", interrupted);
+        }
       };
       recorder.onstop = () => {
         const outcome = session.consumeStop();
@@ -157,12 +196,15 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         if (activeMicrophoneStream === activeStream) activeMicrophoneStream = null;
         if (isActiveSession && typeof document !== "undefined" && document.hidden) microphone.release();
         if (isActiveSession) {
-          if (!recordingFinalizing.value) recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
+          clearCaptureListeners();
+          recordingStarting.value = false;
+          if (isRecording.value && !recordingFinalizing.value) recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
           clearRecordingTimer();
           isRecording.value = false;
           recordingFinalizing.value = false;
           mediaRecorder.value = null;
           activeVoiceRecordingSession = null;
+          finalizeActiveRecording = null;
           void recordingWakeLock.release();
         }
         if (!outcome.keepPreview || !isActiveSession) return;
@@ -170,7 +212,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         const blob = new Blob(chunks, { type });
         if (!blob.size) {
           recordingStatus.value = "没有录到声音";
-          recordingNotice.value = outcome.reason === "interrupted" ? "录音被系统提前中断，而且没有保留下声音。请保持屏幕亮起并停留在聊天室后重录。" : "";
+          recordingNotice.value = "麦克风未提供可保存的音频。请重新录音；若仍失败，请检查系统麦克风权限。";
           return;
         }
         const ext = audioExtensionFromMime(type);
@@ -193,43 +235,46 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
           : "";
         void persistDraft();
       };
-      recorder.onerror = () => {
-        if (activeVoiceRecordingSession === session) recordingStatus.value = "录音发生错误，正在保留已录部分";
+      recorder.onerror = interrupted;
+      recorder.onstart = () => {
+        if (disposed || ticket !== revision || activeVoiceRecordingSession !== session || recordingFinalizing.value) return;
+        if (tracks.some((track) => track.readyState !== "live" || track.muted || !track.enabled)) { interrupted(); return; }
+        clearTimeout(startupTimer);
+        startupTimer = undefined;
+        startedAt = Date.now();
+        recordingStarting.value = false;
+        isRecording.value = true;
+        recordingStatus.value = "正在录音，请保持屏幕亮起";
+        recordingNotice.value = "";
+        recordingTimer = window.setInterval(() => {
+          recordingDuration.value = Date.now() - startedAt;
+          if (tracks.some((track) => track.readyState !== "live" || track.muted || !track.enabled)) interrupted();
+        }, 250);
+        void recordingWakeLock.acquire().then((held) => {
+          if (held && activeVoiceRecordingSession === session && isRecording.value) recordingStatus.value = "正在录音";
+        });
       };
+      recordingStatus.value = "麦克风已连接，正在启动录音…";
+      startupTimer = setTimeout(() => {
+        if (activeVoiceRecordingSession !== session || !recordingStarting.value) return;
+        clearRecording(false);
+        recordingStatus.value = "录音未能启动，请重试";
+      }, 10_000);
       session.start(recorder);
-      recordingStarting.value = false;
-      isRecording.value = true;
-      recordingStatus.value = "正在录音";
-      recordingTimer = window.setInterval(() => {
-        recordingDuration.value = Date.now() - startedAt;
-      }, 250);
-      void recordingWakeLock.acquire().then((held) => {
-        if (!held && activeVoiceRecordingSession === session && isRecording.value) {
-          recordingStatus.value = "正在录音，请保持屏幕亮起";
-        }
-      });
-    } catch {
+    } catch (error) {
       if (stream) microphone.finish(stream);
       if (disposed || ticket !== revision) return;
       microphone.release();
       clearRecording(false);
-      recordingStatus.value = "";
-      options.composerPanel.value = null;
-      alert("无法开始录音，请允许麦克风权限");
+      const name = error instanceof Error ? error.name : "";
+      recordingStatus.value = name === "NotAllowedError" ? "麦克风权限未允许" : "无法开始录音";
+      recordingNotice.value = name === "NotAllowedError"
+        ? "请在系统或浏览器设置中允许麦克风访问，然后重新录音。"
+        : "麦克风没有提供可用输入，请重新录音；若仍失败，请检查系统麦克风权限。";
     }
   }
 
-  function stopRecording() {
-    const recorder = mediaRecorder.value;
-    if (!recorder || recorder.state === "inactive") return;
-    recordingDuration.value = Math.max(recordingDuration.value, Date.now() - recordingStartedAt);
-    clearRecordingTimer();
-    recordingFinalizing.value = true;
-    recordingStatus.value = "正在保留录音…";
-    void recordingWakeLock.release();
-    if (activeVoiceRecordingSession) activeVoiceRecordingSession.stop(recorder, "user");
-    else recorder.stop();
-  }
+  function stopRecording() { finalizeActiveRecording?.("user"); }
 
   async function sendVoice() {
     if (!audioFile.value || voiceSending.value) return;
@@ -261,10 +306,11 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
 
   async function analyzeAudioBlob(blob: Blob, bars = 48) {
     const fallback = { durationMs: audioPreviewDurationMs.value || recordingDuration.value, waveform: fallbackWaveform(Date.now(), bars) };
+    let context: AudioContext | undefined;
     try {
       const AudioContextCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!AudioContextCtor) return fallback;
-      const context = new AudioContextCtor();
+      context = new AudioContextCtor();
       const buffer = await context.decodeAudioData(await blob.arrayBuffer());
       const channel = buffer.getChannelData(0);
       const blockSize = Math.max(1, Math.floor(channel.length / bars));
@@ -275,11 +321,14 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         for (let cursor = start; cursor < end; cursor += 1) sum += Math.abs(channel[cursor]);
         return sum / Math.max(1, end - start);
       });
-      await context.close();
       const max = Math.max(...waveform, 0.01);
       return { durationMs: Math.round(buffer.duration * 1000), waveform: waveform.map((bar) => Math.min(1, Math.max(0.1, bar / max))) };
     } catch {
       return fallback;
+    } finally {
+      if (context && context.state !== "closed") {
+        try { await context.close(); } catch { /* The browser may already have closed the context. */ }
+      }
     }
   }
 
@@ -322,7 +371,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   // visibility reactions (read position, effects, music lyrics header).
   function handleRecordingVisibilityChange(visible: boolean) {
     if (!visible) {
-      if (isRecording.value) recordingStatus.value = "录音可能因锁屏或切换应用而中断";
+      if (isRecording.value) {
+        finalizeActiveRecording?.("interrupted");
+        recordingNotice.value = "录音因锁屏或切换应用而停止，请试听后发送，或重新录音。";
+      }
       else if (recordingStarting.value) {
         clearRecording(false);
         options.composerPanel.value = null;
@@ -376,7 +428,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   }
   function handlePageHide() {
     if (recordingStarting.value) clearRecording(false);
-    if (isRecording.value) stopRecording();
+    if (isRecording.value) finalizeActiveRecording?.("interrupted");
     microphone.release();
   }
   if (typeof document !== "undefined") document.addEventListener("pointerdown", handleOutsidePointer);

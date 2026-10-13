@@ -17,7 +17,7 @@ export function createVoiceRecordingSession() {
       // so collect it when the user stops instead.
       recorder.start();
     },
-    stop(recorder: VoiceRecorder, reason: Exclude<VoiceRecordingStopReason, "interrupted">) {
+    stop(recorder: VoiceRecorder, reason: VoiceRecordingStopReason) {
       stopReason = reason;
       if (recorder.state !== "inactive") recorder.stop();
     },

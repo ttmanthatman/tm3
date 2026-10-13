@@ -1,41 +1,59 @@
-/** Keep one disabled source for this foreground session. Each recording owns
- * a clone, so a late recorder callback cannot stop the next recording. */
+/** Each recording owns a fresh source. Never retain capture just to retain
+ * permission: on iOS an interrupted live track can remain muted indefinitely. */
 export function createVoiceMicrophone(request: () => Promise<MediaStream>) {
-  let retained: MediaStream | null = null;
-  let pending: Promise<MediaStream> | null = null;
   let epoch = 0;
   const recordings = new Set<MediaStream>();
+  const pendingInputs = new Set<() => void>();
   const stop = (stream: MediaStream) => stream.getTracks().forEach((track) => track.stop());
 
-  function source(): Promise<MediaStream> {
-    const tracks = retained?.getAudioTracks() || [];
-    if (tracks.length && tracks.every((track) => track.readyState === "live")) return Promise.resolve(retained!);
-    if (pending) return pending;
-    if (retained) stop(retained);
-    retained = null;
-    const ticket = epoch;
-    const acquisition = request().then((stream) => {
-      if (ticket !== epoch) {
-        stop(stream);
-        throw new DOMException("录音申请已取消", "AbortError");
+  async function waitForInput(stream: MediaStream) {
+    const tracks = stream.getAudioTracks();
+    const readable = () => tracks.length > 0 && tracks.every((track) => track.readyState === "live" && track.enabled && !track.muted);
+    if (readable()) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        pendingInputs.delete(cancel);
+        for (const track of tracks) {
+          track.removeEventListener("unmute", check);
+          track.removeEventListener("ended", check);
+        }
+      };
+      const fail = (error: DOMException) => { cleanup(); reject(error); };
+      const cancel = () => fail(new DOMException("录音申请已取消", "AbortError"));
+      const check = () => {
+        if (!tracks.length || tracks.some((track) => track.readyState === "ended" || !track.enabled)) {
+          fail(new DOMException("麦克风输入已停止", "NotReadableError"));
+        } else if (readable()) { cleanup(); resolve(); }
+      };
+      const timer = setTimeout(() => fail(new DOMException("麦克风没有提供音频输入，请重试", "NotReadableError")), 10_000);
+      pendingInputs.add(cancel);
+      for (const track of tracks) {
+        track.addEventListener("unmute", check);
+        track.addEventListener("ended", check);
       }
-      stream.getTracks().forEach((track) => { track.enabled = false; });
-      retained = stream;
-      return stream;
-    }).finally(() => { if (pending === acquisition) pending = null; });
-    pending = acquisition;
-    return acquisition;
+      check();
+    });
   }
 
   return {
     async acquire() {
       const ticket = epoch;
-      const stream = await source();
-      if (ticket !== epoch) throw new DOMException("录音申请已取消", "AbortError");
-      const recording = stream.clone();
-      recording.getAudioTracks().forEach((track) => { track.enabled = true; });
-      recordings.add(recording);
-      return recording;
+      const stream = await request();
+      if (ticket !== epoch) {
+        stop(stream);
+        throw new DOMException("录音申请已取消", "AbortError");
+      }
+      recordings.add(stream);
+      try {
+        await waitForInput(stream);
+        if (ticket !== epoch) throw new DOMException("录音申请已取消", "AbortError");
+        return stream;
+      } catch (error) {
+        recordings.delete(stream);
+        stop(stream);
+        throw error;
+      }
     },
     finish(stream: MediaStream) {
       recordings.delete(stream);
@@ -43,9 +61,7 @@ export function createVoiceMicrophone(request: () => Promise<MediaStream>) {
     },
     release() {
       epoch++;
-      pending = null;
-      if (retained) stop(retained);
-      retained = null;
+      for (const cancel of pendingInputs) cancel();
       for (const stream of recordings) stop(stream);
       recordings.clear();
     }
