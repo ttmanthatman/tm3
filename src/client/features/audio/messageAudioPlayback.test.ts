@@ -93,3 +93,30 @@ test("an interrupted message resumes from the last locally persisted position", 
   assert.equal(resumedAudios[0]?.currentTime, 37.5);
   assert.equal(resumed.snapshot(7, 120_000).progress, 37.5 / 120);
 });
+
+test("seeking from a finished recording starts at the chosen subtitle instead of replaying from zero", async () => {
+  const audio = new FakeAudio("/api/files/42");
+  const manager = createMessageAudioPlayback({ createAudio: () => audio, exclusiveAudio: createExclusiveAudio() });
+  await manager.toggle(42, audio.src, 120_000);
+  audio.currentTime = 120;
+  audio.ended = true;
+  audio.paused = true;
+  audio.dispatchEvent(new Event("ended"));
+  assert.equal(await manager.seek(42, audio.src, 0.6, 120_000), true);
+  assert.equal(audio.currentTime, 72);
+  assert.equal(manager.snapshot(42).playing, true);
+  assert.equal(manager.snapshot(42).progress, 0.6);
+});
+
+test("a subtitle selected before metadata loads retains its exact time when duration arrives", async () => {
+  const audio = new FakeAudio("/api/files/42");
+  audio.duration = NaN;
+  const manager = createMessageAudioPlayback({ createAudio: () => audio, exclusiveAudio: createExclusiveAudio() });
+  await manager.seek(42, audio.src, 0.98, 6_000);
+  // Model a browser that only applies a media position after loadedmetadata.
+  audio.currentTime = 0;
+  audio.duration = 6;
+  audio.dispatchEvent(new Event("loadedmetadata"));
+  assert.equal(audio.currentTime, 5.88);
+  assert.equal(manager.snapshot(42).progress, 0.98);
+});

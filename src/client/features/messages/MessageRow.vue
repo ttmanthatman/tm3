@@ -154,7 +154,7 @@ const emit = defineEmits<{
         @play="emit('voice-play', message)"
         @download="emit('voice-download', message, $event)"
       />
-      <VoiceTranscript v-if="isVoiceMessage(message)" :message="message" />
+      <VoiceTranscript v-if="isVoiceMessage(message)" :message="message" :src="fileUrl(message)" @play="emit('voice-play', message)" />
     </template>
     <template v-else-if="isVideoMessage(message)">
       <button class="media-file-card video-file-card" @click.stop="emit('open-attachment', message, $event)">

@@ -77,7 +77,7 @@ function createHarness(options: { asrConfigured?: boolean; canAccess?: boolean; 
   };
 
   const requireAuth = async (request: FastifyRequest, _reply: FastifyReply) => {
-    (request as FastifyRequest & { auth: { accountId: number; isAdmin: boolean } }).auth = { accountId: 2, isAdmin: !!options.isAdmin };
+    (request as FastifyRequest & { auth: { accountId: number; isAdmin: boolean } }).auth = { accountId: Number(request.headers["x-test-account-id"] || 2), isAdmin: !!options.isAdmin };
   };
 
   const app = Fastify();
@@ -86,7 +86,7 @@ function createHarness(options: { asrConfigured?: boolean; canAccess?: boolean; 
     requireAuth,
     io,
     asr,
-    canAccessChannel: async () => options.canAccess !== false,
+    canAccessChannel: async (accountId) => options.canAccess !== false && [2, 3].includes(accountId),
     hydrateMessage: async (id) => ({ id, channelId: 7 }) as MessageDTO,
     isVoiceMessage: (candidate: Pick<Message, "type" | "fileName" | "payload">) => {
       const payload = candidate.payload as { kind?: unknown } | null;
@@ -228,8 +228,9 @@ test("capability endpoint reflects ASR configuration", async () => {
 });
 
 test("Paraformer upgrades old text only on request and later users reuse its timing", async () => {
-  const { app, transcribeCalls, messageUpdates } = createHarness({ provider: "paraformer",
-    message: voiceMessageStub({ payload: { kind: "voice", durationMs: 1200, transcript: "旧文字" } }) });
+  const options = { provider: "paraformer" as const, asrConfigured: true,
+    message: voiceMessageStub({ payload: { kind: "voice", durationMs: 1200, transcript: "旧文字" } }) };
+  const { app, transcribeCalls, messageUpdates } = createHarness(options);
   try {
     const cached = await app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
     assert.equal(cached.json().transcript, "旧文字");
@@ -237,9 +238,17 @@ test("Paraformer upgrades old text only on request and later users reuse its tim
     const upgraded = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", payload: { timestamps: true } });
     assert.equal(upgraded.statusCode, 200);
     assert.deepEqual(upgraded.json().transcriptWords, [{ text: "这是识别结果", beginMs: 100, endMs: 1100 }]);
-    const reused = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", payload: { timestamps: true } });
+    // The persisted result is shared across authorized accounts, even if ASR is later disabled.
+    options.asrConfigured = false;
+    const reused = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", headers: { "x-test-account-id": "3" }, payload: { timestamps: true } });
+    assert.equal(reused.statusCode, 200);
     assert.equal(reused.json().cached, true);
     assert.deepEqual(reused.json().transcriptWords, upgraded.json().transcriptWords);
+    assert.equal(reused.json().transcriptAt, upgraded.json().transcriptAt);
+    assert.equal(reused.json().transcriptProvider, "paraformer");
+    const denied = await app.inject({ method: "POST", url: "/api/messages/42/transcribe", headers: { "x-test-account-id": "4" }, payload: { timestamps: true } });
+    assert.equal(denied.statusCode, 403);
+    assert.equal(denied.json().transcriptWords, undefined);
     assert.equal(transcribeCalls.length, 1);
     assert.equal(messageUpdates.length, 1);
   } finally { await app.close(); }
@@ -251,11 +260,12 @@ test("simultaneous requests share one recognition and one persisted broadcast", 
   const { app, transcribeCalls, messageUpdates, emissions } = createHarness({ provider: "paraformer", delay });
   try {
     const first = app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
-    const second = app.inject({ method: "POST", url: "/api/messages/42/transcribe" });
+    const second = app.inject({ method: "POST", url: "/api/messages/42/transcribe", headers: { "x-test-account-id": "3" }, payload: { timestamps: true } });
     await new Promise((resolve) => setImmediate(resolve));
     release();
     const responses = await Promise.all([first, second]);
     assert.ok(responses.every((response) => response.statusCode === 200));
+    assert.deepEqual(responses[0].json().transcriptWords, responses[1].json().transcriptWords);
     assert.equal(transcribeCalls.length, 1);
     assert.equal(messageUpdates.length, 1);
     assert.equal(emissions.length, 1);

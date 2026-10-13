@@ -9,7 +9,10 @@ import { revealedTranscriptWords, voiceTranscriptWords } from "./voiceTranscript
 // （含 socket message:updated 推送的 transcript）以柔和次级气泡展示在语音下方。
 const props = defineProps<{
   message: MessageDTO;
+  src: string;
 }>();
+
+const emit = defineEmits<{ play: [] }>();
 
 const { asrCapability, asrTimestamps, transcriptNotice, ensureAsrCapability, isTranscriptBusy, transcribeVoice } = useVoiceTranscript();
 
@@ -21,6 +24,14 @@ const playbackController = getSharedMessageAudioPlayback();
 const playback = ref<MessageAudioSnapshot>({ playing: false, progress: 0, durationMs: 0 });
 const elapsedMs = computed(() => playback.value.progress * playback.value.durationMs);
 const revealedWords = computed(() => revealedTranscriptWords(words.value, elapsedMs.value));
+const visibleWords = computed(() => fullTextOpen.value ? words.value : revealedWords.value);
+
+async function seekWord(beginMs: number) {
+  const durationMs = playback.value.durationMs || Number((props.message.payload as { durationMs?: number } | undefined)?.durationMs) || 0;
+  if (durationMs <= 0) return;
+  const started = await playbackController.seek(props.message.id, props.src, beginMs / durationMs, durationMs);
+  if (started) emit("play");
+}
 let unsubscribe: (() => void) | undefined;
 
 watch(() => props.message.id, () => {
@@ -60,10 +71,18 @@ onMounted(() => {
       </button>
       <small v-if="transcriptNotice" class="voice-transcript-notice" role="status">{{ transcriptNotice }}</small>
     </div>
-    <div v-show="transcriptOpen" :id="transcriptId" class="voice-transcript-bubble">
-      <template v-if="words.length && !fullTextOpen">
-        <span v-for="(word, index) in revealedWords" :key="index" :class="{ 'voice-transcript-current': elapsedMs < word.endMs }">{{ word.text }}</span>
-        <small v-if="!revealedWords.length" class="voice-transcript-notice">播放语音，文字会随进度显示</small>
+    <div v-show="transcriptOpen" :id="transcriptId" class="voice-transcript-bubble" @click.stop>
+      <template v-if="words.length">
+        <button
+          v-for="(word, index) in visibleWords"
+          :key="index"
+          type="button"
+          class="voice-transcript-word"
+          :class="{ 'voice-transcript-current': playback.playing && elapsedMs >= word.beginMs && elapsedMs < word.endMs }"
+          :aria-label="`从“${word.text.trim()}”开始播放`"
+          @click="seekWord(word.beginMs)"
+        >{{ word.text }}</button>
+        <small v-if="!visibleWords.length" class="voice-transcript-notice">播放语音，文字会随进度显示</small>
       </template>
       <template v-else>{{ transcript }}</template>
     </div>

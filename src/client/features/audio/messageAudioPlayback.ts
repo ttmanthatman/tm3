@@ -45,7 +45,7 @@ export function createMessageAudioPlayback(options: MessageAudioPlaybackOptions)
   const listeners = new Map<number, Set<Listener>>();
   const snapshots = new Map<number, MessageAudioSnapshot>();
   const positions = readPositions(options.storage);
-  let active: { messageId: number; src: string; fallbackDurationMs: number; audio: AudioElement } | null = null;
+  let active: { messageId: number; src: string; fallbackDurationMs: number; audio: AudioElement; pendingSeekSeconds?: number } | null = null;
   let coordinatorPause = false;
   let lastStorageFlushAt = 0;
 
@@ -120,7 +120,7 @@ export function createMessageAudioPlayback(options: MessageAudioPlaybackOptions)
     }
     pauseActive();
     const audio = options.createAudio(src);
-    const entry = { messageId, src, fallbackDurationMs, audio };
+    const entry: NonNullable<typeof active> = { messageId, src, fallbackDurationMs, audio };
     active = entry;
     audio.preload = "metadata";
     audio.setAttribute("playsinline", "true");
@@ -130,7 +130,10 @@ export function createMessageAudioPlayback(options: MessageAudioPlaybackOptions)
       if (active !== entry) return;
       const durationMs = Number.isFinite(audio.duration) && audio.duration > 0 ? Math.round(audio.duration * 1000) : fallbackDurationMs;
       const savedSeconds = Math.max(0, positions[String(messageId)]?.seconds || 0);
-      if (savedSeconds > 0 && savedSeconds < audio.duration - 0.5 && audio.currentTime < 0.25) audio.currentTime = savedSeconds;
+      if (entry.pendingSeekSeconds !== undefined && Number.isFinite(audio.duration) && audio.duration > 0) {
+        audio.currentTime = Math.min(entry.pendingSeekSeconds, audio.duration);
+        delete entry.pendingSeekSeconds;
+      } else if (savedSeconds > 0 && savedSeconds < audio.duration - 0.5 && audio.currentTime < 0.25) audio.currentTime = savedSeconds;
       notify(messageId, { durationMs, progress: durationMs > 0 ? clamp((audio.currentTime * 1000) / durationMs) : 0 }, fallbackDurationMs);
     };
     audio.addEventListener("loadedmetadata", syncDuration);
@@ -166,16 +169,7 @@ export function createMessageAudioPlayback(options: MessageAudioPlaybackOptions)
     return audio;
   }
 
-  async function toggle(messageId: number, src: string, fallbackDurationMs = 0) {
-    const audio = ensureAudio(messageId, src, fallbackDurationMs);
-    if (!audio.paused) {
-      audio.pause();
-      return false;
-    }
-    if (audio.ended) {
-      audio.currentTime = 0;
-      notify(messageId, { progress: 0 }, fallbackDurationMs);
-    }
+  async function startPlayback(messageId: number, audio: AudioElement, fallbackDurationMs: number) {
     options.exclusiveAudio.activate(PARTICIPANT_ID);
     notify(messageId, { playing: true }, fallbackDurationMs);
     try {
@@ -188,14 +182,28 @@ export function createMessageAudioPlayback(options: MessageAudioPlaybackOptions)
     }
   }
 
+  async function toggle(messageId: number, src: string, fallbackDurationMs = 0) {
+    const audio = ensureAudio(messageId, src, fallbackDurationMs);
+    if (!audio.paused) {
+      audio.pause();
+      return false;
+    }
+    if (audio.ended) {
+      audio.currentTime = 0;
+      notify(messageId, { progress: 0 }, fallbackDurationMs);
+    }
+    return startPlayback(messageId, audio, fallbackDurationMs);
+  }
+
   async function seek(messageId: number, src: string, value: number, fallbackDurationMs = 0) {
     const audio = ensureAudio(messageId, src, fallbackDurationMs);
     const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : fallbackDurationMs / 1000;
     if (!duration) return false;
+    if (active) active.pendingSeekSeconds = Number.isFinite(audio.duration) && audio.duration > 0 ? undefined : duration * clamp(value);
     audio.currentTime = duration * clamp(value);
     savePosition(messageId, audio.currentTime, duration, false, true);
     notify(messageId, { progress: clamp(value), durationMs: Math.round(duration * 1000) }, fallbackDurationMs);
-    if (audio.paused) return toggle(messageId, src, fallbackDurationMs);
+    if (audio.paused) return startPlayback(messageId, audio, fallbackDurationMs);
     return true;
   }
 

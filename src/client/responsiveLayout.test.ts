@@ -233,7 +233,7 @@ test("all file previews keep download immediately left of close above the safe a
 
 test("audio attachments render their waveform player immediately without a collapsed state", () => {
   assert.match(messageRow, /<template v-else-if="isAudioMessage\(message\)">[\s\S]*?<InlineAudioPlayer/);
-  assert.match(messageRow, /<VoiceTranscript v-if="isVoiceMessage\(message\)" :message="message" \/>/);
+  assert.match(messageRow, /<VoiceTranscript v-if="isVoiceMessage\(message\)" :message="message" :src="fileUrl\(message\)" @play="emit\('voice-play', message\)" \/>/);
   assert.match(app, /<MessageRow[\s\S]*?variant="timeline"/);
   assert.match(inlineAudioPlayer, /class="inline-audio-player"[\s\S]*?<ResponsiveAudioWaveform/);
   assert.match(inlineAudioPlayer, /@seek="seek"/);

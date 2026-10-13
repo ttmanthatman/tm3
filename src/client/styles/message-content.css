@@ -915,7 +915,28 @@
   opacity: 0.86;
 }
 
-.voice-transcript-current {
-  color: var(--text);
-  font-weight: 600;
+.voice-transcript-word {
+  display: inline;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  white-space: inherit;
+  word-break: inherit;
+  cursor: pointer;
+}
+
+.voice-transcript-word:focus-visible {
+  outline: 2px solid #ff6a00;
+  outline-offset: 2px;
+}
+
+.voice-transcript-word.voice-transcript-current {
+  color: #ff6a00;
+  font-weight: 700;
 }

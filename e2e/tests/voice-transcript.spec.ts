@@ -1,4 +1,4 @@
-import { expect, test, chromium, webkit, type Page, type APIRequestContext } from "@playwright/test";
+import { expect, test, chromium, webkit, type Page, type APIRequestContext, type Locator } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -23,6 +23,33 @@ async function createReader(request: APIRequestContext, headers: Record<string, 
   const response = await request.post("/api/auth/login", { data: { username: account.username, password: account.password } });
   expect(response.ok()).toBe(true);
   return { account, token: (await response.json()).token as string };
+}
+
+async function observeAudio(page: Page) {
+  await page.addInitScript(() => {
+    const NativeAudio = window.Audio;
+    window.Audio = class extends NativeAudio {
+      constructor(src?: string) {
+        super(src);
+        (window as Window & { subtitleAudio?: HTMLAudioElement }).subtitleAudio = this;
+      }
+    };
+  });
+}
+
+async function expectSubtitleSeek(page: Page, bubble: Locator, text: string, seconds: number, keyboard = false) {
+  const word = bubble.getByRole("button", { name: `从“${text}”开始播放`, exact: true });
+  if (keyboard) {
+    await word.focus();
+    await word.press("Enter");
+  } else await word.click();
+  await expect(word).toHaveClass(/voice-transcript-current/);
+  await expect(word).toHaveCSS("color", "rgb(255, 106, 0)");
+  await expect(word).toHaveCSS("font-weight", "700");
+  await expect.poll(() => page.evaluate((seconds) => {
+    const audio = (window as Window & { subtitleAudio?: HTMLAudioElement }).subtitleAudio;
+    return !!audio && !audio.paused && audio.currentTime >= seconds && audio.currentTime < seconds + 1;
+  }, seconds)).toBe(true);
 }
 
 test("管理员切换识别服务并保留独立密钥，普通用户无权修改", async ({ page, request }) => {
@@ -70,6 +97,7 @@ for (const browserName of ["chromium", "webkit"] as const) {
     const browser = await (browserName === "webkit" ? webkit : chromium).launch();
     const context = await browser.newContext({ baseURL: "http://127.0.0.1:4173", viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
+    await observeAudio(page);
     const prisma = new PrismaClient();
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "voice-transcript-e2e-"));
     try {
@@ -120,14 +148,27 @@ for (const browserName of ["chromium", "webkit"] as const) {
       await row.getByRole("button", { name: "暂停语音", exact: true }).click();
       await row.getByRole("button", { name: "查看全文", exact: true }).click();
       await expect(bubble).toHaveText("第一句，第二句，最后一句。");
-      for (const width of [360, 1280]) {
+      for (const width of [390, 360, 1280]) {
         await page.setViewportSize({ width, height: 844 });
+        await expectSubtitleSeek(page, bubble, "第二句，", 2.5, width === 1280);
+        await row.getByRole("button", { name: "暂停语音", exact: true }).click();
+        await expect(bubble.locator(".voice-transcript-current")).toHaveCount(0);
+        await expect(bubble).toHaveText("第一句，第二句，最后一句。");
+        await expectSubtitleSeek(page, bubble, "第一句，", 0.5);
+        await row.getByRole("button", { name: "暂停语音", exact: true }).click();
         await row.getByRole("button", { name: "收起文字", exact: true }).click();
         await expect(bubble).toBeHidden();
         await row.getByRole("button", { name: "展开文字", exact: true }).click();
         await expect(bubble).toBeVisible();
         expect(await row.locator(".voice-transcript-row").evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+        expect(await bubble.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
       }
+      // Clicking a word after natural completion must seek rather than restart at zero.
+      await expectSubtitleSeek(page, bubble, "最后一句。", 4.5);
+      await expect(row.getByRole("button", { name: "播放语音", exact: true })).toBeVisible();
+      await expect(bubble.locator(".voice-transcript-current")).toHaveCount(0);
+      await expectSubtitleSeek(page, bubble, "第二句，", 2.5);
+      await row.getByRole("button", { name: "暂停语音", exact: true }).click();
       const member = await createReader(request, headers, browserName);
       const reused = await request.post(`/api/messages/${message.id}/transcribe`, { headers: { Authorization: `Bearer ${member.token}` }, data: { timestamps: true } });
       expect(reused.ok()).toBe(true);
@@ -136,10 +177,17 @@ for (const browserName of ["chromium", "webkit"] as const) {
       const memberContext = await browser.newContext({ baseURL: "http://127.0.0.1:4173", viewport: { width: 390, height: 844 } });
       try {
         const memberPage = await memberContext.newPage();
+        await observeAudio(memberPage);
         await login(memberPage, member.account);
         const memberRow = memberPage.locator(`.message-row[data-message-id="${message.id}"]`);
         await memberRow.getByRole("button", { name: "查看全文", exact: true }).click();
         await expect(memberRow.locator(".voice-transcript-bubble")).toHaveText("第一句，第二句，最后一句。");
+        await expectSubtitleSeek(memberPage, memberRow.locator(".voice-transcript-bubble"), "最后一句。", 4.5);
+        await memberRow.getByRole("button", { name: "暂停语音", exact: true }).click();
+        await expect(memberRow.locator(".voice-unread-dot")).toHaveCount(0);
+        await memberPage.reload();
+        await memberRow.getByRole("button", { name: "查看全文", exact: true }).click();
+        await expect(memberRow.locator(".voice-transcript-word")).toHaveCount(3);
       } finally { await memberContext.close(); }
     } finally {
       await prisma.$disconnect();

@@ -104,7 +104,7 @@ function avatarText(name: string) {
     <div v-if="message.content" class="grace-card-text" v-html="message.content"></div>
     <div v-if="voiceMessage" class="grace-voice-capsule">
       <InlineAudioPlayer :message="voiceMessage" :src="voiceSrc" />
-      <VoiceTranscript :message="voiceMessage" />
+      <VoiceTranscript :message="voiceMessage" :src="voiceSrc" />
     </div>
     <StoryVoice v-else-if="payload.nativeVoice" :src="graceVoiceUrl(message.id)" :duration-ms="payload.nativeVoice.durationMs" label="恩典语音" />
     <button
