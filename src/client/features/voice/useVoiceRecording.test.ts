@@ -8,8 +8,13 @@ function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountI
   let now = 0;
   let resolveStream!: (stream: MediaStream) => void;
   let requests = 0;
-  const tracks = [{ stop() {} }];
-  const stream = { getTracks: () => tracks } as unknown as MediaStream;
+  type Track = { enabled: boolean; readyState: "live" | "ended"; stop(): void };
+  const tracks: Track[] = [];
+  function createStream(enabled = true): MediaStream {
+    const track: Track = { enabled, readyState: "live", stop() { this.readyState = "ended"; } };
+    tracks.push(track);
+    return { getTracks: () => [track], getAudioTracks: () => [track], clone: () => createStream(track.enabled) } as unknown as MediaStream;
+  }
   const timers = new Map<number, () => void>();
   const recorders: Recorder[] = [];
   class Recorder {
@@ -40,15 +45,76 @@ function harness(t: test.TestContext, draftStorage?: VoiceDraftStorage, accountI
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: { mediaDevices: { getUserMedia: () => { requests++; return new Promise<MediaStream>((resolve) => { resolveStream = resolve; }); } } } });
   const scope = effectScope();
   const panel = ref<"voice" | "more" | null>("voice");
-  const voice = scope.run(() => useVoiceRecording({ draftStorage, accountId, composerPanel: panel, pushPendingVoiceMessage: () => 0, uploadFile: async () => ({ success: true, duplicate: false, skipped: false }) }))!;
+  const voice = scope.run(() => useVoiceRecording({ draftStorage, accountId, composerPanel: panel, pushPendingVoiceMessage: () => ({ id: 1, channelId: 1 }), uploadFile: async () => ({ success: true, duplicate: false, skipped: false }) }))!;
   t.after(() => {
     voice.disposeRecording(); scope.stop();
     for (const [key, old] of [["window", oldWindow], ["navigator", oldNavigator], ["MediaRecorder", oldRecorder]] as const) {
       if (old) Object.defineProperty(globalThis, key, old); else Reflect.deleteProperty(globalThis, key);
     }
   });
-  return { scope, voice, panel, recorders, requests: () => requests, resolve: () => resolveStream(stream), tick: (ms: number) => { now = ms; for (const fn of timers.values()) fn(); } };
+  return { scope, voice, panel, recorders, tracks, requests: () => requests, resolve: () => resolveStream(createStream()), tick: (ms: number) => { now = ms; for (const fn of timers.values()) fn(); } };
 }
+
+test("sending one recording retains silent authorization for the next recording", async (t) => {
+  const h = harness(t);
+  const first = h.voice.startRecording(); h.resolve(); await first;
+  h.tick(1000); h.voice.stopRecording(); h.recorders[0]!.finish();
+  await h.voice.sendVoice();
+  const second = h.voice.startRecording();
+  if (h.requests() > 1) h.resolve();
+  await second;
+  assert.equal(h.requests(), 1, "a second recording must reuse the authorized source");
+  assert.equal(h.recorders.length, 2);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 1);
+  h.voice.stopRecording(); h.recorders[1]!.finish();
+  assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 0);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 1);
+  h.voice.disposeRecording();
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+});
+
+test("a delayed stop from a deleted recording cannot stop its successor", async (t) => {
+  const h = harness(t);
+  const first = h.voice.startRecording(); h.resolve(); await first;
+  h.voice.resetRecording();
+  await h.voice.startRecording();
+  h.recorders[0]!.finish();
+  assert.equal(h.requests(), 1);
+  assert.equal(h.voice.isRecording.value, true);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live" && track.enabled).length, 1);
+});
+
+test("hiding an idle page releases authorization and the next recording reacquires it", async (t) => {
+  const h = harness(t);
+  const first = h.voice.startRecording(); h.resolve(); await first;
+  h.voice.stopRecording(); h.recorders[0]!.finish(); h.voice.resetRecording();
+  h.voice.handleRecordingVisibilityChange(false);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  const next = h.voice.startRecording(); h.resolve(); await next;
+  assert.equal(h.requests(), 2);
+});
+
+test("a browser-ended authorized source is reacquired instead of producing silent recordings", async (t) => {
+  const h = harness(t);
+  const first = h.voice.startRecording(); h.resolve(); await first;
+  h.voice.stopRecording(); h.recorders[0]!.finish(); h.voice.resetRecording();
+  h.tracks.find((track) => track.readyState === "live")!.stop();
+  const next = h.voice.startRecording(); h.resolve(); await next;
+  assert.equal(h.requests(), 2);
+});
+
+test("switching accounts releases the previous microphone session", async (t) => {
+  const account = ref<number | null>(3);
+  const h = harness(t, memoryStorage().storage, () => account.value);
+  await flush();
+  const first = h.voice.startRecording(); h.resolve(); await first;
+  account.value = 4;
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
+  h.recorders[0]!.finish(); await flush();
+  assert.equal(h.voice.audioFile.value, null);
+  const next = h.voice.startRecording(); h.resolve(); await next;
+  assert.equal(h.requests(), 2);
+});
 
 test("a rapid double start acquires only one microphone and recorder", async (t) => {
   const h = harness(t);
@@ -97,6 +163,7 @@ test("a cancelled permission request cannot create a recorder later", async (t) 
   h.voice.resetRecording(); h.resolve(); await start;
   assert.equal(h.recorders.length, 0);
   assert.equal(h.voice.isRecording.value, false);
+  assert.equal(h.tracks.filter((track) => track.readyState === "live").length, 0);
 });
 
 test("an existing preview cannot be replaced by another recording", async (t) => {

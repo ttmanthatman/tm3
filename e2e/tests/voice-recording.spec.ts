@@ -11,7 +11,16 @@ for (const browserName of ["chromium", "webkit"] as const) {
         await context.addInitScript(() => {
           let requests = 0;
           const streams: MediaStream[] = [];
-          Object.defineProperty(window, "voiceTestState", { value: () => ({ requests, activeTracks: streams.flatMap((stream) => stream.getTracks()).filter((track) => track.readyState === "live").length }) });
+          const clone = MediaStream.prototype.clone;
+          MediaStream.prototype.clone = function () {
+            const result = clone.call(this);
+            streams.push(result);
+            return result;
+          };
+          Object.defineProperty(window, "voiceTestState", { value: () => ({ requests,
+            activeTracks: streams.flatMap((stream) => stream.getTracks()).filter((track) => track.readyState === "live" && track.enabled).length,
+            liveTracks: streams.flatMap((stream) => stream.getTracks()).filter((track) => track.readyState === "live").length
+          }) });
           let audio: AudioContext;
           Object.defineProperty(window, "prepareVoiceTestSource", { value: async () => {
             audio = new AudioContext(); await audio.resume();
@@ -38,7 +47,7 @@ for (const browserName of ["chromium", "webkit"] as const) {
         const mic = page.getByRole("button", { name: "语音消息", exact: true });
         const drawer = page.locator(".voice-drawer");
         const preview = page.locator(".voice-preview");
-        const state = () => page.evaluate(() => (window as Window & { voiceTestState: () => { requests: number; activeTracks: number } }).voiceTestState());
+        const state = () => page.evaluate(() => (window as Window & { voiceTestState: () => { requests: number; activeTracks: number; liveTracks: number } }).voiceTestState());
         const savedDrafts = () => page.evaluate(async () => {
           const database = await new Promise<IDBDatabase>((resolve, reject) => {
             const request = indexedDB.open("team-chat-voice-drafts", 1);
@@ -65,6 +74,7 @@ for (const browserName of ["chromium", "webkit"] as const) {
         await mic.click();
         await expect(preview).toBeVisible();
         await expect.poll(async () => (await state()).activeTracks).toBe(0);
+        expect((await state()).liveTracks).toBe(1);
         expect((await state()).requests).toBe(1);
         await expect.poll(async () => (await savedDrafts()).length).toBe(1);
         await outside.click();
@@ -99,10 +109,27 @@ for (const browserName of ["chromium", "webkit"] as const) {
         await expect.poll(() => drawer.locator("small").textContent()).not.toBe("0:00");
         await drawer.getByRole("button", { name: "停止录音" }).click();
         await expect(preview).toBeVisible();
+        // Match the report: send, then record again in the same foreground
+        // session. Only the first recording may request a microphone source.
+        await Promise.all([
+          page.waitForResponse((response) => response.url().endsWith("/api/files/upload") && response.ok()),
+          drawer.getByRole("button", { name: "发送", exact: true }).click()
+        ]);
+        await expect(drawer).toBeHidden();
+        await mic.click();
+        await expect(drawer.getByRole("button", { name: "停止录音" })).toBeVisible();
+        expect((await state()).requests).toBe(1);
+        await expect.poll(async () => (await state()).activeTracks).toBe(1);
+        await expect.poll(() => drawer.locator("small").textContent()).not.toBe("0:00");
+        await drawer.getByRole("button", { name: "停止录音" }).click();
+        await expect(preview).toBeVisible();
+        await expect.poll(async () => (await state()).activeTracks).toBe(0);
         await drawer.getByRole("button", { name: "删除录音" }).click();
         await page.locator(".composer textarea").click();
         await expect(drawer).toBeHidden();
         await expect.poll(async () => (await savedDrafts()).length).toBe(0);
+        await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+        expect((await state()).liveTracks).toBe(0);
         await page.reload();
         await expect(outside).toBeVisible();
         await expect(drawer).toBeHidden();

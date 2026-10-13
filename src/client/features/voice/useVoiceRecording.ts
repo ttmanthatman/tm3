@@ -1,6 +1,7 @@
 import { computed, getCurrentScope, onScopeDispose, ref, watch, type Ref } from "vue";
 import { voiceDraftStorage, type VoiceDraftStorage } from "./voiceDrafts";
 import { createRecordingWakeLock, createVoiceRecordingSession, type VoiceRecordingSession } from "./voiceRecording";
+import { createVoiceMicrophone } from "./voiceMicrophone";
 
 type VoiceUploadOptions = { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number };
 type UploadFileFn = (file: File, options?: VoiceUploadOptions) => Promise<{ success: boolean; duplicate: boolean; skipped: boolean }>;
@@ -61,6 +62,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   }
   let activeVoiceRecordingSession: VoiceRecordingSession | null = null;
   const recordingWakeLock = createRecordingWakeLock(navigator);
+  const microphone = createVoiceMicrophone(() => navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+  }));
+  let activeMicrophoneStream: MediaStream | null = null;
 
   function pickAudioMimeType() {
     const recorder = window.MediaRecorder;
@@ -83,6 +88,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
 
   function clearRecording(clearDraft: boolean) {
     revision += 1;
+    if (recordingStarting.value) microphone.release();
     recordingStarting.value = false;
     recordingFinalizing.value = false;
     draftLoading.value = false;
@@ -92,6 +98,8 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     const session = activeVoiceRecordingSession;
     if (recorder && session) session.stop(recorder, "discard");
     else if (recorder && recorder.state !== "inactive") recorder.stop();
+    if (activeMicrophoneStream) microphone.finish(activeMicrophoneStream);
+    activeMicrophoneStream = null;
     previewAudioEl.value?.pause();
     mediaRecorder.value = null;
     activeVoiceRecordingSession = null;
@@ -125,16 +133,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
     recordingStatus.value = "准备录音…";
     let stream: MediaStream | undefined;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
-        }
-      });
-      if (disposed || ticket !== revision) { stream.getTracks().forEach((track) => track.stop()); return; }
+      stream = await microphone.acquire();
+      if (disposed || ticket !== revision) { microphone.finish(stream); return; }
       const activeStream = stream;
+      activeMicrophoneStream = stream;
       const mimeType = pickAudioMimeType();
       const recorderOptions: MediaRecorderOptions = { audioBitsPerSecond: 16000 };
       if (mimeType) recorderOptions.mimeType = mimeType;
@@ -151,7 +153,9 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
       recorder.onstop = () => {
         const outcome = session.consumeStop();
         const isActiveSession = activeVoiceRecordingSession === session;
-        activeStream.getTracks().forEach((track) => track.stop());
+        microphone.finish(activeStream);
+        if (activeMicrophoneStream === activeStream) activeMicrophoneStream = null;
+        if (isActiveSession && typeof document !== "undefined" && document.hidden) microphone.release();
         if (isActiveSession) {
           if (!recordingFinalizing.value) recordingDuration.value = Math.max(recordingDuration.value, Date.now() - startedAt);
           clearRecordingTimer();
@@ -205,8 +209,9 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
         }
       });
     } catch {
-      stream?.getTracks().forEach((track) => track.stop());
+      if (stream) microphone.finish(stream);
       if (disposed || ticket !== revision) return;
+      microphone.release();
       clearRecording(false);
       recordingStatus.value = "";
       options.composerPanel.value = null;
@@ -318,6 +323,10 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   function handleRecordingVisibilityChange(visible: boolean) {
     if (!visible) {
       if (isRecording.value) recordingStatus.value = "录音可能因锁屏或切换应用而中断";
+      else if (recordingStarting.value) {
+        clearRecording(false);
+        options.composerPanel.value = null;
+      } else microphone.release();
       return;
     }
     if (isRecording.value) {
@@ -329,6 +338,7 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
 
   if (options.accountId) {
     watch(options.accountId, async (accountId) => {
+      microphone.release();
       clearRecording(false);
       options.composerPanel.value = null;
       if (!accountId) return;
@@ -361,9 +371,14 @@ export function useVoiceRecording(options: UseVoiceRecordingOptions) {
   // A stopped draft is already saved; leaving the page must not delete it.
   function disposeRecording() {
     disposed = true;
+    microphone.release();
     clearRecording(false);
   }
-  function handlePageHide() { if (isRecording.value) stopRecording(); }
+  function handlePageHide() {
+    if (recordingStarting.value) clearRecording(false);
+    if (isRecording.value) stopRecording();
+    microphone.release();
+  }
   if (typeof document !== "undefined") document.addEventListener("pointerdown", handleOutsidePointer);
   if (typeof window !== "undefined") window.addEventListener("pagehide", handlePageHide);
   if (getCurrentScope()) onScopeDispose(() => {
