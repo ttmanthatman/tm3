@@ -1197,11 +1197,22 @@ const RELEASE_2_9_2_NOTES = [
   "调整圣经开合图标与笔记卡片宽度，修正聊天操作菜单的定位和窄屏滚动。"
 ] as const
 
+const RELEASE_2_9_3_NOTES = [
+  "抄写经文改为连续显示完整作品，消息长按支持点赞、收藏和逐条转发；已加载的笔迹保留在浏览器缓存中，滚动返回时复用。",
+  "抄写时切换到下一个字即可在后台保存已写笔迹，继续写字无需等待；“笔尖观察窗”默认关闭，可在写字区外打开。",
+  "语音消息的波形随气泡宽度伸缩，修正多行聊天输入时反复调整高度造成的消息区抖动。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.4",
+    date: "2026-10-13",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.3",
     date: "2026-10-13",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_3_NOTES
   },
   {
     version: "2.9.2",
