@@ -59,13 +59,6 @@ function seek(value: number) {
   if (!wasPlaying) emit("play");
 }
 
-function voiceBarStyle(bar: number, index: number, total: number, value: number) {
-  return {
-    height: `${Math.round(7 + bar * 25)}px`,
-    opacity: index / Math.max(1, total) <= value ? 1 : 0.52
-  };
-}
-
 function formatDuration(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -82,15 +75,7 @@ onBeforeUnmount(() => {
       <Pause v-if="playing" :size="20" />
       <Play v-else :size="20" />
     </button>
-    <button class="voice-waveform" @click="toggle" aria-label="播放语音波形">
-      <span
-        v-for="(bar, idx) in waveform"
-        :key="idx"
-        class="voice-bar"
-        :class="{ active: idx / waveform.length <= progress }"
-        :style="voiceBarStyle(bar, idx, waveform.length, progress)"
-      ></span>
-    </button>
+    <ResponsiveAudioWaveform :samples="waveform" :progress="progress" @seek="seek" />
     <div class="voice-meta">
       <span>{{ formatDuration(durationMs) }}</span>
       <small>{{ compactBytes(message.fileSize) }}</small>

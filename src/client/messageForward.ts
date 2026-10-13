@@ -1,11 +1,13 @@
+import { copyworkPayload } from "@shared/bibleCopywork";
 import type { ChannelDTO, ChatRecordItemDTO, ChatRecordPayloadDTO, MessageDTO } from "@shared/types";
 
-// 与服务端转发白名单保持一致：只有文本、图片、文件（含语音/音频/视频）可以转发。
-export const FORWARDABLE_TYPES: ReadonlySet<MessageDTO["type"]> = new Set(["text", "image", "file"]);
+// 与服务端转发白名单保持一致；抄写作品以逐条消息保留独立分享授权。
+export const FORWARDABLE_TYPES: ReadonlySet<MessageDTO["type"]> = new Set(["text", "image", "file", "bible_copywork"]);
 
 export function isForwardableMessage(message: MessageDTO) {
   if (message.id <= 0) return false;
   if (!FORWARDABLE_TYPES.has(message.type)) return false;
+  if (message.type === "bible_copywork" && !copyworkPayload(message.payload)) return false;
   if (message.type === "text" && !message.content?.trim()) return false;
   return true;
 }

@@ -12,7 +12,9 @@ async function login(page: Page) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   const bible = page.locator(".bible-header-trigger");
+  await expect(bible).toBeVisible();
   if (await bible.getAttribute("aria-pressed") === "true") await bible.click();
+  await expect(page.locator(".bible-workspace")).toBeHidden();
   return { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}` };
 }
 
@@ -77,5 +79,50 @@ test("笔记消息气泡紧贴卡片，在手机和宽屏保持两侧等宽留�
     }
   } finally {
     await request.delete(`/api/bible/notes/${id}`, { headers });
+  }
+});
+
+test("语音波形随消息气泡与转写文字宽度伸缩", async ({ page, request }) => {
+  const headers = await login(page);
+  const channels = (await (await request.get("/api/channels", { headers })).json()).channels as Array<{ id: number; name: string }>;
+  const channelId = channels.find((channel) => channel.name === E2E_CHANNELS.default)!.id;
+  const wav = Buffer.alloc(44 + 16000 * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(wav.length - 8, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(16000, 24); wav.writeUInt32LE(32000, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write("data", 36); wav.writeUInt32LE(wav.length - 44, 40);
+  const response = await request.post("/api/files/upload", { headers, multipart: {
+    channelId: String(channelId), voice: "1", durationMs: "214000", waveform: JSON.stringify(Array(50).fill(0.6)),
+    file: { name: `wave-${randomUUID()}.wav`, mimeType: "audio/wav", buffer: wav }
+  } });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const { message } = await response.json();
+  for (const transcript of ["", "这是一段较长的语音转写内容，用于检查波形应当随着消息气泡的宽度铺满可用空间。".repeat(8)]) {
+    await page.route(`**/api/channels/${channelId}/messages?**`, async (route) => {
+      const result = await route.fetch(); const body = await result.json();
+      for (const item of body.messages) if (item.id === message.id) item.payload = { ...item.payload, transcript, transcriptAt: new Date().toISOString() };
+      await route.fulfill({ response: result, json: body });
+    });
+    await page.reload();
+    const bible = page.locator(".bible-header-trigger");
+    await expect(bible).toBeVisible();
+    if (await bible.getAttribute("aria-pressed") === "true") await bible.click();
+    await expect(page.locator(".bible-workspace")).toBeHidden();
+    const card = page.locator(`[data-message-id="${message.id}"] .voice-card`);
+    await expect(card).toBeVisible();
+    for (const width of [360, 390, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(card).toBeVisible();
+      await expect.poll(() => card.evaluate((element) => {
+        const card = element.getBoundingClientRect(); const bubble = element.closest(".bubble")!.getBoundingClientRect();
+        const padding = parseFloat(getComputedStyle(element.closest(".bubble")!).paddingLeft);
+        return Math.abs(card.width - (bubble.width - padding * 2));
+      })).toBeLessThanOrEqual(2);
+      const wave = (await card.locator(".inline-audio-waveform").boundingBox())!;
+      expect(wave.width).toBeGreaterThan(40);
+      expect(await card.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBeTruthy();
+      await page.screenshot({ path: `output/playwright/voice-wave-${transcript ? 'text' : 'plain'}-${width}.png` });
+    }
+    await page.unroute(`**/api/channels/${channelId}/messages?**`);
   }
 });

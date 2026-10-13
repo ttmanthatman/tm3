@@ -35,3 +35,22 @@ export function copyworkInkViewport(
   const inset = 16;
   return { x: left - inset, y: top - inset, width: right - left + inset * 2, height: bottom - top + inset * 2 };
 }
+
+/** Join legacy page placements into one continuous sheet without changing stored ink. */
+export function continuousCopyworkPlacements(glyphs: Array<CopyworkGlyph & { index: number }>, pages: CopyworkPlacement[][]) {
+  const result: CopyworkPlacement[] = [];
+  let offset = 0;
+  for (const page of pages) {
+    const view = copyworkInkViewport(glyphs, page);
+    result.push(...page.map((placement) => ({ ...placement, y: placement.y - view.y + 110 + offset })));
+    offset += view.height + 24;
+  }
+  return result;
+}
+
+// Long continuous sheets keep CSS size while bounding the backing canvas.
+export function copyworkCanvasSize(displayWidth: number, ratio: number, dpr: number) {
+  const width = Math.max(1, Math.min(Math.round(displayWidth * Math.min(dpr, 2)),
+    Math.floor(16000 * ratio), Math.floor(Math.sqrt(16_000_000 * ratio))));
+  return { width, height: Math.max(1, Math.ceil(width / ratio)) };
+}

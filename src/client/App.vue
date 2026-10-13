@@ -129,7 +129,7 @@ import {
 } from "@shared/composerPrompts";
 import { canOpenChannelSettings } from "./channelManagement";
 import { memberRoleLabel } from "./memberManagement";
-import { composerHeightForContent } from "./composerLayout";
+import { useComposerAutosize } from "./features/composer/useComposerAutosize";
 import { useBookNavigation } from "./features/books/useBookNavigation";
 import { composerDraftAfterSend, isComposerSendKey, isTouchDevice, useMessageSender } from "./messageSending";
 import { wallpaperLabelTone, wallpaperLabelToneFromPixels, type WallpaperLabelTone } from "./wallpaperContrast";
@@ -607,7 +607,7 @@ const appStartCodeLines = [
 const isLogRoute = ref(window.location.pathname === "/log");
 const keepOriginalImages = ref(false);
 // The textarea lives inside ComposerBar; the exposed element feeds
-// useComposer / useChannelManagement / syncComposerHeight below.
+// useComposer / useChannelManagement / useComposerAutosize below.
 const composerBarRef = ref<{ composerInput: HTMLTextAreaElement | null } | null>(null);
 const composerInput = computed(() => composerBarRef.value?.composerInput ?? null);
 const scroller = ref<HTMLElement | null>(null);
@@ -2001,7 +2001,7 @@ watch(
   { immediate: true }
 );
 
-watch(input, () => void nextTick(syncComposerHeight), { immediate: true });
+useComposerAutosize(composerInput, input);
 
 watch(
   () => [
@@ -3306,15 +3306,6 @@ async function startServerUpdate() {
     startUpdatePolling();
     updateBusy.value = false;
   }
-}
-
-function syncComposerHeight() {
-  const textarea = composerInput.value;
-  if (!textarea) return;
-  textarea.style.height = "auto";
-  const height = composerHeightForContent(textarea.scrollHeight);
-  textarea.style.height = `${height}px`;
-  textarea.style.overflowY = textarea.scrollHeight > height ? "auto" : "hidden";
 }
 
 function chooseMusicMentionSuggestion(track: MusicTrackDTO) {

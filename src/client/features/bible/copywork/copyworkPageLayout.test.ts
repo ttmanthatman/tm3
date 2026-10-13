@@ -43,3 +43,21 @@ test("minimal presentation includes outlying ink and reserves stable full line w
   assert.deepEqual(placements, before);
   assert.ok(copyworkInkViewport([], []).height > 0);
 });
+
+test("continuous presentation includes every legacy page and keeps later ink below earlier ink", async () => {
+  const { continuousCopyworkPlacements } = await import("./copyworkPageLayout");
+  const glyphs = [glyph(0, 15000), glyph(1)];
+  const pages = [[{ index: 0, x: 68, y: 110 }], [{ index: 1, x: 68, y: 110 }]];
+  const before = structuredClone(pages);
+  const placements = continuousCopyworkPlacements(glyphs, pages);
+  assert.deepEqual(placements.map((p) => p.index), [0, 1]);
+  assert.ok(placements[1].y > placements[0].y + 108);
+  assert.deepEqual(pages, before);
+});
+
+test("a long continuous sheet stays within browser canvas dimensions and pixel budget", async () => {
+  const { copyworkCanvasSize } = await import("./copyworkPageLayout");
+  const { width, height } = copyworkCanvasSize(620, 720 / 30000, 3);
+  assert.ok(height <= 16000); assert.ok(width * height <= 16_000_000);
+  assert.deepEqual(copyworkCanvasSize(300, 1, 2), { width: 600, height: 600 });
+});

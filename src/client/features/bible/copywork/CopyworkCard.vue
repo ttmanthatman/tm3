@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, shallowRef } from "vue";
+import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import type { CopyworkDTO, CopyworkGlyph, CopyworkPlacement } from "@shared/bibleCopywork";
-import { api } from "../../../api";
+import { useChatStore } from "../../../store";
+import { copyworkCache, type CopyworkData } from "./copyworkCache";
+import { continuousCopyworkPlacements } from "./copyworkPageLayout";
 import CopyworkPage from "./CopyworkPage.vue";
 import { openCopyworkViewer } from "./copyworkViewerState";
 const props = withDefaults(defineProps<{ id: string; reference?: string; message?: boolean; surfaceActive?: boolean }>(), { surfaceActive: true });
+const store = useChatStore();
+const cacheWarning = ref("");
 const root = ref<HTMLElement | null>(null);
 const work = ref<CopyworkDTO | null>(null);
 const placements = shallowRef<CopyworkPlacement[]>([]);
@@ -13,30 +17,42 @@ const error = ref("");
 let observer: IntersectionObserver | null = null;
 let alive = true;
 let loading = false;
+let sequence = 0;
+function apply(data: CopyworkData) {
+  work.value = data.work;
+  glyphs.value = data.glyphs;
+  placements.value = continuousCopyworkPlacements(data.glyphs, data.pages);
+  cacheWarning.value = data.cacheWarning;
+}
+const initial = copyworkCache.peek(store.account?.id || 0, props.id);
+if (initial) apply(initial);
 async function load() {
-  if (loading || !alive) return;
+  if (loading || !alive || !store.account) return;
+  const request = ++sequence;
+  const id = props.id;
+  const accountId = store.account.id;
   loading = true;
   error.value = "";
   try {
-    const [data, ink] = await Promise.all([
-      api<{ work: CopyworkDTO; pages: CopyworkPlacement[][] }>(`/api/bible/copyworks/${props.id}`),
-      api<{ glyphs: Array<CopyworkGlyph & { index: number }> }>(`/api/bible/copyworks/${props.id}/pages/0`)
-    ]);
-    if (alive) {
-      work.value = data.work;
-      placements.value = data.pages[0];
-      glyphs.value = ink.glyphs;
-    }
+    const data = await copyworkCache.load(accountId, id);
+    if (alive && request === sequence && props.id === id && store.account?.id === accountId) apply(data);
   } catch (e) {
-    if (alive) {
+    if (alive && request === sequence) {
       work.value = null;
       glyphs.value = [];
       error.value = e instanceof Error ? e.message : "作品加载失败";
     }
   } finally {
-    loading = false;
+    if (request === sequence) loading = false;
   }
 }
+watch(() => [props.id, store.account?.id], () => {
+  sequence++;
+  loading = false;
+  work.value = null;
+  glyphs.value = [];
+  void load();
+});
 onMounted(() => {
   observer = new IntersectionObserver((entries) => {
     if (entries[0]?.isIntersecting) {
@@ -61,6 +77,7 @@ onBeforeUnmount(() => {
       <div v-else class="card-state" :role="error ? 'alert' : 'status'">
         {{ error || "正在铺开册页…" }}<button v-if="error" type="button" @click="load">重试</button>
       </div>
+      <p v-if="cacheWarning" class="cache-warning" role="status">{{ cacheWarning }}</p>
     </template>
     <button
       v-else
@@ -85,6 +102,7 @@ onBeforeUnmount(() => {
   </div>
 </template>
 <style scoped>
+.cache-warning { font-size: 11px; color: #8b7a63; }
 .copywork-card {
   width: min(270px, 100%);
 }

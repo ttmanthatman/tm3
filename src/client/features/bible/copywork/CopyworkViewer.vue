@@ -6,6 +6,8 @@ import AppModal from "../../../components/ui/AppModal.vue";
 import { api } from "../../../api";
 import { copyworkWrite } from "./copyworkApi";
 import { useChatStore } from "../../../store";
+import { copyworkCache } from "./copyworkCache";
+import { continuousCopyworkPlacements } from "./copyworkPageLayout";
 import CopyworkPage from "./CopyworkPage.vue";
 import StoryComposer from "../../stories/StoryComposer.vue";
 import { downloadCopywork, exportCopywork } from "./copyworkExport";
@@ -24,7 +26,7 @@ const choicesOpen = ref(false);
 const detailsOpen = ref(false);
 const pages = shallowRef<CopyworkPlacement[][]>([]);
 const glyphs = shallowRef<Array<CopyworkGlyph & { index: number }>>([]);
-const page = ref(0);
+const placements = computed(() => continuousCopyworkPlacements(glyphs.value, pages.value));
 const error = ref("");
 const busy = ref(false);
 const loading = ref(false);
@@ -48,7 +50,6 @@ const publicOpen = ref(false);
 const channelId = ref<number | null>(null);
 const sharedChannel = ref<number | null>(null);
 const folio = ref<InstanceType<typeof CopyworkPage> | null>(null);
-let sequence = 0;
 let workSequence = 0;
 let choiceSequence = 0;
 let shareRequestId = crypto.randomUUID();
@@ -56,35 +57,23 @@ const mine = computed(() => work.value?.accountId === store.account?.id);
 const channels = computed(() =>
   store.channels.filter((c) => ["standard", "direct"].includes(c.kind) && c.canWrite !== false)
 );
-async function loadPage() {
-  const request = ++sequence;
-  loading.value = true;
-  glyphs.value = [];
-  error.value = "";
-  try {
-    const data = await api<{ glyphs: Array<CopyworkGlyph & { index: number }> }>(
-      `/api/bible/copyworks/${selectedId.value}/pages/${page.value}`
-    );
-    if (request === sequence) glyphs.value = data.glyphs;
-  } catch (e) {
-    if (request === sequence) error.value = e instanceof Error ? e.message : "册页加载失败";
-  } finally {
-    if (request === sequence) loading.value = false;
-  }
-}
 async function load() {
   const request = ++workSequence;
+  const id = selectedId.value;
   error.value = "";
+  loading.value = true;
   try {
-    const data = await api<{ work: CopyworkDTO; pages: CopyworkPlacement[][] }>(
-      `/api/bible/copyworks/${selectedId.value}`
-    );
+    if (!store.account) throw new Error("请先登录");
+    const data = await copyworkCache.load(store.account.id, id);
     if (request !== workSequence) return;
     work.value = data.work;
     pages.value = data.pages;
-    await loadPage();
+    glyphs.value = data.glyphs;
+    exportStatus.value = data.cacheWarning;
   } catch (e) {
     if (request === workSequence) error.value = e instanceof Error ? e.message : "作品加载失败";
+  } finally {
+    if (request === workSequence) loading.value = false;
   }
 }
 async function loadChoices(scope: "public" | "mine", more = false) {
@@ -128,11 +117,6 @@ function selectWork(id: string) {
 function retry() {
   if (selectedId.value) void load();
   else void openVerse();
-}
-function turnPage(direction: -1 | 1) {
-  if (loading.value) return;
-  const next = page.value + direction;
-  if (next >= 0 && next < pages.value.length) page.value = next;
 }
 async function openSource() {
   if (!work.value) return;
@@ -227,23 +211,16 @@ async function prepareImage(target: "download" | "story") {
     busy.value = false;
   }
 }
-watch(page, () => {
-  if (!work.value || work.value.id !== selectedId.value) return;
-  folio.value?.stop();
-  void loadPage();
-});
 watch(channelId, () => {
   shareRequestId = crypto.randomUUID();
 });
 watch(selectedId, (id) => {
     folio.value?.stop();
-    sequence++;
     workSequence++;
     work.value = null;
     pages.value = [];
     glyphs.value = [];
     loading.value = false;
-    page.value = 0;
     shareOpen.value = false;
     publicOpen.value = false;
     deleteOpen.value = false;
@@ -264,7 +241,6 @@ watch(
 );
 onBeforeUnmount(() => {
   window.removeEventListener("resize", sizePopover);
-  sequence++;
   workSequence++;
   choiceSequence++;
 });
@@ -292,9 +268,6 @@ onBeforeUnmount(() => {
             {{ work.source.reference }}
           </button>
           <span v-else class="viewer-loading" role="status">{{ error || (!selectedId && !choiceBusy) ? "抄写册页" : "正在铺开册页…" }}</span>
-          <span v-if="pages.length > 1" class="viewer-page-count" aria-label="当前册页"
-            >{{ page + 1 }} / {{ pages.length }}</span
-          >
           <button
             type="button"
             class="viewer-icon"
@@ -327,9 +300,9 @@ onBeforeUnmount(() => {
         <aside v-if="tipsOpen" id="copywork-tips" class="viewer-popover" :style="{ maxHeight: popoverHeight }" aria-label="抄写操作提示">
           <strong>操作提示</strong>
           <p>
-            左边缘：上一页<br />右边缘：下一页<br />中间单击：播放 / 暂停<br />中间双击：从头播放<br />按住左右拖动：调整进度
+            上下滚动：查看完整抄写<br />单击：播放 / 暂停<br />双击：从头播放<br />按住左右拖动：调整进度
           </p>
-          <small>也可用空格播放 / 暂停，方向键翻页。</small>
+          <small>也可用空格或回车播放 / 暂停。</small>
         </aside>
         <div
           v-if="toolsOpen"
@@ -402,17 +375,15 @@ onBeforeUnmount(() => {
         <p v-else-if="!work && !selectedId && !choiceBusy" class="viewer-empty">此节经文暂无可查看的抄写。</p>
         <template v-if="work">
           <div class="folio-scroll" :aria-busy="loading">
-            <div class="folio-size" :data-page-index="page">
+            <div class="folio-size" >
               <CopyworkPage
                 ref="folio"
                 :glyphs="glyphs"
-                :placements="pages[page] || []"
+                :placements="placements"
                 :source="work.source"
                 compact
                 interactive
-                paging
                 :disabled="loading"
-                @turn="turnPage"
               />
             </div>
           </div>

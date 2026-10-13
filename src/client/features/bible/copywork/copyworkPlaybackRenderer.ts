@@ -1,4 +1,5 @@
 import { COPYWORK_PAGE, type CopyworkGlyph, type CopyworkPlacement } from "@shared/bibleCopywork";
+import { copyworkCanvasSize } from "./copyworkPageLayout";
 import { drawHandwritingInkSteps } from "../../handwriting/handwritingRenderer";
 import { handwritingRenderQueue } from "../../handwriting/handwritingRenderQueue";
 
@@ -61,8 +62,8 @@ export function createCopyworkPlaybackRenderer(deps: {
     const ctx = canvas?.getContext("2d");
     if (!canvas || !ctx || !deps.active()) return;
     const view = deps.viewport();
-    const width = Math.max(1, Math.round(canvas.getBoundingClientRect().width * Math.min(window.devicePixelRatio || 1, 2)));
-    const height = Math.max(1, Math.round(width * view.height / view.width));
+    const { width, height } = copyworkCanvasSize(canvas.getBoundingClientRect().width,
+      view.width / view.height, window.devicePixelRatio || 1);
     const nextSize = `${width}:${height}:${view.x}:${view.y}:${view.width}`;
     if (size !== nextSize) {
       reset();

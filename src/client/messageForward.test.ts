@@ -123,3 +123,8 @@ test("chatRecordPreviewPayload maps messages into preview items", () => {
   assert.equal(payload.items[0].voiceDurationMs, 1500);
   assert.equal(payload.items[0].senderAvatarPath, "a.png");
 });
+
+test("copywork messages with a valid work reference support forwarding", () => {
+  assert.equal(isForwardableMessage(message({ type: "bible_copywork", payload: { kind: "bible_copywork", workId: "work-id", reference: "箴言 4:23" } })), true);
+  assert.equal(isForwardableMessage(message({ type: "bible_copywork", payload: {} })), false);
+});

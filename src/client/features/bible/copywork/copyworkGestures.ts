@@ -27,7 +27,7 @@ export function createCopyworkGestures(deps: Dependencies) {
   const schedule = deps.schedule || ((callback) => setTimeout(callback, 280));
   const unschedule = deps.unschedule || clearTimeout;
   let contact:
-    | (Contact & { progress: number; resume: boolean; dragging: boolean; scrolling: boolean })
+    | (Contact & { at: number; progress: number; resume: boolean; dragging: boolean; scrolling: boolean })
     | null = null;
   let tap: { at: number; x: number; y: number } | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -51,6 +51,7 @@ export function createCopyworkGestures(deps: Dependencies) {
     }
     contact = {
       ...point,
+      at: now(),
       progress: deps.progress(),
       resume: deps.playing(),
       dragging: false,
@@ -83,7 +84,7 @@ export function createCopyworkGestures(deps: Dependencies) {
       if (current.resume) deps.resume();
       return;
     }
-    if (current.scrolling) return;
+    if (current.scrolling || now() - current.at >= 520) { clearTap(); return; }
     const region = copyworkTapRegion(point.x, point.width, deps.paging());
     if (region !== "playback") {
       clearTap();

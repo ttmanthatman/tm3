@@ -10,6 +10,7 @@ type HarnessOptions = {
   messages?: Array<Partial<ForwardSourceMessage> & { id: number; channelId: number }>;
   canAccess?: boolean;
   canWrite?: boolean;
+  copyworkGrant?: boolean;
   targetKinds?: Array<"standard" | "direct" | "music">;
   sourceChannel?: { kind: "standard" | "direct"; name: string; directKey: string | null; members: Array<{ account: { displayName: string } }> };
 };
@@ -45,6 +46,10 @@ function createForwardHarness(options: HarnessOptions = {}) {
         state.created.push(data);
         return { id: nextId++, ...data };
       }
+    },
+    bibleCopyworkShare: {
+      findMany: async () => options.copyworkGrant === false ? [] : messages.filter((message) => message.type === "bible_copywork")
+        .map((message) => ({ messageId: message.id, workId: "work-id" }))
     },
     channel: {
       findMany: async ({ where }: { where: { id: { in: number[] }; kind?: { in: string[] } } }) =>
@@ -315,4 +320,21 @@ test("chatRecordItemRef resolves items only from chat_record payloads", () => {
   assert.equal(chatRecordItemRef({ kind: "chat_record" }, 1), null);
   assert.equal(chatRecordItemRef(null, 0), null);
   assert.equal(chatRecordItemRef({ kind: "other" }, 0), null);
+});
+
+
+test("copywork forwarding creates independent destination grants and rejects revoked sources", async () => {
+  const source = { ...textMessage(10, "经文抄写"), type: "bible_copywork", payload: { kind: "bible_copywork", workId: "work-id", reference: "箴言 4:23" } } as Partial<ForwardSourceMessage> & { id: number; channelId: number };
+  for (const allowed of [true, false]) {
+    const { app, state } = createForwardHarness({ messages: [source], copyworkGrant: allowed });
+    const response = await app.inject({ method: "POST", url: "/api/messages/forward", payload: { messageIds: [10], channelIds: [11], mode: "separate" } });
+    assert.equal(response.statusCode, allowed ? 200 : 404);
+    if (allowed) assert.deepEqual(state.created[0].copyworkShare, { create: { workId: "work-id" } });
+    else assert.equal(state.created.length, 0);
+    await app.close();
+  }
+  const { app } = createForwardHarness({ messages: [source] });
+  const merged = await app.inject({ method: "POST", url: "/api/messages/forward", payload: { messageIds: [10], channelIds: [11], mode: "merged" } });
+  assert.equal(merged.statusCode, 400);
+  await app.close();
 });

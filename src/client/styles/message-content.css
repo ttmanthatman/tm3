@@ -679,6 +679,13 @@
   gap: 8px;
 }
 
+.bubble .voice-card {
+  width: 100%;
+  min-width: min(240px, calc(100cqw - 100px));
+  max-width: none;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+}
+
 .voice-play,
 .preview-play {
   width: 32px;

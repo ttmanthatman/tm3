@@ -28,9 +28,12 @@ import {
   type HandwritingInputPoint
 } from "../../handwriting/useHandwritingComposer";
 import { createHandwritingDraftScheduler } from "../../handwriting/handwritingDraftScheduler";
+import { continuousCopyworkPlacements } from "./copyworkPageLayout";
 import CopyworkPage from "./CopyworkPage.vue";
 import { measureCopyworkInk } from "./copyworkInk";
 import { copyworkDrafts, type CopyworkDraft } from "./copyworkDrafts";
+import { getToken } from "../../../api";
+import { createCopyworkUploadQueue } from "./copyworkUploadQueue";
 import { copyworkWrite as api } from "./copyworkApi";
 import { useChatStore } from "../../../store";
 const props = defineProps<{ draft: CopyworkDraft }>();
@@ -54,6 +57,7 @@ async function changePen(nextPen: HandwritingPen, nextBrush: HandwritingBrush) {
   brush.value = { ...preferences.value.brush };
 }
 const glyphs = ref<CopyworkGlyph[]>(props.draft.glyphs);
+const glyphBodies = props.draft.glyphs.map((glyph) => JSON.stringify(glyph));
 const index = ref(props.draft.index);
 const spacing = ref<CopyworkSpacing>(props.draft.spacing);
 const pen = ref<HandwritingPen>("brush");
@@ -64,8 +68,38 @@ const complete = ref(false);
 const busy = ref(false);
 const status = ref("草稿保存在本机");
 const error = ref("");
-const page = ref(0);
+const uploadError = ref("");
+const uploadStatus = ref("");
 let pendingId = props.draft.uploadId || "";
+let completionAttempted = !!props.draft.completionAttempted;
+const uploadSession = getToken();
+function write<T>(path: string, options: RequestInit): Promise<T> {
+  if (store.account?.id !== props.draft.accountId || getToken() !== uploadSession)
+    return Promise.reject(new Error("登录状态已变化，本机草稿仍保留，请重新打开"));
+  return api<T>(path, { ...options, headers: { Authorization: `Bearer ${uploadSession}` } });
+}
+const uploads = createCopyworkUploadQueue({
+  create: (id, distance) => {
+    const source = props.draft.source;
+    return write<{ completed: boolean }>("/api/bible/copyworks", {
+      method: "POST", body: JSON.stringify({ id, spacing: distance, translation: source.translation,
+        bookCode: source.bookCode, chapter: source.chapter, verseStart: source.verseStart, verseEnd: source.verseEnd })
+    });
+  },
+  put: (id, position, data) => write(`/api/bible/copyworks/${id}/glyphs/${position}`, { method: "PUT", body: data }),
+  status: (remaining) => {
+    uploadError.value = "";
+    uploadStatus.value = remaining ? `后台保存中 · 剩余 ${remaining} 字，可继续书写` : "已同步已写字迹";
+  },
+  error: (cause) => {
+    uploadError.value = `${cause instanceof Error ? cause.message : "后台保存失败"}；本机草稿保留，可继续写字或重试。`;
+  }
+});
+function queueGlyphs() {
+  pendingId ||= crypto.randomUUID();
+  uploads.configure(pendingId, spacing.value);
+  glyphBodies.forEach((body, position) => uploads.enqueue(position, body));
+}
 let saveChain: Promise<unknown> = Promise.resolve();
 let disposed = false;
 const chars = computed(() => copyworkCharacters(props.draft.source.text));
@@ -77,7 +111,7 @@ const pages = computed(() =>
   )
 );
 const displayGlyphs = computed(() => glyphs.value.map((g, i) => ({ ...g, index: i })));
-const activePage = computed(() => pages.value[Math.min(page.value, pages.value.length - 1)] || []);
+const placements = computed(() => continuousCopyworkPlacements(displayGlyphs.value, pages.value));
 function load(character: HandwritingCharacter = { strokes: [] }) {
   composer.load({
     key: props.draft.id,
@@ -101,6 +135,7 @@ function persist() {
       spacing: spacing.value,
       index: index.value,
       uploadId: pendingId,
+      completionAttempted,
       pendingCharacters: pendingCharacters.value,
       updatedAt: Date.now()
     })
@@ -119,7 +154,6 @@ function persist() {
 }
 const scheduler = createHandwritingDraftScheduler({ persist });
 function changed() {
-  pendingId = "";
   scheduler.request();
 }
 function start(id: number, point: HandwritingInputPoint) {
@@ -176,7 +210,9 @@ function finish(skip = false) {
     )
       throw new Error("笔迹容量已满，请简化当前字后重试");
     glyphs.value = next;
-    pendingId = "";
+    glyphBodies[index.value] = JSON.stringify(glyph);
+    if (completionAttempted) { pendingId = ""; completionAttempted = false; }
+    queueGlyphs();
     {
       delete pendingCharacters.value[index.value];
       const pending = Object.keys(pendingCharacters.value)
@@ -186,11 +222,9 @@ function finish(skip = false) {
       if (index.value === chars.value.length) {
         complete.value = true;
         load();
-        page.value = 0;
       } else {
         load(pendingCharacters.value[index.value]);
         delete pendingCharacters.value[index.value];
-        page.value = pages.value.length - 1;
       }
     }
     scheduler.flush();
@@ -215,30 +249,15 @@ async function save() {
   scheduler.flush();
   try {
     await saveChain;
-    const source = props.draft.source;
-    const result = await api<{ id: string; completed: boolean }>("/api/bible/copyworks", {
-      method: "POST",
-      body: JSON.stringify({
-        id: pendingId,
-        spacing: spacing.value,
-        translation: source.translation,
-        bookCode: source.bookCode,
-        chapter: source.chapter,
-        verseStart: source.verseStart,
-        verseEnd: source.verseEnd
-      })
-    });
-    if (!result.completed)
-      for (let i = 0; i < glyphs.value.length; i++) {
-        status.value = `正在保存 ${i + 1} / ${glyphs.value.length} 字`;
-        await api(`/api/bible/copyworks/${result.id}/glyphs/${i}`, {
-          method: "PUT",
-          body: JSON.stringify(glyphs.value[i])
-        });
-      }
-    const saved = await api<{ work: CopyworkDTO }>(`/api/bible/copyworks/${result.id}/complete`, {
+    queueGlyphs();
+    await uploads.flush();
+    completionAttempted = true;
+    scheduler.flush();
+    await saveChain;
+    const saved = await write<{ work: CopyworkDTO }>(`/api/bible/copyworks/${pendingId}/complete`, {
       method: "POST"
     });
+    uploads.stop();
     scheduler.stop();
     disposed = true;
     try {
@@ -262,15 +281,18 @@ watch([pen, color, brush], () => {
 });
 watch(spacing, () => {
   pendingId = "";
-  page.value = 0;
+  completionAttempted = false;
+  if (glyphs.value.length) queueGlyphs();
   scheduler.flush();
 });
 onMounted(() => {
+  if (glyphs.value.length) { queueGlyphs(); scheduler.flush(); }
   document.addEventListener("visibilitychange", visibility);
   window.addEventListener("pagehide", persist);
   scheduler.flush();
 });
 onBeforeUnmount(() => {
+  uploads.stop();
   scheduler.stop();
   if (!disposed) persist();
   document.removeEventListener("visibilitychange", visibility);
@@ -343,16 +365,11 @@ onBeforeUnmount(() => {
         </div>
         <CopyworkPage
           :glyphs="displayGlyphs"
-          :placements="activePage"
+          :placements="placements"
           :source="draft.source"
           :editable="!busy"
           @edit="edit"
         />
-        <div class="page-actions">
-          <button :disabled="page <= 0" @click="page--">上一页</button
-          ><span>{{ page + 1 }} / {{ pages.length }}</span
-          ><button :disabled="page >= pages.length - 1" @click="page++">下一页</button>
-        </div>
         <label class="spacing-control"
           >字距
           <select v-model="spacing" :disabled="busy">
@@ -365,7 +382,8 @@ onBeforeUnmount(() => {
     </div>
     <footer class="copywork-composer-footer">
       <div>
-        <small role="status">{{ status }}</small>
+        <small role="status">{{ status }}<template v-if="uploadStatus"> · {{ uploadStatus }}</template></small>
+        <p v-if="uploadError" role="alert">{{ uploadError }} <button :disabled="busy" @click="queueGlyphs">重试同步</button></p>
         <p v-if="error || composer.errorMessage.value" role="alert">
           {{ error || composer.errorMessage.value }}
         </p>
@@ -440,7 +458,7 @@ onBeforeUnmount(() => {
 .writing-surface.guides {
   outline: 1px dashed #b5a992;
 }
-.writing-surface.guides :deep(canvas) {
+.writing-surface.guides :deep(.handwriting-pad-canvas) {
   background-image:
     linear-gradient(90deg, transparent 49.8%, #ac927033 50%, transparent 50.2%),
     linear-gradient(transparent 49.8%, #ac927033 50%, transparent 50.2%);

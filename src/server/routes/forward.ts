@@ -2,6 +2,7 @@ import { Prisma, type Message, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import type { ChatRecordItemDTO, ChatRecordPayloadDTO } from "../../shared/types.js";
+import { copyworkPayload } from "../../shared/bibleCopywork.js";
 import { imageDimensionsFromPayload } from "../../shared/imageDimensions.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
 
@@ -28,7 +29,7 @@ const forwardBodySchema = z.object({
 });
 
 // 只有纯内容型消息可以转发；接龙/祷告/讲道/系统消息等交互型消息不在白名单内。
-const FORWARDABLE_TYPES = new Set(["text", "image", "file"]);
+const FORWARDABLE_TYPES = new Set(["text", "image", "file", "bible_copywork"]);
 const RECORD_ITEM_TEXT_LIMIT = 2000;
 const RECORD_PAYLOAD_BYTE_LIMIT = 1_000_000;
 
@@ -109,9 +110,22 @@ export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDe
 
     const ordered = sources
       .sort((a, b) => a.id - b.id)
-      .filter((message) => FORWARDABLE_TYPES.has(message.type) && (message.type === "text" ? Boolean(message.content?.trim()) : Boolean(message.filePath)));
+      .filter((message) => FORWARDABLE_TYPES.has(message.type) && (message.type === "text" ? Boolean(message.content?.trim()) : message.type === "bible_copywork" ? Boolean(copyworkPayload(message.payload)) : Boolean(message.filePath)));
     const skipped = sources.length - ordered.length;
     if (!ordered.length) return reply.code(400).send({ success: false, message: "所选消息类型不支持转发" });
+
+    const copyworks = ordered.filter((message) => message.type === "bible_copywork");
+    if (copyworks.length) {
+      if (body.mode === "merged") return reply.code(400).send({ success: false, message: "抄写作品请使用逐条转发" });
+      // A payload alone never grants access: the source must still have a live
+      // share of this completed work in the channel the requester may read.
+      const grants = await prisma.bibleCopyworkShare.findMany({
+        where: { messageId: { in: copyworks.map((message) => message.id) }, work: { completedAt: { not: null } } },
+        select: { messageId: true, workId: true }
+      });
+      if (copyworks.some((message) => !grants.some((grant) => grant.messageId === message.id && grant.workId === copyworkPayload(message.payload)?.workId)))
+        return reply.code(404).send({ success: false, message: "抄写作品已删除或分享已撤回" });
+    }
 
     const targets = await prisma.channel.findMany({
       where: { id: { in: channelIds }, kind: { in: ["standard", "direct"] } },
@@ -138,6 +152,7 @@ export function registerForwardRoutes(app: FastifyInstance, deps: ForwardRouteDe
                   content: message.content || "",
                   type: message.type,
                   ...(message.payload === null ? {} : { payload: message.payload as Prisma.InputJsonValue }),
+                  ...(message.type === "bible_copywork" ? { copyworkShare: { create: { workId: copyworkPayload(message.payload)!.workId } } } : {}),
                   ...(message.fileName ? { fileName: message.fileName } : {}),
                   ...(message.filePath ? { filePath: message.filePath } : {}),
                   ...(typeof message.fileSize === "number" ? { fileSize: message.fileSize } : {})

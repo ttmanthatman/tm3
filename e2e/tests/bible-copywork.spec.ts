@@ -43,6 +43,10 @@ async function login(page: Page, username = E2E_ADMIN.username as string, passwo
   await page.getByPlaceholder("密码").fill(password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  const bible = page.locator(".bible-header-trigger");
+  await expect(bible).toBeVisible();
+  if (await bible.getAttribute("aria-pressed") === "true") await bible.click();
+  await expect(page.locator(".bible-workspace")).toBeHidden();
 }
 async function openVerse(page: Page) {
   await ensureBibleOpen(page);
@@ -51,6 +55,8 @@ async function openVerse(page: Page) {
   await page.getByRole("tab", { name: "经卷目录", exact: true }).click();
   await page.getByRole("button", { name: /^约翰福音/ }).click();
   await page.getByRole("button", { name: "11", exact: true }).click();
+  const navigation = page.getByRole("button", { name: "展开 A 窗格导航", exact: true });
+  if (await navigation.isVisible()) await navigation.click();
   await page.getByLabel("选择经节").selectOption("35");
   const verse = page.locator('[data-verse-key="JHN-11-35"]');
   await expect(verse).toBeVisible();
@@ -408,8 +414,21 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await expect(dialog.getByRole("slider", { name: "毛笔速度响应" })).toHaveValue("70");
   await dialog.getByText("毛笔参数", { exact: true }).click();
   await page.screenshot({ path: "output/e2e/copywork-writing-390.png", fullPage: true });
+  let releaseUpload!: () => void;
+  const uploadGate = new Promise<void>((resolve) => { releaseUpload = resolve; });
+  let backgroundWrites = 0;
+  await page.route("**/api/bible/copyworks/*/glyphs/*", async (route) => {
+    backgroundWrites++;
+    if (backgroundWrites === 1) await uploadGate;
+    await route.continue();
+  });
   await dialog.getByRole("button", { name: "写好了" }).click();
+  await expect.poll(() => backgroundWrites).toBe(1);
+  await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
+  await expect(dialog.getByLabel("经文抄写手写板")).not.toHaveAttribute("aria-disabled", "true");
   await stroke(page);
+  await expect(dialog.getByRole("button", { name: "写好了" })).toBeEnabled();
+  releaseUpload();
   await dialog.getByRole("button", { name: /重写第 1 字/ }).click();
   await dialog.getByRole("button", { name: "写好了" }).click();
   await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
@@ -691,7 +710,7 @@ test("WebKit touch input retains unfinished ink and shows natural narrow glyph b
   }
 });
 
-test("minimal copywork bubbles replay in place, link context, and turn only at viewer edges", async ({ page, request }) => {
+test("minimal copywork bubbles replay in place, link context, and show all legacy pages without pagination", async ({ page, request }) => {
   test.setTimeout(120000);
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -722,6 +741,7 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   await expect(card.locator(".folio-caption, strong, small")).toHaveCount(0);
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
+    await expect(card).toBeVisible();
     const cardBox = (await card.boundingBox())!;
     expect(cardBox.width).toBeGreaterThan(220);
     const wrap = card.locator("xpath=ancestor::div[contains(@class, 'bubble-wrap')]");
@@ -732,6 +752,25 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
     expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
     await page.screenshot({ path: `output/e2e/copywork-own-${width}.png`, fullPage: true });
   }
+  const fullSheetBox = (await paper.boundingBox())!;
+  expect(fullSheetBox.height).toBeGreaterThan(fullSheetBox.width);
+  const scrollerBox = (await page.locator(".messages-scroll").boundingBox())!;
+  const hold = { pointerId: 27, pointerType: "touch", isPrimary: true, button: 0,
+    clientX: fullSheetBox.x + fullSheetBox.width / 2, clientY: scrollerBox.y + scrollerBox.height / 2 };
+  await paper.dispatchEvent("pointerdown", hold);
+  const messageMenu = page.locator("[data-message-actions-popover]");
+  await expect(messageMenu).toBeVisible();
+  await paper.dispatchEvent("pointerup", hold);
+  await expect(paper).toHaveAttribute("data-playing", "false");
+  await expect(messageMenu.getByRole("button", { name: "点赞", exact: true })).toBeVisible();
+  await expect(messageMenu.getByRole("button", { name: "收藏", exact: true })).toBeVisible();
+  await expect(messageMenu.getByRole("button", { name: "转发", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  let rereads = 0;
+  page.on("request", (request) => { if (request.url().includes(`/api/bible/copyworks/${id}/pages/`)) rereads++; });
+  await page.reload();
+  await expect(paper).toBeVisible();
+  expect(rereads).toBe(0);
   const bubble = card.locator("xpath=..");
   const outgoing = await bubble.evaluate((el) => ({
     actual: getComputedStyle(el).backgroundColor,
@@ -763,8 +802,11 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   await expect(page.getByRole("dialog", { name: "抄写册页", exact: true })).toHaveCount(0);
   await card.getByRole("button", { name: `在圣经中阅读：${source.reference}`, exact: true }).click();
   await expect(page.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
+  const sourceNavigation = page.getByRole("button", { name: "展开 A 窗格导航", exact: true });
+  if (await sourceNavigation.isVisible()) await sourceNavigation.click();
   await expect(page.getByLabel("选择经节")).toHaveValue("9");
-  await expect(paper).toHaveCount(0);
+  // Opening the reference on desktop preserves the chat in the split layout.
+  await expect(paper).toBeVisible();
   await page.locator('[data-verse-key="JOS-1-9"]').locator("xpath=following-sibling::button[1]").click();
   const privateViewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
   await expect(privateViewer.locator(".copywork-paper")).toBeVisible();
@@ -780,18 +822,15 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   await expect(viewerPaper).toBeVisible();
   await expect(viewer.locator(".viewer-heading, .folio-caption, details, .viewer-actions")).toHaveCount(0);
   const viewerBox = (await viewerPaper.boundingBox())!;
-  // The right half replays; only the actual edge turns a page.
-  await viewerPaper.click({ position: { x: viewerBox.width * 0.75, y: viewerBox.height * 0.5 } });
+  // All legacy pages are visible on one continuous scrollable sheet.
+  expect(viewerBox.height).toBeGreaterThan(viewerBox.width);
+  await expect(viewer.getByLabel("当前册页")).toHaveCount(0);
+  await viewerPaper.click({ position: { x: viewerBox.width * 0.75, y: 80 } });
   await expect(viewerPaper).toHaveAttribute("data-playing", "true");
-  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "0");
-  await viewerPaper.click({ position: { x: viewerBox.width - 2, y: viewerBox.height * 0.5 } });
-  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "1");
-  await expect(viewerPaper).toHaveAttribute("aria-disabled", "false");
-  const nextBox = (await viewerPaper.boundingBox())!;
-  await viewerPaper.click({ position: { x: 2, y: nextBox.height * 0.5 } });
-  await expect(viewer.locator(".folio-size")).toHaveAttribute("data-page-index", "0");
+  await viewerPaper.click({ position: { x: viewerBox.width - 2, y: 80 } });
+  await expect(viewerPaper).toHaveAttribute("data-playing", "false");
   await viewer.getByRole("button", { name: "抄写操作提示", exact: true }).click();
-  await expect(viewer.getByText("右边缘：下一页", { exact: false })).toBeVisible();
+  await expect(viewer.getByText("上下滚动：查看完整抄写", { exact: false })).toBeVisible();
   await expect(viewer.getByText("抄写来源", { exact: true })).toHaveCount(0);
   await viewer.getByRole("button", { name: "抄写操作提示", exact: true }).click();
   for (const width of [360, 390, 1280]) {
@@ -804,6 +843,10 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
   expect(pageErrors).toEqual([]);
 
   // Receive the same message in WebKit, using real touch taps and pointer drags.
+  const ownerToken = await page.evaluate(() => localStorage.getItem("team-chat-token"));
+  expect((await request.patch(`/api/bible/copyworks/${id}`, {
+    headers: { Authorization: `Bearer ${ownerToken}` }, data: { published: true }
+  })).ok()).toBeTruthy();
   const username = `cw-reader-${Date.now()}`;
   const password = "CopyworkReader123!";
   const adminHeaders = { Authorization: `Bearer ${await token(request)}` };
@@ -818,6 +861,17 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
     const receivedCard = receiver.locator(".copywork-card.message").last();
     const receivedPaper = receivedCard.locator(".copywork-paper");
     await expect(receivedPaper).toBeVisible();
+    // Reuse the browser session: another login revokes the UI's token.
+    const readerToken = await receiver.evaluate(() => localStorage.getItem("team-chat-token"));
+    const sourceMessageId = await receivedCard.evaluate((element) => Number(element.closest("[data-message-id]")!.getAttribute("data-message-id")));
+    const targetChannel = channels.find((candidate: { name: string }) => candidate.name === E2E_CHANNELS.secondary);
+    const forwarded = await request.post("/api/messages/forward", {
+      headers: { Authorization: `Bearer ${readerToken}` },
+      data: { messageIds: [sourceMessageId], channelIds: [targetChannel.id], mode: "separate" }
+    });
+    expect(forwarded.ok(), await forwarded.text()).toBeTruthy();
+    expect((await forwarded.json()).forwarded).toBe(1);
+
     expect(await receivedCard.locator("xpath=..").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgb(255, 250, 240)");
     expect((await receivedCard.boundingBox())!.width).toBeGreaterThan(220);
     await receiver.screenshot({ path: "output/e2e/copywork-received-static-webkit-390.png", fullPage: true });
@@ -840,12 +894,8 @@ test("minimal copywork bubbles replay in place, link context, and turn only at v
     expect(Number(await receivedPaper.getAttribute("data-progress"))).toBeLessThan(scrubbed);
     await receivedCard.getByRole("button", { name: `在圣经中阅读：${source.reference}`, exact: true }).click();
     await expect(receiver.locator('[data-verse-key="JOS-1-9"]')).toBeVisible();
-    await receiver.getByRole("button", { name: "目录", exact: true }).click();
-    await receiver.getByRole("tab", { name: "经卷目录", exact: true }).click();
-    await receiver.getByRole("button", { name: /^约翰福音/ }).click();
-    await receiver.getByRole("button", { name: "11", exact: true }).click();
-    await receiver.getByLabel("选择经节").selectOption("35");
-    await receiver.locator('[data-verse-key="JHN-11-35"]').locator("xpath=following-sibling::button[1]").click();
+    // Inspect this test's published work, independent of earlier tests' data.
+    await receiver.locator('[data-verse-key="JOS-1-9"]').locator("xpath=following-sibling::button[1]").click();
     const receivedViewer = receiver.getByRole("dialog", { name: "抄写册页", exact: true });
     await expect(receivedViewer.locator(".copywork-paper")).toBeVisible();
     await receivedViewer.getByRole("button", { name: "作品操作", exact: true }).click();

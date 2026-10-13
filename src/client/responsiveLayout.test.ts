@@ -1169,8 +1169,9 @@ test("reaction details use distinct polished icon treatments", () => {
 });
 
 test("composer autosizes through twelve rows while controls keep their dimensions", () => {
-  assert.match(app, /function syncComposerHeight/);
-  assert.match(app, /watch\(input,[\s\S]*?syncComposerHeight/);
+  assert.match(app, /useComposerAutosize\(composerInput, input\)/);
+  const autosize = fs.readFileSync(new URL("./features/composer/useComposerAutosize.ts", import.meta.url), "utf8");
+  assert.match(autosize, /composerHeightForContent\(contentHeight\)/);
   assert.match(css, /\.composer textarea \{[\s\S]*?max-height: 280px;/);
   assert.match(css, /\.composer-main \{[\s\S]*?align-items: flex-end;/);
 });

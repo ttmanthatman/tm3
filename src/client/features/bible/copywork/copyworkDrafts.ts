@@ -3,6 +3,7 @@ import type { HandwritingCharacter } from "@shared/handwriting";
 export type CopyworkDraft = {
   id: string;
   uploadId?: string;
+  completionAttempted?: boolean;
   pendingCharacters?: Record<number, HandwritingCharacter>;
   accountId: number;
   source: CopyworkSource;

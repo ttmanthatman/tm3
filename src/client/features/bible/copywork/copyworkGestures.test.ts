@@ -122,3 +122,12 @@ test("vertical scrolling and cancelled/offscreen gestures do not replay or turn 
   h.wait();
   assert.deepEqual(h.calls, []);
 });
+
+test("holding a copywork opens message actions without toggling playback on release", () => {
+  const h = harness();
+  h.gestures.down(h.point());
+  h.advance(600);
+  h.gestures.up(h.point());
+  h.wait();
+  assert.deepEqual(h.calls, []);
+});

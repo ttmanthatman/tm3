@@ -103,6 +103,10 @@ export function useMessageForward(options: UseMessageForwardOptions) {
   }
 
   function chooseForwardMode(mode: "separate" | "merged") {
+    if (mode === "merged" && forwardSourceMessages.value.some((message) => message.type === "bible_copywork")) {
+      window.alert("抄写作品请使用逐条转发，以保留完整笔迹。");
+      return;
+    }
     forwardMode.value = mode;
     forwardActionSheetOpen.value = false;
     forwardPickerOpen.value = true;

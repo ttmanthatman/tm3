@@ -329,6 +329,9 @@ test("桌面鼠标和手写笔显示笔尖镜并在结束或取消后隐藏", as
   await dialog.getByRole("button", { name: "毛笔", exact: true }).click();
   const canvas = dialog.getByLabel("当前手写字格");
   const mirror = dialog.locator(".handwriting-tip-mirror-frame");
+  await expect(dialog.getByRole("checkbox", { name: "笔尖观察窗", exact: true })).not.toBeChecked();
+  await dialog.getByRole("checkbox", { name: "笔尖观察窗", exact: true }).check();
+  await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;
   await expect(mirror).toBeHidden();
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.4);
@@ -347,7 +350,7 @@ test("桌面鼠标和手写笔显示笔尖镜并在结束或取消后隐藏", as
   }
 });
 
-test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) => {
+test("可选笔尖观察窗始终在写字区外并在抬笔后隐藏", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 844 });
   await login(page, E2E_MEMBER);
   const dialog = await openHandwritingComposer(page);
@@ -359,6 +362,8 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
   await dialog.getByRole("button", { name: "清空当前字", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "清空当前字", exact: true })).toBeDisabled();
 
+  await dialog.getByRole("checkbox", { name: "笔尖观察窗", exact: true }).check();
+  await canvas.scrollIntoViewIfNeeded();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("手写画板不可见");
   await canvas.dispatchEvent("pointerdown", {
@@ -389,8 +394,7 @@ test("触屏毛笔显示固定笔尖镜并在抬笔后隐藏", async ({ page }) 
   const desktopMirror = await mirror.boundingBox();
   const desktopCanvas = await canvas.boundingBox();
   expect(desktopMirror!.height).toBe(140);
-  expect(desktopMirror!.x).toBeGreaterThanOrEqual(desktopCanvas!.x);
-  expect(desktopMirror!.x + desktopMirror!.width).toBeLessThanOrEqual(desktopCanvas!.x + desktopCanvas!.width);
+  expect(desktopMirror!.y + desktopMirror!.height).toBeLessThanOrEqual(desktopCanvas!.y);
   await dialog.screenshot({ path: "output/playwright/handwriting-tip-mirror-touch-desktop.png" });
   await canvas.dispatchEvent("pointerup", {
     pointerId: 18,

@@ -27,6 +27,7 @@ const emit = defineEmits<{
 const canvas = ref<HTMLCanvasElement | null>(null);
 const tipMirror = ref<HTMLCanvasElement | null>(null);
 const mirrorVisible = ref(false);
+const tipMirrorOpen = ref(false);
 const diagnosticsEnabled = import.meta.env.DEV;
 let activePointerId: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
@@ -239,7 +240,7 @@ function pointerDown(event: PointerEvent) {
     return;
   event.preventDefault();
   activePointerId = event.pointerId;
-  mirrorVisible.value = true;
+  mirrorVisible.value = tipMirrorOpen.value;
   try {
     canvas.value?.setPointerCapture?.(event.pointerId);
   } catch {
@@ -264,6 +265,14 @@ function blur() {
   if (activePointerId !== null) cancel(activePointerId);
 }
 
+watch(tipMirrorOpen, (open) => {
+  mirrorVisible.value = open && activePointerId !== null;
+  if (!open && mirrorFrame !== null) {
+    cancelAnimationFrame(mirrorFrame);
+    mirrorFrame = null;
+  }
+  queueTipMirror();
+});
 watch(() => props.strokes, redraw);
 watch(() => props.strokes.map((stroke) => stroke.points.length), syncAppendedInk);
 watch(() => props.glow, redraw, { deep: true });
@@ -292,6 +301,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <div class="handwriting-pad-workspace">
+    <label class="tip-mirror-option"><input v-model="tipMirrorOpen" type="checkbox" />笔尖观察窗</label>
+    <div v-if="tipMirrorOpen" class="handwriting-tip-mirror-frame" :class="{ 'is-visible': mirrorVisible }" aria-hidden="true">
+      <canvas ref="tipMirror"></canvas>
+    </div>
   <div class="handwriting-pad" data-bible-swipe-interaction="handwriting" :style="{ backgroundColor: backgroundColor || '#fff' }">
     <canvas
       ref="canvas"
@@ -304,17 +318,11 @@ onBeforeUnmount(() => {
       @pointercancel="cancel($event.pointerId)"
       @lostpointercapture="cancel($event.pointerId)"
     ></canvas>
-    <div
-      class="handwriting-tip-mirror-frame"
-      :class="{ 'is-visible': mirrorVisible }"
-      aria-hidden="true"
-    >
-      <canvas ref="tipMirror"></canvas>
-    </div>
     <span class="handwriting-pad-corner top-left" aria-hidden="true"></span>
     <span class="handwriting-pad-corner top-right" aria-hidden="true"></span>
     <span class="handwriting-pad-corner bottom-left" aria-hidden="true"></span>
     <span class="handwriting-pad-corner bottom-right" aria-hidden="true"></span>
+  </div>
   </div>
 </template>
 
@@ -336,26 +344,20 @@ onBeforeUnmount(() => {
   cursor: crosshair;
 }
 
+.handwriting-pad-workspace { display: grid; gap: 8px; }
+.tip-mirror-option { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #355c48; }
 .handwriting-tip-mirror-frame {
-  display: none;
-  position: absolute;
-  z-index: 4;
-  top: 10px;
-  left: 50%;
+  justify-self: start;
   width: 160px;
   height: 140px;
   overflow: hidden;
-  transform: translateX(-50%);
   background: #fff;
   border: 1px solid rgba(23, 53, 43, 0.28);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(23, 53, 43, 0.18);
   pointer-events: none;
+  visibility: hidden;
 }
-
-.handwriting-tip-mirror-frame.is-visible {
-  display: block;
-}
+.handwriting-tip-mirror-frame.is-visible { visibility: visible; }
 
 .handwriting-tip-mirror-frame canvas {
   display: block;
@@ -399,15 +401,6 @@ onBeforeUnmount(() => {
   .handwriting-tip-mirror-frame {
     width: 140px;
     height: 124px;
-  }
-}
-@media (max-width: 600px) {
-  .handwriting-tip-mirror-frame {
-    position: fixed;
-    z-index: 10;
-    top: calc(env(safe-area-inset-top) + 86px);
-    left: max(8px, env(safe-area-inset-left));
-    transform: none;
   }
 }
 </style>
