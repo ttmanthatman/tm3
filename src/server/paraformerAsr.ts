@@ -33,6 +33,32 @@ const eventSchema = z.object({
 export type ParaformerSocket = Pick<WebSocket, "on" | "send" | "close" | "terminate">;
 export type ParaformerSocketFactory = (url: string, apiKey: string) => ParaformerSocket;
 
+function handshakeError(status: number | undefined, body = ""): Error {
+  if (status === 403) {
+    try {
+      const denied = z.object({ code: z.literal("AccessDenied"), message: z.literal("IP access denied by API-Key restriction.") }).safeParse(JSON.parse(body));
+      if (denied.success) return new Error("Paraformer 访问被拒绝（HTTP 403）：API Key 的 IP 白名单未允许当前服务器，请在百炼控制台添加服务器公网出口 IP");
+    } catch {
+      // Non-JSON upstream responses still use the safe status-only diagnostic.
+    }
+  }
+  switch (status) {
+    case 401: return new Error("Paraformer 鉴权失败（HTTP 401），请使用有效的阿里云百炼北京地域 API Key，并确认已保存");
+    case 403: return new Error("Paraformer 访问被拒绝（HTTP 403），请检查 API Key 所属地域、业务空间和模型访问权限");
+    case 429: return new Error("Paraformer 请求受限（HTTP 429），请检查调用额度或稍后重试");
+    default: return new Error(`Paraformer 服务连接被拒绝${status ? `（HTTP ${status}）` : ""}，请稍后重试`);
+  }
+}
+
+function connectionError(error: Error & { code?: string }): Error {
+  if (error.code === "ENOTFOUND" || error.code === "EAI_AGAIN") return new Error("Paraformer 域名解析失败，请检查服务器 DNS 和出站网络");
+  if (error.code === "ETIMEDOUT" || error.message === "Opening handshake has timed out") return new Error("Paraformer 连接超时，请检查服务器出站网络或稍后重试");
+  if (["CERT_HAS_EXPIRED", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "DEPTH_ZERO_SELF_SIGNED_CERT", "ERR_TLS_CERT_ALTNAME_INVALID", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"].includes(error.code || "")) {
+    return new Error("Paraformer TLS 证书校验失败，请检查服务器时间和可信证书配置");
+  }
+  return new Error("Paraformer 网络连接失败，请检查服务器出站网络或稍后重试");
+}
+
 export async function transcribeParaformerWav(
   audioDataUrl: string,
   config: MimoAsrConfig,
@@ -136,7 +162,22 @@ export async function transcribeParaformerWav(
         fail(new Error("Paraformer 返回的文字或时间戳无效"));
       }
     });
-    socket.on("error", () => fail(new Error("Paraformer 连接失败，请检查地址、API Key 和网络")));
+    // Match only documented diagnostic text; never expose raw upstream bodies,
+    // headers or errors, which may include credentials or infrastructure details.
+    socket.on("unexpected-response", (_request, response) => {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      response.on("data", (chunk: Buffer) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > 8192) { fail(handshakeError(response.statusCode)); return; }
+        chunks.push(chunk);
+      });
+      response.on("end", () => fail(handshakeError(response.statusCode, Buffer.concat(chunks).toString("utf8"))));
+      response.on("error", () => fail(handshakeError(response.statusCode)));
+      response.on("aborted", () => fail(handshakeError(response.statusCode)));
+    });
+    socket.on("error", (error) => fail(connectionError(error)));
     socket.on("close", () => { if (!settled) fail(new Error("Paraformer 连接中断，请稍后重试")); });
   });
 }
