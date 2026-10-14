@@ -266,13 +266,11 @@ export function useMessageActions(options: UseMessageActionsOptions) {
   }
 
   async function dismissLikeNotification(id: number) {
-    store.likeNotifications = store.likeNotifications.filter((item) => item.id !== id);
-    await api(`/api/like-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
+    await store.acknowledgeNotification({ kind: "like", id });
   }
 
   async function dismissFavoriteNotification(id: number) {
-    store.favoriteNotifications = store.favoriteNotifications.filter((item) => item.id !== id);
-    await api(`/api/favorite-notifications/${id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) }).catch(() => undefined);
+    await store.acknowledgeNotification({ kind: "favorite", id });
   }
 
   function closeMessageActionMenu() {

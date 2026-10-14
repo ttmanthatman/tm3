@@ -146,12 +146,14 @@ test("a held mobile touch keeps following the finger across a chapter insertion"
     const anchor = page.locator('[data-reader-chapter="66"]');
     const before = await anchor.evaluate((el) => el.getBoundingClientRect().top);
     releasePrevious();
-    await expect(page.locator('[data-reader-chapter="65"]')).toBeAttached();
+    await page.waitForTimeout(250);
+    await expect(page.locator('[data-reader-chapter="65"]')).toHaveCount(0);
     expect(Math.abs(await anchor.evaluate((el) => el.getBoundingClientRect().top) - before)).toBeLessThan(3);
     // Keep the same contact down. A new gesture would hide the user's bug.
     await input.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: point(y - 54) });
     await expect.poll(() => anchor.evaluate((el) => el.getBoundingClientRect().top)).toBeLessThan(before - 10);
     await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    await expect(page.locator('[data-reader-chapter="65"]')).toBeAttached();
   } finally {
     releasePrevious();
     await context.close();
@@ -177,4 +179,25 @@ for (const engine of ["chromium", "webkit"] as const) {
       }
     });
   }
+}
+
+for (const width of [360, 390, 1280]) {
+  test(`jump highlight can be cleared at width ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await openPsalm66(page);
+    const pane = page.locator(".bible-reader-pane").first();
+    const navigation = pane.getByRole("button", { name: "展开 A 窗格导航" });
+    if (await navigation.isVisible()) await navigation.click();
+    await page.getByLabel("选择经节").selectOption("3");
+    const verse = page.locator('[data-verse-key="PSA-66-3"]').first();
+    await expect(verse).toHaveClass(/target/);
+    await page.screenshot({ path: `output/e2e/bible-highlight-${width}.png` });
+    await pane.getByRole("button", { name: "清除经文高亮", exact: true }).click();
+    await expect(verse).not.toHaveClass(/target|selected/);
+    await expect(page.getByLabel("选择经节")).toHaveValue("");
+    await verse.click();
+    await expect(verse).toHaveClass(/selected/);
+    await pane.getByRole("button", { name: "清除经文高亮", exact: true }).click();
+    await expect(verse).not.toHaveClass(/target|selected/);
+  });
 }

@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
+import type { NotificationRead } from "../../shared/notificationRead.js";
 import webPush from "web-push";
 import { z } from "zod";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
@@ -21,6 +22,7 @@ export type NotificationsRouteDependencies = {
   pushNotificationsEnabled: boolean;
   vapidPublicKey(): string;
   pushReady(): boolean;
+  notifyRead(accountId: number, read: NotificationRead): void;
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
 };
 
@@ -34,6 +36,34 @@ const pushSubscriptionSchema = z.object({
 
 export function registerNotificationsRoutes(app: FastifyInstance, deps: NotificationsRouteDependencies) {
   const { prisma, requireAuth, pushNotificationsEnabled, vapidPublicKey, pushReady, canAccessChannel } = deps;
+
+  // One immutable key per account/message avoids lost updates between devices
+  // and keeps old acknowledgements without a rolling browser-only ID limit.
+  app.get("/api/notifications/mentions/read", { preHandler: requireAuth }, async (request) => {
+    const { accountId } = (request as AuthedNotificationRequest).auth;
+    const prefix = `mention-read:${accountId}:`;
+    const rows = await prisma.setting.findMany({ where: { key: { startsWith: prefix } }, select: { key: true } });
+    return { ids: rows.map((row) => Number(row.key.slice(prefix.length))).filter(Number.isSafeInteger) };
+  });
+
+  app.patch("/api/notifications/mentions/read", { preHandler: requireAuth }, async (request, reply) => {
+    const { accountId } = (request as AuthedNotificationRequest).auth;
+    const { ids } = z.object({ ids: z.array(z.number().int().positive().safe()).min(1).max(500) }).parse(request.body);
+    const uniqueIds = [...new Set(ids)];
+    const messages = await prisma.message.findMany({ where: { id: { in: uniqueIds } }, select: { id: true, channelId: true } });
+    const accessible: number[] = [];
+    for (const message of messages) {
+      if (!(await canAccessChannel(accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此频道" });
+      accessible.push(message.id);
+    }
+    // Deleted messages can be acknowledged too: they can never produce a
+    // new mention, and old local acknowledgements may refer to them.
+    await prisma.$transaction(uniqueIds.map((id) => prisma.setting.upsert({
+      where: { key: `mention-read:${accountId}:${id}` }, update: {}, create: { key: `mention-read:${accountId}:${id}`, value: "1" }
+    })));
+    for (const id of accessible) deps.notifyRead(accountId, { kind: "mention", id });
+    return { success: true };
+  });
 
   app.get("/api/notifications/settings", { preHandler: requireAuth }, async (request) => {
     const auth = (request as AuthedNotificationRequest).auth;

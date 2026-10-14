@@ -1,3 +1,5 @@
+import type { NotificationRead } from "@shared/notificationRead";
+import { pendingNotificationReads, queueNotificationRead, completeNotificationRead, knownNotificationReads, rememberNotificationRead } from "./features/messages/notificationReadQueue";
 import { defineStore } from "pinia";
 import { io, type Socket } from "socket.io-client";
 import { markRaw } from "vue";
@@ -164,6 +166,10 @@ export const useChatStore = defineStore("chat", {
     unreadLastRead: {} as Record<number, number>,
     unreadAccountId: 0,
     unreadSeeded: false,
+    acknowledgedMentionIds: [] as number[],
+    readNotificationKeys: [] as string[],
+    notificationReadError: "",
+    notificationReadsReady: false,
     likeNotifications: [] as LikeNotificationDTO[],
     favoriteNotifications: [] as FavoriteNotificationDTO[],
     storyActivity: { hasUnreadStories: false, notifications: [] } as StoryActivityDTO,
@@ -308,6 +314,12 @@ export const useChatStore = defineStore("chat", {
         const channelId = preferredChannelId ?? this.currentChannelId;
         const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
         if (me.token) setToken(me.token);
+        if (this.account?.id !== me.account.id) {
+          this.acknowledgedMentionIds = [];
+          this.readNotificationKeys = [];
+          this.notificationReadError = "";
+          this.notificationReadsReady = false;
+        }
         this.account = me.account;
         if (this.hydratedPersistedAccountId && this.hydratedPersistedAccountId !== me.account.id) {
           this.resetMessageWindow();
@@ -337,6 +349,10 @@ export const useChatStore = defineStore("chat", {
     async afterLogin(account: AccountDTO) {
       invalidateMessageWindowRequests();
       if (this.account?.id && this.account.id !== account.id) handwritingPlaybackRegistry.clearAccount(this.account.id);
+      this.acknowledgedMentionIds = [];
+      this.readNotificationKeys = [];
+      this.notificationReadError = "";
+      this.notificationReadsReady = false;
       this.account = account;
       rememberMsgwinAccount(account.id);
       this.initUnreadForAccount();
@@ -353,6 +369,10 @@ export const useChatStore = defineStore("chat", {
       this.socket = null;
       this.connectionState = "offline";
       this.account = null;
+      this.acknowledgedMentionIds = [];
+      this.readNotificationKeys = [];
+      this.notificationReadError = "";
+      this.notificationReadsReady = false;
       resetSermonState();
       this.likeNotifications = [];
       this.favoriteNotifications = [];
@@ -371,10 +391,75 @@ export const useChatStore = defineStore("chat", {
     async loadAppearance() {
       this.appearance = await api<AppearanceDTO>("/api/settings/appearance").catch(() => ({ ...defaultAppearance }));
     },
+    applyNotificationRead(read: NotificationRead) {
+      rememberNotificationRead(this.account?.id || 0, read);
+      const key = `${read.kind}:${read.id}`;
+      if (!this.readNotificationKeys.includes(key)) this.readNotificationKeys.push(key);
+      if (read.kind === "mention" && !this.acknowledgedMentionIds.includes(read.id)) this.acknowledgedMentionIds.push(read.id);
+      if (read.kind === "like") this.likeNotifications = this.likeNotifications.filter((row) => row.id !== read.id);
+      if (read.kind === "favorite") this.favoriteNotifications = this.favoriteNotifications.filter((row) => row.id !== read.id);
+    },
+    async acknowledgeNotification(read: NotificationRead) {
+      const accountId = this.account?.id || 0;
+      queueNotificationRead(accountId, read);
+      this.applyNotificationRead(read);
+      await this.syncNotificationReads(accountId, [read]);
+    },
+    async syncNotificationReads(accountId: number, reads: NotificationRead[]) {
+      try {
+        const mentions = reads.filter((read) => read.kind === "mention");
+        for (let offset = 0; offset < mentions.length; offset += 500) {
+          if ((this.account?.id || 0) !== accountId) return;
+          const batch = mentions.slice(offset, offset + 500);
+          await api("/api/notifications/mentions/read", { method: "PATCH", body: JSON.stringify({ ids: batch.map((read) => read.id) }) });
+          for (const read of batch) completeNotificationRead(accountId, read);
+        }
+        for (const read of reads.filter((read) => read.kind !== "mention")) {
+          if ((this.account?.id || 0) !== accountId) return;
+          try {
+            await api(`/api/${read.kind}-notifications/${read.id}/dismiss`, { method: "PATCH", body: JSON.stringify({}) });
+          } catch (error) {
+            // A removed reaction has no remaining reminder. Retire its old
+            // queued read so it cannot block later acknowledgements.
+            if (!(error instanceof Error) || error.message !== "提醒不存在") throw error;
+          }
+          completeNotificationRead(accountId, read);
+        }
+        if (this.account?.id === accountId && !pendingNotificationReads(accountId).length) this.notificationReadError = "";
+      } catch (error) {
+        if (this.account?.id === accountId) this.notificationReadError = "已读同步失败，连接恢复后会重试";
+        throw error;
+      }
+    },
     async loadLikeNotifications() {
-      const result = await api<{ notifications: LikeNotificationDTO[]; favoriteNotifications?: FavoriteNotificationDTO[] }>("/api/like-notifications").catch(() => ({ notifications: [], favoriteNotifications: [] }));
-      this.likeNotifications = result.notifications;
-      this.favoriteNotifications = result.favoriteNotifications || [];
+      const accountId = this.account?.id || 0;
+      if (accountId) {
+        for (const read of knownNotificationReads(accountId)) this.applyNotificationRead(read);
+        // Import the old browser-only @ acknowledgements once, without losing
+        // their history when the user upgrades or changes devices.
+        try {
+          const legacy: unknown = JSON.parse(localStorage.getItem(`team-chat-mention-acknowledged-${accountId}`) || "[]");
+          if (Array.isArray(legacy)) for (const id of legacy) {
+            if (Number.isSafeInteger(id) && id > 0) queueNotificationRead(accountId, { kind: "mention", id });
+          }
+          localStorage.removeItem(`team-chat-mention-acknowledged-${accountId}`);
+        } catch { /* Malformed legacy storage has no usable acknowledgement. */ }
+        const pending = pendingNotificationReads(accountId);
+        for (const read of pending) this.applyNotificationRead(read);
+        // A failed write remains in durable storage for the next reconnect.
+        await this.syncNotificationReads(accountId, pending).catch(() => { /* Error is exposed above; pending writes remain durable. */ });
+      }
+      const [result, mentions] = await Promise.all([
+        api<{ notifications: LikeNotificationDTO[]; favoriteNotifications?: FavoriteNotificationDTO[] }>("/api/like-notifications").catch(() => null),
+        accountId ? api<{ ids: number[] }>("/api/notifications/mentions/read").catch(() => null) : null
+      ]);
+      if ((this.account?.id || 0) !== accountId) return;
+      for (const id of mentions?.ids || []) this.applyNotificationRead({ kind: "mention", id });
+      if (mentions) this.notificationReadsReady = true;
+      if (result) {
+        this.likeNotifications = result.notifications.filter((row) => !this.readNotificationKeys.includes(`like:${row.id}`));
+        this.favoriteNotifications = (result.favoriteNotifications || []).filter((row) => !this.readNotificationKeys.includes(`favorite:${row.id}`));
+      }
     },
     async loadStoryActivity() {
       this.storyActivity = await api<StoryActivityDTO>("/api/stories/activity").catch(() => ({ hasUnreadStories: false, notifications: [] }));
@@ -808,6 +893,7 @@ export const useChatStore = defineStore("chat", {
         connectedOnce = true;
         this.connectionState = "connected";
         if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
+        if (this.account) void this.loadLikeNotifications();
         // 演示目录兜底：连接建立即拉取一次，socket 断档期间的生命周期变化由此补齐。
         void refreshSermonDirectory().catch(() => undefined);
         if (reconnecting) {
@@ -851,10 +937,13 @@ export const useChatStore = defineStore("chat", {
       socket.on("message:reaction", (event: { messageId: number; channelId: number; reactions: Partial<MessageReactionsDTO> }) => {
         if (event.channelId === this.currentChannelId) this.updateMessageReactions(event.messageId, event.reactions);
       });
+      socket.on("notification:read", (read: NotificationRead) => this.applyNotificationRead(read));
       socket.on("message:liked", (notification: LikeNotificationDTO) => {
+        if (this.readNotificationKeys.includes(`like:${notification.id}`)) return;
         this.likeNotifications = [notification, ...this.likeNotifications.filter((item) => item.id !== notification.id)].slice(0, 20);
       });
       socket.on("message:favorited", (notification: FavoriteNotificationDTO) => {
+        if (this.readNotificationKeys.includes(`favorite:${notification.id}`)) return;
         this.favoriteNotifications = [notification, ...this.favoriteNotifications.filter((item) => item.id !== notification.id)].slice(0, 20);
       });
       socket.on("message:favorite-removed", (event: { id: number }) => {

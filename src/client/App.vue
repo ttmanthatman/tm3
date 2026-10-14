@@ -1545,6 +1545,8 @@ watch(
   { flush: "post", immediate: true }
 );
 
+watch(() => store.notificationReadError, (error) => { if (error) showGraceToast(error); });
+
 watch(
   () => store.account?.id,
   (accountId, previousAccountId) => {
@@ -1884,6 +1886,7 @@ const loadedMentionToasts = computed<MentionToast[]>(() =>
     }))
 );
 const mentionNoticeItems = computed<TopNotice[]>(() => {
+  if (!store.notificationReadsReady) return [];
   const byMessageId = new Map<number, MentionToast>();
   for (const toast of [...mentionToasts.value, ...loadedMentionToasts.value]) {
     if (!acknowledgedMentionIds.value.has(toast.id)) byMessageId.set(toast.id, toast);
@@ -2981,10 +2984,12 @@ async function jumpToSearchMessage(channelId: number, messageId: number) {
 async function openTopNotice(notice: TopNotice) {
   if (notice.kind === "story") { openOwnStory(); return; }
   if (!notice.channelId || !notice.messageId) return;
-  await jumpToMessageInChannel(notice.channelId, notice.messageId);
-  if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
-  if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
-  if (notice.kind === "favorite" && notice.notificationId) await dismissFavoriteNotification(notice.notificationId);
+  try {
+    await jumpToMessageInChannel(notice.channelId, notice.messageId, true);
+    if (notice.kind === "mention") acknowledgeMentionId(notice.messageId);
+    if (notice.kind === "like" && notice.notificationId) await dismissLikeNotification(notice.notificationId);
+    if (notice.kind === "favorite" && notice.notificationId) await dismissFavoriteNotification(notice.notificationId);
+  } catch (error) { showGraceToast(store.notificationReadError || (error instanceof Error ? error.message : "提醒查看失败，请重试")); }
 }
 
 async function doLogin() {
@@ -3513,6 +3518,7 @@ function handleDocumentVisibilityChange() {
     oopsPhysicsLayer.value?.reset();
   } else {
     handleRecordingVisibilityChange(true);
+    if (store.account) void store.loadLikeNotifications();
     if (store.account && !store.account.isGuest) void store.loadStoryActivity();
     if (musicLyricsHeaderSuppressed.value) scheduleMusicLyricsHeaderResume();
     nextTick(() => {

@@ -1203,11 +1203,20 @@ const RELEASE_2_9_3_NOTES = [
   "语音消息的波形随气泡宽度伸缩，修正多行聊天输入时反复调整高度造成的消息区抖动。"
 ] as const
 
+const RELEASE_2_9_4_NOTES = [
+  "连续录音复用当前前台会话的麦克风访问，停录后暂停采集，空闲时切入后台、离开页面或切换账号后释放，减少重复授权请求。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.5",
+    date: "2026-10-14",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.4",
     date: "2026-10-13",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_4_NOTES
   },
   {
     version: "2.9.3",

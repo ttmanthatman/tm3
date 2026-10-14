@@ -19,6 +19,7 @@ import {
   groupContinuousBibleVerses,
   selectBibleVerseKeys
 } from "../bibleVerseActions";
+import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import { bibleParallelReferenceSegments } from "../bibleParallelReferences";
 import { useNoteMarkers } from "../features/bible/notes/useNoteMarkers";
@@ -81,6 +82,8 @@ const selectionAnchorKey = ref<string | null>(props.initialState.selectionAnchor
 const selectedFavoriteColor = ref<string>(DEFAULT_BIBLE_FAVORITE_COLOR);
 const backStack = ref<BiblePaneLocationState[]>([...(props.initialState.backStack || [])]);
 const sendBusy = ref(false);
+const insertionGate = createReaderInsertionGate();
+let readerNavigating = false;
 let readerGeneration = 0;
 let nearbyPreloadTimer = 0;
 let stateTimer = 0;
@@ -142,6 +145,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  insertionGate.cancel();
   readerGeneration += 1;
   if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   if (stateTimer) window.clearTimeout(stateTimer);
@@ -212,6 +216,8 @@ async function openLocation(
 ) {
   if (pushCurrent && readerBook.value) backStack.value = [...backStack.value.slice(-19), captureLocation()];
   const generation = ++readerGeneration;
+  insertionGate.cancel();
+  readerNavigating = true;
   suppressReaderScrollUntil = Date.now() + 500;
   if (nearbyPreloadTimer) window.clearTimeout(nearbyPreloadTimer);
   readerBook.value = location.book;
@@ -228,6 +234,8 @@ async function openLocation(
   await nextTick();
   if (location.scrollAnchor) restoreScrollAnchor(location.scrollAnchor);
   else scrollToLocation(location);
+  readerNavigating = false;
+  suppressReaderScrollUntil = Date.now() + 180;
   scheduleNearbyChapterPreloads(location.book, location.visibleChapter, generation);
   emitState();
 }
@@ -332,6 +340,7 @@ function scheduleNearbyChapterPreloads(book: BibleBookCatalogDTO, chapter: numbe
     const nextChapter = queue.shift();
     if (!nextChapter) return;
     void fetchBibleChapter(book, nextChapter, translationId).catch(() => undefined).finally(() => {
+      if (generation !== readerGeneration) return;
       nearbyPreloadTimer = window.setTimeout(pump, 420);
     });
   };
@@ -347,10 +356,13 @@ async function loadChapter(chapter: number, prepend = false) {
   try {
     const result = await fetchBibleChapter(book, chapter, translationId);
     if (generation !== readerGeneration) return;
+    const insertsBefore = prepend || (loadedChapters.value.length > 0 && chapter < loadedChapters.value[0]);
+    if (insertsBefore && !(await insertionGate.wait())) return;
+    if (generation !== readerGeneration) return;
     // Capture at insertion time: the reader can keep moving while the request
     // is pending. A pre-request anchor would undo that native scrolling.
     const scroller = readerScroll.value;
-    const anchorChapter = prepend ? loadedChapters.value[0] : undefined;
+    const anchorChapter = insertsBefore ? loadedChapters.value[0] : undefined;
     const anchorBefore = anchorChapter
       ? scroller?.querySelector<HTMLElement>(`[data-reader-chapter="${anchorChapter}"]`)?.getBoundingClientRect().top
       : undefined;
@@ -373,8 +385,9 @@ async function loadChapter(chapter: number, prepend = false) {
 }
 
 function handleReaderScroll() {
+  insertionGate.motion();
   const scroller = readerScroll.value;
-  if (!scroller || !loadedChapters.value.length || Date.now() < suppressReaderScrollUntil) return;
+  if (!scroller || readerNavigating || !loadedChapters.value.length || Date.now() < suppressReaderScrollUntil) return;
   const chapters = Array.from(scroller.querySelectorAll<HTMLElement>("[data-reader-chapter]"));
   let closest = visibleChapter.value;
   let distance = Number.POSITIVE_INFINITY;
@@ -421,6 +434,7 @@ function isTargetVerse(verse: BibleVerseLineDTO) {
 }
 
 function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
+  clearNavigationHighlight();
   const clickedKey = bibleVerseKey(readerBook.value.code, verse);
   selectedVerseKeys.value = selectBibleVerseKeys(
     orderedLoadedVerseKeys.value,
@@ -433,7 +447,14 @@ function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
   scheduleStateChange();
 }
 
+function clearNavigationHighlight() {
+  targetVerse.value = null;
+  linkedTargetVerseKeys.value = new Set();
+  jumpVerse.value = "";
+}
+
 function clearVerseSelection(notify = true) {
+  if (notify) clearNavigationHighlight();
   selectedVerseKeys.value = new Set();
   selectionAnchorKey.value = null;
   if (notify) scheduleStateChange();
@@ -535,7 +556,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
     :style="{ '--bible-font-size': `${fontSize}px` }"
     @pointerdown="emit('activate', paneId)"
   >
-    <header class="bible-pane-toolbar" :class="{ expanded: navigationOpen }" data-no-bible-swipe @keydown.esc.stop="navigationOpen = false">
+    <header class="bible-pane-toolbar" :class="{ expanded: navigationOpen, 'has-highlight': targetVerse || linkedTargetVerseKeys.size || selectedVerseKeys.size }" data-no-bible-swipe @keydown.esc.stop="navigationOpen = false">
       <button type="button" class="bible-pane-navigation" :aria-label="`${navigationOpen ? '收起' : '展开'} ${label} 窗格导航`" :aria-expanded="navigationOpen" @click="navigationOpen = !navigationOpen"><span>{{ readerBook.name }} {{ visibleChapter }}章</span><MoreHorizontal :size="18" /></button>
       <button type="button" class="bible-pane-icon" :disabled="!backStack.length" aria-label="返回跳转前的阅读点" title="返回阅读点" @click.stop="goBack"><ArrowLeft :size="17" /></button>
       <nav class="bible-pane-jumps" :aria-label="`${label} 窗格经文跳转`">
@@ -562,11 +583,14 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
         :title="receiving ? '取消链接接收窗格' : '所有经文链接在这里打开'"
         @click.stop="emit('toggle-receiver', paneId)"
       ><Link2 :size="16" /></button>
+      <button v-if="targetVerse || linkedTargetVerseKeys.size || selectedVerseKeys.size" type="button" class="bible-pane-icon" aria-label="清除经文高亮" title="清除经文高亮" @click.stop="clearVerseSelection()"><X :size="16" /></button>
       <button v-if="canClose" type="button" class="bible-pane-icon close" :aria-label="`关闭 ${label} 窗格`" @click.stop="emit('close', paneId)"><X :size="16" /></button>
       <span class="bible-pane-label" :title="`${label} 窗格`">{{ label }}</span>
     </header>
 
-    <main ref="readerScroll" class="bible-pane-scroll" @scroll.passive="handleReaderScroll">
+    <main ref="readerScroll" class="bible-pane-scroll" @scroll.passive="handleReaderScroll"
+      @touchstart.passive="insertionGate.touchStart()" @touchend.passive="insertionGate.touchEnd()" @touchcancel.passive="insertionGate.touchEnd()"
+      @wheel.passive="insertionGate.motion()">
       <div v-if="loadedChapters[0] === 1" class="bible-book-boundary">本卷开始</div>
       <section v-for="chapter in loadedChapters" :key="chapter" class="bible-reader-chapter" :data-reader-chapter="chapter" data-scroll-anchor :data-anchor-chapter="chapter">
         <header><span>{{ readerBook.name }}</span><h1>第{{ chapter }}章</h1></header>
@@ -645,6 +669,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
 .bible-reader-pane.receiving { box-shadow: inset 0 0 0 2px rgba(220, 125, 31, .72); }
 .bible-pane-navigation { display: none; }
 .bible-pane-toolbar { min-width: 0; min-height: 44px; padding: 5px 7px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto auto; align-items: center; gap: 4px; border-bottom: 1px solid rgba(104, 76, 45, .16); background: rgba(250, 246, 237, .98); }
+.bible-pane-toolbar.has-highlight { grid-template-columns: auto minmax(0, 1fr) auto auto auto auto; }
 .bible-pane-jumps { min-width: 0; display: grid; grid-template-columns: minmax(62px, .85fr) minmax(0, 1.3fr) minmax(48px, .7fr) minmax(43px, .62fr); gap: 3px; }
 .bible-pane-jumps select { min-width: 0; height: 32px; border: 1px solid rgba(128, 97, 63, .24); border-radius: 7px; padding: 0 4px; color: #5e452f; background: #fffaf1; font: inherit; font-size: 12px; font-weight: 700; }
 .bible-pane-icon { width: 32px; height: 32px; border: 0; border-radius: 7px; padding: 0; color: #725537; background: rgba(128, 97, 63, .09); display: grid; place-items: center; cursor: pointer; }
@@ -704,7 +729,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
   .bible-pane-action-buttons button { padding: 0 5px; }
 }
 @container (max-width: 420px) {
-  .bible-pane-toolbar { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 5px; }
+  .bible-pane-toolbar, .bible-pane-toolbar.has-highlight { grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 5px; }
   .bible-pane-navigation { grid-column: 1 / 4; grid-row: 1; min-width: 0; min-height: 36px; display: flex; align-items: center; justify-content: space-between; gap: 4px; border: 0; border-radius: 7px; padding: 0 6px; color: #5e452f; background: rgba(128, 97, 63, .09); font: inherit; font-size: 12px; cursor: pointer; }
   .bible-pane-navigation span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bible-pane-navigation svg { flex-shrink: 0; }

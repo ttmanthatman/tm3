@@ -1,4 +1,4 @@
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import type { MessageDTO } from "@shared/types";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
@@ -52,7 +52,10 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
     linkPreviewCache.value = linkPreviewQueue.state();
   });
   const mentionToasts = ref<MentionToast[]>([]);
-  const acknowledgedMentionIds = ref<Set<number>>(new Set());
+  const acknowledgedMentionIds = computed({
+    get: () => new Set(store.acknowledgedMentionIds),
+    set: (ids: Set<number>) => { store.acknowledgedMentionIds = [...new Set([...store.acknowledgedMentionIds, ...ids])]; }
+  });
 
   const messagePreviewUrl = memoizeMessage((message: MessageDTO) => {
     if (message.type !== "text" && message.type !== "prayer") return "";
@@ -132,7 +135,7 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
   }
 
   function queueMentionToast(message: MessageDTO) {
-    if (!messageMentionsCurrentUser(message) || mentionToasts.value.some((toast) => toast.id === message.id)) return;
+    if (!messageMentionsCurrentUser(message) || acknowledgedMentionIds.value.has(message.id) || mentionToasts.value.some((toast) => toast.id === message.id)) return;
     mentionToasts.value = [
       ...mentionToasts.value,
       {
@@ -161,19 +164,12 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
     }
   }
 
-  function saveAcknowledgedMentionIds() {
-    const key = mentionAcknowledgementKey();
-    if (!key) return;
-    const ids = [...acknowledgedMentionIds.value].slice(-500);
-    localStorage.setItem(key, JSON.stringify(ids));
-  }
-
   function isMentionAlertActive(message: MessageDTO) {
-    return messageMentionsCurrentUser(message) && !acknowledgedMentionIds.value.has(message.id);
+    return store.notificationReadsReady && messageMentionsCurrentUser(message) && !acknowledgedMentionIds.value.has(message.id);
   }
 
   function acknowledgeMentionAlert(message: MessageDTO) {
-    if (!isMentionAlertActive(message)) return false;
+    if (!messageMentionsCurrentUser(message) || acknowledgedMentionIds.value.has(message.id)) return false;
     acknowledgeMentionId(message.id);
     return true;
   }
@@ -181,7 +177,7 @@ export function useMessageRendering(options: UseMessageRenderingOptions) {
   function acknowledgeMentionId(messageId: number) {
     if (acknowledgedMentionIds.value.has(messageId)) return;
     acknowledgedMentionIds.value = new Set([...acknowledgedMentionIds.value, messageId]);
-    saveAcknowledgedMentionIds();
+    void store.acknowledgeNotification({ kind: "mention", id: messageId }).catch(() => { /* Store exposes sync failure and retains its retry queue. */ });
   }
 
   return {

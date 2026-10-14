@@ -3029,7 +3029,7 @@ app.put("/api/messages/:messageId/like", { preHandler: requireAuth }, async (req
     const like = await prisma.messageLike.upsert({
       where: key,
       create: { messageId, accountId: auth.accountId },
-      update: { dismissedAt: null }
+      update: {}
     });
     if (!existing && message.sender.accountId && message.sender.accountId !== auth.accountId) {
       const liker = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { displayName: true } });
@@ -3279,6 +3279,7 @@ app.patch("/api/like-notifications/:id/dismiss", { preHandler: requireAuth }, as
   const like = await prisma.messageLike.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
   if (!like || like.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
   await prisma.messageLike.update({ where: { id }, data: { dismissedAt: new Date() } });
+  io.to(`acct:${auth.accountId}`).emit("notification:read", { kind: "like", id });
   return { success: true };
 });
 
@@ -3288,6 +3289,7 @@ app.patch("/api/favorite-notifications/:id/dismiss", { preHandler: requireAuth }
   const favorite = await prisma.messageFavorite.findUnique({ where: { id }, include: { message: { include: { sender: true } } } });
   if (!favorite || favorite.message.sender.accountId !== auth.accountId) return reply.code(404).send({ success: false, message: "提醒不存在" });
   await prisma.messageFavorite.update({ where: { id }, data: { dismissedAt: new Date() } });
+  io.to(`acct:${auth.accountId}`).emit("notification:read", { kind: "favorite", id });
   return { success: true };
 });
 
@@ -4125,7 +4127,8 @@ registerNotificationsRoutes(app, {
   pushNotificationsEnabled: PUSH_NOTIFICATIONS_ENABLED,
   vapidPublicKey: () => vapidPublicKey,
   pushReady: () => pushReady,
-  canAccessChannel
+  canAccessChannel,
+  notifyRead: (accountId, read) => { io.to(`acct:${accountId}`).emit("notification:read", read); }
 });
 
 registerWhyTopicsRoutes(app, { requireAuth });

@@ -97,7 +97,7 @@ test("dismissing a favorite notification removes it locally and syncs the dismis
   assert.deepEqual(requests, [{ url: "/api/favorite-notifications/1/dismiss", method: "PATCH" }]);
 });
 
-test("favorite notification dismissal keeps the local removal when the sync fails", async () => {
+test("favorite notification dismissal exposes a failed sync instead of pretending it persisted", async () => {
   globalThis.fetch = (async () => {
     return {
       ok: false,
@@ -135,6 +135,6 @@ test("favorite notification dismissal keeps the local removal when the sync fail
     closeCompetingPrompts: () => undefined
   });
 
-  await actions.dismissFavoriteNotification(5);
+  await assert.rejects(actions.dismissFavoriteNotification(5));
   assert.deepEqual(store.favoriteNotifications, []);
 });
