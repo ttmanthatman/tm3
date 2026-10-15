@@ -1227,7 +1227,7 @@ function showToast(message: string) {
 .bible-workspace.split.compact .bible-topbar { grid-template-columns: minmax(0, 1fr) auto; }
 .bible-workspace.split.compact .bible-topbar-title { display: none; }
 .bible-topbar-button.layout-control { min-width: 32px; min-height: 44px; justify-content: center; }
-.bible-topbar { position: relative; min-height: calc(58px + var(--safe-top)); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: minmax(78px, 1fr) minmax(0, 2fr) minmax(112px, 1fr); align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); }
+.bible-topbar { position: relative; min-height: var(--bible-topbar-height); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: minmax(78px, 1fr) minmax(0, 2fr) minmax(112px, 1fr); align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); }
 .bible-topbar-button { border: 0; background: transparent; color: #725537; display: inline-flex; align-items: center; gap: 3px; font: inherit; font-weight: 700; padding: 10px 0; cursor: pointer; }
 .bible-topbar-leading { justify-self: start; display: flex; align-items: center; }
 .bible-topbar-actions { justify-self: end; display: flex; align-items: center; gap: 10px; }

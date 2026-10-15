@@ -50,6 +50,16 @@ async function openReading(page: Page) {
   await expect(page.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
 }
 
+async function expectTopSwapAlignment(page: Page) {
+  const swap = (await page.getByRole("button", { name: "左右交换圣经和聊天", exact: true }).boundingBox())!;
+  const separator = (await page.locator(".bible-chat-separator").boundingBox())!;
+  const toolbar = (await page.locator(".bible-topbar").boundingBox())!;
+  expect(swap.x).toBeCloseTo(separator.x, 0);
+  expect(swap.width).toBeCloseTo(separator.width, 0);
+  expect(swap.y).toBeCloseTo(toolbar.y, 0);
+  expect(swap.y + swap.height).toBeCloseTo(toolbar.y + toolbar.height, 0);
+}
+
 for (const engine of ["chromium", "webkit"] as const) {
   test(`split panels swap without losing widths, reading or drafts (${engine})`, async ({ browser, baseURL }) => {
     const owned = engine === "webkit" ? await webkit.launch() : null;
@@ -69,10 +79,11 @@ for (const engine of ["chromium", "webkit"] as const) {
       await expectRatio(page, 0.48);
       await input.focus();
       await page.mouse.move(100, 100);
-      await expect(swap).toHaveCSS("opacity", "0");
-      await separator.hover({ position: { x: 6, y: 200 } });
-      await expect(swap).toHaveCSS("opacity", "1");
-      await page.screenshot({ path: `output/e2e/bible-swap-hover-${engine}.png` });
+      await expect(swap).toBeVisible();
+      await expectTopSwapAlignment(page);
+      await expect(swap).toHaveCSS("border-radius", "0px");
+      await expect(swap.locator("svg")).toHaveCount(0);
+      await page.screenshot({ path: `output/e2e/bible-swap-top-${engine}.png` });
       const bible = page.locator(".bible-workspace");
       const chat = page.locator(".chat-pane");
       const width = (await bible.boundingBox())!.width;
@@ -120,6 +131,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       expect((await chat.boundingBox())!.x).toBe(0);
       await expect(separator).toHaveAttribute("aria-valuenow", "40");
       await page.setViewportSize({ width: 1063, height: 804 });
+      await expectTopSwapAlignment(page);
       expect((await bible.boundingBox())!.width).toBeGreaterThanOrEqual(320);
       expect((await chat.boundingBox())!.width).toBeGreaterThanOrEqual(360);
       await separator.hover({ position: { x: 6, y: 200 } });
@@ -276,7 +288,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       await login(page);
       await expectRatio(page, 0.5);
       const swap = page.getByRole("button", { name: "左右交换圣经和聊天", exact: true });
-      await expect(swap).toHaveCSS("opacity", "1");
+      await expectTopSwapAlignment(page);
       await swap.tap();
       expect((await page.locator(".chat-pane").boundingBox())!.x).toBe(0);
       await swap.tap();
@@ -297,6 +309,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       }
       await expectRatio(page, 374 / 1012);
       await page.setViewportSize({ width: 768, height: 1024 });
+      await expectTopSwapAlignment(page);
       await expectRatio(page, 320 / 756);
       await openReading(page);
       await page.screenshot({ path: `output/e2e/bible-split-ipad-${engine}.png` });

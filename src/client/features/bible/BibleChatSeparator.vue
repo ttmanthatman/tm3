@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { ArrowLeftRight } from "lucide-vue-next";
 import { BIBLE_SPLIT_HANDLE_WIDTH, bibleSplitBounds } from "./useBibleDisplayLayout";
 
 const props = defineProps<{ ratio: number; width: number; reversed: boolean }>();
@@ -50,9 +49,7 @@ function keydown(event: KeyboardEvent) {
       <span class="bible-chat-grip" aria-hidden="true"></span>
     </div>
     <button class="bible-chat-swap" type="button" tabindex="0" aria-label="左右交换圣经和聊天" title="左右交换圣经和聊天"
-      :disabled="dragging" @touchend.stop @click="emit('swap')">
-      <ArrowLeftRight :size="18" aria-hidden="true" />
-    </button>
+      :disabled="dragging" @touchend.stop @click="emit('swap')"></button>
   </div>
 </template>
 
@@ -62,15 +59,7 @@ function keydown(event: KeyboardEvent) {
 .bible-chat-grip { width: 4px; height: 44px; border-radius: 3px; background: #a89477; }
 .bible-chat-separator:hover, .bible-chat-separator:focus-within, .bible-chat-separator.dragging { background: #e1d4bc; }
 .bible-chat-resize:focus-visible { outline: 2px solid #947044; outline-offset: -2px; }
-.bible-chat-swap { position: absolute; left: 50%; top: 50%; display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 1px solid #cdbb9f; border-radius: 14px; background: #fffaf1; color: #795735; box-shadow: 0 3px 12px #503b2426; cursor: pointer; touch-action: manipulation; opacity: 0; pointer-events: none; transform: translate(-50%, -50%) scale(.9); transition: opacity 140ms ease, transform 140ms ease; }
-.bible-chat-separator:hover .bible-chat-swap, .bible-chat-separator:focus-within .bible-chat-swap { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%) scale(1); }
-.bible-chat-swap:hover { background: #f3e8d5; border-color: #ad8d64; }
-.bible-chat-swap:focus-visible { outline: 2px solid #947044; outline-offset: 3px; }
-.bible-chat-separator.dragging .bible-chat-swap { opacity: 0; pointer-events: none; }
-@media (hover: none), (pointer: coarse) {
-  .bible-chat-swap { opacity: 1; pointer-events: auto; transform: translate(-50%, -50%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .bible-chat-swap { transition: none; }
-}
+.bible-chat-swap { position: absolute; left: 0; top: 0; width: 100%; height: var(--bible-topbar-height); min-width: 0; padding: 0; border: 0; border-inline: 1px solid #899a7d; border-bottom: 1px solid #7d8f70; border-radius: 0; background: #a1b195; box-shadow: none; cursor: pointer; touch-action: manipulation; }
+.bible-chat-swap:hover, .bible-chat-swap:focus-visible { background: #819571; }
+.bible-chat-swap:focus-visible { outline: 2px solid #415a35; outline-offset: -2px; }
 </style>
