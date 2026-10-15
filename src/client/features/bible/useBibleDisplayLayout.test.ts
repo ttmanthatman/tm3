@@ -30,6 +30,9 @@ test("login initializes split, resize/fullscreen/reopen preserve preference, log
     assert.equal(layout.bibleSplit.value, true);
     assert.equal(layout.bibleSplitRatio.value, 0.5);
     layout.resizeBible(0.75);
+    layout.swapBibleChat();
+    assert.equal(layout.bibleOnRight.value, true);
+    assert.equal(layout.bibleSplitRatio.value, 0.75);
     layout.expandBible();
     assert.equal(layout.bibleFullscreen.value, true);
     layout.shrinkBible();
@@ -47,10 +50,15 @@ test("login initializes split, resize/fullscreen/reopen preserve preference, log
     layout.bibleOpen.value = false;
     layout.openBible();
     assert.equal(layout.bibleSplitRatio.value, 0.75);
+    assert.equal(layout.bibleOnRight.value, true);
+    layout.swapBibleChat();
+    assert.equal(layout.bibleOnRight.value, false);
+    layout.swapBibleChat();
     accountId.value = undefined;
     await nextTick();
     assert.equal(layout.bibleOpen.value, false);
     assert.equal(layout.bibleSplitRatio.value, 0.5);
+    assert.equal(layout.bibleOnRight.value, false);
     scope.stop();
     mock.innerWidth = 800;
     mock.dispatchEvent(new Event("resize"));

@@ -50,6 +50,87 @@ async function openReading(page: Page) {
   await expect(page.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
 }
 
+for (const engine of ["chromium", "webkit"] as const) {
+  test(`split panels swap without losing widths, reading or drafts (${engine})`, async ({ browser, baseURL }) => {
+    const owned = engine === "webkit" ? await webkit.launch() : null;
+    const context = await (owned || browser).newContext({ baseURL, viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    try {
+      const page = await context.newPage();
+      const errors: string[] = [];
+      page.on("pageerror", (error) => errors.push(error.message));
+      await login(page);
+      await openReading(page);
+      const input = page.locator(".composer textarea");
+      await input.fill("左右交换保留草稿");
+      const separator = page.getByRole("separator", { name: "调整圣经和聊天宽度" });
+      const swap = page.getByRole("button", { name: "左右交换圣经和聊天", exact: true });
+      await separator.focus();
+      await separator.press("ArrowLeft");
+      await expectRatio(page, 0.48);
+      await input.focus();
+      await page.mouse.move(100, 100);
+      await expect(swap).toHaveCSS("opacity", "0");
+      await separator.hover({ position: { x: 6, y: 200 } });
+      await expect(swap).toHaveCSS("opacity", "1");
+      await page.screenshot({ path: `output/e2e/bible-swap-hover-${engine}.png` });
+      const bible = page.locator(".bible-workspace");
+      const chat = page.locator(".chat-pane");
+      const width = (await bible.boundingBox())!.width;
+      const scroll = page.locator(".bible-pane-scroll");
+      const scrollTop = await scroll.evaluate((element) => element.scrollTop);
+      await swap.click();
+      expect((await chat.boundingBox())!.x).toBe(0);
+      expect((await bible.boundingBox())!.width).toBeCloseTo(width, 0);
+      expect((await bible.boundingBox())!.x).toBeCloseTo((await chat.boundingBox())!.width + 12, 0);
+      await expect(input).toHaveValue("左右交换保留草稿");
+      await expect(page.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
+      expect(await scroll.evaluate((element) => element.scrollTop)).toBeCloseTo(scrollTop, 0);
+      // Enter belongs to the swap button, not the separator's equal-width shortcut.
+      await swap.press("Enter");
+      await expectRatio(page, 0.48);
+      await separator.focus();
+      await separator.press("Tab");
+      await expect(swap).toBeFocused();
+      await swap.press("Space");
+      await separator.focus();
+      await separator.press("ArrowRight");
+      await expect(separator).toHaveAttribute("aria-valuenow", "46");
+      await separator.press("Home");
+      expect((await chat.boundingBox())!.width).toBeCloseTo(360, 0);
+      await separator.press("End");
+      expect((await bible.boundingBox())!.width).toBeCloseTo(320, 0);
+      const box = (await separator.boundingBox())!;
+      await page.mouse.move(box.x + 6, 200);
+      await page.mouse.down();
+      await page.mouse.move((1280 - 12) * 0.6 + 6, 200, { steps: 8 });
+      await page.mouse.up();
+      await expect(separator).toHaveAttribute("aria-valuenow", "40");
+      await page.getByRole("button", { name: "展开频道", exact: true }).click();
+      expect((await page.locator(".channel-pane").boundingBox())!.x).toBe(0);
+      expect((await page.locator(".scrim").boundingBox())!.width).toBeCloseTo((await chat.boundingBox())!.width, 0);
+      await page.locator(".scrim").click({ position: { x: 500, y: 250 } });
+      await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
+      await page.getByRole("menuitem", { name: "成员列表", exact: true }).click();
+      const members = (await page.locator(".member-pane").boundingBox())!;
+      expect(members.x + members.width).toBeCloseTo((await chat.boundingBox())!.width, 0);
+      await page.getByRole("button", { name: "收起成员", exact: true }).click();
+      await page.getByRole("button", { name: "圣经全屏", exact: true }).click();
+      await expect(separator).toHaveCount(0);
+      await page.getByRole("button", { name: "缩小圣经，恢复分屏", exact: true }).click();
+      expect((await chat.boundingBox())!.x).toBe(0);
+      await expect(separator).toHaveAttribute("aria-valuenow", "40");
+      await page.setViewportSize({ width: 1063, height: 804 });
+      expect((await bible.boundingBox())!.width).toBeGreaterThanOrEqual(320);
+      expect((await chat.boundingBox())!.width).toBeGreaterThanOrEqual(360);
+      await separator.hover({ position: { x: 6, y: 200 } });
+      await page.screenshot({ path: `output/e2e/bible-swap-reversed-${engine}.png` });
+      await swap.click();
+      await expectRatio(page, 0.4);
+      expect(errors).toEqual([]);
+    } finally { await context.close(); await owned?.close(); }
+  });
+}
+
 test("desktop split supports snapping, keyboard, drawers, fullscreen and drafts", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await login(page);
@@ -93,6 +174,13 @@ test("desktop split supports snapping, keyboard, drawers, fullscreen and drafts"
     await expectRatio(page, ratio);
     await expectReadingPosition();
   }
+  await separator.hover({ position: { x: 6, y: 200 } });
+  const swap = page.getByRole("button", { name: "左右交换圣经和聊天", exact: true });
+  await swap.click();
+  await expectReadingPosition();
+  await expect(input).toHaveValue("分屏切换保留草稿");
+  await swap.click();
+  await expectReadingPosition();
   await separator.focus();
   await separator.press("ArrowRight");
   await expectRatio(page, 0.52);
@@ -186,6 +274,13 @@ for (const engine of ["chromium", "webkit"] as const) {
     try {
       const page = await context.newPage();
       await login(page);
+      await expectRatio(page, 0.5);
+      const swap = page.getByRole("button", { name: "左右交换圣经和聊天", exact: true });
+      await expect(swap).toHaveCSS("opacity", "1");
+      await swap.tap();
+      expect((await page.locator(".chat-pane").boundingBox())!.x).toBe(0);
+      await swap.tap();
+      await expect.poll(async () => (await page.locator(".chat-pane").boundingBox())!.x).toBeGreaterThan(0);
       await expectRatio(page, 0.5);
       const separator = page.getByRole("separator", { name: "调整圣经和聊天宽度" });
       const box = (await separator.boundingBox())!;

@@ -845,6 +845,8 @@ const {
   bibleFullscreen,
   bibleSplitAvailable,
   bibleSplitRatio,
+  bibleOnRight,
+  swapBibleChat,
   bibleLayoutStyle,
   viewportWidth,
   resizeBible,
@@ -5320,7 +5322,7 @@ const messageRowBindings = {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleFullscreen, 'bible-split': bibleSplit, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="[appearanceStyle, bibleLayoutStyle]">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleFullscreen, 'bible-split': bibleSplit, 'bible-right': bibleOnRight, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="[appearanceStyle, bibleLayoutStyle]">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
@@ -5351,7 +5353,7 @@ const messageRowBindings = {
       @reading-change="handleBibleReadingChange"
     />
 
-    <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" @resize="resizeBible" />
+    <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" :reversed="bibleOnRight" @resize="resizeBible" @swap="swapBibleChat" />
 
     <BookWorkspace v-if="bookWorkspaceOpen" :initial-location="bookLocation" :active-channel-id="bibleTargetChannelId" :readers="bookReaders" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
 

@@ -25,6 +25,7 @@ export function useBibleDisplayLayout(accountId: () => number | undefined) {
   const bibleOpen = ref(false);
   const expanded = ref(false);
   const preferredRatio = ref(0.5);
+  const bibleOnRight = ref(false);
   const bibleSplit = computed(() => bibleOpen.value && bibleSplitAvailable.value && !expanded.value);
   const bibleFullscreen = computed(() => bibleOpen.value && !bibleSplit.value);
   const bibleSplitRatio = computed(() => clampBibleSplitRatio(preferredRatio.value, viewportWidth.value));
@@ -41,6 +42,7 @@ export function useBibleDisplayLayout(accountId: () => number | undefined) {
     bibleOpen.value = !!id && bibleSplitAvailable.value;
     expanded.value = false;
     preferredRatio.value = 0.5;
+    bibleOnRight.value = false;
   }, { immediate: true });
 
   function resizeBible(ratio: number, snap = false) {
@@ -49,6 +51,7 @@ export function useBibleDisplayLayout(accountId: () => number | undefined) {
   function expandBible() { expanded.value = true; }
   function shrinkBible() { expanded.value = false; }
   function openBible() { expanded.value = false; bibleOpen.value = true; }
+  function swapBibleChat() { bibleOnRight.value = !bibleOnRight.value; }
 
-  return { bibleOpen, bibleSplit, bibleFullscreen, bibleSplitAvailable, bibleSplitRatio, bibleLayoutStyle, viewportWidth, resizeBible, expandBible, shrinkBible, openBible };
+  return { bibleOpen, bibleSplit, bibleFullscreen, bibleSplitAvailable, bibleSplitRatio, bibleOnRight, bibleLayoutStyle, viewportWidth, resizeBible, expandBible, shrinkBible, openBible, swapBibleChat };
 }

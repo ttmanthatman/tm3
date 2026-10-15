@@ -514,7 +514,7 @@
 }
 
 
-/* A split reader owns the left track; navigation drawers stay inside chat. */
+/* Navigation drawers stay inside chat in either split order. */
 .app-shell.bible-split,
 .app-shell.bible-split.channels-collapsed,
 .app-shell.bible-split.members-collapsed {
@@ -536,6 +536,12 @@
 .app-shell.bible-split > .member-pane.open { visibility: visible; opacity: 1; pointer-events: auto; }
 .app-shell.bible-split > .channel-pane.collapsed { visibility: hidden; }
 .app-shell.bible-split > .scrim { display: block; left: calc(var(--bible-width) + 12px); }
+.app-shell.bible-split.bible-right { grid-template-columns: minmax(0, 1fr) 12px var(--bible-width); }
+.app-shell.bible-split.bible-right > .bible-workspace { grid-column: 3; }
+.app-shell.bible-split.bible-right > .chat-pane { grid-column: 1; }
+.app-shell.bible-split.bible-right > .channel-pane { left: 0; }
+.app-shell.bible-split.bible-right > .member-pane { right: calc(var(--bible-width) + 12px); }
+.app-shell.bible-split.bible-right > .scrim { left: 0; right: calc(var(--bible-width) + 12px); }
 @container (max-width: 600px) {
   .chat-head { padding-inline: 6px; gap: 2px; }
   .chat-head .icon-btn { width: 32px; flex-basis: 32px; }
