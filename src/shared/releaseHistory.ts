@@ -1207,11 +1207,22 @@ const RELEASE_2_9_4_NOTES = [
   "连续录音复用当前前台会话的麦克风访问，停录后暂停采集，空闲时切入后台、离开页面或切换账号后释放，减少重复授权请求。"
 ] as const
 
+const RELEASE_2_9_5_NOTES = [
+  "@、点赞和收藏提醒查看后的已读状态按账号保存并同步到其他设备；断线保留待同步记录，恢复连接或重新打开页面后重试，旧的本机 @ 已读记录自动迁移。",
+  "圣经跳转经文的高亮支持清除，点击经文进入普通选择时也会解除跳转高亮。",
+  "圣经前置章节等待触摸与惯性滚动结束后再插入，修正 iPhone 跳转后轻滑时阅读位置突然大幅移动的问题。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.6",
+    date: "2026-10-15",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.5",
     date: "2026-10-14",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_5_NOTES
   },
   {
     version: "2.9.4",
