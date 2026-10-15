@@ -18,6 +18,8 @@ import {
   type BibleRichTextSegment
 } from "./messageRendering";
 import { storyAnnouncementLetters } from "./storyAnnouncement";
+import BookNoteShareCard from "../books/BookNoteShareCard.vue";
+import { bookNoteSharePayload } from "@shared/bookNotes";
 import BookShareCard from "../books/BookShareCard.vue";
 import { parseBookShareMessage } from "../books/bookShareMessage";
 
@@ -62,6 +64,7 @@ const props = defineProps<{
   handwritingSurfaceActive?: boolean;
 }>();
 
+const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSharePayload(props.message.payload) : null);
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
 
 const emit = defineEmits<{
@@ -96,6 +99,7 @@ const emit = defineEmits<{
       <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
       <ChevronRight :size="18" />
     </button>
+    <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
@@ -233,7 +237,8 @@ const emit = defineEmits<{
           :surface-active="handwritingSurfaceActive ?? true"
           :claim-auto-play="consumeHandwritingPlayback ? () => consumeHandwritingPlayback!(message) : undefined"
         />
-        <BookShareCard v-else-if="bookShare" :context="bookShare" />
+        <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :active="handwritingSurfaceActive ?? true" />
+    <BookShareCard v-else-if="bookShare" :context="bookShare" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>

@@ -1,3 +1,4 @@
+import { bookNoteShareSchema } from "../shared/bookNotes.js";
 import { saveGraceCard } from "./services/gracePersistence.js";
 import { graceMediaFiles } from "../shared/grace.js";
 import fs from "node:fs";
@@ -517,6 +518,7 @@ function cleanMessagePayload(input: unknown): { effect?: MessageEffect; contentF
 async function cleanTextMessagePayload(input: unknown) {
   const payload = cleanMessagePayload(input);
   if (!input || typeof input !== "object" || Array.isArray(input)) return payload;
+  if ((input as { kind?: unknown }).kind === "book_note") return bookNoteShareSchema.parse(input);
   const requestedTrackId = Number((input as { musicTrackId?: unknown }).musicTrackId);
   if (!Number.isInteger(requestedTrackId) || requestedTrackId <= 0) return payload;
   const track = await prisma.message.findFirst({

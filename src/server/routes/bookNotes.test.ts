@@ -15,37 +15,48 @@ function createHarness() {
   const rows = new Map<string, { key: string; value: string }>();
   const books = new Map([[1, { id: 1, title: "正式书名" }], [10, { id: 10, title: "另一本书" }]]);
   let reads = 0;
-  let uniqueConflicts = 0;
-  let failCreate = false;
-  const prisma = {
-    book: {
-      findUnique: async ({ where }: { where: { id: number } }) => {
-        reads++;
-        return books.get(where.id) ?? null;
-      }
+  let transactions = 0;
+  const transactionErrors: string[] = [];
+  let failCreate = false, failParts = false;
+  type Where = { key?: string | { startsWith: string }; OR?: Where[] };
+  const matches = (key: string, where: Where): boolean => where.OR ? where.OR.some((item) => matches(key, item)) : typeof where.key === "string" ? key === where.key : key.startsWith(where.key?.startsWith ?? "");
+  const setting = {
+    findMany: async ({ where }: { where: Where }) => [...rows.values()].filter((row) => matches(row.key, where)),
+    upsert: async ({ where, create }: { where: { key: string }; create: { key: string; value: string } }) => {
+      if (failCreate) throw new Error("storage unavailable");
+      if (!rows.has(where.key)) rows.set(where.key, { ...create });
+      return rows.get(where.key)!;
     },
-    setting: {
-      findMany: async ({ where }: { where: { key: { startsWith: string } } }) => [...rows.values()].filter((row) => row.key.startsWith(where.key.startsWith)),
-      findUnique: async ({ where }: { where: { key: string } }) => rows.get(where.key) ?? null,
-      create: async ({ data }: { data: { key: string; value: string } }) => {
-        if (failCreate) throw new Error("storage unavailable");
-        // Let concurrent inject requests reach the database boundary before a
-        // create commits, as separate devices can on a real database.
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        if (rows.has(data.key)) {
-          uniqueConflicts++;
-          throw new Prisma.PrismaClientKnownRequestError("duplicate key", { code: "P2002", clientVersion: "test" });
-        }
-        rows.set(data.key, { ...data });
-        return data;
-      },
-      update: async ({ where, data }: { where: { key: string }; data: { value: string } }) => {
-        assert.ok(rows.has(where.key));
-        const row = { key: where.key, value: data.value };
-        rows.set(where.key, row);
-        return row;
-      },
-      deleteMany: async ({ where }: { where: { key: string } }) => ({ count: Number(rows.delete(where.key)) })
+    createMany: async ({ data }: { data: { key: string; value: string }[] }) => {
+      if (failParts) throw new Error("part storage unavailable");
+      for (const row of data) rows.set(row.key, { ...row });
+      return { count: data.length };
+    },
+    update: async ({ where, data }: { where: { key: string }; data: { value: string } }) => {
+      assert.ok(rows.has(where.key));
+      const row = { key: where.key, value: data.value }; rows.set(where.key, row); return row;
+    },
+    deleteMany: async ({ where }: { where: Where }) => {
+      let count = 0;
+      for (const key of rows.keys()) if (matches(key, where)) { rows.delete(key); count++; }
+      return { count };
+    }
+  };
+  let pending = Promise.resolve();
+  const prisma = {
+    book: { findUnique: async ({ where }: { where: { id: number } }) => { reads++; return books.get(where.id) ?? null; } },
+    setting,
+    $transaction<T>(action: (tx: { setting: typeof setting }) => Promise<T>): Promise<T> {
+      const operation = pending.then(async () => {
+        transactions++;
+        const code = transactionErrors.shift();
+        if (code) throw new Prisma.PrismaClientKnownRequestError("retry transaction", { code, clientVersion: "test" });
+        const before = new Map(rows);
+        try { return await action({ setting }); }
+        catch (error) { rows.clear(); for (const [key, value] of before) rows.set(key, value); throw error; }
+      });
+      pending = operation.then(() => undefined, () => undefined);
+      return operation;
     }
   };
   const app = Fastify();
@@ -57,7 +68,7 @@ function createHarness() {
     },
     authFor: (request) => ({ accountId: accountIdFor(request), isAdmin: false })
   });
-  return { app, rows, books, reads: () => reads, uniqueConflicts: () => uniqueConflicts, failCreate: () => { failCreate = true; } };
+  return { app, rows, books, transactionErrors, reads: () => reads, transactions: () => transactions, failCreate: () => { failCreate = true; }, failParts: (value: boolean) => { failParts = value; } };
 }
 
 test("book notes require authentication before reading or changing private data", async (t) => {
@@ -131,7 +142,7 @@ test("distinct simultaneous notes survive, same UUID races converge, and list so
   const saved = await Promise.all([noteId, noteId, secondId].map((id) => h.app.inject({ method: "PUT", url: `/api/books/1/notes/${id}`, headers, payload: input })));
   assert.deepEqual(saved.map((response) => response.statusCode), [200, 200, 200]);
   assert.equal(h.rows.size, 2);
-  assert.equal(h.uniqueConflicts(), 1);
+  assert.equal(h.transactions(), 3);
   assert.equal(saved[0].json().note.createdAt, saved[1].json().note.createdAt);
   const firstKey = `${bookNotesSettingPrefix(7, 1)}${noteId}`;
   h.rows.set(firstKey, { key: firstKey, value: JSON.stringify({ ...saved[0].json().note, updatedAt: "2000-01-01T00:00:00.000Z" }) });
@@ -192,4 +203,55 @@ test("storage failure cannot report a saved note", async (t) => {
   const response = await h.app.inject({ method: "PUT", url: `/api/books/1/notes/${noteId}`, headers, payload: input });
   assert.equal(response.statusCode, 500);
   assert.equal(h.rows.size, 0);
+});
+
+const ink = { kind: "handwriting" as const, version: 1 as const, characters: [{ strokes: [{ color: "#123456" as const, points: [[1000, 2000, 0], [3000, 4000, 25]] as [number, number, number][] }] }] };
+test("handwritten drafts survive reads, edits and deletion; malformed ink cannot replace a note", async (t) => {
+  const h = createHarness(); t.after(() => h.app.close());
+  const url = `/api/books/1/notes/${noteId}`;
+  const saved = await h.app.inject({ method: "PUT", url, headers, payload: { ...input, text: "", handwriting: ink, draft: true } });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.json().note.handwriting, ink);
+  assert.equal(saved.json().note.draft, true);
+  for (const handwriting of [{ ...ink, version: 99 }, { ...ink, characters: [] }, { ...ink, url: "https://invalid.example/" }]) {
+    assert.equal((await h.app.inject({ method: "PUT", url, headers, payload: { ...input, handwriting } })).statusCode, 400);
+  }
+  const listed = await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers });
+  assert.deepEqual(listed.json().notes[0].handwriting, ink);
+  await h.app.inject({ method: "DELETE", url, headers });
+  assert.equal(h.rows.size, 0);
+});
+
+test("large handwriting uses bounded atomic parts, preserves Unicode and rolls back a failed replacement", async (t) => {
+  const h = createHarness(); t.after(() => h.app.close());
+  const url = `/api/books/1/notes/${noteId}`;
+  const handwriting = { ...ink, characters: [{ strokes: [{ color: "#123456", points: Array.from({ length: 8000 }, (_, index) => [index, 5000, index]) }] }] };
+  const payload = { ...input, text: "😀".repeat(5000), handwriting, draft: true };
+  const saved = await h.app.inject({ method: "PUT", url, headers, payload });
+  assert.equal(saved.statusCode, 200);
+  assert.ok(h.rows.size > 2);
+  assert.ok([...h.rows.values()].every((row) => Buffer.byteLength(row.value) <= 60 * 1024));
+  assert.deepEqual((await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers })).json().notes, [saved.json().note]);
+  h.failParts(true);
+  const failed = await h.app.inject({ method: "PUT", url, headers, payload: { ...payload, text: "replacement" } });
+  assert.equal(failed.statusCode, 500);
+  assert.deepEqual((await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers })).json().notes, [saved.json().note]);
+  h.failParts(false);
+  const small = await h.app.inject({ method: "PUT", url, headers, payload: input });
+  assert.equal(small.statusCode, 200); assert.equal(h.rows.size, 1);
+  assert.equal(small.json().note.createdAt, saved.json().note.createdAt);
+  await h.app.inject({ method: "PUT", url, headers, payload });
+  await h.app.inject({ method: "DELETE", url, headers });
+  assert.equal(h.rows.size, 0);
+});
+
+test("transaction uniqueness and deadlock races retry atomically with one stable note", async (t) => {
+  const h = createHarness(); t.after(() => h.app.close());
+  h.transactionErrors.push("P2002", "P2034");
+  const saved = await h.app.inject({ method: "PUT", url: `/api/books/1/notes/${noteId}`, headers, payload: input });
+  assert.equal(saved.statusCode, 200); assert.equal(h.transactions(), 3); assert.equal(h.rows.size, 1);
+  h.transactionErrors.push("P2034", "P2034", "P2034");
+  const failed = await h.app.inject({ method: "PUT", url: `/api/books/1/notes/${noteId}`, headers, payload: { ...input, text: "未保存" } });
+  assert.equal(failed.statusCode, 500);
+  assert.deepEqual((await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers })).json().notes, [saved.json().note]);
 });

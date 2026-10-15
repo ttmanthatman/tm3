@@ -25,7 +25,7 @@ export function registerBookNotesRoutes(app: FastifyInstance, deps: Pick<BooksRo
     return { notes: await notes.list(deps.authFor(request).accountId, book) };
   });
 
-  app.put("/api/books/:id/notes/:noteId", { preHandler }, async (request, reply) => {
+  app.put("/api/books/:id/notes/:noteId", { preHandler, bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
     reply.header("Cache-Control", "private, no-store");
     const params = noteParamsSchema.safeParse(request.params);
     const body = bookNoteInputSchema.safeParse(request.body);

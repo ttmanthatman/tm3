@@ -38,6 +38,7 @@ const props = defineProps<{
   status: string;
   socketReady: boolean;
   replyLabel?: string;
+  submitLabel?: string;
   preferences: HandwritingPreferencesDTO;
   preferencesError?: string;
   globalSettings: HandwritingGlobalSettings;
@@ -436,7 +437,7 @@ onBeforeUnmount(() => {
     <footer class="handwriting-composer-footer">
       <p v-if="replyLabel">将引用：{{ replyLabel }}</p>
         <p v-else>{{ totalPointCount }} 个采样点</p>
-      <button type="button" class="handwriting-send" :disabled="!canSubmit" @click="submit"><Send :size="17" />发送</button>
+      <button type="button" class="handwriting-send" :disabled="!canSubmit" @click="submit"><Send :size="17" />{{ submitLabel || "发送" }}</button>
     </footer>
 
     <div v-if="clearConfirmOpen" class="handwriting-confirm" role="dialog" aria-modal="true" aria-labelledby="handwriting-clear-title">

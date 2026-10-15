@@ -228,3 +228,16 @@ test("generated ID collision is rejected and unexpected public Bible import is r
   f.client.createBible = async (...args) => ({ note: { ...(await create(...args)).note, publishedAt: at } });
   assert.match((await importNotesBackup(backup, 1, f.client, f.options)).error, /导入结果不符/);
 });
+
+test("ebook backups preserve handwritten drafts and distinguish different ink when importing", async () => {
+  const ink = { kind: "handwriting" as const, version: 1 as const, characters: [{ strokes: [{ color: "#123456" as const, points: [[1000, 2000, 0], [3000, 4000, 20]] as [number, number, number][] }] }] };
+  const origin = fixture(); origin.notes.set(1, [{ ...bookNote, text: "", handwriting: ink, draft: true }]);
+  const backup = parseNotesBackup(serializeNotesBackup(await exportNotesBackup("books", 1, origin.client, origin.options)), "books");
+  const target = fixture(2);
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).imported, 1);
+  assert.deepEqual(target.notes.get(1)![0].handwriting, ink);
+  assert.equal(target.notes.get(1)![0].draft, true);
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).duplicates, 1);
+  if (backup.domain === "books") backup.notes[0].handwriting!.characters[0].strokes[0].color = "#654321";
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).imported, 1);
+});

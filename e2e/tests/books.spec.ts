@@ -327,21 +327,58 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.screenshot({ path: `output/playwright/book-selection-${flow}.png` });
       await toolbar.getByRole("button", { name: "做笔记" }).click();
       const editor = page.getByRole("dialog", { name: "阅读笔记", exact: true });
+      await expect(editor.getByText("阅读笔记", { exact: true })).toHaveCount(0);
+      await editor.getByLabel("笔记内容").fill("  ");
+      await editor.click({ position: { x: 3, y: 3 } });
+      await expect(editor).toHaveCount(0);
+      expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toHaveLength(0);
+      await toolbar.getByRole("button", { name: "做笔记" }).click();
       await editor.getByLabel("笔记内容").fill(`摘录笔记 ${flow}`);
-      await editor.getByRole("button", { name: "保存笔记" }).click();
+      await editor.click({ position: { x: 3, y: 3 } });
       await expect(editor).toHaveCount(0);
       await expect(page.getByText("笔记已保存到我的账号", { exact: true })).toHaveCount(0);
       const response = await request.get(`/api/books/${book.id}/notes`, { headers });
       expect(response.ok()).toBe(true);
-      const { notes } = await response.json() as { notes: Array<{ id: string; text: string; quote: string }> };
+      const { notes } = await response.json() as { notes: Array<{ id: string; text: string; quote: string; draft?: boolean }> };
       expect(notes).toHaveLength(1); noteId = notes[0].id;
       expect(notes[0].text).toBe(`摘录笔记 ${flow}`);
+      expect(notes[0].draft).toBe(true);
       expect(notes[0].quote).toBe("这是用于验证手机点按控制栏的正文。");
       if (flow === "paginated") await page.setViewportSize({ width: 390, height: 844 });
       await expect(frame.locator(`[data-book-note-id="${noteId}"]`)).toBeVisible();
       await frame.locator(`[data-book-note-id="${noteId}"]`).click();
       await expect(editor.getByLabel("笔记内容")).toHaveValue(`摘录笔记 ${flow}`);
-      await editor.getByRole("button", { name: "关闭" }).click();
+      await editor.getByRole("button", { name: "手写笔记", exact: true }).click();
+      const writer = page.getByRole("dialog", { name: "逐字手写" });
+      const pad = (await writer.getByLabel("当前手写字格").boundingBox())!;
+      await page.mouse.move(pad.x + pad.width * .2, pad.y + pad.height * .3);
+      await page.mouse.down();
+      await page.mouse.move(pad.x + pad.width * .7, pad.y + pad.height * .6, { steps: 12 });
+      await page.mouse.up();
+      await writer.getByRole("button", { name: "完成", exact: true }).click();
+      await expect(writer).toHaveCount(0);
+      await expect(editor.locator(".handwriting-message canvas")).toHaveCount(1);
+      for (const width of [360, 390, 1280]) {
+        await page.setViewportSize({ width, height: 844 });
+        const panel = editor.locator(".book-note-editor");
+        expect(await panel.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(223, 206, 176)");
+        expect(await editor.getByLabel("笔记内容").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(241, 230, 210)");
+        const inputBounds = (await editor.getByLabel("笔记内容").boundingBox())!;
+        const bounds = (await panel.boundingBox())!;
+        expect(inputBounds.width).toBeGreaterThan(bounds.width - 44);
+        expect(bounds.x).toBeGreaterThanOrEqual(0); expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+        await expect(editor.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+        await editor.getByRole("button", { name: "分享笔记到聊天室", exact: true }).scrollIntoViewIfNeeded();
+        await expect(editor.getByRole("button", { name: "分享笔记到聊天室", exact: true })).toBeInViewport();
+        if (flow === "scrolled") await page.screenshot({ path: `output/playwright/book-note-editor-${width}.png` });
+      }
+      await editor.getByRole("button", { name: "分享笔记到聊天室", exact: true }).click();
+      const noteShare = page.getByRole("dialog", { name: "分享笔记到聊天室", exact: true });
+      await expect(noteShare).toContainText(`摘录笔记 ${flow}`);
+      await expect(noteShare.locator(".handwriting-message canvas")).toHaveCount(1);
+      await noteShare.getByRole("button", { name: "发送到聊天室", exact: true }).click();
+      await expect(noteShare).toHaveCount(0);
+      await expect(page.getByRole("status").filter({ hasText: "笔记已分享到聊天室" })).toBeVisible();
       if (flow === "paginated") await page.setViewportSize({ width: 1280, height: 900 });
       await selectText();
       await toolbar.getByRole("button", { name: "聊天室", exact: true }).click();
@@ -409,6 +446,13 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await invitation.getByRole("button", { name: "发送到聊天室", exact: true }).click();
       await expect(invitation).toHaveCount(0);
       await page.locator(".book-top").getByRole("button", { name: "聊天室", exact: true }).click();
+      const noteCard = page.locator(".book-note-share-card").filter({ hasText: `摘录笔记 ${flow}` });
+      await expect(noteCard).toBeVisible();
+      await noteCard.click();
+      const sharedViewer = page.getByRole("dialog", { name: "阅读笔记", exact: true });
+      await expect(sharedViewer).toContainText(`摘录笔记 ${flow}`);
+      await expect(sharedViewer.locator(".handwriting-message canvas")).toHaveCount(1);
+      await sharedViewer.getByRole("button", { name: "关闭", exact: true }).click();
       const currentLink = page.locator(`.message-row a[href*="bookId=${book.id}&"]`).last();
       await expect(currentLink).toBeVisible();
       const sharedUrl = new URL((await currentLink.getAttribute("href"))!);
@@ -432,3 +476,32 @@ for (const flow of ["scrolled", "paginated"] as const) {
     }
   });
 }
+
+test("大幅手写笔记的并发保存与缩减在真实数据库中保持一条完整记录", async ({ request }) => {
+  const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
+  const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
+  const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "large-note.epub", mimeType: "application/epub+zip", buffer: await buildEpub() } } });
+  expect(upload.ok()).toBe(true);
+  const { book } = await upload.json() as { book: { id: number } };
+  const id = randomUUID();
+  const url = `/api/books/${book.id}/notes/${id}`;
+  const handwriting = { kind: "handwriting", version: 1, characters: [{ strokes: [{ color: "#123456", points: Array.from({ length: 8000 }, (_, index) => [index, 5000, index]) }] }] };
+  const input = { quote: "这是用于验证手机点按控制栏的正文。", text: "😀".repeat(5000), chapter: "第一章", fraction: .2, handwriting, draft: true };
+  try {
+    const writes = await Promise.all(Array.from({ length: 3 }, () => request.put(url, { headers, data: input })));
+    expect(writes.map((result) => result.status())).toEqual([200, 200, 200]);
+    const created = await Promise.all(writes.map((result) => result.json()));
+    expect(new Set(created.map((result) => result.note.createdAt)).size).toBe(1);
+    const list = await request.get(`/api/books/${book.id}/notes`, { headers });
+    const listed = (await list.json()).notes;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ ...input, id, createdAt: created[0].note.createdAt });
+    expect(created.map((result) => result.note.updatedAt)).toContain(listed[0].updatedAt);
+    const small = await request.put(url, { headers, data: { ...input, handwriting: null, text: "缩减为文字", draft: false } });
+    expect(small.ok()).toBe(true);
+    const reduced = await small.json();
+    expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toEqual([reduced.note]);
+    await request.delete(url, { headers });
+    expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toEqual([]);
+  } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
+});
