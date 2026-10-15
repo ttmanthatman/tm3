@@ -8,15 +8,16 @@ export function registerMulticharRoutes(
   app: FastifyInstance,
   deps: MulticharDeps,
   manager: MulticharManager,
-  requireAdmin: (request: FastifyRequest, reply: FastifyReply) => Promise<void>
+  requireAdmin: (request: FastifyRequest, reply: FastifyReply) => Promise<void>,
+  conversations: ReturnType<typeof import("../routes/aiConversation.js").registerAiConversationRoutes>
 ) {
 
   app.get("/api/admin/multichar/status", { preHandler: requireAdmin }, async (request) => {
     const channelId = Number((request.query as { channelId?: string }).channelId || 0);
     if (channelId) {
-      return { success: true, session: await manager.getSessionStatus(channelId) };
+      return { success: true, session: { channelId, ...conversations.status(channelId) } };
     }
-    return { success: true, sessions: manager.getAllStatus() };
+    return { success: true, sessions: conversations.allStatus() };
   });
 
   app.post("/api/admin/multichar/start", { preHandler: requireAdmin }, async (request, reply) => {
@@ -40,17 +41,21 @@ export function registerMulticharRoutes(
       validChars.push(charId);
     }
 
-    const session = await manager.startSession(body.channelId, validChars);
+    try { await conversations.startForAccount((request as FastifyRequest & { auth: { accountId: number } }).auth.accountId, body.channelId, validChars); }
+    catch (error) { return reply.code(400).send({ success: false, message: error instanceof Error ? error.message : "启动失败" }); }
+    const session = { channelId: body.channelId, ...conversations.status(body.channelId) };
     return { success: true, session };
   });
 
   app.post("/api/admin/multichar/stop", { preHandler: requireAdmin }, async (request) => {
     const body = z.object({ channelId: z.number().int().positive() }).parse(request.body);
+    await conversations.control(body.channelId, "stop");
     await manager.stopSession(body.channelId);
     return { success: true };
   });
 
   app.post("/api/admin/multichar/stop-all", { preHandler: requireAdmin }, async () => {
+    await conversations.stopAll();
     manager.stopAll();
     return { success: true };
   });

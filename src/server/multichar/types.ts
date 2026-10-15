@@ -7,7 +7,7 @@ export interface MulticharDeps {
   prisma: PrismaClient;
   io: SocketIOServer;
   log: (level: "info" | "warn" | "error", msg: string, data?: unknown) => void;
-  loadAiSettings: () => Promise<{ value: { baseUrl: string; model: string; enabled: boolean }; encryptedApiKey: string }>;
+  loadAiSettings: () => Promise<{ value: { baseUrl: string; model: string; enabled: boolean; provider?: import("../../shared/aiProviders.js").AiProvider; providers?: import("../../shared/aiProviders.js").AiProviderSettings[] }; encryptedApiKey: string; providerKeys?: Partial<Record<import("../../shared/aiProviders.js").AiProvider, string>> }>;
   decryptAiApiKey: (value: string) => string;
   createMessageFromActor: (input: {
     channelId: number;

@@ -131,7 +131,11 @@ test("版本更新分隔提示在点击、后续消息和刷新后保留", async
 
 test("管理员登录并进入默认频道", async ({ page }) => {
   await loginAsAdmin(page);
+  const expandChannels = page.getByRole("button", { name: "展开频道", exact: true });
+  if (await expandChannels.isVisible()) await expandChannels.click();
   await expect(page.getByRole("button", { name: "退出", exact: true })).toBeVisible();
+  const collapseChannels = page.getByRole("button", { name: "收起频道", exact: true });
+  if (await collapseChannels.isVisible()) await collapseChannels.click();
 
   await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
   const chatTools = page.getByRole("menu", { name: "聊天管理功能" });

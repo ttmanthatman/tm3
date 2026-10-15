@@ -1078,6 +1078,8 @@ export interface AsrSettingsDTO {
 }
 
 export interface AiSettingsDTO {
+  provider?: import("./aiProviders.js").AiProvider;
+  providers?: import("./aiProviders.js").AiProviderSettings[];
   enabled: boolean;
   apiKeyConfigured: boolean;
   baseUrl: string;

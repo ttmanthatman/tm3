@@ -1,3 +1,6 @@
+import { channelAiConversationEnabled } from "./multichar/mode.js";
+import { registerAiConversationRoutes } from "./routes/aiConversation.js";
+import { aiThinkingParameters, aiProviderHeaders } from "../shared/aiProviders.js";
 import { saveGraceCard } from "./services/gracePersistence.js";
 import { graceMediaFiles } from "../shared/grace.js";
 import fs from "node:fs";
@@ -628,10 +631,7 @@ async function generateDirectChatNameSuggestions(memberNames: string[]) {
   try {
     const response = await fetch(`${aiSettings.value.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: aiProviderHeaders(aiSettings.value.provider, apiKey),
       body: JSON.stringify({
         model: aiSettings.value.model,
         messages: [
@@ -644,7 +644,7 @@ async function generateDirectChatNameSuggestions(memberNames: string[]) {
             content: `请根据这些成员昵称起名：${JSON.stringify(memberNames)}`
           }
         ],
-        thinking: { type: "disabled" },
+        ...aiThinkingParameters(aiSettings.value.provider, false, aiSettings.value.model),
         temperature: 1.1,
         max_tokens: 300,
         stream: false
@@ -1143,7 +1143,7 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
 }
 
 async function loadWhyAssistantSettings() {
-  const aiSettings = await aiSettingsStore.loadAiSettings();
+  const aiSettings = await aiSettingsStore.loadAiSettingsForRole(WHY_ASSISTANT_USERNAME);
   const rows = await prisma.setting.findMany({
     where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName", "whyAssistantModel", "whyAssistantThinkingEnabled"] } }
   });
@@ -1168,10 +1168,7 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
   try {
     const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: aiProviderHeaders(settings.provider, apiKey),
       body: JSON.stringify({
         model: settings.model,
         messages: [
@@ -1184,7 +1181,7 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
             ].join("\n\n")
           }
         ],
-        thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" },
+        ...aiThinkingParameters(settings.provider, settings.thinkingEnabled, settings.model),
         stream: false
       }),
       signal: controller.signal
@@ -1251,7 +1248,7 @@ async function maybeTriggerWhyDirectAssistant(messageId: number) {
 }
 
 async function loadQuestionAssistantSettings() {
-  const aiSettings = await aiSettingsStore.loadAiSettings();
+  const aiSettings = await aiSettingsStore.loadAiSettingsForRole(QUESTION_ASSISTANT_USERNAME);
   const rows = await prisma.setting.findMany({
     where: {
       key: {
@@ -1393,10 +1390,7 @@ async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnable
   try {
     const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: aiProviderHeaders(settings.provider, apiKey),
       body: JSON.stringify({
         model: settings.model,
         messages: [
@@ -1409,7 +1403,7 @@ async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnable
             ].join("\n\n")
           }
         ],
-        thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" },
+        ...aiThinkingParameters(settings.provider, settings.thinkingEnabled, settings.model),
         stream: false
       }),
       signal: controller.signal
@@ -1478,17 +1472,14 @@ async function callQuestionAssistantActivationJudge(
   try {
     const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: aiProviderHeaders(settings.provider, apiKey),
       body: JSON.stringify({
         model: settings.model,
         messages: [
           { role: "system", content: settings.activationJudgePrompt || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT },
           { role: "user", content: contextText }
         ],
-        thinking: { type: "disabled" },
+        ...aiThinkingParameters(settings.provider, false, settings.model),
         stream: false
       }),
       signal: controller.signal
@@ -1779,6 +1770,7 @@ async function sendPrayerUpdatePush(messageId: number, origin: string) {
 }
 
 async function createEngineEvent(kind: "message_created" | "idle_tick" | "manual_test" | "active_topic_due", payload: unknown, channelId?: number, messageId?: number, characterId?: number) {
+  if (channelId && await channelAiConversationEnabled(prisma, channelId)) return;
   const event = await prisma.engineEvent.create({
     data: {
       kind,
@@ -2231,6 +2223,11 @@ async function createMessageFromActor(input: {
   skipEngineEvent?: boolean;
   skipQuestionAssistant?: boolean;
 }) {
+  const aiConversationMode = await channelAiConversationEnabled(prisma, input.channelId);
+  if (aiConversationMode && !(input.payload && typeof input.payload === "object" && "aiConversation" in input.payload && input.payload.aiConversation === true)) {
+    const actor = await prisma.actor.findUnique({ where: { id: input.actorId }, select: { kind: true } });
+    if (actor?.kind === "virtual") throw new Error("AI 强参与频道请通过频道内自主对话控制发言");
+  }
   const message = await prisma.message.create({
     data: {
       channelId: input.channelId,
@@ -2255,7 +2252,7 @@ async function createMessageFromActor(input: {
   if (!isolatedReception && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
-  if (!isolatedReception && !input.skipQuestionAssistant && (input.type || "text") === "text") {
+  if (!aiConversationMode && !isolatedReception && !input.skipQuestionAssistant && (input.type || "text") === "text") {
     void maybeTriggerWhyDirectAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "why direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
@@ -2758,10 +2755,7 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
       })),
       ...virtuals.map((v) => ({
         id: v.actor.id,
-        characterId:
-          AI_ROLE_USERNAMES.has(v.actor.username) && !(channel.directKey?.startsWith("virtual:") && channel.directKey.endsWith(`:${v.actor.username}`))
-            ? v.id
-            : undefined,
+        characterId: channel.directKey?.startsWith("virtual:") && channel.directKey.endsWith(`:${v.actor.username}`) ? undefined : v.id,
         kind: "virtual",
         username: v.actor.username,
         displayName: v.actor.displayName,
@@ -2775,7 +2769,7 @@ app.get("/api/channels/:id/members", { preHandler: requireAuth }, async (request
 app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, directKey: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, isDefault: true, directKey: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
@@ -2789,7 +2783,6 @@ app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, asyn
     prisma.virtualCharacter.findMany({ where: { enabled: true }, include: { actor: true }, orderBy: { id: "asc" } })
   ]);
   const virtuals = channel.kind === "reception" ? [] : virtualCharacters
-    .filter((character) => AI_ROLE_USERNAMES.has(character.actor.username))
     .filter((character) => !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config }))
     .map((character) => ({
       id: character.actor.id,
@@ -2805,7 +2798,7 @@ app.get("/api/channels/:id/member-candidates", { preHandler: requireAuth }, asyn
 app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (request, reply) => {
   const auth = (request as AuthedRequest).auth;
   const channelId = Number((request.params as { id: string }).id);
-  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, directKey: true } });
+  const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, kind: true, isPrivate: true, isDefault: true, directKey: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持成员管理" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
@@ -2819,6 +2812,10 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
     .parse(request.body);
   const requestedIds = [...new Set([...(body.accountIds || []), ...(body.accountId ? [body.accountId] : [])])];
   const requestedVirtualIds = [...new Set(body.virtualCharacterIds || [])];
+  if (requestedVirtualIds.length && !auth.isAdmin) {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: auth.accountId } } });
+    if (member?.role !== "owner") return reply.code(403).send({ success: false, message: "只有频道创建者可以邀请 AI 角色" });
+  }
   if (!requestedIds.length && !requestedVirtualIds.length) return reply.code(400).send({ success: false, message: "请选择要添加的人" });
   if (channel.kind === "reception" && requestedVirtualIds.length) {
     return reply.code(400).send({ success: false, message: "会客厅不能邀请 AI 角色" });
@@ -2831,7 +2828,7 @@ app.post("/api/channels/:id/members", { preHandler: requireAuth }, async (reques
       : Promise.resolve([])
   ]);
   if (accounts.length !== requestedIds.length) return reply.code(404).send({ success: false, message: "用户不存在" });
-  if (virtualCharacters.length !== requestedVirtualIds.length || virtualCharacters.some((character) => !AI_ROLE_USERNAMES.has(character.actor.username))) {
+  if (virtualCharacters.length !== requestedVirtualIds.length || virtualCharacters.some((character) => character.actor.status !== "active")) {
     return reply.code(404).send({ success: false, message: "AI 角色不存在" });
   }
   const existingAccountIds = new Set(existingMemberships.map((membership) => membership.accountId));
@@ -2886,8 +2883,12 @@ app.delete("/api/channels/:id/virtual-members/:characterId", { preHandler: requi
   if (!channel) return reply.code(404).send({ success: false, message: "频道不存在" });
   if (!channel.isPrivate || channel.kind === "aiLounge" || channel.kind === "music") return reply.code(400).send({ success: false, message: "此频道不支持角色管理" });
   if (!(await canManageChannel(auth.accountId, channelId))) return reply.code(403).send({ success: false, message: "无权管理此频道" });
+  if (!auth.isAdmin) {
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId: auth.accountId } } });
+    if (member?.role !== "owner") return reply.code(403).send({ success: false, message: "只有频道创建者可以移出 AI 角色" });
+  }
   const character = await prisma.virtualCharacter.findUnique({ where: { id: characterId }, include: { actor: true } });
-  if (!character || !AI_ROLE_USERNAMES.has(character.actor.username)) return reply.code(404).send({ success: false, message: "AI 角色不存在" });
+  if (!character) return reply.code(404).send({ success: false, message: "AI 角色不存在" });
   await prisma.virtualCharacter.update({
     where: { id: character.id },
     data: { config: virtualCharacterConfigForChannel(character.config, channelId, false) as Prisma.InputJsonObject }
@@ -4246,8 +4247,9 @@ const multicharDeps: MulticharDeps = {
   decryptAiApiKey: (value: string) => aiSettingsStore.decryptAiApiKey(value),
   createMessageFromActor: (input: any) => createMessageFromActor(input),
 };
+const aiConversations = registerAiConversationRoutes(app, { ...multicharDeps, requireAuth, canAccessChannel });
 const multicharManager = createMulticharManager(multicharDeps);
-registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin);
+registerMulticharRoutes(app, multicharDeps, multicharManager, requireAdmin, aiConversations);
 
 const musicResourceAiClient = createAiClient(multicharDeps);
 registerMusicResourceRoutes(app, {

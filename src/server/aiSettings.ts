@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { AI_PROVIDERS, aiThinkingParameters, aiProviderHeaders, type AiProvider } from "../shared/aiProviders.js";
 import type { PrismaClient } from "@prisma/client";
 import type { AiSettingsDTO, AsrSettingsDTO } from "../shared/types.js";
 
@@ -134,7 +135,7 @@ export function cleanAsrLanguage(input: unknown): AsrSettingsDTO["language"] {
 
 export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: string }) {
   const { prisma, secret } = deps;
-  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; encryptedAsrApiKey: string; encryptedParaformerApiKey: string; loadedAt: number } | null = null;
+  let aiSettingsCache: { value: AiSettingsDTO; encryptedApiKey: string; encryptedAsrApiKey: string; encryptedParaformerApiKey: string; providerKeys: Partial<Record<AiProvider, string>>; loadedAt: number } | null = null;
 
   function aiEncryptionKey() {
     return crypto.createHash("sha256").update(secret).digest();
@@ -168,6 +169,8 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
         key: {
           in: [
             "aiDeepSeekApiKeyEncrypted",
+            "aiLlmProvider",
+            ...Object.keys(AI_PROVIDERS).flatMap((id) => [`aiLlm.${id}.key`, `aiLlm.${id}.baseUrl`, `aiLlm.${id}.model`]),
             "aiRelatedVersesEnabled",
             "aiRelatedVersesPromptCommand",
             "aiRelatedVersesCardCooldownSeconds",
@@ -187,11 +190,22 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
       }
     });
     const settings = new Map(rows.map((row) => [row.key, row.value]));
-    const encryptedApiKey = settings.get("aiDeepSeekApiKeyEncrypted") || "";
+    const provider = (settings.get("aiLlmProvider") || "deepseek") as AiProvider;
+    const selected = Object.hasOwn(AI_PROVIDERS, provider) ? provider : "deepseek";
+    const providerKeys = Object.fromEntries(Object.keys(AI_PROVIDERS).map((id) => [id, settings.get(`aiLlm.${id}.key`) || (id === "deepseek" ? settings.get("aiDeepSeekApiKeyEncrypted") || "" : "")])) as Record<AiProvider, string>;
+    const providers = (Object.keys(AI_PROVIDERS) as AiProvider[]).map((id) => ({
+      provider: id, baseUrl: settings.get(`aiLlm.${id}.baseUrl`) || AI_PROVIDERS[id].baseUrl,
+      model: settings.get(`aiLlm.${id}.model`) || AI_PROVIDERS[id].model,
+      apiKeyConfigured: !!decryptAiApiKey(providerKeys[id])
+    }));
+    const encryptedApiKey = providerKeys[selected];
     const encryptedAsrApiKey = settings.get("aiAsrApiKeyEncrypted") || "";
     const encryptedParaformerApiKey = settings.get("aiParaformerApiKeyEncrypted") || "";
     const value: AiSettingsDTO = {
       ...DEFAULT_AI_SETTINGS,
+      provider: selected, providers,
+      baseUrl: providers.find((item) => item.provider === selected)!.baseUrl,
+      model: providers.find((item) => item.provider === selected)!.model,
       enabled: settings.get("aiRelatedVersesEnabled") !== "false",
       apiKeyConfigured: !!decryptAiApiKey(encryptedApiKey),
       promptCommand: (settings.get("aiRelatedVersesPromptCommand") || DEFAULT_AI_PROMPT_COMMAND).trim() || DEFAULT_AI_PROMPT_COMMAND,
@@ -213,15 +227,25 @@ export function createAiSettingsStore(deps: { prisma: PrismaClient; secret: stri
         }
       }
     };
-    aiSettingsCache = { value, encryptedApiKey, encryptedAsrApiKey, encryptedParaformerApiKey, loadedAt: Date.now() };
+    aiSettingsCache = { value, encryptedApiKey, encryptedAsrApiKey, encryptedParaformerApiKey, providerKeys, loadedAt: Date.now() };
     return aiSettingsCache;
+  }
+
+  async function loadAiSettingsForRole(username: string) {
+    const loaded = await loadAiSettings();
+    const character = await prisma.virtualCharacter.findFirst({ where: { actor: { username } } });
+    const config = character?.config as { generation?: { provider?: AiProvider } } | null;
+    const provider = config?.generation?.provider;
+    const connection = loaded.value.providers?.find((item) => item.provider === provider);
+    if (!connection || !provider) return loaded;
+    return { ...loaded, value: { ...loaded.value, provider, baseUrl: connection.baseUrl, model: connection.model, apiKeyConfigured: connection.apiKeyConfigured }, encryptedApiKey: loaded.providerKeys[provider] || "" };
   }
 
   function resetAiSettingsCache() {
     aiSettingsCache = null;
   }
 
-  return { loadAiSettings, resetAiSettingsCache, encryptAiApiKey, decryptAiApiKey };
+  return { loadAiSettings, loadAiSettingsForRole, resetAiSettingsCache, encryptAiApiKey, decryptAiApiKey };
 }
 
 export async function callDeepSeekBibleReferences(settings: AiSettingsDTO, apiKey: string, systemPrompt: string, contextText: string, limit: number) {
@@ -230,17 +254,14 @@ export async function callDeepSeekBibleReferences(settings: AiSettingsDTO, apiKe
   try {
     const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
+      headers: aiProviderHeaders(settings.provider, apiKey),
       body: JSON.stringify({
         model: settings.model,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: contextText }
         ],
-        thinking: { type: "disabled" },
+        ...aiThinkingParameters(settings.provider, false, settings.model),
         stream: false
       }),
       signal: controller.signal

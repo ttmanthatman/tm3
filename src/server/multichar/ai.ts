@@ -1,3 +1,4 @@
+import { aiThinkingParameters, aiProviderHeaders, type AiProvider } from "../../shared/aiProviders.js";
 import type { MulticharDeps } from "./types.js";
 
 /** OpenAI 兼容 /chat/completions 响应中我们用到的字段；其余字段忽略。 */
@@ -7,31 +8,33 @@ interface ChatCompletionPayload {
   choices?: { message?: { content?: unknown } }[];
 }
 
-export function createAiClient(deps: MulticharDeps) {
+export function createAiClient(deps: Pick<MulticharDeps, "loadAiSettings" | "decryptAiApiKey">) {
   async function callLlm(
     messages: { role: "system" | "user" | "assistant"; content: string }[],
-    options?: { model?: string; temperature?: number; maxTokens?: number; timeoutMs?: number; thinkingEnabled?: boolean }
+    options?: { signal?: AbortSignal; provider?: AiProvider; model?: string; temperature?: number; maxTokens?: number; timeoutMs?: number; thinkingEnabled?: boolean }
   ): Promise<string> {
     const aiSettings = await deps.loadAiSettings();
-    const apiKey = deps.decryptAiApiKey(aiSettings.encryptedApiKey);
-    if (!aiSettings.value.enabled || !apiKey) {
+    const provider = options?.provider || aiSettings.value.provider || "deepseek";
+    const connection = aiSettings.value.providers?.find((item) => item.provider === provider);
+    const apiKey = deps.decryptAiApiKey(aiSettings.providerKeys?.[provider] ?? aiSettings.encryptedApiKey);
+    if (!apiKey) {
       throw new Error("AI 未启用或未配置 API Key");
     }
-    const model = options?.model || aiSettings.value.model;
-    const baseUrl = aiSettings.value.baseUrl.replace(/\/+$/, "");
+    const model = options?.model || connection?.model || aiSettings.value.model;
+    const baseUrl = (connection?.baseUrl || aiSettings.value.baseUrl).replace(/\/+$/, "");
     const controller = new AbortController();
+    const abort = () => controller.abort();
+    options?.signal?.addEventListener("abort", abort, { once: true });
+    if (options?.signal?.aborted) controller.abort();
     const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? 60_000);
     try {
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
+        headers: aiProviderHeaders(provider, apiKey),
         body: JSON.stringify({
           model,
           messages,
-          thinking: { type: options?.thinkingEnabled ? "enabled" : "disabled" },
+          ...aiThinkingParameters(provider, options?.thinkingEnabled, model),
           stream: false,
           temperature: options?.temperature ?? 0.8,
           max_tokens: options?.maxTokens ?? 1024,
@@ -40,14 +43,14 @@ export function createAiClient(deps: MulticharDeps) {
       });
       const payload = (await response.json().catch(() => ({}))) as ChatCompletionPayload;
       if (!response.ok) {
-        const msg = payload?.error?.message || payload?.message || `AI HTTP ${response.status}`;
-        throw new Error(String(msg));
+        throw new Error(`AI 请求失败（HTTP ${response.status}）`);
       }
       const content = String(payload?.choices?.[0]?.message?.content || "").trim();
       if (!content) throw new Error("AI 返回空内容");
       return content;
     } finally {
       clearTimeout(timeout);
+      options?.signal?.removeEventListener("abort", abort);
     }
   }
 

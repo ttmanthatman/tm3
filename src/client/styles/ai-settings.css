@@ -505,3 +505,30 @@ button {
   display: none;
 }
 
+
+.ai-role-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.ai-role-choice { display: flex; align-items: center; gap: 10px; text-align: left; border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+.ai-role-choice.active { border-color: #0f766e; background: #eaf7f5; }
+.ai-role-choice > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 4px; overflow-wrap: anywhere; }
+.ai-role-choice small { color: var(--muted); }
+.ai-role-editor { display: grid; gap: 16px; border-top: 1px solid var(--line); padding-top: 12px; }
+.ai-role-sections { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-role-sections button { padding: 8px 12px; border-radius: 6px; background: #f1f5f9; }
+.ai-role-sections button.active { background: #0f766e; color: white; }
+.ai-detail-fields { display: grid; gap: 12px; padding: 12px 0; min-width: 0; }
+.ai-detail-fields label { display: grid; gap: 6px; min-width: 0; }
+.ai-detail-fields .check-row { display: flex; }
+.ai-detail-fields input:not([type=checkbox]), .ai-detail-fields textarea, .ai-detail-fields select { width: 100%; min-width: 0; }
+.ai-provider-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+.ai-provider-card summary { cursor: pointer; font-weight: 700; overflow-wrap: anywhere; }
+.ai-provider-card summary small { font-weight: 400; color: var(--muted); margin-left: 8px; }
+@media (max-width: 700px) {
+  .ai-settings-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); padding: 0 10px calc(var(--safe-bottom) + 10px); gap: 10px; }
+  .ai-settings-workspace .ai-settings-tabs { display: flex; overflow-x: auto; width: 100%; }
+  .ai-settings-workspace .ai-settings-tabs button { flex: 1 0 80px; display: flex; min-height: 44px; padding: 8px; justify-content: center; font-size: 12px; }
+  .ai-settings-workspace .ai-settings-tabs button small, .ai-settings-workspace .ai-settings-tabs button svg { display: none; }
+  .ai-settings-overview { padding: 10px; gap: 6px; }
+  .ai-settings-overview > div { padding: 8px; }
+  .ai-settings-overview strong { font-size: 16px; }
+  .ai-settings-card { padding: 12px; min-width: 0; }
+}

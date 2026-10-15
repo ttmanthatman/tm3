@@ -1,3 +1,4 @@
+import { AI_PROVIDERS, type AiProvider } from "@shared/aiProviders";
 import { ref, type Ref } from "vue";
 import type { AiRoleDTO, AiSettingsDTO } from "@shared/types";
 import { api, authHeaders } from "../../api";
@@ -15,6 +16,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   const store = useChatStore();
   const isAiSettingsRoute = ref(window.location.pathname === "/ai-settings");
   const newVirtual = ref({
+    provider: "" as AiProvider | "",
     username: "",
     displayName: "",
     model: "",
@@ -34,6 +36,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   const mcMsg = ref("");
   const aiSettings = ref<AiSettingsDTO | null>(null);
   const aiSettingsEdit = ref({
+    provider: "deepseek" as AiProvider,
+    providers: (Object.keys(AI_PROVIDERS) as AiProvider[]).map((id) => ({ provider: id, baseUrl: String(AI_PROVIDERS[id].baseUrl), model: String(AI_PROVIDERS[id].model), apiKey: "", clearApiKey: false, apiKeyConfigured: false })),
     enabled: true,
     apiKey: "",
     clearApiKey: false,
@@ -73,6 +77,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   function syncAiSettingsEdit(settings: AiSettingsDTO) {
     aiSettings.value = settings;
     aiSettingsEdit.value = {
+      provider: settings.provider || "deepseek",
+      providers: (settings.providers || (Object.keys(AI_PROVIDERS) as AiProvider[]).map((id) => ({ provider: id, ...AI_PROVIDERS[id], apiKeyConfigured: id === "deepseek" && settings.apiKeyConfigured }))).map((item) => ({ ...item, baseUrl: String(item.baseUrl), model: String(item.model), apiKey: "", clearApiKey: false })),
       enabled: settings.enabled,
       apiKey: "",
       clearApiKey: false,
@@ -261,9 +267,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   }
 
   function virtualChannelNames(character: any) {
-    const ids = new Set(virtualChannelIds(character));
-    const names = store.channels.filter((channel) => ids.has(channel.id)).map((channel) => channel.name);
-    return names.length ? names.join("、") : "未指定频道";
+    void character;
+    return "综合频道；私聊由创建者邀请";
   }
 
   function toggleNewVirtualChannel(channelId: number) {
@@ -486,8 +491,10 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     aiSettingsBusy.value = true;
     aiSettingsMsg.value = "";
     try {
-      if (virtuals.value.length) await saveAllVirtualCharacters();
+      if (aiSettingsTab.value === "virtuals" && virtuals.value.length) await saveAllVirtualCharacters();
       const payload = {
+        provider: aiSettingsEdit.value.provider,
+        providers: aiSettingsEdit.value.providers.map((item) => ({ ...item, apiKey: item.apiKey.trim() || undefined })),
         enabled: aiSettingsEdit.value.enabled,
         apiKey: aiSettingsEdit.value.apiKey.trim() || undefined,
         clearApiKey: aiSettingsEdit.value.clearApiKey,
@@ -528,7 +535,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
           language: aiSettingsEdit.value.asr.language
         }
       };
-      syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(payload) }));
+      syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings", { method: "POST", body: JSON.stringify(aiSettingsTab.value === "llm" ? { provider: payload.provider, providers: payload.providers } : aiSettingsTab.value === "asr" ? { asr: payload.asr } : aiSettingsTab.value === "verses" ? { enabled: payload.enabled, promptCommand: payload.promptCommand, cardCooldownSeconds: payload.cardCooldownSeconds, userLimitPerMinute: payload.userLimitPerMinute, maxSuccessPerMessage: payload.maxSuccessPerMessage } : { aiRoles: payload.aiRoles }) }));
       invalidateAsrCapability();
       if (virtuals.value.length) await loadVirtualCharacters();
       aiSettingsMsg.value = "AI 设置已保存";
@@ -599,29 +606,19 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   }
 
   async function addVirtual() {
+    const draftConfig = buildVirtualConfig(newVirtual.value.displayName.trim(), newVirtual.value.persona.trim(), [], undefined, "", newVirtual.value.model.trim(), newVirtual.value.thinkingEnabled, { shortTerm: newVirtual.value.shortTermMemory, midTerm: newVirtual.value.midTermMemory, longTerm: newVirtual.value.longTermMemory });
+    draftConfig.generation = { ...draftConfig.generation, provider: newVirtual.value.provider };
     await api("/api/virtual-characters", {
       method: "POST",
       body: JSON.stringify({
         username: newVirtual.value.username.trim(),
         displayName: newVirtual.value.displayName.trim(),
         enabled: newVirtual.value.enabled,
-        config: buildVirtualConfig(
-          newVirtual.value.displayName.trim(),
-          newVirtual.value.persona.trim(),
-          newVirtual.value.channelIds,
-          undefined,
-          "",
-          newVirtual.value.model.trim(),
-          newVirtual.value.thinkingEnabled,
-          {
-            shortTerm: newVirtual.value.shortTermMemory,
-            midTerm: newVirtual.value.midTermMemory,
-            longTerm: newVirtual.value.longTermMemory
-          }
-        )
+        config: draftConfig
       })
     });
     newVirtual.value = {
+      provider: "" as AiProvider | "",
       username: "",
       displayName: "",
       model: "",

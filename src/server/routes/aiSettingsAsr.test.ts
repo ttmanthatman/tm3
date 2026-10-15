@@ -186,3 +186,32 @@ test("invalid providers and credential destinations are rejected before saving s
     }
   } finally { await app.close(); }
 });
+
+test("LLM providers store independent encrypted credentials and keep legacy DeepSeek", async () => {
+  const { app, settings } = createHarness();
+  try {
+    const response = await app.inject({method:"POST",url:"/api/admin/ai-settings",payload:{
+      apiKey:"legacy-test", provider:"bailian", providers:[{provider:"bailian",model:"qwen-plus",baseUrl:"https://dashscope.aliyuncs.com/compatible-mode/v1",apiKey:"bailian-test"}]
+    }});
+    assert.equal(response.statusCode,200);
+    const body = response.json();
+    assert.equal(body.provider,"bailian"); assert.equal(body.apiKeyConfigured,true);
+    assert.equal(body.model,"qwen-plus"); assert.equal(body.providers.length,4);
+    assert.ok(settings.get("aiLlm.bailian.key")?.startsWith("v1:"));
+    assert.ok(settings.get("aiDeepSeekApiKeyEncrypted")?.startsWith("v1:"));
+    assert.equal(JSON.stringify(body).includes("bailian-test"),false);
+    const cleared = await app.inject({method:"POST",url:"/api/admin/ai-settings",payload:{providers:[{provider:"bailian",model:"qwen-plus",baseUrl:"https://dashscope.aliyuncs.com/compatible-mode/v1",clearApiKey:true}]}});
+    assert.equal(cleared.json().apiKeyConfigured,false);
+    assert.equal(cleared.json().providers.find((item:{provider:string})=>item.provider==="deepseek").apiKeyConfigured,true);
+  } finally {await app.close();}
+});
+
+test("LLM provider destinations reject internal hosts, credentials and query strings", async () => {
+  const { app, settings } = createHarness();
+  try {
+    for(const baseUrl of ["http://127.0.0.1:3003", "https://example.com/v1", "https://user:pass@api.deepseek.com", "https://api.deepseek.com?key=secret"]) {
+      const response=await app.inject({method:"POST",url:"/api/admin/ai-settings",payload:{providers:[{provider:"bailian",model:"test",baseUrl,apiKey:"fake"}]}});
+      assert.equal(response.statusCode,400); assert.equal(settings.size,0);
+    }
+  } finally {await app.close();}
+});

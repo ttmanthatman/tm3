@@ -1,3 +1,4 @@
+import { virtualCharacterVisibleInChannel } from "../channelMembership.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -66,7 +67,8 @@ export function registerEngineRoutes(app: FastifyInstance, deps: EngineRouteDepe
     if (actionType === "typing_start" || actionType === "typing_stop") {
       const channelId = Number(data.channelId);
       const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
-      if (!channelId || !character) throw new Error("invalid typing action");
+      const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+      if (!channel || !character?.enabled || character.actor.status !== "active" || !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config })) throw new Error("invalid typing action");
       io.to(`ch:${channelId}`).emit("message:typing", {
         channelId,
         actor: { id: character.actor.id, username: character.actor.username, displayName: character.actor.displayName, kind: "virtual" },
@@ -77,7 +79,8 @@ export function registerEngineRoutes(app: FastifyInstance, deps: EngineRouteDepe
     if (actionType === "send_message") {
       const channelId = Number(data.channelId);
       const character = await prisma.virtualCharacter.findUnique({ where: { id: Number(data.characterId) }, include: { actor: true } });
-      if (!channelId || !character?.enabled) throw new Error("invalid send action");
+      const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+      if (!channel || !character?.enabled || character.actor.status !== "active" || !virtualCharacterVisibleInChannel(channel, { username: character.actor.username, config: character.config })) throw new Error("invalid send action");
       const messages = Array.isArray(data.messages) ? data.messages : [{ content: data.content }];
       const created: MessageDTO[] = [];
       for (const msg of messages.slice(0, 6)) {
@@ -125,7 +128,7 @@ export function registerEngineRoutes(app: FastifyInstance, deps: EngineRouteDepe
       const character = await prisma.virtualCharacter.create({
         data: {
           enabled: body.enabled,
-          config: (body.config as object) || defaultVirtualCharacterConfig(body.displayName),
+          config: { ...((body.config as object) || defaultVirtualCharacterConfig(body.displayName)), channels: [], invitedChannels: [] },
           engineBinding: (body.engineBinding as object) || {},
           actor: { create: { kind: "virtual", username: body.username, displayName: body.displayName } }
         },
@@ -146,7 +149,10 @@ export function registerEngineRoutes(app: FastifyInstance, deps: EngineRouteDepe
       where: { id },
       data: {
         enabled: body.enabled,
-        config: body.config as object | undefined,
+        config: body.config === undefined ? undefined : {
+          ...(body.config && typeof body.config === "object" && !Array.isArray(body.config) ? body.config : {}),
+          channels: [], invitedChannels: (current.config as { invitedChannels?: number[] } | null)?.invitedChannels || []
+        },
         engineBinding: body.engineBinding as object | undefined,
         actor: body.displayName ? { update: { displayName: body.displayName } } : undefined
       },

@@ -201,6 +201,9 @@ import { useAiSettings } from "./features/admin/useAiSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
 import RelatedVersesPanel from "./features/prayer/RelatedVersesPanel.vue";
+import AiVirtualSettingsPanel from "./features/admin/AiVirtualSettingsPanel.vue";
+import AiLlmSettingsPanel from "./features/admin/AiLlmSettingsPanel.vue";
+import AiConversationPanel from "./features/channels/AiConversationPanel.vue";
 import AiAsrSettingsPanel from "./features/admin/AiAsrSettingsPanel.vue";
 import GraceComposer from "./features/grace/GraceComposer.vue";
 import GraceUpdateEditor from "./features/grace/GraceUpdateEditor.vue";
@@ -737,9 +740,14 @@ const {
   clearAppearancePickerImage,
   syncLoginAppearanceEdit
 } = adminTools;
+const aiTools = useAiSettings({
+  showAdmin,
+  isLogRoute,
+  adminMsg,
+  saveReadPosition
+});
 const {
   isAiSettingsRoute,
-  newVirtual,
   virtuals,
   aiSettings,
   aiSettingsEdit,
@@ -750,29 +758,7 @@ const {
   loadAiSettings,
   loadMcStatus,
   saveAiSettings,
-  saveVirtualCharacter,
-  addVirtual,
-  uploadVirtualAvatar,
-  toggleNewVirtualChannel,
-  toggleVirtualChannel,
-  virtualEnabled,
-  virtualModel,
-  virtualThinkingEnabled,
-  virtualPersona,
-  virtualManualMemory,
-  virtualChannelIds,
-  setVirtualDisplayName,
-  setVirtualEnabled,
-  setVirtualManualMemory,
-  setVirtualModel,
-  setVirtualPersona,
-  setVirtualThinkingEnabled
-} = useAiSettings({
-  showAdmin,
-  isLogRoute,
-  adminMsg,
-  saveReadPosition
-});
+} = aiTools;
 const notificationMsg = ref("");
 const notificationPublicKey = ref("");
 const notificationPermission = ref(typeof Notification === "undefined" ? "default" : Notification.permission);
@@ -5080,120 +5066,8 @@ const messageRowBindings = {
         </nav>
 
         <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
-          <template v-if="aiSettingsTab === 'llm'">
-            <section class="ai-settings-subsection ai-settings-card">
-              <div class="ai-section-title">
-                <strong>DeepSeek 接入</strong>
-                <small>密钥状态与默认接入参数</small>
-              </div>
-              <label>DeepSeek API Key</label>
-              <input v-model="aiSettingsEdit.apiKey" type="password" autocomplete="off" :placeholder="aiSettings?.apiKeyConfigured ? '已设置，留空不改' : '请输入 DeepSeek API Key'" />
-              <label v-if="aiSettings?.apiKeyConfigured" class="check-row"><input v-model="aiSettingsEdit.clearApiKey" type="checkbox" /> 清除已保存的 API Key</label>
-              <div class="ai-defaults">
-                <span>Base URL：{{ aiSettings?.baseUrl || 'https://api.deepseek.com' }}</span>
-                <span>Model：{{ aiSettings?.model || 'deepseek-v4-flash' }}</span>
-              </div>
-            </section>
-          </template>
-
-          <template v-else-if="aiSettingsTab === 'virtuals'">
-            <section class="ai-settings-subsection ai-settings-card virtual-create-section">
-              <div class="ai-section-title">
-                <strong>新增虚拟角色</strong>
-                <small>角色身份、模型和初始记忆</small>
-              </div>
-              <div class="virtual-create-grid">
-                <label>ID<input v-model="newVirtual.username" placeholder="ai_luna" autocomplete="off" /></label>
-                <label>昵称<input v-model="newVirtual.displayName" placeholder="小月" autocomplete="off" /></label>
-                <label>模型<input v-model="newVirtual.model" :placeholder="aiSettings?.model || '跟随系统默认模型'" autocomplete="off" /></label>
-                <label class="check-row"><input v-model="newVirtual.thinkingEnabled" type="checkbox" /> 开启思考</label>
-                <label>人设<textarea v-model="newVirtual.persona" rows="3" placeholder="这个角色是谁、语气、边界和应该怎样参与聊天"></textarea></label>
-                <label>短期记忆<textarea v-model="newVirtual.shortTermMemory" rows="3" placeholder="当前状态、最近要记住的事"></textarea></label>
-                <label>中期记忆<textarea v-model="newVirtual.midTermMemory" rows="3" placeholder="一段时间内稳定的背景"></textarea></label>
-                <label>长期记忆<textarea v-model="newVirtual.longTermMemory" rows="3" placeholder="长期身份、关系和重要判断"></textarea></label>
-                <div class="virtual-create-channels">
-                  <span>所在频道</span>
-                  <div class="channel-chip-grid">
-                    <button
-                      v-for="channel in store.channels"
-                      :key="channel.id"
-                      class="channel-chip"
-                      :class="{ active: newVirtual.channelIds.includes(channel.id) }"
-                      type="button"
-                      @click="toggleNewVirtualChannel(channel.id)"
-                    >
-                      {{ channel.name }}
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div class="ai-settings-inline-actions">
-                <label class="check-row"><input v-model="newVirtual.enabled" type="checkbox" /> 创建后启用</label>
-                <button class="primary-btn" type="button" :disabled="!newVirtual.username.trim() || !newVirtual.displayName.trim()" @click="addVirtual"><Bot :size="16" />创建角色</button>
-              </div>
-            </section>
-
-            <section class="ai-settings-subsection ai-role-settings ai-settings-card">
-              <div class="ai-section-title">
-                <strong>虚拟角色矩阵</strong>
-                <small>角色档案、频道范围和启用状态</small>
-              </div>
-              <div class="virtual-role-table-wrap">
-                <table class="virtual-role-table">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>头像</th>
-                      <th>昵称</th>
-                      <th>所接入模型</th>
-                      <th>思考</th>
-                      <th>人设</th>
-                      <th>短期记忆</th>
-                      <th>中期记忆</th>
-                      <th>长期记忆</th>
-                      <th>所在频道</th>
-                      <th>启用</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="character in virtuals" :key="character.id">
-                      <td class="virtual-id-cell">@{{ character.actor.username }}</td>
-                      <td>
-                        <label class="avatar virtual-table-avatar" :class="{ online: virtualEnabled(character) }">
-                          <AvatarImage :path="character.actor?.avatarPath"><span>{{ avatarText(character.actor?.displayName || character.actor?.username) }}</span></AvatarImage>
-                          <input type="file" accept="image/*" @change="uploadVirtualAvatar(character, $event)" />
-                        </label>
-                      </td>
-                      <td><input class="virtual-nickname-input" :value="character.actor.displayName" @input="setVirtualDisplayName(character, ($event.target as HTMLInputElement).value)" /></td>
-                      <td><input class="virtual-model-input" :value="virtualModel(character)" :placeholder="aiSettings?.model || '跟随默认'" @input="setVirtualModel(character, ($event.target as HTMLInputElement).value)" /></td>
-                      <td><input :checked="virtualThinkingEnabled(character)" type="checkbox" @change="setVirtualThinkingEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
-                      <td><textarea class="virtual-text-cell" :value="virtualPersona(character)" rows="4" @input="setVirtualPersona(character, ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).shortTerm" rows="4" @input="setVirtualManualMemory(character, 'shortTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).midTerm" rows="4" @input="setVirtualManualMemory(character, 'midTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                      <td><textarea class="virtual-text-cell" :value="virtualManualMemory(character).longTerm" rows="4" @input="setVirtualManualMemory(character, 'longTerm', ($event.target as HTMLTextAreaElement).value)"></textarea></td>
-                      <td>
-                        <div class="channel-chip-grid virtual-channel-grid">
-                          <button
-                            v-for="channel in store.channels"
-                            :key="channel.id"
-                            class="channel-chip"
-                            :class="{ active: virtualChannelIds(character).includes(channel.id) }"
-                            type="button"
-                            @click="toggleVirtualChannel(character, channel.id)"
-                          >
-                            {{ channel.name }}
-                          </button>
-                        </div>
-                      </td>
-                      <td><input :checked="virtualEnabled(character)" type="checkbox" @change="setVirtualEnabled(character, ($event.target as HTMLInputElement).checked)" /></td>
-                      <td><button class="mini-btn icon-btn" type="button" @click="saveVirtualCharacter(character)"><Save :size="15" /></button></td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </template>
+          <AiLlmSettingsPanel v-if="aiSettingsTab === 'llm'" :edit="aiSettingsEdit" />
+          <AiVirtualSettingsPanel v-else-if="aiSettingsTab === 'virtuals'" :tools="aiTools" />
 
           <template v-else-if="aiSettingsTab === 'asr'">
             <AiAsrSettingsPanel :edit="aiSettingsEdit.asr" :configured="aiSettings?.asr" />
@@ -5539,6 +5413,8 @@ const messageRowBindings = {
         v-model:music-player-expanded="musicPlayerExpanded"
         v-bind="chatHeaderBindings"
       />
+
+      <AiConversationPanel v-if="!showingFavoriteSurface && currentChannel && (currentChannel.kind === 'standard' || currentChannel.kind === 'direct')" :key="currentChannel.id" :channel-id="currentChannel.id" />
 
       <Transition name="music-lyrics-panel">
         <MusicLyricsHeader

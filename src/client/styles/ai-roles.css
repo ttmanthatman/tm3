@@ -391,47 +391,6 @@
 }
 
 @media (max-width: 560px) {
-  .ai-settings-full-page {
-    overflow-y: auto;
-  }
-
-  .ai-settings-workspace {
-    min-height: var(--app-height);
-    height: auto;
-    overflow: visible;
-  }
-
-  .ai-settings-workspace .ai-settings-head {
-    min-height: calc(var(--safe-top) + 92px);
-    align-items: end;
-    flex-wrap: wrap;
-  }
-
-  .ai-settings-overview {
-    grid-template-columns: 1fr;
-  }
-
-  .ai-settings-shell {
-    grid-template-columns: 1fr;
-    overflow: visible;
-  }
-
-  .ai-settings-workspace .ai-settings-tabs {
-    grid-template-columns: 1fr;
-  }
-
-  .ai-settings-workspace .ai-settings-form {
-    overflow: visible;
-  }
-
-  .ai-settings-workspace .ai-defaults {
-    grid-template-columns: 1fr;
-  }
-
-  .ai-settings-savebar {
-    position: static;
-  }
-
   .virtual-create-grid {
     grid-template-columns: 1fr;
   }

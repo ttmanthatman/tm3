@@ -1,3 +1,4 @@
+import { AI_PROVIDERS, type AiProvider } from "../../shared/aiProviders.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -205,6 +206,24 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
   app.post("/api/admin/ai-settings", { preHandler: requireAdmin }, async (request) => {
     const body = z
       .object({
+        provider: z.enum(["deepseek", "bailian", "mimo", "volcengine"]).optional(),
+        providers: z.array(z.object({
+          provider: z.enum(["deepseek", "bailian", "mimo", "volcengine"]),
+          model: z.string().trim().min(1).max(120),
+          baseUrl: z.string().refine((value) => {
+            try {
+              const url = new URL(value);
+              return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash &&
+                (Object.values(AI_PROVIDERS).some((item) => new URL(item.baseUrl).host === url.host) ||
+                 /^[a-zA-Z0-9-]+\.(cn-beijing|ap-southeast-1|us-east-1|ap-northeast-1)\.maas\.aliyuncs\.com$/.test(url.host));
+            } catch { return false; }
+          }, "请使用服务商官方 HTTPS 地址"),
+          apiKey: z.string().max(400).optional(), clearApiKey: z.boolean().optional()
+        }).refine((connection) => {
+          let host: string;
+          try { host = new URL(connection.baseUrl).host; } catch { return false; }
+          return host === new URL(AI_PROVIDERS[connection.provider].baseUrl).host || (connection.provider === "bailian" && /^[a-zA-Z0-9-]+\.(cn-beijing|ap-southeast-1|us-east-1|ap-northeast-1)\.maas\.aliyuncs\.com$/.test(host));
+        }, "服务地址必须属于所选平台")).max(4).refine((items) => new Set(items.map((item) => item.provider)).size === items.length, "平台不能重复").optional(),
         enabled: z.boolean().optional(),
         apiKey: z.string().max(400).optional(),
         clearApiKey: z.boolean().optional(),
@@ -258,9 +277,20 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
           .optional()
       })
       .parse(request.body);
+    if (body.provider) await setSetting("aiLlmProvider", body.provider);
+    for (const connection of body.providers || []) {
+      const id: AiProvider = connection.provider;
+      await setSetting(`aiLlm.${id}.baseUrl`, connection.baseUrl.replace(/\/+$/, ""));
+      await setSetting(`aiLlm.${id}.model`, connection.model);
+      if (connection.clearApiKey) {
+        await setSetting(`aiLlm.${id}.key`, "");
+        if (id === "deepseek") await setSetting("aiDeepSeekApiKeyEncrypted", "");
+      }
+      if (connection.apiKey?.trim()) await setSetting(`aiLlm.${id}.key`, aiSettings.encryptAiApiKey(connection.apiKey.trim()));
+    }
     if (Object.prototype.hasOwnProperty.call(body, "enabled")) await setSetting("aiRelatedVersesEnabled", body.enabled ? "true" : "false");
-    if (body.clearApiKey) await setSetting("aiDeepSeekApiKeyEncrypted", "");
-    if (body.apiKey?.trim()) await setSetting("aiDeepSeekApiKeyEncrypted", aiSettings.encryptAiApiKey(body.apiKey.trim()));
+    if (body.clearApiKey) { await setSetting("aiDeepSeekApiKeyEncrypted", ""); await setSetting("aiLlm.deepseek.key", ""); }
+    if (body.apiKey?.trim()) { const encrypted = aiSettings.encryptAiApiKey(body.apiKey.trim()); await setSetting("aiDeepSeekApiKeyEncrypted", encrypted); await setSetting("aiLlm.deepseek.key", encrypted); }
     if (Object.prototype.hasOwnProperty.call(body, "promptCommand")) await setSetting("aiRelatedVersesPromptCommand", (body.promptCommand || "").trim() || DEFAULT_AI_PROMPT_COMMAND);
     if (Object.prototype.hasOwnProperty.call(body, "cardCooldownSeconds")) await setSetting("aiRelatedVersesCardCooldownSeconds", String(clampInteger(body.cardCooldownSeconds, DEFAULT_AI_SETTINGS.cardCooldownSeconds, 0, 3600)));
     if (Object.prototype.hasOwnProperty.call(body, "userLimitPerMinute")) await setSetting("aiRelatedVersesUserLimitPerMinute", String(clampInteger(body.userLimitPerMinute, DEFAULT_AI_SETTINGS.userLimitPerMinute, 1, 60)));
