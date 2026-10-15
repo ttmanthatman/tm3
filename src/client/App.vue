@@ -870,6 +870,7 @@ const {
   openBibleWorkspace,
   closeBibleWorkspace,
   openBibleFavoritePassage,
+  openBiblePassage,
   openFavoriteMessage,
   openBibleSessionFromMessage,
   handleBibleReadingChange,
@@ -5000,7 +5001,8 @@ const messageRowBindings = {
   onStopMentionedMusic: stopMentionedMusic,
   onToggleMusicMentionBackground: toggleMusicMentionBackground,
   onToggleBibleReference: toggleBibleReference,
-  onOpenBibleReference: openBibleReferenceInWorkspace
+  onOpenBibleReference: openBibleReferenceInWorkspace,
+  openBiblePassage
 };
 </script>
 

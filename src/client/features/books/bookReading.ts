@@ -34,9 +34,9 @@ function html(value: string) {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;").replace(/\n/g, "<br>");
 }
 
-export function bookShareContent(context: BookReadingContext, origin: string): string {
+export function bookShareContent(context: BookReadingContext, origin: string, comment = ""): string {
   const heading = context.quote ? `摘录自《${context.title}》` : `邀请你一起读《${context.title}》`;
-  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl(context, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>`;
+  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl(context, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>${comment.trim() ? `<p>${html(comment.trim())}</p>` : ""}`;
 }
 
 export function wrapBookCardText(text: string, measure: (value: string) => number, width: number): string[] {

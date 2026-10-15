@@ -10,6 +10,7 @@ import { useChatStore } from "../../store";
 import { useMessageSender } from "../../messageSending";
 import { bookNotesClient } from "./bookNotesClient";
 import { bookExcerptImage, bookShareContent, type BookReadingContext } from "./bookReading";
+import { escapeHtmlText } from "../messages/messageRendering";
 import BookNoteEditor from "./BookNoteEditor.vue";
 import BookNoteContent from "./BookNoteContent.vue";
 import NotesTransfer from "../notes/NotesTransfer.vue";
@@ -24,9 +25,10 @@ const { send, pending: shareBusy } = useMessageSender({ getSocket: () => store.s
 const shareContext = ref<BookReadingContext | null>(null);
 const shareChannelId = ref<number | null>(null);
 const shareError = ref("");
+const shareComment = ref("");
 const notice = ref("");
 let shareRequestId = "";
-watch(shareChannelId, () => { shareRequestId = crypto.randomUUID(); });
+watch([shareChannelId, shareComment], () => { shareRequestId = crypto.randomUUID(); });
 const editor = ref<InstanceType<typeof BookNoteEditor> | null>(null);
 const noteBusy = ref(false);
 const noteEditorOpen = ref(false);
@@ -44,6 +46,7 @@ const selectionTooLong = computed(() => (props.selection?.quote.length || 0) > B
 
 function share(context: BookReadingContext, note?: BookNoteDTO) {
   if (!available.value) return;
+  shareComment.value = "";
   sharedNote.value = note ?? null;
   shareContext.value = { ...context };
   shareChannelId.value = channels.value.find((channel) => channel.id === props.activeChannelId)?.id ?? channels.value[0]?.id ?? null;
@@ -53,7 +56,7 @@ async function sendShare() {
   const context = shareContext.value, channelId = shareChannelId.value;
   if (!context || !channelId || shareBusy.value) return;
   if (!channels.value.some((channel) => channel.id === channelId)) { shareError.value = "当前聊天室不可发送，请重新选择"; return; }
-  const result = await send({ channelId, type: "text", content: sharedNote.value ? `阅读笔记 · 《${context.title}》` : bookShareContent(context, window.location.origin), ...(sharedNote.value ? { payload: { kind: "book_note", note: sharedNote.value } satisfies BookNoteSharePayload } : {}), replyToId: null, clientRequestId: shareRequestId });
+  const result = await send({ channelId, type: "text", content: sharedNote.value ? escapeHtmlText(shareComment.value.trim() || `阅读笔记 · 《${context.title}》`) : bookShareContent(context, window.location.origin, shareComment.value), ...(sharedNote.value ? { payload: { kind: "book_note", note: sharedNote.value } satisfies BookNoteSharePayload } : {}), replyToId: null, clientRequestId: shareRequestId });
   if (!result.ok) { shareError.value = result.message; return; }
   if (sharedNote.value) notice.value = "笔记已分享到聊天室";
   shareContext.value = null; sharedNote.value = null;
@@ -135,7 +138,7 @@ defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edi
       </footer>
     </article>
   </AppModal>
-  <AppModal :open="!!shareContext" :title="sharedNote ? '分享笔记到聊天室' : shareContext?.quote ? '分享阅读摘录' : '邀请大家一起读'" :busy="shareBusy" content-class="book-action-dialog" @close="shareContext = null">
+  <AppModal :open="!!shareContext" :title="sharedNote ? '分享笔记到聊天室' : shareContext?.quote ? '分享阅读摘录' : '邀请大家一起读'" :busy="shareBusy" content-class="book-action-dialog book-share-dialog" @close="shareContext = null">
     <template v-if="shareContext">
       <p><strong>《{{ shareContext.title }}》</strong></p>
       <small>{{ shareContext.chapter }} · {{ Math.round(shareContext.fraction * 100) }}%</small>
@@ -143,6 +146,7 @@ defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edi
       <BookNoteContent v-if="sharedNote" :note="sharedNote" />
       <p v-if="sharedNote">将发送当前笔记的副本，包含文字和手写内容。</p>
       <p v-else>大家点击消息中的链接，就能打开这本书的阅读位置。</p>
+      <label>分享感言（选填）<textarea v-model="shareComment" aria-label="分享感言（选填）" rows="3" maxlength="500" :disabled="shareBusy" placeholder="说说你为什么想分享…"></textarea><small>感言将单独显示在卡片上方 · {{ shareComment.length }}/500</small></label>
       <label>发送到聊天室<select v-model="shareChannelId" :disabled="shareBusy"><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label>
       <p v-if="!channels.length">没有可以发送的聊天室</p>
       <p v-if="shareError" role="alert">{{ shareError }}</p>

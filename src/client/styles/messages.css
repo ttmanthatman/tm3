@@ -456,12 +456,15 @@
   width: 100%;
 }
 
-.bubble-wrap:has(.bible-note-card) {
-  width: 322px;
+.bubble-wrap:has(.reading-share-card) {
+  width: max-content;
 }
 
-.bubble:has(.bible-note-card) {
-  padding-inline: 11px;
+.message-row .bubble:has(.reading-share-card),
+.message-row.mine .bubble:has(.reading-share-card) {
+  padding: 0;
+  background: transparent;
+  border: 0;
 }
 
 .message-bubble-cluster {

@@ -135,9 +135,14 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   }
 
   async function openBibleFavoritePassage(passage: BibleFavoritePassage) {
+    await openBiblePassage(passage.lookup);
+  }
+
+  async function openBiblePassage(lookup: BibleLookupDTO) {
     openBibleWorkspace();
     await nextTick();
-    await bibleWorkspace.value?.openLookupContext(passage.lookup);
+    if (!bibleWorkspace.value) throw new Error("圣经阅读器未能打开，请重试");
+    await bibleWorkspace.value.openLookupContext(lookup);
   }
 
   async function openFavoriteMessage(favorite: FavoriteMessageDTO) {
@@ -206,6 +211,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     openBibleWorkspace,
     closeBibleWorkspace,
     openBibleFavoritePassage,
+    openBiblePassage,
     openFavoriteMessage,
     openBibleSessionFromMessage,
     handleBibleReadingChange,

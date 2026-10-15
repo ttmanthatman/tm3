@@ -278,8 +278,8 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.locator(".book-topbar").getByRole("button", { name: "关闭" }).click();
       const link = page.locator(`.message-row a[href*="bookId=${book.id}&"]`).last();
       await expect(link).toBeVisible();
-      await expect(link.locator('img[alt="《移动阅读回归》封面"]')).toBeVisible();
-      await expect(link).toContainText("邀请人已读");
+      await expect(link.locator("..").locator('img[alt="《移动阅读回归》封面"]')).toBeVisible();
+      await expect(link.locator("..")).toContainText("邀请人已读");
       await link.click();
       await expect(page.locator(".book-invitation-notice")).toContainText("共读邀请");
       await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "下载《移动阅读回归》" }).click();
@@ -376,6 +376,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       const noteShare = page.getByRole("dialog", { name: "分享笔记到聊天室", exact: true });
       await expect(noteShare).toContainText(`摘录笔记 ${flow}`);
       await expect(noteShare.locator(".handwriting-message canvas")).toHaveCount(1);
+      await noteShare.getByLabel("分享感言（选填）").fill(`笔记之外的感言 ${flow}`);
       await noteShare.getByRole("button", { name: "发送到聊天室", exact: true }).click();
       await expect(noteShare).toHaveCount(0);
       await expect(page.getByRole("status").filter({ hasText: "笔记已分享到聊天室" })).toBeVisible();
@@ -384,6 +385,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await toolbar.getByRole("button", { name: "聊天室", exact: true }).click();
       const share = page.getByRole("dialog", { name: "分享阅读摘录" });
       await expect(share).toContainText(notes[0].quote);
+      await share.getByLabel("分享感言（选填）").fill(`摘录之外的感言 ${flow}`);
       await share.getByRole("button", { name: "发送到聊天室", exact: true }).click();
       await expect(share).toHaveCount(0);
       await expect(page.getByRole("status").filter({ hasText: "已发送到" })).toHaveCount(0);
@@ -448,7 +450,10 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.locator(".book-top").getByRole("button", { name: "聊天室", exact: true }).click();
       const noteCard = page.locator(".book-note-share-card").filter({ hasText: `摘录笔记 ${flow}` });
       await expect(noteCard).toBeVisible();
-      await noteCard.click();
+      await expect(noteCard.locator("..").locator(".reading-share-comment")).toHaveText(`笔记之外的感言 ${flow}`);
+      await expect(noteCard.locator(".reading-share-note")).not.toContainText("笔记之外的感言");
+      await expect(page.locator(".book-share-message").filter({ hasText: `摘录之外的感言 ${flow}` }).locator("blockquote")).toContainText(notes[0].quote);
+      await noteCard.getByRole("button", { name: `查看阅读笔记：${book.title}` }).click();
       const sharedViewer = page.getByRole("dialog", { name: "阅读笔记", exact: true });
       await expect(sharedViewer).toContainText(`摘录笔记 ${flow}`);
       await expect(sharedViewer.locator(".handwriting-message canvas")).toHaveCount(1);

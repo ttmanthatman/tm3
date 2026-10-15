@@ -20,6 +20,8 @@ import {
 import { storyAnnouncementLetters } from "./storyAnnouncement";
 import BookNoteShareCard from "../books/BookNoteShareCard.vue";
 import { bookNoteSharePayload } from "@shared/bookNotes";
+import BiblePassageShareCard from "../bible/BiblePassageShareCard.vue";
+import { parseBiblePassageShare, readingNoteComment } from "../reading-shares/readingShareMessage";
 import BookShareCard from "../books/BookShareCard.vue";
 import { parseBookShareMessage } from "../books/bookShareMessage";
 
@@ -30,6 +32,7 @@ import { parseBookShareMessage } from "../books/bookShareMessage";
 // props/emits.
 const props = defineProps<{
   message: MessageDTO;
+  openBiblePassage: (lookup: BibleLookupDTO) => Promise<void>;
   variant: "timeline" | "favorite";
   fileUrl: (message: MessageDTO) => string;
   fileThumbUrl: (message: MessageDTO) => string;
@@ -67,6 +70,9 @@ const props = defineProps<{
 const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSharePayload(props.message.payload) : null);
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
 
+const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
+const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(props.message.content, bookNoteShare.value.note.bookTitle) : "");
+
 const emit = defineEmits<{
   "open-shared-playlist": [message: MessageDTO];
   "longpress-begin": [message: MessageDTO, event: PointerEvent];
@@ -99,8 +105,9 @@ const emit = defineEmits<{
       <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
       <ChevronRight :size="18" />
     </button>
-    <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :active="handwritingSurfaceActive ?? true" />
-    <BookShareCard v-else-if="bookShare" :context="bookShare" />
+    <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
+    <BookShareCard v-else-if="bookShare" :context="bookShare" :comment="bookShare.comment" />
+    <BiblePassageShareCard v-else-if="bibleShare" :passage="bibleShare" :open-passage="openBiblePassage" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -237,8 +244,9 @@ const emit = defineEmits<{
           :surface-active="handwritingSurfaceActive ?? true"
           :claim-auto-play="consumeHandwritingPlayback ? () => consumeHandwritingPlayback!(message) : undefined"
         />
-        <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :active="handwritingSurfaceActive ?? true" />
-    <BookShareCard v-else-if="bookShare" :context="bookShare" />
+        <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
+        <BookShareCard v-else-if="bookShare" :context="bookShare" :comment="bookShare.comment" />
+        <BiblePassageShareCard v-else-if="bibleShare" :passage="bibleShare" :open-passage="openBiblePassage" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>
