@@ -4,8 +4,10 @@
 .reading-share-card { position: relative; isolation: isolate; min-width: 0; width: max-content; max-width: 100%; color: #3d352c; font: inherit; text-align: left; line-height: 1.6; overflow-wrap: anywhere; }
 .reading-share-card::before { content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none; border: 0 solid transparent; border-image-source: url("./assets/bookmark.webp"); border-image-slice: 190 190 80 130 fill; border-image-width: 68px 68px 28px 46px; filter: drop-shadow(0 3px 4px #49331815); }
 .reading-share-card-content { padding: 25px 30px 22px 40px; min-width: 0; }
-.reading-share-book::before { border-image-source: url("./assets/sticky.webp"); border-image-slice: 350 170 35 80 fill; border-image-width: 105px 51px 11px 24px; transform: rotate(-1.2deg); }
-.reading-share-book .reading-share-card-content { padding: 28px 38px 26px 24px; }
+.reading-share-book::before { border-image-source: url("./assets/sticky-flowers.webp"); border-image-slice: 300 200 200 24 fill; border-image-width: 100px 67px 67px 8px; }
+.reading-share-book[data-plant="lavender"]::before { border-image-source: url("./assets/sticky-lavender.webp"); }
+.reading-share-book[data-plant="fern"]::before { border-image-source: url("./assets/sticky-fern.webp"); }
+.reading-share-book .reading-share-card-content { padding: 28px 38px 36px 24px; }
 .reading-share-label { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px; color: #9a4c28; font-size: 12px; font-weight: 650; }
 .reading-share-heading { display: block; margin: 0 0 5px; font-size: 17px; font-weight: 700; line-height: 1.45; }
 .reading-share-meta { display: block; color: #766650; font-size: 12px; line-height: 1.65; }
@@ -24,7 +26,7 @@
 .reading-share-book-layout > .reading-share-action { grid-column: 1 / -1; margin-top: 0; }
 @media (max-width: 480px) {
   .reading-share-card-content { padding: 24px 22px 20px 30px; }
-  .reading-share-book .reading-share-card-content { padding: 24px 28px 24px 18px; }
+  .reading-share-book .reading-share-card-content { padding: 24px 28px 36px 18px; }
   .reading-share-book-layout { grid-template-columns: 48px minmax(0, 1fr); gap: 10px; }
   .reading-share-heading { font-size: 16px; }
 }

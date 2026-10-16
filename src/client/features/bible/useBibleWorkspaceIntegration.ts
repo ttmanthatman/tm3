@@ -14,7 +14,7 @@ import { useBibleDisplayLayout } from "./useBibleDisplayLayout";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import { parseBibleSessionPayload } from "../../bibleSessionShare";
 import { useChatStore } from "../../store";
-import { escapeHtmlText } from "../messages/messageRendering";
+import { biblePassageShareContent } from "../reading-shares/readingShareMessage";
 
 export type BibleWorkspaceHandle = {
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
@@ -172,13 +172,12 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     options.publishBookReading();
   }
 
-  async function sendBiblePassage(lookup: BibleLookupDTO) {
+  async function sendBiblePassage(lookup: BibleLookupDTO, includeTranslation = false) {
     const channel = bibleTargetChannel.value;
     if (!channel) throw new Error("当前聊天室不可用");
     if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
     if (!store.socket?.connected) throw new Error("聊天室连接尚未恢复，请稍后重试");
-    const body = lookup.verses.map((verse) => verse.text).join("");
-    const content = `${escapeHtmlText(lookup.normalizedReference)}<br>“${escapeHtmlText(body)}”<br>——${escapeHtmlText(lookup.translation)}`;
+    const content = biblePassageShareContent(lookup, includeTranslation);
     await new Promise<void>((resolve, reject) => {
       store.socket?.emit(
         "message:send",

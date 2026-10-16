@@ -35,7 +35,6 @@ async function jump() {
       <span class="reading-share-label"><NotebookPen :size="14" />圣经笔记</span>
       <strong class="reading-share-heading">{{ reference }}</strong>
       <span class="reading-share-note reading-share-note-preview">{{ note?.text || error || '正在翻开笔记…' }}</span>
-      <small class="reading-share-meta">{{ note?.author || '经文笔记' }} · 点击查看笔记</small>
     </button>
     <button type="button" class="reading-share-action" :disabled="!note || jumpBusy" @click.stop="jump"><BookOpen :size="17" />{{ jumpBusy ? '正在打开…' : '跳转到经文' }}<ArrowRight :size="16" /></button>
     <p v-if="jumpError" class="reading-share-error" role="alert">{{ jumpError }}</p>

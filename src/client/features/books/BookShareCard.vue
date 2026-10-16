@@ -4,13 +4,13 @@ import { ArrowRight, BookOpen, Quote } from "lucide-vue-next";
 import { bookPositionLabel, bookReadingUrl, type BookReadingContext } from "./bookReading";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
 import BookShareCover from "./BookShareCover.vue";
-const props = defineProps<{ context: BookReadingContext; comment?: string }>();
+const props = defineProps<{ context: BookReadingContext; comment?: string; paperSeed?: string | number }>();
 const href = computed(() => bookReadingUrl(props.context, window.location.origin));
 </script>
 <template>
   <div class="reading-share-message book-share-message">
     <p v-if="comment" class="reading-share-comment">{{ comment }}</p>
-    <ReadingShareCard kind="book" class="book-share-card" :text="context.quote || context.title">
+    <ReadingShareCard kind="book" :paper-seed="paperSeed" class="book-share-card" :text="context.quote || context.title">
       <div class="reading-share-book-layout">
         <BookShareCover :book-id="context.bookId" :title="context.title" />
         <div class="reading-share-book-copy">

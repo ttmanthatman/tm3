@@ -234,8 +234,28 @@ test("split Bible sends a verse to the newly selected chat channel", async ({ pa
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
   await page.locator('[data-verse-key="PSA-66-1"]').click();
   await page.locator(".bible-pane-verse-action").getByRole("button", { name: "发送", exact: true }).click();
-  await expect(page.locator(".messages-scroll")).toContainText("诗篇 66:1");
+  const share = page.getByRole("dialog", { name: "分享经文", exact: true });
+  await expect(share.getByLabel("显示版本信息")).not.toBeChecked();
+  await share.getByRole("button", { name: "发送到聊天室", exact: true }).click();
+  const cards = page.locator(".messages-scroll .bible-passage-share-card");
+  await expect(cards).toHaveCount(1);
+  await expect(cards.first()).toContainText("诗篇 66:1");
+  await expect(cards.first().locator(".reading-share-meta")).toHaveCount(0);
   await expect(page.locator(".bible-toast")).toContainText(E2E_CHANNELS.secondary);
+  await page.locator(".bible-pane-verse-action").getByRole("button", { name: "发送", exact: true }).click();
+  await share.getByLabel("显示版本信息").check();
+  await expect(share.locator(".passage-share-preview small")).toContainText("和合本");
+  await share.getByRole("button", { name: "发送到聊天室", exact: true }).click();
+  await expect(cards).toHaveCount(2);
+  await expect(cards.last().locator(".reading-share-meta")).toContainText("和合本");
+  await page.locator(".bible-pane-verse-action").getByRole("button", { name: "发送", exact: true }).click();
+  await expect(share.getByLabel("显示版本信息")).not.toBeChecked();
+  await share.press("Escape");
+  await expect(share).toHaveCount(0);
+  await page.reload();
+  await expect(cards).toHaveCount(2);
+  await expect(cards.first().locator(".reading-share-meta")).toHaveCount(0);
+  await expect(cards.last().locator(".reading-share-meta")).toContainText("和合本");
 });
 
 test("fullscreen Bible suspends chat visuals, receives messages and preserves the history position", async ({ page }) => {

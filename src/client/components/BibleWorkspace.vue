@@ -42,6 +42,7 @@ import NoteManager from "../features/bible/notes/NoteManager.vue";
 import NoteLibrary from "../features/bible/notes/NoteLibrary.vue";
 import CopyworkManager from "../features/bible/copywork/CopyworkManager.vue";
 import CopyworkLibrary from "../features/bible/copywork/CopyworkLibrary.vue";
+import BiblePassageShareDialog from "../features/bible/BiblePassageShareDialog.vue";
 import BibleReaderPane from "./BibleReaderPane.vue";
 import { DEFAULT_BIBLE_TRANSLATION_ID } from "../bibleChapterCache";
 import {
@@ -68,7 +69,7 @@ const props = defineProps<{
   channelName: string;
   canSend: boolean;
   sendUnavailableReason: string;
-  sendPassage: (lookup: BibleLookupDTO) => Promise<void>;
+  sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
@@ -131,7 +132,7 @@ const defaultBibleFontSize = 20;
 const bibleFontSize = ref(defaultBibleFontSize);
 const showBibleFontMenu = ref(false);
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
-const sendBusyKey = ref("");
+const passageShareDialog = ref<InstanceType<typeof BiblePassageShareDialog> | null>(null);
 const showShareDialog = ref(false);
 const shareChannelId = ref<number | null>(null);
 const shareBusy = ref(false);
@@ -860,17 +861,8 @@ function openBibleFavoritePassage(passage: BibleFavoritePassage) {
   void openLookupContext(passage.lookup);
 }
 
-async function sendLookup(lookup: BibleLookupDTO, key: string) {
-  if (!props.canSend || sendBusyKey.value) return;
-  sendBusyKey.value = key;
-  try {
-    await props.sendPassage(lookup);
-    showToast(`已发送到：${props.channelName}`);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "发送失败，请重试");
-  } finally {
-    sendBusyKey.value = "";
-  }
+function sendLookup(lookup: BibleLookupDTO) {
+  if (props.canSend) passageShareDialog.value?.open([lookup]);
 }
 
 function openShareDialog() {
@@ -1089,7 +1081,7 @@ function showToast(message: string) {
           <article v-for="lookup in topicResult.results" :key="lookup.normalizedReference" class="bible-result-card" @click="openTopicResult(lookup)">
             <h3>{{ lookup.normalizedReference }}</h3>
             <p><template v-for="verse in lookup.verses" :key="verse.reference"><sup>{{ verse.verse }}</sup>{{ verse.text }}</template></p>
-            <footer><button type="button" @click.stop="copyLookup(lookup)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTopicResult(lookup)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(lookup, lookup.normalizedReference)"><Send :size="16" />发送</button></footer>
+            <footer><button type="button" @click.stop="copyLookup(lookup)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTopicResult(lookup)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(lookup)"><Send :size="16" />发送</button></footer>
           </article>
         </section>
 
@@ -1099,7 +1091,7 @@ function showToast(message: string) {
           <article v-for="item in textResult.items" :key="item.verse.reference" class="bible-result-card" @click="openTextResult(item)">
             <h3>{{ item.verse.reference }}</h3>
             <p><template v-for="(segment, index) in verseSegments(item.verse.text, item.matches)" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></p>
-            <footer><button type="button" @click.stop="copyTextItem(item)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTextResult(item)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend || !!sendBusyKey" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(singleVerseLookup(item.verse), item.verse.reference)"><Send :size="16" />发送</button></footer>
+            <footer><button type="button" @click.stop="copyTextItem(item)"><ClipboardCopy :size="16" />复制</button><button type="button" @click.stop="openTextResult(item)"><BookOpen :size="16" />阅读上下文</button><button type="button" :disabled="!canSend" :title="canSend ? '' : sendUnavailableReason" @click.stop="sendLookup(singleVerseLookup(item.verse))"><Send :size="16" />发送</button></footer>
           </article>
           <button v-if="textHasMore" type="button" class="bible-load-more" :disabled="textBusy" @click="searchText(true)">{{ textBusy ? "加载中…" : "加载更多" }}</button>
         </section>
@@ -1185,6 +1177,7 @@ function showToast(message: string) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-passage="sendPassage" @sent="showToast(`已发送到：${channelName}`)" />
     <NoteManager ref="noteManager" :key="accountId" :account-id="accountId" :active="open" />
     <CopyworkManager ref="copyworkManager" :account-id="accountId" @changed="copyworkRevision++" @chat="emit('close')" />
     <div v-if="showShareDialog" class="bible-share-backdrop" @click.self="showShareDialog = false" @keydown.esc="showShareDialog = false">

@@ -8,14 +8,14 @@ import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
 import BookShareCover from "./BookShareCover.vue";
 import BookNoteContent from "./BookNoteContent.vue";
 import { bookPositionLabel, bookReadingUrl } from "./bookReading";
-const props = withDefaults(defineProps<{ note: BookNoteDTO; active?: boolean; comment?: string }>(), { active: true });
+const props = withDefaults(defineProps<{ note: BookNoteDTO; active?: boolean; comment?: string; paperSeed?: string | number }>(), { active: true });
 const viewerOpen = ref(false);
 const href = computed(() => bookReadingUrl(props.note, window.location.origin));
 </script>
 <template>
   <div class="reading-share-message">
     <p v-if="comment" class="reading-share-comment">{{ comment }}</p>
-    <ReadingShareCard kind="book" class="book-note-share-card" :text="note.text + note.quote" @click="viewerOpen = true">
+    <ReadingShareCard kind="book" :paper-seed="paperSeed" class="book-note-share-card" :text="note.text + note.quote" @click="viewerOpen = true">
       <div class="reading-share-book-layout">
         <BookShareCover :book-id="note.bookId" :title="note.bookTitle" />
         <button class="reading-share-note-open" type="button" :aria-label="`查看阅读笔记：${note.bookTitle}`" @click.stop="viewerOpen = true">

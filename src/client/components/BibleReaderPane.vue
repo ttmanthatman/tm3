@@ -19,6 +19,7 @@ import {
   groupContinuousBibleVerses,
   selectBibleVerseKeys
 } from "../bibleVerseActions";
+import BiblePassageShareDialog from "../features/bible/BiblePassageShareDialog.vue";
 import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import { bibleParallelReferenceSegments } from "../bibleParallelReferences";
@@ -45,7 +46,7 @@ const props = defineProps<{
   channelName: string;
   canSend: boolean;
   sendUnavailableReason: string;
-  sendPassage: (lookup: BibleLookupDTO) => Promise<void>;
+  sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
@@ -81,7 +82,7 @@ const selectedVerseKeys = ref<Set<string>>(new Set(props.initialState.selectedVe
 const selectionAnchorKey = ref<string | null>(props.initialState.selectionAnchorKey || null);
 const selectedFavoriteColor = ref<string>(DEFAULT_BIBLE_FAVORITE_COLOR);
 const backStack = ref<BiblePaneLocationState[]>([...(props.initialState.backStack || [])]);
-const sendBusy = ref(false);
+const passageShareDialog = ref<InstanceType<typeof BiblePassageShareDialog> | null>(null);
 const insertionGate = createReaderInsertionGate();
 let readerNavigating = false;
 let readerGeneration = 0;
@@ -533,17 +534,8 @@ async function chooseFavoriteColor(color: string) {
   }
 }
 
-async function sendSelectedVerses() {
-  if (!props.canSend || sendBusy.value || !selectedPassageLookups.value.length) return;
-  sendBusy.value = true;
-  try {
-    for (const lookup of selectedPassageLookups.value) await props.sendPassage(lookup);
-    emit("toast", `已发送到：${props.channelName}`);
-  } catch (error) {
-    emit("toast", error instanceof Error ? error.message : "发送失败，请重试");
-  } finally {
-    sendBusy.value = false;
-  }
+function sendSelectedVerses() {
+  if (props.canSend) passageShareDialog.value?.open(selectedPassageLookups.value);
 }
 
 defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor });
@@ -655,10 +647,11 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
         <button type="button" @click="emit('copy-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><Brush :size="16" /><span>抄写</span></button>
         <button type="button" @click="writeClipboard(formatBibleVersesForCopy(selectedVerses, translationName))"><ClipboardCopy :size="16" /><span>复制</span></button>
         <button type="button" :disabled="favoritesBusy" @click="updateSelectedFavorites(allSelectedFavorited)"><BookmarkCheck v-if="allSelectedFavorited" :size="16" /><Bookmark v-else :size="16" /><span>{{ allSelectedFavorited ? "取消" : "收藏" }}</span></button>
-        <button type="button" :disabled="!canSend || sendBusy" :title="canSend ? '' : sendUnavailableReason" @click="sendSelectedVerses"><Send :size="16" /><span>发送</span></button>
+        <button type="button" :disabled="!canSend" :title="canSend ? '' : sendUnavailableReason" @click="sendSelectedVerses"><Send :size="16" /><span>发送</span></button>
         <button type="button" class="secondary" aria-label="清除选择" @click="clearVerseSelection()"><X :size="16" /></button>
       </div>
     </footer>
+    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-passage="sendPassage" @sent="emit('toast', `已发送到：${channelName}`)" />
   </article>
 </template>
 
