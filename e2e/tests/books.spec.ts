@@ -458,6 +458,18 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await expect(sharedViewer).toContainText(`摘录笔记 ${flow}`);
       await expect(sharedViewer.locator(".handwriting-message canvas")).toHaveCount(1);
       await sharedViewer.getByRole("button", { name: "关闭", exact: true }).click();
+      const noteLink = noteCard.getByRole("link", { name: "跳转到原书位置" });
+      expect(new URL((await noteLink.getAttribute("href"))!).searchParams.get("bookQuote")).toBe(notes[0].quote);
+      await noteLink.click();
+      const highlightedFrame = await readingFrame(page);
+      await expect(highlightedFrame.locator("[data-book-quote-highlight]")).toHaveCount(1);
+      await expect.poll(() => highlightedFrame.locator("#tap-target").evaluate(el => {
+        const rect = el.getBoundingClientRect();
+        const iframe = el.ownerDocument.defaultView!.frameElement!.getBoundingClientRect();
+        return iframe.top + rect.top;
+      })).toBeGreaterThanOrEqual(0);
+      if (flow === "scrolled" && await page.locator(".book-top").evaluate(el => el.classList.contains("bar-hidden"))) await highlightedFrame.locator("#tap-target").click();
+      await page.locator(".book-top").getByRole("button", { name: "聊天室", exact: true }).click();
       const currentLink = page.locator(`.message-row a[href*="bookId=${book.id}&"]`).last();
       await expect(currentLink).toBeVisible();
       const sharedUrl = new URL((await currentLink.getAttribute("href"))!);

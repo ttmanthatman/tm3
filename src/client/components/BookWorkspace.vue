@@ -39,6 +39,7 @@ import BookReadingActions from "../features/books/BookReadingActions.vue";
 import BookReaderPresence from "../features/books/BookReaderPresence.vue";
 import { useBookSelection } from "../features/books/useBookSelection";
 import { useBookNoteHighlights } from "../features/books/useBookNoteHighlights";
+import { useBookQuoteNavigation } from "../features/books/useBookQuoteNavigation";
 import { useChatStore } from "../store";
 import NotesTransfer from "../features/notes/NotesTransfer.vue";
 import type { BookLocation, BookReadingContext } from "../features/books/bookReading";
@@ -56,6 +57,17 @@ const noteHighlights = useBookNoteHighlights({
   openNote: (note) => actions.value?.openNote(note)
 });
 const noteHighlightsError = noteHighlights.error;
+const quoteNavigation = useBookQuoteNavigation({
+  sectionFractions: () => epubBook ? sectionFractions(epubBook.sections) : [0, 1],
+  navigateFraction: async (fraction) => {
+    if (continuousReader) await continuousReader.goToFraction(fraction);
+    else await view?.goToFraction(fraction);
+  },
+  navigateRange: async (doc, index, range) => {
+    if (continuousReader) continuousReader.goToRange(doc, range);
+    else await view?.renderer.goTo?.({ index, anchor: () => range });
+  }
+});
 function currentContext(book = activeBook.value, fraction = sliderValue.value): BookReadingContext | null {
   return book ? { bookId: book.id, title: book.title, chapter: chapterLabel.value.slice(0, 300), fraction, quote: "" } : null;
 }
@@ -68,10 +80,9 @@ function inviteBook(book: BookDTO, fraction = book.id === activeBook.value?.id ?
   if (context) { if (book.id !== activeBook.value?.id) context.chapter = ""; actions.value?.share(context); }
 }
 function showBookNotes() { const context = currentContext(); if (context) void actions.value?.showNotes(context); }
-function jumpToFraction(fraction: number) {
+function jumpToLocation(location: BookLocation) {
   clearSelection();
-  if (continuousReader) void continuousReader.goToFraction(fraction);
-  else void view?.goToFraction(fraction);
+  void quoteNavigation.jump(location);
 }
 async function openInvitation() {
   const target = invitation.value;
@@ -80,7 +91,7 @@ async function openInvitation() {
   if (!book) { invitationNotice.value = "这本书已不在书架中"; return; }
   if (bookDownloadState(book) !== "ready") { invitationNotice.value = `共读邀请：《${book.title}》。请先下载，再点开，自动到达分享位置。`; return; }
   invitationNotice.value = "";
-  if (activeBook.value?.id === book.id && readerOpen.value) { jumpToFraction(target.fraction); invitation.value = null; }
+  if (activeBook.value?.id === book.id && readerOpen.value) { jumpToLocation(target); invitation.value = null; }
   else await openBook(book);
 }
 watch(() => props.initialLocation, (value) => {
@@ -315,6 +326,7 @@ function emitClose() {
 }
 
 function closeBookView() {
+  quoteNavigation.reset();
   noteHighlights.reset();
   resetSelection();
   closeFootnote();
@@ -370,7 +382,9 @@ async function openBook(book: BookDTO) {
     });
 
     const starts = sectionFractions(bookObject.sections);
-    const restoreTarget = nudgeFromSectionBoundaries(starts, invitation.value?.bookId === book.id ? invitation.value.fraction : cachedProgress(book));
+    const sharedLocation = invitation.value?.bookId === book.id ? invitation.value : null;
+    const restoreTarget = sharedLocation?.quote ? sharedLocation.fraction
+      : nudgeFromSectionBoundaries(starts, sharedLocation ? sharedLocation.fraction : cachedProgress(book));
     const metadata = bookObject.metadata ?? {};
     activeBookTitle.value = formatLang(metadata.title) || book.title;
     renderTOC(bookObject.toc ?? [], bookObject);
@@ -422,6 +436,7 @@ async function openBook(book: BookDTO) {
         await element.renderer.next(); // 首页就绪后再开放阅读操作
       }
     }
+    if (sharedLocation) await quoteNavigation.highlight(sharedLocation);
     chromeVisible.value = style.value.flow === "paginated";
     settingsOpen.value = false;
     tocOpen.value = false;
@@ -476,6 +491,7 @@ function renderTOC(toc: RawTocItem[], book?: EpubBook) {
 }
 
 function jumpTo(href: string) {
+  quoteNavigation.clear();
   tocOpen.value = false;
   if (continuousReader) void continuousReader.goToHref(href);
   else void (view as unknown as { goTo(target: string): Promise<void> })?.goTo?.(href);
@@ -534,6 +550,7 @@ function onContinuousScrollDirection(direction: "down" | "up") {
 }
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
+  quoteNavigation.bind(doc, index);
   noteHighlights.bind(doc, index);
   bindSelection(doc);
   doc.addEventListener("click", (event) => {
@@ -837,6 +854,7 @@ function onViewLoad(event: Event) {
   const detail = (event as CustomEvent<{ doc?: Document; index?: number }>).detail;
   const doc = detail?.doc;
   if (!doc) return;
+  quoteNavigation.bind(doc, detail.index ?? 0);
   noteHighlights.bind(doc, detail.index ?? 0);
   bindSelection(doc);
   doc.addEventListener("click", (e) => onDocClick(doc, e));
@@ -845,6 +863,7 @@ function onViewLoad(event: Event) {
 }
 
 function onSliderInput(event: Event) {
+  quoteNavigation.clear();
   const value = Number((event.target as HTMLInputElement).value);
   if (continuousReader) void continuousReader.goToFraction(value);
   else void view?.goToFraction(value);
@@ -1056,7 +1075,7 @@ defineExpose({ reload: loadShelf });
       </div>
       <p v-if="noteHighlightsError" class="book-note-load-error" role="alert">{{ noteHighlightsError }} <button @click="noteHighlights.reload()">重试读取笔记</button></p>
     </div>
-    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToFraction" @notes-changed="noteHighlights.reload" />
+    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToLocation" @notes-changed="noteHighlights.reload" />
   </section>
 </template>
 

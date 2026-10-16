@@ -40,7 +40,7 @@ async function mountCards(page: Page) {
       const url = /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(card, "::before").borderImageSource)?.[1];
       if (!url) throw new Error("missing card paper image");
       const paper = new Image(); paper.src = url;
-      return paper.decode();
+      return paper.decode().catch(() => { throw new Error(`paper image failed: ${url}`); });
     }));
   });
   await expect(page.locator("#short .reading-share-meta")).toHaveCount(0);
@@ -48,7 +48,7 @@ async function mountCards(page: Page) {
   await expect(page.locator("#bible-note")).toContainText("祂与我们一同流泪。");
   await expect(page.locator("#bible-note")).not.toContainText("不应显示的作者");
   await expect(page.locator("#bible-note")).not.toContainText("点击查看笔记");
-  for (const [id, plant] of [["book", "flowers"], ["book-note", "lavender"], ["fern", "fern"]]) {
+  for (const [id, plant] of [["book", "daisy"], ["book-note", "lavender"], ["fern", "fern"], ["short", "olive"]]) {
     await expect(page.locator(`#${id} .reading-share-card`)).toHaveAttribute("data-plant", plant);
   }
 }
@@ -67,7 +67,10 @@ async function responsiveCards(page: Page) {
       expect(await card.evaluate(el => getComputedStyle(el, "::before").transform)).toBe("none");
       expect(await card.locator(".reading-share-card-content").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       expect(await card.locator("..").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
+      expect(await card.locator(".reading-share-plant").evaluate(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)).toBe(true);
     }
+    const cover = await page.locator("#book .book-share-cover").boundingBox();
+    expect(cover!.width).toBeGreaterThanOrEqual(width === 1280 ? 96 : 76);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await expect(page.locator("#long blockquote")).toHaveText("你们若有彼此相爱的心，众人因此就认出你们是我的门徒了。".repeat(35));
     await expect(page.locator("#book blockquote")).not.toContainText("这句话一直留在我心里");
@@ -81,6 +84,43 @@ async function responsiveCards(page: Page) {
     }
   }
 }
+
+test("all twelve plants in each sharing collection load and stay fixed after rerender", async ({ page }) => {
+  await mountCards(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.evaluate(async () => {
+    const path = "/src/client/features/reading-shares/ReadingShareCard.vue";
+    document.getElementById("host")?.remove();
+    document.documentElement.style.cssText = "height:auto;overflow:visible";
+    document.body.style.cssText = "margin:0;height:auto;overflow:visible;background:#e9eff4";
+    const source = await (await fetch(path)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)?.[1];
+    if (!vuePath) throw new Error("missing Vue runtime");
+    const { createApp, h, ref, nextTick } = await import(vuePath) as typeof import("vue");
+    const { default: Card } = await import(path);
+    const layoutPath = "/src/client/features/reading-shares/readingShareLayout.ts";
+    const { readingSharePlant } = await import(layoutPath) as typeof import("../../src/client/features/reading-shares/readingShareLayout");
+    const rows: { kind: "book" | "bible"; seed: number; plant: string }[] = [];
+    for (const kind of ["book", "bible"] as const) {
+      const seen = new Set<string>();
+      for (let seed = 0; seen.size < 12; seed++) {
+        const plant = readingSharePlant(seed, kind);
+        if (seen.has(plant)) continue;
+        seen.add(plant); rows.push({ kind, seed, plant });
+      }
+    }
+    const host = document.createElement("div"); host.id = "plant-gallery"; host.style.cssText = "display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;padding:24px"; document.body.append(host);
+    const rerender = ref(0);
+    createApp({ render: () => rows.map(row => h(Card, { kind: row.kind, paperSeed: row.seed, key: `${row.kind}-${row.plant}`, "data-render": rerender.value }, () => h("div", { style: "min-height:100px;padding-right:28px" }, row.plant))) }).mount(host);
+    const before = [...host.querySelectorAll<HTMLImageElement>(".reading-share-plant")].map(img => img.src);
+    await Promise.all([...host.querySelectorAll<HTMLImageElement>(".reading-share-plant")].map(img => img.decode()));
+    rerender.value++; await nextTick();
+    if (before.some((url, index) => url !== host.querySelectorAll<HTMLImageElement>(".reading-share-plant")[index]!.src)) throw new Error("plant changed on render");
+  });
+  await expect(page.locator("#plant-gallery .reading-share-book")).toHaveCount(12);
+  await expect(page.locator("#plant-gallery .reading-share-bible")).toHaveCount(12);
+  await page.locator("#plant-gallery").screenshot({ path: "output/e2e/share-plants-gallery.png" });
+});
 
 test("share cards adapt to passage length, keep sentiments separate and fit mobile columns", async ({ page }) => {
   await responsiveCards(page);

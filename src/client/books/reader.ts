@@ -1,6 +1,7 @@
 // 图书阅读器核心：流式加载、进度换算、主题注入。
 // 与 UI 分离，保证纯函数可单测。
 import { getToken } from "../api";
+import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
 
 export type ReaderThemeName = "light" | "sepia" | "dark";
 
@@ -230,6 +231,7 @@ type FoliateView = HTMLElement & {
     setAttribute(name: string, value: string): void;
     setStyles?(css: string): void;
     getContents(): { doc: Document }[];
+    goTo?(target: { index: number; anchor: (doc: Document) => Range | null }): Promise<void>;
     next(): void;
     prev(): void;
     start: number;
@@ -352,7 +354,11 @@ export class ContinuousBookReader {
   private readonly frames: Array<HTMLIFrameElement | null>;
   private readonly loading = new Map<number, Promise<void>>();
   private readonly loaded = new Set<number>();
+  private readonly acquiredSections = new Set<number>();
   private readonly resizeObservers = new Map<number, ResizeObserver>();
+  private readonly insertionGate = createReaderInsertionGate();
+  private readonly interactionController = new AbortController();
+  private readonly pendingResizes = new Set<number>();
   private style: ReaderStyle;
   private onDocumentLoad?: (doc: Document, index: number) => void;
   private onRelocate?: (location: ContinuousReaderLocation) => void;
@@ -371,6 +377,9 @@ export class ContinuousBookReader {
     this.element = document.createElement("div");
     this.element.className = "book-continuous-scroll";
     this.element.setAttribute("data-continuous-reader", "");
+    // This reader owns its anchor correction; native anchoring would apply it twice.
+    this.element.style.overflowAnchor = "none";
+    this.element.style.scrollBehavior = "auto";
     this.wrappers = book.sections.map((section, index) => {
       const wrapper = document.createElement("div");
       wrapper.className = "book-continuous-section";
@@ -381,6 +390,7 @@ export class ContinuousBookReader {
     });
     this.frames = book.sections.map(() => null);
     this.element.addEventListener("scroll", this.handleScroll, { passive: true });
+    this.bindTouchEvents(this.element);
   }
 
   async open(fraction: number): Promise<void> {
@@ -412,6 +422,18 @@ export class ContinuousBookReader {
     this.reportLocation();
   }
 
+  goToRange(doc: Document, range: Range): void {
+    const index = this.frames.findIndex((frame) => frame?.contentDocument === doc);
+    const wrapper = this.wrappers[index];
+    if (!wrapper || !this.loaded.has(index)) return;
+    this.element.scrollTo({
+      top: Math.max(0, wrapper.offsetTop + range.getBoundingClientRect().top - this.element.clientHeight / 3),
+      behavior: "instant"
+    });
+    this.lastScrollTop = this.element.scrollTop;
+    this.reportLocation();
+  }
+
   async goToHref(href: string): Promise<void> {
     const resolved = this.book.resolveHref?.(href);
     if (!resolved) return;
@@ -439,15 +461,20 @@ export class ContinuousBookReader {
   destroy(): void {
     this.destroyed = true;
     this.element.removeEventListener("scroll", this.handleScroll);
+    this.interactionController.abort();
+    this.insertionGate.cancel();
     if (this.scrollFrame) cancelAnimationFrame(this.scrollFrame);
     for (const observer of this.resizeObservers.values()) observer.disconnect();
-    for (const index of this.loaded) this.book.sections[index]?.unload?.();
+    for (const index of this.acquiredSections) this.book.sections[index]?.unload?.();
     this.resizeObservers.clear();
+    this.acquiredSections.clear();
+    this.pendingResizes.clear();
     this.loaded.clear();
     this.element.remove();
   }
 
   private readonly handleScroll = () => {
+    this.insertionGate.motion();
     if (this.scrollFrame) return;
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0;
@@ -513,10 +540,10 @@ export class ContinuousBookReader {
   private async loadSectionNow(index: number, preserveScroll: boolean): Promise<void> {
     const section = this.book.sections[index];
     const wrapper = this.wrappers[index];
-    const previousHeight = wrapper.offsetHeight;
-    const previousTop = this.element.scrollTop;
     const src = await section.load();
-    if (!src || this.destroyed) return;
+    if (!src) return;
+    if (this.destroyed) { section.unload?.(); return; }
+    this.acquiredSections.add(index);
     const frame = document.createElement("iframe");
     frame.className = "book-continuous-frame";
     frame.setAttribute("scrolling", "no");
@@ -525,6 +552,9 @@ export class ContinuousBookReader {
     // 'self', matching foliate-js' own paginator/fixed-layout iframe policy.
     frame.setAttribute("sandbox", "allow-same-origin allow-scripts");
     frame.title = `电子书第 ${index + 1} 节`;
+    // A loading iframe must not add its default 150px height, then its full
+    // chapter height, above a live native gesture. Measure it outside flow first.
+    frame.style.cssText = `position:fixed;visibility:hidden;pointer-events:none;width:${this.element.clientWidth}px;height:1px`;
     this.frames[index] = frame;
     wrapper.replaceChildren(frame);
     await new Promise<void>((resolve, reject) => {
@@ -535,19 +565,43 @@ export class ContinuousBookReader {
     if (this.destroyed) return;
     const doc = frame.contentDocument;
     if (!doc) throw new Error(`图书第 ${index + 1} 节不可访问`);
-    this.loaded.add(index);
     this.applyDocumentStyle(doc, index);
-    this.onDocumentLoad?.(doc, index);
     await doc.fonts?.ready?.catch(() => undefined);
+    if (this.destroyed) return;
     this.measureFrame(index);
+    if (preserveScroll || wrapper.offsetTop < this.element.scrollTop) {
+      const ready = await this.insertionGate.wait();
+      if (!ready || this.destroyed) return;
+    }
+    // Images can finish loading while the insertion is deferred.
+    frame.style.width = `${this.element.clientWidth}px`;
+    this.measureFrame(index);
+    // Capture at commit time, after asynchronous loading and native movement.
+    const anchor = this.wrappers[this.visibleSectionIndex()];
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    frame.style.removeProperty("position");
+    frame.style.removeProperty("visibility");
+    frame.style.removeProperty("pointer-events");
+    frame.style.removeProperty("width");
+    this.loaded.add(index);
+    if (anchor && anchor !== wrapper && anchorTop !== undefined) {
+      const delta = anchor.getBoundingClientRect().top - anchorTop;
+      this.element.scrollTo({ top: this.element.scrollTop + delta, behavior: "instant" });
+      this.lastScrollTop = this.element.scrollTop;
+    }
+    this.bindTouchEvents(doc);
+    this.onDocumentLoad?.(doc, index);
     const observer = new ResizeObserver(() => this.measureFrame(index));
     observer.observe(doc.documentElement);
     if (doc.body) observer.observe(doc.body);
     this.resizeObservers.set(index, observer);
-    if (preserveScroll && wrapper.offsetTop < previousTop) {
-      this.element.scrollTop = previousTop + wrapper.offsetHeight - previousHeight;
-      this.lastScrollTop = this.element.scrollTop;
-    }
+  }
+
+  private bindTouchEvents(target: HTMLElement | Document): void {
+    const options = { passive: true, signal: this.interactionController.signal };
+    target.addEventListener("touchstart", () => this.insertionGate.touchStart(), options);
+    target.addEventListener("touchend", () => this.insertionGate.touchEnd(), options);
+    target.addEventListener("touchcancel", () => this.insertionGate.touchEnd(), options);
   }
 
   private applyDocumentStyle(doc: Document, index: number): void {
@@ -569,12 +623,42 @@ export class ContinuousBookReader {
     requestAnimationFrame(() => this.measureFrame(index));
   }
 
-  private measureFrame(index: number): void {
+  private measureFrame(index: number, afterQuiet = false): void {
     const frame = this.frames[index];
     const doc = frame?.contentDocument;
-    if (!frame || !doc) return;
-    const height = Math.max(doc.documentElement.scrollHeight, doc.body?.scrollHeight ?? 0, 1);
-    frame.style.height = `${Math.ceil(height)}px`;
+    if (!frame || !doc || this.destroyed) return;
+    // scrollHeight cannot shrink below the iframe viewport, creating a resize
+    // feedback loop. The root's natural box measures the chapter independently.
+    const root = doc.documentElement;
+    const body = doc.body;
+    const paddingBottom = Number.parseFloat(doc.defaultView?.getComputedStyle(root).paddingBottom ?? "0") || 0;
+    const contents = doc.createRange();
+    if (body) contents.selectNodeContents(body);
+    // Include positioned illustrations without using a viewport-sized scrollHeight.
+    const overflowBottom = body ? contents.getBoundingClientRect().bottom + paddingBottom : 0;
+    const height = Math.ceil(Math.max(root.getBoundingClientRect().height, overflowBottom, 1));
+    if (frame.style.height === `${height}px`) return;
+    const wrapper = this.wrappers[index];
+    const aboveViewport = this.loaded.has(index) && wrapper.offsetTop + wrapper.offsetHeight <= this.element.scrollTop;
+    if (aboveViewport && !afterQuiet) {
+      if (!this.pendingResizes.has(index)) {
+        this.pendingResizes.add(index);
+        void this.insertionGate.wait().then((ready) => {
+          this.pendingResizes.delete(index);
+          if (ready) this.measureFrame(index, true);
+        });
+      }
+      return;
+    }
+    const anchor = aboveViewport ? this.wrappers[this.visibleSectionIndex()] : null;
+    const anchorTop = anchor?.getBoundingClientRect().top;
+    frame.style.height = `${height}px`;
+    if (anchor && anchorTop !== undefined) {
+      // Shrinking can clamp scrollTop before correction; use that current value.
+      const delta = anchor.getBoundingClientRect().top - anchorTop;
+      this.element.scrollTo({ top: this.element.scrollTop + delta, behavior: "instant" });
+      this.lastScrollTop = this.element.scrollTop;
+    }
   }
 }
 

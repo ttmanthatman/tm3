@@ -93,7 +93,7 @@ const emit = defineEmits<{
 
 <template>
   <template v-if="variant === 'favorite'">
-    <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+    <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
     <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
     <HandwritingMessage v-else-if="message.type === 'handwriting'" :message="message" variant="favorite" />
     <img v-else-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
@@ -107,7 +107,7 @@ const emit = defineEmits<{
     </button>
     <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
-    <BiblePassageShareCard v-else-if="bibleShare" :passage="bibleShare" :open-passage="openBiblePassage" />
+    <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -235,7 +235,7 @@ const emit = defineEmits<{
         >{{ musicMentionBackground(message) }}</div>
       </template>
       <template v-else>
-        <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+        <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
         <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
         <HandwritingMessage
           v-else-if="message.type === 'handwriting'"
@@ -246,7 +246,7 @@ const emit = defineEmits<{
         />
         <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
         <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
-        <BiblePassageShareCard v-else-if="bibleShare" :passage="bibleShare" :open-passage="openBiblePassage" />
+        <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>

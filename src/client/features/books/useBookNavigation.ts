@@ -11,6 +11,7 @@ export function useBookNavigation(accountId: () => number | undefined, open: () 
     navigate(next);
     const url = new URL(window.location.href);
     url.searchParams.delete("bookId"); url.searchParams.delete("bookFraction");
+    url.searchParams.delete("bookQuote");
     window.history.replaceState(window.history.state, "", url);
   }
   function click(event: MouseEvent) {

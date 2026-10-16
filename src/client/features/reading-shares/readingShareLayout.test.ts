@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readingSharePlant, readingShareWidth } from "./readingShareLayout";
+import { READING_SHARE_PLANTS, readingSharePlant, readingSharePlantImage, readingShareWidth } from "./readingShareLayout";
 
 test("shared passages expand from a compact measure to a bounded reading column", () => {
   const short = readingShareWidth("耶和华是我的牧者。");
@@ -14,8 +14,13 @@ test("shared passages expand from a compact measure to a bounded reading column"
 
 test("each message keeps its plant across renders while random send UUIDs spread across plants", () => {
   const seeds = ["c", "a", "b"];
-  assert.deepEqual(seeds.map(readingSharePlant), ["flowers", "lavender", "fern"]);
-  assert.deepEqual(["e86aa50d-efc3-4b1b-b99b-e5bd2db9c053", "5ba34ae8-79d0-4083-aa59-ab539549f315", 1234].map(readingSharePlant), ["lavender", "flowers", "lavender"]);
+  assert.deepEqual(seeds.map(seed => readingSharePlant(seed)), ["daisy", "lavender", "fern"]);
   assert.equal(readingSharePlant(1234), readingSharePlant("1234"));
-  assert.equal(readingSharePlant(), "flowers");
+  assert.equal(readingSharePlant(), "cosmos");
+  for (const kind of ["book", "bible"] as const) {
+    assert.equal(new Set(READING_SHARE_PLANTS[kind]).size, 12);
+    const plants = new Set(Array.from({ length: 120 }, (_, seed) => readingSharePlant(seed, kind)));
+    assert.deepEqual([...plants].sort(), [...READING_SHARE_PLANTS[kind]].sort());
+    assert.match(readingSharePlantImage(1234, kind), new RegExp(`${kind}-${readingSharePlant(1234, kind)}\\.webp$`));
+  }
 });

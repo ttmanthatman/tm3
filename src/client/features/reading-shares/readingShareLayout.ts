@@ -6,8 +6,18 @@ export function readingShareWidth(text: string): number {
 
 // A send's random request UUID keeps its plant consistent across recipients,
 // favorites and reloads. Older messages fall back to their immutable message ID.
-export function readingSharePlant(seed: string | number = ""): "flowers" | "lavender" | "fern" {
+export const READING_SHARE_PLANTS = {
+  book: ["cosmos", "lavender", "fern", "daisy", "poppy", "camellia", "ginkgo", "eucalyptus", "bellflower", "rosemary", "sunflower", "hydrangea"],
+  bible: ["olive", "vine", "fig", "pomegranate", "date-palm", "wheat", "barley", "mustard", "almond", "lily", "cedar", "hyssop"]
+} as const;
+
+export function readingSharePlant(seed: string | number = "", kind: "book" | "bible" = "book"): string {
   let hash = 0;
   for (const character of String(seed)) hash = (Math.imul(hash, 31) + character.charCodeAt(0)) >>> 0;
-  return (["flowers", "lavender", "fern"] as const)[hash % 3];
+  return READING_SHARE_PLANTS[kind][hash % READING_SHARE_PLANTS[kind].length]!;
+}
+
+export function readingSharePlantImage(seed: string | number, kind: "book" | "bible"): string {
+  const plant = readingSharePlant(seed, kind);
+  return new URL(`./assets/plants/${kind}-${plant}.webp`, import.meta.url).href;
 }

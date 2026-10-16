@@ -13,6 +13,11 @@ test("excerpt shares escape EPUB text and embed a reading link", () => {
   assert.ok(!value.includes("<script>")); assert.ok(!value.includes("<img"));
   assert.match(value, /&lt;img/); assert.match(value, /bookId=2&amp;bookFraction=0.25/); assert.match(value, /打开书中的位置：第一章 · 25%/);
 });
+test("reading links preserve the exact shared quote while legacy links stay valid", () => {
+  const location = { bookId: 12, fraction: .55, quote: "我亲爱的私酷鬼\n跨节点 & 原文" };
+  assert.deepEqual(parseBookReadingUrl(bookReadingUrl(location, origin), origin), location);
+  assert.equal(parseBookReadingUrl('/?bookId=12&bookFraction=.5&bookQuote=' + '文'.repeat(5001), origin), null);
+});
 test("positions label numeric chapters and share the inviter's reading progress", () => {
   assert.equal(bookPositionLabel("2", .15), "第2章 · 15%");
   assert.equal(bookPositionLabel("", 0), "0%");

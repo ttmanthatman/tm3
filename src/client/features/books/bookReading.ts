@@ -1,4 +1,6 @@
-export type BookLocation = { bookId: number; fraction: number };
+import { BOOK_QUOTE_MAX } from "@shared/bookNotes";
+
+export type BookLocation = { bookId: number; fraction: number; quote?: string };
 export type BookReadingContext = BookLocation & { title: string; chapter: string; quote: string };
 
 export function bookChapterLabel(chapter: string): string {
@@ -14,6 +16,7 @@ export function bookReadingUrl(location: BookLocation, origin: string): string {
   const url = new URL("/", origin);
   url.searchParams.set("bookId", String(location.bookId));
   url.searchParams.set("bookFraction", String(location.fraction));
+  if (location.quote?.trim()) url.searchParams.set("bookQuote", location.quote.trim().slice(0, BOOK_QUOTE_MAX));
   return url.href;
 }
 
@@ -25,8 +28,10 @@ export function parseBookReadingUrl(value: string, origin: string): BookLocation
     const rawFraction = url.searchParams.get("bookFraction");
     if (!id || !/^\d+$/.test(id) || !rawFraction?.trim()) return null;
     const bookId = Number(id), fraction = Number(rawFraction);
+    const quote = url.searchParams.get("bookQuote")?.trim();
+    if (quote && quote.length > BOOK_QUOTE_MAX) return null;
     return Number.isSafeInteger(bookId) && bookId > 0 && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1
-      ? { bookId, fraction } : null;
+      ? { bookId, fraction, ...(quote ? { quote } : {}) } : null;
   } catch { return null; }
 }
 
@@ -36,7 +41,9 @@ function html(value: string) {
 
 export function bookShareContent(context: BookReadingContext, origin: string, comment = ""): string {
   const heading = context.quote ? `摘录自《${context.title}》` : `邀请你一起读《${context.title}》`;
-  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl(context, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>${comment.trim() ? `<p>${html(comment.trim())}</p>` : ""}`;
+  // The quote already lives in the message; cards add it to their navigation URL.
+  // Avoid duplicating thousands of percent-encoded characters in stored messages.
+  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl({ bookId: context.bookId, fraction: context.fraction }, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>${comment.trim() ? `<p>${html(comment.trim())}</p>` : ""}`;
 }
 
 export function wrapBookCardText(text: string, measure: (value: string) => number, width: number): string[] {

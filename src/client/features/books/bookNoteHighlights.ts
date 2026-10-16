@@ -148,6 +148,26 @@ function documentText(doc: Document, view: HighlightWindow): { nodes: Text[]; te
   return { nodes, text: buildBookNoteText(parts) };
 }
 
+/** Resolve shared text without changing the EPUB's text nodes or page geometry. */
+export function findBookQuoteRange(doc: Document, quote: string, fraction: number): Range | null {
+  const view = doc.defaultView;
+  if (!view || !doc.body) return null;
+  const { nodes, text } = documentText(doc, view);
+  let closest: Range | null = null;
+  let distance = Infinity;
+  for (const match of findBookNoteQuotes(text.text, quote)) {
+    const start = text.starts[match.start]!;
+    const end = text.ends[match.end - 1]!;
+    const range = doc.createRange();
+    range.setStart(nodes[start.part]!, start.offset);
+    range.setEnd(nodes[end.part]!, end.offset);
+    const position = bookNoteRangeFraction(doc, range) ?? (match.start + match.end) / 2 / Math.max(1, text.text.length);
+    const nextDistance = Math.abs(position - fraction);
+    if (nextDistance < distance) { closest = range; distance = nextDistance; }
+  }
+  return closest;
+}
+
 /** Draw private note marks without wrapping/splitting EPUB text or changing page flow. */
 export function renderBookNoteHighlights(doc: Document, notes: readonly BookNoteDTO[], options: NoteHighlightOptions): BookNoteHighlights {
   activeHighlights.get(doc)?.destroy();

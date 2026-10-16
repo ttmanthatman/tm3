@@ -6,7 +6,7 @@ import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { BibleNoteDTO } from "@shared/bibleNotes";
 import { noteApi } from "./noteApi";
 import { openBibleNote } from "./noteViewerState";
-const props = defineProps<{ id: string; reference: string }>();
+const props = defineProps<{ id: string; reference: string; paperSeed?: string | number }>();
 const note = ref<BibleNoteDTO | null>(null);
 const error = ref("");
 const jumpError = ref("");
@@ -30,7 +30,7 @@ async function jump() {
 }
 </script>
 <template>
-  <ReadingShareCard kind="bible" class="bible-note-card" :text="note?.text" :data-note-id="id">
+  <ReadingShareCard kind="bible" :paper-seed="paperSeed ?? id" class="bible-note-card" :text="note?.text" :data-note-id="id">
     <button type="button" class="reading-share-note-open" :aria-label="`查看笔记：${reference}`" @click.stop="openBibleNote(id)">
       <span class="reading-share-label"><NotebookPen :size="14" />圣经笔记</span>
       <strong class="reading-share-heading">{{ reference }}</strong>

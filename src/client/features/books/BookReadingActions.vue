@@ -9,14 +9,14 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import { useChatStore } from "../../store";
 import { useMessageSender } from "../../messageSending";
 import { bookNotesClient } from "./bookNotesClient";
-import { bookExcerptImage, bookShareContent, type BookReadingContext } from "./bookReading";
+import { bookExcerptImage, bookShareContent, type BookLocation, type BookReadingContext } from "./bookReading";
 import { escapeHtmlText } from "../messages/messageRendering";
 import BookNoteEditor from "./BookNoteEditor.vue";
 import BookNoteContent from "./BookNoteContent.vue";
 import NotesTransfer from "../notes/NotesTransfer.vue";
 
 const props = defineProps<{ selection: BookReadingContext | null; activeChannelId: number | null }>();
-const emit = defineEmits<{ clear: []; jump: [fraction: number]; 'notes-changed': [bookId: number] }>();
+const emit = defineEmits<{ clear: []; jump: [location: BookLocation]; 'notes-changed': [bookId: number] }>();
 const store = useChatStore();
 const available = computed(() => !!store.account && !store.account.isGuest);
 const StoryComposer = defineAsyncComponent(() => import("../stories/StoryComposer.vue"));
@@ -130,7 +130,7 @@ defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edi
     <article v-for="note in notes" :key="note.id" class="book-note-entry">
       <small>{{ note.draft ? "草稿 · " : "" }}{{ note.chapter }} · {{ Math.round(note.fraction * 100) }}%</small><blockquote>{{ note.quote }}</blockquote><BookNoteContent :note="note" :active="!shareContext && !noteEditorOpen && !deleteNote" />
       <footer>
-        <button @click="emit('jump', note.fraction); closeLibrary()"><BookOpen :size="15" />回到原文</button>
+        <button @click="emit('jump', note); closeLibrary()"><BookOpen :size="15" />回到原文</button>
         <button @click="edit(noteContext(note), note)">编辑</button>
         <button @click="shareNote(note)"><Send :size="15" />聊天室</button>
         <button :disabled="storyBusy" @click="shareStory(noteContext(note))">我的故事</button>

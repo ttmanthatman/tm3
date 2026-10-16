@@ -5,7 +5,7 @@ import type { BibleLookupDTO } from "@shared/types";
 import { api } from "../../api";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
 import type { BiblePassageShare } from "../reading-shares/readingShareMessage";
-const props = defineProps<{ passage: BiblePassageShare; openPassage: (lookup: BibleLookupDTO) => Promise<void> }>();
+const props = defineProps<{ passage: BiblePassageShare; openPassage: (lookup: BibleLookupDTO) => Promise<void>; paperSeed?: string | number }>();
 const jumpBusy = ref(false);
 const error = ref("");
 async function jump(reference: string) {
@@ -20,7 +20,7 @@ async function jump(reference: string) {
 }
 </script>
 <template>
-  <ReadingShareCard kind="bible" class="bible-passage-share-card" :text="passage.text">
+  <ReadingShareCard kind="bible" :paper-seed="paperSeed" class="bible-passage-share-card" :text="passage.text">
     <span class="reading-share-label"><BookOpen :size="14" />经文分享</span>
     <strong class="reading-share-heading">{{ passage.reference }}</strong>
     <blockquote class="reading-share-quote">{{ passage.text }}</blockquote>
