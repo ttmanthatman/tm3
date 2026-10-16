@@ -21,8 +21,10 @@ async function jump(reference: string) {
 </script>
 <template>
   <ReadingShareCard kind="bible" class="bible-passage-share-card" :text="passage.text">
+    <span class="reading-share-label"><BookOpen :size="14" />经文分享</span>
     <strong class="reading-share-heading">{{ passage.reference }}</strong>
     <blockquote class="reading-share-quote">{{ passage.text }}</blockquote>
+    <small class="reading-share-meta">{{ passage.translation }}</small>
     <button type="button" class="reading-share-action" :disabled="jumpBusy" @click.stop="jump(passage.reference)"><BookOpen :size="17" />{{ jumpBusy ? '正在打开…' : '跳转到经文' }}<ArrowRight :size="16" /></button>
     <p v-if="error" class="reading-share-error" role="alert">{{ error }}</p>
   </ReadingShareCard>

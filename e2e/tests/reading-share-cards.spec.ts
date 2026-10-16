@@ -1,11 +1,6 @@
 import { expect, test, webkit, type Page } from "@playwright/test";
 
 async function mountCards(page: Page) {
-  await page.route("**/api/bible/notes/share-card-note", (route) => route.fulfill({ json: { note: {
-    id: "share-card-note", accountId: 1, author: "笔记作者", text: "愿我今天也带着盼望，认真走好眼前的路。",
-    source: { translation: "cmn-cu89s", translationName: "和合本", copyright: "", bookCode: "PSA", chapter: 23, verseStart: 1, verseEnd: 1, reference: "诗篇 23:1", text: "耶和华是我的牧者。" },
-    createdAt: "2026-10-01T00:00:00Z", updatedAt: "2026-10-01T00:00:00Z", publishedAt: null
-  } } }));
   await page.route("**/reading-share-harness", (route) => route.fulfill({ contentType: "text/html", body: '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><main id="host"></main>' }));
   await page.goto("/reading-share-harness");
   await page.evaluate(async () => {
@@ -17,11 +12,6 @@ async function mountCards(page: Page) {
     const { default: Passage } = await import(path);
     const bookPath = "/src/client/features/books/BookShareCard.vue";
     const { default: Book } = await import(bookPath);
-    const notePath = "/src/client/features/bible/notes/NoteCard.vue";
-    const { default: Note } = await import(notePath);
-    const navigationPath = "/src/client/features/bible/copywork/copyworkViewerState.ts";
-    const { registerCopyworkNavigation } = await import(navigationPath) as typeof import("../../src/client/features/bible/copywork/copyworkViewerState");
-    registerCopyworkNavigation(async () => { document.body.dataset.noteJumped = "yes"; });
     const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "/src/client/styles.css";
     document.head.append(css);
     await new Promise<void>((resolve, reject) => { css.onload = () => resolve(); css.onerror = () => reject(new Error("styles failed")); });
@@ -33,12 +23,10 @@ async function mountCards(page: Page) {
     createApp({ render: () => h("div", {}, [
       row("short", h(Passage, { passage: { reference: "诗篇 23:1", text: short, translation: "和合本" }, openPassage })),
       row("long", h(Passage, { passage: { reference: "约翰福音 13:35", text: long, translation: "和合本" }, openPassage })),
-      row("book", h(Book, { context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "真要有危险，一所想象出来的房子又能给你什么保护？" }, comment: "这句话一直留在我心里。" })),
-      row("note", h(Note, { id: "share-card-note", reference: "诗篇 23:1" }))
+      row("book", h(Book, { context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "真要有危险，一所想象出来的房子又能给你什么保护？" }, comment: "这句话一直留在我心里。" }))
     ]) }).mount(document.getElementById("host")!);
   });
-  await expect(page.locator(".reading-share-card")).toHaveCount(4);
-  await expect(page.locator("#note .reading-share-note")).toHaveText("愿我今天也带着盼望，认真走好眼前的路。");
+  await expect(page.locator(".reading-share-card")).toHaveCount(3);
 }
 
 async function responsiveCards(page: Page) {
@@ -52,23 +40,19 @@ async function responsiveCards(page: Page) {
     for (const card of await page.locator(".reading-share-card").all()) {
       const box = (await card.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
-      // The paper and its readable content share one bounded rotation.
-      expect(await card.evaluate((el) => new DOMMatrixReadOnly(getComputedStyle(el).transform).b)).toBeLessThan(0);
-      expect(await card.evaluate((el) => getComputedStyle(el, "::before").transform)).toBe("none");
+      // The rotated paper intentionally extends a few pixels beyond its content.
+      // Check readable content and the page boundary independently of that art.
       expect(await card.locator(".reading-share-card-content").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       expect(await card.locator("..").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
     await expect(page.locator("#long blockquote")).toHaveText("你们若有彼此相爱的心，众人因此就认出你们是我的门徒了。".repeat(35));
     await expect(page.locator("#book blockquote")).not.toContainText("这句话一直留在我心里");
-    await expect(page.locator("#short .reading-share-label, #short .reading-share-meta, #note .reading-share-label, #note .reading-share-meta")).toHaveCount(0);
-    await expect(page.locator("#note .reading-share-pencil")).toBeVisible();
     await page.locator("#book").scrollIntoViewIfNeeded();
     await page.screenshot({ path: `output/e2e/share-cards-${page.context().browser()!.browserType().name()}-${width}.png`, fullPage: true });
     if (width === 1280) {
       await page.locator("#short").screenshot({ path: "output/e2e/share-card-bible.png" });
       await page.locator("#book").screenshot({ path: "output/e2e/share-card-book.png" });
-      await page.locator("#note").screenshot({ path: "output/e2e/share-card-note.png" });
     }
   }
 }
@@ -84,16 +68,6 @@ test("share cards adapt to passage length, keep sentiments separate and fit mobi
   await jump.click();
   await expect(page.locator("body")).toHaveAttribute("data-jumped", "yes");
   await expect(page.locator("#short [role=alert]")).toHaveCount(0);
-  const note = page.locator("#note").getByRole("button", { name: "查看笔记：诗篇 23:1", exact: true });
-  await note.focus();
-  await page.keyboard.press("Enter");
-  expect(await page.evaluate(async () => {
-    const path = "/src/client/features/bible/notes/noteViewerState.ts";
-    const { viewedBibleNoteId } = await import(path) as typeof import("../../src/client/features/bible/notes/noteViewerState");
-    return viewedBibleNoteId.value;
-  })).toBe("share-card-note");
-  await page.locator("#note").getByRole("button", { name: "跳转到经文", exact: true }).click();
-  await expect(page.locator("body")).toHaveAttribute("data-note-jumped", "yes");
 });
 
 test("share card paper layout stays readable in WebKit", async () => {
