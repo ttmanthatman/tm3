@@ -1213,11 +1213,23 @@ const RELEASE_2_9_5_NOTES = [
   "圣经前置章节等待触摸与惯性滚动结束后再插入，修正 iPhone 跳转后轻滑时阅读位置突然大幅移动的问题。"
 ] as const
 
+const RELEASE_2_9_6_NOTES = [
+  "阅读笔记采用更深的纸张配色并精简标题；点击外部或关闭时自动保存有内容的草稿，空白新笔记不生成笔记图标。",
+  "阅读笔记支持逐字手写，文字、笔迹和草稿状态可跨设备保存，并包含在笔记备份中。",
+  "阅读笔记可将文字、手写内容和原文位置作为副本分享到聊天室，点击卡片即可查看并返回原文。",
+  "圣经与聊天室分栏顶部新增悬停交换控件，可快速对调两侧位置。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.7",
+    date: "2026-10-17",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.6",
     date: "2026-10-15",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_6_NOTES
   },
   {
     version: "2.9.5",
