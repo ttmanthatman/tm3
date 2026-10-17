@@ -184,7 +184,7 @@ async function passageOptions(page: Page) {
     const host = document.createElement("section"); document.body.prepend(host);
     createApp({ render: () => h("div", {}, [
       h("button", { onClick: () => dialog.value?.open(passages) }, "测试分享选项"),
-      h(Dialog, { ref: dialog, channelName: "综合频道", sendPassage: async (lookup: Parameters<typeof biblePassageShareContent>[0], include: boolean) => {
+      h(Dialog, { ref: dialog, channelName: "综合频道", sendText: async () => { throw new Error("两条经文应逐条发送"); }, sendPassage: async (lookup: Parameters<typeof biblePassageShareContent>[0], include: boolean) => {
         if (lookup.normalizedReference === "诗篇 23:3" && fail) { fail = false; throw new Error("网络暂时中断"); }
         sent.push(biblePassageShareContent(lookup, include)); document.body.dataset.sent = JSON.stringify(sent);
       } })

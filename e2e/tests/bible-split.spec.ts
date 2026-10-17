@@ -1,6 +1,7 @@
 import { expect, test, webkit, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_PERF } from "../seed-data.js";
+import { openBibleHome } from "../helpers/bible.js";
 
 test.use({ serviceWorkers: "block" });
 test.setTimeout(60_000);
@@ -45,8 +46,10 @@ async function expectRatio(page: Page, ratio: number) {
 }
 
 async function openReading(page: Page) {
-  await page.getByRole("button", { name: /^诗篇/ }).click();
-  await page.getByRole("button", { name: "66", exact: true }).click();
+  await openBibleHome(page);
+  const home = page.locator(".bible-home-pane.active");
+  await home.getByRole("button", { name: /^诗篇/ }).click();
+  await home.getByRole("button", { name: "66", exact: true }).click();
   await expect(page.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
 }
 
@@ -373,19 +376,21 @@ for (const engine of ["chromium", "webkit"] as const) {
     try {
       const page = await context.newPage();
       await login(page);
-      const home = page.locator(".bible-home");
+      await openBibleHome(page);
+      const homePane = page.locator(".bible-home-pane.active");
+      const home = homePane.locator(".bible-home");
       expect(await home.evaluate((el) => parseFloat(getComputedStyle(el).paddingLeft))).toBeLessThanOrEqual(24);
-      const tabs = page.getByRole("tablist", { name: "书房功能" });
+      const tabs = homePane.getByRole("tablist", { name: "书房功能" });
       expect(await tabs.evaluate((el) => el.scrollHeight <= el.clientHeight + 1)).toBeTruthy();
       for (const width of [1280, 1378, 1600]) {
         await page.setViewportSize({ width, height: 1000 });
         if (width === 1378) await page.screenshot({ path: `output/e2e/bible-catalog-${engine}.png` });
-        await page.getByRole("button", { name: /^创世记/ }).click();
-        const chapter = page.locator(".bible-chapter-grid button").first();
+        await homePane.getByRole("button", { name: /^创世记/ }).click();
+        const chapter = homePane.locator(".bible-chapter-grid button").first();
         expect((await chapter.boundingBox())!.width).toBeGreaterThanOrEqual(40);
-        expect(await page.locator(".bible-chapter-picker").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
+        expect(await homePane.locator(".bible-chapter-picker").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
         if (width === 1378) await page.screenshot({ path: `output/e2e/bible-chapters-${engine}.png` });
-        await page.getByRole("button", { name: "返回经卷目录", exact: true }).click();
+        await homePane.getByRole("button", { name: "返回经卷目录", exact: true }).click();
       }
       await openReading(page);
       for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "添加圣经阅读窗格", exact: true }).click();

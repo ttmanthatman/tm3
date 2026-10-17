@@ -9,3 +9,15 @@ export async function ensureBibleOpen(page: Page) {
   }
   await expect(workspace).toBeVisible();
 }
+
+export async function openBibleHome(page: Page) {
+  await ensureBibleOpen(page);
+  await expect(page.locator(".bible-home-pane.active, .bible-reader-pane.active")).toBeVisible();
+  const reader = page.locator(".bible-reader-pane.active");
+  if (await reader.isVisible()) {
+    const expand = reader.getByRole("button", { name: /^展开 .* 窗格导航$/ });
+    if (await expand.isVisible()) await expand.click();
+    await reader.getByRole("button", { name: /窗格目录$/ }).click();
+  }
+  await expect(page.locator(".bible-home-pane.active")).toBeVisible();
+}
