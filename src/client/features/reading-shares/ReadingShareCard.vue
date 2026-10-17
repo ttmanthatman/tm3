@@ -3,7 +3,7 @@ import "./readingShares.css";
 import { computed } from "vue";
 import { readingSharePlant, readingSharePlantImage, readingShareWidth } from "./readingShareLayout";
 const props = defineProps<{ kind: "bible" | "book"; text?: string; paperSeed?: string | number }>();
-const preferredWidth = computed(() => `${Math.max(props.kind === "book" ? 390 : 280, readingShareWidth(props.text || ""))}px`);
+const preferredWidth = computed(() => `${props.kind === "bible" ? 390 : Math.max(390, readingShareWidth(props.text || ""))}px`);
 </script>
 
 <template>

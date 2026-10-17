@@ -44,7 +44,9 @@ async function mountCards(page: Page) {
     }));
   });
   await expect(page.locator("#short .reading-share-meta")).toHaveCount(0);
-  await expect(page.locator("#long .reading-share-meta")).toHaveText("和合本");
+  await expect(page.locator("#long .reading-share-meta")).toHaveCount(0);
+  await expect(page.locator(".bible-passage-share-card .reading-share-label, .bible-passage-share-card .reading-share-action")).toHaveCount(0);
+  await expect(page.locator("#long .bible-passage-share-card")).not.toContainText("和合本");
   await expect(page.locator("#bible-note")).toContainText("祂与我们一同流泪。");
   await expect(page.locator("#bible-note")).not.toContainText("不应显示的作者");
   await expect(page.locator("#bible-note")).not.toContainText("点击查看笔记");
@@ -60,7 +62,7 @@ async function responsiveCards(page: Page) {
     const short = (await page.locator("#short .reading-share-card").boundingBox())!;
     const long = (await page.locator("#long .reading-share-card").boundingBox())!;
     expect(long.height).toBeGreaterThan(short.height);
-    if (width === 1280) expect(long.width).toBeGreaterThan(short.width + 80);
+    expect(long.width).toBeCloseTo(short.width, 0);
     for (const card of await page.locator(".reading-share-card").all()) {
       const box = (await card.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -122,11 +124,12 @@ test("all twelve plants in each sharing collection load and stay fixed after rer
   await page.locator("#plant-gallery").screenshot({ path: "output/e2e/share-plants-gallery.png" });
 });
 
-test("share cards adapt to passage length, keep sentiments separate and fit mobile columns", async ({ page }) => {
+test("Bible shares keep equal widths, hide legacy versions and link references to passages", async ({ page }) => {
   await responsiveCards(page);
   await page.route("**/api/bible/lookup?**", (route) => route.fulfill({ json: { success: false, message: "暂时无法读取" } }));
-  const jump = page.locator("#short").getByRole("button", { name: "跳转到经文", exact: true });
-  await jump.click();
+  const jump = page.locator("#short").getByRole("link", { name: "诗篇 23:1", exact: true });
+  await jump.focus();
+  await jump.press("Enter");
   await expect(page.locator("#short [role=alert]")).toHaveText("暂时无法读取");
   await page.unroute("**/api/bible/lookup?**");
   await page.route("**/api/bible/lookup?**", (route) => route.fulfill({ json: { success: true, result: { reference: "诗篇 23:1", normalizedReference: "诗篇 23:1", translation: "和合本", sourceId: "cmn-cu89s", verses: [{ book: "诗篇", chapter: 23, verse: 1, reference: "诗篇 23:1", text: "耶和华是我的牧者。" }] } } }));

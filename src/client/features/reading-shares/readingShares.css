@@ -11,6 +11,9 @@
 .reading-share-bible .reading-share-heading, .reading-share-bible .reading-share-label { padding-right: 28px; }
 .reading-share-label { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px; color: #9a4c28; font-size: 12px; font-weight: 650; }
 .reading-share-heading { display: block; margin: 0 0 5px; font-size: 17px; font-weight: 700; line-height: 1.45; }
+.reading-share-reference { color: #9a4c28; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.reading-share-reference:focus-visible { outline: 2px solid #527bb3; outline-offset: 3px; }
+.reading-share-reference[aria-disabled="true"] { opacity: .55; cursor: wait; }
 .reading-share-meta { display: block; color: #766650; font-size: 12px; line-height: 1.65; }
 .reading-share-quote { display: block; margin: 10px 0; white-space: pre-wrap; font-family: "Songti SC", "STSong", serif; font-size: var(--message-content-font-size, 17px); line-height: 1.7; }
 .reading-share-note { margin-top: 8px; white-space: pre-wrap; font-size: var(--message-content-font-size, 16px); }

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { ArrowRight, BookOpen } from "lucide-vue-next";
 import type { BibleLookupDTO } from "@shared/types";
 import { api } from "../../api";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
@@ -21,11 +20,8 @@ async function jump(reference: string) {
 </script>
 <template>
   <ReadingShareCard kind="bible" :paper-seed="paperSeed" class="bible-passage-share-card" :text="passage.text">
-    <span class="reading-share-label"><BookOpen :size="14" />经文分享</span>
-    <strong class="reading-share-heading">{{ passage.reference }}</strong>
+    <a class="reading-share-heading reading-share-reference" href="#bible" :aria-disabled="jumpBusy" :aria-busy="jumpBusy" title="在圣经中阅读这处经文" @click.stop.prevent="jump(passage.reference)">{{ passage.reference }}</a>
     <blockquote class="reading-share-quote">{{ passage.text }}</blockquote>
-    <small v-if="passage.translation" class="reading-share-meta">{{ passage.translation }}</small>
-    <button type="button" class="reading-share-action" :disabled="jumpBusy" @click.stop="jump(passage.reference)"><BookOpen :size="17" />{{ jumpBusy ? '正在打开…' : '跳转到经文' }}<ArrowRight :size="16" /></button>
     <p v-if="error" class="reading-share-error" role="alert">{{ error }}</p>
   </ReadingShareCard>
 </template>
