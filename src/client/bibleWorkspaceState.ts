@@ -48,7 +48,20 @@ export type BiblePaneLocationState = {
   scrollAnchor: BiblePaneScrollAnchor | null;
 };
 
+export type BibleHomeState = {
+  section: "catalog" | "search" | "favorites" | "copyworks" | "notes";
+  searchMode: BibleWorkspaceSearchMode;
+  topicQuery: string;
+  textQuery: string;
+  topicResult: BibleRelatedSearchDTO | null;
+  textResult: BibleTextSearchDTO | null;
+  selectedBook: BibleBookCatalogDTO | null;
+};
+
 export type BiblePaneState = BiblePaneLocationState & {
+  view?: BibleWorkspaceView;
+  homeSection?: BibleHomeState["section"];
+  homeState?: BibleHomeState;
   id: string;
   selectedVerseKeys: string[];
   selectionAnchorKey: string | null;
@@ -237,6 +250,8 @@ export function bibleWorkspaceSnapshot(state: BibleWorkspaceState, updatedAt = n
     view: state.view,
     panes: state.panes.slice(0, MAX_BIBLE_PANES).map((pane) => ({
       id: pane.id,
+      ...(pane.view ? { view: pane.view } : {}),
+      ...(pane.homeSection ? { homeSection: pane.homeSection } : {}),
       book: pane.book,
       visibleChapter: pane.visibleChapter,
       targetVerse: pane.targetVerse,
@@ -257,7 +272,8 @@ export function bibleWorkspaceStateFromSnapshot(snapshot: BibleWorkspaceSnapshot
   const panes: BiblePaneState[] = snapshot.panes.map((pane) => ({
     ...pane,
     selectedVerseKeys: [],
-    selectionAnchorKey: null
+    selectionAnchorKey: null,
+    homeState: base?.panes.find(local => local.id === pane.id)?.homeState
   }));
   return sanitizeWorkspaceState({
     version: 2,

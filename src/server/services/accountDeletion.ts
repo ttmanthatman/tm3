@@ -25,6 +25,8 @@ type AccountDeletionRecord = {
 };
 
 export type AccountDeletionTransaction = {
+  $queryRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<unknown>;
+  setting: { deleteMany(args: { where: { key: string } }): Promise<unknown> };
   account: {
     findUnique(args: {
       where: { id: number };
@@ -68,6 +70,7 @@ export async function deleteAccount(
   }
 
   return deps.runTransaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM accounts WHERE id = ${targetAccountId} FOR UPDATE`;
     const account = await tx.account.findUnique({
       where: { id: targetAccountId },
       include: {
@@ -97,6 +100,7 @@ export async function deleteAccount(
         }
       });
     }
+    await tx.setting.deleteMany({ where: { key: `bible.search.history.${targetAccountId}` } });
     await tx.account.delete({ where: { id: targetAccountId } });
 
     return {

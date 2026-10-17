@@ -32,6 +32,7 @@ type FakeActor = {
 };
 
 type FakeState = {
+  settings?: string[];
   accounts: FakeAccount[];
   actors: FakeActor[];
   sessions: Array<{ id: string; accountId: number }>;
@@ -57,6 +58,8 @@ function createDeletionStore(
       transactionCalls += 1;
       const draft = cloneState(state);
       const tx: AccountDeletionTransaction = {
+        $queryRaw: async () => [],
+        setting: { deleteMany: async ({ where }) => { if (draft.settings) draft.settings = draft.settings.filter(key => key !== where.key); } },
         account: {
           async findUnique(args) {
             const account = draft.accounts.find(
@@ -425,4 +428,11 @@ test("account deletion transaction rolls back Actor changes when account removal
     /injected account delete failure/
   );
   assert.deepEqual(store.getState(), initialState);
+});
+
+test("account deletion removes only the target account Bible search history", async () => {
+  const store = createDeletionStore({ ...defaultState(), settings: ["bible.search.history.1", "bible.search.history.2", "bible.search.v1.public"] });
+  const result = await deleteAccount(store.deps, { currentAccountId: 1, targetAccountId: 2 });
+  assert.equal(result.deleted, true);
+  assert.deepEqual(store.getState().settings, ["bible.search.history.1", "bible.search.v1.public"]);
 });

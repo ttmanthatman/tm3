@@ -15,6 +15,7 @@ import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bib
 import { parseBibleSessionPayload } from "../../bibleSessionShare";
 import { useChatStore } from "../../store";
 import { biblePassageShareContent } from "../reading-shares/readingShareMessage";
+import { useMessageSender } from "../../messageSending";
 
 export type BibleWorkspaceHandle = {
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
@@ -172,6 +173,15 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     options.publishBookReading();
   }
 
+  const { send: sendMergedMessage } = useMessageSender({ getSocket: () => store.socket });
+  async function sendBibleText(content: string, requestId: string) {
+    const channel = bibleTargetChannel.value;
+    if (!channel) throw new Error("当前聊天室不可用");
+    if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
+    const result = await sendMergedMessage({ channelId: channel.id, content, type: "text", replyToId: null, clientRequestId: requestId });
+    if (!result.ok) throw new Error(result.message);
+  }
+
   async function sendBiblePassage(lookup: BibleLookupDTO, includeTranslation = false) {
     const channel = bibleTargetChannel.value;
     if (!channel) throw new Error("当前聊天室不可用");
@@ -215,6 +225,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     openBibleSessionFromMessage,
     handleBibleReadingChange,
     handleBookReadingChange,
-    sendBiblePassage
+    sendBiblePassage,
+    sendBibleText
   };
 }

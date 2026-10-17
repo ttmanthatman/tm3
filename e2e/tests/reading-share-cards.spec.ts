@@ -213,7 +213,7 @@ async function passageOptions(page: Page) {
   await expect(dialog).toHaveCount(0);
   const sent = JSON.parse((await page.locator("body").getAttribute("data-sent"))!) as string[];
   expect(sent).toHaveLength(2);
-  expect(sent.every(content => content.endsWith("<br>——和合本"))).toBe(true);
+  expect(sent.every(content => content.endsWith("<br><em>——和合本</em>"))).toBe(true);
   await open.click();
   await expect(dialog.getByLabel("显示版本信息")).not.toBeChecked();
   await dialog.press("Escape");

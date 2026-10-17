@@ -993,6 +993,14 @@ export type BibleReferenceLabelMode = "normalizedFull" | "preserveInput" | "omit
 export type BibleCombinedPassageMode = "compactEllipsis" | "groupedLines";
 export type BibleQuotationStyle = "fullWidth" | "halfWidth" | "square";
 
+export interface BibleSearchHistoryDTO {
+  kind: "topic" | "text";
+  query: string;
+  translation: string;
+  updatedAt: string;
+  count: number;
+}
+
 export interface BiblePreferencesDTO {
   outputFormat: BibleOutputFormat;
   referenceLabelMode: BibleReferenceLabelMode;
@@ -1001,6 +1009,10 @@ export interface BiblePreferencesDTO {
   /** 账号级保存的阅读窗格快照；缺省表示从未同步 */
   workspace?: BibleWorkspaceSnapshotDTO | null;
   notesAlwaysPublic?: boolean;
+  shareIncludeTranslation?: boolean;
+  shareConfirm?: boolean;
+  defaultSearchMode?: "topic" | "text";
+  fontSize?: number;
 }
 
 /** 阅读器窗格定位目标（节范围 + 文本匹配区间） */
@@ -1025,6 +1037,8 @@ export interface BibleWorkspaceLocationSnapshotDTO {
 }
 
 export interface BibleWorkspacePaneSnapshotDTO extends BibleWorkspaceLocationSnapshotDTO {
+  view?: "home" | "chapters" | "reader";
+  homeSection?: "catalog" | "search" | "favorites" | "copyworks" | "notes";
   id: string;
   backStack: BibleWorkspaceLocationSnapshotDTO[];
   /** 窗格使用的译本数据 ID；缺省为默认译本（和合本） */

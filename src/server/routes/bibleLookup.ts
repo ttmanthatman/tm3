@@ -7,12 +7,12 @@ import type {
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
-  BibleRelatedSearchDTO,
-  BibleTextSearchDTO
+  BibleSearchHistoryDTO
 } from "../../shared/types.js";
 import { APP_VERSION } from "../../shared/release.js";
 import { DEFAULT_BIBLE_FAVORITE_COLOR, normalizeBibleFavoriteColor } from "../../shared/bibleFavoriteColors.js";
-import { bibleCatalog, lookupBibleChapter, lookupBibleReference, searchBibleText } from "../bible/lookup.js";
+import { bibleCatalog, lookupBibleChapter, lookupBibleReference } from "../bible/lookup.js";
+import { createBibleSearchService } from "../services/bibleSearch.js";
 import { applyJsonValidation } from "../fileResponses.js";
 import {
   BIBLE_TOPIC_SEARCH_PROMPT,
@@ -51,6 +51,20 @@ function resolveBibleFavorite(key: BibleFavoriteKeyDTO) {
 
 export function registerBibleLookupRoutes(app: FastifyInstance, deps: BibleLookupRouteDependencies) {
   const { prisma, requireAuth, aiSettings } = deps;
+  const search = createBibleSearchService(prisma);
+  const accountId = (request: FastifyRequest) => (request as AuthedBibleRequest).auth.accountId;
+  app.get("/api/bible/search/history", { preHandler: requireAuth }, async (request, reply) => {
+    reply.header("Cache-Control", "private, no-store");
+    return { success: true, history: await search.history(accountId(request)) };
+  });
+  app.delete("/api/bible/search/history", { preHandler: requireAuth }, async (request) => ({ success: true, history: await search.clearHistory(accountId(request)) }));
+  app.post("/api/bible/search/history/import", { preHandler: requireAuth }, async (request) => {
+    const body = z.object({ entries: z.array(z.object({
+      kind: z.enum(["topic", "text"]), query: z.string().trim().min(1).max(200),
+      translation: z.string().min(1).max(30), updatedAt: z.string().datetime(), count: z.number().int().min(0).max(40000)
+    }).strict()).max(20) }).strict().parse(request.body);
+    return { success: true, history: await search.importHistory(accountId(request), body.entries as BibleSearchHistoryDTO[]) };
+  });
 
   async function listBibleFavorites(accountId: number): Promise<BibleFavoriteDTO[]> {
     const rows = await prisma.bibleFavorite.findMany({
@@ -168,31 +182,32 @@ export function registerBibleLookupRoutes(app: FastifyInstance, deps: BibleLooku
 
   app.get("/api/bible/search/export", { preHandler: requireAuth }, async (request, reply) => {
     const query = z.object({
-      query: z.string().min(1).max(200),
+      query: z.string().trim().min(1).max(200),
       translation: z.string().trim().min(1).max(30).optional()
     }).parse(request.query);
     try {
-      const result = searchBibleText(query.query, 0, 40000, 40000, query.translation);
+      const result = await search.text(accountId(request), query.query, 0, 40000, query.translation);
       return { success: true, result };
-    } catch {
+    } catch (error) {
+      request.log.warn({ error }, "Bible text search failed");
       return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
     }
   });
 
   app.get("/api/bible/search", { preHandler: requireAuth }, async (request, reply) => {
-    if (applyJsonValidation(request, reply, `W/"bible-${APP_VERSION}"`)) return reply.code(304).send();
     const query = z
       .object({
-        query: z.string().min(1).max(200),
+        query: z.string().trim().min(1).max(200),
         offset: z.coerce.number().int().min(0).default(0),
         limit: z.coerce.number().int().min(1).max(50).default(50),
         translation: z.string().trim().min(1).max(30).optional()
       })
       .parse(request.query);
     try {
-      const result: BibleTextSearchDTO = searchBibleText(query.query, query.offset, query.limit, 50, query.translation);
+      const result = await search.text(accountId(request), query.query, query.offset, query.limit, query.translation);
       return { success: true, result };
-    } catch {
+    } catch (error) {
+      request.log.warn({ error }, "Bible text search failed");
       return reply.code(400).send({ success: false, message: "搜索失败，请更换译本或关键词后重试" });
     }
   });
@@ -203,41 +218,42 @@ export function registerBibleLookupRoutes(app: FastifyInstance, deps: BibleLooku
       query: z.string().trim().min(2).max(200),
       excludeReferences: z.array(z.string().trim().min(1).max(120)).max(60).default([])
     }).parse(request.body);
-    const loaded = await aiSettings.loadAiSettings();
-    const settings = loaded.value;
-    const apiKey = aiSettings.decryptAiApiKey(loaded.encryptedApiKey);
-    if (!settings.enabled || !apiKey) return reply.code(409).send({ success: false, message: aiConfigurationMessage(auth) });
-    if (!bibleTopicSearchAllowed(auth.accountId, settings.userLimitPerMinute)) {
-      return reply.code(429).send({ success: false, message: "主题检索太频繁了，请稍后再试。" });
-    }
     try {
-      const exclusionInstruction = body.excludeReferences.length
-        ? `请追加不同的经文，不要重复这些已有出处：${body.excludeReferences.join("、")}。`
-        : "";
-      const generated = await callDeepSeekBibleReferences(
-        settings,
-        apiKey,
-        BIBLE_TOPIC_SEARCH_PROMPT,
-        `用户想查找关于“${body.query}”的经文。${exclusionInstruction}`,
-        10
-      );
-      const seen = new Set<string>();
-      const results: BibleLookupDTO[] = [];
-      for (const reference of generated.references) {
-        try {
-          const lookup = lookupBibleReference(reference);
-          if (!lookup.verses.length || seen.has(lookup.normalizedReference)) continue;
-          seen.add(lookup.normalizedReference);
-          results.push(lookup);
-          if (results.length >= 6) break;
-        } catch {
-          // AI references must resolve against the bundled Bible before being returned.
+      const result = await search.related(auth.accountId, body.query, body.excludeReferences, async (excluded) => {
+        const loaded = await aiSettings.loadAiSettings();
+        const settings = loaded.value;
+        const apiKey = aiSettings.decryptAiApiKey(loaded.encryptedApiKey);
+        if (!settings.enabled || !apiKey) throw Object.assign(new Error(aiConfigurationMessage(auth)), { statusCode: 409 });
+        if (!bibleTopicSearchAllowed(auth.accountId, settings.userLimitPerMinute)) throw Object.assign(new Error("主题检索太频繁了，请稍后再试。"), { statusCode: 429 });
+        const exclusionInstruction = excluded.length
+          ? `请追加不同的经文，不要重复这些已有出处：${excluded.join("、")}。`
+          : "";
+        const generated = await callDeepSeekBibleReferences(
+          settings,
+          apiKey,
+          BIBLE_TOPIC_SEARCH_PROMPT,
+          `用户想查找关于“${body.query}”的经文。${exclusionInstruction}`,
+          10
+        );
+        const seen = new Set<string>();
+        const results: BibleLookupDTO[] = [];
+        for (const reference of generated.references) {
+          try {
+            const lookup = lookupBibleReference(reference);
+            if (!lookup.verses.length || seen.has(lookup.normalizedReference)) continue;
+            seen.add(lookup.normalizedReference);
+            results.push(lookup);
+            if (results.length >= 6) break;
+          } catch {
+            // AI references must resolve against the bundled Bible before being returned.
+          }
         }
-      }
-      if (!results.length) throw new Error("AI did not return locally valid Bible references");
-      const result: BibleRelatedSearchDTO = { query: body.query, results };
+        if (!results.length) throw new Error("AI did not return locally valid Bible references");
+        return results;
+      });
       return { success: true, result };
     } catch (error) {
+      if (error instanceof Error && "statusCode" in error && (error.statusCode === 409 || error.statusCode === 429)) return reply.code(error.statusCode).send({ success: false, message: error.message });
       request.log.warn({ error }, "Bible topic search failed");
       return reply.code(502).send({ success: false, message: auth.isAdmin ? `主题检索失败：${cleanAiError(error)}` : "主题检索暂时不可用，请稍后重试。" });
     }

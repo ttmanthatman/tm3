@@ -288,3 +288,23 @@ test("sanitize drops non-string pane translations", () => {
   saveBibleWorkspaceState(storage, 34, state);
   assert.equal(loadBibleWorkspaceState(storage, 34)?.panes[0]?.translation, undefined);
 });
+
+test("home and chapter panes survive local reload and account snapshots without sharing search bodies", () => {
+  const state: BibleWorkspaceState = {
+    version: 2, view: "reader", searchMode: "text", topicQuery: "", textQuery: "", topicResult: null, textResult: null,
+    selectedBook: null, panes: [{
+      id: "home-a", view: "home", homeSection: "search", book: { code: "GEN", name: "创世记", chapterCount: 50 },
+      visibleChapter: 1, targetVerse: null, scrollAnchor: null, selectedVerseKeys: [], selectionAnchorKey: null, backStack: [],
+      homeState: { section: "search", searchMode: "text", topicQuery: "", textQuery: "起初", topicResult: null, textResult: null, selectedBook: null }
+    }], activePaneId: "home-a", receivingPaneId: null, orientation: null, paneSizes: [100], history: []
+  };
+  const values = new Map<string, string>();
+  const storage = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  saveBibleWorkspaceState(storage, 1, state);
+  assert.equal(loadBibleWorkspaceState(storage, 1)?.panes[0].homeState?.textQuery, "起初");
+  const snapshot = bibleWorkspaceSnapshot(state);
+  assert.equal(snapshot.panes[0].view, "home"); assert.equal(snapshot.panes[0].homeSection, "search");
+  assert.equal("homeState" in snapshot.panes[0], false);
+  assert.equal(bibleWorkspaceStateFromSnapshot(snapshot, state).panes[0].homeState?.textQuery, "起初");
+  assert.equal(bibleWorkspaceStateFromSnapshot(snapshot, null).panes[0].view, "home");
+});

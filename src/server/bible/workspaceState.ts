@@ -37,6 +37,8 @@ const locationSchema = z.object({
 
 const paneSchema = locationSchema.extend({
   id: z.string().trim().min(1).max(40),
+  view: z.enum(["home", "chapters", "reader"]).optional(),
+  homeSection: z.enum(["catalog", "search", "favorites", "copyworks", "notes"]).optional(),
   backStack: z.array(locationSchema).max(20),
   translation: z.string().trim().min(1).max(30).optional()
 });

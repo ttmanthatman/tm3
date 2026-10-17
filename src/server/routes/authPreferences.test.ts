@@ -4,18 +4,28 @@ import Fastify from "fastify";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { HANDWRITING_DEFAULT_PREFERENCES, normalizeHandwritingPreferences } from "../../shared/handwriting.js";
+import { biblePreferencesJson } from "../biblePreferences.js";
 import { registerAuthRoutes } from "./auth.js";
 
 function createHarness() {
   let preferences = structuredClone(HANDWRITING_DEFAULT_PREFERENCES);
   let writes = 0;
+  let transactionActive = false;
+  let biblePreferences: unknown;
   const prisma = {
+    $queryRaw: async () => [],
+    $transaction: async (action: (tx: unknown) => Promise<unknown>) => {
+      transactionActive = true;
+      try { return await action(prisma); }
+      finally { transactionActive = false; }
+    },
     account: {
-      findUnique: async () => ({ handwritingPreferences: preferences }),
+      findUnique: async () => ({ handwritingPreferences: preferences, biblePreferences }),
       update: async ({ data }: { data: Prisma.AccountUpdateInput }) => {
-        preferences = normalizeHandwritingPreferences(data.handwritingPreferences);
+        if (data.handwritingPreferences !== undefined) preferences = normalizeHandwritingPreferences(data.handwritingPreferences);
+        if (data.biblePreferences !== undefined) biblePreferences = data.biblePreferences;
         writes++;
-        return { id: 1, handwritingPreferences: preferences };
+        return { id: 1, handwritingPreferences: preferences, biblePreferences };
       }
     }
   } as unknown as PrismaClient;
@@ -32,9 +42,9 @@ function createHarness() {
     },
     authLoginRateLimitMax: 100,
     settingBool: async (_key, fallback = false) => fallback,
-    themeExists: async () => true,
+    themeExists: async () => { assert.equal(transactionActive, false, "theme lookup must not acquire an outer connection inside the preference transaction"); return true; },
     signToken: () => "test-token",
-    authDto: (account) => ({ id: account.id, handwritingPreferences: account.handwritingPreferences }),
+    authDto: (account) => ({ id: account.id, handwritingPreferences: account.handwritingPreferences, biblePreferences: account.biblePreferences }),
     createAuthSession: async () => ({ id: "test-session" }),
     sessionExpiresAt: () => new Date(),
     writeLoginLog: async () => undefined,
@@ -45,6 +55,14 @@ function createHarness() {
   });
   return { app, writes: () => writes, preferences: () => preferences };
 }
+
+test("theme validation completes before the preference transaction starts", async () => {
+  const { app } = createHarness();
+  try {
+    const response = await app.inject({ method: "PATCH", url: "/api/me/preferences", headers: { authorization: "member" }, payload: { theme: "wechat" } });
+    assert.equal(response.statusCode, 200, response.body);
+  } finally { await app.close(); }
+});
 
 test("handwriting preferences save all algorithms, rotation lag bounds and selected color", async () => {
   const { app, preferences } = createHarness();
@@ -103,4 +121,23 @@ test("handwriting preferences reject unauthenticated, malformed and unknown brus
   } finally {
     await app.close();
   }
+});
+
+test("Bible preferences validate account options and preserve unrelated settings", async () => {
+  const { app, writes } = createHarness();
+  const update = (biblePreferences: unknown) => app.inject({ method: "PATCH", url: "/api/me/preferences", headers: { authorization: "member" }, payload: { biblePreferences } });
+  try {
+    const first = await update({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 24, defaultSearchMode: "text" });
+    assert.equal(first.statusCode, 200, first.body);
+    assert.equal(first.json().account.biblePreferences.shareIncludeTranslation, true);
+    const next = await update({ fontSize: 26 });
+    assert.equal(next.statusCode, 200, next.body);
+    assert.deepEqual(next.json().account.biblePreferences, biblePreferencesJson({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 26, defaultSearchMode: "text" }));
+    const before = writes();
+    for (const patch of [{ shareConfirm: "false" }, { fontSize: 41 }, { fontSize: 15 }, { fontSize: 20.5 }, { defaultSearchMode: "unknown" }, { shareIncludeTranslation: null }, { notesAlwaysPublic: 1 }]) {
+      const invalid = await update(patch);
+      assert.equal(invalid.statusCode, 400, invalid.body);
+    }
+    assert.equal(writes(), before);
+  } finally { await app.close(); }
 });

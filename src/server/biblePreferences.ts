@@ -21,6 +21,10 @@ export function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
     referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
     combinedPassageMode: BIBLE_COMBINED_PASSAGE_MODES.has(String(row.combinedPassageMode)) ? (row.combinedPassageMode as BiblePreferencesDTO["combinedPassageMode"]) : DEFAULT_BIBLE_PREFERENCES.combinedPassageMode,
     quotationStyle: BIBLE_QUOTATION_STYLES.has(String(row.quotationStyle)) ? (row.quotationStyle as BiblePreferencesDTO["quotationStyle"]) : DEFAULT_BIBLE_PREFERENCES.quotationStyle,
+    ...(typeof row.shareIncludeTranslation === "boolean" ? { shareIncludeTranslation: row.shareIncludeTranslation } : {}),
+    ...(typeof row.shareConfirm === "boolean" ? { shareConfirm: row.shareConfirm } : {}),
+    ...(row.defaultSearchMode === "topic" || row.defaultSearchMode === "text" ? { defaultSearchMode: row.defaultSearchMode } : {}),
+    ...(typeof row.fontSize === "number" && Number.isFinite(row.fontSize) ? { fontSize: Math.min(40, Math.max(16, Math.round(row.fontSize))) } : {}),
     ...(typeof row.notesAlwaysPublic === "boolean" ? { notesAlwaysPublic: row.notesAlwaysPublic } : {}),
     ...(workspace ? { workspace } : {})
   };
@@ -33,6 +37,10 @@ export function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
     referenceLabelMode: preferences.referenceLabelMode,
     combinedPassageMode: preferences.combinedPassageMode,
     quotationStyle: preferences.quotationStyle,
+    ...(preferences.shareIncludeTranslation !== undefined ? { shareIncludeTranslation: preferences.shareIncludeTranslation } : {}),
+    ...(preferences.shareConfirm !== undefined ? { shareConfirm: preferences.shareConfirm } : {}),
+    ...(preferences.defaultSearchMode !== undefined ? { defaultSearchMode: preferences.defaultSearchMode } : {}),
+    ...(preferences.fontSize !== undefined ? { fontSize: preferences.fontSize } : {}),
     ...(preferences.notesAlwaysPublic !== undefined ? { notesAlwaysPublic: preferences.notesAlwaysPublic } : {}),
     ...(preferences.workspace ? { workspace: preferences.workspace as unknown as Prisma.InputJsonValue } : {})
   };

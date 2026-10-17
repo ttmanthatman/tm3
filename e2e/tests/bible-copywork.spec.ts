@@ -50,8 +50,8 @@ async function login(page: Page, username = E2E_ADMIN.username as string, passwo
 }
 async function openVerse(page: Page) {
   await ensureBibleOpen(page);
-  if (await page.getByRole("button", { name: "目录", exact: true }).isVisible())
-    await page.getByRole("button", { name: "目录", exact: true }).click();
+  if (await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).isVisible())
+    await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   await page.getByRole("tab", { name: "经卷目录", exact: true }).click();
   await page.getByRole("button", { name: /^约翰福音/ }).click();
   await page.getByRole("button", { name: "11", exact: true }).click();
@@ -162,7 +162,7 @@ test("admin swipe switches persist and protect copywork dragging and writing in 
     await expect(bible).toBeVisible();
     await swipe(bible, "left");
     await expect(bible).toBeVisible();
-    await bible.getByRole("button", { name: "聊天", exact: true }).click();
+    await bible.getByRole("button", { name: "关闭圣经", exact: true }).click();
     await settings(true, true);
     await swipe(chat, "right");
     await expect(bible).toBeVisible();
@@ -402,7 +402,7 @@ test("guided copywork writes, resumes an unfinished glyph, frames, saves and mar
   await expect(dialog).toBeHidden();
   await page.reload();
   await ensureBibleOpen(page);
-  await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
   await page
     .getByRole("button", { name: /本机草稿/ })
@@ -606,8 +606,8 @@ test("multi-page copywork downloads reuse a transparent PNG and seed a cancellab
   await page.setViewportSize({ width: 390, height: 844 });
   await login(page);
   await ensureBibleOpen(page);
-  if (await page.getByRole("button", { name: "目录", exact: true }).isVisible())
-    await page.getByRole("button", { name: "目录", exact: true }).click();
+  if (await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).isVisible())
+    await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
   await page.getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).first().click();
   const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });
@@ -646,7 +646,7 @@ test("skipped slots survive draft reload and can be filled before completion", a
   await dialog.getByRole("button", { name: "下次继续写", exact: true }).click();
   await page.reload();
   await ensureBibleOpen(page);
-  await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
   await page.getByRole("button", { name: /本机草稿/ }).first().click();
   await expect(dialog.locator(".writing-heading")).toContainText("2 / 5");
@@ -814,7 +814,7 @@ test("minimal copywork bubbles replay in place, link context, and show all legac
   await privateViewer.getByRole("button", { name: "作品详情", exact: true }).click();
   await expect(privateViewer.locator(".viewer-details")).toContainText("私人保存");
   await privateViewer.getByRole("button", { name: "关闭", exact: true }).click();
-  await page.getByRole("button", { name: "目录", exact: true }).click();
+  await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   await page.getByRole("tab", { name: "我的抄写", exact: true }).click();
   await page.locator(`.copywork-card[data-copywork-id="${id}"]`).getByRole("button", { name: `查看抄写：${source.reference}`, exact: true }).click();
   const viewer = page.getByRole("dialog", { name: "抄写册页", exact: true });

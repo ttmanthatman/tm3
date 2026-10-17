@@ -24,8 +24,8 @@ async function openPsalm66(page: Page) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   await ensureBibleOpen(page);
-  if (await page.getByRole("button", { name: "目录", exact: true }).isVisible()) {
-    await page.getByRole("button", { name: "目录", exact: true }).click();
+  if (await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).isVisible()) {
+    await page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ }).click();
   }
   await page.getByRole("tab", { name: "经卷目录", exact: true }).click();
   await page.getByRole("button", { name: /^诗篇/ }).click();

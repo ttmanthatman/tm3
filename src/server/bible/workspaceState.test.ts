@@ -88,3 +88,13 @@ test("cleanBibleWorkspaceState keeps known pane translations and drops unknown o
   assert.equal(cleaned?.panes[1]?.translation, undefined);
   assert.equal(cleaned?.panes[2]?.translation, undefined);
 });
+
+test("account workspace keeps independent catalog/search and chapter pane views", () => {
+  const base = validSnapshot();
+  const result = cleanBibleWorkspaceState({ ...base, panes: [
+    { ...base.panes[0], id: "home-a", view: "home", homeSection: "search" },
+    { ...base.panes[0], id: "chapters-b", view: "chapters", homeSection: "catalog" }
+  ], paneSizes: [50, 50] });
+  assert.deepEqual(result?.panes.map(pane => [pane.view, pane.homeSection]), [["home", "search"], ["chapters", "catalog"]]);
+  assert.equal(cleanBibleWorkspaceState({ ...base, panes: [{ ...base.panes[0], view: "unknown" }] }), null);
+});

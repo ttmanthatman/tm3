@@ -875,7 +875,8 @@ const {
   openBibleSessionFromMessage,
   handleBibleReadingChange,
   handleBookReadingChange,
-  sendBiblePassage
+  sendBiblePassage,
+  sendBibleText
 } = useBibleWorkspaceIntegration({
   showChannels,
   showMembers,
@@ -5345,6 +5346,7 @@ const messageRowBindings = {
       :can-send="bibleCanSend"
       :send-unavailable-reason="bibleSendUnavailableReason"
       :send-passage="sendBiblePassage"
+      :send-text="sendBibleText"
       :favorites="bibleFavorites"
       :favorites-busy="bibleFavoritesLoading"
       :update-favorites="updateBibleFavorites"

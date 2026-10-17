@@ -22,6 +22,7 @@ async function jump(reference: string) {
   <ReadingShareCard kind="bible" :paper-seed="paperSeed" class="bible-passage-share-card" :text="passage.text">
     <a class="reading-share-heading reading-share-reference" href="#bible" :aria-disabled="jumpBusy" :aria-busy="jumpBusy" title="在圣经中阅读这处经文" @click.stop.prevent="jump(passage.reference)">{{ passage.reference }}</a>
     <blockquote class="reading-share-quote">{{ passage.text }}</blockquote>
+    <p v-if="passage.showTranslation && passage.translation" class="reading-share-meta">{{ passage.translation }}</p>
     <p v-if="error" class="reading-share-error" role="alert">{{ error }}</p>
   </ReadingShareCard>
 </template>

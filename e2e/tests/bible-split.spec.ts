@@ -356,7 +356,7 @@ for (const width of [360, 390]) {
       await expect(page.getByRole("separator", { name: "调整圣经和聊天宽度" })).toHaveCount(0);
       await openReading(page);
       await page.screenshot({ path: `output/e2e/bible-split-phone-${width}.png` });
-      await page.getByRole("button", { name: "聊天", exact: true }).click();
+      await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
       await expect(page.locator(".chat-pane")).toBeVisible();
       await page.setViewportSize({ width: 844, height: width });
       await page.getByRole("button", { name: "打开圣经", exact: true }).click();
@@ -385,7 +385,7 @@ for (const engine of ["chromium", "webkit"] as const) {
         expect((await chapter.boundingBox())!.width).toBeGreaterThanOrEqual(40);
         expect(await page.locator(".bible-chapter-picker").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
         if (width === 1378) await page.screenshot({ path: `output/e2e/bible-chapters-${engine}.png` });
-        await page.getByRole("button", { name: "目录", exact: true }).click();
+        await page.getByRole("button", { name: "返回经卷目录", exact: true }).click();
       }
       await openReading(page);
       for (let i = 0; i < 3; i++) await page.getByRole("button", { name: "添加圣经阅读窗格", exact: true }).click();

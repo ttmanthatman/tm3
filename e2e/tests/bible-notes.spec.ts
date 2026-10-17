@@ -18,7 +18,7 @@ test("自己的圣经笔记可以下载、导入为私密笔记并跳过重复�
   let note = (await response.json()).note as BibleNoteDTO;
   try {
     await ensureBibleOpen(page);
-    const home = page.getByRole("button", { name: "目录", exact: true });
+    const home = page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ });
     if (await home.isVisible()) await home.click();
     await page.getByRole("tab", { name: "我的笔记", exact: true }).click();
     const library = page.getByRole("region", { name: "经文笔记列表" });
@@ -59,7 +59,7 @@ async function openVerse(page: Page) {
   await ensureBibleOpen(page);
   // Restoring the saved reader after reload is asynchronous.
   await expect(async () => {
-    const home = page.getByRole("button", { name: "目录", exact: true });
+    const home = page.locator(".bible-reader-pane.active").getByRole("button", { name: /窗格目录$/ });
     if (await home.isVisible()) await home.click();
     await expect(page.getByRole("tab", { name: "经卷目录", exact: true })).toBeVisible({ timeout: 500 });
   }).toPass({ timeout: 10_000 });

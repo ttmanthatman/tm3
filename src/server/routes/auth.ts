@@ -172,6 +172,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
     const cleanupStories = await deps.prepareStoryCleanup?.(account.id);
     const sessions = await prisma.accountSession.findMany({ where: { accountId: account.id }, select: { id: true } });
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM accounts WHERE id = ${account.id} FOR UPDATE`;
       if (account.actor) {
         await tx.actor.update({
           where: { id: account.actor.id },
@@ -184,6 +185,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
           }
         });
       }
+      await tx.setting.deleteMany({ where: { key: `bible.search.history.${account.id}` } });
       await tx.account.delete({ where: { id: account.id } });
     });
     disconnectSessions(sessions.map((session) => session.id));
@@ -254,7 +256,12 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
             outputFormat: z.string().optional(),
             referenceLabelMode: z.string().optional(),
             combinedPassageMode: z.string().optional(),
-            quotationStyle: z.string().optional()
+            quotationStyle: z.string().optional(),
+            shareIncludeTranslation: z.boolean().optional(),
+            shareConfirm: z.boolean().optional(),
+            defaultSearchMode: z.enum(["topic", "text"]).optional(),
+            fontSize: z.number().int().min(16).max(40).optional(),
+            notesAlwaysPublic: z.boolean().optional()
           })
           .optional(),
         bibleWorkspace: z.unknown().nullable().optional(),
@@ -283,37 +290,41 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
           .optional()
       })
       .parse(request.body);
-    const data: Prisma.AccountUpdateInput = {};
-    if (body.theme !== undefined) {
-      const requestedTheme = cleanThemeId(body.theme);
-      data.theme = requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
-    }
-    if (body.biblePreferences !== undefined || body.bibleWorkspace !== undefined) {
-      const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { biblePreferences: true } });
-      const merged: Record<string, unknown> = {
-        ...(current?.biblePreferences as Record<string, unknown> | null | undefined),
-        ...body.biblePreferences
-      };
-      if (body.bibleWorkspace !== undefined) {
-        if (body.bibleWorkspace === null) delete merged.workspace;
-        else {
-          const workspace = cleanBibleWorkspaceState(body.bibleWorkspace);
-          if (!workspace) return reply.code(400).send({ success: false, message: "阅读窗格状态格式无效" });
-          merged.workspace = workspace;
-        }
+    const workspace = (body.bibleWorkspace === undefined || body.bibleWorkspace === null) ? null : cleanBibleWorkspaceState(body.bibleWorkspace);
+    if ((body.bibleWorkspace !== undefined && body.bibleWorkspace !== null) && !workspace) return reply.code(400).send({ success: false, message: "阅读窗格状态格式无效" });
+    const requestedTheme = body.theme === undefined ? undefined : cleanThemeId(body.theme);
+    const theme = body.theme === undefined ? undefined : requestedTheme && (await themeExists(requestedTheme)) ? requestedTheme : "wechat";
+    const account = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM accounts WHERE id = ${auth.accountId} FOR UPDATE`;
+      const data: Prisma.AccountUpdateInput = {};
+      if (body.theme !== undefined) {
+        data.theme = theme;
       }
-      data.biblePreferences = biblePreferencesJson(merged);
-    }
-    if (body.handwritingPreferences !== undefined) {
-      const current = await prisma.account.findUnique({ where: { id: auth.accountId }, select: { handwritingPreferences: true } });
-      data.handwritingPreferences = handwritingPreferencesJson({
-        ...(current?.handwritingPreferences as Record<string, unknown> | null | undefined),
-        ...body.handwritingPreferences
-      });
-    }
-    const account = Object.keys(data).length
-      ? await prisma.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })
-      : await prisma.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
+      if (body.biblePreferences !== undefined || body.bibleWorkspace !== undefined) {
+        const current = await tx.account.findUnique({ where: { id: auth.accountId }, select: { biblePreferences: true } });
+        const merged: Record<string, unknown> = {
+          ...(current?.biblePreferences as Record<string, unknown> | null | undefined),
+          ...body.biblePreferences
+        };
+        if (body.bibleWorkspace !== undefined) {
+          if (body.bibleWorkspace === null) delete merged.workspace;
+          else {
+            merged.workspace = workspace;
+          }
+        }
+        data.biblePreferences = biblePreferencesJson(merged);
+      }
+      if (body.handwritingPreferences !== undefined) {
+        const current = await tx.account.findUnique({ where: { id: auth.accountId }, select: { handwritingPreferences: true } });
+        data.handwritingPreferences = handwritingPreferencesJson({
+          ...(current?.handwritingPreferences as Record<string, unknown> | null | undefined),
+          ...body.handwritingPreferences
+        });
+      }
+      return Object.keys(data).length
+        ? await tx.account.update({ where: { id: auth.accountId }, data, include: { actor: true } })
+        : await tx.account.findUniqueOrThrow({ where: { id: auth.accountId }, include: { actor: true } });
+    });
     return { success: true, account: authDto(account) };
   });
 }
