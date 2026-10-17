@@ -834,6 +834,7 @@ model Book {
   fileName    String   @unique @map("file_name") @db.VarChar(64)
   coverName   String?  @map("cover_name") @db.VarChar(64)
   fileSize    Int      @map("file_size")
+  publicationRevision String? @map("publication_revision") @db.Char(64)
   createdById Int?     @map("created_by_id")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -848,6 +849,10 @@ model BookProgress {
   bookId    Int      @map("book_id")
   accountId Int      @map("account_id")
   fraction  Float
+  locator Json?
+  revision Int @default(0)
+  locatorRevision Int? @map("locator_revision")
+  lastMutationId String? @map("last_mutation_id") @db.VarChar(64)
   updatedAt DateTime @updatedAt @map("updated_at")
   book      Book     @relation(fields: [bookId], references: [id], onDelete: Cascade)
   account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)

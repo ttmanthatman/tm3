@@ -105,7 +105,7 @@ const emit = defineEmits<{
       <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
       <ChevronRight :size="18" />
     </button>
-    <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
+    <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
     <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
@@ -244,7 +244,7 @@ const emit = defineEmits<{
           :surface-active="handwritingSurfaceActive ?? true"
           :claim-auto-play="consumeHandwritingPlayback ? () => consumeHandwritingPlayback!(message) : undefined"
         />
-        <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
+        <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
         <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
         <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>

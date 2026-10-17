@@ -1,5 +1,10 @@
 // 图书阅读器核心：流式加载、进度换算、主题注入。
 // 与 UI 分离，保证纯函数可单测。
+import { preloadBookNeighbors } from "../features/books/bookAdjacentPreload";
+import { applyBookTypography } from "../features/books/bookTypography";
+import { forgetBookTextModel } from "../features/books/bookTextModel";
+import { captureBookViewAnchor, bookViewAnchorTop, type BookViewAnchor } from "../features/books/bookViewAnchor";
+import { createBookSectionQueue } from "../features/books/bookSectionQueue";
 import { getToken } from "../api";
 import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
 
@@ -29,11 +34,16 @@ export const DEFAULT_READER_STYLE: ReaderStyle = {
 };
 
 export function readerStyleFromStored(stored: Partial<ReaderStyle> | null): ReaderStyle {
-  const merged = { ...DEFAULT_READER_STYLE, ...stored };
-  // 48px 是旧版写入本地配置的默认值，不代表用户主动选择；升级后迁移到新默认。
-  // 其他档位只能由用户点按边距按钮产生，因此继续保留。
-  if (stored?.margin === undefined || stored.margin === null || stored.margin === 48) merged.margin = DEFAULT_READER_STYLE.margin;
-  return merged;
+  const value = stored && typeof stored === "object" ? stored : {};
+  const bounded = (input: unknown, fallback: number, min: number, max: number) =>
+    typeof input === "number" && Number.isFinite(input) ? Math.max(min, Math.min(max, input)) : fallback;
+  return {
+    theme: value.theme === "sepia" || value.theme === "dark" ? value.theme : "light",
+    flow: value.flow === "paginated" ? "paginated" : "scrolled",
+    fontPct: bounded(value.fontPct, 100, 70, 200),
+    spacing: bounded(value.spacing, 1.6, 1.2, 2.4),
+    margin: value.margin === 48 ? 16 : bounded(value.margin, 16, 16, 96)
+  };
 }
 
 export type BookTapAction = "previous" | "next" | "toggle-chrome";
@@ -75,17 +85,24 @@ export function bookFootnoteTargetId(anchor: Element, href: string): string | nu
   }
 }
 
-export function buildBookCSS(style: ReaderStyle): string {
+export function buildBookCSS(style: ReaderStyle, fixedLayout = false): string {
   const t = READER_THEMES[style.theme];
+  if (fixedLayout) return `html { color-scheme: ${t.scheme}; }`;
   return `
     @namespace epub "http://www.idpf.org/2007/ops";
     /* --theme-bg-color 会被 foliate 分页器的 #background 读取：它用图书自带背景绘制页边，
        不显式覆盖的话，切到深色主题时页边会保持 EPUB 自带的白底。 */
-    html { color-scheme: ${t.scheme}; background: ${t.bg} !important; --theme-bg-color: ${t.bg}; font-size: ${style.fontPct}%; }
-    body { background: ${t.bg} !important; color: ${t.fg} !important; }
+    html { color-scheme: ${t.scheme}; background: ${t.bg} !important; --theme-bg-color: ${t.bg}; font-size: ${16 * style.fontPct / 100}px !important; }
+    body { background: ${t.bg} !important; color: ${t.fg} !important; font-size: 1rem !important; line-height: ${style.spacing} !important; }
+    /* Cover fixed author sizes on prose; retain heading hierarchy and inline semantics. */
+    p, li, blockquote, dd, dt, div, section, article, td, th { font-size: 1rem !important; line-height: ${style.spacing} !important; }
+    p :where(span, a, em, strong, b, i), li :where(span, a, em, strong, b, i) { font-size: inherit !important; line-height: inherit !important; }
+    h1 { font-size: 2rem !important; } h2 { font-size: 1.5rem !important; } h3 { font-size: 1.25rem !important; }
+    h4, h5, h6 { font-size: 1.1rem !important; }
+    small, sup, sub { font-size: .8em !important; }
     a:link { color: ${t.link} !important; }
     p, li, blockquote, dd {
-      line-height: ${style.spacing};
+      line-height: ${style.spacing} !important;
       text-align: justify;
       hanging-punctuation: allow-end last;
       widows: 2;
@@ -158,6 +175,7 @@ export function bookCoverUrl(bookId: number): string {
 
 export type EpubSection = {
   id?: string;
+  cfi?: string;
   linear?: string;
   size?: number;
   load(): Promise<string | null>;
@@ -179,6 +197,8 @@ export function sectionFractions(sections: EpubSection[]): number[] {
 }
 
 export type EpubBook = {
+  rendition?: { layout?: string };
+  resolveCFI?(cfi: string): { index: number; anchor: (doc: Document) => Range };
   metadata?: { title?: unknown; author?: unknown; language?: unknown };
   toc?: { label?: string; href?: string; subitems?: unknown[] }[];
   dir?: string;
@@ -240,6 +260,7 @@ type FoliateView = HTMLElement & {
     page?: number;
     pages?: number;
   };
+  lastLocation?: { range?: Range };
   book: EpubBook & {
     // foliate 的节对象；load() 预取该节内容（内部带缓存与引用计数，重复调用便宜）
   } | null;
@@ -254,27 +275,29 @@ type ZipLoader = {
 
 // 通过 HTTP Range 流式读取 zip 内部条目：翻到哪节才下载哪节，弱网首屏更快。
 // 需要服务端支持 Range（图书文件路由已支持），且 SW 缓存白名单包含该路径以便复读命中缓存。
-export async function createStreamingLoader(url: string): Promise<ZipLoader> {
+export async function createStreamingLoader(url: string, signal?: AbortSignal): Promise<ZipLoader> {
   const { configure, ZipReader, HttpReader, TextWriter, BlobWriter } = await import("@zip.js/zip.js");
   configure({ useWebWorkers: false });
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
-  const reader = new ZipReader(new HttpReader(url, { useRangeHeader: true, preventHeadRequest: true, headers: new Headers(headers) }));
+  signal?.throwIfAborted();
+  const reader = new ZipReader(new HttpReader(url, { useRangeHeader: true, preventHeadRequest: true, headers: new Headers(headers),
+    fetch: (input, init) => fetch(input, { ...init, signal }) }));
   const entries = await reader.getEntries();
   const map = new Map(entries.map((entry) => [(entry as { filename: string }).filename, entry as {
     filename: string;
-    getData(writer: unknown): Promise<unknown>;
+    getData(writer: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
   }]));
-  const load = <T>(f: (entry: { getData(writer: unknown): Promise<unknown> }, ...args: unknown[]) => Promise<T>) =>
+  const load = <T>(f: (entry: { getData(writer: unknown, options?: { signal?: AbortSignal }): Promise<unknown> }, ...args: unknown[]) => Promise<T>) =>
     (name: string, ...args: unknown[]) => {
       const entry = map.get(name);
       return entry ? f(entry, ...args) : Promise.resolve(null);
     };
   return {
     entries,
-    loadText: load((entry) => entry.getData(new TextWriter()) as Promise<string>),
-    loadBlob: load((entry, type) => entry.getData(new BlobWriter(type as string | undefined)) as Promise<Blob>),
+    loadText: load((entry) => entry.getData(new TextWriter(), { signal }) as Promise<string>),
+    loadBlob: load((entry, type) => entry.getData(new BlobWriter(type as string | undefined), { signal }) as Promise<Blob>),
     getSize: (name) => (map.get(name) as { uncompressedSize?: number } | undefined)?.uncompressedSize ?? 0
   };
 }
@@ -319,16 +342,8 @@ export function paginatedBookFraction(starts: number[], index: number, page: num
   return start + (end - start) * local;
 }
 
-// 提前加载相邻节：滚动/翻节进入下一章时内容已在缓存里（引用计数保证
-// foliate 换节时的 unload 不会清掉预取），避免新章白屏闪烁。
-export function preloadAdjacentSections(view: FoliateView, index: number): void {
-  const sections = view.book?.sections;
-  if (!sections?.length) return;
-  for (const i of [index - 1, index + 1]) {
-    const section = sections[i];
-    if (section?.load) void section.load().catch(() => { /* 预取失败不影响当前阅读 */ });
-  }
-}
+// 相邻节预取各持有一个可释放引用；换章和关闭时回收。
+export function preloadAdjacentSections(view: FoliateView, index: number): void { preloadBookNeighbors(view, index); }
 
 export type ContinuousReaderLocation = {
   index: number;
@@ -339,6 +354,8 @@ export type ContinuousReaderLocation = {
 type ContinuousReaderOptions = {
   style: ReaderStyle;
   onDocumentLoad?: (doc: Document, index: number) => void;
+  onDocumentUnload?: (doc: Document, index: number) => void;
+  onBackgroundError?: (error: unknown) => void;
   onRelocate?: (location: ContinuousReaderLocation) => void;
   onScrollDirection?: (direction: Exclude<BookScrollDirection, null>) => void;
 };
@@ -352,14 +369,26 @@ export class ContinuousBookReader {
   private readonly sectionStarts: number[];
   private readonly wrappers: HTMLDivElement[];
   private readonly frames: Array<HTMLIFrameElement | null>;
-  private readonly loading = new Map<number, Promise<void>>();
   private readonly loaded = new Set<number>();
   private readonly acquiredSections = new Set<number>();
   private readonly resizeObservers = new Map<number, ResizeObserver>();
+  private readonly queue = createBookSectionQueue(2);
+  private readonly documentControllers = new Map<number, AbortController>();
+  private readonly resizeObserver: ResizeObserver;
+  private readonly placeholders = new Map<number, { height: number; width: number; fontPct: number; spacing: number }>();
+  private navigation = 0;
+  private targetIndex = 0;
+  private layoutAnchor: BookViewAnchor | null = null;
+  private lastAnchor: BookViewAnchor | null = null;
+  private programmaticTop: number | null = null;
+  private styleGeneration = 0;
+  private styleFrame = 0;
   private readonly insertionGate = createReaderInsertionGate();
   private readonly interactionController = new AbortController();
   private readonly pendingResizes = new Set<number>();
   private style: ReaderStyle;
+  private onDocumentUnload?: (doc: Document, index: number) => void;
+  private onBackgroundError?: (error: unknown) => void;
   private onDocumentLoad?: (doc: Document, index: number) => void;
   private onRelocate?: (location: ContinuousReaderLocation) => void;
   private onScrollDirection?: (direction: Exclude<BookScrollDirection, null>) => void;
@@ -372,6 +401,8 @@ export class ContinuousBookReader {
     this.sectionStarts = sectionStarts;
     this.style = options.style;
     this.onDocumentLoad = options.onDocumentLoad;
+    this.onDocumentUnload = options.onDocumentUnload;
+    this.onBackgroundError = options.onBackgroundError;
     this.onRelocate = options.onRelocate;
     this.onScrollDirection = options.onScrollDirection;
     this.element = document.createElement("div");
@@ -391,53 +422,50 @@ export class ContinuousBookReader {
     this.frames = book.sections.map(() => null);
     this.element.addEventListener("scroll", this.handleScroll, { passive: true });
     this.bindTouchEvents(this.element);
+    this.resizeObserver = new ResizeObserver(() => this.reflowViewport());
+    this.resizeObserver.observe(this.element);
   }
 
-  async open(fraction: number): Promise<void> {
-    const target = sectionAtFraction(this.sectionStarts, fraction);
-    await this.loadSection(target.index);
-    const wrapper = this.wrappers[target.index];
-    if (wrapper) {
-      this.element.scrollTop = continuousScrollTopForFraction(wrapper.offsetTop, wrapper.offsetHeight, target.fraction, this.element.clientHeight);
-      this.lastScrollTop = this.element.scrollTop;
-    }
-    // 相邻章节只是预载优化，不能阻塞当前章节打开；上一章随后插入时由
-    // preserveScroll 保持当前阅读位置不跳动。
-    void this.loadSection(target.index - 1, true);
-    void this.loadSection(target.index + 1);
-    this.reportLocation();
-  }
+  async open(fraction: number): Promise<void> { await this.goToFraction(fraction); }
 
   async goToFraction(fraction: number): Promise<void> {
+    const request = ++this.navigation;
+    this.layoutAnchor = null;
     const target = sectionAtFraction(this.sectionStarts, fraction);
-    await this.loadSection(target.index);
+    this.targetIndex = target.index;
+    this.queue.retain(index => Math.abs(index - target.index) <= 2);
+    await this.loadSection(target.index, false, true);
+    if (this.destroyed || request !== this.navigation) return;
     const wrapper = this.wrappers[target.index];
-    if (!wrapper) return;
-    this.element.scrollTo({
-      top: continuousScrollTopForFraction(wrapper.offsetTop, wrapper.offsetHeight, target.fraction, this.element.clientHeight),
-      behavior: "auto"
-    });
-    this.lastScrollTop = this.element.scrollTop;
-    void this.loadSection(target.index + 1);
+    if (!wrapper || !this.loaded.has(target.index)) return;
+    this.scrollTo(continuousScrollTopForFraction(wrapper.offsetTop, wrapper.offsetHeight, target.fraction, this.element.clientHeight));
+    this.prefetch(target.index - 1, true);
+    this.prefetch(target.index + 1);
+    this.trimSections();
+    this.lastAnchor = this.captureAnchor();
     this.reportLocation();
   }
 
   goToRange(doc: Document, range: Range): void {
+    ++this.navigation;
+    this.layoutAnchor = null;
     const index = this.frames.findIndex((frame) => frame?.contentDocument === doc);
     const wrapper = this.wrappers[index];
     if (!wrapper || !this.loaded.has(index)) return;
-    this.element.scrollTo({
-      top: Math.max(0, wrapper.offsetTop + range.getBoundingClientRect().top - this.element.clientHeight / 3),
-      behavior: "instant"
-    });
-    this.lastScrollTop = this.element.scrollTop;
+    this.targetIndex = index;
+    this.scrollTo(Math.max(0, wrapper.offsetTop + range.getBoundingClientRect().top - this.element.clientHeight / 3));
+    this.lastAnchor = this.captureAnchor();
     this.reportLocation();
   }
 
   async goToHref(href: string): Promise<void> {
+    const request = ++this.navigation;
+    this.layoutAnchor = null;
     const resolved = this.book.resolveHref?.(href);
     if (!resolved) return;
-    await this.loadSection(resolved.index);
+    this.targetIndex = resolved.index;
+    await this.loadSection(resolved.index, false, true);
+    if (this.destroyed || request !== this.navigation) return;
     const wrapper = this.wrappers[resolved.index];
     const doc = this.frames[resolved.index]?.contentDocument;
     if (!wrapper || !doc) return;
@@ -445,21 +473,50 @@ export class ContinuousBookReader {
     const rect = anchor && typeof anchor !== "number" && "getBoundingClientRect" in anchor
       ? anchor.getBoundingClientRect()
       : null;
-    this.element.scrollTo({ top: wrapper.offsetTop + (rect?.top ?? 0), behavior: "auto" });
-    this.lastScrollTop = this.element.scrollTop;
-    void this.loadSection(resolved.index + 1);
+    this.scrollTo(wrapper.offsetTop + (rect?.top ?? 0));
+    this.prefetch(resolved.index + 1);
+    this.lastAnchor = this.captureAnchor();
+    this.reportLocation();
   }
 
   setStyle(style: ReaderStyle): void {
+    if (this.destroyed) return;
+    this.layoutAnchor ??= this.captureAnchor();
     this.style = style;
-    for (let index = 0; index < this.frames.length; index += 1) {
-      const doc = this.frames[index]?.contentDocument;
-      if (doc) this.applyDocumentStyle(doc, index);
-    }
+    const generation = ++this.styleGeneration;
+    if (this.styleFrame) cancelAnimationFrame(this.styleFrame);
+    this.styleFrame = requestAnimationFrame(() => {
+      this.styleFrame = 0;
+      if (this.destroyed || generation !== this.styleGeneration) return;
+      for (let index = 0; index < this.frames.length; index++) {
+        const doc = this.frames[index]?.contentDocument;
+        if (doc) this.applyDocumentStyle(doc, index);
+      }
+      for (const [index, measured] of this.placeholders) if (!this.loaded.has(index)) {
+        const fontRatio = this.style.fontPct / measured.fontPct;
+        const widthRatio = measured.width / this.textWidth();
+        this.wrappers[index].style.height = `${Math.max(1, Math.round(measured.height * fontRatio ** 2 * this.style.spacing / measured.spacing * widthRatio))}px`;
+        this.wrappers[index].dataset.estimatedHeight = "true";
+      }
+      for (const index of this.loaded) this.measureFrame(index, true);
+      this.restoreAnchor(this.layoutAnchor);
+      this.lastAnchor = this.layoutAnchor ?? this.captureAnchor();
+      this.layoutAnchor = null;
+    });
   }
 
   destroy(): void {
     this.destroyed = true;
+    ++this.navigation;
+    this.queue.destroy();
+    this.resizeObserver.disconnect();
+    if (this.styleFrame) cancelAnimationFrame(this.styleFrame);
+    for (const [index, controller] of this.documentControllers) {
+      controller.abort();
+      const doc = this.frames[index]?.contentDocument;
+      if (doc) { this.onDocumentUnload?.(doc, index); forgetBookTextModel(doc); }
+    }
+    this.documentControllers.clear();
     this.element.removeEventListener("scroll", this.handleScroll);
     this.interactionController.abort();
     this.insertionGate.cancel();
@@ -474,23 +531,31 @@ export class ContinuousBookReader {
   }
 
   private readonly handleScroll = () => {
-    this.insertionGate.motion();
+    const compensation = this.programmaticTop !== null && Math.abs(this.element.scrollTop - this.programmaticTop) < 1;
+    if (!compensation) { this.insertionGate.motion(); this.layoutAnchor = null; }
     if (this.scrollFrame) return;
     this.scrollFrame = requestAnimationFrame(() => {
       this.scrollFrame = 0;
       const currentScrollTop = this.element.scrollTop;
-      const direction = bookScrollDirection(this.lastScrollTop, currentScrollTop);
+      const programmatic = this.programmaticTop !== null && Math.abs(currentScrollTop - this.programmaticTop) < 1;
+      this.programmaticTop = null;
+      const direction = programmatic ? null : bookScrollDirection(this.lastScrollTop, currentScrollTop);
       this.lastScrollTop = currentScrollTop;
       if (direction) this.onScrollDirection?.(direction);
-      this.reportLocation();
+      if (!programmatic) this.reportLocation();
+      // A delayed scroll event can arrive after image/font layout has already
+      // changed. Keep the source anchor established by the navigation/layout.
+      if (!programmatic && !this.layoutAnchor) this.lastAnchor = this.captureAnchor();
       const index = this.visibleSectionIndex();
+      this.targetIndex = index;
+      this.trimSections();
       const viewportBottom = this.element.scrollTop + this.element.clientHeight;
       const wrapper = this.wrappers[index];
       if (wrapper && wrapper.offsetTop + wrapper.offsetHeight - viewportBottom < this.element.clientHeight) {
-        void this.loadSection(index + 1);
+        this.prefetch(index + 1);
       }
       if (wrapper && this.element.scrollTop - wrapper.offsetTop < this.element.clientHeight / 2) {
-        void this.loadSection(index - 1, true);
+        this.prefetch(index - 1, true);
       }
     });
   };
@@ -527,23 +592,28 @@ export class ContinuousBookReader {
     });
   }
 
-  private loadSection(index: number, preserveScroll = false): Promise<void> {
+  private prefetch(index: number, preserveScroll = false): void {
+    void this.loadSection(index, preserveScroll).catch(error => this.onBackgroundError?.(error));
+  }
+
+  private loadSection(index: number, preserveScroll = false, foreground = false): Promise<void> {
+    if (this.destroyed) return Promise.resolve();
     if (index < 0 || index >= this.book.sections.length || this.book.sections[index]?.linear === "no") return Promise.resolve();
     if (this.loaded.has(index)) return Promise.resolve();
-    const pending = this.loading.get(index);
-    if (pending) return pending;
-    const promise = this.loadSectionNow(index, preserveScroll).finally(() => this.loading.delete(index));
-    this.loading.set(index, promise);
-    return promise;
+    return this.queue.run(index, async () => {
+      try { await this.loadSectionNow(index, preserveScroll); }
+      catch (error) { this.releaseSection(index); throw error; }
+    }, foreground);
   }
 
   private async loadSectionNow(index: number, preserveScroll: boolean): Promise<void> {
     const section = this.book.sections[index];
     const wrapper = this.wrappers[index];
     const src = await section.load();
-    if (!src) return;
+    if (!src) throw new Error(`图书第 ${index + 1} 节没有正文`);
     if (this.destroyed) { section.unload?.(); return; }
     this.acquiredSections.add(index);
+    if (Math.abs(index - this.targetIndex) > 3) { this.releaseSection(index); return; }
     const frame = document.createElement("iframe");
     frame.className = "book-continuous-frame";
     frame.setAttribute("scrolling", "no");
@@ -558,21 +628,27 @@ export class ContinuousBookReader {
     this.frames[index] = frame;
     wrapper.replaceChildren(frame);
     await new Promise<void>((resolve, reject) => {
-      frame.addEventListener("load", () => resolve(), { once: true });
-      frame.addEventListener("error", () => reject(new Error(`图书第 ${index + 1} 节加载失败`)), { once: true });
+      const timer = setTimeout(() => { cleanup(); reject(new Error(`图书第 ${index + 1} 节加载超时，请重试`)); }, 15000);
+      const abort = () => { cleanup(); resolve(); };
+      const cleanup = () => { clearTimeout(timer); this.interactionController.signal.removeEventListener("abort", abort); };
+      this.interactionController.signal.addEventListener("abort", abort, { once: true });
+      frame.addEventListener("load", () => { cleanup(); resolve(); }, { once: true });
+      frame.addEventListener("error", () => { cleanup(); reject(new Error(`图书第 ${index + 1} 节加载失败`)); }, { once: true });
       frame.src = src;
     });
     if (this.destroyed) return;
     const doc = frame.contentDocument;
     if (!doc) throw new Error(`图书第 ${index + 1} 节不可访问`);
     this.applyDocumentStyle(doc, index);
-    await doc.fonts?.ready?.catch(() => undefined);
+    // Do not block readable text on remote fonts; later reflow uses the same text anchor.
+    void doc.fonts?.ready.then(() => { if (!this.destroyed) this.measureFrame(index); });
     if (this.destroyed) return;
     this.measureFrame(index);
     if (preserveScroll || wrapper.offsetTop < this.element.scrollTop) {
       const ready = await this.insertionGate.wait();
       if (!ready || this.destroyed) return;
     }
+    if (Math.abs(index - this.targetIndex) > 3) { this.releaseSection(index); return; }
     // Images can finish loading while the insertion is deferred.
     frame.style.width = `${this.element.clientWidth}px`;
     this.measureFrame(index);
@@ -583,25 +659,98 @@ export class ContinuousBookReader {
     frame.style.removeProperty("visibility");
     frame.style.removeProperty("pointer-events");
     frame.style.removeProperty("width");
+    wrapper.style.removeProperty("height");
+    delete wrapper.dataset.estimatedHeight;
+    this.placeholders.delete(index);
     this.loaded.add(index);
     if (anchor && anchor !== wrapper && anchorTop !== undefined) {
       const delta = anchor.getBoundingClientRect().top - anchorTop;
-      this.element.scrollTo({ top: this.element.scrollTop + delta, behavior: "instant" });
-      this.lastScrollTop = this.element.scrollTop;
+      this.scrollTo(this.element.scrollTop + delta);
     }
-    this.bindTouchEvents(doc);
+    const controller = new AbortController();
+    this.documentControllers.set(index, controller);
+    this.bindTouchEvents(doc, controller.signal);
     this.onDocumentLoad?.(doc, index);
-    const observer = new ResizeObserver(() => this.measureFrame(index));
+    this.lastAnchor = this.captureAnchor();
+    const observer = new ResizeObserver(() => {
+      const anchor = this.lastAnchor;
+      this.measureFrame(index);
+      if (anchor?.doc === doc) this.restoreAnchor(anchor);
+    });
     observer.observe(doc.documentElement);
     if (doc.body) observer.observe(doc.body);
     this.resizeObservers.set(index, observer);
   }
 
-  private bindTouchEvents(target: HTMLElement | Document): void {
-    const options = { passive: true, signal: this.interactionController.signal };
-    target.addEventListener("touchstart", () => this.insertionGate.touchStart(), options);
+  private bindTouchEvents(target: HTMLElement | Document, signal = this.interactionController.signal): void {
+    const options = { passive: true, signal };
+    target.addEventListener("pointerdown", () => { ++this.navigation; this.layoutAnchor = null; }, options);
+    target.addEventListener("wheel", () => { ++this.navigation; this.layoutAnchor = null; this.lastAnchor = null; this.programmaticTop = null; }, options);
+    target.addEventListener("touchstart", () => { ++this.navigation; this.layoutAnchor = null; this.lastAnchor = null; this.insertionGate.touchStart(); }, options);
     target.addEventListener("touchend", () => this.insertionGate.touchEnd(), options);
     target.addEventListener("touchcancel", () => this.insertionGate.touchEnd(), options);
+  }
+
+  private scrollTo(top: number): void {
+    this.element.scrollTo({ top, behavior: "instant" });
+    this.lastScrollTop = this.element.scrollTop;
+    this.programmaticTop = this.element.scrollTop;
+  }
+
+  captureAnchor(): BookViewAnchor | null {
+    const bounds = this.element.getBoundingClientRect();
+    const top = bounds.top + this.element.clientHeight / 3;
+    for (const index of this.loaded) {
+      const doc = this.frames[index]?.contentDocument;
+      const frame = this.frames[index]?.getBoundingClientRect();
+      if (doc && frame && frame.top <= top && frame.bottom > top) return captureBookViewAnchor(doc, top, bounds.bottom);
+    }
+    return null;
+  }
+
+  private restoreAnchor(anchor: BookViewAnchor | null): void {
+    if (!anchor || this.destroyed) return;
+    const top = bookViewAnchorTop(anchor);
+    if (top !== null && Math.abs(top - anchor.top) > .5) this.scrollTo(this.element.scrollTop + top - anchor.top);
+  }
+
+  private reflowViewport(): void {
+    if (this.destroyed) return;
+    const anchor = this.lastAnchor ?? this.captureAnchor();
+    this.layoutAnchor = anchor ? { ...anchor, top: this.element.getBoundingClientRect().top + this.element.clientHeight / 3 } : null;
+    this.lastAnchor = this.layoutAnchor;
+    this.setStyle(this.style);
+  }
+
+  private releaseSection(index: number): void {
+    const frame = this.frames[index];
+    const doc = frame?.contentDocument;
+    if (doc) { this.onDocumentUnload?.(doc, index); forgetBookTextModel(doc); }
+    this.resizeObservers.get(index)?.disconnect(); this.resizeObservers.delete(index);
+    this.documentControllers.get(index)?.abort(); this.documentControllers.delete(index);
+    if (this.loaded.has(index)) {
+      const height = this.wrappers[index].offsetHeight;
+      this.placeholders.set(index, { height, width: this.textWidth(), fontPct: this.style.fontPct, spacing: this.style.spacing });
+      this.wrappers[index].style.height = `${height}px`;
+    }
+    frame?.remove(); this.frames[index] = null; this.loaded.delete(index);
+    if (this.acquiredSections.delete(index)) this.book.sections[index]?.unload?.();
+  }
+
+  private textWidth(): number {
+    return Math.max(1, Math.min(this.element.clientWidth - 2 * this.style.margin, Math.max(320, 720 - 2 * (this.style.margin - 16))));
+  }
+
+  private trimSections(): void {
+    // Seven normal chapters, or three for large chapters; selected/shared text stays alive.
+    const indices = [...this.loaded].sort((a, b) => Math.abs(a - this.targetIndex) - Math.abs(b - this.targetIndex));
+    let bytes = 0;
+    for (let rank = 0; rank < indices.length; rank++) {
+      const index = indices[rank], doc = this.frames[index]?.contentDocument;
+      bytes += this.book.sections[index]?.size ?? 0;
+      const protectedText = !!doc?.getSelection()?.toString() || !!doc?.querySelector("[data-book-quote-highlight]");
+      if (!protectedText && Math.abs(index - this.targetIndex) > 1 && (rank >= 7 || Math.abs(index - this.targetIndex) > 3 || bytes > 2_000_000)) this.releaseSection(index);
+    }
   }
 
   private applyDocumentStyle(doc: Document, index: number): void {
@@ -611,6 +760,7 @@ export class ContinuousBookReader {
       style.id = "team-chat-continuous-style";
       doc.head?.append(style);
     }
+    applyBookTypography(doc, this.style);
     const edge = Math.max(16, this.style.margin);
     // 窄屏由 html padding 决定两侧留白；宽屏正文原本固定在 720px，
     // padding 变化只挤压空白区，视觉上完全不动。同步收窄居中的正文栏，
@@ -620,7 +770,7 @@ export class ContinuousBookReader {
       html { box-sizing: border-box !important; height: auto !important; min-height: 0 !important; overflow: hidden !important; padding: 24px ${edge}px !important; }
       body { width: auto !important; max-width: ${maxTextWidth}px !important; min-height: 0 !important; margin: 0 auto !important; overflow: visible !important; }
     `;
-    requestAnimationFrame(() => this.measureFrame(index));
+    this.measureFrame(index);
   }
 
   private measureFrame(index: number, afterQuiet = false): void {
@@ -656,8 +806,7 @@ export class ContinuousBookReader {
     if (anchor && anchorTop !== undefined) {
       // Shrinking can clamp scrollTop before correction; use that current value.
       const delta = anchor.getBoundingClientRect().top - anchorTop;
-      this.element.scrollTo({ top: this.element.scrollTop + delta, behavior: "instant" });
-      this.lastScrollTop = this.element.scrollTop;
+      this.scrollTo(this.element.scrollTop + delta);
     }
   }
 }

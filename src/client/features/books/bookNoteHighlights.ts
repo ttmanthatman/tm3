@@ -1,47 +1,8 @@
 import type { BookNoteDTO } from "../../../shared/bookNotes";
 
-type TextPosition = { part: number; offset: number };
-export type BookNoteTextPart = { text: string; breakBefore?: boolean };
-export type BookNoteText = {
-  text: string;
-  starts: TextPosition[];
-  ends: TextPosition[];
-};
-
-// Keep source offsets while collapsing EPUB indentation and paragraph boundaries.
-// Inline nodes stay adjacent, so a word split by <em> still matches that word.
-export function buildBookNoteText(parts: readonly BookNoteTextPart[]): BookNoteText {
-  const characters: string[] = [];
-  const starts: TextPosition[] = [];
-  const ends: TextPosition[] = [];
-  const append = (character: string, start: TextPosition, end: TextPosition) => {
-    if (/\s/u.test(character)) {
-      if (!characters.length) return;
-      if (characters[characters.length - 1] === " ") {
-        ends[ends.length - 1] = end;
-        return;
-      }
-      character = " ";
-    }
-    characters.push(character);
-    starts.push(start);
-    ends.push(end);
-  };
-  parts.forEach((part, index) => {
-    if (part.breakBefore && characters.length) {
-      const previousEnd = ends[ends.length - 1]!;
-      append(" ", previousEnd, { part: index, offset: 0 });
-    }
-    for (let offset = 0; offset < part.text.length; offset += 1) {
-      append(part.text[offset]!, { part: index, offset }, { part: index, offset: offset + 1 });
-    }
-  });
-  if (characters[characters.length - 1] === " ") {
-    characters.pop(); starts.pop(); ends.pop();
-  }
-  return { text: characters.join(""), starts, ends };
-}
-
+import { bookTextModel } from "./bookTextModel";
+import { resolveBookLocator, type BookPublication } from "./bookLocator";
+export { buildBookNoteText, type BookNoteText, type BookNoteTextPart } from "./bookText";
 export function findBookNoteQuotes(text: string, quote: string): { start: number; end: number }[] {
   const needle = quote.replace(/\s+/gu, " ").trim();
   if (!needle) return [];
@@ -107,6 +68,9 @@ export function bookNoteInSection(fraction: number, start: number, end: number):
 }
 
 type NoteHighlightOptions = {
+  publication?: BookPublication | null;
+  sectionHref?: string;
+  cfiRange?: (cfi: string) => Range | null;
   startFraction: number;
   endFraction: number;
   onOpen: (note: BookNoteDTO) => void;
@@ -120,47 +84,19 @@ type HighlightWindow = Window & {
 const activeHighlights = new WeakMap<Document, BookNoteHighlights>();
 const HIGHLIGHT_NAME = "book-saved-notes";
 const OVERLAY_ATTRIBUTE = "data-book-note-overlay";
-const BLOCK_TAGS = new Set(["P", "DIV", "LI", "BLOCKQUOTE", "DD", "DT", "H1", "H2", "H3", "H4", "H5", "H6", "TR", "PRE", "SECTION", "ARTICLE"]);
-const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEXTAREA", "SELECT", "BUTTON", "INPUT"]);
 const NOTEBOOK_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M3 7h5M3 12h5M3 17h5M11 8h6M11 12h6M11 16h4"/></svg>';
-
-function documentText(doc: Document, view: HighlightWindow): { nodes: Text[]; text: BookNoteText } {
-  const nodes: Text[] = [];
-  const parts: BookNoteTextPart[] = [];
-  let breakBefore = false;
-  const visit = (node: Node) => {
-    if (node.nodeType === 3) {
-      const text = node as Text;
-      if (text.data) { nodes.push(text); parts.push({ text: text.data, breakBefore }); breakBefore = false; }
-      return;
-    }
-    if (node.nodeType !== 1) return;
-    const element = node as Element;
-    if (SKIP_TAGS.has(element.tagName.toUpperCase()) || element.hasAttribute("hidden") || element.getAttribute("aria-hidden") === "true") return;
-    const style = view.getComputedStyle(element);
-    if (style.display === "none" || style.visibility === "hidden") return;
-    const isBlock = BLOCK_TAGS.has(element.tagName.toUpperCase()) || ["block", "list-item", "table-row"].includes(style.display);
-    if (isBlock || element.tagName.toUpperCase() === "BR") breakBefore = true;
-    for (const child of element.childNodes) visit(child);
-    if (isBlock) breakBefore = true;
-  };
-  if (doc.body) visit(doc.body);
-  return { nodes, text: buildBookNoteText(parts) };
-}
 
 /** Resolve shared text without changing the EPUB's text nodes or page geometry. */
 export function findBookQuoteRange(doc: Document, quote: string, fraction: number): Range | null {
   const view = doc.defaultView;
   if (!view || !doc.body) return null;
-  const { nodes, text } = documentText(doc, view);
+  const model = bookTextModel(doc), { text } = model;
   let closest: Range | null = null;
   let distance = Infinity;
   for (const match of findBookNoteQuotes(text.text, quote)) {
-    const start = text.starts[match.start]!;
-    const end = text.ends[match.end - 1]!;
-    const range = doc.createRange();
-    range.setStart(nodes[start.part]!, start.offset);
-    range.setEnd(nodes[end.part]!, end.offset);
+    const range = model.range(match.start, match.end);
+    if (!range) continue;
+    if (!Array.from(range.getClientRects()).some(rect => rect.width > 0 && rect.height > 0)) continue;
     const position = bookNoteRangeFraction(doc, range) ?? (match.start + match.end) / 2 / Math.max(1, text.text.length);
     const nextDistance = Math.abs(position - fraction);
     if (nextDistance < distance) { closest = range; distance = nextDistance; }
@@ -173,21 +109,23 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
   activeHighlights.get(doc)?.destroy();
   const view = doc.defaultView as HighlightWindow | null;
   if (!view || !doc.body) return { refresh() {}, destroy() {} };
-  const sectionNotes = notes.filter((note) => bookNoteInSection(note.fraction, options.startFraction, options.endFraction));
+  const sectionNotes = notes.filter((note) => note.locator ? note.locator.sectionHref === options.sectionHref : bookNoteInSection(note.fraction, options.startFraction, options.endFraction));
   if (!sectionNotes.length) return { refresh() {}, destroy() {} };
-  const { nodes, text } = documentText(doc, view);
+  const model = bookTextModel(doc), { text } = model;
   const marked: { note: BookNoteDTO; candidates: { range: Range; textFraction: number }[]; range: Range }[] = [];
   const seen = new Set<string>();
   for (const note of sectionNotes) {
     if (seen.has(note.id)) continue;
     seen.add(note.id);
-    const candidates = findBookNoteQuotes(text.text, note.quote).map((match) => {
-      const start = text.starts[match.start]!;
-      const end = text.ends[match.end - 1]!;
-      const range = doc.createRange();
-      range.setStart(nodes[start.part]!, start.offset);
-      range.setEnd(nodes[end.part]!, end.offset);
-      return { range, textFraction: (match.start + match.end) / 2 / Math.max(1, text.text.length) };
+    if (note.locator) {
+      if (!options.publication || !options.sectionHref) continue;
+      const resolved = resolveBookLocator(options.publication, options.sectionHref, doc, note.locator, note.locator.cfi ? options.cfiRange?.(note.locator.cfi) : null);
+      if (resolved.range) marked.push({ note, candidates: [{ range: resolved.range, textFraction: 0 }], range: resolved.range });
+      continue;
+    }
+    const candidates = findBookNoteQuotes(text.text, note.quote).flatMap((match) => {
+      const range = model.range(match.start, match.end);
+      return range ? [{ range, textFraction: (match.start + match.end) / 2 / Math.max(1, text.text.length) }] : [];
     });
     if (!candidates.length) continue;
     marked.push({ note, candidates, range: candidates[0]!.range });

@@ -2,12 +2,13 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import type { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import type { BookDTO } from "../../shared/types.js";
 import { BOOK_UPLOAD_MAX_BYTES, EpubRejectedError, readEpubMeta } from "../books/epub.js";
 import { registerBookNotesRoutes } from "./bookNotes.js";
+import { registerBookProgressRoutes } from "./bookProgress.js";
 
 export type BooksAuth = {
   accountId: number;
@@ -75,9 +76,10 @@ function sendBookFile(request: FastifyRequest, reply: FastifyReply, filePath: st
   const range = String(request.headers.range || "");
   const match = /^bytes=(\d*)-(\d*)$/.exec(range);
   if (range && match) {
-    const start = match[1] ? Number(match[1]) : 0;
-    const end = match[2] ? Math.min(Number(match[2]), stat.size - 1) : stat.size - 1;
-    if (Number.isFinite(start) && Number.isFinite(end) && start <= end && start < stat.size) {
+    const suffix = !match[1] && !!match[2];
+    const start = suffix ? Math.max(0, stat.size - Number(match[2])) : match[1] ? Number(match[1]) : Number.NaN;
+    const end = suffix || !match[2] ? stat.size - 1 : Math.min(Number(match[2]), stat.size - 1);
+    if (Number.isSafeInteger(start) && Number.isSafeInteger(end) && (!suffix || Number(match[2]) > 0) && start <= end && start < stat.size) {
       reply.code(206);
       reply.header("Content-Range", `bytes ${start}-${end}/${stat.size}`);
       reply.header("Content-Length", end - start + 1);
@@ -127,6 +129,7 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
   const { prisma, booksDir, requireAuth, requireMediaAuth, requireAdmin, authFor } = deps;
 
   registerBookNotesRoutes(app, deps);
+  registerBookProgressRoutes(app, deps);
 
   fs.mkdirSync(booksDir, { recursive: true });
 
@@ -197,6 +200,7 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
         fileName,
         coverName,
         fileSize: buffer.length,
+        publicationRevision: crypto.createHash("sha256").update(buffer).digest("hex"),
         createdById: auth.accountId
       },
       include: { progress: { where: { accountId: auth.accountId }, select: { fraction: true } } }
@@ -251,8 +255,8 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
     const auth = authFor(request);
     await prisma.bookProgress.upsert({
       where: { bookId_accountId: { bookId: book.id, accountId: auth.accountId } },
-      create: { bookId: book.id, accountId: auth.accountId, fraction: body.data.fraction },
-      update: { fraction: body.data.fraction }
+      create: { bookId: book.id, accountId: auth.accountId, fraction: body.data.fraction, revision: 1 },
+      update: { fraction: body.data.fraction, locator: Prisma.DbNull, locatorRevision: null, lastMutationId: null, revision: { increment: 1 } }
     });
     return { success: true };
   });

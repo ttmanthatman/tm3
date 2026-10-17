@@ -3,13 +3,14 @@ import "../stories/stories.css";
 import "./bookNotes.css";
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
 import { BookOpen, NotebookPen, Send, Sparkles, X } from "lucide-vue-next";
-import { BOOK_QUOTE_MAX, type BookNoteDTO, type BookNoteSharePayload } from "@shared/bookNotes";
+import { BOOK_QUOTE_MAX, legacyBookNote, type BookNoteDTO, type BookNoteSharePayload } from "@shared/bookNotes";
+import { bookLocatorSchema } from "@shared/bookLocator";
 import AppModal from "../../components/ui/AppModal.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import { useChatStore } from "../../store";
 import { useMessageSender } from "../../messageSending";
 import { bookNotesClient } from "./bookNotesClient";
-import { bookExcerptImage, bookShareContent, type BookLocation, type BookReadingContext } from "./bookReading";
+import { bookExcerptImage, bookReadingUrl, bookShareContent, type BookLocation, type BookReadingContext } from "./bookReading";
 import { escapeHtmlText } from "../messages/messageRendering";
 import BookNoteEditor from "./BookNoteEditor.vue";
 import BookNoteContent from "./BookNoteContent.vue";
@@ -56,7 +57,9 @@ async function sendShare() {
   const context = shareContext.value, channelId = shareChannelId.value;
   if (!context || !channelId || shareBusy.value) return;
   if (!channels.value.some((channel) => channel.id === channelId)) { shareError.value = "当前聊天室不可发送，请重新选择"; return; }
-  const result = await send({ channelId, type: "text", content: sharedNote.value ? escapeHtmlText(shareComment.value.trim() || `阅读笔记 · 《${context.title}》`) : bookShareContent(context, window.location.origin, shareComment.value), ...(sharedNote.value ? { payload: { kind: "book_note", note: sharedNote.value } satisfies BookNoteSharePayload } : {}), replyToId: null, clientRequestId: shareRequestId });
+  const precise = bookLocatorSchema.safeParse(context.locator);
+  const noteContent = escapeHtmlText(shareComment.value.trim() || `阅读笔记 · 《${context.title}》`) + (precise.success ? `<br><a href="${escapeHtmlText(bookReadingUrl({ bookId: context.bookId, fraction: context.fraction, locator: precise.data }, window.location.origin))}">打开书中的位置</a>` : "");
+  const result = await send({ channelId, type: "text", content: sharedNote.value ? noteContent : bookShareContent(context, window.location.origin, shareComment.value), ...(sharedNote.value ? { payload: { kind: "book_note", note: legacyBookNote(sharedNote.value) } satisfies BookNoteSharePayload } : {}), replyToId: null, clientRequestId: shareRequestId });
   if (!result.ok) { shareError.value = result.message; return; }
   if (sharedNote.value) notice.value = "笔记已分享到聊天室";
   shareContext.value = null; sharedNote.value = null;
@@ -87,7 +90,7 @@ function closeLibrary() {
 watch(() => store.account?.id, () => { closeLibrary(); shareContext.value = null; sharedNote.value = null; });
 onBeforeUnmount(() => { notesSequence++; });
 function noteContext(note: BookNoteDTO): BookReadingContext {
-  return { bookId: note.bookId, title: note.bookTitle, chapter: note.chapter, fraction: note.fraction, quote: note.quote };
+  return { bookId: note.bookId, title: note.bookTitle, chapter: note.chapter, fraction: note.fraction, quote: note.quote, ...(note.locator ? { locator: note.locator } : {}) };
 }
 async function removeNote() {
   const note = deleteNote.value;

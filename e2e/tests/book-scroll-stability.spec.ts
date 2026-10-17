@@ -5,10 +5,10 @@ type FixtureWindow = Window & {
   bookScrollFixture: { reader: ContinuousBookReader; releasePrevious(): void; previousRequested: boolean; unloaded: number[] };
 };
 
-async function openFixture(page: Page, withIllustration = false) {
+async function openFixture(page: Page, withIllustration = false, withProse = false) {
   await page.goto("/src/client/books/reader.ts");
   await page.setContent('<style>html,body{margin:0;height:100%;overflow:hidden}.book-continuous-scroll{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain}.book-continuous-section{width:100%;min-height:1px}.book-continuous-frame{display:block;width:100%;min-height:1px;border:0}</style>');
-  await page.evaluate(async (withIllustration) => {
+  await page.evaluate(async ({ withIllustration, withProse }) => {
     const source = "/src/client/books/reader.ts";
     const { ContinuousBookReader: Reader, DEFAULT_READER_STYLE } = await import(source) as typeof import("../../src/client/books/reader");
     let release!: () => void;
@@ -16,14 +16,14 @@ async function openFixture(page: Page, withIllustration = false) {
     const fixture = { reader: null as unknown as ContinuousBookReader, releasePrevious: release, previousRequested: false, unloaded: [] as number[] };
     const sections = Array.from({ length: 3 }, (_, index) => ({ size: 1000, async load() {
       if (index === 0) { fixture.previousRequested = true; await previous; }
-      const html = `<!doctype html><html><head><style>p{margin:0;height:100px;font:20px/1.5 serif}</style></head><body>${Array.from({ length: 35 }, (_, n) => `<p id="p-${n}">Section ${index} paragraph ${n}</p>`).join("")}${withIllustration ? '<div style="position:absolute;top:3600px;height:300px;width:100px">Illustration</div>' : ""}</body></html>`;
+      const html = `<!doctype html><html><head><style>p{margin:0;${withProse ? "font:inherit" : "height:100px;font:20px/1.5 serif"}}</style></head><body>${Array.from({ length: 35 }, (_, n) => `<p id="p-${n}">${withProse && n === 10 ? '<img id="late-image" style="display:block;width:100%;height:0" />' : ""}Section ${index} paragraph ${n}${withProse ? " 阅读时要记住这一句，在字体变大以后仍然能看到同一段文字。".repeat(5) : ""}</p>`).join("")}${withIllustration ? '<div style="position:absolute;top:3600px;height:300px;width:100px">Illustration</div>' : ""}</body></html>`;
       return URL.createObjectURL(new Blob([html], { type: "text/html" }));
     }, unload() { fixture.unloaded.push(index); } }));
     fixture.reader = new Reader({ sections }, [0, 1 / 3, 2 / 3, 1], { style: DEFAULT_READER_STYLE });
     (window as FixtureWindow).bookScrollFixture = fixture;
     document.body.append(fixture.reader.element);
     await fixture.reader.open(.4);
-  }, withIllustration);
+  }, { withIllustration, withProse });
   await expect.poll(() => page.evaluate(() => (window as FixtureWindow).bookScrollFixture.previousRequested)).toBe(true);
   await page.waitForTimeout(100);
 }
@@ -164,4 +164,101 @@ test("EPUB destruction releases a preceding section that is still loading", asyn
 test("EPUB positioned illustrations retain their full chapter extent", async ({ page }) => {
   await openFixture(page, true);
   await expect.poll(() => page.locator('[data-section-index="1"] iframe').evaluate((el) => el.getBoundingClientRect().height)).toBeGreaterThan(3900);
+});
+
+test("EPUB a slow old navigation cannot replace a newer target", async ({ page }) => {
+  await openFixture(page);
+  await page.evaluate(async () => {
+    const fixture = (window as FixtureWindow).bookScrollFixture;
+    const old = fixture.reader.goToFraction(.1);
+    await fixture.reader.goToFraction(.85);
+    fixture.releasePrevious();
+    await old;
+  });
+  const target = page.locator('[data-section-index="2"]');
+  const box = (await target.boundingBox())!;
+  expect(box.y).toBeLessThan(0);
+  expect(box.y + box.height).toBeGreaterThan(400);
+});
+
+test("EPUB Aa preserves the same words and does not report a user scroll", async ({ page }) => {
+  await openFixture(page, false, true);
+  const result = await page.evaluate(async () => {
+    const { reader } = (window as FixtureWindow).bookScrollFixture;
+    const doc = reader.element.querySelector<HTMLIFrameElement>('[data-section-index="1"] iframe')!.contentDocument!;
+    const range = doc.createRange(); range.setStart(doc.querySelector("#p-20")!.firstChild!, 0); range.setEnd(doc.querySelector("#p-20")!.firstChild!, 1);
+    reader.goToRange(doc, range);
+    const frame = doc.defaultView!.frameElement!;
+    const before = frame.getBoundingClientRect().top + range.getBoundingClientRect().top;
+    reader.setStyle({ theme: "light", fontPct: 180, spacing: 2.2, margin: 48, flow: "scrolled" });
+    await new Promise(resolve => setTimeout(resolve, 200));
+    const after = frame.getBoundingClientRect().top + range.getBoundingClientRect().top;
+    return { before, after };
+  });
+  expect(Math.abs(result.after - result.before)).toBeLessThan(40);
+});
+
+test("EPUB 100-chapter traversal releases frames and revisits placeholders after reflow", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto("/src/client/books/reader.ts");
+  await page.setContent('<style>body{margin:0}.book-continuous-scroll{position:absolute;inset:0;overflow:auto}.book-continuous-section{min-height:1px}.book-continuous-frame{display:block;width:100%;border:0}</style>');
+  const result = await page.evaluate(async () => {
+    const module = "/src/client/books/reader.ts";
+    const { ContinuousBookReader, DEFAULT_READER_STYLE } = await import(module) as typeof import("../../src/client/books/reader");
+    const urls = new Map<number, string>();
+    let active = 0, peak = 0, released = 0, peakTasks = 0, tasks = 0;
+    const sections = Array.from({ length: 105 }, (_, i) => ({ size: 10000, async load() {
+      tasks++; peakTasks = Math.max(peakTasks, tasks);
+      await new Promise(resolve => setTimeout(resolve, 1));
+      const url = URL.createObjectURL(new Blob([`<html><body>${Array.from({ length: 30 }, (_, j) => `<p>Chapter ${i}, sentence ${j}. ${"A long reading paragraph. ".repeat(10)}</p>`).join("")}</body></html>`], { type: "text/html" }));
+      tasks--; urls.set(i, url); active++; peak = Math.max(peak, active); return url;
+    }, unload() { const url = urls.get(i); if (url) { URL.revokeObjectURL(url); urls.delete(i); active--; released++; } } }));
+    const reader = new ContinuousBookReader({ sections }, Array.from({ length: 106 }, (_, i) => i / 105), { style: DEFAULT_READER_STYLE });
+    document.body.append(reader.element);
+    let maxFrames = 0;
+    for (let i = 0; i < 100; i++) {
+      await reader.goToFraction((i + .4) / 105);
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      maxFrames = Math.max(maxFrames, reader.element.querySelectorAll("iframe").length);
+    }
+    reader.setStyle({ ...DEFAULT_READER_STYLE, fontPct: 180, spacing: 2.2, margin: 48 });
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+    for (const index of [10, 90, 5, 95]) await reader.goToFraction((index + .4) / 105);
+    const anchor = reader.captureAnchor();
+    const text = anchor?.doc.body.textContent;
+    reader.destroy();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return { maxFrames, peak, peakTasks, released, remaining: active, text };
+  });
+  expect(result.maxFrames).toBeLessThanOrEqual(9); // Seven committed plus two off-flow preparations.
+  expect(result.peakTasks).toBeLessThanOrEqual(2);
+  expect(result.peak).toBeLessThanOrEqual(10);
+  expect(result.released).toBeGreaterThan(90);
+  expect(result.remaining).toBe(0);
+  expect(result.text).toContain("Chapter 95");
+});
+
+test("EPUB a late image above visible text keeps the same character on screen", async ({ page }) => {
+  await openFixture(page, false, true);
+  const result = await page.evaluate(async () => {
+    const { reader } = (window as FixtureWindow).bookScrollFixture;
+    const frame = reader.element.querySelector<HTMLIFrameElement>('[data-section-index="1"] iframe')!;
+    const doc = frame.contentDocument!, range = doc.createRange(), node = doc.querySelector("#p-20")!.firstChild!;
+    range.setStart(node, 0); range.setEnd(node, 1); reader.goToRange(doc, range);
+    const top = () => frame.getBoundingClientRect().top + range.getBoundingClientRect().top;
+    const before = top();
+    const tops: number[] = [];
+    // rAF runs before ResizeObserver delivery. Observe the corrected layout in
+    // the same pre-paint delivery, then every subsequent frame, rather than
+    // treating the transient, unpainted pre-observer geometry as a visible jump.
+    await new Promise<void>(resolve => {
+      const observer = new ResizeObserver(() => { tops.push(top()); observer.disconnect(); resolve(); });
+      observer.observe(doc.body);
+      (doc.querySelector("#late-image") as HTMLElement).style.height = "600px";
+    });
+    const until = performance.now() + 400;
+    while (performance.now() < until) { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); tops.push(top()); }
+    return { before, tops };
+  });
+  expect(Math.max(...result.tops.map(top => Math.abs(top - result.before))), JSON.stringify(result)).toBeLessThanOrEqual(2);
 });

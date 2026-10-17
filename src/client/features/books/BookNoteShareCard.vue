@@ -7,10 +7,10 @@ import AppModal from "../../components/ui/AppModal.vue";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
 import BookShareCover from "./BookShareCover.vue";
 import BookNoteContent from "./BookNoteContent.vue";
-import { bookPositionLabel, bookReadingUrl } from "./bookReading";
-const props = withDefaults(defineProps<{ note: BookNoteDTO; active?: boolean; comment?: string; paperSeed?: string | number }>(), { active: true });
+import { bookLocationFromMessage, bookPositionLabel, bookReadingUrl } from "./bookReading";
+const props = withDefaults(defineProps<{ note: BookNoteDTO; content?: string; active?: boolean; comment?: string; paperSeed?: string | number }>(), { active: true });
 const viewerOpen = ref(false);
-const href = computed(() => bookReadingUrl(props.note, window.location.origin));
+const href = computed(() => bookReadingUrl({ ...props.note, ...bookLocationFromMessage(props.content ?? "", props.note.bookId, window.location.origin) }, window.location.origin));
 </script>
 <template>
   <div class="reading-share-message">

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BibleNoteDTO } from "@shared/bibleNotes";
 import type { BookNoteDTO } from "@shared/bookNotes";
+import { bookLocatorSchema } from "@shared/bookLocator";
 import { exportNotesBackup, importNotesBackup, NOTES_BACKUP_MAX_BYTES, NOTES_BACKUP_MAX_COUNT, parseNotesBackup, serializeNotesBackup, type NotesBackup, type NotesBackupClient, type TransferBook } from "./notesBackup";
 
 const at = "2026-10-09T10:00:00.000Z";
@@ -46,6 +47,19 @@ async function booksBackup(): Promise<NotesBackup> {
   const f = fixture(); f.notes.set(1, [bookNote]);
   return exportNotesBackup("books", 1, f.client, f.options);
 }
+test("precise book backups declare v2, retain verified locators and still import old v1 files", async () => {
+  const f = fixture();
+  const locator = bookLocatorSchema.parse({ version: 1, bookId: 1, publicationRevision: "a".repeat(64), textRevision: "epub-text-v1", sectionHref: "chapter.xhtml", start: 0, end: 4, quote: { exact: "原文测试", prefix: "", suffix: "", length: 4 } });
+  f.notes.set(1, [{ ...bookNote, locator }]);
+  const backup = await exportNotesBackup("books", 1, f.client, f.options);
+  assert.equal(backup.version, 2);
+  const parsed = parseNotesBackup(serializeNotesBackup(backup), "books");
+  assert.equal(parsed.domain, "books");
+  if (parsed.domain === "books") assert.deepEqual(parsed.notes[0].locator, locator);
+  f.notes.clear(); const imported = await importNotesBackup(parsed, 1, f.client, f.options);
+  assert.equal(imported.imported, 1); assert.deepEqual(f.notes.get(1)?.[0].locator, locator);
+  const legacy = await booksBackup(); assert.equal(legacy.version, 1);
+});
 
 test("Bible export reads every own page, preserves source and content, and roundtrips JSON", async () => {
   const f = fixture();

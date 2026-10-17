@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import {
-  bookNoteSchema,
+  bookNoteV2Schema,
   type BookNoteDTO,
   type BookNoteInput
 } from "../../shared/bookNotes.js";
@@ -39,7 +39,7 @@ function decodeNote(value: string, key: string, prefix: string, book: { id: numb
     if (part === undefined) throw new Error("Stored book note is incomplete");
     return part;
   }).join("") : value;
-  const parsed = bookNoteSchema.safeParse(JSON.parse(serialized));
+  const parsed = bookNoteV2Schema.safeParse(JSON.parse(serialized));
   if (!parsed.success || parsed.data.bookId !== book.id || `${prefix}${parsed.data.id}` !== key) throw new Error("Stored book note is invalid");
   return { ...parsed.data, bookTitle: book.title };
 }

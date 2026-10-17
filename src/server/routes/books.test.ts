@@ -1,6 +1,7 @@
 /// <reference types="node" />
 
 import assert from "node:assert/strict";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -58,6 +59,7 @@ type BookRow = {
   fileName: string;
   coverName: string | null;
   fileSize: number;
+  publicationRevision: string | null;
   createdAt: Date;
   createdById: number | null;
   progress: { fraction: number }[];
@@ -80,6 +82,7 @@ async function createHarness(options: { admin?: boolean } = {}) {
           fileName: String(data.fileName),
           coverName: (data.coverName as string | null) ?? null,
           fileSize: Number(data.fileSize),
+          publicationRevision: (data.publicationRevision as string | null) ?? null,
           createdAt: new Date(),
           createdById: (data.createdById as number | null) ?? null,
           progress: []
@@ -272,6 +275,56 @@ test("admin upload creates book with metadata and cover; list includes progress"
   assert.equal(list.json().books[0].progress, null);
 });
 
+test("every new EPUB upload gets its own metadata, cover, original bytes and revision without backfill", async (t) => {
+  const { app, dir, rows } = await createHarness({ admin: true });
+  t.after(async () => { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); });
+  const variants = [
+    { version: "2.0", root: "OEBPS/content.opf", chapters: 1, cover: true, fixed: false },
+    { version: "3.0", root: "OPS/volume/package.opf", chapters: 3, cover: false, fixed: false },
+    { version: "3.0", root: "book.opf", chapters: 2, cover: true, fixed: true }
+  ];
+  const revisions = new Set<string>();
+  for (const variant of variants) {
+    // New titles and identifiers each run: no existing library entry is involved.
+    const id = randomUUID(), title = `新上传-${id}`, author = `作者-${id}`;
+    const zip = new JSZip(), rootDir = path.posix.dirname(variant.root);
+    zip.file("mimetype", "application/epub+zip");
+    zip.file("META-INF/container.xml", CONTAINER.replace("OEBPS/content.opf", variant.root));
+    const chapters = Array.from({ length: variant.chapters }, (_, index) => ({ id: `ch${index}`, href: `text/part-${index}.xhtml` }));
+    zip.file(variant.root, `<package xmlns="http://www.idpf.org/2007/opf" version="${variant.version}" unique-identifier="uid">
+      <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="uid">${id}</dc:identifier>
+      <dc:title>${title}</dc:title><dc:creator>${author}</dc:creator><dc:language>zh</dc:language>
+      ${variant.cover && variant.version === "2.0" ? '<meta name="cover" content="cvr"/>' : ""}
+      ${variant.fixed ? '<meta property="rendition:layout">pre-paginated</meta>' : ""}</metadata>
+      <manifest>${variant.cover ? `<item id="cvr" href="images/front.png" media-type="image/png"${variant.version === "3.0" ? ' properties="cover-image"' : ""}/>` : ""}
+      ${chapters.map(chapter => `<item id="${chapter.id}" href="${chapter.href}" media-type="application/xhtml+xml"/>`).join("")}</manifest>
+      <spine>${chapters.map(chapter => `<itemref idref="${chapter.id}"/>`).join("")}</spine></package>`);
+    for (const chapter of chapters) zip.file(path.posix.join(rootDir, chapter.href), `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${title}</title></head><body><p>${id}-${chapter.id}</p></body></html>`);
+    if (variant.cover) zip.file(path.posix.join(rootDir, "images/front.png"), PNG);
+    const bytes = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+    // Same incoming filename must never reuse the previous book's processing results.
+    const uploaded = await upload(app, "new-book.epub", bytes);
+    assert.equal(uploaded.statusCode, 201, uploaded.body);
+    const book = uploaded.json().book, stored = rows.get(book.id)!;
+    assert.equal(stored.title, title);
+    assert.equal(stored.author, author);
+    assert.equal(stored.language, "zh");
+    assert.equal(stored.fileSize, bytes.length);
+    const revision = createHash("sha256").update(bytes).digest("hex");
+    assert.equal(stored.publicationRevision, revision);
+    revisions.add(revision);
+    assert.ok(stored.coverName);
+    assert.ok(fs.statSync(path.join(dir, stored.coverName)).size > 0);
+    const file = await app.inject({ method: "GET", url: `/api/books/${book.id}/file` });
+    assert.equal(file.statusCode, 200);
+    assert.deepEqual(file.rawPayload, bytes);
+  }
+  assert.equal(rows.size, variants.length);
+  assert.equal(revisions.size, variants.length);
+  const list = await app.inject({ method: "GET", url: "/api/books" });
+  assert.equal(list.json().books.length, variants.length);
+});
+
 test("upload rejects non-epub extension and bad content", async (t) => {
   const { app, dir } = await createHarness({ admin: true });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -315,6 +368,13 @@ test("file endpoint serves bytes with range support and immutable caching", asyn
   assert.equal(ranged.statusCode, 206);
   assert.equal(ranged.rawPayload.length, 100);
   assert.match(String(ranged.headers["content-range"]), /^bytes 0-99\/\d+$/);
+  const tail = await app.inject({ method: "GET", url: `/api/books/${id}/file`, headers: { range: "bytes=-22" } });
+  assert.equal(tail.statusCode, 206);
+  assert.deepEqual(tail.rawPayload, epub.subarray(-22));
+  assert.equal(tail.headers["content-range"], `bytes ${epub.length - 22}-${epub.length - 1}/${epub.length}`);
+  for (const range of ["bytes=-0", "bytes=-", `bytes=${epub.length}-`, "bytes=9007199254740999-"]) {
+    assert.equal((await app.inject({ method: "GET", url: `/api/books/${id}/file`, headers: { range } })).statusCode, 416);
+  }
 
   const etag = String(full.headers.etag);
   const notModified = await app.inject({

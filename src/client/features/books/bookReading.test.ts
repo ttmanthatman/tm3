@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bookPositionLabel, bookReadingUrl, bookShareContent, parseBookReadingUrl, wrapBookCardText } from "./bookReading";
+import { bookLocatorSchema } from "@shared/bookLocator";
 const origin = "https://chat.example.test";
+test("versioned locator URLs preserve exact addresses without changing legacy location fields", () => {
+  const locator = bookLocatorSchema.parse({ version: 1, bookId: 12, publicationRevision: "a".repeat(64), textRevision: "epub-text-v1", sectionHref: "chapter.xhtml", start: 0, end: 4, quote: { exact: "原文测试", prefix: "", suffix: "", length: 4 } });
+  const location = { bookId: 12, fraction: .3, locator };
+  assert.deepEqual(parseBookReadingUrl(bookReadingUrl(location, origin), origin), location);
+  const legacy = new URL(bookReadingUrl(location, origin));
+  legacy.searchParams.delete("bookLocatorV1");
+  assert.deepEqual(parseBookReadingUrl(legacy.href, origin), { bookId: 12, fraction: .3 });
+});
 test("reading invitations preserve the sender's position and accept only local, finite locations", () => {
   const location = { bookId: 12, fraction: 0.731234 };
   assert.deepEqual(parseBookReadingUrl(bookReadingUrl(location, origin), origin), location);

@@ -26,6 +26,7 @@ export function parseBiblePassageShare(content: string): BiblePassageShare | nul
 
 export function readingNoteComment(content: string, title: string): string {
   const doc = new DOMParser().parseFromString(content, "text/html");
+  for (const anchor of doc.querySelectorAll('a[href*="bookLocatorV1="]')) anchor.remove();
   for (const br of doc.querySelectorAll("br")) br.replaceWith("\n");
   const text = (doc.body.textContent || "").trim();
   return text === `阅读笔记 · 《${title}》` ? "" : text;

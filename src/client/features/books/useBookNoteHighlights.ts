@@ -3,6 +3,7 @@ import type { BookNoteDTO } from "@shared/bookNotes";
 import { bookNotesClient } from "./bookNotesClient";
 import { bookNoteRangeFraction, renderBookNoteHighlights, type BookNoteHighlights } from "./bookNoteHighlights";
 import type { BookReadingContext } from "./bookReading";
+import type { BookPublication } from "./bookLocator";
 
 export function useBookNoteHighlights(options: {
   bookId: () => number | undefined;
@@ -10,6 +11,9 @@ export function useBookNoteHighlights(options: {
   sectionFractions: () => number[];
   chapter: (index: number) => string;
   openNote: (note: BookNoteDTO) => void;
+  publication?: () => BookPublication | null;
+  sectionHref?: (index: number) => string;
+  cfiRange?: (cfi: string, doc: Document) => Range | null;
 }) {
   const error = ref("");
   const documents = new Map<Document, { index: number; marks: BookNoteHighlights | null }>();
@@ -19,6 +23,7 @@ export function useBookNoteHighlights(options: {
     entry.marks?.destroy();
     const starts = options.sectionFractions();
     entry.marks = renderBookNoteHighlights(doc, notes, {
+      publication: options.publication?.(), sectionHref: options.sectionHref?.(entry.index), cfiRange: cfi => options.cfiRange?.(cfi, doc) ?? null,
       startFraction: starts[entry.index] ?? 0,
       endFraction: starts[entry.index + 1] ?? 1,
       onOpen: options.openNote
@@ -47,6 +52,7 @@ export function useBookNoteHighlights(options: {
       if (request === sequence) error.value = cause instanceof Error ? cause.message : "笔记高亮读取失败";
     }
   }
+  function unbind(doc: Document) { documents.get(doc)?.marks?.destroy(); documents.delete(doc); }
   function refresh() { for (const entry of documents.values()) entry.marks?.refresh(); }
   function reset() {
     sequence++;
@@ -66,5 +72,5 @@ export function useBookNoteHighlights(options: {
     return { ...context, fraction, chapter: options.chapter(entry.index) || context.chapter };
   }
   onScopeDispose(reset);
-  return { error, bind, reload, refresh, reset, selectionContext };
+  return { error, bind, unbind, reload, refresh, reset, selectionContext };
 }

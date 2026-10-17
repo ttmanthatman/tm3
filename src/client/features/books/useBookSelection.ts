@@ -4,8 +4,12 @@ import type { BookReadingContext } from "./bookReading";
 export function useBookSelection(context: (doc: Document) => BookReadingContext | null) {
   const selection = ref<BookReadingContext | null>(null);
   let selectedDocument: Document | null = null;
-  let controller = new AbortController();
+  const controllers = new Map<Document, AbortController>();
   function bind(doc: Document) {
+    for (const previous of controllers.keys()) if (previous !== doc && !previous.defaultView?.frameElement?.isConnected) unbind(previous);
+    unbind(doc);
+    const controller = new AbortController();
+    controllers.set(doc, controller);
     const update = () => {
       const quote = doc.getSelection()?.toString().trim() || "";
       const source = context(doc);
@@ -17,7 +21,11 @@ export function useBookSelection(context: (doc: Document) => BookReadingContext 
     doc.addEventListener("keyup", update, { signal: controller.signal });
   }
   function clear() { selectedDocument?.getSelection()?.removeAllRanges(); selectedDocument = null; selection.value = null; }
-  function reset() { clear(); controller.abort(); controller = new AbortController(); }
-  onScopeDispose(() => { clear(); controller.abort(); });
-  return { selection, bind, clear, reset };
+  function unbind(doc: Document) {
+    controllers.get(doc)?.abort(); controllers.delete(doc);
+    if (selectedDocument === doc) clear();
+  }
+  function reset() { clear(); for (const controller of controllers.values()) controller.abort(); controllers.clear(); }
+  onScopeDispose(reset);
+  return { selection, bind, unbind, clear, reset };
 }

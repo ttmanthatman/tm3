@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { normalizeHandwritingPayload, type HandwritingPayload } from "./handwriting.js";
+import { bookLocatorSchema, type PersistedBookLocator } from "./bookLocator.js";
 
 export const BOOK_QUOTE_MAX = 5000;
 export const BOOK_NOTE_TEXT_MAX = 10000;
@@ -12,6 +13,7 @@ export type BookNoteInput = {
   fraction: number;
   handwriting?: HandwritingPayload | null;
   draft?: boolean;
+  locator?: PersistedBookLocator;
 };
 
 export type BookNoteDTO = BookNoteInput & {
@@ -42,6 +44,12 @@ export const bookNoteSchema = bookNoteInputSchema.extend({
   createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true })
 });
 export const bookNoteShareSchema = z.object({ kind: z.literal("book_note"), note: bookNoteSchema }).strict();
+export const bookNoteInputV2Schema = bookNoteInputSchema.extend({ locator: bookLocatorSchema.optional() });
+export const bookNoteV2Schema = bookNoteSchema.extend({ locator: bookLocatorSchema.optional() });
+export function legacyBookNote(note: BookNoteDTO): z.infer<typeof bookNoteSchema> {
+  const { locator: _locator, ...legacy } = note;
+  return bookNoteSchema.parse(legacy);
+}
 export type BookNoteSharePayload = z.infer<typeof bookNoteShareSchema>;
 export function bookNoteSharePayload(value: unknown): BookNoteSharePayload | null {
   const parsed = bookNoteShareSchema.safeParse(value);

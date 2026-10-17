@@ -135,7 +135,7 @@ test("nudgeFromSectionBoundaries pushes boundary values inside their section", (
 test("buildBookCSS reflects theme, font size and spacing", () => {
   const dark = buildBookCSS({ theme: "dark", fontPct: 120, spacing: 1.8, margin: 48, flow: "paginated" });
   assert.match(dark, /#161617/);
-  assert.match(dark, /font-size: 120%/);
+  assert.match(dark, /font-size: 19\.2px !important/);
   assert.match(dark, /line-height: 1\.8/);
   const sepia = buildBookCSS({ theme: "sepia", fontPct: 100, spacing: 1.6, margin: 48, flow: "scrolled" });
   assert.match(sepia, /#f7f0e0/);
@@ -182,4 +182,12 @@ test("paginated positions round trip through Foliate's first-to-last page anchor
     }
   }
   assert.ok(Math.abs(paginatedBookFraction([0, .3, 1], 1, 2, 5) - .65) < 1e-12);
+});
+
+test("reader rejects invalid persisted style and bounds every layout control", () => {
+  assert.deepEqual(readerStyleFromStored({ theme: "invalid", flow: "invalid", fontPct: NaN, spacing: Infinity, margin: -1 } as unknown as Partial<typeof DEFAULT_READER_STYLE>), { ...DEFAULT_READER_STYLE });
+  assert.equal(readerStyleFromStored({ fontPct: 999, spacing: 0, margin: 999 }).fontPct, 200);
+  assert.equal(readerStyleFromStored({ fontPct: 999, spacing: 0, margin: 999 }).spacing, 1.2);
+  assert.equal(readerStyleFromStored({ fontPct: 999, spacing: 0, margin: 999 }).margin, 96);
+  assert.equal(buildBookCSS(DEFAULT_READER_STYLE, true).includes("font-size"), false);
 });

@@ -23,3 +23,8 @@ declare module "foliate-js/footnotes.js" {
     ): Promise<void> | undefined;
   }
 }
+
+declare module "foliate-js/epubcfi.js" {
+  export function fromRange(range: Range): string;
+  export function joinIndir(...parts: string[]): string;
+}

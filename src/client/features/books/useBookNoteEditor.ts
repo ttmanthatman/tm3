@@ -3,6 +3,7 @@ import { bookNoteHasContent, type BookNoteDTO } from "@shared/bookNotes";
 import type { HandwritingPayload } from "@shared/handwriting";
 import { bookNotesClient } from "./bookNotesClient";
 import type { BookReadingContext } from "./bookReading";
+import { bookLocatorSchema } from "@shared/bookLocator";
 
 type Options = { accountId(): number | undefined; changed(bookId: number): void; client?: typeof bookNotesClient };
 export function useBookNoteEditor(options: Options) {
@@ -33,9 +34,10 @@ export function useBookNoteEditor(options: Options) {
     try {
       let saved: BookNoteDTO | null = null;
       if (hasContent.value) {
+        const locator = bookLocatorSchema.safeParse(selected.locator);
         saved = (await client.save(selected.bookId, id, {
           quote: selected.quote, chapter: selected.chapter, fraction: selected.fraction,
-          text: text.value, handwriting: handwriting.value, draft
+          text: text.value, handwriting: handwriting.value, draft, ...(locator.success ? { locator: locator.data } : {})
         })).note;
       } else await client.remove(selected.bookId, id);
       if (!current()) return null;

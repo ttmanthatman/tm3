@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { bookNoteInputSchema, createBookNotesService } from "../services/bookNotes.js";
 import type { BooksRouteDeps } from "./books.js";
+import { bookNoteInputV2Schema, legacyBookNote } from "../../shared/bookNotes.js";
 
 const bookParamsSchema = z.object({ id: z.coerce.number().int().positive().max(2147483647) });
 const noteParamsSchema = bookParamsSchema.extend({ noteId: z.string().uuid().transform((id) => id.toLowerCase()) });
@@ -22,7 +23,7 @@ export function registerBookNotesRoutes(app: FastifyInstance, deps: Pick<BooksRo
     const params = bookParamsSchema.safeParse(request.params);
     if (!params.success) throw fail(400, "图书编号无效");
     const book = await loadBook(params.data.id);
-    return { notes: await notes.list(deps.authFor(request).accountId, book) };
+    return { notes: (await notes.list(deps.authFor(request).accountId, book)).map(legacyBookNote) };
   });
 
   app.put("/api/books/:id/notes/:noteId", { preHandler, bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
@@ -31,6 +32,22 @@ export function registerBookNotesRoutes(app: FastifyInstance, deps: Pick<BooksRo
     const body = bookNoteInputSchema.safeParse(request.body);
     if (!params.success || !body.success) throw fail(400, "笔记信息无效");
     const book = await loadBook(params.data.id);
+    return { note: legacyBookNote(await notes.save(deps.authFor(request).accountId, book, params.data.noteId, body.data)) };
+  });
+
+  app.get("/api/books/:id/notes/v2", { preHandler }, async (request, reply) => {
+    reply.header("Cache-Control", "private, no-store");
+    const params = bookParamsSchema.safeParse(request.params);
+    if (!params.success) throw fail(400, "图书编号无效");
+    return { notes: await notes.list(deps.authFor(request).accountId, await loadBook(params.data.id)) };
+  });
+  app.put("/api/books/:id/notes/v2/:noteId", { preHandler, bodyLimit: 2 * 1024 * 1024 }, async (request, reply) => {
+    reply.header("Cache-Control", "private, no-store");
+    const params = noteParamsSchema.safeParse(request.params), body = bookNoteInputV2Schema.safeParse(request.body);
+    if (!params.success || !body.success) throw fail(400, "笔记信息无效");
+    const book = await deps.prisma.book.findUnique({ where: { id: params.data.id }, select: { id: true, title: true, publicationRevision: true } });
+    if (!book) throw fail(404, "图书不存在");
+    if (body.data.locator && (body.data.locator.bookId !== book.id || body.data.locator.publicationRevision !== book.publicationRevision)) throw fail(422, "图书版本不一致，请重新选择原文");
     return { note: await notes.save(deps.authFor(request).accountId, book, params.data.noteId, body.data) };
   });
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { BIBLE_NOTE_TEXT_MAX, type BibleNoteDTO, type BibleNoteSelection } from "@shared/bibleNotes";
-import { bookNoteInputSchema, type BookNoteDTO, type BookNoteInput } from "@shared/bookNotes";
+import { bookNoteInputV2Schema, type BookNoteDTO, type BookNoteInput } from "@shared/bookNotes";
 
 export const NOTES_BACKUP_MAX_BYTES = 10 * 1024 * 1024;
 export const NOTES_BACKUP_MAX_COUNT = 5000;
@@ -18,14 +18,14 @@ const bibleNoteSchema = z.object({
   text: z.string().trim().min(1).max(BIBLE_NOTE_TEXT_MAX), createdAt: date, updatedAt: date,
   publishedAt: date.nullable()
 }).strict();
-const bookNoteSchema = bookNoteInputSchema.extend({
+const bookNoteSchema = bookNoteInputV2Schema.extend({
   id: z.string().uuid().transform((id) => id.toLowerCase()), bookId: integer,
   bookTitle: z.string().min(1).max(200), bookAuthor: z.string().max(120), createdAt: date, updatedAt: date
 }).strict();
 const header = { format: z.literal("team-chat-notes"), version: z.literal(1), accountId: integer, exportedAt: date };
 const backupSchema = z.discriminatedUnion("domain", [
   z.object({ ...header, domain: z.literal("bible"), notes: z.array(bibleNoteSchema).max(NOTES_BACKUP_MAX_COUNT) }).strict(),
-  z.object({ ...header, domain: z.literal("books"), notes: z.array(bookNoteSchema).max(NOTES_BACKUP_MAX_COUNT) }).strict()
+  z.object({ ...header, version: z.union([z.literal(1), z.literal(2)]), domain: z.literal("books"), notes: z.array(bookNoteSchema).max(NOTES_BACKUP_MAX_COUNT) }).strict()
 ]);
 export type NotesBackup = z.infer<typeof backupSchema>;
 type BibleBackupNote = z.infer<typeof bibleNoteSchema>;
@@ -117,7 +117,7 @@ export async function exportNotesBackup(domain: NotesDomain, accountId: number, 
     notes.push(...result.notes.map((note) => bookBackupNote(note, book)));
     assertCount(notes.length);
   }
-  return checkedBackup({ ...metadata, domain, notes });
+  return checkedBackup({ ...metadata, version: notes.some(note => note.locator) ? 2 : 1, domain, notes });
 }
 function bibleContent(note: BibleBackupNote): string {
   const { translation, bookCode, chapter, verseStart } = note.source;
@@ -188,7 +188,7 @@ export async function importNotesBackup(value: NotesBackup, accountId: number, c
         try {
           const id = z.string().uuid().parse(newId());
           if (inventory.ids.has(id)) throw new Error("导入编号冲突，请重试");
-          const input = { quote: note.quote, text: note.text, chapter: note.chapter, fraction: note.fraction, ...(note.handwriting !== undefined ? { handwriting: note.handwriting } : {}), ...(note.draft !== undefined ? { draft: note.draft } : {}) };
+          const input = { quote: note.quote, text: note.text, chapter: note.chapter, fraction: note.fraction, ...(note.handwriting !== undefined ? { handwriting: note.handwriting } : {}), ...(note.draft !== undefined ? { draft: note.draft } : {}), ...(note.locator && note.locator.bookId === book.id ? { locator: note.locator } : {}) };
           const saved = await client.createBook(book.id, id, input);
           if (bookContent(bookBackupNote(saved.note, book)) !== content) throw new Error("导入结果不符，请刷新笔记后重试");
           inventory.ids.set(saved.note.id, content);

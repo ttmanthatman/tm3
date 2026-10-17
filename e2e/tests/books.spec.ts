@@ -281,9 +281,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await expect(link.locator("..").locator('img[alt="《移动阅读回归》封面"]')).toBeVisible();
       await expect(link.locator("..")).toContainText("邀请人已读");
       await link.click();
-      await expect(page.locator(".book-invitation-notice")).toContainText("共读邀请");
-      await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "下载《移动阅读回归》" }).click();
-      await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "阅读《移动阅读回归》" }).click();
+      // Invitations now open the target directly, without an offline-download gate.
       let frame = await readingFrame(page);
       await expect(frame.locator("#tap-target")).toBeVisible();
       await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);

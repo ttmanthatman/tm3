@@ -2,7 +2,7 @@
 // 图书室负一屏：书架 + EPUB 阅读器。
 // 懒加载编排：本组件由 App.vue defineAsyncComponent 分包，进入聊天室不下载；
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
-// 未缓存的图书首次点按只下载到当前会话的 Cache Storage，完成后再次点按才打开。
+// 点按即可流式阅读；整本离线下载是书架上的独立操作。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
@@ -35,6 +35,12 @@ import {
   type ReaderStyle
 } from "../books/reader";
 
+import { applyBookTypography } from "../features/books/bookTypography";
+import { clearBookNeighborPreloads } from "../features/books/bookAdjacentPreload";
+import { createBookReaderLocations } from "../features/books/bookReaderLocations";
+import { bookTextModel } from "../features/books/bookTextModel";
+import { useBookPanelGeometry } from "../features/books/useBookPanelGeometry";
+import { useBookProgress } from "../features/books/useBookProgress";
 import BookReadingActions from "../features/books/BookReadingActions.vue";
 import BookReaderPresence from "../features/books/BookReaderPresence.vue";
 import { useBookSelection } from "../features/books/useBookSelection";
@@ -49,7 +55,12 @@ const actions = ref<InstanceType<typeof BookReadingActions> | null>(null);
 const invitation = ref<BookLocation | null>(props.initialLocation ?? null);
 const invitationNotice = ref("");
 const store = useChatStore();
+const preciseProgress = useBookProgress(() => store.account?.id);
+const syncState = preciseProgress.state;
 const noteHighlights = useBookNoteHighlights({
+  publication: () => locations.publication(),
+  sectionHref: index => locations.sectionHref(index),
+  cfiRange: (cfi, doc) => locations.cfiRange(cfi, doc),
   bookId: () => activeBook.value?.id,
   accountId: () => store.account?.isGuest ? undefined : store.account?.id,
   sectionFractions: () => epubBook ? sectionFractions(epubBook.sections) : [0, 1],
@@ -57,7 +68,12 @@ const noteHighlights = useBookNoteHighlights({
   openNote: (note) => actions.value?.openNote(note)
 });
 const noteHighlightsError = noteHighlights.error;
+const locations = createBookReaderLocations(() => epubBook, () => activeBook.value?.id);
 const quoteNavigation = useBookQuoteNavigation({
+  publication: locations.publication,
+  sectionHref: locations.sectionHref,
+  sectionIndex: locations.sectionIndex,
+  cfiRange: locations.cfiRange,
   sectionFractions: () => epubBook ? sectionFractions(epubBook.sections) : [0, 1],
   navigateFraction: async (fraction) => {
     if (continuousReader) await continuousReader.goToFraction(fraction);
@@ -68,16 +84,35 @@ const quoteNavigation = useBookQuoteNavigation({
     else await view?.renderer.goTo?.({ index, anchor: () => range });
   }
 });
+const navigationStatus = quoteNavigation.status;
+const navigationNotice = computed(() => quoteNavigation.error.value || ({ exact: "", recovered: "已根据原文恢复位置", approximate: "此位置来自旧进度或摘录，仅作近似定位", ambiguous: "原文有多处匹配，无法确认位置", "revision-mismatch": "图书或文字版本不一致，未应用原位置", "not-found": "未找到可显示的原文，当前为近似阅读位置" })[navigationStatus.value ?? "exact"]);
 function currentContext(book = activeBook.value, fraction = sliderValue.value): BookReadingContext | null {
   return book ? { bookId: book.id, title: book.title, chapter: chapterLabel.value.slice(0, 300), fraction, quote: "" } : null;
 }
-const { selection, bind: bindSelection, clear: clearSelection, reset: resetSelection } = useBookSelection((doc) => {
+function currentReadingLocation(): BookLocation | undefined {
+  if (quoteNavigation.currentLocation.value?.bookId === activeBook.value?.id) return quoteNavigation.currentLocation.value ?? undefined;
   const context = currentContext();
-  return context ? noteHighlights.selectionContext(doc, context) : null;
+  if (!context) return;
+  const anchor = continuousReader?.captureAnchor();
+  const doc = anchor?.doc ?? view?.renderer.getContents()[0]?.doc;
+  const range = anchor ? bookTextModel(anchor.doc).range(anchor.start, anchor.end) : view?.lastLocation?.range;
+  const locator = doc && range ? locations.capture(doc, range, context.fraction) : null;
+  return { ...context, ...(locator ? { locator } : {}) };
+}
+const { selection, bind: bindSelection, clear: clearSelection, unbind: unbindSelection, reset: resetSelection } = useBookSelection((doc) => {
+  const context = currentContext();
+  if (!context) return null;
+  const range = doc.getSelection()?.rangeCount ? doc.getSelection()!.getRangeAt(0) : null;
+  const locator = range ? locations.capture(doc, range, context.fraction) : null;
+  return { ...noteHighlights.selectionContext(doc, context), ...(locator ? { locator } : {}) };
 });
 function inviteBook(book: BookDTO, fraction = book.id === activeBook.value?.id ? sliderValue.value : cachedProgress(book)) {
   const context = currentContext(book, fraction);
-  if (context) { if (book.id !== activeBook.value?.id) context.chapter = ""; actions.value?.share(context); }
+  if (context) {
+    if (book.id !== activeBook.value?.id) context.chapter = "";
+    const locator = book.id === activeBook.value?.id ? currentReadingLocation()?.locator : undefined;
+    actions.value?.share({ ...context, ...(locator ? { locator } : {}) });
+  }
 }
 function showBookNotes() { const context = currentContext(); if (context) void actions.value?.showNotes(context); }
 function jumpToLocation(location: BookLocation) {
@@ -89,7 +124,6 @@ async function openInvitation() {
   if (!target) return;
   const book = books.value.find((item) => item.id === target.bookId);
   if (!book) { invitationNotice.value = "这本书已不在书架中"; return; }
-  if (bookDownloadState(book) !== "ready") { invitationNotice.value = `共读邀请：《${book.title}》。请先下载，再点开，自动到达分享位置。`; return; }
   invitationNotice.value = "";
   if (activeBook.value?.id === book.id && readerOpen.value) { jumpToLocation(target); invitation.value = null; }
   else await openBook(book);
@@ -123,6 +157,7 @@ const openingBook = ref(false);
 const readerError = ref("");
 const activeBook = ref<BookDTO | null>(null);
 
+const fixedLayout = ref(false);
 const style = ref<ReaderStyle>(loadStyle());
 const tocItems = ref<{ label: string; href: string; depth: number }[]>([]);
 const tocOpen = ref(false);
@@ -137,6 +172,12 @@ const footnoteText = ref("");
 const footnoteHost = ref<HTMLElement | null>(null);
 const coverUrls = new Map<number, string>();
 
+let openSequence = 0;
+let openingController: AbortController | null = null;
+let disposed = false;
+const topBarElement = ref<HTMLElement | null>(null);
+const readerElement = ref<HTMLElement | null>(null);
+const panelStyle = useBookPanelGeometry(readerElement, topBarElement);
 let foliatePromise: Promise<FoliateModule> | null = null;
 let view: FoliateView | null = null;
 let continuousReader: ContinuousBookReader | null = null;
@@ -144,7 +185,7 @@ let epubBook: EpubBook | null = null;
 let tocSectionLabels = new Map<number, string>();
 let relocateHandler: ((event: Event) => void) | null = null;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let lastSavedFraction = -1;
+let progressDirty = false;
 type FootnoteView = HTMLElement & {
   renderer?: { setAttribute?(name: string, value: string): void; setStyles?(css: string): void };
 };
@@ -182,7 +223,7 @@ function openCurrentDocumentFootnote(doc: Document, anchor: Element, href: strin
 footnoteHandler.addEventListener("before-render", (event) => {
   const nextView = (event as CustomEvent<{ view: FootnoteView }>).detail.view;
   nextView.renderer?.setAttribute?.("flow", "scrolled");
-  nextView.renderer?.setStyles?.(buildBookCSS(style.value));
+  nextView.renderer?.setStyles?.(buildBookCSS(style.value, fixedLayout.value));
 });
 
 footnoteHandler.addEventListener("render", (event) => {
@@ -205,11 +246,11 @@ function loadStyle(): ReaderStyle {
 }
 
 function persistStyle() {
-  localStorage.setItem(STYLE_KEY, JSON.stringify(style.value));
+  localStorage.setItem(STYLE_KEY, JSON.stringify({ ...style.value, version: 1 }));
 }
 
 function localProgressKey(bookId: number) {
-  return `${LOCAL_PROGRESS_PREFIX}${bookId}`;
+  return `${LOCAL_PROGRESS_PREFIX}${store.account?.id ?? "guest"}.${bookId}`;
 }
 
 function cachedProgress(book: BookDTO): number {
@@ -279,12 +320,11 @@ function bookDownloadPercent(book: BookDTO): number {
   return Math.round((downloadProgress.value.get(book.id) ?? 0) * 100);
 }
 
-async function handleBookClick(book: BookDTO) {
+async function handleBookClick(book: BookDTO) { await openBook(book); }
+
+async function handleDownloadClick(book: BookDTO) {
   const action = bookClickAction(bookDownloadState(book));
-  if (action === "open") {
-    await openBook(book);
-    return;
-  }
+  if (action === "open") return;
   if (action === "wait") return;
   downloadError.value = "";
   setDownloadState(book.id, "downloading");
@@ -315,6 +355,8 @@ async function preloadFoliate() {
 function backToShelf() {
   closeBookView();
   readerOpen.value = false;
+  openingBook.value = false;
+  settingsOpen.value = false;
   activeBook.value = null;
   emit("reading-change", { active: false, bookTitle: null });
   void loadShelf();
@@ -326,6 +368,12 @@ function emitClose() {
 }
 
 function closeBookView() {
+  flushProgress();
+  preciseProgress.close();
+  ++openSequence;
+  openingController?.abort();
+  openingController = null;
+  locations.reset();
   quoteNavigation.reset();
   noteHighlights.reset();
   resetSelection();
@@ -339,10 +387,10 @@ function closeBookView() {
     resizeTimer = null;
   }
   window.removeEventListener("resize", onWindowResize);
-  flushProgress();
   if (view && relocateHandler) view.removeEventListener("relocate", relocateHandler);
   relocateHandler = null;
   lastPreloadIndex = -1;
+  if (view) clearBookNeighborPreloads(view);
   if (view?.renderer?.getContents().length) view.close();
   view?.remove();
   view = null;
@@ -357,42 +405,49 @@ function closeBookView() {
   sliderValue.value = 0;
 }
 
-async function openBook(book: BookDTO) {
-  if (openingBook.value) return;
+async function openBook(book: BookDTO, restoreLocation?: BookLocation) {
+  closeBookView();
+  const request = ++openSequence;
+  const controller = new AbortController();
+  openingController = controller;
   openingBook.value = true;
+  readerOpen.value = false;
   readerError.value = "";
   activeBook.value = book;
   emit("reading-change", { active: true, bookTitle: book.title });
   try {
-    await nextTick(); // 等阅读器容器渲染（openingBook 驱动 v-if）
-    closeBookView();
+    await nextTick();
+    if (disposed || request !== openSequence) return;
 
     const stage = bookStage.value;
     if (!stage) throw new Error("阅读器容器不可用");
-    // 完整文件已由书架下载到私有 SW cache；阅读器仍走 Range 接口，
-    // 离线时由缓存切片响应，在线时也不会重复下载整本书。
-    const loader = await createStreamingLoader(bookFileUrl(book.id));
+    // Range 直接读取目标章节；已有私有整本缓存继续支持离线切片。
+    const [loader, saved] = await Promise.all([createStreamingLoader(bookFileUrl(book.id), controller.signal), preciseProgress.open(book.id)]);
+    if (disposed || request !== openSequence) return;
+    locations.begin(restoreLocation?.locator, saved.publicationRevision);
     const bookObject = await createEpubBook(loader);
+    if (disposed || request !== openSequence) { bookObject.destroy?.(); return; }
     epubBook = bookObject;
     void noteHighlights.reload(book.id);
 
-    bookObject.transformTarget?.addEventListener("data", (event) => {
-      const detail = (event as CustomEvent<{ data: Promise<unknown> }>).detail;
-      detail.data = Promise.resolve(detail.data).catch(() => "");
-    });
-
     const starts = sectionFractions(bookObject.sections);
-    const sharedLocation = invitation.value?.bookId === book.id ? invitation.value : null;
-    const restoreTarget = sharedLocation?.quote ? sharedLocation.fraction
+    const sharedLocation = restoreLocation ?? (invitation.value?.bookId === book.id ? invitation.value : null) ?? saved.location;
+    const restoreTarget = sharedLocation?.quote || sharedLocation?.locator ? sharedLocation.fraction
       : nudgeFromSectionBoundaries(starts, sharedLocation ? sharedLocation.fraction : cachedProgress(book));
     const metadata = bookObject.metadata ?? {};
     activeBookTitle.value = formatLang(metadata.title) || book.title;
     renderTOC(bookObject.toc ?? [], bookObject);
 
+    if (bookObject.rendition?.layout === "pre-paginated") {
+      style.value = { ...style.value, flow: "paginated" };
+      fixedLayout.value = true;
+    } else fixedLayout.value = false;
     if (style.value.flow === "scrolled") {
       const continuous = new ContinuousBookReader(bookObject, starts, {
         style: style.value,
         onDocumentLoad: onContinuousDocumentLoad,
+        onDocumentUnload: (doc) => { locations.unbind(doc); quoteNavigation.unbind(doc); noteHighlights.unbind(doc); unbindSelection(doc); },
+        onBackgroundError: (error) => { console.warn("相邻章节准备失败，可重新打开该章重试", error); },
         onRelocate: onContinuousRelocate,
         onScrollDirection: onContinuousScrollDirection
       });
@@ -402,13 +457,15 @@ async function openBook(book: BookDTO) {
     } else {
       const module = await (foliatePromise ??= import("foliate-js/view.js"));
       await module; // 确保自定义元素已注册
+      if (disposed || request !== openSequence) return;
       const element = document.createElement("foliate-view") as unknown as FoliateView;
       stage.append(element as unknown as Node);
       view = element;
       await element.open(bookObject);
+      if (disposed || request !== openSequence) return;
       element.renderer.setAttribute("flow", "paginated");
       applyLayout();
-      element.renderer.setStyles?.(buildBookCSS(style.value));
+      element.renderer.setStyles?.(buildBookCSS(style.value, fixedLayout.value));
       relocateHandler = (event) => onRelocate(event as CustomEvent<RelocateDetail>);
       element.addEventListener("relocate", relocateHandler);
       element.addEventListener("load", onViewLoad);
@@ -427,32 +484,33 @@ async function openBook(book: BookDTO) {
             resolve();
           }, 4000);
         });
-        try {
-          await element.goToFraction(restoreTarget);
-        } catch (error) {
-          console.error("restore failed", error);
-        }
+        if (disposed || request !== openSequence) return;
+        await element.goToFraction(restoreTarget);
       } else {
         await element.renderer.next(); // 首页就绪后再开放阅读操作
       }
     }
-    if (sharedLocation) await quoteNavigation.highlight(sharedLocation);
-    chromeVisible.value = style.value.flow === "paginated";
-    settingsOpen.value = false;
+    if (disposed || request !== openSequence) return;
+    if (sharedLocation?.locator) await quoteNavigation.jump(sharedLocation);
+    else if (sharedLocation) await quoteNavigation.highlight(sharedLocation);
+    if (disposed || request !== openSequence) return;
+    chromeVisible.value = settingsOpen.value || style.value.flow === "paginated";
     tocOpen.value = false;
     readerOpen.value = true;
     invitation.value = null;
     invitationNotice.value = "";
-    localStorage.setItem(LAST_READ_KEY, String(book.id));
+    localStorage.setItem(`${LAST_READ_KEY}.${store.account?.id ?? "guest"}`, String(book.id));
     if (style.value.flow === "paginated") window.addEventListener("resize", onWindowResize);
   } catch (error) {
+    if (disposed || request !== openSequence) return;
     console.error(error);
-    readerError.value = error instanceof Error ? error.message : "图书打开失败";
     closeBookView();
-    activeBook.value = null;
+    readerOpen.value = true;
+    openingBook.value = false;
+    readerError.value = error instanceof Error ? error.message : "图书打开失败";
     emit("reading-change", { active: false, bookTitle: null });
   } finally {
-    openingBook.value = false;
+    if (request === openSequence) openingBook.value = false;
   }
 }
 
@@ -490,10 +548,14 @@ function renderTOC(toc: RawTocItem[], book?: EpubBook) {
   tocItems.value = items;
 }
 
+function showNavigationError(cause: unknown) {
+  readerError.value = cause instanceof Error ? cause.message : "章节加载失败，请重试";
+}
+
 function jumpTo(href: string) {
   quoteNavigation.clear();
   tocOpen.value = false;
-  if (continuousReader) void continuousReader.goToHref(href);
+  if (continuousReader) void continuousReader.goToHref(href).catch(showNavigationError);
   else void (view as unknown as { goTo(target: string): Promise<void> })?.goTo?.(href);
 }
 
@@ -541,6 +603,8 @@ function onContinuousRelocate(location: ContinuousReaderLocation) {
 }
 
 function onContinuousScrollDirection(direction: "down" | "up") {
+  quoteNavigation.releaseLocation();
+  if (settingsOpen.value) return;
   if (direction === "down" && chromeVisible.value) {
     chromeVisible.value = false;
     settingsOpen.value = false;
@@ -550,6 +614,7 @@ function onContinuousScrollDirection(direction: "down" | "up") {
 }
 
 function onContinuousDocumentLoad(doc: Document, index: number) {
+  locations.bind(doc, index);
   quoteNavigation.bind(doc, index);
   noteHighlights.bind(doc, index);
   bindSelection(doc);
@@ -575,28 +640,28 @@ function onContinuousDocumentLoad(doc: Document, index: number) {
 }
 
 function scheduleSave(global: number) {
+  if (openingBook.value) return;
   const book = activeBook.value;
   if (!book) return;
   localStorage.setItem(localProgressKey(book.id), String(global));
+  progressDirty = true;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => flushProgress(), 1500);
 }
 
 function flushProgress() {
   const book = activeBook.value;
-  if (!book) return;
-  const raw = localStorage.getItem(localProgressKey(book.id));
-  const fraction = raw == null ? Number.NaN : Number(raw);
-  if (!Number.isFinite(fraction) || Math.abs(fraction - lastSavedFraction) < 0.002) return;
-  lastSavedFraction = fraction;
-  void api(`/api/books/${book.id}/progress`, {
-    method: "PUT",
-    body: JSON.stringify({ fraction })
-  }).then(() => {
-    const idx = books.value.findIndex((b) => b.id === book.id);
-    if (idx >= 0) books.value[idx] = { ...books.value[idx], progress: fraction };
-  }).catch(() => { /* 离线时保留本地进度，下次同步 */ });
+  if (!book || !progressDirty || openingBook.value) return;
+  progressDirty = false;
+  const position = currentReadingLocation() ?? { bookId: book.id, fraction: sliderValue.value };
+  preciseProgress.record(position);
+  void preciseProgress.flush();
 }
+function resolveProgress(choice: "local" | "remote") {
+  const location = preciseProgress.resolve(choice);
+  if (location) jumpToLocation(location);
+}
+window.addEventListener("pagehide", flushProgress);
 
 // 边距/版式变化时同步 foliate 布局三件套。margin 只管上下页边距且必须带单位；
 // 左右留白由 max-inline-size + gap 决定（见 readerLayoutMetrics），
@@ -621,8 +686,9 @@ function onWindowResize() {
 function applyStyle() {
   persistStyle();
   continuousReader?.setStyle(style.value);
-  view?.renderer.setStyles?.(buildBookCSS(style.value));
-  footnoteView?.renderer?.setStyles?.(buildBookCSS(style.value));
+  if (!fixedLayout.value) for (const { doc } of view?.renderer.getContents() ?? []) applyBookTypography(doc, style.value);
+  view?.renderer.setStyles?.(buildBookCSS(style.value, fixedLayout.value));
+  footnoteView?.renderer?.setStyles?.(buildBookCSS(style.value, fixedLayout.value));
   noteHighlights.refresh();
 }
 
@@ -632,19 +698,12 @@ function setTheme(theme: ReaderStyle["theme"]) {
 }
 
 function setFlow(flow: ReaderStyle["flow"]) {
-  if (style.value.flow === flow) return;
+  if (style.value.flow === flow || fixedLayout.value) return;
   style.value = { ...style.value, flow };
   persistStyle();
-  // 滚动版式进入沉浸阅读：自动隐藏控制栏（之后向下滚动隐藏、向上滚动或点按中部显示）；
-  // 切回分页则恢复显示，保持可发现性
-  if (flow === "scrolled") {
-    chromeVisible.value = false;
-    settingsOpen.value = false;
-  } else {
-    chromeVisible.value = true;
-  }
+  const location = currentReadingLocation();
   const book = activeBook.value;
-  if (book) void openBook(book);
+  if (book) void openBook(book, location);
 }
 
 function stepFont(delta: number) {
@@ -689,6 +748,7 @@ function toggleChrome() {
 }
 
 function pageBy(direction: 1 | -1) {
+  quoteNavigation.releaseLocation();
   const target = view as unknown as { goLeft?(): void; goRight?(): void } | null;
   if (!target) return;
   if (direction > 0) target.goRight?.();
@@ -722,6 +782,7 @@ function chainScrolledSection(event: { preventDefault(): void }, direction: 1 | 
 }
 
 function onDocWheel(event: WheelEvent) {
+  quoteNavigation.releaseLocation();
   if (!view) return;
   const renderer = view.renderer;
   if (style.value.flow === "scrolled") {
@@ -760,6 +821,7 @@ let docTouchDragged = false;
 let suppressDocumentClickUntil = 0;
 
 function onDocTouchStart(event: TouchEvent) {
+  quoteNavigation.releaseLocation();
   const touch = event.touches[0];
   docTouchY = touch?.clientY ?? null;
   docTouchStartX = touch?.clientX ?? null;
@@ -818,7 +880,7 @@ function followBookLink(anchor: Element, href: string) {
   } else if (resolution.kind === "external") {
     window.open(href, "_blank", "noopener");
   } else if (continuousReader) {
-    void continuousReader.goToHref(href);
+    void continuousReader.goToHref(href).catch(showNavigationError);
   }
 }
 
@@ -854,6 +916,8 @@ function onViewLoad(event: Event) {
   const detail = (event as CustomEvent<{ doc?: Document; index?: number }>).detail;
   const doc = detail?.doc;
   if (!doc) return;
+  if (!fixedLayout.value) applyBookTypography(doc, style.value);
+  locations.bind(doc, detail.index ?? 0);
   quoteNavigation.bind(doc, detail.index ?? 0);
   noteHighlights.bind(doc, detail.index ?? 0);
   bindSelection(doc);
@@ -865,8 +929,8 @@ function onViewLoad(event: Event) {
 function onSliderInput(event: Event) {
   quoteNavigation.clear();
   const value = Number((event.target as HTMLInputElement).value);
-  if (continuousReader) void continuousReader.goToFraction(value);
-  else void view?.goToFraction(value);
+  if (continuousReader) void continuousReader.goToFraction(value).catch(showNavigationError);
+  else void view?.goToFraction(value).catch(showNavigationError);
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -876,6 +940,7 @@ function onKeydown(event: KeyboardEvent) {
   else if (event.key === "ArrowRight") target?.goRight?.();
   else if (event.key === "Escape") {
     if (footnoteOpen.value) closeFootnote();
+    else if (settingsOpen.value) settingsOpen.value = false;
     else if (tocOpen.value) tocOpen.value = false;
     else backToShelf();
   }
@@ -890,7 +955,7 @@ void loadShelf().then(() => {
   if (invitation.value) { void openInvitation(); return; }
   // 返回图书室自动打开上次读的书；进度恢复走既有 cachedProgress 逻辑。
   // 书被删除（不在书架）时留在书架页。
-  const raw = localStorage.getItem(LAST_READ_KEY);
+  const raw = localStorage.getItem(`${LAST_READ_KEY}.${store.account?.id ?? "guest"}`);
   const id = raw == null ? Number.NaN : Number(raw);
   const book = Number.isFinite(id) ? books.value.find((b) => b.id === id) : undefined;
   if (book && bookDownloadState(book) === "ready") void openBook(book);
@@ -898,6 +963,8 @@ void loadShelf().then(() => {
 void preloadFoliate();
 
 onBeforeUnmount(() => {
+  window.removeEventListener("pagehide", flushProgress);
+  disposed = true;
   document.removeEventListener("keydown", onKeydown);
   closeBookView();
 });
@@ -931,7 +998,7 @@ defineExpose({ reload: loadShelf });
         <button
           class="book-card"
           type="button"
-          :aria-label="bookDownloadState(book) === 'ready' ? `阅读《${book.title}》` : `下载《${book.title}》`"
+          :aria-label="`阅读《${book.title}》`"
           @click="handleBookClick(book)"
         >
           <span class="book-cover">
@@ -952,6 +1019,7 @@ defineExpose({ reload: loadShelf });
           <span class="book-card-title">{{ book.title }}</span>
           <span class="book-card-author">{{ book.author || "佚名" }}</span>
         </button>
+        <button class="book-shelf-download" type="button" :disabled="bookDownloadState(book) === 'downloading'" :aria-label="`下载《${book.title}》`" @click="handleDownloadClick(book)"><Download :size="14" />{{ bookDownloadState(book) === 'ready' ? '已下载' : '离线下载' }}</button>
         <button class="book-shelf-invite" type="button" :aria-label="`邀请共读《${book.title}》`" @click="inviteBook(book)"><Send :size="14" />邀请共读</button>
         </article>
       </div>
@@ -960,6 +1028,7 @@ defineExpose({ reload: loadShelf });
     <!-- 阅读器 -->
     <div
       v-if="readerOpen || openingBook"
+      ref="readerElement"
       class="book-reader"
       :data-theme="style.theme"
     >
@@ -981,7 +1050,7 @@ defineExpose({ reload: loadShelf });
         @click.stop="pageBy(1)"
       ></button>
 
-      <header class="book-bar book-top" :class="{ 'bar-hidden': !chromeVisible }">
+      <header ref="topBarElement" class="book-bar book-top" :class="{ 'bar-hidden': !chromeVisible }">
         <div class="book-top-main">
         <button class="book-bar-btn" type="button" @click="backToShelf">‹ 书架</button>
         <div class="book-reader-title">
@@ -1016,7 +1085,10 @@ defineExpose({ reload: loadShelf });
         </section>
       </div>
 
-      <div v-if="settingsOpen" class="book-settings" data-book-settings>
+      <div v-if="settingsOpen" class="book-settings" :style="panelStyle" data-book-settings role="dialog" aria-label="阅读设置">
+        <button class="book-bar-btn" type="button" aria-label="关闭阅读设置" @click="settingsOpen = false"><X :size="18" />关闭</button>
+        <p v-if="fixedLayout" role="status">此书为固定版式，保留原书排版。</p>
+        <fieldset :disabled="fixedLayout" class="book-typesetting">
         <div class="book-settings-row">
           <span>字号</span>
           <button class="book-bar-btn bordered" type="button" :aria-label="'缩小字号'" @click="stepFont(-10)"><Minus :size="14" /></button>
@@ -1035,6 +1107,7 @@ defineExpose({ reload: loadShelf });
           <span class="book-font-pct">{{ style.margin }}</span>
           <button class="book-bar-btn bordered" type="button" :aria-label="'增大边距'" @click="stepMargin(16)"><Plus :size="14" /></button>
         </div>
+        </fieldset>
         <div class="book-settings-row" role="radiogroup" aria-label="主题">
           <span>主题</span>
           <button
@@ -1048,8 +1121,8 @@ defineExpose({ reload: loadShelf });
         </div>
         <div class="book-settings-row" role="radiogroup" aria-label="版式">
           <span>版式</span>
-          <button class="book-bar-btn bordered" :class="{ active: style.flow === 'paginated' }" type="button" @click="setFlow('paginated')">分页</button>
-          <button class="book-bar-btn bordered" :class="{ active: style.flow === 'scrolled' }" type="button" @click="setFlow('scrolled')">滚动</button>
+          <button :disabled="fixedLayout" class="book-bar-btn bordered" :class="{ active: style.flow === 'paginated' }" type="button" @click="setFlow('paginated')">分页</button>
+          <button :disabled="fixedLayout" class="book-bar-btn bordered" :class="{ active: style.flow === 'scrolled' }" type="button" @click="setFlow('scrolled')">滚动</button>
         </div>
       </div>
 
@@ -1073,6 +1146,15 @@ defineExpose({ reload: loadShelf });
         <p>{{ readerError }}</p>
         <button class="book-btn" type="button" @click="activeBook && openBook(activeBook)">重试</button>
       </div>
+      <p v-if="navigationNotice" class="book-navigation-notice" role="status">{{ navigationNotice }}</p>
+      <div v-if="syncState.status === 'conflict'" class="book-sync-notice" role="alert">
+        另一设备已更新阅读位置。本机位置已保留。
+        <button type="button" @click="resolveProgress('local')">保留本机位置</button>
+        <button type="button" @click="resolveProgress('remote')">使用另一设备位置</button>
+      </div>
+      <div v-else-if="syncState.status === 'offline'" class="book-sync-notice" role="status">阅读位置已保存在本机，联网后重试。<button type="button" @click="preciseProgress.flush()">重试同步</button></div>
+      <div v-else-if="syncState.status === 'storage-error'" class="book-sync-notice" role="alert">本机存储空间不足，阅读位置尚未安全保存。请联网同步后再关闭。</div>
+      <div v-else-if="syncState.status === 'revision-mismatch'" class="book-sync-notice" role="alert">图书版本已变化，旧地址未同步。请重新打开图书并选择新的阅读位置。</div>
       <p v-if="noteHighlightsError" class="book-note-load-error" role="alert">{{ noteHighlightsError }} <button @click="noteHighlights.reload()">重试读取笔记</button></p>
     </div>
     <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToLocation" @notes-changed="noteHighlights.reload" />
@@ -1184,7 +1266,7 @@ defineExpose({ reload: loadShelf });
 
 .book-shelf-item { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .book-shelf-item .book-card { width: 100%; }
-.book-shelf-invite { display: inline-flex; justify-content: center; align-items: center; gap: 5px; margin-top: auto; padding: 6px; min-height: 32px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
+.book-shelf-invite, .book-shelf-download { display: inline-flex; justify-content: center; align-items: center; gap: 5px; margin-top: auto; padding: 6px; min-height: 44px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
 .book-shelf-transfer { padding: 12px max(16px, calc((100vw - 980px) / 2)) 0; }
 .book-invitation-notice { padding: 12px; background: #f7efdf; color: #70583b; }
 /* ---------- 阅读器 ---------- */
@@ -1234,6 +1316,9 @@ defineExpose({ reload: loadShelf });
 .book-top.bar-hidden { transform: translateY(-100%); }
 .book-bottom.bar-hidden { transform: translateY(100%); }
 .book-bar-btn {
+  min-width: 44px;
+  min-height: 44px;
+  justify-content: center;
   border: 0;
   background: none;
   color: #6d573d;
@@ -1292,10 +1377,19 @@ defineExpose({ reload: loadShelf });
 .book-footnote-text { overflow-y: auto; padding: 18px; line-height: 1.65; white-space: pre-wrap; }
 .book-footnote-error { padding: 24px 18px; color: #a33; text-align: center; }
 
+.book-typesetting { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.book-navigation-notice { position: absolute; bottom: calc(66px + var(--safe-bottom, 0px)); left: 16px; right: 16px; z-index: 25; padding: 8px 12px; border-radius: 8px; background: #f7edcfee; color: #60421f; pointer-events: none; font-size: 13px; }
+.book-sync-notice { position: absolute; top: calc(76px + var(--safe-top, 0px)); left: 12px; right: 12px; z-index: 32; padding: 8px; background: #fff7e8; color: #60421f; border-radius: 8px; font-size: 13px; }
+.book-sync-notice button { min-height: 44px; margin: 4px; padding: 4px 8px; font: inherit; }
 .book-settings {
   position: absolute;
   right: 12px;
-  top: calc(54px + var(--safe-top, 0px));
+  top: var(--book-panel-top, 80px);
+  max-height: var(--book-panel-height, 65%);
+  max-width: calc(100% - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
   z-index: 40;
   background: rgba(250, 247, 240, .97);
   backdrop-filter: blur(14px);

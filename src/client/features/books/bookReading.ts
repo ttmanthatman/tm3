@@ -1,6 +1,9 @@
 import { BOOK_QUOTE_MAX } from "@shared/bookNotes";
+import { bookLocatorSchema } from "@shared/bookLocator";
 
-export type BookLocation = { bookId: number; fraction: number; quote?: string };
+import type { BookLocatorV1 } from "./bookLocator";
+
+export type BookLocation = { bookId: number; fraction: number; quote?: string; locator?: BookLocatorV1 };
 export type BookReadingContext = BookLocation & { title: string; chapter: string; quote: string };
 
 export function bookChapterLabel(chapter: string): string {
@@ -17,6 +20,8 @@ export function bookReadingUrl(location: BookLocation, origin: string): string {
   url.searchParams.set("bookId", String(location.bookId));
   url.searchParams.set("bookFraction", String(location.fraction));
   if (location.quote?.trim()) url.searchParams.set("bookQuote", location.quote.trim().slice(0, BOOK_QUOTE_MAX));
+  const locator = bookLocatorSchema.safeParse(location.locator);
+  if (locator.success && locator.data.bookId === location.bookId) url.searchParams.set("bookLocatorV1", JSON.stringify(locator.data));
   return url.href;
 }
 
@@ -29,9 +34,11 @@ export function parseBookReadingUrl(value: string, origin: string): BookLocation
     if (!id || !/^\d+$/.test(id) || !rawFraction?.trim()) return null;
     const bookId = Number(id), fraction = Number(rawFraction);
     const quote = url.searchParams.get("bookQuote")?.trim();
+    const rawLocator = url.searchParams.get("bookLocatorV1");
+    const parsedLocator = rawLocator && rawLocator.length <= 8000 ? bookLocatorSchema.safeParse(JSON.parse(rawLocator)) : null;
     if (quote && quote.length > BOOK_QUOTE_MAX) return null;
     return Number.isSafeInteger(bookId) && bookId > 0 && Number.isFinite(fraction) && fraction >= 0 && fraction <= 1
-      ? { bookId, fraction, ...(quote ? { quote } : {}) } : null;
+      ? { bookId, fraction, ...(quote ? { quote } : {}), ...(parsedLocator?.success && parsedLocator.data.bookId === bookId ? { locator: parsedLocator.data } : {}) } : null;
   } catch { return null; }
 }
 
@@ -43,7 +50,16 @@ export function bookShareContent(context: BookReadingContext, origin: string, co
   const heading = context.quote ? `摘录自《${context.title}》` : `邀请你一起读《${context.title}》`;
   // The quote already lives in the message; cards add it to their navigation URL.
   // Avoid duplicating thousands of percent-encoded characters in stored messages.
-  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl({ bookId: context.bookId, fraction: context.fraction }, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>${comment.trim() ? `<p>${html(comment.trim())}</p>` : ""}`;
+  return `${html(heading)}${context.quote ? `<br>“${html(context.quote)}”` : ""}<br><a href="${html(bookReadingUrl({ bookId: context.bookId, fraction: context.fraction, locator: context.locator }, origin))}">打开书中的位置：${html(bookPositionLabel(context.chapter, context.fraction))}</a>${comment.trim() ? `<p>${html(comment.trim())}</p>` : ""}`;
+}
+
+export function bookLocationFromMessage(content: string, bookId: number, origin: string): BookLocation | null {
+  const doc = new DOMParser().parseFromString(content, "text/html");
+  for (const anchor of doc.querySelectorAll("a[href]")) {
+    const location = parseBookReadingUrl(anchor.getAttribute("href") ?? "", origin);
+    if (location?.bookId === bookId) return location;
+  }
+  return null;
 }
 
 export function wrapBookCardText(text: string, measure: (value: string) => number, width: number): string[] {

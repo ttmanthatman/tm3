@@ -9,9 +9,9 @@ async function write<T>(path: string, options: RequestInit): Promise<T> {
 }
 
 export const bookNotesClient = {
-  list(bookId: number) { return api<{ notes: BookNoteDTO[] }>(`/api/books/${bookId}/notes`); },
+  list(bookId: number) { return api<{ notes: BookNoteDTO[] }>(`/api/books/${bookId}/notes/v2`); },
   save(bookId: number, id: string, note: BookNoteInput) {
-    return write<{ note: BookNoteDTO }>(`/api/books/${bookId}/notes/${id}`, { method: "PUT", body: JSON.stringify(note) });
+    return write<{ note: BookNoteDTO }>(`/api/books/${bookId}/notes/v2/${id}`, { method: "PUT", body: JSON.stringify(note) });
   },
   remove(bookId: number, id: string) { return write<{ success: true }>(`/api/books/${bookId}/notes/${id}`, { method: "DELETE" }); }
 };
