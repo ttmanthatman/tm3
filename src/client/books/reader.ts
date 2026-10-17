@@ -378,6 +378,7 @@ export class ContinuousBookReader {
   private readonly placeholders = new Map<number, { height: number; width: number; fontPct: number; spacing: number }>();
   private navigation = 0;
   private targetIndex = 0;
+  private pendingNavigation: { request: number } | null = null;
   private layoutAnchor: BookViewAnchor | null = null;
   private lastAnchor: BookViewAnchor | null = null;
   private programmaticTop: number | null = null;
@@ -434,7 +435,9 @@ export class ContinuousBookReader {
     const target = sectionAtFraction(this.sectionStarts, fraction);
     this.targetIndex = target.index;
     this.queue.retain(index => Math.abs(index - target.index) <= 2);
-    await this.loadSection(target.index, false, true);
+    this.pendingNavigation = { request };
+    try { await this.loadSection(target.index, false, true); }
+    finally { if (this.pendingNavigation?.request === request) this.pendingNavigation = null; }
     if (this.destroyed || request !== this.navigation) return;
     const wrapper = this.wrappers[target.index];
     if (!wrapper || !this.loaded.has(target.index)) return;
@@ -444,10 +447,12 @@ export class ContinuousBookReader {
     this.trimSections();
     this.lastAnchor = this.captureAnchor();
     this.reportLocation();
+    this.prefetchViewport();
   }
 
   goToRange(doc: Document, range: Range): void {
     ++this.navigation;
+    this.pendingNavigation = null;
     this.layoutAnchor = null;
     const index = this.frames.findIndex((frame) => frame?.contentDocument === doc);
     const wrapper = this.wrappers[index];
@@ -464,7 +469,9 @@ export class ContinuousBookReader {
     const resolved = this.book.resolveHref?.(href);
     if (!resolved) return;
     this.targetIndex = resolved.index;
-    await this.loadSection(resolved.index, false, true);
+    this.pendingNavigation = { request };
+    try { await this.loadSection(resolved.index, false, true); }
+    finally { if (this.pendingNavigation?.request === request) this.pendingNavigation = null; }
     if (this.destroyed || request !== this.navigation) return;
     const wrapper = this.wrappers[resolved.index];
     const doc = this.frames[resolved.index]?.contentDocument;
@@ -477,6 +484,7 @@ export class ContinuousBookReader {
     this.prefetch(resolved.index + 1);
     this.lastAnchor = this.captureAnchor();
     this.reportLocation();
+    this.prefetchViewport();
   }
 
   setStyle(style: ReaderStyle): void {
@@ -502,6 +510,7 @@ export class ContinuousBookReader {
       this.restoreAnchor(this.layoutAnchor);
       this.lastAnchor = this.layoutAnchor ?? this.captureAnchor();
       this.layoutAnchor = null;
+      this.prefetchViewport();
     });
   }
 
@@ -542,6 +551,7 @@ export class ContinuousBookReader {
       const direction = programmatic ? null : bookScrollDirection(this.lastScrollTop, currentScrollTop);
       this.lastScrollTop = currentScrollTop;
       if (direction) this.onScrollDirection?.(direction);
+      if (this.pendingNavigation?.request === this.navigation) return;
       if (!programmatic) this.reportLocation();
       // A delayed scroll event can arrive after image/font layout has already
       // changed. Keep the source anchor established by the navigation/layout.
@@ -549,16 +559,40 @@ export class ContinuousBookReader {
       const index = this.visibleSectionIndex();
       this.targetIndex = index;
       this.trimSections();
-      const viewportBottom = this.element.scrollTop + this.element.clientHeight;
-      const wrapper = this.wrappers[index];
-      if (wrapper && wrapper.offsetTop + wrapper.offsetHeight - viewportBottom < this.element.clientHeight) {
-        this.prefetch(index + 1);
-      }
-      if (wrapper && this.element.scrollTop - wrapper.offsetTop < this.element.clientHeight / 2) {
-        this.prefetch(index - 1, true);
-      }
+      this.prefetchViewport();
     });
   };
+
+  private prefetchViewport(): void {
+    if (this.destroyed || this.pendingNavigation?.request === this.navigation) return;
+    const top = this.element.scrollTop, bottom = top + this.element.clientHeight;
+    // The last short page can be visible even while the midpoint is in the cover.
+    // Continue after commits as well: a viewport full of short pages may not scroll yet.
+    for (const index of this.loaded) {
+      const wrapper = this.wrappers[index], end = wrapper.offsetTop + wrapper.offsetHeight;
+      if (end < top || wrapper.offsetTop > bottom) continue;
+      if (end - bottom < this.element.clientHeight) {
+        let next = index + 1;
+        while (this.book.sections[next]?.linear === "no") next++;
+        this.prefetch(next);
+      }
+      if (top - wrapper.offsetTop < this.element.clientHeight / 2) {
+        let previous = index - 1;
+        while (this.book.sections[previous]?.linear === "no") previous--;
+        this.prefetch(previous, true);
+      }
+    }
+  }
+
+  private isRelevantSection(index: number): boolean {
+    if (Math.abs(index - this.targetIndex) <= 3) return true;
+    let previous = index - 1;
+    while (this.book.sections[previous]?.linear === "no") previous--;
+    if (!this.loaded.has(previous)) return false;
+    const wrapper = this.wrappers[previous], end = wrapper.offsetTop + wrapper.offsetHeight;
+    // A run of tiny chapters must fill the visible page before it can scroll.
+    return end >= this.element.scrollTop && end <= this.element.scrollTop + this.element.clientHeight;
+  }
 
   private visibleSectionIndex(): number {
     const center = this.element.scrollTop + this.element.clientHeight / 2;
@@ -613,7 +647,7 @@ export class ContinuousBookReader {
     if (!src) throw new Error(`图书第 ${index + 1} 节没有正文`);
     if (this.destroyed) { section.unload?.(); return; }
     this.acquiredSections.add(index);
-    if (Math.abs(index - this.targetIndex) > 3) { this.releaseSection(index); return; }
+    if (!this.isRelevantSection(index)) { this.releaseSection(index); return; }
     const frame = document.createElement("iframe");
     frame.className = "book-continuous-frame";
     frame.setAttribute("scrolling", "no");
@@ -648,7 +682,7 @@ export class ContinuousBookReader {
       const ready = await this.insertionGate.wait();
       if (!ready || this.destroyed) return;
     }
-    if (Math.abs(index - this.targetIndex) > 3) { this.releaseSection(index); return; }
+    if (!this.isRelevantSection(index)) { this.releaseSection(index); return; }
     // Images can finish loading while the insertion is deferred.
     frame.style.width = `${this.element.clientWidth}px`;
     this.measureFrame(index);
@@ -676,10 +710,12 @@ export class ContinuousBookReader {
       const anchor = this.lastAnchor;
       this.measureFrame(index);
       if (anchor?.doc === doc) this.restoreAnchor(anchor);
+      this.prefetchViewport();
     });
     observer.observe(doc.documentElement);
     if (doc.body) observer.observe(doc.body);
     this.resizeObservers.set(index, observer);
+    this.prefetchViewport();
   }
 
   private bindTouchEvents(target: HTMLElement | Document, signal = this.interactionController.signal): void {
@@ -749,7 +785,9 @@ export class ContinuousBookReader {
       const index = indices[rank], doc = this.frames[index]?.contentDocument;
       bytes += this.book.sections[index]?.size ?? 0;
       const protectedText = !!doc?.getSelection()?.toString() || !!doc?.querySelector("[data-book-quote-highlight]");
-      if (!protectedText && Math.abs(index - this.targetIndex) > 1 && (rank >= 7 || Math.abs(index - this.targetIndex) > 3 || bytes > 2_000_000)) this.releaseSection(index);
+      const wrapper = this.wrappers[index];
+      const visible = wrapper.offsetTop + wrapper.offsetHeight > this.element.scrollTop && wrapper.offsetTop < this.element.scrollTop + this.element.clientHeight;
+      if (!visible && !protectedText && Math.abs(index - this.targetIndex) > 1 && (rank >= 7 || Math.abs(index - this.targetIndex) > 3 || bytes > 2_000_000)) this.releaseSection(index);
     }
   }
 

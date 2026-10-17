@@ -5,6 +5,27 @@ type FixtureWindow = Window & {
   bookScrollFixture: { reader: ContinuousBookReader; releasePrevious(): void; previousRequested: boolean; unloaded: number[] };
 };
 
+for (const opening of ["cover", "tiny"] as const) test(`EPUB short opening sections keep loading past the viewport midpoint: ${opening}`, async ({ page }) => {
+  await page.setViewportSize({ width: 557, height: 1073 });
+  await page.goto("/src/client/books/reader.ts");
+  await page.setContent('<style>html,body{margin:0;height:100%;overflow:hidden}.book-continuous-scroll{position:absolute;inset:0;overflow-y:auto}.book-continuous-frame{display:block;width:100%;border:0}</style>');
+  await page.evaluate(async (opening) => {
+    const source = "/src/client/books/reader.ts";
+    const { ContinuousBookReader, DEFAULT_READER_STYLE } = await import(source);
+    const sections = Array.from({ length: 5 }, (_, index) => ({ id: `${index}.xhtml`, async load() {
+      const height = opening === "tiny" ? (index < 4 ? 40 : 1800) : index === 0 ? 1000 : index === 1 ? 300 : 1800;
+      return URL.createObjectURL(new Blob([`<html><head></head><body><div style="height:${height}px">Section ${index}</div></body></html>`], { type: "text/html" }));
+    } }));
+    const reader = new ContinuousBookReader({ sections }, [0, .2, .4, .6, .8, 1], { style: DEFAULT_READER_STYLE });
+    document.body.append(reader.element); await reader.open(0);
+  }, opening);
+  const scroller = page.locator("[data-continuous-reader]");
+  await scroller.hover();
+  for (let step = 0; step < 8; step++) { await page.mouse.wheel(0, 500); await page.waitForTimeout(80); }
+  await expect.poll(() => scroller.evaluate(element => element.scrollTop)).toBeGreaterThan(opening === "tiny" ? 500 : 1800);
+  await expect(page.locator(`[data-section-index="${opening === "tiny" ? 4 : 2}"] iframe`)).toBeAttached();
+});
+
 async function openFixture(page: Page, withIllustration = false, withProse = false) {
   await page.goto("/src/client/books/reader.ts");
   await page.setContent('<style>html,body{margin:0;height:100%;overflow:hidden}.book-continuous-scroll{position:absolute;inset:0;overflow-y:auto;overscroll-behavior:contain}.book-continuous-section{width:100%;min-height:1px}.book-continuous-frame{display:block;width:100%;min-height:1px;border:0}</style>');

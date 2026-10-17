@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
-import { Download, Upload } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { Download, NotebookPen, Upload } from "lucide-vue-next";
 import AppModal from "../../components/ui/AppModal.vue";
 import { getToken } from "../../api";
 import { exportNotesBackup, importNotesBackup, NOTES_BACKUP_MAX_BYTES, parseNotesBackup, serializeNotesBackup, type ImportResult, type NotesBackup, type NotesDomain } from "./notesBackup";
 import { notesTransferClient } from "./notesTransferClient";
 
-const props = defineProps<{ domain: NotesDomain; accountId: number }>();
+const props = defineProps<{ domain: NotesDomain; accountId: number; menu?: boolean }>();
 const emit = defineEmits<{ imported: [] }>();
 const fileInput = ref<HTMLInputElement | null>(null);
 const transferBusy = ref(false);
@@ -19,6 +19,25 @@ const label = computed(() => props.domain === "bible" ? "圣经笔记" : "电子
 let sequence = 0;
 let mounted = true;
 const downloads = new Map<string, ReturnType<typeof setTimeout>>();
+const root = ref<HTMLElement | null>(null), menuTrigger = ref<HTMLButtonElement | null>(null), menuOpen = ref(false);
+function outside(event: PointerEvent) { if (event.target instanceof Node && !root.value?.contains(event.target)) menuOpen.value = false; }
+async function toggleMenu() {
+  menuOpen.value = !menuOpen.value;
+  if (menuOpen.value) { await nextTick(); root.value?.querySelector<HTMLButtonElement>(".transfer-buttons button:not(:disabled)")?.focus(); }
+}
+function closeMenu(event: KeyboardEvent) {
+  if (!menuOpen.value) return;
+  if (event.key === "Escape") { event.preventDefault(); menuOpen.value = false; menuTrigger.value?.focus(); }
+  else if (event.key === "Tab") menuOpen.value = false;
+  else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    const buttons = [...(root.value?.querySelectorAll<HTMLButtonElement>(".transfer-buttons button:not(:disabled)") ?? [])];
+    const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    buttons[event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (current + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+  }
+}
+onMounted(() => document.addEventListener("pointerdown", outside));
+onBeforeUnmount(() => document.removeEventListener("pointerdown", outside));
 
 function releaseDownloads() {
   for (const [url, timer] of downloads) { clearTimeout(timer); URL.revokeObjectURL(url); }
@@ -27,6 +46,7 @@ function releaseDownloads() {
 
 function reset() {
   sequence++;
+  menuOpen.value = false;
   transferBusy.value = false;
   transferOpen.value = false;
   backup.value = null;
@@ -48,6 +68,7 @@ function begin() {
   return { request, accountId, domain, assertActive };
 }
 async function download() {
+  menuOpen.value = false;
   const operation = begin();
   try {
     const exported = await exportNotesBackup(operation.domain, operation.accountId, notesTransferClient, operation);
@@ -109,12 +130,13 @@ function close() {
 </script>
 
 <template>
-  <div class="notes-transfer" :aria-label="`${label}导入与导出`">
-    <div class="transfer-buttons">
-      <button type="button" :disabled="transferBusy" @click="download"><Download :size="16" />{{ transferBusy && !transferOpen ? '处理中…' : '导出笔记' }}</button>
-      <button type="button" :disabled="transferBusy" @click="fileInput?.click()"><Upload :size="16" />导入笔记</button>
-      <input ref="fileInput" type="file" accept=".json,application/json" hidden :aria-label="`选择${label}备份文件`" @change="chooseFile" />
+  <div ref="root" class="notes-transfer" :class="{ 'notes-transfer-menu': menu }" :aria-label="`${label}导入与导出`" @keydown="closeMenu">
+    <button v-if="menu" ref="menuTrigger" class="transfer-menu-trigger" type="button" aria-label="笔记导入与导出" aria-haspopup="menu" :aria-expanded="menuOpen" @click="toggleMenu"><NotebookPen :size="21" /></button>
+    <div v-if="!menu || menuOpen" class="transfer-buttons" :role="menu ? 'menu' : undefined" :aria-label="menu ? '笔记操作' : undefined">
+      <button type="button" :role="menu ? 'menuitem' : undefined" :disabled="transferBusy" @click="download"><Download :size="16" />{{ transferBusy && !transferOpen ? '处理中…' : '导出笔记' }}</button>
+      <button type="button" :role="menu ? 'menuitem' : undefined" :disabled="transferBusy" @click="menuOpen = false; fileInput?.click()"><Upload :size="16" />导入笔记</button>
     </div>
+    <input ref="fileInput" type="file" accept=".json,application/json" hidden :aria-label="`选择${label}备份文件`" @change="chooseFile" />
     <p v-if="error && !transferOpen" class="transfer-error" role="alert">{{ error }}</p>
     <Teleport to="body"><AppModal :open="transferOpen" :title="`导入${label}`" :busy="transferBusy" content-class="notes-transfer-modal" @close="close">
       <div class="transfer-body">
@@ -140,6 +162,11 @@ function close() {
 
 <style scoped>
 .notes-transfer { min-width: 0; color: #69553c; }
+.notes-transfer-menu { position: relative; }
+.transfer-menu-trigger { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
+.notes-transfer-menu .transfer-buttons { position: absolute; z-index: 10; right: 0; top: calc(100% + 6px); width: 160px; padding: 6px; display: grid; border: 1px solid #d8c6a9; border-radius: 8px; background: #fffaf1; box-shadow: 0 8px 24px #0002; }
+.notes-transfer-menu .transfer-buttons button { min-height: 44px; border: 0; justify-content: start; }
+.notes-transfer-menu > .transfer-error { position: absolute; z-index: 10; right: 0; top: 44px; width: 220px; padding: 10px; background: #fffaf1; }
 .transfer-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .transfer-buttons button, .transfer-footer button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 8px 12px; border: 1px solid #c5b394; border-radius: 6px; background: #fffaf1; color: inherit; font: inherit; cursor: pointer; }
 button:disabled { opacity: .55; cursor: wait; }

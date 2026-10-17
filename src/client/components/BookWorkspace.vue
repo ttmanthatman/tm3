@@ -2,13 +2,13 @@
 // 图书室负一屏：书架 + EPUB 阅读器。
 // 懒加载编排：本组件由 App.vue defineAsyncComponent 分包，进入聊天室不下载；
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
-// 点按即可流式阅读；整本离线下载是书架上的独立操作。
+// 点按即可流式阅读；整本离线下载位于书架长按菜单。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { Download, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
+import { ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
 import type { BookDTO, BookReaderPresenceDTO } from "@shared/types";
 import { api, getToken } from "../api";
-import { bookClickAction, downloadBook, isBookDownloaded, type BookDownloadState } from "../books/cache";
+import { bookClickAction, downloadBook, isBookDownloaded, removeBookDownload, type BookDownloadState } from "../books/cache";
 import {
   bookTapAction,
   bookFootnoteTargetId,
@@ -42,6 +42,7 @@ import { bookTextModel } from "../features/books/bookTextModel";
 import { useBookPanelGeometry } from "../features/books/useBookPanelGeometry";
 import { useBookProgress } from "../features/books/useBookProgress";
 import BookReadingActions from "../features/books/BookReadingActions.vue";
+import BookShelfItem from "../features/books/BookShelfItem.vue";
 import BookReaderPresence from "../features/books/BookReaderPresence.vue";
 import { useBookSelection } from "../features/books/useBookSelection";
 import { useBookNoteHighlights } from "../features/books/useBookNoteHighlights";
@@ -321,6 +322,16 @@ function bookDownloadPercent(book: BookDTO): number {
 }
 
 async function handleBookClick(book: BookDTO) { await openBook(book); }
+
+async function removeDownload(book: BookDTO) {
+  downloadError.value = "";
+  try { await removeBookDownload(book.id); setDownloadState(book.id, "needed"); setDownloadProgress(book.id, 0); }
+  catch (error) { downloadError.value = error instanceof Error ? error.message : "本地删除失败，请重试"; }
+}
+function shelfNotes(book: BookDTO) {
+  const context = currentContext(book, cachedProgress(book));
+  if (context) { context.chapter = ""; void actions.value?.showNotes(context); }
+}
 
 async function handleDownloadClick(book: BookDTO) {
   const action = bookClickAction(bookDownloadState(book));
@@ -979,9 +990,11 @@ defineExpose({ reload: loadShelf });
       <header class="book-topbar">
         <button class="book-topbar-btn" type="button" @click="emitClose"><X :size="19" /> 关闭</button>
         <strong class="book-topbar-title">图书室</strong>
-        <span class="book-topbar-hint">{{ books.length ? `${books.length} 本` : "" }}</span>
+        <div class="book-topbar-actions">
+          <span class="book-topbar-hint">{{ books.length ? `${books.length} 本` : "" }}</span>
+          <NotesTransfer v-if="store.account && !store.account.isGuest" domain="books" :account-id="store.account.id" menu @imported="noteHighlights.reload()" />
+        </div>
       </header>
-      <NotesTransfer v-if="store.account && !store.account.isGuest" class="book-shelf-transfer" domain="books" :account-id="store.account.id" @imported="noteHighlights.reload()" />
       <div v-if="shelfLoading" class="book-shelf-state"><LoaderCircle class="book-spin" :size="22" /> 正在打开书架…</div>
       <div v-else-if="shelfError" class="book-shelf-state error">
         <p>{{ shelfError }}</p>
@@ -994,34 +1007,9 @@ defineExpose({ reload: loadShelf });
       <p v-if="downloadError" class="book-download-error" role="alert">{{ downloadError }}</p>
       <p v-if="invitationNotice" class="book-invitation-notice" role="status">{{ invitationNotice }}</p>
       <div v-if="!shelfLoading && !shelfError && books.length" class="book-shelf-grid">
-        <article v-for="book in sortedBooks" :key="book.id" class="book-shelf-item" :data-book-id="book.id">
-        <button
-          class="book-card"
-          type="button"
-          :aria-label="`阅读《${book.title}》`"
-          @click="handleBookClick(book)"
-        >
-          <span class="book-cover">
-            <img v-if="book.coverName" :src="coverUrl(book)" alt="" loading="lazy" />
-            <span v-else class="book-cover-fallback">{{ book.title }}</span>
-            <span v-if="cachedProgress(book) > 0.005" class="book-progress"><i :style="{ width: `${Math.round(cachedProgress(book) * 100)}%` }" /></span>
-            <span
-              v-if="bookDownloadState(book) !== 'ready'"
-              class="book-download-badge"
-              :class="{ error: bookDownloadState(book) === 'error' }"
-              aria-hidden="true"
-            >
-              <LoaderCircle v-if="bookDownloadState(book) === 'checking'" class="book-spin" :size="18" />
-              <span v-else-if="bookDownloadState(book) === 'downloading'" class="book-download-percent">{{ bookDownloadPercent(book) }}%</span>
-              <Download v-else :size="18" />
-            </span>
-          </span>
-          <span class="book-card-title">{{ book.title }}</span>
-          <span class="book-card-author">{{ book.author || "佚名" }}</span>
-        </button>
-        <button class="book-shelf-download" type="button" :disabled="bookDownloadState(book) === 'downloading'" :aria-label="`下载《${book.title}》`" @click="handleDownloadClick(book)"><Download :size="14" />{{ bookDownloadState(book) === 'ready' ? '已下载' : '离线下载' }}</button>
-        <button class="book-shelf-invite" type="button" :aria-label="`邀请共读《${book.title}》`" @click="inviteBook(book)"><Send :size="14" />邀请共读</button>
-        </article>
+        <BookShelfItem v-for="book in sortedBooks" :key="book.id" :book="book" :cover-url="coverUrl(book)" :progress="cachedProgress(book)"
+          :state="bookDownloadState(book)" :percent="bookDownloadPercent(book)" :can-use-notes="!!store.account && !store.account.isGuest"
+          @open="handleBookClick(book)" @invite="inviteBook(book)" @download="handleDownloadClick(book)" @remove="removeDownload(book)" @notes="shelfNotes(book)" />
       </div>
     </div>
 
@@ -1198,6 +1186,7 @@ defineExpose({ reload: loadShelf });
 }
 .book-topbar-title { font-size: 17px; font-weight: 800; }
 .book-topbar-hint { justify-self: end; color: #97836a; font-size: 12px; }
+.book-topbar-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
 .book-shelf-state {
   flex: 1;
   display: flex;
@@ -1229,47 +1218,7 @@ defineExpose({ reload: loadShelf });
   padding: 22px max(16px, calc((100vw - 980px) / 2)) calc(36px + var(--safe-bottom, 0px));
   align-content: start;
 }
-.book-card { border: 0; background: none; padding: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
-.book-cover {
-  position: relative;
-  display: block;
-  width: 100%;
-  aspect-ratio: 2 / 3;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #ddd5c4;
-  box-shadow: 0 2px 8px rgba(60, 44, 22, .16);
-}
-.book-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.book-cover-fallback { display: grid; place-items: center; height: 100%; padding: 10px; font-size: 14px; color: #77644c; text-align: center; }
-.book-download-badge {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  z-index: 2;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, .76);
-  border-radius: 50%;
-  background: rgba(51, 45, 37, .84);
-  color: #fff;
-  box-shadow: 0 2px 8px rgba(36, 27, 16, .28);
-  display: grid;
-  place-items: center;
-}
-.book-download-badge.error { background: rgba(153, 45, 45, .9); }
-.book-download-percent { font-size: 10px; font-weight: 800; font-variant-numeric: tabular-nums; }
-.book-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255, 255, 255, .45); }
-.book-progress > i { display: block; height: 100%; background: #e0862a; }
-.book-card-title { margin-top: 8px; font-size: 13.5px; font-weight: 700; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.book-card-author { display: block; margin-top: 2px; font-size: 11.5px; color: #97836a; }
-
-.book-shelf-item { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.book-shelf-item .book-card { width: 100%; }
-.book-shelf-invite, .book-shelf-download { display: inline-flex; justify-content: center; align-items: center; gap: 5px; margin-top: auto; padding: 6px; min-height: 44px; border: 1px solid #d8c6a9; border-radius: 7px; background: #faf5e9; color: #70583b; font: inherit; font-size: 12px; }
-.book-shelf-transfer { padding: 12px max(16px, calc((100vw - 980px) / 2)) 0; }
 .book-invitation-notice { padding: 12px; background: #f7efdf; color: #70583b; }
-/* ---------- 阅读器 ---------- */
 .book-reader { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .book-reader[data-theme="light"] { background: #ffffff; color: #1c1c1e; }
 .book-reader[data-theme="sepia"] { background: #f7f0e0; color: #3f3222; }

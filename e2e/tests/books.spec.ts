@@ -1,8 +1,10 @@
 import { devices, expect, test, type Frame, type Page } from "@playwright/test";
 import JSZip from "jszip";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import { io } from "socket.io-client";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { bookShelfAction } from "../book-shelf.js";
 
 const CONTAINER = `<?xml version="1.0"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
@@ -59,7 +61,8 @@ async function login(page: Page) {
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
 
-test("书架共读按钮对齐、邀请包含已有进度、读者名称和头像显示在阅读栏下", async ({ page, request }) => {
+test("书架长按菜单、笔记下拉、离线删除及共读进度可用", async ({ page, request }, info) => {
+  test.setTimeout(60000);
   const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
   const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
   const books: Array<{ id: number; title: string }> = [];
@@ -72,6 +75,8 @@ test("书架共读按钮对齐、邀请包含已有进度、读者名称和头�
       expect(upload.ok()).toBe(true); books.push((await upload.json()).book);
     }
     await request.put(`/api/books/${books[0].id}/progress`, { headers, data: { fraction: .61 } });
+    const note = await request.put(`/api/books/${books[0].id}/notes/${randomUUID()}`, { headers, data: { quote: "书架笔记", text: "本地删除后仍须保留", chapter: "第一章", fraction: .61 } });
+    expect(note.ok()).toBe(true);
     const created = await request.post("/api/admin/accounts", { headers, data: { username, password: "BookReaderTest123!", displayName: "同读的朋友" } });
     expect(created.ok()).toBe(true);
     const readerAuth = await request.post("/api/auth/login", { data: { username, password: "BookReaderTest123!" } });
@@ -84,17 +89,61 @@ test("书架共读按钮对齐、邀请包含已有进度、读者名称和头�
     await login(page);
     headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await expect(page.locator(".book-shelf-invite")).toHaveCount(2);
+    await page.setViewportSize({ width: 557, height: 1073 });
+    await expect(page.locator(".book-shelf-invite, .book-shelf-download")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "导出笔记", exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "笔记导入与导出", exact: true }).click();
+    await expect(page.getByRole("menu", { name: "笔记操作" })).toBeVisible();
+    await page.screenshot({ path: info.outputPath("shelf-notes-menu.png") });
+    await expect(page.getByRole("menuitem", { name: "导入笔记", exact: true })).toBeVisible();
+    const exported = page.waitForEvent("download");
+    await page.getByRole("menuitem", { name: "导出笔记", exact: true }).click();
+    const backupPath = (await (await exported).path())!;
+    expect(JSON.parse(fs.readFileSync(backupPath, "utf8")).notes[0].text).toBe("本地删除后仍须保留");
+    await page.locator('.book-topbar input[type="file"]').setInputFiles(backupPath);
+    const importDialog = page.getByRole("dialog", { name: "导入电子书笔记" });
+    await expect(importDialog).toBeVisible();
+    await importDialog.getByRole("button", { name: "开始导入", exact: true }).click();
+    await expect(importDialog.getByRole("status")).toContainText("重复 1 条");
+    await importDialog.getByRole("button", { name: "完成", exact: true }).click();
+    await page.getByRole("button", { name: "笔记导入与导出", exact: true }).click();
+    await page.keyboard.press("Escape");
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 900 });
-      const buttons = await page.locator(".book-shelf-invite").evaluateAll((items) => items.map((item) => item.getBoundingClientRect().top));
-      expect(Math.abs(buttons[0] - buttons[1])).toBeLessThan(1);
+      const cover = page.getByRole("button", { name: "阅读《短书名》", exact: true });
+      if (width === 390) {
+        const input = await page.context().newCDPSession(page), box = (await cover.boundingBox())!;
+        await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+        await page.waitForTimeout(600);
+        await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        await input.detach();
+      } else { await cover.hover(); await page.mouse.down(); await page.waitForTimeout(600); await page.mouse.up(); }
+      const menu = page.getByRole("menu", { name: "《短书名》操作" });
+      await expect(menu).toBeVisible();
+      await expect(menu.getByRole("menuitem")).toHaveCount(4);
+      const box = (await menu.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
+      await expect(page.locator(".book-reader")).toHaveCount(0);
+      if (width === 390) await page.screenshot({ path: info.outputPath("shelf-book-menu-390.png") });
+      await page.keyboard.press("Escape");
+      await expect(menu).toHaveCount(0);
     }
-    await page.getByRole("button", { name: "邀请共读《短书名》" }).click();
+    await bookShelfAction(page, "短书名", "查看笔记");
+    const notes = page.getByRole("dialog", { name: "我的阅读笔记" });
+    await expect(notes).toBeVisible(); await notes.getByRole("button", { name: "关闭", exact: true }).click();
+    await bookShelfAction(page, "短书名", "邀请共读");
     const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
     await expect(invitation).toContainText("61%");
     await invitation.getByRole("button", { name: "关闭" }).click();
-    await page.getByRole("button", { name: "下载《短书名》" }).click();
+    await bookShelfAction(page, "短书名", "下载");
+    const badge = page.locator(`[data-book-id="${books[0].id}"] .book-download-badge`);
+    await expect(badge).toHaveAttribute("aria-label", "已下载");
+    await bookShelfAction(page, "短书名", "本地删除");
+    await expect(badge).toHaveAttribute("aria-label", "未下载");
+    const stillListed = await request.get("/api/books", { headers });
+    expect((await stillListed.json()).books.find((book: { id: number }) => book.id === books[0].id).progress).toBe(.61);
+    const keptNotes = await request.get(`/api/books/${books[0].id}/notes`, { headers });
+    expect((await keptNotes.json()).notes[0].text).toBe("本地删除后仍须保留");
     await page.getByRole("button", { name: "阅读《短书名》" }).click();
     const frame = await readingFrame(page);
     await expect(frame.locator("#tap-target")).toBeVisible();
@@ -141,9 +190,7 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    const download = page.getByRole("button", { name: "下载《移动阅读回归》" });
-    await expect(download).toBeVisible();
-    await download.click();
+    await bookShelfAction(page, "移动阅读回归", "下载", book.id);
     const read = page.getByRole("button", { name: "阅读《移动阅读回归》" });
     await expect(read).toBeVisible();
     await read.click();
@@ -216,7 +263,7 @@ test("桌面滚动模式的边距改变正文实际位置", async ({ browser, re
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await page.getByRole("button", { name: "下载《移动阅读回归》" }).click();
+    await bookShelfAction(page, "移动阅读回归", "下载", book.id);
     await page.getByRole("button", { name: "阅读《移动阅读回归》" }).click();
     const frame = page.frameLocator('iframe[title="电子书第 1 节"]');
     const text = frame.locator("#tap-target");
@@ -270,7 +317,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await login(page);
       headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "邀请共读《移动阅读回归》" }).click();
+      await bookShelfAction(page, "移动阅读回归", "邀请共读", book.id);
       const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
       await expect(invitation).toBeVisible();
       await invitation.getByRole("button", { name: "发送到聊天室", exact: true }).click();

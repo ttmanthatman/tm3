@@ -38,6 +38,12 @@ export async function isBookDownloaded(bookId: number): Promise<boolean> {
   return Boolean(await (await caches.open(cacheName)).match(key));
 }
 
+/** Remove only this session's offline bytes; the server book, notes and progress remain. */
+export async function removeBookDownload(bookId: number): Promise<void> {
+  const { cacheName, key } = cacheContext(bookId);
+  await (await caches.open(cacheName)).delete(key);
+}
+
 export async function downloadBook(
   bookId: number,
   onProgress: (loaded: number, total: number) => void
