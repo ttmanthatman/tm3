@@ -1227,11 +1227,21 @@ const RELEASE_2_9_7_NOTES = [
   "书架长按图书可邀请共读、下载、本地删除或查看笔记，封面显示下载状态；笔记导入与导出收纳至标题栏右侧的笔记本菜单，本地删除保留服务器图书、笔记和进度。"
 ] as const
 
+const RELEASE_2_9_8_NOTES = [
+  "书房支持独立窗格目录与检索，搜索历史和分享偏好随账号同步；精简导航图标、译本入口与说明文字，统一检索字体。",
+  "发送超过三节经文时提示并合并成一条普通消息；返回按钮支持在目录和阅读之间恢复原位置，新开的上下文窗格不再生成无效阅读历史。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.9.9",
+    date: "2026-10-18",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.9.8",
     date: "2026-10-17",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_9_8_NOTES
   },
   {
     version: "2.9.7",
