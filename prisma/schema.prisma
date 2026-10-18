@@ -129,6 +129,7 @@ model Account {
   bibleCopyworks          BibleCopywork[]
   bibleNotes              BibleNote[]
   bibleFavorites          BibleFavorite[]
+  bibleTopics             BibleTopic[]
   musicFavorites          MusicFavorite[]
   musicPlays              MusicPlay[]
   musicPlaylists          MusicPlaylist[]
@@ -589,6 +590,37 @@ model BibleFavorite {
   @@unique([accountId, bookCode, chapter, verse])
   @@index([accountId, createdAt])
   @@map("bible_favorites")
+}
+
+// 经文收藏夹主题：账号自建的主题集，条目为经文段落（引用字符串解析而来）
+model BibleTopic {
+  id        Int               @id @default(autoincrement())
+  accountId Int               @map("account_id")
+  name      String            @db.VarChar(60)
+  createdAt DateTime          @default(now()) @map("created_at")
+  updatedAt DateTime          @updatedAt @map("updated_at")
+  account   Account           @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  entries   BibleTopicEntry[]
+
+  @@unique([accountId, name])
+  @@index([accountId, updatedAt])
+  @@map("bible_topics")
+}
+
+model BibleTopicEntry {
+  id          Int        @id @default(autoincrement())
+  topicId     Int        @map("topic_id")
+  sortOrder   Int        @map("sort_order")
+  bookCode     String    @map("book_code") @db.Char(3)
+  startChapter Int       @map("start_chapter")
+  startVerse   Int       @map("start_verse")
+  endChapter   Int       @map("end_chapter")
+  endVerse     Int       @map("end_verse")
+  topic       BibleTopic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([topicId, bookCode, startChapter, startVerse, endChapter, endVerse])
+  @@index([topicId, sortOrder])
+  @@map("bible_topic_entries")
 }
 
 model WhyTopic {

@@ -26,6 +26,7 @@ import type { MulticharDeps } from "./multichar/types.js";
 import { registerAdminAccountRoutes } from "./routes/adminAccounts.js";
 import { registerBibleCopyworkRoutes } from "./routes/bibleCopyworks.js";
 import { registerBibleNoteRoutes } from "./routes/bibleNotes.js";
+import { registerBibleTopicRoutes } from "./routes/bibleTopics.js";
 import { registerBibleRoutes } from "./routes/bible.js";
 import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
@@ -3739,6 +3740,7 @@ const musicProgressTracker = registerMusicRoutes(app, {
 
 registerBibleCopyworkRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage });
 registerBibleNoteRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage });
+registerBibleTopicRoutes(app, { prisma, requireAuth, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage });
 
 registerBibleRoutes(app, {
   prisma,

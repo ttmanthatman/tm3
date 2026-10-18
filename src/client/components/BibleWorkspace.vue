@@ -14,6 +14,8 @@ import type {
   BibleWorkspaceSnapshotDTO,
   ChannelDTO
 } from "@shared/types";
+import type { BibleTopicDTO } from "@shared/bibleTopics";
+import type { BibleTopicActions } from "../bibleTopics";
 import { api } from "../api";
 import { useChatStore } from "../store";
 import { createBibleSwipeNavigation } from "../features/bible/bibleSwipeNavigation";
@@ -65,6 +67,10 @@ const props = defineProps<{
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
+  /** 账号自建的经文收藏主题（含已解析的经文段落） */
+  topics: BibleTopicDTO[];
+  topicsBusy: boolean;
+  topicActions: BibleTopicActions;
   /** 账号级保存的阅读窗格快照（来自服务器），用于跨设备恢复 */
   serverWorkspace?: BibleWorkspaceSnapshotDTO | null;
   /** 可分享到聊天室的频道列表 */
@@ -913,6 +919,7 @@ function showToast(message: string) {
           @translation="changePaneTranslation(pane.id, $event)"
           :account-id="accountId" :channel-name="channelName" :can-send="canSend" :send-unavailable-reason="sendUnavailableReason"
           :send-passage="sendPassage" :send-text="sendText" :favorites="favorites" :favorites-busy="favoritesBusy" :update-favorites="updateFavorites" :copywork-revision="copyworkRevision"
+          :topics="topics" :topics-busy="topicsBusy" :topic-actions="topicActions"
           @activate="activePaneId = $event" @close="closeBiblePane" @state="updateHomeState(pane.id, $event)"
           @book="(book, chapter) => openBookInActivePane(book, chapter, pane.id)"
           @context="(lookup, matches) => openSearchContext(pane.id, lookup, matches)" @resume="copyworkManager?.resume($event)" @toast="showToast"

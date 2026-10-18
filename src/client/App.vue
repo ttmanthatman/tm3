@@ -72,6 +72,7 @@ import StoryEntry from "./features/stories/StoryEntry.vue";
 import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
+import type { BibleTopicActions } from "./bibleTopics";
 import { compactBytes } from "./time";
 import { isForwardableMessage } from "./messageForward";
 import { useChatStore } from "./store";
@@ -860,6 +861,16 @@ const {
   bibleFavoritesLoading,
   bibleFavoritesError,
   bibleFavoritePassages,
+  bibleTopics,
+  bibleTopicsBusy,
+  bibleTopicsError,
+  loadBibleTopics,
+  createBibleTopic,
+  renameBibleTopic,
+  deleteBibleTopic,
+  addBibleTopicPassages,
+  removeBibleTopicPassages,
+  shareBibleTopic,
   bibleTargetChannel,
   bibleCanSend,
   bibleSendUnavailableReason,
@@ -894,6 +905,14 @@ const {
   publishBookReading,
   jumpToMessageInChannel
 });
+const bibleTopicActions: BibleTopicActions = {
+  create: createBibleTopic,
+  rename: renameBibleTopic,
+  remove: deleteBibleTopic,
+  addPassages: addBibleTopicPassages,
+  removePassages: removeBibleTopicPassages,
+  share: shareBibleTopic
+};
 const chatWorkspaceHidden = computed(() => bibleFullscreen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value);
 const { start: handleBibleSwipeStart, end: handleBibleSwipeEnd, cancel: cancelBibleSwipe } = createBibleSwipeNavigation({
   appearance: () => store.appearance,
@@ -1068,6 +1087,24 @@ async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
   } catch {
     // The dedicated surface keeps the error visible and leaves the passage intact.
   }
+}
+
+const bibleTopicForwardNotice = ref("");
+let bibleTopicForwardNoticeTimer = 0;
+// 聊天室收藏夹里的经文主题一键转发到当前频道（服务端生成整组经文的卡片消息）
+async function forwardBibleTopic(topic: { id: number; name: string; passages: unknown[] }) {
+  const channel = currentChannel.value;
+  if (!channel || bibleTopicsBusy.value || !bibleCanSend.value) return;
+  if (!window.confirm(`把主题「${topic.name}」（${topic.passages.length} 段经文）转发到：${channel.name}？`)) return;
+  window.clearTimeout(bibleTopicForwardNoticeTimer);
+  bibleTopicForwardNotice.value = "";
+  try {
+    await shareBibleTopic(topic.id);
+    bibleTopicForwardNotice.value = `主题「${topic.name}」已转发到 ${channel.name}`;
+  } catch (error) {
+    bibleTopicForwardNotice.value = error instanceof Error ? error.message : "转发失败，请稍后再试";
+  }
+  bibleTopicForwardNoticeTimer = window.setTimeout(() => { bibleTopicForwardNotice.value = ""; }, 5000);
 }
 
 async function removeFavorite(favorite: FavoriteMessageDTO) {
@@ -5350,6 +5387,9 @@ const messageRowBindings = {
       :favorites="bibleFavorites"
       :favorites-busy="bibleFavoritesLoading"
       :update-favorites="updateBibleFavorites"
+      :topics="bibleTopics"
+      :topics-busy="bibleTopicsBusy"
+      :topic-actions="bibleTopicActions"
       :server-workspace="store.account?.biblePreferences?.workspace || null"
       :share-channels="bibleShareChannels"
       :active-channel-id="bibleTargetChannelId"
@@ -5674,6 +5714,20 @@ const messageRowBindings = {
               <small>出处作为标题，正文自动展开一次</small>
             </div>
           </div>
+          <section v-if="bibleTopics.length" class="bible-topic-forward-list" aria-label="经文主题">
+            <article v-for="topic in bibleTopics" :key="topic.id" class="favorite-message-card bible-topic-forward-card">
+              <header class="bible-topic-forward-head">
+                <strong>{{ topic.name }}</strong>
+                <span>{{ topic.passages.length }} 段经文</span>
+              </header>
+              <footer class="favorite-message-actions">
+                <span>更新于 {{ adminDate(topic.updatedAt) }}</span>
+                <button class="mini-btn" type="button" :disabled="bibleTopicsBusy || !topic.passages.length || !bibleCanSend" @click="forwardBibleTopic(topic)">转发到聊天室</button>
+              </footer>
+            </article>
+          </section>
+          <p v-if="bibleTopicForwardNotice" class="favorites-empty bible-topic-forward-notice" role="status">{{ bibleTopicForwardNotice }}</p>
+          <h3 class="bible-favorites-passages-head" v-if="bibleTopics.length">散收藏经文</h3>
           <p v-if="bibleFavoritesLoading && !bibleFavoritePassages.length" class="favorites-empty">正在加载经文收藏…</p>
           <p v-else-if="bibleFavoritesError" class="favorites-empty bible-favorites-error">{{ bibleFavoritesError }}<button class="mini-btn secondary" type="button" @click="loadBibleFavorites">重试</button></p>
           <p v-else-if="!bibleFavoritePassages.length" class="favorites-empty">还没有收藏经文。打开圣经，点选经文后点击“收藏”。</p>

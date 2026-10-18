@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Bookmark, BookmarkCheck, BookOpen, ClipboardCopy, History, Plus, Search, Send, Trash2, ArrowLeft, X } from "lucide-vue-next";
+import { BookMarked, Bookmark, BookmarkCheck, BookOpen, ClipboardCopy, History, ListPlus, Pencil, Plus, Search, Send, Share2, Trash2, ArrowLeft, X } from "lucide-vue-next";
 import type { BibleBookCatalogDTO, BibleCatalogDTO, BibleFavoriteDTO, BibleFavoriteKeyDTO, BibleLookupDTO, BibleRelatedSearchDTO, BibleSearchHistoryDTO, BibleTextSearchDTO, BibleTextSearchItemDTO, BibleTextMatchRangeDTO, BibleVerseLineDTO } from "@shared/types";
+import type { BibleTopicDTO, BibleTopicPassageDTO } from "@shared/bibleTopics";
 import type { BiblePaneState, BibleHomeState, BibleWorkspaceSearchMode } from "../../bibleWorkspaceState";
 import { mergeBibleTopicResults, normalizeBibleSearchQuery } from "../../bibleWorkspaceState";
 import { api } from "../../api";
-import { DEFAULT_BIBLE_TRANSLATION_ID } from "../../bibleChapterCache";
+import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../../bibleChapterCache";
 import { formatBibleLookupsForCopy, formatBibleVersesForCopy } from "../../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
+import type { BibleTopicActions } from "../../bibleTopics";
 import BiblePassageShareDialog from "./BiblePassageShareDialog.vue";
 import BibleTranslationSelect from "./BibleTranslationSelect.vue";
 import BibleSearchHistory from "./BibleSearchHistory.vue";
@@ -21,6 +23,7 @@ const props = defineProps<{
   sendUnavailableReason: string; copyworkRevision: number;
   favorites: BibleFavoriteDTO[]; favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
+  topics: BibleTopicDTO[]; topicsBusy: boolean; topicActions: BibleTopicActions;
   sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   sendText: (content: string, requestId: string) => Promise<void>;
 }>();
@@ -257,6 +260,156 @@ function sendLookup(lookup: BibleLookupDTO) {
   if (props.canSend) passageShareDialog.value?.open([lookup]);
 }
 
+// ----- 经文主题（收藏夹自建主题：解析引用批量添加，可转发到聊天室） -----
+const topicCreateOpen = ref(false);
+const topicNameDraft = ref("");
+const activeTopicId = ref<number | null>(null);
+const activeTopic = computed(() => props.topics.find(topic => topic.id === activeTopicId.value) || null);
+const topicVerses = ref<Record<number, BibleVerseLineDTO[]>>({});
+const topicVersesFailed = ref<Set<number>>(new Set());
+const topicReferenceDraft = ref("");
+const topicAddNotice = ref("");
+const topicRenameOpen = ref(false);
+const topicRenameDraft = ref("");
+
+watch(activeTopicId, () => { topicVerses.value = {}; topicVersesFailed.value = new Set(); topicReferenceDraft.value = ""; topicAddNotice.value = ""; topicRenameOpen.value = false; });
+
+async function loadTopicVerses(passage: BibleTopicPassageDTO) {
+  if (topicVerses.value[passage.id]) return;
+  const book: BibleBookCatalogDTO = { code: passage.bookCode, name: passage.bookName, chapterCount: passage.endChapter };
+  const verses: BibleVerseLineDTO[] = [];
+  for (let chapter = passage.startChapter; chapter <= passage.endChapter; chapter++) {
+    const loaded = await fetchBibleChapter(book, chapter);
+    const from = chapter === passage.startChapter ? passage.startVerse : 1;
+    const to = chapter === passage.endChapter ? passage.endVerse : loaded.verses[loaded.verses.length - 1]?.verse || 0;
+    for (const verse of loaded.verses) if (verse.verse >= from && verse.verse <= to) verses.push(verse);
+  }
+  topicVerses.value = { ...topicVerses.value, [passage.id]: verses };
+}
+
+watch(() => activeTopic.value?.passages.map(passage => passage.id).join(","), () => {
+  const topic = activeTopic.value;
+  if (!topic) return;
+  for (const passage of topic.passages) {
+    if (topicVerses.value[passage.id] || topicVersesFailed.value.has(passage.id)) continue;
+    loadTopicVerses(passage).catch(() => { topicVersesFailed.value = new Set([...topicVersesFailed.value, passage.id]); });
+  }
+}, { immediate: true });
+
+function openTopic(topic: BibleTopicDTO) {
+  activeTopicId.value = topic.id;
+}
+
+function topicPassageLookup(passage: BibleTopicPassageDTO): BibleLookupDTO | null {
+  const verses = topicVerses.value[passage.id];
+  if (!verses?.length) return null;
+  return {
+    reference: passage.reference,
+    normalizedReference: passage.reference,
+    translation: "新标点和合本（简体）",
+    sourceId: DEFAULT_BIBLE_TRANSLATION_ID,
+    verses
+  };
+}
+
+function openTopicPassage(passage: BibleTopicPassageDTO) {
+  const lookup = topicPassageLookup(passage);
+  if (lookup) emit("context", lookup, []);
+}
+
+async function submitTopicCreate() {
+  const name = topicNameDraft.value.trim();
+  if (!name || props.topicsBusy) return;
+  try {
+    const topic = await props.topicActions.create(name);
+    topicNameDraft.value = "";
+    topicCreateOpen.value = false;
+    openTopic(topic);
+    showToast(`已创建主题「${topic.name}」，粘贴经文章节号即可批量添加`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "创建主题失败");
+  }
+}
+
+async function submitTopicRename() {
+  const topic = activeTopic.value;
+  const name = topicRenameDraft.value.trim();
+  if (!topic || !name || name === topic.name || props.topicsBusy) return;
+  try {
+    await props.topicActions.rename(topic.id, name);
+    topicRenameOpen.value = false;
+    showToast("主题已重命名");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "重命名失败");
+  }
+}
+
+async function removeTopic() {
+  const topic = activeTopic.value;
+  if (!topic || props.topicsBusy) return;
+  if (!window.confirm(`删除主题「${topic.name}」？其中的 ${topic.passages.length} 段经文会一并移除（不影响散收藏的经文）。`)) return;
+  try {
+    await props.topicActions.remove(topic.id);
+    activeTopicId.value = null;
+    showToast("主题已删除");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "删除主题失败");
+  }
+}
+
+async function submitTopicPassages() {
+  const topic = activeTopic.value;
+  const reference = topicReferenceDraft.value.trim();
+  if (!topic || !reference || props.topicsBusy) return;
+  try {
+    const { added, duplicates } = await props.topicActions.addPassages(topic.id, reference);
+    topicReferenceDraft.value = "";
+    topicAddNotice.value = duplicates
+      ? `已添加 ${added} 段经文，${duplicates} 段已在主题中，自动跳过`
+      : `已添加 ${added} 段经文`;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "添加经文失败，请检查引用写法");
+  }
+}
+
+async function removeTopicPassage(passage: BibleTopicPassageDTO) {
+  const topic = activeTopic.value;
+  if (!topic || props.topicsBusy) return;
+  if (!window.confirm(`从主题中移除「${passage.reference}」？`)) return;
+  try {
+    await props.topicActions.removePassages(topic.id, [passage.id]);
+    showToast(`已移除 ${passage.reference}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "移除经文失败");
+  }
+}
+
+async function shareTopic(topic: BibleTopicDTO) {
+  if (!props.canSend || props.topicsBusy) return;
+  if (!window.confirm(`把主题「${topic.name}」（${topic.passages.length} 段经文）转发到：${props.channelName}？`)) return;
+  try {
+    await props.topicActions.share(topic.id);
+    showToast(`已发送到：${props.channelName}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "转发失败");
+  }
+}
+
+function retryTopicVerses(passage: BibleTopicPassageDTO) {
+  topicVersesFailed.value = new Set([...topicVersesFailed.value].filter(id => id !== passage.id));
+  loadTopicVerses(passage).catch(() => { topicVersesFailed.value = new Set([...topicVersesFailed.value, passage.id]); });
+}
+
+function copyTopic() {
+  const topic = activeTopic.value;
+  if (!topic) return;
+  const body = topic.passages.map(passage => {
+    const verses = topicVerses.value[passage.id] || [];
+    return `${passage.reference}\n${verses.map(verse => `${verse.verse} ${verse.text}`).join("\n")}`;
+  }).join("\n\n");
+  return writeClipboard(body, `已复制主题「${topic.name}」`);
+}
+
 </script>
 <template>
   <section class="bible-home-pane" :class="{ active }" @pointerdown="emit('activate', pane.id)">
@@ -331,20 +484,96 @@ function sendLookup(lookup: BibleLookupDTO) {
       <NoteLibrary v-else-if="homeSection === 'notes'" :key="accountId" :account-id="accountId" />
       <CopyworkLibrary v-else-if="homeSection === 'copyworks'" :account-id="accountId" :revision="copyworkRevision" @resume="emit('resume', $event)" />
       <section v-else-if="homeSection === 'favorites'" class="bible-favorites" aria-label="经文收藏夹">
-        <header>
-          <Bookmark :size="24" />
-          <div><h2>经文收藏夹</h2><p>连续收藏的经文会自动合并，便于阅读和复制</p></div>
-          <span>{{ favorites.length }} 节 · {{ favoritePassages.length }} 段</span>
-        </header>
-        <p v-if="favoritesBusy && !favorites.length" class="bible-empty">正在加载收藏…</p>
-        <p v-else-if="!favorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
-        <div v-else class="bible-favorite-grid">
-          <article v-for="passage in favoritePassages" :key="passage.key" @click="openBibleFavoritePassage(passage)">
-            <h3><BookmarkCheck :size="16" />{{ passage.lookup.normalizedReference }}</h3>
-            <p><template v-for="verse in passage.lookup.verses" :key="verse.reference"><sup>{{ verse.verse }}</sup>{{ verse.text }}</template></p>
-            <footer><button type="button" @click.stop="copyLookup(passage.lookup)"><ClipboardCopy :size="15" />复制</button><button type="button" :disabled="favoritesBusy" @click.stop="removeBibleFavoritePassage(passage)"><Trash2 :size="15" />取消收藏</button></footer>
-          </article>
-        </div>
+        <template v-if="activeTopic">
+          <header class="bible-topic-detail-head">
+            <button class="bible-topic-back" type="button" aria-label="返回收藏夹" @click="activeTopicId = null"><ArrowLeft :size="17" /></button>
+            <div class="bible-topic-detail-title">
+              <template v-if="!topicRenameOpen">
+                <h2><BookMarked :size="20" />{{ activeTopic.name }}</h2>
+                <p>{{ activeTopic.passages.length }} 段经文 · 更新于 {{ new Date(activeTopic.updatedAt).toLocaleDateString() }}</p>
+              </template>
+              <form v-else class="bible-topic-rename-form" @submit.prevent="submitTopicRename">
+                <input v-model="topicRenameDraft" maxlength="60" aria-label="新的主题名称" />
+                <button type="submit" :disabled="topicsBusy">保存</button>
+                <button type="button" @click="topicRenameOpen = false">取消</button>
+              </form>
+            </div>
+            <span class="bible-topic-detail-actions">
+              <button type="button" :disabled="!activeTopic.passages.length" @click="copyTopic"><ClipboardCopy :size="16" />复制全部</button>
+              <button type="button" :disabled="topicsBusy" @click="topicRenameOpen = true; topicRenameDraft = activeTopic.name"><Pencil :size="16" />重命名</button>
+              <button type="button" :disabled="topicsBusy || !activeTopic.passages.length || !canSend" :title="!canSend ? sendUnavailableReason : ''" @click="shareTopic(activeTopic)"><Share2 :size="16" />转发到聊天室</button>
+              <button type="button" :disabled="topicsBusy" @click="removeTopic"><Trash2 :size="16" />删除</button>
+            </span>
+          </header>
+
+          <form class="bible-topic-add-form" @submit.prevent="submitTopicPassages">
+            <label :for="`bible-topic-reference-${pane.id}`">批量添加经文</label>
+            <textarea :id="`bible-topic-reference-${pane.id}`" v-model="topicReferenceDraft" rows="3" :disabled="topicsBusy" placeholder="例如：申命记8:17–18；历代志上29:14–16；约伯记1:21；诗篇40:17；49:6–9；86:1" spellcheck="false"></textarea>
+            <div class="bible-topic-add-row">
+              <small>粘贴一处或多处经文章节号，支持书卷名、节范围与换行，自动按本地和合本解析</small>
+              <button type="submit" :disabled="topicsBusy || !topicReferenceDraft.trim()"><ListPlus :size="16" />{{ topicsBusy ? "添加中…" : "解析并添加" }}</button>
+            </div>
+            <p v-if="topicAddNotice" class="bible-topic-add-notice" role="status">{{ topicAddNotice }}</p>
+          </form>
+
+          <p v-if="!activeTopic.passages.length" class="bible-empty">这个主题还没有经文。把经文章节号粘贴到上方输入框，一次就能添加多处。</p>
+          <div v-else class="bible-favorite-grid">
+            <article v-for="passage in activeTopic.passages" :key="passage.id" @click="openTopicPassage(passage)">
+              <h3><BookOpen :size="15" />{{ passage.reference }}</h3>
+              <p v-if="topicVerses[passage.id]?.length"><template v-for="verse in topicVerses[passage.id]" :key="verse.reference"><sup>{{ verse.verse }}</sup>{{ verse.text }}</template></p>
+              <div v-else-if="topicVersesFailed.has(passage.id)" class="bible-topic-verse-failed">
+                <span>正文暂时无法展开</span>
+                <button type="button" @click.stop="retryTopicVerses(passage)">重试</button>
+              </div>
+              <p v-else class="bible-topic-verse-loading">正在展开正文…</p>
+              <footer>
+                <button type="button" :disabled="topicsBusy" @click.stop="removeTopicPassage(passage)"><Trash2 :size="15" />移除</button>
+              </footer>
+            </article>
+          </div>
+        </template>
+
+        <template v-else>
+          <header>
+            <Bookmark :size="24" />
+            <div><h2>经文收藏夹</h2><p>连续收藏的经文会自动合并，便于阅读和复制</p></div>
+            <span>{{ favorites.length }} 节 · {{ favoritePassages.length }} 段</span>
+          </header>
+
+          <section class="bible-topic-strip" aria-label="经文主题">
+            <div class="bible-topic-strip-head">
+              <h3><BookMarked :size="17" />我的主题<span>{{ topics.length }}</span></h3>
+              <button type="button" @click="topicCreateOpen = !topicCreateOpen"><Plus :size="16" />新建主题</button>
+            </div>
+            <form v-if="topicCreateOpen" class="bible-topic-create-form" @submit.prevent="submitTopicCreate">
+              <input v-model="topicNameDraft" maxlength="60" placeholder="主题名称，例如：我们在神面前都是穷人" aria-label="主题名称" />
+              <button type="submit" :disabled="topicsBusy || !topicNameDraft.trim()">创建</button>
+              <button type="button" @click="topicCreateOpen = false">取消</button>
+            </form>
+            <p v-if="!topics.length" class="bible-topic-empty">创建主题，把一组经文收藏在一起：粘贴“申命记8:17–18；诗篇40:17”这样的章节号就能批量添加，还能整组转发到聊天室。</p>
+            <div v-else class="bible-topic-grid">
+              <article v-for="topic in topics" :key="topic.id" @click="openTopic(topic)">
+                <h4><BookMarked :size="16" />{{ topic.name }}</h4>
+                <p>{{ topic.passages.length }} 段经文 · 更新于 {{ new Date(topic.updatedAt).toLocaleDateString() }}</p>
+                <footer>
+                  <button type="button" @click.stop="openTopic(topic)"><BookOpen :size="15" />打开</button>
+                  <button type="button" :disabled="topicsBusy || !topic.passages.length || !canSend" :title="!canSend ? sendUnavailableReason : ''" @click.stop="shareTopic(topic)"><Share2 :size="15" />转发</button>
+                </footer>
+              </article>
+            </div>
+          </section>
+
+          <h3 class="bible-favorites-subhead">全部收藏</h3>
+          <p v-if="favoritesBusy && !favorites.length" class="bible-empty">正在加载收藏…</p>
+          <p v-else-if="!favorites.length" class="bible-empty">还没有收藏经文。在阅读时点选经文，再点“收藏”。</p>
+          <div v-else class="bible-favorite-grid">
+            <article v-for="passage in favoritePassages" :key="passage.key" @click="openBibleFavoritePassage(passage)">
+              <h3><BookmarkCheck :size="16" />{{ passage.lookup.normalizedReference }}</h3>
+              <p><template v-for="verse in passage.lookup.verses" :key="verse.reference"><sup>{{ verse.verse }}</sup>{{ verse.text }}</template></p>
+              <footer><button type="button" @click.stop="copyLookup(passage.lookup)"><ClipboardCopy :size="15" />复制</button><button type="button" :disabled="favoritesBusy" @click.stop="removeBibleFavoritePassage(passage)"><Trash2 :size="15" />取消收藏</button></footer>
+            </article>
+          </div>
+        </template>
       </section>
 
     </main>
@@ -419,6 +648,48 @@ function sendLookup(lookup: BibleLookupDTO) {
 .bible-favorites > header p { margin-top: 3px; color: #8b7259; font-size: 13px; }
 .bible-favorites > header > span { color: #8b7259; font-size: 13px; white-space: nowrap; }
 .bible-favorite-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bible-favorites-subhead { margin: 22px 0 10px; color: #6d5135; font-family: "Songti SC", "STSong", serif; }
+.bible-topic-strip { margin-top: 6px; }
+.bible-topic-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.bible-topic-strip-head h3 { margin: 0; color: #6d5135; display: flex; align-items: center; gap: 6px; font-family: "Songti SC", "STSong", serif; }
+.bible-topic-strip-head h3 span { min-width: 20px; padding: 1px 7px; border-radius: 999px; color: #8b7259; background: rgba(128, 97, 63, .12); font-size: 12px; }
+.bible-topic-strip-head > button, .bible-topic-create-form button, .bible-topic-rename-form button { min-height: 34px; border: 1px solid #80613f; color: #fffaf1; background: #80613f; border-radius: 8px; padding: 0 11px; display: inline-flex; align-items: center; gap: 5px; font: inherit; font-weight: 700; cursor: pointer; }
+.bible-topic-create-form button[type="button"], .bible-topic-rename-form button[type="button"] { color: #6d5135; background: #faf4e8; border-color: #cbb797; }
+.bible-topic-strip-head > button:disabled, .bible-topic-create-form button:disabled, .bible-topic-rename-form button:disabled { opacity: .45; cursor: not-allowed; }
+.bible-topic-create-form, .bible-topic-rename-form { display: flex; gap: 8px; margin-bottom: 12px; }
+.bible-topic-create-form input, .bible-topic-rename-form input { flex: 1; min-width: 0; height: 40px; border: 1px solid #cdbb9f; border-radius: 9px; padding: 0 12px; color: #3f3227; background: #fffef9; font: inherit; outline: none; }
+.bible-topic-create-form input:focus, .bible-topic-rename-form input:focus { border-color: #967046; }
+.bible-topic-empty { margin: 0; padding: 12px 14px; border: 1px dashed rgba(128, 97, 63, .3); border-radius: 11px; color: #8c745c; background: rgba(255, 252, 245, .6); }
+.bible-topic-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.bible-topic-grid article { min-width: 0; padding: 13px 14px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 12px; background: #fffdf7; cursor: pointer; }
+.bible-topic-grid article:hover { border-color: rgba(128, 97, 63, .4); box-shadow: 0 7px 20px rgba(76, 51, 25, .08); }
+.bible-topic-grid h4 { margin: 0 0 6px; color: #76502d; display: flex; align-items: center; gap: 6px; font-family: "Songti SC", "STSong", serif; overflow-wrap: anywhere; }
+.bible-topic-grid p { margin: 0; color: #8b7259; font-size: 13px; }
+.bible-topic-grid footer { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.bible-topic-grid footer button { min-height: 32px; border: 1px solid #cbb797; border-radius: 8px; padding: 0 9px; color: #6d5135; background: #faf4e8; display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.bible-topic-grid footer button:disabled { opacity: .45; cursor: not-allowed; }
+.bible-topic-detail-head { margin-bottom: 14px; color: #6d5135; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+.bible-topic-back { flex-shrink: 0; min-height: 34px; border: 0; border-radius: 7px; padding: 6px; background: transparent; color: #725537; display: inline-flex; align-items: center; cursor: pointer; }
+.bible-topic-detail-title { min-width: 0; }
+.bible-topic-detail-title h2 { margin: 0; display: flex; align-items: center; gap: 7px; color: #76502d; font-family: "Songti SC", "STSong", serif; overflow-wrap: anywhere; }
+.bible-topic-detail-title p { margin: 3px 0 0; color: #8b7259; font-size: 13px; }
+.bible-topic-rename-form input { height: 36px; }
+.bible-topic-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.bible-topic-detail-actions button { min-height: 34px; border: 1px solid #cbb797; border-radius: 8px; padding: 0 10px; color: #6d5135; background: #faf4e8; display: inline-flex; align-items: center; gap: 4px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
+.bible-topic-detail-actions button:disabled { opacity: .45; cursor: not-allowed; }
+.bible-topic-detail-actions button:not(:disabled):last-of-type { color: #a4382c; }
+.bible-topic-add-form { display: grid; gap: 8px; margin-bottom: 18px; padding: 13px 14px; border: 1px solid rgba(128, 97, 63, .2); border-radius: 12px; background: #f6efe2; }
+.bible-topic-add-form label { color: #74583b; font-weight: 700; }
+.bible-topic-add-form textarea { width: 100%; box-sizing: border-box; border: 1px solid #cdbb9f; border-radius: 9px; padding: 9px 12px; color: #3f3227; background: #fffef9; font: inherit; line-height: 1.6; resize: vertical; outline: none; }
+.bible-topic-add-form textarea:focus { border-color: #967046; }
+.bible-topic-add-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bible-topic-add-row small { color: #8a735c; }
+.bible-topic-add-row button { min-height: 38px; border: 0; border-radius: 9px; padding: 0 13px; color: #fffaf1; background: #80613f; display: inline-flex; align-items: center; gap: 5px; font: inherit; font-weight: 700; cursor: pointer; }
+.bible-topic-add-row button:disabled { opacity: .45; cursor: not-allowed; }
+.bible-topic-add-notice { margin: 0; color: #4d6b3c; font-weight: 700; }
+.bible-topic-verse-loading { color: #9b8268; }
+.bible-topic-verse-failed { display: flex; align-items: center; gap: 8px; color: #a4382c; }
+.bible-topic-verse-failed button { min-height: 30px; border: 1px solid #cbb797; border-radius: 7px; padding: 0 9px; color: #6d5135; background: #faf4e8; font: inherit; font-size: 13px; cursor: pointer; }
 .bible-favorite-grid article { min-width: 0; padding: 14px; border: 1px solid rgba(117, 84, 47, .16); border-radius: 12px; background: #fffdf7; cursor: pointer; }
 .bible-favorite-grid h3 { margin: 0 0 7px; color: #76502d; display: flex; align-items: center; gap: 6px; font-family: "Songti SC", "STSong", serif; }
 .bible-favorite-grid p { color: #574330; font-family: "Songti SC", "STSong", serif; font-size: calc(var(--bible-font-size) * .85); line-height: 1.7; }
@@ -462,5 +733,10 @@ function sendLookup(lookup: BibleLookupDTO) {
 .bible-result-card footer { flex-wrap: wrap; }
 .bible-results > header { flex-wrap: wrap; gap: 8px; }
 .bible-favorite-grid { grid-template-columns: minmax(0, 1fr); }
+.bible-topic-grid { grid-template-columns: minmax(0, 1fr); }
+.bible-topic-detail-head { grid-template-columns: auto minmax(0, 1fr); }
+.bible-topic-detail-actions { grid-column: 1 / -1; justify-content: flex-start; }
+.bible-topic-add-row { flex-direction: column; align-items: stretch; }
+.bible-topic-add-row button { justify-content: center; }
 }
 </style>

@@ -1,5 +1,6 @@
 import { computed, nextTick, onScopeDispose, ref, watch, type Ref } from "vue";
 import type { CopyworkSource } from "@shared/bibleCopywork";
+import type { BibleTopicDTO } from "@shared/bibleTopics";
 import { registerCopyworkNavigation, viewedCopyworkId } from "./copywork/copyworkViewerState";
 import type {
   BibleFavoriteDTO,
@@ -66,6 +67,9 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   const bibleFavorites = ref<BibleFavoriteDTO[]>([]);
   const bibleFavoritesLoading = ref(false);
   const bibleFavoritesError = ref("");
+  const bibleTopics = ref<BibleTopicDTO[]>([]);
+  const bibleTopicsBusy = ref(false);
+  const bibleTopicsError = ref("");
 
   const bibleFavoritePassages = computed(() => groupBibleFavoritePassages(bibleFavorites.value));
   const bibleTargetChannel = computed(() => store.channels.find((channel) => channel.id === bibleTargetChannelId.value) || null);
@@ -85,6 +89,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     if (!store.account || bibleFavoritesLoading.value) return;
     bibleFavoritesLoading.value = true;
     bibleFavoritesError.value = "";
+    void loadBibleTopics();
     try {
       const result = await api<{ success: boolean; favorites: BibleFavoriteDTO[] }>("/api/bible/favorites");
       bibleFavorites.value = result.favorites;
@@ -93,6 +98,94 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     } finally {
       bibleFavoritesLoading.value = false;
     }
+  }
+
+  async function loadBibleTopics() {
+    bibleTopicsError.value = "";
+    try {
+      const result = await api<{ success: boolean; topics: BibleTopicDTO[] }>("/api/bible/topics");
+      bibleTopics.value = result.topics;
+    } catch (error) {
+      bibleTopicsError.value = error instanceof Error ? error.message : "经文主题加载失败";
+    }
+  }
+
+  function replaceBibleTopic(topic: BibleTopicDTO) {
+    const index = bibleTopics.value.findIndex((row) => row.id === topic.id);
+    if (index >= 0) bibleTopics.value.splice(index, 1, topic);
+  }
+
+  async function runBibleTopicAction<T>(action: () => Promise<T>): Promise<T> {
+    if (bibleTopicsBusy.value) throw new Error("主题操作进行中，请稍候");
+    bibleTopicsBusy.value = true;
+    bibleTopicsError.value = "";
+    try {
+      return await action();
+    } catch (error) {
+      bibleTopicsError.value = error instanceof Error ? error.message : "经文主题操作失败";
+      throw error;
+    } finally {
+      bibleTopicsBusy.value = false;
+    }
+  }
+
+  async function createBibleTopic(name: string) {
+    const topic = await runBibleTopicAction(async () => {
+      const result = await api<{ success: boolean; topic: BibleTopicDTO }>("/api/bible/topics", { method: "POST", body: JSON.stringify({ name }) });
+      return result.topic;
+    });
+    bibleTopics.value = [topic, ...bibleTopics.value];
+    return topic;
+  }
+
+  async function renameBibleTopic(topicId: number, name: string) {
+    const topic = await runBibleTopicAction(async () => {
+      const result = await api<{ success: boolean; topic: BibleTopicDTO }>(`/api/bible/topics/${topicId}`, { method: "PATCH", body: JSON.stringify({ name }) });
+      return result.topic;
+    });
+    replaceBibleTopic(topic);
+    return topic;
+  }
+
+  async function deleteBibleTopic(topicId: number) {
+    await runBibleTopicAction(() => api<{ success: boolean }>(`/api/bible/topics/${topicId}`, { method: "DELETE" }));
+    bibleTopics.value = bibleTopics.value.filter((topic) => topic.id !== topicId);
+  }
+
+  async function addBibleTopicPassages(topicId: number, reference: string) {
+    const result = await runBibleTopicAction(() =>
+      api<{ success: boolean; topic: BibleTopicDTO; added: number; duplicates: number }>(`/api/bible/topics/${topicId}/passages`, {
+        method: "POST",
+        body: JSON.stringify({ reference })
+      })
+    );
+    replaceBibleTopic(result.topic);
+    return result;
+  }
+
+  async function removeBibleTopicPassages(topicId: number, passageIds: number[]) {
+    const topic = await runBibleTopicAction(async () => {
+      const result = await api<{ success: boolean; topic: BibleTopicDTO }>(`/api/bible/topics/${topicId}/passages`, {
+        method: "DELETE",
+        body: JSON.stringify({ passageIds })
+      });
+      return result.topic;
+    });
+    replaceBibleTopic(topic);
+    return topic;
+  }
+
+  // 把主题转发到当前聊天室：服务端按主题生成自包含的经文主题卡片消息
+  async function shareBibleTopic(topicId: number) {
+    const channel = bibleTargetChannel.value;
+    if (!channel) throw new Error("当前聊天室不可用");
+    if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
+    return runBibleTopicAction(() =>
+      api<{ success: boolean }>(`/api/bible/topics/${topicId}/share`, {
+        method: "POST",
+        body: JSON.stringify({ channelId: channel.id, clientRequestId: crypto.randomUUID() })
+      })
+    );
   }
 
   async function updateBibleFavorites(verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) {
@@ -210,12 +303,22 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     bibleFavoritesLoading,
     bibleFavoritesError,
     bibleFavoritePassages,
+    bibleTopics,
+    bibleTopicsBusy,
+    bibleTopicsError,
     bibleTargetChannel,
     bibleCanSend,
     bibleSendUnavailableReason,
     bibleShareChannels,
     loadBibleFavorites,
     updateBibleFavorites,
+    loadBibleTopics,
+    createBibleTopic,
+    renameBibleTopic,
+    deleteBibleTopic,
+    addBibleTopicPassages,
+    removeBibleTopicPassages,
+    shareBibleTopic,
     openBibleFavorites,
     openBibleWorkspace,
     closeBibleWorkspace,

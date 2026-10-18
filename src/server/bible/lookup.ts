@@ -327,6 +327,63 @@ export function lookupBibleReference(reference: string): BibleLookupDTO {
   };
 }
 
+export type BibleTopicPassageInput = {
+  bookCode: string;
+  bookName: string;
+  startChapter: number;
+  startVerse: number;
+  endChapter: number;
+  endVerse: number;
+  reference: string;
+  verses: BibleVerseLineDTO[];
+};
+
+// 主题批量添加用的段落级解析：把一段引用串（可含多处、书名继承）拆成逐段引用，
+// 每段返回定位字段与已展开正文，超出 passageLimit 时拒绝而不是截断成半份清单。
+export function parseBibleTopicPassages(reference: string, passageLimit: number): BibleTopicPassageInput[] {
+  const index = indexFor();
+  const parsed = parseReference(reference);
+  if (parsed.passages.length > passageLimit) throw new Error("passage limit exceeded");
+  return parsed.passages.map((passage) => {
+    const startVerse = passage.startVerse ?? 1;
+    const endVerse = passage.endVerse ?? lastVerseNumber(index, passage.book, passage.endChapter);
+    return {
+      bookCode: passage.book.code,
+      bookName: passage.book.chineseName,
+      startChapter: passage.startChapter,
+      startVerse,
+      endChapter: passage.endChapter,
+      endVerse,
+      reference: displayPassage(passage),
+      verses: versesForPassage(index, passage).map(serializeVerse)
+    };
+  });
+}
+
+// 主题条目（已存的定位字段）→ 展示引用与正文；条目来自 parseBibleTopicPassages，
+// 定位字段一定能命中本地经文，命中不到说明数据被改过，直接抛错由路由转 4xx。
+export function bibleTopicEntryPassage(input: { bookCode: string; startChapter: number; startVerse: number; endChapter: number; endVerse: number }) {
+  const index = indexFor();
+  const book = bookByCode.get(input.bookCode.toUpperCase());
+  if (!book) throw new Error("unknown book");
+  const passage: PassageReference = {
+    book,
+    startChapter: input.startChapter,
+    startVerse: input.startVerse,
+    endChapter: input.endChapter,
+    endVerse: input.endVerse
+  };
+  return {
+    bookName: book.chineseName,
+    reference: displayPassage(passage),
+    verses: versesForPassage(index, passage).map(serializeVerse)
+  };
+}
+
+export function defaultBibleTranslationName() {
+  return indexFor().payload.displayName;
+}
+
 export function lookupBibleChapter(bookCode: string, chapter: number, translationId?: string): BibleChapterDTO {
   const index = indexFor(translationId);
   const book = bookByCode.get(bookCode.toUpperCase());

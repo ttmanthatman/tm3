@@ -21,6 +21,8 @@ import { storyAnnouncementLetters } from "./storyAnnouncement";
 import BookNoteShareCard from "../books/BookNoteShareCard.vue";
 import { bookNoteSharePayload } from "@shared/bookNotes";
 import BiblePassageShareCard from "../bible/BiblePassageShareCard.vue";
+import BibleTopicShareCard from "../bible/BibleTopicShareCard.vue";
+import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { parseBiblePassageShare, readingNoteComment } from "../reading-shares/readingShareMessage";
 import BookShareCard from "../books/BookShareCard.vue";
 import { parseBookShareMessage } from "../books/bookShareMessage";
@@ -71,6 +73,7 @@ const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSha
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
 
 const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
+const bibleTopicShare = computed(() => props.message.type === "text" && !bibleShare.value ? bibleTopicMessagePayload(props.message.payload) : null);
 const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(props.message.content, bookNoteShare.value.note.bookTitle) : "");
 
 const emit = defineEmits<{
@@ -108,6 +111,7 @@ const emit = defineEmits<{
     <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
     <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
+    <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -247,6 +251,7 @@ const emit = defineEmits<{
         <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
         <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
         <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
+        <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>

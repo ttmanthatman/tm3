@@ -159,6 +159,50 @@
   color: #a4382c;
 }
 
+.bible-topic-forward-list {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0 4px;
+}
+
+.bible-topic-forward-card {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.bible-topic-forward-head {
+  padding: 13px 14px 10px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.bible-topic-forward-head strong {
+  min-width: 0;
+  color: #76502d;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.bible-topic-forward-head span {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bible-topic-forward-notice {
+  margin: 10px 0 0;
+}
+
+.bible-favorites-passages-head {
+  margin: 22px 0 10px;
+  color: #76502d;
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 16px;
+}
+
 .bible-favorite-passage-card {
   user-select: text;
   -webkit-user-select: text;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { bibleCatalog, bibleTranslations, lookupBibleChapter, lookupBibleReference, searchBibleText } from "./lookup.js";
+import { bibleCatalog, bibleTranslations, bibleTopicEntryPassage, defaultBibleTranslationName, lookupBibleChapter, lookupBibleReference, parseBibleTopicPassages, searchBibleText } from "./lookup.js";
 
 test("Bible catalog exposes all 66 books and 1189 chapters", () => {
   const catalog = bibleCatalog();
@@ -185,4 +185,48 @@ test("unknown translation ids are rejected", () => {
   assert.throws(() => lookupBibleChapter("JHN", 3, "kjv"), /unknown bible translation/);
   assert.throws(() => searchBibleText("神", 0, 50, 50, "kjv"), /unknown bible translation/);
   assert.throws(() => bibleCatalog("kjv"), /unknown bible translation/);
+});
+
+// 经文主题批量添加依赖的段落级解析：一段引用串（含书名继承、全角与范围符号）拆成逐段定位与正文
+test("parseBibleTopicPassages splits a pasted multi-reference string into ordered passages", () => {
+  const reference = "申命记8:17–18；历代志上29:14–16；约伯记1:21；诗篇40:17；49:6–9；86:1；以赛亚书55:1–3；57:15；66:2；马太福音5:3；18:23–27；路加福音18:9–14；罗马书3:23–24；哥林多前书1:26–31；4:7；哥林多后书3:5；8:9；以弗所书2:1–9；启示录3:17–18";
+  const passages = parseBibleTopicPassages(reference, 200);
+  assert.equal(passages.length, 19);
+  assert.deepEqual(
+    { ...passages[0], verses: passages[0].verses.length },
+    { bookCode: "DEU", bookName: "申命记", startChapter: 8, startVerse: 17, endChapter: 8, endVerse: 18, reference: "申命记 8:17-18", verses: 2 }
+  );
+  // 诗篇 49:6–9 与 86:1 继承前一段的书卷
+  assert.equal(passages[4].bookCode, "PSA");
+  assert.equal(passages[4].reference, "诗篇 49:6-9");
+  assert.equal(passages[5].reference, "诗篇 86:1");
+  assert.equal(passages[14].reference, "哥林多前书 4:7");
+  assert.equal(passages[18].bookCode, "REV");
+  // 每一段都带回已展开正文，可独立渲染
+  assert.ok(passages[0].verses[0].text.length > 0);
+  assert.ok(passages.every((passage) => passage.verses.length > 0));
+});
+
+test("parseBibleTopicPassages covers whole chapters, cross-chapter ranges and limits", () => {
+  const wholeChapter = parseBibleTopicPassages("诗篇23", 200)[0];
+  assert.equal(wholeChapter.startVerse, 1);
+  assert.equal(wholeChapter.endVerse, 6);
+  assert.equal(wholeChapter.verses.length, 6);
+  const crossChapter = parseBibleTopicPassages("撒母耳记上1:1-2:10", 200)[0];
+  assert.equal(crossChapter.startChapter, 1);
+  assert.equal(crossChapter.endChapter, 2);
+  assert.equal(crossChapter.reference, "撒母耳记上 1:1-2:10");
+  assert.ok(crossChapter.verses.length > 10);
+  assert.throws(() => parseBibleTopicPassages("约翰福音3:16；罗马书3:23", 1), /passage limit exceeded/);
+  assert.throws(() => parseBibleTopicPassages("不存在的书卷9:9", 200));
+});
+
+test("bibleTopicEntryPassage restores stored entries and rejects tampered ones", () => {
+  const restored = bibleTopicEntryPassage({ bookCode: "PSA", startChapter: 49, startVerse: 6, endChapter: 49, endVerse: 9 });
+  assert.equal(restored.bookName, "诗篇");
+  assert.equal(restored.reference, "诗篇 49:6-9");
+  // 和合本中诗篇 49:8-9 为合并节条目
+  assert.deepEqual(restored.verses.map((verse) => verse.verse), [6, 7, 8]);
+  assert.equal(defaultBibleTranslationName(), "新标点和合本（简体）");
+  assert.throws(() => bibleTopicEntryPassage({ bookCode: "XXX", startChapter: 1, startVerse: 1, endChapter: 1, endVerse: 1 }), /unknown book/);
 });
