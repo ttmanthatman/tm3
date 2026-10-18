@@ -73,6 +73,8 @@ import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "./bibleFavorites";
 import type { BibleTopicActions } from "./bibleTopics";
+import type { BibleTopicDTO } from "@shared/bibleTopics";
+import BibleTopicShareDialog from "./features/bible/BibleTopicShareDialog.vue";
 import { compactBytes } from "./time";
 import { isForwardableMessage } from "./messageForward";
 import { useChatStore } from "./store";
@@ -1091,20 +1093,16 @@ async function removeBibleFavoritePassage(passage: BibleFavoritePassage) {
 
 const bibleTopicForwardNotice = ref("");
 let bibleTopicForwardNoticeTimer = 0;
-// 聊天室收藏夹里的经文主题一键转发到当前频道（服务端生成整组经文的卡片消息）
-async function forwardBibleTopic(topic: { id: number; name: string; passages: unknown[] }) {
-  const channel = currentChannel.value;
-  if (!channel || bibleTopicsBusy.value || !bibleCanSend.value) return;
-  if (!window.confirm(`把主题「${topic.name}」（${topic.passages.length} 段经文）转发到：${channel.name}？`)) return;
+const bibleTopicShareDialog = ref<InstanceType<typeof BibleTopicShareDialog> | null>(null);
+function showBibleTopicForwardNotice(message: string) {
   window.clearTimeout(bibleTopicForwardNoticeTimer);
-  bibleTopicForwardNotice.value = "";
-  try {
-    await shareBibleTopic(topic.id);
-    bibleTopicForwardNotice.value = `主题「${topic.name}」已转发到 ${channel.name}`;
-  } catch (error) {
-    bibleTopicForwardNotice.value = error instanceof Error ? error.message : "转发失败，请稍后再试";
-  }
+  bibleTopicForwardNotice.value = message;
   bibleTopicForwardNoticeTimer = window.setTimeout(() => { bibleTopicForwardNotice.value = ""; }, 5000);
+}
+// 聊天室收藏夹里的经文主题一键转发：弹出应用内确认框（与书房一致），不再用系统确认对话框
+function forwardBibleTopic(topic: { id: number; name: string; passages: unknown[] }) {
+  if (!currentChannel.value || bibleTopicsBusy.value || !bibleCanSend.value) return;
+  bibleTopicShareDialog.value?.open(topic as BibleTopicDTO);
 }
 
 async function removeFavorite(favorite: FavoriteMessageDTO) {
@@ -5727,6 +5725,13 @@ const messageRowBindings = {
             </article>
           </section>
           <p v-if="bibleTopicForwardNotice" class="favorites-empty bible-topic-forward-notice" role="status">{{ bibleTopicForwardNotice }}</p>
+          <BibleTopicShareDialog
+            ref="bibleTopicShareDialog"
+            :channel-name="currentChannel?.name || '聊天室'"
+            :share="shareBibleTopic"
+            @sent="topic => showBibleTopicForwardNotice(`主题「${topic.name}」已转发到 ${currentChannel?.name || '聊天室'}`)"
+            @failed="message => showBibleTopicForwardNotice(message)"
+          />
           <h3 class="bible-favorites-passages-head" v-if="bibleTopics.length">散收藏经文</h3>
           <p v-if="bibleFavoritesLoading && !bibleFavoritePassages.length" class="favorites-empty">正在加载经文收藏…</p>
           <p v-else-if="bibleFavoritesError" class="favorites-empty bible-favorites-error">{{ bibleFavoritesError }}<button class="mini-btn secondary" type="button" @click="loadBibleFavorites">重试</button></p>

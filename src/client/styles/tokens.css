@@ -2,7 +2,8 @@
   --app-height: 100dvh;
   --keyboard-offset: 0px;
   --safe-top: env(safe-area-inset-top, 0px);
-  --bible-topbar-height: calc(58px + var(--safe-top));
+  /* 圣经顶栏与分屏交换按钮共用此高度，与聊天室顶栏（shell.css .chat-head）保持一致 */
+  --bible-topbar-height: calc(56px + var(--safe-top));
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);

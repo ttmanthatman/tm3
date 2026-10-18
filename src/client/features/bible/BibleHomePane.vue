@@ -11,6 +11,7 @@ import { formatBibleLookupsForCopy, formatBibleVersesForCopy } from "../../bible
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import type { BibleTopicActions } from "../../bibleTopics";
 import BiblePassageShareDialog from "./BiblePassageShareDialog.vue";
+import BibleTopicShareDialog from "./BibleTopicShareDialog.vue";
 import BibleTranslationSelect from "./BibleTranslationSelect.vue";
 import BibleSearchHistory from "./BibleSearchHistory.vue";
 import NoteLibrary from "./notes/NoteLibrary.vue";
@@ -49,6 +50,7 @@ const searchTranslation = ref(textResult.value?.sourceId || props.pane.translati
 watch(() => props.pane.translation, value => { searchTranslation.value = value || DEFAULT_BIBLE_TRANSLATION_ID; });
 watch(searchTranslation, value => emit("translation", value));
 const passageShareDialog = ref<InstanceType<typeof BiblePassageShareDialog> | null>(null);
+const topicShareDialog = ref<InstanceType<typeof BibleTopicShareDialog> | null>(null);
 const homeScroller = ref<HTMLElement | null>(null);
 defineExpose({ scrollTop: () => homeScroller.value?.scrollTop || 0, restoreScroll: (top: number) => { if (homeScroller.value) homeScroller.value.scrollTop = top; } });
 const favoritePassages = computed(() => groupBibleFavoritePassages(props.favorites));
@@ -384,15 +386,10 @@ async function removeTopicPassage(passage: BibleTopicPassageDTO) {
   }
 }
 
-async function shareTopic(topic: BibleTopicDTO) {
+// 转发主题走应用内确认框（BibleTopicShareDialog），不用系统 window.confirm
+function shareTopic(topic: BibleTopicDTO) {
   if (!props.canSend || props.topicsBusy) return;
-  if (!window.confirm(`把主题「${topic.name}」（${topic.passages.length} 段经文）转发到：${props.channelName}？`)) return;
-  try {
-    await props.topicActions.share(topic.id);
-    showToast(`已发送到：${props.channelName}`);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "转发失败");
-  }
+  topicShareDialog.value?.open(topic);
 }
 
 function retryTopicVerses(passage: BibleTopicPassageDTO) {
@@ -586,6 +583,7 @@ function copyTopic() {
     </main>
 
     <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-passage="sendPassage" :send-text="sendText" @sent="showToast(`已发送到：${channelName}`)" />
+    <BibleTopicShareDialog ref="topicShareDialog" :channel-name="channelName" :share="topicActions.share" @sent="showToast(`已发送到：${channelName}`)" />
   </section>
 </template>
 <style scoped>
