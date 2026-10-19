@@ -140,8 +140,18 @@ test("an interrupted in-flight delivery becomes uncertain instead of being resen
       lastError: "Relay stopped while delivery was in progress; manual resolution required"
     }]);
     assert.equal(recoveredQueue.claimNext(), null);
+    const relay = new WeChatRelay(loadRelayConfig(validEnvironment()), recoveredQueue, {
+      close() {},
+      async ensureSubscription() {},
+      async catchUp(after) { return { cursor: after, total: 0 }; }
+    }, {
+      async doctor() { return []; },
+      async send() { throw new Error("Must not resend an uncertain notification"); }
+    });
+    assert.match(relay.lastError()!, /转发已暂停：消息 #9/);
     assert.equal(recoveredQueue.resolve(9, "sent"), true);
     assert.equal(recoveredQueue.item(9)?.state, "sent");
+    assert.equal(relay.lastError(), null);
   } finally {
     recoveredQueue.close();
     fs.rmSync(temporary.directory, { recursive: true, force: true });

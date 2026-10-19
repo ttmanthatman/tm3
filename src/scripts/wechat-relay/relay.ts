@@ -28,6 +28,7 @@ export class WeChatRelay {
   private lastSentAt = 0;
   private sourceError: string | null = null;
   private deliveryError: string | null = null;
+  private sourceSynchronized = false;
   private readonly shutdown = new AbortController();
 
   constructor(
@@ -46,6 +47,10 @@ export class WeChatRelay {
   }
 
   lastError() {
+    const uncertain = this.queue.attention().find((item) => item.state === "uncertain");
+    if (uncertain) {
+      return `转发已暂停：消息 #${uncertain.sourceId} 的发送结果需要确认。${uncertain.lastError ?? "请检查目标微信群后处理该消息"}`.slice(0, 1000);
+    }
     return this.sourceError ?? this.deliveryError;
   }
 
@@ -58,6 +63,7 @@ export class WeChatRelay {
   }
 
   private ingest(messages: readonly MessageDTO[], advanceCursor: boolean) {
+    if (!this.sourceSynchronized && messages.length) this.queue.noteOutage();
     const result = this.queue.ingest(messages, (message) => formatRelayMessage(message), { advanceCursor });
     if (result.inserted) this.logger.info(`queued ${result.inserted} message(s), cursor=${result.cursor}`);
   }
@@ -69,9 +75,12 @@ export class WeChatRelay {
         await this.source.ensureSubscription((message) => this.ingest([message], false));
         await this.source.catchUp(catchUpFrom, (messages) => this.ingest(messages, true));
         this.sourceError = null;
+        this.sourceSynchronized = true;
       } catch (error) {
         if (!this.stopping) {
           this.sourceError = errorMessage(error);
+          this.sourceSynchronized = false;
+          this.queue.noteOutage();
           this.logger.error(`source synchronization failed: ${this.sourceError}`);
         }
       }
@@ -86,7 +95,7 @@ export class WeChatRelay {
 
   private async deliveryLoop() {
     while (!this.stopping) {
-      if (this.source.deliveryEnabled?.() === false) {
+      if (!this.sourceSynchronized || this.source.deliveryEnabled?.() === false) {
         await this.wait(this.config.idleIntervalMs);
         continue;
       }
@@ -107,7 +116,7 @@ export class WeChatRelay {
       }
       const sendDelay = Math.max(0, this.config.minSendIntervalMs - (Date.now() - this.lastSentAt));
       if (sendDelay) await this.wait(sendDelay);
-      if (this.stopping || this.source.deliveryEnabled?.() === false) {
+      if (this.stopping || !this.sourceSynchronized || this.source.deliveryEnabled?.() === false) {
         this.queue.markDeferred(item.sourceId, "Relay stopped before delivery began", 0);
         if (this.stopping) break;
         continue;
@@ -121,6 +130,7 @@ export class WeChatRelay {
       } catch (error) {
         const message = errorMessage(error);
         this.deliveryError = message;
+        this.queue.noteOutage();
         if (error instanceof AmbiguousDeliveryError) {
           this.queue.markUncertain(item.sourceId, message);
           this.logger.error(`source message ${item.sourceId} is uncertain: ${message}`);
@@ -148,6 +158,7 @@ export class WeChatRelay {
       const findings = await this.driver.doctor();
       findings.forEach((finding) => this.logger.info(finding));
     } catch (error) {
+      this.queue.noteOutage();
       this.logger.warn(`driver is not ready; messages will remain queued: ${errorMessage(error)}`);
     }
     await Promise.all([this.sourceLoop(), this.deliveryLoop()]);

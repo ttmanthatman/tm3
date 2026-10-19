@@ -50,6 +50,8 @@ Dry-run uses the normal delivery bookkeeping and marks previewed messages as sen
 
 The image anchor is a fail-closed target check. If WeChat changes its layout, the relay stops sending until the target group is manually reopened and calibrated again.
 
+Delivery verification checks that pasted text is visible before pressing Enter, then requires both a local chat-area change and a cleared composer. Small notification bubbles are measured in fixed-size tiles instead of being averaged across the entire chat area. Rendering is sampled up to three times without pressing Enter again. `RELAY_X11_COMPOSER_REGION` must cover the text-entry area, excluding toolbar icons and the Send button; when omitted it is derived from the message region and window height. If that derived region does not fit the desktop layout, set it explicitly before enabling forwarding.
+
 ## Operations
 
 ### Automatic updates for a user service
@@ -81,3 +83,7 @@ node dist/server/scripts/wechat-relay/main.js resolve 12345 retry
 ```
 
 The first command records that the message is already visible in WeChat. The second returns it to the queue. This manual boundary prevents an automatic restart from silently duplicating a possibly delivered notification.
+
+An uncertain desktop delivery saves the before/after chat images, empty/staged/after composer images and an ID/timestamp manifest under `<RELAY_X11_ANCHOR_PATH>.evidence/<source-id>-<timestamp>/`. These files may contain private chat content: directories use mode `0700`, files use `0600`, and they remain on the relay device for operator inspection and cleanup. A restart preserves the queue pause and reports the affected message ID in the administrator error. “NAS online” describes connectivity; always inspect the attention count and error before assuming delivery is healthy.
+
+After a forwarding or source outage, queued original notifications are never replayed individually. On recovery the outbox atomically replaces them with one notice: `因转发故障，积压了XX条消息，请回聊天室查看`. The count excludes confirmed sent notifications and includes older queued notifications regardless of the normal message-age limit. Pending originals are retained locally in expired state. Outage/count metadata survives restarts; later arrivals join the same notice while a safe retry is deferred. Startup catch-up also uses this rule. A notice whose delivery is uncertain still needs explicit resolution before further delivery, preserving the no-duplicate-send boundary. Messages received after successful recovery resume normal forwarding.

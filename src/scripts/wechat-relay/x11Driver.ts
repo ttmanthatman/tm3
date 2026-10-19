@@ -8,6 +8,7 @@ import type { Rectangle, X11DriverConfig } from "./config.js";
 import { RelayDriverOperations, type DeliveryEvidence, type WeChatDriver } from "./driver.js";
 import { AmbiguousDeliveryError, SafeRelayError } from "./errors.js";
 import type { QueueItem } from "./queue.js";
+import { composerWasCleared, deliveryImageChange } from "./deliveryVerification.js";
 
 interface WindowGeometry {
   id: string;
@@ -160,12 +161,18 @@ async function imageDifference(leftPath: string, rightPath: string) {
   return difference / left.data.length / 255;
 }
 
+interface X11DriverRuntime {
+  execute?: (command: string, args: string[]) => Promise<string>;
+  paste?: typeof pasteClipboardText;
+  wait?: (milliseconds: number) => Promise<void>;
+}
+
 export class X11WeChatDriver implements WeChatDriver {
   private readonly environment: NodeJS.ProcessEnv;
   private readonly operations = new RelayDriverOperations();
   private stopping = false;
 
-  constructor(private readonly config: X11DriverConfig) {
+  constructor(private readonly config: X11DriverConfig, private readonly runtime: X11DriverRuntime = {}) {
     this.environment = { ...process.env, DISPLAY: config.display };
   }
 
@@ -174,6 +181,7 @@ export class X11WeChatDriver implements WeChatDriver {
   }
 
   private execute(command: string, args: string[]) {
+    if (this.runtime.execute) return this.runtime.execute(command, args);
     return new Promise<string>((resolve, reject) => {
       execFile(command, args, { env: this.environment, timeout: 15000, encoding: "utf8" }, (error, stdout, stderr) => {
         if (error) {
@@ -223,7 +231,7 @@ export class X11WeChatDriver implements WeChatDriver {
   }
 
   private absoluteRegion(window: WindowGeometry, region: Rectangle): Rectangle {
-    if (region.x + region.width > window.width || region.y + region.height > window.height) {
+    if (region.width <= 0 || region.height <= 0 || region.x + region.width > window.width || region.y + region.height > window.height) {
       throw new SafeRelayError("Configured verification region falls outside the WeChat window");
     }
     return { ...region, x: window.x + region.x, y: window.y + region.y };
@@ -337,17 +345,24 @@ export class X11WeChatDriver implements WeChatDriver {
     }
     const anchorDifference = await this.verifyTarget(window);
     const messageRegion = this.absoluteRegion(window, this.config.messageRegion);
+    const composerRegion = this.absoluteRegion(window, this.config.composerRegion);
     const before = this.temporaryImage("before");
     const after = this.temporaryImage("after");
+    const empty = this.temporaryImage("composer-empty");
+    const staged = this.temporaryImage("composer-staged");
+    const cleared = this.temporaryImage("composer-after");
+    const wait = this.runtime.wait ?? delay;
+    const paste = this.runtime.paste ?? pasteClipboardText;
     let sendKeyPressed = false;
     try {
-      await this.screenshot(messageRegion, before);
       await this.execute("xdotool", [
         "mousemove", "--window", window.id,
         String(this.config.inputPoint.x), String(this.config.inputPoint.y),
         "click", "1"
       ]);
       await this.clearComposer(window.id);
+      await wait(this.config.pasteWaitMs);
+      await this.screenshot(composerRegion, empty);
       const mentions = [...new Set(item.message.relayMentions || [])].slice(0, 20);
       if (mentions.length) {
         try {
@@ -357,24 +372,53 @@ export class X11WeChatDriver implements WeChatDriver {
           throw error;
         }
       }
-      await pasteClipboardText(item.formattedText, this.environment, () => (
+      await paste(item.formattedText, this.environment, () => (
         this.execute("xdotool", ["key", "--window", window.id, "ctrl+v"])
       ));
-      await delay(this.config.pasteWaitMs);
+      await wait(this.config.pasteWaitMs);
+      await this.screenshot(composerRegion, staged);
+      const inserted = await deliveryImageChange(empty, staged);
+      if (inserted.changedPixels < 64) {
+        throw new SafeRelayError("Pasted text was not visible in the WeChat composer; the message was not sent");
+      }
+      // Capture just before Enter so focus, selection and mention-popup changes
+      // cannot be mistaken for a newly sent notification.
+      await this.screenshot(messageRegion, before);
       sendKeyPressed = true;
       await this.execute("xdotool", ["key", "--window", window.id, "Return"]);
-      await delay(this.config.postSendWaitMs);
-      await this.screenshot(messageRegion, after);
-      const messageDifference = await imageDifference(before, after);
-      if (messageDifference < this.config.messageMinDifference) {
-        throw new AmbiguousDeliveryError(
-          `The send key was pressed but no sufficient chat-area change was observed (difference ${messageDifference.toFixed(4)})`
-        );
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await wait(attempt === 0 ? this.config.postSendWaitMs : 1000);
+        await this.screenshot(messageRegion, after);
+        await this.screenshot(composerRegion, cleared);
+        const change = await deliveryImageChange(before, after);
+        if (change.local >= this.config.messageMinDifference && change.changedPixels >= 64
+          && await composerWasCleared(empty, staged, cleared)) {
+          return {
+            summary: `target difference ${anchorDifference.toFixed(4)}, chat change ${change.average.toFixed(4)}, local change ${change.local.toFixed(4)}, composer cleared`
+          };
+        }
       }
-      return {
-        summary: `target difference ${anchorDifference.toFixed(4)}, chat change ${messageDifference.toFixed(4)}`
-      };
+      throw new AmbiguousDeliveryError("The send key was pressed but a changed chat and cleared composer could not both be verified");
     } catch (error) {
+      if (sendKeyPressed) {
+        const directory = path.join(`${this.config.anchorPath}.evidence`, `${item.sourceId}-${Date.now()}`);
+        try {
+          fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+          for (const [name, source] of Object.entries({ before, after, empty, staged, cleared })) {
+            if (fs.existsSync(source)) {
+              const destination = path.join(directory, `${name}.png`);
+              fs.copyFileSync(source, destination);
+              fs.chmodSync(destination, 0o600);
+            }
+          }
+          fs.writeFileSync(path.join(directory, "delivery.json"), JSON.stringify({
+            sourceId: item.sourceId, capturedAt: new Date().toISOString(),
+            error: error instanceof Error ? error.message : String(error)
+          }), { mode: 0o600 });
+        } catch (evidenceError) {
+          console.error("WeChat delivery evidence could not be saved", evidenceError instanceof Error ? evidenceError.message : String(evidenceError));
+        }
+      }
       if (sendKeyPressed && !(error instanceof AmbiguousDeliveryError)) {
         throw new AmbiguousDeliveryError("The send key was pressed but delivery verification failed", { cause: error });
       }
@@ -382,6 +426,7 @@ export class X11WeChatDriver implements WeChatDriver {
     } finally {
       fs.rmSync(before, { force: true });
       fs.rmSync(after, { force: true });
+      for (const file of [empty, staged, cleared]) fs.rmSync(file, { force: true });
     }
   }
 }

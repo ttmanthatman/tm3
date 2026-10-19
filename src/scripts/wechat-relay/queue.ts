@@ -100,6 +100,9 @@ export class RelayQueue {
           updated_at = ?
       WHERE state = 'processing'
     `).run(now);
+    if (this.database.prepare("SELECT 1 FROM relay_outbox WHERE state IN ('pending', 'failed', 'uncertain') LIMIT 1").get()) {
+      this.noteOutage();
+    }
   }
 
   cursor() {
@@ -117,6 +120,50 @@ export class RelayQueue {
       INSERT INTO relay_meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(key, value);
+  }
+
+  noteOutage() {
+    this.setMetaValue("delivery_outage", "1");
+  }
+
+  private clearRecoveryNotice(keepOutage = false) {
+    this.database.prepare("DELETE FROM relay_meta WHERE key IN ('recovery_notice_id', 'recovery_notice_count')").run();
+    if (!keepOutage) this.database.prepare("DELETE FROM relay_meta WHERE key = 'delivery_outage'").run();
+  }
+
+  private prepareRecoveryNotice(now: number) {
+    if (this.metaValue("delivery_outage") !== "1") return;
+    const previousId = Number(this.metaValue("recovery_notice_id") || 0);
+    const previous = previousId ? this.item(previousId) : null;
+    const backlog = this.database.prepare(`
+      SELECT source_id, channel_id FROM relay_outbox
+      WHERE state IN ('pending', 'failed') AND source_id != ? ORDER BY source_id
+    `).all(previousId) as Array<{ source_id: number; channel_id: number }>;
+    const count = Number(this.metaValue("recovery_notice_count") || 0) + backlog.length;
+    if (!count) { this.clearRecoveryNotice(); return; }
+    const sourceId = previousId || 6_000_000_000_000_000 + Number.parseInt(crypto.randomBytes(6).toString("hex"), 16);
+    const text = `因转发故障，积压了${count}条消息，请回聊天室查看`;
+    const message: MessageDTO = {
+      id: sourceId, channelId: previous?.channelId ?? backlog[0].channel_id,
+      type: "system", content: text, relayText: text, createdAt: new Date(now).toISOString(),
+      sender: { id: 1, kind: "system", username: "wechat_relay", displayName: "微信转发" }
+    };
+    // This runs inside claimNext's transaction. Keep the existing retry deadline
+    // while folding later arrivals into the same notice, never into a new send.
+    if (previous) {
+      this.database.prepare(`
+        UPDATE relay_outbox SET payload_json = ?, formatted_text = ?, state = 'pending',
+          source_created_at = ?, updated_at = ? WHERE source_id = ?
+      `).run(JSON.stringify(message), text, now, now, sourceId);
+    } else {
+      this.ingest([message], () => text, { advanceCursor: false });
+    }
+    this.database.prepare(`
+      UPDATE relay_outbox SET state = 'expired', last_error = 'Replaced by a forwarding recovery notice', updated_at = ?
+      WHERE state IN ('pending', 'failed') AND source_id != ?
+    `).run(now, sourceId);
+    this.setMetaValue("recovery_notice_id", String(sourceId));
+    this.setMetaValue("recovery_notice_count", String(count));
   }
 
   managedActionResult(actionId: string): ManagedActionResult | undefined {
@@ -137,6 +184,7 @@ export class RelayQueue {
         WHERE state IN ('pending', 'processing', 'uncertain', 'failed')
       `).run(now);
       this.setMetaValue("source_cursor", String(Math.max(cursor, this.cursor())));
+      this.clearRecoveryNotice();
       return result.changes;
     })();
   }
@@ -200,6 +248,8 @@ export class RelayQueue {
 
   claimNext(now = Date.now()): QueueItem | null {
     const transaction = this.database.transaction(() => {
+      if (this.hasUncertain()) return null;
+      this.prepareRecoveryNotice(now);
       const row = this.database.prepare(`
         SELECT source_id, channel_id, payload_json, formatted_text, state,
                attempt_count, next_attempt_at, last_error, source_created_at
@@ -220,11 +270,14 @@ export class RelayQueue {
   }
 
   markSent(sourceId: number, now = Date.now()) {
-    this.database.prepare(`
+    this.database.transaction(() => {
+      const result = this.database.prepare(`
       UPDATE relay_outbox
       SET state = 'sent', last_error = NULL, sent_at = ?, updated_at = ?
       WHERE source_id = ? AND state = 'processing'
-    `).run(now, now, sourceId);
+      `).run(now, now, sourceId);
+      if (result.changes && this.metaValue("recovery_notice_id") === String(sourceId)) this.clearRecoveryNotice();
+    })();
   }
 
   markUncertain(sourceId: number, error: string, now = Date.now()) {
@@ -267,7 +320,8 @@ export class RelayQueue {
   }
 
   resolve(sourceId: number, resolution: "sent" | "retry", now = Date.now()) {
-    const result = resolution === "sent"
+    return this.database.transaction(() => {
+      const result = resolution === "sent"
       ? this.database.prepare(`
           UPDATE relay_outbox
           SET state = 'sent', last_error = NULL, sent_at = ?, updated_at = ?
@@ -278,7 +332,12 @@ export class RelayQueue {
           SET state = 'pending', next_attempt_at = 0, last_error = NULL, updated_at = ?
           WHERE source_id = ? AND state IN ('uncertain', 'failed')
         `).run(now, sourceId);
-    return result.changes === 1;
+      if (result.changes && resolution === "sent" && this.metaValue("recovery_notice_id") === String(sourceId)) {
+        // Later arrivals may have accumulated while this notice was uncertain.
+        this.clearRecoveryNotice(true);
+      }
+      return result.changes === 1;
+    })();
   }
 
   hasUncertain() {

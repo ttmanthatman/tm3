@@ -21,6 +21,7 @@ export interface X11DriverConfig {
   anchorRegion: Rectangle;
   inputPoint: Point;
   messageRegion: Rectangle;
+  composerRegion: Rectangle;
   mentionRegion: Rectangle;
   anchorMaxDifference: number;
   messageMinDifference: number;
@@ -73,6 +74,7 @@ const envSchema = z.object({
   RELAY_X11_ANCHOR_REGION: z.string().default("420,20,440,70"),
   RELAY_X11_INPUT_POINT: z.string().default("820,650"),
   RELAY_X11_MESSAGE_REGION: z.string().default("330,100,900,470"),
+  RELAY_X11_COMPOSER_REGION: z.string().default(""),
   RELAY_X11_MENTION_REGION: z.string().default("330,430,900,190"),
   RELAY_X11_ANCHOR_MAX_DIFFERENCE: z.coerce.number().min(0).max(1).default(0.06),
   RELAY_X11_MESSAGE_MIN_DIFFERENCE: z.coerce.number().min(0).max(1).default(0.01),
@@ -143,6 +145,13 @@ export function loadRelayConfig(input: NodeJS.ProcessEnv = process.env): RelayCo
       anchorRegion: parseRectangle(env.RELAY_X11_ANCHOR_REGION, "RELAY_X11_ANCHOR_REGION"),
       inputPoint: parsePoint(env.RELAY_X11_INPUT_POINT, "RELAY_X11_INPUT_POINT"),
       messageRegion: parseRectangle(env.RELAY_X11_MESSAGE_REGION, "RELAY_X11_MESSAGE_REGION"),
+      composerRegion: env.RELAY_X11_COMPOSER_REGION
+        ? parseRectangle(env.RELAY_X11_COMPOSER_REGION, "RELAY_X11_COMPOSER_REGION")
+        : (() => {
+          const messages = parseRectangle(env.RELAY_X11_MESSAGE_REGION, "RELAY_X11_MESSAGE_REGION");
+          const y = messages.y + messages.height + 40;
+          return { x: messages.x, y, width: messages.width, height: env.RELAY_X11_WINDOW_HEIGHT - y - 45 };
+        })(),
       mentionRegion: parseRectangle(env.RELAY_X11_MENTION_REGION, "RELAY_X11_MENTION_REGION"),
       anchorMaxDifference: env.RELAY_X11_ANCHOR_MAX_DIFFERENCE,
       messageMinDifference: env.RELAY_X11_MESSAGE_MIN_DIFFERENCE,
