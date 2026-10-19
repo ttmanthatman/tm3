@@ -976,3 +976,41 @@ model BibleNoteShare {
   @@index([noteId])
   @@map("bible_note_shares")
 }
+
+model BibleAudioVersion {
+  id            Int                 @id @default(autoincrement())
+  versionId     String              @unique @db.VarChar(40)
+  name          String              @db.VarChar(80)
+  language      String              @db.VarChar(16)
+  dialect       String?             @db.VarChar(16)
+  style         String?             @db.VarChar(24)
+  translation   String              @db.VarChar(30)
+  copyright     String              @db.Text
+  bookCount     Int                 @default(0)
+  chapterCount  Int                 @default(0)
+  totalBytes    BigInt              @default(0)
+  completed     Boolean             @default(false)
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  chapters      BibleAudioChapter[]
+
+  @@map("bible_audio_versions")
+}
+
+model BibleAudioChapter {
+  id          Int               @id @default(autoincrement())
+  versionId   Int
+  version     BibleAudioVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  bookCode    String            @map("book_code") @db.VarChar(3)
+  chapter     Int
+  fileName    String            @db.VarChar(64)
+  bytes       BigInt
+  md5         String            @db.Char(32)
+  durationMs  Int               @map("duration_ms")
+  verses      Json
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@unique([versionId, bookCode, chapter])
+  @@index([versionId, bookCode])
+  @@map("bible_audio_chapters")
+}

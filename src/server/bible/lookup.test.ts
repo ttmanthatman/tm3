@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { bibleCatalog, bibleTranslations, bibleTopicEntryPassage, defaultBibleTranslationName, lookupBibleChapter, lookupBibleReference, parseBibleTopicPassages, searchBibleText } from "./lookup.js";
+import { BIBLE_BOOK_CHAPTERS, BIBLE_BOOK_CODES, BIBLE_CHAPTER_COUNT } from "../../shared/bibleBooks.js";
 
 test("Bible catalog exposes all 66 books and 1189 chapters", () => {
   const catalog = bibleCatalog();
@@ -9,6 +10,14 @@ test("Bible catalog exposes all 66 books and 1189 chapters", () => {
   assert.equal([...catalog.oldTestament, ...catalog.newTestament].reduce((total, book) => total + book.chapterCount, 0), 1189);
   assert.deepEqual(catalog.oldTestament[0], { code: "GEN", name: "创世记", chapterCount: 50 });
   assert.deepEqual(catalog.newTestament.at(-1), { code: "REV", name: "启示录", chapterCount: 22 });
+});
+
+test("shared Bible book code table matches the catalog order and chapter counts", () => {
+  const catalog = bibleCatalog();
+  const books = [...catalog.oldTestament, ...catalog.newTestament];
+  assert.deepEqual(books.map((book) => book.code), [...BIBLE_BOOK_CODES]);
+  assert.deepEqual(Object.fromEntries(books.map((book) => [book.code, book.chapterCount])), BIBLE_BOOK_CHAPTERS);
+  assert.equal(Object.values(BIBLE_BOOK_CHAPTERS).reduce((total, count) => total + count, 0), BIBLE_CHAPTER_COUNT);
 });
 
 test("Bible text search returns phrase matches with safe character ranges", () => {

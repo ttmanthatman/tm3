@@ -15,14 +15,26 @@ import { useBibleDisplayLayout } from "./useBibleDisplayLayout";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import { parseBibleSessionPayload } from "../../bibleSessionShare";
 import { useChatStore } from "../../store";
-import { biblePassageShareContent } from "../reading-shares/readingShareMessage";
+import { biblePassageShareContent, parseBiblePassageShare } from "../reading-shares/readingShareMessage";
 import { useMessageSender } from "../../messageSending";
+import { bibleTopicMessagePayload } from "@shared/bibleTopics";
+import { bibleAudioEnabled, loadBibleAudioManifest, resetBibleAudioManifest } from "./bibleAudioManifest";
 
 export type BibleWorkspaceHandle = {
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
   openCopyworkContext: (source: CopyworkSource) => Promise<void>;
   openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
+  startAudioFromLookups: (lookups: BibleLookupDTO[]) => Promise<boolean>;
 };
+
+/** 消息里可交给有声圣经朗读的引用：经文分享（单段）或经文主题分享（多段，保序） */
+export function bibleAudioReferencesFromMessage(message: Pick<MessageDTO, "type" | "content" | "payload">): string[] {
+  if (message.type !== "text") return [];
+  const passage = parseBiblePassageShare(message.content);
+  if (passage) return [passage.reference];
+  const topic = bibleTopicMessagePayload(message.payload);
+  return topic ? topic.passages.map((entry) => entry.reference) : [];
+}
 
 interface UseBibleWorkspaceIntegrationOptions {
   showChannels: Ref<boolean>;
@@ -54,6 +66,11 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     options.membersCollapsed.value = true;
   }
   watch(() => store.account?.id, collapseNavigation);
+  // 有声圣经 manifest 随登录账号刷新；未登录时清空，菜单与顶栏控件随之隐藏。
+  watch(() => store.account?.id, (accountId) => {
+    if (accountId) void loadBibleAudioManifest(true);
+    else resetBibleAudioManifest();
+  }, { immediate: true });
   const bibleWorkspace = ref<BibleWorkspaceHandle | null>(null);
   onScopeDispose(registerCopyworkNavigation(async (source) => {
     viewedCopyworkId.value = "";
@@ -256,6 +273,33 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     await bibleWorkspace.value?.openSession(payload);
   }
 
+  function canPlayBibleAudioFromMessage(message: MessageDTO) {
+    return bibleAudioEnabled.value && bibleAudioReferencesFromMessage(message).length > 0;
+  }
+
+  // 消息长按「播放经文」：逐段解析引用，打开圣经工作区跳到首段，再依次朗读全部引用
+  async function playBibleAudioFromMessage(message: MessageDTO) {
+    const references = bibleAudioReferencesFromMessage(message);
+    if (!references.length) return false;
+    const lookups: BibleLookupDTO[] = [];
+    for (const reference of references) {
+      try {
+        const result = await api<{ success: boolean; result?: BibleLookupDTO }>(`/api/bible/lookup?reference=${encodeURIComponent(reference)}`);
+        if (result.success && result.result?.verses.length) lookups.push(result.result);
+      } catch {
+        // 单段解析失败不阻断其余段落
+      }
+    }
+    if (!lookups.length) {
+      alert("这条经文暂时无法朗读");
+      return false;
+    }
+    openBibleWorkspace();
+    await nextTick();
+    if (!bibleWorkspace.value) throw new Error("圣经阅读器未能打开，请重试");
+    return bibleWorkspace.value.startAudioFromLookups(lookups);
+  }
+
   function handleBibleReadingChange(activity: { active: boolean; bookName: string | null }) {
     bibleReadingActivity.value = activity;
     options.publishBibleReading();
@@ -326,6 +370,8 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     openBiblePassage,
     openFavoriteMessage,
     openBibleSessionFromMessage,
+    canPlayBibleAudioFromMessage,
+    playBibleAudioFromMessage,
     handleBibleReadingChange,
     handleBookReadingChange,
     sendBiblePassage,

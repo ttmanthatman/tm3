@@ -53,6 +53,10 @@ const props = defineProps<{
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
+  /** 有声圣经正在朗读的经节，格式 `CODE-章-节`（与 data-verse-key 一致） */
+  playingVerseKey?: string | null;
+  /** 有声圣经处于播放会话中：点经节改为跳到该节朗读，而不是选中 */
+  audioSeekable?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -68,6 +72,7 @@ const emit = defineEmits<{
   "note-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
   "copy-start": [selection: { translation: string; bookCode: string; verses: BibleVerseLineDTO[] }];
   "copy-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
+  "verse-seek": [paneId: string, chapter: number, verse: number];
 }>();
 
 type TextSegment = { text: string; highlighted: boolean };
@@ -452,6 +457,52 @@ function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
   scheduleStateChange();
 }
 
+// 有声圣经：播放会话中点经节 = 跳到该节朗读（prs.app 同款），不改动选集。
+function handleVerseClick(verse: BibleVerseLineDTO, shiftKey = false) {
+  if (props.audioSeekable && !shiftKey) {
+    emit("verse-seek", props.paneId, verse.chapter, verse.verse);
+    return;
+  }
+  selectVerse(verse, shiftKey);
+}
+
+const playingVerseTarget = computed(() => {
+  const key = props.playingVerseKey;
+  if (!key) return null;
+  const match = /^(.+)-(\d+)-(\d+)$/.exec(key);
+  if (!match || match[1] !== readerBook.value.code) return null;
+  return { chapter: Number(match[2]), verse: Number(match[3]) };
+});
+
+function isPlayingVerse(verse: BibleVerseLineDTO) {
+  const target = playingVerseTarget.value;
+  return !!target && target.chapter === verse.chapter && verse.verse <= target.verse && target.verse <= verse.endVerse;
+}
+
+// 用户手动滚动后 3 秒内不跟随朗读进度，避免滚动打架。
+const AUDIO_FOLLOW_COOLDOWN_MS = 3000;
+let audioFollowSuppressedUntil = 0;
+function noteUserScroll() {
+  audioFollowSuppressedUntil = Date.now() + AUDIO_FOLLOW_COOLDOWN_MS;
+}
+
+function handleReaderWheel() {
+  insertionGate.motion();
+  noteUserScroll();
+}
+
+watch(() => props.playingVerseKey, (key) => {
+  if (!key || Date.now() < audioFollowSuppressedUntil) return;
+  const scroller = readerScroll.value;
+  const element = scroller?.querySelector<HTMLElement>(`[data-verse-key="${key}"]`);
+  if (!scroller || !element) return;
+  const bounds = scroller.getBoundingClientRect();
+  const rect = element.getBoundingClientRect();
+  const margin = Math.min(120, bounds.height * 0.2);
+  if (rect.top >= bounds.top + margin && rect.bottom <= bounds.bottom - margin) return;
+  element.scrollIntoView({ block: "center", behavior: "smooth" });
+}, { flush: "post" });
+
 function clearNavigationHighlight() {
   targetVerse.value = null;
   linkedTargetVerseKeys.value = new Set();
@@ -542,7 +593,11 @@ function sendSelectedVerses() {
   if (props.canSend) passageShareDialog.value?.open(selectedPassageLookups.value);
 }
 
-defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor });
+function selectedLookups(): BibleLookupDTO[] {
+  return selectedPassageLookups.value;
+}
+
+defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor, selectedLookups });
 </script>
 
 <template>
@@ -585,7 +640,8 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
 
     <main ref="readerScroll" class="bible-pane-scroll" @scroll.passive="handleReaderScroll"
       @touchstart.passive="insertionGate.touchStart()" @touchend.passive="insertionGate.touchEnd()" @touchcancel.passive="insertionGate.touchEnd()"
-      @wheel.passive="insertionGate.motion()">
+      @touchmove.passive="noteUserScroll" @pointerdown.passive="noteUserScroll"
+      @wheel.passive="handleReaderWheel">
       <div v-if="loadedChapters[0] === 1" class="bible-book-boundary">本卷开始</div>
       <section v-for="chapter in loadedChapters" :key="chapter" class="bible-reader-chapter" :data-reader-chapter="chapter" data-scroll-anchor :data-anchor-chapter="chapter">
         <header><span>{{ readerBook.name }}</span><h1>第{{ chapter }}章</h1></header>
@@ -604,7 +660,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
             <p v-else-if="block.type === 'paragraph'" class="bible-structure-paragraph" :class="block.style">
               <template v-for="fragment in block.fragments" :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"><span
                 class="bible-reader-verse"
-                :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse) }"
+                :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse), playing: isPlayingVerse(fragment.verse) }"
                 :style="favoriteVerseStyle(fragment.verse)"
                 :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
                 :data-scroll-anchor="fragment.showVerseNumber ? '' : undefined"
@@ -613,8 +669,8 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
                 role="button"
                 tabindex="0"
                 :aria-pressed="isSelectedVerse(fragment.verse)"
-                @click="selectVerse(fragment.verse, $event.shiftKey)"
-                @keydown.enter.prevent="selectVerse(fragment.verse, $event.shiftKey)"
+                @click="handleVerseClick(fragment.verse, $event.shiftKey)"
+                @keydown.enter.prevent="handleVerseClick(fragment.verse, $event.shiftKey)"
               ><sup v-if="fragment.showVerseNumber">{{ fragment.verse.verse }}</sup><template v-for="(segment, index) in verseSegments(fragment.text, fragmentMatches(fragment))" :key="index"><mark v-if="segment.highlighted">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></span><button v-if="isFinalFragment(fragment) && copyworkMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的抄写" @click.stop="emit('copy-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><Brush :size="16" /></button><button v-if="isFinalFragment(fragment) && noteMarkers[fragment.verse.chapter]?.includes(fragment.verse.verse)" type="button" class="bible-copywork-marker" aria-label="查看此节经文的笔记" @click.stop="emit('note-browse', { translation, bookCode: readerBook.code, chapter: fragment.verse.chapter, verse: fragment.verse.verse })"><StickyNote :size="16" /></button></template>
             </p>
           </template>
@@ -700,6 +756,8 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
 .bible-reader-verse.target { background: rgba(222, 177, 70, .22); }
 .bible-reader-verse.favorite { box-shadow: inset 0 -0.24em color-mix(in srgb, var(--bible-favorite-color, #f28b82) 72%, transparent); }
 .bible-reader-verse.selected { border-radius: 0; background: rgba(221, 180, 92, .3); }
+.bible-reader-verse.playing { color: #f97316; font-weight: 700; }
+.bible-reader-verse.playing sup { color: #f97316; }
 .bible-book-boundary, .bible-reader-loading { padding: 16px 0 28px; color: #9a8168; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-translation-copyright { padding: 0 0 24px; color: #b39a80; text-align: center; font-size: 11px; line-height: 1.6; }
 .bible-state { display: grid; place-items: center; min-height: 150px; color: #80674e; }

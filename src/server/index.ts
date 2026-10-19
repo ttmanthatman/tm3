@@ -28,6 +28,7 @@ import { registerBibleCopyworkRoutes } from "./routes/bibleCopyworks.js";
 import { registerBibleNoteRoutes } from "./routes/bibleNotes.js";
 import { registerBibleTopicRoutes } from "./routes/bibleTopics.js";
 import { registerBibleRoutes } from "./routes/bible.js";
+import { registerBibleAudioRoutes } from "./routes/bibleAudio.js";
 import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerStoryRoutes } from "./routes/stories.js";
@@ -95,7 +96,7 @@ import {
 } from "./imageProcessing.js";
 import { StoryImageBusyError } from "./services/storyImages.js";
 import { appendPinnedTextBlock, cleanPinnedTitle, pinnedBlocksFromMessage, pinnedBodyUploadFilePaths, pinnedPlainTextFromHtml, serializePinnedBody } from "./pinnedBody.js";
-import { AVATAR_DIR, BACKUP_DIR, BG_DIR, BOOKS_DIR, DIST_CLIENT, MUSIC_SCORE_DIR, PARALLAX_DIR, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore } from "./storageDirs.js";
+import { AVATAR_DIR, BACKUP_DIR, BG_DIR, BIBLE_AUDIO_DIR, BOOKS_DIR, DIST_CLIENT, MUSIC_SCORE_DIR, PARALLAX_DIR, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore } from "./storageDirs.js";
 import { parseJsonField, plainTextFromHtml, stripMarkdownSyntax } from "./textUtils.js";
 
 export { writeImageThumbnail };
@@ -3788,6 +3789,15 @@ registerBooksRoutes(app, {
   requireAdmin,
   authFor: (request) => (request as AuthedRequest).auth,
   imageWebpEffort: IMAGE_WEBP_EFFORT
+});
+
+registerBibleAudioRoutes(app, {
+  prisma,
+  bibleAudioDir: BIBLE_AUDIO_DIR,
+  requireAuth,
+  requireMediaAuth,
+  requireAdmin,
+  authFor: (request) => (request as AuthedRequest).auth
 });
 
 const friendFeedService = createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") });

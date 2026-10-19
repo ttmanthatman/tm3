@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   CircleOff,
   HeartHandshake,
+  Headphones,
   Heart,
   LockKeyhole,
   LogOut,
@@ -887,6 +888,8 @@ const {
   openBiblePassage,
   openFavoriteMessage,
   openBibleSessionFromMessage,
+  canPlayBibleAudioFromMessage,
+  playBibleAudioFromMessage,
   handleBibleReadingChange,
   handleBookReadingChange,
   sendBiblePassage,
@@ -3642,6 +3645,16 @@ function openMusicTrackInManager() {
   closeMessageActionMenu();
   openMusicManager({ kind: "track", id: message.id });
 }
+async function playBibleAudioFromAction() {
+  const message = pendingMessageActions.value;
+  if (!message || !canPlayBibleAudioFromMessage(message)) return;
+  closeMessageActionMenu();
+  try {
+    await playBibleAudioFromMessage(message);
+  } catch (error) {
+    alert(error instanceof Error ? error.message : "经文朗读启动失败");
+  }
+}
 
 function musicScoreRequestUrl(page: MusicScorePageDTO) {
   if (!page.scoreId) return "";
@@ -6358,6 +6371,7 @@ const messageRowBindings = {
           <button v-if="isForwardableMessage(pendingMessageActions)" type="button" @click="openSingleForward"><Send :size="15" />转发</button>
           <button type="button" @click="startSelectionFromAction"><CheckCircle2 :size="15" />多选</button>
           <button v-if="isManageableMusicMessage(pendingMessageActions)" type="button" @click="openMusicTrackInManager"><AudioLines :size="15" />在音乐管理中打开</button>
+          <button v-if="canPlayBibleAudioFromMessage(pendingMessageActions)" type="button" @click="playBibleAudioFromAction"><Headphones :size="15" />播放经文</button>
           <button v-if="canEndChain(pendingMessageActions, store.account?.actorId, isAdmin)" type="button" class="danger" @click="requestEndChainFromAction"><CircleOff :size="15" />终止接龙</button>
           <button v-if="canRemoveMessage(pendingMessageActions) && !isManageableMusicMessage(pendingMessageActions)" type="button" class="danger" @click="recallActionMessage($event)"><Trash2 :size="15" />{{ removeActionText(pendingMessageActions) }}</button>
           <button type="button" @click="selectActionMessageText"><CheckCircle2 :size="15" />选择文字</button>

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { Columns2, Maximize2, Minimize2, PanelsTopLeft, Rows2, Settings2, Share2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
+  BibleChapterDTO,
   BibleFavoriteDTO,
   BibleFavoriteKeyDTO,
   BibleLookupDTO,
@@ -42,7 +43,11 @@ import BiblePreferencesDialog from "../features/bible/BiblePreferencesDialog.vue
 import AppModal from "./ui/AppModal.vue";
 import { provideBibleAccountState } from "../features/bible/useBibleAccountState";
 import BibleReaderPane from "./BibleReaderPane.vue";
-import { DEFAULT_BIBLE_TRANSLATION_ID } from "../bibleChapterCache";
+import BibleAudioControls from "../features/bible/BibleAudioControls.vue";
+import BibleAudioLyricsBar from "../features/bible/BibleAudioLyricsBar.vue";
+import { useBibleAudioPlayer } from "../features/bible/useBibleAudioPlayer";
+import { bibleAudioDefaultVersion, bibleAudioEnabled, loadBibleAudioManifest } from "../features/bible/bibleAudioManifest";
+import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../bibleChapterCache";
 import {
   MAX_BIBLE_PANES,
   biblePaneLabel,
@@ -92,6 +97,7 @@ type BibleReaderPaneExpose = {
   snapshot: () => BiblePaneState;
   restoreReadingAnchor: (anchor: NonNullable<BiblePaneLocationState["scrollAnchor"]>) => void;
   applyTranslation: (translationId: string) => void;
+  selectedLookups: () => BibleLookupDTO[];
 };
 
 type TextSegment = { text: string; highlighted: boolean };
@@ -746,7 +752,131 @@ async function openCopyworkContext(source: CopyworkSource) {
   }, activePaneId.value, [], source.translation);
 }
 
-defineExpose({ openLookupContext, openSession, openCopyworkContext });
+// ---- 有声圣经：播放器挂在工作区上，离开工作区即暂停；队列/时间戳逻辑见 features/bible/bibleAudioQueue.ts ----
+const bibleAudio = reactive(useBibleAudioPlayer({
+  accountId: () => props.accountId,
+  books: () => allBooks.value,
+  version: () => bibleAudioDefaultVersion.value,
+  onToast: showToast
+}));
+const bibleAudioFollow = ref(true);
+const bibleAudioChapterText = ref<BibleChapterDTO | null>(null);
+let bibleAudioChapterTextKey = "";
+
+function bibleAudioFollowStorageKey(accountId: number) {
+  return `team-chat-bible-audio-follow:${accountId}`;
+}
+
+watch(() => props.accountId, (accountId) => {
+  bibleAudioFollow.value = localStorage.getItem(bibleAudioFollowStorageKey(accountId)) !== "false";
+  if (props.open && accountId) void loadBibleAudioManifest(true);
+}, { immediate: true });
+
+watch(() => props.open, (open) => {
+  if (open) {
+    if (props.accountId) void loadBibleAudioManifest();
+  } else if (bibleAudio.playing) {
+    bibleAudio.pause();
+  }
+}, { immediate: true });
+
+function toggleBibleAudioFollow() {
+  bibleAudioFollow.value = !bibleAudioFollow.value;
+  localStorage.setItem(bibleAudioFollowStorageKey(props.accountId), bibleAudioFollow.value ? "true" : "false");
+}
+
+const bibleAudioCompact = computed(() => workspaceWidth.value <= 560);
+const bibleAudioResumeLabel = computed(() => {
+  const state = bibleAudio.resumeState;
+  const version = bibleAudioDefaultVersion.value;
+  if (!state || !version || state.versionId !== version.versionId || bibleAudio.active) return null;
+  const name = allBooks.value.find((book) => book.code === state.book)?.name || state.book;
+  return `续播 ${name} ${state.chapter}${state.verse > 0 ? `:${state.verse}` : ""}`;
+});
+
+function activeReaderPane() {
+  const isReader = (pane: BiblePaneState) => pane.view !== "home" && pane.view !== "chapters";
+  return panes.value.find((pane) => pane.id === activePaneId.value && isReader(pane)) || panes.value.find(isReader) || null;
+}
+
+// 无选中：从活动窗格当前章整章播起；有选中：按选集分段依次播放。
+function handleBibleAudioToggle() {
+  if (bibleAudio.toggle()) return;
+  const pane = activeReaderPane();
+  if (!pane) {
+    showToast("请先打开一章经文再播放");
+    return;
+  }
+  const reader = paneRefs.get(pane.id);
+  const selection = reader?.selectedLookups() || [];
+  if (selection.length) {
+    bibleAudio.startFromLookups(selection);
+    return;
+  }
+  bibleAudio.startFromChapter(pane.book.code, reader?.snapshot().visibleChapter || pane.visibleChapter);
+}
+
+function handleBibleAudioVerseSeek(paneId: string, chapter: number, verse: number) {
+  const pane = panes.value.find((item) => item.id === paneId);
+  if (pane) bibleAudio.seekToVerse(pane.book.code, chapter, verse);
+}
+
+/** 消息长按「播放经文」：打开首段所在位置，然后依次朗读全部引用 */
+async function startAudioFromLookups(lookups: BibleLookupDTO[]) {
+  await ensureCatalog();
+  await loadBibleAudioManifest();
+  if (!bibleAudioEnabled.value) {
+    showToast("有声圣经暂未开放");
+    return false;
+  }
+  if (lookups[0]) await openLookupContext(lookups[0]);
+  return bibleAudio.startFromLookups(lookups);
+}
+
+// 跟随翻页：朗读进入新一章时让活动窗格翻到该章（可在控件里关闭）
+watch(() => bibleAudio.currentItem, async (item) => {
+  if (!item || !bibleAudioFollow.value || !props.open) return;
+  const book = allBooks.value.find((entry) => entry.code === item.book);
+  if (!book) return;
+  const pane = activeReaderPane();
+  const current = pane ? paneRefs.get(pane.id)?.snapshot() : null;
+  if (pane && current && current.book.code === item.book && current.visibleChapter === item.chapter) return;
+  await openBookInActivePane(book, item.chapter, pane?.id || activePaneId.value);
+});
+
+// 卡拉OK条按朗读所在章取经文文本（与音频同一译本）
+watch(() => bibleAudio.currentItem, async (item) => {
+  if (!item) {
+    bibleAudioChapterText.value = null;
+    bibleAudioChapterTextKey = "";
+    return;
+  }
+  const key = `${item.book}:${item.chapter}`;
+  if (key === bibleAudioChapterTextKey) return;
+  bibleAudioChapterTextKey = key;
+  const book = allBooks.value.find((entry) => entry.code === item.book);
+  if (!book) return;
+  try {
+    const chapter = await fetchBibleChapter(book, item.chapter, bibleAudioDefaultVersion.value?.translation || DEFAULT_BIBLE_TRANSLATION_ID);
+    if (bibleAudioChapterTextKey === key) bibleAudioChapterText.value = chapter;
+  } catch {
+    if (bibleAudioChapterTextKey === key) bibleAudioChapterText.value = null;
+  }
+});
+
+const bibleAudioLyrics = computed(() => {
+  if (!bibleAudio.currentItem) return null;
+  const verse = bibleAudio.currentVerse;
+  const lines = bibleAudioChapterText.value?.verses || [];
+  if (verse === null || verse <= 0) return { current: "本章引言", previous: "", next: lines[0]?.text || "" };
+  const index = lines.findIndex((line) => line.verse <= verse && verse <= line.endVerse);
+  if (index < 0) return { current: "", previous: "", next: "" };
+  return { current: lines[index].text, previous: lines[index - 1]?.text || "", next: lines[index + 1]?.text || "" };
+});
+
+onBeforeUnmount(() => bibleAudio.dispose());
+
+defineExpose({ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups });
 
 function openShareDialog() {
   const channels = props.shareChannels || [];
@@ -898,6 +1028,32 @@ function showToast(message: string) {
         ><Share2 :size="19" /></button>
         <button v-if="splitAvailable" type="button" class="bible-topbar-button layout-control" :aria-label="split ? '圣经全屏' : '缩小圣经，恢复分屏'" :title="split ? '圣经全屏' : '恢复分屏'" @click="split ? emit('expand') : emit('shrink')"><Maximize2 v-if="split" :size="20" /><Minimize2 v-else :size="20" /></button>
       </div>
+      <BibleAudioControls
+        v-if="bibleAudioEnabled"
+        :active="bibleAudio.active"
+        :playing="bibleAudio.playing"
+        :loading="bibleAudio.loading"
+        :position-ms="bibleAudio.positionMs"
+        :duration-ms="bibleAudio.durationMs"
+        :rate="bibleAudio.rate"
+        :reference="bibleAudio.currentReference"
+        :can-previous-chapter="bibleAudio.canPreviousChapter"
+        :can-next-chapter="bibleAudio.canNextChapter"
+        :compact="bibleAudioCompact"
+        :follow-enabled="bibleAudioFollow"
+        :resume-label="bibleAudioResumeLabel"
+        :error="bibleAudio.error"
+        @toggle="handleBibleAudioToggle"
+        @previous-verse="bibleAudio.previousVerse()"
+        @next-verse="bibleAudio.nextVerse()"
+        @previous-chapter="bibleAudio.previousChapter()"
+        @next-chapter="bibleAudio.nextChapter()"
+        @seek="bibleAudio.seekChapterMs($event)"
+        @cycle-rate="bibleAudio.cycleRate()"
+        @toggle-follow="toggleBibleAudioFollow"
+        @resume="bibleAudio.resume()"
+        @stop="bibleAudio.stop()"
+      />
     </header>
 
     <div v-if="catalogBusy" class="bible-state">正在展开圣经目录…</div>
@@ -949,6 +1105,9 @@ function showToast(message: string) {
           :favorites="favorites"
           :favorites-busy="favoritesBusy"
           :update-favorites="updateFavorites"
+          :playing-verse-key="bibleAudio.playingVerseKey"
+          :audio-seekable="bibleAudioEnabled && bibleAudio.active"
+          @verse-seek="handleBibleAudioVerseSeek"
           @home="returnHome(pane.id)"
           @activate="activePaneId = $event"
           @close="closeBiblePane"
@@ -975,6 +1134,15 @@ function showToast(message: string) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <BibleAudioLyricsBar
+      v-if="bibleAudioEnabled && bibleAudio.active && bibleAudioLyrics"
+      :reference="bibleAudio.currentReference"
+      :current-text="bibleAudioLyrics.current"
+      :previous-text="bibleAudioLyrics.previous"
+      :next-text="bibleAudioLyrics.next"
+      :playing="bibleAudio.playing"
+      @tap="handleBibleAudioToggle"
+    />
     <BiblePreferencesDialog :open="preferencesOpen" @close="preferencesOpen = false" />
     <AppModal :open="!!pendingContext" title="发送上下文到哪个窗格？" content-class="bible-context-dialog" @close="pendingContext = null">
       <div class="bible-context-options"><p>检索结果会保留在原窗格。</p><button v-for="pane in panes.filter(item => item.id !== pendingContext?.sourcePaneId)" :key="pane.id" type="button" @click="chooseContextPane(pane.id)">{{ biblePaneLabel(panes.findIndex(item => item.id === pane.id)) }} 窗格 · {{ pane.view === 'home' ? '目录与检索' : pane.book.name }}</button></div>
@@ -1007,7 +1175,7 @@ function showToast(message: string) {
   inset: 0;
   z-index: 80;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   color: #3f3227;
   background: #f3ecde;
   transform: translateX(-102%);

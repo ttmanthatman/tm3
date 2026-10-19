@@ -8,6 +8,7 @@ export const STORAGE_ROOT = process.env.STORAGE_ROOT || path.join(ROOT, "storage
 export const UPLOAD_DIR = path.join(STORAGE_ROOT, "uploads");
 export const MUSIC_SCORE_DIR = path.join(STORAGE_ROOT, "music-scores");
 export const BOOKS_DIR = path.join(STORAGE_ROOT, "books");
+export const BIBLE_AUDIO_DIR = path.join(STORAGE_ROOT, "bible-audio");
 export const AVATAR_DIR = path.join(STORAGE_ROOT, "avatars");
 export const BG_DIR = path.join(STORAGE_ROOT, "backgrounds");
 export const PARALLAX_DIR = path.join(STORAGE_ROOT, "parallax");

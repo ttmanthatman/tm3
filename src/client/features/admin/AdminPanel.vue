@@ -12,6 +12,7 @@ import {
   CircleOff,
   DoorOpen,
   Download,
+  Headphones,
   Image as ImageIcon,
   Info,
   Library,
@@ -47,6 +48,7 @@ import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields, wa
 const AdminResourceManager = defineAsyncComponent(() => import("../../components/AdminResourceManager.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./AdminAccountsPage.vue"));
 const AdminBooksPage = defineAsyncComponent(() => import("./AdminBooksPage.vue"));
+const AdminBibleAudioPage = defineAsyncComponent(() => import("./AdminBibleAudioPage.vue"));
 const AdminReceptionPage = defineAsyncComponent(() => import("./AdminReceptionPage.vue"));
 const WeChatRelayPanel = defineAsyncComponent(() => import("./WeChatRelayPanel.vue"));
 const DemoModePanel = defineAsyncComponent(() => import("./DemoModePanel.vue"));
@@ -253,6 +255,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
               <button class="admin-entry-row" @click="openAdminPage('channels')"><span class="admin-entry-icon"><Menu :size="20" /></span><span><b>频道与私聊历史</b><small>正式频道和历史会话分开管理</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('reception')"><span class="admin-entry-icon"><DoorOpen :size="20" /></span><span><b>会客厅</b><small>创建者、期限、人数和用量</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('books')"><span class="admin-entry-icon"><Library :size="20" /></span><span><b>图书</b><small>上传 EPUB 图书，管理图书室藏书</small></span><ChevronRight :size="19" /></button>
+              <button class="admin-entry-row" @click="openAdminPage('bibleAudio')"><span class="admin-entry-icon"><Headphones :size="20" /></span><span><b>有声圣经</b><small>上传卷包、查看覆盖进度并启用朗读</small></span><ChevronRight :size="19" /></button>
             </div>
             <div class="admin-hub-group">
               <label>通知与连接</label>
@@ -901,6 +904,8 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
           </section>
 
           <AdminBooksPage v-else-if="adminPage === 'books'" @message="adminMsg = $event" />
+
+          <AdminBibleAudioPage v-else-if="adminPage === 'bibleAudio'" @message="adminMsg = $event" />
 
           <WeChatRelayPanel v-else-if="adminPage === 'wechatRelay'" />
 
