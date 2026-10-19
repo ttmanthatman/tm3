@@ -32,6 +32,7 @@ import {
   Trash2,
   ThumbsUp,
   Upload,
+  UploadCloud,
   X
 } from "lucide-vue-next";
 import type {
@@ -1123,8 +1124,14 @@ const {
   pushPendingVoiceMessage,
   isImageFile,
   uploadPickedFile,
+  uploadIncomingFiles,
   handlePickedFile,
   handleComposerPaste,
+  chatDragActive,
+  handleChatDragEnter,
+  handleChatDragOver,
+  handleChatDragLeave,
+  handleChatDrop,
   removePendingMessage,
   retryPendingUpload
 } = useUploads({
@@ -1132,7 +1139,8 @@ const {
   keepOriginalImages,
   isMusicChannel: () => isMusicChannel.value,
   scrollBottom,
-  uploadFile
+  uploadFile,
+  dragBlocked: () => !!storyActorId.value
 });
 const {
   isRecording,
@@ -4262,12 +4270,7 @@ async function handlePickedFiles(event: Event) {
       return;
     }
   }
-  let skipped = 0;
-  for (const file of files) {
-    const result = await uploadPickedFile(file);
-    if (result.skipped) skipped += 1;
-  }
-  if (skipped) alert(`已按文件内容跳过 ${skipped} 首重复歌曲`);
+  await uploadIncomingFiles(files);
 }
 
 function isAudioMessage(message: MessageDTO) {
@@ -5510,7 +5513,7 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe">
+    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -5583,6 +5586,13 @@ const messageRowBindings = {
         v-model:music-player-expanded="musicPlayerExpanded"
         v-bind="chatHeaderBindings"
       />
+      <div v-if="chatDragActive" class="chat-drop-mask" aria-hidden="true">
+        <div class="chat-drop-mask-frame">
+          <UploadCloud :size="46" />
+          <strong>丢到聊天室</strong>
+          <small>松开即上传到当前频道</small>
+        </div>
+      </div>
 
       <Transition name="music-lyrics-panel">
         <MusicLyricsHeader

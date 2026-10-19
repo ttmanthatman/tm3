@@ -1,4 +1,4 @@
-import { nextTick, ref, watch, type Ref } from "vue";
+import { nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
 import { useChatStore } from "../../store";
 import {
@@ -8,6 +8,12 @@ import {
   type PendingUploadDraft,
   type PendingUploadDraftOptions
 } from "./pendingUploadDrafts";
+import {
+  clipboardUploadFiles,
+  dataTransferHasFiles,
+  isImageFile
+} from "./fileIntake";
+import { useDropZone } from "./useDropZone";
 
 type UploadStatus = "uploading" | "processing" | "failed";
 export type PendingUpload = {
@@ -28,6 +34,9 @@ interface UseUploadsOptions {
   isMusicChannel: () => boolean;
   scrollBottom: (smooth?: boolean) => void;
   uploadFile: (file: File, options?: { voice?: boolean; durationMs?: number; waveform?: number[]; pendingMessageId?: number; originalImage?: boolean; channelId?: number }) => Promise<{ success: boolean; duplicate: boolean; skipped: boolean }>;
+  // While a story workspace/composer covers the chat pane, drops there must
+  // never silently publish into the channel.
+  dragBlocked?: () => boolean;
 }
 
 export function useUploads(options: UseUploadsOptions) {
@@ -51,10 +60,6 @@ export function useUploads(options: UseUploadsOptions) {
     if (upload.status === "failed") return `${upload.message || "发送失败"} · ${upload.localDraftReady ? "已暂存在本机" : "可重试"}`;
     if (upload.status === "processing") return upload.message || "正在发布";
     return `上传中 ${upload.progress}%`;
-  }
-
-  function isImageFile(file: File) {
-    return file.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name);
   }
 
   function pendingUploadKindLabel(file: File) {
@@ -262,46 +267,58 @@ export function useUploads(options: UseUploadsOptions) {
     input.value = "";
   }
 
-  function extensionFromImageMime(type: string) {
-    if (type === "image/jpeg") return "jpg";
-    if (type === "image/png") return "png";
-    if (type === "image/gif") return "gif";
-    if (type === "image/webp") return "webp";
-    if (type === "image/heic") return "heic";
-    if (type === "image/heif") return "heif";
-    if (type === "image/tiff") return "tiff";
-    return "png";
-  }
-
-  function namedClipboardImage(file: File, index: number) {
-    if (/\.(jpe?g|png|gif|webp|heic|heif|tiff?)$/i.test(file.name)) return file;
-    const extension = extensionFromImageMime(file.type);
-    return new File([file], `粘贴图片-${Date.now()}-${index + 1}.${extension}`, { type: file.type || "image/png", lastModified: file.lastModified || Date.now() });
-  }
-
-  function clipboardImageFiles(event: ClipboardEvent) {
-    const data = event.clipboardData;
-    if (!data) return [];
-    const files: File[] = [];
-    for (const item of Array.from(data.items || [])) {
-      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
-      const file = item.getAsFile();
-      if (file) files.push(file);
+  async function uploadIncomingFiles(files: File[]) {
+    if (!files.length) return;
+    let blocked = 0;
+    const allowed: File[] = [];
+    for (const file of files) {
+      if (options.isMusicChannel() && !/\.(mp3|m4a)$/i.test(file.name)) blocked += 1;
+      else allowed.push(file);
     }
-    if (!files.length) {
-      for (const file of Array.from(data.files || [])) {
-        if (isImageFile(file)) files.push(file);
-      }
+    if (blocked) alert(`音乐频道只支持上传 MP3 和 M4A 文件，已忽略 ${blocked} 个文件`);
+    let skipped = 0;
+    for (const file of allowed) {
+      const result = await uploadPickedFile(file);
+      if (result.skipped) skipped += 1;
     }
-    return files;
+    if (skipped) alert(`已按文件内容跳过 ${skipped} 首重复歌曲`);
   }
 
   function handleComposerPaste(event: ClipboardEvent) {
-    const files = clipboardImageFiles(event);
+    const files = clipboardUploadFiles(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
-    files.forEach((file, index) => uploadPickedFile(namedClipboardImage(file, index)));
+    void uploadIncomingFiles(files);
   }
+
+  const chatDropZone = useDropZone({
+    enabled: () => !options.dragBlocked?.(),
+    onFiles: (files) => { void uploadIncomingFiles(files); }
+  });
+  const chatDragActive = chatDropZone.active;
+  const handleChatDragEnter = chatDropZone.dragenter;
+  const handleChatDragOver = chatDropZone.dragover;
+  const handleChatDragLeave = chatDropZone.dragleave;
+  const handleChatDrop = chatDropZone.drop;
+
+  // 拖到聊天室外（侧栏等）时拦下浏览器的默认行为，防止整个应用被拖入的文件替换掉。
+  function guardWindowFileDrag(event: DragEvent) {
+    if (!dataTransferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (event.type === "drop" || event.type === "dragend") chatDropZone.reset();
+  }
+
+  onMounted(() => {
+    window.addEventListener("dragover", guardWindowFileDrag);
+    window.addEventListener("drop", guardWindowFileDrag);
+    window.addEventListener("dragend", guardWindowFileDrag);
+  });
+
+  onBeforeUnmount(() => {
+    window.removeEventListener("dragover", guardWindowFileDrag);
+    window.removeEventListener("drop", guardWindowFileDrag);
+    window.removeEventListener("dragend", guardWindowFileDrag);
+  });
 
   function removePendingMessage(id: number) {
     store.removeMessage(id);
@@ -338,8 +355,14 @@ export function useUploads(options: UseUploadsOptions) {
     pushPendingVoiceMessage,
     isImageFile,
     uploadPickedFile,
+    uploadIncomingFiles,
     handlePickedFile,
     handleComposerPaste,
+    chatDragActive,
+    handleChatDragEnter,
+    handleChatDragOver,
+    handleChatDragLeave,
+    handleChatDrop,
     removePendingMessage,
     retryPendingUpload
   };

@@ -84,6 +84,7 @@ import {
   IMAGE_EXTENSIONS,
   IMAGE_WEBP_EFFORT,
   compressImageFile,
+  convertHeicImageFile,
   displayWebpFileName,
   imageProcessingLog,
   isImageFileName,
@@ -92,6 +93,7 @@ import {
   wantsOriginalImage,
   writeImageThumbnail
 } from "./imageProcessing.js";
+import { StoryImageBusyError } from "./services/storyImages.js";
 import { appendPinnedTextBlock, cleanPinnedTitle, pinnedBlocksFromMessage, pinnedBodyUploadFilePaths, pinnedPlainTextFromHtml, serializePinnedBody } from "./pinnedBody.js";
 import { AVATAR_DIR, BACKUP_DIR, BG_DIR, BOOKS_DIR, DIST_CLIENT, MUSIC_SCORE_DIR, PARALLAX_DIR, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore } from "./storageDirs.js";
 import { parseJsonField, plainTextFromHtml, stripMarkdownSyntax } from "./textUtils.js";
@@ -3486,12 +3488,30 @@ app.post("/api/files/upload", { preHandler: requireAuth }, async (request, reply
     safeUnlink("upload", safeName);
     return reply.code(400).send({ success: false, message: "音频文件内容无效，仅支持 MP3 和 M4A" });
   }
-  const isImageUpload = file.mimetype.startsWith("image/") && isImageFileName(file.filename);
-  if (isImageUpload && !(await validateStoredImage(outPath))) {
+  // HEIC/HEIF count as images by extension alone: some desktop browsers report
+  // an empty or octet-stream MIME for them.
+  const isHeicUpload = /\.(heic|heif)$/i.test(file.filename);
+  const isImageUpload = isHeicUpload || (file.mimetype.startsWith("image/") && isImageFileName(file.filename));
+  let heicConverted = false;
+  if (isImageUpload && !isHeicUpload && !(await validateStoredImage(outPath))) {
     safeUnlink("upload", safeName);
     return reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });
   }
-  if (isImageUpload && !wantsOriginalImage(fields)) {
+  if (isHeicUpload) {
+    try {
+      const converted = await convertHeicImageFile(outPath, UPLOAD_DIR);
+      fs.unlinkSync(outPath);
+      storedFileName = converted.fileName;
+      displayFileName = displayWebpFileName(file.filename);
+      stat = fs.statSync(converted.filePath);
+      heicConverted = true;
+    } catch (error) {
+      safeUnlink("upload", safeName);
+      const busy = error instanceof StoryImageBusyError;
+      return reply.code(busy ? 503 : 400).send({ success: false, message: busy ? "照片处理繁忙，请稍后重试" : "图片内容无效或尺寸过大" });
+    }
+  }
+  if (isImageUpload && !heicConverted && !wantsOriginalImage(fields)) {
     const compressed = await compressImageFile(outPath, UPLOAD_DIR);
     if (compressed) {
       fs.unlinkSync(outPath);

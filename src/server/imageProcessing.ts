@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import sharp from "sharp";
 import { orientedImageDimensions, type ImageDimensions } from "../shared/imageDimensions.js";
+import { convertImageWithDecoder } from "./services/storyImages.js";
 
 export const IMAGE_WEBP_QUALITY = 82;
 export const IMAGE_WEBP_EFFORT = 5;
@@ -74,6 +75,26 @@ export async function validateStoredImage(filePath: string) {
     return !!metadata.format && !!metadata.width && !!metadata.height && metadata.width <= 20_000 && metadata.height <= 20_000;
   } catch {
     return false;
+  }
+}
+
+// The bundled sharp reads HEIC metadata but cannot decode HEVC pixels, so
+// validateStoredImage passes while every render outside Safari breaks. Run the
+// bytes through the isolated decoder and store a same-resolution webp instead;
+// runs even for 保留原图 uploads for exactly that reason.
+export async function convertHeicImageFile(inputPath: string, outputDir: string) {
+  const outputName = compressedImageFileName();
+  const outputPath = path.join(outputDir, outputName);
+  await convertImageWithDecoder(inputPath, outputPath, { quality: IMAGE_WEBP_QUALITY });
+  try {
+    const outputStat = fs.statSync(outputPath);
+    if (outputStat.size > 32 * 1024 * 1024) throw new Error("Converted image too large");
+    const metadata = await sharp(outputPath).metadata();
+    if (!metadata.width || !metadata.height) throw new Error("Image has no dimensions");
+    return { fileName: outputName, filePath: outputPath, size: outputStat.size };
+  } catch (error) {
+    if (fs.existsSync(outputPath)) fs.unlinkSync(outputPath);
+    throw error;
   }
 }
 

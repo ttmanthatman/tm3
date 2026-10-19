@@ -26,6 +26,10 @@ const messageRow = fs.readFileSync(new URL("./features/messages/MessageRow.vue",
 const storyInteractions = fs.readFileSync(new URL("./features/stories/StoryInteractions.vue", import.meta.url), "utf8");
 const storiesCss = fs.readFileSync(new URL("./features/stories/stories.css", import.meta.url), "utf8");
 const composerBar = fs.readFileSync(new URL("./features/composer/ComposerBar.vue", import.meta.url), "utf8");
+const uploadsLogic = fs.readFileSync(new URL("./features/uploads/useUploads.ts", import.meta.url), "utf8");
+const dropZoneLogic = fs.readFileSync(new URL("./features/uploads/useDropZone.ts", import.meta.url), "utf8");
+const storyComposer = fs.readFileSync(new URL("./features/stories/StoryComposer.vue", import.meta.url), "utf8");
+const storyWorkspace = fs.readFileSync(new URL("./features/stories/StoryWorkspace.vue", import.meta.url), "utf8");
 const chatHeader = fs.readFileSync(new URL("./features/chat/ChatHeader.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
@@ -1110,7 +1114,34 @@ test("music track detail and previews keep controls outside iPhone safe areas", 
 
 test("the photo picker uploads every selected image", () => {
   assert.match(composerBar, /ref="photoInput"[^>]*accept="image\/\*"[^>]*multiple[^>]*@change="handlePickedFiles"/);
-  assert.match(app, /async function handlePickedFiles[\s\S]*?Array\.from\(input\.files \|\| \[\]\)[\s\S]*?for \(const file of files\)/);
+  assert.match(app, /async function handlePickedFiles[\s\S]*?Array\.from\(input\.files \|\| \[\]\)[\s\S]*?await uploadIncomingFiles\(files\)/);
+  assert.match(uploadsLogic, /async function uploadIncomingFiles[\s\S]*?for \(const file of allowed\)[\s\S]*?await uploadPickedFile\(file\)/);
+});
+
+test("the chat room takes pasted and dropped files behind a drop mask", () => {
+  assert.match(composerBar, /@paste="handleComposerPaste"/);
+  assert.match(uploadsLogic, /function handleComposerPaste[\s\S]*?clipboardUploadFiles\(event\.clipboardData\)[\s\S]*?uploadIncomingFiles\(files\)/);
+  assert.match(app, /class="chat-pane"[^>]*@dragenter="handleChatDragEnter"[^>]*@dragover="handleChatDragOver"[^>]*@dragleave="handleChatDragLeave"[^>]*@drop="handleChatDrop"/);
+  assert.match(app, /v-if="chatDragActive" class="chat-drop-mask"/);
+  assert.match(uploadsLogic, /const handleChatDrop = chatDropZone\.drop/);
+  assert.match(dropZoneLogic, /function dragover\(event: DragEvent\)[\s\S]*?event\.preventDefault\(\)/);
+  assert.match(dropZoneLogic, /function drop\(event: DragEvent\)[\s\S]*?options\.onFiles\(filesFromDataTransfer\(event\.dataTransfer\)\)/);
+  assert.match(css, /\.chat-drop-mask \{[\s\S]*?pointer-events: none;/);
+  // While the story workspace covers the chat pane its drops must not publish
+  // into the channel.
+  assert.match(app, /dragBlocked: \(\) => !!storyActorId\.value/);
+  assert.match(uploadsLogic, /enabled: \(\) => !options\.dragBlocked\?\.\(\)/);
+});
+
+test("story surfaces accept dragged photos: the workspace starts a draft, the composer appends to it", () => {
+  assert.match(storyWorkspace, /class="story-scroll"[^>]*@dragenter="storyDragEnter"[^>]*@dragover="storyDragOver"[^>]*@dragleave="storyDragLeave"[^>]*@drop="storyDrop"/);
+  assert.match(storyWorkspace, /v-if="storyDropActive" class="story-drop-mask story-workspace-drop-mask"/);
+  assert.match(storyWorkspace, /if \(!composerOpen\.value\) composerOpen\.value = true;\s*\n?\s*void nextTick\(\(\) => composerRef\.value\?\.addFiles\(photos\)\)/);
+  assert.match(storyComposer, /class="story-composer-body"[^>]*@submit\.prevent="submit"[^>]*@dragenter="dropDragEnter"/);
+  assert.match(storyComposer, /v-if="dropActive" class="story-drop-mask"/);
+  assert.match(storyComposer, /defineExpose\(\{ addFiles \}\)/);
+  assert.match(storyComposer, /const photos = files\.filter\(isImageFile\)/);
+  assert.match(storiesCss, /\.story-drop-mask \{[\s\S]*?pointer-events: none;/);
 });
 
 test("music actions use the server-authorized track ownership flag", () => {

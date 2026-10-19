@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
-import { ArrowLeft, ArrowRight, Feather, Trash2, BookOpen, RefreshCw, Pencil, Send } from "lucide-vue-next";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
+import { ArrowLeft, ArrowRight, Feather, ImagePlus, Trash2, BookOpen, RefreshCw, Pencil, Send } from "lucide-vue-next";
 import type { MessageDTO } from "@shared/types";
 import { useChatStore } from "../../store";
+import { isImageFile } from "../uploads/fileIntake";
+import { useDropZone } from "../uploads/useDropZone";
 import { useStoryGraceForward } from "./useStoryGraceForward";
 import StoryGraceForwardDialog from "./StoryGraceForwardDialog.vue";
 import { storyTitle, type StoryActivityDTO, type StoryAuthorDTO, type StoryDTO, type StoryInteractionsDTO, type StoryMediaDTO } from "@shared/stories";
@@ -53,6 +55,17 @@ const canDelete = (story: DisplayStory) => !!storyAuthor(story)?.own;
 const imageMedia = computed(() => image.value ? photos(image.value.story)[image.value.index] : null);
 let controller: AbortController | null = null;
 let disposed = false;
+const composerRef = ref<InstanceType<typeof StoryComposer> | null>(null);
+const { active: storyDropActive, dragenter: storyDragEnter, dragover: storyDragOver, dragleave: storyDragLeave, drop: storyDrop } = useDropZone({
+  // Dropping photos only starts a publish flow for the account's own stories.
+  enabled: () => !!author.value?.own,
+  onFiles: (files) => {
+    const photos = files.filter(isImageFile);
+    if (!photos.length) return;
+    if (!composerOpen.value) composerOpen.value = true;
+    void nextTick(() => composerRef.value?.addFiles(photos));
+  }
+});
 
 async function load(more = false) {
   controller?.abort();
@@ -132,7 +145,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
 <template>
   <AppModal open :title="title" :busy="forwardBusy" size="medium" content-class="story-workspace story-surface" close-label="关闭故事" @close="emit('close')">
     <template #header><button type="button" class="story-back" aria-label="返回聊天" @click="emit('close')"><ArrowLeft :size="21" /></button><button v-if="canToggle" type="button" class="story-title-toggle" :aria-label="`${title}，点击切换`" @click="toggleMode"><strong>{{ title }}</strong></button><strong v-else>{{ title }}</strong></template>
-    <div class="story-scroll">
+    <div class="story-scroll" @dragenter="storyDragEnter" @dragover="storyDragOver" @dragleave="storyDragLeave" @drop="storyDrop">
       <template v-if="author">
         <header class="story-profile">
           <div class="story-avatar"><AvatarImage :path="author.avatarPath"><span>{{ author.displayName.slice(0, 1) }}</span></AvatarImage></div>
@@ -171,6 +184,9 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
       <div v-if="busy && !stories.length" class="story-empty" role="status">正在翻开故事…</div>
       <div v-if="error" class="story-empty"><p class="story-error" role="alert">{{ error }}</p><button type="button" class="story-secondary-button" @click="load()"><RefreshCw :size="17" />重新读取</button></div>
     </div>
+    <div v-if="storyDropActive" class="story-drop-mask story-workspace-drop-mask" aria-hidden="true">
+      <div class="story-drop-mask-frame"><ImagePlus :size="42" /><strong>丢到这里，留下一段故事</strong><small>松开即开始发布</small></div>
+    </div>
   </AppModal>
 
   <AppModal v-if="detail" open title="故事详情" :busy="forwardBusy" size="medium" content-class="story-detail story-surface" @close="detail = null">
@@ -189,7 +205,7 @@ onBeforeUnmount(() => { disposed = true; controller?.abort(); window.removeEvent
     <div class="story-lightbox-body"><StoryPhotoViewer :src="storyMediaUrl(imageMedia.id)" /><nav aria-label="照片翻页"><button type="button" class="story-secondary-button" :disabled="image.index === 0" aria-label="上一张照片" @click="image.index--"><ArrowLeft :size="20" /></button><button type="button" class="story-secondary-button" :disabled="image.index === photos(image.story).length - 1" aria-label="下一张照片" @click="image.index++"><ArrowRight :size="20" /></button></nav></div>
   </AppModal>
   <StoryGraceForwardDialog :forwarding="forwarding" @view-card="emit('viewGrace', $event)" />
-  <StoryComposer v-if="composerOpen" :channel-id="channelId" @close="composerOpen = false" @published="published" />
+  <StoryComposer v-if="composerOpen" ref="composerRef" :channel-id="channelId" @close="composerOpen = false" @published="published" />
   <StoryProfileEditor v-if="profileOpen && author?.own" :bio="author.bio" @close="profileOpen = false" @saved="author.bio = $event; profileOpen = false" />
   <ConfirmDialog :open="!!deleteTarget" title="删除这段故事？" message="照片、语音和文字将一起删除，删除后无法恢复。" confirm-text="删除故事" danger :busy="deleteBusy" :error="deleteError" @close="deleteTarget = null" @confirm="confirmDelete" />
 </template>

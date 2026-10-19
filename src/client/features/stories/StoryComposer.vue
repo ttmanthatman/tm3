@@ -7,6 +7,8 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import StoryVoice from "./StoryVoice.vue";
 import { useStoryRecording } from "./useStoryRecording";
 import { publishStory, prepareStoryPhoto } from "./storyClient";
+import { isImageFile } from "../uploads/fileIntake";
+import { useDropZone } from "../uploads/useDropZone";
 const props = defineProps<{ channelId?: number | null; initialImage?: File; initialText?: string }>();
 const emit = defineEmits<{ close: []; published: [story: StoryDTO] }>();
 const text = ref(props.initialText || "");
@@ -22,10 +24,7 @@ let requestId = crypto.randomUUID();
 let controller: AbortController | null = null;
 watch([text, () => images.value.map((image) => image.url).join(","), voice], () => { requestId = crypto.randomUUID(); }, { flush: "sync" });
 
-async function pick(event: Event) {
-  const input = event.target as HTMLInputElement;
-  const files = [...(input.files || [])];
-  input.value = "";
+async function addFiles(files: File[]) {
   error.value = "";
   if (files.length + images.value.length > STORY_LIMITS.images) { error.value = "每篇最多 9 张图片"; return; }
   if (photoBusy.value || !files.length) return;
@@ -41,6 +40,20 @@ async function pick(event: Event) {
   } catch (cause) { error.value = request.signal.aborted ? "照片处理已取消或超时，请重新选择" : cause instanceof Error ? cause.message : "照片处理失败，请重新选择"; }
   finally { clearTimeout(timeout); photoBusy.value = false; }
 }
+async function pick(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const files = [...(input.files || [])];
+  input.value = "";
+  await addFiles(files);
+}
+const { active: dropActive, dragenter: dropDragEnter, dragover: dropDragOver, dragleave: dropDragLeave, drop: dropFiles } = useDropZone({
+  enabled: () => !busy.value && !photoBusy.value,
+  onFiles: (files) => {
+    const photos = files.filter(isImageFile);
+    if (!photos.length) { error.value = "故事照片只支持图片"; return; }
+    void addFiles(photos);
+  }
+});
 function remove(index: number) { URL.revokeObjectURL(images.value[index].url); images.value.splice(index, 1); }
 function move(index: number, direction: number) { const [image] = images.value.splice(index, 1); images.value.splice(index + direction, 0, image); }
 function close() {
@@ -61,11 +74,15 @@ async function submit() {
   finally { clearTimeout(timeout); busy.value = false; }
 }
 onBeforeUnmount(() => { controller?.abort(); photoController?.abort(); for (const image of images.value) URL.revokeObjectURL(image.url); });
+defineExpose({ addFiles });
 </script>
 
 <template>
   <AppModal open title="留下一段故事" :busy="busy" content-class="story-composer story-surface" @close="close">
-    <form class="story-composer-body" @submit.prevent="submit">
+    <form class="story-composer-body" @submit.prevent="submit" @dragenter="dropDragEnter" @dragover="dropDragOver" @dragleave="dropDragLeave" @drop="dropFiles">
+      <div v-if="dropActive" class="story-drop-mask" aria-hidden="true">
+        <div class="story-drop-mask-frame"><ImagePlus :size="42" /><strong>丢进来，加进这段故事</strong><small>松开即添加照片</small></div>
+      </div>
       <p class="story-muted">用照片留住此刻，用声音讲给以后。</p>
       <label class="story-field-label" for="story-text">这一刻，想说些什么 <small>选填</small></label>
       <textarea id="story-text" v-model="text" :maxlength="STORY_LIMITS.text" :disabled="busy" rows="4" placeholder="给这段记忆，留几句旁白…" />
