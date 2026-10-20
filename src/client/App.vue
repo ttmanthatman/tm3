@@ -4847,16 +4847,8 @@ function setBibleReferenceBusy(key: string, busy: boolean) {
   bibleLookupBusyKeys.value = next;
 }
 
-async function toggleBibleReference(scope: string | number, reference: string) {
+async function ensureBibleReferenceLookup(scope: string | number, reference: string) {
   const key = bibleReferenceKey(scope, reference);
-  const next = new Set(expandedBibleReferenceKeys.value);
-  if (next.has(key)) {
-    next.delete(key);
-    expandedBibleReferenceKeys.value = next;
-    return;
-  }
-  next.add(key);
-  expandedBibleReferenceKeys.value = next;
   if (Object.prototype.hasOwnProperty.call(bibleLookupCache.value, key) || bibleLookupBusyKeys.value.has(key)) return;
   setBibleReferenceBusy(key, true);
   try {
@@ -4867,6 +4859,19 @@ async function toggleBibleReference(scope: string | number, reference: string) {
   } finally {
     setBibleReferenceBusy(key, false);
   }
+}
+
+async function toggleBibleReference(scope: string | number, reference: string) {
+  const key = bibleReferenceKey(scope, reference);
+  const next = new Set(expandedBibleReferenceKeys.value);
+  if (next.has(key)) {
+    next.delete(key);
+    expandedBibleReferenceKeys.value = next;
+    return;
+  }
+  next.add(key);
+  expandedBibleReferenceKeys.value = next;
+  await ensureBibleReferenceLookup(scope, reference);
 }
 
 async function openBibleReferenceInWorkspace(scope: string | number, reference: string) {
@@ -5052,6 +5057,7 @@ const messageRowBindings = {
   isBibleReferenceExpanded,
   isBibleReferenceBusy,
   bibleReferenceLookup,
+  ensureBibleReferenceLookup,
   formatBibleLookup,
   consumeHandwritingPlayback,
   onOpenSharedPlaylist: openSharedMusicPlaylistFromTap,

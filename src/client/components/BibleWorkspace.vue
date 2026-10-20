@@ -768,9 +768,17 @@ function bibleAudioLyricsTransitionStorageKey(accountId: number) {
   return `team-chat-bible-audio-lyrics-transition:${accountId}`;
 }
 
+// 「连播到底」开关（播放键长按切换）：开启后从选中经文起播不受选集终点约束，按账号存本地。
+const bibleAudioPlayThrough = ref(false);
+
+function bibleAudioPlayThroughStorageKey(accountId: number) {
+  return `team-chat-bible-audio-play-through:${accountId}`;
+}
+
 watch(() => props.accountId, (accountId) => {
   bibleAudioFollow.value = localStorage.getItem(bibleAudioFollowStorageKey(accountId)) !== "false";
   bibleAudioLyricsTransition.value = localStorage.getItem(bibleAudioLyricsTransitionStorageKey(accountId)) !== "false";
+  bibleAudioPlayThrough.value = localStorage.getItem(bibleAudioPlayThroughStorageKey(accountId)) === "true";
   if (props.open && accountId) void loadBibleAudioManifest(true);
 }, { immediate: true });
 
@@ -795,10 +803,10 @@ function activeReaderPane() {
   return panes.value.find((pane) => pane.id === activePaneId.value && isReader(pane)) || panes.value.find(isReader) || null;
 }
 
-// 无选中：从活动窗格当前章整章播起；有选中：按选集分段依次播放。
-function handleBibleAudioToggle() {
-  if (bibleAudio.toggle()) return;
-  const pane = activeReaderPane();
+// 无选中：从（优先）窗格当前章整章播起；有选中：按播放模式逐段播放或从首节连播到底。
+function startBibleAudioPlayback(preferPaneId?: string) {
+  const isReader = (pane: BiblePaneState) => pane.view !== "home" && pane.view !== "chapters";
+  const pane = (preferPaneId ? panes.value.find((item) => item.id === preferPaneId && isReader(item)) : null) || activeReaderPane();
   if (!pane) {
     showToast("请先打开一章经文再播放");
     return;
@@ -806,10 +814,26 @@ function handleBibleAudioToggle() {
   const reader = paneRefs.get(pane.id);
   const selection = reader?.selectedLookups() || [];
   if (selection.length) {
-    bibleAudio.startFromLookups(selection);
+    if (bibleAudioPlayThrough.value) bibleAudio.startFromLookupsThrough(selection);
+    else bibleAudio.startFromLookups(selection);
     return;
   }
   bibleAudio.startFromChapter(pane.book.code, reader?.snapshot().visibleChapter || pane.visibleChapter);
+}
+
+function handleBibleAudioToggle() {
+  if (bibleAudio.toggle()) return;
+  startBibleAudioPlayback();
+}
+
+// 播放键长按：切换「连播到底」。开启时把进行中的选集会话当场转连播；空闲则按当前上下文起播
+// （阅读窗格 footer 的长按以该窗格为上下文，顶栏则以活动窗格为准）。
+function toggleBibleAudioPlayThrough(startPaneId?: string) {
+  bibleAudioPlayThrough.value = !bibleAudioPlayThrough.value;
+  localStorage.setItem(bibleAudioPlayThroughStorageKey(props.accountId), bibleAudioPlayThrough.value ? "true" : "false");
+  if (!bibleAudioPlayThrough.value) return;
+  bibleAudio.continueAll();
+  if (!bibleAudio.active) startBibleAudioPlayback(startPaneId);
 }
 
 function handleBibleAudioVerseSeek(paneId: string, chapter: number, verse: number) {
@@ -817,10 +841,12 @@ function handleBibleAudioVerseSeek(paneId: string, chapter: number, verse: numbe
   if (pane) bibleAudio.seekToVerse(pane.book.code, chapter, verse);
 }
 
-// 阅读窗格 footer 的「播放」：朗读该窗格当前选中的经文
+// 阅读窗格 footer 的「播放」：朗读该窗格当前选中的经文（连播到底开启时从首节连播）
 function handleBibleAudioPlaySelection(paneId: string) {
   const selection = paneRefs.get(paneId)?.selectedLookups() || [];
-  if (selection.length) bibleAudio.startFromLookups(selection);
+  if (!selection.length) return;
+  if (bibleAudioPlayThrough.value) bibleAudio.startFromLookupsThrough(selection);
+  else bibleAudio.startFromLookups(selection);
 }
 
 // 播放器停止播放（暂停）后，点击控件与歌词条以外任意处即收起播放会话
@@ -1054,6 +1080,7 @@ function showToast(message: string) {
         :can-next-chapter="bibleAudio.canNextChapter"
         :compact="bibleAudioCompact"
         :follow-enabled="bibleAudioFollow"
+        :play-through="bibleAudioPlayThrough"
         :error="bibleAudio.error"
         @toggle="handleBibleAudioToggle"
         @previous-verse="bibleAudio.previousVerse()"
@@ -1062,6 +1089,7 @@ function showToast(message: string) {
         @next-chapter="bibleAudio.nextChapter()"
         @cycle-rate="bibleAudio.cycleRate()"
         @toggle-follow="toggleBibleAudioFollow"
+        @toggle-play-through="toggleBibleAudioPlayThrough"
       />
     </header>
 
@@ -1117,8 +1145,10 @@ function showToast(message: string) {
           :playing-verse-key="bibleAudio.playingVerseKey"
           :audio-seekable="bibleAudioEnabled && bibleAudio.active"
           :audio-enabled="bibleAudioEnabled"
+          :audio-play-through="bibleAudioPlayThrough"
           @verse-seek="handleBibleAudioVerseSeek"
           @play-selection="handleBibleAudioPlaySelection"
+          @toggle-play-through="toggleBibleAudioPlayThrough"
           @home="returnHome(pane.id)"
           @activate="activePaneId = $event"
           @close="closeBiblePane"

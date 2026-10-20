@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, watch } from "vue";
 import { AudioLines, BookOpen, ChevronDown, ChevronRight, Download, FileUp, Mic, Pause, Play, Square } from "lucide-vue-next";
 import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
@@ -13,6 +13,7 @@ import HandwritingMessage from "../handwriting/HandwritingMessage.vue";
 import {
   isMarkdownMessage,
   messageBibleReferenceScope,
+  messageScriptureOnlyReference,
   musicMentionPayload,
   previewSiteName,
   type BibleRichTextSegment
@@ -64,6 +65,7 @@ const props = defineProps<{
   isBibleReferenceExpanded: (scope: string | number, reference: string) => boolean;
   isBibleReferenceBusy: (scope: string | number, reference: string) => boolean;
   bibleReferenceLookup: (scope: string | number, reference: string) => BibleLookupDTO | null | undefined;
+  ensureBibleReferenceLookup: (scope: string | number, reference: string) => void;
   formatBibleLookup: (lookup: BibleLookupDTO | null | undefined, originalReference: string) => string;
   consumeHandwritingPlayback?: (message: MessageDTO) => boolean;
   handwritingSurfaceActive?: boolean;
@@ -75,6 +77,24 @@ const bookShare = computed(() => props.message.type === "text" ? parseBookShareM
 const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
 const bibleTopicShare = computed(() => props.message.type === "text" && !bibleShare.value ? bibleTopicMessagePayload(props.message.payload) : null);
 const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(props.message.content, bookNoteShare.value.note.bookTitle) : "");
+
+// 整条消息只有一处经文引用：拉取经文后以经文卡片形态展示（取不到则回退普通气泡）
+const scriptureOnly = computed(() => {
+  const reference = messageScriptureOnlyReference(props.message);
+  if (!reference) return null;
+  if (bibleShare.value || bibleTopicShare.value || bookNoteShare.value || bookShare.value) return null;
+  return { reference, scope: messageBibleReferenceScope(props.message, "content") };
+});
+watch(scriptureOnly, (value) => {
+  if (value) props.ensureBibleReferenceLookup(value.scope, value.reference);
+}, { immediate: true });
+const scriptureOnlyCard = computed(() => {
+  const base = scriptureOnly.value;
+  if (!base) return null;
+  const lookup = props.bibleReferenceLookup(base.scope, base.reference);
+  if (!lookup?.verses.length) return null;
+  return { reference: base.reference, text: lookup.verses.map((verse) => verse.text).join(""), translation: lookup.translation };
+});
 
 const emit = defineEmits<{
   "open-shared-playlist": [message: MessageDTO];
@@ -111,6 +131,7 @@ const emit = defineEmits<{
     <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
     <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
+    <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" />
     <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
@@ -251,6 +272,7 @@ const emit = defineEmits<{
         <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
         <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
         <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
+        <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" />
         <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">

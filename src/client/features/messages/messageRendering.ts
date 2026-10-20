@@ -223,6 +223,18 @@ export function messageBibleReferences(message: MessageDTO) {
   return message.type === "text" ? bibleReferencesFromHtml(message.content) : [];
 }
 
+/** 整条文字消息只有一处经文引用、不掺其他文字（如「约翰福音 3:16」）→ 返回引用原文，供经文卡片形态使用。 */
+export function messageScriptureOnlyReference(message: MessageDTO): string | null {
+  if (message.type !== "text") return null;
+  const plain = plainTextFromHtml(message.content).trim();
+  if (!plain) return null;
+  const matches = extractBibleReferenceMatches(plain);
+  if (matches.length !== 1) return null;
+  const match = matches[0];
+  if (match.start !== 0 || match.end !== plain.length) return null;
+  return plain;
+}
+
 export function chainBibleReferences(message: MessageDTO) {
   return message.type === "chain" ? extractBibleReferencesFromText(chainPayload(message).topic || "") : [];
 }

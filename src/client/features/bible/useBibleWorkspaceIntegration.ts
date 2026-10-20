@@ -250,6 +250,8 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     options.sermonWorkspaceOpen.value = false;
     options.bookWorkspaceOpen.value = false;
     layout.openBible();
+    // 使用日志（/log 后台页）：只记用户主动打开，失败静默——不影响阅读
+    void api("/api/bible/activity", { method: "POST", body: JSON.stringify({ action: "open" }) }).catch(() => {});
   }
 
   function closeBibleWorkspace() {

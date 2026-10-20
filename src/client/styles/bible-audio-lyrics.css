@@ -16,9 +16,13 @@
   backdrop-filter: blur(24px) saturate(1.18);
 }
 
+/* 聊天形态当前句固定占位 2 行（比底部条更紧凑），短经文不塌陷、换句时高度不变 */
+.bible-audio-lyrics.chat .bible-audio-lyrics-current-wrap {
+  font-size: clamp(18px, 2.8vw, 24px);
+  height: calc(1.45em * 2);
+}
 .bible-audio-lyrics.chat .bible-audio-lyrics-current {
   -webkit-line-clamp: 2;
-  font-size: clamp(18px, 2.8vw, 24px);
 }
 .bible-audio-lyrics.chat .bible-audio-lyrics-next { font-size: 12.5px; }
 

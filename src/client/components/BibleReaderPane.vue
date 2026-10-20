@@ -22,6 +22,8 @@ import {
 import BibleTranslationSelect from "../features/bible/BibleTranslationSelect.vue";
 import BiblePassageShareDialog from "../features/bible/BiblePassageShareDialog.vue";
 import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
+import BiblePlayThroughIcon from "../features/bible/BiblePlayThroughIcon.vue";
+import { useLongPressAction } from "../features/bible/useLongPressAction";
 import { nearbyBibleChapterPreloadOrder, preservedScrollTop } from "../bibleReaderLoading";
 import { bibleParallelReferenceSegments } from "../bibleParallelReferences";
 import { useNoteMarkers } from "../features/bible/notes/useNoteMarkers";
@@ -59,6 +61,8 @@ const props = defineProps<{
   audioSeekable?: boolean;
   /** 有声圣经功能对用户开放：选中经文的 footer 显示「播放」入口 */
   audioEnabled?: boolean;
+  /** 「连播到底」已开启：footer 播放按钮显示绿色 + 三角带箭头图标 */
+  audioPlayThrough?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -76,6 +80,7 @@ const emit = defineEmits<{
   "copy-browse": [filter: { translation: string; bookCode: string; chapter: number; verse: number }];
   "verse-seek": [paneId: string, chapter: number, verse: number];
   "play-selection": [paneId: string];
+  "toggle-play-through": [paneId: string];
 }>();
 
 type TextSegment = { text: string; highlighted: boolean };
@@ -561,6 +566,14 @@ async function writeClipboard(text: string) {
   }
 }
 
+// footer「播放」键：短按朗读选中经文，长按切换「连播到底」（按钮变绿 + 三角带箭头图标）
+const playThroughPress = useLongPressAction(() => emit("toggle-play-through", props.paneId));
+
+function handlePlaySelectionClick() {
+  if (playThroughPress.consumeClick()) return;
+  emit("play-selection", props.paneId);
+}
+
 function favoriteKey(verse: BibleVerseLineDTO): BibleFavoriteKeyDTO {
   return { bookCode: readerBook.value.code, chapter: verse.chapter, verse: verse.verse };
 }
@@ -688,14 +701,6 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
     </main>
 
     <footer v-if="selectedVerses.length" class="bible-pane-verse-action">
-      <button
-        v-if="audioEnabled"
-        type="button"
-        class="bible-pane-audio-play"
-        aria-label="播放选中的经文"
-        title="朗读选中经文"
-        @click="emit('play-selection', paneId)"
-      ><Play :size="16" /><span>播放</span></button>
       <div class="bible-pane-selection-copy">
         <strong>{{ selectedVerseSummary }}</strong>
         <span class="bible-favorite-color-picker" aria-label="收藏标线颜色">
@@ -713,6 +718,21 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
         </span>
       </div>
       <div class="bible-pane-action-buttons">
+        <button
+          v-if="audioEnabled"
+          type="button"
+          class="bible-pane-audio-play"
+          :class="{ through: audioPlayThrough }"
+          :aria-label="audioPlayThrough ? '连播到底：从选中经文一直朗读' : '播放选中的经文'"
+          :title="audioPlayThrough ? '从选中经文连播到底（长按切回选段朗读）' : '朗读选中经文（长按连播到底）'"
+          @pointerdown="playThroughPress.down"
+          @pointermove="playThroughPress.move"
+          @pointerup="playThroughPress.clear"
+          @pointercancel="playThroughPress.clear"
+          @pointerleave="playThroughPress.clear"
+          @contextmenu.prevent
+          @click="handlePlaySelectionClick"
+        ><BiblePlayThroughIcon v-if="audioPlayThrough" :size="16" /><Play v-else :size="16" /><span>播放</span></button>
         <button type="button" :disabled="selectedVerses.length !== 1 || selectedVerses[0].endVerse !== selectedVerses[0].verse" title="选中一节经文后写笔记" @click="emit('note-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><StickyNote :size="16" /><span>笔记</span></button>
         <button type="button" @click="emit('copy-start', { translation, bookCode: readerBook.code, verses: selectedVerses })"><Brush :size="16" /><span>抄写</span></button>
         <button type="button" @click="writeClipboard(formatBibleVersesForCopy(selectedVerses, translationName))"><ClipboardCopy :size="16" /><span>复制</span></button>
@@ -783,9 +803,11 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
 .bible-pane-action-buttons button { min-height: 34px; border: 0; border-radius: 8px; padding: 0 8px; color: white; background: #80613f; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font: inherit; font-size: 12px; font-weight: 700; }
 .bible-pane-action-buttons button.secondary { color: #74583b; background: #eee3d2; }
 .bible-pane-action-buttons button:disabled { opacity: .45; }
-/* 有声圣经「播放」：选中经文 footer 的第一个动作，样式与动作按钮一致 */
-.bible-pane-audio-play { flex: none; min-height: 34px; border: 0; border-radius: 8px; padding: 0 8px; color: #fff; background: #c2733a; display: inline-flex; align-items: center; justify-content: center; gap: 3px; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
-.bible-pane-audio-play:hover { background: #ad6530; }
+/* 有声圣经「播放」：动作按钮行的第一个动作，与笔记/抄写/复制同行同尺寸；连播到底时变绿 */
+.bible-pane-action-buttons button.bible-pane-audio-play { background: #c2733a; cursor: pointer; }
+.bible-pane-action-buttons button.bible-pane-audio-play:hover { background: #ad6530; }
+.bible-pane-action-buttons button.bible-pane-audio-play.through { background: #2f9e44; }
+.bible-pane-action-buttons button.bible-pane-audio-play.through:hover { background: #268a3b; }
 @container (max-width: 600px) {
   .bible-pane-toolbar { grid-template-columns: auto auto minmax(0, 1fr) auto auto auto; padding: 4px; }
   .bible-pane-icon { width: 29px; height: 30px; }
@@ -794,8 +816,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
   .bible-pane-scroll { padding: 18px 13px 94px; }
   .bible-pane-verse-action { align-items: stretch; flex-direction: column; }
   .bible-pane-selection-copy { display: none; }
-  .bible-pane-audio-play { align-self: stretch; }
-  .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; }
+  .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)) auto; }
   .bible-pane-action-buttons button { padding: 0 5px; }
 }
 @container (max-width: 420px) {

@@ -74,11 +74,20 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
   line-height: 1.3;
   color: rgba(255, 255, 255, .38);
 }
-.bible-audio-lyrics-current-wrap { position: relative; display: grid; width: 100%; justify-items: center; }
+/* 当前句占位固定为最大行数（正文 3 行），短经文不塌陷、换句时条高不变 */
+.bible-audio-lyrics-current-wrap {
+  position: relative;
+  display: grid;
+  width: 100%;
+  justify-items: center;
+  align-content: start;
+  font-size: clamp(17px, 2.6vw, 22px);
+  height: calc(1.45em * 3);
+}
 .bible-audio-lyrics-current {
   display: block;
   max-width: 100%;
-  font-size: clamp(17px, 2.6vw, 22px);
+  font-size: inherit;
   font-weight: 800;
   line-height: 1.45;
   letter-spacing: .02em;

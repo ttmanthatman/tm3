@@ -329,6 +329,29 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     return true;
   }
 
+  /** 长按「连播到底」起播：定位到选集首节，但按整章连播（不受选集终点约束）。 */
+  function startFromLookupsThrough(lookups: BibleLookupDTO[]) {
+    const first = queueFromLookups(lookups, options.books())[0];
+    if (!first) {
+      toast("没有可播放的经文");
+      return false;
+    }
+    mode.value = "continuous";
+    queue.value = queueFromChapter(first.book, first.chapter);
+    loadItem(0, first.verseStart);
+    return true;
+  }
+
+  /** 进行中的选集会话当场转为整章连播（长按开启「连播到底」时调用）。 */
+  function continueAll() {
+    const item = currentItem.value;
+    if (!item || mode.value !== "selection") return;
+    mode.value = "continuous";
+    queue.value = queueFromChapter(item.book, item.chapter);
+    queueIndex.value = 0;
+    segmentEndMs = null;
+  }
+
   function resume() {
     const state = resumeState.value;
     const version = options.version();
@@ -491,6 +514,8 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     canNextChapter,
     startFromChapter,
     startFromLookups,
+    startFromLookupsThrough,
+    continueAll,
     resume,
     play,
     pause,

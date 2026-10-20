@@ -208,6 +208,44 @@ test("seeking to a verse outside the current passage releases the selection into
   assert.equal(player.currentVerse.value, 7);
 });
 
+test("play-through starts at the selection's first verse but continues past the selection end", () => {
+  const { audio, player } = createHarness();
+  const started = player.startFromLookupsThrough([
+    lookup([line("启示录", 1, 2), line("启示录", 1, 3)]),
+    lookup([line("启示录", 2, 1)])
+  ]);
+  assert.equal(started, true);
+  assert.equal(player.mode.value, "continuous");
+  assert.deepEqual(player.queue.value, [{ book: "REV", chapter: 1, verseStart: 0, verseEnd: null }]);
+  audio.ready(204);
+  assert.equal(audio.currentTime, 14, "starts at verse 2 of the selection");
+
+  audio.tick(100);
+  assert.equal(player.mode.value, "continuous", "passing the selection end keeps playing the chapter");
+  audio.tick(203.99);
+  assert.equal(player.currentVerse.value, 20);
+  audio.end();
+  assert.equal(audio.src, "/api/bible-audio/cuvmpt-drama/REV/2/stream?token=tok-1", "chapter end chains into the next chapter instead of the next passage");
+});
+
+test("continueAll converts a running selection session into whole-chapter play on the spot", () => {
+  const { audio, player } = createHarness();
+  player.startFromLookups([lookup([line("启示录", 1, 2), line("启示录", 1, 3)]), lookup([line("启示录", 2, 1)])]);
+  audio.ready(204);
+  assert.equal(audio.currentTime, 14);
+
+  player.continueAll();
+  assert.equal(player.mode.value, "continuous");
+  assert.deepEqual(player.queue.value, [{ book: "REV", chapter: 1, verseStart: 0, verseEnd: null }]);
+  assert.equal(audio.currentTime, 14, "playback position is untouched by the conversion");
+
+  audio.tick(100);
+  assert.equal(player.queueIndex.value, 0, "no passage boundary stop after the conversion");
+  audio.tick(203.99);
+  audio.end();
+  assert.equal(audio.src, "/api/bible-audio/cuvmpt-drama/REV/2/stream?token=tok-1");
+});
+
 test("verse and chapter stepping, playback rate and resume memory", async () => {
   const { audio, player, storage } = createHarness();
   player.startFromChapter("REV", 1, 5);

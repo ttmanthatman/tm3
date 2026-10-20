@@ -184,6 +184,12 @@ const TRANSLATION_SOURCES: BibleTranslationSource[] = [
 
 const bookByCode = new Map(BOOKS.map((book) => [book.code, book]));
 const bookOrder = new Map(BOOKS.map((book, index) => [book.code, index]));
+
+/** 书卷码 → 中文名（日志等展示用；未知码原样返回）。 */
+export function bibleBookChineseName(code: string) {
+  return bookByCode.get(code.toUpperCase() as (typeof BOOKS)[number]["code"])?.chineseName || code;
+}
+
 const startAliases = BOOKS.flatMap((book) => [book.chineseName, book.code, ...book.aliases].map((alias) => ({ alias: normalizeBook(alias), book })))
   .filter((item) => item.alias)
   .sort((left, right) => right.alias.length - left.alias.length);

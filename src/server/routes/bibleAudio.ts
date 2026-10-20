@@ -20,6 +20,8 @@ import {
   deleteBibleAudioVersion,
   importBibleAudioBundle
 } from "../bibleAudio/bundleImport.js";
+import { bibleBookChineseName } from "../bible/lookup.js";
+import { bibleActivityAccountLabel, pushBibleActivity } from "../bibleActivityLog.js";
 
 // 有声圣经：管理员上传卷包、读取章节索引（manifest）、鉴权流播放、功能开关。
 // 资源不入 git；stream 必须鉴权（支持 ?token= 以供 <audio> 使用）。
@@ -138,6 +140,13 @@ export function registerBibleAudioRoutes(app: FastifyInstance, deps: BibleAudioR
     const filePath = bibleAudioChapterPath(bibleAudioDir, version.versionId, row.bookCode, row.fileName);
     if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "音频文件不存在" });
     const stat = fs.statSync(filePath);
+    // 使用日志：每个章节的首次（非 Range）加载记一条「听圣经」；拖动进度产生的分段请求不重复记录。
+    if (!request.headers.range) {
+      const { accountId } = authFor(request);
+      void bibleActivityAccountLabel(prisma, accountId)
+        .then((account) => pushBibleActivity("听圣经", `${bibleBookChineseName(params.data.book)} ${params.data.chapter}章`, account))
+        .catch(() => {});
+    }
     return sendAudioFile(request, reply, filePath, row.fileName, stat);
   });
 

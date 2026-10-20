@@ -1,9 +1,11 @@
 <script setup lang="ts">
 // 有声圣经顶栏控件（仅在播放会话中渲染）：上一章 | 上一节 | 播放/暂停 | 下一节 | 下一章 + 参考/时间 + 速率 + 跟随翻页。
 // 始终内联在顶栏第一行（居中于关闭按钮与右侧操作组之间）；紧凑时按钮缩小并随宽度收窄细节，不新增行。
-// 纯展示组件：状态来自 props，动作通过 emit 交给工作区里的播放器。
+// 播放键长按 = 切换「连播到底」（按钮变绿、暂停态显示三角带箭头图标），再长按切回；短按仍是暂停/继续。
 import { computed } from "vue";
 import { ChevronFirst, ChevronLast, LoaderCircle, Locate, LocateOff, Pause, Play, SkipBack, SkipForward } from "lucide-vue-next";
+import BiblePlayThroughIcon from "./BiblePlayThroughIcon.vue";
+import { useLongPressAction } from "./useLongPressAction";
 
 const props = withDefaults(defineProps<{
   active: boolean;
@@ -17,6 +19,7 @@ const props = withDefaults(defineProps<{
   canNextChapter?: boolean;
   compact?: boolean;
   followEnabled?: boolean;
+  playThrough?: boolean;
   error?: string;
 }>(), {
   loading: false,
@@ -24,6 +27,7 @@ const props = withDefaults(defineProps<{
   canNextChapter: false,
   compact: false,
   followEnabled: true,
+  playThrough: false,
   error: ""
 });
 
@@ -35,7 +39,15 @@ const emit = defineEmits<{
   "next-chapter": [];
   "cycle-rate": [];
   "toggle-follow": [];
+  "toggle-play-through": [];
 }>();
+
+const playThroughPress = useLongPressAction(() => emit("toggle-play-through"));
+
+function handlePlayClick() {
+  if (playThroughPress.consumeClick()) return;
+  emit("toggle");
+}
 
 const rateLabel = computed(() => `${Number.isInteger(props.rate) ? props.rate.toFixed(1) : String(props.rate)}×`);
 
@@ -52,9 +64,23 @@ function formatTime(ms: number) {
     <div class="bible-audio-buttons">
       <button v-if="!compact" type="button" class="bible-audio-button chapter-nav" :disabled="!active || !canPreviousChapter" aria-label="上一章" title="上一章" @click="emit('previous-chapter')"><ChevronFirst :size="17" /></button>
       <button type="button" class="bible-audio-button" :disabled="!active" aria-label="上一节" title="上一节" @click="emit('previous-verse')"><SkipBack :size="16" /></button>
-      <button type="button" class="bible-audio-button primary" :aria-label="playing ? '暂停朗读' : '播放朗读'" :title="playing ? '暂停' : '播放'" @click="emit('toggle')">
+      <button
+        type="button"
+        class="bible-audio-button primary"
+        :class="{ through: playThrough }"
+        :aria-label="playing ? '暂停朗读' : playThrough ? '连播到底，点击继续朗读' : '播放朗读'"
+        :title="playThrough ? '连播到底（长按切回选段朗读）' : playing ? '暂停' : '播放'"
+        @pointerdown="playThroughPress.down"
+        @pointermove="playThroughPress.move"
+        @pointerup="playThroughPress.clear"
+        @pointercancel="playThroughPress.clear"
+        @pointerleave="playThroughPress.clear"
+        @contextmenu.prevent
+        @click="handlePlayClick"
+      >
         <LoaderCircle v-if="loading && playing" :size="19" class="bible-audio-spin" />
         <Pause v-else-if="playing" :size="19" />
+        <BiblePlayThroughIcon v-else-if="playThrough" :size="19" />
         <Play v-else :size="19" />
       </button>
       <button type="button" class="bible-audio-button" :disabled="!active" aria-label="下一节" title="下一节" @click="emit('next-verse')"><SkipForward :size="16" /></button>
@@ -94,6 +120,9 @@ function formatTime(ms: number) {
 .bible-audio-button:not(:disabled):hover { background: rgba(114, 85, 55, .1); }
 .bible-audio-button.primary { min-width: 36px; min-height: 36px; color: #fff; background: #c2733a; box-shadow: 0 4px 12px rgba(194, 115, 58, .32); }
 .bible-audio-button.primary:not(:disabled):hover { background: #ad6530; }
+/* 连播到底：绿色标识 */
+.bible-audio-button.primary.through { background: #2f9e44; box-shadow: 0 4px 12px rgba(47, 158, 68, .32); }
+.bible-audio-button.primary.through:not(:disabled):hover { background: #268a3b; }
 .bible-audio-button.on { color: #c2733a; background: rgba(194, 115, 58, .12); }
 .bible-audio-spin { animation: bible-audio-spin 1s linear infinite; }
 @keyframes bible-audio-spin { to { transform: rotate(360deg); } }
