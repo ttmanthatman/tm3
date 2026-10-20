@@ -417,6 +417,7 @@ const PdfScoreInline = defineAsyncComponent(() => import("./components/PdfScoreI
 const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWorkspace.vue"));
 const BookWorkspace = defineAsyncComponent(() => import("./components/BookWorkspace.vue"));
 const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicLyricsHeader.vue"));
+const BibleAudioLyricsBar = defineAsyncComponent(() => import("./features/bible/BibleAudioLyricsBar.vue"));
 const MusicManager = defineAsyncComponent(() => import("./features/music/MusicManager.vue"));
 const FriendPrograms = defineAsyncComponent(() => import("./features/friend/FriendPrograms.vue"));
 const AdminPanel = defineAsyncComponent(() => import("./features/admin/AdminPanel.vue"));
@@ -1854,6 +1855,19 @@ const musicLyricsHeaderVisible = computed(
     // 歌谱舞台全屏展示时让位于舞台，避免悬浮歌词头盖住舞台页签；关闭舞台后自动恢复
     !musicScoreStageVisible.value
 );
+// 有声圣经聊天顶端提词器：只在“只看聊天”（圣经工作区已关）且朗读会话进行中时出现。
+// 点提词器 = 暂停/继续；暂停时点聊天其他区域 = 收起会话（handleBibleAudioPromptDismiss）。
+// 与音乐歌词头同位：音乐歌词头可见时让位，避免两个顶端浮层叠影。
+const bibleAudioPrompt = computed(() => bibleWorkspace.value?.bibleAudioTeleprompter || null);
+const bibleAudioPromptVisible = computed(() => !!bibleAudioPrompt.value?.active && !bibleOpen.value && !musicLyricsHeaderVisible.value);
+
+function handleBibleAudioPromptDismiss(event: PointerEvent) {
+  const prompt = bibleAudioPrompt.value;
+  if (!prompt?.active || prompt.playing) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".bible-audio-lyrics")) return;
+  bibleWorkspace.value?.stopBibleAudio();
+}
 const previewScoreTrack = computed(() => {
   const trackId = previewPinnedImage.value?.trackId;
   if (!trackId) return null;
@@ -5526,7 +5540,7 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
+    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -5614,6 +5628,20 @@ const messageRowBindings = {
           :playing="musicPlaying"
           :get-current-time-ms="currentMusicPlaybackTimeMs"
           @hide="hideMusicLyricsHeader"
+        />
+      </Transition>
+
+      <Transition name="bible-audio-lyrics-panel">
+        <BibleAudioLyricsBar
+          v-if="bibleAudioPromptVisible"
+          variant="chat"
+          :reference="bibleAudioPrompt?.reference || ''"
+          :current-text="bibleAudioPrompt?.lyrics?.current || ''"
+          :previous-text="bibleAudioPrompt?.lyrics?.previous || ''"
+          :next-text="bibleAudioPrompt?.lyrics?.next || ''"
+          :playing="!!bibleAudioPrompt?.playing"
+          :transition="bibleAudioPrompt?.transition !== false"
+          @tap="bibleWorkspace?.toggleBibleAudio()"
         />
       </Transition>
 

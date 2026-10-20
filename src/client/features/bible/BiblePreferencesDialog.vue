@@ -7,8 +7,8 @@ import { Minus, Plus } from "lucide-vue-next";
 import AppModal from "../../components/ui/AppModal.vue";
 import { useBibleAccountState } from "./useBibleAccountState";
 import { BIBLE_FONT_MAX, BIBLE_FONT_MIN, clampBibleFontSize } from "./bibleFont";
-const props = defineProps<{ open: boolean; fontSize: number }>();
-const emit = defineEmits<{ close: []; "font-size": [size: number] }>();
+const props = defineProps<{ open: boolean; fontSize: number; lyricsTransition: boolean }>();
+const emit = defineEmits<{ close: []; "font-size": [size: number]; "lyrics-transition": [value: boolean] }>();
 const { preferences, preferencesBusy, savePreferences, refreshPreferences } = useBibleAccountState();
 const draft = ref<Partial<BiblePreferencesDTO>>({});
 const size = ref(props.fontSize);
@@ -71,6 +71,11 @@ async function save() {
           </div>
           <p class="font-preview" aria-hidden="true" :style="{ fontSize: `${size}px` }">你的话是我脚前的灯，是我路上的光。</p>
           <small class="pref-note">调节即时生效，并自动保存到账号。</small>
+        </section>
+        <section class="preferences-card" aria-label="朗读提词">
+          <header><h3>朗读提词</h3></header>
+          <label class="pref-switch"><input type="checkbox" :checked="props.lyricsTransition" @change="emit('lyrics-transition', ($event.target as HTMLInputElement).checked)" /><span class="switch" aria-hidden="true"></span><span class="pref-text">换句时使用滑动过渡</span></label>
+          <small class="pref-note">关闭后卡拉OK提词器换句改为硬切；调节即时生效，并保存在本机。</small>
         </section>
         <section class="preferences-card" aria-label="经文分享">
           <header><h3>经文分享</h3></header>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 有声圣经顶栏控件（仅在播放会话中渲染）：上一章 | 上一节 | 播放/暂停 | 下一节 | 下一章 + 参考/时间 + 速率 + 跟随翻页。
-// 非紧凑时是顶栏第一行中间的内联条（居中于关闭按钮与右侧操作组之间），紧凑时退化为顶栏第二行的窄条。
+// 始终内联在顶栏第一行（居中于关闭按钮与右侧操作组之间）；紧凑时按钮缩小并随宽度收窄细节，不新增行。
 // 纯展示组件：状态来自 props，动作通过 emit 交给工作区里的播放器。
 import { computed } from "vue";
 import { ChevronFirst, ChevronLast, LoaderCircle, Locate, LocateOff, Pause, Play, SkipBack, SkipForward } from "lucide-vue-next";
@@ -107,26 +107,34 @@ function formatTime(ms: number) {
 
 /* 顶栏较窄时内联条保持精简：先藏参考文字，再藏章节按钮与时间；
    容器（.bible-topbar）变宽时逐级恢复。容器查询不可用时停留在精简形态。 */
-.bible-audio-controls:not(.compact) .chapter-nav { display: none; }
-.bible-audio-controls:not(.compact) .bible-audio-time { display: none; }
-.bible-audio-controls:not(.compact) .bible-audio-track .bible-audio-reference { display: none; }
+.bible-audio-controls .chapter-nav { display: none; }
+.bible-audio-controls .bible-audio-time { display: none; }
+.bible-audio-controls .bible-audio-track .bible-audio-reference { display: none; }
 @container bible-topbar (min-width: 780px) {
-  .bible-audio-controls:not(.compact) .chapter-nav { display: inline-flex; }
-  .bible-audio-controls:not(.compact) .bible-audio-time { display: inline; }
+  .bible-audio-controls .chapter-nav { display: inline-flex; }
+  .bible-audio-controls .bible-audio-time { display: inline; }
 }
 @container bible-topbar (min-width: 1080px) {
-  .bible-audio-controls:not(.compact) .bible-audio-track .bible-audio-reference { display: inline-flex; }
+  .bible-audio-controls .bible-audio-track .bible-audio-reference { display: inline-flex; }
 }
 
-/* 紧凑（窄屏顶栏第二行）：章节按钮收起，元信息靠右 */
+/* 紧凑（窄屏）：与关闭键、右侧操作组共享顶栏第一行，按钮整体缩小，参考/时间不留单行空间 */
 .bible-audio-controls.compact {
   position: relative;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
   min-height: 40px;
-  padding: 7px 0 4px;
-  border-top: 1px solid rgba(104, 76, 45, .12);
+  padding: 0;
 }
-.bible-audio-controls.compact .bible-audio-track { flex: 1; justify-content: flex-end; font-size: 12px; }
-.bible-audio-controls.compact .bible-audio-time { font-size: 11px; }
+.bible-audio-controls.compact .bible-audio-button { min-width: 28px; min-height: 30px; }
+.bible-audio-controls.compact .bible-audio-button.primary { min-width: 34px; min-height: 34px; }
+.bible-audio-controls.compact .bible-audio-rate { min-width: 38px; min-height: 26px; padding: 0 6px; }
+.bible-audio-controls.compact .bible-audio-track { display: none; }
+/* 顶栏极窄时先收跟随键、再收速率键，保住单行不换行 */
+@container bible-topbar (max-width: 379px) {
+  .bible-audio-controls.compact .bible-audio-extras .bible-audio-button { display: none; }
+}
+@container bible-topbar (max-width: 329px) {
+  .bible-audio-controls.compact .bible-audio-rate { display: none; }
+}
 </style>

@@ -20,11 +20,23 @@ import { useMessageSender } from "../../messageSending";
 import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { bibleAudioEnabled, loadBibleAudioManifest, resetBibleAudioManifest } from "./bibleAudioManifest";
 
+/** 聊天顶端提词器的状态快照：工作区 expose 出来，App 在只看聊天时渲染悬浮提词器 */
+export type BibleAudioTeleprompterState = {
+  active: boolean;
+  playing: boolean;
+  reference: string;
+  transition: boolean;
+  lyrics: { current: string; previous: string; next: string } | null;
+};
+
 export type BibleWorkspaceHandle = {
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
   openCopyworkContext: (source: CopyworkSource) => Promise<void>;
   openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
   startAudioFromLookups: (lookups: BibleLookupDTO[]) => Promise<boolean>;
+  bibleAudioTeleprompter: BibleAudioTeleprompterState;
+  toggleBibleAudio: () => void;
+  stopBibleAudio: () => void;
 };
 
 /** 消息里可交给有声圣经朗读的引用：经文分享（单段）或经文主题分享（多段，保序） */

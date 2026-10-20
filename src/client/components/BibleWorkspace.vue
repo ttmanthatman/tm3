@@ -746,7 +746,7 @@ async function openCopyworkContext(source: CopyworkSource) {
   }, activePaneId.value, [], source.translation);
 }
 
-// ---- 有声圣经：播放器挂在工作区上，离开工作区即暂停；队列/时间戳逻辑见 features/bible/bibleAudioQueue.ts ----
+// ---- 有声圣经：播放器挂在工作区上，关闭工作区后继续朗读，由 App 悬浮在聊天顶端的提词器接管；队列/时间戳逻辑见 features/bible/bibleAudioQueue.ts ----
 const bibleAudio = reactive(useBibleAudioPlayer({
   accountId: () => props.accountId,
   books: () => allBooks.value,
@@ -761,22 +761,31 @@ function bibleAudioFollowStorageKey(accountId: number) {
   return `team-chat-bible-audio-follow:${accountId}`;
 }
 
+// 提词器换句过渡（滑动变形）开关；默认开启，按账号存本地。声明须在下方 immediate watch 之前。
+const bibleAudioLyricsTransition = ref(true);
+
+function bibleAudioLyricsTransitionStorageKey(accountId: number) {
+  return `team-chat-bible-audio-lyrics-transition:${accountId}`;
+}
+
 watch(() => props.accountId, (accountId) => {
   bibleAudioFollow.value = localStorage.getItem(bibleAudioFollowStorageKey(accountId)) !== "false";
+  bibleAudioLyricsTransition.value = localStorage.getItem(bibleAudioLyricsTransitionStorageKey(accountId)) !== "false";
   if (props.open && accountId) void loadBibleAudioManifest(true);
 }, { immediate: true });
 
 watch(() => props.open, (open) => {
-  if (open) {
-    if (props.accountId) void loadBibleAudioManifest();
-  } else if (bibleAudio.playing) {
-    bibleAudio.pause();
-  }
+  if (open && props.accountId) void loadBibleAudioManifest();
 }, { immediate: true });
 
 function toggleBibleAudioFollow() {
   bibleAudioFollow.value = !bibleAudioFollow.value;
   localStorage.setItem(bibleAudioFollowStorageKey(props.accountId), bibleAudioFollow.value ? "true" : "false");
+}
+
+function handleBibleAudioLyricsTransition(value: boolean) {
+  bibleAudioLyricsTransition.value = value;
+  localStorage.setItem(bibleAudioLyricsTransitionStorageKey(props.accountId), value ? "true" : "false");
 }
 
 const bibleAudioCompact = computed(() => workspaceWidth.value <= 600);
@@ -877,7 +886,16 @@ const bibleAudioLyrics = computed(() => {
 
 onBeforeUnmount(() => bibleAudio.dispose());
 
-defineExpose({ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups });
+// 暴露给 App 的聊天顶端提词器状态快照（reactive 经 expose 代理保持追踪）
+const bibleAudioTeleprompter = computed(() => ({
+  active: bibleAudio.active,
+  playing: bibleAudio.playing,
+  reference: bibleAudio.currentReference,
+  transition: bibleAudioLyricsTransition.value,
+  lyrics: bibleAudioLyrics.value
+}));
+
+defineExpose({ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups, bibleAudioTeleprompter, toggleBibleAudio: handleBibleAudioToggle, stopBibleAudio: () => bibleAudio.stop() });
 
 function openShareDialog() {
   const channels = props.shareChannels || [];
@@ -1127,16 +1145,18 @@ function showToast(message: string) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
+    <!-- 分屏时经文就在旁边高亮跟随，不占空间放底部提词器；全屏阅读时保留 -->
     <BibleAudioLyricsBar
-      v-if="bibleAudioEnabled && bibleAudio.active && bibleAudioLyrics"
+      v-if="bibleAudioEnabled && bibleAudio.active && bibleAudioLyrics && !split"
       :reference="bibleAudio.currentReference"
       :current-text="bibleAudioLyrics.current"
       :previous-text="bibleAudioLyrics.previous"
       :next-text="bibleAudioLyrics.next"
       :playing="bibleAudio.playing"
+      :transition="bibleAudioLyricsTransition"
       @tap="handleBibleAudioToggle"
     />
-    <BiblePreferencesDialog :open="preferencesOpen" :font-size="bibleFontSize" @font-size="handleBibleFontSizeLive" @close="preferencesOpen = false" />
+    <BiblePreferencesDialog :open="preferencesOpen" :font-size="bibleFontSize" :lyrics-transition="bibleAudioLyricsTransition" @font-size="handleBibleFontSizeLive" @lyrics-transition="handleBibleAudioLyricsTransition" @close="preferencesOpen = false" />
     <AppModal :open="!!pendingContext" title="发送上下文到哪个窗格？" content-class="bible-context-dialog" @close="pendingContext = null">
       <div class="bible-context-options"><p>检索结果会保留在原窗格。</p><button v-for="pane in panes.filter(item => item.id !== pendingContext?.sourcePaneId)" :key="pane.id" type="button" @click="chooseContextPane(pane.id)">{{ biblePaneLabel(panes.findIndex(item => item.id === pane.id)) }} 窗格 · {{ pane.view === 'home' ? '目录与检索' : pane.book.name }}</button></div>
     </AppModal>
@@ -1212,10 +1232,9 @@ function showToast(message: string) {
 .bible-share-actions button { min-height: 36px; padding: 0 14px; border: 1px solid #cbb797; border-radius: 9px; color: #6d5135; background: transparent; font: inherit; cursor: pointer; }
 .bible-share-actions button.primary { color: white; border-color: #80613f; background: #80613f; }
 .bible-share-actions button:disabled { opacity: .45; cursor: default; }
-.bible-workspace.compact .bible-topbar { padding-left: 10px; padding-right: 10px; padding-bottom: 6px; grid-template-columns: auto minmax(0, 1fr); }
-.bible-workspace.compact .bible-topbar-actions { grid-row: 1; grid-column: 2; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.bible-workspace.compact .bible-audio-controls { grid-row: 2; grid-column: 1 / -1; justify-self: stretch; }
-.bible-workspace.split.compact .bible-topbar { grid-template-columns: auto minmax(0, 1fr); padding-bottom: 0; }
-.bible-workspace.split.compact .bible-topbar-actions { grid-row: 1; grid-column: 2; }
+.bible-workspace.compact .bible-topbar { padding-left: 10px; padding-right: 10px; padding-bottom: 6px; grid-template-columns: auto minmax(0, 1fr) auto; }
+.bible-workspace.compact .bible-topbar-actions { grid-row: 1; grid-column: 3; max-width: 100%; justify-content: flex-end; gap: 5px; }
+.bible-workspace.compact .bible-resource-link { width: 32px; height: 32px; }
+.bible-workspace.split.compact .bible-topbar { padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } }
 </style>

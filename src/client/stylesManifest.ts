@@ -18,6 +18,7 @@ export const STYLE_DOMAIN_FILES = [
   "music-player.css",
   "sidebar.css",
   "chat-pane.css",
+  "bible-audio-lyrics.css",
   "messages.css",
   "message-content.css",
   "prayer.css",

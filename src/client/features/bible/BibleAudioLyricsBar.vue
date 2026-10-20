@@ -1,30 +1,41 @@
 <script setup lang="ts">
-// 有声圣经卡拉OK逐节条：当前节大字居中、上一/下一节淡显，视觉语言沿用音乐歌词条。
-// 纯展示组件：文本由工作区按当前朗读位置提供。
-import { ref, watch } from "vue";
+// 有声圣经卡拉OK提词器：当前句大字居中、上下句淡显，视觉语言沿用音乐歌词头。
+// 两种形态：bar = 工作区底部逐节条；chat = 只看聊天时悬浮在聊天室顶端的提词器（定位样式在全局 bible-audio-lyrics.css）。
+// 纯展示组件：文本与播放状态由调用方提供；点击始终交给调用方（暂停/继续）。
+import { computed, ref, watch } from "vue";
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   reference: string;
   currentText: string;
   previousText: string;
   nextText: string;
   playing: boolean;
-}>();
+  variant?: "bar" | "chat";
+  transition?: boolean;
+}>(), {
+  variant: "bar",
+  transition: true
+});
 
 defineEmits<{ tap: [] }>();
 
-// 节切换时轻微上滑淡入，让“滚动歌词”的感觉连续。
+const tapLabel = computed(() => props.playing ? `正在朗读 ${props.reference}，点击暂停` : `朗读已停在 ${props.reference}，点击继续`);
+
+// 句子切换的过渡键：文本变化时旧句上滑淡出、新句自下滑入变形归位；transition 关闭时硬切。
 const transitionKey = ref(0);
 watch(() => props.currentText, () => { transitionKey.value += 1; });
 </script>
 
 <template>
-  <button type="button" class="bible-audio-lyrics" :class="{ playing }" :aria-label="`正在朗读 ${reference}，点击暂停或继续`" @click="$emit('tap')">
+  <button type="button" class="bible-audio-lyrics" :class="[variant, { playing }]" :aria-label="tapLabel" @click="$emit('tap')">
     <span class="bible-audio-lyrics-reference">{{ reference }}</span>
-    <span class="bible-audio-lyrics-previous" aria-hidden="true">{{ previousText }}</span>
-    <Transition name="bible-audio-lyrics-swap" mode="out-in">
-      <span :key="transitionKey" class="bible-audio-lyrics-current">{{ currentText }}</span>
-    </Transition>
+    <span v-if="variant === 'bar'" class="bible-audio-lyrics-previous" aria-hidden="true">{{ previousText }}</span>
+    <span class="bible-audio-lyrics-current-wrap">
+      <Transition v-if="transition" name="bible-audio-lyrics-roll">
+        <span :key="transitionKey" class="bible-audio-lyrics-current">{{ currentText }}</span>
+      </Transition>
+      <span v-else :key="transitionKey" class="bible-audio-lyrics-current">{{ currentText }}</span>
+    </span>
     <span class="bible-audio-lyrics-next" aria-hidden="true">{{ nextText }}</span>
   </button>
 </template>
@@ -63,6 +74,7 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
   line-height: 1.3;
   color: rgba(255, 255, 255, .38);
 }
+.bible-audio-lyrics-current-wrap { position: relative; display: grid; width: 100%; justify-items: center; }
 .bible-audio-lyrics-current {
   display: block;
   max-width: 100%;
@@ -78,10 +90,12 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
   overflow: hidden;
 }
 .bible-audio-lyrics:not(.playing) .bible-audio-lyrics-current { color: rgba(255, 213, 160, .72); text-shadow: none; }
-.bible-audio-lyrics-swap-enter-active, .bible-audio-lyrics-swap-leave-active { transition: opacity 160ms ease, transform 160ms ease; }
-.bible-audio-lyrics-swap-enter-from { opacity: 0; transform: translateY(8px); }
-.bible-audio-lyrics-swap-leave-to { opacity: 0; transform: translateY(-8px); }
+/* 换句滑动变形：旧句缩小上浮淡出、新句自下方滑入归位，两句短暂交叠 */
+.bible-audio-lyrics-roll-leave-active { position: absolute; inset: 0; transition: transform 360ms cubic-bezier(.4, .1, .6, 1), opacity 280ms ease, filter 280ms ease; }
+.bible-audio-lyrics-roll-enter-active { transition: transform 440ms cubic-bezier(.22, .9, .26, 1), opacity 380ms ease, filter 380ms ease; }
+.bible-audio-lyrics-roll-enter-from { opacity: 0; transform: translateY(20px) scale(.955); filter: blur(3px); }
+.bible-audio-lyrics-roll-leave-to { opacity: 0; transform: translateY(-18px) scale(.93); filter: blur(3px); }
 @media (prefers-reduced-motion: reduce) {
-  .bible-audio-lyrics-swap-enter-active, .bible-audio-lyrics-swap-leave-active { transition: none; }
+  .bible-audio-lyrics-roll-enter-active, .bible-audio-lyrics-roll-leave-active { transition: none; }
 }
 </style>

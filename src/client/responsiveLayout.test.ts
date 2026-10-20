@@ -135,7 +135,7 @@ test("Bible minus-one workspace keeps both search modes and the full catalog ava
   assert.match(bibleHomePane, /matchingTopicHistory[\s\S]*?查看历史[\s\S]*?追加生成/);
   assert.match(app, /<BibleWorkspace[\s\S]*?:account-id="store\.account\?\.id \|\| 0"/);
   assert.match(app, /class="inline-bible-reader-link"[\s\S]*?openBibleReferenceInWorkspace/);
-  assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups \}\)/);
+  assert.match(bibleWorkspace, /defineExpose\(\{ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups, bibleAudioTeleprompter, toggleBibleAudio: handleBibleAudioToggle, stopBibleAudio: \(\) => bibleAudio\.stop\(\) \}\)/);
   assert.match(bibleReaderPane, /linkedTargetVerseKeys[\s\S]*?isTargetVerse/);
   assert.match(bibleWorkspace, /let catalogLoadPromise: Promise<void> \| null = null/);
   assert.match(bibleWorkspace, /if \(catalogLoadPromise\) \{[\s\S]*?await catalogLoadPromise;[\s\S]*?return;/);
