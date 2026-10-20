@@ -70,6 +70,7 @@ import type {
   ActorDTO
 } from "@shared/types";
 import { api, authHeaders, getToken, joinReception, login, register } from "./api";
+import { notifyNativeAppReady, setupNativeShell } from "./nativeShell";
 import StoryEntry from "./features/stories/StoryEntry.vue";
 import { parseBibleSessionPayload } from "./bibleSessionShare";
 import { extractBibleReferenceMatches, extractBibleReferencesFromText } from "./bibleReferences";
@@ -1361,6 +1362,7 @@ type VoicePayload = {
 };
 
 onMounted(async () => {
+  setupNativeShell({ onBackButton: closeTopmostOverlay });
   hydratePlayedRainEffectIds();
   mountMusicPlayer();
   document.addEventListener("pointerdown", closeTapPromptsFromOutside);
@@ -1380,6 +1382,7 @@ onMounted(async () => {
     return;
   } finally {
     appStarting.value = false;
+    void nextTick(() => notifyNativeAppReady());
   }
   if (store.account) {
     // Music data is not needed for the chat first paint. Restore playback
@@ -1424,6 +1427,61 @@ function reloadApplication() {
   window.location.reload();
 }
 
+// 安卓返回键与网页 Escape 共用的浮层关闭级联；
+// 返回 False 表示当前没有可关闭的浮层（原生侧将退出应用）。
+function closeTopmostOverlay(): boolean {
+  if (showChatToolsMenu.value) {
+    showChatToolsMenu.value = false;
+    return true;
+  }
+  if (bibleOpen.value) {
+    closeBibleWorkspace();
+    return true;
+  }
+  if (sermonWorkspaceOpen.value) {
+    sermonWorkspaceOpen.value = false;
+    return true;
+  }
+  if (previewMessage.value) {
+    closePreviewMessage();
+    return true;
+  }
+  if (musicScoreOpen.value) {
+    closeMusicScore();
+    return true;
+  }
+  if (appearanceImagePicker.value) {
+    closeAppearanceImagePicker();
+    return true;
+  }
+  if (selectedMember.value) {
+    selectedMember.value = null;
+    return true;
+  }
+  if (showMembers.value) {
+    showMembers.value = false;
+    membersCollapsed.value = true;
+    return true;
+  }
+  if (pendingChain.value) {
+    closeChainJoin();
+    return true;
+  }
+  if (showChainModal.value) {
+    closeChainModal();
+    return true;
+  }
+  if (showSettings.value) {
+    void closeSettingsPanel();
+    return true;
+  }
+  if (showAdmin.value) {
+    void closeAdminPanel();
+    return true;
+  }
+  return false;
+}
+
 function handleGlobalEscape(event: KeyboardEvent) {
   if (previewPinnedImage.value?.score && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
     if (previewMessage.value?.type !== "file") {
@@ -1433,43 +1491,7 @@ function handleGlobalEscape(event: KeyboardEvent) {
     }
   }
   if (event.key !== "Escape") return;
-  if (showChatToolsMenu.value) {
-    showChatToolsMenu.value = false;
-    return;
-  }
-  if (bibleFullscreen.value) {
-    closeBibleWorkspace();
-    return;
-  }
-  if (sermonWorkspaceOpen.value) {
-    sermonWorkspaceOpen.value = false;
-    return;
-  }
-  if (previewMessage.value) {
-    closePreviewMessage();
-    return;
-  }
-  if (musicScoreOpen.value) {
-    closeMusicScore();
-    return;
-  }
-  if (appearanceImagePicker.value) {
-    closeAppearanceImagePicker();
-    return;
-  }
-  if (pendingChain.value) {
-    closeChainJoin();
-    return;
-  }
-  if (showChainModal.value) {
-    closeChainModal();
-    return;
-  }
-  if (showSettings.value) {
-    void closeSettingsPanel();
-    return;
-  }
-  if (showAdmin.value) void closeAdminPanel();
+  closeTopmostOverlay();
 }
 
 watch(

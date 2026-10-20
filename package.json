@@ -54,6 +54,11 @@
     "verify:full": "npm run check:public-tree && npm run check:release && npm run lint && npm run check && npm run test:all && npm run build"
   },
   "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6",
     "@fastify/compress": "^9.1.1",
     "@fastify/cors": "^10.1.0",
     "@fastify/multipart": "^9.0.3",
@@ -85,6 +90,7 @@
     "zod": "^3.25.64"
   },
   "devDependencies": {
+    "@capacitor/cli": "^7.6.9",
     "@playwright/test": "^1.61.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^7.6.13",
