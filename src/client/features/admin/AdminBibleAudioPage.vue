@@ -286,7 +286,6 @@ onMounted(load);
       <div class="admin-bible-audio-books" :aria-label="`${version.name} 已上传书卷`">
         <span v-for="code in BIBLE_BOOK_CODES" :key="code" class="admin-bible-audio-book" :class="{ uploaded: version.books.includes(code) }">{{ code }}</span>
       </div>
-      <p class="admin-bible-audio-copyright">{{ version.copyright }}</p>
     </section>
   </div>
 </template>
@@ -326,7 +325,6 @@ onMounted(load);
 .admin-bible-audio-books { display: flex; flex-wrap: wrap; gap: 4px; }
 .admin-bible-audio-book { min-width: 34px; padding: 2px 4px; border-radius: 5px; background: #f1ede6; color: #b0a89c; font-size: 10px; font-weight: 700; text-align: center; font-variant-numeric: tabular-nums; }
 .admin-bible-audio-book.uploaded { background: #e3f3e8; color: #2f7d4f; }
-.admin-bible-audio-copyright { margin: 0; font-size: 11px; color: #8a8a8e; }
 .admin-bible-audio-spin { animation: admin-bible-audio-rotate 1s linear infinite; }
 @keyframes admin-bible-audio-rotate { to { transform: rotate(360deg); } }
 </style>

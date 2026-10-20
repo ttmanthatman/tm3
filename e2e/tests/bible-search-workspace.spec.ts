@@ -103,8 +103,11 @@ for (const engine of ["chromium", "webkit"] as const) {
       const settings = page.getByRole("dialog", { name: "圣经偏好设置", exact: true });
       await settings.getByLabel("发送经文时显示版本信息").check();
       await settings.getByLabel("发送经文前显示确认窗口").uncheck();
-      await settings.getByLabel("默认检索方式").selectOption("text");
-      await settings.getByLabel("经文字号").fill("23");
+      await settings.getByRole("radio", { name: "文本检索" }).check();
+      const fontSize = settings.getByLabel("经文字号");
+      await expect(fontSize).toHaveValue("20");
+      for (let step = 0; step < 3; step += 1) await settings.getByRole("button", { name: "增大字号" }).click();
+      await expect(fontSize).toHaveValue("23");
       await settings.getByRole("button", { name: "保存偏好", exact: true }).click();
       await expect(settings).toBeHidden();
       await home.getByRole("button", { name: "发送所选", exact: true }).click();

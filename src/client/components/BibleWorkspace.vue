@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { Columns2, Maximize2, Minimize2, PanelsTopLeft, Rows2, Settings2, Share2, X } from "lucide-vue-next";
+import { Columns2, Maximize2, Minimize2, PanelsTopLeft, Play, Rows2, Settings2, Share2, X } from "lucide-vue-next";
 import type {
   BibleBookCatalogDTO,
   BibleCatalogDTO,
@@ -40,6 +40,7 @@ import NoteManager from "../features/bible/notes/NoteManager.vue";
 import CopyworkManager from "../features/bible/copywork/CopyworkManager.vue";
 import BibleHomePane from "../features/bible/BibleHomePane.vue";
 import BiblePreferencesDialog from "../features/bible/BiblePreferencesDialog.vue";
+import { BIBLE_FONT_DEFAULT, bibleFontSizeStorageKey, clampBibleFontSize } from "../features/bible/bibleFont";
 import AppModal from "./ui/AppModal.vue";
 import { provideBibleAccountState } from "../features/bible/useBibleAccountState";
 import BibleReaderPane from "./BibleReaderPane.vue";
@@ -128,11 +129,8 @@ const screenHistory = ref<Record<string, { state: BiblePaneState; scrollTop: num
 const splitContainer = ref<HTMLElement | null>(null);
 let paneSequence = 0;
 let separatorDrag: { index: number; start: number; sizes: number[]; extent: number } | null = null;
-const minBibleFontSize = 16;
-const maxBibleFontSize = 40;
-const defaultBibleFontSize = 20;
-const bibleFontSize = ref(defaultBibleFontSize);
-const showBibleFontMenu = ref(false);
+const bibleFontSize = ref(BIBLE_FONT_DEFAULT);
+let bibleFontSizeSaveTimer = 0;
 const searchHistory = ref<BibleSearchHistoryEntry[]>([]);
 const preferencesOpen = ref(false);
 const pendingContext = ref<{ sourcePaneId: string; lookup: BibleLookupDTO; matches: BibleTextMatchRangeDTO[] } | null>(null);
@@ -158,23 +156,27 @@ let serverSyncTimer = 0;
 let pendingWorkspaceSyncJson = "";
 let lastSyncedWorkspaceJson = "";
 
-function clampBibleFontSize(value: number) {
-  if (!Number.isFinite(value)) return defaultBibleFontSize;
-  return Math.min(maxBibleFontSize, Math.max(minBibleFontSize, Math.round(value)));
-}
-
-function bibleFontSizeStorageKey(accountId: number) {
-  return `team-chat-bible-font-size:${accountId}`;
-}
-
 function loadBibleFontSize(accountId: number) {
   const saved = localStorage.getItem(bibleFontSizeStorageKey(accountId));
-  bibleFontSize.value = preferences.value?.fontSize || (saved ? clampBibleFontSize(Number(saved)) : defaultBibleFontSize);
+  bibleFontSize.value = preferences.value?.fontSize || (saved ? clampBibleFontSize(Number(saved)) : BIBLE_FONT_DEFAULT);
 }
 
-function adjustBibleFontSize(delta: number) {
-  const fontSize = clampBibleFontSize(bibleFontSize.value + delta);
-  void savePreferences({ fontSize }).catch(cause => showToast(cause instanceof Error ? cause.message : "字号保存失败"));
+// 偏好面板里的字号调节：立即应用到阅读区，保存按 500ms 合并；撞上「正在保存」稍后自动重试。
+function handleBibleFontSizeLive(size: number) {
+  const fontSize = clampBibleFontSize(size);
+  if (fontSize !== bibleFontSize.value) bibleFontSize.value = fontSize;
+  scheduleBibleFontSizeSave();
+}
+
+function scheduleBibleFontSizeSave(retry = 0) {
+  if (bibleFontSizeSaveTimer) window.clearTimeout(bibleFontSizeSaveTimer);
+  bibleFontSizeSaveTimer = window.setTimeout(() => {
+    bibleFontSizeSaveTimer = 0;
+    void savePreferences({ fontSize: bibleFontSize.value }).catch(() => {
+      if (retry < 2) scheduleBibleFontSizeSave(retry + 1);
+      else showToast("字号保存失败，请稍后重试");
+    });
+  }, 500);
 }
 
 watch(() => props.accountId, loadBibleFontSize, { immediate: true });
@@ -247,17 +249,9 @@ watch(
   { deep: true }
 );
 
-function handleWorkspacePointerDown(event: PointerEvent) {
-  const target = event.target instanceof Element ? event.target : null;
-  if (showBibleFontMenu.value && !target?.closest("[data-bible-font-menu]")) {
-    showBibleFontMenu.value = false;
-  }
-}
-
 onMounted(() => {
   componentMounted = true;
   window.addEventListener("pagehide", persistWorkspaceState);
-  document.addEventListener("pointerdown", handleWorkspacePointerDown);
   window.addEventListener("resize", handleViewportResize);
   void restoreWorkspaceState();
   catalogPreloadTimer = window.setTimeout(() => void ensureCatalog(), 500);
@@ -265,13 +259,13 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("pagehide", persistWorkspaceState);
-  document.removeEventListener("pointerdown", handleWorkspacePointerDown);
   window.removeEventListener("resize", handleViewportResize);
   persistWorkspaceState();
   void flushWorkspaceServerSync();
   if (toastTimer) window.clearTimeout(toastTimer);
   if (persistTimer) window.clearTimeout(persistTimer);
   if (catalogPreloadTimer) window.clearTimeout(catalogPreloadTimer);
+  if (bibleFontSizeSaveTimer) window.clearTimeout(bibleFontSizeSaveTimer);
 });
 
 async function restoreWorkspaceState() {
@@ -785,14 +779,7 @@ function toggleBibleAudioFollow() {
   localStorage.setItem(bibleAudioFollowStorageKey(props.accountId), bibleAudioFollow.value ? "true" : "false");
 }
 
-const bibleAudioCompact = computed(() => workspaceWidth.value <= 560);
-const bibleAudioResumeLabel = computed(() => {
-  const state = bibleAudio.resumeState;
-  const version = bibleAudioDefaultVersion.value;
-  if (!state || !version || state.versionId !== version.versionId || bibleAudio.active) return null;
-  const name = allBooks.value.find((book) => book.code === state.book)?.name || state.book;
-  return `续播 ${name} ${state.chapter}${state.verse > 0 ? `:${state.verse}` : ""}`;
-});
+const bibleAudioCompact = computed(() => workspaceWidth.value <= 600);
 
 function activeReaderPane() {
   const isReader = (pane: BiblePaneState) => pane.view !== "home" && pane.view !== "chapters";
@@ -819,6 +806,20 @@ function handleBibleAudioToggle() {
 function handleBibleAudioVerseSeek(paneId: string, chapter: number, verse: number) {
   const pane = panes.value.find((item) => item.id === paneId);
   if (pane) bibleAudio.seekToVerse(pane.book.code, chapter, verse);
+}
+
+// 阅读窗格 footer 的「播放」：朗读该窗格当前选中的经文
+function handleBibleAudioPlaySelection(paneId: string) {
+  const selection = paneRefs.get(paneId)?.selectedLookups() || [];
+  if (selection.length) bibleAudio.startFromLookups(selection);
+}
+
+// 播放器停止播放（暂停）后，点击控件与歌词条以外任意处即收起播放会话
+function handleBibleAudioDismiss(event: PointerEvent) {
+  if (!bibleAudio.active || bibleAudio.playing) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(".bible-audio-controls, .bible-audio-lyrics")) return;
+  bibleAudio.stop();
 }
 
 /** 消息长按「播放经文」：打开首段所在位置，然后依次朗读全部引用 */
@@ -982,10 +983,19 @@ function showToast(message: string) {
     @touchstart.passive="handleTouchStart"
     @touchend.passive="handleTouchEnd"
     @touchcancel.passive="cancelSwipe"
+    @pointerdown.passive="handleBibleAudioDismiss"
   >
     <header class="bible-topbar">
       <button type="button" class="bible-topbar-button layout-control" aria-label="关闭圣经" title="关闭圣经" @click="emit('close')"><X :size="20" /></button>
       <div class="bible-topbar-actions">
+        <button
+          v-if="bibleAudioEnabled && !bibleAudio.active"
+          type="button"
+          class="bible-resource-link"
+          aria-label="播放有声圣经"
+          title="播放有声圣经"
+          @click="handleBibleAudioToggle"
+        ><Play :size="19" /></button>
         <button type="button" class="bible-resource-link" aria-label="圣经偏好设置" title="偏好设置" @click="preferencesOpen = true"><Settings2 :size="19" /></button>
         <button
           type="button"
@@ -1003,21 +1013,6 @@ function showToast(message: string) {
           :title="effectiveSplitOrientation === 'columns' ? '上下分屏' : '左右分屏'"
           @click="toggleSplitOrientation"
         ><Rows2 v-if="effectiveSplitOrientation === 'columns'" :size="19" /><Columns2 v-else :size="19" /></button>
-        <div class="bible-font-control" data-bible-font-menu>
-          <button
-            v-if="!showBibleFontMenu"
-            type="button"
-            class="bible-font-trigger"
-            :aria-label="`经文字体大小，当前 ${bibleFontSize} 号`"
-            aria-expanded="false"
-            @click.stop="showBibleFontMenu = true"
-          >字</button>
-          <div v-else class="bible-font-stepper" role="group" :aria-label="`经文字体大小，当前 ${bibleFontSize} 号`" @click.stop>
-            <button type="button" :disabled="bibleFontSize <= minBibleFontSize" @click="adjustBibleFontSize(-1)">小</button>
-            <span aria-live="polite">{{ bibleFontSize }}</span>
-            <button type="button" :disabled="bibleFontSize >= maxBibleFontSize" @click="adjustBibleFontSize(1)">大</button>
-          </div>
-        </div>
         <button
           v-if="view === 'reader' && panes.length"
           type="button"
@@ -1029,7 +1024,7 @@ function showToast(message: string) {
         <button v-if="splitAvailable" type="button" class="bible-topbar-button layout-control" :aria-label="split ? '圣经全屏' : '缩小圣经，恢复分屏'" :title="split ? '圣经全屏' : '恢复分屏'" @click="split ? emit('expand') : emit('shrink')"><Maximize2 v-if="split" :size="20" /><Minimize2 v-else :size="20" /></button>
       </div>
       <BibleAudioControls
-        v-if="bibleAudioEnabled"
+        v-if="bibleAudioEnabled && bibleAudio.active"
         :active="bibleAudio.active"
         :playing="bibleAudio.playing"
         :loading="bibleAudio.loading"
@@ -1041,18 +1036,14 @@ function showToast(message: string) {
         :can-next-chapter="bibleAudio.canNextChapter"
         :compact="bibleAudioCompact"
         :follow-enabled="bibleAudioFollow"
-        :resume-label="bibleAudioResumeLabel"
         :error="bibleAudio.error"
         @toggle="handleBibleAudioToggle"
         @previous-verse="bibleAudio.previousVerse()"
         @next-verse="bibleAudio.nextVerse()"
         @previous-chapter="bibleAudio.previousChapter()"
         @next-chapter="bibleAudio.nextChapter()"
-        @seek="bibleAudio.seekChapterMs($event)"
         @cycle-rate="bibleAudio.cycleRate()"
         @toggle-follow="toggleBibleAudioFollow"
-        @resume="bibleAudio.resume()"
-        @stop="bibleAudio.stop()"
       />
     </header>
 
@@ -1107,7 +1098,9 @@ function showToast(message: string) {
           :update-favorites="updateFavorites"
           :playing-verse-key="bibleAudio.playingVerseKey"
           :audio-seekable="bibleAudioEnabled && bibleAudio.active"
+          :audio-enabled="bibleAudioEnabled"
           @verse-seek="handleBibleAudioVerseSeek"
+          @play-selection="handleBibleAudioPlaySelection"
           @home="returnHome(pane.id)"
           @activate="activePaneId = $event"
           @close="closeBiblePane"
@@ -1143,7 +1136,7 @@ function showToast(message: string) {
       :playing="bibleAudio.playing"
       @tap="handleBibleAudioToggle"
     />
-    <BiblePreferencesDialog :open="preferencesOpen" @close="preferencesOpen = false" />
+    <BiblePreferencesDialog :open="preferencesOpen" :font-size="bibleFontSize" @font-size="handleBibleFontSizeLive" @close="preferencesOpen = false" />
     <AppModal :open="!!pendingContext" title="发送上下文到哪个窗格？" content-class="bible-context-dialog" @close="pendingContext = null">
       <div class="bible-context-options"><p>检索结果会保留在原窗格。</p><button v-for="pane in panes.filter(item => item.id !== pendingContext?.sourcePaneId)" :key="pane.id" type="button" @click="chooseContextPane(pane.id)">{{ biblePaneLabel(panes.findIndex(item => item.id === pane.id)) }} 窗格 · {{ pane.view === 'home' ? '目录与检索' : pane.book.name }}</button></div>
     </AppModal>
@@ -1189,19 +1182,14 @@ function showToast(message: string) {
 .bible-workspace.open { transform: translateX(0); pointer-events: auto; visibility: visible; }
 .bible-workspace.split { position: relative; inset: auto; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; z-index: 5; transition: none; }
 .bible-topbar-button.layout-control { min-width: 32px; min-height: 44px; justify-content: center; }
-.bible-topbar { position: relative; min-height: var(--bible-topbar-height); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); }
+.bible-topbar { position: relative; min-height: var(--bible-topbar-height); padding: var(--safe-top) 14px 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 10px; align-items: center; border-bottom: 1px solid rgba(104, 76, 45, .18); background: rgba(250, 246, 237, .96); box-shadow: 0 4px 18px rgba(74, 52, 29, .08); container: bible-topbar / inline-size; }
 .bible-topbar-button { border: 0; background: transparent; color: #725537; display: inline-flex; align-items: center; gap: 3px; font: inherit; font-weight: 700; padding: 10px 0; cursor: pointer; }
-.bible-topbar-actions { grid-column: 2; justify-self: end; display: flex; align-items: center; gap: 10px; }
-.bible-font-control { flex: 0 0 auto; }
-.bible-resource-link, .bible-font-trigger { flex: 0 0 auto; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
+.bible-topbar-actions { grid-column: 3; display: flex; align-items: center; gap: 10px; }
+.bible-workspace .bible-audio-controls { grid-row: 1; grid-column: 2; justify-self: center; }
+.bible-resource-link { flex: 0 0 auto; width: 36px; height: 36px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; color: #725537; background: rgba(128, 97, 63, .09); font: inherit; font-size: 18px; font-weight: 800; line-height: 1; cursor: pointer; }
 .bible-resource-link { display: grid; place-items: center; padding: 0; text-decoration: none; cursor: pointer; }
 .bible-resource-link:disabled { opacity: .36; cursor: not-allowed; }
-.bible-resource-link:hover, .bible-font-trigger:hover { background: rgba(128, 97, 63, .16); }
-.bible-font-stepper { min-height: 36px; display: flex; align-items: center; gap: 4px; }
-.bible-font-stepper button, .bible-font-stepper span { min-width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center; }
-.bible-font-stepper button { border: 0; padding: 0 7px; color: #654a31; background: rgba(128, 97, 63, .12); font: inherit; font-size: 14px; font-weight: 800; cursor: pointer; }
-.bible-font-stepper button:disabled { opacity: .4; cursor: not-allowed; }
-.bible-font-stepper span { border: 1px solid rgba(128, 97, 63, .28); color: #4f3b29; background: #fffaf1; font-size: 13px; font-weight: 800; }
+.bible-resource-link:hover { background: rgba(128, 97, 63, .16); }
 .bible-split-reader { min-width: 0; min-height: 0; display: grid; overflow: hidden; background: #d9cbb8; }
 .bible-pane-separator { position: relative; z-index: 4; min-width: 0; min-height: 0; display: grid; place-items: center; touch-action: none; outline: none; background: rgba(112, 77, 42, .12); }
 .bible-pane-separator::before { content: ""; position: absolute; inset: 0; background: transparent; transition: background-color 140ms ease; }
@@ -1226,7 +1214,7 @@ function showToast(message: string) {
 .bible-share-actions button:disabled { opacity: .45; cursor: default; }
 .bible-workspace.compact .bible-topbar { padding-left: 10px; padding-right: 10px; padding-bottom: 6px; grid-template-columns: auto minmax(0, 1fr); }
 .bible-workspace.compact .bible-topbar-actions { grid-row: 1; grid-column: 2; max-width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.bible-workspace.compact .bible-font-stepper { position: absolute; right: 10px; top: calc(var(--safe-top) + 10px); z-index: 2; padding: 3px; border-radius: 10px; background: rgba(250, 246, 237, .98); box-shadow: 0 8px 24px rgba(74, 52, 29, .18); }
+.bible-workspace.compact .bible-audio-controls { grid-row: 2; grid-column: 1 / -1; justify-self: stretch; }
 .bible-workspace.split.compact .bible-topbar { grid-template-columns: auto minmax(0, 1fr); padding-bottom: 0; }
 .bible-workspace.split.compact .bible-topbar-actions { grid-row: 1; grid-column: 2; }
 @media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } }

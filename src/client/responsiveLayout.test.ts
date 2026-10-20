@@ -9,6 +9,7 @@ const store = fs.readFileSync(new URL("./store.ts", import.meta.url), "utf8");
 const lyricsHeader = fs.readFileSync(new URL("./components/MusicLyricsHeader.vue", import.meta.url), "utf8");
 const bibleWorkspace = fs.readFileSync(new URL("./components/BibleWorkspace.vue", import.meta.url), "utf8");
 const bibleHomePane = fs.readFileSync(new URL("./features/bible/BibleHomePane.vue", import.meta.url), "utf8");
+const biblePreferencesDialog = fs.readFileSync(new URL("./features/bible/BiblePreferencesDialog.vue", import.meta.url), "utf8");
 const bibleSearchHistory = fs.readFileSync(new URL("./features/bible/BibleSearchHistory.vue", import.meta.url), "utf8");
 const bibleReaderPane = fs.readFileSync(new URL("./components/BibleReaderPane.vue", import.meta.url), "utf8");
 const overflowMarquee = fs.readFileSync(new URL("./components/OverflowMarquee.vue", import.meta.url), "utf8");
@@ -734,11 +735,15 @@ test("Bible workspace includes copyworks and notes beside catalog, search and fa
   assert.doesNotMatch(bibleHomePane, /favoritesCollapsed|team-chat-bible-favorites-collapsed/);
 });
 
-test("Bible workspace keeps translation selectors in panes and offers a persistent font stepper", () => {
+test("Bible workspace keeps translation selectors in panes and moves font sizing into the preferences dialog", () => {
   assert.doesNotMatch(bibleWorkspace, /label="当前窗格译本"/);
   assert.doesNotMatch(bibleWorkspace, /窗格阅读<|小故事的书房<|<Sparkles/);
-  assert.match(bibleWorkspace, /team-chat-bible-font-size/);
-  assert.match(bibleWorkspace, /adjustBibleFontSize\(-1\)[\s\S]*?adjustBibleFontSize\(1\)/);
+  assert.doesNotMatch(bibleWorkspace, /bible-font-trigger|bible-font-stepper|data-bible-font-menu/);
+  assert.match(bibleWorkspace, /bibleFontSizeStorageKey|team-chat-bible-font-size/);
+  assert.match(bibleWorkspace, /handleBibleFontSizeLive[\s\S]*?scheduleBibleFontSizeSave/);
+  assert.match(biblePreferencesDialog, /applyFontSize\(size - 1\)[\s\S]*?applyFontSize\(size \+ 1\)/);
+  assert.match(biblePreferencesDialog, /"font-size": \[size: number\]/);
+  assert.match(biblePreferencesDialog, /aria-label="经文字号"/);
   assert.match(bibleReaderPane, /font-size: var\(--bible-font-size\)/);
 });
 
