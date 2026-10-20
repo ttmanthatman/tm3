@@ -67,6 +67,12 @@ export type MessageSerializationService = {
   buildMessageSerializeBatch(rows: Array<Message & { sender: Actor }>, channelId: number, viewerAccountId: number): Promise<MessageSerializeBatch>;
 };
 
+function indexSourceMessages(sourceIds: number[], sourceRows: Message[]) {
+  const sourceMessages = new Map<number, Message | null>(sourceIds.map((id) => [id, null]));
+  for (const row of sourceRows) sourceMessages.set(row.id, row);
+  return sourceMessages;
+}
+
 export function createMessageSerializationService(deps: MessageSerializationDependencies): MessageSerializationService {
   const {
     prisma,
@@ -468,8 +474,7 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         )
       ];
       const sourceRows = sourceIds.length ? await prisma.message.findMany({ where: { id: { in: sourceIds }, channelId, type: "prayer" } }) : [];
-      const sourceMessages = new Map<number, Message | null>();
-      for (const sourceId of sourceIds) sourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
+      const sourceMessages = indexSourceMessages(sourceIds, sourceRows);
       const actionMessageIds = [
         ...new Set(
           prayerRows.map((message) => {
@@ -539,10 +544,8 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
           : Promise.resolve([]),
         sourceIds.length ? prisma.message.findMany({ where: { id: { in: sourceIds }, channelId, type: "grace" } }) : Promise.resolve([])
       ]);
-      const voiceSourceMessages = new Map<number, Message | null>();
-      for (const sourceId of graceVoiceSourceIds) voiceSourceMessages.set(sourceId, voiceSourceRows.find((row) => row.id === sourceId) ?? null);
-      const sourceMessages = new Map<number, Message | null>();
-      for (const sourceId of sourceIds) sourceMessages.set(sourceId, sourceRows.find((row) => row.id === sourceId) ?? null);
+      const voiceSourceMessages = indexSourceMessages(graceVoiceSourceIds, voiceSourceRows);
+      const sourceMessages = indexSourceMessages(sourceIds, sourceRows);
       const actionMessageIds = [
         ...new Set(
           graceRows.map((message) => {

@@ -5113,7 +5113,6 @@ const composerBindings = computed(() => ({
   previewProgress: previewProgress.value,
   audioPreviewDurationMs: audioPreviewDurationMs.value,
   voiceSending: voiceSending.value,
-  previewAudioEl,
   replyPreviewText,
   removeMusicMention,
   removeListenMention,
@@ -5402,7 +5401,7 @@ const messageRowBindings = {
           </template>
 
           <template v-else-if="aiSettingsTab === 'asr'">
-            <AiAsrSettingsPanel :edit="aiSettingsEdit.asr" :configured="aiSettings?.asr" />
+            <AiAsrSettingsPanel v-model:edit="aiSettingsEdit.asr" :configured="aiSettings?.asr" />
           </template>
 
           <template v-else>
@@ -6366,6 +6365,7 @@ const messageRowBindings = {
         v-model:composer-focused="composerFocused"
         v-model:keep-original-images="keepOriginalImages"
         v-model:preview-playing="previewPlaying"
+        v-model:preview-audio-el="previewAudioEl"
         v-bind="composerBindings"
       />
     </section>

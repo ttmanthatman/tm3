@@ -255,9 +255,9 @@ function localProgressKey(bookId: number) {
 }
 
 function cachedProgress(book: BookDTO): number {
-  if (book.progress != null) return book.progress;
+  if (book.progress !== null && book.progress !== undefined) return book.progress;
   const raw = localStorage.getItem(localProgressKey(book.id));
-  const value = raw == null ? 0 : Number(raw);
+  const value = raw === null ? 0 : Number(raw);
   return Number.isFinite(value) && value > 0.005 && value < 0.995 ? value : 0;
 }
 
@@ -586,7 +586,7 @@ function onRelocate(event: CustomEvent<RelocateDetail>) {
   const starts = view.getSectionFractions();
   const global = style.value.flow === "paginated" && view.renderer.page !== undefined && view.renderer.pages !== undefined
     ? paginatedBookFraction(starts, index, view.renderer.page, view.renderer.pages)
-    : detail.section?.current != null
+    : detail.section?.current !== null && detail.section?.current !== undefined
     ? Math.max(0, Math.min(0.9999, detail.fraction))
     : globalFraction(starts, index, detail.fraction);
   sliderValue.value = global;
@@ -844,7 +844,7 @@ function onDocTouchStart(event: TouchEvent) {
 
 // 滚动版式的触摸跨节；分页的滑动手势由 foliate 分页器自带处理（带速度吸附）
 function onDocTouchMove(event: TouchEvent) {
-  if (docTouchY == null || docTouchStartX == null || docTouchStartY == null) return;
+  if (docTouchY === null || docTouchStartX === null || docTouchStartY === null) return;
   const touch = event.touches[0];
   const x = touch?.clientX ?? docTouchStartX;
   const y = event.touches[0]?.clientY ?? docTouchY;
@@ -967,7 +967,7 @@ void loadShelf().then(() => {
   // 返回图书室自动打开上次读的书；进度恢复走既有 cachedProgress 逻辑。
   // 书被删除（不在书架）时留在书架页。
   const raw = localStorage.getItem(`${LAST_READ_KEY}.${store.account?.id ?? "guest"}`);
-  const id = raw == null ? Number.NaN : Number(raw);
+  const id = raw === null ? Number.NaN : Number(raw);
   const book = Number.isFinite(id) ? books.value.find((b) => b.id === id) : undefined;
   if (book && bookDownloadState(book) === "ready") void openBook(book);
 });

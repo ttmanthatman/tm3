@@ -72,7 +72,7 @@ export function useMusicSleepTimer(options: UseMusicSleepTimerOptions) {
 
   watch(options.currentTrackId, (trackId, previousTrackId) => {
     if (kind.value !== "tracks") return;
-    if (trackId == null || previousTrackId == null || trackId === previousTrackId) return;
+    if (trackId === null || trackId === undefined || previousTrackId === null || previousTrackId === undefined || trackId === previousTrackId) return;
     remainingTracks.value -= 1;
     if (remainingTracks.value <= 0) fire();
   });

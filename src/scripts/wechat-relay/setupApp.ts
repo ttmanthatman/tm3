@@ -204,14 +204,17 @@ export function applyRelayConnectionWithPkexec(connection: RelaySetupConnection)
     let stdout = "";
     let stderr = "";
     let settled = false;
-    let timeout: NodeJS.Timeout | undefined;
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
-      if (timeout) clearTimeout(timeout);
+      clearTimeout(timeout);
       if (error) reject(error);
       else resolve();
     };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish(new Error("等待管理员授权超时，配置没有改变"));
+    }, 90_000);
     const append = (current: string, chunk: Buffer) => `${current}${chunk.toString("utf8")}`.slice(-16_384);
     child.stdout.on("data", (chunk: Buffer) => { stdout = append(stdout, chunk); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = append(stderr, chunk); });
@@ -231,10 +234,6 @@ export function applyRelayConnectionWithPkexec(connection: RelaySetupConnection)
       if (code === 126 || code === 127) return finish(new Error("管理员授权已取消，配置没有改变"));
       finish(new Error(stderr.trim() || "保存配置或重启微信转发服务失败，原配置已恢复"));
     });
-    timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error("等待管理员授权超时，配置没有改变"));
-    }, 90_000);
     child.stdin.end(JSON.stringify({ baseUrl: connection.baseUrl, token: connection.token }));
   });
 }

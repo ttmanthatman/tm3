@@ -21,7 +21,7 @@ export function createBookProgressSync(options: Options) {
     catch { publish(session, { status: "storage-error" }); return false; }
   };
   const location = (bookId: number, fraction: number | null | undefined, locator?: unknown): BookLocation | undefined => {
-    if (fraction == null) return;
+    if (fraction === null || fraction === undefined) return;
     const parsed = bookLocatorSchema.safeParse(locator);
     return { bookId, fraction, ...(parsed.success ? { locator: parsed.data } : {}) };
   };

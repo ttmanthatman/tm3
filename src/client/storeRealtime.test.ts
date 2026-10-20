@@ -72,14 +72,14 @@ test("transport reconnect reports offline state and reloads messages missed whil
 
   const history = [message(1)];
   const originalFetch = globalThis.fetch;
-  let clientSocket: { disconnect: () => unknown } | undefined;
+  const clientConnection: { socket?: { disconnect: () => unknown } } = {};
   globalThis.fetch = async () =>
     new Response(JSON.stringify({ messages: history }), {
       status: 200,
       headers: { "content-type": "application/json" }
     });
   context.after(async () => {
-    clientSocket?.disconnect();
+    clientConnection.socket?.disconnect();
     globalThis.fetch = originalFetch;
     await new Promise<void>((resolve) => ioServer.close(() => resolve()));
     httpServer.close();
@@ -99,7 +99,7 @@ test("transport reconnect reports offline state and reloads messages missed whil
   await waitFor(() => store.connectionState === "connected", "initial socket connection");
 
   const socket = toRaw(store.socket)!;
-  clientSocket = socket;
+  clientConnection.socket = socket;
   socket.io.engine.close();
   await waitFor(() => !socket.connected, "transport disconnection");
   assert.equal(store.connectionState, "offline");
@@ -162,14 +162,14 @@ test("pinned:updated applies only to its own channel", async (context) => {
   });
 
   const originalFetch = globalThis.fetch;
-  let clientSocket: { disconnect: () => unknown } | undefined;
+  const clientConnection: { socket?: { disconnect: () => unknown } } = {};
   globalThis.fetch = async () =>
     new Response(JSON.stringify([]), {
       status: 200,
       headers: { "content-type": "application/json" }
     });
   context.after(async () => {
-    clientSocket?.disconnect();
+    clientConnection.socket?.disconnect();
     globalThis.fetch = originalFetch;
     await new Promise<void>((resolve) => ioServer.close(() => resolve()));
     httpServer.close();
@@ -190,7 +190,7 @@ test("pinned:updated applies only to its own channel", async (context) => {
   store.pinned = pinnedOne;
   store.connectSocket();
   await waitFor(() => store.connectionState === "connected", "initial socket connection");
-  clientSocket = toRaw(store.socket)!;
+  clientConnection.socket = toRaw(store.socket)!;
 
   // Another channel's pinned update must not touch the current view.
   serverSocket!.emit("pinned:updated", { channelId: 2, pinned: pinnedTwo });
@@ -211,7 +211,7 @@ test("pinned:updated applies only to its own channel", async (context) => {
   assert.equal(store.channels.find((ch) => ch.id === 1)?.pinned, null);
   assert.equal(store.channels.find((ch) => ch.id === 2)?.pinned?.id, pinnedTwo.id);
 
-  clientSocket?.disconnect();
+  clientConnection.socket?.disconnect();
 });
 
 test("transport reconnect reloads channels and backfills the pinned notice", async (context) => {
@@ -230,7 +230,7 @@ test("transport reconnect reloads channels and backfills the pinned notice", asy
 
   const pinned = { id: 5, kind: "notice", title: "Pinned", version: 1 } as PinnedDTO;
   const originalFetch = globalThis.fetch;
-  let clientSocket: { disconnect: () => unknown } | undefined;
+  const clientConnection: { socket?: { disconnect: () => unknown } } = {};
   let channelRequests = 0;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
@@ -251,7 +251,7 @@ test("transport reconnect reloads channels and backfills the pinned notice", asy
     throw new Error(`unexpected fetch ${url}`);
   }) as typeof fetch;
   context.after(async () => {
-    clientSocket?.disconnect();
+    clientConnection.socket?.disconnect();
     globalThis.fetch = originalFetch;
     await new Promise<void>((resolve) => ioServer.close(() => resolve()));
     httpServer.close();
@@ -269,7 +269,7 @@ test("transport reconnect reloads channels and backfills the pinned notice", asy
   assert.equal(store.pinned, null);
 
   const socket = toRaw(store.socket)!;
-  clientSocket = socket;
+  clientConnection.socket = socket;
   socket.io.engine.close();
   await waitFor(() => !socket.connected, "transport disconnection");
   await waitFor(() => socket.connected, "transport reconnection");

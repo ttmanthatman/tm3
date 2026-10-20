@@ -121,9 +121,8 @@ function createHarness() {
         return row && row.channelId === where.channelId && row.type === where.type ? row : null;
       }),
       findMany: counted("message.findMany", async ({ where }: { where: { id: { in: number[] }; channelId: number; type: string } }) =>
-        where.id.in
-          .map((id) => state.messagesById.get(id))
-          .filter((row): row is Message => !!row && row.channelId === where.channelId && row.type === where.type)),
+        [...state.messagesById.values()]
+          .filter((row) => where.id.in.includes(row.id) && row.channelId === where.channelId && row.type === where.type)),
       findUnique: counted("message.findUnique", async ({ where, include }: { where: { id: number }; include?: Record<string, unknown> }) => {
         if (include) findUniqueIncludes.push(include);
         return state.messagesById.get(where.id) ?? null;
@@ -599,6 +598,47 @@ test("batch and per-message serialization produce identical DTOs", async () => {
 
   assert.deepEqual(batchedDtos, singleDtos);
 });
+
+for (const kind of ["prayer", "grace", "voice"] as const) {
+  test(`batched ${kind} sources preserve out-of-order matches and unavailable-source fallbacks`, async () => {
+    const harness = createHarness();
+    const type = kind === "voice" ? "file" : kind;
+    // No orderBy is used by the source queries; return the valid sources in reverse order.
+    for (const id of [402, 401, 404, 405]) {
+      harness.state.messagesById.set(id, makeMessage({
+        id,
+        channelId: id === 404 ? CHANNEL_ID + 1 : CHANNEL_ID,
+        type: id === 405 ? "text" : type,
+        content: `source-${id}`,
+        fileName: kind === "voice" ? "voice.m4a" : null,
+        payload: kind === "voice" ? { kind: "voice", durationMs: id } : { kind, status: "answered" }
+      }));
+    }
+    const sourceKey = kind === "prayer" ? "sourcePrayerMessageId" : kind === "grace" ? "sourceGraceMessageId" : "voiceMessageId";
+    // 403 is missing, 404 belongs to another channel, 405 has the wrong type, and 401 is reused.
+    const sourceIds = [401, 402, 403, 404, 405, 401];
+    const rows = sourceIds.map((sourceId, index) => Object.assign(makeMessage({
+      id: 600 + index,
+      type: kind === "prayer" ? "prayer" : "grace",
+      content: `fallback-${index}`,
+      payload: { [sourceKey]: sourceId }
+    }), { likes: [], favorites: [] }));
+    const singleDtos = await Promise.all(rows.map((row) => harness.service.serializeMessage(row, VIEWER)));
+    harness.queries.length = 0;
+
+    const batch = await harness.service.buildMessageSerializeBatch(rows, CHANNEL_ID, VIEWER);
+    const sources = must(kind === "prayer" ? batch.prayer?.sourceMessages : kind === "grace" ? batch.grace?.sourceMessages : batch.grace?.voiceSourceMessages);
+    assert.deepEqual([...sources].map(([id, source]) => [id, source?.id ?? null]), [
+      [401, 401], [402, 402], [403, null], [404, null], [405, null]
+    ]);
+    assert.equal(harness.queries.filter((query) => query === "message.findMany").length, 1);
+    const batchQueries = [...harness.queries];
+    const batchedDtos = await Promise.all(rows.map((row) => harness.service.serializeMessage(row, VIEWER, batch)));
+
+    assert.deepEqual(batchedDtos, singleDtos);
+    assert.deepEqual(harness.queries, batchQueries, "serialization must use the prefetched source results");
+  });
+}
 
 test("batched page serialization keeps the query count constant as page size grows", async () => {
   async function renderPage(groups: number) {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, ref, type CSSProperties, type ComponentPublicInstance, type Ref } from "vue";
+import { nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
 import {
   AudioLines,
   CheckCircle2,
@@ -47,6 +47,7 @@ const replyTo = defineModel<MessageDTO | null>("replyTo", { required: true });
 const composerFocused = defineModel<boolean>("composerFocused", { required: true });
 const keepOriginalImages = defineModel<boolean>("keepOriginalImages", { required: true });
 const previewPlaying = defineModel<boolean>("previewPlaying", { required: true });
+const previewAudioEl = defineModel<HTMLAudioElement | null>("previewAudioEl", { required: true });
 
 const props = defineProps<{
   emojiContextKey: string;
@@ -88,7 +89,6 @@ const props = defineProps<{
   previewProgress: number;
   audioPreviewDurationMs: number;
   voiceSending: boolean;
-  previewAudioEl: Ref<HTMLAudioElement | null>;
   replyPreviewText: (message: MessageDTO) => string;
   removeMusicMention: () => void;
   removeListenMention: (index: number) => void;
@@ -142,7 +142,7 @@ async function chooseEmoji(emoji: WechatEmoji) {
 }
 
 function bindPreviewAudioEl(el: Element | ComponentPublicInstance | null) {
-  props.previewAudioEl.value = (el as HTMLAudioElement | null) ?? null;
+  previewAudioEl.value = (el as HTMLAudioElement | null) ?? null;
 }
 
 defineExpose({ composerInput });

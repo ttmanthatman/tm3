@@ -451,8 +451,7 @@ test("a sent control test is not repeated after restart when its acknowledgement
   try {
     for (const failAcknowledgement of [true, false]) {
       const queue = new RelayQueue(temporary.databasePath);
-      let source: ManagedTeamChatSource;
-      source = new ManagedTeamChatSource("https://chat.example.com", "token", async (input) => {
+      const source = new ManagedTeamChatSource("https://chat.example.com", "token", async (input) => {
         const url = new URL(String(input));
         if (url.pathname.endsWith("/config")) return Response.json({ config: {
           enabled: true, channelId: 7, targetGroup: "Target", startAfterId: 0,
