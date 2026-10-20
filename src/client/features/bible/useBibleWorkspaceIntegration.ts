@@ -20,6 +20,7 @@ import { useMessageSender } from "../../messageSending";
 import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { bibleAudioEnabled, loadBibleAudioManifest, resetBibleAudioManifest } from "./bibleAudioManifest";
 import type { BibleAudioPlayItem } from "./bibleAudioQueue";
+import type { BibleShareTextSender } from "./biblePassageSharing";
 
 /** 聊天顶端提词器的状态快照：工作区 expose 出来，App 在只看聊天时渲染悬浮提词器；bookName/chapter 供「正在听圣经」动态 */
 export type BibleAudioTeleprompterState = {
@@ -346,13 +347,14 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   }
 
   const { send: sendMergedMessage } = useMessageSender({ getSocket: () => store.socket });
-  async function sendBibleText(content: string, requestId: string) {
+  // 合并经文是纯文本；带 payload 时是「一起听」清单（listen_playlist），服务端按引用解析并重写正文
+  const sendBibleText: BibleShareTextSender = async (content, requestId, payload) => {
     const channel = bibleTargetChannel.value;
     if (!channel) throw new Error("当前聊天室不可用");
     if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
-    const result = await sendMergedMessage({ channelId: channel.id, content, type: "text", replyToId: null, clientRequestId: requestId });
+    const result = await sendMergedMessage({ channelId: channel.id, content, type: "text", ...(payload ? { payload } : {}), replyToId: null, clientRequestId: requestId });
     if (!result.ok) throw new Error(result.message);
-  }
+  };
 
   async function sendBiblePassage(lookup: BibleLookupDTO, includeTranslation = false) {
     const channel = bibleTargetChannel.value;

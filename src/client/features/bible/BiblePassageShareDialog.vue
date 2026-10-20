@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { inject, ref } from "vue";
+import { computed, inject, ref } from "vue";
 import type { BibleLookupDTO } from "@shared/types";
 import { bibleAccountStateKey } from "./useBibleAccountState";
 import AppModal from "../../components/ui/AppModal.vue";
-import { BIBLE_BULK_SHARE_NOTICE, mergedBiblePassageContent, shouldMergeBiblePassages } from "./biblePassageSharing";
+import { BIBLE_BULK_SHARE_NOTICE, listenBiblePassageDraft, mergedBiblePassageContent, shouldMergeBiblePassages, type BibleShareTextSender } from "./biblePassageSharing";
 
 const props = defineProps<{
   channelName: string;
   sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
-  sendText: (content: string, requestId: string) => Promise<void>;
+  sendText: BibleShareTextSender;
 }>();
 const emit = defineEmits<{ sent: [] }>();
 const accountState = inject(bibleAccountStateKey, null);
@@ -17,16 +17,31 @@ const passages = ref<BibleLookupDTO[]>([]);
 const includeTranslation = ref(false);
 const shareBusy = ref(false);
 const error = ref("");
-const merged = ref(false);
+// 三种发法：逐条卡片（默认）/ 合并成一条文本 / 「一起听」清单。超过三节强制合并并提示；
+// 「一起听」本身就是一条消息，选中后合并与版本信息都不再适用。
+const mergeForced = ref(false);
+const mergeChecked = ref(false);
+const listenChecked = ref(false);
+const merged = computed(() => mergeForced.value || mergeChecked.value);
+const mergeOptionVisible = computed(() => passages.value.length > 1 || mergeForced.value);
+// 合并/清单消息共用同一个 clientRequestId 重试，失败后不许再改会变动正文的选项，否则服务端会判为内容冲突
+const optionsLocked = computed(() => shareBusy.value || !!error.value);
+const submitLabel = computed(() => {
+  if (shareBusy.value) return "发送中…";
+  if (listenChecked.value) return "发送到聊天室一起听";
+  return merged.value ? "合并发送到聊天室" : "发送到聊天室";
+});
 let requestId = "";
 
-function open(lookups: BibleLookupDTO[]) {
+function open(lookups: BibleLookupDTO[], options: { merge?: boolean } = {}) {
   if (shareBusy.value || !lookups.length) return;
   passages.value = [...lookups];
-  merged.value = shouldMergeBiblePassages(lookups);
+  mergeForced.value = shouldMergeBiblePassages(lookups);
+  mergeChecked.value = !!options.merge;
+  listenChecked.value = false;
   requestId = crypto.randomUUID();
   includeTranslation.value = accountState?.preferences.value?.shareIncludeTranslation ?? false;
-  confirmationOpen.value = merged.value || (accountState?.preferences.value?.shareConfirm ?? true);
+  confirmationOpen.value = mergeForced.value || (accountState?.preferences.value?.shareConfirm ?? true);
   error.value = "";
   if (!confirmationOpen.value) void share();
 }
@@ -35,7 +50,11 @@ async function share() {
   shareBusy.value = true;
   error.value = "";
   try {
-    if (merged.value) {
+    if (listenChecked.value) {
+      const draft = listenBiblePassageDraft(passages.value);
+      await props.sendText(draft.content, requestId, draft.payload);
+      passages.value = [];
+    } else if (merged.value) {
       await props.sendText(mergedBiblePassageContent(passages.value, includeTranslation.value), requestId);
       passages.value = [];
     }
@@ -57,18 +76,23 @@ defineExpose({ open, busy: shareBusy });
 <template>
   <Teleport to="body">
     <AppModal :open="!!passages.length && (confirmationOpen || !!error)" title="分享经文" :busy="shareBusy" content-class="bible-passage-share-dialog" @close="passages = []">
-      <p v-if="merged" class="passage-share-notice" role="status">{{ BIBLE_BULK_SHARE_NOTICE }}</p>
+      <p v-if="mergeForced" class="passage-share-notice" role="status">{{ BIBLE_BULK_SHARE_NOTICE }}</p>
       <div class="passage-share-preview">
         <article v-for="passage in passages" :key="passage.normalizedReference">
           <strong>{{ passage.normalizedReference }}</strong>
           <p>{{ passage.verses.map(verse => verse.text).join('') }}</p>
-          <small v-if="includeTranslation">{{ passage.translation }}</small>
+          <small v-if="includeTranslation && !listenChecked">{{ passage.translation }}</small>
         </article>
       </div>
-      <label class="passage-share-option"><input v-model="includeTranslation" type="checkbox" :disabled="shareBusy || (merged && !!error)" />显示版本信息</label>
-      <p>发送到：{{ channelName }}</p>
+      <div class="passage-share-options">
+        <label class="passage-share-option"><input v-model="includeTranslation" type="checkbox" :disabled="shareBusy || listenChecked || (merged && !!error)" />显示版本信息</label>
+        <label v-if="mergeOptionVisible" class="passage-share-option"><input type="checkbox" :checked="merged" :disabled="optionsLocked || mergeForced || listenChecked" @change="mergeChecked = ($event.target as HTMLInputElement).checked" />合并发送</label>
+        <label class="passage-share-option"><input v-model="listenChecked" type="checkbox" :disabled="optionsLocked" />一起听</label>
+      </div>
+      <p v-if="listenChecked" class="passage-share-hint">以「/听」播放清单发出，收到的人点一下就能按顺序收听这些经文。</p>
+      <p class="passage-share-target">发送到：{{ channelName }}</p>
       <p v-if="error" role="alert">{{ error }}</p>
-      <footer><button type="button" :disabled="shareBusy" @click="share">{{ shareBusy ? '发送中…' : merged ? '合并发送到聊天室' : '发送到聊天室' }}</button></footer>
+      <footer><button type="button" :disabled="shareBusy" @click="share">{{ submitLabel }}</button></footer>
     </AppModal>
   </Teleport>
 </template>
@@ -81,11 +105,14 @@ defineExpose({ open, busy: shareBusy });
 .passage-share-preview article + article { margin-top: 8px; }
 .passage-share-preview p { margin: 8px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .passage-share-preview small { display: block; margin-top: 8px; color: #766650; }
-.passage-share-option { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 32px; margin: 0 16px; cursor: pointer; }
+.passage-share-options { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 0 18px; margin: 0 16px; }
+.passage-share-option { display: flex; flex-shrink: 0; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
 .passage-share-option input { width: 18px; height: 18px; accent-color: #b9582b; }
+.passage-share-option:has(input:disabled) { opacity: .55; cursor: default; }
 .passage-share-notice { flex-shrink: 0; margin: 0 16px; line-height: 1.6; }
+.passage-share-hint { flex-shrink: 0; margin: -6px 16px 0; font-size: 13px; line-height: 1.5; color: #766650; }
 footer { display: flex; flex-shrink: 0; justify-content: flex-end; margin: 0 16px 16px; }
-div + p, label + p, [role="alert"] { flex-shrink: 0; margin: 0 16px; }
+.passage-share-target, [role="alert"] { flex-shrink: 0; margin: 0 16px; }
 footer button { min-height: 40px; padding: 8px 16px; border: 0; border-radius: 20px; background: #b9582b; color: white; font: inherit; cursor: pointer; }
 footer button:disabled { opacity: .55; cursor: wait; }
 [role="alert"] { color: #a33429; }

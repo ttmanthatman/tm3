@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BibleLookupDTO } from "@shared/types";
-import { mergedBiblePassageContent, shouldMergeBiblePassages } from "./biblePassageSharing";
+import { listenBiblePassageDraft, mergedBiblePassageContent, shouldMergeBiblePassages } from "./biblePassageSharing";
 
 function passage(start: number, end = start): BibleLookupDTO {
   return { reference: `约翰福音 1:${start}-${end}`, normalizedReference: `约翰福音 1:${start}-${end}`, translation: "和合本", sourceId: "cmn-cu89s",
@@ -23,4 +23,14 @@ test("merged verses use one ordinary text body and honor the version option", ()
   assert.match(content, /&lt;b&gt; &amp;/);
   assert.doesNotMatch(content, /<br>|和合本/);
   assert.match(mergedBiblePassageContent(lookups, true), /—— 和合本/);
+});
+
+test("listen-together turns the selected passages into one /听 draft in selection order", () => {
+  const { content, payload } = listenBiblePassageDraft([passage(1), passage(5, 7)]);
+  assert.deepEqual(payload, {
+    kind: "listen_playlist",
+    items: [{ kind: "scripture", reference: "约翰福音 1:1-1" }, { kind: "scripture", reference: "约翰福音 1:5-7" }]
+  });
+  assert.equal(content, "一起听：约翰福音 1:1-1 · 约翰福音 1:5-7");
+  assert.doesNotMatch(content, /太初有道/);
 });

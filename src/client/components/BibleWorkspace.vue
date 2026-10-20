@@ -45,6 +45,7 @@ import AppModal from "./ui/AppModal.vue";
 import { provideBibleAccountState } from "../features/bible/useBibleAccountState";
 import BibleReaderPane from "./BibleReaderPane.vue";
 import BibleAudioControls from "../features/bible/BibleAudioControls.vue";
+import type { BibleShareTextSender } from "../features/bible/biblePassageSharing";
 import { useBibleAudioPlayer } from "../features/bible/useBibleAudioPlayer";
 import type { BibleAudioPlayItem } from "../features/bible/bibleAudioQueue";
 import { bibleAudioDefaultVersion, bibleAudioEnabled, loadBibleAudioManifest } from "../features/bible/bibleAudioManifest";
@@ -69,7 +70,7 @@ const props = defineProps<{
   canSend: boolean;
   sendUnavailableReason: string;
   sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
-  sendText: (content: string, requestId: string) => Promise<void>;
+  sendText: BibleShareTextSender;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;

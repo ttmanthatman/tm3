@@ -7,10 +7,11 @@ import type { BiblePaneState, BibleHomeState, BibleWorkspaceSearchMode } from ".
 import { mergeBibleTopicResults, normalizeBibleSearchQuery } from "../../bibleWorkspaceState";
 import { api } from "../../api";
 import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../../bibleChapterCache";
-import { formatBibleLookupsForCopy, formatBibleVersesForCopy } from "../../bibleVerseActions";
+import { formatBibleLookupReferencesForCopy, formatBibleLookupsForCopy, formatBibleVerseReferencesForCopy, formatBibleVersesForCopy } from "../../bibleVerseActions";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import type { BibleTopicActions } from "../../bibleTopics";
 import BiblePassageShareDialog from "./BiblePassageShareDialog.vue";
+import type { BibleShareTextSender } from "./biblePassageSharing";
 import BibleTopicShareDialog from "./BibleTopicShareDialog.vue";
 import BibleTranslationSelect from "./BibleTranslationSelect.vue";
 import BibleSearchHistory from "./BibleSearchHistory.vue";
@@ -26,7 +27,7 @@ const props = defineProps<{
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
   topics: BibleTopicDTO[]; topicsBusy: boolean; topicActions: BibleTopicActions;
   sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
-  sendText: (content: string, requestId: string) => Promise<void>;
+  sendText: BibleShareTextSender;
 }>();
 const emit = defineEmits<{
   back: [];
@@ -58,6 +59,8 @@ const textHasMore = computed(() => !!textResult.value && textResult.value.items.
 const textModeLabel = computed(() => textResult.value?.mode === "allTerms" ? "多关键词匹配" : "连续原文匹配");
 const matchingTopicHistory = computed(() => searchHistory.value.find(entry => entry.kind === "topic" && normalizeBibleSearchQuery(entry.query) === normalizeBibleSearchQuery(topicQuery.value)));
 const selectedResults = ref<string[]>([]);
+// 「只复制出处」：复制全部/复制所选只给引用不给正文；同时「发送所选」变为合并发送（一条消息）
+const referencesOnly = ref(false);
 const appendAvailable = computed(() => topicResult.value && normalizeBibleSearchQuery(topicResult.value.query) === normalizeBibleSearchQuery(topicQuery.value));
 const currentLookups = computed(() => searchMode.value === "topic" ? topicResult.value?.results || [] : textResult.value?.items.map(item => singleVerseLookup(item.verse)) || []);
 const selectedLookups = computed(() => currentLookups.value.filter(lookup => selectedResults.value.includes(lookup.normalizedReference)));
@@ -84,8 +87,12 @@ function openTextResult(item: BibleTextSearchItemDTO) { emit("context", singleVe
 function openTopicResult(lookup: BibleLookupDTO) { emit("context", lookup, []); }
 function showToast(message: string) { emit("toast", message); }
 function toggleAll() { selectedResults.value = selectedLookups.value.length === currentLookups.value.length ? [] : currentLookups.value.map(lookup => lookup.normalizedReference); }
-function copySelected() { return writeClipboard(formatBibleLookupsForCopy(selectedLookups.value, props.catalog.translation), `已复制 ${selectedLookups.value.length} 处结果`); }
-function sendSelected() { if (props.canSend) passageShareDialog.value?.open(selectedLookups.value); }
+function copySelected() {
+  const lookups = selectedLookups.value;
+  if (referencesOnly.value) return writeClipboard(formatBibleLookupReferencesForCopy(lookups), `已复制 ${lookups.length} 处出处`);
+  return writeClipboard(formatBibleLookupsForCopy(lookups, props.catalog.translation), `已复制 ${lookups.length} 处结果`);
+}
+function sendSelected() { if (props.canSend) passageShareDialog.value?.open(selectedLookups.value, { merge: referencesOnly.value }); }
 type TextSegment = { text: string; highlighted: boolean };
 async function searchTopic(append = false) {
   const query = topicQuery.value.trim();
@@ -187,9 +194,11 @@ function copyLookup(lookup: BibleLookupDTO) {
 
 function copyTopicResults() {
   if (!topicResult.value) return;
+  const lookups = topicResult.value.results;
+  if (referencesOnly.value) return writeClipboard(formatBibleLookupReferencesForCopy(lookups), `已复制 ${lookups.length} 处出处`);
   return writeClipboard(
-    formatBibleLookupsForCopy(topicResult.value.results, props.catalog?.translation || "新标点和合本（简体）"),
-    `已复制 ${topicResult.value.results.length} 处结果`
+    formatBibleLookupsForCopy(lookups, props.catalog?.translation || "新标点和合本（简体）"),
+    `已复制 ${lookups.length} 处结果`
   );
 }
 
@@ -225,10 +234,12 @@ async function copyAllTextResults() {
     const response = await api<{ success: boolean; result: BibleTextSearchDTO }>(
       `/api/bible/search/export?query=${encodeURIComponent(query)}&translation=${encodeURIComponent(translationId)}`
     );
-    await writeClipboard(
-      formatBibleVersesForCopy(response.result.items.map((item) => item.verse), response.result.translation),
-      `已复制全部 ${response.result.total} 节结果`
-    );
+    const verses = response.result.items.map((item) => item.verse);
+    if (referencesOnly.value) {
+      await writeClipboard(formatBibleVerseReferencesForCopy(verses), `已复制全部 ${response.result.total} 节的出处`);
+    } else {
+      await writeClipboard(formatBibleVersesForCopy(verses, response.result.translation), `已复制全部 ${response.result.total} 节结果`);
+    }
   } catch (error) {
     showToast(error instanceof Error ? error.message : "复制全部结果失败");
   } finally {
@@ -455,7 +466,8 @@ function copyTopic() {
           <button type="button" @click="toggleAll">{{ selectedLookups.length === currentLookups.length ? '取消全选' : '全选当前结果' }}</button>
           <span>已选 {{ selectedLookups.length }} 处</span>
           <button type="button" :disabled="!selectedLookups.length" @click="copySelected">复制所选</button>
-          <button type="button" :disabled="!selectedLookups.length || !canSend || passageShareDialog?.busy" @click="sendSelected">发送所选</button>
+          <button type="button" :disabled="!selectedLookups.length || !canSend || passageShareDialog?.busy" @click="sendSelected">{{ referencesOnly ? '合并发送' : '发送所选' }}</button>
+          <label class="bible-reference-only"><input v-model="referencesOnly" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span>只复制出处</label>
         </div>
         <section v-if="searchMode === 'topic' && topicResult" class="bible-results" aria-live="polite">
           <header><strong>相关经文</strong><span>{{ topicResult.results.length }} 处</span><button v-if="topicResult.results.length" type="button" class="bible-copy-all" @click="copyTopicResults"><ClipboardCopy :size="15" />复制全部</button></header>
@@ -596,6 +608,15 @@ function copyTopic() {
 .bible-selection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .bible-selection-actions button { min-height: 40px; padding: 6px 10px; color: #604b32; background: #fffaf1; border: 1px solid #cbb797; border-radius: 8px; font: inherit; }
 .bible-selection-actions button:disabled { opacity: .45; }
+/* 「只复制出处」开关：真实 input 铺满整个标签（opacity 0）才能被点中，视觉由 .switch 替身负责 */
+.bible-reference-only { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 40px; margin-left: auto; color: #604b32; cursor: pointer; user-select: none; }
+.bible-reference-only input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.bible-reference-only .switch { flex: none; position: relative; width: 36px; height: 20px; border-radius: 999px; background: #d3c3a8; transition: background 160ms ease; }
+.bible-reference-only .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fffdf7; box-shadow: 0 1px 3px rgba(74, 52, 29, .3); transition: transform 160ms ease; }
+.bible-reference-only input:checked + .switch { background: #b9582b; }
+.bible-reference-only input:checked + .switch::after { transform: translateX(16px); }
+.bible-reference-only input:focus-visible + .switch { outline: 2px solid rgba(185, 88, 43, .55); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .bible-reference-only .switch, .bible-reference-only .switch::after { transition: none; } }
 .bible-home, .bible-chapter-picker { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .bible-home { padding: 26px max(16px, calc((100% - 1120px) / 2)) calc(44px + var(--safe-bottom)); }
 .bible-home-navigation { max-width: 820px; margin: 0 auto 12px; display: flex; align-items: center; gap: 8px; }

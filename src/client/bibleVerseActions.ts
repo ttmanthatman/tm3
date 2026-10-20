@@ -64,3 +64,15 @@ export function formatBibleLookupsForCopy(lookups: BibleLookupDTO[], fallbackTra
   });
   return `${passages.join("\n\n")}\n\n—— ${lookups[0].translation || fallbackTranslation}`;
 }
+
+// 「只复制出处」：不带正文、不带译本，用全角分号连成一行，与主题批量添加框、「/听」正文的书写习惯一致，
+// 粘贴到聊天/「/听」/主题里都能被同一套引用识别器解析。分组口径与各自的正文复制保持一致。
+export const BIBLE_REFERENCE_COPY_SEPARATOR = "；";
+
+export function formatBibleLookupReferencesForCopy(lookups: BibleLookupDTO[]) {
+  return lookups.map((lookup) => lookup.normalizedReference).join(BIBLE_REFERENCE_COPY_SEPARATOR);
+}
+
+export function formatBibleVerseReferencesForCopy(verses: BibleVerseLineDTO[]) {
+  return groupContinuousBibleVerses(verses).map(bibleVerseGroupReference).join(BIBLE_REFERENCE_COPY_SEPARATOR);
+}

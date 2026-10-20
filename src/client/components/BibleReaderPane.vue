@@ -21,6 +21,7 @@ import {
 } from "../bibleVerseActions";
 import BibleTranslationSelect from "../features/bible/BibleTranslationSelect.vue";
 import BiblePassageShareDialog from "../features/bible/BiblePassageShareDialog.vue";
+import type { BibleShareTextSender } from "../features/bible/biblePassageSharing";
 import { createReaderInsertionGate } from "../features/bible/readerInsertionGate";
 import BiblePlayThroughIcon from "../features/bible/BiblePlayThroughIcon.vue";
 import { useLongPressAction } from "../features/bible/useLongPressAction";
@@ -50,7 +51,7 @@ const props = defineProps<{
   canSend: boolean;
   sendUnavailableReason: string;
   sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
-  sendText: (content: string, requestId: string) => Promise<void>;
+  sendText: BibleShareTextSender;
   canGoBack: boolean;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;

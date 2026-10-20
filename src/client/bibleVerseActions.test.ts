@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { BibleVerseLineDTO } from "@shared/types";
-import { bibleVerseGroupReference, bibleVerseKey, formatBibleVersesForCopy, groupContinuousBibleVerses, selectBibleVerseKeys } from "./bibleVerseActions";
+import type { BibleLookupDTO, BibleVerseLineDTO } from "@shared/types";
+import { bibleVerseGroupReference, bibleVerseKey, formatBibleLookupReferencesForCopy, formatBibleVerseReferencesForCopy, formatBibleVersesForCopy, groupContinuousBibleVerses, selectBibleVerseKeys } from "./bibleVerseActions";
 
 const verse = (chapter: number, number: number, text: string): BibleVerseLineDTO => ({
   book: "约翰福音",
@@ -44,4 +44,17 @@ test("groupContinuousBibleVerses merges adjacent verses and splits gaps and chap
 test("bibleVerseGroupReference collapses a continuous range into one reference", () => {
   assert.equal(bibleVerseGroupReference([verse(1, 1, "甲")]), "约翰福音 1:1");
   assert.equal(bibleVerseGroupReference([verse(1, 1, "甲"), verse(1, 2, "乙"), verse(1, 3, "丙")]), "约翰福音 1:1-3");
+});
+
+test("reference-only copy keeps each lookup's title and drops verse text and translation", () => {
+  const lookup = (normalizedReference: string): BibleLookupDTO => ({ reference: normalizedReference, normalizedReference, translation: "和合本", sourceId: "cmn-cu89s", verses: [verse(3, 16, "神爱世人")] });
+  const text = formatBibleLookupReferencesForCopy([lookup("约翰福音 3:16"), lookup("诗篇 23:1-6")]);
+  assert.equal(text, "约翰福音 3:16；诗篇 23:1-6");
+  assert.equal(formatBibleLookupReferencesForCopy([]), "");
+});
+
+test("reference-only copy of raw verses groups contiguous verses like the text copy does", () => {
+  const text = formatBibleVerseReferencesForCopy([verse(1, 1, "甲"), verse(1, 2, "乙"), verse(1, 8, "丁"), verse(2, 1, "戊")]);
+  assert.equal(text, "约翰福音 1:1-2；约翰福音 1:8；约翰福音 2:1");
+  assert.doesNotMatch(text, /甲|和合本/);
 });

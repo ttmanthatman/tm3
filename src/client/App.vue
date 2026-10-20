@@ -99,6 +99,7 @@ import { useBibleWorkspaceIntegration } from "./features/bible/useBibleWorkspace
 import { viewedBibleNoteId } from "./features/bible/notes/noteViewerState";
 import { createBibleSwipeNavigation } from "./features/bible/bibleSwipeNavigation";
 import { bibleAudioPromptVisible as bibleAudioPromptVisibleRule } from "./features/bible/bibleAudioPromptVisibility";
+import { useBibleAudioPromptAutoHide } from "./features/bible/useBibleAudioPromptAutoHide";
 import { bibleAudioEnabled } from "./features/bible/bibleAudioManifest";
 import { useMusicLibraryIntegration, type BibleListeningActivity } from "./features/music/useMusicLibraryIntegration";
 import { isListenDraft } from "./features/listen/listenComposer";
@@ -1932,15 +1933,18 @@ const musicLyricsHeaderVisible = computed(
     !musicScoreStageVisible.value
 );
 // 有声圣经聊天顶端提词器：只在“只看聊天”（圣经工作区已关，无论之前是分屏还是全屏）且朗读会话进行中时出现。
-// 点提词器 = 暂停/继续；暂停时点聊天其他区域 = 收起会话（handleBibleAudioPromptDismiss）。
+// 点提词器 = 暂停/继续；播放中点聊天其他区域 = 临时收起、5 秒无点击再出现（useBibleAudioPromptAutoHide）；
+// 暂停时点聊天其他区域 = 收起会话（handleBibleAudioPromptDismiss，与工作区内暂停后点外收起同一约定）。
 // 判定规则抽在 features/bible/bibleAudioPromptVisibility.ts 便于测试。
 const bibleAudioPrompt = computed(() => bibleWorkspace.value?.bibleAudioTeleprompter || null);
+const bibleAudioPromptAutoHide = useBibleAudioPromptAutoHide({ sessionActive: () => !!bibleAudioPrompt.value?.active });
 const bibleAudioPromptVisible = computed(() => bibleAudioPromptVisibleRule({
   sessionActive: !!bibleAudioPrompt.value?.active,
   bibleOpen: bibleOpen.value,
   sermonWorkspaceOpen: sermonWorkspaceOpen.value,
   bookWorkspaceOpen: bookWorkspaceOpen.value,
-  musicLyricsHeaderVisible: musicLyricsHeaderVisible.value
+  musicLyricsHeaderVisible: musicLyricsHeaderVisible.value,
+  temporarilyHidden: bibleAudioPromptAutoHide.hidden.value
 }));
 // 「正在听圣经」动态：朗读会话进行中（含暂停）即视为在听，章节变化时重新发布
 const bibleListeningActivity = computed<BibleListeningActivity>(() => {
@@ -1952,10 +1956,11 @@ watch(bibleListeningActivity, () => publishBibleListening());
 
 function handleBibleAudioPromptDismiss(event: PointerEvent) {
   const prompt = bibleAudioPrompt.value;
-  if (!prompt?.active || prompt.playing) return;
+  if (!prompt?.active) return;
   const target = event.target;
   if (target instanceof Element && target.closest(".bible-audio-lyrics")) return;
-  bibleWorkspace.value?.stopBibleAudio();
+  if (prompt.playing) bibleAudioPromptAutoHide.collapse();
+  else bibleWorkspace.value?.stopBibleAudio();
 }
 const previewScoreTrack = computed(() => {
   const trackId = previewPinnedImage.value?.trackId;

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { bibleAudioPromptVisible } from "./bibleAudioPromptVisibility";
 
-const chatOnly = { sessionActive: true, bibleOpen: false, sermonWorkspaceOpen: false, bookWorkspaceOpen: false, musicLyricsHeaderVisible: false };
+const chatOnly = { sessionActive: true, bibleOpen: false, sermonWorkspaceOpen: false, bookWorkspaceOpen: false, musicLyricsHeaderVisible: false, temporarilyHidden: false };
 
 test("the prompter floats over the chat only while a session plays and nothing else owns the screen", () => {
   assert.equal(bibleAudioPromptVisible(chatOnly), true);
@@ -18,4 +18,8 @@ test("sermon and book workspaces and the music lyrics header also hide the promp
   assert.equal(bibleAudioPromptVisible({ ...chatOnly, sermonWorkspaceOpen: true }), false);
   assert.equal(bibleAudioPromptVisible({ ...chatOnly, bookWorkspaceOpen: true }), false);
   assert.equal(bibleAudioPromptVisible({ ...chatOnly, musicLyricsHeaderVisible: true }), false);
+});
+
+test("a chat tap collapses the prompter temporarily without ending the session", () => {
+  assert.equal(bibleAudioPromptVisible({ ...chatOnly, temporarilyHidden: true }), false);
 });
