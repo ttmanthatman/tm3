@@ -1,0 +1,3 @@
+# codebase-memory-mcp discovery rules (gitignore syntax, read at index time).
+# The Capacitor web build copy duplicates every compiled client/server symbol.
+android/app/src/main/assets/public/
