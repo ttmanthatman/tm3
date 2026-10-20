@@ -45,7 +45,6 @@ import AppModal from "./ui/AppModal.vue";
 import { provideBibleAccountState } from "../features/bible/useBibleAccountState";
 import BibleReaderPane from "./BibleReaderPane.vue";
 import BibleAudioControls from "../features/bible/BibleAudioControls.vue";
-import BibleAudioLyricsBar from "../features/bible/BibleAudioLyricsBar.vue";
 import { useBibleAudioPlayer } from "../features/bible/useBibleAudioPlayer";
 import { bibleAudioDefaultVersion, bibleAudioEnabled, loadBibleAudioManifest } from "../features/bible/bibleAudioManifest";
 import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../bibleChapterCache";
@@ -849,11 +848,11 @@ function handleBibleAudioPlaySelection(paneId: string) {
   else bibleAudio.startFromLookups(selection);
 }
 
-// 播放器停止播放（暂停）后，点击控件与歌词条以外任意处即收起播放会话
+// 播放器停止播放（暂停）后，点击控件以外任意处即收起播放会话
 function handleBibleAudioDismiss(event: PointerEvent) {
   if (!bibleAudio.active || bibleAudio.playing) return;
   const target = event.target;
-  if (target instanceof Element && target.closest(".bible-audio-controls, .bible-audio-lyrics")) return;
+  if (target instanceof Element && target.closest(".bible-audio-controls")) return;
   bibleAudio.stop();
 }
 
@@ -880,7 +879,7 @@ watch(() => bibleAudio.currentItem, async (item) => {
   await openBookInActivePane(book, item.chapter, pane?.id || activePaneId.value);
 });
 
-// 卡拉OK条按朗读所在章取经文文本（与音频同一译本）
+// 聊天顶端提词器按朗读所在章取经文文本（与音频同一译本）
 watch(() => bibleAudio.currentItem, async (item) => {
   if (!item) {
     bibleAudioChapterText.value = null;
@@ -904,10 +903,10 @@ const bibleAudioLyrics = computed(() => {
   if (!bibleAudio.currentItem) return null;
   const verse = bibleAudio.currentVerse;
   const lines = bibleAudioChapterText.value?.verses || [];
-  if (verse === null || verse <= 0) return { current: "本章引言", previous: "", next: lines[0]?.text || "" };
+  if (verse === null || verse <= 0) return { current: "本章引言", next: lines[0]?.text || "" };
   const index = lines.findIndex((line) => line.verse <= verse && verse <= line.endVerse);
-  if (index < 0) return { current: "", previous: "", next: "" };
-  return { current: lines[index].text, previous: lines[index - 1]?.text || "", next: lines[index + 1]?.text || "" };
+  if (index < 0) return { current: "", next: "" };
+  return { current: lines[index].text, next: lines[index + 1]?.text || "" };
 });
 
 onBeforeUnmount(() => bibleAudio.dispose());
@@ -1175,17 +1174,7 @@ function showToast(message: string) {
         ><span aria-hidden="true"></span></div>
       </template>
     </section>
-    <!-- 分屏时经文就在旁边高亮跟随，不占空间放底部提词器；全屏阅读时保留 -->
-    <BibleAudioLyricsBar
-      v-if="bibleAudioEnabled && bibleAudio.active && bibleAudioLyrics && !split"
-      :reference="bibleAudio.currentReference"
-      :current-text="bibleAudioLyrics.current"
-      :previous-text="bibleAudioLyrics.previous"
-      :next-text="bibleAudioLyrics.next"
-      :playing="bibleAudio.playing"
-      :transition="bibleAudioLyricsTransition"
-      @tap="handleBibleAudioToggle"
-    />
+    <!-- 圣经页面内不放提词器（经文本身高亮跟随）；提词器只在只看聊天时由 App 悬浮在聊天顶端 -->
     <BiblePreferencesDialog :open="preferencesOpen" :font-size="bibleFontSize" :lyrics-transition="bibleAudioLyricsTransition" @font-size="handleBibleFontSizeLive" @lyrics-transition="handleBibleAudioLyricsTransition" @close="preferencesOpen = false" />
     <AppModal :open="!!pendingContext" title="发送上下文到哪个窗格？" content-class="bible-context-dialog" @close="pendingContext = null">
       <div class="bible-context-options"><p>检索结果会保留在原窗格。</p><button v-for="pane in panes.filter(item => item.id !== pendingContext?.sourcePaneId)" :key="pane.id" type="button" @click="chooseContextPane(pane.id)">{{ biblePaneLabel(panes.findIndex(item => item.id === pane.id)) }} 窗格 · {{ pane.view === 'home' ? '目录与检索' : pane.book.name }}</button></div>

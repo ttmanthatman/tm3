@@ -26,7 +26,7 @@ export type BibleAudioTeleprompterState = {
   playing: boolean;
   reference: string;
   transition: boolean;
-  lyrics: { current: string; previous: string; next: string } | null;
+  lyrics: { current: string; next: string } | null;
 };
 
 export type BibleWorkspaceHandle = {

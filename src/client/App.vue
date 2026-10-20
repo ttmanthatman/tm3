@@ -5640,10 +5640,8 @@ const messageRowBindings = {
       <Transition name="bible-audio-lyrics-panel">
         <BibleAudioLyricsBar
           v-if="bibleAudioPromptVisible"
-          variant="chat"
           :reference="bibleAudioPrompt?.reference || ''"
           :current-text="bibleAudioPrompt?.lyrics?.current || ''"
-          :previous-text="bibleAudioPrompt?.lyrics?.previous || ''"
           :next-text="bibleAudioPrompt?.lyrics?.next || ''"
           :playing="!!bibleAudioPrompt?.playing"
           :transition="bibleAudioPrompt?.transition !== false"

@@ -1,30 +1,13 @@
-/* 有声圣经聊天顶端提词器（BibleAudioLyricsBar 的 chat 形态）：
-   只看聊天时悬浮在聊天室最顶端、遮住顶部工具行，视觉与音乐歌词头同一层级。
-   组件本体的逐节样式在 BibleAudioLyricsBar.vue 的 scoped 块里；这里只放挂载位与进出场的全局类。 */
-.chat-pane > .bible-audio-lyrics.chat {
+/* 有声圣经聊天顶端提词器（BibleAudioLyricsBar）的挂载位与进出场：
+   只看聊天时悬浮在聊天室最顶端、遮住顶部工具行，与音乐歌词头同一层级。
+   组件视觉在 BibleAudioLyricsBar.vue 的 scoped 块里；这里只放定位与过渡的全局类。 */
+.chat-pane > .bible-audio-lyrics {
   position: absolute;
   top: 0;
   right: 0;
   left: 0;
   z-index: 30;
-  padding: calc(var(--safe-top) + 12px) clamp(18px, 5vw, 44px) 12px;
-  border-top: 0;
-  border-bottom: 1px solid rgba(255, 215, 159, .24);
-  box-shadow: inset 0 -1px rgba(255, 225, 184, .16), 0 18px 42px rgba(8, 15, 28, .28);
-  gap: 4px;
-  transform-origin: top center;
-  backdrop-filter: blur(24px) saturate(1.18);
 }
-
-/* 聊天形态当前句固定占位 2 行（比底部条更紧凑），短经文不塌陷、换句时高度不变 */
-.bible-audio-lyrics.chat .bible-audio-lyrics-current-wrap {
-  font-size: clamp(18px, 2.8vw, 24px);
-  height: calc(1.45em * 2);
-}
-.bible-audio-lyrics.chat .bible-audio-lyrics-current {
-  -webkit-line-clamp: 2;
-}
-.bible-audio-lyrics.chat .bible-audio-lyrics-next { font-size: 12.5px; }
 
 /* 进出场：从聊天顶端滑下展开、向上滑走收起 */
 .bible-audio-lyrics-panel-enter-active { transition: transform 320ms cubic-bezier(.22, .8, .25, 1); }

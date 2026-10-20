@@ -1,19 +1,16 @@
 <script setup lang="ts">
-// 有声圣经卡拉OK提词器：当前句大字居中、上下句淡显，视觉语言沿用音乐歌词头。
-// 两种形态：bar = 工作区底部逐节条；chat = 只看聊天时悬浮在聊天室顶端的提词器（定位样式在全局 bible-audio-lyrics.css）。
-// 纯展示组件：文本与播放状态由调用方提供；点击始终交给调用方（暂停/继续）。
+// 有声圣经卡拉OK提词器：只在「只看聊天」时由 App 悬浮在聊天室顶端（挂载位与进出场在全局 bible-audio-lyrics.css）。
+// 当前句大字居中、下一句淡显，视觉语言沿用音乐歌词头。圣经页面内不显示——经文本身已高亮跟随。
+// 纯展示组件：文本与播放状态由调用方提供；点击交给调用方（暂停/继续）。
 import { computed, ref, watch } from "vue";
 
 const props = withDefaults(defineProps<{
   reference: string;
   currentText: string;
-  previousText: string;
   nextText: string;
   playing: boolean;
-  variant?: "bar" | "chat";
   transition?: boolean;
 }>(), {
-  variant: "bar",
   transition: true
 });
 
@@ -27,9 +24,8 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
 </script>
 
 <template>
-  <button type="button" class="bible-audio-lyrics" :class="[variant, { playing }]" :aria-label="tapLabel" @click="$emit('tap')">
+  <button type="button" class="bible-audio-lyrics" :class="{ playing }" :aria-label="tapLabel" @click="$emit('tap')">
     <span class="bible-audio-lyrics-reference">{{ reference }}</span>
-    <span v-if="variant === 'bar'" class="bible-audio-lyrics-previous" aria-hidden="true">{{ previousText }}</span>
     <span class="bible-audio-lyrics-current-wrap">
       <Transition v-if="transition" name="bible-audio-lyrics-roll">
         <span :key="transitionKey" class="bible-audio-lyrics-current">{{ currentText }}</span>
@@ -41,48 +37,49 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
 </template>
 
 <style scoped>
+/* 定位（absolute/top/z-index）由全局 .chat-pane > .bible-audio-lyrics 负责，这里不写 position，避免同权重覆盖 */
 .bible-audio-lyrics {
-  position: relative;
-  z-index: 6;
   width: 100%;
   min-width: 0;
-  padding: 10px clamp(16px, 5vw, 44px) calc(10px + var(--safe-bottom));
+  padding: calc(var(--safe-top) + 12px) clamp(18px, 5vw, 44px) 12px;
   border: 0;
-  border-top: 1px solid rgba(255, 215, 159, .22);
+  border-bottom: 1px solid rgba(255, 215, 159, .24);
   color: #fff;
   background:
     radial-gradient(circle at 18% 6%, rgba(255, 180, 85, .22), transparent 42%),
     radial-gradient(circle at 84% 92%, rgba(101, 126, 181, .16), transparent 38%),
     linear-gradient(148deg, rgba(18, 24, 37, .985), rgba(53, 38, 34, .975) 56%, rgba(15, 24, 39, .985));
-  box-shadow: inset 0 1px rgba(255, 225, 184, .14), 0 -12px 32px rgba(8, 15, 28, .22);
+  box-shadow: inset 0 -1px rgba(255, 225, 184, .16), 0 18px 42px rgba(8, 15, 28, .28);
   display: grid;
   justify-items: center;
-  gap: 3px;
+  gap: 4px;
   overflow: hidden;
   cursor: pointer;
   font: inherit;
   text-align: center;
+  transform-origin: top center;
+  backdrop-filter: blur(24px) saturate(1.18);
   -webkit-tap-highlight-color: transparent;
 }
 .bible-audio-lyrics-reference { font-size: 12px; font-weight: 700; letter-spacing: .08em; color: rgba(255, 181, 77, .85); }
-.bible-audio-lyrics-previous, .bible-audio-lyrics-next {
+.bible-audio-lyrics-next {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.3;
   color: rgba(255, 255, 255, .38);
 }
-/* 当前句占位固定为最大行数（正文 3 行），短经文不塌陷、换句时条高不变 */
+/* 当前句占位固定 2 行：短经文不塌陷、换句时高度不变 */
 .bible-audio-lyrics-current-wrap {
   position: relative;
   display: grid;
   width: 100%;
   justify-items: center;
   align-content: start;
-  font-size: clamp(17px, 2.6vw, 22px);
-  height: calc(1.45em * 3);
+  font-size: clamp(18px, 2.8vw, 24px);
+  height: calc(1.45em * 2);
 }
 .bible-audio-lyrics-current {
   display: block;
@@ -95,7 +92,7 @@ watch(() => props.currentText, () => { transitionKey.value += 1; });
   text-shadow: 0 0 9px rgba(255, 137, 28, .5), 0 1px 0 rgba(0, 0, 0, .35);
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   overflow: hidden;
 }
 .bible-audio-lyrics:not(.playing) .bible-audio-lyrics-current { color: rgba(255, 213, 160, .72); text-shadow: none; }
