@@ -70,6 +70,21 @@ export function sameBibleAudioItem(left: BibleAudioPlayItem | null, right: Bible
   return left.book === right.book && left.chapter === right.chapter && left.verseStart === right.verseStart && left.verseEnd === right.verseEnd;
 }
 
+/** 已定位的一段经文（可跨章）→ 按章切开的队列：首章从起始节播到章末，末章从 1 节播到结束节。 */
+export function queueFromPassage(passage: { bookCode: string; startChapter: number; startVerse: number; endChapter: number; endVerse: number }): BibleAudioPlayItem[] {
+  const book = passage.bookCode.toUpperCase();
+  if (passage.endChapter < passage.startChapter) return [];
+  if (passage.endChapter === passage.startChapter) {
+    return [{ book, chapter: passage.startChapter, verseStart: passage.startVerse, verseEnd: Math.max(passage.startVerse, passage.endVerse) }];
+  }
+  const items: BibleAudioPlayItem[] = [{ book, chapter: passage.startChapter, verseStart: passage.startVerse, verseEnd: null }];
+  for (let chapter = passage.startChapter + 1; chapter < passage.endChapter; chapter += 1) {
+    items.push({ book, chapter, verseStart: 1, verseEnd: null });
+  }
+  items.push({ book, chapter: passage.endChapter, verseStart: 1, verseEnd: passage.endVerse });
+  return items;
+}
+
 export function nextBibleChapterLocation(books: BibleBookCatalogDTO[], book: string, chapter: number): { book: string; chapter: number } | null {
   const index = books.findIndex((item) => item.code === book.toUpperCase());
   if (index < 0) return null;

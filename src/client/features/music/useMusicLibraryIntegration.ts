@@ -1,5 +1,6 @@
-import { computed, nextTick, ref, type Ref } from "vue";
+import { computed, nextTick, ref, watch, type Ref } from "vue";
 import type {
+  BibleListenerDTO,
   BibleReaderPresenceDTO,
   BookReaderPresenceDTO,
   FriendListenerDTO,
@@ -14,6 +15,8 @@ import { sortMusicTracks } from "../../musicPlayer";
 import { useChatStore } from "../../store";
 import type { MusicManagerFocus } from "./useMusicLibrary";
 
+export type BibleListeningActivity = { bookName: string; chapter: number } | null;
+
 interface UseMusicLibraryIntegrationOptions {
   showChatToolsMenu: Ref<boolean>;
   musicManagerRef: Ref<{ openFocus: (focus: MusicManagerFocus) => void } | null>;
@@ -27,6 +30,7 @@ interface UseMusicLibraryIntegrationOptions {
   loadMusicTracks: () => Promise<void>;
   onActivitySocketConnect: () => void;
   getBibleReadingActivity: () => { active: boolean; bookName: string | null };
+  getBibleListeningActivity: () => BibleListeningActivity;
   getBookReadingActivity: () => { active: boolean; bookTitle: string | null };
 }
 
@@ -41,6 +45,7 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
   const musicPlayerExpanded = ref(false);
   const musicListeners = ref<MusicListenerDTO[]>([]);
   const bibleReaders = ref<BibleReaderPresenceDTO[]>([]);
+  const bibleListeners = ref<BibleListenerDTO[]>([]);
   const bookReaders = ref<BookReaderPresenceDTO[]>([]);
   const friendListeners = ref<FriendListenerDTO[]>([]);
   const friendListeningProgram = ref<FriendProgramDTO | null>(null);
@@ -164,6 +169,18 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
       : [];
   }
 
+  function handleBibleListeners(listeners: BibleListenerDTO[]) {
+    bibleListeners.value = Array.isArray(listeners)
+      ? listeners.filter(
+          (listener) =>
+            Number.isFinite(listener?.accountId) &&
+            typeof listener?.displayName === "string" &&
+            typeof listener?.bookName === "string" &&
+            Number.isFinite(listener?.chapter)
+        )
+      : [];
+  }
+
   function handleFriendListeners(listeners: FriendListenerDTO[]) {
     friendListeners.value = Array.isArray(listeners)
       ? listeners.filter(
@@ -176,9 +193,13 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
       : [];
   }
 
-  function emitPresence(event: string, payload: unknown) {
+  // Presence emits are de-duplicated so idle clients stay silent. The periodic
+  // heartbeat passes `keepalive` to force a re-send of *active* states only:
+  // an emit can be dropped (server still registering handlers, auth refresh,
+  // transport hiccup) and the server would otherwise never learn about it.
+  function emitPresence(event: string, payload: unknown, force = false) {
     const serialized = JSON.stringify(payload ?? null);
-    if (presenceEmitCache.get(event) === serialized) return;
+    if (!force && presenceEmitCache.get(event) === serialized) return;
     presenceEmitCache.set(event, serialized);
     store.socket?.emit(event, payload);
   }
@@ -187,20 +208,28 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     presenceEmitCache.clear();
   }
 
-  function publishMusicListening() {
-    emitPresence("music:listening", { trackId: options.isMusicPlaying() ? options.currentTrack()?.id || null : null });
+  function publishMusicListening(keepalive = false) {
+    const trackId = options.isMusicPlaying() ? options.currentTrack()?.id || null : null;
+    emitPresence("music:listening", { trackId }, keepalive && trackId !== null);
   }
 
   function stopPublishingMusicListening() {
     emitPresence("music:listening", { trackId: null });
   }
 
-  function publishBibleReading() {
-    emitPresence("bible:reading", options.getBibleReadingActivity());
+  function publishBibleReading(keepalive = false) {
+    const activity = options.getBibleReadingActivity();
+    emitPresence("bible:reading", activity, keepalive && activity.active);
   }
 
-  function publishBookReading() {
-    emitPresence("book:reading", options.getBookReadingActivity());
+  function publishBibleListening(keepalive = false) {
+    const activity = options.getBibleListeningActivity();
+    emitPresence("bible:listening", activity, keepalive && activity !== null);
+  }
+
+  function publishBookReading(keepalive = false) {
+    const activity = options.getBookReadingActivity();
+    emitPresence("book:reading", activity, keepalive && activity.active);
   }
 
   function stopPublishingBibleReading() {
@@ -211,11 +240,12 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     emitPresence("book:reading", { active: false, bookTitle: null });
   }
 
-  function publishFriendListening() {
+  function publishFriendListening(keepalive = false) {
     const program = friendListeningProgram.value;
     emitPresence(
       "friend:listening",
-      program ? { programId: program.id, programTitle: `${program.seriesTitle}·${program.title}`.slice(0, 200) } : null
+      program ? { programId: program.id, programTitle: `${program.seriesTitle}·${program.title}`.slice(0, 200) } : null,
+      keepalive && program !== null
     );
   }
 
@@ -223,11 +253,16 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     emitPresence("friend:listening", null);
   }
 
-  function publishPresenceActivities() {
-    publishMusicListening();
-    publishBibleReading();
-    publishBookReading();
-    publishFriendListening();
+  function publishPresenceActivities(keepalive = false) {
+    publishMusicListening(keepalive);
+    publishBibleReading(keepalive);
+    publishBibleListening(keepalive);
+    publishBookReading(keepalive);
+    publishFriendListening(keepalive);
+  }
+
+  function handlePresenceHeartbeat() {
+    publishPresenceActivities(true);
   }
 
   function attachMusicSocket() {
@@ -241,17 +276,29 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     store.socket?.on("music:listeners", handleMusicListeners);
     store.socket?.off("bible:readers", handleBibleReaders);
     store.socket?.on("bible:readers", handleBibleReaders);
+    store.socket?.off("bible:listeners", handleBibleListeners);
+    store.socket?.on("bible:listeners", handleBibleListeners);
     store.socket?.off("book:readers", handleBookReaders);
     store.socket?.on("book:readers", handleBookReaders);
     store.socket?.off("friend:listeners", handleFriendListeners);
     store.socket?.on("friend:listeners", handleFriendListeners);
-    store.socket?.off("connect", options.onActivitySocketConnect);
-    store.socket?.on("connect", options.onActivitySocketConnect);
+    // The server registers its presence handlers asynchronously after the
+    // transport connects and only then emits `session:ready`; publishing on the
+    // raw `connect` event raced that setup and the first emits were dropped.
+    store.socket?.off("session:ready", options.onActivitySocketConnect);
+    store.socket?.on("session:ready", options.onActivitySocketConnect);
     if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
-    musicListenerHeartbeatTimer = window.setInterval(publishPresenceActivities, 15_000);
+    musicListenerHeartbeatTimer = window.setInterval(handlePresenceHeartbeat, 15_000);
     presenceEmitCache.clear();
     publishPresenceActivities();
   }
+
+  // The store replaces its Socket instance after an `io server disconnect`
+  // (server restart, session replaced); handlers bound to the old instance
+  // would silently stop receiving snapshots, so follow every replacement.
+  watch(() => store.socket, (socket, previous) => {
+    if (socket && socket !== previous) attachMusicSocket();
+  });
 
   function stopPresenceHeartbeat() {
     if (musicListenerHeartbeatTimer) window.clearInterval(musicListenerHeartbeatTimer);
@@ -267,6 +314,7 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     musicPlayerExpanded,
     musicListeners,
     bibleReaders,
+    bibleListeners,
     bookReaders,
     friendListeners,
     friendListeningProgram,
@@ -283,11 +331,13 @@ export function useMusicLibraryIntegration(options: UseMusicLibraryIntegrationOp
     handleMusicListeners,
     handleBookReaders,
     handleBibleReaders,
+    handleBibleListeners,
     handleFriendListeners,
     clearPresenceEmitCache,
     publishMusicListening,
     stopPublishingMusicListening,
     publishBibleReading,
+    publishBibleListening,
     publishBookReading,
     stopPublishingBibleReading,
     stopPublishingBookReading,

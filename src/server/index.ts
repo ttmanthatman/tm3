@@ -105,6 +105,8 @@ import { registerSermonSocket } from "./sermon/socket.js";
 import { deleteAccount as deleteAccountService } from "./services/accountDeletion.js";
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
+import { cleanListenPlaylistPayload } from "./services/listenPlaylist.js";
+import { listenPlaylistContent, listenPlaylistPayload } from "../shared/listenPlaylist.js";
 import { createMessageSerializationService } from "./services/messageSerialization.js";
 import { createReceptionService } from "./services/receptionService.js";
 import {
@@ -119,6 +121,7 @@ import type {
   AdminLoginLogKind,
   AiSettingsDTO,
   AiSuggestionDTO,
+  BibleListenerDTO,
   BibleReaderPresenceDTO,
   BookReaderPresenceDTO,
   ChainPayload,
@@ -386,6 +389,7 @@ const accountSocketIds = new Map<number, Set<string>>();
 const accountPresenceStartedAt = new Map<number, Date>();
 const musicListeners = new Map<string, MusicListenerDTO & { updatedAt: number }>();
 const bibleReaders = new Map<string, BibleReaderPresenceDTO & { updatedAt: number }>();
+const bibleListeners = new Map<string, BibleListenerDTO & { updatedAt: number }>();
 const bookReaders = new Map<string, BookReaderPresenceDTO & { updatedAt: number }>();
 const friendListeners = new Map<string, FriendListenerDTO & { updatedAt: number }>();
 let vapidPublicKey = "";
@@ -519,21 +523,28 @@ function cleanMessagePayload(input: unknown): { effect?: MessageEffect; contentF
   return Object.keys(payload).length ? payload : undefined;
 }
 
+async function resolveMusicTrack(trackId: number) {
+  const track = await prisma.message.findFirst({
+    where: { id: trackId, channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
+    select: { id: true, fileName: true }
+  });
+  if (!track?.fileName || !isMusicFileName(track.fileName)) return null;
+  return { id: track.id, title: musicTrackTitle(track.fileName) };
+}
+
 async function cleanTextMessagePayload(input: unknown) {
   const payload = cleanMessagePayload(input);
   if (!input || typeof input !== "object" || Array.isArray(input)) return payload;
   if ((input as { kind?: unknown }).kind === "book_note") return bookNoteShareSchema.parse(input);
+  if ((input as { kind?: unknown }).kind === "listen_playlist") return cleanListenPlaylistPayload(input, resolveMusicTrack);
   const requestedTrackId = Number((input as { musicTrackId?: unknown }).musicTrackId);
   if (!Number.isInteger(requestedTrackId) || requestedTrackId <= 0) return payload;
-  const track = await prisma.message.findFirst({
-    where: { id: requestedTrackId, channel: { kind: "music" }, type: "file", filePath: { not: null }, fileName: { not: null } },
-    select: { id: true, fileName: true }
-  });
-  if (!track?.fileName || !isMusicFileName(track.fileName)) throw new Error("提及的歌曲不存在或已被删除");
+  const track = await resolveMusicTrack(requestedTrackId);
+  if (!track) throw new Error("提及的歌曲不存在或已被删除");
   return {
     ...payload,
     musicTrackId: track.id,
-    musicTrackTitle: musicTrackTitle(track.fileName)
+    musicTrackTitle: track.title
   };
 }
 
@@ -1823,6 +1834,17 @@ function bibleReadersSnapshot() {
 
 function broadcastBibleReaders() {
   io.emit("bible:readers", bibleReadersSnapshot());
+}
+
+function bibleListenersSnapshot() {
+  return [...bibleListeners.values()]
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .filter((listener, index, all) => all.findIndex((candidate) => candidate.accountId === listener.accountId) === index)
+    .map(({ updatedAt: _updatedAt, ...listener }) => listener);
+}
+
+function broadcastBibleListeners() {
+  io.emit("bible:listeners", bibleListenersSnapshot());
 }
 
 function bookReadersSnapshot() {
@@ -4362,9 +4384,13 @@ io.on("connection", async (socket: Socket) => {
   channels.forEach((ch) => socket.join(`ch:${ch.id}`));
   await broadcastPresence();
   // Listener lists did not change on connect: send the snapshots only to the
-  // new socket instead of broadcasting them to everyone.
+  // new socket instead of broadcasting them to everyone. Every presence family
+  // is included so a (re)connecting client never starts with a blank ticker.
   socket.emit("music:listeners", musicListenersSnapshot());
   socket.emit("friend:listeners", friendListenersSnapshot());
+  socket.emit("bible:readers", bibleReadersSnapshot());
+  socket.emit("bible:listeners", bibleListenersSnapshot());
+  socket.emit("book:readers", bookReadersSnapshot());
   registerSermonSocket(io, socket, sermonSocketDeps);
 
   socket.on("channel:join", async (data: { channelId: number }) => {
@@ -4395,7 +4421,6 @@ io.on("connection", async (socket: Socket) => {
         return ack?.({ success: false, code: "not_sent", message: "消息内容无效" });
       }
       const handwriting = body.type === "handwriting" ? prepareHandwritingMessage(body.payload, body.clientRequestId) : null;
-      const content = handwriting?.content ?? cleanText(body.content || "");
       const payload = handwriting?.payload ?? (
         body.type === "prayer"
           ? cleanPrayerPayload(body.payload)
@@ -4403,6 +4428,9 @@ io.on("connection", async (socket: Socket) => {
             ? cleanSermonRequestPayload(body.payload)
             : await cleanTextMessagePayload(body.payload)
       );
+      // 「/听」清单的正文摘要按服务端解析后的引用重写，保证通知/回复预览与卡片一致
+      const listenPlaylist = body.type === "text" ? listenPlaylistPayload(payload) : null;
+      const content = handwriting?.content ?? (listenPlaylist ? listenPlaylistContent(listenPlaylist.items, listenPlaylist.note) : cleanText(body.content || ""));
       const requestHash = body.clientRequestId
         ? messageSendRequestHash({ channelId: body.channelId, content, type: body.type, payload, replyToId: body.replyToId ?? null })
         : undefined;
@@ -4548,6 +4576,36 @@ io.on("connection", async (socket: Socket) => {
     broadcastBibleReaders();
   });
 
+  socket.on("bible:listening", async (data: unknown) => {
+    const currentAuth = await refreshSocketAuth(socket);
+    if (!currentAuth) return;
+    if (currentAuth.isGuest) {
+      if (bibleListeners.delete(socket.id)) broadcastBibleListeners();
+      return;
+    }
+    const body = z.object({
+      bookName: z.string().trim().min(1).max(40),
+      chapter: z.number().int().min(1).max(200)
+    }).nullable().safeParse(data);
+    if (!body.success || body.data === null) {
+      if (bibleListeners.delete(socket.id)) broadcastBibleListeners();
+      return;
+    }
+    const existing = bibleListeners.get(socket.id);
+    if (existing?.bookName === body.data.bookName && existing.chapter === body.data.chapter) {
+      existing.updatedAt = Date.now();
+      return;
+    }
+    bibleListeners.set(socket.id, {
+      accountId: currentAuth.accountId,
+      displayName: account.displayName,
+      bookName: body.data.bookName,
+      chapter: body.data.chapter,
+      updatedAt: Date.now()
+    });
+    broadcastBibleListeners();
+  });
+
   socket.on("book:reading", async (data: unknown) => {
     const currentAuth = await refreshSocketAuth(socket);
     if (!currentAuth) return;
@@ -4608,6 +4666,7 @@ io.on("connection", async (socket: Socket) => {
     online.delete(socket.id);
     const musicListenerChanged = musicListeners.delete(socket.id);
     const bibleReaderChanged = bibleReaders.delete(socket.id);
+    const bibleListenerChanged = bibleListeners.delete(socket.id);
     const bookReaderChanged = bookReaders.delete(socket.id);
     const friendListenerChanged = friendListeners.delete(socket.id);
     const set = accountSocketIds.get(account.id);
@@ -4635,6 +4694,7 @@ io.on("connection", async (socket: Socket) => {
     await broadcastPresence();
     if (musicListenerChanged) broadcastMusicListeners();
     if (bibleReaderChanged) broadcastBibleReaders();
+    if (bibleListenerChanged) broadcastBibleListeners();
     if (bookReaderChanged) broadcastBookReaders();
     if (friendListenerChanged) broadcastFriendListeners();
   });

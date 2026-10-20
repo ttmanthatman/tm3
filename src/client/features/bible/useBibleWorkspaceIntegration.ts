@@ -19,14 +19,33 @@ import { biblePassageShareContent, parseBiblePassageShare } from "../reading-sha
 import { useMessageSender } from "../../messageSending";
 import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { bibleAudioEnabled, loadBibleAudioManifest, resetBibleAudioManifest } from "./bibleAudioManifest";
+import type { BibleAudioPlayItem } from "./bibleAudioQueue";
 
-/** 聊天顶端提词器的状态快照：工作区 expose 出来，App 在只看聊天时渲染悬浮提词器 */
+/** 聊天顶端提词器的状态快照：工作区 expose 出来，App 在只看聊天时渲染悬浮提词器；bookName/chapter 供「正在听圣经」动态 */
 export type BibleAudioTeleprompterState = {
   active: boolean;
   playing: boolean;
   reference: string;
+  bookName: string;
+  chapter: number | null;
   transition: boolean;
   lyrics: { current: string; next: string } | null;
+};
+
+/** 「/听」会话直接驾驭的播放器子集（工作区 expose 的 reactive 播放器） */
+export type BibleWorkspaceAudioHandle = {
+  active: boolean;
+  playing: boolean;
+  currentVerse: number | null;
+  currentItem: BibleAudioPlayItem | null;
+  canPreviousChapter: boolean;
+  canNextChapter: boolean;
+  toggle: () => boolean;
+  stop: () => void;
+  nextVerse: () => void;
+  previousVerse: () => void;
+  nextChapter: () => void;
+  previousChapter: () => void;
 };
 
 export type BibleWorkspaceHandle = {
@@ -34,6 +53,8 @@ export type BibleWorkspaceHandle = {
   openCopyworkContext: (source: CopyworkSource) => Promise<void>;
   openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;
   startAudioFromLookups: (lookups: BibleLookupDTO[]) => Promise<boolean>;
+  playAudioItems: (items: BibleAudioPlayItem[]) => Promise<boolean>;
+  audio: BibleWorkspaceAudioHandle;
   bibleAudioTeleprompter: BibleAudioTeleprompterState;
   toggleBibleAudio: () => void;
   stopBibleAudio: () => void;

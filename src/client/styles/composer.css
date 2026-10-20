@@ -64,6 +64,58 @@
   white-space: nowrap;
 }
 
+/* 「/听」清单歌曲：同一张芯片里横向排开多首，每首自带移除键；超出时横向滚动而不是撑高输入区 */
+.listen-mention-chip {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.listen-mention-chip .listen-mention-copy {
+  display: grid;
+  gap: 2px;
+  align-items: start;
+}
+
+.listen-mention-list {
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.listen-mention-list::-webkit-scrollbar {
+  display: none;
+}
+
+.listen-mention-item {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 4px 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  font-size: 13px;
+}
+
+.listen-mention-item strong {
+  max-width: 160px;
+}
+
+.listen-mention-remove {
+  border: 0;
+  padding: 3px;
+  display: inline-flex;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.listen-mention-remove:hover {
+  opacity: 1;
+}
+
 .text-btn {
   color: #0b7d0a;
   font-weight: 700;

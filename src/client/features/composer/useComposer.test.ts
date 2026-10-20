@@ -24,10 +24,13 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
   const file = ref<File | null>(null);
   let starts = 0;
   let stops = 0;
+  const listenMusicMentions = ref<MusicTrackDTO[]>([]);
+  const messageSendStatus = ref("");
   const composer = useComposer({
     input,
     composerFocused: ref(false),
     selectedMusicMention: ref<MusicTrackDTO | null>(null),
+    listenMusicMentions,
     composerCaret,
     composerSuggestionIndex: ref(0),
     composerSuggestionSuppressed: ref(false),
@@ -36,7 +39,7 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
     composerInput: ref<HTMLTextAreaElement | null>(null),
     composerPanel: panel,
     messageSendPending: ref(false),
-    messageSendStatus: ref(""),
+    messageSendStatus,
     clearMessageSendStatus: () => undefined,
     sendMessage: async (payload: unknown) => {
       sent.push(payload);
@@ -55,8 +58,56 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
     sortedMusicTracks: () => [],
     chooseActiveSuggestion: () => undefined
   });
-  return { composer, input, composerCaret, sent, gracePrefills, panel, recording, file, starts: () => starts, stops: () => stops };
+  return { composer, input, composerCaret, sent, gracePrefills, panel, recording, file, listenMusicMentions, messageSendStatus, starts: () => starts, stops: () => stops };
 }
+
+test("/听 parses as a listen draft and appears in the slash suggestions", () => {
+  const { composer, input, composerCaret } = createComposerHarness();
+  assert.equal(composer.parseComposerText("/听 诗篇23 @@奇异恩典").type, "listen");
+  assert.equal(composer.parseComposerText("/听 诗篇23 @@奇异恩典").content, "诗篇23 @@奇异恩典");
+  input.value = "/听";
+  composerCaret.value = 2;
+  assert.ok(composer.matchingSlashCommands.value.some((item) => item.kind === "listen" && item.command === "/听"));
+  assert.equal(composer.listenComposerActive.value, true);
+  input.value = "普通消息";
+  assert.equal(composer.listenComposerActive.value, false);
+});
+
+test("sendText turns a /听 draft into a text message carrying an ordered listen_playlist payload", async () => {
+  const { composer, input, sent, listenMusicMentions } = createComposerHarness();
+  const { useChatStore } = await import("../../store");
+  useChatStore().currentChannelId = 7;
+  const grace = { id: 7, title: "奇异恩典" } as MusicTrackDTO;
+  listenMusicMentions.value = [grace];
+  input.value = "/听 睡前听 诗篇23 @@奇异恩典 约翰福音3:16";
+  await composer.sendText();
+  assert.equal(sent.length, 1);
+  const payload = sent[0] as { type: string; content: string; payload: { kind: string; items: unknown[]; note?: string } };
+  assert.equal(payload.type, "text");
+  assert.equal(payload.content, "一起听：诗篇23 · ♪奇异恩典 · 约翰福音3:16\n睡前听");
+  assert.deepEqual(payload.payload, {
+    kind: "listen_playlist",
+    items: [
+      { kind: "scripture", reference: "诗篇23" },
+      { kind: "track", trackId: 7 },
+      { kind: "scripture", reference: "约翰福音3:16" }
+    ],
+    note: "睡前听"
+  });
+  assert.equal(input.value, "");
+  assert.deepEqual(listenMusicMentions.value, []);
+});
+
+test("an empty /听 draft is refused with a hint instead of being sent", async () => {
+  const { composer, input, sent, messageSendStatus } = createComposerHarness();
+  const { useChatStore } = await import("../../store");
+  useChatStore().currentChannelId = 7;
+  input.value = "/听 今晚一起听吧";
+  await composer.sendText();
+  assert.equal(sent.length, 0);
+  assert.match(messageSendStatus.value, /经文|@@/);
+  assert.equal(input.value, "/听 今晚一起听吧");
+});
 
 test("parseComposerText recognizes /恩典 with and without inline content", () => {
   const { composer } = createComposerHarness();

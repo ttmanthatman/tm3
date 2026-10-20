@@ -13,7 +13,8 @@ import {
   parseBibleAudioResume,
   previousBibleChapterLocation,
   queueFromChapter,
-  queueFromLookups
+  queueFromLookups,
+  queueFromPassage
 } from "./bibleAudioQueue";
 
 const books: BibleBookCatalogDTO[] = [
@@ -134,4 +135,16 @@ test("stream path encodes identifiers and rates cycle through the preset list", 
   assert.equal(nextBibleAudioRate(1.5), 2);
   assert.equal(nextBibleAudioRate(2), 1);
   assert.equal(nextBibleAudioRate(0.7), 1);
+});
+
+test("queueFromPassage splits a located passage per chapter and keeps single-chapter bounds", () => {
+  assert.deepEqual(queueFromPassage({ bookCode: "psa", startChapter: 23, startVerse: 1, endChapter: 23, endVerse: 6 }), [
+    { book: "PSA", chapter: 23, verseStart: 1, verseEnd: 6 }
+  ]);
+  assert.deepEqual(queueFromPassage({ bookCode: "MAT", startChapter: 5, startVerse: 3, endChapter: 7, endVerse: 12 }), [
+    { book: "MAT", chapter: 5, verseStart: 3, verseEnd: null },
+    { book: "MAT", chapter: 6, verseStart: 1, verseEnd: null },
+    { book: "MAT", chapter: 7, verseStart: 1, verseEnd: 12 }
+  ]);
+  assert.deepEqual(queueFromPassage({ bookCode: "MAT", startChapter: 7, startVerse: 1, endChapter: 5, endVerse: 1 }), []);
 });

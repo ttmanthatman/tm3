@@ -4,6 +4,7 @@ import {
   CloudRain,
   Droplet,
   FileText,
+  Headphones,
   HeartHandshake,
   Mic,
   Plane,
@@ -20,6 +21,8 @@ import {
   type MessageSendResult
 } from "../../messageSending";
 import { useChatStore } from "../../store";
+import { buildListenDraft, isListenDraft, LISTEN_COMMAND } from "../listen/listenComposer";
+import { listenPlaylistContent } from "@shared/listenPlaylist";
 
 type IconComponent = typeof Sparkles;
 const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: IconComponent }> = [
@@ -35,14 +38,16 @@ const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道
 const graceCommand = { command: "/恩典", label: "恩典", hint: "发送频道恩典卡片", icon: Sparkles };
 const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
+const listenCommand = { command: LISTEN_COMMAND, label: "一起听", hint: "写经文、@@ 选歌，按顺序组成播放清单", icon: Headphones };
 export type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "grace"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "sermonRequest"; command: string; label: string; hint: string; icon: IconComponent }
+  | { kind: "listen"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "format"; command: string; label: string; hint: string; icon: IconComponent }
   | ({ kind: "effect" } & (typeof effectCommands)[number]);
 
-export type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "grace" | "sermon_request"; contentFormat?: "markdown" };
+export type ComposerParseResult = { content: string; effect?: MessageEffect; type?: "text" | "prayer" | "grace" | "sermon_request" | "listen"; contentFormat?: "markdown" };
 export type ComposerMentionToken = { start: number; end: number; query: string };
 
 export function messageEffect(message: MessageDTO): MessageEffect | null {
@@ -55,6 +60,8 @@ interface UseComposerOptions {
   input: Ref<string>;
   composerFocused: Ref<boolean>;
   selectedMusicMention: Ref<MusicTrackDTO | null>;
+  /** 「/听」草稿里按选择顺序累积的歌曲；发送时按正文中 `@@歌名` 的位置重排 */
+  listenMusicMentions: Ref<MusicTrackDTO[]>;
   composerCaret: Ref<number>;
   composerSuggestionIndex: Ref<number>;
   composerSuggestionSuppressed: Ref<boolean>;
@@ -96,6 +103,7 @@ export function useComposer(options: UseComposerOptions) {
     if (clearDraft && input.value === row.draft && store.currentChannelId === row.channelId) {
       input.value = "";
       selectedMusicMention.value = null;
+      listenMusicMentions.value = [];
       replyTo.value = null;
       if (row.payload.type === "prayer") options.clearPrayerComposerPhoto();
     }
@@ -143,6 +151,7 @@ export function useComposer(options: UseComposerOptions) {
   const input = options.input;
   const composerFocused = options.composerFocused;
   const selectedMusicMention = options.selectedMusicMention;
+  const listenMusicMentions = options.listenMusicMentions;
   const composerCaret = options.composerCaret;
   const composerSuggestionIndex = options.composerSuggestionIndex;
   const composerSuggestionSuppressed = options.composerSuggestionSuppressed;
@@ -159,7 +168,7 @@ export function useComposer(options: UseComposerOptions) {
   function parseComposerText(value: string): ComposerParseResult {
     let content = value.trim();
     let effect: MessageEffect | undefined;
-    let type: "text" | "prayer" | "grace" | "sermon_request" | undefined;
+    let type: ComposerParseResult["type"];
     let contentFormat: "markdown" | undefined;
     let consumed = true;
 
@@ -190,6 +199,13 @@ export function useComposer(options: UseComposerOptions) {
       if (sermonRequestContent !== null) {
         type = "sermon_request";
         content = sermonRequestContent;
+        consumed = true;
+        continue;
+      }
+      const listenContent = consumeLeadingCommand(content, listenCommand.command);
+      if (listenContent !== null) {
+        type = "listen";
+        content = listenContent;
         consumed = true;
         continue;
       }
@@ -251,6 +267,7 @@ export function useComposer(options: UseComposerOptions) {
       { ...prayerCommand, kind: "prayer" as const },
       { ...graceCommand, kind: "grace" as const },
       { ...sermonRequestCommand, kind: "sermonRequest" as const },
+      { ...listenCommand, kind: "listen" as const },
       ...effectCommands.map((item) => ({ ...item, kind: "effect" as const }))
     ].filter((item) => item.command.toLowerCase().startsWith(token.query.toLowerCase()));
   });
@@ -366,6 +383,19 @@ export function useComposer(options: UseComposerOptions) {
     nextTick(() => options.composerInput.value?.focus());
   }
 
+  /** 草稿是否处于「/听」模式：此时 @@ 可以反复选歌，歌曲累积在 listenMusicMentions */
+  const listenComposerActive = computed(() => isListenDraft(input.value));
+
+  function removeListenMention(index: number) {
+    const track = listenMusicMentions.value[index];
+    if (!track) return;
+    const marker = `@@${track.title}`;
+    const at = input.value.indexOf(marker);
+    if (at >= 0) input.value = `${input.value.slice(0, at)}${input.value.slice(at + marker.length)}`.replace(/[ \t]{2,}/g, " ");
+    listenMusicMentions.value = listenMusicMentions.value.filter((_, position) => position !== index);
+    nextTick(() => options.composerInput.value?.focus());
+  }
+
   async function sendText() {
     if (options.messageSendPending.value) return;
     const retry = unconfirmedSends.value.find((item) => item.channelId === store.currentChannelId && item.draft === input.value);
@@ -379,12 +409,22 @@ export function useComposer(options: UseComposerOptions) {
       options.openGraceComposer(parsed.content);
       return;
     }
-    const content = parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
+    // /听：正文里的经文引用与 @@歌曲 按出现顺序组成播放清单，作为 text 消息的 listen_playlist payload 发出，
+    // 引用解析与歌曲校验在服务端完成；正文摘要先用草稿文字，服务端会按解析结果重写。
+    const listenDraft = parsed.type === "listen" ? buildListenDraft(parsed.content, listenMusicMentions.value) : null;
+    if (listenDraft && !listenDraft.items.length) {
+      options.messageSendStatus.value = "请写一处经文，或用 @@ 选一首歌";
+      return;
+    }
+    const content = listenDraft
+      ? listenPlaylistContent(listenDraft.preview, listenDraft.note)
+      : parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
     if (!content || !store.currentChannelId) return;
     const originalInput = input.value;
     const originalMusicMention = musicMention;
+    const originalListenMentions = listenMusicMentions.value;
     const originalReply = replyTo.value;
-    const messageType = musicMention ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
+    const messageType = listenDraft || musicMention || parsed.type === "listen" ? "text" : parsed.type || (store.prayerOnly ? "prayer" : "text");
     let prayerImageMessageId: number | null = null;
     if (messageType === "prayer" && options.prayerComposerPhoto.value) {
       try {
@@ -394,14 +434,16 @@ export function useComposer(options: UseComposerOptions) {
         return;
       }
     }
-    const messagePayload = {
-      ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
-      ...(messageType === "sermon_request" ? { note: content } : {}),
-      ...(parsed.effect ? { effect: parsed.effect } : {}),
-      ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
-      ...(musicMention ? { musicTrackId: musicMention.id } : {}),
-      ...(prayerImageMessageId ? { imageMessageId: prayerImageMessageId } : {})
-    };
+    const messagePayload = listenDraft
+      ? { kind: "listen_playlist", items: listenDraft.items, ...(listenDraft.note ? { note: listenDraft.note } : {}) }
+      : {
+          ...(messageType === "prayer" ? { kind: "prayer", status: "active" } : {}),
+          ...(messageType === "sermon_request" ? { note: content } : {}),
+          ...(parsed.effect ? { effect: parsed.effect } : {}),
+          ...(parsed.contentFormat ? { contentFormat: parsed.contentFormat } : {}),
+          ...(musicMention ? { musicTrackId: musicMention.id } : {}),
+          ...(prayerImageMessageId ? { imageMessageId: prayerImageMessageId } : {})
+        };
     const payload = {
       channelId: store.currentChannelId,
       content,
@@ -422,11 +464,13 @@ export function useComposer(options: UseComposerOptions) {
     const submittedComposerIsCurrent =
       input.value === originalInput &&
       selectedMusicMention.value === originalMusicMention &&
+      listenMusicMentions.value === originalListenMentions &&
       replyTo.value === originalReply;
     if (!submittedComposerIsCurrent) return;
     input.value = composerDraftAfterSend(result, originalInput, input.value);
     if (!result.ok) return;
     selectedMusicMention.value = null;
+    listenMusicMentions.value = [];
     replyTo.value = null;
     if (prayerImageMessageId) options.clearPrayerComposerPhoto();
   }
@@ -513,6 +557,8 @@ export function useComposer(options: UseComposerOptions) {
     startPrayerComposer,
     chooseMentionSuggestion,
     removeMusicMention,
+    listenComposerActive,
+    removeListenMention,
     sendText,
     toggleMorePanel,
     toggleVoicePanel,

@@ -46,6 +46,7 @@ import { provideBibleAccountState } from "../features/bible/useBibleAccountState
 import BibleReaderPane from "./BibleReaderPane.vue";
 import BibleAudioControls from "../features/bible/BibleAudioControls.vue";
 import { useBibleAudioPlayer } from "../features/bible/useBibleAudioPlayer";
+import type { BibleAudioPlayItem } from "../features/bible/bibleAudioQueue";
 import { bibleAudioDefaultVersion, bibleAudioEnabled, loadBibleAudioManifest } from "../features/bible/bibleAudioManifest";
 import { DEFAULT_BIBLE_TRANSLATION_ID, fetchBibleChapter } from "../bibleChapterCache";
 import {
@@ -89,6 +90,7 @@ const emit = defineEmits<{
   expand: [];
   shrink: [];
   "reading-change": [activity: { active: boolean; bookName: string | null }];
+  "audio-queue-ended": [];
 }>();
 
 type BibleReaderPaneExpose = {
@@ -750,7 +752,8 @@ const bibleAudio = reactive(useBibleAudioPlayer({
   accountId: () => props.accountId,
   books: () => allBooks.value,
   version: () => bibleAudioDefaultVersion.value,
-  onToast: showToast
+  onToast: showToast,
+  onQueueEnded: () => emit("audio-queue-ended")
 }));
 const bibleAudioFollow = ref(true);
 const bibleAudioChapterText = ref<BibleChapterDTO | null>(null);
@@ -868,6 +871,15 @@ async function startAudioFromLookups(lookups: BibleLookupDTO[]) {
   return bibleAudio.startFromLookups(lookups);
 }
 
+/** 「/听」清单里的经文段：不改动窗格位置（工作区可能根本没打开），只起播已切好的队列；
+ *  未开放时静默返回 false，由调用方在聊天侧给提示（工作区关着时这里的 toast 用户看不见） */
+async function playAudioItems(items: BibleAudioPlayItem[]) {
+  await ensureCatalog();
+  await loadBibleAudioManifest();
+  if (!bibleAudioEnabled.value) return false;
+  return bibleAudio.startFromItems(items);
+}
+
 // 跟随翻页：朗读进入新一章时让活动窗格翻到该章（可在控件里关闭）
 watch(() => bibleAudio.currentItem, async (item) => {
   if (!item || !bibleAudioFollow.value || !props.open) return;
@@ -911,16 +923,28 @@ const bibleAudioLyrics = computed(() => {
 
 onBeforeUnmount(() => bibleAudio.dispose());
 
-// 暴露给 App 的聊天顶端提词器状态快照（reactive 经 expose 代理保持追踪）
+// 暴露给 App 的聊天顶端提词器状态快照（reactive 经 expose 代理保持追踪）；bookName/chapter 供「正在听圣经」动态使用
 const bibleAudioTeleprompter = computed(() => ({
   active: bibleAudio.active,
   playing: bibleAudio.playing,
   reference: bibleAudio.currentReference,
+  bookName: bibleAudio.currentBookName,
+  chapter: bibleAudio.currentItem?.chapter ?? null,
   transition: bibleAudioLyricsTransition.value,
   lyrics: bibleAudioLyrics.value
 }));
 
-defineExpose({ openLookupContext, openSession, openCopyworkContext, startAudioFromLookups, bibleAudioTeleprompter, toggleBibleAudio: handleBibleAudioToggle, stopBibleAudio: () => bibleAudio.stop() });
+defineExpose({
+  openLookupContext,
+  openSession,
+  openCopyworkContext,
+  startAudioFromLookups,
+  playAudioItems,
+  audio: bibleAudio,
+  bibleAudioTeleprompter,
+  toggleBibleAudio: handleBibleAudioToggle,
+  stopBibleAudio: () => bibleAudio.stop()
+});
 
 function openShareDialog() {
   const channels = props.shareChannels || [];

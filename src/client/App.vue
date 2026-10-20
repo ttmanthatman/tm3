@@ -98,7 +98,12 @@ import BibleChatSeparator from "./features/bible/BibleChatSeparator.vue";
 import { useBibleWorkspaceIntegration } from "./features/bible/useBibleWorkspaceIntegration";
 import { viewedBibleNoteId } from "./features/bible/notes/noteViewerState";
 import { createBibleSwipeNavigation } from "./features/bible/bibleSwipeNavigation";
-import { useMusicLibraryIntegration } from "./features/music/useMusicLibraryIntegration";
+import { bibleAudioPromptVisible as bibleAudioPromptVisibleRule } from "./features/bible/bibleAudioPromptVisibility";
+import { bibleAudioEnabled } from "./features/bible/bibleAudioManifest";
+import { useMusicLibraryIntegration, type BibleListeningActivity } from "./features/music/useMusicLibraryIntegration";
+import { isListenDraft } from "./features/listen/listenComposer";
+import { useListenSession } from "./features/listen/useListenSession";
+import { listenPlaylistPayload } from "@shared/listenPlaylist";
 import { useRainEffect } from "./features/effects/useRainEffect";
 import { useDripEffect } from "./features/effects/useDripEffect";
 import { useGooeyDripEffect } from "./features/effects/useGooeyDripEffect";
@@ -439,11 +444,15 @@ const receptionInviteToken = receptionInviteRouteMatch?.[1] || "";
 const input = ref("");
 const composerFocused = ref(false);
 const selectedMusicMention = ref<MusicTrackDTO | null>(null);
+// 「/听」草稿可反复 @@ 选歌，按选择顺序累积；普通消息仍只允许一首（selectedMusicMention）
+const listenMusicMentions = ref<MusicTrackDTO[]>([]);
 const composerCaret = ref(0);
 const composerSuggestionIndex = ref(0);
 const composerSuggestionSuppressed = ref(false);
 const replyTo = ref<MessageDTO | null>(null);
-const musicMentionToken = computed(() => (selectedMusicMention.value ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)));
+const musicMentionToken = computed(() => (
+  selectedMusicMention.value && !isListenDraft(input.value) ? null : musicMentionTokenAtCursor(input.value, composerCaret.value)
+));
 const showChannels = ref(false);
 const showFavorites = ref(false);
 const showGraceFavorites = ref(false);
@@ -483,6 +492,7 @@ const {
   musicPlayerExpanded,
   musicListeners,
   bibleReaders,
+  bibleListeners,
   bookReaders,
   friendListeners,
   friendListeningProgram,
@@ -504,6 +514,7 @@ const {
   publishMusicListening,
   stopPublishingMusicListening,
   publishBibleReading,
+  publishBibleListening,
   publishBookReading,
   stopPublishingBibleReading,
   stopPublishingBookReading,
@@ -525,6 +536,7 @@ const {
   loadMusicTracks,
   onActivitySocketConnect: handleActivitySocketConnect,
   getBibleReadingActivity: () => bibleReadingActivity.value,
+  getBibleListeningActivity: () => bibleListeningActivity.value,
   getBookReadingActivity: () => bookReadingActivity.value
 });
 const {
@@ -1224,6 +1236,8 @@ const {
   startPrayerComposer,
   chooseMentionSuggestion,
   removeMusicMention,
+  listenComposerActive,
+  removeListenMention,
   sendText,
   toggleMorePanel,
   toggleVoicePanel,
@@ -1234,6 +1248,7 @@ const {
   input,
   composerFocused,
   selectedMusicMention,
+  listenMusicMentions,
   composerCaret,
   composerSuggestionIndex,
   composerSuggestionSuppressed,
@@ -1486,6 +1501,7 @@ watch(
     messageSelectionMode.value = false;
     composerPanel.value = null;
     selectedMusicMention.value = null;
+    listenMusicMentions.value = [];
     lastParallaxScrollTop = null;
     pendingParallaxDelta = 0;
     pendingWallpaperPanDelta = 0;
@@ -1703,7 +1719,7 @@ onBeforeUnmount(() => {
   store.socket?.off("music:favorite-updated", handleMusicFavoriteUpdated);
   store.socket?.off("music:listeners", handleMusicListeners);
   store.socket?.off("bible:readers", handleBibleReaders);
-  store.socket?.off("connect", handleActivitySocketConnect);
+  store.socket?.off("session:ready", handleActivitySocketConnect);
   stopPresenceHeartbeat();
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   clearMusicScoreCache();
@@ -1746,6 +1762,8 @@ const musicPlayer = useMusicPlayer({
   onCurrentTrackChanged: reconcileOpenMusicScore,
   onListeningChanged: publishMusicListening,
   onPlaybackStart: () => exclusiveAudio.activate("music"),
+  // 「/听」会话接管自己点播的歌曲结束事件（返回 true 时曲库不再自动续播）
+  onTrackEnded: () => listenSession.handleTrackEnded(),
   onHeatChanged: (trackId, heat) => {
     musicTracks.value = musicTracks.value.map((track) => track.id === trackId ? { ...track, heat } : track);
   }
@@ -1796,6 +1814,63 @@ const {
   musicManagerOpen
 });
 const musicSleepTimer = useMusicSleepTimer({ currentTrackId: currentMusicTrackId, onStop: () => pauseMusic(true) });
+
+// 「/听」清单播放会话：经文段交给圣经工作区上的有声圣经播放器，歌曲交给音乐播放器，顺序由会话编排。
+// 必须在 bibleWorkspace ref 与 musicPlayer 之后创建（内部 watch 会立刻读取两边状态）。
+const listenSession = useListenSession<MusicTrackDTO>({
+  bible: {
+    active: () => bibleWorkspace.value?.audio.active ?? false,
+    playing: () => bibleWorkspace.value?.audio.playing ?? false,
+    currentVerse: () => bibleWorkspace.value?.audio.currentVerse ?? null,
+    currentChapter: () => bibleWorkspace.value?.audio.currentItem?.chapter ?? null,
+    canPreviousChapter: () => bibleWorkspace.value?.audio.canPreviousChapter ?? false,
+    canNextChapter: () => bibleWorkspace.value?.audio.canNextChapter ?? false,
+    playItems: async (items) => (await bibleWorkspace.value?.playAudioItems(items)) ?? false,
+    unavailableMessage: () => (bibleAudioEnabled.value ? null : "有声圣经暂未开放"),
+    toggle: () => void bibleWorkspace.value?.audio.toggle(),
+    stop: () => bibleWorkspace.value?.audio.stop(),
+    nextVerse: () => bibleWorkspace.value?.audio.nextVerse(),
+    previousVerse: () => bibleWorkspace.value?.audio.previousVerse(),
+    nextChapter: () => bibleWorkspace.value?.audio.nextChapter(),
+    previousChapter: () => bibleWorkspace.value?.audio.previousChapter()
+  },
+  music: {
+    currentTrackId: () => currentMusicTrackId.value,
+    playing: () => musicPlaying.value,
+    ensureTracks: async () => {
+      if (!musicTracks.value.length) await loadMusicTracks();
+    },
+    findTrack: (trackId) => musicTracks.value.find((track) => track.id === trackId) || null,
+    playTrack: (track) => {
+      musicSourceKind.value = "library";
+      selectedMusicPlaylistId.value = null;
+      musicManagerOpen.value = false;
+      selectMusicTrackCore(track);
+    },
+    pause: () => pauseMusic(true),
+    toggle: () => toggleMusicPlayback()
+  },
+  onUnavailable: (message) => alert(message)
+});
+
+function listenSessionFor(message: MessageDTO) {
+  const current = listenSession.current.value;
+  return current && current.messageId === message.id ? current : null;
+}
+
+function listenPlaylistItemsOf(message: MessageDTO) {
+  return listenPlaylistPayload(message.payload)?.items || [];
+}
+
+function toggleListenPlaylist(message: MessageDTO) {
+  const items = listenPlaylistItemsOf(message);
+  if (items.length) listenSession.toggle(message.id, items);
+}
+
+function playListenPlaylistItem(message: MessageDTO, index: number) {
+  const items = listenPlaylistItemsOf(message);
+  if (items.length) listenSession.playItem(message.id, items, index);
+}
 const friendPlayer = useFriendPlayer({
   onUserPlay: () => exclusiveAudio.activate("friend"),
   onUserPause: () => exclusiveAudio.deactivate("friend"),
@@ -1817,13 +1892,14 @@ function toggleFriendPrograms() {
     void friendPlayer.controls.playRandom();
   }
 }
-const activityStatusItems = computed(() => activityTickerItems(
-  bibleReaders.value,
-  bookReaders.value,
-  musicListeners.value,
-  friendListeners.value,
-  Object.values(store.typing)
-));
+const activityStatusItems = computed(() => activityTickerItems({
+  bibleReaders: bibleReaders.value,
+  bibleListeners: bibleListeners.value,
+  bookReaders: bookReaders.value,
+  musicListeners: musicListeners.value,
+  friendListeners: friendListeners.value,
+  typingActivities: Object.values(store.typing)
+}));
 const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
 const currentMusicScores = computed(() => currentMusicTrack.value?.scores || []);
 const currentMusicScore = computed(
@@ -1855,11 +1931,24 @@ const musicLyricsHeaderVisible = computed(
     // 歌谱舞台全屏展示时让位于舞台，避免悬浮歌词头盖住舞台页签；关闭舞台后自动恢复
     !musicScoreStageVisible.value
 );
-// 有声圣经聊天顶端提词器：只在“只看聊天”（圣经工作区已关）且朗读会话进行中时出现。
+// 有声圣经聊天顶端提词器：只在“只看聊天”（圣经工作区已关，无论之前是分屏还是全屏）且朗读会话进行中时出现。
 // 点提词器 = 暂停/继续；暂停时点聊天其他区域 = 收起会话（handleBibleAudioPromptDismiss）。
-// 与音乐歌词头同位：音乐歌词头可见时让位，避免两个顶端浮层叠影。
+// 判定规则抽在 features/bible/bibleAudioPromptVisibility.ts 便于测试。
 const bibleAudioPrompt = computed(() => bibleWorkspace.value?.bibleAudioTeleprompter || null);
-const bibleAudioPromptVisible = computed(() => !!bibleAudioPrompt.value?.active && !bibleOpen.value && !musicLyricsHeaderVisible.value);
+const bibleAudioPromptVisible = computed(() => bibleAudioPromptVisibleRule({
+  sessionActive: !!bibleAudioPrompt.value?.active,
+  bibleOpen: bibleOpen.value,
+  sermonWorkspaceOpen: sermonWorkspaceOpen.value,
+  bookWorkspaceOpen: bookWorkspaceOpen.value,
+  musicLyricsHeaderVisible: musicLyricsHeaderVisible.value
+}));
+// 「正在听圣经」动态：朗读会话进行中（含暂停）即视为在听，章节变化时重新发布
+const bibleListeningActivity = computed<BibleListeningActivity>(() => {
+  const prompt = bibleAudioPrompt.value;
+  if (!prompt?.active || !prompt.bookName || !prompt.chapter) return null;
+  return { bookName: prompt.bookName, chapter: prompt.chapter };
+});
+watch(bibleListeningActivity, () => publishBibleListening());
 
 function handleBibleAudioPromptDismiss(event: PointerEvent) {
   const prompt = bibleAudioPrompt.value;
@@ -3383,7 +3472,8 @@ function chooseMusicMentionSuggestion(track: MusicTrackDTO) {
   const end = token?.end ?? input.value.length;
   const mention = `@@${track.title} `;
   input.value = `${input.value.slice(0, start)}${mention}${input.value.slice(end)}`;
-  selectedMusicMention.value = track;
+  if (listenComposerActive.value) listenMusicMentions.value = [...listenMusicMentions.value, track];
+  else selectedMusicMention.value = track;
   composerPanel.value = null;
   composerSuggestionSuppressed.value = true;
   nextTick(() => {
@@ -3659,6 +3749,7 @@ function openMusicTrackInManager() {
   closeMessageActionMenu();
   openMusicManager({ kind: "track", id: message.id });
 }
+
 async function playBibleAudioFromAction() {
   const message = pendingMessageActions.value;
   if (!message || !canPlayBibleAudioFromMessage(message)) return;
@@ -4119,12 +4210,15 @@ function openSharedMusicPlaylistFromTap(message: MessageDTO) {
   void openSharedMusicPlaylist(message);
 }
 
+// 运行在 session:ready（服务端已注册好 presence 处理器）之后；700ms 后再强制重发一次兜底，
+// 重发前必须清空去重缓存，否则第二次会被当成「未变化」而静默跳过。
 function handleActivitySocketConnect() {
   clearPresenceEmitCache();
   publishPresenceActivities();
   if (activityConnectRetryTimer) window.clearTimeout(activityConnectRetryTimer);
   activityConnectRetryTimer = window.setTimeout(() => {
     activityConnectRetryTimer = undefined;
+    clearPresenceEmitCache();
     publishPresenceActivities();
   }, 700);
 }
@@ -4956,6 +5050,7 @@ const composerBindings = computed(() => ({
   emojiContextKey: `${store.account?.id}:${store.currentChannelId}:${store.prayerOnly}:${store.graceOnly}`,
   closeComposerPanels: () => { composerPanel.value = null; },
   selectedMusicMention: selectedMusicMention.value,
+  listenMusicMentions: listenMusicMentions.value,
   prayerComposerPhotoPreview: prayerComposerPhotoPreview.value,
   composerPanel: composerPanel.value,
   composerPromptText: composerPromptText.value,
@@ -4994,6 +5089,7 @@ const composerBindings = computed(() => ({
   previewAudioEl,
   replyPreviewText,
   removeMusicMention,
+  removeListenMention,
   clearPrayerComposerPhoto,
   toggleVoicePanel,
   focusComposer,
@@ -5074,7 +5170,14 @@ const messageRowBindings = {
   onToggleMusicMentionBackground: toggleMusicMentionBackground,
   onToggleBibleReference: toggleBibleReference,
   onOpenBibleReference: openBibleReferenceInWorkspace,
-  openBiblePassage
+  openBiblePassage,
+  listenSessionFor,
+  onListenToggle: toggleListenPlaylist,
+  onListenPlayItem: playListenPlaylistItem,
+  onListenPreviousVerse: () => listenSession.previousVerse(),
+  onListenNextVerse: () => listenSession.nextVerse(),
+  onListenPreviousChapter: () => listenSession.previousChapter(),
+  onListenNextChapter: () => listenSession.nextChapter()
 };
 </script>
 
@@ -5429,6 +5532,7 @@ const messageRowBindings = {
       :active-channel-id="bibleTargetChannelId"
       @close="closeBibleWorkspace"
       @reading-change="handleBibleReadingChange"
+      @audio-queue-ended="listenSession.handleBibleQueueEnded"
     />
 
     <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" :reversed="bibleOnRight" @resize="resizeBible" @swap="swapBibleChat" />

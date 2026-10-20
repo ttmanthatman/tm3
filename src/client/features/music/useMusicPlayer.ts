@@ -71,6 +71,8 @@ interface UseMusicPlayerOptions {
   onHeatChanged?: (trackId: number, heat: number) => void;
   /** 每次实际发起播放（用户点选、切换、自动续播都会汇聚到 play()）时触发 */
   onPlaybackStart?: () => void;
+  /** 当前曲目自然播完时触发；返回 true 表示外部编排器（如「/听」清单）已接管，跳过曲库内的循环/续播。 */
+  onTrackEnded?: () => boolean | void;
 }
 
 type MusicPlaySession = {
@@ -832,6 +834,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     playing.value = false;
     if (playSession && audio) void reportProgress(playSession, audio, "ended");
     notifyListeningChanged();
+    if (options.onTrackEnded?.() === true) return;
     if (shouldRepeatCurrentMusic(playbackMode.value, options.scoreOpen.value) && currentTrack.value) {
       if (audio) audio.currentTime = 0;
       beginPlaySession(currentTrack.value);

@@ -40,6 +40,8 @@ export interface UseBibleAudioPlayerOptions {
   books: () => BibleBookCatalogDTO[];
   version: () => BibleAudioVersionManifest | null;
   onToast?: (message: string) => void;
+  /** 队列自然播完（选集最后一段结束 / 连播到正典末尾）时触发；用户主动 stop 不触发。 */
+  onQueueEnded?: () => void;
   runtime?: BibleAudioPlayerRuntime;
 }
 
@@ -299,16 +301,21 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     }
     if (mode.value === "selection") {
       if (fromIndex + 1 < queue.value.length) loadItem(fromIndex + 1, undefined, playbackIntended);
-      else finish();
+      else endQueue();
       return;
     }
     const next = nextBibleChapterLocation(options.books(), item.book, item.chapter);
     if (!next) {
-      finish();
+      endQueue();
       return;
     }
     queue.value = queueFromChapter(next.book, next.chapter);
     loadItem(0, undefined, playbackIntended);
+  }
+
+  function endQueue() {
+    finish();
+    options.onQueueEnded?.();
   }
 
   function startFromChapter(book: string, chapter: number, verse = 0) {
@@ -317,8 +324,8 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     loadItem(0, verse);
   }
 
-  function startFromLookups(lookups: BibleLookupDTO[]) {
-    const items = queueFromLookups(lookups, options.books());
+  /** 选集模式起播一组已切好的段（消息 /听 清单等由调用方构建）。 */
+  function startFromItems(items: BibleAudioPlayItem[]) {
     if (!items.length) {
       toast("没有可播放的经文");
       return false;
@@ -327,6 +334,10 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     queue.value = items;
     loadItem(0);
     return true;
+  }
+
+  function startFromLookups(lookups: BibleLookupDTO[]) {
+    return startFromItems(queueFromLookups(lookups, options.books()));
   }
 
   /** 长按「连播到底」起播：定位到选集首节，但按整章连播（不受选集终点约束）。 */
@@ -506,6 +517,7 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     currentVerse,
     currentItem,
     currentChapter,
+    currentBookName,
     currentReference,
     playingVerseKey,
     rate,
@@ -513,6 +525,7 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     canPreviousChapter,
     canNextChapter,
     startFromChapter,
+    startFromItems,
     startFromLookups,
     startFromLookupsThrough,
     continueAll,

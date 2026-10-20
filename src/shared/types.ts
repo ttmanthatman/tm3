@@ -412,6 +412,13 @@ export interface BibleReaderPresenceDTO {
   bookName: string | null;
 }
 
+export interface BibleListenerDTO {
+  accountId: number;
+  displayName: string;
+  bookName: string;
+  chapter: number;
+}
+
 export interface BookReaderPresenceDTO {
   accountId: number;
   displayName: string;

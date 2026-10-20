@@ -27,6 +27,9 @@ import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { parseBiblePassageShare, readingNoteComment } from "../reading-shares/readingShareMessage";
 import BookShareCard from "../books/BookShareCard.vue";
 import { parseBookShareMessage } from "../books/bookShareMessage";
+import ListenPlaylistCard from "../listen/ListenPlaylistCard.vue";
+import { listenPlaylistPayload } from "@shared/listenPlaylist";
+import type { ListenSessionSnapshot } from "../listen/useListenSession";
 
 // Shared message-body renderer: the timeline bubble and the favorites card both
 // delegate their type branches here. Rendering differences between the two
@@ -69,10 +72,13 @@ const props = defineProps<{
   formatBibleLookup: (lookup: BibleLookupDTO | null | undefined, originalReference: string) => string;
   consumeHandwritingPlayback?: (message: MessageDTO) => boolean;
   handwritingSurfaceActive?: boolean;
+  /** 「/听」清单：这条消息正在播放时返回会话快照，否则 null */
+  listenSessionFor?: (message: MessageDTO) => ListenSessionSnapshot | null;
 }>();
 
 const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSharePayload(props.message.payload) : null);
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
+const listenPlaylist = computed(() => props.message.type === "text" ? listenPlaylistPayload(props.message.payload) : null);
 
 const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
 const bibleTopicShare = computed(() => props.message.type === "text" && !bibleShare.value ? bibleTopicMessagePayload(props.message.payload) : null);
@@ -82,7 +88,7 @@ const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(prop
 const scriptureOnly = computed(() => {
   const reference = messageScriptureOnlyReference(props.message);
   if (!reference) return null;
-  if (bibleShare.value || bibleTopicShare.value || bookNoteShare.value || bookShare.value) return null;
+  if (bibleShare.value || bibleTopicShare.value || bookNoteShare.value || bookShare.value || listenPlaylist.value) return null;
   return { reference, scope: messageBibleReferenceScope(props.message, "content") };
 });
 watch(scriptureOnly, (value) => {
@@ -111,6 +117,12 @@ const emit = defineEmits<{
   "toggle-music-mention-background": [message: MessageDTO];
   "toggle-bible-reference": [scope: string | number, reference: string];
   "open-bible-reference": [scope: string | number, reference: string];
+  "listen-toggle": [message: MessageDTO];
+  "listen-play-item": [message: MessageDTO, index: number];
+  "listen-previous-verse": [];
+  "listen-next-verse": [];
+  "listen-previous-chapter": [];
+  "listen-next-chapter": [];
 }>();
 </script>
 
@@ -128,6 +140,22 @@ const emit = defineEmits<{
       <span v-else class="music-playlist-message-copy"><small>共享歌单</small><strong>歌单已删除</strong></span>
       <ChevronRight :size="18" />
     </button>
+    <ListenPlaylistCard
+      v-else-if="listenPlaylist"
+      :playlist="listenPlaylist"
+      :session="listenSessionFor?.(message) ?? null"
+      :scope="messageBibleReferenceScope(message, 'content')"
+      :bible-reference-lookup="bibleReferenceLookup"
+      :ensure-bible-reference-lookup="ensureBibleReferenceLookup"
+      :open-passage="openBiblePassage"
+      :paper-seed="message.clientRequestId || message.id"
+      @toggle="emit('listen-toggle', message)"
+      @play-item="(index) => emit('listen-play-item', message, index)"
+      @previous-verse="emit('listen-previous-verse')"
+      @next-verse="emit('listen-next-verse')"
+      @previous-chapter="emit('listen-previous-chapter')"
+      @next-chapter="emit('listen-next-chapter')"
+    />
     <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
     <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
@@ -208,7 +236,23 @@ const emit = defineEmits<{
       </button>
     </template>
     <template v-else>
-      <template v-if="musicMentionPayload(message)">
+      <ListenPlaylistCard
+        v-if="listenPlaylist"
+        :playlist="listenPlaylist"
+        :session="listenSessionFor?.(message) ?? null"
+        :scope="messageBibleReferenceScope(message, 'content')"
+        :bible-reference-lookup="bibleReferenceLookup"
+        :ensure-bible-reference-lookup="ensureBibleReferenceLookup"
+        :open-passage="openBiblePassage"
+        :paper-seed="message.clientRequestId || message.id"
+        @toggle="emit('listen-toggle', message)"
+        @play-item="(index) => emit('listen-play-item', message, index)"
+        @previous-verse="emit('listen-previous-verse')"
+        @next-verse="emit('listen-next-verse')"
+        @previous-chapter="emit('listen-previous-chapter')"
+        @next-chapter="emit('listen-next-chapter')"
+      />
+      <template v-else-if="musicMentionPayload(message)">
         <div class="message-text music-mention-text" v-html="musicMentionTextHtml(message)"></div>
         <div
           class="music-mention-capsule"

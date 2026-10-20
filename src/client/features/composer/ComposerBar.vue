@@ -4,6 +4,7 @@ import {
   AudioLines,
   CheckCircle2,
   FileUp,
+  Headphones,
   HeartHandshake,
   Image as ImageIcon,
   Mic,
@@ -51,6 +52,7 @@ const props = defineProps<{
   emojiContextKey: string;
   closeComposerPanels: () => void;
   selectedMusicMention: MusicTrackDTO | null;
+  listenMusicMentions: MusicTrackDTO[];
   prayerComposerPhotoPreview: string;
   composerPanel: "voice" | "more" | null;
   composerPromptText: string;
@@ -89,6 +91,7 @@ const props = defineProps<{
   previewAudioEl: Ref<HTMLAudioElement | null>;
   replyPreviewText: (message: MessageDTO) => string;
   removeMusicMention: () => void;
+  removeListenMention: (index: number) => void;
   clearPrayerComposerPhoto: () => void;
   toggleVoicePanel: () => void;
   focusComposer: () => void;
@@ -155,6 +158,18 @@ defineExpose({ composerInput });
       <AudioLines :size="17" />
       <span><small>已提及歌曲</small><strong>{{ selectedMusicMention.title }}</strong></span>
       <button class="icon-btn" type="button" @click="removeMusicMention" aria-label="取消提及歌曲"><X :size="16" /></button>
+    </div>
+    <div v-if="listenMusicMentions.length" class="music-mention-chip listen-mention-chip" aria-label="一起听清单里的歌曲">
+      <Headphones :size="17" />
+      <span class="listen-mention-copy">
+        <small>一起听 · {{ listenMusicMentions.length }} 首</small>
+        <span class="listen-mention-list">
+          <span v-for="(track, index) in listenMusicMentions" :key="`${track.id}-${index}`" class="listen-mention-item">
+            <strong>{{ track.title }}</strong>
+            <button class="listen-mention-remove" type="button" :aria-label="`从清单移除 ${track.title}`" @click="removeListenMention(index)"><X :size="12" /></button>
+          </span>
+        </span>
+      </span>
     </div>
     <div v-if="prayerComposerPhotoPreview" class="music-mention-chip prayer-photo-chip">
       <img :src="prayerComposerPhotoPreview" alt="代祷附带照片预览" />
