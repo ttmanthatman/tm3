@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 import type { ChannelDTO, GracePayload, MessageDTO } from "../../src/shared/types.js";
 import type { StoryDTO, StoryPageDTO } from "../../src/shared/stories.js";
 
@@ -20,6 +21,7 @@ test("我的故事原样转发、重试去重、独立媒体与恩典卡片交�
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toBeVisible();
+  await focusChat(page);
   const token = await page.evaluate(() => localStorage.getItem("team-chat-token"));
   const headers = { Authorization: `Bearer ${token}` };
   const me = (await (await request.get("/api/auth/me", { headers })).json()).account;
@@ -115,6 +117,8 @@ test("我的故事原样转发、重试去重、独立媒体与恩典卡片交�
     expect((await request.get(imageUrl, { headers })).status()).toBe(200);
     expect((await request.get(voiceUrl, { headers, maxRedirects: 0 })).status()).toBe(200);
     await page.reload();
+    await expect(page.getByTestId("active-channel-name")).toBeVisible();
+    await focusChat(page);
     await expect(rendered.getByRole("button", { name: "播放恩典语音" })).toBeVisible();
     await rendered.getByRole("button", { name: "编辑卡片" }).click();
     const editor = page.getByRole("dialog", { name: "编辑恩典卡片", exact: true });
@@ -148,6 +152,8 @@ test("我的故事原样转发、重试去重、独立媒体与恩典卡片交�
     expect((await request.post(`/api/stories/${photoOnly.id}/forward-grace`, { headers: readerHeaders, data: { channelId: current.id, clientRequestId: crypto.randomUUID() } })).status()).toBe(404);
     await page.evaluate((readerToken: string) => localStorage.setItem("team-chat-token", readerToken), reader.token);
     await page.reload();
+    await expect(page.getByTestId("active-channel-name")).toBeVisible();
+    await focusChat(page);
     await page.locator(".story-header-trigger").click();
     const feed = page.getByRole("dialog", { name: "我们的故事", exact: true });
     await expect(feed.locator(".story-moment").first()).toBeVisible();

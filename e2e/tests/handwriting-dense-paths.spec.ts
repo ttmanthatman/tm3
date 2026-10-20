@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 type Harness = {
   draws: number[];
@@ -333,7 +334,10 @@ for (const width of [390, 1280]) test(`a channel full of dense drawings stays na
     await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
     await page.getByRole("button", { name: "登录", exact: true }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
-    if (width < 768) await page.getByRole("button", { name: "频道", exact: true }).click();
+    // 桌面端登录后默认开圣经分屏、频道列表折叠：回到聊天为主再计时。
+    if (width >= 768) await focusChat(page);
+    // 有其他频道未读时移动端触发按钮的 aria-label 会带未读数，用类名定位最稳。
+    if (width < 768) await page.locator(".channel-mobile-trigger").click();
     const start = Date.now();
     await page.getByRole("button", { name: E2E_CHANNELS.secondary, exact: true }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);

@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 async function blockPublicNetwork(page: Page) {
   await page.route("**/*", async (route) => {
@@ -18,6 +19,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await focusChat(page);
 }
 
 async function expectFocusInside(root: Locator) {

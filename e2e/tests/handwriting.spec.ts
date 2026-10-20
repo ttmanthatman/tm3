@@ -1,6 +1,7 @@
 import { expect, test, webkit, type APIRequestContext, type Browser, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import { HANDWRITING_DEFAULT_BRUSH_ALGORITHM } from "../../src/shared/handwriting.js";
+import { focusChat } from "../helpers/chat.js";
 
 type Account = { username: string; password: string };
 
@@ -34,6 +35,7 @@ async function login(page: Page, account: Account) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   await expect.poll(() => connectionState(page)).toBe("connected");
+  await focusChat(page);
 }
 
 async function adminToken(request: APIRequestContext) {
@@ -70,6 +72,7 @@ test.afterAll(async ({ request }) => {
 });
 
 async function openHandwritingComposer(page: Page) {
+  await focusChat(page);
   await page.getByRole("button", { name: "更多功能", exact: true }).click();
   await page.getByRole("button", { name: "手写", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "逐字手写" });

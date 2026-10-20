@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 async function blockPublicNetwork(page: Page) {
   await page.route("**/*", async (route) => {
@@ -12,12 +13,18 @@ async function blockPublicNetwork(page: Page) {
   });
 }
 
+// 频道行定位要排除「数算恩典」子行：子行可达名是「数算恩典+频道名」，同样以频道名结尾。
+function channelRow(page: Page, name: string) {
+  return page.locator("button.channel-row:not(.channel-subrow)", { hasText: new RegExp(`${name}$`) });
+}
+
 async function loginAsAdmin(page: Page) {
   await page.goto("/");
   await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await focusChat(page);
 }
 
 // 只拦截消息列表 GET；同前缀的 /api/messages/unread-counts 等接口必须放行。
@@ -82,7 +89,7 @@ test("挂起的消息请求在 GET 超时预算内失败并给出可重试错误
   await interceptMessageListGet(page, "hang");
 
   const startedAt = Date.now();
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+  await channelRow(page, E2E_CHANNELS.secondary).click();
 
   // 切换频道先清空消息再加载，期间必须出现加载中横幅而不是白屏。
   await expect(page.locator(".message-load-banner.message-load-loading")).toHaveText("正在加载最近消息...");
@@ -108,8 +115,8 @@ test("弱网延迟下快速往返切换频道，消息窗口始终属于当前�
   // 统一给消息列表请求加 600ms 延迟；B 的响应会晚于再次切回 A 的点击到达，
   // 过期响应必须被丢弃（S2 消息请求代际隔离）。
   await interceptMessageListGet(page, "delay");
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.default}$`) }).click();
+  await channelRow(page, E2E_CHANNELS.secondary).click();
+  await channelRow(page, E2E_CHANNELS.default).click();
 
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   await expect(page.locator("[data-message-id]").filter({ hasText: marker })).toHaveCount(1, { timeout: 15_000 });
@@ -153,7 +160,7 @@ test("消息加载失败后可点按错误横幅手动重试并恢复", async ({
 
   // 快速失败（连接被拒）：GET 重试一次后仍失败，必须出现错误横幅。
   await interceptMessageListGet(page, "fail");
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+  await channelRow(page, E2E_CHANNELS.secondary).click();
   const errorBanner = page.locator(".message-load-banner.message-load-error");
   await expect(errorBanner).toBeVisible({ timeout: 15_000 });
 

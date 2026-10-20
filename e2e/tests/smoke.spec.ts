@@ -1,4 +1,5 @@
 import { ensureBibleOpen } from "../helpers/bible.js";
+import { focusChat } from "../helpers/chat.js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import { APP_VERSION } from "../../src/shared/release.js";
@@ -21,6 +22,7 @@ async function loginAsAdmin(page: Page) {
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
   await waitForChatSocket(page);
+  await focusChat(page);
 }
 
 async function expectPopoverNearAnchor(page: Page, anchor: Locator, popover: Locator) {
@@ -243,6 +245,7 @@ test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   await page.getByRole("button", { name: "进入会客厅", exact: true }).click();
 
   await expect(page.getByTestId("active-channel-name")).toHaveText(roomName);
+  await focusChat(page);
   await expect(page.locator(".channel-list").getByText(roomName, { exact: true })).toBeVisible();
   await expect(page.locator(".channel-list").getByText(E2E_CHANNELS.default, { exact: true })).toHaveCount(0);
   await expect(page.locator(".bible-header-trigger")).toBeVisible();
@@ -256,6 +259,7 @@ test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(roomName);
+  await focusChat(page);
   await page.getByRole("button", { name: "会客厅", exact: true }).click();
   const roomCard = page.locator(".room-card").filter({ hasText: roomName });
   page.once("dialog", (dialog) => dialog.accept());
@@ -442,14 +446,18 @@ test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => 
   const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });
   const searchTab = homeTabs.getByRole("tab", { name: "经文检索", exact: true });
   const favoritesTab = homeTabs.getByRole("tab", { name: /^经文收藏/ });
-  await expect(homeTabs.getByRole("tab")).toHaveCount(4);
+  await expect(homeTabs.getByRole("tab")).toHaveCount(5); // 目录/检索/抄写/笔记/收藏
   await expect(homeTabs.getByRole("tab", { name: "我的抄写", exact: true })).toBeVisible();
   await expect(catalogTab).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("heading", { name: "经卷目录", exact: true })).toBeVisible();
+  // 目录视图自书房改版后直接展示旧约/新约分区，不再有「经卷目录」大标题。
+  await expect(page.getByRole("heading", { name: "旧约", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "新约", exact: true })).toBeVisible();
 
   for (const width of [390, 360, 1280]) {
     await page.setViewportSize({ width, height: 844 });
-    expect(await homeTabs.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    // 5 个 tab（含「我的笔记」）在窄屏允许条内横向滑动（隐藏滚动条），但每个 tab 必须可达且页面不产生横向滚动。
+    await expect(homeTabs.getByRole("tab", { name: "我的笔记", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   }
 
   await searchTab.click();
@@ -507,6 +515,7 @@ test("管理员创建用户、修改资料并在刷新后确认持久化", async
 
   await page.reload();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await focusChat(page);
   await openAccountsAdmin(page);
   const persistedMember = page.getByTestId("admin-account-row").filter({ hasText: `@${E2E_MEMBER.username}` });
   await expect(persistedMember).toContainText(updatedDisplayName);

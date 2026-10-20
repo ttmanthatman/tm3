@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_PERF } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 // 性能基线不是门禁：只记录采样结果，不设阈值断言（阈值会随机器漂移，见 e2e/README.md）。
 // 轮数可用 E2E_PERF_ROUNDS 调整，默认 5。
@@ -155,6 +156,8 @@ async function runRound(browser: Browser, condition: Condition, round: number): 
     if (!defaultChannel || !perfChannel) throw new Error("seeded channels were not found");
     await waitStoreSettled(page, defaultChannel.id, expectTimeout);
     const firstEntryMs = Date.now() - entryStart;
+    // 登录后默认开圣经分屏、频道列表折叠：回到聊天为主再开始切频道计时。
+    await focusChat(page);
 
     // ② 切到 300 条消息的性能频道，到首条消息渲染且加载落定。
     const perfSwitchStart = Date.now();
