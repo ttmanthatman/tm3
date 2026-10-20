@@ -1,9 +1,7 @@
 # Codex Model Task Routing
 
-This document defines the repository's task-size and risk routing rules. Use it with the
-[repository guidance](../AGENTS.md), the [development index](development-index.md), and
-any nested `AGENTS.md` in the files being changed. The development index remains the
-canonical module map and validation reference; this document does not duplicate it.
+Read this document when sizing, delegating or escalating work. Startup rules live in
+[AGENTS.md](../AGENTS.md); check selection lives in [development-workflow.md](development-workflow.md).
 
 ## 默认由执行者选择流程
 
@@ -21,12 +19,10 @@ canonical module map and validation reference; this document does not duplicate 
 
 ## 统一任务模板
 
-A task card ([docs/task-cards.md](task-cards.md)) is required only for tasks that cross a
-boundary: delegated to another model or session, run in parallel with other work, or
-touching a high-risk area. Routine single-session fixes inside one domain do not need one.
-The card carries baseline, goal, owner, dependencies, allowed/forbidden files,
-reproduction, acceptance, targeted/full checks, and unverified items. Fill every field;
-write "none" with a reason instead of deleting a field.
+Only delegated, parallel, cross-session or high-risk tasks need a [short task card](task-cards.md#简短模板).
+Reuse the existing card or handoff message; omit inapplicable optional fields. High-risk
+tasks also record invariants, failure scenarios and required full/E2E/migration checks.
+Routine single-session work needs neither a card nor a separate report document.
 
 ## 多模型协作规则
 
@@ -37,12 +33,14 @@ write "none" with a reason instead of deleting a field.
   at a time, never in parallel. Independent tasks use separate worktrees; a separate
   worktree prevents tree pollution but not logical conflicts, so the integration order is
   declared in the task cards before work starts.
-- **Baseline before conclusions:** record the commit, environment, and graph-index
-  freshness on the card. A clean Git diff does not prove a fresh index; a failed check
-  caused by missing dependencies is an environment problem, not a source regression.
-- **Independent review on handoff:** the reviewer re-runs the card's acceptance scenarios
-  against the delivered diff — actual call wiring, lifecycle cleanup, and test realism —
-  and fixes only the findings, without expanding into a second refactor.
+- **Bounded context:** pass the goal, baseline, file ownership, relevant findings and
+  unresolved questions. Include environment/index evidence when relied on; link long
+  logs and source instead of copying full history. Missing dependencies are an environment
+  problem, not a source regression.
+- **Handoff acceptance:** check the delivered diff against the card's acceptance scenarios
+  (wiring, lifecycle cleanup and realistic tests). Reuse valid checks under the workflow's
+  rules; changed environments need targeted checks. Add independent review when risk warrants
+  it, without expanding into a second refactor or automatically repeating full suites.
 
 ## 审计背景
 

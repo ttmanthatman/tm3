@@ -228,6 +228,8 @@ npm start
 npm run dev
 ```
 
+Codex、Zcode 跨设备开发共用仓库内的 `AGENTS.md` 和[开发流程](docs/development-workflow.md#codex-与-zcode-跨设备协作)。`npm run dev:status` 查看当前分支及本地缓存的同步状态；新任务开工或接收另一端的代码时，在干净且已配置上游的分支运行 `npm run dev:sync`，只允许安全快进。交接时附分支、提交号、远端状态与验证结果；提交、推送和部署仍分别按授权执行。
+
 ### 数据库迁移
 
 `prisma/migrations/0_init/migration.sql` 是当前完整 schema 的初始基线。修改 `prisma/schema.prisma` 时，在一次性开发数据库上同时创建新迁移：

@@ -2,29 +2,25 @@
 
 This index is the canonical module map and checklist reference for Team Chat. Read the sections relevant to your task instead of the whole file; locate sections with a heading search. It is intentionally public-safe: do not add deployment hosts, private domains, `.env` values, database snapshots, or local machine notes here.
 
-## Codex Guidance
+## Agent Guidance
 
-- The root `AGENTS.md` is the Codex entry point and contains repository-wide behavior rules.
+- The root `AGENTS.md` is the shared Codex/Zcode entry point and contains repository-wide behavior rules.
 - `AGENTS.local.md` is only for private, machine-local instructions and must never be committed.
 - A nested `AGENTS.md` applies to work inside its directory and supplements the root rules.
 - Delegated and multi-session tasks use the task card format in [task-cards.md](task-cards.md); routing rules live in [model-task-routing.md](model-task-routing.md).
 - Keep detailed module knowledge in this development index instead of expanding agent guidance into a second handbook.
+- Cross-device startup, ownership, and handoff follow [development-workflow.md](development-workflow.md#codex-与-zcode-跨设备协作). `dev:status` inspects cached local Git state; `dev:sync` fetches the configured upstream and permits only a clean fast-forward.
 
 ## Start Every Work Session
 
-1. Run `git status --short` and `git log --oneline -n 5`. Keep the task baseline (HEAD commit) in working context; write a task card only when required by the routing guide.
-2. Identify existing worktree changes before editing. Do not overwrite changes you did not make.
-3. Read only the sections of this index the task touches: module-map entries for the files being changed and any checklist the change triggers.
-4. For UI or workflow changes, inspect the relevant changelog entries first; repeated regressions usually show up there.
-5. Iterate with `npm run verify:changed`; before release or push, run `npm run verify:full`.
-6. Review `git diff` locally before deployment or publishing.
+Follow [AGENTS.md](../AGENTS.md#start-every-session) for startup and ownership; this index is not an additional startup checklist. Read only the module-map entries and checklists the task triggers. Consult relevant changelog entries when tracing product behavior or a repeated regression. Validation and cross-device handoff use [development-workflow.md](development-workflow.md).
 
 ### Baseline Health Check
 
 Check these once when relevant to the task; reuse current evidence instead of reinstalling dependencies or rebuilding an unchanged index. Record them in a task card only when one is required:
 
 - **Environment:** confirm Node version, lockfile integrity, and dependency availability (`npm ci` state). If a check fails because packages are missing or stale, treat it as an environment problem and repair the install first — do not report it as a source regression or change source code to work around it.
-- **Code graph:** a clean Git diff does not prove the knowledge-graph index is fresh. Verify a known symbol before relying on graph results; re-index when the graph looks stale, and fall back to targeted source reading for files the index could not fully parse.
+- **Code graph:** a clean Git diff does not prove the knowledge-graph index is fresh. Check freshness and coverage before relying on results; fill stale or unparsed regions with targeted source reads. Refresh the index when structural discovery needs it, not for documentation or as a repeated recovery loop.
 - **Changed-file scope:** after a commit, `verify:changed` against the default `HEAD` sees an empty diff and selects nothing. Pass an explicit `--base <ref>` covering the whole task, or cite the recorded results from before the commit. "No checks selected" is never a pass.
 
 ## Continuous Integration
@@ -158,6 +154,7 @@ During local iteration, `npm run verify:changed` inspects the working tree again
 - `src/scripts/check-public-tree.ts`: public-tree safety check used before push/publish. Add project-specific forbidden content through `PUBLIC_SAFETY_FORBIDDEN_PATTERNS`, not by committing private names.
 - `src/scripts/write-build-info.ts` (`build:info`, run as the first step of `npm run build`): writes root `build-info.json` with the current commit hash/time from git; without `.git` (rsync-deployed tree) it keeps the file uploaded with the source. The file is gitignored and served nowhere; the server reads it via `src/server/buildInfo.ts`.
 - `src/scripts/verify-changed.ts`: local changed-file verification planner. It maps Git changes to focused checks and conservatively falls back to full verification when scope is uncertain.
+- `scripts/dev-sync.mjs` (`dev:status`, `dev:sync`): dependency-free cross-device Git status and guarded upstream fast-forward. Integration tests in `src/scripts/dev-sync.test.ts` use disposable local repositories; synchronization never installs dependencies, writes application data, or pushes.
 - `src/scripts/wechat-relay/` and `scripts/wechat-relay/`: optional NAS relay core, SQLite outbox, Team Chat source adapter, fail-closed X11 official-WeChat driver, tests, Linux deployment templates, and a localhost-only desktop setup page. The setup flow validates an administrator-generated device token before a narrowly scoped privileged helper atomically updates `/etc/wechat-relay.env`, assigns a site-specific queue path, and restarts the service; the token travels over standard input rather than process arguments. The source accepts newer message kinds using server-rendered reminders, bounds requests, and cancels them during shutdown. Desktop operations serialize, control-action outcomes survive restarts, and disabling forwarding also pauses the local outbox. `discard-backlog` requires the delivery lock, expires outstanding local items, advances the source cursor, and baselines managed system events without sending them. The optional user-service updater builds a fixed operator-selected repository branch in a separate release directory, checks relay regressions and compatibility before an atomic switch, and restores the previous release after a failed activation. The X11 driver separately calibrates the fixed target-group anchor and the member-picker region used for mapped `@` mentions; any ambiguous visual state stops delivery. Desktop delivery checks use `deliveryVerification.ts` for local chat changes plus staged/cleared composer evidence, retry render sampling without resending, and retain private failure screenshots beside the target anchor. Restarted relays report the uncertain message ID while keeping delivery paused. Outage and startup catch-up backlogs are atomically replaced by one counted recovery notice; queue metadata preserves the count and safe retry deadline across restarts, without replaying original reminders. Runtime credentials, target-group anchors, queue data, and machine-specific calibration values must remain outside the repository.
 - `e2e/` and `playwright.config.ts`: isolated MySQL reset/seed, local Docker service, and the small critical browser smoke suite. Run with `npm run test:e2e:local`, or provide a local `E2E_DATABASE_URL` for a database named exactly `tm3_e2e`.
 - `e2e-remote/`, `playwright.remote.config.ts`, and `scripts/run-e2e-remote.sh`: a separate, non-destructive test-station smoke runner. It requires ignored local credentials, accepts only the dedicated test hostname/account/channel, blocks every other browser origin, and never invokes reset, seed, Prisma cleanup, or direct database writes.

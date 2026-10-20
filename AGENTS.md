@@ -1,134 +1,59 @@
 # Repository Agent Guidance
 
-This file is the public-safe entry point for agents working in this repository.
-It defines behavior and routing rules, not detailed module documentation.
-Instructions in a nested `AGENTS.md` also apply within that directory.
+This file is the shared, public-safe entry point for Codex, Zcode, and other agents working in this repository. Nested `AGENTS.md` rules also apply within their directories.
 
 ## Start Every Session
 
-1. Run `git status --short` and `git log --oneline -n 5`.
-2. Identify existing changes. Preserve unrelated work and continue when its boundary is clear; stop only for unexplained overlap with the task.
-3. Check for a more specific `AGENTS.md` in the target directory and read it before editing there.
-4. If `AGENTS.local.md` exists, read it and apply its private local guidance; never commit it.
+1. Run `git status --short` and `git log --oneline -n 5`; remember the task's starting SHA.
+2. Preserve existing work. Continue when unrelated changes have a clear boundary; stop for unexplained overlap. Never overwrite, revert, stage, or remove the user's changes.
+3. Read applicable nested `AGENTS.md` and ignored `AGENTS.local.md` before editing. Never commit local guidance.
+4. For a fresh cross-device task, run `npm run dev:sync` before editing a clean checkout with an upstream. It fetches and fast-forwards only; on refusal, preserve local work and inspect `npm run dev:status`. Re-read changed guidance after updating. Continuing local work needs no automatic update.
 
-Read reference documents on demand, not at startup:
+Load references only when needed; use heading searches and read the relevant section:
 
-- `docs/development-index.md`: read only the sections the task touches (module-map entries for the files being changed, plus any triggered checklist). Locate sections with a heading search instead of reading the whole file.
-- `docs/model-task-routing.md`: consult its routing and escalation rules when sizing or escalating a task; audit background lives in `docs/architecture-audit.md`.
+| Need | Reference |
+| --- | --- |
+| Module ownership or a triggered checklist | [development-index.md](docs/development-index.md) |
+| Validation selection, staging or cross-device handoff | [development-workflow.md](docs/development-workflow.md) |
+| Task sizing, delegation or escalation | [model-task-routing.md](docs/model-task-routing.md) |
 
-## Requirement-Driven Work
+## Work and Token Budget
 
-- The user describes the desired result; the agent owns technical discovery, implementation, and validation. Do not ask the user to choose files, commands, or testing strategy.
-- For a routine task, state the expected result and scope briefly, then implement it. Ask only about a product decision that materially changes the result or authorization that is actually missing.
-- Treat small follow-up requests as adjustments to the existing work; reuse relevant findings and successful checks when the code and environment have not changed.
-- Use [development-workflow.md](docs/development-workflow.md) for risk-based local completion. Ordinary work needs no task card, multi-agent review, or written design proposal.
+- The user describes the result; the agent owns discovery, implementation and validation. State the intended effect briefly, then act. Ask only about material product ambiguity or missing authorization.
+- Keep one task within one domain; make the smallest coherent change and preserve behavior outside the request. Avoid unrelated cleanup and speculative abstraction. Change schema only when explicitly required; add no dependency when existing facilities suffice.
+- Ordinary single-session work needs no task card, design proposal or separate reviewer. Use one agent by default; delegate only substantial independent work when useful and authorized. One active owner per task; independent parallel tasks use separate branches/checkouts and explicit file boundaries. Shared-file edits serialize.
+- Reuse findings and successful checks for small follow-ups while code, dependencies and environment remain unchanged. Handoffs carry goal, baseline, relevant symbols/files, decisions, checks and next step; link evidence instead of copying history.
+- Start code discovery with codebase-memory MCP, including known code paths. The installed `codebase-memory` skill owns lookup, freshness and coverage rules; reuse SessionStart project context without adding a second startup/indexing pass. Documentation/configuration use text search.
+- Trace callers/consumers before changing shared helpers or contracts; inspect nearby tests and conventions. Do not re-read unchanged files or dump whole files, module maps, diffs or logs into context.
+- Batch independent lookups and bound output. Preview checks with `npm run verify:changed -- --dry-run --quiet`; store long logs outside the tracked tree and report exit status plus relevant failures.
 
-## Token Economy
+## Authority and Safety
 
-- Discover code with graph tools first; index if needed. If unavailable or insufficient, use narrow text search and source regions without repeatedly trying to recover the tool.
-- Read the smallest useful region around a symbol. Never read a large file end to end when symbol-level inspection works, and do not re-read files that have not changed.
-- Use one agent by default. Delegate only substantial independent work when useful and authorized; never spawn reviewers or parallel researchers for a small fix.
-- Choose checks once by risk. Run the narrow regression during iteration, then one final appropriate verification; do not stack domain suites, `verify:changed`, and `verify:full` on unchanged code.
-- Keep reports and tool output short. Use `verify:changed -- --dry-run --quiet` to inspect the plan; retain long logs outside the repository and return exit status plus relevant failures. Read the full diff locally without pasting it into chat.
+- Commit only when requested or required by the workflow. Push, merge, deploy, publish, tag and release each require their respective explicit authorization; release preparation does not grant it.
+- Do not change versions, `CHANGELOG.md`, release metadata or Service Worker files unless requested. Feature release notes belong only under `## Unreleased`; prepare requested releases with `npm run release:prepare -- <version>`.
+- Never commit secrets, environment values, private notes, runtime data or machine-specific details. Keep private guidance in ignored `AGENTS.local.md` and module explanations in the development index.
+- Treat destructive data actions, migrations, authentication, authorization and file storage as high risk. Keep authorization checks on the server even when the client hides an action.
 
-## Scope Discipline
+## Implementation Boundaries
 
-- Keep one task focused on one domain: client, server, shared contract, tooling, or documentation.
-- Do not bundle unrelated cleanup, formatting, or refactors with the requested change.
-- Do not overwrite, revert, stage, or remove changes made by the user.
-- Preserve existing behavior unless the task explicitly requests a behavior change.
-- Do not modify database schema unless the task explicitly requires it.
-- Do not add a dependency when an existing project facility is sufficient.
-- Keep detailed module explanations in `docs/development-index.md`.
-- Keep these instruction files short, actionable, and public-safe.
+- `src/client/App.vue` composes the application; new business behavior belongs in focused components, composables or feature modules.
+- `src/server/index.ts` is an entry point; add routes through focused route modules. Separate route handling, business rules and data access as touched; keep shared DTOs explicit and compatible.
+- Match naming, types, validation, error handling and test conventions. Preserve HTTP status codes and response shapes unless the request changes the contract.
+- Never bypass type errors with `any`, swallow exceptions, silently discard failures, weaken/delete tests to pass checks, or disable lint, type, validation or security controls.
 
-## Change Authority
+## Database Migrations
 
-- Do not change version numbers, `CHANGELOG.md`, or release metadata unless explicitly requested.
-- Feature work adds user-visible release notes only under `## Unreleased`; do not bump versions in feature pull requests.
-- Prepare an explicitly requested release with `npm run release:prepare -- <version>` instead of manually editing synchronized version files.
-- Release preparation does not authorize commits, tags, pushes, deployments, publishing, or GitHub Releases.
-- Do not modify release or service-worker files unless explicitly requested.
-- Do not deploy, push, merge, publish, or create a release unless explicitly requested.
-- Treat destructive data actions, migrations, authentication, and file storage as high risk.
-- Never commit secrets, environment values, private notes, runtime data, or machine-specific details.
-- Put private local guidance in ignored `AGENTS.local.md`, never in tracked guidance.
+- Every `prisma/schema.prisma` change requires a new migration created with `prisma migrate dev` against a disposable development database. Never alter committed migrations; `prisma/migrations/0_init` is immutable.
+- Use `prisma migrate deploy` for retained test/production databases, never `prisma db push`. Before `prisma migrate resolve --applied 0_init`, prove equality with `prisma migrate diff` and take a verified backup.
+- Restrict destructive reset/seed commands to guarded disposable databases. Run migration verification only with `MIGRATION_VERIFY_RUN=1` and a fresh local MySQL database named exactly `tm3_migration_verify`.
 
-## Discovery Before Editing
+## Validation and Delivery
 
-- Locate the relevant symbol, route, test, or style rule before opening broad files.
-- Prefer repository graph search for symbols, callers, routes, and dependencies.
-- Use text search for literals, configuration, documentation, and error messages.
-- Read the smallest useful code region around the target symbol.
-- Do not read a giant file from beginning to end when symbol-level inspection is possible.
-- Trace callers and consumers before changing a shared contract or helper.
-- Check nearby tests and established patterns before inventing a new structure.
-
-## Architecture Boundaries
-
-- `src/client/App.vue` is for application composition and top-level coordination.
-- Do not add new business logic directly to `src/client/App.vue`.
-- Put client behavior in focused components, composables, or feature modules.
-- `src/server/index.ts` is an existing entry point, not a destination for new route bodies.
-- Do not add new routes directly to `src/server/index.ts` or a future giant app file.
-- Register new server routes through focused route modules.
-- Separate route handling, business rules, and data access as code is touched.
-- Keep shared DTOs and contracts explicit and compatible across client and server.
-
-## Implementation Guardrails
-
-- Make the smallest coherent change that satisfies the task.
-- Match existing naming, types, validation, error handling, and test conventions.
-- Do not use `any` to bypass type errors.
-- Do not swallow exceptions or silently discard failure states.
-- Do not delete tests or weaken assertions to make checks pass.
-- Do not disable linting, type checking, validation, or security controls.
-- Preserve HTTP status codes and response shapes unless the task requires a contract change.
-- Keep authorization checks on the server even when the client also hides an action.
-- Avoid speculative abstraction; extract only around a demonstrated responsibility.
-
-## Database Migration Discipline
-
-- Every `prisma/schema.prisma` change must include a new migration created with `prisma migrate dev` against a disposable development database.
-- Never modify or delete a committed migration. `prisma/migrations/0_init` is the immutable baseline for the current schema.
-- Use `prisma migrate deploy` for long-lived test and production databases; never update those databases with `prisma db push`.
-- Before baselining an existing database with `prisma migrate resolve --applied 0_init`, prove with `prisma migrate diff` that its structure exactly matches the baseline and take a verified backup.
-- Keep destructive reset and seed commands restricted to explicitly guarded disposable test databases.
-
-## Validation
-
-- Run targeted tests for every changed behavior before broad checks.
-- Use `npm run verify:changed` during development to select conservative checks from the current Git diff; pass `-- --base <ref>` when comparing with another baseline.
-- Prefer the narrowest relevant test command during iteration.
-- Run type checks when TypeScript or Vue code changes.
-- Run `npm run test:client` when client state, layout logic, or interaction behavior changes.
-- Run `npm run test:server` when server, authentication, authorization, upload, or URL handling changes.
-- Run `npm run test:scripts` when migration files or migration verification scripts change.
-- Run `npm run test:migrations` only with `MIGRATION_VERIFY_RUN=1` and a fresh local MySQL database named exactly `tm3_migration_verify`.
-- Run `npm run test:e2e` with the isolated `tm3_e2e` database when UI changes affect login, channel navigation, message persistence, Bible reading, or administrator account workflows.
-- Run `npm run test:all` for complete test coverage without duplicate file execution.
-- Ordinary low-risk local commits may use `verify:changed` plus the applicable build, public-tree and behavioral checks; see the workflow matrix. Full verification is required for high-risk changes, verification infrastructure, release preparation, push, CI, and handoffs explicitly requiring it.
-- Run `verify:full` only once on the final tree when required. It already includes type checks, all source test groups, lint and builds; E2E and migration checks remain separate.
-- Run the affected production build when code paths change; build/configuration changes require full verification. Pure documentation and isolated static prototypes do not need production builds.
-- For UI behavior, use the existing isolated local Playwright suite; any retained-environment browser check must be a separate, non-destructive runner with an exact approved hostname and ignored local credentials.
-- Run `npm run check:public-tree` for tracked-file or publication-safety changes.
-- Run `git diff --check` before committing.
-- Do not claim a check passed unless its command completed successfully.
-
-## Review and Git
-
-- Review the complete task diff before committing. Stage explicit task-owned paths only; never use `git add -A`. When using `verify:changed -- --staged`, stage the complete task (including new files) first; unrelated untracked files are excluded from selection, not isolated from execution.
-- Confirm the diff contains only files needed for the current domain.
-- Confirm tracked guidance and docs contain no private or machine-specific information.
-- Follow the requested branch and commit conventions.
-- Create local commits only when the task requests or repository workflow requires them.
-- Never push a local commit without explicit permission.
-
-## Failure and Handoff
-
-- After two unsuccessful fix attempts for the same failure, stop iterating.
-- Report the observed failure, likely root cause, and evidence gathered.
-- Explain the blocker and a concrete next step in plain language; use capability-based escalation from the routing guide instead of making the user diagnose it.
-- Do not conceal failures with broad rewrites or unrelated changes.
-- Leave the worktree in a reviewable state.
-- The final report must include only changed files, test results, and remaining risks.
+- Choose checks once by risk using the workflow's verification matrix. Run the narrow behavior regression during iteration, then required final checks; do not stack domain suites, `verify:changed` and `verify:full` on unchanged code.
+- TypeScript/Vue changes require type checks; client state/layout/interaction requires `test:client`; server/auth/upload/URL changes require `test:server`; migration files/verification scripts require `test:scripts`. Run affected production builds for code changes; pure documentation and isolated static prototypes need none.
+- UI changes to login, channel navigation, message persistence, Bible reading or admin accounts require isolated `test:e2e` with `tm3_e2e`. Retained-environment checks use a separate non-destructive runner with an exact approved hostname and ignored local credentials.
+- High-risk changes, verification infrastructure, dependency/build/configuration changes, release preparation, push, CI and explicitly full-validation handoffs require one `verify:full` on the final tree. It includes lint, types, all source test groups and builds; E2E/migration checks remain separate. `test:all` runs complete source coverage without duplicate files.
+- `verify:changed` selects conservative checks from the Git diff, not business risk. Across commits pass `-- --base <task-start-SHA>`; an empty plan or dry-run is not a pass. Reuse results only for the code, dependencies and environment actually checked.
+- Run `check:public-tree` for tracked/publication-safety changes and `git diff --check` before committing. Claim success only for commands that completed successfully.
+- Review the complete task diff, then stage explicit task-owned paths only; never `git add -A`. With `verify:changed -- --staged`, include all task files and no unrelated staged content; selection does not isolate execution. Follow requested branch/commit conventions.
+- After two unsuccessful fixes for the same failure, stop blind iteration. Leave reviewable work and report failure, likely cause, evidence and concrete next step; do not hide failures with broad rewrites. Final reports contain changed files, test results and remaining risks only.
