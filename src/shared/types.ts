@@ -562,7 +562,9 @@ export type AdminLoginLogKind =
   | "presence_leave"
   | "music_progress"
   | "channel_view"
-  | "message_sent";
+  | "message_sent"
+  | "bible_open"
+  | "bible_listen";
 
 export interface AdminLoginLogDTO {
   id: string;

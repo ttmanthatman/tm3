@@ -27,7 +27,9 @@ export function loginLogKindLabel(kind: AdminLoginLogKind) {
     presence_leave: "离开聊天",
     music_progress: "歌曲进度",
     channel_view: "查看频道",
-    message_sent: "发送消息"
+    message_sent: "发送消息",
+    bible_open: "打开圣经",
+    bible_listen: "听圣经"
   };
   return labels[kind] || kind;
 }
@@ -36,7 +38,7 @@ export function loginLogTone(kind: AdminLoginLogKind) {
   if (kind === "auth_login" || kind === "presence_join") return "enter";
   if (kind === "auth_logout" || kind === "presence_leave") return "leave";
   if (kind === "music_progress") return "music";
-  if (kind === "channel_view" || kind === "message_sent") return "usage";
+  if (kind === "channel_view" || kind === "message_sent" || kind === "bible_open" || kind === "bible_listen") return "usage";
   return "system";
 }
 

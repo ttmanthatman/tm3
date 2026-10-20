@@ -8,9 +8,18 @@ import { pushOriginFromHeaders } from "../pushOrigin.js";
 export type BibleAuthContext = {
   accountId: number;
   actorId: number;
+  sessionId?: string | null;
+  isGuest?: boolean;
 };
 
 export type AuthedBibleRequest = FastifyRequest & { auth: BibleAuthContext };
+
+/** 「打开圣经」活动日志：复用 account_activity_logs 体系（管理面板「活动日志」可见）。 */
+export type BibleOpenLogInput = {
+  kind: "bible_open";
+  accountId: number;
+  sessionId: string | null;
+};
 
 export type BibleRouteDependencies = {
   prisma: PrismaClient;
@@ -19,6 +28,11 @@ export type BibleRouteDependencies = {
   emitMessage(messageId: number): Promise<unknown>;
   sendMessagePush(messageId: number, origin: string): Promise<void>;
   hydrateMessage(id: number, viewerAccountId?: number): Promise<MessageDTO | null>;
+};
+
+/** 本模块独有的依赖：活动日志写入。notes/copyworks/topics 等派生模块沿用 BibleRouteDependencies 即可。 */
+export type BibleCoreRouteDependencies = BibleRouteDependencies & {
+  writeActivityLog(input: BibleOpenLogInput): Promise<void>;
 };
 
 const shareBodySchema = z.object({
@@ -40,8 +54,17 @@ const shareBodySchema = z.object({
     .max(4)
 });
 
-export function registerBibleRoutes(app: FastifyInstance, deps: BibleRouteDependencies) {
-  const { prisma, requireAuth, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage } = deps;
+export function registerBibleRoutes(app: FastifyInstance, deps: BibleCoreRouteDependencies) {
+  const { prisma, requireAuth, canWriteChannel, emitMessage, sendMessagePush, hydrateMessage, writeActivityLog } = deps;
+
+  // 客户端上报「打开圣经」（只记成员主动打开，登录时的桌面自动分屏不算），进入活动日志；游客不记。
+  app.post("/api/bible/activity", { preHandler: requireAuth }, async (request, reply) => {
+    const parsed = z.object({ action: z.enum(["open"]) }).strict().safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ success: false, message: "无效的活动事件" });
+    const auth = (request as AuthedBibleRequest).auth;
+    if (!auth.isGuest) await writeActivityLog({ kind: "bible_open", accountId: auth.accountId, sessionId: auth.sessionId || null });
+    return { success: true };
+  });
 
   // 分享当前打开的阅读窗格布局到聊天频道（“打开的圣经”卡片）。
   // bookName 以服务端目录为准，客户端只能提供 bookCode/chapter/节范围。

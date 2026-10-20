@@ -10,13 +10,15 @@ import { registerBibleRoutes } from "./bible.js";
 type HarnessOptions = {
   channelKind?: "standard" | "direct" | "music" | null;
   canWrite?: boolean;
+  guest?: boolean;
 };
 
 function createBibleRouteHarness(options: HarnessOptions = {}) {
   const state = {
     created: null as Record<string, unknown> | null,
     emitted: [] as number[],
-    pushed: [] as number[]
+    pushed: [] as number[],
+    activity: [] as Array<{ kind: string; accountId: number; sessionId: string | null }>
   };
   const prisma = {
     channel: {
@@ -31,7 +33,12 @@ function createBibleRouteHarness(options: HarnessOptions = {}) {
   };
   const app = Fastify();
   const requireAuth = async (request: FastifyRequest) => {
-    (request as FastifyRequest & { auth: { accountId: number; actorId: number } }).auth = { accountId: 1, actorId: 7 };
+    (request as FastifyRequest & { auth: { accountId: number; actorId: number; sessionId: string; isGuest: boolean } }).auth = {
+      accountId: 1,
+      actorId: 7,
+      sessionId: "sess-1",
+      isGuest: options.guest === true
+    };
   };
   registerBibleRoutes(app, {
     prisma: prisma as unknown as PrismaClient,
@@ -43,7 +50,10 @@ function createBibleRouteHarness(options: HarnessOptions = {}) {
     sendMessagePush: async (id: number) => {
       state.pushed.push(id);
     },
-    hydrateMessage: async (id: number) => ({ id }) as unknown as MessageDTO
+    hydrateMessage: async (id: number) => ({ id }) as unknown as MessageDTO,
+    writeActivityLog: async (input) => {
+      state.activity.push(input);
+    }
   });
   return { app, state };
 }
@@ -142,4 +152,20 @@ test("bible session share normalizes an out-of-range receiving index", async () 
   const response = await app.inject({ method: "POST", url: "/api/bible/share", payload: { channelId: 10, panes: [{ bookCode: "MAT", chapter: 3 }], receivingIndex: 3 } });
   assert.equal(response.statusCode, 200);
   assert.equal((state.created as { payload: { receivingIndex: number | null } }).payload.receivingIndex, null);
+});
+
+test("opening the Bible writes a bible_open activity log entry, except for guests", async () => {
+  const { app, state } = createBibleRouteHarness();
+  const rejected = await app.inject({ method: "POST", url: "/api/bible/activity", payload: { action: "listen" } });
+  assert.equal(rejected.statusCode, 400);
+  assert.deepEqual(state.activity, []);
+
+  const accepted = await app.inject({ method: "POST", url: "/api/bible/activity", payload: { action: "open" } });
+  assert.equal(accepted.statusCode, 200);
+  assert.deepEqual(state.activity, [{ kind: "bible_open", accountId: 1, sessionId: "sess-1" }]);
+
+  const guest = createBibleRouteHarness({ guest: true });
+  const silent = await guest.app.inject({ method: "POST", url: "/api/bible/activity", payload: { action: "open" } });
+  assert.equal(silent.statusCode, 200);
+  assert.deepEqual(guest.state.activity, []);
 });

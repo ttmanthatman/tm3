@@ -21,10 +21,17 @@ import {
   importBibleAudioBundle
 } from "../bibleAudio/bundleImport.js";
 import { bibleBookChineseName } from "../bible/lookup.js";
-import { bibleActivityAccountLabel, pushBibleActivity } from "../bibleActivityLog.js";
 
 // 有声圣经：管理员上传卷包、读取章节索引（manifest）、鉴权流播放、功能开关。
 // 资源不入 git；stream 必须鉴权（支持 ?token= 以供 <audio> 使用）。
+
+/** 「听圣经」活动日志：复用 account_activity_logs，章节以 `state` 字段的「书卷 N章」记录。 */
+export type BibleListenLogInput = {
+  kind: "bible_listen";
+  accountId: number;
+  sessionId: string | null;
+  state: string;
+};
 
 export interface BibleAudioRouteDeps {
   prisma: PrismaClient;
@@ -32,7 +39,8 @@ export interface BibleAudioRouteDeps {
   requireAuth: preHandlerHookHandler;
   requireMediaAuth: preHandlerHookHandler;
   requireAdmin: preHandlerHookHandler;
-  authFor: (request: FastifyRequest) => { accountId: number; isAdmin: boolean };
+  authFor: (request: FastifyRequest) => { accountId: number; isAdmin: boolean; isGuest?: boolean; sessionId?: string | null };
+  writeActivityLog: (input: BibleListenLogInput) => Promise<void>;
 }
 
 export const BIBLE_AUDIO_BUNDLE_MAX_BYTES = 800 * 1024 * 1024;
@@ -43,7 +51,7 @@ const STREAM_CACHE_CONTROL = "private, max-age=3600";
 export type BibleAudioSettings = { enabled: boolean; defaultVersion: string | null };
 
 export function registerBibleAudioRoutes(app: FastifyInstance, deps: BibleAudioRouteDeps) {
-  const { prisma, bibleAudioDir, requireAuth, requireMediaAuth, requireAdmin, authFor } = deps;
+  const { prisma, bibleAudioDir, requireAuth, requireMediaAuth, requireAdmin, authFor, writeActivityLog } = deps;
   fs.mkdirSync(bibleAudioDir, { recursive: true });
   let manifestCache: { revision: string; body: string; etag: string } | null = null;
 
@@ -140,12 +148,17 @@ export function registerBibleAudioRoutes(app: FastifyInstance, deps: BibleAudioR
     const filePath = bibleAudioChapterPath(bibleAudioDir, version.versionId, row.bookCode, row.fileName);
     if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "音频文件不存在" });
     const stat = fs.statSync(filePath);
-    // 使用日志：每个章节的首次（非 Range）加载记一条「听圣经」；拖动进度产生的分段请求不重复记录。
+    // 活动日志：每章首次（非 Range）加载记一条「听圣经」；拖动进度产生的分段请求不重复记录，游客不记。
     if (!request.headers.range) {
-      const { accountId } = authFor(request);
-      void bibleActivityAccountLabel(prisma, accountId)
-        .then((account) => pushBibleActivity("听圣经", `${bibleBookChineseName(params.data.book)} ${params.data.chapter}章`, account))
-        .catch(() => {});
+      const auth = authFor(request);
+      if (!auth.isGuest) {
+        void writeActivityLog({
+          kind: "bible_listen",
+          accountId: auth.accountId,
+          sessionId: auth.sessionId || null,
+          state: `${bibleBookChineseName(params.data.book)} ${params.data.chapter}章`
+        });
+      }
     }
     return sendAudioFile(request, reply, filePath, row.fileName, stat);
   });

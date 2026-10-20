@@ -11,7 +11,7 @@ import Fastify, { type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import { zipArchive, type ZipArchiveEntry } from "../zipArchive.js";
 import { BibleAudioBundleRejectedError, parseBibleAudioBundle } from "../bibleAudio/bundleImport.js";
-import { registerBibleAudioRoutes } from "./bibleAudio.js";
+import { registerBibleAudioRoutes, type BibleListenLogInput } from "./bibleAudio.js";
 
 type VersionRow = {
   id: number;
@@ -196,10 +196,10 @@ function createFakePrisma() {
   return { prisma, settings, versions, chapters };
 }
 
-type SharedState = ReturnType<typeof createFakePrisma> & { dir: string };
+type SharedState = ReturnType<typeof createFakePrisma> & { dir: string; activity: BibleListenLogInput[] };
 
 async function createHarness(role: Role = "admin", shared?: SharedState) {
-  const state = shared ?? { ...createFakePrisma(), dir: fs.mkdtempSync(path.join(os.tmpdir(), "bible-audio-test-")) };
+  const state = shared ?? { ...createFakePrisma(), dir: fs.mkdtempSync(path.join(os.tmpdir(), "bible-audio-test-")), activity: [] as BibleListenLogInput[] };
   const app = Fastify();
   await app.register(multipart, { limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
   type Reply = { sent: boolean; code: (status: number) => { send: (body: unknown) => unknown } };
@@ -216,7 +216,10 @@ async function createHarness(role: Role = "admin", shared?: SharedState) {
     requireAuth: requireAuth as never,
     requireMediaAuth: requireAuth as never,
     requireAdmin: requireAdmin as never,
-    authFor: () => ({ accountId: 7, isAdmin: role === "admin" })
+    authFor: () => ({ accountId: 7, isAdmin: role === "admin", isGuest: false, sessionId: "sess-7" }),
+    writeActivityLog: async (input) => {
+      state.activity.push(input);
+    }
   });
   return { ...state, app };
 }
@@ -420,6 +423,10 @@ test("stream serves full and ranged audio with auth and feature gating", async (
   assert.equal((await user.app.inject({ method: "GET", url: "/api/bible-audio/other-version/TIT/1/stream" })).statusCode, 404);
   assert.equal((await user.app.inject({ method: "GET", url: "/api/bible-audio/cuvmpt-drama/XXX/1/stream" })).statusCode, 400);
   assert.equal((await user.app.inject({ method: "GET", url: "/api/bible-audio/Bad%20Id/TIT/1/stream" })).statusCode, 400);
+
+  // 每次非 Range 的章节加载记一条「听圣经」（含 304 重验证），Range 分段与 4xx 不记录
+  assert.deepEqual(admin.activity.map((entry) => entry.state), ["提多书 1章", "提多书 2章", "提多书 2章"]);
+  assert.ok(admin.activity.every((entry) => entry.kind === "bible_listen" && entry.accountId === 7 && entry.sessionId === "sess-7"));
 });
 
 test("settings only enable the feature once the default version is complete", async () => {

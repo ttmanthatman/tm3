@@ -29,7 +29,6 @@ import { registerBibleNoteRoutes } from "./routes/bibleNotes.js";
 import { registerBibleTopicRoutes } from "./routes/bibleTopics.js";
 import { registerBibleRoutes } from "./routes/bible.js";
 import { registerBibleAudioRoutes } from "./routes/bibleAudio.js";
-import { registerBibleActivityLogRoutes } from "./routes/bibleActivityLog.js";
 import { chatRecordItemRef, registerForwardRoutes } from "./routes/forward.js";
 import { registerBooksRoutes } from "./routes/books.js";
 import { registerStoryRoutes } from "./routes/stories.js";
@@ -3770,7 +3769,8 @@ registerBibleRoutes(app, {
   canWriteChannel,
   emitMessage,
   sendMessagePush,
-  hydrateMessage
+  hydrateMessage,
+  writeActivityLog
 });
 
 registerForwardRoutes(app, {
@@ -3798,10 +3798,9 @@ registerBibleAudioRoutes(app, {
   requireAuth,
   requireMediaAuth,
   requireAdmin,
-  authFor: (request) => (request as AuthedRequest).auth
+  authFor: (request) => (request as AuthedRequest).auth,
+  writeActivityLog
 });
-
-registerBibleActivityLogRoutes(app, { prisma, requireAuth });
 
 const friendFeedService = createFriendFeedService({ cacheDir: path.join(STORAGE_ROOT, "friend-cache") });
 
