@@ -605,15 +605,15 @@ test("song, score library, friend, and own-story controls stay ordered before ch
   const headerEnd = chatHeader.indexOf("</header>", headerStart);
   const header = chatHeader.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
-  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="icon-btn score-library-trigger"'));
-  assert.ok(header.indexOf('class="icon-btn score-library-trigger"') < header.indexOf('class="friend-player-control"'));
+  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('<MusicScoreControl'));
+  assert.ok(header.indexOf('<MusicScoreControl') < header.indexOf('class="friend-player-control"'));
   assert.ok(header.indexOf('class="friend-player-control"') < header.indexOf('class="icon-btn story-header-trigger"'));
   assert.ok(header.indexOf('class="icon-btn story-header-trigger"') < header.indexOf('class="chat-tools-control"'));
   assert.match(header, /class="icon-btn story-header-trigger"[\s\S]*?aria-label="我们的故事，长按查看我的故事"[\s\S]*?@pointerdown\.stop="beginStoryHold"[\s\S]*?<Sparkles :size="20"/);
   assert.match(app, /canOpenOwnStory: !!store\.account && !store\.account\.isGuest,[\s\S]*?storyAttention:[\s\S]*?openOwnStory,[\s\S]*?openSharedStories/);
-  assert.match(header, /aria-label="打开歌谱库"[\s\S]*?>谱<\/span>/);
+
   assert.doesNotMatch(header, /aria-label="打开或关闭歌谱"/);
-  assert.match(chatHeader, /<MusicScoreLibrary[\s\S]*?:current-score-available="musicScoreTriggerVisible \|\| musicScoreOpen"/);
+  assert.match(chatHeader, /<MusicScoreControl[\s\S]*?:current-score-available="musicScoreTriggerVisible \|\| musicScoreOpen"/);
   assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);
   assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
   assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);

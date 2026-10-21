@@ -24,9 +24,9 @@ import BibleIcon from "../bible/BibleIcon.vue";
 import SermonHub from "../sermon/SermonHub.vue";
 import type { MusicPlayer } from "../music/useMusicPlayer";
 import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
+import MusicScoreControl from "../music/MusicScoreControl.vue";
 
 const MusicMiniPanel = defineAsyncComponent(() => import("../music/MusicMiniPanel.vue"));
-const MusicScoreLibrary = defineAsyncComponent(() => import("../music/MusicScoreLibrary.vue"));
 
 // Presentation-only home of the chat header and the pinned/activity notice
 // stack, moved verbatim from App.vue. Interactive state stays in App.vue and
@@ -99,7 +99,6 @@ const props = defineProps<{
 }>();
 
 const messageSearchOpen = ref(false);
-const scoreLibraryOpen = ref(false);
 
 function showCurrentScore() {
   if (!props.musicScoreOpen) props.toggleMusicScore();
@@ -190,16 +189,7 @@ onBeforeUnmount(clearStoryHold);
         @open-manager="openMusicManagerFromMiniPanel"
       />
     </div>
-    <button
-      v-if="!showingFavoriteSurface"
-      class="icon-btn score-library-trigger"
-      type="button"
-      :class="{ active: scoreLibraryOpen }"
-      aria-label="打开歌谱库"
-      title="歌谱"
-      :aria-expanded="scoreLibraryOpen"
-      @click.stop="scoreLibraryOpen = true"
-    ><span class="music-player-glyph" aria-hidden="true">谱</span></button>
+    <MusicScoreControl v-if="!showingFavoriteSurface" :current-score-available="musicScoreTriggerVisible || musicScoreOpen" :current-channel-id="currentChannel?.id" @current="showCurrentScore" />
     <div v-if="!showingFavoriteSurface" class="friend-player-control">
       <button class="icon-btn friend-player-trigger" type="button" :class="{ active: friendProgramsOpen, spinning: friendPlaying }" @click.stop="toggleFriendPrograms" aria-label="打开良友节目">
         <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
@@ -286,13 +276,6 @@ onBeforeUnmount(clearStoryHold);
       <ActivityTicker :items="activityStatusItems" />
     </span>
   </section>
-  <MusicScoreLibrary
-    v-if="scoreLibraryOpen"
-    :current-channel-id="currentChannel?.id"
-    :current-score-available="musicScoreTriggerVisible || musicScoreOpen"
-    :show-current-score="showCurrentScore"
-    @close="scoreLibraryOpen = false"
-  />
 </template>
 
 <style scoped>

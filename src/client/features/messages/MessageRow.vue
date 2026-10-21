@@ -85,7 +85,8 @@ const bookShare = computed(() => props.message.type === "text" ? parseBookShareM
 const listenPlaylist = computed(() => props.message.type === "text" ? listenPlaylistPayload(props.message.payload) : null);
 
 const passageShare = computed(() => props.message.type === "text" ? (biblePassageMessagePayload(props.message.payload) || parseLegacyMergedBiblePassages(props.message.content)) : null);
-const playScripture = computed(() => props.canPlayBibleAudio?.(props.message) && props.playBibleAudio ? () => props.playBibleAudio!(props.message) : undefined);
+// Keep the card action stable while the audio manifest loads or recovers.
+const playScripture = computed(() => props.playBibleAudio ? () => props.playBibleAudio!(props.message) : undefined);
 const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
 const bibleTopicShare = computed(() => props.message.type === "text" && !bibleShare.value ? bibleTopicMessagePayload(props.message.payload) : null);
 const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(props.message.content, bookNoteShare.value.note.bookTitle) : "");

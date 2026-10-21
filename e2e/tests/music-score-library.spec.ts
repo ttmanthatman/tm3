@@ -36,7 +36,7 @@ function twoPagePdf() {
 }
 const pdf = twoPagePdf();
 const scores: (MusicScoreDTO & { trackId: number | null; trackTitle: string })[] = [
-  { id: 501, title: "平安 · 双页简谱", kind: "image", trackId: 51, trackTitle: "平安之歌", pages: [
+  { id: 501, title: "Screenshot_20260817_191825", kind: "image", trackId: 51, trackTitle: "平安之歌", pages: [
     { id: 5011, scoreId: 501, pageIndex: 0, fileName: "平安第1页.png", fileSize: 1200, width: 800, height: 1120 },
     { id: 5012, scoreId: 501, pageIndex: 1, fileName: "平安第2页.png", fileSize: 1200, width: 800, height: 1120 }
   ] },
@@ -48,8 +48,8 @@ const scores: (MusicScoreDTO & { trackId: number | null; trackTitle: string })[]
   ] }
 ];
 
-async function mountLibrary(page: Page, options: { failList?: boolean; failShare?: boolean } = {}) {
-  const state = { failList: !!options.failList, failShare: !!options.failShare, listReads: 0, shares: [] as { scoreId: number; channelId: number; clientRequestId: string }[] };
+async function mountLibrary(page: Page, options: { failList?: boolean; failShare?: boolean; failScoreId?: number } = {}) {
+  const state = { failList: !!options.failList, failShare: !!options.failShare, failScoreId: options.failScoreId, listReads: 0, shares: [] as { scoreId: number; channelId: number; clientRequestId: string }[] };
   await page.route("**/api/music/scores", route => {
     state.listReads++;
     return state.failList
@@ -68,7 +68,7 @@ async function mountLibrary(page: Page, options: { failList?: boolean; failShare
   await page.route("**/api/music/scores/*/share", async route => {
     const body = route.request().postDataJSON() as { channelId: number; clientRequestId: string };
     state.shares.push({ scoreId: Number(new URL(route.request().url()).pathname.split("/").at(-2)), ...body });
-    if (state.failShare) await route.fulfill({ status: 503, json: { message: "分享暂时失败，请重试" } });
+    if (state.failShare || state.failScoreId === state.shares.at(-1)?.scoreId) await route.fulfill({ status: 503, json: { message: "分享暂时失败，请重试" } });
     else await route.fulfill({ json: { success: true } });
   });
   await page.route("**/music-score-library-harness", route => route.fulfill({ contentType: "text/html", body: '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><main id="host"></main>' }));
@@ -87,18 +87,19 @@ async function mountLibrary(page: Page, options: { failList?: boolean; failShare
     const open = ref(true);
     createApp({ render: () => h("div", {}, [
       h("button", { onClick: () => { open.value = true; } }, "打开测试歌谱"),
-      open.value ? h(Library, { currentChannelId: 11, currentScoreAvailable: true, showCurrentScore: () => { document.body.dataset.currentScore = "opened"; }, onClose: () => { open.value = false; } }) : null
+      open.value ? h(Library, { currentChannelId: 11, onClose: () => { open.value = false; } }) : null
     ]) }).mount(document.getElementById("host")!);
   });
   await expect(page.getByRole("dialog", { name: "歌谱", exact: true })).toBeVisible();
   return state;
 }
 
+const songTitle = (score: typeof scores[number]) => score.trackTitle || score.title;
 const library = (page: Page) => page.getByRole("dialog", { name: "歌谱", exact: true });
 const preview = (page: Page, title: string) => page.getByRole("dialog", { name: title, exact: true });
 async function openScore(page: Page, index: number) {
-  await library(page).getByRole("button", { name: new RegExp(scores[index].title) }).click();
-  const dialog = preview(page, scores[index].title);
+  await library(page).getByRole("button", { name: new RegExp(songTitle(scores[index])) }).click();
+  const dialog = preview(page, songTitle(scores[index]));
   await expect(dialog.locator(".music-score-preview-stage")).toHaveAttribute("data-scale", "1");
   if (scores[index].kind === "pdf") await expect(dialog.locator(".music-score-preview-canvas")).toBeVisible();
   else await expect.poll(() => dialog.locator(".music-score-preview-image").evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
@@ -220,21 +221,20 @@ test("score search filters locally, distinguishes no matches and recovers from l
   await expect(library(page).getByText("歌谱列表暂时不可用", { exact: false })).toBeVisible();
   state.failList = false;
   await library(page).getByRole("button", { name: "重新加载歌谱", exact: true }).click();
-  await expect(library(page).getByRole("button", { name: /平安 · 双页简谱/ })).toBeVisible();
+  await expect(library(page).getByRole("button", { name: /平安之歌/ })).toBeVisible();
   const reads = state.listReads;
   const search = library(page).getByRole("searchbox", { name: "搜索歌谱", exact: true });
   await search.fill("奇异恩典");
-  await expect(library(page).getByRole("button", { name: /恩典 · 单页简谱/ })).toBeVisible();
-  await expect(library(page).getByRole("button", { name: /平安 · 双页简谱/ })).toHaveCount(0);
+  await expect(library(page).getByRole("button", { name: /奇异恩典/ })).toBeVisible();
+  await expect(library(page).getByRole("button", { name: /平安之歌/ })).toHaveCount(0);
   await search.fill("钢琴");
   await expect(library(page).getByRole("button", { name: /盼望 · 钢琴谱/ })).toBeVisible();
   await search.fill("不存在的歌谱");
   await expect(library(page).getByText(/没有.*歌谱|未找到.*歌谱|暂无.*歌谱/)).toBeVisible();
   await search.fill("");
-  for (const score of scores) await expect(library(page).getByRole("button", { name: new RegExp(score.title) })).toBeVisible();
+  for (const score of scores) await expect(library(page).getByRole("button", { name: new RegExp(songTitle(score)) })).toBeVisible();
   expect(state.listReads).toBe(reads);
-  await library(page).getByRole("button", { name: "当前播放的歌谱", exact: true }).click();
-  await expect(page.locator("body")).toHaveAttribute("data-current-score", "opened");
+  await library(page).getByRole("button", { name: "关闭", exact: true }).click();
   await expect(library(page)).toBeHidden();
 });
 
@@ -287,4 +287,94 @@ test("downloads retain the original single image and PDF and package every image
     await expect(dialog).toBeVisible();
     await dialog.getByRole("button", { name: "关闭歌谱预览", exact: true }).click();
   }
+});
+
+test("song names replace file titles; selections survive search and share retries skip completed scores", async ({ page }) => {
+  await page.setViewportSize({ width: 696, height: 1033 });
+  const state = await mountLibrary(page, { failScoreId: 503 });
+  await expect(library(page)).not.toContainText("Screenshot_");
+  await expect(library(page)).not.toContainText("预览歌谱");
+  await expect(library(page).locator(".score-library-item small")).toHaveCount(0);
+  await library(page).getByRole("checkbox", { name: "选择《平安之歌》歌谱", exact: true }).check();
+  await library(page).getByRole("searchbox").fill("奇异恩典");
+  await library(page).getByRole("checkbox", { name: "选择《奇异恩典》歌谱", exact: true }).check();
+  await expect(library(page)).toContainText("已选 2 份");
+  await library(page).getByRole("button", { name: "分享所选", exact: true }).click();
+  const share = page.getByRole("dialog", { name: "分享歌谱", exact: true });
+  expect((await share.locator(".small-modal").boundingBox())!.width).toBeLessThanOrEqual(420);
+  await share.screenshot({ path: "output/e2e/music-score-share-compact.png" });
+  await share.getByRole("button", { name: "分享", exact: true }).click();
+  await expect(share.getByRole("status")).toContainText("已分享 1/2 份");
+  expect(state.shares.map(item => item.scoreId)).toEqual([501, 503]);
+  state.failScoreId = undefined;
+  await share.getByRole("button", { name: "重试分享", exact: true }).click();
+  await expect(share.getByRole("status")).toHaveText("已分享到“当前测试频道”");
+  expect(state.shares.map(item => item.scoreId)).toEqual([501, 503, 503]);
+  expect(state.shares[2]).toEqual(state.shares[1]);
+  await share.getByRole("button", { name: "完成", exact: true }).click();
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 700 });
+    const panel = (await library(page).locator(".music-score-library").boundingBox())!;
+    expect(panel.x).toBeGreaterThanOrEqual(0);
+    expect(panel.x + panel.width).toBeLessThanOrEqual(width);
+    const selection = library(page).locator(".score-library-selection");
+    expect(await selection.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await expect(selection.getByRole("button", { name: "分享所选", exact: true })).toBeInViewport();
+  }
+  const downloadEvent = page.waitForEvent("download");
+  await library(page).getByRole("button", { name: "下载所选", exact: true }).click();
+  const download = await downloadEvent;
+  const zip = await JSZip.loadAsync(await readFile((await download.path())!));
+  const files = Object.values(zip.files).filter(entry => !entry.dir);
+  expect(files).toHaveLength(3);
+  expect(files.filter(entry => entry.name.includes("平安之歌/"))).toHaveLength(2);
+  expect(files.filter(entry => entry.name.includes("奇异恩典/"))).toHaveLength(1);
+  for (const file of files) expect(await file.async("nodebuffer")).toEqual(await png);
+  await library(page).getByRole("searchbox").fill("");
+  await library(page).getByRole("button", { name: "取消选择", exact: true }).click();
+  await expect(library(page).getByRole("checkbox", { checked: true })).toHaveCount(0);
+  await page.screenshot({ path: "output/e2e/music-score-library-song-names.png" });
+});
+
+test("the colored score control offers current and other scores with keyboard and outside dismissal", async ({ page }) => {
+  await page.route("**/api/music/scores", route => route.fulfill({ json: { scores: [] } }));
+  await page.route("**/score-control-harness", route => route.fulfill({ contentType: "text/html", body: '<!doctype html><meta charset="utf-8"><main id="host"></main>' }));
+  await page.goto("/score-control-harness");
+  await page.evaluate(async () => {
+    const path = "/src/client/features/music/MusicScoreControl.vue";
+    const source = await (await fetch(path)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)![1];
+    const { createApp, h, ref } = await import(vuePath) as typeof import("vue");
+    const { default: Control } = await import(path);
+    const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "/src/client/styles.css"; document.head.append(css);
+    const available = ref(true);
+    createApp({ render: () => h("div", { style: "padding:40px;display:flex;gap:20px" }, [
+      h(Control, { currentScoreAvailable: available.value, currentChannelId: 11, onCurrent: () => { document.body.dataset.currentScore = "opened"; } }),
+      h("button", { onClick: () => { available.value = !available.value; } }, "切换歌谱状态")
+    ]) }).mount(document.getElementById("host")!);
+  });
+  const trigger = page.getByRole("button", { name: "打开歌谱菜单", exact: true });
+  await expect(trigger).toHaveClass(/has-current-score/);
+  await trigger.focus();
+  await trigger.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "当前歌谱", exact: true })).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(page.locator("body")).toHaveAttribute("data-current-score", "opened");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await trigger.click();
+  await page.locator("body").click({ position: { x: 300, y: 300 } });
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "其他歌谱", exact: true }).click();
+  await expect(library(page)).toBeVisible();
+  await library(page).getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("button", { name: "切换歌谱状态", exact: true }).click();
+  const plain = page.getByRole("button", { name: "打开歌谱库", exact: true });
+  await expect(plain).not.toHaveClass(/has-current-score/);
+  await plain.click();
+  await expect(library(page)).toBeVisible();
 });

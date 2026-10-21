@@ -326,6 +326,8 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     const references = bibleAudioReferencesFromMessage(message);
     const sourceId = biblePassageMessagePayload(message.payload)?.sourceId;
     if (!references.length) return false;
+    if (!bibleAudioEnabled.value) await loadBibleAudioManifest(true);
+    if (!bibleAudioEnabled.value) throw new Error("有声圣经暂时不可用，请稍后重试");
     const lookups: BibleLookupDTO[] = [];
     for (const reference of references) {
       try {
@@ -336,8 +338,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
       }
     }
     if (!lookups.length) {
-      alert("这条经文暂时无法朗读");
-      return false;
+      throw new Error("这条经文暂时无法朗读，请重试");
     }
     openBibleWorkspace();
     await nextTick();

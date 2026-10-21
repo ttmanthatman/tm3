@@ -97,6 +97,9 @@ async function responsiveCards(page: Page) {
       await expect(scripture.getByRole("button", { name: "复制经文", exact: true })).toBeVisible();
       await expect(scripture.getByRole("button", { name: "播放经文", exact: true })).toBeVisible();
     }
+    const plant = (await page.locator("#short .reading-share-plant").boundingBox())!;
+    expect(plant.width).toBe(width <= 480 ? 40 : 50);
+    expect(plant.height).toBe(width <= 480 ? 76 : 88);
     for (const card of await page.locator(".reading-share-card").all()) {
       const box = (await card.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -314,4 +317,49 @@ test("passage share options remain accessible in WebKit", async () => {
   const page = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
   try { await passageOptions(page); }
   finally { await browser.close(); }
+});
+
+test("message cards retain playback before audio availability loads and retry through the workspace integration", async ({ page }) => {
+  let audioReady = false;
+  let manifestReads = 0;
+  await page.route("**/api/bible-audio/manifest", route => {
+    manifestReads++;
+    return audioReady ? route.fulfill({ json: { enabled: true, defaultVersionId: "fixture", versions: [{ versionId: "fixture", chapters: [] }] } })
+      : route.fulfill({ status: 503 });
+  });
+  await page.route("**/api/bible/lookup?**", route => route.fulfill({ json: { success: true, result: { reference: "马可福音 1:1", translation: "和合本", verses: [{ book: "马可福音", chapter: 1, verse: 1, text: "神的儿子，耶稣基督福音的起头。" }] } } }));
+  await page.route("**/api/bible/activity", route => route.fulfill({ json: { success: true } }));
+  await page.route("**/scripture-message-harness", route => route.fulfill({ contentType: "text/html", body: '<!doctype html><meta charset="utf-8"><main id="host"></main>' }));
+  await page.goto("/scripture-message-harness");
+  await page.evaluate(async () => {
+    const rowPath = "/src/client/features/messages/MessageRow.vue";
+    const rowSource = await (await fetch(rowPath)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(rowSource)![1];
+    const { createApp, h, ref } = await import(vuePath) as typeof import("vue");
+    const storeSource = await (await fetch("/src/client/store.ts")).text();
+    const piniaPath = /from ["']([^"']*\/pinia\.js[^"']*)["']/.exec(storeSource)![1];
+    const { createPinia } = await import(piniaPath) as typeof import("pinia");
+    const { default: Row } = await import(rowPath);
+    const integrationPath = "/src/client/features/bible/useBibleWorkspaceIntegration.ts";
+    const { useBibleWorkspaceIntegration } = await import(integrationPath) as typeof import("../../src/client/features/bible/useBibleWorkspaceIntegration");
+    const defaults = Object.fromEntries(Object.keys(Row.props).map(name => [name, () => false]));
+    const message = { id: 801, type: "text", content: '马可福音 1:1<br>“神的儿子，耶稣基督福音的起头。”', payload: null };
+    createApp({ setup() {
+      const noop = () => {};
+      const integration = useBibleWorkspaceIntegration({ showChannels: ref(false), showMembers: ref(false), channelsCollapsed: ref(true), membersCollapsed: ref(true), sermonWorkspaceOpen: ref(false), bookWorkspaceOpen: ref(false), saveReadPosition: noop, currentChannelId: () => 11, isTapSuppressed: () => false, publishBibleReading: noop, publishBookReading: noop, jumpToMessageInChannel: async () => {} });
+      integration.bibleWorkspace.value = { startAudioFromLookups: async lookups => { document.body.dataset.played = lookups.map(lookup => lookup.reference).join(","); return true; } } as import("../../src/client/features/bible/useBibleWorkspaceIntegration").BibleWorkspaceHandle;
+      return () => h(Row, { ...defaults, message, variant: "timeline", brokenAttachmentIds: new Set(), canPlayBibleAudio: integration.canPlayBibleAudioFromMessage, playBibleAudio: integration.playBibleAudioFromMessage });
+    } }).use(createPinia()).mount(document.getElementById("host")!);
+  });
+  const play = page.getByRole("button", { name: "播放经文", exact: true });
+  await expect(play).toBeVisible();
+  expect(manifestReads).toBe(0);
+  await play.click();
+  await expect(page.getByRole("alert")).toHaveText("有声圣经暂时不可用，请稍后重试");
+  await expect(play).toBeEnabled();
+  audioReady = true;
+  await play.click();
+  await expect(page.locator("body")).toHaveAttribute("data-played", "马可福音 1:1");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(manifestReads).toBe(2);
 });

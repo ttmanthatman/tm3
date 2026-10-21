@@ -52,7 +52,9 @@ async function handlePlay() {
   if (!props.play || playBusy.value) return;
   playBusy.value = true;
   error.value = "";
-  try { await props.play(); }
+  try {
+    if (await props.play() === false) throw new Error("经文暂时无法播放，请重试");
+  }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "经文播放失败，请重试"; }
   finally { playBusy.value = false; }
 }
@@ -98,7 +100,6 @@ async function copy() {
 </template>
 
 <style scoped>
-.bible-scripture-card :deep(.reading-share-plant) { width: 40px; height: 68px; opacity: .65; }
 .bible-scripture-card :deep(.reading-share-card-content) { padding-bottom: 17px; }
 .scripture-card-head { display: grid; gap: 3px; padding-right: 22px; margin-bottom: 14px; }
 .scripture-card-head small, .scripture-card-count { color: #8b7052; font-size: 12px; }
