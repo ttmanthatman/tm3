@@ -106,6 +106,10 @@ import { deleteAccount as deleteAccountService } from "./services/accountDeletio
 import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.js";
 import { createMusicService } from "./services/musicService.js";
 import { cleanListenPlaylistPayload } from "./services/listenPlaylist.js";
+import { createQuestionAssistantCatalog } from "./services/questionAssistantCatalog.js";
+import { questionAssistantDirectActivation } from "./services/questionAssistantActivation.js";
+import { generateQuestionAssistantReply, requestQuestionAssistantCompletion } from "./services/questionAssistantReply.js";
+import { createMusicScoreShareService } from "./services/musicScoreLibrary.js";
 import { listenPlaylistContent, listenPlaylistPayload } from "../shared/listenPlaylist.js";
 import { BiblePassageValidationError, cleanBiblePassagePayload } from "./services/biblePassages.js";
 import { biblePassageMessageContent, biblePassageMessagePayload } from "../shared/biblePassages.js";
@@ -1311,23 +1315,6 @@ async function loadQuestionAssistantSettings() {
 
 type QuestionAssistantActivationMode = "strong" | "direct" | "weak";
 
-function questionAssistantDirectActivation(content?: string | null, displayName?: string | null): "strong" | "direct" | null {
-  const text = plainTextFromHtml(content, 4000);
-  if (!text) return null;
-  if (/@\s*ai_slmm\b/i.test(text)) return "direct";
-  const name = String(displayName || "").trim();
-  if (name && name !== QUESTION_ASSISTANT_USERNAME) {
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`@\\s*${escapedName}`).test(text) || text.includes(name)) return "direct";
-  }
-  if (/[?？]/.test(text)) return "strong";
-  const sentences = text
-    .split(/[。.!！?？；;\n\r]+/)
-    .map((sentence) => sentence.replace(/[，,、：:\s"'“”‘’（）()[\]{}]+$/g, "").trim())
-    .filter(Boolean);
-  return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence)) ? "strong" : null;
-}
-
 function messagePayloadRecord(message: Pick<Message, "payload">) {
   return message.payload && typeof message.payload === "object" && !Array.isArray(message.payload) ? (message.payload as Record<string, unknown>) : {};
 }
@@ -1354,7 +1341,7 @@ async function buildQuestionAssistantContext(
       take: 500
     })
   ).reverse();
-  type Round = { user: Message & { sender: Actor }; assistant?: Message & { sender: Actor } };
+  type Round = { user: Message & { sender: Actor }; assistant: Array<Message & { sender: Actor }> };
   const rounds: Round[] = [];
   const roundByTriggerId = new Map<number, Round>();
   const userRowsById = new Map<number, Message & { sender: Actor }>();
@@ -1362,7 +1349,7 @@ async function buildQuestionAssistantContext(
     if (row.senderActorId === message.senderActorId) {
       userRowsById.set(row.id, row);
       if (row.id === message.id) {
-        const round = { user: row };
+        const round: Round = { user: row, assistant: [] };
         rounds.push(round);
         roundByTriggerId.set(row.id, round);
       }
@@ -1376,11 +1363,11 @@ async function buildQuestionAssistantContext(
     let round = roundByTriggerId.get(triggerMessageId);
     const user = userRowsById.get(triggerMessageId);
     if (!round && user) {
-      round = { user };
+      round = { user, assistant: [] };
       rounds.push(round);
       roundByTriggerId.set(triggerMessageId, round);
     }
-    if (round) round.assistant = row;
+    if (round) round.assistant.push(row);
   }
   rounds.sort((left, right) => left.user.id - right.user.id);
   const scopedRounds = rounds.slice(-contextTurnLimit);
@@ -1388,7 +1375,7 @@ async function buildQuestionAssistantContext(
     const prefix = `第 ${index + 1} 轮`;
     return [
       `${prefix} 用户：${plainTextFromHtml(round.user.content, 1200)}`,
-      round.assistant ? `${prefix} ${assistant.displayName}：${plainTextFromHtml(round.assistant.content, 1200)}` : ""
+      round.assistant.length ? `${prefix} ${assistant.displayName}：${plainTextFromHtml(round.assistant.map((reply) => reply.content).join("\n"), 4000)}` : ""
     ].filter(Boolean);
   });
   const lines = [
@@ -1405,43 +1392,6 @@ async function buildQuestionAssistantContext(
     "请作为 ai_slmm 在同一频道回复这条消息。"
   ];
   return lines.filter(Boolean).join("\n").slice(0, 12000);
-}
-
-async function callQuestionAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean; thinkingEnabled?: boolean }, apiKey: string, contextText: string) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
-  try {
-    const response = await fetch(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: settings.model,
-        messages: [
-          { role: "system", content: settings.promptCommand },
-          {
-            role: "user",
-            content: [
-              settings.webSearchEnabled ? "联网查询默认开启；如当前模型或接口没有联网工具，请明确标注资料来自模型知识、需要查证。" : "联网查询已关闭。",
-              contextText
-            ].join("\n\n")
-          }
-        ],
-        thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" },
-        stream: false
-      }),
-      signal: controller.signal
-    });
-    const payload = (await response.json().catch(() => ({}))) as any;
-    if (!response.ok) throw new Error(String(payload?.error?.message || payload?.message || `AI HTTP ${response.status}`));
-    const responseText = String(payload?.choices?.[0]?.message?.content || "").trim();
-    if (!responseText) throw new Error("AI returned empty content");
-    return responseText.slice(0, 5000);
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 async function findQuestionAssistantActivationAnchor(
@@ -1525,7 +1475,7 @@ async function callQuestionAssistantActivationJudge(
 async function maybeTriggerQuestionAssistant(messageId: number) {
   const message = await prisma.message.findUnique({
     where: { id: messageId },
-    include: { sender: true, channel: { select: { id: true, name: true, isPrivate: true, directKey: true } } }
+    include: { sender: true, channel: { select: { id: true, name: true, kind: true, isPrivate: true, directKey: true } } }
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
   if (message.channel.directKey === virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
@@ -1548,23 +1498,60 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     activationMode = "weak";
   }
   const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, activationMode, activationAnchor);
-  const responseText = await callQuestionAssistant(settings.value, apiKey, contextText);
-  await createMessageFromActor({
-    channelId: message.channelId,
-    actorId: assistant.id,
-    content: responseText,
-    type: "text",
-    replyToId: message.id,
-    payload: {
-      contentFormat: "markdown",
-      aiRole: QUESTION_ASSISTANT_USERNAME,
-      aiActivationMode: activationMode,
-      triggerMessageId: message.id,
-      activationAnchorMessageId: activationAnchor?.id || message.id
-    },
-    skipEngineEvent: true,
-    skipQuestionAssistant: true
+  const accountId = message.sender.accountId;
+  if (!accountId) return;
+  const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true, canPinMessages: true } });
+  if (!account || !(await canWriteChannel(accountId, message.channelId))) return;
+  const catalog = createQuestionAssistantCatalog({ prisma, auth: { accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
+  const metadata = {
+    aiRole: QUESTION_ASSISTANT_USERNAME,
+    aiActivationMode: activationMode,
+    triggerMessageId: message.id,
+    activationAnchorMessageId: activationAnchor?.id || message.id
+  };
+  const sendReply = (content: string, payload: Record<string, unknown>) => createMessageFromActor({
+    channelId: message.channelId, actorId: assistant.id, content, type: "text", replyToId: message.id,
+    payload: { ...payload, ...metadata }, skipEngineEvent: true, skipQuestionAssistant: true
   });
+  let reply;
+  try {
+    reply = await generateQuestionAssistantReply({
+      prompt: settings.value.promptCommand,
+      context: [settings.value.webSearchEnabled ? "联网查询默认开启；如当前模型或接口没有联网工具，请明确标注资料来自模型知识、需要查证。" : "联网查询已关闭。", contextText].join("\n\n"),
+      complete: (messages) => requestQuestionAssistantCompletion(settings.value, apiKey, messages),
+      searchMusic: ({ query, category, offset }) => catalog.search({ query, kind: category, offset }),
+      resolveTrack: catalog.getTrack,
+      canShareScore: async (id) => (message.channel.kind === "standard" || message.channel.kind === "direct") && !!(await catalog.getScore(id))
+    });
+  } catch (error) {
+    app.log.warn({ error, messageId: message.id }, "question assistant response failed");
+    if (await canWriteChannel(accountId, message.channelId)) await sendReply("这次暂时无法完成回答或查找，请稍后重试。", { contentFormat: "markdown" });
+    return;
+  }
+  // A model call may outlive a membership change. Recheck before posting or copying any files.
+  if (!(await canWriteChannel(accountId, message.channelId))) return;
+  for (const item of reply.messages) await sendReply(item.content, item.payload);
+  const sharing = createMusicScoreShareService(prisma, { scores: MUSIC_SCORE_DIR, uploads: UPLOAD_DIR });
+  for (const scoreId of reply.scoreIds) {
+    try {
+      const score = await catalog.getScore(scoreId);
+      if (!score) throw new Error("selected score is no longer available");
+      const shared = await sharing.share({
+        score, actorId: assistant.id, channelId: message.channelId,
+        clientRequestId: `ai:${message.id}:score:${scoreId}`,
+        reply: { messageId: message.id, aiRole: QUESTION_ASSISTANT_USERNAME, activationMode, anchorMessageId: activationAnchor?.id || message.id }
+      });
+      if (shared.state === "created") {
+        for (const id of shared.messageIds) {
+          await emitMessage(id).catch((error) => app.log.warn({ error, messageId: id }, "assistant score emit failed"));
+          void sendMessagePush(id, "").catch((error) => app.log.warn({ error, messageId: id }, "assistant score push failed"));
+        }
+      }
+    } catch (error) {
+      app.log.warn({ error, messageId: message.id, scoreId }, "assistant score share failed");
+      await sendReply("这份曲谱暂时无法发送，可能已被删除或文件不可用，请稍后重新查找。", { contentFormat: "markdown" });
+    }
+  }
 }
 
 

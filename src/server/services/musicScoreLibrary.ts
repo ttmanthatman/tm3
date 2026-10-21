@@ -60,9 +60,24 @@ export function createMusicScoreShareService(prisma: PrismaClient, directories: 
     isUniqueConflict: (error) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002"
   });
 
-  async function share(input: { score: MusicScoreLibraryRow; actorId: number; channelId: number; clientRequestId: string }) {
-    const { score, actorId, channelId, clientRequestId } = input;
-    const hash = messageSendRequestHash({ channelId, content: "", type: "music_score_share", payload: { scoreId: score.id }, replyToId: null });
+  async function share(input: {
+    score: MusicScoreLibraryRow;
+    actorId: number;
+    channelId: number;
+    clientRequestId: string;
+    reply?: { messageId: number; aiRole: string; activationMode: string; anchorMessageId: number };
+  }) {
+    const { score, actorId, channelId, clientRequestId, reply } = input;
+    const replyPayload = reply ? {
+      aiRole: reply.aiRole,
+      triggerMessageId: reply.messageId,
+      aiActivationMode: reply.activationMode,
+      activationAnchorMessageId: reply.anchorMessageId
+    } : {};
+    const hash = messageSendRequestHash({
+      channelId, content: "", type: "music_score_share",
+      payload: { scoreId: score.id, ...replyPayload }, replyToId: reply?.messageId ?? null
+    });
     const result = await idempotency.send({ actorId, clientRequestId, hash, create: async () => {
       if (!score.pages.length) throw new MusicScoreShareError("歌谱没有可分享的页面", 400);
       const copied: string[] = [];
@@ -89,6 +104,7 @@ export function createMusicScoreShareService(prisma: PrismaClient, directories: 
               channelId, senderActorId: actorId,
               clientRequestId: index === 0 ? clientRequestId : `${clientRequestId}:score:${index}`,
               clientRequestHash: hash,
+              ...(reply ? { replyToId: reply.messageId } : {}),
               content: score.title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"),
               type: file.type,
               fileName: file.page.fileName,
@@ -96,6 +112,7 @@ export function createMusicScoreShareService(prisma: PrismaClient, directories: 
               fileSize: file.fileSize,
               payload: {
                 sourceMusicScoreId: score.id, musicScoreShareRequestId: clientRequestId, musicScorePageIndex: index,
+                ...replyPayload,
                 ...(file.type === "image" ? { imageWidth: file.page.width, imageHeight: file.page.height } : {})
               }
             } });
