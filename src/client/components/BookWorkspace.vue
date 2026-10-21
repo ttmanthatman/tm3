@@ -86,7 +86,7 @@ const quoteNavigation = useBookQuoteNavigation({
   }
 });
 const navigationStatus = quoteNavigation.status;
-const navigationNotice = computed(() => quoteNavigation.error.value || ({ exact: "", recovered: "已根据原文恢复位置", approximate: "此位置来自旧进度或摘录，仅作近似定位", ambiguous: "原文有多处匹配，无法确认位置", "revision-mismatch": "图书或文字版本不一致，未应用原位置", "not-found": "未找到可显示的原文，当前为近似阅读位置" })[navigationStatus.value ?? "exact"]);
+const navigationNotice = computed(() => quoteNavigation.error.value || ({ exact: "", recovered: "已根据原文恢复位置", approximate: "", ambiguous: "原文有多处匹配，无法确认位置", "revision-mismatch": "图书或文字版本不一致，未应用原位置", "not-found": "未找到可显示的原文，当前为近似阅读位置" })[navigationStatus.value ?? "exact"]);
 function currentContext(book = activeBook.value, fraction = sliderValue.value): BookReadingContext | null {
   return book ? { bookId: book.id, title: book.title, chapter: chapterLabel.value.slice(0, 300), fraction, quote: "" } : null;
 }

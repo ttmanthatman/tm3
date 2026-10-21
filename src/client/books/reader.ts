@@ -1,5 +1,6 @@
 // 图书阅读器核心：流式加载、进度换算、主题注入。
 // 与 UI 分离，保证纯函数可单测。
+import "./compatibility";
 import { preloadBookNeighbors } from "../features/books/bookAdjacentPreload";
 import { applyBookTypography } from "../features/books/bookTypography";
 import { forgetBookTextModel } from "../features/books/bookTextModel";
