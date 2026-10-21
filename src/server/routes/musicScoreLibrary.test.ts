@@ -135,7 +135,9 @@ test("score library authenticates every metadata and share route", async (contex
 });
 
 test("score library lists only readable bound and own unbound scores and searches title or track", async (context) => {
-  const { app, accessChecks } = await withHarness(context);
+  const { app, accessChecks, directories, scores, messages } = await withHarness(context);
+  const originalFiles = await fs.readdir(directories.scores);
+  const originalIds = [...scores.keys()];
   const owner = await app.inject({ method: "GET", url: "/api/music/scores", headers: headers() });
   assert.equal(owner.statusCode, 200);
   assert.deepEqual(owner.json().scores.map((row: { id: number }) => row.id), [7, 4, 2, 1]);
@@ -151,6 +153,13 @@ test("score library lists only readable bound and own unbound scores and searche
   assert.deepEqual(byTitle.json().scores.map((row: { id: number }) => row.id), [1]);
   const byTrack = await app.inject({ method: "GET", url: `/api/music/scores?search=${encodeURIComponent("私群歌曲")}`, headers: headers() });
   assert.deepEqual(byTrack.json().scores.map((row: { id: number }) => row.id), [4]);
+  const detail = await app.inject({ method: "GET", url: "/api/music/scores/1", headers: headers() });
+  assert.equal(detail.statusCode, 200);
+  assert.deepEqual(detail.json().score.pages, owner.json().scores.at(-1).pages);
+  assert.deepEqual([...scores.keys()], originalIds, "browsing reuses the existing score records");
+  assert.deepEqual(await fs.readdir(directories.scores), originalFiles, "browsing never duplicates source pages");
+  assert.deepEqual(await fs.readdir(directories.uploads), [], "only an explicit share may create chat attachments");
+  assert.equal(messages.size, 0);
 });
 
 test("score detail and sharing keep page source permission, invalid-track and missing rules", async (context) => {

@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from "vue";
-import { Check, Download, LoaderCircle, NotebookPen, Send, Trash2 } from "lucide-vue-next";
+import { Cloud, Download, HardDrive, HardDriveDownload, LoaderCircle, NotebookPen, Send, Trash2 } from "lucide-vue-next";
 import type { BookDTO } from "@shared/types";
 import type { BookDownloadState } from "../../books/cache";
 import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
 
-const props = defineProps<{ book: BookDTO; coverUrl: string; progress: number; state: BookDownloadState; percent: number; canUseNotes: boolean }>();
-const emit = defineEmits<{ open: []; invite: []; download: []; remove: []; notes: [] }>();
+const props = defineProps<{ book: BookDTO; coverUrl: string; progress: number; state: BookDownloadState; percent: number; canUseNotes: boolean; fileDownloadBusy?: boolean }>();
+const emit = defineEmits<{ open: []; invite: []; cache: []; download: []; remove: []; notes: [] }>();
 const card = ref<HTMLButtonElement | null>(null), menu = ref<HTMLElement | null>(null);
 const position = ref<{ left: number; top: number } | null>(null);
 let timer: ReturnType<typeof setTimeout> | undefined, origin = { x: 0, y: 0 }, suppressClick = false;
@@ -25,9 +25,10 @@ function begin(event: PointerEvent) {
 function move(event: PointerEvent) { if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 10) cancel(); }
 function open() { if (suppressClick) { suppressClick = false; return; } emit("open"); }
 function close() { position.value = null; card.value?.focus(); }
-function choose(action: "invite" | "download" | "remove" | "notes") {
+function choose(action: "invite" | "cache" | "download" | "remove" | "notes") {
   close();
   if (action === "invite") emit("invite");
+  else if (action === "cache") emit("cache");
   else if (action === "download") emit("download");
   else if (action === "remove") emit("remove");
   else emit("notes");
@@ -56,10 +57,10 @@ onBeforeUnmount(() => { cancel(); document.removeEventListener("keydown", keyboa
         <img v-if="book.coverName" :src="coverUrl" alt="" loading="lazy" draggable="false" />
         <span v-else class="book-cover-fallback">{{ book.title }}</span>
         <span v-if="progress > .005" class="book-progress"><i :style="{ width: `${Math.round(progress * 100)}%` }" /></span>
-        <span class="book-download-badge" :class="{ error: state === 'error', ready: state === 'ready' }" :aria-label="state === 'ready' ? '已下载' : state === 'downloading' ? `已下载 ${percent}%` : '未下载'">
+        <span class="book-download-badge" :class="{ error: state === 'error', ready: state === 'ready' }" :aria-label="state === 'ready' ? '已缓存到本机' : state === 'downloading' ? `缓存中 ${percent}%` : state === 'checking' ? '检查本机缓存' : state === 'error' ? '缓存失败，图书仍在云端' : '云端图书，尚未缓存'" :title="state === 'ready' ? '已缓存到本机，可离线阅读' : '云端图书，可长按缓存到本机'">
           <LoaderCircle v-if="state === 'checking'" class="book-spin" :size="18" />
           <span v-else-if="state === 'downloading'" class="book-download-percent">{{ percent }}%</span>
-          <Check v-else-if="state === 'ready'" :size="18" /><Download v-else :size="18" />
+          <HardDrive v-else-if="state === 'ready'" :size="18" /><Cloud v-else :size="18" />
         </span>
       </span>
       <span class="book-card-title">{{ book.title }}</span><span class="book-card-author">{{ book.author || '佚名' }}</span>
@@ -70,8 +71,9 @@ onBeforeUnmount(() => { cancel(); document.removeEventListener("keydown", keyboa
           <AppMenu :label="`《${book.title}》操作`">
             <p class="book-menu-title">{{ book.title }}</p>
             <AppMenuItem :disabled="!canUseNotes" @click="choose('invite')"><Send :size="18" />邀请共读</AppMenuItem>
-            <AppMenuItem :disabled="state === 'ready' || state === 'downloading' || state === 'checking'" @click="choose('download')"><Download :size="18" />{{ state === 'ready' ? '已下载' : state === 'downloading' ? `下载中 ${percent}%` : '下载' }}</AppMenuItem>
-            <AppMenuItem :disabled="state !== 'ready'" @click="choose('remove')"><Trash2 :size="18" />本地删除</AppMenuItem>
+            <AppMenuItem :disabled="fileDownloadBusy" @click="choose('download')"><Download :size="18" />{{ fileDownloadBusy ? '下载中…' : '下载' }}</AppMenuItem>
+            <AppMenuItem :disabled="state === 'ready' || state === 'downloading' || state === 'checking'" @click="choose('cache')"><HardDriveDownload :size="18" />{{ state === 'ready' ? '已缓存到本机' : state === 'downloading' ? `缓存中 ${percent}%` : '缓存到本机' }}</AppMenuItem>
+            <AppMenuItem :disabled="state !== 'ready'" @click="choose('remove')"><Trash2 :size="18" />清除本机缓存</AppMenuItem>
             <AppMenuItem :disabled="!canUseNotes" @click="choose('notes')"><NotebookPen :size="18" />查看笔记</AppMenuItem>
           </AppMenu>
         </div>

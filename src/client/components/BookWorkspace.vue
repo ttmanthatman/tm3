@@ -2,7 +2,7 @@
 // 图书室负一屏：书架 + EPUB 阅读器。
 // 懒加载编排：本组件由 App.vue defineAsyncComponent 分包，进入聊天室不下载；
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
-// 点按即可流式阅读；整本离线下载位于书架长按菜单。
+// 点按即可流式阅读；长按菜单分别提供离线缓存和 EPUB 文件下载。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
@@ -41,6 +41,7 @@ import { createBookReaderLocations } from "../features/books/bookReaderLocations
 import { bookTextModel } from "../features/books/bookTextModel";
 import { useBookPanelGeometry } from "../features/books/useBookPanelGeometry";
 import { useBookProgress } from "../features/books/useBookProgress";
+import { useBookFileDownload } from "../features/books/useBookFileDownload";
 import BookReadingActions from "../features/books/BookReadingActions.vue";
 import BookShelfItem from "../features/books/BookShelfItem.vue";
 import BookReaderPresence from "../features/books/BookReaderPresence.vue";
@@ -150,6 +151,9 @@ const books = ref<BookDTO[]>([]);
 const shelfLoading = ref(true);
 const shelfError = ref("");
 const downloadError = ref("");
+const fileDownloads = useBookFileDownload();
+const fileDownloadBusyIds = fileDownloads.busyIds;
+const fileDownloadError = fileDownloads.error;
 const downloadStates = ref(new Map<number, BookDownloadState>());
 const downloadProgress = ref(new Map<number, number>());
 
@@ -333,7 +337,7 @@ function shelfNotes(book: BookDTO) {
   if (context) { context.chapter = ""; void actions.value?.showNotes(context); }
 }
 
-async function handleDownloadClick(book: BookDTO) {
+async function handleCacheClick(book: BookDTO) {
   const action = bookClickAction(bookDownloadState(book));
   if (action === "open") return;
   if (action === "wait") return;
@@ -349,7 +353,7 @@ async function handleDownloadClick(book: BookDTO) {
     setDownloadState(book.id, "ready");
   } catch (error) {
     setDownloadState(book.id, "error");
-    downloadError.value = error instanceof Error ? error.message : "图书下载失败，请重试";
+    downloadError.value = error instanceof Error ? error.message : "图书缓存失败，请重试";
   }
 }
 
@@ -1004,12 +1008,13 @@ defineExpose({ reload: loadShelf });
         <p>还没有图书</p>
         <p class="book-shelf-sub">管理员可在「管理 → 图书」上传 EPUB 图书</p>
       </div>
-      <p v-if="downloadError" class="book-download-error" role="alert">{{ downloadError }}</p>
+      <p v-if="downloadError || fileDownloadError" class="book-download-error" role="alert">{{ downloadError || fileDownloadError }}</p>
       <p v-if="invitationNotice" class="book-invitation-notice" role="status">{{ invitationNotice }}</p>
       <div v-if="!shelfLoading && !shelfError && books.length" class="book-shelf-grid">
         <BookShelfItem v-for="book in sortedBooks" :key="book.id" :book="book" :cover-url="coverUrl(book)" :progress="cachedProgress(book)"
           :state="bookDownloadState(book)" :percent="bookDownloadPercent(book)" :can-use-notes="!!store.account && !store.account.isGuest"
-          @open="handleBookClick(book)" @invite="inviteBook(book)" @download="handleDownloadClick(book)" @remove="removeDownload(book)" @notes="shelfNotes(book)" />
+          :file-download-busy="fileDownloadBusyIds.has(book.id)"
+          @open="handleBookClick(book)" @invite="inviteBook(book)" @cache="handleCacheClick(book)" @download="fileDownloads.download(book)" @remove="removeDownload(book)" @notes="shelfNotes(book)" />
       </div>
     </div>
 
