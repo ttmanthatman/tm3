@@ -114,7 +114,8 @@ async function expectReset(dialog: Locator) {
 }
 async function zoomAndPan(page: Page, dialog: Locator) {
   const stage = dialog.locator(".music-score-preview-stage");
-  await dialog.getByRole("button", { name: "放大歌谱", exact: true }).click();
+  await stage.hover();
+  await page.mouse.wheel(0, -100);
   await expect.poll(async () => Number(await stage.getAttribute("data-scale"))).toBeGreaterThan(1);
   const box = (await stage.boundingBox())!;
   await page.mouse.move(box.x + box.width * .4, box.y + box.height * .4);
@@ -146,7 +147,7 @@ async function pinchWithTouch(page: Page, dialog: Locator) {
 
 async function checkResponsivePreview(page: Page) {
   await mountLibrary(page);
-  for (const width of [360, 390, 1280]) {
+  for (const width of [360, 390, 768, 1280]) {
     const height = 844;
     await page.setViewportSize({ width, height });
     await page.evaluate((height) => {
@@ -154,25 +155,56 @@ async function checkResponsivePreview(page: Page) {
       document.documentElement.style.setProperty("--safe-top", "24px");
       document.documentElement.style.setProperty("--safe-bottom", "20px");
     }, height);
+    await expect(library(page).locator(".music-score-library")).toHaveCSS("background-image", /radial-gradient.*linear-gradient/);
+    await expect(library(page).locator(".modal-head")).toHaveCSS("background-color", "rgba(255, 248, 239, 0.2)");
+    await library(page).screenshot({ path: `output/e2e/music-score-library-${width}.png` });
     const dialog = await openScore(page, 0);
+    const stage = dialog.locator(".music-score-preview-stage");
     const panel = (await dialog.locator(":scope > div").first().boundingBox())!;
-    expect(panel.x).toBeGreaterThanOrEqual(0);
-    expect(panel.x + panel.width).toBeLessThanOrEqual(width + 1);
-    expect(panel.y).toBeGreaterThanOrEqual(24);
-    expect(panel.y + panel.height).toBeLessThanOrEqual(height - 20 + 1);
-    for (const name of ["关闭歌谱预览", "分享歌谱", "下载歌谱", "放大歌谱", "缩小歌谱", "适合窗口"]) {
+    expect(panel.x).toBe(0);
+    expect(panel.y).toBe(0);
+    expect(panel.width).toBe(width);
+    expect(panel.height).toBe(height);
+    await expect(stage).toHaveCSS("background-color", "rgb(0, 0, 0)");
+    for (const name of ["关闭歌谱预览", "分享歌谱", "下载歌谱"]) {
       const button = dialog.getByRole("button", { name, exact: true });
       await expect(button).toBeVisible();
       const box = (await button.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width + 1);
       expect(box.y).toBeGreaterThanOrEqual(24); expect(box.y + box.height).toBeLessThanOrEqual(height - 20 + 1);
     }
+    for (const name of ["放大歌谱", "缩小歌谱", "适合窗口"]) {
+      const button = dialog.getByRole("button", { name, exact: true });
+      if (width <= 1024) await expect(button).toBeHidden();
+      else await expect(button).toBeVisible();
+    }
     await expect(dialog.getByTestId("music-score-page-number")).toContainText("1");
     await zoomAndPan(page, dialog);
-    if (width === 390) await pinchWithTouch(page, dialog);
-    await dialog.getByRole("button", { name: "适合窗口", exact: true }).click();
+    await expect(dialog.getByRole("button", { name: "关闭歌谱预览", exact: true })).toBeVisible();
+    if (width === 390) {
+      await pinchWithTouch(page, dialog);
+      await expect(dialog.getByRole("button", { name: "关闭歌谱预览", exact: true })).toBeVisible();
+    }
+    if (width > 1024) {
+      await dialog.getByRole("button", { name: "适合窗口", exact: true }).click();
+      await expectReset(dialog);
+      await zoomAndPan(page, dialog);
+    }
+    await stage.click({ position: { x: width / 2, y: height / 2 } });
+    await expect(dialog.getByRole("group", { name: "歌谱操作", exact: true })).toBeHidden();
+    await stage.press("Tab");
+    await expect(stage).toBeFocused();
+    await stage.press("ArrowRight");
+    await expect(stage).toHaveAttribute("aria-busy", "false");
     await expectReset(dialog);
-    await zoomAndPan(page, dialog);
+    await stage.press("ArrowLeft");
+    await expect(stage).toHaveAttribute("aria-busy", "false");
+    await stage.click({ position: { x: width / 2, y: height / 2 } });
+    await expect(dialog.getByRole("button", { name: "关闭歌谱预览", exact: true })).toBeVisible();
+    await stage.press("Enter");
+    await expect(dialog.getByRole("group", { name: "歌谱操作", exact: true })).toBeHidden();
+    await stage.press("Enter");
+    await expect(dialog.getByRole("button", { name: "关闭歌谱预览", exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: "下一页歌谱", exact: true }).click();
     await expect(dialog.locator(".music-score-preview-image")).toHaveAttribute("src", /5012|blob:/);
     await expect(dialog.getByTestId("music-score-page-number")).toContainText("2");
@@ -204,7 +236,7 @@ async function checkResponsivePreview(page: Page) {
   await expect(library(page)).toBeVisible();
 }
 
-test("score images and PDF pages share zoom, pan and reset within narrow and desktop safe areas", async ({ page }) => {
+test("score previews fill the black viewport with tap controls, touch gestures and safe-area actions", async ({ page }) => {
   await checkResponsivePreview(page);
 });
 
@@ -312,7 +344,7 @@ test("song names replace file titles; selections survive search and share retrie
   expect(state.shares.map(item => item.scoreId)).toEqual([501, 503, 503]);
   expect(state.shares[2]).toEqual(state.shares[1]);
   await share.getByRole("button", { name: "完成", exact: true }).click();
-  for (const width of [360, 390, 1280]) {
+  for (const width of [360, 390, 768, 1280]) {
     await page.setViewportSize({ width, height: 700 });
     const panel = (await library(page).locator(".music-score-library").boundingBox())!;
     expect(panel.x).toBeGreaterThanOrEqual(0);

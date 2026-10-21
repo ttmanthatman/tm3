@@ -20,17 +20,19 @@ export function pinchScoreAt(transform: ScoreTransform, start: [ScorePoint, Scor
   return { ...next, x: next.x + after.x - before.x, y: next.y + after.y - before.y };
 }
 
-export function useScorePanZoom() {
+export function useScorePanZoom(onTap: () => void = () => {}) {
   const transform = ref<ScoreTransform>({ scale: 1, x: 0, y: 0 });
   const dragging = ref(false);
   const pointers = new Map<number, ScorePoint>();
   let gesture: { transform: ScoreTransform; points: ScorePoint[] } | null = null;
+  let tap: { pointerId: number; point: ScorePoint } | null = null;
   const contentStyle = computed(() => ({ transform: `translate3d(${transform.value.x}px, ${transform.value.y}px, 0) scale(${transform.value.scale})` }));
 
   function reset() {
     transform.value = { scale: 1, x: 0, y: 0 };
     pointers.clear();
     gesture = null;
+    tap = null;
     dragging.value = false;
   }
   function zoomBy(factor: number) {
@@ -47,14 +49,18 @@ export function useScorePanZoom() {
   function onPointerDown(event: PointerEvent) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
-    pointers.set(event.pointerId, eventPoint(event));
+    const point = eventPoint(event);
+    tap = pointers.size ? null : { pointerId: event.pointerId, point };
+    pointers.set(event.pointerId, point);
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     startGesture();
   }
   function onPointerMove(event: PointerEvent) {
     if (!pointers.has(event.pointerId) || !gesture) return;
     event.preventDefault();
-    pointers.set(event.pointerId, eventPoint(event));
+    const point = eventPoint(event);
+    if (tap && Math.hypot(point.x - tap.point.x, point.y - tap.point.y) > 8) tap = null;
+    pointers.set(event.pointerId, point);
     const current = [...pointers.values()].slice(0, 2);
     if (current.length >= 2 && gesture.points.length >= 2) {
       transform.value = pinchScoreAt(gesture.transform, [gesture.points[0], gesture.points[1]], [current[0], current[1]]);
@@ -63,9 +69,14 @@ export function useScorePanZoom() {
     }
   }
   function onPointerEnd(event: PointerEvent) {
+    const point = eventPoint(event);
+    const tapped = event.type === "pointerup" && tap?.pointerId === event.pointerId
+      && Math.hypot(point.x - tap.point.x, point.y - tap.point.y) <= 8;
     if (!pointers.delete(event.pointerId)) return;
+    tap = null;
     if (pointers.size) startGesture();
     else { gesture = null; dragging.value = false; }
+    if (tapped) onTap();
   }
   function onWheel(event: WheelEvent) {
     event.preventDefault();
