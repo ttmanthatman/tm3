@@ -50,7 +50,6 @@ const props = defineProps<{
   channelName: string;
   canSend: boolean;
   sendUnavailableReason: string;
-  sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   sendText: BibleShareTextSender;
   canGoBack: boolean;
   favorites: BibleFavoriteDTO[];
@@ -742,7 +741,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
         <button type="button" class="secondary" aria-label="清除选择" @click="clearVerseSelection()"><X :size="16" /></button>
       </div>
     </footer>
-    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-passage="sendPassage" :send-text="sendText" @sent="emit('toast', `已发送到：${channelName}`)" />
+    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-text="sendText" @sent="emit('toast', `已发送到：${channelName}`)" />
   </article>
 </template>
 

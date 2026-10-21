@@ -191,9 +191,18 @@ test("text search follows the requested translation", () => {
 });
 
 test("unknown translation ids are rejected", () => {
+  assert.throws(() => lookupBibleReference("约翰福音 3:16", "kjv"), /unknown bible translation/);
   assert.throws(() => lookupBibleChapter("JHN", 3, "kjv"), /unknown bible translation/);
   assert.throws(() => searchBibleText("神", 0, 50, 50, "kjv"), /unknown bible translation/);
   assert.throws(() => bibleCatalog("kjv"), /unknown bible translation/);
+});
+
+test("reference lookups follow the requested translation while preserving the default", () => {
+  const translated = lookupBibleReference("约翰福音 3:16", "cmncbs");
+  assert.equal(translated.sourceId, "cmncbs");
+  assert.equal(translated.translation, "当代译本（简体）");
+  assert.match(translated.verses[0].text, /上帝爱世人/);
+  assert.match(lookupBibleReference("约翰福音 3:16").verses[0].text, /神爱世人/);
 });
 
 // 经文主题批量添加依赖的段落级解析：一段引用串（含书名继承、全角与范围符号）拆成逐段定位与正文

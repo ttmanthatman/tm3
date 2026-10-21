@@ -224,7 +224,7 @@ export function messageBibleReferences(message: MessageDTO) {
 }
 
 /** 整条文字消息只有一处经文引用、不掺其他文字（如「约翰福音 3:16」）→ 返回引用原文，供经文卡片形态使用。 */
-export function messageScriptureOnlyReference(message: MessageDTO): string | null {
+export function messageScriptureOnlyReference(message: Pick<MessageDTO, "type" | "content">): string | null {
   if (message.type !== "text") return null;
   const plain = plainTextFromHtml(message.content).trim();
   if (!plain) return null;

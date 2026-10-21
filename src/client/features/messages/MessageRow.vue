@@ -22,9 +22,11 @@ import { storyAnnouncementLetters } from "./storyAnnouncement";
 import BookNoteShareCard from "../books/BookNoteShareCard.vue";
 import { bookNoteSharePayload } from "@shared/bookNotes";
 import BiblePassageShareCard from "../bible/BiblePassageShareCard.vue";
+import BibleScriptureCard from "../bible/BibleScriptureCard.vue";
+import { biblePassageMessagePayload } from "@shared/biblePassages";
 import BibleTopicShareCard from "../bible/BibleTopicShareCard.vue";
 import { bibleTopicMessagePayload } from "@shared/bibleTopics";
-import { parseBiblePassageShare, readingNoteComment } from "../reading-shares/readingShareMessage";
+import { parseBiblePassageShare, parseLegacyMergedBiblePassages, readingNoteComment } from "../reading-shares/readingShareMessage";
 import BookShareCard from "../books/BookShareCard.vue";
 import { parseBookShareMessage } from "../books/bookShareMessage";
 import ListenPlaylistCard from "../listen/ListenPlaylistCard.vue";
@@ -70,6 +72,8 @@ const props = defineProps<{
   bibleReferenceLookup: (scope: string | number, reference: string) => BibleLookupDTO | null | undefined;
   ensureBibleReferenceLookup: (scope: string | number, reference: string) => void;
   formatBibleLookup: (lookup: BibleLookupDTO | null | undefined, originalReference: string) => string;
+  canPlayBibleAudio?: (message: MessageDTO) => boolean;
+  playBibleAudio?: (message: MessageDTO) => Promise<unknown>;
   consumeHandwritingPlayback?: (message: MessageDTO) => boolean;
   handwritingSurfaceActive?: boolean;
   /** 「/听」清单：这条消息正在播放时返回会话快照，否则 null */
@@ -80,6 +84,8 @@ const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSha
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
 const listenPlaylist = computed(() => props.message.type === "text" ? listenPlaylistPayload(props.message.payload) : null);
 
+const passageShare = computed(() => props.message.type === "text" ? (biblePassageMessagePayload(props.message.payload) || parseLegacyMergedBiblePassages(props.message.content)) : null);
+const playScripture = computed(() => props.canPlayBibleAudio?.(props.message) && props.playBibleAudio ? () => props.playBibleAudio!(props.message) : undefined);
 const bibleShare = computed(() => props.message.type === "text" ? parseBiblePassageShare(props.message.content) : null);
 const bibleTopicShare = computed(() => props.message.type === "text" && !bibleShare.value ? bibleTopicMessagePayload(props.message.payload) : null);
 const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(props.message.content, bookNoteShare.value.note.bookTitle) : "");
@@ -88,7 +94,7 @@ const noteComment = computed(() => bookNoteShare.value ? readingNoteComment(prop
 const scriptureOnly = computed(() => {
   const reference = messageScriptureOnlyReference(props.message);
   if (!reference) return null;
-  if (bibleShare.value || bibleTopicShare.value || bookNoteShare.value || bookShare.value || listenPlaylist.value) return null;
+  if (passageShare.value || bibleShare.value || bibleTopicShare.value || bookNoteShare.value || bookShare.value || listenPlaylist.value) return null;
   return { reference, scope: messageBibleReferenceScope(props.message, "content") };
 });
 watch(scriptureOnly, (value) => {
@@ -158,9 +164,10 @@ const emit = defineEmits<{
     />
     <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
     <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
-    <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
-    <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" />
-    <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
+    <BibleScriptureCard v-else-if="passageShare" class="bible-passage-share-card" :passages="passageShare.passages" :source-id="'sourceId' in passageShare ? passageShare.sourceId : undefined" :translation="passageShare.translation" :show-translation="passageShare.showTranslation" :paper-seed="message.clientRequestId || message.id" :open-passage="openBiblePassage" :play="playScripture" />
+    <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" :play="playScripture" />
+    <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" :play="playScripture" />
+    <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" :play="playScripture" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -315,9 +322,10 @@ const emit = defineEmits<{
         />
         <BookNoteShareCard v-else-if="bookNoteShare" :note="bookNoteShare.note" :content="message.content" :paper-seed="message.clientRequestId || message.id" :comment="noteComment" :active="handwritingSurfaceActive ?? true" />
         <BookShareCard v-else-if="bookShare" :context="bookShare" :paper-seed="message.clientRequestId || message.id" :comment="bookShare.comment" />
-        <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" />
-        <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" />
-        <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" />
+        <BibleScriptureCard v-else-if="passageShare" class="bible-passage-share-card" :passages="passageShare.passages" :source-id="'sourceId' in passageShare ? passageShare.sourceId : undefined" :translation="passageShare.translation" :show-translation="passageShare.showTranslation" :paper-seed="message.clientRequestId || message.id" :open-passage="openBiblePassage" :play="playScripture" />
+        <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" :play="playScripture" />
+        <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" :play="playScripture" />
+        <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" :play="playScripture" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>

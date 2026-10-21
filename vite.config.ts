@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [vue()],
   root: ".",
   publicDir: "public",
+  optimizeDeps: {
+    // Prepare the sheet viewer's lazy libraries before its first dev-server request.
+    include: ["pdfjs-dist/legacy/build/pdf.mjs", "jszip"]
+  },
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src/client", import.meta.url)),

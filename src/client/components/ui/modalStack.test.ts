@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createModalStack, type ModalStackEntry } from "./modalStack";
 
+test("native back closes only the top modal and consumes back while sharing is busy", () => {
+  const doc = new FakeDocument();
+  const stack = createModalStack(doc as unknown as Document);
+  const closed: string[] = [];
+  const library = stack.register({ root: () => null, canClose: () => true, requestClose: () => closed.push("library") });
+  let busy = true;
+  const share = stack.register({ root: () => null, canClose: () => !busy, requestClose: () => closed.push("share") });
+  assert.equal(stack.requestCloseTop(), true);
+  assert.deepEqual(closed, []);
+  busy = false;
+  assert.equal(stack.requestCloseTop(), true);
+  assert.deepEqual(closed, ["share"]);
+  share.release();
+  assert.equal(stack.requestCloseTop(), true);
+  assert.deepEqual(closed, ["share", "library"]);
+  library.release();
+  assert.equal(stack.requestCloseTop(), false);
+});
+
 class FakeElement {
   parent: FakeElement | null = null;
   children: FakeElement[] = [];

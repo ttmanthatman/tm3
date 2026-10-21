@@ -15,12 +15,14 @@ import { useBibleDisplayLayout } from "./useBibleDisplayLayout";
 import { groupBibleFavoritePassages, type BibleFavoritePassage } from "../../bibleFavorites";
 import { parseBibleSessionPayload } from "../../bibleSessionShare";
 import { useChatStore } from "../../store";
-import { biblePassageShareContent, parseBiblePassageShare } from "../reading-shares/readingShareMessage";
+import { parseBiblePassageShare, parseLegacyMergedBiblePassages } from "../reading-shares/readingShareMessage";
 import { useMessageSender } from "../../messageSending";
 import { bibleTopicMessagePayload } from "@shared/bibleTopics";
 import { bibleAudioEnabled, loadBibleAudioManifest, resetBibleAudioManifest } from "./bibleAudioManifest";
 import type { BibleAudioPlayItem } from "./bibleAudioQueue";
 import type { BibleShareTextSender } from "./biblePassageSharing";
+import { biblePassageMessagePayload } from "@shared/biblePassages";
+import { messageScriptureOnlyReference } from "../messages/messageRendering";
 
 /** 聊天顶端提词器的状态快照：工作区 expose 出来，App 在只看聊天时渲染悬浮提词器；bookName/chapter 供「正在听圣经」动态 */
 export type BibleAudioTeleprompterState = {
@@ -61,13 +63,19 @@ export type BibleWorkspaceHandle = {
   stopBibleAudio: () => void;
 };
 
-/** 消息里可交给有声圣经朗读的引用：经文分享（单段）或经文主题分享（多段，保序） */
+/** 经文卡片、主题和旧分享均按原顺序朗读。 */
 export function bibleAudioReferencesFromMessage(message: Pick<MessageDTO, "type" | "content" | "payload">): string[] {
   if (message.type !== "text") return [];
+  const shared = biblePassageMessagePayload(message.payload);
+  if (shared) return shared.passages.map(passage => passage.reference);
   const passage = parseBiblePassageShare(message.content);
   if (passage) return [passage.reference];
+  const merged = parseLegacyMergedBiblePassages(message.content);
+  if (merged) return merged.passages.map(passage => passage.reference);
   const topic = bibleTopicMessagePayload(message.payload);
-  return topic ? topic.passages.map((entry) => entry.reference) : [];
+  if (topic) return topic.passages.map((entry) => entry.reference);
+  const reference = messageScriptureOnlyReference(message);
+  return reference ? [reference] : [];
 }
 
 interface UseBibleWorkspaceIntegrationOptions {
@@ -316,11 +324,12 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   // 消息长按「播放经文」：逐段解析引用，打开圣经工作区跳到首段，再依次朗读全部引用
   async function playBibleAudioFromMessage(message: MessageDTO) {
     const references = bibleAudioReferencesFromMessage(message);
+    const sourceId = biblePassageMessagePayload(message.payload)?.sourceId;
     if (!references.length) return false;
     const lookups: BibleLookupDTO[] = [];
     for (const reference of references) {
       try {
-        const result = await api<{ success: boolean; result?: BibleLookupDTO }>(`/api/bible/lookup?reference=${encodeURIComponent(reference)}`);
+        const result = await api<{ success: boolean; result?: BibleLookupDTO }>(`/api/bible/lookup?reference=${encodeURIComponent(reference)}${sourceId ? `&translation=${encodeURIComponent(sourceId)}` : ""}`);
         if (result.success && result.result?.verses.length) lookups.push(result.result);
       } catch {
         // 单段解析失败不阻断其余段落
@@ -347,7 +356,7 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
   }
 
   const { send: sendMergedMessage } = useMessageSender({ getSocket: () => store.socket });
-  // 合并经文是纯文本；带 payload 时是「一起听」清单（listen_playlist），服务端按引用解析并重写正文
+  // Every reader/search selection uses the same validated scripture-card transport.
   const sendBibleText: BibleShareTextSender = async (content, requestId, payload) => {
     const channel = bibleTargetChannel.value;
     if (!channel) throw new Error("当前聊天室不可用");
@@ -355,24 +364,6 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     const result = await sendMergedMessage({ channelId: channel.id, content, type: "text", ...(payload ? { payload } : {}), replyToId: null, clientRequestId: requestId });
     if (!result.ok) throw new Error(result.message);
   };
-
-  async function sendBiblePassage(lookup: BibleLookupDTO, includeTranslation = false) {
-    const channel = bibleTargetChannel.value;
-    if (!channel) throw new Error("当前聊天室不可用");
-    if (!bibleCanSend.value) throw new Error(bibleSendUnavailableReason.value || "当前频道不能发送经文");
-    if (!store.socket?.connected) throw new Error("聊天室连接尚未恢复，请稍后重试");
-    const content = biblePassageShareContent(lookup, includeTranslation);
-    await new Promise<void>((resolve, reject) => {
-      store.socket?.emit(
-        "message:send",
-        { channelId: channel.id, content, type: "text", replyToId: null },
-        (ack: { success?: boolean; message?: string }) => {
-          if (ack?.success) resolve();
-          else reject(new Error(ack?.message || "发送失败，请重试"));
-        }
-      );
-    });
-  }
 
   return {
     ...layout,
@@ -411,7 +402,6 @@ export function useBibleWorkspaceIntegration(options: UseBibleWorkspaceIntegrati
     playBibleAudioFromMessage,
     handleBibleReadingChange,
     handleBookReadingChange,
-    sendBiblePassage,
     sendBibleText
   };
 }

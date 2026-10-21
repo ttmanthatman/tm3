@@ -5,6 +5,7 @@ import type { BibleLookupDTO } from "@shared/types";
 import { listenPlaylistCountLabel, listenPlaylistItemLabel, type ListenPlaylistPayload, type ListenScriptureItem } from "@shared/listenPlaylist";
 import { api } from "../../api";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
+import BibleScriptureCard from "../bible/BibleScriptureCard.vue";
 import type { ListenSessionSnapshot } from "./useListenSession";
 
 // 「/听」清单卡片：按顺序列出经文段与歌曲，正在播放的一项橙色加粗；
@@ -33,6 +34,30 @@ const emit = defineEmits<{
 const jumpBusy = ref("");
 const error = ref("");
 
+const onlyScriptures = computed(() => props.playlist.items.every(item => item.kind === "scripture"));
+const scripturePassages = computed(() => props.playlist.items.filter((item): item is ListenScriptureItem => item.kind === "scripture").map(item => ({
+  reference: item.reference,
+  text: props.bibleReferenceLookup(props.scope, item.reference)?.verses.map(verse => `${verse.chapter}:${verse.verse} ${verse.text}`).join("\n") || ""
+})));
+watch(() => onlyScriptures.value ? scripturePassages.value.map(passage => passage.reference).join("\0") : "", () => {
+  if (onlyScriptures.value) scripturePassages.value.slice(0, 2).forEach(passage => props.ensureBibleReferenceLookup(props.scope, passage.reference));
+}, { immediate: true });
+function expandScriptures() {
+  scripturePassages.value.forEach(passage => props.ensureBibleReferenceLookup(props.scope, passage.reference));
+}
+async function copyScriptures() {
+  const sections: string[] = [];
+  for (const passage of scripturePassages.value) {
+    let lookup = props.bibleReferenceLookup(props.scope, passage.reference);
+    if (!lookup?.verses.length) {
+      const response = await api<{ success: boolean; result?: BibleLookupDTO; message?: string }>(`/api/bible/lookup?reference=${encodeURIComponent(passage.reference)}`);
+      if (!response.success || !response.result?.verses.length) throw new Error(response.message || "经文读取失败，请重试");
+      lookup = response.result;
+    }
+    sections.push(`${passage.reference}\n${lookup.verses.map(verse => `${verse.chapter}:${verse.verse} ${verse.text}`).join("\n")}`);
+  }
+  return [...(props.playlist.note ? [props.playlist.note] : []), ...sections, props.playlist.translation].join("\n\n");
+}
 const countLabel = computed(() => listenPlaylistCountLabel(props.playlist.items));
 const currentItem = computed(() => (props.session ? props.playlist.items[props.session.index] || null : null));
 const scripturePlaying = computed(() => props.session?.phase === "scripture" && currentItem.value?.kind === "scripture");
@@ -79,7 +104,18 @@ async function jump(item: ListenScriptureItem) {
 </script>
 
 <template>
-  <ReadingShareCard kind="bible" :paper-seed="paperSeed" class="listen-card" :class="{ active: !!session, playing: !!session?.playing }">
+  <BibleScriptureCard v-if="onlyScriptures" class="listen-card" :passages="scripturePassages" :note="playlist.note" :translation="playlist.translation" show-translation :paper-seed="paperSeed" :open-passage="openPassage" :play="() => emit('toggle')" :playing="session?.playing" :play-label="session?.playing ? '暂停播放' : session ? '继续播放' : '播放经文'" :copy-text="copyScriptures" @expand="expandScriptures">
+    <template #playback>
+      <div v-if="session" class="listen-card-controls" role="group" aria-label="播放清单控制" @click.stop @pointerdown.stop>
+        <button type="button" class="listen-card-button" aria-label="上一章" @click="emit('previous-chapter')"><ChevronFirst :size="18" /></button>
+        <button type="button" class="listen-card-button" :disabled="!scripturePlaying" aria-label="上一节" @click="emit('previous-verse')"><SkipBack :size="16" /></button>
+        <span class="listen-card-position">{{ versePosition(session.index) }}</span>
+        <button type="button" class="listen-card-button" :disabled="!scripturePlaying" aria-label="下一节" @click="emit('next-verse')"><SkipForward :size="16" /></button>
+        <button type="button" class="listen-card-button" aria-label="下一章" @click="emit('next-chapter')"><ChevronLast :size="18" /></button>
+      </div>
+    </template>
+  </BibleScriptureCard>
+  <ReadingShareCard v-else kind="bible" :paper-seed="paperSeed" class="listen-card" :class="{ active: !!session, playing: !!session?.playing }">
     <header class="listen-card-head">
       <span class="listen-card-kicker"><Headphones :size="15" />一起听</span>
       <small>{{ countLabel }} · {{ playlist.translation }}</small>
@@ -143,6 +179,7 @@ async function jump(item: ListenScriptureItem) {
 </template>
 
 <style scoped>
+.listen-card-position { min-width: 52px; text-align: center; font-size: 12px; }
 .listen-card {
   max-width: 100%;
 }

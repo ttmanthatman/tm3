@@ -131,6 +131,12 @@ export function createModalStack(doc: Document) {
 
   return {
     register,
+    requestCloseTop: () => {
+      const current = top();
+      if (!current) return false;
+      if (current.canClose()) current.requestClose();
+      return true;
+    },
     size: () => entries.length
   };
 }

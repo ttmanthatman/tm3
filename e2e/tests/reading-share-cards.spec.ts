@@ -11,6 +11,10 @@ async function mountCards(page: Page) {
     if (!vuePath) throw new Error("missing Vue runtime");
     const { createApp, h } = await import(vuePath) as typeof import("vue");
     const { default: Passage } = await import(path);
+    const scripturePath = "/src/client/features/bible/BibleScriptureCard.vue";
+    const topicPath = "/src/client/features/bible/BibleTopicShareCard.vue";
+    const { default: Scripture } = await import(scripturePath);
+    const { default: Topic } = await import(topicPath);
     const bookPath = "/src/client/features/books/BookShareCard.vue";
     const { default: Book } = await import(bookPath);
     const notePath = "/src/client/features/books/BookNoteShareCard.vue";
@@ -23,18 +27,27 @@ async function mountCards(page: Page) {
     document.body.style.cssText = "margin:0;overflow:auto;background:#e9eff4";
     const short = "耶和华是我的牧者，我必不致缺乏。";
     const long = "你们若有彼此相爱的心，众人因此就认出你们是我的门徒了。".repeat(35);
-    const openPassage = async () => { document.body.dataset.jumped = "yes"; };
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text: string) => { document.body.dataset.copied = text; } } });
+    const openPassage = async (lookup: { sourceId: string }) => { document.body.dataset.jumped = "yes"; document.body.dataset.openedSource = lookup.sourceId; };
+    const passages = [
+      { reference: "诗篇 23:1", text: short },
+      { reference: "约翰福音 13:35", text: long },
+      { reference: "诗篇 23:3", text: '第三段保留全文。<script>window.injected = true</script><img src=x onerror="window.injected=true">' }
+    ];
+    const play = (id: string) => async () => { document.body.dataset.played = id; };
     const row = (id: string, card: ReturnType<typeof h>) => h("div", { id, class: "message-row mine", style: "margin:24px 14px;gap:9px" }, [h("div", { style: "width:32px;flex-shrink:0" }), h("div", { class: "bubble-wrap" }, [h("div", { class: "bubble" }, [card])])]);
     createApp({ render: () => h("div", {}, [
-      row("short", h(Passage, { passage: { reference: "诗篇 23:1", text: short, translation: "" }, openPassage })),
-      row("long", h(Passage, { passage: { reference: "约翰福音 13:35", text: long, translation: "和合本" }, openPassage })),
+      row("short", h(Passage, { passage: { reference: "诗篇 23:1", text: short, translation: "" }, openPassage, play: play("short") })),
+      row("long", h(Passage, { passage: { reference: "约翰福音 13:35", text: long, translation: "和合本" }, openPassage, play: play("long") })),
+      row("multiple", h(Scripture, { passages, translation: "当代译本（简体）", showTranslation: true, sourceId: "cmncbs", openPassage, play: play("multiple") })),
+      row("topic", h(Topic, { topic: { kind: "bible_topic", name: "彼此相爱", translation: "和合本", passages }, openPassage, play: play("topic") })),
       row("book", h(Book, { paperSeed: "c", context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "真要有危险，一所想象出来的房子又能给你什么保护？" }, comment: "这句话一直留在我心里。" })),
       row("book-note", h(BookNote, { paperSeed: "a", note: { id: "fixture", bookId: 999999, bookTitle: "魔鬼家书：地狱来鸿", chapter: "第20封信", fraction: .55, quote: "我亲爱的私酷鬼", text: "停下来，认真想想这封信。", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" } })),
       row("fern", h(Book, { paperSeed: "b", context: { bookId: 999999, title: "返璞归真", chapter: "1", fraction: .2, quote: "每一个新的清晨，都是一个新的开始。" } })),
       row("bible-note", h(BibleNote, { id: "share-card-note", reference: "约翰福音 11:35" }))
     ]) }).mount(document.getElementById("host")!);
   });
-  await expect(page.locator(".reading-share-card")).toHaveCount(6);
+  await expect(page.locator(".reading-share-card")).toHaveCount(8);
   await page.locator(".reading-share-card").evaluateAll(async cards => {
     await Promise.all(cards.map(card => {
       const url = /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(card, "::before").borderImageSource)?.[1];
@@ -63,6 +76,27 @@ async function responsiveCards(page: Page) {
     const long = (await page.locator("#long .reading-share-card").boundingBox())!;
     expect(long.height).toBeGreaterThan(short.height);
     expect(long.width).toBeCloseTo(short.width, 0);
+    for (const id of ["short", "long"]) {
+      const gaps = await page.locator(`#${id} .bible-scripture-card`).evaluate(card => {
+        const heading = card.querySelector(".reading-share-reference")!;
+        const action = card.querySelector(".scripture-card-actions button:last-child")!;
+        const textRect = (element: Element) => {
+          const range = document.createRange();
+          const text = [...element.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())!;
+          range.selectNodeContents(text);
+          return range.getBoundingClientRect();
+        };
+        return { top: textRect(heading).top - card.getBoundingClientRect().top,
+          bottom: card.getBoundingClientRect().bottom - textRect(action).bottom };
+      });
+      expect(Math.abs(gaps.top - gaps.bottom), JSON.stringify(gaps)).toBeLessThanOrEqual(4);
+    }
+    for (const id of ["short", "long", "multiple", "topic"]) {
+      const scripture = page.locator(`#${id} .bible-scripture-card`);
+      expect((await scripture.boundingBox())!.width).toBeCloseTo(short.width, 0);
+      await expect(scripture.getByRole("button", { name: "复制经文", exact: true })).toBeVisible();
+      await expect(scripture.getByRole("button", { name: "播放经文", exact: true })).toBeVisible();
+    }
     for (const card of await page.locator(".reading-share-card").all()) {
       const box = (await card.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
@@ -124,7 +158,7 @@ test("all twelve plants in each sharing collection load and stay fixed after rer
   await page.locator("#plant-gallery").screenshot({ path: "output/e2e/share-plants-gallery.png" });
 });
 
-test("Bible shares keep equal widths, hide legacy versions and link references to passages", async ({ page }) => {
+test("Bible shares use a common card, keep equal widths and link references to passages", async ({ page }) => {
   await responsiveCards(page);
   await page.route("**/api/bible/lookup?**", (route) => route.fulfill({ json: { success: false, message: "暂时无法读取" } }));
   const jump = page.locator("#short").getByRole("link", { name: "诗篇 23:1", exact: true });
@@ -138,6 +172,42 @@ test("Bible shares keep equal widths, hide legacy versions and link references t
   await expect(page.locator("#short [role=alert]")).toHaveCount(0);
 });
 
+test("single, multiple and topic cards share safe text, expansion, copy and playback actions", async ({ page }) => {
+  await mountCards(page);
+  for (const id of ["long", "multiple", "topic"]) {
+    const card = page.locator(`#${id} .bible-scripture-card`);
+    const expand = card.getByRole("button", { name: "展开全部经文", exact: true });
+    await expect(expand).toHaveAttribute("aria-expanded", "false");
+    const before = (await card.boundingBox())!.height;
+    await expand.click();
+    await expect(card.getByRole("button", { name: "收起经文", exact: true })).toHaveAttribute("aria-expanded", "true");
+    expect((await card.boundingBox())!.height).toBeGreaterThan(before);
+    if (id !== "long") {
+      await expect(card.locator(".scripture-card-passages section")).toHaveCount(3);
+      await expect(card.locator("blockquote").last()).toContainText('<script>window.injected = true</script>');
+      await expect(card.locator("blockquote script, blockquote img")).toHaveCount(0);
+    }
+    await card.getByRole("button", { name: "收起经文", exact: true }).click();
+  }
+  for (const id of ["short", "long", "multiple", "topic"]) {
+    const card = page.locator(`#${id} .bible-scripture-card`);
+    await card.getByRole("button", { name: "播放经文", exact: true }).click();
+    await expect(page.locator("body")).toHaveAttribute("data-played", id);
+    await card.getByRole("button", { name: "复制经文", exact: true }).click();
+    await expect(card.getByRole("button", { name: "已复制", exact: true })).toBeVisible();
+    const copied = await page.locator("body").getAttribute("data-copied");
+    expect(copied).toContain(id === "long" ? "约翰福音 13:35" : "诗篇 23:1");
+    if (id === "multiple" || id === "topic") expect(copied).toContain("第三段保留全文。");
+  }
+  expect(await page.evaluate(() => "injected" in window)).toBe(false);
+  await page.route("**/api/bible/lookup?**", route => route.fulfill({ json: { success: true, result: { reference: "诗篇 23:1", normalizedReference: "诗篇 23:1", translation: "当代译本（简体）", sourceId: "cmncbs", verses: [{ book: "诗篇", chapter: 23, verse: 1, endVerse: 1, reference: "诗篇 23:1", text: "耶和华是我的牧者。" }] } } }));
+  const request = page.waitForRequest(url => url.url().includes("/api/bible/lookup?"));
+  await page.locator("#multiple").getByRole("link", { name: "诗篇 23:1", exact: true }).click();
+  const query = new URL((await request).url()).searchParams;
+  expect(query.get("translation")).toBe("cmncbs");
+  await expect(page.locator("body")).toHaveAttribute("data-opened-source", "cmncbs");
+});
+
 test("share card paper layout stays readable in WebKit", async () => {
   const browser = await webkit.launch();
   const page = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
@@ -149,11 +219,14 @@ test("Bible share recognition preserves ordinary reference messages and note com
   await page.goto("/");
   const result = await page.evaluate(async () => {
     const path = "/src/client/features/reading-shares/readingShareMessage.ts";
-    const { parseBiblePassageShare, readingNoteComment } = await import(path) as typeof import("../../src/client/features/reading-shares/readingShareMessage");
+    const { parseBiblePassageShare, parseLegacyMergedBiblePassages, readingNoteComment } = await import(path) as typeof import("../../src/client/features/reading-shares/readingShareMessage");
     return {
       passage: parseBiblePassageShare("以赛亚书 30:10<br>“请听真实的话。&lt;script&gt;”<br>——和合本"),
       withoutVersion: parseBiblePassageShare("以赛亚书 30:10<br>“第一行<br>第二行”"),
       ordinary: parseBiblePassageShare("今天读到以赛亚书 30:10<br>“请听真实的话。”<br>——和合本"),
+      merged: parseLegacyMergedBiblePassages("诗篇 23:1<br>1 耶和华是我的牧者。<br>——和合本<br><br>诗篇 23:3<br>3 他使我的灵魂苏醒。<br>——和合本"),
+      mergedComment: parseLegacyMergedBiblePassages("今天读到：<br>诗篇 23:1<br>1 耶和华是我的牧者。"),
+      mergedHtml: parseLegacyMergedBiblePassages('诗篇 23:1<br>1 <img src=x onerror="alert(1)">耶和华是我的牧者。'),
       link: parseBiblePassageShare('<a href="/">以赛亚书 30:10</a><br>“正文”<br>——和合本'),
       legacy: readingNoteComment("阅读笔记 · 《大离婚》", "大离婚"),
       comment: readingNoteComment("感言 &lt;script&gt;<br>第二行", "大离婚")
@@ -162,6 +235,11 @@ test("Bible share recognition preserves ordinary reference messages and note com
   expect(result.passage).toEqual({ reference: "以赛亚书 30:10", text: "请听真实的话。<script>", translation: "和合本" });
   expect(result.withoutVersion).toEqual({ reference: "以赛亚书 30:10", text: "第一行\n第二行", translation: "" });
   expect(result.ordinary).toBeNull(); expect(result.link).toBeNull();
+  expect(result.merged).toEqual({ passages: [
+    { reference: "诗篇 23:1", text: "1 耶和华是我的牧者。", translation: "和合本" },
+    { reference: "诗篇 23:3", text: "3 他使我的灵魂苏醒。", translation: "和合本" }
+  ], translation: "和合本", showTranslation: true });
+  expect(result.mergedComment).toBeNull(); expect(result.mergedHtml).toBeNull();
   expect(result.legacy).toBe(""); expect(result.comment).toBe("感言 <script>\n第二行");
 });
 
@@ -175,18 +253,16 @@ async function passageOptions(page: Page) {
     if (!vuePath) throw new Error("missing Vue runtime");
     const { createApp, h, ref } = await import(vuePath) as typeof import("vue");
     const { default: Dialog } = await import(path);
-    const messagePath = "/src/client/features/reading-shares/readingShareMessage.ts";
-    const { biblePassageShareContent } = await import(messagePath) as typeof import("../../src/client/features/reading-shares/readingShareMessage");
     const dialog = ref<{ open: (lookups: unknown[]) => void } | null>(null);
-    const passages = ["诗篇 23:1", "诗篇 23:3"].map((reference, i) => ({ reference, normalizedReference: reference, translation: "和合本", verses: [{ text: i ? "第二段经文。" : "很长的经文。".repeat(300) }] }));
+    const passages = ["诗篇 23:1", "诗篇 23:3"].map((reference, i) => ({ reference, normalizedReference: reference, translation: "和合本", sourceId: "cmn-cu89s", verses: [{ book: "诗篇", chapter: 23, verse: i ? 3 : 1, endVerse: i ? 3 : 1, reference, text: i ? "第二段经文。" : "很长的经文。".repeat(300) }] }));
     let fail = true;
-    const sent: string[] = [];
+    const attempts: { content: string; requestId: string; payload: unknown }[] = [];
     const host = document.createElement("section"); document.body.prepend(host);
     createApp({ render: () => h("div", {}, [
       h("button", { onClick: () => dialog.value?.open(passages) }, "测试分享选项"),
-      h(Dialog, { ref: dialog, channelName: "综合频道", sendText: async () => { throw new Error("两条经文应逐条发送"); }, sendPassage: async (lookup: Parameters<typeof biblePassageShareContent>[0], include: boolean) => {
-        if (lookup.normalizedReference === "诗篇 23:3" && fail) { fail = false; throw new Error("网络暂时中断"); }
-        sent.push(biblePassageShareContent(lookup, include)); document.body.dataset.sent = JSON.stringify(sent);
+      h(Dialog, { ref: dialog, channelName: "综合频道", sendText: async (content: string, requestId: string, payload: unknown) => {
+        attempts.push({ content, requestId, payload }); document.body.dataset.attempts = JSON.stringify(attempts);
+        if (fail) { fail = false; throw new Error("网络暂时中断"); }
       } })
     ]) }).mount(host);
   });
@@ -194,6 +270,8 @@ async function passageOptions(page: Page) {
   const dialog = page.getByRole("dialog", { name: "分享经文", exact: true });
   await open.click();
   await expect(dialog.getByLabel("显示版本信息")).not.toBeChecked();
+  await expect(dialog.getByRole("checkbox")).toHaveCount(1);
+  await expect(dialog.getByText("已选 2 段经文，将合成一张经文卡片。", { exact: false })).toBeVisible();
   await expect(dialog.locator(".passage-share-preview small")).toHaveCount(0);
   await dialog.getByLabel("显示版本信息").check();
   await expect(dialog.locator(".passage-share-preview small")).toHaveCount(2);
@@ -209,11 +287,18 @@ async function passageOptions(page: Page) {
   await dialog.getByRole("button", { name: "发送到聊天室" }).click();
   await expect(dialog.getByRole("alert")).toHaveText("网络暂时中断");
   await expect(dialog.getByLabel("显示版本信息")).toBeChecked();
+  await expect(dialog.getByLabel("显示版本信息")).toBeDisabled();
   await dialog.getByRole("button", { name: "发送到聊天室" }).click();
   await expect(dialog).toHaveCount(0);
-  const sent = JSON.parse((await page.locator("body").getAttribute("data-sent"))!) as string[];
-  expect(sent).toHaveLength(2);
-  expect(sent.every(content => content.endsWith("<br><em>——和合本</em>"))).toBe(true);
+  const attempts = JSON.parse((await page.locator("body").getAttribute("data-attempts"))!) as { content: string; requestId: string; payload: unknown }[];
+  expect(attempts).toHaveLength(2);
+  expect(attempts[0]).toEqual(attempts[1]);
+  expect(attempts[0].requestId).toMatch(/^[0-9a-f-]{36}$/);
+  expect(attempts[0].content).toContain("诗篇 23:1");
+  expect(attempts[0].content).toContain("诗篇 23:3");
+  expect(attempts[0].content).toContain("第二段经文。");
+  expect(attempts[0].content).toContain("和合本");
+  expect(attempts[0].payload).toEqual({ kind: "bible_passage", sourceId: "cmn-cu89s", showTranslation: true, references: ["诗篇 23:1", "诗篇 23:3"] });
   await open.click();
   await expect(dialog.getByLabel("显示版本信息")).not.toBeChecked();
   await dialog.press("Escape");

@@ -87,6 +87,7 @@ import MessageRow from "./features/messages/MessageRow.vue";
 import ComposerBar from "./features/composer/ComposerBar.vue";
 import ChatHeader from "./features/chat/ChatHeader.vue";
 import AppModal from "./components/ui/AppModal.vue";
+import { sharedModalStack } from "./components/ui/modalStack";
 import AppButton from "./components/ui/AppButton.vue";
 import ConfirmDialog from "./components/ui/ConfirmDialog.vue";
 import AvatarImage from "./components/ui/AvatarImage.vue";
@@ -907,7 +908,6 @@ const {
   playBibleAudioFromMessage,
   handleBibleReadingChange,
   handleBookReadingChange,
-  sendBiblePassage,
   sendBibleText
 } = useBibleWorkspaceIntegration({
   showChannels,
@@ -1430,6 +1430,7 @@ function reloadApplication() {
 // 安卓返回键与网页 Escape 共用的浮层关闭级联；
 // 返回 False 表示当前没有可关闭的浮层（原生侧将退出应用）。
 function closeTopmostOverlay(): boolean {
+  if (sharedModalStack().requestCloseTop()) return true;
   if (showChatToolsMenu.value) {
     showChatToolsMenu.value = false;
     return true;
@@ -5197,6 +5198,8 @@ const messageRowBindings = {
   onToggleBibleReference: toggleBibleReference,
   onOpenBibleReference: openBibleReferenceInWorkspace,
   openBiblePassage,
+  canPlayBibleAudio: canPlayBibleAudioFromMessage,
+  playBibleAudio: playBibleAudioFromMessage,
   listenSessionFor,
   onListenToggle: toggleListenPlaylist,
   onListenPlayItem: playListenPlaylistItem,
@@ -5545,7 +5548,6 @@ const messageRowBindings = {
       :channel-name="bibleTargetChannel?.name || '聊天室'"
       :can-send="bibleCanSend"
       :send-unavailable-reason="bibleSendUnavailableReason"
-      :send-passage="sendBiblePassage"
       :send-text="sendBibleText"
       :favorites="bibleFavorites"
       :favorites-busy="bibleFavoritesLoading"

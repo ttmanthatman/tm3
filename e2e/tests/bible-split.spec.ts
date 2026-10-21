@@ -240,7 +240,7 @@ test("split Bible sends a verse to the newly selected chat channel", async ({ pa
   const share = page.getByRole("dialog", { name: "分享经文", exact: true });
   await expect(share.getByLabel("显示版本信息")).not.toBeChecked();
   await share.getByRole("button", { name: "发送到聊天室", exact: true }).click();
-  const cards = page.locator(".messages-scroll .bible-passage-share-card");
+  const cards = page.locator(".messages-scroll .bible-scripture-card.bible-passage-share-card");
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toContainText("诗篇 66:1");
   await expect(cards.first().locator(".reading-share-meta")).toHaveCount(0);
@@ -259,6 +259,74 @@ test("split Bible sends a verse to the newly selected chat channel", async ({ pa
   await expect(cards).toHaveCount(2);
   await expect(cards.first().locator(".reading-share-meta")).toHaveCount(0);
   await expect(cards.last().locator(".reading-share-meta")).toContainText("和合本");
+});
+
+test("structured scripture survives socket send and reload and opens its translation in the receiving pane", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 960 });
+  await login(page);
+  await openReading(page);
+  await page.getByRole("button", { name: "添加圣经阅读窗格", exact: true }).click();
+  // A new pane copies the current reading location, with navigation initially collapsed.
+  await page.getByRole("button", { name: "展开 A 窗格导航", exact: true }).click();
+  await page.getByRole("button", { name: "展开 B 窗格导航", exact: true }).click();
+  await page.getByRole("button", { name: "指定 B 窗格接收所有经文链接", exact: true }).click();
+  const sourcePane = page.locator(".bible-reader-pane").nth(0);
+  const receiver = page.locator(".bible-reader-pane").nth(1);
+  await expect(sourcePane.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
+  await expect(receiver.getByRole("button", { name: "选择圣经译本", exact: true })).toHaveText("和合本");
+  await expect.poll(() => page.evaluate(() => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map(key => provides?.[key]).find(value => value && typeof value === "object" && "_s" in value) as { _s?: Map<string, Record<string, unknown>> } | undefined;
+    return [...(pinia?._s?.values() || [])].find(candidate => "connectionState" in candidate && "socket" in candidate)?.connectionState;
+  })).toBe("connected");
+  const result = await page.evaluate(async () => {
+    const root = document.querySelector("#app") as HTMLElement & { __vue_app__?: { _context?: { provides?: Record<PropertyKey, unknown> } } };
+    const provides = root?.__vue_app__?._context?.provides;
+    const pinia = Reflect.ownKeys(provides || {}).map(key => provides?.[key]).find(value => value && typeof value === "object" && "_s" in value) as { _s?: Map<string, Record<string, unknown>> } | undefined;
+    const store = [...(pinia?._s?.values() || [])].find(candidate => "connectionState" in candidate && "socket" in candidate);
+    const socket = store?.socket as { timeout(ms: number): { emit(event: string, data: unknown, ack: (error: Error | null, response?: { success?: boolean; messageId?: number; message?: { content: string; payload: unknown } }) => void): void } } | undefined;
+    if (!socket || typeof store?.currentChannelId !== "number") throw new Error("chat socket was not found");
+    const clientRequestId = crypto.randomUUID();
+    const payload = { kind: "bible_passage", sourceId: "cmncbs", showTranslation: true, references: ["约翰福音 3:16", "诗篇 23:1"] };
+    return new Promise<{ success?: boolean; messageId?: number; message?: { content: string; payload: unknown } }>((resolve, reject) => {
+      socket.timeout(10_000).emit("message:send", { channelId: store.currentChannelId, type: "text", content: "测试发送摘要", payload, clientRequestId }, (error, response) => error ? reject(error) : resolve(response || {}));
+    });
+  });
+  expect(result.success).toBe(true);
+  expect(result.messageId).toEqual(expect.any(Number));
+  expect(result.message?.payload).toMatchObject({ kind: "bible_passage", sourceId: "cmncbs", translation: "当代译本（简体）", showTranslation: true, passages: [
+    { reference: "约翰福音 3:16", text: expect.stringContaining("上帝爱世人") },
+    { reference: "诗篇 23:1", text: expect.any(String) }
+  ] });
+  expect(result.message?.content).toContain("上帝爱世人");
+  const row = page.locator(`[data-message-id="${result.messageId}"]`);
+  const card = row.locator(".bible-scripture-card");
+  await expect(card).toBeVisible();
+  await expect(card.locator(".scripture-card-passages section")).toHaveCount(2);
+  await expect(card.locator(".reading-share-meta")).toHaveText("当代译本（简体）");
+  // Wait for the account workspace to save the explicit receiver before reloading.
+  await expect.poll(async () => {
+    const token = await page.evaluate(() => localStorage.getItem("team-chat-token"));
+    const me = await page.request.get("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+    const workspace = (await me.json()).account.biblePreferences.workspace;
+    return workspace?.panes.length === 2 && !!workspace.receivingPaneId;
+  }).toBe(true);
+  await page.reload();
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("上帝爱世人");
+  await expect(card.locator(".reading-share-meta")).toHaveText("当代译本（简体）");
+  // Navigation is session-local and starts collapsed after a reload.
+  await page.getByRole("button", { name: "展开 A 窗格导航", exact: true }).click();
+  await page.getByRole("button", { name: "展开 B 窗格导航", exact: true }).click();
+  await expect(page.getByRole("button", { name: "B 窗格正在接收所有经文链接", exact: true })).toBeVisible();
+  await card.getByRole("link", { name: "约翰福音 3:16", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "发送上下文到哪个窗格？", exact: true })).toBeHidden();
+  await expect(receiver.getByRole("button", { name: "选择圣经译本", exact: true })).toHaveText("当代译本");
+  await expect(receiver.locator('[data-verse-key="JHN-3-16"]')).toHaveClass(/target/);
+  await expect(receiver.locator('[data-verse-key="JHN-3-16"]')).toContainText("上帝爱世人");
+  await expect(sourcePane.locator('[data-verse-key="PSA-66-1"]')).toBeAttached();
+  await expect(sourcePane.getByRole("button", { name: "选择圣经译本", exact: true })).toHaveText("和合本");
 });
 
 test("fullscreen Bible suspends chat visuals, receives messages and preserves the history position", async ({ page }) => {

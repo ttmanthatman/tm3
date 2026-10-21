@@ -107,6 +107,8 @@ import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.j
 import { createMusicService } from "./services/musicService.js";
 import { cleanListenPlaylistPayload } from "./services/listenPlaylist.js";
 import { listenPlaylistContent, listenPlaylistPayload } from "../shared/listenPlaylist.js";
+import { BiblePassageValidationError, cleanBiblePassagePayload } from "./services/biblePassages.js";
+import { biblePassageMessageContent, biblePassageMessagePayload } from "../shared/biblePassages.js";
 import { createMessageSerializationService } from "./services/messageSerialization.js";
 import { createReceptionService } from "./services/receptionService.js";
 import {
@@ -537,6 +539,7 @@ async function cleanTextMessagePayload(input: unknown) {
   if (!input || typeof input !== "object" || Array.isArray(input)) return payload;
   if ((input as { kind?: unknown }).kind === "book_note") return bookNoteShareSchema.parse(input);
   if ((input as { kind?: unknown }).kind === "listen_playlist") return cleanListenPlaylistPayload(input, resolveMusicTrack);
+  if ((input as { kind?: unknown }).kind === "bible_passage") return cleanBiblePassagePayload(input);
   const requestedTrackId = Number((input as { musicTrackId?: unknown }).musicTrackId);
   if (!Number.isInteger(requestedTrackId) || requestedTrackId <= 0) return payload;
   const track = await resolveMusicTrack(requestedTrackId);
@@ -3436,7 +3439,9 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     else void emitPinnedChainUpdate(body.channelId, rootId).catch((error) => app.log.warn({ error, rootId }, "pinned chain refresh failed"));
     return { success: true, message: await hydrateMessage(created.id) };
   }
-  const content = cleanText(body.content);
+  const textPayload = body.type === "text" ? await cleanTextMessagePayload(body.payload) : undefined;
+  const biblePassage = biblePassageMessagePayload(textPayload);
+  const content = biblePassage ? biblePassageMessageContent(biblePassage) : cleanText(body.content);
   if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return reply.code(400).send({ success: false, message: "消息不能为空" });
   if (body.type === "prayer") {
     const payload = cleanPrayerPayload(body.payload);
@@ -3471,7 +3476,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     actorId: auth.actorId,
     content,
     type: "text",
-    payload: await cleanTextMessagePayload(body.payload),
+    payload: textPayload,
     replyToId: body.replyToId || null,
     pushOrigin
   });
@@ -4430,7 +4435,10 @@ io.on("connection", async (socket: Socket) => {
       );
       // 「/听」清单的正文摘要按服务端解析后的引用重写，保证通知/回复预览与卡片一致
       const listenPlaylist = body.type === "text" ? listenPlaylistPayload(payload) : null;
-      const content = handwriting?.content ?? (listenPlaylist ? listenPlaylistContent(listenPlaylist.items, listenPlaylist.note) : cleanText(body.content || ""));
+      const biblePassage = body.type === "text" ? biblePassageMessagePayload(payload) : null;
+      const content = handwriting?.content ?? (biblePassage
+        ? biblePassageMessageContent(biblePassage)
+        : listenPlaylist ? listenPlaylistContent(listenPlaylist.items, listenPlaylist.note) : cleanText(body.content || ""));
       const requestHash = body.clientRequestId
         ? messageSendRequestHash({ channelId: body.channelId, content, type: body.type, payload, replyToId: body.replyToId ?? null })
         : undefined;
@@ -4474,7 +4482,7 @@ io.on("connection", async (socket: Socket) => {
     } catch (error) {
       ack?.({
         success: false,
-        ...(error instanceof HandwritingValidationError || error instanceof z.ZodError ? { code: "not_sent" } : {}),
+        ...(error instanceof HandwritingValidationError || error instanceof BiblePassageValidationError || error instanceof z.ZodError ? { code: "not_sent" } : {}),
         message: error instanceof Error ? error.message : "发送失败"
       });
     }

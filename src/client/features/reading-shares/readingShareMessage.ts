@@ -28,6 +28,29 @@ export function parseBiblePassageShare(content: string): BiblePassageShare | nul
   return { reference, text: match[2], translation: match[3]?.trim() || "", ...(showTranslation ? { showTranslation: true } : {}) };
 }
 
+/** Recognize only the numbered, complete format emitted by the former merge action. */
+export function parseLegacyMergedBiblePassages(content: string): { passages: BiblePassageShare[]; translation: string; showTranslation: boolean } | null {
+  if (!/(?:\n|<br\s*\/?>)\s*\d+(?:-\d+)?\s+\S/i.test(content)) return null;
+  const doc = new DOMParser().parseFromString(content, "text/html");
+  if (doc.body.querySelector(":not(br)")) return null;
+  for (const br of doc.querySelectorAll("br")) br.replaceWith("\n");
+  const passages: BiblePassageShare[] = [];
+  for (const section of (doc.body.textContent || "").trim().split(/\n\s*\n/)) {
+    const lines = section.trim().split("\n");
+    const reference = lines.shift()?.trim() || "";
+    const matches = extractBibleReferenceMatches(reference);
+    if (matches.length !== 1 || matches[0].start !== 0 || matches[0].end !== reference.length) return null;
+    let translation = "";
+    if (/^——\s*\S/.test(lines.at(-1) || "")) translation = lines.pop()!.replace(/^——\s*/, "");
+    if (!lines.length || lines.some(line => !/^\d+(?:-\d+)?\s+\S/.test(line))) return null;
+    passages.push({ reference, text: lines.join("\n"), translation });
+  }
+  if (!passages.length) return null;
+  const translation = passages[0].translation;
+  if (passages.some(passage => passage.translation !== translation)) return null;
+  return { passages, translation, showTranslation: !!translation };
+}
+
 export function readingNoteComment(content: string, title: string): string {
   const doc = new DOMParser().parseFromString(content, "text/html");
   for (const anchor of doc.querySelectorAll('a[href*="bookLocatorV1="]')) anchor.remove();

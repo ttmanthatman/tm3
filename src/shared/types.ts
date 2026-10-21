@@ -457,6 +457,11 @@ export interface MusicScoreDTO {
   pages: MusicScorePageDTO[];
 }
 
+export interface MusicScoreLibraryEntryDTO extends MusicScoreDTO {
+  trackId: number | null;
+  trackTitle: string;
+}
+
 export interface MusicLyricsResourceDTO {
   id: number;
   fileName: string;

@@ -92,9 +92,12 @@ export function registerBibleLookupRoutes(app: FastifyInstance, deps: BibleLooku
 
   app.get("/api/bible/lookup", { preHandler: requireAuth }, async (request, reply) => {
     if (applyJsonValidation(request, reply, `W/"bible-${APP_VERSION}"`)) return reply.code(304).send();
-    const query = z.object({ reference: z.string().min(1).max(120) }).parse(request.query);
+    const query = z.object({
+      reference: z.string().min(1).max(120),
+      translation: z.string().trim().min(1).max(30).optional()
+    }).parse(request.query);
     try {
-      const result: BibleLookupDTO = lookupBibleReference(query.reference);
+      const result: BibleLookupDTO = lookupBibleReference(query.reference, query.translation);
       return { success: true, result };
     } catch {
       return { success: false, message: "暂时找不到这处经文" };

@@ -161,8 +161,7 @@ const BOOKS: BibleBook[] = [
   { code: "REV", chineseName: "启示录", aliases: ["启示录", "启", "Revelation", "Revelations", "Rev", "Re"] }
 ];
 
-// 译本注册表：首个为默认译本（和合本）。经文展开、讲道台、收藏等永远走默认译本；
-// 只有章节阅读与全文搜索接受 translationId 参数。
+// 译本注册表：首个为默认译本（和合本）。未指定译本的经文展开、讲道台、收藏沿用默认译本。
 export const DEFAULT_BIBLE_TRANSLATION_ID = "cmn-cu89s";
 
 const TRANSLATION_SOURCES: BibleTranslationSource[] = [
@@ -320,8 +319,8 @@ export function searchBibleText(rawQuery: string, offset = 0, limit = 50, maximu
   };
 }
 
-export function lookupBibleReference(reference: string): BibleLookupDTO {
-  const index = indexFor();
+export function lookupBibleReference(reference: string, translationId?: string): BibleLookupDTO {
+  const index = indexFor(translationId);
   const parsed = parseReference(reference);
   const verses = versesForParsedReference(index, parsed);
   return {

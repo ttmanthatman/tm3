@@ -41,6 +41,7 @@ const musicPlayer = fs.readFileSync(new URL("./features/music/useMusicPlayer.ts"
 const musicManager = fs.readFileSync(new URL("./features/music/MusicManager.vue", import.meta.url), "utf8");
 const musicMiniPanel = fs.readFileSync(new URL("./features/music/MusicMiniPanel.vue", import.meta.url), "utf8");
 const musicSleepTimer = fs.readFileSync(new URL("./features/music/useMusicSleepTimer.ts", import.meta.url), "utf8");
+const musicScoreLibraryService = fs.readFileSync(new URL("../server/services/musicScoreLibrary.ts", import.meta.url), "utf8");
 const receptionManager = fs.readFileSync(new URL("./features/reception/ReceptionManager.vue", import.meta.url), "utf8");
 const prayerUpdateEditor = fs.readFileSync(new URL("./features/prayer/PrayerUpdateEditor.vue", import.meta.url), "utf8");
 const graceCard = fs.readFileSync(new URL("./features/grace/GraceCard.vue", import.meta.url), "utf8");
@@ -115,7 +116,7 @@ test("the message viewport and composer occupy separate chat grid rows", () => {
 });
 
 test("Bible minus-one workspace keeps both search modes and the full catalog available", () => {
-  assert.match(app, /<BibleWorkspace[\s\S]*?:send-passage="sendBiblePassage"[\s\S]*?@close="closeBibleWorkspace"/);
+  assert.match(app, /<BibleWorkspace[\s\S]*?:send-text="sendBibleText"[\s\S]*?@close="closeBibleWorkspace"/);
   assert.match(app, /createBibleSwipeNavigation\([\s\S]*?direction: "right"[\s\S]*?navigate: openBibleWorkspace/);
   assert.match(bibleWorkspace, /createBibleSwipeNavigation\([\s\S]*?direction: "left"[\s\S]*?navigate: \(\) => emit\("close"\)/);
   assert.match(chatHeader, /class="icon-btn bible-header-trigger"[\s\S]*?@click="openBibleWorkspace"/);
@@ -599,18 +600,20 @@ test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn \? 0 : 1;/);
 });
 
-test("song, friend, and own-story controls stay ordered before the score and consolidated chat tools", () => {
+test("song, score library, friend, and own-story controls stay ordered before chat tools", () => {
   const headerStart = chatHeader.indexOf('<header class="chat-head"');
   const headerEnd = chatHeader.indexOf("</header>", headerStart);
   const header = chatHeader.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
-  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="friend-player-control"'));
+  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('class="icon-btn score-library-trigger"'));
+  assert.ok(header.indexOf('class="icon-btn score-library-trigger"') < header.indexOf('class="friend-player-control"'));
   assert.ok(header.indexOf('class="friend-player-control"') < header.indexOf('class="icon-btn story-header-trigger"'));
   assert.ok(header.indexOf('class="icon-btn story-header-trigger"') < header.indexOf('class="chat-tools-control"'));
   assert.match(header, /class="icon-btn story-header-trigger"[\s\S]*?aria-label="我们的故事，长按查看我的故事"[\s\S]*?@pointerdown\.stop="beginStoryHold"[\s\S]*?<Sparkles :size="20"/);
   assert.match(app, /canOpenOwnStory: !!store\.account && !store\.account\.isGuest,[\s\S]*?storyAttention:[\s\S]*?openOwnStory,[\s\S]*?openSharedStories/);
-  assert.match(header, /v-if="[^"]*musicScoreTriggerVisible"[\s\S]*?>谱<\/span>/);
-  assert.match(header, /'page-turning': musicPlaying/);
+  assert.match(header, /aria-label="打开歌谱库"[\s\S]*?>谱<\/span>/);
+  assert.doesNotMatch(header, /aria-label="打开或关闭歌谱"/);
+  assert.match(chatHeader, /<MusicScoreLibrary[\s\S]*?:current-score-available="musicScoreTriggerVisible \|\| musicScoreOpen"/);
   assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);
   assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
   assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);
@@ -878,7 +881,8 @@ test("music scores preload through authenticated blobs for reliable Safari rende
   // Only the restored track's pages warm at startup; other tracks load on demand.
   assert.match(app, /preloadMusicScorePages\(restoredTrackId \? result\.tracks\.filter/);
   assert.match(app, /musicScoreCachedUrls\.value\[page\.id\]/);
-  assert.match(server, /canReadMusicScore\(score\.track\.channel\.kind, canAccessSourceChannel\)/);
+  assert.match(server, /musicScoreReadStatus\(auth, score, canAccessChannel, isAudioFileName\)/);
+  assert.match(musicScoreLibraryService, /canReadMusicScore\(score\.track\.channel\.kind, canAccess\)/);
 });
 
 test("SRT and LRC lyrics upload from the music manager and render over the header during playback", () => {

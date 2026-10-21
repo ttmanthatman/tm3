@@ -1,17 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
-import { Prisma, type Actor, type Message, type MusicScorePage, type PrismaClient } from "@prisma/client";
+import { Prisma, type Actor, type Message, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
-import type { MessageDTO, MusicPlaylistDTO, MusicScoreDTO, MusicTrackDTO } from "../../shared/types.js";
+import type { MessageDTO, MusicPlaylistDTO, MusicTrackDTO } from "../../shared/types.js";
 import { isQualifiedMusicPlay } from "../../shared/musicPlayback.js";
 import { canManageMusicAsset, canManageMusicRole, isMusicFileName } from "../music.js";
-import { canReadMusicScore } from "../musicScoreAccess.js";
 import { processScoreImageParts } from "../musicScoreUpload.js";
 import { pushOriginFromHeaders } from "../pushOrigin.js";
 import { createMusicProgressTracker, type MusicProgressLogInput } from "../services/musicProgressSummary.js";
 import type { MusicService } from "../services/musicService.js";
 import { parseLyrics } from "../srt.js";
+import { registerMusicScoreLibraryRoutes } from "./musicScoreLibrary.js";
+import { musicScoreReadStatus, serializeMusicScore as serializeScore } from "../services/musicScoreLibrary.js";
 
 export type MusicAuthContext = {
   accountId: number;
@@ -86,6 +87,7 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
   } = deps;
 
   const musicProgressTracker = createMusicProgressTracker({ write: writeActivityLog });
+  registerMusicScoreLibraryRoutes(app, deps);
 
   const trackScoresInclude = {
     orderBy: { id: "asc" as const },
@@ -99,24 +101,6 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
   function canManageScore(auth: MusicAuthContext, score: Pick<ScoreWithTrack, "trackId" | "uploadedByAccountId" | "track">) {
     if (score.trackId) return canManageMusicAsset(auth, score.track?.sender.accountId);
     return canManageMusicRole(auth) || score.uploadedByAccountId === auth.accountId;
-  }
-
-  function serializeScore(score: { id: number; title: string; pages: MusicScorePage[] }): MusicScoreDTO {
-    const kind = score.pages[0]?.fileName?.toLowerCase().endsWith(".pdf") ? "pdf" : "image";
-    return {
-      id: score.id,
-      title: score.title,
-      kind,
-      pages: score.pages.map((page) => ({
-        id: page.id,
-        scoreId: score.id,
-        pageIndex: page.pageIndex,
-        fileName: page.fileName,
-        fileSize: page.fileSize,
-        width: page.width,
-        height: page.height
-      }))
-    };
   }
 
   async function serializeTrackResponse(trackId: number): Promise<MusicTrackDTO> {
@@ -696,18 +680,8 @@ export function registerMusicRoutes(app: FastifyInstance, deps: MusicRouteDepend
     });
     if (!page) return reply.code(404).send({ success: false, message: "歌谱不存在" });
     const { score } = page;
-    if (score.track) {
-      if (score.track.type !== "file" || !isAudioFileName(score.track.fileName)) {
-        return reply.code(404).send({ success: false, message: "歌谱不存在" });
-      }
-      const canAccessSourceChannel =
-        score.track.channel.kind === "music" || (await canAccessChannel(auth.accountId, score.track.channelId));
-      if (!canReadMusicScore(score.track.channel.kind, canAccessSourceChannel)) {
-        return reply.code(403).send({ success: false, message: "无权查看歌谱" });
-      }
-    } else if (score.uploadedByAccountId !== auth.accountId && !canManageMusicRole(auth)) {
-      return reply.code(403).send({ success: false, message: "无权查看歌谱" });
-    }
+    const status = await musicScoreReadStatus(auth, score, canAccessChannel, isAudioFileName);
+    if (status !== 200) return reply.code(status).send({ success: false, message: status === 403 ? "无权查看歌谱" : "歌谱不存在" });
     const filePath = path.join(musicScoreDir, path.basename(page.filePath));
     if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "歌谱文件不存在" });
     const stat = fs.statSync(filePath);

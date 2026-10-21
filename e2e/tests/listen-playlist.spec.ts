@@ -14,7 +14,7 @@ async function loginAsAdmin(page: Page) {
   await focusChat(page);
 }
 
-test("/听 draft becomes an ordered listen playlist card with transport controls", async ({ page }) => {
+test("/听 draft becomes the same scripture card with ordered passages and a play action", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 960 });
   await loginAsAdmin(page);
   const textarea = page.locator(".composer-main textarea");
@@ -33,31 +33,28 @@ test("/听 draft becomes an ordered listen playlist card with transport controls
 
   const card = page.locator(".listen-card").filter({ hasText: `今晚一起听 ${stamp}` });
   await expect(card).toBeVisible();
-  await expect(card.locator(".listen-card-kicker")).toHaveText(/一起听/);
-  await expect(card.locator(".listen-card-head small")).toContainText("2 段经文");
-  const rows = card.locator(".listen-card-row");
-  await expect(rows).toHaveCount(2);
-  // 引用按服务端解析结果重写，保持 composer 里的书写顺序
-  await expect(rows.nth(0).locator(".listen-card-label")).toHaveText("诗篇 第23章");
-  await expect(rows.nth(1).locator(".listen-card-label")).toHaveText("约翰福音 3:16");
-  await expect(rows.locator(".listen-card-row.current")).toHaveCount(0);
-
-  const controls = card.locator(".listen-card-controls");
-  await expect(controls.getByRole("button", { name: "播放", exact: true })).toBeEnabled();
-  await expect(controls.getByRole("button", { name: "上一节", exact: true })).toBeDisabled();
-  await expect(controls.getByRole("button", { name: "下一节", exact: true })).toBeDisabled();
-  await expect(controls.getByRole("button", { name: "上一章", exact: true })).toBeDisabled();
-  await expect(controls.getByRole("button", { name: "下一章", exact: true })).toBeDisabled();
+  await expect(card).toHaveClass(/bible-scripture-card/);
+  await expect(card.locator(".scripture-card-count")).toHaveText("2 段经文");
+  await expect(card.locator(".scripture-card-note")).toHaveText(`今晚一起听 ${stamp}`);
+  const passages = card.locator(".scripture-card-passages section");
+  await expect(passages).toHaveCount(2);
+  // 阅读、复制和播放入口与普通经文卡片一致；出处仍保留输入的顺序。
+  await expect(passages.nth(0).getByRole("link")).toHaveText("诗篇 第23章");
+  await expect(passages.nth(1).getByRole("link")).toHaveText("约翰福音 3:16");
+  await expect(card.getByRole("button", { name: "复制经文", exact: true })).toBeEnabled();
+  await expect(card.getByRole("button", { name: "播放经文", exact: true })).toBeEnabled();
+  await expect(card.locator(".listen-card-controls")).toHaveCount(0);
 
   // 消息正文摘要（通知/引用预览用）也按解析后的引用生成
   await expect(page.locator(".message-row").filter({ has: card })).toBeVisible();
 
   // 没有有声圣经包：点播放会在聊天侧弹出「暂未开放」提示（工作区里的 toast 关着时看不见），卡片不会假装在播
   const dialogMessage = new Promise<string>((resolve) => page.once("dialog", (dialog) => { resolve(dialog.message()); void dialog.dismiss(); }));
-  await controls.getByRole("button", { name: "播放", exact: true }).click();
+  await card.getByRole("button", { name: "播放经文", exact: true }).click();
   expect(await dialogMessage).toContain("有声圣经暂未开放");
   await expect(card).not.toHaveClass(/playing/);
-  await expect(card.locator(".listen-card-row.current")).toHaveCount(0);
+  await expect(card.getByRole("button", { name: "播放经文", exact: true })).toBeEnabled();
+  await expect(card.locator(".listen-card-controls")).toHaveCount(0);
 });
 
 test("an empty /听 draft stays in the composer with a hint", async ({ page }) => {

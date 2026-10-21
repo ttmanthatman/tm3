@@ -69,7 +69,6 @@ const props = defineProps<{
   channelName: string;
   canSend: boolean;
   sendUnavailableReason: string;
-  sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   sendText: BibleShareTextSender;
   favorites: BibleFavoriteDTO[];
   favoritesBusy: boolean;
@@ -732,7 +731,7 @@ async function chooseContextPane(targetId: string) {
 }
 
 async function openLookupContext(lookup: BibleLookupDTO) {
-  await routeLookup(lookup, activePaneId.value);
+  await routeLookup(lookup, activePaneId.value, [], lookup.sourceId);
 }
 
 async function openCopyworkContext(source: CopyworkSource) {
@@ -1135,7 +1134,7 @@ function showToast(message: string) {
           :can-close="panes.length > 1" :catalog="catalog"
           @translation="changePaneTranslation(pane.id, $event)"
           :account-id="accountId" :channel-name="channelName" :can-send="canSend" :send-unavailable-reason="sendUnavailableReason"
-          :send-passage="sendPassage" :send-text="sendText" :favorites="favorites" :favorites-busy="favoritesBusy" :update-favorites="updateFavorites" :copywork-revision="copyworkRevision"
+          :send-text="sendText" :favorites="favorites" :favorites-busy="favoritesBusy" :update-favorites="updateFavorites" :copywork-revision="copyworkRevision"
           :topics="topics" :topics-busy="topicsBusy" :topic-actions="topicActions"
           @activate="activePaneId = $event" @close="closeBiblePane" @state="updateHomeState(pane.id, $event)"
           @book="(book, chapter) => openBookInActivePane(book, chapter, pane.id)"
@@ -1161,7 +1160,6 @@ function showToast(message: string) {
           :channel-name="channelName"
           :can-send="canSend"
           :send-unavailable-reason="sendUnavailableReason"
-          :send-passage="sendPassage"
           :send-text="sendText"
           :favorites="favorites"
           :favorites-busy="favoritesBusy"

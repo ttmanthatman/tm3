@@ -26,7 +26,6 @@ const props = defineProps<{
   favorites: BibleFavoriteDTO[]; favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
   topics: BibleTopicDTO[]; topicsBusy: boolean; topicActions: BibleTopicActions;
-  sendPassage: (lookup: BibleLookupDTO, includeTranslation?: boolean) => Promise<void>;
   sendText: BibleShareTextSender;
 }>();
 const emit = defineEmits<{
@@ -92,7 +91,7 @@ function copySelected() {
   if (referencesOnly.value) return writeClipboard(formatBibleLookupReferencesForCopy(lookups), `已复制 ${lookups.length} 处出处`);
   return writeClipboard(formatBibleLookupsForCopy(lookups, props.catalog.translation), `已复制 ${lookups.length} 处结果`);
 }
-function sendSelected() { if (props.canSend) passageShareDialog.value?.open(selectedLookups.value, { merge: referencesOnly.value }); }
+function sendSelected() { if (props.canSend) passageShareDialog.value?.open(selectedLookups.value); }
 type TextSegment = { text: string; highlighted: boolean };
 async function searchTopic(append = false) {
   const query = topicQuery.value.trim();
@@ -466,7 +465,7 @@ function copyTopic() {
           <button type="button" @click="toggleAll">{{ selectedLookups.length === currentLookups.length ? '取消全选' : '全选当前结果' }}</button>
           <span>已选 {{ selectedLookups.length }} 处</span>
           <button type="button" :disabled="!selectedLookups.length" @click="copySelected">复制所选</button>
-          <button type="button" :disabled="!selectedLookups.length || !canSend || passageShareDialog?.busy" @click="sendSelected">{{ referencesOnly ? '合并发送' : '发送所选' }}</button>
+          <button type="button" :disabled="!selectedLookups.length || !canSend || passageShareDialog?.busy" @click="sendSelected">发送所选</button>
           <label class="bible-reference-only"><input v-model="referencesOnly" type="checkbox" role="switch" /><span class="switch" aria-hidden="true"></span>只复制出处</label>
         </div>
         <section v-if="searchMode === 'topic' && topicResult" class="bible-results" aria-live="polite">
@@ -594,7 +593,7 @@ function copyTopic() {
       <div class="bible-chapter-grid"><button v-for="chapter in selectedBook.chapterCount" :key="chapter" type="button" @click="emit('book', selectedBook, chapter)">{{ chapter }}</button></div>
     </main>
 
-    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-passage="sendPassage" :send-text="sendText" @sent="showToast(`已发送到：${channelName}`)" />
+    <BiblePassageShareDialog ref="passageShareDialog" :channel-name="channelName" :send-text="sendText" @sent="showToast(`已发送到：${channelName}`)" />
     <BibleTopicShareDialog ref="topicShareDialog" :channel-name="channelName" :share="topicActions.share" @sent="showToast(`已发送到：${channelName}`)" />
   </section>
 </template>
