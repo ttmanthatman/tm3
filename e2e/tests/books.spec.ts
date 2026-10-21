@@ -61,17 +61,20 @@ async function login(page: Page) {
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
 }
 
-test("书架长按菜单、笔记下拉、离线删除及共读进度可用", async ({ page, request }, info) => {
+test("书架长按下载、独立缓存、笔记下拉及共读进度可用", async ({ page, request }, info) => {
   test.setTimeout(60000);
   const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
   const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
   const books: Array<{ id: number; title: string }> = [];
+  const uploadedEpubs = new Map<string, Buffer>();
   const username = `book-reader-${randomUUID().slice(0, 8)}`;
   let readerId = 0;
   const socket = io("http://127.0.0.1:3003", { autoConnect: false });
   try {
     for (const title of ["短书名", "用于验证多行图书名称以及邀请按钮行内对齐的较长书名"]) {
-      const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "shelf.epub", mimeType: "application/epub+zip", buffer: await buildEpub(title) } } });
+      const buffer = await buildEpub(title);
+      uploadedEpubs.set(title, buffer);
+      const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "shelf.epub", mimeType: "application/epub+zip", buffer } } });
       expect(upload.ok()).toBe(true); books.push((await upload.json()).book);
     }
     await request.put(`/api/books/${books[0].id}/progress`, { headers, data: { fraction: .61 } });
@@ -120,7 +123,7 @@ test("书架长按菜单、笔记下拉、离线删除及共读进度可用", as
       } else { await cover.hover(); await page.mouse.down(); await page.waitForTimeout(600); await page.mouse.up(); }
       const menu = page.getByRole("menu", { name: "《短书名》操作" });
       await expect(menu).toBeVisible();
-      await expect(menu.getByRole("menuitem")).toHaveCount(4);
+      await expect(menu.getByRole("menuitem")).toHaveCount(5);
       const box = (await menu.boundingBox())!;
       expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(width);
       await expect(page.locator(".book-reader")).toHaveCount(0);
@@ -135,11 +138,28 @@ test("书架长按菜单、笔记下拉、离线删除及共读进度可用", as
     const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
     await expect(invitation).toContainText("61%");
     await invitation.getByRole("button", { name: "关闭" }).click();
-    await bookShelfAction(page, "短书名", "下载");
     const badge = page.locator(`[data-book-id="${books[0].id}"] .book-download-badge`);
-    await expect(badge).toHaveAttribute("aria-label", "已下载");
-    await bookShelfAction(page, "短书名", "本地删除");
-    await expect(badge).toHaveAttribute("aria-label", "未下载");
+    const verifyFileDownload = async () => {
+      const downloaded = page.waitForEvent("download");
+      await bookShelfAction(page, "短书名", "下载", books[0].id);
+      const download = await downloaded;
+      expect(download.suggestedFilename()).toBe("短书名.epub");
+      const filePath = await download.path();
+      expect(filePath).not.toBeNull();
+      const file = fs.readFileSync(filePath!);
+      expect(file.equals(uploadedEpubs.get("短书名")!)).toBe(true);
+      const epub = await JSZip.loadAsync(file);
+      expect(await epub.file("mimetype")!.async("string")).toBe("application/epub+zip");
+    };
+    await expect(badge).toHaveAttribute("aria-label", "云端图书，尚未缓存");
+    await verifyFileDownload();
+    await expect(badge).toHaveAttribute("aria-label", "云端图书，尚未缓存");
+    await bookShelfAction(page, "短书名", "缓存到本机", books[0].id);
+    await expect(badge).toHaveAttribute("aria-label", "已缓存到本机");
+    await verifyFileDownload();
+    await expect(badge).toHaveAttribute("aria-label", "已缓存到本机");
+    await bookShelfAction(page, "短书名", "清除本机缓存", books[0].id);
+    await expect(badge).toHaveAttribute("aria-label", "云端图书，尚未缓存");
     const stillListed = await request.get("/api/books", { headers });
     expect((await stillListed.json()).books.find((book: { id: number }) => book.id === books[0].id).progress).toBe(.61);
     const keptNotes = await request.get(`/api/books/${books[0].id}/notes`, { headers });
@@ -148,6 +168,7 @@ test("书架长按菜单、笔记下拉、离线删除及共读进度可用", as
     const frame = await readingFrame(page);
     await expect(frame.locator("#tap-target")).toBeVisible();
     await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);
+    await expect(page.locator(".book-navigation-notice")).toHaveCount(0);
     const continuous = page.locator("[data-continuous-reader]");
     await expect.poll(() => continuous.evaluate((element) => element.scrollTop)).toBeGreaterThan(100);
     // Restoring 61% opens mid-chapter; scrolling back to the first paragraph shows the reading bar.
@@ -190,7 +211,7 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await bookShelfAction(page, "移动阅读回归", "下载", book.id);
+    await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     const read = page.getByRole("button", { name: "阅读《移动阅读回归》" });
     await expect(read).toBeVisible();
     await read.click();
@@ -263,7 +284,7 @@ test("桌面滚动模式的边距改变正文实际位置", async ({ browser, re
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await bookShelfAction(page, "移动阅读回归", "下载", book.id);
+    await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     await page.getByRole("button", { name: "阅读《移动阅读回归》" }).click();
     const frame = page.frameLocator('iframe[title="电子书第 1 节"]');
     const text = frame.locator("#tap-target");

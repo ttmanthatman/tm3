@@ -77,7 +77,7 @@ for (const profile of [{ engine: "chromium", width: 994 }, { engine: "chromium",
         expect(message.ok()).toBe(true);
       }
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await bookShelfAction(page, book.title, "下载", book.id);
+      await bookShelfAction(page, book.title, "缓存到本机", book.id);
       await expect(page.getByRole("button", { name: `阅读《${book.title}》`, exact: true })).toBeVisible();
       await page.locator(".book-topbar").getByRole("button", { name: "关闭", exact: true }).click();
       for (const kind of ["note", "excerpt"] as const) {
