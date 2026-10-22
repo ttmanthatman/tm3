@@ -1288,11 +1288,20 @@ const RELEASE_2_11_1_NOTES = [
   "歌谱库以歌曲名展示，支持跨搜索多选、批量分享与打包下载，精简列表并收窄分享弹窗；当前歌曲有谱时，顶栏「谱」显示彩色并提供「当前歌谱 / 其他歌谱」菜单。"
 ] as const
 
+const RELEASE_2_11_2_NOTES = [
+  "聊天中可向 ai_slmm 索取主题赞美诗、经文和曲谱；助手保留已配置的人设，实时查询曲库的歌曲显示名、歌词、背景和曲谱，再发送可播放的 @@ 歌曲、一起听经文卡片或实际图片/PDF 曲谱。发送前校验资源，连续追问保留整组回复上下文。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.11.3",
+    date: "2026-10-22",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.11.2",
     date: "2026-10-21",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_11_2_NOTES
   },
   {
     version: "2.11.1",
