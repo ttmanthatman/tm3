@@ -119,12 +119,15 @@ async function collectPage<Row extends { id: number }, Item>(
 export function createQuestionAssistantCatalog(deps: {
   prisma: Pick<PrismaClient, "message" | "musicScore">;
   auth: QuestionAssistantCatalogAuth;
+  /** Group replies must not expose standalone scores from a user's private library. */
+  publicOnly?: boolean;
 }) {
-  const { prisma, auth } = deps;
+  const { prisma, auth, publicOnly = false } = deps;
+  const publicScoreWhere = { track: { is: publicTrackWhere } } satisfies Prisma.MusicScoreWhereInput;
   function canReadScore(score: ScoreRow) {
     if (!hasShareablePages(score)) return false;
     if (score.track) return isPublicTrack(score.track);
-    return score.trackId === null && (score.uploadedByAccountId === auth.accountId || canManageMusicRole(auth));
+    return !publicOnly && score.trackId === null && (score.uploadedByAccountId === auth.accountId || canManageMusicRole(auth));
   }
 
   function trackSummary(row: TrackRow, query: string): QuestionAssistantTrack | null {
@@ -152,8 +155,8 @@ export function createQuestionAssistantCatalog(deps: {
       }),
       (row) => trackSummary(row, query), offset, limit
     );
-    const visibleScores: Prisma.MusicScoreWhereInput = { OR: [
-      { track: { is: publicTrackWhere } },
+    const visibleScores: Prisma.MusicScoreWhereInput = publicOnly ? publicScoreWhere : { OR: [
+      publicScoreWhere,
       { trackId: null, ...(canManageMusicRole(auth) ? {} : { uploadedByAccountId: auth.accountId }) }
     ] };
     const scores = kind === "tracks" ? { items: [] as QuestionAssistantScore[], hasMore: false } : await collectPage(
@@ -181,7 +184,7 @@ export function createQuestionAssistantCatalog(deps: {
 
   async function getScore(id: number): Promise<MusicScoreLibraryRow | null> {
     if (!Number.isSafeInteger(id) || id <= 0) return null;
-    const score = await prisma.musicScore.findUnique({ where: { id }, include: scoreInclude });
+    const score = await prisma.musicScore.findUnique({ where: { id, ...(publicOnly ? publicScoreWhere : {}) }, include: scoreInclude });
     return score && canReadScore(score) ? score : null;
   }
 

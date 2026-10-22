@@ -188,6 +188,12 @@ ${recentText}
 
     try {
       const readFromVersion = await stage.latestVersion(chId);
+      // The engine polls independently from message events. Respect the latest
+      // human message's opt-out before either evaluator or speaking model runs.
+      if (await stage.activationSuppressed(chId, readFromVersion)) {
+        scheduleNextUrge();
+        return;
+      }
       const snapshot = await stage.getSnapshot(chId, readFromVersion, 8);
 
       const now = new Date();

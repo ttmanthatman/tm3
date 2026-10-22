@@ -41,11 +41,12 @@ function beforeId(where: Prisma.MessageWhereInput | Prisma.MusicScoreWhereInput 
   return Math.min(Infinity, ...conditions.map(beforeId));
 }
 
-function harness(auth: QuestionAssistantCatalogAuth = viewer) {
+function harness(auth: QuestionAssistantCatalogAuth = viewer, publicOnly = false) {
   const tracks: Track[] = [];
   const scores: Score[] = [];
   const trackQueries: Prisma.MessageFindManyArgs[] = [];
   const scoreQueries: Prisma.MusicScoreFindManyArgs[] = [];
+  const scoreLookups: Prisma.MusicScoreFindUniqueArgs[] = [];
   const failures = { tracks: false };
   // Return all candidate rows to exercise the service's final access/format checks as well as cursor scanning.
   const prisma = {
@@ -62,10 +63,13 @@ function harness(auth: QuestionAssistantCatalogAuth = viewer) {
         scoreQueries.push(args);
         return scores.filter((row) => row.id < beforeId(args.where)).sort((a, b) => b.id - a.id).slice(0, args.take ?? Infinity);
       },
-      findUnique: async ({ where }: { where: { id: number } }) => scores.find((row) => row.id === where.id) ?? null
+      findUnique: async (args: Prisma.MusicScoreFindUniqueArgs) => {
+        scoreLookups.push(args);
+        return scores.find((row) => row.id === args.where.id) ?? null;
+      }
     }
   } as unknown as PrismaClient;
-  return { tracks, scores, trackQueries, scoreQueries, failures, prisma, catalog: createQuestionAssistantCatalog({ prisma, auth }) };
+  return { tracks, scores, trackQueries, scoreQueries, scoreLookups, failures, prisma, catalog: createQuestionAssistantCatalog({ prisma, auth, publicOnly }) };
 }
 
 test("assistant catalog uses the library display title and never exposes physical filenames", async () => {
@@ -138,6 +142,39 @@ test("catalog enforces public music sources and independent score ownership for 
     assert.ok(await manager.getScore(8));
     assert.equal(await manager.getScore(2), null);
     assert.equal(await manager.getScore(3), null);
+  }
+});
+
+test("public-only catalogs keep standalone and private scores out of group answers for owners and managers", async () => {
+  for (const auth of [viewer, { ...viewer, isAdmin: true }, { ...viewer, canPinMessages: true }]) {
+    const h = harness(auth, true);
+    const publicSong = track(1);
+    const privateSong = track(2, { channel: { kind: "music", isPrivate: true } });
+    h.tracks.push(publicSong, privateSong);
+    h.scores.push(
+      score(1, publicSong), score(2, null), score(3, null, { uploadedByAccountId: 20 }),
+      score(4, privateSong), score(5, null, { trackId: 99 })
+    );
+
+    const results = await h.catalog.search();
+    assert.deepEqual(results.tracks.map(item => item.id), [1]);
+    assert.deepEqual(results.scores.map(item => item.id), [1]);
+    assert.ok(await h.catalog.getScore(1));
+    for (const id of [2, 3, 4, 5]) assert.equal(await h.catalog.getScore(id), null);
+    const conditions = h.scoreQueries[0].where?.AND;
+    assert.ok(Array.isArray(conditions));
+    assert.deepEqual(conditions[0], { track: { is: {
+      type: "file", channel: { kind: "music", isPrivate: false }, fileName: { not: null }, filePath: { not: null }
+    } } });
+    assert.deepEqual(h.scoreLookups[0].where, { id: 1, ...conditions[0] });
+
+    // The same user's private conversation retains the library permissions.
+    const privateCatalog = createQuestionAssistantCatalog({ prisma: h.prisma, auth, publicOnly: false });
+    assert.ok(await privateCatalog.getScore(2));
+    assert.equal(Boolean(await privateCatalog.getScore(3)), auth.isAdmin || auth.canPinMessages);
+    assert.equal(await privateCatalog.getScore(4), null);
+    const privateResults = await privateCatalog.search({ kind: "scores" });
+    assert.deepEqual(privateResults.scores.map(item => item.id), auth.isAdmin || auth.canPinMessages ? [3, 2, 1] : [2, 1]);
   }
 });
 

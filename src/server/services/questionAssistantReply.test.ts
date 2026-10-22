@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { z } from "zod";
+import { createAssistantToolRegistry } from "./assistantTools.js";
 import { listenPlaylistPayload } from "../../shared/listenPlaylist.js";
 import {
   generateQuestionAssistantReply, QUESTION_ASSISTANT_MEDIA_PROTOCOL, requestQuestionAssistantCompletion,
@@ -39,6 +41,61 @@ function harness(steps: CompletionStep[]) {
   };
   return { deps, prompts, searches, resolvedTrackIds, checkedScoreIds, liveTracks, readableScores, catalog };
 }
+
+test("registered tools are discovered, invoked with immutable scope, and produce application-owned feature cards", async () => {
+  const context = { accountId: 1, channelId: 2, triggerMessageId: 3, assistantActorId: 4 };
+  let calls = 0;
+  const registry = createAssistantToolRegistry(async value => { assert.deepEqual(value, context); return true; });
+  registry.register({ name: "open_feature", description: "打开功能", kind: "present", input: { feature: "help" }, schema: z.object({ feature: z.literal("help") }).strict(),
+    execute: async () => { calls++; return { data: { presented: true }, messages: [{ content: "使用说明", payload: { assistantActions: [{ feature: "help", label: "打开使用说明" }] } }] }; } });
+  const call = JSON.stringify({ kind: "call_tool", name: "open_feature", arguments: { feature: "help" } });
+  const h = harness([call, call, reply("请点击下面的入口")]);
+  const result = await generateQuestionAssistantReply({ ...h.deps, tools: { registry, context, maxCalls: 1 } });
+  assert.equal(calls, 1, "a second invocation must not bypass the configured call budget");
+  assert.match(h.prompts[0].map(item => item.content).join("\n"), /open_feature/);
+  assert.deepEqual(result.messages[0].payload, { assistantActions: [{ feature: "help", label: "打开使用说明" }] });
+  assert.equal(result.messages.at(-1)?.content, "请点击下面的入口");
+});
+
+test("legacy and registered searches share one budget and the same live authorization", async () => {
+  const context = { accountId: 1, channelId: 2, triggerMessageId: 3, assistantActorId: 4 };
+  const modern = JSON.stringify({ kind: "call_tool", name: "search_music", arguments: { query: "平安", category: "all", offset: 0 } });
+  for (const steps of [[modern, search(), reply("已完成")], [search(), modern, reply("已完成")]]) {
+    const h = harness(steps);
+    let calls = 0;
+    const registry = createAssistantToolRegistry(async () => true);
+    registry.register({ name: "search_music", description: "查曲库", kind: "read", input: {}, schema: z.object({ query: z.string(), category: z.string(), offset: z.number() }).strict(),
+      execute: async () => { calls++; return { data: h.catalog }; } });
+    await generateQuestionAssistantReply({ ...h.deps, tools: { registry, context, maxCalls: 1 } });
+    assert.equal(calls, 1);
+    assert.equal(h.searches.length, 0, "the legacy adapter cannot bypass registry authorization");
+  }
+  const h = harness([search(), reply("功能不可用")]);
+  const registry = createAssistantToolRegistry(async () => false);
+  registry.register({ name: "search_music", description: "查曲库", kind: "read", input: {}, schema: z.object({}).passthrough(),
+    execute: async () => { throw new Error("must not execute"); } });
+  await generateQuestionAssistantReply({ ...h.deps, tools: { registry, context, maxCalls: 2 } });
+  assert.equal(h.searches.length, 0);
+});
+
+test("disabling functions during generation prevents final resource lookup and new calls", async () => {
+  const h = harness([search(), reply("播放", [track(7)], [30]), search(), reply("功能已关闭")]);
+  let enabled = true;
+  const searchMusic = h.deps.searchMusic;
+  h.deps.searchMusic = async input => { const result = await searchMusic(input); enabled = false; return result; };
+  const result = await generateQuestionAssistantReply({ ...h.deps, canUseResources: async () => enabled });
+  assert.equal(h.searches.length, 1);
+  assert.deepEqual(h.resolvedTrackIds, []);
+  assert.deepEqual(h.checkedScoreIds, []);
+  assert.equal(result.messages[0].content, "功能已关闭");
+});
+
+test("disabling function calls also blocks the legacy resource-search protocol", async () => {
+  const h = harness([search(), reply("功能调用已关闭")]);
+  const result = await generateQuestionAssistantReply({ ...h.deps, allowResources: false });
+  assert.deepEqual(h.searches, []);
+  assert.equal(result.messages[0].content, "功能调用已关闭");
+});
 
 test("ordinary answers preserve the custom prompt and Markdown without querying music", async () => {
   const h = harness([reply("## 信靠\n\n在祷告中交托自己的忧虑。")]);

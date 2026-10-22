@@ -10,10 +10,10 @@ function createHarness(username = "story_friend") {
     id: 2, kind: "virtual", username, displayName: "故事朋友", status: "active",
     character: { enabled: true, config: { persona: "陪伴读书", memory: "熟悉的故事" } } as { enabled: boolean; config: { persona: string; memory: string } } | null
   };
-  type Row = { id: number; channelId: number; senderActorId: number; content: string; type: string; createdAt: Date };
+  type Row = { id: number; channelId: number; senderActorId: number; content: string; type: string; createdAt: Date; payload?: unknown };
   const rows: Row[] = [];
   const add = (id: number, content: string, senderActorId = 1, channelId = 30) => {
-    const row = { id, content, senderActorId, channelId, type: "text", createdAt: new Date(2026, 9, 22, 1, 0, id) };
+    const row: Row = { id, content, senderActorId, channelId, type: "text", createdAt: new Date(2026, 9, 22, 1, 0, id) };
     rows.push(row);
     return row;
   };
@@ -99,6 +99,21 @@ test("the why assistant also responds to ordinary private messages", async () =>
   assert.equal(h.calls.send[0]?.payload.aiRole, "why_assistant");
 });
 
+test("private messages with raw or persisted final-space opt-outs never call an assistant", async () => {
+  for (const username of ["story_friend", "why_assistant"]) {
+    for (const source of ["@故事朋友 你好？ ", "<p>你好？&nbsp;</p>", "persisted", "闭嘴 "]) {
+      const h = createHarness(username);
+      h.message.content = source === "persisted" ? "@故事朋友 你好？" : source;
+      if (source === "persisted") h.message.payload = { aiActivationSuppressed: true };
+      await h.service.trigger(h.message.id);
+      assert.equal(h.calls.settings, 0, `${username}: ${source}`);
+      assert.equal(h.calls.complete, 0);
+      assert.equal(h.calls.stop, 0);
+      assert.equal(h.calls.send.length, 0);
+    }
+  }
+});
+
 test("foreign direct keys, public channels, ai_slmm, non-human and non-text triggers are ignored", async () => {
   const cases = [
     (h: ReturnType<typeof createHarness>) => { h.channel.directKey = "virtual:8:story_friend"; },
@@ -181,6 +196,59 @@ test("a stop arriving during the final settings read suppresses the pending answ
   await h.service.trigger(50);
   assert.equal(h.calls.complete, 1);
   assert.equal(h.calls.settings, 2);
+  assert.deepEqual(h.calls.send, []);
+});
+
+test("private tool results keep structured payloads and stop before subsequent messages", async () => {
+  const h = createHarness();
+  h.deps.complete = async (_settings, _key, _text, context) => {
+    assert.deepEqual(context, { accountId: 7, channelId: 30, triggerMessageId: 50, assistantActorId: 2 });
+    return { messages: [
+      { content: "功能入口", payload: { assistantActions: [{ feature: "help", label: "使用说明" }] } },
+      { content: "第二条结果", payload: {} }
+    ], scoreIds: [] };
+  };
+  const send = h.deps.send;
+  h.deps.send = async input => { await send(input); h.setStopped(true); };
+  await h.service.trigger(50);
+  assert.equal(h.calls.send.length, 1);
+  assert.deepEqual(h.calls.send[0].payload.assistantActions, [{ feature: "help", label: "使用说明" }]);
+  assert.equal(h.calls.send[0].payload.aiRole, "story_friend");
+});
+
+test("disabling functions after generation drops cards, songs, playlists and scores while keeping prose", async () => {
+  const h = createHarness();
+  let enabled = true;
+  let scores = 0;
+  h.deps.canUseFunctions = async () => enabled;
+  h.deps.shareScore = async () => { scores++; };
+  h.deps.complete = async () => {
+    enabled = false;
+    return { messages: [
+      { content: "入口", payload: { assistantActions: [{ feature: "help", label: "使用说明" }] } },
+      { content: "歌曲", payload: { musicTrackId: 7 } },
+      { content: "经文", payload: { kind: "listen_playlist" } },
+      { content: "未来功能结果", payload: {}, requiresFunctions: true },
+      { content: "普通文字仍可回答", payload: {} }
+    ], scoreIds: [30] };
+  };
+  await h.service.trigger(50);
+  assert.deepEqual(h.calls.send.map(item => item.content), ["普通文字仍可回答"]);
+  assert.equal(scores, 0);
+});
+
+test("a function switch changed during the final permission read still suppresses cards", async () => {
+  const h = createHarness();
+  let enabled = true;
+  h.deps.canUseFunctions = async () => enabled;
+  h.deps.complete = async () => ({ messages: [{ content: "入口", payload: { assistantActions: [{ feature: "help", label: "使用说明" }] } }], scoreIds: [] });
+  const canWrite = h.deps.canWriteChannel;
+  h.deps.canWriteChannel = async (...args) => {
+    const allowed = await canWrite(...args);
+    if (h.calls.permissions.length > 1) enabled = false;
+    return allowed;
+  };
+  await h.service.trigger(50);
   assert.deepEqual(h.calls.send, []);
 });
 

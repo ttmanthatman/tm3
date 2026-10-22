@@ -60,7 +60,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   let aiSettingsLoad: Promise<void> | undefined;
   const aiSettingsMsg = ref("");
   const aiSettingsShowAdvanced = ref(false);
-  const aiSettingsTab = ref<"llm" | "virtuals" | "verses" | "asr">("llm");
+  const aiSettingsTab = ref<"llm" | "virtuals" | "verses" | "asr" | "tools">("llm");
 
   async function openAiSettingsPage(tab: "llm" | "virtuals" | "verses" | "asr" = "llm") {
     if (!store.account?.isAdmin) return;

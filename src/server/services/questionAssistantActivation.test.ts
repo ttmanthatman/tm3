@@ -44,6 +44,22 @@ test("question punctuation and question endings retain strong activation", () =>
   }
 });
 
+test("a final visible space overrides mentions, question marks and resource requests", () => {
+  for (const content of ["@ai_slmm 为什么？ ", "@所罗没门 你好 ", "为什么？ ", "奇异恩典的曲谱 ", "<p>@ai_slmm 为什么？&nbsp;</p>"])
+    assert.equal(questionAssistantDirectActivation(content, "所罗没门"), null, content);
+  assert.equal(virtualAssistantStopCommand("闭嘴 ", "ai_slmm").stop, false);
+});
+
+test("suppressed messages never become a later weak activation anchor", () => {
+  const now = new Date();
+  const settings = { activationDurationMinutes: 3 };
+  const trimmed = { content: "@ai_slmm 为什么？", createdAt: now, payload: { aiActivationSuppressed: true } };
+  const historic = { content: "为什么？ ", createdAt: now };
+  assert.equal(questionAssistantActivationAnchor([trimmed, historic], now, settings), null);
+  const older = { content: "之前的问题？", createdAt: new Date(now.getTime() - 60_000) };
+  assert.equal(questionAssistantActivationAnchor([trimmed, historic, older], now, settings), older);
+});
+
 test("explicit music, scripture and score requests activate without a mention or question mark", () => {
   for (const text of [
     "我想听关于平安的赞美诗", "关于安慰的经文", "奇异恩典的歌谱", "奇异恩典的谱子",

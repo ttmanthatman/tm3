@@ -1,4 +1,5 @@
 import { plainTextFromHtml } from "../textUtils.js";
+import { assistantActivationSuppressed, hasAssistantOptOutSuffix } from "../../shared/assistantActivation.js";
 
 const resourceName = /赞美诗|诗歌|歌曲|(?:这|那|一|几)首歌|歌谱|曲谱|谱子|简谱|五线谱|钢琴谱|吉他谱|合唱谱|伴奏谱|经文/;
 const requestPrefix = /^(?:我(?:们)?(?:想(?:要)?|要|需要)(?:听|看|读|找|查|一|些|几|关于|有关|赞美诗|诗歌|歌曲|歌谱|曲谱|谱子|经文)|(?:(?:请|麻烦)(?:你)?(?:帮(?:我|我们))?|帮(?:我|我们))?(?:推荐|寻找|查找|找|查|发(?:送)?|播放|提供|读)|(?:请|麻烦)?(?:你)?给(?:我|我们))/;
@@ -8,6 +9,7 @@ const scoreStatement = /^(?:这|那)(?:是|个|份|首)|^(?:我|我们|他|她|�
 
 /** Only a complete command ends a conversation; quoted examples and questions do not. */
 export function virtualAssistantStopCommand(content: string | null | undefined, username: string, displayName?: string | null) {
+  if (hasAssistantOptOutSuffix(content)) return { stop: false, addressed: false };
   let text = plainTextFromHtml(content, 4000).trim();
   const names = [...new Set([username, displayName?.trim()].filter((name): name is string => !!name))];
   let addressed = false;
@@ -33,6 +35,7 @@ function isResourceRequest(sentence: string) {
 
 /** Explicit mentions stay direct; question/request triggers remain controlled by the caller's setting. */
 export function questionAssistantDirectActivation(content?: string | null, displayName?: string | null): "strong" | "direct" | null {
+  if (hasAssistantOptOutSuffix(content)) return null;
   const text = plainTextFromHtml(content, 4000);
   if (!text) return null;
   if (/@\s*ai_slmm\b/i.test(text)) return "direct";
@@ -49,12 +52,13 @@ export function questionAssistantDirectActivation(content?: string | null, displ
   return sentences.some((sentence) => /(吗|嘛|为啥|为什么)$/.test(sentence) || isResourceRequest(sentence)) ? "strong" : null;
 }
 
-export function questionAssistantActivationAnchor<T extends { content: string | null; createdAt: Date }>(
+export function questionAssistantActivationAnchor<T extends { content: string | null; createdAt: Date; payload?: unknown }>(
   rowsNewestFirst: T[], now: Date, settings: { displayName?: string; questionTriggerEnabled?: boolean; activationDurationMinutes: number }
 ) {
   const cutoff = now.getTime() - settings.activationDurationMinutes * 60_000;
   for (const row of rowsNewestFirst) {
     if (row.createdAt.getTime() < cutoff) return null;
+    if (assistantActivationSuppressed(row)) continue;
     if (virtualAssistantStopCommand(row.content, "ai_slmm", settings.displayName).stop) return null;
     const mode = questionAssistantDirectActivation(row.content, settings.displayName);
     if (mode === "direct" || (mode === "strong" && settings.questionTriggerEnabled !== false)) return row;

@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from "vue";
+import { assistantFeatureActions, type AssistantFeatureId } from "@shared/assistantTools";
+import AssistantFeatureActions from "./AssistantFeatureActions.vue";
 import { AudioLines, BookOpen, ChevronDown, ChevronRight, Download, FileUp, Mic, Pause, Play, Square } from "lucide-vue-next";
 import type { BibleLookupDTO, LinkPreviewDTO, MessageDTO } from "@shared/types";
 import type { ImageDimensions } from "@shared/imageDimensions";
@@ -110,6 +112,7 @@ const scriptureOnlyCard = computed(() => {
 });
 
 const emit = defineEmits<{
+  "open-assistant-feature": [feature: AssistantFeatureId];
   "open-shared-playlist": [message: MessageDTO];
   "longpress-begin": [message: MessageDTO, event: PointerEvent];
   "longpress-move": [event: PointerEvent];
@@ -360,4 +363,5 @@ const emit = defineEmits<{
       </template>
     </template>
   </template>
+  <AssistantFeatureActions v-if="message.sender.kind === 'virtual'" :actions="assistantFeatureActions(message.payload)" @open="emit('open-assistant-feature', $event)" />
 </template>

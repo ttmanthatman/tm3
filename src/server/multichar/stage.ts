@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { StageSnapshot, SnapshotMessage } from "./types.js";
+import { assistantActivationSuppressed } from "../../shared/assistantActivation.js";
 
 /**
  * Prisma 生成的 JsonNullableFilter 把 path 标为 string、且不接受 null，
@@ -19,6 +20,14 @@ export function createStage(prisma: PrismaClient) {
       select: { id: true },
     });
     return row?.id ?? 0;
+  }
+
+  async function activationSuppressed(channelId: number, version: number): Promise<boolean> {
+    const row = await prisma.message.findFirst({
+      where: { channelId, id: version, sender: { kind: "human" } },
+      select: { content: true, payload: true }
+    });
+    return !!row && assistantActivationSuppressed(row);
   }
 
   function extractMulticharMeta(payload: unknown): { basedOnVersion?: number; turnIndex?: number } {
@@ -41,7 +50,7 @@ export function createStage(prisma: PrismaClient) {
       include: { sender: true },
     });
 
-    const messages: SnapshotMessage[] = rows.reverse().map((row) => {
+    const messages: SnapshotMessage[] = rows.filter((row) => row.sender?.kind !== "human" || !assistantActivationSuppressed(row)).reverse().map((row) => {
       const meta = extractMulticharMeta(row.payload);
       return {
         id: row.id,
@@ -121,7 +130,7 @@ export function createStage(prisma: PrismaClient) {
     });
   }
 
-  return { latestVersion, getSnapshot, append, getRecentTurnIndex, countMessagesSince, extractMulticharMeta };
+  return { latestVersion, activationSuppressed, getSnapshot, append, getRecentTurnIndex, countMessagesSince, extractMulticharMeta };
 }
 
 export type Stage = ReturnType<typeof createStage>;

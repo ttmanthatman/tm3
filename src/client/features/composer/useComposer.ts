@@ -416,10 +416,13 @@ export function useComposer(options: UseComposerOptions) {
       options.messageSendStatus.value = "请写一处经文，或用 @@ 选一首歌";
       return;
     }
-    const content = listenDraft
+    const normalizedContent = listenDraft
       ? listenPlaylistContent(listenDraft.preview, listenDraft.note)
       : parsed.content || (musicMention ? `提及歌曲：${musicMention.title}` : "");
-    if (!content || !store.currentChannelId) return;
+    if (!normalizedContent || !store.currentChannelId) return;
+    // Parsing slash commands trims text. Preserve a typed final space on the
+    // wire so the server can derive the assistant opt-out from the raw input.
+    const content = normalizedContent + (/[ \u00a0]$/.test(input.value) ? " " : "");
     const originalInput = input.value;
     const originalMusicMention = musicMention;
     const originalListenMentions = listenMusicMentions.value;

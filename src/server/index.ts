@@ -108,11 +108,15 @@ import { createMusicService } from "./services/musicService.js";
 import { cleanListenPlaylistPayload } from "./services/listenPlaylist.js";
 import { createQuestionAssistantCatalog } from "./services/questionAssistantCatalog.js";
 import { DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT } from "../shared/virtualCharacters.js";
+import { assistantActivationPayload, assistantActivationSuppressed } from "../shared/assistantActivation.js";
 import { createVirtualDirectAssistant } from "./services/virtualDirectAssistant.js";
 import { createVirtualAssistantSessions } from "./services/virtualAssistantSessions.js";
+import { createAssistantToolRegistry } from "./services/assistantTools.js";
+import { registerAssistantChatFunctions } from "./services/assistantChatFunctions.js";
+import { createAssistantToolsSettingsStore, registerAssistantToolsRoutes } from "./routes/assistantTools.js";
 import { registerVirtualDirectChannelRoutes } from "./routes/virtualDirectChannels.js";
 import { questionAssistantActivationAnchor, virtualAssistantStopCommand, questionAssistantDirectActivation } from "./services/questionAssistantActivation.js";
-import { generateQuestionAssistantReply, requestQuestionAssistantCompletion } from "./services/questionAssistantReply.js";
+import { assistantMessageUsesFunctions, generateQuestionAssistantReply, requestQuestionAssistantCompletion } from "./services/questionAssistantReply.js";
 import { createMusicScoreShareService } from "./services/musicScoreLibrary.js";
 import { listenPlaylistContent, listenPlaylistPayload } from "../shared/listenPlaylist.js";
 import { BiblePassageValidationError, cleanBiblePassagePayload } from "./services/biblePassages.js";
@@ -960,6 +964,31 @@ const virtualAssistantSessions = createVirtualAssistantSessions(prisma, async (i
   if (dto) io.to(`ch:${channelId}`).emit("message:updated", dto);
 });
 
+const assistantToolsSettings = createAssistantToolsSettingsStore(prisma);
+const assistantTools = createAssistantToolRegistry(async context => {
+  if (!(await assistantToolsSettings.load()).enabled || !(await canWriteChannel(context.accountId, context.channelId))) return false;
+  const [trigger, assistant] = await Promise.all([
+    prisma.message.findUnique({ where: { id: context.triggerMessageId }, include: { sender: true, channel: true } }),
+    prisma.actor.findUnique({ where: { id: context.assistantActorId }, include: { character: true } })
+  ]);
+  if (!trigger || trigger.channelId !== context.channelId || trigger.sender.accountId !== context.accountId || trigger.sender.kind !== "human" || assistantActivationSuppressed(trigger)
+    || !assistant || assistant.kind !== "virtual" || assistant.status !== "active" || !assistant.character?.enabled) return false;
+  if (trigger.channel.kind === "direct" && trigger.channel.directKey !== virtualDirectChannelKey(context.accountId, assistant.username)) return false;
+  if (!virtualCharacterVisibleInChannel(trigger.channel, { username: assistant.username, config: assistant.character.config })) return false;
+  return !(await virtualAssistantSessions.stoppedSince(trigger, assistant.username, assistant.displayName));
+});
+registerAssistantChatFunctions(assistantTools, {
+  prisma,
+  searchMusic: async (input, context) => {
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: context.accountId }, select: { role: true, canPinMessages: true } });
+    const channel = await prisma.channel.findUniqueOrThrow({ where: { id: context.channelId }, select: { kind: true } });
+    const catalog = createQuestionAssistantCatalog({ prisma, publicOnly: channel.kind !== "direct", auth: { accountId: context.accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
+    return catalog.search({ query: input.query, kind: input.category, offset: input.offset });
+  },
+  friendPrograms: () => friendFeedService.getPrograms()
+});
+registerAssistantToolsRoutes(app, { registry: assistantTools, settings: assistantToolsSettings, requireAdmin });
+
 const audioWaveformJobs = new Set<number>();
 
 async function enrichAudioMessageWaveform(messageId: number, expectedFilePath: string) {
@@ -1265,7 +1294,40 @@ const virtualDirectAssistant = createVirtualDirectAssistant({
       apiKey: aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey)
     };
   },
-  complete: callWhyAssistant,
+  complete: async (settings, apiKey, contextText, context) => {
+    const tools = await assistantToolsSettings.load();
+    if (!tools.enabled) return callWhyAssistant(settings, apiKey, contextText);
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: context.accountId }, select: { role: true, canPinMessages: true } });
+    const catalog = createQuestionAssistantCatalog({ prisma, auth: { accountId: context.accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
+    return generateQuestionAssistantReply({
+      prompt: settings.promptCommand, systemPrompt: settings.systemPrompt, context: contextText,
+      canUseResources: async () => (await assistantToolsSettings.load()).enabled,
+      complete: messages => requestQuestionAssistantCompletion(settings, apiKey, messages),
+      searchMusic: input => catalog.search({ query: input.query, kind: input.category, offset: input.offset }),
+      resolveTrack: catalog.getTrack, canShareScore: async id => !!await catalog.getScore(id),
+      tools: { registry: assistantTools, context, maxCalls: tools.maxCalls }
+    });
+  },
+  canUseFunctions: async () => (await assistantToolsSettings.load()).enabled,
+  shareScore: async (scoreId, context, canPublish) => {
+    const assistant = await prisma.actor.findUniqueOrThrow({ where: { id: context.assistantActorId }, select: { username: true, displayName: true } });
+    const account = await prisma.account.findUniqueOrThrow({ where: { id: context.accountId }, select: { role: true, canPinMessages: true } });
+    const catalog = createQuestionAssistantCatalog({ prisma, auth: { accountId: context.accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
+    const score = await catalog.getScore(scoreId);
+    if (!score) throw new Error("selected score is no longer available");
+    const trigger = await prisma.message.findUniqueOrThrow({ where: { id: context.triggerMessageId } });
+    if (!(await canPublish()) || !(await assistantToolsSettings.load()).enabled) return;
+    if (await virtualAssistantSessions.stoppedSince(trigger, assistant.username, assistant.displayName)) return;
+    const shared = await createMusicScoreShareService(prisma, { scores: MUSIC_SCORE_DIR, uploads: UPLOAD_DIR }).share({
+      score, actorId: context.assistantActorId, channelId: context.channelId,
+      clientRequestId: `ai:${context.triggerMessageId}:score:${scoreId}`,
+      reply: { messageId: context.triggerMessageId, aiRole: assistant.username, activationMode: "direct", anchorMessageId: context.triggerMessageId }
+    });
+    if (shared.state === "created") for (const id of shared.messageIds) {
+      await emitMessage(id).catch(error => app.log.warn({ error, messageId: id }, "assistant score emit failed"));
+      void sendMessagePush(id, "").catch(error => app.log.warn({ error, messageId: id }, "assistant score push failed"));
+    }
+  },
   send: (input) => createMessageFromActor({ ...input, type: "text", skipEngineEvent: true, skipQuestionAssistant: true })
 });
 
@@ -1343,7 +1405,7 @@ async function buildQuestionAssistantContext(
     })
   ).reverse();
   const stopId = rows.reduce((last, row) => row.senderActorId === message.senderActorId && row.id < message.id
-    && virtualAssistantStopCommand(row.content, QUESTION_ASSISTANT_USERNAME, settings.displayName).stop ? Math.max(last, row.id) : last, 0);
+    && !assistantActivationSuppressed(row) && virtualAssistantStopCommand(row.content, QUESTION_ASSISTANT_USERNAME, settings.displayName).stop ? Math.max(last, row.id) : last, 0);
   const sessionRows = rows.filter(row => row.id > stopId);
   type Round = { user: Message & { sender: Actor }; assistant: Array<Message & { sender: Actor }> };
   const rounds: Round[] = [];
@@ -1469,7 +1531,7 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     where: { id: messageId },
     include: { sender: true, channel: { select: { id: true, name: true, kind: true, isPrivate: true, directKey: true } } }
   });
-  if (!message || message.type !== "text" || message.sender.kind !== "human") return;
+  if (!message || message.type !== "text" || message.sender.kind !== "human" || assistantActivationSuppressed(message)) return;
   const accountId = message.sender.accountId;
   if (!accountId || !(await canWriteChannel(accountId, message.channelId))) return;
   const ownDirect = message.channel.directKey === virtualDirectChannelKey(accountId, QUESTION_ASSISTANT_USERNAME);
@@ -1502,13 +1564,14 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, activationMode, activationAnchor);
   const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true, canPinMessages: true } });
   if (!account || !(await canWriteChannel(accountId, message.channelId))) return;
-  const catalog = createQuestionAssistantCatalog({ prisma, auth: { accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
+  const catalog = createQuestionAssistantCatalog({ prisma, publicOnly: !ownDirect, auth: { accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
   const metadata = {
     aiRole: QUESTION_ASSISTANT_USERNAME,
     aiActivationMode: activationMode,
     triggerMessageId: message.id,
     activationAnchorMessageId: activationAnchor?.id || message.id
   };
+  const toolsSettings = await assistantToolsSettings.load();
   const canPublish = async () => {
     if (!(await canWriteChannel(accountId, message.channelId))) return false;
     const current = await prisma.virtualCharacter.findUnique({ where: { actorId: assistant.id }, include: { actor: true } });
@@ -1517,8 +1580,12 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     // Read the durable stop boundary last: the permission/settings reads above can yield.
     return !(await virtualAssistantSessions.stoppedSince(message, assistant.username, assistant.displayName));
   };
-  const sendReply = async (content: string, payload: Record<string, unknown>) => {
+  const sendReply = async (content: string, payload: Record<string, unknown>, requiresFunctions?: boolean) => {
     if (!(await canPublish())) return false;
+    if (assistantMessageUsesFunctions({ content, payload, requiresFunctions })) {
+      if (!(await assistantToolsSettings.load()).enabled) return true;
+      if (await virtualAssistantSessions.stoppedSince(message, assistant.username, assistant.displayName)) return false;
+    }
     await createMessageFromActor({
       channelId: message.channelId, actorId: assistant.id, content, type: "text", replyToId: message.id,
       payload: { ...payload, ...metadata }, skipEngineEvent: true, skipQuestionAssistant: true
@@ -1530,11 +1597,14 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     reply = await generateQuestionAssistantReply({
       prompt: settings.value.promptCommand,
       systemPrompt: settings.value.systemPrompt,
+      allowResources: toolsSettings.enabled,
+      canUseResources: async () => (await assistantToolsSettings.load()).enabled,
       context: [settings.value.webSearchEnabled ? "联网查询默认开启；如当前模型或接口没有联网工具，请明确标注资料来自模型知识、需要查证。" : "联网查询已关闭。", contextText].join("\n\n"),
       complete: (messages) => requestQuestionAssistantCompletion(settings.value, apiKey, messages),
       searchMusic: ({ query, category, offset }) => catalog.search({ query, kind: category, offset }),
       resolveTrack: catalog.getTrack,
-      canShareScore: async (id) => (message.channel.kind === "standard" || message.channel.kind === "direct") && !!(await catalog.getScore(id))
+      canShareScore: async (id) => (message.channel.kind === "standard" || message.channel.kind === "direct") && !!(await catalog.getScore(id)),
+      tools: toolsSettings.enabled ? { registry: assistantTools, context: { accountId, channelId: message.channelId, triggerMessageId: message.id, assistantActorId: assistant.id }, maxCalls: toolsSettings.maxCalls } : undefined
     });
   } catch (error) {
     app.log.warn({ error, messageId: message.id }, "question assistant response failed");
@@ -1545,13 +1615,16 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
   }
   // A model call may outlive a membership change. Recheck before posting or copying any files.
   await virtualAssistantSessions.exclusive(message, assistant.username, async () => {
-    for (const item of reply.messages) if (!(await sendReply(item.content, item.payload))) return;
+    for (const item of reply.messages) if (!(await sendReply(item.content, item.payload, item.requiresFunctions))) return;
     const sharing = createMusicScoreShareService(prisma, { scores: MUSIC_SCORE_DIR, uploads: UPLOAD_DIR });
     for (const scoreId of reply.scoreIds) {
       try {
-        const score = await catalog.getScore(scoreId);
-        if (!score) throw new Error("selected score is no longer available");
         if (!(await canPublish())) return;
+        const currentAccount = await prisma.account.findUniqueOrThrow({ where: { id: accountId }, select: { role: true, canPinMessages: true } });
+        const currentCatalog = createQuestionAssistantCatalog({ prisma, publicOnly: !ownDirect, auth: { accountId, isAdmin: currentAccount.role === "admin", canPinMessages: currentAccount.canPinMessages } });
+        const score = await currentCatalog.getScore(scoreId);
+        if (!score) throw new Error("selected score is no longer available");
+        if (!(await assistantToolsSettings.load()).enabled || await virtualAssistantSessions.stoppedSince(message, assistant.username, assistant.displayName)) return;
         // One score is committed as a unit. A queued stop stamps its last page.
         const shared = await sharing.share({
           score, actorId: assistant.id, channelId: message.channelId,
@@ -2285,12 +2358,13 @@ async function createMessageFromActor(input: {
     include: { channel: { select: { kind: true } } }
   });
   const isolatedReception = message.channel.kind === "reception";
+  const suppressAiActivation = assistantActivationSuppressed(message);
   await emitMessage(message.id);
   if (!isolatedReception && !input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
-  if (!isolatedReception && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
+  if (!isolatedReception && !suppressAiActivation && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
-  if (!isolatedReception && !input.skipQuestionAssistant && (input.type || "text") === "text") {
+  if (!isolatedReception && !suppressAiActivation && !input.skipQuestionAssistant && (input.type || "text") === "text") {
     void virtualDirectAssistant.trigger(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "virtual direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
@@ -3438,7 +3512,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       actorId: auth.actorId,
       content,
       type: "prayer",
-      payload,
+      payload: assistantActivationPayload(body.content, payload),
       replyToId: body.replyToId || null,
       pushOrigin
     });
@@ -3461,7 +3535,7 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
     actorId: auth.actorId,
     content,
     type: "text",
-    payload: textPayload,
+    payload: assistantActivationPayload(body.content, textPayload),
     replyToId: body.replyToId || null,
     pushOrigin
   });
@@ -4411,13 +4485,14 @@ io.on("connection", async (socket: Socket) => {
         return ack?.({ success: false, code: "not_sent", message: "消息内容无效" });
       }
       const handwriting = body.type === "handwriting" ? prepareHandwritingMessage(body.payload, body.clientRequestId) : null;
-      const payload = handwriting?.payload ?? (
+      const validatedPayload = handwriting?.payload ?? (
         body.type === "prayer"
           ? cleanPrayerPayload(body.payload)
           : body.type === "sermon_request"
             ? cleanSermonRequestPayload(body.payload)
             : await cleanTextMessagePayload(body.payload)
       );
+      const payload = assistantActivationPayload(body.content, validatedPayload);
       // 「/听」清单的正文摘要按服务端解析后的引用重写，保证通知/回复预览与卡片一致
       const listenPlaylist = body.type === "text" ? listenPlaylistPayload(payload) : null;
       const biblePassage = body.type === "text" ? biblePassageMessagePayload(payload) : null;

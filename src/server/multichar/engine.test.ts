@@ -10,6 +10,39 @@ import type { UrgeEvaluator } from "./urge.js";
 import type { ImpressionManager } from "./impression.js";
 import type { EmotionManager } from "./emotion.js";
 
+test("a latest opt-out message blocks polling model calls until an ordinary message arrives", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
+  let suppressed = true;
+  let evaluations = 0;
+  let snapshots = 0;
+  const engine = createCharacterEngine(
+    { log: () => undefined } as unknown as MulticharDeps,
+    {
+      latestVersion: async () => 5,
+      activationSuppressed: async () => suppressed,
+      getSnapshot: async () => { snapshots++; return { channelId: 5, readFromVersion: 5, messages: [] }; }
+    } as unknown as Stage,
+    {} as Memory,
+    {} as AiClient,
+    { evaluate: async () => { evaluations++; return { wantToSpeak: false, reason: "无须回应", urgency: "low" }; } } as UrgeEvaluator,
+    {} as ImpressionManager,
+    { getEmotion: async () => "平静", updateEmotion: async () => "平静", driftTowardBaseline: async () => "平静" } satisfies EmotionManager,
+    { characterId: 3, actorId: 9, name: "角色甲", config: { bio: null, emotionBaseline: "平静" } }
+  );
+  try {
+    engine.start(5);
+    context.mock.timers.tick(9000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(evaluations, 0);
+    assert.equal(snapshots, 0);
+    suppressed = false;
+    context.mock.timers.tick(9000);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(evaluations, 1);
+    assert.equal(snapshots, 1);
+  } finally { engine.stop(); }
+});
+
 test("character utterances use saved base prompts and preserve runtime persona, memory and model settings", async (context) => {
   context.mock.timers.enable({ apis: ["setTimeout", "setInterval"] });
   for (const systemPrompt of [undefined, "管理员修改后的发言规则"]) {
@@ -17,7 +50,7 @@ test("character utterances use saved base prompts and preserve runtime persona, 
     const snapshot: StageSnapshot = { channelId: 5, readFromVersion: 1, messages: [] };
     const engine = createCharacterEngine(
       { prisma: { virtualCharacter: { findMany: async () => [] } }, log: () => {} } as unknown as MulticharDeps,
-      { latestVersion: async () => 1, getSnapshot: async () => snapshot } as unknown as Stage,
+      { latestVersion: async () => 1, activationSuppressed: async () => false, getSnapshot: async () => snapshot } as unknown as Stage,
       { recall: async () => ({ longTerm: ["自动记忆"], midTerm: [], impressions: new Map(), emotion: "喜乐" }) } as unknown as Memory,
       { callMainModel: async (system, user, model, thinkingEnabled) => {
         calls.push({ system, user, model, thinkingEnabled });

@@ -157,6 +157,20 @@ test("sendText keeps plain text on the normal send path", async () => {
   assert.deepEqual(gracePrefills, []);
 });
 
+test("sending preserves a final-space assistant opt-out after plain text or slash command normalization", async () => {
+  const { useChatStore } = await import("../../store");
+  useChatStore().currentChannelId = 7;
+  for (const draft of ["@所罗没门 为什么？ ", "/Markdown @所罗没门 为什么？ ", "/闪动 为什么？\u00a0", "/听 诗篇23 "]) {
+    const { composer, input, sent } = createComposerHarness();
+    input.value = draft;
+    await composer.sendText();
+    assert.equal(sent.length, 1, draft);
+    const message = sent[0] as { content: string; payload?: Record<string, unknown> };
+    assert.equal(message.content.endsWith(" "), true, draft);
+    assert.equal(message.payload?.aiActivationSuppressed, undefined);
+  }
+});
+
 test("an unconfirmed send reuses its request id when the user retries", async () => {
   let calls = 0;
   const { composer, input, sent } = createComposerHarness(async () => {

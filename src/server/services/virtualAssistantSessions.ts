@@ -1,5 +1,6 @@
 import type { Message, PrismaClient } from "@prisma/client";
 import { virtualAssistantStopCommand } from "./questionAssistantActivation.js";
+import { assistantActivationSuppressed } from "../../shared/assistantActivation.js";
 
 type Trigger = Pick<Message, "id" | "channelId" | "senderActorId" | "content" | "createdAt">;
 
@@ -20,9 +21,9 @@ export function createVirtualAssistantSessions(prisma: PrismaClient, updated: (i
     // The command itself is the durable session boundary, including across restarts.
     const rows = await prisma.message.findMany({
       where: { channelId: message.channelId, senderActorId: message.senderActorId, type: "text", id: { gt: message.id } },
-      select: { content: true }, orderBy: { id: "asc" }
+      select: { content: true, payload: true }, orderBy: { id: "asc" }
     });
-    return rows.some(row => virtualAssistantStopCommand(row.content, username, displayName).stop);
+    return rows.some(row => !assistantActivationSuppressed(row) && virtualAssistantStopCommand(row.content, username, displayName).stop);
   }
 
   async function stop(message: Trigger, assistant: { id: number; username: string }) {

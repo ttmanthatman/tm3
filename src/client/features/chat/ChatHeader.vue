@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   Ellipsis,
+  HelpCircle,
   Library,
   Search,
   PanelLeftOpen,
@@ -20,6 +21,7 @@ import ActivityTicker from "../../components/ActivityTicker.vue";
 import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
 import MessageSearchWindow from "./MessageSearchWindow.vue";
+import ChatUsageHelp from "./ChatUsageHelp.vue";
 import BibleIcon from "../bible/BibleIcon.vue";
 import SermonHub from "../sermon/SermonHub.vue";
 import type { MusicPlayer } from "../music/useMusicPlayer";
@@ -99,6 +101,8 @@ const props = defineProps<{
 }>();
 
 const messageSearchOpen = ref(false);
+const usageHelpOpen = ref(false);
+const chatToolsTrigger = ref<HTMLButtonElement | null>(null);
 
 function showCurrentScore() {
   if (!props.musicScoreOpen) props.toggleMusicScore();
@@ -107,6 +111,12 @@ function showCurrentScore() {
 function openMessageSearch() {
   messageSearchOpen.value = true;
   props.toggleChatToolsMenu();
+}
+
+function openUsageHelp() {
+  chatToolsTrigger.value?.focus({ preventScroll: true });
+  props.toggleChatToolsMenu();
+  usageHelpOpen.value = true;
 }
 
 function jumpToSearchResult(result: MessageSearchResultDTO) {
@@ -214,6 +224,7 @@ onBeforeUnmount(clearStoryHold);
     <button v-if="!showingFavoriteSurface && canDeleteCurrentChannel" class="icon-btn danger" @click="currentChannel && deleteChannel(currentChannel)" aria-label="删除频道"><Trash2 :size="19" /></button>
     <div v-if="!showingFavoriteSurface" class="chat-tools-control" data-chat-tools-menu>
       <button
+        ref="chatToolsTrigger"
         class="icon-btn chat-tools-trigger"
         type="button"
         :class="{ active: showChatToolsMenu }"
@@ -232,6 +243,7 @@ onBeforeUnmount(clearStoryHold);
         <AppMenuItem @click="toggleCurrentMemberPane"><Users :size="17" /><span>成员列表</span></AppMenuItem>
         <AppMenuItem :active="messageSelectionMode" @click="toggleMessageSelectionMode"><CheckCircle2 :size="17" /><span>{{ messageSelectionMode ? "退出消息多选" : "消息多选" }}</span></AppMenuItem>
         <AppMenuItem v-if="isAdmin" @click="loadAdmin"><Settings :size="17" /><span>系统设置</span></AppMenuItem>
+        <AppMenuItem @click="openUsageHelp"><HelpCircle :size="17" /><span>使用说明</span></AppMenuItem>
       </AppMenu>
     </div>
   </header>
@@ -241,6 +253,8 @@ onBeforeUnmount(clearStoryHold);
     @close="messageSearchOpen = false"
     @jump="jumpToSearchResult"
   />
+
+  <ChatUsageHelp v-if="usageHelpOpen" @close="usageHelpOpen = false" />
 
   <section
     v-if="!showingFavoriteSurface && (visiblePinned || activityTickerText)"

@@ -21,12 +21,14 @@ test("stop stamps only the same user's latest reply and preserves its media meta
 });
 
 test("durable stop detection scopes the user and channel and does not confuse discussion with a command", async () => {
-  let rows = [{ content: "为什么说闭嘴？" }];
+  let rows: Array<{ content: string; payload?: unknown }> = [{ content: "为什么说闭嘴？" }];
   let query: unknown;
   const prisma = { message: { findMany: async (input: unknown) => { query = input; return rows; } } } as unknown as PrismaClient;
   const sessions = createVirtualAssistantSessions(prisma, async () => undefined);
   assert.equal(await sessions.stoppedSince(trigger, "ai_slmm", "所罗没门"), false);
-  assert.deepEqual(query, { where: { channelId: 3, senderActorId: 4, type: "text", id: { gt: 10 } }, select: { content: true }, orderBy: { id: "asc" } });
+  assert.deepEqual(query, { where: { channelId: 3, senderActorId: 4, type: "text", id: { gt: 10 } }, select: { content: true, payload: true }, orderBy: { id: "asc" } });
+  rows = [{ content: "@所罗没门 你去睡觉吧", payload: { aiActivationSuppressed: true } }, { content: "闭嘴 " }];
+  assert.equal(await sessions.stoppedSince(trigger, "ai_slmm", "所罗没门"), false);
   rows = [{ content: "@所罗没门 你去睡觉吧" }];
   assert.equal(await sessions.stoppedSince(trigger, "ai_slmm", "所罗没门"), true);
 });

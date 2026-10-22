@@ -213,6 +213,9 @@ import { useAdminTools } from "./features/admin/useAdminTools";
 import VirtualRolePrompts from "./features/admin/VirtualRolePrompts.vue";
 import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
 import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
+import AssistantToolsSettingsPanel from "./features/admin/AssistantToolsSettingsPanel.vue";
+import AssistantFeatureLauncher from "./features/messages/AssistantFeatureLauncher.vue";
+import type { AssistantFeatureId } from "@shared/assistantTools";
 import { useAiSettings } from "./features/admin/useAiSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
@@ -5167,7 +5170,24 @@ const composerBindings = computed(() => ({
 // Stable helper/handler bundle shared by the timeline bubble and the favorites
 // card so both render message bodies through MessageRow with identical wiring.
 // brokenAttachmentIds is a ref and is bound separately at each usage site.
+const assistantFeatureLauncher = ref<InstanceType<typeof AssistantFeatureLauncher> | null>(null);
+const assistantFeatureHandlers = {
+  bible: openBibleWorkspace,
+  books: openBookWorkspace,
+  music: () => { if (!musicPlayerExpanded.value) openMusicPlayer(); },
+  friend: () => { if (!friendProgramsOpen.value) toggleFriendPrograms(); },
+  favorites: openFavorites,
+  prayer: () => store.currentChannelId && openChannelFromList(store.currentChannelId, "prayer"),
+  grace: () => store.currentChannelId && openChannelFromList(store.currentChannelId, "grace"),
+  stories: openSharedStories,
+  handwriting: openHandwritingComposer,
+  chain: openChainModal,
+  sermon: openSermonWorkspace,
+  members: () => { if (!showMembers.value) toggleCurrentMemberPane(); },
+  channels: () => { showChannels.value = true; }
+};
 const messageRowBindings = {
+  onOpenAssistantFeature: (feature: AssistantFeatureId) => assistantFeatureLauncher.value?.open(feature),
   fileUrl,
   fileThumbUrl,
   compactBytes,
@@ -5300,9 +5320,12 @@ const messageRowBindings = {
             <Mic :size="17" />
             <span>语音识别<small>语音消息转文字</small></span>
           </button>
+          <button type="button" :class="{ active: aiSettingsTab === 'tools' }" @click="aiSettingsTab = 'tools'">
+            <Sparkles :size="17" /><span>功能调用<small>自动发现聊天室功能</small></span>
+          </button>
         </nav>
 
-        <form class="form-grid ai-settings-form" @submit.prevent="saveAiSettings">
+        <form class="form-grid ai-settings-form" @submit.prevent="aiSettingsTab !== 'tools' && saveAiSettings()">
           <template v-if="aiSettingsTab === 'llm'">
             <section class="ai-settings-subsection ai-settings-card">
               <div class="ai-section-title">
@@ -5439,6 +5462,9 @@ const messageRowBindings = {
             </section>
           </template>
 
+          <template v-else-if="aiSettingsTab === 'tools'">
+            <AssistantToolsSettingsPanel />
+          </template>
           <template v-else-if="aiSettingsTab === 'asr'">
             <AiAsrSettingsPanel v-model:edit="aiSettingsEdit.asr" :configured="aiSettings?.asr" />
           </template>
@@ -5461,7 +5487,7 @@ const messageRowBindings = {
             </section>
           </template>
 
-          <div class="ai-settings-savebar">
+          <div v-if="aiSettingsTab !== 'tools'" class="ai-settings-savebar">
             <p v-if="aiSettingsMsg" class="settings-note">{{ aiSettingsMsg }}</p>
             <button class="primary-btn" type="submit" :disabled="aiSettingsBusy">{{ aiSettingsBusy ? "保存中" : "保存 AI 设置" }}</button>
           </div>
@@ -6868,5 +6894,6 @@ const messageRowBindings = {
       @clear="clearAppearancePickerImage"
       @select="selectAppearanceImage"
     />
+    <AssistantFeatureLauncher ref="assistantFeatureLauncher" :handlers="assistantFeatureHandlers" :channel-id="store.currentChannelId" @jump="jumpToMessageInChannel($event.channelId, $event.id)" />
   </main>
 </template>
