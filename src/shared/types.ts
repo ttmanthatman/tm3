@@ -576,12 +576,13 @@ export type AdminLoginLogKind =
   | "channel_view"
   | "message_sent"
   | "bible_open"
-  | "bible_listen";
+  | "bible_listen"
+  | "ai_exchange";
 
 export interface AdminLoginLogDTO {
   id: string;
   kind: AdminLoginLogKind;
-  category: "session" | "music" | "usage";
+  category: "session" | "music" | "usage" | "ai";
   accountId: number;
   username: string;
   displayName: string;
@@ -602,6 +603,13 @@ export interface AdminLoginLogDTO {
   progressMs?: number | null;
   listenedMs?: number | null;
   durationMs?: number | null;
+  aiRoleUsername?: string | null;
+  aiRoleName?: string | null;
+  isPrivateConversation?: boolean;
+  questionMessageId?: number;
+  answerMessageId?: number;
+  questionText?: string;
+  answerText?: string;
   createdAt: string;
 }
 
@@ -1079,6 +1087,7 @@ export interface AiRoleDTO {
   model?: string;
   thinkingEnabled?: boolean;
   promptCommand: string;
+  systemPrompt?: string;
   shortTermMemory?: string;
   midTermMemory?: string;
   longTermMemory?: string;
@@ -1086,6 +1095,7 @@ export interface AiRoleDTO {
   webSearchEnabled?: boolean;
   questionTriggerEnabled?: boolean;
   activationJudgePrompt?: string;
+  activationDurationMinutes?: number;
   contextTurnLimit?: number;
   contextWindowMinutes?: number;
 }

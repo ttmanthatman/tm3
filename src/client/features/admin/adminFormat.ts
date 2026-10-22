@@ -29,7 +29,8 @@ export function loginLogKindLabel(kind: AdminLoginLogKind) {
     channel_view: "查看频道",
     message_sent: "发送消息",
     bible_open: "打开圣经",
-    bible_listen: "听圣经"
+    bible_listen: "听圣经",
+    ai_exchange: "虚拟角色问答"
   };
   return labels[kind] || kind;
 }
@@ -38,6 +39,7 @@ export function loginLogTone(kind: AdminLoginLogKind) {
   if (kind === "auth_login" || kind === "presence_join") return "enter";
   if (kind === "auth_logout" || kind === "presence_leave") return "leave";
   if (kind === "music_progress") return "music";
+  if (kind === "ai_exchange") return "usage";
   if (kind === "channel_view" || kind === "message_sent" || kind === "bible_open" || kind === "bible_listen") return "usage";
   return "system";
 }

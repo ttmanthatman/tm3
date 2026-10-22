@@ -1,3 +1,4 @@
+import { DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT } from "../../shared/virtualCharacters.js";
 import type { MulticharDeps, CharacterConfig, StageSnapshot, SnapshotMessage } from "./types.js";
 import type { Stage } from "./stage.js";
 import type { Memory } from "./memory.js";
@@ -40,10 +41,13 @@ export function createCharacterEngine(
     const mc = (c.multichar ?? {}) as Record<string, unknown>;
     const channels = Array.isArray(c.channels) ? c.channels.map(Number).filter(Number.isFinite) : [];
     return {
-      bio: (mc.bio as CharacterConfig["bio"]) ?? null,
-      emotionBaseline: String(mc.emotionBaseline ?? "平静中性"),
+      systemPrompt: typeof c.systemPrompt === "string" ? c.systemPrompt : undefined,
+      bio: (mc.bio as CharacterConfig["bio"]) ?? (c.bio as CharacterConfig["bio"]) ?? null,
+      emotionBaseline: String(mc.emotionBaseline ?? c.emotionBaseline ?? "平静中性"),
       channels,
-      modelHints: mc.modelHints as CharacterConfig["modelHints"] | undefined,
+      manualMemory: c.manualMemory as CharacterConfig["manualMemory"] | undefined,
+      thinkingEnabled: Boolean(c.thinkingEnabled),
+      modelHints: (mc.modelHints ?? c.modelHints) as CharacterConfig["modelHints"] | undefined,
     };
   }
 
@@ -138,7 +142,7 @@ export function createCharacterEngine(
     const longTermMemory = [config.manualMemory?.longTerm, ...recalled.longTerm].filter((item): item is string => !!item);
     const recentMemory = [config.manualMemory?.shortTerm, ...recalled.midTerm].filter((item): item is string => !!item);
 
-    const systemPrompt = `你是以下这个人。完全融入这个人格发言。
+    const systemPrompt = `${config.systemPrompt ?? DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT}
 
 ${buildBioText(config)}
 
@@ -156,13 +160,7 @@ ${config.manualMemory?.midTerm ? `- ${config.manualMemory.midTerm}` : "-（暂�
 ${recentMemory.map((m: string) => `- ${m}`).join("\n") || "-（暂无）"}
 
 你对在场者的印象：
-${impressionLines || "-（暂无）"}
-
-要求：
-1. 完全融入人格，用你的语言指纹说话
-2. 你的印象和情绪会自然影响你的语气和立场
-3. 只输出发言内容本身，不要"XX说："之类前缀
-4. 如果觉得现在没什么可说的，输出 [PASS]`;
+${impressionLines || "-（暂无）"}`;
 
     const userPrompt = `当前对话（你开口时能看到的所有信息，version ≤ ${snapshot.readFromVersion}。期间别人可能说了新话，但你此刻基于这些回应）：
 

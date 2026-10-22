@@ -5,6 +5,7 @@ import { Prisma, type Actor, type Message, type PrismaClient } from "@prisma/cli
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import type { AiRoleDTO, AiSettingsDTO, MessageDTO } from "../../shared/types.js";
+import { QUESTION_ASSISTANT_MEDIA_PROTOCOL } from "../../shared/virtualCharacters.js";
 import {
   AI_RELATED_VERSES_KIND,
   AI_ROLE_USERNAMES,
@@ -43,6 +44,8 @@ type AuthedAiSettingsRequest = FastifyRequest & { auth: AiSettingsAuthContext };
 
 type RoleConfigDetails = {
   persona: string;
+  systemPrompt?: string;
+  activationDurationMinutes?: number;
   activationJudgePrompt: string;
   channelIds: number[];
   model: string;
@@ -54,6 +57,8 @@ type RoleConfigDetails = {
 
 type AiRoleSyncInput = {
   displayName: string;
+  systemPrompt?: string;
+  activationDurationMinutes?: number;
   persona: string;
   enabled?: boolean;
   activationJudgePrompt?: string;
@@ -110,6 +115,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
           in: [
             "whyAssistantEnabled",
             "whyAssistantPromptCommand",
+            "whyAssistantSystemPrompt",
             "whyAssistantActivationJudgePrompt",
             "whyAssistantWebSearchEnabled",
             "whyAssistantDisplayName",
@@ -118,6 +124,8 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
             "questionAssistantEnabled",
             "questionAssistantTriggerEnabled",
             "questionAssistantPromptCommand",
+            "questionAssistantSystemPrompt",
+            "questionAssistantActivationDurationMinutes",
             "questionAssistantActivationJudgePrompt",
             "questionAssistantWebSearchEnabled",
             "questionAssistantDisplayName",
@@ -147,6 +155,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         model: normalizeRoleModel(settings.get("whyAssistantModel")) || whyConfig.model,
         thinkingEnabled: settings.get("whyAssistantThinkingEnabled") === "true",
         promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
+        systemPrompt: settings.get("whyAssistantSystemPrompt") ?? whyConfig.systemPrompt ?? "",
         shortTermMemory: whyConfig.shortTermMemory,
         midTermMemory: whyConfig.midTermMemory,
         longTermMemory: whyConfig.longTermMemory,
@@ -162,6 +171,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         model: normalizeRoleModel(settings.get("questionAssistantModel")) || questionConfig.model,
         thinkingEnabled: settings.get("questionAssistantThinkingEnabled") === "true",
         promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+        systemPrompt: settings.get("questionAssistantSystemPrompt") ?? questionConfig.systemPrompt ?? QUESTION_ASSISTANT_MEDIA_PROTOCOL,
         shortTermMemory: questionConfig.shortTermMemory,
         midTermMemory: questionConfig.midTermMemory,
         longTermMemory: questionConfig.longTermMemory,
@@ -169,6 +179,7 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || questionConfig.activationJudgePrompt || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
         webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
         questionTriggerEnabled: settings.get("questionAssistantTriggerEnabled") !== "false",
+        activationDurationMinutes: clampInteger(settings.get("questionAssistantActivationDurationMinutes") ?? questionConfig.activationDurationMinutes ?? settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440),
         contextTurnLimit: clampInteger(settings.get("questionAssistantContextTurnLimit"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_TURNS, 1, 50),
         contextWindowMinutes: clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440)
       }
@@ -244,6 +255,8 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
               model: z.string().max(120).optional(),
               thinkingEnabled: z.boolean().optional(),
               promptCommand: z.string().max(6000).optional(),
+              systemPrompt: z.string().max(12000).optional(),
+              activationDurationMinutes: z.number().int().min(1).max(1440).optional(),
               shortTermMemory: z.string().max(8000).optional(),
               midTermMemory: z.string().max(8000).optional(),
               longTermMemory: z.string().max(8000).optional(),
@@ -284,7 +297,9 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         if (Object.prototype.hasOwnProperty.call(paraformer, "language")) await setSetting("aiParaformerLanguage", cleanAsrLanguage(paraformer.language));
       }
     }
-    for (const role of body.aiRoles || []) {
+    const currentRoles = body.aiRoles?.length ? (await aiSettingsDto()).aiRoles || [] : [];
+    for (const rolePatch of body.aiRoles || []) {
+      const role = { ...currentRoles.find((current) => current.username === rolePatch.username), ...rolePatch };
       if (role.username === WHY_ASSISTANT_USERNAME) {
         const displayName = (role.displayName || "").trim() || WHY_ASSISTANT_NAME;
         await setSetting("whyAssistantDisplayName", displayName);
@@ -293,10 +308,12 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("whyAssistantModel", normalizeRoleModel(role.model));
         if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("whyAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
         if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("whyAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT);
+        if (Object.prototype.hasOwnProperty.call(role, "systemPrompt")) await setSetting("whyAssistantSystemPrompt", role.systemPrompt || "");
         if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) await setSetting("whyAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim());
         await syncAiRoleVirtualCharacterConfig(WHY_ASSISTANT_USERNAME, WHY_ASSISTANT_NAME, {
           displayName,
           persona: (role.promptCommand || "").trim() || DEFAULT_WHY_ASSISTANT_PROMPT,
+          systemPrompt: role.systemPrompt,
           enabled: role.enabled,
           activationJudgePrompt: (role.activationJudgePrompt || "").trim(),
           channelIds: role.channelIds,
@@ -316,6 +333,8 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         if (Object.prototype.hasOwnProperty.call(role, "model")) await setSetting("questionAssistantModel", normalizeRoleModel(role.model));
         if (Object.prototype.hasOwnProperty.call(role, "thinkingEnabled")) await setSetting("questionAssistantThinkingEnabled", role.thinkingEnabled ? "true" : "false");
         if (Object.prototype.hasOwnProperty.call(role, "promptCommand")) await setSetting("questionAssistantPromptCommand", (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT);
+        if (Object.prototype.hasOwnProperty.call(role, "systemPrompt")) await setSetting("questionAssistantSystemPrompt", role.systemPrompt || "");
+        if (Object.prototype.hasOwnProperty.call(role, "activationDurationMinutes")) await setSetting("questionAssistantActivationDurationMinutes", String(role.activationDurationMinutes));
         if (Object.prototype.hasOwnProperty.call(role, "activationJudgePrompt")) {
           await setSetting("questionAssistantActivationJudgePrompt", (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT);
         }
@@ -328,6 +347,8 @@ export function registerAiSettingsRoutes(app: FastifyInstance, deps: AiSettingsR
         await syncAiRoleVirtualCharacterConfig(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, {
           displayName,
           persona: (role.promptCommand || "").trim() || DEFAULT_QUESTION_ASSISTANT_PROMPT,
+          systemPrompt: role.systemPrompt,
+          activationDurationMinutes: role.activationDurationMinutes,
           enabled: role.enabled,
           activationJudgePrompt: (role.activationJudgePrompt || "").trim() || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
           channelIds: role.channelIds,

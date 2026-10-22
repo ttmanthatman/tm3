@@ -1,6 +1,28 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { questionAssistantDirectActivation } from "./questionAssistantActivation.js";
+import { questionAssistantActivationAnchor, questionAssistantDirectActivation, virtualAssistantStopCommand } from "./questionAssistantActivation.js";
+
+test("activation uses its own duration, stop boundaries and new explicit reactivation", () => {
+  const now = new Date("2026-10-22T12:00:00Z");
+  const row = (content: string, minutesAgo: number) => ({ content, createdAt: new Date(now.getTime() - minutesAgo * 60_000) });
+  const settings = { activationDurationMinutes: 3, displayName: "所罗没门", questionTriggerEnabled: true };
+  const question = row("为什么？", 2);
+  assert.equal(questionAssistantActivationAnchor([question], now, settings), question);
+  assert.equal(questionAssistantActivationAnchor([row("为什么？", 4)], now, settings), null);
+  assert.equal(questionAssistantActivationAnchor([row("谢谢", 0), row("闭嘴", 1), question], now, settings), null);
+  const next = row("@所罗没门 再来回答", 0);
+  assert.equal(questionAssistantActivationAnchor([next, row("闭嘴", 1), question], now, settings), next);
+  assert.equal(questionAssistantActivationAnchor([question], now, { ...settings, questionTriggerEnabled: false }), null);
+  assert.equal(questionAssistantActivationAnchor([next], now, { ...settings, questionTriggerEnabled: false }), next);
+});
+
+test("complete stop commands accept mentions and polite endings without matching ordinary discussion", () => {
+  for (const content of ["@所罗没门 安静", "闭嘴", "你去买酱油吧", "你去跑步吧", "你去睡觉吧", "<p>@ai_slmm 请安静！</p>", "所罗没门，闭嘴。"])
+    assert.equal(virtualAssistantStopCommand(content, "ai_slmm", "所罗没门").stop, true, content);
+  for (const content of ["为什么要安静？", "他说你去睡觉吧", "不要闭嘴", "@其他人 安静", "安静的经文", "“闭嘴”是什么含义？"])
+    assert.equal(virtualAssistantStopCommand(content, "ai_slmm", "所罗没门").stop, false, content);
+  assert.deepEqual(virtualAssistantStopCommand("@小+助手 安静", "ai_slmm", "小+助手"), { stop: true, addressed: true });
+});
 
 test("explicit assistant mentions and configured nicknames retain direct activation", () => {
   for (const text of ["@ai_slmm 我想听歌", "@ AI_SLMM", "<b>@ai_slmm</b> 关于安慰的经文", "@ai_slmm 你好吗？"]) {

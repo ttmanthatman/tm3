@@ -58,6 +58,16 @@ test("ordinary answers preserve the custom prompt and Markdown without querying 
   assert.equal(h.checkedScoreIds.length, 0);
 });
 
+test("the saved base system prompt replaces the default while preserving persona and context", async () => {
+  const h = harness([reply("按已保存的指令回答。")]);
+  await generateQuestionAssistantReply({ ...h.deps, systemPrompt: "管理员修改后的底层提示" });
+  assert.deepEqual(h.prompts[0], [
+    { role: "system", content: h.deps.prompt },
+    { role: "system", content: "管理员修改后的底层提示" },
+    { role: "user", content: h.deps.context }
+  ]);
+});
+
 test("legacy prose and JSON code fences remain readable during provider format transitions", async () => {
   for (const answer of ["**愿你平安**", "```json\n" + reply("**愿你平安**") + "\n``` "]) {
     const h = harness([answer]);

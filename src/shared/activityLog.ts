@@ -1,4 +1,4 @@
-export type ActivityLogCategory = "session" | "music" | "usage";
+export type ActivityLogCategory = "session" | "music" | "usage" | "ai";
 
 export type MusicProgressState = "started" | "progress" | "paused" | "changed" | "ended" | "error";
 
@@ -26,6 +26,7 @@ export function shouldWriteMusicProgress(state: MusicProgressState, elapsedSince
 }
 
 export function activityLogCategory(kind: string): ActivityLogCategory {
+  if (kind === "ai_exchange") return "ai";
   if (SESSION_ACTIVITY_KINDS.has(kind)) return "session";
   if (kind.startsWith("music_")) return "music";
   return "usage";

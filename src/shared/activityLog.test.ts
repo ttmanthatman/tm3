@@ -19,6 +19,7 @@ test("music progress snapshots are throttled while lifecycle events are always k
 });
 
 test("activity log kinds map to the log page filters", () => {
+  assert.equal(activityLogCategory("ai_exchange"), "ai");
   assert.equal(activityLogCategory("auth_login"), "session");
   assert.equal(activityLogCategory("presence_leave"), "session");
   assert.equal(activityLogCategory("music_progress"), "music");

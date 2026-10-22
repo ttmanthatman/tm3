@@ -12,6 +12,7 @@ import { createCharacterEngine, type CharacterEngine } from "./engine.js";
  * 字段类型从 CharacterConfig 派生，越界数据由读取处的兜底逻辑处理。
  */
 interface StoredCharacterConfig {
+  systemPrompt?: string;
   channels?: unknown;
   manualMemory?: CharacterConfig["manualMemory"];
   generation?: { thinkingEnabled?: boolean };
@@ -50,6 +51,7 @@ export function createMulticharManager(deps: MulticharDeps) {
     const stored = vc.config as StoredCharacterConfig;
     const mc = stored.multichar ?? {};
     const config: CharacterConfig = {
+      systemPrompt: stored.systemPrompt,
       bio: mc.bio ?? null,
       emotionBaseline: mc.emotionBaseline ?? "平静中性",
       channels: Array.isArray(stored.channels) ? stored.channels.map(Number).filter(Number.isFinite) : [],

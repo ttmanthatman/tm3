@@ -31,6 +31,7 @@ export interface CharacterBio {
 }
 
 export interface CharacterConfig {
+  systemPrompt?: string;
   bio: CharacterBio | null;
   emotionBaseline: string;
   channels?: number[];

@@ -107,7 +107,11 @@ import { createFriendFeedService, nextFriendFeedRefreshAt } from "./friendFeed.j
 import { createMusicService } from "./services/musicService.js";
 import { cleanListenPlaylistPayload } from "./services/listenPlaylist.js";
 import { createQuestionAssistantCatalog } from "./services/questionAssistantCatalog.js";
-import { questionAssistantDirectActivation } from "./services/questionAssistantActivation.js";
+import { DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT } from "../shared/virtualCharacters.js";
+import { createVirtualDirectAssistant } from "./services/virtualDirectAssistant.js";
+import { createVirtualAssistantSessions } from "./services/virtualAssistantSessions.js";
+import { registerVirtualDirectChannelRoutes } from "./routes/virtualDirectChannels.js";
+import { questionAssistantActivationAnchor, virtualAssistantStopCommand, questionAssistantDirectActivation } from "./services/questionAssistantActivation.js";
 import { generateQuestionAssistantReply, requestQuestionAssistantCompletion } from "./services/questionAssistantReply.js";
 import { createMusicScoreShareService } from "./services/musicScoreLibrary.js";
 import { listenPlaylistContent, listenPlaylistPayload } from "../shared/listenPlaylist.js";
@@ -951,6 +955,11 @@ const messageSerializationService = createMessageSerializationService({
 });
 const { serializeMessage, hydrateMessage, buildMessageSerializeBatch } = messageSerializationService;
 
+const virtualAssistantSessions = createVirtualAssistantSessions(prisma, async (id, channelId) => {
+  const dto = await hydrateMessage(id);
+  if (dto) io.to(`ch:${channelId}`).emit("message:updated", dto);
+});
+
 const audioWaveformJobs = new Set<number>();
 
 async function enrichAudioMessageWaveform(messageId: number, expectedFilePath: string) {
@@ -1062,6 +1071,8 @@ function roleConfigDetails(rawConfig: unknown) {
   return {
     persona: String(profile.persona || ""),
     activationJudgePrompt: String(config.activationJudgePrompt || ""),
+    systemPrompt: typeof config.systemPrompt === "string" ? config.systemPrompt : undefined,
+    activationDurationMinutes: Number(config.activationDurationMinutes) || undefined,
     channelIds: Array.isArray(config.channels) ? config.channels.map(Number).filter(Number.isFinite) : [],
     model: normalizeRoleModel(generation.model || modelHints.mainModel),
     thinkingEnabled: Boolean(generation.thinkingEnabled),
@@ -1077,6 +1088,8 @@ function buildAiRoleCharacterConfig(input: {
   channelIds?: number[];
   existingConfig?: unknown;
   activationJudgePrompt?: string;
+  systemPrompt?: string;
+  activationDurationMinutes?: number;
   model?: string;
   thinkingEnabled?: boolean;
   shortTermMemory?: string;
@@ -1102,6 +1115,8 @@ function buildAiRoleCharacterConfig(input: {
       speakingStyle: String(profile.speakingStyle || "像微信群里的真人，简短自然")
     },
     activationJudgePrompt: input.activationJudgePrompt ?? String(base.activationJudgePrompt || ""),
+    ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+    ...(input.activationDurationMinutes !== undefined ? { activationDurationMinutes: input.activationDurationMinutes } : {}),
     channels: [...new Set((input.channelIds || []).map(Number).filter(Number.isFinite))],
     manualMemory: {
       ...roleConfigObject(base.manualMemory),
@@ -1135,6 +1150,8 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
   persona: string;
   enabled?: boolean;
   activationJudgePrompt?: string;
+  systemPrompt?: string;
+  activationDurationMinutes?: number;
   channelIds?: number[];
   model?: string;
   thinkingEnabled?: boolean;
@@ -1155,6 +1172,8 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
         channelIds: input.channelIds,
         existingConfig: character.config,
         activationJudgePrompt: input.activationJudgePrompt,
+        systemPrompt: input.systemPrompt,
+        activationDurationMinutes: input.activationDurationMinutes,
         model: input.model,
         thinkingEnabled: input.thinkingEnabled,
         shortTermMemory: input.shortTermMemory,
@@ -1169,15 +1188,18 @@ async function syncAiRoleVirtualCharacterConfig(username: string, fallbackName: 
 async function loadWhyAssistantSettings() {
   const aiSettings = await aiSettingsStore.loadAiSettings();
   const rows = await prisma.setting.findMany({
-    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName", "whyAssistantModel", "whyAssistantThinkingEnabled"] } }
+    where: { key: { in: ["whyAssistantEnabled", "whyAssistantPromptCommand", "whyAssistantWebSearchEnabled", "whyAssistantDisplayName", "whyAssistantModel", "whyAssistantThinkingEnabled", "whyAssistantSystemPrompt"] } }
   });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
+  const character = await prisma.virtualCharacter.findFirst({ where: { actor: { username: WHY_ASSISTANT_USERNAME } }, select: { config: true } });
+  const role = roleConfigDetails(character?.config);
   return {
     value: {
       ...aiSettings.value,
       enabled: settings.get("whyAssistantEnabled") !== "false",
       displayName: settings.get("whyAssistantDisplayName") || WHY_ASSISTANT_NAME,
       promptCommand: settings.get("whyAssistantPromptCommand") || DEFAULT_WHY_ASSISTANT_PROMPT,
+      systemPrompt: settings.get("whyAssistantSystemPrompt") ?? role.systemPrompt ?? "",
       webSearchEnabled: settings.get("whyAssistantWebSearchEnabled") !== "false",
       model: normalizeRoleModel(settings.get("whyAssistantModel")) || aiSettings.value.model,
       thinkingEnabled: settings.get("whyAssistantThinkingEnabled") === "true"
@@ -1186,7 +1208,7 @@ async function loadWhyAssistantSettings() {
   };
 }
 
-async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean; thinkingEnabled?: boolean }, apiKey: string, contextText: string) {
+async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: boolean; thinkingEnabled?: boolean; systemPrompt?: string }, apiKey: string, contextText: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45_000);
   try {
@@ -1200,6 +1222,7 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
         model: settings.model,
         messages: [
           { role: "system", content: settings.promptCommand },
+          ...(settings.systemPrompt ? [{ role: "system", content: settings.systemPrompt }] : []),
           {
             role: "user",
             content: [
@@ -1223,56 +1246,28 @@ async function callWhyAssistant(settings: AiSettingsDTO & { webSearchEnabled?: b
   }
 }
 
-async function buildWhyDirectAssistantContext(message: Message & { sender: Actor; channel: { name: string } }, assistant: Actor) {
-  const rows = await prisma.message.findMany({
-    where: {
-      channelId: message.channelId,
-      id: { lte: message.id },
-      OR: [{ senderActorId: message.senderActorId }, { senderActorId: assistant.id }]
-    },
-    include: { sender: true },
-    orderBy: { id: "desc" },
-    take: 24
-  });
-  const historyLines = rows
-    .reverse()
-    .map((row) => `${row.senderActorId === assistant.id ? "为什么助手" : "用户"}：${plainTextFromHtml(row.content, 1200)}`)
-    .filter(Boolean);
-  return [
-    `私聊频道：${message.channel.name}`,
-    `发言人：${message.sender.displayName}`,
-    "",
-    "最近对话：",
-    ...(historyLines.length ? historyLines : ["无"]),
-    "",
-    "请按为什么助手规则回应。"
-  ].join("\n").slice(0, 12000);
-}
-
-async function maybeTriggerWhyDirectAssistant(messageId: number) {
-  const message = await prisma.message.findUnique({
-    where: { id: messageId },
-    include: { sender: true, channel: { select: { name: true, directKey: true } } }
-  });
-  if (!message || message.type !== "text" || message.sender.kind !== "human") return;
-  if (message.channel.directKey !== virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
-  const settings = await loadWhyAssistantSettings();
-  const apiKey = aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey);
-  if (!settings.value.enabled || !apiKey) return;
-  const assistant = await ensureWhyAssistantCharacter(settings.value.displayName);
-  const contextText = await buildWhyDirectAssistantContext(message, assistant);
-  const responseText = await callWhyAssistant(settings.value, apiKey, contextText);
-  await createMessageFromActor({
-    channelId: message.channelId,
-    actorId: assistant.id,
-    content: responseText,
-    type: "text",
-    replyToId: message.id,
-    payload: { contentFormat: "markdown", aiRole: WHY_ASSISTANT_USERNAME, triggerMessageId: message.id },
-    skipEngineEvent: true,
-    skipQuestionAssistant: true
-  });
-}
+const virtualDirectAssistant = createVirtualDirectAssistant({
+  prisma, canWriteChannel, sessions: virtualAssistantSessions,
+  loadSettings: async (username, config) => {
+    if (username === WHY_ASSISTANT_USERNAME) {
+      const settings = await loadWhyAssistantSettings();
+      return { value: settings.value, apiKey: aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey) };
+    }
+    const settings = await aiSettingsStore.loadAiSettings();
+    const role = roleConfigDetails(config);
+    return {
+      value: {
+        ...settings.value, enabled: true, model: role.model || settings.value.model,
+        promptCommand: [role.persona, JSON.stringify(roleConfigObject(roleConfigObject(config).multichar).bio || {}), role.shortTermMemory, role.midTermMemory, role.longTermMemory].filter(Boolean).join("\n\n"),
+        systemPrompt: role.systemPrompt ?? DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT,
+        thinkingEnabled: role.thinkingEnabled, webSearchEnabled: false
+      },
+      apiKey: aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey)
+    };
+  },
+  complete: callWhyAssistant,
+  send: (input) => createMessageFromActor({ ...input, type: "text", skipEngineEvent: true, skipQuestionAssistant: true })
+});
 
 async function loadQuestionAssistantSettings() {
   const aiSettings = await aiSettingsStore.loadAiSettings();
@@ -1284,6 +1279,8 @@ async function loadQuestionAssistantSettings() {
           "questionAssistantTriggerEnabled",
           "questionAssistantPromptCommand",
           "questionAssistantActivationJudgePrompt",
+          "questionAssistantSystemPrompt",
+          "questionAssistantActivationDurationMinutes",
           "questionAssistantWebSearchEnabled",
           "questionAssistantDisplayName",
           "questionAssistantModel",
@@ -1295,6 +1292,8 @@ async function loadQuestionAssistantSettings() {
     }
   });
   const settings = new Map(rows.map((row) => [row.key, row.value]));
+  const character = await prisma.virtualCharacter.findFirst({ where: { actor: { username: QUESTION_ASSISTANT_USERNAME } }, select: { config: true } });
+  const role = roleConfigDetails(character?.config);
   return {
     value: {
       ...aiSettings.value,
@@ -1303,6 +1302,8 @@ async function loadQuestionAssistantSettings() {
       displayName: settings.get("questionAssistantDisplayName") || QUESTION_ASSISTANT_NAME,
       promptCommand: settings.get("questionAssistantPromptCommand") || DEFAULT_QUESTION_ASSISTANT_PROMPT,
       activationJudgePrompt: settings.get("questionAssistantActivationJudgePrompt") || DEFAULT_QUESTION_ASSISTANT_JUDGE_PROMPT,
+      systemPrompt: settings.get("questionAssistantSystemPrompt") ?? role.systemPrompt,
+      activationDurationMinutes: clampInteger(settings.get("questionAssistantActivationDurationMinutes"), role.activationDurationMinutes ?? clampInteger(settings.get("questionAssistantContextWindowMinutes"), DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440), 1, 1440),
       webSearchEnabled: settings.get("questionAssistantWebSearchEnabled") !== "false",
       model: normalizeRoleModel(settings.get("questionAssistantModel")) || aiSettings.value.model,
       thinkingEnabled: settings.get("questionAssistantThinkingEnabled") === "true",
@@ -1341,11 +1342,14 @@ async function buildQuestionAssistantContext(
       take: 500
     })
   ).reverse();
+  const stopId = rows.reduce((last, row) => row.senderActorId === message.senderActorId && row.id < message.id
+    && virtualAssistantStopCommand(row.content, QUESTION_ASSISTANT_USERNAME, settings.displayName).stop ? Math.max(last, row.id) : last, 0);
+  const sessionRows = rows.filter(row => row.id > stopId);
   type Round = { user: Message & { sender: Actor }; assistant: Array<Message & { sender: Actor }> };
   const rounds: Round[] = [];
   const roundByTriggerId = new Map<number, Round>();
   const userRowsById = new Map<number, Message & { sender: Actor }>();
-  for (const row of rows) {
+  for (const row of sessionRows) {
     if (row.senderActorId === message.senderActorId) {
       userRowsById.set(row.id, row);
       if (row.id === message.id) {
@@ -1355,7 +1359,7 @@ async function buildQuestionAssistantContext(
       }
     }
   }
-  for (const row of rows) {
+  for (const row of sessionRows) {
     if (row.senderActorId !== assistant.id) continue;
     const payload = messagePayloadRecord(row);
     if (payload.aiRole !== QUESTION_ASSISTANT_USERNAME) continue;
@@ -1396,40 +1400,28 @@ async function buildQuestionAssistantContext(
 
 async function findQuestionAssistantActivationAnchor(
   message: Message & { sender: Actor; channel: { name: string } },
-  settings: AiSettingsDTO & { displayName?: string; questionTriggerEnabled?: boolean; contextWindowMinutes?: number }
+  settings: AiSettingsDTO & { displayName?: string; questionTriggerEnabled?: boolean; activationDurationMinutes: number }
 ) {
-  const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
-  const cutoff = new Date(message.createdAt.getTime() - contextWindowMinutes * 60 * 1000);
+  const cutoff = new Date(message.createdAt.getTime() - settings.activationDurationMinutes * 60_000);
   const rows = await prisma.message.findMany({
-    where: {
-      channelId: message.channelId,
-      senderActorId: message.senderActorId,
-      type: "text",
-      id: { lt: message.id },
-      createdAt: { gte: cutoff }
-    },
-    orderBy: { id: "desc" },
-    take: 100
+    where: { channelId: message.channelId, senderActorId: message.senderActorId, type: "text", id: { lt: message.id }, createdAt: { gte: cutoff } },
+    orderBy: { id: "desc" }
   });
-  return rows.find((row) => {
-    const activation = questionAssistantDirectActivation(row.content, settings.displayName);
-    if (activation === "strong" && !settings.questionTriggerEnabled) return false;
-    return activation === "strong" || activation === "direct";
-  });
+  return questionAssistantActivationAnchor(rows, message.createdAt, settings);
 }
 
 function buildQuestionAssistantJudgeContext(
   message: Message & { sender: Actor; channel: { name: string } },
   anchor: Message,
   assistant: Actor,
-  settings: AiSettingsDTO & { displayName?: string; contextTurnLimit?: number; contextWindowMinutes?: number }
+  settings: AiSettingsDTO & { displayName?: string; contextTurnLimit?: number; contextWindowMinutes?: number; activationDurationMinutes?: number }
 ) {
   const contextWindowMinutes = clampInteger(settings.contextWindowMinutes, DEFAULT_QUESTION_ASSISTANT_CONTEXT_WINDOW_MINUTES, 1, 1440);
   const lines = [
     `频道：${message.channel.name}`,
     `发言人：${message.sender.displayName}`,
     `虚拟助手：${assistant.displayName} (@${assistant.username})`,
-    `弱激活有效分钟数：${contextWindowMinutes}`,
+    `弱激活有效分钟数：${settings.activationDurationMinutes || contextWindowMinutes}`,
     `最近强激活问题：${plainTextFromHtml(anchor.content, 2000)}`,
     `当前用户发言：${plainTextFromHtml(message.content, 2000)}`,
     "",
@@ -1478,17 +1470,27 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     include: { sender: true, channel: { select: { id: true, name: true, kind: true, isPrivate: true, directKey: true } } }
   });
   if (!message || message.type !== "text" || message.sender.kind !== "human") return;
-  if (message.channel.directKey === virtualDirectChannelKey(message.sender.accountId || 0, WHY_ASSISTANT_USERNAME)) return;
+  const accountId = message.sender.accountId;
+  if (!accountId || !(await canWriteChannel(accountId, message.channelId))) return;
+  const ownDirect = message.channel.directKey === virtualDirectChannelKey(accountId, QUESTION_ASSISTANT_USERNAME);
+  if (message.channel.directKey && !ownDirect) return;
   const settings = await loadQuestionAssistantSettings();
-  const directActivation = questionAssistantDirectActivation(message.content, settings.value.displayName);
+  const command = virtualAssistantStopCommand(message.content, QUESTION_ASSISTANT_USERNAME, settings.value.displayName);
+  if (command.stop) {
+    const actor = await prisma.actor.findUnique({ where: { username: QUESTION_ASSISTANT_USERNAME }, include: { character: true } });
+    if (actor && virtualCharacterVisibleInChannel(message.channel, { username: actor.username, config: actor.character?.config }))
+      await virtualAssistantSessions.stop(message, actor);
+    return;
+  }
   const apiKey = aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey);
   if (!settings.value.enabled || !apiKey) return;
+  const directActivation = ownDirect ? "direct" : questionAssistantDirectActivation(message.content, settings.value.displayName);
   let activationMode: QuestionAssistantActivationMode | null = directActivation;
   let activationAnchor: Message | null | undefined = directActivation ? message : null;
   if (activationMode === "strong" && !settings.value.questionTriggerEnabled) return;
   const assistant = await ensureAiRoleCharacter(QUESTION_ASSISTANT_USERNAME, QUESTION_ASSISTANT_NAME, settings.value.displayName);
-  const assistantCharacter = await prisma.virtualCharacter.findUnique({ where: { actorId: assistant.id }, select: { config: true } });
-  if (!virtualCharacterVisibleInChannel(message.channel, { username: QUESTION_ASSISTANT_USERNAME, config: assistantCharacter?.config })) return;
+  const assistantCharacter = await prisma.virtualCharacter.findUnique({ where: { actorId: assistant.id }, select: { config: true, enabled: true } });
+  if (!assistantCharacter?.enabled || !virtualCharacterVisibleInChannel(message.channel, { username: QUESTION_ASSISTANT_USERNAME, config: assistantCharacter.config })) return;
   if (!activationMode) {
     activationAnchor = await findQuestionAssistantActivationAnchor(message, settings.value);
     if (!activationAnchor) return;
@@ -1498,8 +1500,6 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     activationMode = "weak";
   }
   const contextText = await buildQuestionAssistantContext(message, assistant, settings.value, activationMode, activationAnchor);
-  const accountId = message.sender.accountId;
-  if (!accountId) return;
   const account = await prisma.account.findUnique({ where: { id: accountId }, select: { role: true, canPinMessages: true } });
   if (!account || !(await canWriteChannel(accountId, message.channelId))) return;
   const catalog = createQuestionAssistantCatalog({ prisma, auth: { accountId, isAdmin: account.role === "admin", canPinMessages: account.canPinMessages } });
@@ -1509,14 +1509,27 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     triggerMessageId: message.id,
     activationAnchorMessageId: activationAnchor?.id || message.id
   };
-  const sendReply = (content: string, payload: Record<string, unknown>) => createMessageFromActor({
-    channelId: message.channelId, actorId: assistant.id, content, type: "text", replyToId: message.id,
-    payload: { ...payload, ...metadata }, skipEngineEvent: true, skipQuestionAssistant: true
-  });
+  const canPublish = async () => {
+    if (!(await canWriteChannel(accountId, message.channelId))) return false;
+    const current = await prisma.virtualCharacter.findUnique({ where: { actorId: assistant.id }, include: { actor: true } });
+    if (!current?.enabled || current.actor.status !== "active" || !(await loadQuestionAssistantSettings()).value.enabled
+      || !virtualCharacterVisibleInChannel(message.channel, { username: assistant.username, config: current.config })) return false;
+    // Read the durable stop boundary last: the permission/settings reads above can yield.
+    return !(await virtualAssistantSessions.stoppedSince(message, assistant.username, assistant.displayName));
+  };
+  const sendReply = async (content: string, payload: Record<string, unknown>) => {
+    if (!(await canPublish())) return false;
+    await createMessageFromActor({
+      channelId: message.channelId, actorId: assistant.id, content, type: "text", replyToId: message.id,
+      payload: { ...payload, ...metadata }, skipEngineEvent: true, skipQuestionAssistant: true
+    });
+    return true;
+  };
   let reply;
   try {
     reply = await generateQuestionAssistantReply({
       prompt: settings.value.promptCommand,
+      systemPrompt: settings.value.systemPrompt,
       context: [settings.value.webSearchEnabled ? "联网查询默认开启；如当前模型或接口没有联网工具，请明确标注资料来自模型知识、需要查证。" : "联网查询已关闭。", contextText].join("\n\n"),
       complete: (messages) => requestQuestionAssistantCompletion(settings.value, apiKey, messages),
       searchMusic: ({ query, category, offset }) => catalog.search({ query, kind: category, offset }),
@@ -1525,35 +1538,39 @@ async function maybeTriggerQuestionAssistant(messageId: number) {
     });
   } catch (error) {
     app.log.warn({ error, messageId: message.id }, "question assistant response failed");
-    if (await canWriteChannel(accountId, message.channelId)) await sendReply("这次暂时无法完成回答或查找，请稍后重试。", { contentFormat: "markdown" });
+    await virtualAssistantSessions.exclusive(message, assistant.username, async () => {
+      await sendReply("这次暂时无法完成回答或查找，请稍后重试。", { contentFormat: "markdown" });
+    });
     return;
   }
   // A model call may outlive a membership change. Recheck before posting or copying any files.
-  if (!(await canWriteChannel(accountId, message.channelId))) return;
-  for (const item of reply.messages) await sendReply(item.content, item.payload);
-  const sharing = createMusicScoreShareService(prisma, { scores: MUSIC_SCORE_DIR, uploads: UPLOAD_DIR });
-  for (const scoreId of reply.scoreIds) {
-    try {
-      const score = await catalog.getScore(scoreId);
-      if (!score) throw new Error("selected score is no longer available");
-      const shared = await sharing.share({
-        score, actorId: assistant.id, channelId: message.channelId,
-        clientRequestId: `ai:${message.id}:score:${scoreId}`,
-        reply: { messageId: message.id, aiRole: QUESTION_ASSISTANT_USERNAME, activationMode, anchorMessageId: activationAnchor?.id || message.id }
-      });
-      if (shared.state === "created") {
-        for (const id of shared.messageIds) {
-          await emitMessage(id).catch((error) => app.log.warn({ error, messageId: id }, "assistant score emit failed"));
-          void sendMessagePush(id, "").catch((error) => app.log.warn({ error, messageId: id }, "assistant score push failed"));
+  await virtualAssistantSessions.exclusive(message, assistant.username, async () => {
+    for (const item of reply.messages) if (!(await sendReply(item.content, item.payload))) return;
+    const sharing = createMusicScoreShareService(prisma, { scores: MUSIC_SCORE_DIR, uploads: UPLOAD_DIR });
+    for (const scoreId of reply.scoreIds) {
+      try {
+        const score = await catalog.getScore(scoreId);
+        if (!score) throw new Error("selected score is no longer available");
+        if (!(await canPublish())) return;
+        // One score is committed as a unit. A queued stop stamps its last page.
+        const shared = await sharing.share({
+          score, actorId: assistant.id, channelId: message.channelId,
+          clientRequestId: `ai:${message.id}:score:${scoreId}`,
+          reply: { messageId: message.id, aiRole: QUESTION_ASSISTANT_USERNAME, activationMode, anchorMessageId: activationAnchor?.id || message.id }
+        });
+        if (shared.state === "created") {
+          for (const id of shared.messageIds) {
+            await emitMessage(id).catch((error) => app.log.warn({ error, messageId: id }, "assistant score emit failed"));
+            void sendMessagePush(id, "").catch((error) => app.log.warn({ error, messageId: id }, "assistant score push failed"));
+          }
         }
+      } catch (error) {
+        app.log.warn({ error, messageId: message.id, scoreId }, "assistant score share failed");
+        await sendReply("这份曲谱暂时无法发送，可能已被删除或文件不可用，请稍后重新查找。", { contentFormat: "markdown" });
       }
-    } catch (error) {
-      app.log.warn({ error, messageId: message.id, scoreId }, "assistant score share failed");
-      await sendReply("这份曲谱暂时无法发送，可能已被删除或文件不可用，请稍后重新查找。", { contentFormat: "markdown" });
     }
-  }
+  });
 }
-
 
 function pinnedBodyPreview(body: PinnedBodyDTO, title?: string | null) {
   const text = body.blocks
@@ -2274,7 +2291,7 @@ async function createMessageFromActor(input: {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
   if (!isolatedReception && !input.skipQuestionAssistant && (input.type || "text") === "text") {
-    void maybeTriggerWhyDirectAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "why direct assistant failed"));
+    void virtualDirectAssistant.trigger(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "virtual direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
   return message;
@@ -2692,38 +2709,19 @@ app.post("/api/direct-channels", { preHandler: requireAuth }, async (request, re
   return { success: true, channel: dto };
 });
 
-app.post("/api/direct-virtual-channels", { preHandler: requireAuth }, async (request, reply) => {
-  const auth = (request as AuthedRequest).auth;
-  if (auth.isGuest) return reply.code(403).send({ success: false, message: "来访者不能发起私聊" });
-  const body = z.object({ username: z.string().min(1).max(80) }).parse(request.body);
-  if (body.username !== WHY_ASSISTANT_USERNAME) return reply.code(400).send({ success: false, message: "暂时只能和为什么助手私聊" });
-  const [me, assistant] = await Promise.all([
-    prisma.account.findUnique({ where: { id: auth.accountId }, include: { actor: true } }),
-    ensureWhyAssistantCharacter()
-  ]);
-  if (!me?.actor || !assistant) return reply.code(404).send({ success: false, message: "助手不存在" });
-  const key = virtualDirectChannelKey(auth.accountId, body.username);
-  const channel = await prisma.channel.upsert({
-    where: { directKey: key },
-    update: { name: `私聊：${me.displayName}、${assistant.displayName}`, isPrivate: true },
-    create: {
-      kind: "direct",
-      name: `私聊：${me.displayName}、${assistant.displayName}`,
-      description: "一对一私聊",
-      icon: "",
-      isPrivate: true,
-      directKey: key,
-      members: { create: [{ accountId: auth.accountId, role: "owner" }] }
-    }
-  });
-  await prisma.channelMember.createMany({
-    data: [{ accountId: auth.accountId, channelId: channel.id, role: "owner" }],
-    skipDuplicates: true
-  });
-  joinAccountChannel(auth.accountId, channel.id);
-  const dto = await channelDto(channel.id, auth);
-  io.to(`acct:${auth.accountId}`).emit("channel:updated", { action: "direct", channel: dto });
-  return { success: true, channel: dto };
+registerVirtualDirectChannelRoutes(app, {
+  prisma, requireAuth,
+  ensureBuiltIn: async (username) => {
+    if (!AI_ROLE_USERNAMES.has(username)) return null;
+    const existing = await prisma.actor.findUnique({ where: { username } });
+    if (existing) return existing;
+    return ensureAiRoleCharacter(username, username === WHY_ASSISTANT_USERNAME ? WHY_ASSISTANT_NAME : QUESTION_ASSISTANT_NAME);
+  },
+  channelDto,
+  joined: (accountId, channelId, channel) => {
+    joinAccountChannel(accountId, channelId);
+    io.to(`acct:${accountId}`).emit("channel:updated", { action: "direct", channel });
+  }
 });
 
 app.delete("/api/channels/:id/membership", { preHandler: requireAuth }, async (request, reply) => {

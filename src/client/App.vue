@@ -210,6 +210,9 @@ import {
 import { useMessageRendering, type MentionToast } from "./features/messages/useMessageRendering";
 import { useMusicMentionRendering } from "./features/messages/useMusicMentionRendering";
 import { useAdminTools } from "./features/admin/useAdminTools";
+import VirtualRolePrompts from "./features/admin/VirtualRolePrompts.vue";
+import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
+import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
 import { useAiSettings } from "./features/admin/useAiSettings";
 import type { SettingsTab } from "./features/settings/settingsTabs";
 import PrayerUpdateEditor from "./features/prayer/PrayerUpdateEditor.vue";
@@ -694,7 +697,8 @@ const activityLogFilterOptions: Array<{ value: "all" | ActivityLogCategory; labe
   { value: "all", label: "全部" },
   { value: "session", label: "会话" },
   { value: "music", label: "音乐" },
-  { value: "usage", label: "使用情况" }
+  { value: "usage", label: "使用情况" },
+  { value: "ai", label: "AI 问答" }
 ];
 const adminTools = useAdminTools({
   showAdmin,
@@ -768,6 +772,7 @@ const {
   aiSettingsMsg,
   aiSettingsTab,
   loadVirtualCharacters,
+  virtualCharactersBusy,
   loadAiSettings,
   loadMcStatus,
   saveAiSettings,
@@ -781,6 +786,16 @@ const {
   virtualThinkingEnabled,
   virtualPersona,
   virtualManualMemory,
+  virtualSystemPrompt,
+  setVirtualSystemPrompt,
+  virtualActivationJudgePrompt,
+  setVirtualActivationJudgePrompt,
+  virtualActivationDurationMinutes,
+  setVirtualActivationDurationMinutes,
+  virtualContextTurnLimit,
+  setVirtualContextTurnLimit,
+  virtualContextWindowMinutes,
+  setVirtualContextWindowMinutes,
   virtualChannelIds,
   setVirtualDisplayName,
   setVirtualEnabled,
@@ -5401,6 +5416,27 @@ const messageRowBindings = {
                 </table>
               </div>
             </section>
+            <section v-for="character in virtuals" :key="`prompts-${character.id}`" class="ai-settings-subsection ai-settings-card" :aria-label="`${character.actor.displayName} 的提示与激活设置`">
+              <div class="ai-section-title">
+                <strong>{{ character.actor.displayName }} · 提示与激活</strong>
+                <button class="mini-btn" type="button" :disabled="aiSettingsBusy || virtualCharactersBusy" @click="saveVirtualCharacter(character)"><Save :size="15" />保存角色设置</button>
+              </div>
+              <VirtualRolePrompts
+                :disabled="aiSettingsBusy || virtualCharactersBusy"
+                :id-prefix="`virtual-${character.id}`"
+                :system-prompt="virtualSystemPrompt(character)"
+                :activation-judge-prompt="virtualActivationJudgePrompt(character)"
+                :question-assistant="character.actor?.username === 'ai_slmm'"
+                :activation-duration-minutes="virtualActivationDurationMinutes(character)"
+                :context-turn-limit="virtualContextTurnLimit(character)"
+                :context-window-minutes="virtualContextWindowMinutes(character)"
+                @update:system-prompt="setVirtualSystemPrompt(character, $event)"
+                @update:activation-judge-prompt="setVirtualActivationJudgePrompt(character, $event)"
+                @update:activation-duration-minutes="setVirtualActivationDurationMinutes(character, $event)"
+                @update:context-turn-limit="setVirtualContextTurnLimit(character, $event)"
+                @update:context-window-minutes="setVirtualContextWindowMinutes(character, $event)"
+              />
+            </section>
           </template>
 
           <template v-else-if="aiSettingsTab === 'asr'">
@@ -5439,7 +5475,7 @@ const messageRowBindings = {
       <header class="ai-settings-head">
         <div>
           <strong>活动日志</strong>
-          <small>会话、版本、在线时长、音乐进度与主要功能使用情况</small>
+          <small>会话、版本、在线时长、音乐进度与虚拟角色问答（含私聊）</small>
         </div>
         <div class="login-log-actions">
           <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
@@ -5471,6 +5507,7 @@ const messageRowBindings = {
                 <span v-if="log.ipAddress">IP {{ log.ipAddress }}</span>
                 <span v-if="log.sessionId">会话 {{ log.sessionId.slice(0, 8) }}</span>
               </div>
+              <AiExchangeLogDetail v-if="log.kind === 'ai_exchange'" :log="log" />
               <small v-if="log.kind === 'music_progress'" class="activity-log-detail">{{ musicProgressSummary(log) }}</small>
               <small v-if="log.kind === 'presence_leave' && log.durationMs != null" class="activity-log-detail">本次在线 {{ activityDuration(log.durationMs) }}</small>
               <small v-if="log.appVersion" class="activity-log-detail">
@@ -6307,6 +6344,7 @@ const messageRowBindings = {
                   :handwriting-surface-active="!showingFavoriteSurface && !chatWorkspaceHidden && !viewedBibleNoteId"
                   v-bind="messageRowBindings"
                 />
+                <AiSessionEndStamp :message="row.message" />
               </div>
               <button
                 v-if="musicScorePreviewPage(row.message)"
@@ -6629,7 +6667,7 @@ const messageRowBindings = {
             <button class="mini-btn" @click="mentionSelectedMember"><AtSign :size="15" />提及 @</button>
             <button
               class="mini-btn secondary"
-              :disabled="selectedMember.kind === 'virtual' ? selectedMember.username !== 'why_assistant' : (!selectedMember.accountId || selectedMember.accountId === store.account.id)"
+              :disabled="selectedMember.kind !== 'virtual' && (!selectedMember.accountId || selectedMember.accountId === store.account.id)"
               @click="startPrivateChat(selectedMember)"
             >
               <MessageCircle :size="15" />私聊

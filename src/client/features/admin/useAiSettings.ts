@@ -1,5 +1,6 @@
 import { ref, type Ref } from "vue";
 import type { AiRoleDTO, AiSettingsDTO } from "@shared/types";
+import { DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT, QUESTION_ASSISTANT_MEDIA_PROTOCOL } from "@shared/virtualCharacters";
 import { api, authHeaders } from "../../api";
 import { useChatStore } from "../../store";
 import { invalidateAsrCapability } from "../voice/useVoiceTranscript";
@@ -27,6 +28,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     enabled: true
   });
   const virtuals = ref<any[]>([]);
+  const virtualCharactersBusy = ref(false);
+  let virtualCharactersLoad: Promise<void> | undefined;
   const mcStatus = ref<any | null>(null);
   const mcSelectedChannelId = ref<number | null>(null);
   const mcSelectedCharacterIds = ref<number[]>([]);
@@ -54,6 +57,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     }
   });
   const aiSettingsBusy = ref(false);
+  let aiSettingsLoad: Promise<void> | undefined;
   const aiSettingsMsg = ref("");
   const aiSettingsShowAdvanced = ref(false);
   const aiSettingsTab = ref<"llm" | "virtuals" | "verses" | "asr">("llm");
@@ -81,6 +85,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
         ...role,
         model: role.model || "",
         thinkingEnabled: !!role.thinkingEnabled,
+        systemPrompt: role.systemPrompt ?? (role.username === "ai_slmm" ? QUESTION_ASSISTANT_MEDIA_PROTOCOL : ""),
+        activationDurationMinutes: role.activationDurationMinutes ?? role.contextWindowMinutes ?? (role.username === "ai_slmm" ? 10 : undefined),
         shortTermMemory: role.shortTermMemory || "",
         midTermMemory: role.midTermMemory || "",
         longTermMemory: role.longTermMemory || "",
@@ -145,6 +151,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
         model: String(generation.model || modelHints.mainModel || ""),
         thinkingEnabled: !!generation.thinkingEnabled
       },
+      systemPrompt: typeof raw.systemPrompt === "string" ? raw.systemPrompt : DEFAULT_VIRTUAL_CHARACTER_SYSTEM_PROMPT,
+      activationDurationMinutes: Number(raw.activationDurationMinutes || raw.contextWindowMinutes || 10),
       activationJudgePrompt: String(raw.activationJudgePrompt || ""),
       channels: Array.isArray(raw.channels) ? raw.channels.map(Number).filter(Number.isFinite) : []
     };
@@ -243,6 +251,48 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     return !!virtualConfig(character).generation.thinkingEnabled;
   }
 
+  function virtualSystemPrompt(character: unknown) {
+    const role = aiRoleForCharacter(character);
+    if (role) return role.systemPrompt ?? (role.username === "ai_slmm" ? QUESTION_ASSISTANT_MEDIA_PROTOCOL : "");
+    return virtualConfig(character).systemPrompt;
+  }
+
+  function virtualActivationDurationMinutes(character: unknown) {
+    const role = aiRoleForCharacter(character);
+    return role?.activationDurationMinutes ?? role?.contextWindowMinutes ?? virtualConfig(character).activationDurationMinutes;
+  }
+
+  function virtualContextTurnLimit(character: unknown) {
+    return aiRoleForCharacter(character)?.contextTurnLimit ?? 10;
+  }
+
+  function virtualContextWindowMinutes(character: unknown) {
+    return aiRoleForCharacter(character)?.contextWindowMinutes ?? 10;
+  }
+
+  function setVirtualSystemPrompt(character: { config?: unknown }, value: string) {
+    const role = aiRoleForCharacter(character);
+    if (role) role.systemPrompt = value;
+    character.config = { ...virtualConfig(character), systemPrompt: value };
+  }
+
+  function setVirtualActivationDurationMinutes(character: { config?: unknown }, value: number) {
+    const duration = Math.min(1440, Math.max(1, Math.round(value) || 10));
+    const role = aiRoleForCharacter(character);
+    if (role) role.activationDurationMinutes = duration;
+    character.config = { ...virtualConfig(character), activationDurationMinutes: duration };
+  }
+
+  function setVirtualContextTurnLimit(character: unknown, value: number) {
+    const role = aiRoleForCharacter(character);
+    if (role) role.contextTurnLimit = Math.min(50, Math.max(1, Math.round(value) || 10));
+  }
+
+  function setVirtualContextWindowMinutes(character: unknown, value: number) {
+    const role = aiRoleForCharacter(character);
+    if (role) role.contextWindowMinutes = Math.min(1440, Math.max(1, Math.round(value) || 10));
+  }
+
   function virtualActivationJudgePrompt(character: any) {
     const role = aiRoleForCharacter(character);
     if (role) return role.activationJudgePrompt || "";
@@ -281,7 +331,17 @@ export function useAiSettings(options: UseAiSettingsOptions) {
   }
 
   async function loadVirtualCharacters() {
-    virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
+    if (virtualCharactersLoad) return virtualCharactersLoad;
+    virtualCharactersBusy.value = true;
+    virtualCharactersLoad = (async () => {
+      try {
+        virtuals.value = (await api<{ characters: any[] }>("/api/virtual-characters")).characters;
+      } finally {
+        virtualCharactersBusy.value = false;
+        virtualCharactersLoad = undefined;
+      }
+    })();
+    return virtualCharactersLoad;
   }
 
   function setVirtualChannelIds(character: any, channelIds: number[]) {
@@ -470,15 +530,20 @@ export function useAiSettings(options: UseAiSettingsOptions) {
 
   async function loadAiSettings() {
     if (!store.account?.isAdmin) return;
+    if (aiSettingsLoad) return aiSettingsLoad;
     aiSettingsBusy.value = true;
     aiSettingsMsg.value = "";
-    try {
-      syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
-    } catch (error) {
-      aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置加载失败";
-    } finally {
-      aiSettingsBusy.value = false;
-    }
+    aiSettingsLoad = (async () => {
+      try {
+        syncAiSettingsEdit(await api<AiSettingsDTO>("/api/admin/ai-settings"));
+      } catch (error) {
+        aiSettingsMsg.value = error instanceof Error ? error.message : "AI 设置加载失败";
+      } finally {
+        aiSettingsBusy.value = false;
+        aiSettingsLoad = undefined;
+      }
+    })();
+    return aiSettingsLoad;
   }
 
   async function saveAiSettings() {
@@ -499,6 +564,8 @@ export function useAiSettings(options: UseAiSettingsOptions) {
           model: role.model || "",
           thinkingEnabled: !!role.thinkingEnabled,
           promptCommand: role.promptCommand,
+          systemPrompt: role.systemPrompt,
+          activationDurationMinutes: role.activationDurationMinutes,
           shortTermMemory: role.shortTermMemory || "",
           midTermMemory: role.midTermMemory || "",
           longTermMemory: role.longTermMemory || "",
@@ -671,6 +738,14 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     virtualManualMemory,
     virtualModel,
     virtualThinkingEnabled,
+    virtualSystemPrompt,
+    setVirtualSystemPrompt,
+    virtualActivationDurationMinutes,
+    setVirtualActivationDurationMinutes,
+    virtualContextTurnLimit,
+    setVirtualContextTurnLimit,
+    virtualContextWindowMinutes,
+    setVirtualContextWindowMinutes,
     virtualActivationJudgePrompt,
     virtualEnabled,
     virtualChannelIds,
@@ -678,6 +753,7 @@ export function useAiSettings(options: UseAiSettingsOptions) {
     toggleNewVirtualChannel,
     toggleVirtualChannel,
     loadVirtualCharacters,
+    virtualCharactersBusy,
     setVirtualChannelIds,
     setVirtualDisplayName,
     setVirtualEnabled,
