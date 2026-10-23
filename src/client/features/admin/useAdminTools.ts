@@ -54,6 +54,7 @@ export type AdminPage =
   | "resources"
   | "books"
   | "bibleAudio"
+  | "zoom"
   | "wechatRelay"
   | "demo"
   | "release";
@@ -82,6 +83,7 @@ export const adminPageMeta: Record<AdminPage, { title: string; description: stri
   resources: { title: "资源管理", description: "查看、筛选、压缩和删除附件" },
   books: { title: "图书", description: "上传 EPUB 图书，管理图书室藏书" },
   bibleAudio: { title: "有声圣经", description: "上传卷包、查看覆盖进度并启用朗读" },
+  zoom: { title: "Zoom 会议", description: "配置顶栏会议链接，长按图标设置会议状态" },
   wechatRelay: { title: "微信通知转发", description: "连接 NAS 微信、选择来源频道并测试发送" },
   demo: { title: "演示模式", description: "从 GitHub 载入或复位标准演示数据" },
   release: { title: "版本与更新", description: "当前版本、更新状态和发布记录" }

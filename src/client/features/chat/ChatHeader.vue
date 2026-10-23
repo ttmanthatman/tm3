@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent, onBeforeUnmount, ref } from "vue";
+import { onBeforeUnmount, ref } from "vue";
 import {
   CheckCircle2,
   ChevronLeft,
@@ -26,9 +26,9 @@ import BibleIcon from "../bible/BibleIcon.vue";
 import SermonHub from "../sermon/SermonHub.vue";
 import type { MusicPlayer } from "../music/useMusicPlayer";
 import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
-import MusicScoreControl from "../music/MusicScoreControl.vue";
-
-const MusicMiniPanel = defineAsyncComponent(() => import("../music/MusicMiniPanel.vue"));
+import ListenControl from "../listen/ListenControl.vue";
+import type { HeaderPlayback } from "../listen/useHeaderPlayback";
+import ZoomControl from "../zoom/ZoomControl.vue";
 
 // Presentation-only home of the chat header and the pinned/activity notice
 // stack, moved verbatim from App.vue. Interactive state stays in App.vue and
@@ -53,6 +53,7 @@ const props = defineProps<{
   bibleOpen: boolean;
   musicPlaying: boolean;
   musicPlayer: MusicPlayer;
+  headerPlayback: HeaderPlayback;
   favoriteMusicTracks: MusicTrackDTO[];
   musicPlaylists: MusicPlaylistDTO[];
   musicSleepTimer: MusicSleepTimer;
@@ -183,28 +184,24 @@ onBeforeUnmount(clearStoryHold);
     <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BibleIcon :open="bibleOpen" /></button>
     <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
     <SermonHub v-if="!showingFavoriteSurface" />
-    <div v-if="!showingFavoriteSurface" class="music-player-control" data-music-player>
-      <button class="icon-btn music-player-trigger" type="button" :class="{ spinning: musicPlaying }" @click.stop="openMusicPlayer()" aria-label="打开音乐播放器">
-        <span class="music-player-glyph" aria-hidden="true">歌</span>
-      </button>
-      <MusicMiniPanel
-        v-if="musicPlayerExpanded"
-        :player="musicPlayer"
-        :favorite-tracks="favoriteMusicTracks"
-        :playlists="musicPlaylists"
-        :sleep-timer="musicSleepTimer"
-        :font-size="musicPanelFontSize"
-        @close="musicPlayerExpanded = false"
-        @toggle-favorite="toggleCurrentMusicFavorite"
-        @open-manager="openMusicManagerFromMiniPanel"
-      />
-    </div>
-    <MusicScoreControl v-if="!showingFavoriteSurface" :current-score-available="musicScoreTriggerVisible || musicScoreOpen" :current-channel-id="currentChannel?.id" @current="showCurrentScore" />
-    <div v-if="!showingFavoriteSurface" class="friend-player-control">
-      <button class="icon-btn friend-player-trigger" type="button" :class="{ active: friendProgramsOpen, spinning: friendPlaying }" @click.stop="toggleFriendPrograms" aria-label="打开良友节目">
-        <span class="music-player-glyph friend-player-glyph" aria-hidden="true">友</span>
-      </button>
-    </div>
+    <ListenControl
+      v-if="!showingFavoriteSurface"
+      v-model:expanded="musicPlayerExpanded"
+      :playback="headerPlayback"
+      :music-player="musicPlayer"
+      :favorite-tracks="favoriteMusicTracks"
+      :playlists="musicPlaylists"
+      :sleep-timer="musicSleepTimer"
+      :font-size="musicPanelFontSize"
+      :current-score-available="musicScoreTriggerVisible || musicScoreOpen"
+      :current-channel-id="currentChannel?.id"
+      :open-music="openMusicPlayer"
+      :open-friend="toggleFriendPrograms"
+      :toggle-favorite="toggleCurrentMusicFavorite"
+      :open-manager="openMusicManagerFromMiniPanel"
+      @current-score="showCurrentScore"
+    />
+    <ZoomControl v-if="!showingFavoriteSurface" :is-admin="isAdmin" />
     <button
       v-if="!showingFavoriteSurface"
       class="icon-btn story-header-trigger"

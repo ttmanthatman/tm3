@@ -4,7 +4,7 @@ import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
 
 const Library = defineAsyncComponent(() => import("./MusicScoreLibrary.vue"));
-const props = defineProps<{ currentScoreAvailable: boolean; currentChannelId?: number | null }>();
+const props = defineProps<{ currentScoreAvailable: boolean; currentChannelId?: number | null; hideTrigger?: boolean }>();
 const emit = defineEmits<{ current: [] }>();
 const menuOpen = ref(false);
 const libraryOpen = ref(false);
@@ -45,11 +45,12 @@ function outside(event: PointerEvent) {
 watch(() => props.currentScoreAvailable, available => { if (!available) closeMenu(); });
 onMounted(() => document.addEventListener("pointerdown", outside));
 onBeforeUnmount(() => document.removeEventListener("pointerdown", outside));
+defineExpose({ open: openMenu });
 </script>
 
 <template>
   <div ref="root" class="score-library-control" @click.stop @keydown="menuOpen && keydown($event)">
-    <button ref="trigger" type="button" class="icon-btn score-library-trigger" :class="{ 'has-current-score': currentScoreAvailable, active: menuOpen || libraryOpen }" :aria-label="currentScoreAvailable ? '打开歌谱菜单' : '打开歌谱库'" title="歌谱" :aria-haspopup="currentScoreAvailable ? 'menu' : 'dialog'" :aria-expanded="menuOpen || libraryOpen" @click="openMenu" @keydown.down.stop.prevent="currentScoreAvailable && (menuOpen = true, focusItem())" @keydown.up.stop.prevent="currentScoreAvailable && (menuOpen = true, focusItem(true))">
+    <button v-if="!hideTrigger" ref="trigger" type="button" class="icon-btn score-library-trigger" :class="{ 'has-current-score': currentScoreAvailable, active: menuOpen || libraryOpen }" :aria-label="currentScoreAvailable ? '打开歌谱菜单' : '打开歌谱库'" title="歌谱" :aria-haspopup="currentScoreAvailable ? 'menu' : 'dialog'" :aria-expanded="menuOpen || libraryOpen" @click="openMenu" @keydown.down.stop.prevent="currentScoreAvailable && (menuOpen = true, focusItem())" @keydown.up.stop.prevent="currentScoreAvailable && (menuOpen = true, focusItem(true))">
       <span class="music-player-glyph" aria-hidden="true">谱</span>
     </button>
     <AppMenu v-if="menuOpen" class="score-library-menu" label="歌谱菜单">

@@ -176,6 +176,7 @@ import {
 import { useMusicPlayer } from "./features/music/useMusicPlayer";
 import { useMusicSleepTimer } from "./features/music/useMusicSleepTimer";
 import type { MusicManagerFocus } from "./features/music/useMusicLibrary";
+import { useHeaderPlayback } from "./features/listen/useHeaderPlayback";
 import { useFriendPlayer } from "./features/friend/useFriendPlayer";
 import { getSharedExclusiveAudio, stopAllMessageAudioPlayback } from "./features/audio/messageAudioPlayback";
 import { useComposerPlaceholder } from "./features/composer/useComposerPlaceholder";
@@ -1922,6 +1923,18 @@ const friendPlayer = useFriendPlayer({
   }
 });
 const { playing: friendPlaying } = friendPlayer.state;
+const headerPlayback = useHeaderPlayback({
+  music: musicPlayer,
+  friend: friendPlayer,
+  bible: () => bibleWorkspace.value?.audio,
+  canShiftSession: delta => listenSession.current.value ? listenSession.canShiftChapter(delta) : null,
+  shiftSession: delta => {
+    if (!listenSession.current.value) return false;
+    if (delta < 0) listenSession.previousChapter();
+    else listenSession.nextChapter();
+    return true;
+  }
+});
 exclusiveAudio.register({ id: "friend", resumable: true, suspend: () => friendPlayer.controls.duck(true), resume: () => void friendPlayer.controls.resumeWithFade() });
 const friendProgramsOpen = ref(false);
 function toggleFriendPrograms() {
@@ -5044,6 +5057,7 @@ const chatHeaderBindings = computed(() => ({
   bibleOpen: bibleOpen.value,
   musicPlaying: musicPlaying.value,
   musicPlayer,
+  headerPlayback,
   favoriteMusicTracks: favoriteMusicTracks.value,
   musicPlaylists: musicPlaylists.value,
   musicSleepTimer,

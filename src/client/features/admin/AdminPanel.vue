@@ -45,6 +45,7 @@ import { useChatStore } from "../../store";
 import { adminDirectPageSize, type AdminTools } from "./useAdminTools";
 import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields, wallpaperFitOptions } from "./useAppearanceSettings";
 
+const ZoomSettingsPanel = defineAsyncComponent(() => import("./ZoomSettingsPanel.vue"));
 const AdminResourceManager = defineAsyncComponent(() => import("../../components/AdminResourceManager.vue"));
 const AdminAccountsPage = defineAsyncComponent(() => import("./AdminAccountsPage.vue"));
 const AdminBooksPage = defineAsyncComponent(() => import("./AdminBooksPage.vue"));
@@ -259,6 +260,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
             </div>
             <div class="admin-hub-group">
               <label>通知与连接</label>
+              <button class="admin-entry-row" @click="openAdminPage('zoom')"><span class="admin-entry-icon"><Monitor :size="20" /></span><span><b>Zoom 会议</b><small>设置顶栏会议链接</small></span><ChevronRight :size="19" /></button>
               <button class="admin-entry-row" @click="openAdminPage('wechatRelay')"><span class="admin-entry-icon"><Bell :size="20" /></span><span><b>微信通知转发</b><small>连接 NAS 微信并向指定群发送频道通知</small></span><ChevronRight :size="19" /></button>
             </div>
             <div class="admin-hub-group">
@@ -268,6 +270,8 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
               <button class="admin-entry-row" @click="openAdminPage('release')"><span class="admin-entry-icon"><Info :size="20" /></span><span><b>版本与更新</b><small>版本状态和发布记录</small></span><ChevronRight :size="19" /></button>
             </div>
           </section>
+
+          <ZoomSettingsPanel v-else-if="adminPage === 'zoom'" />
 
           <section v-else-if="adminPage === 'appearance'" class="admin-hub compact">
             <div class="admin-hub-group">

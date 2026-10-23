@@ -75,6 +75,17 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     || seriesPrograms.value.find((program) => program.id === currentProgramId.value)
     || null
   );
+  const playbackQueue = computed(() => seriesPrograms.value.some(program => program.id === currentProgramId.value)
+    ? seriesPrograms.value : programs.value);
+  const canShiftProgram = computed(() => playbackQueue.value.length > 1);
+
+  function shiftProgram(delta: number) {
+    const queue = playbackQueue.value;
+    if (queue.length < 2) return;
+    const index = queue.findIndex(program => program.id === currentProgramId.value);
+    const target = queue[(Math.max(0, index) + delta + queue.length) % queue.length];
+    if (target) void playProgram(target);
+  }
 
   let audio: HTMLAudioElement | null = null;
   let fadeFrame: number | undefined;
@@ -481,6 +492,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
       historyError,
       currentProgramId,
       currentProgram,
+      canShiftProgram,
       playing,
       loading,
       error,
@@ -496,6 +508,7 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
       playProgram,
       playRandom,
       toggleProgram,
+      shiftProgram,
       pause,
       duck,
       resumeWithFade,

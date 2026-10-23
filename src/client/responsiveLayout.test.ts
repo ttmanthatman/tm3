@@ -31,6 +31,7 @@ const uploadsLogic = fs.readFileSync(new URL("./features/uploads/useUploads.ts",
 const dropZoneLogic = fs.readFileSync(new URL("./features/uploads/useDropZone.ts", import.meta.url), "utf8");
 const storyComposer = fs.readFileSync(new URL("./features/stories/StoryComposer.vue", import.meta.url), "utf8");
 const storyWorkspace = fs.readFileSync(new URL("./features/stories/StoryWorkspace.vue", import.meta.url), "utf8");
+const listenControl = fs.readFileSync(new URL("./features/listen/ListenControl.vue", import.meta.url), "utf8");
 const chatHeader = fs.readFileSync(new URL("./features/chat/ChatHeader.vue", import.meta.url), "utf8");
 const adminAccountsPage = fs.readFileSync(new URL("./features/admin/AdminAccountsPage.vue", import.meta.url), "utf8");
 const adminPanel = fs.readFileSync(new URL("./features/admin/AdminPanel.vue", import.meta.url), "utf8");
@@ -446,8 +447,10 @@ test("opening the music player starts or resumes playback without pausing an act
 });
 
 test("the mini panel floats centered over a plain dim backdrop instead of covering the header", () => {
-  assert.match(chatHeader, /@click\.stop="openMusicPlayer\(\)"/);
-  assert.match(chatHeader, /<MusicMiniPanel[\s\S]*?v-if="musicPlayerExpanded"/);
+  assert.match(chatHeader, /:open-music="openMusicPlayer"/);
+  assert.match(listenControl, /@click="select\(props\.openMusic\)"/);
+  assert.match(chatHeader, /v-model:expanded="musicPlayerExpanded"/);
+  assert.match(listenControl, /<MusicMiniPanel[\s\S]*?v-if="expanded"/);
   assert.match(musicMiniPanel, /<Teleport to="body">/);
   assert.match(musicMiniPanel, /class="music-mini-backdrop"[\s\S]*?@click="emit\('close'\)"/);
   assert.match(css, /\.music-mini-backdrop \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;/);
@@ -525,7 +528,8 @@ test("the queue section shows all tracks of the current source in playlist order
 test("the source name carries an expand button that opens the full music manager", () => {
   assert.match(musicMiniPanel, /"open-manager": \[\]/);
   assert.match(musicMiniPanel, /class="icon-btn music-mini-panel-expand"[\s\S]*?aria-label="打开歌单管理"[\s\S]*?@click="emit\('open-manager'\)"/);
-  assert.match(chatHeader, /@open-manager="openMusicManagerFromMiniPanel"/);
+  assert.match(chatHeader, /:open-manager="openMusicManagerFromMiniPanel"/);
+  assert.match(listenControl, /@open-manager="openManager"/);
   assert.match(app, /function openMusicManagerFromMiniPanel\(\) \{[\s\S]*?openMusicManager\(\{ kind: "playlist", id: selectedMusicPlaylistId\.value \}\)/);
 });
 
@@ -576,7 +580,8 @@ test("the music manager opens from the mini panel expand button as a separate ov
 
 test("music favorites persist per account and can constrain the playback queue", () => {
   assert.match(musicMiniPanel, /music-mini-panel-heart[\s\S]*?emit\('toggle-favorite', currentTrack\)/);
-  assert.match(chatHeader, /@toggle-favorite="toggleCurrentMusicFavorite"/);
+  assert.match(chatHeader, /:toggle-favorite="toggleCurrentMusicFavorite"/);
+  assert.match(listenControl, /@toggle-favorite="toggleFavorite"/);
   assert.match(musicPlayer, /const playableTracks = computed[\s\S]*?playbackSourceKind\.value === "favorites"[\s\S]*?options\.favoriteTracks\.value/);
   assert.match(server, /app\.put\("\/api\/music\/tracks\/:id\/favorite"[\s\S]*?prisma\.musicFavorite\.upsert/);
 });
@@ -600,20 +605,28 @@ test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn && runtime\.documentVisible\(\) \? 0 : 1;/);
 });
 
-test("song, score library, friend, and own-story controls stay ordered before chat tools", () => {
+test("the listening menu and Zoom stay before stories and chat tools", () => {
   const headerStart = chatHeader.indexOf('<header class="chat-head"');
   const headerEnd = chatHeader.indexOf("</header>", headerStart);
   const header = chatHeader.slice(headerStart, headerEnd);
-  assert.ok(header.indexOf('class="bible-header-trigger"') < header.indexOf('class="music-player-control"'));
-  assert.ok(header.indexOf('class="music-player-control"') < header.indexOf('<MusicScoreControl'));
-  assert.ok(header.indexOf('<MusicScoreControl') < header.indexOf('class="friend-player-control"'));
-  assert.ok(header.indexOf('class="friend-player-control"') < header.indexOf('class="icon-btn story-header-trigger"'));
+  assert.ok(header.indexOf('bible-header-trigger') < header.indexOf('<ListenControl'));
+  assert.ok(header.indexOf('<ListenControl') < header.indexOf('<ZoomControl'));
+  assert.ok(header.indexOf('<ZoomControl') < header.indexOf('class="icon-btn story-header-trigger"'));
+  const menu = listenControl.slice(listenControl.indexOf('<AppMenu v-if="menuOpen"'), listenControl.indexOf('</AppMenu>'));
+  const entries = ['aria-label="播放器"', '<span>赞美诗</span>', '<span>歌谱</span>', '<span>良友电台</span>'];
+  let previous = -1;
+  for (const entry of entries) {
+    const position = menu.indexOf(entry);
+    assert.ok(position > previous, `missing or out of order: ${entry}`);
+    previous = position;
+  }
   assert.ok(header.indexOf('class="icon-btn story-header-trigger"') < header.indexOf('class="chat-tools-control"'));
   assert.match(header, /class="icon-btn story-header-trigger"[\s\S]*?aria-label="我们的故事，长按查看我的故事"[\s\S]*?@pointerdown\.stop="beginStoryHold"[\s\S]*?<Sparkles :size="20"/);
   assert.match(app, /canOpenOwnStory: !!store\.account && !store\.account\.isGuest,[\s\S]*?storyAttention:[\s\S]*?openOwnStory,[\s\S]*?openSharedStories/);
 
   assert.doesNotMatch(header, /aria-label="打开或关闭歌谱"/);
-  assert.match(chatHeader, /<MusicScoreControl[\s\S]*?:current-score-available="musicScoreTriggerVisible \|\| musicScoreOpen"/);
+  assert.match(chatHeader, /<ListenControl[\s\S]*?:current-score-available="musicScoreTriggerVisible \|\| musicScoreOpen"/);
+  assert.match(listenControl, /<MusicScoreControl[\s\S]*?:current-score-available="currentScoreAvailable"/);
   assert.match(css, /\.music-score-trigger\.page-turning \.[\w-]+ \{[\s\S]*?animation: musicScoreBreathe/);
   assert.match(css, /@keyframes musicScoreBreathe \{[\s\S]*?scale\(0\.92\)[\s\S]*?scale\(1\.12\)[\s\S]*?color:/);
   assert.match(css, /\.music-score-trigger \{[\s\S]*?background: transparent;[\s\S]*?box-shadow: none;/);

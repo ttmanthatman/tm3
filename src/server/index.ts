@@ -39,6 +39,7 @@ import { createMessageSendIdempotency, messageSendRequestHash } from "./services
 import { HANDWRITING_SEND_LIMITS, HANDWRITING_CONTENT, HandwritingValidationError } from "../shared/handwriting.js";
 import { prepareHandwritingMessage } from "./services/handwriting.js";
 import { registerFriendRoutes } from "./routes/friend.js";
+import { createZoomSettingsStore, registerZoomRoutes } from "./routes/zoom.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
@@ -988,6 +989,7 @@ registerAssistantChatFunctions(assistantTools, {
   friendPrograms: () => friendFeedService.getPrograms()
 });
 registerAssistantToolsRoutes(app, { registry: assistantTools, settings: assistantToolsSettings, requireAdmin });
+registerZoomRoutes(app, { settings: createZoomSettingsStore(prisma), requireAuth, requireAdmin });
 
 const audioWaveformJobs = new Set<number>();
 

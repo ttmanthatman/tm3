@@ -364,3 +364,22 @@ test("exclusive suspension pauses immediately and keeps progress without running
   assert.equal(player.state.playing.value, false);
   player.controls.dispose();
 });
+
+test("header transport wraps within the current daily or series queue", async () => {
+  const { player } = createHarness({ seriesPrograms: [program("8"), program("9")] });
+  await player.controls.loadPrograms();
+  await player.controls.playProgram(program("1"));
+  assert.equal(player.state.canShiftProgram.value, true);
+  player.controls.shiftProgram(-1);
+  await Promise.resolve();
+  assert.equal(player.state.currentProgramId.value, "2");
+  player.controls.shiftProgram(1);
+  await Promise.resolve();
+  assert.equal(player.state.currentProgramId.value, "1");
+  await player.controls.openSeries({ id: "series", alias: "series", title: "系列", description: "" });
+  await player.controls.playProgram(program("9"));
+  player.controls.shiftProgram(1);
+  await Promise.resolve();
+  assert.equal(player.state.currentProgramId.value, "8");
+  player.controls.dispose();
+});

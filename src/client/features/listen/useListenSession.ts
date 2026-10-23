@@ -192,6 +192,12 @@ export function useListenSession<Track extends { id: number }>(options: UseListe
   }
 
   /** 经文段跨章时先在段内翻章，否则切到清单里的上一项/下一项。 */
+  function canShiftChapter(delta: number) {
+    if (phase.value === null) return false;
+    if (phase.value === "scripture" && (delta < 0 ? options.bible.canPreviousChapter() : options.bible.canNextChapter())) return true;
+    return delta < 0 ? index.value > 0 : index.value + 1 < items.value.length;
+  }
+
   function nextChapter() {
     if (phase.value === null) return;
     if (phase.value === "scripture" && options.bible.canNextChapter()) {
@@ -231,6 +237,7 @@ export function useListenSession<Track extends { id: number }>(options: UseListe
     previousVerse,
     nextChapter,
     previousChapter,
+    canShiftChapter,
     handleBibleQueueEnded,
     handleTrackEnded
   };
