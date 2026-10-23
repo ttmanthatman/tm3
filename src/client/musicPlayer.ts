@@ -26,8 +26,12 @@ type MusicMediaSessionStateTarget<TMetadata> = {
   metadata: TMetadata | null;
 };
 
+const mediaSessionBindings = new WeakMap<MusicMediaSessionActionTarget, symbol>();
+
 export function bindMusicMediaSession(session: MusicMediaSessionActionTarget | null | undefined, handlers: MusicMediaSessionHandlers) {
-  if (!session) return () => undefined;
+  if (!session) return () => false;
+  const owner = Symbol("media-session-owner");
+  mediaSessionBindings.set(session, owner);
   const bindings: Array<[MusicMediaSessionAction, () => void]> = [
     ["play", handlers.play],
     ["pause", handlers.pause],
@@ -42,6 +46,9 @@ export function bindMusicMediaSession(session: MusicMediaSessionActionTarget | n
     }
   }
   return () => {
+    // An older player must not clear the current player’s lock-screen controls.
+    if (mediaSessionBindings.get(session) !== owner) return false;
+    mediaSessionBindings.delete(session);
     for (const [action] of bindings) {
       try {
         session.setActionHandler(action, null);
@@ -49,6 +56,7 @@ export function bindMusicMediaSession(session: MusicMediaSessionActionTarget | n
         // Ignore actions that were unsupported during registration.
       }
     }
+    return true;
   };
 }
 

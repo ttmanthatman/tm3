@@ -22,6 +22,10 @@ import {
   type BibleAudioResumeState
 } from "./bibleAudioQueue";
 
+import { bindMusicMediaSession } from "../../musicPlayer";
+import { getSharedExclusiveAudio } from "../audio/messageAudioPlayback";
+import type { ExclusiveAudio } from "../audio/exclusiveAudio";
+
 // 有声圣经播放器：单个 <audio> 元素驾驭一个播放队列。
 // - continuous（整章）模式：章尾自动续下一章，REV 22 之后停止；
 // - selection（选集 / 消息引用）模式：逐段播放，段尾跳到下一段起点（跨章则换源），全部播完停止。
@@ -33,9 +37,12 @@ export interface BibleAudioPlayerRuntime {
   createAudio: () => HTMLAudioElement;
   storage: Pick<Storage, "getItem" | "setItem" | "removeItem">;
   token: () => string;
+  mediaSession?: (Parameters<typeof bindMusicMediaSession>[0] & Pick<MediaSession, "playbackState" | "metadata">) | null;
+  createMediaMetadata?: (metadata: MediaMetadataInit) => MediaMetadata;
 }
 
 export interface UseBibleAudioPlayerOptions {
+  exclusiveAudio?: ExclusiveAudio;
   accountId: () => number;
   books: () => BibleBookCatalogDTO[];
   version: () => BibleAudioVersionManifest | null;
@@ -53,7 +60,9 @@ function browserRuntime(): BibleAudioPlayerRuntime {
   return {
     createAudio: () => new Audio(),
     storage: localStorage,
-    token: getToken
+    token: getToken,
+    mediaSession: "mediaSession" in navigator ? navigator.mediaSession : null,
+    createMediaMetadata: typeof MediaMetadata === "undefined" ? undefined : metadata => new MediaMetadata(metadata)
   };
 }
 
@@ -63,6 +72,7 @@ function rateStorageKey(accountId: number) {
 
 export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
   const runtime = options.runtime || browserRuntime();
+  const exclusiveAudio = options.exclusiveAudio || getSharedExclusiveAudio();
 
   const queue = shallowRef<BibleAudioPlayItem[]>([]);
   const queueIndex = ref(-1);
@@ -80,10 +90,12 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
   let pendingSeekMs: number | null = null;
   let segmentEndMs: number | null = null;
   let playbackIntended = false;
+  let playAttempt = 0;
   let lastResumeSavedAt = 0;
   let skippedChapters = 0;
   let disposed = false;
   let detachAudio: (() => void) | null = null;
+  let unbindMediaSession: (() => boolean) | null = null;
 
   const chapterMap = computed<BibleAudioChapterMap>(() => {
     const version = options.version();
@@ -118,6 +130,35 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     if (!item) return false;
     return mode.value === "selection" ? queueIndex.value < queue.value.length - 1 : nextBibleChapterLocation(options.books(), item.book, item.chapter) !== null;
   });
+
+  function syncMediaSession() {
+    const session = runtime.mediaSession;
+    if (!session || !exclusiveAudio.isActive("bible")) return;
+    session.playbackState = playbackIntended ? "playing" : "paused";
+    const item = currentItem.value;
+    if (item && runtime.createMediaMetadata) session.metadata = runtime.createMediaMetadata({
+      title: `${bookName(item.book)} ${item.chapter}章`, artist: "有声圣经"
+    });
+  }
+
+  function claimMediaSession() {
+    if (!runtime.mediaSession) return;
+    unbindMediaSession?.();
+    unbindMediaSession = bindMusicMediaSession(runtime.mediaSession, {
+      play, pause, previousTrack: previousChapter, nextTrack: nextChapter
+    });
+    syncMediaSession();
+  }
+
+  function releaseMediaSession() {
+    if (!unbindMediaSession) return;
+    const released = unbindMediaSession();
+    unbindMediaSession = null;
+    if (released && runtime.mediaSession) {
+      runtime.mediaSession.playbackState = "none";
+      runtime.mediaSession.metadata = null;
+    }
+  }
 
   function bookName(code: string) {
     return options.books().find((book) => book.code === code)?.name || code;
@@ -154,7 +195,9 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     element.preload = "auto";
     element.playbackRate = rate.value;
     const onTimeUpdate = () => handleTimeUpdate(element);
-    const onEnded = () => advance(queueIndex.value);
+    const onEnded = () => {
+      if (playbackIntended && exclusiveAudio.isActive("bible")) advance(queueIndex.value);
+    };
     const onLoadedMetadata = () => {
       loading.value = false;
       if (pendingSeekMs !== null) {
@@ -163,10 +206,15 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
       }
     };
     const onPlay = () => {
+      if (disposed || !playbackIntended) {
+        element.pause();
+        return;
+      }
       playing.value = true;
       error.value = "";
     };
     const onPause = () => {
+      if (!element.paused) return;
       playing.value = false;
       saveResume(true);
     };
@@ -223,6 +271,9 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
 
   function finish() {
     playbackIntended = false;
+    playAttempt++;
+    releaseMediaSession();
+    exclusiveAudio.deactivate("bible");
     segmentEndMs = null;
     pendingSeekMs = null;
     if (audio) audio.pause();
@@ -274,11 +325,7 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     currentVerse.value = bibleAudioVerseAtTime(chapter.verses, bounds.startMs)?.verse ?? null;
     playbackIntended = autoplay;
     if (autoplay) {
-      void element.play().catch(() => {
-        playing.value = false;
-        loading.value = false;
-        error.value = "浏览器阻止了自动播放，请再点一次播放";
-      });
+      requestPlayback("浏览器阻止了自动播放，请再点一次播放");
     }
   }
 
@@ -371,17 +418,34 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     return true;
   }
 
+  function requestPlayback(failureMessage: string) {
+    if (!audio || disposed) return;
+    const attempt = ++playAttempt;
+    playbackIntended = true;
+    exclusiveAudio.activate("bible");
+    claimMediaSession();
+    void audio.play().catch(() => {
+      if (disposed || attempt !== playAttempt || !playbackIntended) return;
+      playbackIntended = false;
+      releaseMediaSession();
+      exclusiveAudio.deactivate("bible");
+      playing.value = false;
+      loading.value = false;
+      error.value = failureMessage;
+    });
+  }
+
   function play() {
     if (!audio || !currentItem.value) return;
-    playbackIntended = true;
-    void audio.play().catch(() => {
-      playing.value = false;
-      error.value = "播放失败，请重试";
-    });
+    requestPlayback("播放失败，请重试");
   }
 
   function pause() {
     playbackIntended = false;
+    playAttempt++;
+    if (!exclusiveAudio.isActive("bible")) releaseMediaSession();
+    else syncMediaSession();
+    exclusiveAudio.deactivate("bible");
     audio?.pause();
   }
 
@@ -495,6 +559,7 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
   function dispose() {
     disposed = true;
     finish();
+    exclusiveAudio.unregister("bible");
     detachAudio?.();
     detachAudio = null;
     if (audio) {
@@ -503,6 +568,8 @@ export function useBibleAudioPlayer(options: UseBibleAudioPlayerOptions) {
     }
     audio = null;
   }
+
+  exclusiveAudio.register({ id: "bible", resumable: true, suspend: pause, resume: play });
 
   return {
     queue,

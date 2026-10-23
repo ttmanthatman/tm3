@@ -23,6 +23,9 @@ import {
   type MusicPlaybackMode
 } from "../../musicPlayer";
 
+import { getSharedExclusiveAudio } from "../audio/messageAudioPlayback";
+import type { ExclusiveAudio } from "../audio/exclusiveAudio";
+
 const MUSIC_FADE_OUT_MS = 900;
 const MUSIC_STATE_SYNC_INTERVAL_MS = 30_000;
 const MUSIC_STALL_TIMEOUT_MS = 15_000;
@@ -55,6 +58,7 @@ export interface MusicPlayerRuntime {
 }
 
 interface UseMusicPlayerOptions {
+  exclusiveAudio?: ExclusiveAudio;
   tracks: Ref<MusicTrackDTO[]>;
   libraryTracks: ComputedRef<MusicTrackDTO[]>;
   favoriteTracks: ComputedRef<MusicTrackDTO[]>;
@@ -156,6 +160,7 @@ export function randomMusicTrack(
 }
 
 export function useMusicPlayer(options: UseMusicPlayerOptions) {
+  const exclusiveAudio = options.exclusiveAudio || getSharedExclusiveAudio();
   const request = options.request || api;
   const runtime = options.runtime || browserRuntime();
   const streamUrl = options.streamUrl || ((track: MusicTrackDTO) =>
@@ -200,7 +205,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   let pendingRestoredProgressMs = 0;
   let stateSyncTimer: number | undefined;
   let audio: HTMLAudioElement | null = null;
-  let unbindMediaSession: (() => void) | null = null;
+  let unbindMediaSession: (() => boolean) | null = null;
   let fadeFrame: number | undefined;
   let fadeTimer: number | undefined;
   let playSession: MusicPlaySession | null = null;
@@ -433,6 +438,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function syncCurrentMediaSession() {
+    if (exclusiveAudio.activeId() && !exclusiveAudio.isActive("music")) return;
     if (!runtime.mediaSession || !runtime.createMediaMetadata) return;
     syncMusicMediaSession(
       runtime.mediaSession,
@@ -532,7 +538,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function handlePlay() {
-    if (disposed) return;
+    if (disposed || !playbackIntended) {
+      audio?.pause();
+      return;
+    }
     playing.value = true;
     loading.value = false;
     error.value = "";
@@ -545,13 +554,14 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   function handlePause() {
     if (disposed) return;
     // load()/play() may have queued a pause for the previous source.
-    if (audio && !audio.paused) return;
+    if (audio && (!audio.paused || audio.ended)) return;
     if (recoveringSource && playbackIntended) return;
     playbackIntended = false;
     playAttempt++;
     clearRecovery();
     playing.value = false;
     loading.value = false;
+    exclusiveAudio.deactivate("music");
     if (playSession && audio) void reportProgress(playSession, audio, "paused");
     resetPlayObservation();
     notifyListeningChanged();
@@ -631,6 +641,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     error.value = code === 3 || code === 4
       ? "歌曲文件无法解码或格式不支持，请切换歌曲"
       : "歌曲加载中断，请点击播放继续";
+    exclusiveAudio.deactivate("music");
     notifyListeningChanged();
   }
 
@@ -646,7 +657,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     clearFade();
     audio.src = streamUrl(track);
     audio.dataset.trackId = String(track.id);
-    audio.load();
+    // play() performs source selection; avoid resetting the background media session with load().
     beginPlaySession(track);
   }
 
@@ -673,10 +684,12 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       }
     }
     clearFade();
-    targetAudio.volume = playOptions?.fadeIn ? 0 : 1;
+    targetAudio.volume = playOptions?.fadeIn && runtime.documentVisible() ? 0 : 1;
     preparePlaySession();
     loading.value = true;
     error.value = "";
+    exclusiveAudio.activate("music");
+    initializeMediaSession();
     options.onPlaybackStart?.();
     try {
       await targetAudio.play();
@@ -691,7 +704,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       recoveringSource = false;
       playing.value = true;
       loading.value = false;
-      if (playOptions?.fadeIn) {
+      if (playOptions?.fadeIn && runtime.documentVisible()) {
         const startedAt = runtime.now();
         const animate = (now: number) => {
           if (targetAudio !== audio || disposed) return;
@@ -714,6 +727,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
         return;
       }
       playbackIntended = false;
+      exclusiveAudio.deactivate("music");
       clearRecovery();
       loading.value = false;
       playing.value = false;
@@ -728,10 +742,11 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     playAttempt++;
     recoveringSource = false;
     clearRecovery();
+    exclusiveAudio.deactivate("music");
     const targetAudio = audio;
     if (!targetAudio) return;
     clearFade();
-    if (immediate || targetAudio.paused) {
+    if (immediate || targetAudio.paused || !runtime.documentVisible()) {
       targetAudio.pause();
       targetAudio.volume = 1;
       playing.value = false;
@@ -827,14 +842,22 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
   }
 
   function handleEnded() {
-    if (disposed) return;
+    if (disposed || !exclusiveAudio.isActive("music")) return;
     clearFade();
     playbackIntended = false;
     clearRecovery();
-    playing.value = false;
+    // Keep Now Playing active until the synchronous continuation has selected its source.
     if (playSession && audio) void reportProgress(playSession, audio, "ended");
     notifyListeningChanged();
-    if (options.onTrackEnded?.() === true) return;
+    if (options.onTrackEnded?.() === true) {
+      if (!playbackIntended) {
+        playing.value = false;
+        loading.value = false;
+        exclusiveAudio.deactivate("music");
+        notifyListeningChanged();
+      }
+      return;
+    }
     if (shouldRepeatCurrentMusic(playbackMode.value, options.scoreOpen.value) && currentTrack.value) {
       if (audio) audio.currentTime = 0;
       beginPlaySession(currentTrack.value);
@@ -844,6 +867,10 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
       playableTracks.value.length
     ) {
       void shiftTrack(1, true);
+    } else {
+      playing.value = false;
+      exclusiveAudio.deactivate("music");
+      notifyListeningChanged();
     }
   }
 
@@ -1004,9 +1031,9 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     clearRecovery();
     if (!audio) return;
     const targetAudio = audio;
-    unbindMediaSession?.();
+    const released = unbindMediaSession?.();
     unbindMediaSession = null;
-    if (runtime.mediaSession) {
+    if (released && runtime.mediaSession) {
       runtime.mediaSession.playbackState = "none";
       runtime.mediaSession.metadata = null;
     }
@@ -1042,6 +1069,7 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     if (disposed) return;
     persistPlaybackState(true);
     disposed = true;
+    exclusiveAudio.unregister("music");
     accountGeneration += 1;
     stopStateSyncTimer();
     removePageHideListener?.();
@@ -1051,6 +1079,12 @@ export function useMusicPlayer(options: UseMusicPlayerOptions) {
     disposeAudio();
     stopMediaSessionWatch();
   }
+
+  exclusiveAudio.register({
+    id: "music", resumable: true,
+    suspend: () => pause(true),
+    resume: () => void play({ fadeIn: true })
+  });
 
   const stopMediaSessionWatch = watch(
     [() => currentTrack.value?.title || "", playing],

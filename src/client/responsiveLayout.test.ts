@@ -597,7 +597,7 @@ test("long music titles scroll inside the mini panel", () => {
 test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /const MUSIC_FADE_OUT_MS = 900;/);
   assert.match(musicPlayer, /function pause\(immediate = false\)[\s\S]*?musicFadeVolume[\s\S]*?targetAudio\.pause\(\)/);
-  assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn \? 0 : 1;/);
+  assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn && runtime\.documentVisible\(\) \? 0 : 1;/);
 });
 
 test("song, score library, friend, and own-story controls stay ordered before chat tools", () => {

@@ -351,3 +351,16 @@ test("resetHistory 清空收听记录", async () => {
   player.controls.resetHistory();
   assert.equal(player.state.history.value.length, 0);
 });
+
+
+test("exclusive suspension pauses immediately and keeps progress without running fade timers", async () => {
+  const { player, audio } = createHarness();
+  await player.controls.loadPrograms();
+  await player.controls.playProgram(player.state.programs.value[0]);
+  audio.currentTime = 42;
+  player.controls.duck(true);
+  assert.equal(audio.paused, true);
+  assert.equal(audio.currentTime, 42);
+  assert.equal(player.state.playing.value, false);
+  player.controls.dispose();
+});

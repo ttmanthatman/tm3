@@ -168,3 +168,17 @@ test("media session metadata and playback state follow the current song", () => 
   assert.equal(session.playbackState, "none");
   assert.equal(session.metadata, null);
 });
+
+
+test("releasing an old Media Session binding preserves the current player's controls", () => {
+  const handlers = new Map<string, (() => void) | null>();
+  const session = { setActionHandler: (action: string, handler: (() => void) | null) => { handlers.set(action, handler); } };
+  const music = { play: () => {}, pause: () => {}, previousTrack: () => {}, nextTrack: () => {} };
+  const bible = { play: () => {}, pause: () => {}, previousTrack: () => {}, nextTrack: () => {} };
+  const releaseMusic = bindMusicMediaSession(session, music);
+  const releaseBible = bindMusicMediaSession(session, bible);
+  assert.equal(releaseMusic(), false);
+  assert.equal(handlers.get("pause"), bible.pause);
+  assert.equal(releaseBible(), true);
+  assert.equal(handlers.get("pause"), null);
+});

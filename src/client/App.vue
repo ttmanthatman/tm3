@@ -1803,7 +1803,6 @@ const musicPlayer = useMusicPlayer({
   scoreOpen: musicScoreOpen,
   onCurrentTrackChanged: reconcileOpenMusicScore,
   onListeningChanged: publishMusicListening,
-  onPlaybackStart: () => exclusiveAudio.activate("music"),
   // 「/听」会话接管自己点播的歌曲结束事件（返回 true 时曲库不再自动续播）
   onTrackEnded: () => listenSession.handleTrackEnded(),
   onHeatChanged: (trackId, heat) => {
@@ -1923,8 +1922,7 @@ const friendPlayer = useFriendPlayer({
   }
 });
 const { playing: friendPlaying } = friendPlayer.state;
-exclusiveAudio.register({ id: "music", resumable: true, suspend: () => pauseMusic(), resume: () => void playCurrentMusic({ fadeIn: true }) });
-exclusiveAudio.register({ id: "friend", resumable: true, suspend: () => friendPlayer.controls.duck(), resume: () => void friendPlayer.controls.resumeWithFade() });
+exclusiveAudio.register({ id: "friend", resumable: true, suspend: () => friendPlayer.controls.duck(true), resume: () => void friendPlayer.controls.resumeWithFade() });
 const friendProgramsOpen = ref(false);
 function toggleFriendPrograms() {
   friendProgramsOpen.value = !friendProgramsOpen.value;

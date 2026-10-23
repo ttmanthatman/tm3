@@ -346,14 +346,17 @@ export function useFriendPlayer(options: UseFriendPlayerOptions = {}) {
     options.onUserPause?.();
   }
 
-  /** 被协调器挂起：渐弱暂停，保留进度 */
-  function duck() {
+  /** 被协调器挂起：可立即暂停以避免与新音频交叠，保留进度 */
+  function duck(immediate = false) {
     if (!audio || audio.paused) return;
     playing.value = false;
     loading.value = false;
     stopProgressTimer();
     savePlaybackProgress();
-    fadeOutThenPause(audio);
+    if (immediate) {
+      clearFade();
+      audio.pause();
+    } else fadeOutThenPause(audio);
     notifyListening(null);
   }
 

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
+import { createExclusiveAudio } from "../audio/exclusiveAudio.js";
+import { useBibleAudioPlayer } from "../bible/useBibleAudioPlayer.js";
 import type { MusicPlaybackStateDTO, MusicPlaylistDTO, MusicTrackDTO } from "../../../shared/types.js";
 import { useMusicPlayer, type MusicPlayerRuntime } from "./useMusicPlayer.js";
 
@@ -72,12 +74,14 @@ function playbackState(
 }
 
 function createHarness(input?: {
+  onTrackEnded?: () => boolean | void;
   tracks?: MusicTrackDTO[];
   playlists?: MusicPlaylistDTO[];
   random?: number;
   playbackState?: MusicPlaybackStateDTO | null;
   request?: <T>(path: string, options?: RequestInit) => Promise<T>;
 }) {
+  const exclusiveAudio = createExclusiveAudio();
   const tracks = ref(input?.tracks || [track(1), track(2), track(3)]);
   const playlists = ref(input?.playlists || []);
   const selectedSourceKind = ref<"library" | "favorites" | "playlist">("library");
@@ -165,6 +169,8 @@ function createHarness(input?: {
     scoreOpen,
     request,
     runtime,
+    exclusiveAudio,
+    onTrackEnded: input?.onTrackEnded,
     streamUrl: (item) => `/stream/${item.id}`,
     primeTrackCache: async () => undefined,
     onListeningChanged: () => {
@@ -174,6 +180,8 @@ function createHarness(input?: {
 
   return {
     player,
+    exclusiveAudio,
+    runtime,
     tracks,
     audio,
     storageValues,
@@ -484,4 +492,97 @@ test("account changes discard prior playback state and ignore stale responses", 
   assert.equal(harness.player.state.currentTrack.value?.id, 3);
   assert.equal(harness.player.state.playbackMode.value, "single");
   harness.player.controls.dispose();
+});
+
+
+test("Bible, music and message playback suspend each other before the next audio starts", async () => {
+  const h = createHarness();
+  await activate(h);
+  const bibleAudio = new FakeAudio();
+  const bible = useBibleAudioPlayer({
+    accountId: () => 1,
+    books: () => [{ code: "JUD", name: "犹大书", chapterCount: 1 }],
+    version: () => ({ versionId: "test", name: "Test", language: "zh", dialect: "zh", style: "drama", translation: "cmn-cu89s", copyright: "", bookCount: 1, chapterCount: 1, totalBytes: 0, completed: false, chapters: [{ book: "JUD", chapter: 1, durationMs: 10000, verses: [{ verse: 1, startMs: 0, endMs: 10000 }] }] }),
+    exclusiveAudio: h.exclusiveAudio,
+    runtime: { createAudio: () => bibleAudio as unknown as HTMLAudioElement, storage: { ...h.runtime.storage, removeItem: () => {} }, token: () => "test", mediaSession: h.runtime.mediaSession, createMediaMetadata: metadata => metadata as MediaMetadata }
+  });
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  bible.startFromChapter("JUD", 1);
+  assert.equal(h.audio.paused, true, "music must stop immediately, without waiting for fades");
+  assert.equal(bibleAudio.paused, false);
+  assert.equal(h.runtime.mediaSession?.metadata?.artist, "有声圣经");
+  h.mediaHandlers.get("pause")?.();
+  assert.equal(bibleAudio.paused, true);
+  h.mediaHandlers.get("play")?.();
+  await Promise.resolve();
+  assert.equal(bibleAudio.paused, false);
+  await h.player.controls.play();
+  assert.equal(bibleAudio.paused, true, "music must also suspend Bible narration");
+  assert.equal(h.audio.paused, false);
+  h.exclusiveAudio.register({ id: "voice", resumable: false, suspend: () => {}, resume: () => {} });
+  h.exclusiveAudio.activate("voice");
+  assert.equal(h.audio.paused, true);
+  h.exclusiveAudio.deactivate("voice", { resumeSuspended: true });
+  await Promise.resolve();
+  assert.equal(h.audio.paused, false);
+  bible.dispose();
+  assert.equal(h.runtime.mediaSession?.playbackState, "playing");
+  assert.ok(h.mediaHandlers.get("pause"), "disposing the old player must preserve music controls");
+  h.player.controls.dispose();
+});
+
+test("hidden-page track transitions keep Media Session playing and reuse the audio element", async () => {
+  const h = createHarness();
+  await activate(h);
+  h.player.controls.setPlaybackMode("playlist");
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.setVisible(false);
+  for (const listener of h.visibilityListeners) listener();
+  const states: string[] = [];
+  const stop = watch(h.player.state.playing, () => states.push(h.runtime.mediaSession!.playbackState), { flush: "sync" });
+  const loads = h.audio.loadCalls;
+  h.audio.ended = true;
+  h.audio.paused = true;
+  h.audio.dispatchEvent(new Event("pause"));
+  h.audio.dispatchEvent(new Event("ended"));
+  await Promise.resolve();
+  assert.equal(h.player.state.currentTrack.value?.id, 2);
+  assert.equal(h.audio.paused, false);
+  assert.ok(!states.includes("paused"), "automatic continuation must not announce a user pause");
+  assert.equal(h.audio.loadCalls, loads, "play() starts the new source without an explicit load() reset");
+  stop();
+  h.player.controls.dispose();
+});
+
+
+test("background resumption skips animation and background pause completes immediately", async () => {
+  const h = createHarness();
+  await activate(h);
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.player.controls.pause(true);
+  h.setVisible(false);
+  await h.player.controls.play({ fadeIn: true });
+  assert.equal(h.audio.volume, 1, "hidden pages cannot rely on animation frames to become audible");
+  assert.equal(h.frames.size, 0);
+  h.player.controls.pause();
+  assert.equal(h.audio.paused, true);
+  assert.equal(h.frames.size, 0);
+  h.player.controls.dispose();
+});
+
+
+test("external playlist completion leaves the finished music paused", async () => {
+  const h = createHarness({ onTrackEnded: () => true });
+  await activate(h);
+  h.player.controls.selectTrack(h.tracks.value[0]);
+  await Promise.resolve();
+  h.audio.ended = true;
+  h.audio.paused = true;
+  h.audio.dispatchEvent(new Event("ended"));
+  assert.equal(h.player.state.playing.value, false);
+  assert.equal(h.exclusiveAudio.activeId(), null);
+  h.player.controls.dispose();
 });
