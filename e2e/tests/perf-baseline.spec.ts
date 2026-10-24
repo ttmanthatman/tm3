@@ -189,9 +189,10 @@ async function runRound(browser: Browser, condition: Condition, round: number): 
       };
     });
 
-    // ④ 切回默认频道。
+    // ④ 切回默认频道。未读数会进无障碍名（“N 频道名”），恩典/代祷子行又以频道名
+    // 结尾——非子行 + hasText 才唯一。
     const switchBackStart = Date.now();
-    await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.default}$`) }).click();
+    await page.locator("button.channel-row:not(.channel-subrow)", { hasText: E2E_CHANNELS.default }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default, { timeout: expectTimeout });
     const switchBackMs = Date.now() - switchBackStart;
 

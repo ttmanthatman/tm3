@@ -313,7 +313,7 @@ test("多选消息后合并转发为聊天记录卡片", async ({ page }) => {
   await forwardModal.getByRole("button", { name: "发送", exact: true }).click();
   await expect(forwardModal).toHaveCount(0);
 
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+  await page.locator("button.channel-row:not(.channel-subrow)", { hasText: E2E_CHANNELS.secondary }).click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
   const recordCard = page.locator(".chat-record-card").filter({ hasText: `${E2E_CHANNELS.default}的聊天记录` });
   await expect(recordCard).toBeVisible();
@@ -433,7 +433,7 @@ test("390px 手机视口打开频道列表并切换频道", async ({ page }) => 
   await expect(channelTrigger.locator(".channel-mobile-unread")).toHaveText("7");
   await expect(channelTrigger.locator("svg")).toHaveCount(0);
   await channelTrigger.click();
-  await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+  await page.locator("button.channel-row:not(.channel-subrow)", { hasText: E2E_CHANNELS.secondary }).click();
 
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
 });
@@ -446,6 +446,9 @@ test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => 
   const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });
   const searchTab = homeTabs.getByRole("tab", { name: "经文检索", exact: true });
   const favoritesTab = homeTabs.getByRole("tab", { name: /^经文收藏/ });
+  // The workspace tab strip mounts from an async chunk; on loaded runners the
+  // tabs appear progressively, so wait for the first tab before counting.
+  await expect(catalogTab).toBeVisible();
   await expect(homeTabs.getByRole("tab")).toHaveCount(5); // 目录/检索/抄写/笔记/收藏
   await expect(homeTabs.getByRole("tab", { name: "我的抄写", exact: true })).toBeVisible();
   await expect(catalogTab).toHaveAttribute("aria-selected", "true");

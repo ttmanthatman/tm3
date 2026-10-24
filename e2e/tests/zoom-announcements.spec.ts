@@ -85,7 +85,9 @@ test("Zoom events create durable centered notices in every public chat, deduplic
     // History remains available after reload and when changing to another public channel.
     await page.reload(); await expect(page.getByTestId("active-channel-name")).toBeVisible(); await focusChat(page);
     await expect(start).toHaveCount(1); await expect(ended).toHaveCount(1);
-    await page.getByRole("button", { name: new RegExp(`${E2E_CHANNELS.secondary}$`) }).click();
+    // 未读数会进无障碍名（“N 频道名”），恩典/代祷子行又以频道名结尾——限定侧栏
+    // 非子行 + hasText 才唯一。
+    await page.locator("aside.channel-pane button.channel-row:not(.channel-subrow)", { hasText: E2E_CHANNELS.secondary }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
     await expect(start).toBeVisible(); await expect(ended).toBeVisible();
     const history = await request.get(`/api/messages?channelId=${secondary.id}`, { headers });
