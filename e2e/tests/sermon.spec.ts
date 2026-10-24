@@ -122,10 +122,10 @@ async function startGroupPresentation(workspace: Locator, inviteDisplayName?: st
   await expect(workspace.locator(".sermon-start-view")).toBeVisible();
   await expect(workspace.getByRole("radio", { name: /小组演示/ })).toBeChecked();
   if (inviteDisplayName) {
-    // Scope to the primary audience list: the collapsible「邀请更多」section can
-    // render another row for the same account (without its offline note), which
-    // makes an unscoped hasText locator ambiguous.
-    const row = workspace.locator(".sermon-audience-list > .sermon-audience-row", { hasText: inviteDisplayName });
+    // A sermon minus-one/preview workspace can stay mounted beside the primary
+    // one, duplicating audience rows; only the visible instance is actionable.
+    // TODO(P3): model the dual workspace explicitly instead of visibility filtering.
+    const row = workspace.locator(".sermon-audience-list > .sermon-audience-row", { hasText: inviteDisplayName }).filter({ visible: true });
     await expect(row).toBeVisible();
     await row.locator('input[type="checkbox"]').check();
   }
