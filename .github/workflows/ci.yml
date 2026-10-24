@@ -91,7 +91,9 @@ jobs:
     name: Browser smoke tests
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The suite has grown to 212 tests (~35 min observed); the previous 20 min
+    # timeout cancelled the job mid-run (a timeout surfaces as "cancelled").
+    timeout-minutes: 45
 
     services:
       mysql:
