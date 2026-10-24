@@ -99,7 +99,23 @@ async function loginToDiagnosticChannel(page: Page) {
   await page.getByPlaceholder("用户名").fill(remote.username);
   await page.getByPlaceholder("密码").fill(remote.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
-  const channel = page.getByRole("button", { name: remote.channel, exact: true });
+  // Some approved sites enable the desktop Bible auto-split at login (it opens
+  // with the shell and hides the channel sidebar); whichever surface appears
+  // first, end in plain chat before looking for the dedicated channel.
+  const closeBible = page.getByRole("button", { name: "关闭圣经" });
+  // The dedicated channel is private (「私密频道 …」 accessible name); match by suffix.
+  const channel = page.getByRole("button", { name: new RegExp(`${remote.channel}$`) });
+  await expect(closeBible.or(channel)).toBeVisible();
+  if (await closeBible.isVisible()) await closeBible.click();
+  // Some approved sites pin a notice in the default channel and its viewer
+  // auto-expands over the sidebar; acknowledge it once so the channel list is
+  // clickable (the dismissal persists for the dedicated account).
+  const pinnedAck = page.getByRole("dialog", { name: "置顶消息" }).getByRole("button", { name: "朕知道了" });
+  if (await pinnedAck.isVisible()) await pinnedAck.click();
+  // Some approved sites default to a collapsed desktop channel sidebar; expand
+  // it when present so the dedicated channel row is clickable.
+  const expandChannels = page.getByRole("button", { name: "展开频道" });
+  if (await expandChannels.isVisible()) await expandChannels.click();
   await expect(channel).toBeVisible();
   await channel.click();
   await expect(page.getByTestId("active-channel-name")).toHaveText(remote.channel);

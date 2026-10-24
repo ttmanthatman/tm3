@@ -2,9 +2,13 @@
 
 ## Status
 
-Accepted (2026-08-10); not yet implemented. `MessageType` in
-`src/shared/types.ts` has no `handwriting` variant as of v1.13.2 — the decision
-is recorded here ahead of the implementation.
+Accepted (2026-08-10); implemented. `MessageType.handwriting` now exists in
+`src/shared/types.ts`; composition and playback live in `src/client/features/handwriting/`,
+Bible copying reuses the same stroke payloads in `src/client/features/bible/copywork/`,
+and behavior is covered by `e2e/tests/handwriting.spec.ts` and
+`e2e/tests/bible-copywork.spec.ts`. The vector-storage decision itself is unchanged;
+per-message budgets have evolved since (see the handwriting entry in
+[development-index.md](../development-index.md)).
 
 ## Context
 

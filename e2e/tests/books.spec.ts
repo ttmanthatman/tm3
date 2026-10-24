@@ -115,11 +115,15 @@ test("书架长按下载、独立缓存、笔记下拉及共读进度可用", as
       await page.setViewportSize({ width, height: 900 });
       const cover = page.getByRole("button", { name: "阅读《短书名》", exact: true });
       if (width === 390) {
-        const input = await page.context().newCDPSession(page), box = (await cover.boundingBox())!;
-        await input.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: box.x + box.width / 2, y: box.y + box.height / 2, id: 1 }] });
+        // CI runs this spec in WebKit first and WebKit has no CDP session;
+        // a DOM PointerEvent with pointerType "touch" drives the same
+        // press-and-hold pointer handlers in both engines.
+        const box = (await cover.boundingBox())!;
+        await cover.evaluate((el, point) => {
+          el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0, pointerId: 1, isPrimary: true, pointerType: "touch", clientX: point.x, clientY: point.y }));
+        }, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
         await page.waitForTimeout(600);
-        await input.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-        await input.detach();
+        await cover.evaluate((el) => el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0, pointerId: 1, isPrimary: true, pointerType: "touch" })));
       } else { await cover.hover(); await page.mouse.down(); await page.waitForTimeout(600); await page.mouse.up(); }
       const menu = page.getByRole("menu", { name: "《短书名》操作" });
       await expect(menu).toBeVisible();

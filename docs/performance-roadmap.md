@@ -2,6 +2,7 @@
 
 本文档记录 2026-08 加载性能专项的剩余工作，供后续会话直接接手。
 已完成部分见 git 历史 `74abce0..fc014ef`（main）与 `CHANGELOG.md` 的 Unreleased 段落。
+2026-10-24 状态复核（基线 `01aef47`）：下列条目已逐项对照源码更新完成状态，行号以复核当日为准。
 
 ## 已完成的优化（基线）
 
@@ -14,7 +15,8 @@
 
 - `AGENTS.md`（根 / src/client / src/server）与 `docs/development-index.md`、`docs/model-task-routing.md`——先读这些再动手。
 - 部署与测试站信息在 `AGENTS.local.md`（本地忽略文件，不要提交、不要引用其中内容到受跟踪文件）。
-- 验证命令：`npm run verify:full`（提交前必须 exit 0）；e2e 需要本地 MySQL 的 `tm3_e2e` 库，用 `.env` 里的 `DATABASE_URL` 改库名得到 `E2E_DATABASE_URL` 后跑 `npm run test:e2e`。
+- 验证按 [development-workflow.md](development-workflow.md#验证选择) 的风险矩阵选择：常规改动跑领域检查与受影响构建；高风险改动、推送/发布前才要求一次 `npm run verify:full`。旧文的“每次提交全量检查”不再是普通本地提交的默认要求。
+- e2e 只能使用一次性 `tm3_e2e` 库：显式设置 `E2E_DATABASE_URL` 指向它后经 `npm run test:e2e` 运行（脚本自带校验、播种与 webServer）；不要通过修改 `.env` 的 `DATABASE_URL` 换库名，也不要对 `tm3_local` 等保留库运行 e2e。
 - 注意管道会掩盖退出码：`npm run verify:full | tail` 永远返回 0，必须 `set -o pipefail` 或重定向到文件后看 `exit=$?`。
 - `src/client/responsiveLayout.test.ts` 和 `src/server/musicPlaylistRoutes.test.ts` 是源码正则测试：改动 App.vue / server/index.ts 结构后需要同步更新断言（保持断言意图，不要删除）。
 
@@ -41,14 +43,14 @@
 - **messages:refresh 扇出**（中）：✅ 2026-08-10 完成——prayed/prayer-status/AI 经文/撤回改发 `message:updated` 增量（广播点统一复用 hydrate 的 DTO，零额外查询）；客户端合并时保留本视角字段（`src/client/messageUpdates.ts`）。撤回路径冗余双发已去掉。批量删除/导入等真多消息场景保留 refresh。
 - **channel:updated 客户端忽略 payload**（中）：✅ 2026-08-10 完成——已存在的频道做增量合并（保留本视角权限位/lastMessageId/pinned），新频道/删除/无 payload 事件回退 loadChannels。
 - **socket 发消息双重 hydrateMessage**（中）：✅ 2026-08-10 部分完成——未做 DTO 复用，改为给 `hydrateMessage` 补 likes/favorites/musicScores/musicLyrics/voiceListens 预载（serializeMessage 走既有预载分支），每次 hydrate 从 3-5 条查询降为 1 条，同时覆盖 roadmap 项 4。
-- **索引**（中，需迁移，Sol 域）：prayer 计数需 `@@index([type, channelId])`；音乐曲目列表查询全表扫 messages（缓存音乐频道 id 后走 `[channelId, id]`）。
+- **索引**（中，需迁移，高风险域）：schema 现有 `[channelId, id]`/`replyToId`/`chainRootId`，仍缺 prayer 计数用的 `@@index([type, channelId])`；音乐曲目列表查询全表扫 messages（缓存音乐频道 id 后走 `[channelId, id]`）。
 - **/api/channels members include**（低）：全部频道拉全部成员 account 行，只有 direct 双成员频道用得到 directPeer。
 - **vendor 分包**（中低）：✅ 已并入 0.2 节完成项。
 - **RELEASE_HISTORY 移出首屏**（中低）：✅ 已并入 0.2 节完成项（改用 `/api/version/history` 端点方案，未动 release 工具链）。
 - **socket.io 动态 import**（低）：~11KB br，代价是 WS 握手晚一轮，需权衡。
-- **滚动路径减重**（中）：`saveReadPosition` 每滚动帧强制布局 + 同步 localStorage 写 → 复用 idle timer 节流；虚拟滚动观察器全量重建改增量 + forward overscan 320px 偏小。
-- **缓存剪枝**（低-中）：`voicePlayers`/`voiceProgress`/`resolvedMessageImageDimensions` 等按消息 id 累积且全量 spread 写入，切频道不清理；BibleWorkspace `chapterCache` 无上限（~20 章 LRU）。
-- **小项**：parallax 图层强制无损 PNG（改 webp）；歌谱 webp q92 偏高（85 即可）；styles.css 约十余个死 CSS 家族；`switchPrayerView` 串行 await 改 Promise.all；unread-counts 的 actor join 可用 `senderActorId != auth.actorId` 省掉；friend media 无 ETag 且不在 SW 缓存白名单。
+- **滚动路径减重**（中）：`saveReadPosition` 已有 400ms 防抖与签名去重（App.vue `scheduleSaveReadPosition`，✅ 2026-10-24 核实）；虚拟滚动观察器全量重建改增量未做。
+- **缓存剪枝**（低-中）：`voicePlayers` 等已随播放体系重构移出 App.vue（2026-10-24 全仓检索无残留）；章节缓存已抽出 `src/client/bibleChapterCache.ts`，是否有界未复核，留待性能测量阶段确认。
+- **小项**：parallax 图层强制无损 PNG（改 webp）；歌谱 webp q92 偏高（85 即可）；styles.css 约十余个死 CSS 家族；`switchPrayerView` 串行 await 改 Promise.all（store.ts 约 629 行，2026-10-24 仍为串行）；unread-counts 的 actor join 可用 `senderActorId != auth.actorId` 省掉；friend media 无 ETag 且不在 SW 缓存白名单（除标注外均未复核）。
 
 ### 1. `/api/music/tracks` 与歌单接口的负载裁剪（服务端，中等收益）
 
@@ -61,44 +63,33 @@
 - 风险：客户端歌词头、歌谱舞台直接消费 `track.lyrics.cues`，需要找到所有消费者并改为按需加载；`docs/development-index.md` 的 Music Player State Ownership 段落描述了边界。
 - 验收：打开音乐面板首包体积显著下降；歌词显示、歌谱翻页、歌单播放全部正常；`npm run test:server` 通过（注意 `musicPlaylistRoutes.test.ts` 有 schema 不变量断言）。
 
-### 2. 认证会话短 TTL 缓存（服务端，小收益但简单）
+### 2. 认证会话短 TTL 缓存（服务端，✅ 已完成，并入 0.2 节）
 
-- 位置：`src/server/index.ts` 的 `verifyJwtToken`（约 574-594 行）。
-- 现状：每个带认证的请求固定 `account.findUnique` + `accountSession.findUnique` 两条 SQL（+5 分钟一次的 `updateMany`）。启动并发 6+ 请求放大成 12+ 条。
-- 做法：给 `(accountId, sessionId)` 加 30-60s 内存缓存（注意登出/撤销会话时失效，`logout` 和账号删除路径要主动清）。也可以选择只缓存 account 行、session 仍实时查（撤销即时生效，安全属性更保守）。
-- 风险：会话撤销后缓存窗口内仍放行——这是安全相关权衡，按 `docs/model-task-routing.md` 属于 Sol 域，改动前明确失效策略。
-- 验收：重复请求在 TTL 内 0 额外 SQL；登出后立即 401。
+- 落点：`src/server/index.ts` `verifyJwtToken` 的 `authSessionCache`（30s TTL、上限 1000 淘汰最旧，2026-10-24 核实在位）；失效统一挂在 `disconnectSessions`（logout/改密码/管理员改删号/账号删除/新登录顶替）。
 
 ### 3. 公开频道 members 接口的字段裁剪（服务端，小收益）
 
-- 位置：`src/server/index.ts` 的 `GET /api/channels/:id/members`（约 3720-3764 行）。
+- 位置：`src/server/index.ts` 的 `GET /api/channels/:id/members`（约 2820-2842 行，2026-10-24 复核）。
 - 现状：公开频道 `where: {}` 拉全站 account 全字段（含 `passwordHash`、`biblePreferences`）过 ORM 后在内存丢弃。
 - 做法：加 `select` 只取响应需要的 7 个字段；顺便去掉 preHandler 已查过的重复 channel 查询。
 - 风险：低。确认没有下游消费被裁掉的字段。
 - 验收：响应 shape 不变；`npm run test:server` 通过。
 
-### 4. 单消息路径的序列化预载（服务端，小收益）
+### 4. 单消息路径的序列化预载（服务端，✅ 已完成，随 0.1 节 socket 项落地）
 
-- 位置：`src/server/index.ts` 的 `hydrateMessage` / `emitMessage`（socket 推送新消息走这里）。
-- 现状：`hydrateMessage` 的 include 不含 likes/favorites，`serializeMessage` 无 batch 时对每条消息额外 2 条查询；语音/音频/代祷同理走单条查询路径。
-- 做法：给 `hydrateMessage` 的 include 补上 `likes`/`favorites`（serializeMessage 已有预载分支，零改动复用）；语音/音频/代祷单条查询量小，可不动。
-- 风险：低。
-- 验收：高频发消息时段 socket 推送路径 SQL 数下降；消息 reactions 显示正常。
+- 落点：`src/server/services/messageSerialization.ts` `hydrateMessage`（约 388 行，2026-10-24 核实）include 预载 likes/favorites/musicScores/musicLyrics/voiceListens，`serializeMessage` 命中预载分支；socket 推送与单条路由共用该实现。
 
-### 5. `App.vue` 模态框与管理面板继续拆分（客户端，架构级，主要收益是可维护性）
+### 5. `App.vue` 继续拆分（客户端，架构级，主要收益是可维护性）
 
-- 位置：`src/client/App.vue`（约 12k 行，18 个 modal 仍在首屏 chunk）。
-- 现状：首屏 chunk 仍有 ~719KB，其中大头是 App.vue 自身模板与逻辑（管理面板、设置、各种弹窗）。
-- 做法：按 `docs/development-index.md` 的 "Next Deepening Opportunities" 顺序来：先抽 modal shell 模块，再把 admin 数据工具、设置页拆成 `defineAsyncComponent` 组件。每拆一个跑 `npm run test:client`（responsiveLayout 正则断言需要同步）。
-- 风险：这是审计文档列出的耦合区 #1，改动面广；建议每个 modal 一个 commit，逐个体测。
-- 验收：首屏 chunk 进一步下降；全部 e2e 通过；移动端 360/390px 与桌面 1280px 逐一检查弹窗。
+- 2026-10-24 复核：`App.vue` 已从约 12,412 行降至 6,911 行；`class="modal-shell"` 在 App.vue 内已清零，管理面板与设置面板分别迁至 `features/admin/AdminPanel.vue`、`features/settings/SettingsPanel.vue`，弹窗统一走 `components/ui/AppModal.vue` 与 `modalStack.ts`。“18 个 modal 在首屏 chunk”不再是当前结论。
+- 剩余职责（导航/阅读位置、收藏、弹层接线、音频/乐谱协调、初始化与销毁）按 [development-index.md](development-index.md) 的 Next Deepening Opportunities 与全流程优化计划 P4/P5 分批处理；每批独立验收，不以行数为目标。
 
 ### 6. 小项（顺手做）
 
-- 头像 `<img>` 无 `loading="lazy"`/`decoding="async"`（如 `App.vue` 成员列表处）——消息列表外的头像加 lazy。
-- `linkPreviewCache` 无上限无淘汰（`App.vue` 约 801 行）——长会话内存增长，加个 LRU 上限（如 200 条）。
-- `preloadMessageImages` 的队列在历史分页时持续累积（`App.vue` 约 2230 行）——给队列设上限或跳过分页加载的旧图。
-- `checkServerVersion` 在 onMounted 里串行 await 在滚动定位之前（约 1071 行）——改为后台并发。
+- 头像 `<img>` — ✅ 已统一走 `components/ui/AvatarImage.vue`（`decoding="async"`、失败回退文字头像）；未加 `loading="lazy"`，头像体积小、影响有限。
+- `linkPreviewCache` 无上限 — ✅ 已重构为 `features/messages/linkPreviewQueue.ts`：缓存上限 120、并发 3、失败退避（5s/30s 后本会话放弃）、切频道/换账号 reset 并中止在途请求。
+- `preloadMessageImages` 队列持续累积 — ✅ 已有界：只预热最新 30 张图（App.vue `preloadMessageImages`），按消息 id 去重入队。
+- `checkServerVersion` 在 onMounted 串行 await 位于滚动定位之前 — 仍在（App.vue 约 1428 行）；改后台并发时保持首个 60s 轮询起点行为不变。
 
 ## 验证与部署纪律
 

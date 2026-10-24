@@ -16,6 +16,12 @@ low-risk work, provided the routing priority above is enforced. The extracted mo
 improve locality, test seams, and application startup, but the remaining application shells
 are still too broad for low-context architectural changes.
 
+> 2026-10-24 基线注记（`01aef47`）：本页全部统计与结论属于 2026-08 审计快照，仅作历史基线保留。
+> 当前入口尺寸为 `src/client/App.vue` 6,911 行、`src/server/index.ts` 4,858 行（其中 36 个
+> in-file 路由注册）；`src/` 下源码测试文件 282 个，另有 e2e/e2e-remote 规格 54 个。
+> 文中模型代号（Terra/Luna/Sol）来自已退役的旧路由词汇；现行分级与高风险清单见
+> [model-task-routing.md](model-task-routing.md)（小改动/常规开发/高风险），下文“Sol-only”清单对应现行“高风险”域。
+
 ## Application shell reduction
 
 | Module | Baseline | Current | Reduction |
