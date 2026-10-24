@@ -5,7 +5,8 @@ import Fastify from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { createZoomSettingsStore, registerZoomRoutes } from "./zoom.js";
 import { registerZoomWebhookRoutes } from "./zoomWebhook.js";
-import { createZoomWebhookStore, zoomMeetingId, ZOOM_WEBHOOK_SETTING } from "../services/zoomWebhook.js";
+import { createZoomWebhookStore, ZOOM_WEBHOOK_SETTING } from "../services/zoomWebhook.js";
+import { zoomMeetingId } from "../../shared/zoom.js";
 
 const secret = "test-only-webhook-secret";
 const meetingId = "7123456789";
@@ -14,7 +15,8 @@ function fixture(enabled = true) {
   let now = Date.parse("2026-10-24T04:00:00Z");
   let conflicts = 0;
   const rows = new Map([["zoom.link", `https://us06web.zoom.us/j/${meetingId}?pwd=test`]]);
-  const prisma = { setting: {
+  const prisma: PrismaClient = { $transaction: async (run: (tx: PrismaClient) => Promise<unknown>) => run(prisma),
+    channel: { findMany: async () => [] }, message: { findMany: async () => [] }, setting: {
     findMany: async () => [...rows].map(([key, value]) => ({ key, value })),
     upsert: async ({ where, create, update }: { where: { key: string }; create: { value: string }; update: { value?: string } }) => {
       if (!rows.has(where.key)) rows.set(where.key, create.value);

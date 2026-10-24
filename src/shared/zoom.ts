@@ -1,5 +1,27 @@
 export const DEFAULT_MEETING_TIME_ZONE = "Asia/Shanghai";
 
+export function zoomMeetingId(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || url.username || url.password) return null;
+    if (!["zoom.us", "zoomgov.com"].some(host => url.hostname === host || url.hostname.endsWith(`.${host}`))) return null;
+    return /^\/(?:j|wc\/join)\/(\d{9,11})\/?$/.exec(url.pathname)?.[1] || null;
+  } catch { return null; }
+}
+
+export interface ZoomAnnouncementPayload {
+  kind: "zoom_meeting";
+  status: "active" | "inactive";
+  url?: string;
+}
+
+export function zoomAnnouncementPayload(value: unknown): ZoomAnnouncementPayload | null {
+  if (!value || typeof value !== "object" || !("kind" in value) || value.kind !== "zoom_meeting" || !("status" in value)) return null;
+  if (value.status === "inactive") return { kind: "zoom_meeting", status: "inactive" };
+  if (value.status !== "active" || !("url" in value) || typeof value.url !== "string" || !zoomMeetingId(value.url)) return null;
+  return { kind: "zoom_meeting", status: "active", url: value.url };
+}
+
 export interface ZoomMeeting {
   endsAt: string;
   timeZone: string;

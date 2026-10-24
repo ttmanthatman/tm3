@@ -21,6 +21,8 @@ import {
   type BibleRichTextSegment
 } from "./messageRendering";
 import { storyAnnouncementLetters } from "./storyAnnouncement";
+import { zoomAnnouncementPayload } from "@shared/zoom";
+import ZoomAnnouncement from "../zoom/ZoomAnnouncement.vue";
 import BookNoteShareCard from "../books/BookNoteShareCard.vue";
 import { bookNoteSharePayload } from "@shared/bookNotes";
 import BiblePassageShareCard from "../bible/BiblePassageShareCard.vue";
@@ -82,6 +84,7 @@ const props = defineProps<{
   listenSessionFor?: (message: MessageDTO) => ListenSessionSnapshot | null;
 }>();
 
+const zoomAnnouncement = computed(() => props.message.type === "system" ? zoomAnnouncementPayload(props.message.payload) : null);
 const bookNoteShare = computed(() => props.message.type === "text" ? bookNoteSharePayload(props.message.payload) : null);
 const bookShare = computed(() => props.message.type === "text" ? parseBookShareMessage(props.message.content, window.location.origin) : null);
 const listenPlaylist = computed(() => props.message.type === "text" ? listenPlaylistPayload(props.message.payload) : null);
@@ -137,7 +140,8 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <template v-if="variant === 'favorite'">
+  <ZoomAnnouncement v-if="zoomAnnouncement" :announcement="zoomAnnouncement" />
+  <template v-else-if="variant === 'favorite'">
     <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
     <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
     <HandwritingMessage v-else-if="message.type === 'handwriting'" :message="message" variant="favorite" />

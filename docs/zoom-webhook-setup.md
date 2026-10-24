@@ -15,4 +15,6 @@ Automatic mode starts with **unknown** status until the first matching notificat
 
 With automatic mode enabled, the administrator's long-press dialog shows synchronized status and manual state changes return HTTP 409. Clear the environment variable and restart to restore manual mode. This setting does not modify Zoom's waiting-room, host or join-before-host policies.
 
+Accepted start/end events also create a persistent `system` message in every public standard chat channel. Private channels, direct messages and specialized channels are excluded. The start notice reads “Zoom会议开始了”, links to the saved meeting URL and uses white text on a blue background; the end notice reads “Zoom会议结束了” without a link. Both sit in the normal message timeline and scroll with history. State changes and the entire channel fan-out commit in one database transaction. Per-instance, per-status and per-channel request IDs prevent duplicate rows on retries; Socket.IO broadcasts only committed messages, and a failed broadcast can retry the same IDs. These notices do not invoke AI or send external push notifications. No new table or migration is required.
+
 References: [Zoom webhooks](https://developers.zoom.us/docs/api/webhooks/), [Server-to-Server OAuth](https://developers.zoom.us/docs/internal-apps/s2s-oauth/).

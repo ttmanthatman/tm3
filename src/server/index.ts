@@ -992,7 +992,7 @@ registerAssistantChatFunctions(assistantTools, {
 });
 registerAssistantToolsRoutes(app, { registry: assistantTools, settings: assistantToolsSettings, requireAdmin });
 const zoomWebhookSecret = process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "";
-const zoomWebhook = createZoomWebhookStore(prisma);
+const zoomWebhook = createZoomWebhookStore(prisma, Date.now, emitMessage);
 registerZoomRoutes(app, { settings: createZoomSettingsStore(prisma, Date.now, zoomWebhookSecret ? zoomWebhook : undefined), requireAuth, requireAdmin });
 registerZoomWebhookRoutes(app, { secretToken: zoomWebhookSecret, accept: zoomWebhook.accept });
 
