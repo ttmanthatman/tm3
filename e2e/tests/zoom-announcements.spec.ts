@@ -104,6 +104,48 @@ test("Zoom events create durable centered notices in every public chat, deduplic
     expect(history.ok()).toBe(true);
     const currentHistory = await prisma.message.findMany({ where: { channelId: current.id, sender: { username: "system:zoom" } }, orderBy: { id: "asc" } });
     expect(currentHistory.map(message => message.content)).toEqual(["Zoom会议开始了", "Zoom会议结束了"]);
+    const observer = await page.context().newPage();
+    try {
+      await observer.clock.install();
+      await observer.goto("/");
+      await expect(observer.getByTestId("active-channel-name")).toBeVisible();
+      await focusChat(observer);
+      const egg = page.locator(".zoom-end-announcement");
+      const profile = await prisma.account.findUniqueOrThrow({ where: { username: E2E_ADMIN.username }, select: { displayName: true } });
+      const exploring = `${profile.displayName}在探索世界`;
+      const replies = ["确实结束了", "真的别点了", "你要信", "想参加吗？", "下次吧……", "别试了真没了"];
+      const pagesBeforeEgg = page.context().pages().length;
+      for (const reply of replies) {
+        await egg.click();
+        await expect(egg).toHaveText(reply);
+      }
+      await expect(page.locator(".chat-activity-ticker")).toContainText(exploring);
+      await expect(observer.locator(".chat-activity-ticker")).toContainText(exploring);
+      await expect(observer.locator(".zoom-end-announcement")).toHaveText("Zoom会议结束了");
+      const today = await page.evaluate(() => {
+        const now = new Date();
+        return { year: now.getFullYear(), month: now.getMonth(), day: now.getDate() };
+      });
+      for (let daysAgo = 0; daysAgo < 20; daysAgo++) {
+        await egg.click();
+        const date = new Date(today.year, today.month, today.day - daysAgo);
+        await expect(egg).toHaveText(`${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`);
+      }
+      expect(page.context().pages()).toHaveLength(pagesBeforeEgg);
+      for (const width of [360, 390, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        await egg.scrollIntoViewIfNeeded();
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        await egg.screenshot({ path: test.info().outputPath(`zoom-egg-${width}.png`) });
+      }
+      await observer.clock.fastForward(30_001);
+      await expect(observer.locator(".chat-activity-ticker").filter({ hasText: exploring })).toHaveCount(0);
+      await page.waitForTimeout(1_100);
+      await egg.press("Space");
+      await expect(observer.locator(".chat-activity-ticker")).toContainText(exploring);
+      await observer.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+      await expect(observer.locator(".chat-activity-ticker").filter({ hasText: exploring })).toHaveCount(0);
+    } finally { await observer.close(); }
     expect(errors).toEqual([]);
   } finally { await prisma.$disconnect(); }
 });

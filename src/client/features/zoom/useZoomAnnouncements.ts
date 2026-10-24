@@ -3,6 +3,7 @@ import type { MessageDTO } from "@shared/types";
 import { zoomAnnouncementPayload } from "@shared/zoom";
 import { useZoomMeeting, zoomMeetingKey } from "./useZoomMeeting";
 import { zoomAnnouncementEnded } from "./zoomAnnouncementState";
+import { useWorldExploration } from "./useWorldExploration";
 
 interface PhysicsLayer {
   start: (id: number, bubble: HTMLElement, text: HTMLElement) => Promise<boolean>;
@@ -19,6 +20,7 @@ export function provideZoomAnnouncements(options: {
   enabled: () => boolean;
 }) {
   const zoom = useZoomMeeting(options.enabled);
+  const exploration = useWorldExploration();
   provide(zoomMeetingKey, zoom);
   watch(() => options.messages().reduce((latest, message) => message.type === "system" && zoomAnnouncementPayload(message.payload) ? Math.max(latest, message.id) : latest, 0), () => { void zoom.refresh(); });
   const settings = computed(() => zoom.ready.value && !zoom.error.value ? zoom.settings.value : null);
@@ -34,7 +36,10 @@ export function provideZoomAnnouncements(options: {
     if (physics.isActive(message.id)) physics.restore(message.id);
     else void physics.start(message.id, bubble, text);
   }
-  const actions = { ended, drop };
+  function explore(message: MessageDTO) {
+    if (options.surfaceActive()) exploration.publish(message.id);
+  }
+  const actions = { ended, drop, explore, explorers: exploration.explorers };
   provide(announcementsKey, actions);
   return actions;
 }

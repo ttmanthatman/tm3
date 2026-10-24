@@ -1,4 +1,5 @@
 import type { BibleListenerDTO, BibleReaderPresenceDTO, BookReaderPresenceDTO, FriendListenerDTO, MusicListenerDTO } from "@shared/types";
+import type { WorldExplorerDTO } from "@shared/worldExploration";
 
 export type TypingActivity = { displayName: string };
 
@@ -9,6 +10,7 @@ export type ActivityTickerSources = {
   musicListeners: MusicListenerDTO[];
   friendListeners: FriendListenerDTO[];
   typingActivities: TypingActivity[];
+  worldExplorers?: WorldExplorerDTO[];
 };
 
 export function activityTickerItems(sources: ActivityTickerSources) {
@@ -19,6 +21,7 @@ export function activityTickerItems(sources: ActivityTickerSources) {
     ...sources.bookReaders.map((reader) => `${reader.displayName}正在读《${reader.bookTitle}》`),
     ...sources.musicListeners.map((listener) => `${listener.displayName}正在听《${listener.trackTitle}》`),
     ...sources.friendListeners.map((listener) => `${listener.displayName}正在听良友节目《${listener.programTitle}》`),
+    ...(sources.worldExplorers ?? []).map(explorer => `${explorer.displayName}在探索世界`),
     ...(typingNames.length ? [`${typingNames.join("、")}正在输入${typingNames.length === 1 ? "…" : ""}`] : [])
   ];
 }

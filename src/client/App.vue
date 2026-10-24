@@ -1952,6 +1952,7 @@ const activityStatusItems = computed(() => activityTickerItems({
   bookReaders: bookReaders.value,
   musicListeners: musicListeners.value,
   friendListeners: friendListeners.value,
+  worldExplorers: zoomAnnouncements.explorers.value,
   typingActivities: Object.values(store.typing)
 }));
 const activityTickerText = computed(() => activityStatusItems.value.join("　✦　"));
@@ -5184,7 +5185,7 @@ const composerBindings = computed(() => ({
 // card so both render message bodies through MessageRow with identical wiring.
 // brokenAttachmentIds is a ref and is bound separately at each usage site.
 const assistantFeatureLauncher = ref<InstanceType<typeof AssistantFeatureLauncher> | null>(null);
-provideZoomAnnouncements({
+const zoomAnnouncements = provideZoomAnnouncements({
   messages: () => store.messages,
   physics: oopsPhysicsLayer,
   enabled: () => !!store.account,

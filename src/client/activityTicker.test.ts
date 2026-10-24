@@ -32,3 +32,7 @@ test("activity ticker combines Bible reading/listening, book, music, friend, and
 test("a single typing user keeps the compact ellipsis treatment", () => {
   assert.deepEqual(activityTickerItems({ ...empty, typingActivities: [{ displayName: "小平" }] }), ["小平正在输入…"]);
 });
+
+test("the activity ticker identifies world explorers by their server-provided name", () => {
+  assert.deepEqual(activityTickerItems({ ...empty, worldExplorers: [{ accountId: 7, displayName: "小光" }] }), ["小光在探索世界"]);
+});

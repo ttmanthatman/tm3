@@ -1,4 +1,5 @@
 import { bookNoteShareSchema } from "../shared/bookNotes.js";
+import { createZoomExplorationHandler } from "./services/zoomExploration.js";
 import { saveGraceCard } from "./services/gracePersistence.js";
 import { graceMediaFiles } from "../shared/grace.js";
 import fs from "node:fs";
@@ -4463,6 +4464,17 @@ io.on("connection", async (socket: Socket) => {
   socket.emit("bible:listeners", bibleListenersSnapshot());
   socket.emit("book:readers", bookReadersSnapshot());
   registerSermonSocket(io, socket, sermonSocketDeps);
+  const exploreZoom = createZoomExplorationHandler({
+    refreshAuth: () => refreshSocketAuth(socket),
+    loadMessage: id => prisma.message.findUnique({ where: { id }, select: { channelId: true, type: true, payload: true } }),
+    canAccessChannel,
+    profile: () => online.get(socket.id),
+    connected: () => socket.connected,
+    broadcast: profile => io.emit("zoom:exploring", profile)
+  });
+  socket.on("zoom:exploring", data => {
+    void exploreZoom(data).catch(error => app.log.error({ err: error }, "Zoom exploration failed"));
+  });
 
   socket.on("channel:join", async (data: { channelId: number }) => {
     const currentAuth = await refreshSocketAuth(socket);
