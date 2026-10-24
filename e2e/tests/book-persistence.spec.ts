@@ -21,6 +21,7 @@ test("v2 progress uses real database CAS, idempotency, legacy invalidation and p
   expect(uploaded.status()).toBe(201);
   const { book } = await uploaded.json();
   const url = `/api/books/${book.id}/progress/v2`;
+  let memberAccountId: number | undefined;
   try {
     expect((await request.get(url)).status()).toBe(401);
     const read = async () => (await (await request.get(url, { headers })).json()).progress as BookProgressSnapshot;
@@ -51,12 +52,19 @@ test("v2 progress uses real database CAS, idempotency, legacy invalidation and p
     const username = `epub-${randomUUID().slice(0, 8)}`;
     const registered = await request.post("/api/admin/accounts", { headers, data: { ...E2E_MEMBER, username } });
     expect(registered.ok()).toBe(true);
+    memberAccountId = ((await registered.json()) as { account: { id: number } }).account.id;
     const member = await request.post("/api/auth/login", { data: { username, password: E2E_MEMBER.password } });
     expect(member.ok()).toBe(true);
     const memberHeaders = { Authorization: `Bearer ${(await member.json()).token}` };
     expect((await (await request.get(`/api/books/${book.id}/notes/v2`, { headers: memberHeaders })).json()).notes).toEqual([]);
     expect((await (await request.get(url, { headers: memberHeaders })).json()).progress).toMatchObject({ fraction: null, locator: null, revision: 0 });
-  } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
+  } finally {
+    const cleanup = await Promise.all([
+      request.delete(`/api/admin/books/${book.id}`, { headers }),
+      ...(memberAccountId === undefined ? [] : [request.delete(`/api/admin/accounts/${memberAccountId}`, { headers })])
+    ]);
+    for (const response of cleanup) expect(response.ok()).toBe(true);
+  }
 });
 
 test("reader reopens exact text and offers an explicit choice after another device writes", async ({ page, request }) => {

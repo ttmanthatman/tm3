@@ -15,7 +15,12 @@ const E2E_MEMBER2 = {
   password: "E2eMember123!"
 } as const;
 
+// Keep a distinct, offline account with the same display name as the viewer.
+// Full-suite runs can contain such accounts from other specs (e.g. book persistence).
+const E2E_NAMESAKE = { ...E2E_MEMBER, username: "e2e-sermon-namesake" } as const;
+
 type Account = { username: string; password: string };
+let memberAccountId: number;
 
 async function blockPublicNetwork(page: Page) {
   await page.route("**/*", async (route) => {
@@ -103,6 +108,8 @@ async function createAccount(
     }
   });
   expect(created.ok()).toBe(true);
+  const body = (await created.json()) as { account: { id: number } };
+  return body.account.id;
 }
 
 async function deleteAccount(request: APIRequestContext, token: string, username: string) {
@@ -118,16 +125,14 @@ async function deleteAccount(request: APIRequestContext, token: string, username
 // —— 二期流程 helpers ——
 
 /** 开始屏 → 勾选受邀观众（可选）→ 进入自己的讲道台，进入队列屏。 */
-async function startGroupPresentation(workspace: Locator, inviteDisplayName?: string) {
+async function startGroupPresentation(workspace: Locator, inviteAccountId?: number) {
   await expect(workspace.locator(".sermon-start-view")).toBeVisible();
   await expect(workspace.getByRole("radio", { name: /小组演示/ })).toBeChecked();
-  if (inviteDisplayName) {
-    // A sermon minus-one/preview workspace can stay mounted beside the primary
-    // one, duplicating audience rows; only the visible instance is actionable.
-    // TODO(P3): model the dual workspace explicitly instead of visibility filtering.
-    const row = workspace.locator(".sermon-audience-list > .sermon-audience-row", { hasText: inviteDisplayName }).filter({ visible: true });
-    await expect(row).toBeVisible();
-    await row.locator('input[type="checkbox"]').check();
+  if (inviteAccountId !== undefined) {
+    // Display names are not unique; select the account created for this viewer.
+    const checkbox = workspace.locator(`.sermon-audience-list input[type="checkbox"][value="${inviteAccountId}"]`);
+    await expect(checkbox).toBeVisible();
+    await checkbox.check();
   }
   const enterOwnButton = workspace.getByRole("button", { name: "进入自己的讲道台", exact: true });
   await expect(enterOwnButton).toBeEnabled();
@@ -163,12 +168,12 @@ async function joinFromLiveNotification(page: Page, presenterDisplayName: string
 }
 
 /** 演示中工作区「邀请更多观众」→ 勾选 → 发出邀请。 */
-async function inviteMoreViewers(workspace: Locator, displayName: string) {
+async function inviteMoreViewers(workspace: Locator, accountId: number) {
   const more = workspace.locator("details.sermon-invite-more");
   await more.locator("summary").click();
-  const row = more.locator(".sermon-audience-row", { hasText: displayName });
-  await expect(row).toBeVisible();
-  await row.locator('input[type="checkbox"]').check();
+  const checkbox = more.locator(`input[type="checkbox"][value="${accountId}"]`);
+  await expect(checkbox).toBeVisible();
+  await checkbox.check();
   await more.getByRole("button", { name: "发出邀请", exact: true }).click();
 }
 
@@ -213,13 +218,15 @@ async function cleanupPresentations(pages: Page[]) {
 
 test.beforeAll(async ({ request }) => {
   const token = await adminToken(request);
-  await createAccount(request, token, E2E_MEMBER);
+  await createAccount(request, token, E2E_NAMESAKE);
+  memberAccountId = await createAccount(request, token, E2E_MEMBER);
   await createAccount(request, token, { ...E2E_ADMIN2, isAdmin: true });
   await createAccount(request, token, E2E_MEMBER2);
 });
 
 test.afterAll(async ({ request }) => {
   const token = await adminToken(request);
+  await deleteAccount(request, token, E2E_NAMESAKE.username);
   await deleteAccount(request, token, E2E_MEMBER.username);
   await deleteAccount(request, token, E2E_ADMIN2.username);
   await deleteAccount(request, token, E2E_MEMBER2.username);
@@ -253,7 +260,7 @@ test("讲道经文负一屏演示、标注与显示设置同步（双端）", as
     await expect(admin.locator(".chat-pane")).toHaveCount(0);
 
     // 管理员开始小组演示并勾选成员；实际展示后，成员从置顶预览进入。
-    await startGroupPresentation(workspace, E2E_MEMBER.displayName);
+    await startGroupPresentation(workspace, memberAccountId);
     await expect(workspace.locator(".sermon-scope-status")).toHaveText("当前：小组演示");
     const inviteMore = workspace.locator("details.sermon-invite-more");
     await inviteMore.locator("summary").click();
@@ -580,7 +587,7 @@ test("小组通知流：预览加入、全屏同步与刷新释席", async ({ br
 
     // 主持人开始小组演示并展示经文 → 成员端弹出带内容的置顶预览。
     const workspace = await openSermonWorkspace(admin);
-    await startGroupPresentation(workspace, E2E_MEMBER.displayName);
+    await startGroupPresentation(workspace, memberAccountId);
     await addToQueueAndPresent(workspace, "约3:16");
     const liveCard = member.locator(".sermon-live-card", { hasText: `${E2E_ADMIN.displayName} 正在讲道` });
     await expect(liveCard).toContainText("神爱世人");
@@ -632,9 +639,9 @@ test("观众互斥：两场预览并存并可换席", async ({ browser }) => {
 
     // 两位讲道者各自开始小组演示并都邀请成员；互不可见对方队列。
     const workspaceA = await openSermonWorkspace(admin);
-    await startGroupPresentation(workspaceA, E2E_MEMBER.displayName);
+    await startGroupPresentation(workspaceA, memberAccountId);
     const workspaceB = await openSermonWorkspace(admin2);
-    await startGroupPresentation(workspaceB, E2E_MEMBER.displayName);
+    await startGroupPresentation(workspaceB, memberAccountId);
     await expect(workspaceA.locator(".sermon-queue-item")).toHaveCount(0);
     await expect(workspaceB.locator(".sermon-queue-item")).toHaveCount(0);
 
@@ -703,7 +710,7 @@ test("主持人移除观众与结束演示通知", async ({ browser }) => {
     await login(member, E2E_MEMBER);
 
     const workspace = await openSermonWorkspace(admin);
-    await startGroupPresentation(workspace, E2E_MEMBER.displayName);
+    await startGroupPresentation(workspace, memberAccountId);
     await addToQueueAndPresent(workspace, "约3:16");
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
     const overlay = member.locator("section.modal-shell.sermon-overlay");
@@ -719,7 +726,7 @@ test("主持人移除观众与结束演示通知", async ({ browser }) => {
     await member.screenshot({ path: "output/e2e/sermon/removed-toast.png" });
 
     // 主持人重新邀请，成员再次加入（演示仍激活，覆盖层立即恢复）。
-    await inviteMoreViewers(workspace, E2E_MEMBER.displayName);
+    await inviteMoreViewers(workspace, memberAccountId);
     await joinFromLiveNotification(member, E2E_ADMIN.displayName);
     await expect(overlay).toBeVisible();
 
