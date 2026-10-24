@@ -75,7 +75,8 @@ function composerElement() {
 function isInteractiveTextNode(node: Text, root: HTMLElement) {
   const parent = node.parentElement;
   if (!parent || !root.contains(parent)) return true;
-  return !!parent.closest("a, button, .inline-bible-reference, .markdown-render, [contenteditable='true']");
+  const interactive = parent.closest("a, button, .inline-bible-reference, .markdown-render, [contenteditable='true']");
+  return !!interactive && interactive !== root && root.contains(interactive);
 }
 
 function collectCandidates(root: HTMLElement) {
@@ -518,6 +519,7 @@ function isActive(messageId: number) {
 }
 
 onMounted(() => {
+  window.addEventListener("pagehide", reset);
   window.addEventListener("resize", scheduleLayoutRefresh, { passive: true });
   window.visualViewport?.addEventListener("resize", scheduleLayoutRefresh, { passive: true });
   nextTick(bindLayoutListeners);
@@ -530,6 +532,7 @@ onBeforeUnmount(() => {
   boundScroller?.removeEventListener("scroll", scheduleLayoutRefresh);
   mutationObserver?.disconnect();
   window.removeEventListener("resize", scheduleLayoutRefresh);
+  window.removeEventListener("pagehide", reset);
   window.visualViewport?.removeEventListener("resize", scheduleLayoutRefresh);
   if (matter && engine) matter.Events.off(engine, "collisionStart", handleCollisions);
 });

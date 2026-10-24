@@ -727,6 +727,10 @@ button.pinned-ticker-action {
   object-fit: contain;
 }
 
+.chat-pane > .pinned-view-shell {
+  position: absolute;
+}
+
 .pinned-view-shell {
   z-index: 50;
   padding: calc(var(--safe-top) + 12px) 12px calc(var(--safe-bottom) + 12px);
@@ -736,7 +740,8 @@ button.pinned-ticker-action {
 
 .pinned-view-modal {
   width: min(560px, 100%);
-  max-height: min(720px, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 24px));
+  min-height: 0;
+  max-height: min(720px, 100%);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   color: #4d3a15;

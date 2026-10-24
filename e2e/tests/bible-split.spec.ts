@@ -34,6 +34,48 @@ async function chatState(page: Page) {
   });
 }
 
+test("pinned viewer stays within chat in both split orders and narrow layouts", async ({ page }) => {
+  await page.setViewportSize({ width: 957, height: 1098 });
+  const { adminToken } = await login(page);
+  const { channelId } = await chatState(page);
+  const response = await page.request.post(`/api/channels/${channelId}/pinned`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+    data: { title: "分屏置顶回归", body: { blocks: [{ id: "text", type: "text", text: "长置顶内容\n".repeat(100) }] }, active: true }
+  });
+  expect(response.ok()).toBe(true);
+  try {
+    await page.reload();
+    const viewer = page.getByRole("dialog", { name: "置顶消息", exact: true });
+    await expect(viewer).toBeVisible();
+    for (const width of [957, 1280, 390, 360]) {
+      if (width === 390) await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
+      await page.setViewportSize({ width, height: 900 });
+      for (let order = 0; order < (width >= 957 ? 2 : 1); order++) {
+        if (order) await page.getByRole("button", { name: "左右交换圣经和聊天", exact: true }).click();
+        const chat = (await page.locator(".chat-pane").boundingBox())!;
+        const shell = (await viewer.boundingBox())!;
+        const modal = (await page.locator(".pinned-view-modal").boundingBox())!;
+        expect(shell.x).toBeCloseTo(chat.x, 0);
+        expect(shell.width).toBeCloseTo(chat.width, 0);
+        expect(modal.x).toBeGreaterThanOrEqual(chat.x);
+        expect(modal.x + modal.width).toBeLessThanOrEqual(chat.x + chat.width);
+        expect(modal.y + modal.height).toBeLessThanOrEqual(chat.y + chat.height);
+        await expect(viewer.getByRole("button", { name: "朕知道了" })).toBeVisible();
+        expect(await page.locator(".pinned-view-body").evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+        await viewer.screenshot({ path: test.info().outputPath(`pinned-${width}-${order}.png`) });
+      }
+    }
+    await viewer.getByRole("button", { name: "朕知道了" }).click();
+    await expect(viewer).toHaveCount(0);
+  } finally {
+    test.setTimeout(test.info().timeout + 10_000);
+    const cleared = await page.request.post(`/api/channels/${channelId}/pinned`, {
+      headers: { Authorization: `Bearer ${adminToken}` }, data: { active: false }
+    });
+    expect(cleared.ok()).toBe(true);
+  }
+});
+
 async function expectRatio(page: Page, ratio: number) {
   await expect.poll(async () => {
     const bible = (await page.locator(".bible-workspace").boundingBox())!;

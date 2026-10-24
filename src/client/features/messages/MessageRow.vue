@@ -140,7 +140,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <ZoomAnnouncement v-if="zoomAnnouncement" :announcement="zoomAnnouncement" />
+  <ZoomAnnouncement v-if="zoomAnnouncement" :announcement="zoomAnnouncement" :message="message" />
   <template v-else-if="variant === 'favorite'">
     <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
     <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />

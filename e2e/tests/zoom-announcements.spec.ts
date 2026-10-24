@@ -80,6 +80,18 @@ test("Zoom events create durable centered notices in every public chat, deduplic
     const ended = page.locator(".message-row.system .zoom-meeting-announcement").filter({ hasText: "Zoom会议结束了" });
     await expect(ended).toBeVisible();
     await expect(ended).not.toHaveAttribute("href");
+    await expect(start).not.toHaveAttribute("href");
+    const pageCount = page.context().pages().length;
+    await start.click();
+    await expect(page.locator(".oops-falling-glyph")).not.toHaveCount(0);
+    expect(page.context().pages()).toHaveLength(pageCount);
+    await start.click();
+    await expect(page.locator(".oops-falling-glyph")).toHaveCount(0);
+    await start.press("Space");
+    await expect(page.locator(".oops-falling-glyph")).not.toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+    await expect(page.locator(".oops-falling-glyph")).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow")));
     expect((await notify("meeting.ended", eventTs + 1)).status()).toBe(204);
     expect(await prisma.message.count({ where: { sender: { username: "system:zoom" } } })).toBe(publicChannels.length * 2);
     // History remains available after reload and when changing to another public channel.

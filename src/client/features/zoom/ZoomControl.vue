@@ -3,10 +3,10 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import AppModal from "../../components/ui/AppModal.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import ZoomMeetingDialog from "./ZoomMeetingDialog.vue";
-import { useZoomMeeting } from "./useZoomMeeting";
+import { useSharedZoomMeeting } from "./useZoomMeeting";
 
 const props = defineProps<{ isAdmin: boolean }>();
-const zoom = useZoomMeeting();
+const zoom = useSharedZoomMeeting();
 const dialogOpen = ref(false);
 const joinOpen = ref(false);
 const noticeOpen = ref(false);

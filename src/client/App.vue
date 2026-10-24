@@ -83,6 +83,7 @@ import { isForwardableMessage } from "./messageForward";
 import { useChatStore } from "./store";
 import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
+import { provideZoomAnnouncements } from "./features/zoom/useZoomAnnouncements";
 import MessageRow from "./features/messages/MessageRow.vue";
 import ComposerBar from "./features/composer/ComposerBar.vue";
 import ChatHeader from "./features/chat/ChatHeader.vue";
@@ -5183,6 +5184,12 @@ const composerBindings = computed(() => ({
 // card so both render message bodies through MessageRow with identical wiring.
 // brokenAttachmentIds is a ref and is bound separately at each usage site.
 const assistantFeatureLauncher = ref<InstanceType<typeof AssistantFeatureLauncher> | null>(null);
+provideZoomAnnouncements({
+  messages: () => store.messages,
+  physics: oopsPhysicsLayer,
+  enabled: () => !!store.account,
+  surfaceActive: () => !showingFavoriteSurface.value && !chatWorkspaceHidden.value && !viewedBibleNoteId.value
+});
 const assistantFeatureHandlers = {
   bible: openBibleWorkspace,
   books: openBookWorkspace,

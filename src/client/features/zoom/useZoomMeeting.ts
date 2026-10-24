@@ -1,11 +1,16 @@
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type InjectionKey } from "vue";
 import { zoomMeetingStatus, type ZoomSettings } from "@shared/zoom";
 import { api } from "../../api";
 import { useHeaderVisibility } from "../listen/useHeaderVisibility";
 
 const changedEvent = "zoom-settings-changed";
+export const zoomMeetingKey: InjectionKey<ReturnType<typeof useZoomMeeting>> = Symbol("zoom-meeting");
 
-export function useZoomMeeting() {
+export function useSharedZoomMeeting() {
+  return inject(zoomMeetingKey, null) ?? useZoomMeeting();
+}
+
+export function useZoomMeeting(enabled: () => boolean = () => true) {
   const settings = ref<ZoomSettings>({ url: "", meeting: null });
   const ready = ref(false);
   const error = ref("");
@@ -24,14 +29,14 @@ export function useZoomMeeting() {
   }
   function schedule() {
     clearTimeout(timer);
-    if (disposed || !visible.value) return;
+    if (disposed || !visible.value || !enabled()) return;
     const remaining = settings.value.meeting ? Date.parse(settings.value.meeting.endsAt) - Date.now() : 0;
     timer = setTimeout(() => void refresh(), remaining > 0 ? Math.min(15_000, remaining) : 15_000);
   }
   async function refresh() {
     stop();
     now.value = Date.now();
-    if (disposed || !visible.value) return;
+    if (disposed || !visible.value || !enabled()) return;
     const request = new AbortController();
     controller = request;
     try {
@@ -58,7 +63,7 @@ export function useZoomMeeting() {
     window.dispatchEvent(new Event(changedEvent));
   }
   const onChanged = () => { void refresh(); };
-  watch(visible, value => { if (value) void refresh(); else stop(); });
+  watch(() => visible.value && enabled(), value => { if (value) void refresh(); else stop(); });
   onMounted(() => window.addEventListener(changedEvent, onChanged));
   onBeforeUnmount(() => {
     disposed = true;
