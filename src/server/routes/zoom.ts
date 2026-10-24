@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
 import { meetingIsActive, validMeetingTimeZone, type ZoomSettings } from "../../shared/zoom.js";
+import { ZOOM_WEBHOOK_SETTING, type createZoomWebhookStore } from "../services/zoomWebhook.js";
 
 const linkSchema = z.object({
   url: z.string().trim().max(2048).refine(value => {
@@ -16,13 +17,14 @@ const timeZoneSchema = z.string().min(1).max(100).refine(validMeetingTimeZone);
 const meetingSchema = z.object({ active: z.boolean(), durationMinutes: z.number().int().min(1).max(10080), timeZone: timeZoneSchema }).strict();
 const storedMeetingSchema = z.object({ endsAt: z.string().datetime(), timeZone: timeZoneSchema });
 
-export function createZoomSettingsStore(prisma: PrismaClient, now = Date.now) {
+export function createZoomSettingsStore(prisma: PrismaClient, now = Date.now, webhook?: ReturnType<typeof createZoomWebhookStore>) {
   async function load(): Promise<ZoomSettings> {
-    const rows = await prisma.setting.findMany({ where: { key: { in: ["zoom.link", "zoom.meeting"] } } });
+    const rows = await prisma.setting.findMany({ where: { key: { in: ["zoom.link", "zoom.meeting", ZOOM_WEBHOOK_SETTING] } } });
     const settings = new Map(rows.map(row => [row.key, row.value]));
     const url = linkSchema.parse({ url: settings.get("zoom.link") || "" }).url;
     const raw = settings.get("zoom.meeting");
     const meeting = raw ? storedMeetingSchema.nullable().parse(JSON.parse(raw)) : null;
+    if (webhook) return { url, meeting: null, live: webhook.status(url, settings.get(ZOOM_WEBHOOK_SETTING)) };
     return { url, meeting: meetingIsActive(meeting, now()) ? meeting : null };
   }
   async function save(key: string, value: string) {
@@ -31,6 +33,7 @@ export function createZoomSettingsStore(prisma: PrismaClient, now = Date.now) {
   }
   return {
     load,
+    automatic: !!webhook,
     saveLink: (url: string) => save("zoom.link", linkSchema.parse({ url }).url),
     saveMeeting: (input: z.infer<typeof meetingSchema>) => {
       const value = meetingSchema.parse(input);
@@ -53,6 +56,7 @@ export function registerZoomRoutes(app: FastifyInstance, deps: {
     return deps.settings.saveLink(result.data.url);
   });
   app.put("/api/admin/zoom/meeting", { preHandler: deps.requireAdmin }, async (request, reply) => {
+    if (deps.settings.automatic) return reply.code(409).send({ success: false, message: "会议状态已由 Zoom 自动同步" });
     const result = meetingSchema.safeParse(request.body);
     if (!result.success) return reply.code(400).send({ success: false, message: "请检查会议时长（1–10080 分钟）和时区" });
     return deps.settings.saveMeeting(result.data);

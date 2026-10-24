@@ -21,7 +21,7 @@ async function save() {
 <template>
   <form class="zoom-settings form-grid" @submit.prevent="save">
     <label>Zoom 会议链接<input v-model="url" type="url" maxlength="2048" placeholder="https://…" :disabled="busy || !zoom.ready.value" /></label>
-    <small>点击顶栏 Zoom 图标打开会议链接；长按图标可切换全站会议状态并设置持续时间。</small>
+    <small>{{ zoom.settings.value.live ? '会议状态由 Zoom 自动同步；点击顶栏 Zoom 图标进入会议，管理员长按可查看同步状态。' : '点击顶栏 Zoom 图标进入会议；管理员长按可切换全站会议状态并设置持续时间。' }}</small>
     <p v-if="error || zoom.error.value" class="error" role="alert">{{ error || zoom.error.value }}</p>
     <p v-if="message" role="status">{{ message }}</p>
     <button class="primary-btn" type="submit" :disabled="busy || !zoom.ready.value">{{ busy ? '保存中…' : '保存会议链接' }}</button>

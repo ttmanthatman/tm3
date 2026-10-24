@@ -1,41 +1,76 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from "vue";
+import AppModal from "../../components/ui/AppModal.vue";
+import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import ZoomMeetingDialog from "./ZoomMeetingDialog.vue";
 import { useZoomMeeting } from "./useZoomMeeting";
 
-defineProps<{ isAdmin: boolean }>();
+const props = defineProps<{ isAdmin: boolean }>();
 const zoom = useZoomMeeting();
 const dialogOpen = ref(false);
-const trigger = ref<HTMLAnchorElement | null>(null);
-const title = computed(() => `${zoom.active.value ? '正在开会 · ' : ''}Zoom${zoom.settings.value.url ? '' : '（管理员尚未设置会议链接）'}，长按查看会议状态`);
+const joinOpen = ref(false);
+const noticeOpen = ref(false);
+const trigger = ref<HTMLButtonElement | null>(null);
+const title = computed(() => {
+  const status = zoom.error.value || (zoom.ready.value && zoom.status.value === "unknown") ? "（会议状态暂时无法确认）" : !zoom.ready.value ? "（加载中）" : !zoom.settings.value.url ? "（管理员尚未设置会议链接）" : zoom.active.value ? "（正在开会）" : "";
+  return `Zoom${status}${props.isAdmin ? '，长按设置会议状态' : ''}`;
+});
+const joinMessage = computed(() => zoom.error.value || !zoom.ready.value || zoom.status.value === "unknown"
+  ? "暂时无法确认会议状态，是否仍要前往 Zoom？"
+  : "目前还没有会议，但你可以进去开始一个会议，是否确定？");
+const noticeMessage = computed(() => zoom.error.value
+  ? "会议链接暂时无法加载，请稍后重试。"
+  : !zoom.ready.value ? "正在加载会议链接，请稍后重试。" : "管理员尚未设置会议链接，请联系管理员。");
 let holdTimer: ReturnType<typeof setTimeout> | undefined;
 let held = false;
 let start: { x: number; y: number } | null = null;
 function clearHold() { clearTimeout(holdTimer); holdTimer = undefined; }
 function begin(event: PointerEvent) {
-  if (event.button !== 0) return;
   clearHold();
   held = false;
+  if (!props.isAdmin || event.button !== 0 || event.isPrimary === false) return;
   start = { x: event.clientX, y: event.clientY };
   trigger.value?.setPointerCapture(event.pointerId);
-  holdTimer = setTimeout(() => { held = true; dialogOpen.value = true; clearHold(); }, 550);
+  holdTimer = setTimeout(openDialog, 550);
 }
 function move(event: PointerEvent) {
   if (start && Math.hypot(event.clientX - start.x, event.clientY - start.y) > 10) clearHold();
 }
-function click(event: MouseEvent) {
-  clearHold();
-  if (held) { event.preventDefault(); held = false; return; }
-  if (!zoom.settings.value.url) { event.preventDefault(); dialogOpen.value = true; }
+function endTouch(event: TouchEvent) {
+  // A held finger can release over the newly opened modal backdrop. Suppress
+  // its synthetic click so it cannot immediately dismiss the settings dialog.
+  if (held && event.cancelable) event.preventDefault();
 }
-function openDialog() { clearHold(); held = true; dialogOpen.value = true; }
+function openMeeting() {
+  const url = zoom.settings.value.url;
+  if (!url) { joinOpen.value = false; noticeOpen.value = true; return; }
+  window.open(url, "_blank", "noopener,noreferrer");
+  joinOpen.value = false;
+}
+function click() {
+  clearHold();
+  if (held) { held = false; return; }
+  held = false;
+  trigger.value?.focus({ preventScroll: true });
+  if (!zoom.settings.value.url) { noticeOpen.value = true; return; }
+  if (!zoom.error.value && zoom.ready.value && zoom.active.value) openMeeting();
+  else joinOpen.value = true;
+}
+function openDialog() {
+  clearHold();
+  if (!props.isAdmin) return;
+  held = true;
+  trigger.value?.focus({ preventScroll: true });
+  dialogOpen.value = true;
+}
 function closeDialog() { dialogOpen.value = false; trigger.value?.focus({ preventScroll: true }); }
 watch(zoom.visible, value => { if (!value) clearHold(); });
+watch(() => props.isAdmin, value => { if (!value) { clearHold(); dialogOpen.value = false; } });
 onBeforeUnmount(clearHold);
 </script>
 
 <template>
-  <a ref="trigger" class="icon-btn zoom-header-trigger" :class="{ 'meeting-active': zoom.active.value, 'meeting-animate': zoom.active.value && zoom.visible.value }" :href="zoom.settings.value.url || undefined" target="_blank" rel="noopener noreferrer" :aria-label="title" :title="title" tabindex="0" @pointerdown.stop="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @click.stop="click" @contextmenu.prevent="openDialog" @keydown.enter="!zoom.settings.value.url && (dialogOpen = true)" @keydown.space.prevent="dialogOpen = true" @keydown.shift.f10.prevent="openDialog" @keydown.escape="clearHold">
+  <button ref="trigger" type="button" class="icon-btn zoom-header-trigger" :class="{ 'meeting-active': zoom.active.value, 'meeting-animate': zoom.active.value && zoom.visible.value }" :aria-label="title" :title="title" @pointerdown.stop="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @lostpointercapture="clearHold" @touchend="endTouch" @click.stop="click" @contextmenu.prevent="openDialog" @keydown.enter="held = false" @keydown.space="held = false" @keydown.shift.f10.prevent="openDialog" @keydown.escape="clearHold">
     <svg viewBox="0 0 36 36" width="28" height="28" aria-hidden="true">
       <rect class="zoom-tile" x="2" y="2" width="32" height="32" rx="9" />
       <g class="zoom-wordmark" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -44,8 +79,12 @@ onBeforeUnmount(clearHold);
         <path d="M25 20.6v-3.4a1.8 1.8 0 0 1 3.6 0v3.4m0-3.4a1.8 1.8 0 0 1 3.6 0v3.4" transform="translate(-.9)" />
       </g>
     </svg>
-  </a>
-  <Teleport to="body"><ZoomMeetingDialog v-if="dialogOpen" :zoom="zoom" :is-admin="isAdmin" @close="closeDialog" /></Teleport>
+  </button>
+  <Teleport to="body">
+    <ZoomMeetingDialog v-if="dialogOpen && isAdmin" :zoom="zoom" :is-admin="isAdmin" @close="closeDialog" />
+    <ConfirmDialog v-if="joinOpen" open title="前往 Zoom" :message="joinMessage" detail="能否直接开始会议取决于 Zoom 的主持人和入会设置。" confirm-text="确定" @close="joinOpen = false" @confirm="openMeeting" />
+    <AppModal v-if="noticeOpen" open title="Zoom" @close="noticeOpen = false"><div class="confirm-body"><p role="status">{{ noticeMessage }}</p></div></AppModal>
+  </Teleport>
 </template>
 
 <style scoped>

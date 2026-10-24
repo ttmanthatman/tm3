@@ -40,6 +40,8 @@ import { HANDWRITING_SEND_LIMITS, HANDWRITING_CONTENT, HandwritingValidationErro
 import { prepareHandwritingMessage } from "./services/handwriting.js";
 import { registerFriendRoutes } from "./routes/friend.js";
 import { createZoomSettingsStore, registerZoomRoutes } from "./routes/zoom.js";
+import { registerZoomWebhookRoutes } from "./routes/zoomWebhook.js";
+import { createZoomWebhookStore } from "./services/zoomWebhook.js";
 import { registerMusicRoutes } from "./routes/music.js";
 import { registerMusicResourceRoutes } from "./routes/musicResources.js";
 import { registerUnreadCountsRoutes } from "./routes/unreadCounts.js";
@@ -989,7 +991,10 @@ registerAssistantChatFunctions(assistantTools, {
   friendPrograms: () => friendFeedService.getPrograms()
 });
 registerAssistantToolsRoutes(app, { registry: assistantTools, settings: assistantToolsSettings, requireAdmin });
-registerZoomRoutes(app, { settings: createZoomSettingsStore(prisma), requireAuth, requireAdmin });
+const zoomWebhookSecret = process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "";
+const zoomWebhook = createZoomWebhookStore(prisma);
+registerZoomRoutes(app, { settings: createZoomSettingsStore(prisma, Date.now, zoomWebhookSecret ? zoomWebhook : undefined), requireAuth, requireAdmin });
+registerZoomWebhookRoutes(app, { secretToken: zoomWebhookSecret, accept: zoomWebhook.accept });
 
 const audioWaveformJobs = new Set<number>();
 

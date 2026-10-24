@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { meetingIsActive, type ZoomSettings } from "@shared/zoom";
+import { zoomMeetingStatus, type ZoomSettings } from "@shared/zoom";
 import { api } from "../../api";
 import { useHeaderVisibility } from "../listen/useHeaderVisibility";
 
@@ -11,7 +11,8 @@ export function useZoomMeeting() {
   const error = ref("");
   const now = ref(Date.now());
   const visible = useHeaderVisibility();
-  const active = computed(() => meetingIsActive(settings.value.meeting, now.value));
+  const status = computed(() => zoomMeetingStatus(settings.value, now.value));
+  const active = computed(() => status.value === "active");
   let timer: ReturnType<typeof setTimeout> | undefined;
   let controller: AbortController | null = null;
   let disposed = false;
@@ -64,5 +65,5 @@ export function useZoomMeeting() {
     stop();
     window.removeEventListener(changedEvent, onChanged);
   });
-  return { settings, active, ready, error, visible, refresh, save };
+  return { settings, status, active, ready, error, visible, refresh, save };
 }

@@ -8,6 +8,16 @@ export interface ZoomMeeting {
 export interface ZoomSettings {
   url: string;
   meeting: ZoomMeeting | null;
+  live?: ZoomLiveStatus;
+}
+
+export interface ZoomLiveStatus {
+  status: "active" | "inactive" | "unknown";
+  updatedAt?: string;
+}
+
+export function zoomMeetingStatus(settings: ZoomSettings, now = Date.now()): ZoomLiveStatus["status"] {
+  return settings.live?.status ?? (meetingIsActive(settings.meeting, now) ? "active" : "inactive");
 }
 
 export function meetingIsActive(meeting: ZoomMeeting | null, now = Date.now()) {

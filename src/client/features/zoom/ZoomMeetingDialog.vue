@@ -16,6 +16,7 @@ const endPreview = computed(() => {
   catch { return "请填写有效的时长和时区"; }
 });
 async function submit() {
+  if (props.zoom.settings.value.live) return;
   busy.value = true;
   error.value = "";
   try {
@@ -29,9 +30,10 @@ async function submit() {
 <template>
   <AppModal open title="Zoom 会议状态" :busy="busy" @close="emit('close')">
     <form class="modal-form zoom-meeting-form" @submit.prevent="submit">
-      <p role="status">{{ zoom.active.value ? '正在开会' : '当前未开会' }}</p>
+      <p role="status">{{ zoom.status.value === 'unknown' ? '会议状态尚未确认' : zoom.active.value ? '正在开会' : '当前未开会' }}</p>
       <p v-if="zoom.active.value && zoom.settings.value.meeting">状态将于 {{ meetingEndLabel(zoom.settings.value.meeting) }} 结束（{{ zoom.settings.value.meeting.timeZone === DEFAULT_MEETING_TIME_ZONE ? '北京时间' : zoom.settings.value.meeting.timeZone }}）。</p>
-      <p v-if="!isAdmin">会议状态由管理员统一设置。</p>
+      <p v-if="zoom.settings.value.live">会议状态由 Zoom 自动同步。{{ zoom.status.value === 'unknown' ? '正在等待 Zoom 的开会或结束通知。' : '' }}</p>
+      <p v-else-if="!isAdmin">会议状态由管理员统一设置。</p>
       <template v-else>
         <label>是否切换会议状态？<select v-model="activeDraft" :disabled="busy || !zoom.ready.value"><option :value="true">正在开会</option><option :value="false">未开会</option></select></label>
         <label>状态持续时间（分钟）<input v-model.number="durationMinutes" type="number" min="1" max="10080" required :disabled="busy || !activeDraft" /></label>
@@ -40,7 +42,7 @@ async function submit() {
         <small v-if="activeDraft">默认北京时间（Asia/Shanghai）；预计 {{ endPreview }} 自动结束。</small>
       </template>
       <p v-if="error || zoom.error.value" class="error" role="alert">{{ error || zoom.error.value }}</p>
-      <button v-if="isAdmin" class="primary-btn" type="submit" :disabled="busy || !zoom.ready.value">{{ busy ? '保存中…' : '确认切换' }}</button>
+      <button v-if="isAdmin && !zoom.settings.value.live" class="primary-btn" type="submit" :disabled="busy || !zoom.ready.value">{{ busy ? '保存中…' : '确认切换' }}</button>
     </form>
   </AppModal>
 </template>
