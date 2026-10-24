@@ -143,7 +143,7 @@ test("editable base prompts, activation expiry, private replies, stop stamps and
       await page.setViewportSize({ width, height: 900 });
       await toolsTrigger.click();
       await page.getByRole("menuitem", { name: "使用说明", exact: true }).click();
-      await expect(help.getByText("还没写呢……", { exact: true })).toBeVisible();
+      await expect(help.getByText("还没写呢，你随便涂涂画画吧……", { exact: true })).toBeVisible();
       await expect(page.getByRole("menu", { name: "聊天管理功能" })).toHaveCount(0);
       const window = help.locator(".chat-usage-help");
       const box = await window.boundingBox();
@@ -263,7 +263,7 @@ test("editable base prompts, activation expiry, private replies, stop stamps and
 
     const featureButton = page.locator(`[data-message-id="${toolCard!.id}"]`).getByRole("button", { name: "打开使用说明", exact: true });
     await featureButton.click();
-    await expect(help.getByText("还没写呢……", { exact: true })).toBeVisible();
+    await expect(help.getByText("还没写呢，你随便涂涂画画吧……", { exact: true })).toBeVisible();
     await help.getByRole("button", { name: "关闭", exact: true }).click();
     await expect(help).toBeHidden();
     await expect(featureButton).toBeFocused();

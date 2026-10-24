@@ -17,6 +17,9 @@ export TRUST_PROXY=false
 # 整套 e2e 在一分钟内登录次数远超生产限流阈值，仅测试环境放宽。
 export AUTH_LOGIN_RATE_LIMIT_MAX=1000
 export API_RATE_LIMIT_MAX=100000
+# zoom-announcements e2e 需要与 spec 内常量一致的测试签名密钥；该密钥仅用于
+# 一次性 tm3_e2e 环境（值已在 spec 中公开），开启 webhook 路由供用例自签事件。
+export ZOOM_WEBHOOK_SECRET_TOKEN="e2e-only-zoom-announcements"
 export PORT=3003
 
 npm run e2e:prepare

@@ -343,7 +343,7 @@ test("message cards retain playback before audio availability loads and retry th
     const integrationPath = "/src/client/features/bible/useBibleWorkspaceIntegration.ts";
     const { useBibleWorkspaceIntegration } = await import(integrationPath) as typeof import("../../src/client/features/bible/useBibleWorkspaceIntegration");
     const defaults = Object.fromEntries(Object.keys(Row.props).map(name => [name, () => false]));
-    const message = { id: 801, type: "text", content: '马可福音 1:1<br>“神的儿子，耶稣基督福音的起头。”', payload: null };
+    const message = { id: 801, type: "text", content: '马可福音 1:1<br>“神的儿子，耶稣基督福音的起头。”', payload: null, sender: { id: 1, kind: "human", username: "e2e", displayName: "E2E" } };
     createApp({ setup() {
       const noop = () => {};
       const integration = useBibleWorkspaceIntegration({ showChannels: ref(false), showMembers: ref(false), channelsCollapsed: ref(true), membersCollapsed: ref(true), sermonWorkspaceOpen: ref(false), bookWorkspaceOpen: ref(false), saveReadPosition: noop, currentChannelId: () => 11, isTapSuppressed: () => false, publishBibleReading: noop, publishBookReading: noop, jumpToMessageInChannel: async () => {} });
