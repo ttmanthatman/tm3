@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 test.use({ serviceWorkers: "block" });
 
@@ -64,6 +65,11 @@ test("笔记消息气泡紧贴卡片，在手机和宽屏保持两侧等宽留�
   expect((await request.post("/api/bible/notes", { headers, data: { id, translation: "cmn-cu89s", bookCode: "JOB", chapter: 39, verse: 17, text, public: true } })).ok()).toBeTruthy();
   try {
     expect((await request.post(`/api/bible/notes/${id}/share`, { headers, data: { channelId, clientRequestId: randomUUID() } })).ok()).toBeTruthy();
+    // Measure the persisted card after history hydration, independently of
+    // whether the initial Socket connection was ready when the fixture sent.
+    await page.reload();
+    await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+    await focusChat(page);
     const card = page.locator(`.message-row [data-note-id="${id}"]`);
     await expect(card).toContainText(text);
     for (const width of [597, 360, 390, 839, 1280]) {

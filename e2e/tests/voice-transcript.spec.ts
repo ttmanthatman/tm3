@@ -55,7 +55,10 @@ async function expectSubtitleSeek(page: Page, bubble: Locator, text: string, sec
 test("管理员切换识别服务并保留独立密钥，普通用户无权修改", async ({ page, request }) => {
   await login(page);
   const headers = { Authorization: `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}` };
+  const settingsLoaded = page.waitForResponse(response => response.url().endsWith("/api/admin/ai-settings") && response.request().method() === "GET" && response.ok());
   await page.goto("/ai-settings");
+  await settingsLoaded;
+  await expect(page.getByRole("button", { name: "保存 AI 设置", exact: true })).toBeEnabled();
   await page.getByRole("button", { name: /语音识别.*语音消息转文字/ }).click();
   const panel = page.locator(".ai-settings-subsection").filter({ hasText: "启用语音转文字" });
   await panel.getByRole("checkbox", { name: "启用语音转文字" }).check();

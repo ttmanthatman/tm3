@@ -54,13 +54,19 @@ async function openReading(page: Page) {
 }
 
 async function expectTopSwapAlignment(page: Page) {
-  const swap = (await page.getByRole("button", { name: "左右交换圣经和聊天", exact: true }).boundingBox())!;
-  const separator = (await page.locator(".bible-chat-separator").boundingBox())!;
-  const toolbar = (await page.locator(".bible-topbar").boundingBox())!;
-  expect(swap.x).toBeCloseTo(separator.x, 0);
-  expect(swap.width).toBeCloseTo(separator.width, 0);
-  expect(swap.y).toBeCloseTo(toolbar.y, 0);
-  expect(swap.y + swap.height).toBeCloseTo(toolbar.y + toolbar.height, 0);
+  // Read all rectangles in one frame, then wait for the resize layout to settle.
+  await expect(async () => {
+    const [swap, separator, toolbar] = await page.evaluate(() =>
+      ['button[aria-label="左右交换圣经和聊天"]', ".bible-chat-separator", ".bible-topbar"].map(selector => {
+        const box = document.querySelector(selector)!.getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height };
+      })
+    );
+    expect(swap.x).toBeCloseTo(separator.x, 0);
+    expect(swap.width).toBeCloseTo(separator.width, 0);
+    expect(swap.y).toBeCloseTo(toolbar.y, 0);
+    expect(swap.y + swap.height).toBeCloseTo(toolbar.y + toolbar.height, 0);
+  }).toPass({ timeout: 10_000 });
 }
 
 for (const engine of ["chromium", "webkit"] as const) {
@@ -338,10 +344,14 @@ test("fullscreen Bible suspends chat visuals, receives messages and preserves th
   await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_PERF.channel);
   const scroller = page.locator(".messages-scroll");
   await expect(scroller).toContainText(E2E_PERF.messagePrefix);
+  // Initial anchoring and channel-pane resize can still move the timeline.
+  // Begin the gesture only after that work has settled at the latest message.
+  await expect(scroller.locator(".message-row").last()).toBeInViewport();
+  await expect(scroller).not.toHaveClass(/timeline-scrolling|messages-scroll--anchoring/);
   await scroller.hover();
   await page.mouse.wheel(0, -800);
+  await expect(scroller).not.toHaveClass(/timeline-scrolling|messages-scroll--anchoring/);
   await expect(page.getByRole("button", { name: "跳到最新消息", exact: true })).toBeVisible();
-  await page.waitForTimeout(250);
   const anchor = await scroller.evaluate((element) => {
     const top = element.getBoundingClientRect().top;
     const message = [...element.querySelectorAll<HTMLElement>("[data-message-id]")].find((node) => node.getBoundingClientRect().bottom > top)!;

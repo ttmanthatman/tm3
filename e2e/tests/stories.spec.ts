@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import fs from "node:fs/promises";
 import { E2E_ADMIN } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 test.use({ permissions: ["microphone"], launchOptions: { args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] } });
 
@@ -16,6 +17,7 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toBeVisible();
+  await focusChat(page);
   const token = await page.evaluate(() => localStorage.getItem("team-chat-token"));
   const headers = { Authorization: `Bearer ${token}` };
   const me = (await (await request.get("/api/auth/me", { headers })).json()).account;
@@ -189,6 +191,7 @@ test("故事发布、录音、称呼、权限、重试与响应式浏览", async
   // A saved story survives reload and owner deletion invalidates its media.
   await page.reload();
   await expect(page.getByTestId("active-channel-name")).toBeVisible();
+  await focusChat(page);
   await page.locator(".story-header-trigger").click();
   await page.getByRole("button", { name: "我们的故事，点击切换" }).click();
   await expect(page.getByRole("button", { name: "编辑故事签名" })).toHaveText("平凡日子里的恩典，慢慢记下。");
