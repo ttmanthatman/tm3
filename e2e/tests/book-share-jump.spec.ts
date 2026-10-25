@@ -61,27 +61,31 @@ for (const profile of [{ engine: "chromium", width: 994 }, { engine: "chromium",
         const url = new URL(route.request().url());
         return ["blob:", "data:"].includes(url.protocol) || ["127.0.0.1", "localhost"].includes(url.hostname) ? route.continue() : route.abort("blockedbyclient");
       });
+      const channelResponse = await request.get("/api/channels", { headers });
+      const { channels } = await channelResponse.json() as { channels: Array<{ id: number; name: string }> };
+      const channelId = channels.find(channel => channel.name === E2E_CHANNELS.default)!.id;
+      const url = `${baseURL}/?bookId=${book.id}&bookFraction=${fixture.fraction}`;
+      const now = new Date().toISOString();
+      const messageIds: Record<string, number> = {};
+      for (const kind of ["note", "excerpt"] as const) {
+        const message = await request.post("/api/messages", { headers, data: { channelId, type: "text", content: kind === "note" ? "多章节笔记定位" : `摘录自《${book.title}》<br>“${fixture.quote}”<br><a href="${url}">打开书中的位置：第21章 · 72%</a>`, ...(kind === "note" ? { payload: { kind: "book_note", note: { id: randomUUID(), bookId: book.id, bookTitle: book.title, quote: fixture.quote, text: "原文定位笔记", chapter: "第21章", fraction: fixture.fraction, createdAt: now, updatedAt: now } } } : {}) } });
+        expect(message.ok()).toBe(true);
+        messageIds[kind] = (await message.json()).message.id;
+      }
+      // Seed shares before login/history hydration; this scenario tests jumps,
+      // not delivery during the initial Socket connection.
       await page.goto("/");
       await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
       await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
       await page.getByRole("button", { name: "登录", exact: true }).click();
       await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
       headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
-      const channelResponse = await request.get("/api/channels", { headers });
-      const { channels } = await channelResponse.json() as { channels: Array<{ id: number; name: string }> };
-      const channelId = channels.find(channel => channel.name === E2E_CHANNELS.default)!.id;
-      const url = `${baseURL}/?bookId=${book.id}&bookFraction=${fixture.fraction}`;
-      const now = new Date().toISOString();
-      for (const kind of ["note", "excerpt"] as const) {
-        const message = await request.post("/api/messages", { headers, data: { channelId, type: "text", content: kind === "note" ? "多章节笔记定位" : `摘录自《${book.title}》<br>“${fixture.quote}”<br><a href="${url}">打开书中的位置：第21章 · 72%</a>`, ...(kind === "note" ? { payload: { kind: "book_note", note: { id: randomUUID(), bookId: book.id, bookTitle: book.title, quote: fixture.quote, text: "原文定位笔记", chapter: "第21章", fraction: fixture.fraction, createdAt: now, updatedAt: now } } } : {}) } });
-        expect(message.ok()).toBe(true);
-      }
       await page.getByRole("button", { name: "打开图书室" }).click();
       await bookShelfAction(page, book.title, "缓存到本机", book.id);
-      await expect(page.getByRole("button", { name: `阅读《${book.title}》`, exact: true })).toBeVisible();
+      await expect(page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: `阅读《${book.title}》`, exact: true })).toBeVisible();
       await page.locator(".book-topbar").getByRole("button", { name: "关闭", exact: true }).click();
       for (const kind of ["note", "excerpt"] as const) {
-        const card = page.locator(kind === "note" ? ".book-note-share-card" : ".reading-share-book:not(.book-note-share-card)").filter({ hasText: book.title }).last();
+        const card = page.locator(`.message-row[data-message-id="${messageIds[kind]}"]`).locator(kind === "note" ? ".book-note-share-card" : ".reading-share-book:not(.book-note-share-card)");
         await expect(card).toContainText(fixture.quote);
         await card.getByRole("link", { name: "跳转到原书位置" }).click();
         const target = page.frameLocator('iframe[title="电子书第 21 节"]').locator("#shared-quote");
@@ -104,7 +108,7 @@ for (const profile of [{ engine: "chromium", width: 994 }, { engine: "chromium",
     } finally {
       await context.close();
       await webkitBrowser?.close();
-      await request.delete(`/api/admin/books/${book.id}`, { headers });
+      expect((await request.delete(`/api/admin/books/${book.id}`, { headers })).ok()).toBe(true);
     }
   });
 }

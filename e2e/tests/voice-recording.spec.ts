@@ -90,6 +90,12 @@ for (const browserName of ["chromium", "webkit"] as const) {
         });
 
         await page.evaluate(() => (window as Window & { prepareVoiceTestSource: () => Promise<void> }).prepareVoiceTestSource());
+        expect(await page.evaluate(() => ({
+          mediaRecorder: typeof window.MediaRecorder,
+          getUserMedia: typeof navigator.mediaDevices?.getUserMedia
+        })), "the browser must support real recording with the synthetic microphone source").toEqual({
+          mediaRecorder: "function", getUserMedia: "function"
+        });
         await expect(mic).toBeEnabled();
         await page.evaluate(() => (window as Window & { holdVoiceTestSource: () => void }).holdVoiceTestSource());
         await mic.click();

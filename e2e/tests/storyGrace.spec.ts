@@ -168,6 +168,9 @@ test("我的故事原样转发、重试去重、独立媒体与恩典卡片交�
     expect((await request.get(voiceUrl, { headers })).status()).toBe(404);
     expect(errors).toEqual([]);
   } finally {
+    // This scenario temporarily makes the shared secondary channel private.
+    // Restore it even after a failed permission assertion for later specs.
+    await prisma.channel.update({ where: { id: target.id }, data: { isPrivate: target.isPrivate } });
     await prisma.$disconnect();
     await fs.rm(scratch, { recursive: true, force: true });
   }

@@ -35,6 +35,7 @@ test("Zoom events create durable centered notices in every public chat, deduplic
     const publicChannels = await prisma.channel.findMany({ where: { kind: "standard", isPrivate: false }, select: { id: true, name: true } });
     const current = publicChannels.find(channel => channel.name === E2E_CHANNELS.default)!;
     const secondary = publicChannels.find(channel => channel.name === E2E_CHANNELS.secondary)!;
+    expect(secondary, "the secondary fixture must still be a public channel").toBeDefined();
     const uuid = randomUUID();
     const eventTs = Date.now();
     async function notify(event: string, time = eventTs, instance = uuid, signatureSecret = secret) {
@@ -89,8 +90,7 @@ test("Zoom events create durable centered notices in every public chat, deduplic
     // 非子行 + hasText 才唯一。
     await page.locator("aside.channel-pane button.channel-row:not(.channel-subrow)", { hasText: E2E_CHANNELS.secondary }).click();
     await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.secondary);
-    // 慢 runner 上切频道后系统通知行渲染需要更久，放宽这两条可见性等待。
-    await expect(start).toBeVisible({ timeout: 20_000 }); await expect(ended).toBeVisible({ timeout: 20_000 });
+    await expect(start).toBeVisible(); await expect(ended).toBeVisible();
     const history = await request.get(`/api/messages?channelId=${secondary.id}`, { headers });
     expect(history.ok()).toBe(true);
     const currentHistory = await prisma.message.findMany({ where: { channelId: current.id, sender: { username: "system:zoom" } }, orderBy: { id: "asc" } });

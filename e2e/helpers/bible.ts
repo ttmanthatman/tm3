@@ -2,10 +2,12 @@ import { expect, type Page } from "@playwright/test";
 
 export async function ensureBibleOpen(page: Page) {
   const workspace = page.locator(".bible-workspace");
+  const toggle = page.locator('.bible-header-trigger[aria-pressed="false"]');
+  // On phones the header disappears before the async workspace mounts.
+  // Wait for either settled state instead of committing to a stale isVisible.
+  await expect(workspace.or(toggle).filter({ visible: true }).first()).toBeVisible();
   if (!await workspace.isVisible()) {
-    const toggle = page.locator(".bible-header-trigger");
-    await expect(toggle).toBeVisible();
-    if (await toggle.getAttribute("aria-pressed") === "false") await toggle.click();
+    await toggle.click();
   }
   await expect(workspace).toBeVisible();
 }

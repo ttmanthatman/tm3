@@ -7,10 +7,13 @@ import { expect, type Page } from "@playwright/test";
 
 export async function closeBibleWorkspace(page: Page) {
   const bible = page.locator("#bible-workspace.bible-workspace.open");
-  // reload/登录后工作区可能晚一拍才挂载；等一小段时间再判定，避免 isVisible 抢跑漏关。
-  await bible.waitFor({ state: "visible", timeout: 3000 }).catch(() => undefined);
-  if (!await bible.isVisible()) return;
-  await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
+  const close = page.getByRole("button", { name: "关闭圣经", exact: true });
+  const closed = page.locator('.bible-header-trigger[aria-pressed="false"]');
+  // The header exposes the closed state immediately; an opening workspace
+  // exposes its close button once its async component is ready.
+  await expect(closed.or(close).filter({ visible: true }).first()).toBeVisible();
+  if (await closed.isVisible()) return;
+  await close.click();
   await expect(bible).toBeHidden();
 }
 

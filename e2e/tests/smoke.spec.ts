@@ -1,4 +1,4 @@
-import { ensureBibleOpen } from "../helpers/bible.js";
+import { openBibleHome } from "../helpers/bible.js";
 import { focusChat } from "../helpers/chat.js";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
@@ -440,15 +440,15 @@ test("390px 手机视口打开频道列表并切换频道", async ({ page }) => 
 
 test("圣经阅读区跳转到指定书卷章节和经节", async ({ page }) => {
   await loginAsAdmin(page);
-  await ensureBibleOpen(page);
+  await openBibleHome(page);
 
   const homeTabs = page.getByRole("tablist", { name: "书房功能" });
   const catalogTab = homeTabs.getByRole("tab", { name: "经卷目录", exact: true });
   const searchTab = homeTabs.getByRole("tab", { name: "经文检索", exact: true });
   const favoritesTab = homeTabs.getByRole("tab", { name: /^经文收藏/ });
-  // The workspace tab strip mounts from an async chunk; on loaded runners the
-  // tabs appear progressively, so wait for the first tab before counting.
+  // The account may restore a reader pane from a preceding scenario.
   await expect(catalogTab).toBeVisible();
+  await catalogTab.click();
   await expect(homeTabs.getByRole("tab")).toHaveCount(5); // 目录/检索/抄写/笔记/收藏
   await expect(homeTabs.getByRole("tab", { name: "我的抄写", exact: true })).toBeVisible();
   await expect(catalogTab).toHaveAttribute("aria-selected", "true");

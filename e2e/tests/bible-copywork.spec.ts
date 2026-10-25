@@ -224,7 +224,7 @@ test("WebKit reload keeps music state writes alive without interface errors", as
     }
     expect(stateWrites).toBeGreaterThanOrEqual(3);
     expect(musicErrors).toEqual([]);
-  } finally { await browser.close(); }
+  } finally { await page.context().close(); await browser.close(); }
 });
 
 test("copywork lifecycle isolates private ink, retries saves and shares, publishes and recalls", async ({

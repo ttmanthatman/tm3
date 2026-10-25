@@ -183,8 +183,10 @@ for (const browserName of ["chromium", "webkit"] as const) {
         await memberRow.getByRole("button", { name: "查看全文", exact: true }).click();
         await expect(memberRow.locator(".voice-transcript-bubble")).toHaveText("第一句，第二句，最后一句。");
         await expectSubtitleSeek(memberPage, memberRow.locator(".voice-transcript-bubble"), "最后一句。", 4.5);
-        await memberRow.getByRole("button", { name: "暂停语音", exact: true }).click();
+        // Seeking updates the UI before audio.play() resolves. Let real playback
+        // acknowledge listening before pausing, especially on Linux WebKit.
         await expect(memberRow.locator(".voice-unread-dot")).toHaveCount(0);
+        await memberRow.getByRole("button", { name: "暂停语音", exact: true }).click();
         await memberPage.reload();
         await memberRow.getByRole("button", { name: "查看全文", exact: true }).click();
         await expect(memberRow.locator(".voice-transcript-word")).toHaveCount(3);

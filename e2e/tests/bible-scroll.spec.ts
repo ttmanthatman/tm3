@@ -173,6 +173,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       try {
         await prependScenario(await context.newPage(), moveWhileLoading);
       } finally {
+        await context.close();
         await browser.close();
       }
     });

@@ -88,13 +88,28 @@ jobs:
         run: npm run test:migrations
 
   e2e:
-    name: Browser smoke tests
+    name: Browser smoke tests (${{ matrix.suite }})
     needs: verify
     runs-on: ubuntu-latest
-    # The suite has grown to 212 tests and CI wall time drifts with runner load
-    # (observed 35→41→45+ min across rounds); a timeout surfaces as "cancelled".
-    # Real fix is sharding (P9); keep headroom until then.
+    # Each matrix job owns its MySQL service, storage and server processes.
+    # Keep specs serial within a shard; never share tm3_e2e between runners.
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: webkit-books
+            args: --browser=webkit e2e/tests/books.spec.ts
+          - suite: story
+            args: e2e/tests/stories.spec.ts
+          - suite: shard-1
+            args: --shard=1/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+          - suite: shard-2
+            args: --shard=2/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+          - suite: shard-3
+            args: --shard=3/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+          - suite: shard-4
+            args: --shard=4/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
 
     services:
       mysql:
@@ -135,26 +150,16 @@ jobs:
           npx playwright install --with-deps chromium webkit
           sudo apt-get install -y ffmpeg
 
-      - name: Run iPhone WebKit book smoke test
-        env:
-          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
-        run: npm run test:e2e -- --browser=webkit e2e/tests/books.spec.ts
-
       - name: Run browser smoke tests
         env:
           E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
-        run: npm run test:e2e -- --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
-
-      - name: Run isolated story smoke test
-        env:
-          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
-        run: npm run test:e2e -- e2e/tests/stories.spec.ts
+        run: npm run test:e2e -- ${{ matrix.args }}
 
       - name: Upload browser failure artifacts
         if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: browser-smoke-artifacts
+          name: browser-smoke-artifacts-${{ matrix.suite }}
           path: |
             output/e2e/report/
             output/e2e/results/
