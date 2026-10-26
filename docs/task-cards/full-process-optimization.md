@@ -40,7 +40,7 @@
 | P1-B | Azure 专用账号验收与远程冒烟 | 浏览器维度**通过**；真机**待验收** | 专用账号/私有频道建立并核实隔离；`test:e2e:remote` 连续两轮 2 passed（360/390/桌面 + Socket/SW/持久化/圣经跳转）；spec 按当前构建做了 6 项环境适配（证据见私有台账） |
 | P1 | Azure 验收护栏与远程冒烟 | 剩真机验收与登录后行为基线 | 凭据就绪、护栏与冒烟全绿；真机清单已交用户 |
 | P2 | 构建身份、增量部署与回退 | **通过** | 优化工作在分支 `codex/full-process-optimization`（main 保持 01aef47）；Azure 已从分支部署 e7dd62a（2.12.0）并三核对+远程冒烟全绿；回退演练与部署前快照俱备；CI 的 WebKit 红点在分支转绿 |
-| P3 | 测试质量与渐进门禁 | 确定性失败清零（两轮 CI 验证）；剩登记项待用户/后续 | 字号保存回写竞态已修（产品级：镜像 watch 待保存守卫+定向回归，未修时 22≠23 可复现）；story-drop 圣经遮挡、三处 WebKit 超时、夹具公开性/分享竞态/helper 时序等全部修复并连续两轮全绿（ff2d64b）；剩余=录音 WebKit×3（Linux 无 MediaRecorder，三选项待用户）+playback alpha 待 Linux 像素证据+每轮 0-2 个单发测量漂移（均登记）；CI 已四分片（job 7-15 分钟）。详见私有 ci-band-register.md |
+| P3 | 测试质量与渐进门禁 | 五项修复通过两轮复验；仍有稳定 alpha 失败、录音能力阻塞与待归因间歇失败 | 字号保存回写竞态已修（产品级+定向回归）；story-drop/三超时/夹具与竞态修复连续两轮全绿（ff2d64b）；**alpha 失败实为 Linux Chromium 路径**（非 WebKitGTK，勘误见登记表），分阶段像素取证进行中；录音×3 系 Playwright WebKit 构建关闭 MediaRecorder（非上游缺失），平台方案建议托管 macOS 独立 job；间歇项不冠"纯噪音"，待证据。详见私有 ci-band-register.md 与 astra-to-glm53-guidance.md |
 | P4–P10 | 前端治理/后端模块/性能/安全/CI 闭环/终验 | 待实施 | 按路线图依赖顺序推进 |
 
 ## 进度 / 下一步
