@@ -120,6 +120,71 @@ test("dense folio seeking coalesces renders, reuses completed ink and retains po
   expect(await fills()).toBe(paused);
 });
 
+test("brush strokes fill exactly once per stroke, only after cross-frame construction", async ({ page }) => {
+  // 管线笔画几何在独立 Path2D 上跨帧构造：构造中不得出现部分填充（fill 计数
+  // 恒 0、画布无墨），完成后恰好一次 fill 且立即出墨。密集路径下 512 stamps
+  // 的分帧 yield 保留——用真实 rAF 调度驱动而非一次性 drain。
+  await harness(page);
+  // The harness app shares the handwriting render queue; let it finish its own
+  // initial drawing first so no real rAF handle is pending when we take over.
+  await expect.poll(() => page.evaluate(() => (window as unknown as { playbackHarness: { fills: () => number } }).playbackHarness.fills())).toBe(31);
+  const result = await page.evaluate(async () => {
+    const path = "/src/client/features/bible/copywork/copyworkPlaybackRenderer.ts";
+    const { createCopyworkPlaybackRenderer } = await import(path);
+    const canvas = document.createElement("canvas");
+    canvas.style.width = "280px";
+    document.body.append(canvas);
+    const glyph = { index: 0, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 }, character: { strokes: [
+      { color: "#182522", brush: { size: 45, sensitivity: 65, lag: 35 }, points: Array.from({ length: 1500 }, (_, i) => [1000 + i * 5, 5000 + Math.sin(i / 45) * 3000, i * 8] as [number, number, number]) }
+    ] } };
+    const frames = new Map<number, FrameRequestCallback>();
+    const originalFrame = window.requestAnimationFrame;
+    const originalCancel = window.cancelAnimationFrame;
+    const originalNow = performance.now.bind(performance);
+    let serial = 0;
+    let tick = 0;
+    window.requestAnimationFrame = (callback) => { frames.set(++serial, callback); return serial; };
+    window.cancelAnimationFrame = (id) => { frames.delete(id); };
+    // 每个队列任务在队列预算口径下都超时（9ms > 8ms），强制一次 flush 只推进
+    // 一个 yield——密集笔画的跨帧构造在快机上也被真实拉长。
+    performance.now = () => ++tick * 9;
+    let fills = 0;
+    const originalFill = CanvasRenderingContext2D.prototype.fill;
+    CanvasRenderingContext2D.prototype.fill = function (...args: Parameters<typeof originalFill>) {
+      fills += 1;
+      return originalFill.apply(this, args);
+    };
+    const renderer = createCopyworkPlaybackRenderer({ canvas: () => canvas,
+      viewport: () => ({ x: 0, y: 0, width: 704, height: 320 }),
+      glyphs: () => [glyph], placements: () => [{ index: 0, x: 68, y: 90 }], active: () => true });
+    const step = () => { const batch = [...frames.entries()]; frames.clear(); for (const [, callback] of batch) callback(performance.now()); };
+    const visibleAlpha = () => { const data = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data; return [...data].some((v, i) => i % 4 === 3 && v > 0); };
+    try {
+      window.requestAnimationFrame(() => {});
+      const hookSanity = frames.size;
+      renderer.draw(new Map([[0, [1500]]]));
+      // 跨帧构造中：连续推进数帧，期间不得有任何 fill 或可见墨迹。
+      const observedSteps = 4;
+      for (let i = 0; i < observedSteps; i += 1) step();
+      const fillsMidConstruction = fills;
+      const inkMidConstruction = visibleAlpha();
+      for (let i = 0; frames.size && i < 400; i += 1) step();
+      return { observedSteps, fillsMidConstruction, inkMidConstruction, totalFills: fills, finalInk: visibleAlpha() };
+    } finally {
+      renderer.destroy();
+      canvas.remove();
+      window.requestAnimationFrame = originalFrame;
+      window.cancelAnimationFrame = originalCancel;
+      performance.now = originalNow;
+      CanvasRenderingContext2D.prototype.fill = originalFill;
+    }
+  });
+  expect(result.fillsMidConstruction).toBe(0);
+  expect(result.inkMidConstruction).toBe(false);
+  expect(result.totalFills).toBe(1);
+  expect(result.finalInk).toBe(true);
+});
+
 test("cached folio ink matches direct drawing at fractional placements and screen scales (chromium)", async ({ page }, testInfo) => {
   await cachedInkScenario(page, "chromium", testInfo);
 });
@@ -193,16 +258,33 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
         document.body.append(cached);
         const renderer = createCopyworkPlaybackRenderer({ canvas: () => cached, viewport: () => view,
           glyphs: () => [glyph], placements: () => [placement], active: () => true });
+        // 预算观测：记录每次 rAF 回调（渲染队列任务在其中执行）的耗时，
+        // 取最大单次与总次数——只测时不改渲染路径。
+        let rafCount = 0, rafMaxMs = 0, rafTotalMs = 0;
+        const originalFrame = window.requestAnimationFrame;
+        window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+          return originalFrame.call(window, (time) => {
+            const started = performance.now();
+            try { callback(time); } finally {
+              const spent = performance.now() - started;
+              rafCount += 1; rafTotalMs += spent; if (spent > rafMaxMs) rafMaxMs = spent;
+            }
+          });
+        }) as typeof requestAnimationFrame;
         renderer.draw(new Map([[0, [count]]]));
         const ctx = cached.getContext("2d")!;
         let settleReads = 0;
         const deadline = performance.now() + 5000;
-        while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
-          if (performance.now() > deadline) { renderer.destroy(); cached.remove(); throw new Error("cached ink did not finish drawing"); }
-          settleReads += 1;
-          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        try {
+          while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
+            if (performance.now() > deadline) throw new Error("cached ink did not finish drawing");
+            settleReads += 1;
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+          }
+        } finally {
+          window.requestAnimationFrame = originalFrame;
         }
-        return { cached, renderer, settleReads };
+        return { cached, renderer, settleReads, budget: { rafCount, rafMaxMs: Math.round(rafMaxMs * 100) / 100, rafTotalMs: Math.round(rafTotalMs * 100) / 100 } };
       };
       const renderDirect = (w: number, h: number, count: number) => {
         const direct = document.createElement("canvas");
@@ -317,6 +399,7 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
               inkScale: (reference.direct.width / view.width) * COPYWORK_PAGE.font / 10000,
               contextState: { direct: reference.snapshot.state, cachedFinal: baseFinal.state, capturedSources: calls.map((call) => call.snap?.state ?? null) },
               settlePollReads: base.settleReads,
+              budget: base.budget,
               baseline, staged, repeatDirect, repeatPipeline,
               png: baseline.maxDiff > 2 ? { direct: reference.direct.toDataURL("image/png"), cached: base.cached.toDataURL("image/png") } : null,
               alphaDump: baseline.maxDiff > 2

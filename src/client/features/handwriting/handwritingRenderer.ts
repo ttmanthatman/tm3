@@ -72,7 +72,12 @@ function brushFootprintPoint(sample: BrushSample, along: number, side: number, e
   };
 }
 
-export function traceBrushFootprintPath(context: CanvasRenderingContext2D, sample: BrushSample, expansion = 0, closePath = true) {
+// 2D targets that accept the same path commands; CanvasRenderingContext2D and
+// Path2D both satisfy it, letting one geometry emitter serve canvas current
+// paths and independent cross-frame stroke paths without duplicating math.
+export type InkPathTarget = Pick<Path2D, "moveTo" | "lineTo" | "bezierCurveTo" | "ellipse" | "arc" | "closePath">;
+
+export function traceBrushFootprintPath(context: InkPathTarget, sample: BrushSample, expansion = 0, closePath = true) {
   const width = Math.max(1, sample.width + expansion);
   const spread = Math.max(0.12, Math.min(1, sample.spread));
   const halfWidth = width * 0.5 * (0.78 + 0.22 * spread);
@@ -200,7 +205,7 @@ function naturalFootprintPoints(sample: BrushSample, expansion: number): Outline
   });
 }
 
-function tracePointHull(context: CanvasRenderingContext2D, outline: NibPoint[]) {
+function tracePointHull(context: InkPathTarget, outline: NibPoint[]) {
   // Connect the support envelopes of consecutive nib cross-sections. The
   // swept body fills the space between them, retaining the rotating waterdrop
   // nib for follow and the fixed shallow cross-section for slanted.
@@ -223,7 +228,7 @@ function tracePointHull(context: CanvasRenderingContext2D, outline: NibPoint[]) 
   for (const point of hull.slice(1)) context.lineTo(point.x, point.y);
 }
 
-function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample, to: BrushSample, expansion: number) {
+function traceNaturalSweep(context: InkPathTarget, from: BrushSample, to: BrushSample, expansion: number) {
   if (from.fold || to.fold) {
     const layers = (sample: BrushSample) => {
       if (sample.fold) return trueBrushContours(sample, sample.fold, expansion);
@@ -239,13 +244,19 @@ function traceNaturalSweep(context: CanvasRenderingContext2D, from: BrushSample,
   traceBrushFootprintPath(context, to, expansion, false);
 }
 
-function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number): Generator<void> {
+function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: readonly BrushSample[], from: number, until: number, expansion: number, independentStrokePath = false): Generator<void> {
   if (from >= until) return;
-  context.beginPath();
+  // Cross-frame construction keeps the stroke geometry on an independent Path2D
+  // and fills exactly once at completion, so nothing depends on the canvas
+  // current path surviving across requestAnimationFrame yields. The drained
+  // synchronous path keeps the original beginPath/fill behavior unchanged.
+  const independent = independentStrokePath ? new Path2D() : null;
+  const path: InkPathTarget = independent ?? context;
+  if (!independent) context.beginPath();
   // fill() closes each subpath implicitly. Repeated explicit closure scans
   // growing paths in some browsers and can stall dense drawings for seconds.
   // Keep one fill per pass to preserve overlapping glow opacity.
-  if (from === 0) traceBrushFootprintPath(context, samples[0], expansion, false);
+  if (from === 0) traceBrushFootprintPath(path, samples[0], expansion, false);
   let stamps = 0;
   for (let index = Math.max(1, from); index < until; index += 1) {
     const previous = samples[index - 1];
@@ -260,13 +271,14 @@ function* drawBrushOutlineSteps(context: CanvasRenderingContext2D, samples: read
     let previousStamp = previous;
     for (let stamp = 1; stamp <= stampCount; stamp += 1) {
       const nextStamp = interpolatedBrushSample(previous, sample, stamp / stampCount);
-      if (sample.version === 2) traceNaturalSweep(context, previousStamp, nextStamp, expansion);
-      else traceBrushFootprintPath(context, nextStamp, expansion, false);
+      if (sample.version === 2) traceNaturalSweep(path, previousStamp, nextStamp, expansion);
+      else traceBrushFootprintPath(path, nextStamp, expansion, false);
       previousStamp = nextStamp;
       if (++stamps % 512 === 0) yield;
     }
   }
-  context.fill();
+  if (independent) context.fill(independent);
+  else context.fill();
 }
 
 function drawPoint(context: CanvasRenderingContext2D, point: HandwritingPoint, width: number) {
@@ -298,7 +310,8 @@ function* drawStrokeGeometrySteps(
   stroke: HandwritingStroke,
   startPointIndex: number,
   visiblePoints: number,
-  width: number
+  width: number,
+  independentStrokePath = false
 ): Generator<void> {
   const end = Math.min(stroke.points.length, Math.max(0, visiblePoints));
   if (startPointIndex >= end) return;
@@ -306,7 +319,7 @@ function* drawStrokeGeometrySteps(
     const geometry = handwritingBrushGeometry(stroke);
     const from = startPointIndex === 0 ? 0 : geometry.ends[startPointIndex - 1];
     const until = end === 0 ? 0 : geometry.ends[end - 1];
-    yield* drawBrushOutlineSteps(context, geometry.samples, from, until, width - HANDWRITING_STROKE_WIDTH);
+    yield* drawBrushOutlineSteps(context, geometry.samples, from, until, width - HANDWRITING_STROKE_WIDTH, independentStrokePath);
     return;
   }
   let index = Math.max(0, startPointIndex);
@@ -475,7 +488,7 @@ export function drawHandwritingInk(context: CanvasRenderingContext2D, character:
 export function* drawHandwritingInkSteps(context: CanvasRenderingContext2D, character: HandwritingCharacter, visiblePointCounts?: number[]): Generator<void> {
   for (const [index, stroke] of character.strokes.entries()) {
     context.fillStyle = stroke.color || HANDWRITING_DEFAULT_COLOR;
-    yield* drawStrokeGeometrySteps(context, stroke, 0, visiblePointCounts?.[index] ?? stroke.points.length, HANDWRITING_STROKE_WIDTH);
+    yield* drawStrokeGeometrySteps(context, stroke, 0, visiblePointCounts?.[index] ?? stroke.points.length, HANDWRITING_STROKE_WIDTH, true);
     yield;
   }
 }

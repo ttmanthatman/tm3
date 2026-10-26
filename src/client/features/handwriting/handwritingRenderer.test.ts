@@ -6,6 +6,22 @@ import { appendHandwritingStroke, drawHandwritingCharacter, drawHandwritingPaylo
 
 type Operation = { type: string; args: unknown[] };
 
+// Node has no Path2D; the yielded folio path builds strokes on one, so the
+// stub records its path commands the same way fakeCanvas records context ops.
+const fakePath2dLog: Operation[][] = [];
+class FakePath2D {
+  readonly operations: Operation[] = [];
+  moveTo: (...args: unknown[]) => void = (...args) => this.operations.push({ type: "moveTo", args });
+  lineTo: (...args: unknown[]) => void = (...args) => this.operations.push({ type: "lineTo", args });
+  bezierCurveTo: (...args: unknown[]) => void = (...args) => this.operations.push({ type: "bezierCurveTo", args });
+  ellipse: (...args: unknown[]) => void = (...args) => this.operations.push({ type: "ellipse", args });
+  arc: (...args: unknown[]) => void = (...args) => this.operations.push({ type: "arc", args });
+  closePath: () => void = () => this.operations.push({ type: "closePath", args: [] });
+  constructor() { fakePath2dLog.push(this.operations); }
+}
+(globalThis as { Path2D?: unknown }).Path2D = FakePath2D;
+const lastPath2dOps = () => fakePath2dLog.at(-1)!;
+
 function fakeCanvas() {
   const operations: Operation[] = [];
   let fillStyle = "";
@@ -17,7 +33,7 @@ function fakeCanvas() {
     beginPath: () => operations.push({ type: "beginPath", args: [] }),
     arc: (...args: unknown[]) => operations.push({ type: "arc", args }),
     ellipse: (...args: unknown[]) => operations.push({ type: "ellipse", args }),
-    fill: () => operations.push({ type: "fill", args: [] }),
+    fill: (...args: unknown[]) => operations.push({ type: "fill", args }),
     moveTo: (...args: unknown[]) => operations.push({ type: "moveTo", args }),
     lineTo: (...args: unknown[]) => operations.push({ type: "lineTo", args }),
     bezierCurveTo: (...args: unknown[]) => operations.push({ type: "bezierCurveTo", args }),
@@ -68,8 +84,11 @@ test("true-v1 sweeps moving fold layers and keeps live, prefix, static and yield
   drawHandwritingCharacter(full.canvas, { strokes: [stroke] });
   assert.deepEqual(paths(live.operations), paths(full.operations));
   const yielded = fakeCanvas();
+  const beforePath2d = fakePath2dLog.length;
   [...drawHandwritingInkSteps(yielded.canvas.getContext("2d")!, { strokes: [stroke] })];
-  assert.deepEqual(paths(yielded.operations), paths(full.operations));
+  assert.equal(fakePath2dLog.length, beforePath2d + 1, "one independent stroke path per brush stroke");
+  assert.deepEqual(paths(lastPath2dOps()), paths(full.operations));
+  assert.deepEqual(paths(yielded.operations), [], "context keeps no stroke path commands of its own");
 });
 
 test("yielded folio ink retains the full and partial paths, including empty skipped strokes", () => {
@@ -81,8 +100,20 @@ test("yielded folio ink retains the full and partial paths, including empty skip
     const direct = fakeCanvas();
     const yielded = fakeCanvas();
     drawHandwritingInk(direct.canvas.getContext("2d")!, character, counts);
+    const beforePath2d = fakePath2dLog.length;
     const steps = [...drawHandwritingInkSteps(yielded.canvas.getContext("2d")!, character, counts)];
-    assert.deepEqual(yielded.operations, direct.operations);
+    const drawsStroke = counts?.[0] !== 0;
+    assert.equal(fakePath2dLog.length, beforePath2d + (drawsStroke ? 1 : 0));
+    const pathCommands = (operations: Operation[]) => operations.filter((op) => ["ellipse", "moveTo", "lineTo", "bezierCurveTo", "closePath"].includes(op.type));
+    if (drawsStroke) {
+      assert.deepEqual(pathCommands(lastPath2dOps()), pathCommands(direct.operations),
+        "the independent path carries exactly the direct stroke commands");
+      assert.equal(yielded.operations.filter(op => op.type === "fill").length, 1, "exactly one fill per stroke");
+    } else {
+      assert.equal(yielded.operations.filter(op => op.type === "fill").length, 0, "skipped strokes fill nothing");
+    }
+    assert.ok(yielded.operations.every(op => !["beginPath", "moveTo", "lineTo", "bezierCurveTo", "ellipse", "arc", "closePath"].includes(op.type)),
+      "no stroke geometry lands on the context current path");
     if (!counts) assert.ok(steps.length > 1, "dense paths must yield within a stroke");
   }
   const skipped = fakeCanvas();
