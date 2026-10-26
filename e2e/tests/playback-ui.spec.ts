@@ -225,6 +225,13 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
             const baseFinal = snapshot(base.cached);
             const reference = renderDirect(base.cached.width, base.cached.height, count);
             const baseline = metrics(reference.snapshot.alpha, baseFinal.alpha, base.cached.width, base.cached.height);
+            // 重复渲染探针：同输入各再渲染一次直接图与完整管线，量化 Linux 软件
+            // 光栅下的逐次渲染非确定性（D1-D2 应为 0；若非 0 则断言前提本身不成立）。
+            const reference2 = renderDirect(base.cached.width, base.cached.height, count);
+            const repeatDirect = metrics(reference.snapshot.alpha, reference2.snapshot.alpha, base.cached.width, base.cached.height);
+            const base2 = await renderCached(count);
+            const base2Final = snapshot(base2.cached);
+            const repeatPipeline = metrics(baseFinal.alpha, base2Final.alpha, base.cached.width, base.cached.height);
 
             // —— 插桩通道：记录窗口内全部画布间 drawImage 的对象身份与快照 ——
             // copy1: buffer.drawImage(raster)（目标=内部缓存画布）；copy2: visible.drawImage(buffer)。
@@ -310,14 +317,15 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
               inkScale: (reference.direct.width / view.width) * COPYWORK_PAGE.font / 10000,
               contextState: { direct: reference.snapshot.state, cachedFinal: baseFinal.state, capturedSources: calls.map((call) => call.snap?.state ?? null) },
               settlePollReads: base.settleReads,
-              baseline, staged,
+              baseline, staged, repeatDirect, repeatPipeline,
               png: baseline.maxDiff > 2 ? { direct: reference.direct.toDataURL("image/png"), cached: base.cached.toDataURL("image/png") } : null,
               alphaDump: baseline.maxDiff > 2
                 ? { width: base.cached.width, direct: Array.from(reference.snapshot.alpha), cachedFinal: Array.from(baseFinal.alpha) }
                 : null
             });
-            reference.direct.remove();
+            reference.direct.remove(); reference2.direct.remove();
             base.renderer.destroy(); base.cached.remove();
+            base2.renderer.destroy(); base2.cached.remove();
             instrRenderer.destroy(); instrumented.remove();
           }
         }
