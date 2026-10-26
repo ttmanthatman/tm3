@@ -122,8 +122,11 @@ test("dense folio seeking coalesces renders, reuses completed ink and retains po
 
 test("brush strokes fill exactly once per stroke, only after cross-frame construction", async ({ page }) => {
   // 管线笔画几何在独立 Path2D 上跨帧构造：构造中不得出现部分填充（fill 计数
-  // 恒 0、画布无墨），完成后恰好一次 fill 且立即出墨。密集路径下 512 stamps
-  // 的分帧 yield 保留——用真实 rAF 调度驱动而非一次性 drain。
+  // 恒 0、画布无墨），完成后恰好一次 fill 且立即出墨。本用例是队列步回归：
+  // 用 rAF Map + 伪时钟强制每次队列 flush 只推进一个 yield（伪时刻步进 9ms
+  // 超过 8ms 预算），并在同一个浏览器任务里同步排空——它证明生成器跨队列步
+  // 零提前填充，不证明跨真实浏览器帧；真实帧版本见
+  // alpha-controlled-experiments.spec.ts。
   await harness(page);
   // The harness app shares the handwriting render queue; let it finish its own
   // initial drawing first so no real rAF handle is pending when we take over.
@@ -150,7 +153,7 @@ test("brush strokes fill exactly once per stroke, only after cross-frame constru
     performance.now = () => ++tick * 9;
     let fills = 0;
     const originalFill = CanvasRenderingContext2D.prototype.fill;
-    CanvasRenderingContext2D.prototype.fill = function (...args: Parameters<typeof originalFill>) {
+    CanvasRenderingContext2D.prototype.fill = function (this: CanvasRenderingContext2D, ...args: Parameters<typeof originalFill>) {
       fills += 1;
       return originalFill.apply(this, args);
     };
@@ -195,9 +198,11 @@ test("cached folio ink matches direct drawing at fractional placements and scree
   finally { await browser.close(); }
 });
 
-// 取证版用例：同一组合先跑未插桩基线（与生产行为一致），再跑带 drawImage 探针的
-// 插桩通道，按 D(直接)/R(整页 raster)/C(裁剪缓存)/F(最终画布) 分阶段比对。断言与
-// 参数不变（全部宽度×DPR×点数，alpha<=2）；证据附件在销毁 canvas 前生成。
+// 取证版用例：同一组合先跑无 drawImage 快照探针的基线（完成判定靠轮询读回，
+// 其余与生产行为一致），再跑带 drawImage 探针的插桩通道，按 D(直接)/R(整页
+// raster)/C(裁剪缓存)/F(最终画布) 分阶段比对。断言与参数不变（全部宽度×DPR×
+// 点数，alpha<=2）；任何比较超阈值都保存实际参与该比较的一对图像与 alpha，
+// 在销毁 canvas 前生成（回件 to-glm-2026-10-26-alpha-path-review §3）。
 async function cachedInkScenario(page: Page, engine: string, testInfo: import("@playwright/test").TestInfo) {
   const declaredPlaywright = JSON.parse(await fs.readFile("package.json", "utf8")).devDependencies["@playwright/test"];
   const browserVersion = page.context().browser()?.version() ?? "unknown";
@@ -258,16 +263,20 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
         document.body.append(cached);
         const renderer = createCopyworkPlaybackRenderer({ canvas: () => cached, viewport: () => view,
           glyphs: () => [glyph], placements: () => [placement], active: () => true });
-        // 预算观测：记录每次 rAF 回调（渲染队列任务在其中执行）的耗时，
-        // 取最大单次与总次数——只测时不改渲染路径。
-        let rafCount = 0, rafMaxMs = 0, rafTotalMs = 0;
+        // 预算观测（口径修正，回件 §3）：包装 window.requestAnimationFrame，
+        // 记录经包装全局注册的回调的墙钟耗时。渲染队列 flush 走包装路径，而
+        // 一次回调内可能推进多个队列任务，所以 wrappedFrameCallbacks 不是
+        // "完成帧数"，wrappedCallbackMaxMs 也不是"单次队列任务最大耗时"
+        // （后者由 alpha-controlled-experiments.spec.ts 的预算探针按任务计量）。
+        // 测试自身的轮询等待走未包装 originalFrame，不计入。只测时不改渲染路径。
+        let wrappedCount = 0, wrappedMaxMs = 0, wrappedTotalMs = 0;
         const originalFrame = window.requestAnimationFrame;
         window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
           return originalFrame.call(window, (time) => {
             const started = performance.now();
             try { callback(time); } finally {
               const spent = performance.now() - started;
-              rafCount += 1; rafTotalMs += spent; if (spent > rafMaxMs) rafMaxMs = spent;
+              wrappedCount += 1; wrappedTotalMs += spent; if (spent > wrappedMaxMs) wrappedMaxMs = spent;
             }
           });
         }) as typeof requestAnimationFrame;
@@ -279,12 +288,14 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
           while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
             if (performance.now() > deadline) throw new Error("cached ink did not finish drawing");
             settleReads += 1;
-            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            await new Promise<void>((resolve) => originalFrame.call(window, () => resolve()));
           }
         } finally {
           window.requestAnimationFrame = originalFrame;
         }
-        return { cached, renderer, settleReads, budget: { rafCount, rafMaxMs: Math.round(rafMaxMs * 100) / 100, rafTotalMs: Math.round(rafTotalMs * 100) / 100 } };
+        return { cached, renderer, settleReads, budget: { wrappedFrameCallbacks: wrappedCount,
+          wrappedCallbackMaxMs: Math.round(wrappedMaxMs * 100) / 100,
+          wrappedCallbackTotalMs: Math.round(wrappedTotalMs * 100) / 100 } };
       };
       const renderDirect = (w: number, h: number, count: number) => {
         const direct = document.createElement("canvas");
@@ -307,8 +318,10 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
             const baseFinal = snapshot(base.cached);
             const reference = renderDirect(base.cached.width, base.cached.height, count);
             const baseline = metrics(reference.snapshot.alpha, baseFinal.alpha, base.cached.width, base.cached.height);
-            // 重复渲染探针：同输入各再渲染一次直接图与完整管线，量化 Linux 软件
-            // 光栅下的逐次渲染非确定性（D1-D2 应为 0；若非 0 则断言前提本身不成立）。
+            // 重复渲染探针：同输入各再渲染一次直接图与完整管线，量化逐次渲染
+            // 非确定性（2D 后端不可查询、环境见 environment 块，不做平台推断；
+            // D1-D2 为 0 只证明这些相邻成对样本相同，不证明任意调度/读回时机
+            // 下恒确定）。
             const reference2 = renderDirect(base.cached.width, base.cached.height, count);
             const repeatDirect = metrics(reference.snapshot.alpha, reference2.snapshot.alpha, base.cached.width, base.cached.height);
             const base2 = await renderCached(count);
@@ -328,7 +341,7 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
             let instrumentedFinal: ReturnType<typeof snapshot> | null = null;
             try {
               let armed = false;
-              CanvasRenderingContext2D.prototype.drawImage = function (source: CanvasImageSource, ...rest: number[]) {
+              CanvasRenderingContext2D.prototype.drawImage = function (this: CanvasRenderingContext2D, source: CanvasImageSource, ...rest: number[]) {
                 const result = originalDrawImage.apply(this, [source, ...rest] as Parameters<typeof originalDrawImage>);
                 if (armed && source instanceof HTMLCanvasElement && this.canvas instanceof HTMLCanvasElement
                   && (this.canvas === instrumented || (source.width === instrumented.width && source.height === instrumented.height))) {
@@ -355,6 +368,11 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
             const copy2 = calls.find((call) => call.dst === instrumented);
             const copy1 = copy2 ? [...calls].slice(0, calls.indexOf(copy2)).reverse().find((call) => call.dst === copy2.src) : undefined;
             let staged: Record<string, unknown> = { captured: false };
+            let stagedParties: {
+              raster: { alpha: Uint8Array; canvas: HTMLCanvasElement };
+              crop: { alpha: Uint8Array; canvas: HTMLCanvasElement };
+              cropOnPage: Uint8Array; finalRegion: Uint8Array;
+            } | null = null;
             if (instrumentedFinal && copy1?.snap && copy2?.snap) {
               const rasterSnap = copy1.snap;
               const cropSnap = copy2.snap;
@@ -374,21 +392,67 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
               for (let i = 0; i < rasterSnap.alpha.length; i += 1) {
                 if (rasterSnap.alpha[i] > 0 && cOnPage[i] === 0 && reference.snapshot.alpha[i] > 0) inkOutsideCrop += 1;
               }
+              const finalRegion = new Uint8Array(cropSnap.alpha.length);
+              for (let y = 0; y < cropSnap.height; y += 1) for (let x = 0; x < cropSnap.width; x += 1) {
+                const fx = copy2.dx + x, fy = copy2.dy + y;
+                if (fx >= 0 && fy >= 0 && fx < instrumentedFinal.width && fy < instrumentedFinal.height) {
+                  finalRegion[y * cropSnap.width + x] = instrumentedFinal.alpha[fy * instrumentedFinal.width + fx];
+                }
+              }
               staged = { captured: true, drawCallCount: calls.length,
                 offsets: { copy1: { dx: copy1.dx, dy: copy1.dy }, copy2: { dx: copy2.dx, dy: copy2.dy } },
                 sizes: { raster: { width: rasterSnap.width, height: rasterSnap.height }, crop: { width: cropSnap.width, height: cropSnap.height } },
                 dVersusRaster, dVersusCropOnPage, inkOutsideCrop,
-                cVersusFinalWithinCrop: metrics(cropSnap.alpha, ((): Uint8Array => {
-                  const region = new Uint8Array(cropSnap.alpha.length);
-                  for (let y = 0; y < cropSnap.height; y += 1) for (let x = 0; x < cropSnap.width; x += 1) {
-                    const fx = copy2.dx + x, fy = copy2.dy + y;
-                    if (fx >= 0 && fy >= 0 && fx < instrumentedFinal.width && fy < instrumentedFinal.height) {
-                      region[y * cropSnap.width + x] = instrumentedFinal.alpha[fy * instrumentedFinal.width + fx];
-                    }
-                  }
-                  return region;
-                })(), cropSnap.width, cropSnap.height),
+                cVersusFinalWithinCrop: metrics(cropSnap.alpha, finalRegion, cropSnap.width, cropSnap.height),
                 observerCheck: metrics(baseFinal.alpha, instrumentedFinal.alpha, base.cached.width, base.cached.height) };
+              stagedParties = {
+                raster: { alpha: rasterSnap.alpha, canvas: copy1.src as HTMLCanvasElement },
+                crop: { alpha: cropSnap.alpha, canvas: copy1.dst as HTMLCanvasElement },
+                cropOnPage: cOnPage, finalRegion
+              };
+            }
+            // 采样修正（回件 §3）：任何比较超阈值都保存实际参与该比较的一对
+            // 图像/alpha/尺寸与样本 ID；阶段证据引用同一次采样实例，不在汇总里
+            // 拼接不同运行的像素。
+            type FailureParty = { id: string; alpha: Uint8Array; png: () => string };
+            const party = (id: string, alpha: Uint8Array, canvas: HTMLCanvasElement): FailureParty => ({ id, alpha, png: () => canvas.toDataURL("image/png") });
+            const derivedParty = (id: string, alpha: Uint8Array): FailureParty => ({ id, alpha, png: () => "derived-array: no single canvas to encode" });
+            // 序列化口径：完整 alpha 以 base64 打包（逐字节、行优先、width×height），
+            // JSON 数字数组会让单个失败对膨胀到几十 MB 并拖垮取证用例本身。
+            const b64Alpha = (alpha: Uint8Array) => {
+              let binary = "";
+              for (let i = 0; i < alpha.length; i += 0x8000) binary += String.fromCharCode(...alpha.subarray(i, i + 0x8000));
+              return btoa(binary);
+            };
+            const failures: Array<Record<string, unknown>> = [];
+            const addFailure = (comparison: string, metric: { maxDiff: number; countOver2: number; topPixels: unknown[] }, a: FailureParty, b: FailureParty) => {
+              if (metric.maxDiff <= 2) return;
+              failures.push({ comparison, ids: [a.id, b.id], maxDiff: metric.maxDiff, countOver2: metric.countOver2,
+                width: base.cached.width, height: base.cached.height, topPixels: metric.topPixels,
+                png: { a: a.png(), b: b.png() },
+                alphaDump: { encoding: "base64-raw-alpha-bytes-row-major", a: b64Alpha(a.alpha), b: b64Alpha(b.alpha) } });
+            };
+            const directParty = party(`direct1@${width}/dpr${ratio}/${count}`, reference.snapshot.alpha, reference.direct);
+            addFailure("baseline-direct1-vs-pipelineFinal1", baseline, directParty, party(`pipelineFinal1@${width}/dpr${ratio}/${count}`, baseFinal.alpha, base.cached));
+            addFailure("repeatDirect-direct1-vs-direct2", repeatDirect, directParty, party(`direct2@${width}/dpr${ratio}/${count}`, reference2.snapshot.alpha, reference2.direct));
+            addFailure("repeatPipeline-final1-vs-final2", repeatPipeline, party(`pipelineFinal1@${width}/dpr${ratio}/${count}`, baseFinal.alpha, base.cached), party(`pipelineFinal2@${width}/dpr${ratio}/${count}`, base2Final.alpha, base2.cached));
+            if (stagedParties && staged.captured) {
+              const stagedMetrics = staged as unknown as {
+                dVersusRaster: { maxDiff: number; countOver2: number; topPixels: unknown[] };
+                dVersusCropOnPage: { maxDiff: number; countOver2: number; topPixels: unknown[] };
+                cVersusFinalWithinCrop: { maxDiff: number; countOver2: number; topPixels: unknown[] };
+                observerCheck: { maxDiff: number; countOver2: number; topPixels: unknown[] };
+              };
+              addFailure("staged-direct1-vs-raster", stagedMetrics.dVersusRaster, directParty,
+                party(`raster@${width}/dpr${ratio}/${count}`, stagedParties.raster.alpha, stagedParties.raster.canvas));
+              addFailure("staged-direct1-vs-cropOnPage", stagedMetrics.dVersusCropOnPage, directParty,
+                derivedParty(`cropOnPage@${width}/dpr${ratio}/${count}`, stagedParties.cropOnPage));
+              addFailure("staged-crop-vs-finalRegion", stagedMetrics.cVersusFinalWithinCrop,
+                party(`crop@${width}/dpr${ratio}/${count}`, stagedParties.crop.alpha, stagedParties.crop.canvas),
+                derivedParty(`finalRegion@${width}/dpr${ratio}/${count}`, stagedParties.finalRegion));
+              addFailure("observer-final1-vs-instrumentedFinal", stagedMetrics.observerCheck,
+                party(`pipelineFinal1@${width}/dpr${ratio}/${count}`, baseFinal.alpha, base.cached),
+                party(`instrumentedFinal@${width}/dpr${ratio}/${count}`, instrumentedFinal!.alpha, instrumented));
             }
             combos.push({
               environment, cssWidth: width, height: 844, simulatedDpr: ratio,
@@ -401,10 +465,7 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
               settlePollReads: base.settleReads,
               budget: base.budget,
               baseline, staged, repeatDirect, repeatPipeline,
-              png: baseline.maxDiff > 2 ? { direct: reference.direct.toDataURL("image/png"), cached: base.cached.toDataURL("image/png") } : null,
-              alphaDump: baseline.maxDiff > 2
-                ? { width: base.cached.width, direct: Array.from(reference.snapshot.alpha), cachedFinal: Array.from(baseFinal.alpha) }
-                : null
+              failures
             });
             reference.direct.remove(); reference2.direct.remove();
             base.renderer.destroy(); base.cached.remove();
@@ -418,18 +479,32 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
       }
       return { environment, combos };
     }, { width, environment });
-    // 双写：attach 供报告展示，outputPath 落盘保证 CI 工件里一定有文件。
+    // 双写：完整数据（含 base64 alphaDump）只落盘；attach 件剥离大字段，避免
+    // 间歇超阈值时取证附件本身把用例拖垮。
     const jsonPath = testInfo.outputPath(`alpha-evidence-${engine}-${width}.json`);
     await fs.writeFile(jsonPath, JSON.stringify(evidence), "utf8");
-    await testInfo.attach(`alpha-evidence-${engine}-${width}.json`, { body: JSON.stringify(evidence), contentType: "application/json" });
+    const lightCombos = (evidence.combos as Array<Record<string, unknown>>).map((combo) => ({
+      ...combo,
+      failures: ((combo.failures as Array<Record<string, unknown>>) ?? []).map((failure) => ({
+        ...failure, png: "see evidence json / png artifacts", alphaDump: "see evidence json"
+      }))
+    }));
+    await testInfo.attach(`alpha-evidence-${engine}-${width}.json`, { body: JSON.stringify({ ...evidence, combos: lightCombos }), contentType: "application/json" });
     for (const combo of evidence.combos as Array<{
-      png: { direct: string; cached: string } | null; simulatedDpr: number; points: number;
+      simulatedDpr: number; points: number;
       baseline: { maxDiff: number };
+      failures: Array<{ comparison: string; ids: string[]; png: { a: string; b: string } }>;
     }>) {
-      if (combo.png) {
-        for (const side of ["direct", "cached"] as const) {
-          const buffer = Buffer.from(combo.png[side].split(",")[1], "base64");
-          const name = `alpha-${engine}-${width}-dpr${combo.simulatedDpr}-${combo.points}-${side}.png`;
+      // 失败对的双写：数据主体在整份 evidence JSON 里，这里额外落盘 PNG 文件，
+      // 保证 CI 工件中能直接打开实际参与比较的两张图。
+      for (const failure of combo.failures ?? []) {
+        for (const slot of ["a", "b"] as const) {
+          const data = failure.png?.[slot];
+          const id = failure.ids?.[slot === "a" ? 0 : 1] ?? slot;
+          if (typeof data !== "string" || !data.startsWith("data:image/png")) continue;
+          const buffer = Buffer.from(data.split(",")[1], "base64");
+          const name = `alpha-${engine}-${width}-dpr${combo.simulatedDpr}-${combo.points}-${failure.comparison}-${id}.png`
+            .replace(/[^A-Za-z0-9._-]+/g, "-");
           await fs.writeFile(testInfo.outputPath(name), buffer);
           await testInfo.attach(name, { body: buffer, contentType: "image/png" });
         }
@@ -438,6 +513,125 @@ async function cachedInkScenario(page: Page, engine: string, testInfo: import("@
     }
   }
 }
+// 读回策略成对对照（回件 §B）：同一输入并排两种完成判定——原轮询组（完成前
+// 反复 getImageData）与按目标画布身份观察最后一次 drawImage 返回（等待期间
+// 不读像素、不加固定 sleep）。像素差只作对照数据记录，不构成新门禁；原轮询组
+// 仍是取证用例的完成判定。
+test("cached folio final ink pairs polling readback against observed final drawImage (chromium)", async ({ page }, testInfo) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await harness(page);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { playbackHarness: { fills: () => number } }).playbackHarness.fills())).toBe(31);
+  const result = await page.evaluate(async () => {
+    const rendererPath = "/src/client/features/bible/copywork/copyworkPlaybackRenderer.ts";
+    const { createCopyworkPlaybackRenderer } = await import(rendererPath);
+    const glyph = { index: 0, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 }, character: { strokes: [{
+      color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },
+      points: Array.from({ length: 300 }, (_, i) => [1000 + i * 25, 5000 + Math.sin(i / 15) * 3000, i * 8])
+    }] } };
+    const placement = { index: 0, x: 77.35, y: 100.65 };
+    const view = { x: 13.7, y: 29.2, width: 704, height: 320 };
+    const realRaf = window.requestAnimationFrame.bind(window);
+    const alphaOf = (data: Uint8ClampedArray) => { const out = new Uint8Array(data.length / 4); for (let i = 3, j = 0; i < data.length; i += 4, j += 1) out[j] = data[i]; return out; };
+    const nextFrame = () => new Promise<void>((resolve) => realRaf(() => resolve()));
+    const runPair = async () => {
+      const pollingCanvas = document.createElement("canvas");
+      pollingCanvas.style.width = "1239.75px";
+      document.body.append(pollingCanvas);
+      const pollingRenderer = createCopyworkPlaybackRenderer({ canvas: () => pollingCanvas, viewport: () => view,
+        glyphs: () => [glyph], placements: () => [placement], active: () => true });
+      const pollingStart = performance.now();
+      pollingRenderer.draw(new Map([[0, [300]]]));
+      const pollingCtx = pollingCanvas.getContext("2d")!;
+      let settleReads = 0;
+      let pollingAlpha: Uint8Array | null = null;
+      try {
+        const deadline = performance.now() + 5000;
+        while (!pollingCtx.getImageData(0, 0, pollingCanvas.width, pollingCanvas.height).data.some((value) => value > 0)) {
+          if (performance.now() > deadline) throw new Error("polling variant did not finish drawing");
+          settleReads += 1;
+          await nextFrame();
+        }
+        pollingAlpha = alphaOf(pollingCtx.getImageData(0, 0, pollingCanvas.width, pollingCanvas.height).data);
+      } finally {
+        pollingRenderer.destroy();
+        pollingCanvas.remove();
+      }
+      const pollingMs = Math.round((performance.now() - pollingStart) * 100) / 100;
+
+      const observedCanvas = document.createElement("canvas");
+      observedCanvas.style.width = "1239.75px";
+      document.body.append(observedCanvas);
+      const targetDraws: number[] = [];
+      const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (this: CanvasRenderingContext2D, source: CanvasImageSource, ...rest: number[]) {
+        const drawn = originalDrawImage.apply(this, [source, ...rest] as Parameters<typeof originalDrawImage>);
+        if (this.canvas === observedCanvas) targetDraws.push(performance.now());
+        return drawn;
+      } as typeof originalDrawImage;
+      const observedStart = performance.now();
+      let observedAlpha: Uint8Array | null = null;
+      try {
+        const observedRenderer = createCopyworkPlaybackRenderer({ canvas: () => observedCanvas, viewport: () => view,
+          glyphs: () => [glyph], placements: () => [placement], active: () => true });
+        observedRenderer.draw(new Map([[0, [300]]]));
+        const deadline = performance.now() + 5000;
+        while (!targetDraws.length) {
+          if (performance.now() > deadline) throw new Error("observed variant did not reach the final canvas");
+          await nextFrame();
+        }
+        await nextFrame();
+        await nextFrame();
+        observedRenderer.destroy();
+        const observedCtx = observedCanvas.getContext("2d")!;
+        observedAlpha = alphaOf(observedCtx.getImageData(0, 0, observedCanvas.width, observedCanvas.height).data);
+      } finally {
+        CanvasRenderingContext2D.prototype.drawImage = originalDrawImage;
+        observedCanvas.remove();
+      }
+      const observedMs = Math.round((performance.now() - observedStart) * 100) / 100;
+      return { pollingAlpha, observedAlpha, settleReads, targetDrawCount: targetDraws.length,
+        width: observedCanvas.width, height: observedCanvas.height, pollingMs, observedMs };
+    };
+    const pairs: unknown[] = [];
+    const originalRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+    try {
+      for (const ratio of [1, 2]) {
+        Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: ratio });
+        for (let pairIndex = 0; pairIndex < 10; pairIndex += 1) {
+          const pair = await runPair();
+          if (!pair.pollingAlpha || !pair.observedAlpha) throw new Error("missing alpha");
+          let maxDiff = 0, countOver2 = 0;
+          const topPixels: Array<{ diff: number; x: number; y: number; a: number; b: number }> = [];
+          for (let i = 0; i < pair.pollingAlpha.length; i += 1) {
+            const diff = Math.abs(pair.pollingAlpha[i]! - pair.observedAlpha[i]!);
+            if (diff > maxDiff) maxDiff = diff;
+            if (diff > 2) countOver2 += 1;
+            if (diff > 0) topPixels.push({ diff, x: i % pair.width, y: Math.floor(i / pair.width), a: pair.pollingAlpha[i]!, b: pair.observedAlpha[i]! });
+          }
+          topPixels.sort((a, b) => b.diff - a.diff);
+          pairs.push({ dpr: ratio, pairIndex, maxDiff, countOver2, topPixels: topPixels.slice(0, 12),
+            settleReads: pair.settleReads, targetDrawCount: pair.targetDrawCount,
+            canvas: { width: pair.width, height: pair.height }, pollingMs: pair.pollingMs, observedMs: pair.observedMs });
+        }
+      }
+    } finally {
+      if (originalRatio) Object.defineProperty(window, "devicePixelRatio", originalRatio);
+      else delete (window as { devicePixelRatio?: number }).devicePixelRatio;
+    }
+    return { pairs };
+  });
+  const jsonPath = testInfo.outputPath("alpha-readback-pair.json");
+  await fs.writeFile(jsonPath, JSON.stringify(result), "utf8");
+  await testInfo.attach("alpha-readback-pair.json", { body: JSON.stringify(result), contentType: "application/json" });
+  const exceed = (result.pairs as Array<{ maxDiff: number }>).filter((pair) => pair.maxDiff > 2).length;
+  console.log(`[playback-ui] readback pair: ${exceed}/${(result.pairs as unknown[]).length} pairs over 2`);
+  for (const pair of result.pairs as Array<{ dpr: number; pairIndex: number; settleReads: number; targetDrawCount: number }>) {
+    expect(pair.settleReads, `dpr${pair.dpr} pair${pair.pairIndex} polling settle reads`).toBeGreaterThan(0);
+    expect(pair.targetDrawCount, `dpr${pair.dpr} pair${pair.pairIndex} observed final draws`).toBeGreaterThan(0);
+  }
+});
+
 test("brush playback retains visible ink while the next frame rasterizes in both browsers", async ({ page }) => {
   async function scenario(current: Page) {
     await harness(current);
