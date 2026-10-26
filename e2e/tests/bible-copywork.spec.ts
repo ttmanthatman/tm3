@@ -203,6 +203,9 @@ test("admin swipe switches persist and protect copywork dragging and writing in 
 });
 
 test("WebKit reload keeps music state writes alive without interface errors", async () => {
+  // Slow WebKit runners need ~24s for the three reload rounds plus ~13s for the
+  // explicit context/browser teardown inside the timed scope; default 30s fails.
+  test.setTimeout(60_000);
   const browser = await webkit.launch();
   const page = await browser.newPage({ baseURL: "http://127.0.0.1:4173" });
   const musicErrors: string[] = [];

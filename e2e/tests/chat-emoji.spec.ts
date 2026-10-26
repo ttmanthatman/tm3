@@ -8,6 +8,9 @@ for (const scenario of [
   { width: 390, height: 844, browserName: "webkit" as const }
 ]) {
   test(`${scenario.browserName} ${scenario.width}px: emoji selection, dismissal and persisted rendering`, async ({ browser }) => {
+    // The webkit variant owns its browser and its full flow plus teardown takes
+    // ~46s on loaded runners; give every scenario the same honest budget.
+    test.setTimeout(60_000);
     const ownedBrowser = scenario.browserName === "webkit" ? await webkit.launch() : null;
     const context = await (ownedBrowser || browser).newContext({
       viewport: { width: scenario.width, height: scenario.height }, baseURL: "http://127.0.0.1:4173"

@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import { E2E_ADMIN } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
 
 test.use({ serviceWorkers: "block" });
 
@@ -12,6 +13,8 @@ async function login(page: Page) {
   await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await expect(page.getByTestId("active-channel-name")).toBeVisible();
+  // 登录后默认「圣经+聊天」分屏会遮挡拖放落点（CI 失败快照实锤）；先回到聊天为主。
+  await focusChat(page);
 }
 
 type DragFile = { name: string; base64: string; mime: string };
@@ -40,6 +43,8 @@ test("把照片拖进故事窗口直接开始发布，发布窗内还能继续�
 
   await page.locator(".story-header-trigger").click();
   await expect(page.getByRole("dialog", { name: "我们的故事" })).toBeVisible();
+  // dispatchDrag 走 evaluate 不做可点性检查，先确认拖放目标已在打开的对话框里。
+  await expect(page.locator(".story-scroll").first()).toBeVisible();
 
   await dispatchDrag(page, ".story-scroll", "dragenter", null);
   await expect(page.locator(".story-drop-mask")).toBeHidden();

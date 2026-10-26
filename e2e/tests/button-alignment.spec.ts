@@ -75,6 +75,9 @@ async function expectCentered(page: Page) {
 
 for (const engine of [chromium, webkit]) {
   test(`${engine.name()}: fixed-size buttons keep text and icons centered across phone, iPad and desktop widths`, async () => {
+    // 5 widths × 2 stress modes issue ~2400 sub-millisecond assertions; every
+    // call is fast but the total legitimately exceeds 30s on loaded WebKit.
+    test.setTimeout(60_000);
     const browser = await engine.launch();
     try {
       const page = await browser.newPage({ ...devices["iPad (gen 7)"] });

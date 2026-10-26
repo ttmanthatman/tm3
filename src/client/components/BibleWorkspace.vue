@@ -181,7 +181,9 @@ function scheduleBibleFontSizeSave(retry = 0) {
 }
 
 watch(() => props.accountId, loadBibleFontSize, { immediate: true });
-watch(() => preferences.value?.fontSize, size => { if (size) bibleFontSize.value = size; });
+// 保存响应携带的是保存时刻的字号；本地已有待保存编辑（防抖计时器在计时，或
+// 撞上「正在保存」后的重试在排队）时它是旧值，回写会把新编辑打回去。
+watch(() => preferences.value?.fontSize, size => { if (size && !bibleFontSizeSaveTimer) bibleFontSize.value = size; });
 watch(bibleFontSize, (value) => {
   const clamped = clampBibleFontSize(value);
   if (clamped !== value) {
