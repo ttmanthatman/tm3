@@ -239,3 +239,79 @@ jobs:
             output/e2e/results/
           if-no-files-found: ignore
           retention-days: 7
+
+  alpha-forensics:
+    # Directed Linux run for the alpha non-determinism investigation (handoff
+    # to-glm-2026-10-27-alpha-controlled-review.md §3). The four-mode and
+    # budget-probe cases materialize renderer copies from git history, so this
+    # job alone checks out the full history; other jobs stay shallow. The
+    # diagnostic observations can stay green while still recording over-
+    # threshold comparisons, so artifacts upload on success AND failure.
+    name: Alpha forensics (Linux, directed)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: tm3_e2e
+          MYSQL_USER: tm3_e2e
+          MYSQL_PASSWORD: tm3_e2e
+          MYSQL_ROOT_PASSWORD: tm3_e2e_root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -ptm3_e2e_root --silent"
+          --health-interval=2s
+          --health-timeout=5s
+          --health-retries=30
+
+    steps:
+      - name: Check out repository (full history)
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Verify the alpha diagnostic history is readable
+        run: |
+          git cat-file -e '7839e5c^{commit}'
+          git cat-file -e '7839e5c^{commit}^'
+          git show 7839e5c:src/client/features/handwriting/handwritingRenderer.ts > /dev/null
+          git show '7839e5c^:src/client/features/handwriting/handwritingRenderer.ts' > /dev/null
+          git show 7839e5c:src/client/features/bible/copywork/copyworkPlaybackRenderer.ts > /dev/null
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Install browser engines
+        run: |
+          npx playwright install --with-deps chromium webkit
+          sudo apt-get install -y ffmpeg
+
+      - name: Run the alpha forensics suites
+        env:
+          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
+        run: npm run test:e2e -- e2e/tests/alpha-controlled-experiments.spec.ts e2e/tests/playback-ui.spec.ts
+
+      - name: Upload alpha forensics artifacts (success and failure)
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: alpha-forensics-artifacts
+          path: |
+            output/e2e/report/
+            output/e2e/results/
+          if-no-files-found: ignore
+          retention-days: 30
