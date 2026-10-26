@@ -1,4 +1,5 @@
 import { expect, test, webkit, type Page } from "@playwright/test";
+import fs from "node:fs/promises";
 
 async function harness(page: Page) {
   await page.route("**/playback-ui-harness", (route) => route.fulfill({
@@ -119,75 +120,233 @@ test("dense folio seeking coalesces renders, reuses completed ink and retains po
   expect(await fills()).toBe(paused);
 });
 
-test("cached folio ink matches direct drawing at fractional placements and screen scales", async ({ page }) => {
-  async function scenario(page: Page) {
-    await harness(page);
-    for (const width of [360, 390, 1280]) {
-      await page.setViewportSize({ width, height: 844 });
-      const results = await page.evaluate(async (width) => {
-        const rendererPath = "/src/client/features/bible/copywork/copyworkPlaybackRenderer.ts";
-        const inkPath = "/src/client/features/handwriting/handwritingRenderer.ts";
-        const sharedPath = "/src/shared/bibleCopywork.ts";
-        const { createCopyworkPlaybackRenderer } = await import(rendererPath) as typeof import("../../src/client/features/bible/copywork/copyworkPlaybackRenderer");
-        const { drawHandwritingInk } = await import(inkPath) as typeof import("../../src/client/features/handwriting/handwritingRenderer");
-        const { COPYWORK_PAGE } = await import(sharedPath) as typeof import("../../src/shared/bibleCopywork");
-        const glyph = { index: 0, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 }, character: { strokes: [{
-          color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },
-          points: Array.from({ length: 300 }, (_, i) => [1000 + i * 25, 5000 + Math.sin(i / 15) * 3000, i * 8] as [number, number, number])
-        }] } };
-        const placement = { index: 0, x: 77.35, y: 100.65 };
-        const view = { x: 13.7, y: 29.2, width: 704, height: 320 };
-        const originalRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
-        const comparisons = [];
-        try {
-          for (const ratio of [1, 2]) {
-            Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: ratio });
-            for (const count of [300, 137]) {
-              const cached = document.createElement("canvas");
-              cached.style.width = `${width - 40.25}px`;
-              document.body.append(cached);
-              const renderer = createCopyworkPlaybackRenderer({ canvas: () => cached, viewport: () => view,
-                glyphs: () => [glyph], placements: () => [placement], active: () => true });
-              renderer.draw(new Map([[0, [count]]]));
-              const ctx = cached.getContext("2d")!;
-              const deadline = performance.now() + 5000;
-              while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
-                if (performance.now() > deadline) throw new Error("cached ink did not finish drawing");
-                await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-              }
-              const direct = document.createElement("canvas");
-              direct.width = cached.width;
-              direct.height = cached.height;
-              const reference = direct.getContext("2d")!;
-              const scale = direct.width / view.width;
-              reference.scale(scale, scale);
-              reference.translate(-view.x, -view.y);
-              reference.translate(placement.x, placement.y);
-              reference.scale(COPYWORK_PAGE.font / 10000, COPYWORK_PAGE.font / 10000);
-              drawHandwritingInk(reference, glyph.character, [count]);
-              const expected = reference.getImageData(0, 0, direct.width, direct.height).data;
-              const actual = ctx.getImageData(0, 0, cached.width, cached.height).data;
-              let alphaDifference = 0;
-              for (let i = 3; i < actual.length; i += 4) alphaDifference = Math.max(alphaDifference, Math.abs(actual[i] - expected[i]));
-              comparisons.push({ ratio, count, alphaDifference });
-              renderer.destroy();
-              cached.remove();
-            }
-          }
-        } finally {
-          if (originalRatio) Object.defineProperty(window, "devicePixelRatio", originalRatio);
-        }
-        return comparisons;
-      }, width);
-      for (const result of results) expect(result.alphaDifference, `${width}px, DPR ${result.ratio}, ${result.count} points`).toBeLessThanOrEqual(2);
-    }
-  }
-  await scenario(page);
+test("cached folio ink matches direct drawing at fractional placements and screen scales (chromium)", async ({ page }, testInfo) => {
+  await cachedInkScenario(page, "chromium", testInfo);
+});
+
+test("cached folio ink matches direct drawing at fractional placements and screen scales (webkit)", async ({ page }, testInfo) => {
   const browser = await webkit.launch();
-  try { await scenario(await browser.newPage({ baseURL: "http://127.0.0.1:4173" })); }
+  try { await cachedInkScenario(await browser.newPage({ baseURL: "http://127.0.0.1:4173" }), "webkit", testInfo); }
   finally { await browser.close(); }
 });
 
+// 取证版用例：同一组合先跑未插桩基线（与生产行为一致），再跑带 drawImage 探针的
+// 插桩通道，按 D(直接)/R(整页 raster)/C(裁剪缓存)/F(最终画布) 分阶段比对。断言与
+// 参数不变（全部宽度×DPR×点数，alpha<=2）；证据附件在销毁 canvas 前生成。
+async function cachedInkScenario(page: Page, engine: string, testInfo: import("@playwright/test").TestInfo) {
+  const declaredPlaywright = JSON.parse(await fs.readFile("package.json", "utf8")).devDependencies["@playwright/test"];
+  const browserVersion = page.context().browser()?.version() ?? "unknown";
+  const environment = { engine, browserVersion, playwright: declaredPlaywright, os: process.platform, arch: process.arch };
+  await harness(page);
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 844 });
+    const evidence = await page.evaluate(async ({ width, environment }) => {
+      const rendererPath = "/src/client/features/bible/copywork/copyworkPlaybackRenderer.ts";
+      const inkPath = "/src/client/features/handwriting/handwritingRenderer.ts";
+      const { createCopyworkPlaybackRenderer } = await import(rendererPath);
+      const { drawHandwritingInk } = await import(inkPath);
+      const shared = await import("/src/shared/bibleCopywork.ts");
+      const COPYWORK_PAGE = shared.COPYWORK_PAGE;
+      const glyph = { index: 0, bounds: { left: 0, top: 0, right: 10000, bottom: 10000 }, character: { strokes: [{
+        color: "#268cff", brush: { size: 45, sensitivity: 65, lag: 35 },
+        points: Array.from({ length: 300 }, (_, i) => [1000 + i * 25, 5000 + Math.sin(i / 15) * 3000, i * 8])
+      }] } };
+      const placement = { index: 0, x: 77.35, y: 100.65 };
+      const view = { x: 13.7, y: 29.2, width: 704, height: 320 };
+      const originalRatio = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
+      const combos: unknown[] = [];
+
+      const alphaOf = (data: Uint8ClampedArray) => { const out = new Uint8Array(data.length / 4); for (let i = 3, j = 0; i < data.length; i += 4, j += 1) out[j] = data[i]; return out; };
+      const metrics = (a: Uint8Array, b: Uint8Array, w: number, h: number) => {
+        const histogram = new Map<number, number>();
+        let maxDiff = 0, countOver = 0;
+        let minX = w, minY = h, maxX = -1, maxY = -1;
+        const worst: Array<{ diff: number; x: number; y: number; a: number; b: number }> = [];
+        for (let y = 0; y < h; y += 1) for (let x = 0; x < w; x += 1) {
+          const index = y * w + x;
+          const diff = Math.abs(a[index] - b[index]);
+          histogram.set(diff, (histogram.get(diff) || 0) + 1);
+          if (diff > maxDiff) maxDiff = diff;
+          if (diff > 2) {
+            countOver += 1;
+            if (x < minX) minX = x; if (y < minY) minY = y;
+            if (x > maxX) maxX = x; if (y > maxY) maxY = y;
+          }
+          if (diff > 0) worst.push({ diff, x, y, a: a[index], b: b[index] });
+        }
+        worst.sort((p, q) => q.diff - p.diff);
+        return { maxDiff, countOver2: countOver, bbox: countOver ? { minX, minY, maxX, maxY } : null,
+          histogram: [...histogram.entries()].sort((p, q) => p[0] - q[0]),
+          topPixels: worst.slice(0, 50) };
+      };
+      const snapshot = (canvas: HTMLCanvasElement) => {
+        const ctx = canvas.getContext("2d")!;
+        const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        return { width: canvas.width, height: canvas.height, alpha: alphaOf(image.data), rgba: new Uint8ClampedArray(image.data),
+          state: { transform: ctx.getTransform().toString(), globalAlpha: ctx.globalAlpha, composite: ctx.globalCompositeOperation,
+            filter: ctx.filter, smoothingEnabled: ctx.imageSmoothingEnabled, smoothingQuality: ctx.imageSmoothingQuality,
+            attributes: (ctx as CanvasRenderingContext2D & { getContextAttributes?: () => unknown }).getContextAttributes?.() ?? null } };
+      };
+      const renderCached = async (count: number) => {
+        const cached = document.createElement("canvas");
+        cached.style.width = `${width - 40.25}px`;
+        document.body.append(cached);
+        const renderer = createCopyworkPlaybackRenderer({ canvas: () => cached, viewport: () => view,
+          glyphs: () => [glyph], placements: () => [placement], active: () => true });
+        renderer.draw(new Map([[0, [count]]]));
+        const ctx = cached.getContext("2d")!;
+        let settleReads = 0;
+        const deadline = performance.now() + 5000;
+        while (!ctx.getImageData(0, 0, cached.width, cached.height).data.some((value) => value > 0)) {
+          if (performance.now() > deadline) { renderer.destroy(); cached.remove(); throw new Error("cached ink did not finish drawing"); }
+          settleReads += 1;
+          await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        }
+        return { cached, renderer, settleReads };
+      };
+      const renderDirect = (w: number, h: number, count: number) => {
+        const direct = document.createElement("canvas");
+        direct.width = w; direct.height = h;
+        const reference = direct.getContext("2d")!;
+        const scale = direct.width / view.width;
+        reference.scale(scale, scale);
+        reference.translate(-view.x, -view.y);
+        reference.translate(placement.x, placement.y);
+        reference.scale(COPYWORK_PAGE.font / 10000, COPYWORK_PAGE.font / 10000);
+        drawHandwritingInk(reference, glyph.character, [count]);
+        return { direct, snapshot: snapshot(direct) };
+      };
+
+      try {
+        for (const ratio of [1, 2]) {
+          Object.defineProperty(window, "devicePixelRatio", { configurable: true, value: ratio });
+          for (const count of [300, 137]) {
+            const base = await renderCached(count);
+            const baseFinal = snapshot(base.cached);
+            const reference = renderDirect(base.cached.width, base.cached.height, count);
+            const baseline = metrics(reference.snapshot.alpha, baseFinal.alpha, base.cached.width, base.cached.height);
+
+            // —— 插桩通道：记录窗口内全部画布间 drawImage 的对象身份与快照 ——
+            // copy1: buffer.drawImage(raster)（目标=内部缓存画布）；copy2: visible.drawImage(buffer)。
+            // copy2 的源就是 C；copy1 的目标与 copy2 的源是同一对象，按身份链分类。
+            const calls: Array<{ src: HTMLCanvasElement; dst: HTMLCanvasElement; dx: number; dy: number; snap?: ReturnType<typeof snapshot> }> = [];
+            const originalDrawImage = CanvasRenderingContext2D.prototype.drawImage;
+            const instrumented = document.createElement("canvas");
+            instrumented.style.width = `${width - 40.25}px`;
+            document.body.append(instrumented);
+            const instrRenderer = createCopyworkPlaybackRenderer({ canvas: () => instrumented, viewport: () => view,
+              glyphs: () => [glyph], placements: () => [placement], active: () => true });
+            let instrumentedFinal: ReturnType<typeof snapshot> | null = null;
+            try {
+              let armed = false;
+              CanvasRenderingContext2D.prototype.drawImage = function (source: CanvasImageSource, ...rest: number[]) {
+                const result = originalDrawImage.apply(this, [source, ...rest] as Parameters<typeof originalDrawImage>);
+                if (armed && source instanceof HTMLCanvasElement && this.canvas instanceof HTMLCanvasElement
+                  && (this.canvas === instrumented || (source.width === instrumented.width && source.height === instrumented.height))) {
+                  const entry = { src: source, dst: this.canvas, dx: rest[0] ?? 0, dy: rest[1] ?? 0 };
+                  entry.snap = snapshot(source);
+                  calls.push(entry);
+                }
+                return result;
+              } as typeof originalDrawImage;
+              armed = true;
+              instrRenderer.draw(new Map([[0, [count]]]));
+              const instrCtx = instrumented.getContext("2d")!;
+              const instrDeadline = performance.now() + 5000;
+              while (!instrCtx.getImageData(0, 0, instrumented.width, instrumented.height).data.some((value) => value > 0)) {
+                if (performance.now() > instrDeadline) throw new Error("instrumented ink did not finish drawing");
+                await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+              }
+              await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+              await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+              instrumentedFinal = snapshot(instrumented);
+            } finally {
+              CanvasRenderingContext2D.prototype.drawImage = originalDrawImage;
+            }
+            const copy2 = calls.find((call) => call.dst === instrumented);
+            const copy1 = copy2 ? [...calls].slice(0, calls.indexOf(copy2)).reverse().find((call) => call.dst === copy2.src) : undefined;
+            let staged: Record<string, unknown> = { captured: false };
+            if (instrumentedFinal && copy1?.snap && copy2?.snap) {
+              const rasterSnap = copy1.snap;
+              const cropSnap = copy2.snap;
+              const dVersusRaster = metrics(reference.snapshot.alpha, rasterSnap.alpha, rasterSnap.width, rasterSnap.height);
+              // C 必须补回 copy2 的目标偏移才能与 D 同帧比较
+              const cOnPage = new Uint8Array(reference.snapshot.alpha.length);
+              for (let y = 0; y < cropSnap.height; y += 1) {
+                for (let x = 0; x < cropSnap.width; x += 1) {
+                  const dx2 = copy2.dx + x, dy2 = copy2.dy + y;
+                  if (dx2 >= 0 && dy2 >= 0 && dx2 < rasterSnap.width && dy2 < rasterSnap.height) {
+                    cOnPage[dy2 * rasterSnap.width + dx2] = cropSnap.alpha[y * cropSnap.width + x];
+                  }
+                }
+              }
+              const dVersusCropOnPage = metrics(reference.snapshot.alpha, cOnPage, rasterSnap.width, rasterSnap.height);
+              let inkOutsideCrop = 0;
+              for (let i = 0; i < rasterSnap.alpha.length; i += 1) {
+                if (rasterSnap.alpha[i] > 0 && cOnPage[i] === 0 && reference.snapshot.alpha[i] > 0) inkOutsideCrop += 1;
+              }
+              staged = { captured: true, drawCallCount: calls.length,
+                offsets: { copy1: { dx: copy1.dx, dy: copy1.dy }, copy2: { dx: copy2.dx, dy: copy2.dy } },
+                sizes: { raster: { width: rasterSnap.width, height: rasterSnap.height }, crop: { width: cropSnap.width, height: cropSnap.height } },
+                dVersusRaster, dVersusCropOnPage, inkOutsideCrop,
+                cVersusFinalWithinCrop: metrics(cropSnap.alpha, ((): Uint8Array => {
+                  const region = new Uint8Array(cropSnap.alpha.length);
+                  for (let y = 0; y < cropSnap.height; y += 1) for (let x = 0; x < cropSnap.width; x += 1) {
+                    const fx = copy2.dx + x, fy = copy2.dy + y;
+                    if (fx >= 0 && fy >= 0 && fx < instrumentedFinal.width && fy < instrumentedFinal.height) {
+                      region[y * cropSnap.width + x] = instrumentedFinal.alpha[fy * instrumentedFinal.width + fx];
+                    }
+                  }
+                  return region;
+                })(), cropSnap.width, cropSnap.height),
+                observerCheck: metrics(baseFinal.alpha, instrumentedFinal.alpha, base.cached.width, base.cached.height) };
+            }
+            combos.push({
+              environment, cssWidth: width, height: 844, simulatedDpr: ratio,
+              dprSimulatedViaDefineProperty: true, originalDprDescriptorExisted: Boolean(originalRatio), points: count,
+              backing: { cached: { width: base.cached.width, height: base.cached.height }, direct: { width: reference.direct.width, height: reference.direct.height } },
+              view, placement, bounds: glyph.bounds,
+              scale: reference.direct.width / view.width,
+              inkScale: (reference.direct.width / view.width) * COPYWORK_PAGE.font / 10000,
+              contextState: { direct: reference.snapshot.state, cachedFinal: baseFinal.state, capturedSources: calls.map((call) => call.snap?.state ?? null) },
+              settlePollReads: base.settleReads,
+              baseline, staged,
+              png: baseline.maxDiff > 2 ? { direct: reference.direct.toDataURL("image/png"), cached: base.cached.toDataURL("image/png") } : null,
+              alphaDump: baseline.maxDiff > 2
+                ? { width: base.cached.width, direct: Array.from(reference.snapshot.alpha), cachedFinal: Array.from(baseFinal.alpha) }
+                : null
+            });
+            reference.direct.remove();
+            base.renderer.destroy(); base.cached.remove();
+            instrRenderer.destroy(); instrumented.remove();
+          }
+        }
+      } finally {
+        if (originalRatio) Object.defineProperty(window, "devicePixelRatio", originalRatio);
+        else delete (window as { devicePixelRatio?: number }).devicePixelRatio;
+      }
+      return { environment, combos };
+    }, { width, environment });
+    // 双写：attach 供报告展示，outputPath 落盘保证 CI 工件里一定有文件。
+    const jsonPath = testInfo.outputPath(`alpha-evidence-${engine}-${width}.json`);
+    await fs.writeFile(jsonPath, JSON.stringify(evidence), "utf8");
+    await testInfo.attach(`alpha-evidence-${engine}-${width}.json`, { body: JSON.stringify(evidence), contentType: "application/json" });
+    for (const combo of evidence.combos as Array<{
+      png: { direct: string; cached: string } | null; simulatedDpr: number; points: number;
+      baseline: { maxDiff: number };
+    }>) {
+      if (combo.png) {
+        for (const side of ["direct", "cached"] as const) {
+          const buffer = Buffer.from(combo.png[side].split(",")[1], "base64");
+          const name = `alpha-${engine}-${width}-dpr${combo.simulatedDpr}-${combo.points}-${side}.png`;
+          await fs.writeFile(testInfo.outputPath(name), buffer);
+          await testInfo.attach(name, { body: buffer, contentType: "image/png" });
+        }
+      }
+      expect(combo.baseline.maxDiff, `${width}px, DPR ${combo.simulatedDpr}, ${combo.points} points`).toBeLessThanOrEqual(2);
+    }
+  }
+}
 test("brush playback retains visible ink while the next frame rasterizes in both browsers", async ({ page }) => {
   async function scenario(current: Page) {
     await harness(current);
