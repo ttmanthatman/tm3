@@ -87,6 +87,80 @@ jobs:
           DATABASE_URL: mysql://tm3_migration_verify:tm3_migration_verify@127.0.0.1:3306/tm3_migration_verify
         run: npm run test:migrations
 
+
+  voice-webkit:
+    # Playwright's WebKit build disables MediaRecorder on Linux, so the three
+    # webkit voice-recording cases run on a standard hosted macOS runner
+    # (public repository: standard hosted minutes are free). Linux shards
+    # exclude exactly these three via grep-invert; the chromium voice cases
+    # and all other webkit coverage stay on Linux.
+    name: Voice recording WebKit (macOS)
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Install browser engines
+        run: npx playwright install chromium webkit
+
+      - name: Install MySQL 8.4 and ffmpeg
+        run: |
+          brew install mysql@8.4 ffmpeg
+          echo "--- versions ---"
+          sw_vers
+          mysql --version
+          ffmpeg -version | head -1
+          npx playwright --version
+
+      - name: Start MySQL and create the disposable e2e database
+        run: |
+          brew services start mysql@8.4
+          for i in $(seq 1 60); do
+            mysqladmin ping -h 127.0.0.1 --silent && break
+            sleep 2
+          done
+          mysql -h 127.0.0.1 -uroot -e "CREATE DATABASE IF NOT EXISTS tm3_e2e; CREATE USER IF NOT EXISTS 'tm3_e2e'@'127.0.0.1' IDENTIFIED BY 'tm3_e2e'; CREATE USER IF NOT EXISTS 'tm3_e2e'@'localhost' IDENTIFIED BY 'tm3_e2e'; GRANT ALL PRIVILEGES ON tm3_e2e.* TO 'tm3_e2e'@'127.0.0.1'; GRANT ALL PRIVILEGES ON tm3_e2e.* TO 'tm3_e2e'@'localhost'; FLUSH PRIVILEGES;"
+
+      - name: Verify the selected test list
+        run: npx playwright test --list e2e/tests/voice-recording.spec.ts --grep "voice lifecycle and single retained draft webkit" | tee "$RUNNER_TEMP/voice-list.txt"
+      - name: The selection must be exactly three webkit cases
+        run: |
+          test "$(grep -c '›' "$RUNNER_TEMP/voice-list.txt")" = "3"
+          ! grep -q 'chromium' "$RUNNER_TEMP/voice-list.txt"
+
+      - name: Run voice recording webkit tests
+        env:
+          E2E_DATABASE_URL: mysql://tm3_e2e:tm3_e2e@127.0.0.1:3306/tm3_e2e
+        run: npm run test:e2e -- e2e/tests/voice-recording.spec.ts --grep "voice lifecycle and single retained draft webkit"
+
+      - name: Upload voice artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: voice-webkit-artifacts
+          path: |
+            output/e2e/report/
+            output/e2e/results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   e2e:
     name: Browser smoke tests (${{ matrix.suite }})
     needs: verify
@@ -103,13 +177,13 @@ jobs:
           - suite: story
             args: e2e/tests/stories.spec.ts
           - suite: shard-1
-            args: --shard=1/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+            args: --shard=1/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览|voice lifecycle and single retained draft webkit"
           - suite: shard-2
-            args: --shard=2/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+            args: --shard=2/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览|voice lifecycle and single retained draft webkit"
           - suite: shard-3
-            args: --shard=3/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+            args: --shard=3/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览|voice lifecycle and single retained draft webkit"
           - suite: shard-4
-            args: --shard=4/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览"
+            args: --shard=4/4 --grep-invert "故事发布、录音、称呼、权限、重试与响应式浏览|voice lifecycle and single retained draft webkit"
 
     services:
       mysql:
