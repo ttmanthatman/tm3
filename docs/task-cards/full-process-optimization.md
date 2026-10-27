@@ -40,7 +40,7 @@
 | P1-B | Azure 专用账号验收与远程冒烟 | 浏览器维度**通过**；真机**待验收** | 专用账号/私有频道建立并核实隔离；`test:e2e:remote` 连续两轮 2 passed（360/390/桌面 + Socket/SW/持久化/圣经跳转）；spec 按当前构建做了 6 项环境适配（证据见私有台账） |
 | P1 | Azure 验收护栏与远程冒烟 | 剩真机验收与登录后行为基线 | 凭据就绪、护栏与冒烟全绿；真机清单已交用户 |
 | P2 | 构建身份、增量部署与回退 | **通过** | 优化工作在分支 `codex/full-process-optimization`（main 保持 01aef47）；Azure 已从分支部署 e7dd62a（2.12.0）并三核对+远程冒烟全绿；回退演练与部署前快照俱备；CI 的 WebKit 红点在分支转绿 |
-| P3 | 测试质量与渐进门禁 | 五项修复通过两轮复验；受控取证批次已被采纳（c429f24），alpha 根因未定、Linux 复核待用户授权；录音平台方案已提交待 CI 观察；间歇项不冠"纯噪音" | 字号保存回写竞态已修（产品级+定向回归）；story-drop/三超时/夹具与竞态修复连续两轮全绿（ff2d64b）；alpha 受控取证：孤立四模式全净、macOS 完整管线间歇命中弱像素 (261,444) 60→63（与 Linux run 40303076589 同坐标同值），数据最支持完整管线/环境方向，工件已保全至 output/alpha-forensics/batches/；Astra 裁决见 to-glm-2026-10-27-alpha-controlled-review.md（Linux 定向 CI 方案待授权）；录音×3 系 Playwright WebKit 构建关闭 MediaRecorder，托管 macOS job 改动（d6ba16a）待推送观察。详见私有 ci-band-register.md |
+| P3 | 测试质量与渐进门禁 | 五项修复通过两轮复验；受控取证批次已采纳（c429f24）+ Linux 定向复核完成（e46e7af 已推送，run 40423412303：孤立全净、管线本批未复现超阈值，记「复现不足」待 Astra 裁决后续方向）；录音×3 托管 macOS job **CI 首轮全绿**；间歇项不冠"纯噪音" | 字号保存回写竞态已修（产品级+定向回归）；story-drop/三超时/夹具与竞态修复连续两轮全绿（ff2d64b）；alpha 证据链：弱像素 (261,444) 60→63 跨平台同坐标（Linux 40303076589 + macOS 三轮），孤立四模式两平台全净，定向 CI job（fetch-depth:0 + always 工件）已常驻；工件保全 output/alpha-forensics/batches/；裁决记录 to-glm-2026-10-27-alpha-controlled-review.md、回件 to-astra-2026-10-27-alpha-linux-result.md |
 | P4–P10 | 前端治理/后端模块/性能/安全/CI 闭环/终验 | 待实施 | 按路线图依赖顺序推进 |
 
 ## 进度 / 下一步
@@ -63,10 +63,9 @@
 
 - 执行者协作（2026-10-26 起）：GLM 处理不了或不应擅自决定的事项，经忽略目录
   `output/handoffs/` 的私有交接协议流转给 Astra 处理；在途项以该目录 README 为准。
-  当前在途：alpha 非确定性——受控取证批次已采纳，待用户授权 Linux 定向 CI
-  （浏览器 job fetch-depth:0 + 定向运行工件 if:always()，方案见
-  to-glm-2026-10-27-alpha-controlled-review.md §3）；Linux 结果后的分支与
-  停止条件在回件 §4。
+  当前在途：alpha 非确定性——Linux 定向复核完成（孤立全净、管线本批未复现，
+  记「复现不足」），待 Astra 裁决「再积累观察轮 vs 启动 raster 生命周期实验」，
+  见 to-astra-2026-10-27-alpha-linux-result.md §5。
 - Azure 部署连接方式（host/user/key、应用目录、pm2 之外的细节）未在任何私有
   记录中找到；用户/Codex 正在核实，等待结果，不能用生产站或 ledouniu 参数套用。
 - 真机验收依赖用户提供 iPhone/Android 实测结果；未提供期间相关批次保持待验收。
