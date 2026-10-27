@@ -40,7 +40,7 @@
 | P1-B | Azure 专用账号验收与远程冒烟 | 浏览器维度**通过**；真机**待验收** | 专用账号/私有频道建立并核实隔离；`test:e2e:remote` 连续两轮 2 passed（360/390/桌面 + Socket/SW/持久化/圣经跳转）；spec 按当前构建做了 6 项环境适配（证据见私有台账） |
 | P1 | Azure 验收护栏与远程冒烟 | 剩真机验收与登录后行为基线 | 凭据就绪、护栏与冒烟全绿；真机清单已交用户 |
 | P2 | 构建身份、增量部署与回退 | **通过** | 优化工作在分支 `codex/full-process-optimization`（main 保持 01aef47）；Azure 已从分支部署 e7dd62a（2.12.0）并三核对+远程冒烟全绿；回退演练与部署前快照俱备；CI 的 WebKit 红点在分支转绿 |
-| P3 | 测试质量与渐进门禁 | 五项修复通过两轮复验；受控取证批次已采纳（c429f24）+ Linux 定向复核完成（e46e7af 已推送，run 40423412303：孤立全净、管线本批未复现超阈值，记「复现不足」待 Astra 裁决后续方向）；录音×3 托管 macOS job **CI 首轮全绿**；间歇项不冠"纯噪音" | 字号保存回写竞态已修（产品级+定向回归）；story-drop/三超时/夹具与竞态修复连续两轮全绿（ff2d64b）；alpha 证据链：弱像素 (261,444) 60→63 跨平台同坐标（Linux 40303076589 + macOS 三轮），孤立四模式两平台全净，定向 CI job（fetch-depth:0 + always 工件）已常驻；工件保全 output/alpha-forensics/batches/；裁决记录 to-glm-2026-10-27-alpha-controlled-review.md、回件 to-astra-2026-10-27-alpha-linux-result.md |
+| P3 | 测试质量与渐进门禁 | 五项修复通过两轮复验；受控取证批次已采纳（c429f24）+ Linux 定向复核完成（e46e7af 已推送）：孤立四模式两平台全净，**同 run shard-3 门禁红**（DPR1 (216,197) 34↔37、DPR2 (261,444) 60↔63，失败对完整保存）→ §4 第二分支成立，待 Astra 裁决下一批；录音×3 托管 macOS job **CI 首轮全绿**；间歇项不冠"纯噪音" | 字号保存回写竞态已修（产品级+定向回归）；story-drop/三超时/夹具与竞态修复连续两轮全绿（ff2d64b）；alpha 证据链：弱像素跨平台跨通道命中（Linux×2 轮 + macOS×3 轮，双向翻转），冷启动定向 job 全零 vs 同 run 分片脏环境复现；定向 CI job（fetch-depth:0 + always 工件）已常驻；工件保全 output/alpha-forensics/batches/；回件 to-astra-2026-10-27-alpha-linux-result.md |
 | P4–P10 | 前端治理/后端模块/性能/安全/CI 闭环/终验 | 待实施 | 按路线图依赖顺序推进 |
 
 ## 进度 / 下一步
