@@ -1,14 +1,17 @@
 import { ref } from "vue";
 import type { MessageDTO, MessageEffect } from "@shared/types";
+import { useEffectActivity } from "./useEffectActivity";
 
 interface UseMessageEffectVisibilityOptions {
   messageEffect: (message: MessageDTO) => MessageEffect | null;
+  enabled?: () => boolean;
 }
 
 export function useMessageEffectVisibility(options: UseMessageEffectVisibilityOptions) {
   const pausedEffectIds = ref<Set<number>>(new Set());
   const observedEffectIds = ref<Set<number>>(new Set());
   const visibleEffectIds = ref<Set<number>>(new Set());
+  const { active: effectsActive } = useEffectActivity({ enabled: options.enabled });
 
   function messageIdForEffectElement(element: Element) {
     const row = element.closest<HTMLElement>(".message-row[data-message-id]");
@@ -36,6 +39,7 @@ export function useMessageEffectVisibility(options: UseMessageEffectVisibilityOp
   }
 
   return {
+    effectsActive,
     pausedEffectIds,
     observedEffectIds,
     visibleEffectIds,

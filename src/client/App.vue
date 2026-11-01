@@ -975,25 +975,30 @@ type TopNotice = {
 const documentVisible = ref(document.visibilityState === "visible");
 let messageEffectObserver: IntersectionObserver | null = null;
 const {
+  effectsActive,
   pausedEffectIds,
   observedEffectIds,
   visibleEffectIds,
   messageIdForEffectElement,
   updateEffectVisibility,
   toggleMessageEffect
-} = useMessageEffectVisibility({ messageEffect });
+} = useMessageEffectVisibility({
+  messageEffect,
+  enabled: () => !chatWorkspaceHidden.value && !showAdmin.value && !showSettings.value && !musicScoreStageVisible.value
+});
 const {
   rainCanvas,
   rainActive,
   hydratePlayedRainEffectIds,
   stopRainEffect,
   triggerOneShotMessageEffects
-} = useRainEffect({ messageEffect });
+} = useRainEffect({ messageEffect, enabled: () => effectsActive.value });
 const {
   dripLayer,
   ensureDripPhysics,
   stopDripPhysics
 } = useDripEffect({
+  enabled: () => effectsActive.value,
   scroller,
   messages: () => chatWorkspaceHidden.value ? [] : store.messages,
   messageEffect,
@@ -1636,13 +1641,14 @@ watch(
 );
 
 watch(
-  () => [chatWorkspaceHidden.value ? "" : store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, chatWorkspaceHidden.value] as const,
+  () => [chatWorkspaceHidden.value ? "" : store.messages.map((message) => `${message.id}:${messageEffect(message) || "none"}`).join("|"), [...pausedEffectIds.value].join(","), showingFavoriteSurface.value, chatWorkspaceHidden.value, effectsActive.value] as const,
   () => {
-    if (chatWorkspaceHidden.value) {
+    if (chatWorkspaceHidden.value || !effectsActive.value) {
       messageEffectObserver?.disconnect();
       stopRainEffect();
       stopDripPhysics(true);
       stopGooeyDripPhysics(true);
+      oopsPhysicsLayer.value?.reset();
       syncFlashEffectTimer();
       return;
     }
@@ -3664,7 +3670,7 @@ watch(sermonRequestDecision, (event) => {
 });
 
 function isMessageEffectPaused(message: MessageDTO) {
-  return chatWorkspaceHidden.value || !shouldRenderMessageEffect({
+  return !effectsActive.value || chatWorkspaceHidden.value || !shouldRenderMessageEffect({
     manuallyPaused: pausedEffectIds.value.has(message.id),
     visibilityKnown: observedEffectIds.value.has(message.id),
     visible: visibleEffectIds.value.has(message.id),
@@ -3673,7 +3679,7 @@ function isMessageEffectPaused(message: MessageDTO) {
 }
 
 function handleMessageEffectIntersections(entries: IntersectionObserverEntry[]) {
-  if (chatWorkspaceHidden.value) return;
+  if (chatWorkspaceHidden.value || !effectsActive.value) return;
   const observed = new Set(observedEffectIds.value);
   const visible = new Set(visibleEffectIds.value);
   for (const entry of entries) {
@@ -3693,7 +3699,7 @@ function refreshMessageEffectObserver() {
   messageEffectObserver?.disconnect();
   messageEffectObserver = null;
   const root = scroller.value;
-  if (chatWorkspaceHidden.value || !root || typeof IntersectionObserver === "undefined") {
+  if (chatWorkspaceHidden.value || !effectsActive.value || !root || typeof IntersectionObserver === "undefined") {
     updateEffectVisibility(new Set(), new Set());
     return;
   }
@@ -4031,7 +4037,7 @@ function handleBubbleClick(message: MessageDTO, event: MouseEvent) {
   }
   if (expandLongMessageUrl(event)) return;
   acknowledgeMentionAlert(message);
-  if (messageEffect(message) === "oops") {
+  if (messageEffect(message) === "oops" && effectsActive.value) {
     const target = event.target instanceof Element ? event.target : null;
     const bubble = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
     if (oopsActiveMessageIds.value.has(message.id)) {

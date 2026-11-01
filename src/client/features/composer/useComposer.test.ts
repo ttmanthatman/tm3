@@ -61,6 +61,26 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
   return { composer, input, composerCaret, sent, gracePrefills, panel, recording, file, listenMusicMentions, messageSendStatus, starts: () => starts, stops: () => stops };
 }
 
+test("typing a root slash opens the complete command menu and selecting /听 inserts a listen draft", () => {
+  const { composer, input } = createComposerHarness();
+  input.value = "/";
+  composer.onInput();
+
+  assert.equal(composer.showComposerSuggestionMenu.value, true);
+  const suggestions = composer.matchingSlashCommands.value;
+  assert.ok(suggestions.length > 1);
+  assert.ok(suggestions.every((item) => typeof item.command === "string" && item.command.startsWith("/")));
+  assert.ok(suggestions.some((item) => item.command === "/水滴"));
+  const listen = suggestions.find((item) => item.kind === "listen");
+  assert.ok(listen);
+  assert.equal(listen.command, "/听");
+
+  composer.chooseSlashCommand(listen);
+  assert.equal(input.value, "/听 ");
+  assert.equal(composer.showComposerSuggestionMenu.value, false);
+  assert.equal(composer.parseComposerText(`${input.value}诗篇23`).type, "listen");
+});
+
 test("/听 parses as a listen draft and appears in the slash suggestions", () => {
   const { composer, input, composerCaret } = createComposerHarness();
   assert.equal(composer.parseComposerText("/听 诗篇23 @@奇异恩典").type, "listen");

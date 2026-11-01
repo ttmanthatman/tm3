@@ -38,7 +38,6 @@ const prayerCommand = { command: "/代祷", label: "代祷", hint: "生成频道
 const graceCommand = { command: "/恩典", label: "恩典", hint: "发送频道恩典卡片", icon: Sparkles };
 const sermonRequestCommand = { command: "/申请演讲", label: "申请演讲", hint: "生成讲道权限申请卡", icon: Mic };
 const markdownCommand = { command: "/Markdown", label: "Markdown", hint: "本条消息按 Markdown 渲染", icon: FileText };
-const listenCommand = { command: LISTEN_COMMAND, label: "一起听", hint: "写经文、@@ 选歌，按顺序组成播放清单", icon: Headphones };
 export type SlashCommandSuggestion =
   | { kind: "prayer"; command: string; label: string; hint: string; icon: IconComponent }
   | { kind: "grace"; command: string; label: string; hint: string; icon: IconComponent }
@@ -87,6 +86,9 @@ interface UseComposerOptions {
 }
 
 export function useComposer(options: UseComposerOptions) {
+  // Production chunks can form a cycle through listenComposer and the store.
+  // Read its command after module initialization, when the composer is created.
+  const listenCommand = { command: LISTEN_COMMAND, label: "一起听", hint: "写经文、@@ 选歌，按顺序组成播放清单", icon: Headphones };
   const store = useChatStore();
   const unconfirmedSends = ref<UnconfirmedSend[]>([]);
   const visibleUnconfirmedSends = computed(() => unconfirmedSends.value.filter((row) => row.channelId === store.currentChannelId));
