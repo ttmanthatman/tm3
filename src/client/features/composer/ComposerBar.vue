@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BottleShore from "../social/BottleShore.vue";
 import { nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
 import {
   AudioLines,
@@ -50,6 +51,9 @@ const previewPlaying = defineModel<boolean>("previewPlaying", { required: true }
 const previewAudioEl = defineModel<HTMLAudioElement | null>("previewAudioEl", { required: true });
 
 const props = defineProps<{
+  channelId: number;
+  onBottleReading: (active: boolean) => void;
+  openSocial: (mode: "poll" | "bottle") => void;
   emojiContextKey: string;
   closeComposerPanels: () => void;
   selectedMusicMention: MusicTrackDTO | null;
@@ -150,6 +154,7 @@ defineExpose({ composerInput });
 
 <template>
   <footer class="composer">
+    <BottleShore v-if="channelId > 0 && !prayerOnly && !graceOnly" :key="channelId" :channel-id="channelId" @reading="onBottleReading" />
     <div v-if="replyTo" class="reply-bar">
       <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
       <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
@@ -336,6 +341,8 @@ defineExpose({ composerInput });
       </div>
     </div>
     <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
+      <button class="tool-tile" aria-label="发起投票" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('poll')"><span aria-hidden="true">▥</span><small>发起投票</small></button>
+      <button class="tool-tile" aria-label="漂流瓶" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('bottle')"><span aria-hidden="true">✉</span><small>漂流瓶</small></button>
       <button
         v-if="handwritingAvailable"
         class="tool-tile"

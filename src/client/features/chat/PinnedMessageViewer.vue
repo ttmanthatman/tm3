@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PollCard from "../social/PollCard.vue";
+import { pollPayload } from "@shared/social";
 import { CheckCircle2, FileUp, Pin } from "lucide-vue-next";
 import type { MessageDTO, PinnedContentBlockDTO } from "@shared/types";
 import type { PinnedMediaBlock } from "../messages/useMediaPreview";
@@ -9,6 +11,7 @@ defineProps<{
   pinnedText: string;
   pinnedSummary: string;
   blocks: PinnedContentBlockDTO[];
+  message?: MessageDTO | null;
   chain?: MessageDTO | null;
   textContentHtml: (text: string) => string;
   pinnedFileUrl: (block: PinnedMediaBlock) => string;
@@ -39,7 +42,8 @@ const emit = defineEmits<{
         </span>
       </header>
       <div class="pin-card-body pinned-view-body">
-        <template v-for="block in blocks" :key="block.id">
+        <PollCard v-if="message && pollPayload(message.payload)" :id="message.id" :poll="pollPayload(message.payload)!" />
+        <template v-for="block in (message && pollPayload(message.payload) ? [] : blocks)" :key="block.id">
           <p v-if="block.type === 'text'" v-html="textContentHtml(block.text)"></p>
           <button
             v-else-if="block.type === 'image'"

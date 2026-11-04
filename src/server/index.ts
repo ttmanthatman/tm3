@@ -1,3 +1,5 @@
+import { pollPayload } from "../shared/social.js";
+import { registerSocialRoutes } from "./routes/social.js";
 import { bookNoteShareSchema } from "../shared/bookNotes.js";
 import { createZoomExplorationHandler } from "./services/zoomExploration.js";
 import { saveGraceCard } from "./services/gracePersistence.js";
@@ -3912,6 +3914,10 @@ registerUnreadCountsRoutes(app, {
   emitRead: (accountId, event) => io.to(`acct:${accountId}`).emit("channel:read", event)
 });
 
+registerSocialRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage,
+  changed: (channelId, pollId) => io.to(`ch:${channelId}`).emit("social:changed", { channelId, pollId })
+});
+
 registerChainRoutes(app, {
   requireAuth,
   prisma,
@@ -4121,9 +4127,11 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
   if (body.active) {
     if (body.messageId && body.messageIds?.length) return reply.code(400).send({ success: false, message: "置顶来源不能重复指定" });
     const linkedId = body.messageId || (body.messageIds?.length === 1 ? body.messageIds[0] : null);
+    const linkedPoll = linkedId ? await prisma.message.findFirst({ where: { id: linkedId, channelId, type: "text" }, select: { id: true, payload: true } }) : null;
+    const pollMessage = linkedPoll && pollPayload(linkedPoll.payload) ? linkedPoll : null;
     const linkedChain = linkedId ? await prisma.message.findFirst({ where: { id: linkedId, channelId, type: "chain" }, select: { id: true, chainRootId: true } }) : null;
-    if (body.messageId && !linkedChain) return reply.code(400).send({ success: false, message: "接龙不存在" });
-    const pinnedBody = body.messageIds?.length ? await pinnedBodyFromMessages(channelId, body.messageIds) : serializePinnedBody(body.body, body.content);
+    if (body.messageId && !linkedChain && !pollMessage) return reply.code(400).send({ success: false, message: "接龙或投票不存在" });
+    const pinnedBody = body.messageIds?.length ? await pinnedBodyFromMessages(channelId, body.messageIds) : pollMessage ? await pinnedBodyFromMessages(channelId, [pollMessage.id]) : serializePinnedBody(body.body, body.content);
     if (!pinnedBody.blocks.length) return reply.code(400).send({ success: false, message: "置顶内容不能为空" });
     const textContent = pinnedBody.blocks
       .filter((block) => block.type === "text")
@@ -4134,11 +4142,11 @@ app.post("/api/channels/:id/pinned", { preHandler: requireAuth }, async (request
     const created = await prisma.pinnedItem.create({
       data: {
         channelId,
-        kind: linkedChain ? "message" : "notice",
+        kind: linkedChain || pollMessage ? "message" : "notice",
         title: cleanPinnedTitle(body.title),
         content: textContent,
         body: pinnedBody as unknown as Prisma.InputJsonValue,
-        messageId: linkedChain ? linkedChain.chainRootId || linkedChain.id : null,
+        messageId: linkedChain ? linkedChain.chainRootId || linkedChain.id : pollMessage?.id || null,
         active: true
       }
     });

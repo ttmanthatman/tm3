@@ -85,6 +85,7 @@ import ParallaxBackground from "./components/ParallaxBackground.vue";
 import OopsTextPhysicsLayer from "./components/OopsTextPhysicsLayer.vue";
 import { provideZoomAnnouncements } from "./features/zoom/useZoomAnnouncements";
 import MessageRow from "./features/messages/MessageRow.vue";
+import SocialComposer from "./features/social/SocialComposer.vue";
 import ComposerBar from "./features/composer/ComposerBar.vue";
 import ChatHeader from "./features/chat/ChatHeader.vue";
 import AppModal from "./components/ui/AppModal.vue";
@@ -585,6 +586,8 @@ const sermonDecisionNotice = ref("");
 let sermonDecisionTimer: number | undefined;
 const musicScoreOpen = ref(false);
 const musicScoreClosing = ref(false);
+const socialMode = ref<"poll" | "bottle" | null>(null);
+const bottleReading = ref(false);
 const musicScoreChatCleared = ref(false);
 const musicScoreStageVisible = ref(false);
 const musicScoreStageClosing = ref(false);
@@ -5907,6 +5910,7 @@ const messageRowBindings = {
 
       <PinnedMessageViewer
         v-if="!showingFavoriteSurface && visiblePinned && pinnedExpanded"
+        :message="visiblePinned.message"
         :pinned-text="pinnedText"
         :pinned-summary="pinnedSummary"
         :blocks="pinnedBlocks"
@@ -6040,7 +6044,7 @@ const messageRowBindings = {
         :class="{
           'music-score-open': musicScoreOpen,
           'music-score-closing': musicScoreClosing,
-          'music-score-chat-cleared': musicScoreChatCleared
+          'music-score-chat-cleared': musicScoreChatCleared || bottleReading
         }"
       >
         <MusicManager
@@ -6449,8 +6453,12 @@ const messageRowBindings = {
         <ArrowDown :size="18" />
       </button>
 
+      <SocialComposer :mode="socialMode" :channel-id="store.currentChannelId" @close="socialMode = null" />
       <ComposerBar
         v-if="!showingFavoriteSurface && !isMusicChannel"
+        :channel-id="store.currentChannelId"
+        :on-bottle-reading="(active) => { bottleReading = active; }"
+        :open-social="(mode) => { socialMode = mode; }"
         ref="composerBarRef"
         v-model:input="input"
         v-model:reply-to="replyTo"

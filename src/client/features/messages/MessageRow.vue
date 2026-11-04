@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PollCard from "../social/PollCard.vue";
+import { pollPayload } from "@shared/social";
 import { computed, watch } from "vue";
 import { assistantFeatureActions, type AssistantFeatureId } from "@shared/assistantTools";
 import AssistantFeatureActions from "./AssistantFeatureActions.vue";
@@ -142,7 +144,8 @@ const emit = defineEmits<{
 <template>
   <ZoomAnnouncement v-if="zoomAnnouncement" :announcement="zoomAnnouncement" :message="message" />
   <template v-else-if="variant === 'favorite'">
-    <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+    <PollCard v-if="pollPayload(message.payload)" :id="message.id" :poll="pollPayload(message.payload)!" />
+    <NoteCard v-else-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
     <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
     <HandwritingMessage v-else-if="message.type === 'handwriting'" :message="message" variant="favorite" />
     <img v-else-if="message.type === 'image'" class="favorite-message-image" :src="fileUrl(message)" loading="lazy" alt="收藏的图片" />
@@ -319,7 +322,8 @@ const emit = defineEmits<{
         >{{ musicMentionBackground(message) }}</div>
       </template>
       <template v-else>
-        <NoteCard v-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
+        <PollCard v-if="pollPayload(message.payload)" :id="message.id" :poll="pollPayload(message.payload)!" />
+        <NoteCard v-else-if="message.type === 'bible_note' && bibleNotePayload(message.payload)" :paper-seed="message.clientRequestId || message.id" :id="bibleNotePayload(message.payload)!.noteId" :reference="bibleNotePayload(message.payload)!.reference" />
         <CopyworkCard v-else-if="message.type === 'bible_copywork' && copyworkPayload(message.payload)" :id="copyworkPayload(message.payload)!.workId" :reference="copyworkPayload(message.payload)!.reference" message :surface-active="handwritingSurfaceActive ?? true" />
         <HandwritingMessage
           v-else-if="message.type === 'handwriting'"

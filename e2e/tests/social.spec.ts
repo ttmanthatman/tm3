@@ -1,0 +1,80 @@
+import { expect, test, webkit, type Browser } from "@playwright/test";
+import { E2E_ADMIN, E2E_CHANNELS } from "../seed-data.js";
+import { focusChat } from "../helpers/chat.js";
+
+for (const size of [1280, 360, 390]) {
+  test.describe(`social ${size}`, () => {
+    test.use({ viewport: { width: size, height: 850 } });
+    let extraBrowser: Browser | null = null;
+    test.afterEach(async () => { await extraBrowser?.close(); extraBrowser = null; });
+    test("polls persist, update live and pin; anonymous bottles open once and restore messages", async ({ page: defaultPage, request }) => {
+      extraBrowser = size === 390 ? await webkit.launch() : null;
+      const page = extraBrowser ? await extraBrowser.newPage({ viewport: { width: size, height: 850 }, baseURL: "http://127.0.0.1:4173" }) : defaultPage;
+      test.setTimeout(90000);
+      await page.goto("/");
+      await page.getByPlaceholder("用户名").fill(E2E_ADMIN.username);
+      await page.getByPlaceholder("密码").fill(E2E_ADMIN.password);
+      await page.getByRole("button", { name: "登录", exact: true }).click();
+      await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+      await focusChat(page);
+      await expect(page.locator(".connection-banner")).toHaveCount(0);
+      const token = await page.evaluate(() => localStorage.getItem("team-chat-token"));
+      const headers = { Authorization: `Bearer ${token}` };
+      const channels = await (await request.get("/api/channels", { headers })).json();
+      const channelId = channels.channels.find((c: { name: string }) => c.name === E2E_CHANNELS.default).id;
+      await expect(async () => {
+        if (!await page.getByRole("button", { name: "发起投票", exact: true }).isVisible()) await page.getByRole("button", { name: "更多功能", exact: true }).click();
+        await expect(page.getByRole("button", { name: "发起投票", exact: true })).toBeVisible();
+      }).toPass();
+      await page.getByRole("button", { name: "发起投票", exact: true }).click();
+      const dialog = page.getByRole("dialog", { name: "发起投票", exact: true });
+      const question = `聚会时间 ${size}`;
+      await dialog.getByLabel("问题").fill(question);
+      await dialog.getByLabel("选项 1").fill("周六");
+      await dialog.getByLabel("选项 2").fill("周日");
+      await dialog.getByRole("button", { name: "发起投票", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      let card = page.locator(".poll-card").filter({ hasText: question });
+      await expect(card).toBeVisible();
+      await card.getByRole("button", { name: /周六/ }).click();
+      await expect(card).toContainText("共 1 票");
+      await expect(card.locator(".poll-bar")).toHaveCount(2);
+      const messages = await (await request.get(`/api/messages?channelId=${channelId}`, { headers })).json();
+      const message = messages.messages.find((m: { content: string }) => m.content === `投票：${question}`);
+      const changed = await request.put(`/api/polls/${message.id}/vote`, { headers, data: { option: 1 } });
+      expect(changed.ok()).toBeTruthy();
+      await expect(card.getByRole("button", { name: /周日/ })).toHaveAttribute("aria-pressed", "true");
+      const pin = await request.post(`/api/channels/${channelId}/pinned`, { headers, data: { messageId: message.id, active: true } });
+      expect(pin.ok()).toBeTruthy();
+      await expect(page.locator(".pinned-view-modal .poll-card")).toBeVisible();
+      await page.locator(".pinned-view-modal").getByRole("button", { name: /朕知道了/ }).click();
+      await page.reload(); await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default); await focusChat(page);
+      card = page.locator(".poll-card").filter({ hasText: question });
+      await expect(card).toContainText("共 1 票");
+      await page.getByRole("button", { name: "更多功能", exact: true }).click();
+      await page.getByRole("button", { name: "漂流瓶", exact: true }).click();
+      const bottleDialog = page.getByRole("dialog", { name: "扔一个漂流瓶", exact: true });
+      await bottleDialog.getByLabel("匿名瓶中信").fill(`匿名的祝福 ${size}`);
+      await bottleDialog.getByRole("button", { name: "扔出去", exact: true }).click();
+      await expect(bottleDialog).toBeHidden();
+      const bottle = page.getByRole("button", { name: "打开匿名漂流瓶" }).last();
+      await expect(bottle).toBeVisible();
+      await page.getByRole("button", { name: "启用摇晃", exact: true }).click();
+      // Chromium lacks sensors on desktop; WebKit can deny permissions. Both leave bottles usable.
+      await page.screenshot({ path: `output/e2e/social-${size}-shore.png` });
+      await bottle.click({ force: true });
+      const letter = page.getByRole("dialog", { name: "一封匿名瓶中信" });
+      await expect(letter).toContainText(`匿名的祝福 ${size}`);
+      await expect(page.locator(".music-score-chat-cleared")).toBeVisible();
+      await expect.poll(() => page.locator(".score-exit-right").last().evaluate((element) => Number(getComputedStyle(element).opacity))).toBe(0);
+      await page.screenshot({ path: `output/e2e/social-${size}-reading.png` });
+      await letter.getByRole("button", { name: "读完了，让它随风而去" }).click();
+      await expect(letter).toBeHidden();
+      await expect(page.locator(".music-score-chat-cleared")).toHaveCount(0);
+      await expect(page.getByRole("button", { name: "打开匿名漂流瓶" })).toHaveCount(0);
+      const thrown = await (await request.post(`/api/channels/${channelId}/bottles`, { headers, data: { text: "争抢测试" } })).json();
+      const opens = await Promise.all([1, 2].map(() => request.post(`/api/channels/${channelId}/bottles/${thrown.id}/open`, { headers })));
+      expect(opens.map((r) => r.status()).sort()).toEqual([200, 410]);
+    });
+  });
+}
