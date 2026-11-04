@@ -640,7 +640,7 @@ const isLogRoute = ref(window.location.pathname === "/log");
 const keepOriginalImages = ref(false);
 // The textarea lives inside ComposerBar; the exposed element feeds
 // useComposer / useChannelManagement / useComposerAutosize below.
-const composerBarRef = ref<{ composerInput: HTMLTextAreaElement | null } | null>(null);
+const composerBarRef = ref<{ composerInput: HTMLTextAreaElement | null; requestBottleMotion: () => void } | null>(null);
 const composerInput = computed(() => composerBarRef.value?.composerInput ?? null);
 const scroller = ref<HTMLElement | null>(null);
 const chatPane = ref<HTMLElement | null>(null);
@@ -6453,7 +6453,7 @@ const messageRowBindings = {
         <ArrowDown :size="18" />
       </button>
 
-      <SocialComposer :mode="socialMode" :channel-id="store.currentChannelId" @close="socialMode = null" />
+      <SocialComposer :mode="socialMode" :channel-id="store.currentChannelId" @request-bottle-motion="composerBarRef?.requestBottleMotion()" @close="socialMode = null" />
       <ComposerBar
         v-if="!showingFavoriteSurface && !isMusicChannel"
         :channel-id="store.currentChannelId"

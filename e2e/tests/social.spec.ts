@@ -59,7 +59,8 @@ for (const size of [1280, 360, 390]) {
       await expect(bottleDialog).toBeHidden();
       const bottle = page.getByRole("button", { name: "打开匿名漂流瓶" }).last();
       await expect(bottle).toBeVisible();
-      await page.getByRole("button", { name: "启用摇晃", exact: true }).click();
+      const enableMotion = page.getByRole("button", { name: "启用摇晃", exact: true });
+      if (await enableMotion.isVisible()) await enableMotion.click();
       // Chromium lacks sensors on desktop; WebKit can deny permissions. Both leave bottles usable.
       await page.screenshot({ path: `output/e2e/social-${size}-shore.png` });
       await bottle.click({ force: true });

@@ -3915,7 +3915,7 @@ registerUnreadCountsRoutes(app, {
 });
 
 registerSocialRoutes(app, { prisma, requireAuth, canAccessChannel, canWriteChannel, emitMessage,
-  changed: (channelId, pollId) => io.to(`ch:${channelId}`).emit("social:changed", { channelId, pollId })
+  changed: (channelId, pollId, removedBottleId) => io.to(`ch:${channelId}`).emit("social:changed", { channelId, pollId, removedBottleId })
 });
 
 registerChainRoutes(app, {

@@ -13,3 +13,5 @@ export function pollPayload(value: unknown): Poll | null {
 export type PollResults = { counts: number[]; total: number; selected: number | null };
 export type Bottle = { id: string; style: number };
 export const bottleTextSchema = z.string().trim().min(1).max(2000);
+
+export type SocialChange = { channelId: number; pollId?: number; removedBottleId?: string };

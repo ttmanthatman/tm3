@@ -149,12 +149,13 @@ function bindPreviewAudioEl(el: Element | ComponentPublicInstance | null) {
   previewAudioEl.value = (el as HTMLAudioElement | null) ?? null;
 }
 
-defineExpose({ composerInput });
+const bottleShore = ref<InstanceType<typeof BottleShore> | null>(null);
+defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requestMotionPermission() });
 </script>
 
 <template>
   <footer class="composer">
-    <BottleShore v-if="channelId > 0 && !prayerOnly && !graceOnly" :key="channelId" :channel-id="channelId" @reading="onBottleReading" />
+    <BottleShore ref="bottleShore" v-if="channelId > 0 && !prayerOnly && !graceOnly" :key="channelId" :channel-id="channelId" @reading="onBottleReading" />
     <div v-if="replyTo" class="reply-bar">
       <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
       <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>

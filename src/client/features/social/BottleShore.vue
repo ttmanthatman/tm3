@@ -15,6 +15,9 @@ const openBusy = ref(false);
 const error = ref("");
 const sensorStatus = ref("");
 const sensorsEnabled = ref(false);
+const sensorBusy = ref(false);
+let permissionAttempted = false;
+let listRevision = 0;
 const engine = Matter.Engine.create({ enableSleeping: true });
 const bodies = new Map<string, Matter.Body>();
 let walls: Matter.Body[] = [];
@@ -30,17 +33,24 @@ let shake = { x: 0, y: 0 };
 const spriteStyle = (style: number) => ({ backgroundPosition: `${style % 4 * 100 / 3}% ${Math.floor(style / 4) * 50}%` });
 const refresh = useSocialRefresh(async () => {
   const channelId = props.channelId;
+  const revision = listRevision;
   try {
     const response = await api<{ bottles: Bottle[] }>(`/api/channels/${channelId}/bottles`);
-    if (!disposed && channelId === props.channelId) { bottles.value = response.bottles; error.value = ""; syncBodies(); }
+    if (!disposed && channelId === props.channelId && revision === listRevision) { bottles.value = response.bottles; error.value = ""; syncBodies(); }
   } catch (e) { if (!disposed && channelId === props.channelId) error.value = e instanceof Error ? e.message : "漂流瓶加载失败"; }
-}, (event) => event.channelId === props.channelId && !event.pollId);
+}, (event) => event.channelId === props.channelId && !event.pollId, (event) => {
+  listRevision++;
+  if (event.removedBottleId) {
+    bottles.value = bottles.value.filter((bottle) => bottle.id !== event.removedBottleId);
+    syncBodies();
+  }
+});
 function syncBodies() {
   for (const [id, body] of bodies) if (!bottles.value.some((bottle) => bottle.id === id)) { Matter.Composite.remove(engine.world, body); bodies.delete(id); }
   bottles.value.forEach((bottle, index) => {
     if (bodies.has(bottle.id)) return;
     const body = Matter.Bodies.rectangle(35 + index % Math.max(1, Math.floor((width - 40) / 45)) * 45, 30, 34, 62, { restitution: .32, friction: .45, frictionAir: .025, chamfer: { radius: 10 } });
-    Matter.Body.setAngle(body, (index % 3 - 1) * .2);
+    Matter.Body.setAngle(body, (index % 2 ? -1 : 1) * (1.1 + bottle.style % 4 * .12));
     bodies.set(bottle.id, body); Matter.Composite.add(engine.world, body);
   });
   start();
@@ -56,13 +66,13 @@ function resize() {
 function tick(time: number) {
   frame = 0;
   if (disposed || document.hidden || !visible || !pageActive || opened.value || !bodies.size) return;
-  const delta = lastTime ? Math.min(1000 / 30, time - lastTime) : 1000 / 60;
+  const delta = lastTime ? Math.min(1000 / 60, time - lastTime) : 1000 / 60;
   lastTime = time;
   for (const body of bodies.values()) if (shake.x || shake.y) Matter.Body.applyForce(body, body.position, { x: shake.x * .0004, y: shake.y * .0004 });
   shake = { x: 0, y: 0 };
   Matter.Engine.update(engine, delta);
   transforms.value = Object.fromEntries([...bodies].map(([id, body]) => [id, `translate(${body.position.x - 28}px, ${body.position.y - 37}px) rotate(${body.angle}rad)`]));
-  if (sensorsEnabled.value || [...bodies.values()].some((body) => !body.isSleeping)) frame = requestAnimationFrame(tick);
+  if ([...bodies.values()].some((body) => !body.isSleeping)) frame = requestAnimationFrame(tick);
 }
 function start() { if (!frame && !disposed && !document.hidden && visible && pageActive && !opened.value && bodies.size) { lastTime = 0; frame = requestAnimationFrame(tick); } }
 function pause() { cancelAnimationFrame(frame); frame = 0; lastTime = 0; }
@@ -86,17 +96,29 @@ function orientation(event: DeviceOrientationEvent) {
 function attachSensors() { if (!disposed && !opened.value && sensorsEnabled.value && !document.hidden && visible && pageActive) { window.addEventListener("devicemotion", motion); window.addEventListener("deviceorientation", orientation); } }
 function detachSensors() { window.removeEventListener("devicemotion", motion); window.removeEventListener("deviceorientation", orientation); shake = { x: 0, y: 0 }; }
 type PermissionConstructor = { requestPermission?: () => Promise<string> };
-async function enableSensors() {
-  if (sensorsEnabled.value) { sensorsEnabled.value = false; detachSensors(); engine.gravity.x = 0; engine.gravity.y = 1; sensorStatus.value = "已关闭摇晃感应"; return; }
+async function requestMotionPermission(automatic = false) {
+  if (disposed || sensorsEnabled.value || sensorBusy.value || (automatic && permissionAttempted)) return;
+  permissionAttempted = true;
   if (!window.isSecureContext || !("DeviceMotionEvent" in window)) { sensorStatus.value = "此设备暂不支持感应，瓶子仍会自然沉积"; return; }
+  sensorBusy.value = true;
   try {
+    // Start both permission requests synchronously within the click/submit gesture.
     const constructors: PermissionConstructor[] = [window.DeviceMotionEvent as unknown as PermissionConstructor, window.DeviceOrientationEvent as unknown as PermissionConstructor];
     const permissions = await Promise.all(constructors.map((ctor) => ctor?.requestPermission ? ctor.requestPermission() : Promise.resolve("granted")));
     if (disposed) return;
     if (permissions.some((permission) => permission !== "granted")) { sensorStatus.value = "未启用权限，瓶子仍会自然沉积"; return; }
     sensorsEnabled.value = true; sensorStatus.value = "已启用摇晃感应"; attachSensors(); start();
   } catch { sensorStatus.value = "未启用感应，瓶子仍会自然沉积"; }
+  finally { sensorBusy.value = false; }
 }
+function enableSensors() {
+  if (sensorsEnabled.value) {
+    sensorsEnabled.value = false; detachSensors(); engine.gravity.x = 0; engine.gravity.y = 1; sensorStatus.value = "已关闭摇晃感应";
+    for (const body of bodies.values()) Matter.Sleeping.set(body, false);
+    start();
+  } else void requestMotionPermission();
+}
+defineExpose({ requestMotionPermission: () => { void requestMotionPermission(true); } });
 function lifecycle() { pause(); detachSensors(); attachSensors(); start(); if (!document.hidden) void refresh(); }
 function pageHide() { pageActive = false; pause(); detachSensors(); }
 function pageShow() { pageActive = true; lifecycle(); }
@@ -107,13 +129,14 @@ async function open(bottle: Bottle) {
   try {
     const result = await api<Bottle & { text: string }>(`/api/channels/${channelId}/bottles/${bottle.id}/open`, { method: "POST" });
     if (channelId !== props.channelId || disposed) return;
+    listRevision++;
     opened.value = result; emit("reading", true); pause(); detachSensors();
-    bottles.value = bottles.value.filter((item) => item.id !== bottle.id); syncBodies();
+    bottles.value = bottles.value.filter((item) => item.id !== bottle.id); syncBodies(); void refresh();
   } catch (e) { error.value = e instanceof Error ? e.message : "打开失败"; void refresh(); }
   finally { openBusy.value = false; }
 }
 function close() { opened.value = null; emit("reading", false); attachSensors(); start(); }
-watch(() => props.channelId, () => { close(); bottles.value = []; syncBodies(); void refresh(); });
+watch(() => props.channelId, () => { listRevision++; close(); bottles.value = []; syncBodies(); void refresh(); });
 onMounted(() => {
   observer = new ResizeObserver(resize); if (root.value) observer.observe(root.value);
   const intersection = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; lifecycle(); });
@@ -128,19 +151,21 @@ onBeforeUnmount(() => { disposed = true; pause(); detachSensors(); observer?.dis
 <template>
   <div ref="root" class="bottle-shore">
     <button v-for="bottle in bottles" :key="bottle.id" type="button" class="shore-bottle" :style="{ transform: transforms[bottle.id] || 'translate(0,0)' }" :disabled="openBusy" aria-label="打开匿名漂流瓶" @click="open(bottle)"><span class="bottle-sprite" :style="spriteStyle(bottle.style)"></span></button>
-    <div v-if="bottles.length" class="shore-controls"><button type="button" :aria-pressed="sensorsEnabled" @click="enableSensors">{{ sensorsEnabled ? '关闭摇晃' : '启用摇晃' }}</button><span role="status">{{ sensorStatus }}</span></div>
+    <div v-if="bottles.length || sensorStatus" class="shore-controls"><button type="button" :aria-pressed="sensorsEnabled" :disabled="sensorBusy" @click="enableSensors">{{ sensorsEnabled ? '关闭摇晃' : '启用摇晃' }}</button><span role="status">{{ sensorStatus }}</span></div>
     <p v-if="error" class="shore-error" role="alert">{{ error }} <button type="button" @click="refresh">重试</button><button type="button" @click="error = ''">关闭</button></p>
-    <AppModal :open="!!opened" title="一封匿名瓶中信" content-class="bottle-reading" @close="close">
+    <Teleport defer to=".app-shell">
+    <AppModal class="bottle-dialog" :open="!!opened" title="一封匿名瓶中信" content-class="bottle-reading" @close="close">
       <div v-if="opened" class="bottle-letter">
         <div class="opened-bottle"><span class="bottle-sprite" :style="spriteStyle(opened.style)"></span><span class="bottle-cork"></span></div>
         <p>{{ opened.text }}</p><button type="button" class="primary-btn" @click="close">读完了，让它随风而去</button>
       </div>
     </AppModal>
+    </Teleport>
   </div>
 </template>
 <style scoped>
 .bottle-shore { position: absolute; z-index: 12; left: 0; right: 0; bottom: 100%; height: 190px; pointer-events: none; }
-.bottle-shore :deep(.modal-shell) { pointer-events: auto; }
+.bottle-dialog { pointer-events: auto; z-index: 160; }
 .shore-bottle { position: absolute; left: 0; top: 0; width: 56px; height: 74px; border: 0; padding: 0; background: transparent; cursor: pointer; pointer-events: auto; filter: drop-shadow(0 3px 2px #0004); }
 .bottle-sprite { display: block; width: 100%; height: 100%; background-image: url('/bottles/bottles.webp'); background-size: 400% 300%; background-repeat: no-repeat; }
 .shore-controls { position: absolute; right: 8px; bottom: 150px; display: flex; flex-direction: column; align-items: end; gap: 4px; max-width: 65%; font-size: 11px; }

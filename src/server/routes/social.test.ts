@@ -56,6 +56,7 @@ test("bottles list hides text and identity, all twelve appearances differ, and o
   assert.equal(opened.statusCode, 200); assert.match(opened.json().text, /秘密/);
   assert.equal((await h.app.inject({ method: "POST", url })).statusCode, 410);
   assert.equal(h.settings.size, 11);
+  assert.deepEqual(h.events.at(-1), [3, undefined, list[0].id], "broadcast only the consumed bottle ID, never its text or reader");
 });
 test("read-only users can see shells but cannot consume bottles", async (t) => {
   const h = harness(); t.after(() => h.app.close()); h.readOnly();

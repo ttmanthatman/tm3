@@ -4,7 +4,7 @@ import { pollSchema, bottleTextSchema } from "@shared/social";
 import { api } from "../../api";
 import AppModal from "../../components/ui/AppModal.vue";
 const props = defineProps<{ mode: "poll" | "bottle" | null; channelId: number }>();
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; requestBottleMotion: [] }>();
 const question = ref("");
 const options = ref(["", ""]);
 const text = ref("");
@@ -17,6 +17,7 @@ async function submit() {
   const poll = pollSchema.safeParse({ kind: "poll", question: question.value, options: options.value });
   const bottle = bottleTextSchema.safeParse(text.value);
   if (props.mode === "poll" ? !poll.success : !bottle.success) { error.value = props.mode === "poll" ? "请填写问题和 2–12 个不重复的选项" : "请填写 1–2000 字的瓶中信"; return; }
+  if (props.mode === "bottle") emit("requestBottleMotion");
   submitBusy.value = true; error.value = "";
   try {
     if (props.mode === "poll" && poll.success) await api(`/api/channels/${props.channelId}/polls`, { method: "POST", body: JSON.stringify({ poll: poll.data, requestId }) });
@@ -27,7 +28,8 @@ async function submit() {
 }
 </script>
 <template>
-  <AppModal :open="!!mode" :title="mode === 'poll' ? '发起投票' : '扔一个漂流瓶'" :busy="submitBusy" @close="emit('close')">
+  <Teleport defer to=".app-shell">
+  <AppModal class="social-dialog" :open="!!mode" :title="mode === 'poll' ? '发起投票' : '扔一个漂流瓶'" :busy="submitBusy" @close="emit('close')">
     <form class="social-form" @submit.prevent="submit">
       <template v-if="mode === 'poll'">
         <label>问题<input v-model="question" maxlength="200" required placeholder="想听听大家的选择…" /></label>
@@ -39,8 +41,10 @@ async function submit() {
       <button class="primary-btn" type="submit" :disabled="submitBusy">{{ submitBusy ? '发送中…' : mode === 'poll' ? '发起投票' : '扔出去' }}</button>
     </form>
   </AppModal>
+  </Teleport>
 </template>
 <style scoped>
+.social-dialog { z-index: 160; }
 .social-form { display: grid; gap: 12px; padding: 16px; max-height: 70dvh; overflow-y: auto; }
 label { display: grid; gap: 6px; }
 input, textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--text); font: inherit; }

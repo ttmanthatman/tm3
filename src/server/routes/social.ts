@@ -11,7 +11,7 @@ type Dependencies = {
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
   canWriteChannel(accountId: number, channelId: number): Promise<boolean>;
   emitMessage(id: number): Promise<unknown>;
-  changed(channelId: number, pollId?: number): void;
+  changed(channelId: number, pollId?: number, removedBottleId?: string): void;
 };
 const fail = (statusCode: number, message: string) => Object.assign(new Error(message), { statusCode });
 function validate<T>(schema: z.ZodType<T>, input: unknown): T {
@@ -115,7 +115,7 @@ export function registerSocialRoutes(app: FastifyInstance, deps: Dependencies) {
       await tx.setting.delete({ where: { key } });
       return JSON.parse(row.value) as StoredBottle;
     });
-    deps.changed(channelId);
+    deps.changed(channelId, undefined, id);
     return { id, ...bottle };
   });
 }
