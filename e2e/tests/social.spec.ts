@@ -26,6 +26,8 @@ for (const size of [1280, 360, 390]) {
         if (!await page.getByRole("button", { name: "发起投票", exact: true }).isVisible()) await page.getByRole("button", { name: "更多功能", exact: true }).click();
         await expect(page.getByRole("button", { name: "发起投票", exact: true })).toBeVisible();
       }).toPass();
+      await expect(page.getByRole("button", { name: "发起投票", exact: true }).locator("svg")).toBeVisible();
+      await expect(page.getByRole("button", { name: "漂流瓶", exact: true }).locator("svg")).toBeVisible();
       await page.getByRole("button", { name: "发起投票", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "发起投票", exact: true });
       const question = `聚会时间 ${size}`;
@@ -59,13 +61,14 @@ for (const size of [1280, 360, 390]) {
       await expect(bottleDialog).toBeHidden();
       const bottle = page.getByRole("button", { name: "打开匿名漂流瓶" }).last();
       await expect(bottle).toBeVisible();
-      const enableMotion = page.getByRole("button", { name: "启用摇晃", exact: true });
-      if (await enableMotion.isVisible()) await enableMotion.click();
+      await expect(page.locator(".shore-controls")).toHaveCount(0);
       // Chromium lacks sensors on desktop; WebKit can deny permissions. Both leave bottles usable.
       await page.screenshot({ path: `output/e2e/social-${size}-shore.png` });
       await bottle.click({ force: true });
-      const letter = page.getByRole("dialog", { name: "一封匿名瓶中信" });
+      const letter = page.getByRole("region", { name: "匿名瓶中信" });
       await expect(letter).toContainText(`匿名的祝福 ${size}`);
+      await expect(letter.getByRole("img", { name: "已打开的漂流瓶" })).toBeVisible();
+      await expect(page.locator(".modal-shell:visible")).toHaveCount(0);
       await expect(page.locator(".music-score-chat-cleared")).toBeVisible();
       await expect.poll(() => page.locator(".score-exit-right").last().evaluate((element) => Number(getComputedStyle(element).opacity))).toBe(0);
       await page.screenshot({ path: `output/e2e/social-${size}-reading.png` });

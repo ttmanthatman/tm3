@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import SensorSettings from "./SensorSettings.vue";
 import { onMounted, ref } from "vue";
 import type { ComputedRef, Ref } from "vue";
 import {
@@ -204,6 +205,7 @@ function deviceIcon(kind: string) {
             <button :class="{ active: settingsTab === 'appearance' }" @click="selectTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
             <button :class="{ active: settingsTab === 'bible' }" @click="selectTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
             <button :class="{ active: settingsTab === 'notifications' }" @click="selectTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
+            <button :class="{ active: settingsTab === 'sensors' }" @click="selectTab('sensors')"><Smartphone :size="19" /><span><b>传感器</b><small>运动与方向授权</small></span></button>
             <button :class="{ active: settingsTab === 'devices' }" @click="selectTab('devices')"><Monitor :size="19" /><span><b>登录设备</b><small>会话与安全</small></span></button>
             <button :class="{ active: settingsTab === 'release' }" @click="selectTab('release')"><Info :size="19" /><span><b>关于</b><small>版本与更新</small></span></button>
           </nav>
@@ -313,6 +315,7 @@ function deviceIcon(kind: string) {
             <p v-if="bibleSettingsMsg" class="settings-note">{{ bibleSettingsMsg }}</p>
           </section>
 
+          <SensorSettings v-if="settingsTab === 'sensors'" />
           <section v-if="settingsTab === 'devices'" class="form-grid settings-section">
             <div class="settings-section-head"><strong>会话安全</strong><small>不认识的设备应立即登出；当前设备退出后需要重新登录。</small></div>
             <label>已登录设备</label>

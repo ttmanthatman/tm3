@@ -3,6 +3,8 @@ import BottleShore from "../social/BottleShore.vue";
 import { nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
 import {
   AudioLines,
+  ChartColumn,
+  Amphora,
   CheckCircle2,
   FileUp,
   Headphones,
@@ -342,8 +344,8 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
       </div>
     </div>
     <div v-if="composerPanel === 'more'" class="composer-drawer more-drawer">
-      <button class="tool-tile" aria-label="发起投票" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('poll')"><span aria-hidden="true">▥</span><small>发起投票</small></button>
-      <button class="tool-tile" aria-label="漂流瓶" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('bottle')"><span aria-hidden="true">✉</span><small>漂流瓶</small></button>
+      <button class="tool-tile" aria-label="发起投票" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('poll')"><span><ChartColumn :size="25" /></span><small>发起投票</small></button>
+      <button class="tool-tile" aria-label="漂流瓶" :disabled="!handwritingAvailable" @click="closeComposerPanels(); openSocial('bottle')"><span><Amphora :size="25" /></span><small>漂流瓶</small></button>
       <button
         v-if="handwritingAvailable"
         class="tool-tile"

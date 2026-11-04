@@ -40,15 +40,15 @@ for (const width of [1280, 360]) {
     await page.screenshot({ path: `output/e2e/bottles-fixed-${width}.png` });
   });
 }
-test("bottle letter is above the Bible split workspace", async ({ page, request }) => {
+test("bottle scroll stays readable beside the Bible split workspace", async ({ page, request }) => {
   await page.setViewportSize({ width: 1280, height: 850 });
   const headers = await login(page);
   await expect(page.locator(".app-shell.bible-split")).toBeVisible();
   await seed(request, headers, 1);
   await page.locator(".shore-bottle").click({ force: true });
-  const dialog = page.getByRole("dialog", { name: "一封匿名瓶中信" });
+  const dialog = page.getByRole("region", { name: "匿名瓶中信" });
   await expect(dialog).toBeVisible();
-  await expect.poll(() => dialog.locator(".bottle-reading").evaluate((element) => {
+  await expect.poll(() => dialog.locator(".bottle-scroll").evaluate((element) => {
     const r = element.getBoundingClientRect();
     return [r.left + 10, r.right - 10].every((x) => element.contains(document.elementFromPoint(x, r.top + r.height / 2)));
   })).toBe(true);
@@ -72,7 +72,7 @@ test("throwing a bottle requests motion permission in the user gesture", async (
   await expect.poll(() => page.evaluate(() => (window as Window & { __bottlePermissionProbe?: { motion: number } }).__bottlePermissionProbe?.motion)).toBe(1);
   const permission = await page.evaluate(() => (window as Window & { __bottlePermissionProbe?: { orientation: number; active: boolean } }).__bottlePermissionProbe);
   expect(permission).toMatchObject({ orientation: 1, active: true });
-  await expect(page.locator(".shore-controls")).toContainText("自然沉积");
+  await expect(page.locator(".shore-controls")).toHaveCount(0);
 });
 
 
@@ -133,14 +133,17 @@ test("another reader removes the bottle while a stale list is still in flight", 
 
 
 test("granted sensors wake settled bottles and stopping them preserves natural gravity", async ({ page, request }) => {
-  await page.setViewportSize({ width: 390, height: 850 });
+  await page.setViewportSize({ width: 1280, height: 850 });
   await page.addInitScript(() => {
     for (const ctor of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) Object.defineProperty(ctor, "requestPermission", { configurable: true, value: () => Promise.resolve("granted") });
   });
   const headers = await login(page); await focusChat(page);
   await seed(request, headers, 1);
-  await page.getByRole("button", { name: "启用摇晃", exact: true }).click();
-  await expect(page.locator(".shore-controls")).toContainText("已启用摇晃感应");
+  await expect(page.locator(".shore-bottle")).toHaveCount(1);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "传感器 运动与方向授权" }).click();
+  await expect(page.locator(".sensor-settings")).toContainText("已启用");
+  await page.getByRole("button", { name: "关闭设置" }).click();
   let previous = ""; let stable = 0;
   await expect.poll(async () => {
     const transform = await page.locator(".shore-bottle").evaluate((element) => (element as HTMLElement).style.transform);
@@ -152,7 +155,68 @@ test("granted sensors wake settled bottles and stopping them preserves natural g
     window.dispatchEvent(new DeviceMotionEvent("devicemotion", { acceleration: { x: -12, y: 8, z: 0 } }));
   });
   await expect.poll(() => page.locator(".shore-bottle").evaluate((element) => new DOMMatrix(getComputedStyle(element).transform).m41)).toBeGreaterThan(before + 2);
-  await page.getByRole("button", { name: "关闭摇晃", exact: true }).click();
-  await expect(page.locator(".shore-controls")).toContainText("已关闭摇晃感应");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "传感器 运动与方向授权" }).click();
+  await page.getByRole("button", { name: "关闭摇晃感应", exact: true }).click();
+  await expect(page.locator(".sensor-settings")).toContainText("已关闭");
+  await page.getByRole("button", { name: "关闭设置" }).click();
   await seed(request, headers, 0);
+});
+
+for (const width of [360, 390]) {
+  test(`long bottle scroll fits ${width}px and restores chat on Escape`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height: 700 });
+    const headers = await login(page);
+    const channelId = await seed(request, headers, 0);
+    const text = "愿平安与你同在。\n".repeat(100);
+    const response = await request.post(`/api/channels/${channelId}/bottles`, { headers, data: { text } });
+    expect(response.ok()).toBeTruthy();
+    const bottle = await response.json();
+    await page.locator(".shore-bottle").click({ force: true });
+    const letter = page.getByRole("region", { name: "匿名瓶中信" });
+    await expect(letter).toBeVisible();
+    await expect(letter.getByRole("img", { name: "已打开的漂流瓶" })).toHaveAttribute("data-bottle-style", String(bottle.style));
+    await expect.poll(() => letter.evaluate((stage) => {
+      const bounds = stage.getBoundingClientRect();
+      return [".letter-close", ".letter-finish", ".bottle-letter-copy"].every((selector) => {
+        const element = stage.querySelector(selector)!; const r = element.getBoundingClientRect();
+        return r.left >= bounds.left && r.right <= bounds.right && r.top >= bounds.top && r.bottom <= bounds.bottom && element.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+      });
+    })).toBe(true);
+    expect(await letter.locator(".bottle-letter-copy").evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+    await page.screenshot({ path: `output/e2e/bottle-scroll-long-${width}.png` });
+    await page.keyboard.press("Escape");
+    await expect(letter).toHaveCount(0);
+    await expect(page.locator(".music-score-chat-cleared")).toHaveCount(0);
+    await expect(page.locator(".shore-bottle")).toHaveCount(0);
+  });
+}
+
+test("ordinary members can grant sensors in settings without bottles", async ({ page, request }) => {
+  const headers = await login(page);
+  await seed(request, headers, 0);
+  const created = await request.post("/api/admin/accounts", { headers, data: E2E_MEMBER });
+  expect(created.ok() || created.status() === 409).toBeTruthy();
+  await page.addInitScript(() => {
+    for (const ctor of [window.DeviceMotionEvent, window.DeviceOrientationEvent]) Object.defineProperty(ctor, "requestPermission", { configurable: true, value: () => Promise.resolve("granted") });
+  });
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.getByPlaceholder("用户名").fill(E2E_MEMBER.username);
+  await page.getByPlaceholder("密码").fill(E2E_MEMBER.password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
+  await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
+  await focusChat(page);
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "传感器 运动与方向授权" }).click();
+  await page.getByRole("button", { name: "授权运动传感器", exact: true }).click();
+  await expect(page.locator(".sensor-settings")).toContainText("已启用");
+  await page.screenshot({ path: "output/e2e/bottle-sensors-member.png" });
+  for (const width of [360, 390]) {
+    await page.setViewportSize({ width, height: 700 });
+    const disable = page.getByRole("button", { name: "关闭摇晃感应", exact: true });
+    await expect(disable).toBeInViewport();
+    expect(await page.locator(".sensor-settings").evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.screenshot({ path: `output/e2e/bottle-sensors-member-${width}.png` });
+  }
 });
