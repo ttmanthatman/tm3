@@ -1,6 +1,7 @@
-export type SettingsTab = "account" | "appearance" | "bible" | "devices" | "notifications" | "sensors" | "release";
+export type SettingsTab = "wallpaper" | "account" | "appearance" | "bible" | "devices" | "notifications" | "sensors" | "release";
 
 export const settingsTabMeta: Record<SettingsTab, { title: string; description: string }> = {
+  wallpaper: { title: "壁纸", description: "大家贡献，自由选择，也可以跟随大家" },
   account: { title: "账号", description: "管理头像、昵称、密码和账号" },
   appearance: { title: "外观", description: "选择舒服、清晰的聊天主题" },
   bible: { title: "经文显示", description: "控制经文弹出的阅读方式" },

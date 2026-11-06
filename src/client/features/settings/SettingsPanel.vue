@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import WallpaperPanel from "../wallpaper/WallpaperPanel.vue";
 import SensorSettings from "./SensorSettings.vue";
 import { onMounted, ref } from "vue";
 import type { ComputedRef, Ref } from "vue";
@@ -202,6 +203,7 @@ function deviceIcon(kind: string) {
           </header>
           <nav class="settings-nav" aria-label="设置分类">
             <button :class="{ active: settingsTab === 'account' }" @click="selectTab('account')"><Users :size="19" /><span><b>账号</b><small>头像与安全</small></span></button>
+            <button :class="{ active: settingsTab === 'wallpaper' }" @click="selectTab('wallpaper')"><Palette :size="19" /><span><b>壁纸</b><small>贡献与跟随大家</small></span></button>
             <button :class="{ active: settingsTab === 'appearance' }" @click="selectTab('appearance')"><Palette :size="19" /><span><b>外观</b><small>主题与颜色</small></span></button>
             <button :class="{ active: settingsTab === 'bible' }" @click="selectTab('bible')"><BookOpen :size="19" /><span><b>经文显示</b><small>格式与引用</small></span></button>
             <button :class="{ active: settingsTab === 'notifications' }" @click="selectTab('notifications')"><Bell :size="19" /><span><b>通知</b><small>设备与频道</small></span></button>
@@ -267,6 +269,7 @@ function deviceIcon(kind: string) {
               </div>
             </div>
           </section>
+          <WallpaperPanel v-if="settingsTab === 'wallpaper'" />
           <section v-if="settingsTab === 'appearance'" class="form-grid settings-section">
             <div class="settings-section-head"><strong>聊天主题</strong><small>仅影响你的账号，可随时切换。</small></div>
             <label>主题</label>

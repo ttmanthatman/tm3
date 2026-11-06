@@ -1,3 +1,4 @@
+import { updateWallpaperFileReferences } from "../wallpaperFiles.js";
 import { importCopyworkBackup, parseCopyworkBackup } from "../services/bibleCopyworkBackup.js";
 import { importBibleNoteBackup, parseBibleNoteBackup } from "../services/bibleNoteBackup.js";
 import bcrypt from "bcryptjs";
@@ -508,6 +509,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
         await prisma.account.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
         await prisma.actor.updateMany({ where: { avatarPath: fileName }, data: { avatarPath: null } });
       } else {
+        if (await updateWallpaperFileReferences(prisma, fileName, null)) io.emit("wallpaper:updated", {});
         const appearance = await appearanceDto();
         if (appearance.wallpaperPath === fileName) {
           await setSetting("wallpaperPath", "");
@@ -586,6 +588,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
   }
 
   async function replaceBackgroundAttachmentReferences(oldFileName: string, newFileName: string) {
+    if (await updateWallpaperFileReferences(prisma, oldFileName, newFileName)) io.emit("wallpaper:updated", {});
     const appearance = await appearanceDto();
     let appearanceChanged = false;
     if (appearance.wallpaperPath === oldFileName) {

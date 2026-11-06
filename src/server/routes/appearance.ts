@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
+import { pipeline } from "node:stream/promises";
 import path from "node:path";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
@@ -253,8 +254,8 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
   return { appearanceDto, setSetting, settingBool, customThemesSetting, themeExists };
 }
 
-export async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, missingMessage: string, shortName = false) {
-  const file = await request.file();
+export async function saveImageUpload(request: FastifyRequest, reply: FastifyReply, missingMessage: string, shortName = false, maxBytes?: number) {
+  const file = await request.file(maxBytes ? { limits: { fileSize: maxBytes } } : undefined);
   if (!file) {
     reply.code(400).send({ success: false, message: missingMessage });
     return "";
@@ -268,13 +269,17 @@ export async function saveImageUpload(request: FastifyRequest, reply: FastifyRep
   const safeExt = ext === ".jpeg" ? ".jpg" : ext;
   const safeName = shortName ? shortStorageFileName(safeExt) : `${crypto.randomUUID()}${safeExt}`;
   const outPath = path.join(BG_DIR, safeName);
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createWriteStream(outPath);
-    file.file.pipe(stream);
-    file.file.on("error", reject);
-    stream.on("finish", resolve);
-    stream.on("error", reject);
-  });
+  try {
+    await pipeline(file.file, fs.createWriteStream(outPath));
+    if (file.file.truncated) {
+      safeUnlink("background", safeName);
+      reply.code(413).send({ success: false, message: "图片文件过大" });
+      return "";
+    }
+  } catch (error) {
+    safeUnlink("background", safeName);
+    throw error;
+  }
   if (!(await validateStoredImage(outPath))) {
     safeUnlink("background", safeName);
     reply.code(400).send({ success: false, message: "图片内容无效或尺寸过大" });

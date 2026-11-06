@@ -1,3 +1,4 @@
+import type { WallpaperState } from "@shared/wallpaper";
 import type { NotificationRead } from "@shared/notificationRead";
 import { pendingNotificationReads, queueNotificationRead, completeNotificationRead, knownNotificationReads, rememberNotificationRead } from "./features/messages/notificationReadQueue";
 import { defineStore } from "pinia";
@@ -140,6 +141,9 @@ export const useChatStore = defineStore("chat", {
     return {
     account: null as AccountDTO | null,
     appearance: { ...defaultAppearance } as AppearanceDTO,
+    wallpaper: null as WallpaperState | null,
+    wallpaperError: "",
+    wallpaperRequest: 0,
     channels: [] as ChannelDTO[],
     currentChannelId: Number(localStorage.getItem("team-chat-current-channel") || 0),
     prayerOnly: localStorage.getItem("team-chat-message-view") === "prayers",
@@ -315,12 +319,15 @@ export const useChatStore = defineStore("chat", {
         const me = await api<{ account: AccountDTO; token?: string }>("/api/auth/me");
         if (me.token) setToken(me.token);
         if (this.account?.id !== me.account.id) {
+          this.wallpaper = null;
+          this.wallpaperRequest++;
           this.acknowledgedMentionIds = [];
           this.readNotificationKeys = [];
           this.notificationReadError = "";
           this.notificationReadsReady = false;
         }
         this.account = me.account;
+        void this.loadWallpaper();
         if (this.hydratedPersistedAccountId && this.hydratedPersistedAccountId !== me.account.id) {
           this.resetMessageWindow();
           // bootstrap() fired the first page before identity was known; if it
@@ -353,10 +360,11 @@ export const useChatStore = defineStore("chat", {
       this.readNotificationKeys = [];
       this.notificationReadError = "";
       this.notificationReadsReady = false;
+      if (this.account?.id !== account.id) { this.wallpaper = null; this.wallpaperRequest++; }
       this.account = account;
       rememberMsgwinAccount(account.id);
       this.initUnreadForAccount();
-      await Promise.all([this.loadLikeNotifications(), this.loadStoryActivity(), this.loadChannels()]);
+      await Promise.all([this.loadWallpaper(), this.loadLikeNotifications(), this.loadStoryActivity(), this.loadChannels()]);
       void this.seedUnreadCounts();
       this.connectSocket();
     },
@@ -369,6 +377,8 @@ export const useChatStore = defineStore("chat", {
       this.socket = null;
       this.connectionState = "offline";
       this.account = null;
+      this.wallpaper = null;
+      this.wallpaperRequest++;
       this.acknowledgedMentionIds = [];
       this.readNotificationKeys = [];
       this.notificationReadError = "";
@@ -387,6 +397,17 @@ export const useChatStore = defineStore("chat", {
       this.messageCache = {};
       this.messageCacheOrder = [];
       clearToken();
+    },
+    async loadWallpaper() {
+      const accountId = this.account?.id;
+      if (!accountId) return;
+      const request = ++this.wallpaperRequest;
+      try {
+        const state = await api<WallpaperState>("/api/wallpapers");
+        if (this.account?.id === accountId && request === this.wallpaperRequest) { this.wallpaper = state; this.wallpaperError = ""; }
+      } catch (error) {
+        if (this.account?.id === accountId && request === this.wallpaperRequest) this.wallpaperError = error instanceof Error ? error.message : "壁纸加载失败";
+      }
     },
     async loadAppearance() {
       this.appearance = await api<AppearanceDTO>("/api/settings/appearance").catch(() => ({ ...defaultAppearance }));
@@ -892,6 +913,7 @@ export const useChatStore = defineStore("chat", {
         const reconnecting = connectedOnce;
         connectedOnce = true;
         this.connectionState = "connected";
+        void this.loadWallpaper();
         if (this.currentChannelId) socket.emit("channel:join", { channelId: this.currentChannelId });
         if (this.account) void this.loadLikeNotifications();
         // 演示目录兜底：连接建立即拉取一次，socket 断档期间的生命周期变化由此补齐。
@@ -1021,7 +1043,8 @@ export const useChatStore = defineStore("chat", {
         window.dispatchEvent(new Event("reception-closed"));
         void this.logout(false);
       });
-      socket.on("appearance:updated", (appearance: AppearanceDTO) => (this.appearance = appearance));
+      socket.on("wallpaper:updated", () => { void this.loadWallpaper(); });
+      socket.on("appearance:updated", (appearance: AppearanceDTO) => { this.appearance = appearance; void this.loadWallpaper(); });
     }
   }
 });

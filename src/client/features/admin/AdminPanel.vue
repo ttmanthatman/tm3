@@ -34,7 +34,6 @@ import {
 import type { ChannelDTO, ThemeDTO, UpdateCheckDTO, UpdateStatusDTO, VersionDTO } from "@shared/types";
 import { APP_VERSION, RELEASE_DATE, RELEASE_NOTES } from "@shared/release";
 import { MUSIC_PANEL_FONT_SIZE_MAX, MUSIC_PANEL_FONT_SIZE_MIN, cleanMusicPanelFontSize } from "@shared/musicPlayback";
-import { cleanWallpaperPanSpeed } from "@shared/wallpaperPan";
 import { compactBytes } from "../../time";
 import { adminDate } from "./adminFormat";
 import { cleanParallaxSpeed, parallaxAssetUrl } from "../../parallax";
@@ -43,7 +42,7 @@ import ChannelIcon from "../../components/ui/ChannelIcon.vue";
 import TransferProgressBar from "../../components/ui/TransferProgressBar.vue";
 import { useChatStore } from "../../store";
 import { adminDirectPageSize, type AdminTools } from "./useAdminTools";
-import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields, wallpaperFitOptions } from "./useAppearanceSettings";
+import { loginBackgroundFitOptions, loginPositionOptions, primaryColorFields } from "./useAppearanceSettings";
 
 const ZoomSettingsPanel = defineAsyncComponent(() => import("./ZoomSettingsPanel.vue"));
 const AdminResourceManager = defineAsyncComponent(() => import("../../components/AdminResourceManager.vue"));
@@ -73,6 +72,8 @@ interface AdminPanelActions {
   wallpaperUrl: (path?: string | null) => string;
   themeSwatchStyle: (theme: ThemeDTO) => { background: string };
 }
+
+const emit = defineEmits<{ wallpaper: [] }>();
 
 const props = defineProps<{
   tools: AdminTools;
@@ -120,11 +121,7 @@ const {
   activeAppearanceSection,
   appearanceDraftIcon,
   appearanceDraftLoginIcon,
-  appearanceDraftWallpaper,
   appearancePreviewLoginStyle,
-  appearancePreviewChatStyle,
-  wallpaperPanFocusMarkerStyle,
-  wallpaperPanSpeedLabel,
   parallaxKitOptions,
   draftParallaxKit,
   parallaxSpeedLabel,
@@ -168,7 +165,6 @@ const {
   removeParallaxLayer,
   pickParallaxLayer,
   uploadParallaxLayer,
-  setWallpaperPanFocus,
   addFlashColor,
   removeFlashColor,
   saveLoginAppearance,
@@ -459,49 +455,9 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
 
               <template v-else-if="appearanceSection === 'chat'">
                 <label>聊天室壁纸</label>
-                <div class="appearance-image-control">
-                  <button class="appearance-image-preview-button login-background-preview chat" :style="appearancePreviewChatStyle" @click="openAppearanceImagePicker('wallpaperPath', '选择聊天室壁纸', '聊天消息后方的背景图，可选择填满、完整显示、拉伸、平铺或推拉摇移。', 'wallpaperFit')" aria-label="选择聊天室壁纸"></button>
-                  <div>
-                    <strong>聊天区背景图</strong>
-                    <small>{{ loginAppearanceEdit.wallpaperPath || "未设置壁纸，点击预览更换" }}</small>
-                  </div>
-                  <select v-model="loginAppearanceEdit.wallpaperFit" aria-label="聊天室壁纸显示方式">
-                    <option v-for="option in wallpaperFitOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
-                  </select>
-                </div>
-                <section v-if="loginAppearanceEdit.wallpaperFit === 'pan'" class="wallpaper-pan-settings">
-                  <div>
-                    <b>初始画面中心</b>
-                    <small>在图上点选一个位置；打开聊天室时，该横坐标会尽量对准视口中心。</small>
-                  </div>
-                  <button
-                    v-if="appearanceDraftWallpaper"
-                    type="button"
-                    class="wallpaper-pan-focus-picker"
-                    @click="setWallpaperPanFocus"
-                    aria-label="在壁纸上指定初始画面中心"
-                  >
-                    <span class="wallpaper-pan-focus-image">
-                      <img :src="wallpaperUrl(appearanceDraftWallpaper)" alt="" />
-                      <span class="wallpaper-pan-focus-line" :style="wallpaperPanFocusMarkerStyle"><i></i></span>
-                    </span>
-                  </button>
-                  <p v-else class="settings-note">请先选择一张聊天室壁纸。</p>
-                  <div class="wallpaper-pan-controls">
-                    <label>
-                      <span>初始移动方向</span>
-                      <span class="segmented-buttons">
-                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'left' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'left'">向左</button>
-                        <button type="button" :class="{ selected: loginAppearanceEdit.wallpaperPanDirection === 'right' }" @click="loginAppearanceEdit.wallpaperPanDirection = 'right'">向右</button>
-                      </span>
-                    </label>
-                    <label>
-                      <span><b>相对消息移动速度</b><output>{{ wallpaperPanSpeedLabel }}</output></span>
-                      <input v-model.number="loginAppearanceEdit.wallpaperPanSpeed" type="range" min="0.02" max="1" step="0.01" />
-                      <small>消息上下移动 100 像素时，壁纸移动 {{ Math.round(cleanWallpaperPanSpeed(loginAppearanceEdit.wallpaperPanSpeed) * 100) }} 像素。</small>
-                    </label>
-                  </div>
-                </section>
+                <button class="primary-btn" @click="emit('wallpaper')">打开独立壁纸设置</button>
+                <p class="settings-note">所有成员均可贡献和设置壁纸，也可选择仅自己使用。</p>
+
                 <label>圣经滑动切换</label>
                 <label class="check-row"><input v-model="loginAppearanceEdit.bibleSwipeEnabled" type="checkbox" role="switch" /> 左右滑动切换聊天室与圣经</label>
                 <small>聊天室右滑进入圣经，圣经左滑返回聊天室；关闭后仍可通过按钮切换。</small>
@@ -747,31 +703,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
                 </template>
 
                 <template v-else-if="appearanceSection === 'chat'">
-                  <div class="appearance-preview-block">
-                    <strong>桌面聊天室</strong>
-                    <div class="appearance-device desktop">
-                      <div class="appearance-chat-preview" :style="appearancePreviewChatStyle">
-                        <div class="appearance-chat-sidebar"><b>频道</b><span>主聊天室</span><span>代祷事项</span></div>
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message other">这是别人发来的消息。</p>
-                          <p class="preview-message mine">这是自己的消息。</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="appearance-preview-block">
-                    <strong>移动聊天室</strong>
-                    <div class="appearance-device mobile">
-                      <div class="appearance-chat-preview mobile-chat" :style="appearancePreviewChatStyle">
-                        <div class="appearance-chat-main">
-                          <div class="appearance-chat-top">主聊天室</div>
-                          <p class="preview-message other">移动端消息</p>
-                          <p class="preview-message mine">自己的回复</p>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  <button class="primary-btn" @click="emit('wallpaper')">打开壁纸全屏预览</button>
                 </template>
 
                 <template v-else-if="appearanceSection === 'parallax'">

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import WallpaperStatus from "./features/wallpaper/WallpaperStatus.vue";
+import { effectiveWallpaper, wallpaperFitPresentation } from "@shared/wallpaper";
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   AudioLines,
@@ -21,6 +23,7 @@ import {
   MessageCircle,
   Mic,
   Monitor,
+  Palette,
   PanelLeftClose,
   PanelRightClose,
   Pin,
@@ -2172,13 +2175,14 @@ const activeFlashColor = computed(() => {
   const colors = flashEffect.value.colors;
   return colors[flashEffectStep.value % colors.length] || colors[0];
 });
-const hasWallpaper = computed(() => !!store.appearance.wallpaperPath);
+const currentWallpaper = computed(() => effectiveWallpaper(store.wallpaper, store.appearance));
+const hasWallpaper = computed(() => !!currentWallpaper.value.wallpaperPath);
 const hasLoginBackground = computed(() => !!store.appearance.loginBackgroundPath);
-const wallpaperPanActive = computed(() => hasWallpaper.value && store.appearance.wallpaperFit === "pan");
-const wallpaperBackground = computed(() => wallpaperFitStyle(store.appearance.wallpaperFit));
+const wallpaperPanActive = computed(() => hasWallpaper.value && currentWallpaper.value.wallpaperFit === "pan");
+const wallpaperBackground = computed(() => wallpaperFitStyle(currentWallpaper.value.wallpaperFit));
 const loginBackground = computed(() => wallpaperFitStyle(store.appearance.loginBackgroundFit));
 const wallpaperPanImageSource = computed(() => {
-  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  const source = wallpaperUrl(currentWallpaper.value.wallpaperPath);
   if (!source || !wallpaperPanRetryKey.value) return source;
   return `${source}${source.includes("?") ? "&" : "?"}pan-retry=${wallpaperPanRetryKey.value}`;
 });
@@ -2200,7 +2204,7 @@ const appearanceStyle = computed(() => ({
   "--water-tilt-x": `${waterTilt.value.x.toFixed(2)}px`,
   "--water-tilt-y": `${waterTilt.value.y.toFixed(2)}px`,
   "--water-tilt-rotate": `${(waterTilt.value.x * 0.26).toFixed(2)}deg`,
-  "--wallpaper-image": hasWallpaper.value && !wallpaperPanActive.value ? `url("${wallpaperUrl(store.appearance.wallpaperPath)}")` : "none",
+  "--wallpaper-image": hasWallpaper.value && !wallpaperPanActive.value ? `url("${wallpaperUrl(currentWallpaper.value.wallpaperPath)}")` : "none",
   "--wallpaper-size": wallpaperBackground.value.size,
   "--wallpaper-repeat": wallpaperBackground.value.repeat,
   "--wallpaper-label-text": wallpaperLabelText.value,
@@ -2220,7 +2224,7 @@ watch(
 );
 
 watch(
-  () => [store.appearance.wallpaperPath, activePalette.value.chatBg] as const,
+  () => [currentWallpaper.value.wallpaperPath, activePalette.value.chatBg] as const,
   () => updateWallpaperLabelTone(),
   { immediate: true }
 );
@@ -2229,10 +2233,10 @@ useComposerAutosize(composerInput, input);
 
 watch(
   () => [
-    store.appearance.wallpaperPath,
-    store.appearance.wallpaperFit,
-    store.appearance.wallpaperPanFocusX,
-    store.appearance.wallpaperPanDirection
+    currentWallpaper.value.wallpaperPath,
+    currentWallpaper.value.wallpaperFit,
+    currentWallpaper.value.wallpaperPanFocusX,
+    currentWallpaper.value.wallpaperPanDirection
   ] as const,
   () => void nextTick(resetWallpaperPan),
   { immediate: true }
@@ -2580,7 +2584,7 @@ async function ensureReleaseHistory() {
   }
 }
 const releaseDeveloper = computed(() => serverVersion.value?.developer || RELEASE_DEVELOPER);
-const activeParallaxKit = computed(() => parallaxKit(store.appearance.parallaxKits || [], store.appearance.parallaxKit));
+const activeParallaxKit = computed(() => store.wallpaper && (store.wallpaper.preference.mode !== "follow" || store.wallpaper.version !== "legacy") ? null : parallaxKit(store.appearance.parallaxKits || [], store.appearance.parallaxKit));
 watch(
   () => [
     `${appearancePreviewFlash.value.colors.join(",")}:${appearancePreviewFlash.value.intervalSeconds}:${appearancePreviewFlash.value.transitionMode}`,
@@ -4530,7 +4534,7 @@ function resizeWallpaperPan() {
   wallpaperPanImageWidth.value = next.imageWidth;
   wallpaperPanReady.value = pane.clientWidth > 0 && pane.clientHeight > 0 && next.imageWidth > 0;
   if (!previous || previous.maxOffset - previous.minOffset <= 0.001) {
-    wallpaperPanOffset.value = initialWallpaperPanOffset(next, store.appearance.wallpaperPanFocusX);
+    wallpaperPanOffset.value = initialWallpaperPanOffset(next, currentWallpaper.value.wallpaperPanFocusX);
     return;
   }
   const progress = (wallpaperPanOffset.value - previous.minOffset) / (previous.maxOffset - previous.minOffset);
@@ -4571,7 +4575,7 @@ function syncWallpaperLabelToneFromImage(image: HTMLImageElement) {
 function updateWallpaperLabelTone() {
   const generation = ++wallpaperLabelSampleGeneration;
   wallpaperLabelToneValue.value = wallpaperLabelTone(activePalette.value.chatBg);
-  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  const source = wallpaperUrl(currentWallpaper.value.wallpaperPath);
   if (!source) return;
   const mountedPanImage = wallpaperPanImage.value;
   if (mountedPanImage?.complete && mountedPanImage.naturalWidth > 0) {
@@ -4593,7 +4597,7 @@ function handleWallpaperPanImageError(event: Event) {
   wallpaperPanNaturalSize = null;
   wallpaperPanImageWidth.value = 0;
   if (wallpaperPanRetryTimer !== undefined || wallpaperPanRetryAttempt >= 3) return;
-  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  const source = wallpaperUrl(currentWallpaper.value.wallpaperPath);
   const attempt = ++wallpaperPanRetryAttempt;
   wallpaperPanRetryTimer = window.setTimeout(() => {
     wallpaperPanRetryTimer = undefined;
@@ -4603,7 +4607,7 @@ function handleWallpaperPanImageError(event: Event) {
 }
 
 async function resetWallpaperPan() {
-  const source = wallpaperUrl(store.appearance.wallpaperPath);
+  const source = wallpaperUrl(currentWallpaper.value.wallpaperPath);
   if (source !== wallpaperPanRetrySource) {
     if (wallpaperPanRetryTimer !== undefined) window.clearTimeout(wallpaperPanRetryTimer);
     wallpaperPanRetryTimer = undefined;
@@ -4613,7 +4617,7 @@ async function resetWallpaperPan() {
   }
   wallpaperPanReady.value = false;
   pendingWallpaperPanDelta = 0;
-  wallpaperPanDirection = cleanWallpaperPanDirection(store.appearance.wallpaperPanDirection);
+  wallpaperPanDirection = cleanWallpaperPanDirection(currentWallpaper.value.wallpaperPanDirection);
   wallpaperPanMetrics = null;
   wallpaperPanNaturalSize = null;
   wallpaperPanOffset.value = 0;
@@ -4653,7 +4657,7 @@ function updateParallaxFromScroll(el: HTMLElement) {
       const moved = advanceWallpaperPan(
         wallpaperPanOffset.value,
         wallpaperPanDirection,
-        pendingWallpaperPanDelta * cleanWallpaperPanSpeed(store.appearance.wallpaperPanSpeed),
+        pendingWallpaperPanDelta * cleanWallpaperPanSpeed(currentWallpaper.value.wallpaperPanSpeed),
         wallpaperPanMetrics
       );
       wallpaperPanOffset.value = moved.offset;
@@ -4859,11 +4863,7 @@ function syncFlashEffectTimer(forceRestart = false) {
 }
 
 function wallpaperFitStyle(fit?: WallpaperFit | null) {
-  if (fit === "pan") return { size: "auto 100%", repeat: "no-repeat" };
-  if (fit === "contain") return { size: "contain", repeat: "no-repeat" };
-  if (fit === "stretch") return { size: "100% 100%", repeat: "no-repeat" };
-  if (fit === "repeat") return { size: "auto", repeat: "repeat" };
-  return { size: "cover", repeat: "no-repeat" };
+  return wallpaperFitPresentation(fit || "cover");
 }
 
 function themeSwatchStyle(theme: ThemeDTO) {
@@ -5765,6 +5765,7 @@ const messageRowBindings = {
           <b>{{ store.account.displayName }}</b>
           <small>{{ store.account.isAdmin ? "管理员" : "成员" }}</small>
         </div>
+        <button class="icon-btn" @click="openSettings('wallpaper')" aria-label="更换壁纸"><Palette :size="18" /></button>
         <button class="icon-btn" @click="openSettings()" aria-label="设置"><Settings :size="18" /></button>
         <button class="icon-btn" @click="logoutApp()" aria-label="退出"><LogOut :size="18" /></button>
       </footer>
@@ -6910,9 +6911,10 @@ const messageRowBindings = {
       @more-settings="openSettings('notifications'); notificationPromptOpen = false"
     />
 
+    <WallpaperStatus />
     <SettingsPanel v-if="showSettings" :settings="settingsPanelBindings" @deleted="handleOwnAccountDeleted" />
 
-    <AdminPanel v-if="showAdmin" :tools="adminTools" :release="adminReleaseBindings" :actions="adminPanelActions" />
+    <AdminPanel @wallpaper="showAdmin = false; openSettings('wallpaper')" v-if="showAdmin" :tools="adminTools" :release="adminReleaseBindings" :actions="adminPanelActions" />
 
     <AppearanceImagePicker
       v-if="appearanceImagePicker"

@@ -61,6 +61,7 @@ import { registerGraceRoutes } from "./routes/grace.js";
 import { registerTranscribeRoutes } from "./routes/transcribe.js";
 import { registerMessageSearchRoutes } from "./routes/messageSearch.js";
 import { createVoiceAsrService } from "./voiceAsr.js";
+import { registerWallpaperRoutes } from "./routes/wallpaper.js";
 import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBibleLookupRoutes } from "./routes/bibleLookup.js";
@@ -4270,6 +4271,11 @@ registerNotificationsRoutes(app, {
 });
 
 registerWhyTopicsRoutes(app, { requireAuth });
+
+registerWallpaperRoutes(app, { prisma, requireAuth, appearance: appearanceService, changed: (accountId) => {
+  if (accountId) io.to(`acct:${accountId}`).emit("wallpaper:updated");
+  else io.emit("wallpaper:updated");
+} });
 
 registerAppearanceRoutes(app, {
   requireAdmin,
