@@ -1309,11 +1309,21 @@ const RELEASE_2_12_1_NOTES = [
   "优化水滴与下雨动画的绘制、帧率和资源管理；页面隐藏或减少动态效果时暂停动画。"
 ] as const
 
+const RELEASE_2_13_0_NOTES = [
+  "新增聊天室单选投票，可改选、置顶，并实时显示柱状图。",
+  "新增匿名漂流瓶，提供 12 种写实外观、碰撞沉积、可选摇晃感应和阅后消失。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.14.0",
+    date: "2026-11-07",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.13.0",
     date: "2026-11-04",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_13_0_NOTES
   },
   {
     version: "2.12.1",
