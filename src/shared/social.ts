@@ -15,3 +15,20 @@ export type Bottle = { id: string; style: number };
 export const bottleTextSchema = z.string().trim().min(1).max(2000);
 
 export type SocialChange = { channelId: number; pollId?: number; removedBottleId?: string };
+
+export type BottleLogRecord = {
+  id: string;
+  channelId: number;
+  text: string;
+  senderAccountId: number | null;
+  sentAt: string | null;
+  readerAccountId: number | null;
+  openedAt: string | null;
+};
+export type AdminBottleLog = BottleLogRecord & {
+  channelName: string;
+  senderName: string | null;
+  senderUsername: string | null;
+  readerName: string | null;
+  readerUsername: string | null;
+};

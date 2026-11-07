@@ -217,6 +217,7 @@ import { useMessageRendering, type MentionToast } from "./features/messages/useM
 import { useMusicMentionRendering } from "./features/messages/useMusicMentionRendering";
 import { useAdminTools } from "./features/admin/useAdminTools";
 import VirtualRolePrompts from "./features/admin/VirtualRolePrompts.vue";
+import BottleLogPanel from "./features/admin/BottleLogPanel.vue";
 import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
 import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
 import AssistantToolsSettingsPanel from "./features/admin/AssistantToolsSettingsPanel.vue";
@@ -704,12 +705,13 @@ const settingsTab = ref<SettingsTab>("account");
 const settingsLoadError = ref("");
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
-const activityLogFilterOptions: Array<{ value: "all" | ActivityLogCategory; label: string }> = [
+const activityLogFilterOptions: Array<{ value: "all" | "bottle" | ActivityLogCategory; label: string }> = [
   { value: "all", label: "全部" },
   { value: "session", label: "会话" },
   { value: "music", label: "音乐" },
   { value: "usage", label: "使用情况" },
-  { value: "ai", label: "AI 问答" }
+  { value: "ai", label: "AI 问答" },
+  { value: "bottle", label: "漂流瓶" }
 ];
 const adminTools = useAdminTools({
   showAdmin,
@@ -5530,10 +5532,10 @@ const messageRowBindings = {
       <header class="ai-settings-head">
         <div>
           <strong>活动日志</strong>
-          <small>会话、版本、在线时长、音乐进度与虚拟角色问答（含私聊）</small>
+          <small>会话、版本、在线时长、音乐进度、虚拟角色问答（含私聊）与漂流瓶</small>
         </div>
         <div class="login-log-actions">
-          <button class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
+          <button v-if="activityLogFilter !== 'bottle'" class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
           <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
         </div>
       </header>
@@ -5541,38 +5543,41 @@ const messageRowBindings = {
         <nav class="activity-log-filters" aria-label="日志分类">
           <button v-for="option in activityLogFilterOptions" :key="option.value" type="button" :class="{ active: activityLogFilter === option.value }" @click="setActivityLogFilter(option.value)">{{ option.label }}</button>
         </nav>
-        <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
-        <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载活动日志...</p>
-        <p v-else-if="!adminLoginLogs.length" class="settings-note">这个分类还没有日志。</p>
-        <div v-else class="login-log-list">
-          <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
-            <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
-            <div class="login-log-main">
-              <div class="login-log-title">
-                <strong>{{ log.displayName }}</strong>
-                <small>@{{ log.username }}</small>
-                <time>{{ adminDateTime(log.createdAt) }}</time>
+        <BottleLogPanel v-if="activityLogFilter === 'bottle'" />
+        <template v-else>
+          <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
+          <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载活动日志...</p>
+          <p v-else-if="!adminLoginLogs.length" class="settings-note">这个分类还没有日志。</p>
+          <div v-else class="login-log-list">
+            <article v-for="log in adminLoginLogs" :key="log.id" class="login-log-row">
+              <div class="login-log-badge" :class="loginLogTone(log.kind)">{{ loginLogKindLabel(log.kind) }}</div>
+              <div class="login-log-main">
+                <div class="login-log-title">
+                  <strong>{{ log.displayName }}</strong>
+                  <small>@{{ log.username }}</small>
+                  <time>{{ adminDateTime(log.createdAt) }}</time>
+                </div>
+                <div class="login-log-meta">
+                  <span v-if="log.deviceName">{{ displayedDeviceName(log) }}</span>
+                  <span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span>
+                  <span v-if="log.channelName">频道：{{ log.channelName }}</span>
+                  <span v-if="log.trackTitle">歌曲：{{ log.trackTitle }}</span>
+                  <span v-if="log.state">{{ activityStateLabel(log.state) }}</span>
+                  <span v-if="log.ipAddress">IP {{ log.ipAddress }}</span>
+                  <span v-if="log.sessionId">会话 {{ log.sessionId.slice(0, 8) }}</span>
+                </div>
+                <AiExchangeLogDetail v-if="log.kind === 'ai_exchange'" :log="log" />
+                <small v-if="log.kind === 'music_progress'" class="activity-log-detail">{{ musicProgressSummary(log) }}</small>
+                <small v-if="log.kind === 'presence_leave' && log.durationMs != null" class="activity-log-detail">本次在线 {{ activityDuration(log.durationMs) }}</small>
+                <small v-if="log.appVersion" class="activity-log-detail">
+                  客户端 v{{ log.appVersion }}<template v-if="log.latestVersion"> · 当时服务器 v{{ log.latestVersion }} · {{ log.isLatestVersion ? "已是最新版" : "不是最新版" }}</template>
+                </small>
+                <small v-if="log.playbackId" class="activity-log-detail">播放会话 {{ log.playbackId.slice(0, 8) }}</small>
+                <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
               </div>
-              <div class="login-log-meta">
-                <span v-if="log.deviceName">{{ displayedDeviceName(log) }}</span>
-                <span v-if="log.deviceKind">{{ deviceLabel(log.deviceKind) }}</span>
-                <span v-if="log.channelName">频道：{{ log.channelName }}</span>
-                <span v-if="log.trackTitle">歌曲：{{ log.trackTitle }}</span>
-                <span v-if="log.state">{{ activityStateLabel(log.state) }}</span>
-                <span v-if="log.ipAddress">IP {{ log.ipAddress }}</span>
-                <span v-if="log.sessionId">会话 {{ log.sessionId.slice(0, 8) }}</span>
-              </div>
-              <AiExchangeLogDetail v-if="log.kind === 'ai_exchange'" :log="log" />
-              <small v-if="log.kind === 'music_progress'" class="activity-log-detail">{{ musicProgressSummary(log) }}</small>
-              <small v-if="log.kind === 'presence_leave' && log.durationMs != null" class="activity-log-detail">本次在线 {{ activityDuration(log.durationMs) }}</small>
-              <small v-if="log.appVersion" class="activity-log-detail">
-                客户端 v{{ log.appVersion }}<template v-if="log.latestVersion"> · 当时服务器 v{{ log.latestVersion }} · {{ log.isLatestVersion ? "已是最新版" : "不是最新版" }}</template>
-              </small>
-              <small v-if="log.playbackId" class="activity-log-detail">播放会话 {{ log.playbackId.slice(0, 8) }}</small>
-              <small v-if="log.userAgent" class="login-log-agent">{{ log.userAgent }}</small>
-            </div>
-          </article>
-        </div>
+            </article>
+          </div>
+        </template>
       </section>
     </section>
   </main>

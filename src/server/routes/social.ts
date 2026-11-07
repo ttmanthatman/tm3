@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
+import type { BottleLogRecord } from "../../shared/social.js";
 import { bottleTextSchema, pollPayload, pollSchema } from "../../shared/social.js";
 
 type Auth = { accountId: number; actorId: number };
@@ -86,10 +87,10 @@ export function registerSocialRoutes(app: FastifyInstance, deps: Dependencies) {
   });
   app.post("/api/channels/:channelId/bottles", { preHandler }, async (request) => {
     const { channelId } = validate(channelParams, request.params);
-    await access(request, channelId, true);
+    const auth = await access(request, channelId, true);
     const { text } = validate(z.object({ text: bottleTextSchema }).strict(), request.body);
     const bottle = await prisma.$transaction(async (tx) => {
-      // Serialize capacity and appearance allocation across processes. No author is stored.
+      // Serialize capacity, appearance allocation and audit writes across processes.
       await tx.$queryRaw`SELECT id FROM channels WHERE id = ${channelId} FOR UPDATE`;
       const rows = await tx.setting.findMany({ where: { key: { startsWith: `bottle:${channelId}:` } } });
       const used = new Set(rows.map((row) => (JSON.parse(row.value) as StoredBottle).style));
@@ -98,6 +99,11 @@ export function registerSocialRoutes(app: FastifyInstance, deps: Dependencies) {
       const style = styles[Math.floor(Math.random() * styles.length)];
       const id = randomUUID();
       await tx.setting.create({ data: { key: `bottle:${channelId}:${id}`, value: JSON.stringify({ text, style }) } });
+      const log: BottleLogRecord = {
+        id, channelId, text, senderAccountId: auth.accountId, sentAt: new Date().toISOString(),
+        readerAccountId: null, openedAt: null
+      };
+      await tx.setting.create({ data: { key: `bottle-log:${id}`, value: JSON.stringify(log) } });
       return { id, style };
     });
     deps.changed(channelId);
@@ -106,14 +112,25 @@ export function registerSocialRoutes(app: FastifyInstance, deps: Dependencies) {
   app.post("/api/channels/:channelId/bottles/:id/open", { preHandler }, async (request, reply) => {
     reply.header("Cache-Control", "private, no-store");
     const { channelId, id } = validate(bottleParams, request.params);
-    await access(request, channelId, true);
+    const auth = await access(request, channelId, true);
     const key = `bottle:${channelId}:${id}`;
     const bottle = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM channels WHERE id = ${channelId} FOR UPDATE`;
       const row = await tx.setting.findUnique({ where: { key } });
       if (!row) throw fail(410, "这个瓶子已被捡走");
+      const stored = JSON.parse(row.value) as StoredBottle;
+      const logKey = `bottle-log:${id}`;
+      const previous = await tx.setting.findUnique({ where: { key: logKey } });
+      const log: BottleLogRecord = previous ? JSON.parse(previous.value) as BottleLogRecord : {
+        id, channelId, text: stored.text, senderAccountId: null, sentAt: null,
+        readerAccountId: null, openedAt: null
+      };
+      log.readerAccountId = auth.accountId;
+      log.openedAt = new Date().toISOString();
+      const value = JSON.stringify(log);
+      await tx.setting.upsert({ where: { key: logKey }, create: { key: logKey, value }, update: { value } });
       await tx.setting.delete({ where: { key } });
-      return JSON.parse(row.value) as StoredBottle;
+      return { text: stored.text, style: stored.style };
     });
     deps.changed(channelId, undefined, id);
     return { id, ...bottle };

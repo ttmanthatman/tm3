@@ -301,6 +301,8 @@
 }
 
 .login-log-actions {
+  flex-shrink: 0;
+  white-space: nowrap;
   display: flex;
   align-items: center;
   gap: 8px;

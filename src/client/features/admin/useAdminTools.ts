@@ -131,7 +131,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
   const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
   const adminLoginLogsBusy = ref(false);
   const adminLoginLogsMsg = ref("");
-  const activityLogFilter = ref<"all" | ActivityLogCategory>("all");
+  const activityLogFilter = ref<"all" | "bottle" | ActivityLogCategory>("all");
   const dataChannelFilter = ref(0);
   const devices = ref<DeviceSessionDTO[]>([]);
 
@@ -292,7 +292,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
   }
 
   async function loadAdminLoginLogs() {
-    if (!store.account?.isAdmin) return;
+    if (!store.account?.isAdmin || activityLogFilter.value === "bottle") return;
     adminLoginLogsBusy.value = true;
     adminLoginLogsMsg.value = "";
     try {
@@ -306,7 +306,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
     }
   }
 
-  async function setActivityLogFilter(filter: "all" | ActivityLogCategory) {
+  async function setActivityLogFilter(filter: "all" | "bottle" | ActivityLogCategory) {
     activityLogFilter.value = filter;
     await loadAdminLoginLogs();
   }

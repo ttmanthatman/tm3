@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { AdminLoginLogDTO, AdminLoginLogKind } from "../../shared/types.js";
 import { activityLogCategory, friendlyDeviceName } from "../../shared/activityLog.js";
 import { musicTrackTitle } from "../music.js";
+import { registerBottleLogRoutes } from "./bottleLogs.js";
 
 const AI_LOG_TEXT_LIMIT = 65_535;
 
@@ -18,6 +19,7 @@ function aiMessageLogText(message: { content: string | null; type: string; fileN
 
 export function registerAdminLogRoutes(app: FastifyInstance, deps: { prisma: PrismaClient; requireAdmin: preHandlerHookHandler }) {
   const { prisma, requireAdmin } = deps;
+  registerBottleLogRoutes(app, deps);
 
   async function adminActivityLogs(request: FastifyRequest, reply: FastifyReply) {
     const parsed = z
