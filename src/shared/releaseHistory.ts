@@ -1320,11 +1320,21 @@ const RELEASE_2_14_0_NOTES = [
   "补充壁纸撤下、管理员下架和附件删除、压缩时的引用处理，并校验图片内容与上传大小。"
 ] as const
 
+const RELEASE_2_14_1_NOTES = [
+  "修复电子书笔记的黄色入口遮挡后续正文的问题，改为摘录内的透明下划线入口，保留点击和键盘查看。",
+  "改进了漂流瓶的功能。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.15.0",
+    date: "2026-11-11",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.14.1",
     date: "2026-11-11",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_14_1_NOTES
   },
   {
     version: "2.14.0",
