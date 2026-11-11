@@ -139,6 +139,9 @@ model Account {
   booksCreated            Book[]
   bookProgress            BookProgress[]
 
+  calendarEvents CalendarEvent[]
+  calendarNotices CalendarNotice[]
+
   @@map("accounts")
 }
 
@@ -311,6 +314,8 @@ model Channel {
   messages                Message[]
   pinned                  PinnedItem[]
 
+  calendarEvents CalendarEvent[]
+
   @@map("channels")
 }
 
@@ -369,6 +374,7 @@ model Message {
   fileSize        Int?                  @map("file_size")
   replyToId       Int?                  @map("reply_to_id")
   chainRootId     Int?                  @map("chain_root_id")
+  calendarOwnerActorId Int? @map("calendar_owner_actor_id")
   chainVersion    Int?                  @map("chain_version")
   musicOrder      Int?                  @map("music_order")
   createdAt       DateTime              @default(now()) @map("created_at")
@@ -1013,4 +1019,73 @@ model BibleAudioChapter {
   @@unique([versionId, bookCode, chapter])
   @@index([versionId, bookCode])
   @@map("bible_audio_chapters")
+}
+
+model CalendarEvent {
+  id Int @id @default(autoincrement())
+  channelId Int @map("channel_id")
+  ownerAccountId Int @map("owner_account_id")
+  ownerActorId Int @map("owner_actor_id")
+  title String @db.VarChar(160)
+  description String @db.Text
+  startAt DateTime @map("start_at")
+  endAt DateTime @map("end_at")
+  timeZone String @map("time_zone") @db.VarChar(80)
+  allDay Boolean @default(false) @map("all_day")
+  visibility String @default("private") @db.VarChar(16)
+  repeat String @default("none") @db.VarChar(16)
+  weekdays Json
+  untilAt DateTime? @map("until_at")
+  excludedDates Json @map("excluded_dates")
+  reminders Json
+  reminderMode String @default("private") @map("reminder_mode") @db.VarChar(16)
+  reminderText String @map("reminder_text") @db.Text
+  chainConfig Json? @map("chain_config")
+  paused Boolean @default(false)
+  revision Int @default(1)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  owner Account @relation(fields: [ownerAccountId], references: [id], onDelete: Cascade)
+  grants CalendarGrant[]
+  deliveries CalendarDelivery[]
+  @@index([channelId, startAt])
+  @@map("calendar_events")
+}
+
+model CalendarGrant {
+  eventId Int @map("event_id")
+  accountId Int @map("account_id")
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  @@id([eventId, accountId])
+  @@map("calendar_grants")
+}
+
+model CalendarDelivery {
+  id Int @id @default(autoincrement())
+  eventId Int @map("event_id")
+  revision Int
+  occurrenceAt DateTime @map("occurrence_at")
+  reminderIndex Int @map("reminder_index")
+  status String @default("sent") @db.VarChar(16)
+  messageId Int? @unique @map("message_id")
+  broadcastedAt DateTime? @map("broadcasted_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  event CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  notices CalendarNotice[]
+  @@unique([eventId, revision, occurrenceAt, reminderIndex])
+  @@index([broadcastedAt, messageId])
+  @@map("calendar_deliveries")
+}
+
+model CalendarNotice {
+  id Int @id @default(autoincrement())
+  deliveryId Int @map("delivery_id")
+  accountId Int @map("account_id")
+  readAt DateTime? @map("read_at")
+  delivery CalendarDelivery @relation(fields: [deliveryId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  @@unique([deliveryId, accountId])
+  @@index([accountId, readAt])
+  @@map("calendar_notices")
 }

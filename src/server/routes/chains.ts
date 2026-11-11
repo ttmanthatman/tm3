@@ -14,6 +14,7 @@ export type ChainRouteDependencies = {
   prisma: PrismaClient;
   requireAuth: preHandlerHookHandler;
   canAccessChannel(accountId: number, channelId: number): Promise<boolean>;
+  canManageChannel?(accountId: number, channelId: number): Promise<boolean>;
   refreshChannel(channelId: number, rootId: number): void;
 };
 
@@ -41,7 +42,7 @@ export function registerChainRoutes(app: FastifyInstance, deps: ChainRouteDepend
     if (!root || !(await deps.canAccessChannel(auth.accountId, root.channelId))) {
       return reply.code(404).send({ success: false, message: "接龙不存在" });
     }
-    if (!auth.isAdmin && root.sender.accountId !== auth.accountId) {
+    if (!auth.isAdmin && root.sender.accountId !== auth.accountId && !(root.calendarOwnerActorId === auth.actorId) && !(root.calendarOwnerActorId && await deps.canManageChannel?.(auth.accountId, root.channelId))) {
       return reply.code(403).send({ success: false, message: "只有接龙发起人或管理员可以终止接龙" });
     }
 

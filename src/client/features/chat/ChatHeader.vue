@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
 import {
+  CalendarDays,
   CheckCircle2,
   ChevronLeft,
   Ellipsis,
@@ -101,6 +102,7 @@ const props = defineProps<{
   jumpToMessageInChannel: (channelId: number, messageId: number) => void | Promise<void>;
 }>();
 
+const emit = defineEmits<{ openCalendar: [] }>();
 const messageSearchOpen = ref(false);
 const usageHelpOpen = ref(false);
 const chatToolsTrigger = ref<HTMLButtonElement | null>(null);
@@ -183,6 +185,7 @@ onBeforeUnmount(clearStoryHold);
     </div>
     <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BibleIcon :open="bibleOpen" /></button>
     <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
+    <button v-if="!showingFavoriteSurface && currentChannel?.kind === 'standard' && !currentChannel.directKey" class="icon-btn calendar-header-trigger" type="button" aria-label="打开群日历" title="群日历" @click="emit('openCalendar')"><CalendarDays :size="20" /></button>
     <SermonHub v-if="!showingFavoriteSurface" />
     <ListenControl
       v-if="!showingFavoriteSurface"

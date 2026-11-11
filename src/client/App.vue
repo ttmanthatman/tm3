@@ -90,6 +90,7 @@ import { provideZoomAnnouncements } from "./features/zoom/useZoomAnnouncements";
 import MessageRow from "./features/messages/MessageRow.vue";
 import SocialComposer from "./features/social/SocialComposer.vue";
 import ComposerBar from "./features/composer/ComposerBar.vue";
+import CalendarHost from "./features/calendar/CalendarHost.vue";
 import ChatHeader from "./features/chat/ChatHeader.vue";
 import AppModal from "./components/ui/AppModal.vue";
 import { sharedModalStack } from "./components/ui/modalStack";
@@ -828,6 +829,7 @@ const notificationPublicKey = ref("");
 const notificationPermission = ref(typeof Notification === "undefined" ? "default" : Notification.permission);
 const notificationEnabled = ref(false);
 const notificationBusy = ref(false);
+const calendarHost = ref<InstanceType<typeof CalendarHost> | null>(null);
 const notificationPromptOpen = ref(false);
 const notificationPermissionAttempts = ref(0);
 const mutedChannelIds = ref<Set<number>>(new Set());
@@ -5848,6 +5850,7 @@ const messageRowBindings = {
         v-model:show-channels="showChannels"
         v-model:channels-collapsed="channelsCollapsed"
         v-model:music-player-expanded="musicPlayerExpanded"
+        @open-calendar="calendarHost?.open(store.currentChannelId)"
         v-bind="chatHeaderBindings"
       />
       <div v-if="chatDragActive" class="chat-drop-mask" aria-hidden="true">
@@ -6918,6 +6921,7 @@ const messageRowBindings = {
       @more-settings="openSettings('notifications'); notificationPromptOpen = false"
     />
 
+    <CalendarHost v-if="store.account" ref="calendarHost" />
     <WallpaperStatus />
     <SettingsPanel v-if="showSettings" :settings="settingsPanelBindings" @deleted="handleOwnAccountDeleted" />
 

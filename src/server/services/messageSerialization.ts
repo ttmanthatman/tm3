@@ -314,13 +314,13 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       if (batch?.chainOwnerActorIds) {
         chainOwnerActorId = batch.chainOwnerActorIds.get(rootId) ?? null;
       } else if (rootId === message.id) {
-        chainOwnerActorId = message.senderActorId;
+        chainOwnerActorId = message.calendarOwnerActorId ?? message.senderActorId;
       } else {
         const root = await prisma.message.findFirst({
           where: { id: rootId, channelId: message.channelId, type: "chain" },
-          select: { senderActorId: true }
+          select: { senderActorId: true, calendarOwnerActorId: true }
         });
-        chainOwnerActorId = root?.senderActorId ?? null;
+        chainOwnerActorId = root?.calendarOwnerActorId ?? root?.senderActorId ?? null;
       }
     }
     return {
@@ -438,11 +438,11 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
         : Promise.resolve([]),
       audioIds.length ? prisma.musicLyrics.findMany({ where: { trackId: { in: audioIds } } }) : Promise.resolve([]),
       chainRootIds.length
-        ? prisma.message.findMany({ where: { id: { in: chainRootIds }, channelId, type: "chain" }, select: { id: true, senderActorId: true } })
+        ? prisma.message.findMany({ where: { id: { in: chainRootIds }, channelId, type: "chain" }, select: { id: true, senderActorId: true, calendarOwnerActorId: true } })
         : Promise.resolve([])
     ]);
     batch.voiceListenedMessageIds = new Set(listenedRows.map((row) => row.messageId));
-    batch.chainOwnerActorIds = new Map(chainRootRows.map((row) => [row.id, row.senderActorId]));
+    batch.chainOwnerActorIds = new Map(chainRootRows.map((row) => [row.id, row.calendarOwnerActorId ?? row.senderActorId]));
 
     // Attach audio relations so serializeMessage's preloaded-relation branches
     // pick them up instead of querying per message.
