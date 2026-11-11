@@ -84,7 +84,6 @@ type HighlightWindow = Window & {
 const activeHighlights = new WeakMap<Document, BookNoteHighlights>();
 const HIGHLIGHT_NAME = "book-saved-notes";
 const OVERLAY_ATTRIBUTE = "data-book-note-overlay";
-const NOTEBOOK_SVG = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3h11a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M3 7h5M3 12h5M3 17h5M11 8h6M11 12h6M11 16h4"/></svg>';
 
 /** Resolve shared text without changing the EPUB's text nodes or page geometry. */
 export function findBookQuoteRange(doc: Document, quote: string, fraction: number): Range | null {
@@ -139,9 +138,8 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
     ::highlight(${HIGHLIGHT_NAME}) { background-color: rgba(229, 172, 58, .32); }
     [${OVERLAY_ATTRIBUTE}] { all: initial !important; position: fixed !important; inset: 0 auto auto 0 !important; width: 0 !important; height: 0 !important; z-index: 10 !important; pointer-events: none !important; }
     [${OVERLAY_ATTRIBUTE}] > span { all: initial !important; position: absolute !important; background: rgba(229, 172, 58, .32) !important; border-radius: 2px !important; pointer-events: none !important; }
-    [${OVERLAY_ATTRIBUTE}] > button { all: initial !important; position: absolute !important; z-index: 1 !important; display: flex !important; align-items: center !important; justify-content: center !important; width: 24px !important; height: 24px !important; padding: 0 !important; margin: 0 !important; border: 1px solid #b98b45 !important; border-radius: 5px !important; background: #f5dfac !important; color: #60421f !important; cursor: pointer !important; pointer-events: auto !important; }
+    [${OVERLAY_ATTRIBUTE}] > button { all: initial !important; position: absolute !important; z-index: 1 !important; display: block !important; box-sizing: border-box !important; padding: 0 !important; margin: 0 !important; border: 0 !important; border-bottom: 2px dotted #b98b45 !important; background: transparent !important; cursor: pointer !important; pointer-events: auto !important; }
     [${OVERLAY_ATTRIBUTE}] > button:focus-visible { outline: 2px solid #1266b0 !important; outline-offset: 2px !important; }
-    [${OVERLAY_ATTRIBUTE}] svg { display: block !important; width: 16px !important; height: 16px !important; fill: none !important; stroke: currentColor !important; }
   `;
   doc.head.append(stylesheet);
   // Outside body: Foliate measures/selects body contents to calculate page count.
@@ -154,7 +152,6 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
   function draw() {
     if (destroyed || !view) return;
     for (const mark of overlay.querySelectorAll("span")) mark.remove();
-    const iconPositions = new Map<string, number>();
     for (const mark of marked) {
       const localFraction = (mark.note.fraction - options.startFraction) / (options.endFraction - options.startFraction);
       let distance = Infinity;
@@ -165,8 +162,18 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
       }
     }
     if (native) view.CSS!.highlights!.set(HIGHLIGHT_NAME, new view.Highlight!(...marked.map(({ range }) => range)));
-    for (const { note, range } of marked) {
-      const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0);
+    const areas = marked.map(({ note, range }) => {
+      const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
+      const rect = rects.at(-1);
+      return { note, rects, rect, key: rect ? `${rect.left}:${rect.top}:${rect.right}:${rect.bottom}` : "" };
+    });
+    const entries = new Map<string, { count: number; next: number }>();
+    for (const { rect, key } of areas) {
+      if (!rect) continue;
+      const group = entries.get(key) ?? { count: 0, next: 0 };
+      group.count++; entries.set(key, group);
+    }
+    for (const { note, rects, rect, key } of areas) {
       if (!native) {
         for (const rect of rects) {
           const mark = doc.createElement("span");
@@ -177,11 +184,7 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
           overlay.append(mark);
         }
       }
-      const rect = rects[rects.length - 1];
       if (!rect) { buttons.get(note.id)?.style.setProperty("display", "none", "important"); continue; }
-      const key = `${Math.round(rect.right)}:${Math.round(rect.top)}`;
-      const rank = iconPositions.get(key) ?? 0;
-      iconPositions.set(key, rank + 1);
       let button = buttons.get(note.id);
       if (!button) {
         button = doc.createElement("button");
@@ -189,14 +192,21 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
         button.dataset.bookNoteId = note.id;
         button.setAttribute("aria-label", `查看笔记：${note.quote.slice(0, 40)}`);
         button.title = "查看笔记";
-        button.innerHTML = NOTEBOOK_SVG;
         button.addEventListener("click", (event) => { event.preventDefault(); event.stopPropagation(); options.onOpen(note); });
         buttons.set(note.id, button);
         overlay.append(button);
       }
-      button.style.setProperty("display", "flex", "important");
-      button.style.setProperty("left", `${Math.max(0, Math.min(rect.right + 2, view.innerWidth - 24))}px`, "important");
-      button.style.setProperty("top", `${rect.top + Math.max(0, (rect.height - 24) / 2) + rank * 24}px`, "important");
+      // Keep the note entry entirely inside its quote. A floating icon after the
+      // range covers the next characters when the excerpt ends mid-line.
+      // Divide a shared ending so overlapping notes each retain a click target.
+      const group = entries.get(key)!;
+      const width = rect.width / group.count;
+      const left = rect.left + group.next++ * width;
+      button.style.setProperty("display", "block", "important");
+      button.style.setProperty("left", `${left}px`, "important");
+      button.style.setProperty("top", `${rect.top}px`, "important");
+      button.style.setProperty("width", `${width}px`, "important");
+      button.style.setProperty("height", `${rect.height}px`, "important");
     }
   }
   const refresh = () => {

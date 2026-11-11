@@ -41,7 +41,35 @@ for (const fallback of [false, true]) {
     expect(initial.width).toBe(initial.beforeWidth);
     expect(initial.height).toBe(initial.beforeHeight);
     expect(initial.fallbackCount > 0).toBe(fallback);
+    // A note ending mid-paragraph must never cover the following text/link.
+    for (const width of [360, 390, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page.locator("#note-fixture").evaluate((frame, width) => { frame.style.width = `${width - 32}px`; }, width);
+      const marks = await page.evaluate(async () => {
+        const { doc, handle } = (window as FixtureWindow).noteFixture;
+        handle.refresh();
+        await new Promise<void>((resolve) => doc.defaultView!.requestAnimationFrame(() => resolve()));
+        const range = doc.createRange(); range.selectNodeContents(doc.querySelector("#second")!.firstChild!);
+        const quote = Array.from(range.getClientRects()).at(-1)!;
+        const link = doc.querySelector("#original-link")!.getBoundingClientRect();
+        return Array.from(doc.querySelectorAll<HTMLElement>("[data-book-note-id]")).map(button => {
+          const rect = button.getBoundingClientRect();
+          return {
+            background: doc.defaultView!.getComputedStyle(button).backgroundColor,
+            withinQuote: rect.left >= quote.left - .5 && rect.right <= quote.right + .5 && rect.top >= quote.top - .5 && rect.bottom <= quote.bottom + .5,
+            overlapsLink: rect.left < link.right && rect.right > link.left && rect.top < link.bottom && rect.bottom > link.top
+          };
+        });
+      });
+      for (const mark of marks) {
+        expect(mark.background).toBe("rgba(0, 0, 0, 0)");
+        expect(mark.withinQuote).toBe(true);
+        expect(mark.overlapsLink).toBe(false);
+      }
+    }
     const frame = page.frameLocator("#note-fixture");
+    await frame.locator('[data-book-note-id="one"]').click();
+    await expect(page.locator("#note-fixture")).toHaveAttribute("data-opened", "one");
     await frame.locator('[data-book-note-id="two"]').click();
     await expect(page.locator("#note-fixture")).toHaveAttribute("data-opened", "two");
     const refreshed = await page.evaluate(async () => {
