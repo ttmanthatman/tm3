@@ -1,3 +1,4 @@
+import { BIBLE_FAVORITE_COLOR_PRESETS } from "./bibleFavoriteColors.js";
 import { z } from "zod";
 import { normalizeHandwritingPayload, type HandwritingPayload } from "./handwriting.js";
 import { bookLocatorSchema, type PersistedBookLocator } from "./bookLocator.js";
@@ -13,6 +14,7 @@ export type BookNoteInput = {
   fraction: number;
   handwriting?: HandwritingPayload | null;
   draft?: boolean;
+  color?: string;
   locator?: PersistedBookLocator;
 };
 
@@ -44,10 +46,11 @@ export const bookNoteSchema = bookNoteInputSchema.extend({
   createdAt: z.string().datetime({ offset: true }), updatedAt: z.string().datetime({ offset: true })
 });
 export const bookNoteShareSchema = z.object({ kind: z.literal("book_note"), note: bookNoteSchema }).strict();
-export const bookNoteInputV2Schema = bookNoteInputSchema.extend({ locator: bookLocatorSchema.optional() });
-export const bookNoteV2Schema = bookNoteSchema.extend({ locator: bookLocatorSchema.optional() });
+const colorSchema = z.string().refine(value => BIBLE_FAVORITE_COLOR_PRESETS.some(preset => preset.color === value), "高亮颜色无效").optional();
+export const bookNoteInputV2Schema = bookNoteInputSchema.extend({ locator: bookLocatorSchema.optional(), color: colorSchema });
+export const bookNoteV2Schema = bookNoteSchema.extend({ locator: bookLocatorSchema.optional(), color: colorSchema });
 export function legacyBookNote(note: BookNoteDTO): z.infer<typeof bookNoteSchema> {
-  const { locator: _locator, ...legacy } = note;
+  const { locator: _locator, color: _color, ...legacy } = note;
   return bookNoteSchema.parse(legacy);
 }
 export type BookNoteSharePayload = z.infer<typeof bookNoteShareSchema>;

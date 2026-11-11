@@ -14,10 +14,12 @@ import { bookExcerptImage, bookReadingUrl, bookShareContent, type BookLocation, 
 import { escapeHtmlText } from "../messages/messageRendering";
 import BookNoteEditor from "./BookNoteEditor.vue";
 import BookNoteContent from "./BookNoteContent.vue";
+import BookFavorites from "./BookFavorites.vue";
+import { BIBLE_FAVORITE_COLOR_PRESETS } from "@shared/bibleFavoriteColors";
 import NotesTransfer from "../notes/NotesTransfer.vue";
 
 const props = defineProps<{ selection: BookReadingContext | null; activeChannelId: number | null }>();
-const emit = defineEmits<{ clear: []; jump: [location: BookLocation]; 'notes-changed': [bookId: number] }>();
+const emit = defineEmits<{ clear: []; jump: [location: BookLocation]; 'notes-changed': [bookId: number]; 'favorites-changed': [] }>();
 const store = useChatStore();
 const available = computed(() => !!store.account && !store.account.isGuest);
 const StoryComposer = defineAsyncComponent(() => import("../stories/StoryComposer.vue"));
@@ -43,7 +45,32 @@ const deleteNote = ref<BookNoteDTO | null>(null);
 const storyImage = ref<File | null>(null);
 const storyContext = ref<BookReadingContext | null>(null);
 const storyBusy = ref(false);
+const favoritesOpen = ref(false);
+const highlightBusy = ref(false);
+let highlightRequest: { key: string; id: string } | null = null;
 const selectionTooLong = computed(() => (props.selection?.quote.length || 0) > BOOK_QUOTE_MAX);
+
+async function highlight(color: string) {
+  const context = props.selection, accountId = store.account?.id;
+  if (!context || !available.value || selectionTooLong.value || highlightBusy.value) return;
+  const key = JSON.stringify([accountId, context]);
+  if (highlightRequest?.key !== key) highlightRequest = { key, id: crypto.randomUUID() };
+  const id = highlightRequest.id;
+  highlightBusy.value = true; notice.value = "";
+  try {
+    const { notes } = await bookNotesClient.list(context.bookId);
+    if (store.account?.id !== accountId) return;
+    const existing = notes.find(note => note.quote === context.quote && (context.locator ? JSON.stringify(note.locator) === JSON.stringify(context.locator) : Math.abs(note.fraction - context.fraction) < .000001));
+    const locator = bookLocatorSchema.safeParse(context.locator);
+    await bookNotesClient.save(context.bookId, existing?.id ?? id, {
+      quote: context.quote, text: existing?.text ?? "", chapter: context.chapter, fraction: context.fraction,
+      handwriting: existing?.handwriting, draft: existing?.draft ?? false, ...(locator.success ? { locator: locator.data } : {}), color
+    });
+    if (store.account?.id !== accountId) return;
+    emit('notes-changed', context.bookId); emit('clear'); notice.value = "已高亮并加入收藏夹";
+  } catch (cause) { if (store.account?.id === accountId) notice.value = cause instanceof Error ? cause.message : "高亮收藏失败，请重试"; }
+  finally { highlightBusy.value = false; }
+}
 
 function share(context: BookReadingContext, note?: BookNoteDTO) {
   if (!available.value) return;
@@ -113,12 +140,13 @@ async function shareStory(context: BookReadingContext) {
   catch (error) { notice.value = error instanceof Error ? error.message : "摘录卡片生成失败"; }
   finally { storyBusy.value = false; }
 }
-defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edit(noteContext(note), note) });
+defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edit(noteContext(note), note) });
 </script>
 
 <template>
   <aside v-if="selection && available" class="book-selection-actions" aria-label="摘录操作" @pointerdown.prevent>
     <span>{{ selectionTooLong ? `请选择 ${BOOK_QUOTE_MAX} 字以内的文字` : `已选 ${selection.quote.length} 字` }}</span>
+    <div class="book-highlight-colors" aria-label="高亮并收藏"><span>高亮并收藏</span><button v-for="preset in BIBLE_FAVORITE_COLOR_PRESETS" :key="preset.color" type="button" :aria-label="`${preset.name}高亮并收藏`" :style="{ backgroundColor: preset.color }" :disabled="selectionTooLong || highlightBusy" @click="highlight(preset.color)"></button></div>
     <button type="button" :disabled="selectionTooLong" @click="edit(selection)"><NotebookPen :size="16" />做笔记</button>
     <button type="button" :disabled="selectionTooLong" @click="share(selection)"><Send :size="16" />聊天室</button>
     <button type="button" :disabled="selectionTooLong || storyBusy" @click="shareStory(selection)"><Sparkles :size="16" />我的故事</button>
@@ -156,6 +184,7 @@ defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edi
       <footer><button :disabled="shareBusy || !shareChannelId" @click="sendShare">{{ shareBusy ? '发送中…' : '发送到聊天室' }}</button></footer>
     </template>
   </AppModal>
+  <AppModal :open="favoritesOpen" title="图书收藏夹" content-class="book-action-dialog" @close="favoritesOpen = false; emit('favorites-changed')"><BookFavorites v-if="favoritesOpen" @navigate="favoritesOpen = false; emit('jump', $event); emit('favorites-changed')" /></AppModal>
   <BookNoteEditor ref="editor" @open="noteEditorOpen = $event" @saved="notesSaved" @share="shareNote" />
   <ConfirmDialog :open="!!deleteNote" title="删除这条阅读笔记？" message="删除后无法恢复。" :busy="noteBusy" confirm-text="删除" @close="deleteNote = null" @confirm="removeNote" />
   <StoryComposer v-if="storyImage && storyContext" :initial-image="storyImage" :initial-text="`读《${storyContext.title}》有感${storyContext.chapter ? '\n' + storyContext.chapter : ''}`" @close="storyImage = null; storyContext = null" @published="storyImage = null; storyContext = null; notice = '摘录已发布到我的故事'" />
@@ -163,6 +192,9 @@ defineExpose({ share, showNotes: loadNotes, openNote: (note: BookNoteDTO) => edi
 
 <style scoped>
 .book-selection-actions { position: absolute; z-index: 35; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; justify-content: center; align-items: center; gap: 6px; padding: 8px; background: #493b2e; color: #fff7e8; border: 1px solid #7b6248; border-radius: 12px; box-shadow: 0 5px 24px #0005; }
+.book-highlight-colors { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.book-highlight-colors span { flex: 1; }
+.book-selection-actions .book-highlight-colors button { min-height: 28px; height: 28px; width: 28px; flex: 0 0 28px; padding: 0; border-radius: 50%; border-color: #fff8; }
 .book-selection-actions span { grid-column: 1 / -1; font-size: 12px; }
 .book-selection-actions button, .book-action-notice button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; border: 1px solid #d8c6a9; border-radius: 7px; padding: 6px 10px; color: #604b32; background: #f7efdf; font: inherit; cursor: pointer; }
 .book-selection-actions button { font-size: 14px; padding: 6px; background: #6b543e; border-color: #a68b6a; color: #fff7e8; }

@@ -255,3 +255,16 @@ test("ebook backups preserve handwritten drafts and distinguish different ink wh
   if (backup.domain === "books") backup.notes[0].handwriting!.characters[0].strokes[0].color = "#654321";
   assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).imported, 1);
 });
+
+
+test("ebook backups retain highlighter-only favorites and distinguish their colors", async () => {
+  const origin = fixture(); origin.notes.set(1, [{ ...bookNote, text: "", color: "#34a853" }]);
+  const backup = parseNotesBackup(serializeNotesBackup(await exportNotesBackup("books", 1, origin.client, origin.options)), "books");
+  assert.equal(backup.version, 2);
+  const target = fixture(2);
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).imported, 1);
+  assert.equal(target.notes.get(1)![0].color, "#34a853");
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).duplicates, 1);
+  if (backup.domain === "books") backup.notes[0].color = "#4285f4";
+  assert.equal((await importNotesBackup(backup, 2, target.client, target.options)).imported, 1);
+});

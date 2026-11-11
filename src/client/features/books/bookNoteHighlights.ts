@@ -1,3 +1,4 @@
+import { BIBLE_FAVORITE_COLOR_PRESETS, normalizeBibleFavoriteColor } from "../../../shared/bibleFavoriteColors";
 import type { BookNoteDTO } from "../../../shared/bookNotes";
 
 import { bookTextModel } from "./bookTextModel";
@@ -136,6 +137,7 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
   stylesheet.setAttribute("data-book-note-style", "");
   stylesheet.textContent = `
     ::highlight(${HIGHLIGHT_NAME}) { background-color: rgba(229, 172, 58, .32); }
+    ${BIBLE_FAVORITE_COLOR_PRESETS.map((preset, index) => `::highlight(${HIGHLIGHT_NAME}-${index}) { background-color: ${preset.color}55; }`).join("\n")}
     [${OVERLAY_ATTRIBUTE}] { all: initial !important; position: fixed !important; inset: 0 auto auto 0 !important; width: 0 !important; height: 0 !important; z-index: 10 !important; pointer-events: none !important; }
     [${OVERLAY_ATTRIBUTE}] > span { all: initial !important; position: absolute !important; background: rgba(229, 172, 58, .32) !important; border-radius: 2px !important; pointer-events: none !important; }
     [${OVERLAY_ATTRIBUTE}] > button { all: initial !important; position: absolute !important; z-index: 1 !important; display: block !important; box-sizing: border-box !important; padding: 0 !important; margin: 0 !important; border: 0 !important; border-bottom: 2px dotted #b98b45 !important; background: transparent !important; cursor: pointer !important; pointer-events: auto !important; }
@@ -161,7 +163,10 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
         if (nextDistance < distance) { mark.range = candidate.range; distance = nextDistance; }
       }
     }
-    if (native) view.CSS!.highlights!.set(HIGHLIGHT_NAME, new view.Highlight!(...marked.map(({ range }) => range)));
+    if (native) {
+      view.CSS!.highlights!.set(HIGHLIGHT_NAME, new view.Highlight!(...marked.filter(({ note }) => !note.color).map(({ range }) => range)));
+      BIBLE_FAVORITE_COLOR_PRESETS.forEach((preset, index) => view.CSS!.highlights!.set(`${HIGHLIGHT_NAME}-${index}`, new view.Highlight!(...marked.filter(({ note }) => note.color && normalizeBibleFavoriteColor(note.color) === preset.color).map(({ range }) => range))));
+    }
     const areas = marked.map(({ note, range }) => {
       const rects = Array.from(range.getClientRects()).filter(rect => rect.width > 0 && rect.height > 0);
       const rect = rects.at(-1);
@@ -181,6 +186,7 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
           mark.style.setProperty("top", `${rect.top}px`, "important");
           mark.style.setProperty("width", `${rect.width}px`, "important");
           mark.style.setProperty("height", `${rect.height}px`, "important");
+          if (note.color) mark.style.setProperty("background", `${normalizeBibleFavoriteColor(note.color)}55`, "important");
           overlay.append(mark);
         }
       }
@@ -229,7 +235,10 @@ export function renderBookNoteHighlights(doc: Document, notes: readonly BookNote
       view.removeEventListener("resize", refresh);
       view.removeEventListener("scroll", refresh);
       doc.removeEventListener("load", refresh, true);
-      if (native) view.CSS!.highlights!.delete(HIGHLIGHT_NAME);
+      if (native) {
+        view.CSS!.highlights!.delete(HIGHLIGHT_NAME);
+        BIBLE_FAVORITE_COLOR_PRESETS.forEach((_, index) => view.CSS!.highlights!.delete(`${HIGHLIGHT_NAME}-${index}`));
+      }
       overlay.remove(); stylesheet.remove();
       if (activeHighlights.get(doc) === handle) activeHighlights.delete(doc);
     }

@@ -255,3 +255,22 @@ test("transaction uniqueness and deadlock races retry atomically with one stable
   assert.equal(failed.statusCode, 500);
   assert.deepEqual((await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers })).json().notes, [saved.json().note]);
 });
+
+
+test("v2 highlighter-only favorites persist colors privately and reject unknown colors", async (t) => {
+  const h = createHarness(); t.after(() => h.app.close());
+  const url = `/api/books/1/notes/v2/${noteId}`;
+  const payload = { ...input, text: "", color: "#34a853" };
+  const saved = await h.app.inject({ method: "PUT", url, headers, payload });
+  assert.equal(saved.statusCode, 200);
+  assert.equal(saved.json().note.color, payload.color);
+  const list = await h.app.inject({ method: "GET", url: "/api/books/1/notes/v2", headers });
+  assert.equal(list.json().notes[0].color, payload.color);
+  const privateList = await h.app.inject({ method: "GET", url: "/api/books/1/notes/v2", headers: { authorization: "Bearer 8" } });
+  assert.deepEqual(privateList.json().notes, []);
+  const invalid = await h.app.inject({ method: "PUT", url, headers, payload: { ...payload, color: "red; color: white" } });
+  assert.equal(invalid.statusCode, 400);
+  const legacy = await h.app.inject({ method: "GET", url: "/api/books/1/notes", headers });
+  assert.equal(legacy.statusCode, 200);
+  assert.equal(legacy.json().notes[0].color, undefined);
+});

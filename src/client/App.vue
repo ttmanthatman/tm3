@@ -436,6 +436,7 @@ async function confirmOwnHandwriting(message: MessageDTO) {
 // async-loaded inside MediaPreviewModal for the same reason.
 const PdfScoreInline = defineAsyncComponent(() => import("./components/PdfScoreInline.vue"));
 const BibleWorkspace = defineAsyncComponent(() => import("./components/BibleWorkspace.vue"));
+const BookFavorites = defineAsyncComponent(() => import("./features/books/BookFavorites.vue"));
 const BookWorkspace = defineAsyncComponent(() => import("./components/BookWorkspace.vue"));
 const MusicLyricsHeader = defineAsyncComponent(() => import("./components/MusicLyricsHeader.vue"));
 const BibleAudioLyricsBar = defineAsyncComponent(() => import("./features/bible/BibleAudioLyricsBar.vue"));
@@ -5937,8 +5938,9 @@ const messageRowBindings = {
               <strong>我的收藏</strong>
             </div>
           </div>
+          <BookFavorites @navigate="bookLocation = $event; openBookWorkspace()" />
           <p v-if="favoritesLoading" class="favorites-empty">正在加载收藏…</p>
-          <p v-else-if="!favoriteMessages.length" class="favorites-empty">还没有收藏。长按聊天消息，再点击爱心即可收藏。</p>
+          <p v-else-if="!favoriteMessages.length" class="favorites-empty">还没有收藏的聊天消息。长按聊天消息，再点击爱心即可收藏。</p>
           <div v-else class="favorites-main-list">
             <article
               v-for="favorite in favoriteMessages"

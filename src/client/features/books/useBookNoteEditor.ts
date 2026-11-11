@@ -12,15 +12,16 @@ export function useBookNoteEditor(options: Options) {
   const text = ref("");
   const handwriting = shallowRef<HandwritingPayload | null>(null);
   const busy = ref(false), error = ref("");
-  let id = "", original = "", existing: BookNoteDTO | null = null, generation = 0;
+  let id = "", original = "", generation = 0;
+  const existing = shallowRef<BookNoteDTO | null>(null);
   let alive = true;
   const content = () => JSON.stringify([text.value, handwriting.value]);
-  const hasContent = computed(() => bookNoteHasContent({ text: text.value, handwriting: handwriting.value }));
-  function reset() { generation++; context.value = null; text.value = ""; handwriting.value = null; busy.value = false; error.value = ""; existing = null; }
+  const hasContent = computed(() => !!existing.value?.color || bookNoteHasContent({ text: text.value, handwriting: handwriting.value }));
+  function reset() { generation++; context.value = null; text.value = ""; handwriting.value = null; busy.value = false; error.value = ""; existing.value = null; }
   function edit(next: BookReadingContext, note?: BookNoteDTO) {
     if (busy.value || !options.accountId()) return;
     generation++;
-    context.value = { ...next }; existing = note ?? null;
+    context.value = { ...next }; existing.value = note ?? null;
     id = note?.id ?? crypto.randomUUID(); text.value = note?.text ?? ""; handwriting.value = note?.handwriting ?? null;
     original = content(); error.value = "";
   }
@@ -28,8 +29,8 @@ export function useBookNoteEditor(options: Options) {
     const selected = context.value, accountId = options.accountId(), sequence = generation;
     if (!selected || !accountId || busy.value) return null;
     const current = () => alive && generation === sequence && options.accountId() === accountId;
-    if (!hasContent.value && !existing) { if (close) reset(); return null; }
-    if (draft && content() === original) { const note = existing; if (close) reset(); return note; }
+    if (!hasContent.value && !existing.value) { if (close) reset(); return null; }
+    if (draft && content() === original) { const note = existing.value; if (close) reset(); return note; }
     busy.value = true; error.value = "";
     try {
       let saved: BookNoteDTO | null = null;
@@ -37,11 +38,11 @@ export function useBookNoteEditor(options: Options) {
         const locator = bookLocatorSchema.safeParse(selected.locator);
         saved = (await client.save(selected.bookId, id, {
           quote: selected.quote, chapter: selected.chapter, fraction: selected.fraction,
-          text: text.value, handwriting: handwriting.value, draft, ...(locator.success ? { locator: locator.data } : {})
+          text: text.value, handwriting: handwriting.value, draft, ...(existing.value?.color ? { color: existing.value.color } : {}), ...(locator.success ? { locator: locator.data } : {})
         })).note;
       } else await client.remove(selected.bookId, id);
       if (!current()) return null;
-      existing = saved; original = content(); options.changed(selected.bookId);
+      existing.value = saved; original = content(); options.changed(selected.bookId);
       if (close) reset();
       return saved;
     } catch (cause) {

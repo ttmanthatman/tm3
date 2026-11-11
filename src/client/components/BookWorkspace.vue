@@ -4,7 +4,7 @@
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
 // 点按即可流式阅读；长按菜单分别提供离线缓存和 EPUB 文件下载。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
+import { Heart, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
 import type { BookDTO, BookReaderPresenceDTO } from "@shared/types";
 import { api, getToken } from "../api";
@@ -1060,6 +1060,7 @@ defineExpose({ reload: loadShelf });
       </header>
 
       <footer class="book-bar book-bottom" :class="{ 'bar-hidden': !chromeVisible }">
+          <button class="book-bar-btn" type="button" aria-label="图书收藏夹" @click="actions?.showFavorites()"><Heart :size="17" /></button>
           <button class="book-bar-btn" type="button" aria-label="我的阅读笔记" @click="showBookNotes"><NotebookPen :size="17" /></button>
           <button class="book-bar-btn" type="button" aria-label="从这里邀请共读" @click="activeBook && inviteBook(activeBook, sliderValue)"><Send :size="17" /></button>
         <span class="book-progress-label">{{ progressLabel }}</span>
@@ -1150,7 +1151,7 @@ defineExpose({ reload: loadShelf });
       <div v-else-if="syncState.status === 'revision-mismatch'" class="book-sync-notice" role="alert">图书版本已变化，旧地址未同步。请重新打开图书并选择新的阅读位置。</div>
       <p v-if="noteHighlightsError" class="book-note-load-error" role="alert">{{ noteHighlightsError }} <button @click="noteHighlights.reload()">重试读取笔记</button></p>
     </div>
-    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToLocation" @notes-changed="noteHighlights.reload" />
+    <BookReadingActions ref="actions" :selection="selection" :active-channel-id="activeChannelId ?? null" @clear="clearSelection" @jump="jumpToLocation" @notes-changed="noteHighlights.reload" @favorites-changed="noteHighlights.reload()" />
   </section>
 </template>
 

@@ -391,6 +391,37 @@ for (const flow of ["scrolled", "paginated"] as const) {
         }
       }
       await page.screenshot({ path: `output/playwright/book-selection-${flow}.png` });
+      await toolbar.getByRole("button", { name: "绿色高亮并收藏", exact: true }).click();
+      await expect(toolbar).toHaveCount(0);
+      const favoriteList = async () => (await (await request.get(`/api/books/${book.id}/notes/v2`, { headers })).json()).notes;
+      await expect.poll(async () => (await favoriteList())[0]?.color).toBe("#34a853");
+      await expect.poll(() => frame.evaluate(() => {
+        const registry = (CSS as typeof CSS & { highlights?: Map<string, { size: number }> }).highlights;
+        return registry?.get("book-saved-notes-3")?.size;
+      })).toBe(1);
+      // Upward scrolling reveals the reader controls on mobile.
+      if (flow === "scrolled") {
+        for (const top of [120, 20]) await page.locator("[data-continuous-reader]").evaluate(async (element, next) => {
+          element.scrollTop = next;
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+        }, top);
+      }
+      // Opening the library also exercises persisted favorites independently of selection.
+      await page.getByRole("button", { name: "图书收藏夹", exact: true }).click();
+      const favorites = page.getByRole("dialog", { name: "图书收藏夹", exact: true });
+      await expect(favorites.locator("blockquote")).toHaveText("这是用于验证手机点按控制栏的正文。");
+      await favorites.getByRole("button", { name: "改为蓝色高亮" }).click();
+      await expect.poll(async () => (await favoriteList())[0]?.color).toBe("#4285f4");
+      await page.screenshot({ path: `output/playwright/book-favorites-${flow}.png` });
+      await favorites.getByRole("button", { name: "回到原文", exact: true }).click();
+      await expect(favorites).toHaveCount(0);
+      await expect.poll(() => frame.evaluate(() => (CSS as typeof CSS & { highlights?: Map<string, { size: number }> }).highlights?.get("book-saved-notes-5")?.size)).toBe(1);
+      await page.getByRole("button", { name: "图书收藏夹", exact: true }).click();
+      await favorites.getByRole("button", { name: "取消收藏", exact: true }).click();
+      await expect(favorites.locator("blockquote")).toHaveCount(0);
+      await favorites.getByRole("button", { name: "关闭", exact: true }).click();
+      await expect.poll(async () => (await favoriteList()).length).toBe(0);
+      await selectText();
       await toolbar.getByRole("button", { name: "做笔记" }).click();
       const editor = page.getByRole("dialog", { name: "阅读笔记", exact: true });
       await expect(editor.getByText("阅读笔记", { exact: true })).toHaveCount(0);
@@ -586,5 +617,40 @@ test("大幅手写笔记的并发保存与缩减在真实数据库中保持一�
     expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toEqual([reduced.note]);
     await request.delete(url, { headers });
     expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toEqual([]);
+  } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
+});
+
+test("图书高亮收藏夹全局入口可换色并回到原文", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
+  const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
+  const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "favorites.epub", mimeType: "application/epub+zip", buffer: await buildEpub("高亮收藏入口") } } });
+  expect(upload.ok()).toBe(true);
+  const { book } = await upload.json() as { book: { id: number } };
+  try {
+    const saved = await request.put(`/api/books/${book.id}/notes/v2/${randomUUID()}`, { headers, data: { quote: "这是用于验证手机点按控制栏的正文。", text: "", chapter: "第一章", fraction: .1, color: "#34a853" } });
+    expect(saved.ok()).toBe(true);
+    await blockPublicNetwork(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await login(page);
+    await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
+    await page.getByRole("button", { name: "展开频道", exact: true }).click();
+    await page.getByRole("button", { name: "收藏夹", exact: true }).click();
+    const favorites = page.getByRole("region", { name: "图书收藏夹", exact: true });
+    await expect(favorites.locator("blockquote")).toHaveText("这是用于验证手机点按控制栏的正文。");
+    for (const width of [360, 390, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      const bounds = (await favorites.boundingBox())!;
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      await expect(favorites.getByRole("button", { name: "回到原文" })).toBeVisible();
+    }
+    const blue = favorites.getByRole("button", { name: "改为蓝色高亮" });
+    await blue.focus(); await page.keyboard.press("Enter");
+    await expect(blue).toHaveAttribute("aria-pressed", "true");
+    await favorites.getByRole("button", { name: "回到原文" }).click();
+    const frame = await readingFrame(page);
+    await expect(frame.locator("#tap-target")).toBeVisible();
+    await expect.poll(() => frame.evaluate(() => (CSS as typeof CSS & { highlights?: Map<string, { size: number }> }).highlights?.get("book-saved-notes-5")?.size)).toBe(1);
   } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
 });

@@ -49,3 +49,14 @@ test("in-flight saves cannot close a different account's editor, emit markers or
   finish({ note }); assert.equal(await pending, null);
   assert.equal(s.editor.text.value, "账号二"); assert.equal(s.changed.length, 0); s.scope.stop();
 });
+
+test("editing a highlight preserves its color even when note content is cleared", async () => {
+  const s = setup();
+  s.editor.edit(context, { ...note, color: "#34a853" });
+  s.editor.text.value = "";
+  await s.editor.save(false);
+  assert.equal(s.writes[0].input.color, "#34a853");
+  assert.equal(s.writes[0].input.text, "");
+  assert.deepEqual(s.deleted, []);
+  s.scope.stop();
+});

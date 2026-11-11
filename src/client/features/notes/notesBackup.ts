@@ -117,14 +117,14 @@ export async function exportNotesBackup(domain: NotesDomain, accountId: number, 
     notes.push(...result.notes.map((note) => bookBackupNote(note, book)));
     assertCount(notes.length);
   }
-  return checkedBackup({ ...metadata, version: notes.some(note => note.locator) ? 2 : 1, domain, notes });
+  return checkedBackup({ ...metadata, version: notes.some(note => note.locator || note.color) ? 2 : 1, domain, notes });
 }
 function bibleContent(note: BibleBackupNote): string {
   const { translation, bookCode, chapter, verseStart } = note.source;
   return JSON.stringify([translation, bookCode, chapter, verseStart, note.text]);
 }
 function bookContent(note: BookNoteInput): string {
-  return JSON.stringify([note.quote, note.text, note.chapter, note.fraction, note.handwriting ?? null]);
+  return JSON.stringify([note.quote, note.text, note.chapter, note.fraction, note.handwriting ?? null, note.color ?? null]);
 }
 function bookForNote(note: BookBackupNote, books: TransferBook[]): TransferBook | undefined {
   const matches = books.filter((book) => book.title === note.bookTitle && book.author === note.bookAuthor);
@@ -188,7 +188,7 @@ export async function importNotesBackup(value: NotesBackup, accountId: number, c
         try {
           const id = z.string().uuid().parse(newId());
           if (inventory.ids.has(id)) throw new Error("导入编号冲突，请重试");
-          const input = { quote: note.quote, text: note.text, chapter: note.chapter, fraction: note.fraction, ...(note.handwriting !== undefined ? { handwriting: note.handwriting } : {}), ...(note.draft !== undefined ? { draft: note.draft } : {}), ...(note.locator && note.locator.bookId === book.id ? { locator: note.locator } : {}) };
+          const input = { quote: note.quote, text: note.text, chapter: note.chapter, fraction: note.fraction, ...(note.handwriting !== undefined ? { handwriting: note.handwriting } : {}), ...(note.color ? { color: note.color } : {}), ...(note.draft !== undefined ? { draft: note.draft } : {}), ...(note.locator && note.locator.bookId === book.id ? { locator: note.locator } : {}) };
           const saved = await client.createBook(book.id, id, input);
           if (bookContent(bookBackupNote(saved.note, book)) !== content) throw new Error("导入结果不符，请刷新笔记后重试");
           inventory.ids.set(saved.note.id, content);
