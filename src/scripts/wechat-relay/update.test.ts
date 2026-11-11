@@ -18,6 +18,7 @@ const updater = await import(moduleUrl) as {
   loadUpdateConfig(environment: NodeJS.ProcessEnv): UpdateConfig;
   currentRevision(current: string): string | null;
   acquireUpdateLock(directory: string): () => void;
+  pruneOldReleases(directory: string): string[];
   runUpdate(config: UpdateConfig, dependencies: Dependencies): Promise<{ status: string; revision: string }>;
 };
 const oldRevision = "a".repeat(40);
@@ -147,6 +148,90 @@ test("upstream revision marker preserves a repaired bootstrap without restarting
     assert.deepEqual(events, []);
     fs.writeFileSync(path.join(item.oldRelease, ".relay-revision"), "bad-marker\n");
     assert.throws(() => updater.currentRevision(path.join(item.directory, "current")), /invalid/);
+  } finally { item.close(); }
+});
+
+test("unchanged updates bound stored releases before fetching, preserving rollback and private state", async () => {
+  const item = fixture();
+  try {
+    const releases = path.join(item.directory, "releases");
+    const addRelease = (letter: string, timestamp: number) => {
+      const directory = path.join(releases, letter.repeat(40));
+      fs.mkdirSync(directory);
+      const marker = path.join(directory, ".relay-revision");
+      fs.writeFileSync(marker, `${letter.repeat(40)}\n`);
+      fs.utimesSync(marker, timestamp, timestamp);
+      fs.writeFileSync(path.join(directory, "build-sentinel"), "generated build");
+      return directory;
+    };
+    const obsolete = addRelease("c", 1000);
+    const recent = addRelease("d", 2000);
+    const newest = addRelease("e", 3000);
+    const activeMarker = path.join(item.oldRelease, ".relay-revision");
+    fs.writeFileSync(activeMarker, `${oldRevision}\n`);
+    fs.utimesSync(activeMarker, 1, 1);
+    const unknown = path.join(releases, "f".repeat(40));
+    fs.mkdirSync(unknown);
+    fs.writeFileSync(path.join(unknown, ".relay-revision"), "invalid marker\n");
+    const external = path.join(item.directory, "external");
+    fs.mkdirSync(external);
+    fs.writeFileSync(path.join(external, ".relay-revision"), `${"1".repeat(40)}\n`);
+    fs.utimesSync(path.join(external, ".relay-revision"), 1, 1);
+    const symlink = path.join(releases, "1".repeat(40));
+    fs.symlinkSync(external, symlink);
+    const { dependencies, events } = runner(item, { revision: oldRevision });
+    const originalRun = dependencies.run;
+    dependencies.run = async (command, args, options) => {
+      if (command === "git" && args.includes("fetch")) {
+        assert.equal(fs.existsSync(obsolete), false, "free space even before a network fetch can fail");
+      }
+      return originalRun(command, args, options);
+    };
+    assert.deepEqual(await updater.runUpdate(item.config, dependencies), { status: "unchanged", revision: oldRevision });
+    for (const directory of [item.oldRelease, recent, newest, unknown, external]) assert.ok(fs.existsSync(directory));
+    assert.ok(fs.lstatSync(symlink).isSymbolicLink());
+    assert.deepEqual(events, []);
+    assert.equal(fs.readFileSync(path.join(item.directory, "queue-sentinel"), "utf8"), "uncertain stays uncertain\n");
+  } finally { item.close(); }
+});
+
+test("cleanup preserves quarantined releases and repaired bootstrap directories", async () => {
+  const item = fixture();
+  try {
+    const releases = path.join(item.directory, "releases");
+    const quarantined = path.join(releases, "c".repeat(40));
+    const repaired = path.join(releases, "repaired-bootstrap");
+    for (const directory of [quarantined, repaired]) {
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, ".relay-revision"), `${"c".repeat(40)}\n`);
+      fs.utimesSync(path.join(directory, ".relay-revision"), 1, 1);
+    }
+    for (const letter of ["d", "e", "f"]) {
+      const directory = path.join(releases, letter.repeat(40));
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, ".relay-revision"), `${letter.repeat(40)}\n`);
+    }
+    fs.writeFileSync(path.join(quarantined, ".relay-update-failed"), "inspect startup failure");
+    const { dependencies } = runner(item, { revision: oldRevision });
+    await updater.runUpdate(item.config, dependencies);
+    assert.ok(fs.existsSync(quarantined));
+    assert.ok(fs.existsSync(repaired));
+  } finally { item.close(); }
+});
+
+test("cleanup refuses transaction recovery paths and a symlinked releases root", () => {
+  const item = fixture();
+  try {
+    const transaction = path.join(item.directory, "update-transaction.json");
+    fs.writeFileSync(transaction, JSON.stringify({ previousPath: item.oldRelease, candidatePath: item.oldRelease }));
+    assert.deepEqual(updater.pruneOldReleases(item.directory), []);
+    fs.unlinkSync(transaction);
+    const releases = path.join(item.directory, "releases");
+    const moved = path.join(item.directory, "external-releases");
+    fs.renameSync(releases, moved);
+    fs.symlinkSync(moved, releases);
+    assert.throws(() => updater.pruneOldReleases(item.directory), /real directory/);
+    assert.ok(fs.existsSync(item.oldRelease));
   } finally { item.close(); }
 });
 

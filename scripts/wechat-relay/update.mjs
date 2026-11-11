@@ -140,6 +140,32 @@ function findRelayTests(directory) {
   }).sort();
 }
 
+export function pruneOldReleases(stateDirectory, log = () => undefined) {
+  // Never clean up an interrupted switch: both transaction paths are needed
+  // for recovery. The caller holds the update lock throughout cleanup.
+  if (fs.existsSync(path.join(stateDirectory, "update-transaction.json"))) return [];
+  const current = fs.realpathSync(path.join(stateDirectory, "current"));
+  const releases = path.join(stateDirectory, "releases");
+  if (!fs.lstatSync(releases).isDirectory()) throw new Error("Relay releases path must be a real directory");
+  const candidates = fs.readdirSync(releases, { withFileTypes: true }).flatMap((entry) => {
+    if (!entry.isDirectory() || !REVISION.test(entry.name)) return [];
+    const directory = path.join(releases, entry.name);
+    const marker = path.join(directory, ".relay-revision");
+    if (directory === current || fs.existsSync(path.join(directory, ".relay-update-failed")) || !fs.existsSync(marker)) return [];
+    if (!fs.lstatSync(marker).isFile() || fs.readFileSync(marker, "utf8").trim() !== entry.name) return [];
+    return [{ directory, timestamp: fs.statSync(marker).mtimeMs }];
+  }).sort((left, right) => right.timestamp - left.timestamp || left.directory.localeCompare(right.directory));
+  const removed = [];
+  // Keep the active release and two recent rollback builds. Leave unmarked,
+  // quarantined and custom repair directories for explicit operator review.
+  for (const { directory } of candidates.slice(2)) {
+    fs.rmSync(directory, { recursive: true });
+    removed.push(directory);
+    log(`Removed obsolete relay build ${path.basename(directory)}`);
+  }
+  return removed;
+}
+
 export async function runUpdate(config, dependencies = {}) {
   const run = dependencies.run || runCommand;
   const sleep = dependencies.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -202,6 +228,7 @@ export async function runUpdate(config, dependencies = {}) {
     if (!fs.lstatSync(current).isSymbolicLink()) throw new Error("Install the managed current release symlink before enabling updates");
     if (fs.existsSync(transactionPath)) await restore(JSON.parse(fs.readFileSync(transactionPath, "utf8")));
     fs.mkdirSync(releases, { recursive: true });
+    pruneOldReleases(stateDirectory, log);
     if (!fs.existsSync(cache)) await run("git", ["init", "--bare", cache], commandOptions);
     await run("git", ["--git-dir", cache, "fetch", "--no-tags", "--depth=1", config.repository, `refs/heads/${config.branch}`], commandOptions);
     const revision = (await run("git", ["--git-dir", cache, "rev-parse", "--verify", "FETCH_HEAD^{commit}"], commandOptions)).stdout.trim();
