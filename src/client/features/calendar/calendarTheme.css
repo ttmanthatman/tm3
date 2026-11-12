@@ -1,0 +1,42 @@
+/* Dawn colors are local to calendar dialogs; shared modal geometry stays intact. */
+.calendar-overlay,
+.calendar-notice-layer {
+  --accent: #a34e65;
+  --accent-dark: #843b50;
+  --button-text: #fff9f4;
+  --line: #ead0ce;
+  color: #553c49;
+}
+.calendar-overlay .calendar-panel,
+.calendar-overlay .small-modal,
+.calendar-notice-layer .calendar-notice-panel {
+  background: linear-gradient(155deg, #f5e5ef 0%, #fbe1da 45%, #fff3da 100%);
+}
+.calendar-overlay .modal-head,
+.calendar-notice-layer .modal-head {
+  background: #f8e5e9;
+  border-color: #ead0ce;
+}
+.calendar-overlay .icon-btn,
+.calendar-notice-layer .icon-btn {
+  color: #865269;
+}
+.calendar-overlay .mini-btn.secondary,
+.calendar-notice-layer .mini-btn.secondary {
+  background: #f1dce3;
+  color: #713e55;
+}
+.calendar-overlay select,
+.calendar-overlay input,
+.calendar-overlay textarea {
+  accent-color: #a34e65;
+}
+.calendar-overlay select {
+  background-color: #fffaf6;
+  color: #553c49;
+  border-color: #dcbfc7;
+}
+.calendar-overlay :focus-visible,
+.calendar-notice-layer :focus-visible {
+  outline-color: #843b50;
+}

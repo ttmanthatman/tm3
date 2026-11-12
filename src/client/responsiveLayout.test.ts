@@ -605,13 +605,13 @@ test("manual music pause fades out within one second", () => {
   assert.match(musicPlayer, /async function play\(playOptions\?: \{ fadeIn\?: boolean; recovering\?: boolean \}\)[\s\S]*?clearFade\(\);[\s\S]*?targetAudio\.volume = playOptions\?\.fadeIn && runtime\.documentVisible\(\) \? 0 : 1;/);
 });
 
-test("the listening menu and Zoom stay before stories and chat tools", () => {
+test("the listening and gathering menus stay before stories and chat tools", () => {
   const headerStart = chatHeader.indexOf('<header class="chat-head"');
   const headerEnd = chatHeader.indexOf("</header>", headerStart);
   const header = chatHeader.slice(headerStart, headerEnd);
   assert.ok(header.indexOf('bible-header-trigger') < header.indexOf('<ListenControl'));
-  assert.ok(header.indexOf('<ListenControl') < header.indexOf('<ZoomControl'));
-  assert.ok(header.indexOf('<ZoomControl') < header.indexOf('class="icon-btn story-header-trigger"'));
+  assert.ok(header.indexOf('<ListenControl') < header.indexOf('<GatherControl'));
+  assert.ok(header.indexOf('<GatherControl') < header.indexOf('class="icon-btn story-header-trigger"'));
   const menu = listenControl.slice(listenControl.indexOf('<AppMenu v-if="menuOpen"'), listenControl.indexOf('</AppMenu>'));
   const entries = ['aria-label="播放器"', '<span>赞美诗</span>', '<span>歌谱</span>', '<span>良友电台</span>'];
   let previous = -1;

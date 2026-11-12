@@ -59,6 +59,9 @@ const invitationNotice = ref("");
 const store = useChatStore();
 const preciseProgress = useBookProgress(() => store.account?.id);
 const syncState = preciseProgress.state;
+const dismissedSyncConflict = ref<string | null>(null);
+const syncConflictKey = computed(() => `${activeBook.value?.id}:${syncState.value.remote?.revision}`);
+const syncConflictVisible = computed(() => syncState.value.status === "conflict" && dismissedSyncConflict.value !== syncConflictKey.value);
 const noteHighlights = useBookNoteHighlights({
   publication: () => locations.publication(),
   sectionHref: index => locations.sectionHref(index),
@@ -385,6 +388,7 @@ function emitClose() {
 function closeBookView() {
   flushProgress();
   preciseProgress.close();
+  dismissedSyncConflict.value = null;
   ++openSequence;
   openingController?.abort();
   openingController = null;
@@ -1141,10 +1145,11 @@ defineExpose({ reload: loadShelf });
         <button class="book-btn" type="button" @click="activeBook && openBook(activeBook)">重试</button>
       </div>
       <p v-if="navigationNotice" class="book-navigation-notice" role="status">{{ navigationNotice }}</p>
-      <div v-if="syncState.status === 'conflict'" class="book-sync-notice" role="alert">
+      <div v-if="syncConflictVisible" class="book-sync-notice" role="alert">
         另一设备已更新阅读位置。本机位置已保留。
         <button type="button" @click="resolveProgress('local')">保留本机位置</button>
         <button type="button" @click="resolveProgress('remote')">使用另一设备位置</button>
+        <button type="button" @click="dismissedSyncConflict = syncConflictKey">稍后处理</button>
       </div>
       <div v-else-if="syncState.status === 'offline'" class="book-sync-notice" role="status">阅读位置已保存在本机，联网后重试。<button type="button" @click="preciseProgress.flush()">重试同步</button></div>
       <div v-else-if="syncState.status === 'storage-error'" class="book-sync-notice" role="alert">本机存储空间不足，阅读位置尚未安全保存。请联网同步后再关闭。</div>

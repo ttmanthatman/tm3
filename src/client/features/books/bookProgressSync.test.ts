@@ -66,3 +66,21 @@ test("a conflict survives close and a new reader session without silently overwr
   next.sync.resolve("local"); await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(next.writes[0]?.baseRevision, 3); assert.equal(next.writes[0]?.fraction, .1);
 });
+test("choosing the local position clears the conflict while its save is still in flight", async () => {
+  const h = harness(); await h.sync.open(1); h.server(remote(2, .9));
+  h.sync.record({ bookId: 1, fraction: .2 }); await h.sync.flush();
+  let release!: () => void;
+  h.intercept(() => new Promise<void>(resolve => { release = resolve; }));
+  h.sync.resolve("local");
+  assert.equal(h.states.at(-1)?.status, "pending");
+  h.intercept(); release(); await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(h.states.at(-1)?.status, "saved");
+});
+test("choosing local on a restored conflict without pending data dismisses the stale conflict", async () => {
+  const h = harness(new Map([["book-progress.v2.7.1", JSON.stringify({ revision: 2, conflict: true })]]));
+  h.server(remote(2, .9)); await h.sync.open(1);
+  assert.equal(h.states.at(-1)?.status, "conflict");
+  h.sync.resolve("local");
+  assert.equal(h.states.at(-1)?.status, "saved");
+  assert.equal(h.writes.length, 0);
+});

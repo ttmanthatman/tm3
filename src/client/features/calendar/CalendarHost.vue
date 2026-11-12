@@ -5,6 +5,7 @@ import CalendarWorkspace from "./CalendarWorkspace.vue";
 import { useChatStore } from "../../store";
 import { api } from "../../api";
 import type { CalendarNoticeDTO } from "../../../shared/calendar";
+import "./calendarTheme.css";
 const store = useChatStore();
 const channelId = ref<number | null>(null),
   initialDate = ref<string>();
@@ -148,13 +149,13 @@ onBeforeUnmount(() => {
   padding: 0 16px;
 }
 .calendar-notice-list article {
-  border-bottom: 1px solid #dfe7e0;
+  border-bottom: 1px solid #ead0ce;
   padding: 12px 0;
   overflow-wrap: anywhere;
 }
 .calendar-notice-list p {
   font-size: 13px;
-  color: #64776a;
+  color: #806775;
   line-height: 1.6;
 }
 .calendar-notice-description {
@@ -169,6 +170,6 @@ onBeforeUnmount(() => {
   padding: 16px;
 }
 .calendar-notice-actions small {
-  color: #64776a;
+  color: #806775;
 }
 </style>

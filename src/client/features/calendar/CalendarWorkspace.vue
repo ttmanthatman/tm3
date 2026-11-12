@@ -5,6 +5,8 @@ import AppModal from "../../components/ui/AppModal.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
+import { calendarHolidays, type HolidayCategory } from "./calendarHolidays";
+import "./calendarTheme.css";
 import {
   calendarInputSchema,
   wallTime,
@@ -20,6 +22,19 @@ const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const selectedDate = ref(props.date ? wallTime(new Date(props.date), zone).slice(0, 10) : today());
 const month = ref(selectedDate.value.slice(0, 7));
 const filter = ref("visible");
+const categories = [
+  { id: "community", label: "我们的日程" },
+  { id: "church", label: "教会节日" },
+  { id: "hebrew", label: "犹太历节期" },
+  { id: "china", label: "中国节假日" }
+] as const;
+type CalendarCategory = HolidayCategory | "community";
+const selectedCategories = ref<CalendarCategory[]>(categories.map((item) => item.id));
+function toggleCategory(id: CalendarCategory) {
+  selectedCategories.value = selectedCategories.value.includes(id)
+    ? selectedCategories.value.filter((value) => value !== id)
+    : [...selectedCategories.value, id];
+}
 const events = ref<CalendarEventDTO[]>([]);
 const members = ref<Array<{ id: number; displayName: string }>>([]);
 const roles = ref<Array<{ id: number; name: string }>>([]);
@@ -91,7 +106,19 @@ function onDay(e: CalendarEventDTO, day: string) {
     last = wallTime(new Date(e.occurrenceEndAt!), zone).slice(0, 10);
   return first <= day && last >= day;
 }
-const dayEvents = computed(() => filtered.value.filter((e) => onDay(e, selectedDate.value)));
+const visibleEvents = computed(() => selectedCategories.value.includes("community") ? filtered.value : []);
+const holidays = computed(() => calendarHolidays(cells.value[0], cells.value[41]));
+const visibleHolidays = computed(() => holidays.value.filter((event) => selectedCategories.value.includes(event.category)));
+const dayHolidays = computed(() => visibleHolidays.value.filter((event) => event.date === selectedDate.value));
+const dayEvents = computed(() => visibleEvents.value.filter((e) => onDay(e, selectedDate.value)));
+function dayCategories(day: string) {
+  return categories.filter((category) => category.id === "community"
+    ? visibleEvents.value.some((event) => onDay(event, day))
+    : visibleHolidays.value.some((event) => event.date === day && event.category === category.id));
+}
+function categoryLabel(id: HolidayCategory) {
+  return categories.find((category) => category.id === id)!.label;
+}
 function moveMonth(delta: number) {
   const d = new Date(`${month.value}-01T12:00:00`);
   d.setMonth(d.getMonth() + delta);
@@ -332,13 +359,24 @@ async function polish() {
         </div>
         <div class="calendar-filters">
           <label
-            >查看
+            >群内日程
             <select v-model="filter">
               <option value="visible">全部可见</option>
               <option value="mine">我创建的</option>
               <option v-if="manager" value="manage">管理全部</option>
             </select></label
           ><small v-if="loading" role="status">正在读取…</small>
+        </div>
+        <div class="calendar-categories" role="group" aria-label="日历分类">
+          <button
+            v-for="category in categories"
+            :key="category.id"
+            type="button"
+            class="calendar-category"
+            :class="`category-${category.id}`"
+            :aria-pressed="selectedCategories.includes(category.id)"
+            @click="toggleCategory(category.id)"
+          ><i aria-hidden="true" />{{ category.label }}</button>
         </div>
         <p v-if="error" role="alert" class="error">
           {{ error }} <button class="mini-btn secondary" @click="load">重试</button>
@@ -359,16 +397,16 @@ async function polish() {
               outside: !day.startsWith(month),
               today: day === today()
             }"
-            :aria-label="`${day}${filtered.some((e) => onDay(e, day)) ? ' 有日程' : ''}`"
+            :aria-label="`${day}${dayCategories(day).length ? ` 有${dayCategories(day).map((category) => category.label).join('、')}` : ''}`"
             :aria-pressed="day === selectedDate"
             @click="selectedDate = day"
           >
             <span>{{ Number(day.slice(-2)) }}</span
-            ><i v-if="filtered.some((e) => onDay(e, day))" />
+            ><span class="calendar-day-markers" aria-hidden="true"><i v-for="category in dayCategories(day)" :key="category.id" :class="`category-${category.id}`" /></span>
           </button>
         </div>
         <h3>{{ selectedDate }} 的日程</h3>
-        <p v-if="!dayEvents.length && !loading" class="calendar-muted">这一天还没有可见日程。</p>
+        <p v-if="!dayEvents.length && !dayHolidays.length && !loading" class="calendar-muted">这一天还没有可见日程。</p>
         <button
           v-for="event in dayEvents"
           :key="`${event.id}-${event.occurrenceAt}`"
@@ -377,7 +415,7 @@ async function polish() {
         >
           <span
             ><strong>{{ event.title }}</strong
-            ><small
+            ><small class="calendar-event-category category-community">我们的日程</small><small
               >{{
                 event.allDay
                   ? "全天"
@@ -392,6 +430,14 @@ async function polish() {
             ></span
           ><CalendarDays :size="18" />
         </button>
+        <article v-for="holiday in dayHolidays" :key="holiday.id" class="calendar-event calendar-holiday">
+          <span><strong>{{ holiday.title }}</strong>
+            <small class="calendar-event-category" :class="`category-${holiday.category}`">{{ categoryLabel(holiday.category) }}</small>
+            <small>{{ holiday.description }}</small>
+          </span><CalendarDays :size="18" aria-hidden="true" />
+        </article>
+        <p class="calendar-muted calendar-holiday-note">教会节日按公历西方教会日期；犹太历节期从前一日日落开始。节日日期供参考，中国放假调休以官方公告为准。</p>
+        <p v-if="selectedCategories.includes('china') && (Number(month.slice(0, 4)) < 1901 || Number(month.slice(0, 4)) > 2100)" class="calendar-muted">中国农历节日与清明日期支持 1901—2100 年，当前年份暂无这些节日数据。</p>
         <div class="calendar-role">
           <label v-if="manager"
             >群提醒角色
@@ -631,7 +677,7 @@ async function polish() {
 .calendar-weekday {
   text-align: center;
   font-size: 12px;
-  color: #718076;
+  color: #8a6a76;
   padding: 5px;
 }
 .calendar-day {
@@ -639,12 +685,12 @@ async function polish() {
   min-height: 44px;
   border: 0;
   border-radius: 8px;
-  background: #f4f7f5;
-  color: #293c32;
+  background: #fff5ed;
+  color: #553c49;
   cursor: pointer;
 }
 .calendar-day.selected {
-  background: #436b55;
+  background: #a34e65;
   color: white;
 }
 .calendar-day.outside {
@@ -654,14 +700,66 @@ async function polish() {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
-.calendar-day i {
+.calendar-day-markers {
+  display: flex;
+  justify-content: center;
+  gap: 3px;
+  min-height: 4px;
+  margin: 3px auto 0;
+}
+.calendar-day-markers i {
   display: block;
   width: 4px;
   height: 4px;
   border-radius: 50%;
-  background: currentColor;
-  margin: 3px auto 0;
+  background: var(--category-color);
 }
+.calendar-day.selected i {
+  outline: 1px solid #fff7ee;
+}
+.category-community { --category-color: #a65038; --category-tint: #fbe6d9; }
+.category-church { --category-color: #7854a3; --category-tint: #eee6f6; }
+.category-hebrew { --category-color: #326b91; --category-tint: #e1edf7; }
+.category-china { --category-color: #a83e59; --category-tint: #fbe2e8; }
+.calendar-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0;
+}
+.calendar-category, .calendar-event small.calendar-event-category {
+  color: var(--category-color);
+  background: var(--category-tint);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.calendar-category {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid var(--category-color);
+  cursor: pointer;
+}
+.calendar-category[aria-pressed="false"] {
+  background: transparent;
+  border-color: #d8c4cb;
+  color: #806775;
+}
+.calendar-category i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--category-color);
+}
+.calendar-category[aria-pressed="false"] i { background: #ad9ba5; }
+.calendar-event small.calendar-event-category {
+  display: inline-block;
+  padding: 2px 6px;
+}
+.calendar-event.calendar-holiday { cursor: default; }
+.calendar-holiday-note { font-size: 12px; }
 .calendar-event {
   width: 100%;
   display: flex;
@@ -671,8 +769,8 @@ async function polish() {
   text-align: left;
   padding: 12px;
   margin: 8px 0;
-  border: 1px solid #dce5de;
-  background: #f9fbf9;
+  border: 1px solid #ead0ce;
+  background: #fff9f3;
   border-radius: 10px;
   cursor: pointer;
 }
@@ -683,16 +781,16 @@ async function polish() {
 .calendar-event small,
 .calendar-role small {
   display: block;
-  color: #68796e;
+  color: #806775;
   margin-top: 5px;
 }
 .calendar-muted {
-  color: #68796e;
+  color: #806775;
   font-size: 13px;
   line-height: 1.6;
 }
 .calendar-role {
-  border-top: 1px solid #e0e7e2;
+  border-top: 1px solid #ead0ce;
   padding-top: 12px;
   margin-top: 18px;
 }
@@ -717,11 +815,11 @@ async function polish() {
   min-width: 0;
   box-sizing: border-box;
   padding: 9px;
-  border: 1px solid #ccd8ce;
+  border: 1px solid #dcbfc7;
   border-radius: 7px;
   font: inherit;
-  background: white;
-  color: #243b2d;
+  background: #fffaf6;
+  color: #553c49;
 }
 .calendar-form .calendar-check {
   display: flex;
@@ -747,7 +845,7 @@ async function polish() {
   flex-wrap: wrap;
 }
 .calendar-form small {
-  color: #68796e;
+  color: #806775;
   line-height: 1.6;
 }
 .calendar-actions {

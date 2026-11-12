@@ -106,7 +106,8 @@ export function createBookProgressSync(options: Options) {
       session.revision = remote.revision; session.conflict = false;
       if (choice === "remote") { session.pending = undefined; persist(session); publish(session, { status: "saved" }); return location(session.bookId, remote.fraction, remote.locator); }
       if (session.pending) session.pending = { ...session.pending, baseRevision: remote.revision, mutationId: crypto.randomUUID() };
-      persist(session); void flush(session);
+      if (persist(session)) publish(session, { status: session.pending ? "pending" : "saved" });
+      void flush(session);
     },
     stop() { active = undefined; for (const session of sessions.values()) session.controller.abort(); sessions.clear(); }
   };

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
 import {
-  CalendarDays,
   CheckCircle2,
   ChevronLeft,
   Ellipsis,
@@ -29,7 +28,7 @@ import type { MusicPlayer } from "../music/useMusicPlayer";
 import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
 import ListenControl from "../listen/ListenControl.vue";
 import type { HeaderPlayback } from "../listen/useHeaderPlayback";
-import ZoomControl from "../zoom/ZoomControl.vue";
+import GatherControl from "./GatherControl.vue";
 
 // Presentation-only home of the chat header and the pinned/activity notice
 // stack, moved verbatim from App.vue. Interactive state stays in App.vue and
@@ -185,7 +184,6 @@ onBeforeUnmount(clearStoryHold);
     </div>
     <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BibleIcon :open="bibleOpen" /></button>
     <button v-if="!showingFavoriteSurface" class="icon-btn book-header-trigger" type="button" @click="openBookWorkspace" aria-label="打开图书室" title="图书室"><Library :size="20" /></button>
-    <button v-if="!showingFavoriteSurface && currentChannel?.kind === 'standard' && !currentChannel.directKey" class="icon-btn calendar-header-trigger" type="button" aria-label="打开群日历" title="群日历" @click="emit('openCalendar')"><CalendarDays :size="20" /></button>
     <SermonHub v-if="!showingFavoriteSurface" />
     <ListenControl
       v-if="!showingFavoriteSurface"
@@ -204,7 +202,7 @@ onBeforeUnmount(clearStoryHold);
       :open-manager="openMusicManagerFromMiniPanel"
       @current-score="showCurrentScore"
     />
-    <ZoomControl v-if="!showingFavoriteSurface" :is-admin="isAdmin" />
+    <GatherControl v-if="!showingFavoriteSurface" :is-admin="isAdmin" :calendar-available="currentChannel?.kind === 'standard' && !currentChannel.directKey" @open-calendar="emit('openCalendar')" />
     <button
       v-if="!showingFavoriteSurface"
       class="icon-btn story-header-trigger"

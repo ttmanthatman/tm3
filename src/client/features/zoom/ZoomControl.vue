@@ -5,12 +5,13 @@ import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import ZoomMeetingDialog from "./ZoomMeetingDialog.vue";
 import { useSharedZoomMeeting } from "./useZoomMeeting";
 
-const props = defineProps<{ isAdmin: boolean }>();
+const props = defineProps<{ isAdmin: boolean; hideTrigger?: boolean; focusTarget?: HTMLButtonElement | null }>();
 const zoom = useSharedZoomMeeting();
 const dialogOpen = ref(false);
 const joinOpen = ref(false);
 const noticeOpen = ref(false);
 const trigger = ref<HTMLButtonElement | null>(null);
+function focusTrigger() { (props.focusTarget ?? trigger.value)?.focus({ preventScroll: true }); }
 const title = computed(() => {
   const status = zoom.error.value || (zoom.ready.value && zoom.status.value === "unknown") ? "（会议状态暂时无法确认）" : !zoom.ready.value ? "（加载中）" : !zoom.settings.value.url ? "（管理员尚未设置会议链接）" : zoom.active.value ? "（正在开会）" : "";
   return `Zoom${status}${props.isAdmin ? '，长按设置会议状态' : ''}`;
@@ -51,7 +52,7 @@ function click() {
   clearHold();
   if (held) { held = false; return; }
   held = false;
-  trigger.value?.focus({ preventScroll: true });
+  focusTrigger();
   if (!zoom.settings.value.url) { noticeOpen.value = true; return; }
   if (!zoom.error.value && zoom.ready.value && zoom.active.value) openMeeting();
   else joinOpen.value = true;
@@ -60,17 +61,19 @@ function openDialog() {
   clearHold();
   if (!props.isAdmin) return;
   held = true;
-  trigger.value?.focus({ preventScroll: true });
+  focusTrigger();
   dialogOpen.value = true;
 }
-function closeDialog() { dialogOpen.value = false; trigger.value?.focus({ preventScroll: true }); }
+function closeDialog() { dialogOpen.value = false; focusTrigger(); }
+function open() { held = false; click(); }
 watch(zoom.visible, value => { if (!value) clearHold(); });
 watch(() => props.isAdmin, value => { if (!value) { clearHold(); dialogOpen.value = false; } });
 onBeforeUnmount(clearHold);
+defineExpose({ open, openSettings: openDialog, active: zoom.active, visible: zoom.visible, title });
 </script>
 
 <template>
-  <button ref="trigger" type="button" class="icon-btn zoom-header-trigger" :class="{ 'meeting-active': zoom.active.value, 'meeting-animate': zoom.active.value && zoom.visible.value }" :aria-label="title" :title="title" @pointerdown.stop="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @lostpointercapture="clearHold" @touchend="endTouch" @click.stop="click" @contextmenu.prevent="openDialog" @keydown.enter="held = false" @keydown.space="held = false" @keydown.shift.f10.prevent="openDialog" @keydown.escape="clearHold">
+  <button v-if="!hideTrigger" ref="trigger" type="button" class="icon-btn zoom-header-trigger" :class="{ 'meeting-active': zoom.active.value, 'meeting-animate': zoom.active.value && zoom.visible.value }" :aria-label="title" :title="title" @pointerdown.stop="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @lostpointercapture="clearHold" @touchend="endTouch" @click.stop="click" @contextmenu.prevent="openDialog" @keydown.enter="held = false" @keydown.space="held = false" @keydown.shift.f10.prevent="openDialog" @keydown.escape="clearHold">
     <svg viewBox="0 0 36 36" width="28" height="28" aria-hidden="true">
       <rect class="zoom-tile" x="2" y="2" width="32" height="32" rx="9" />
       <g class="zoom-wordmark" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">

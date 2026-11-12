@@ -159,7 +159,8 @@ test("group calendar permissions, private reminders, chain ownership and global 
   ).toBeTruthy();
   await reminder.getByRole("button", { name: "知道了" }).click();
   await expect(reminder).toHaveCount(0);
-  await page.getByRole("button", { name: "打开群日历" }).click();
+  await page.getByRole("button", { name: "聚", exact: true }).click();
+  await page.getByRole("menuitem", { name: "我们的日历" }).click();
   const calendar = page.getByRole("dialog", { name: /· 日历/ });
   await expect(calendar).toBeVisible();
   await calendar.getByRole("button", { name: "新建日程" }).click();
@@ -169,6 +170,14 @@ test("group calendar permissions, private reminders, chain ownership and global 
   await detail.getByRole("button", { name: "保存日程", exact: true }).click();
   await expect(detail).toHaveCount(0);
   await expect(calendar.getByText("界面创建日程", { exact: true })).toBeVisible();
+  const categories = calendar.getByRole("group", { name: "日历分类" });
+  for (const name of ["我们的日程", "教会节日", "犹太历节期", "中国节假日"]) {
+    await expect(categories.getByRole("button", { name, exact: true })).toHaveAttribute("aria-pressed", "true");
+  }
+  await categories.getByRole("button", { name: "我们的日程", exact: true }).click();
+  await expect(calendar.getByText("界面创建日程", { exact: true })).toHaveCount(0);
+  await categories.getByRole("button", { name: "我们的日程", exact: true }).click();
+  await expect(calendar.getByText("界面创建日程", { exact: true })).toBeVisible();
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     const panel = calendar.locator(".calendar-panel");
@@ -176,6 +185,21 @@ test("group calendar permissions, private reminders, chain ownership and global 
     await expect(calendar.getByRole("button", { name: "关闭日历" })).toBeVisible();
     await calendar.screenshot({ path: test.info().outputPath(`calendar-${width}.png`) });
   }
+  // Known dates exercise the merged month markers and each built-in calendar.
+  const now = new Date();
+  const monthsToApril = (2026 - now.getFullYear()) * 12 + 3 - now.getMonth();
+  for (let i = 0; i < Math.abs(monthsToApril); i++)
+    await calendar.getByRole("button", { name: monthsToApril < 0 ? "上个月" : "下个月" }).click();
+  await calendar.getByRole("button", { name: /^2026-04-05 / }).click();
+  await expect(calendar.locator(".calendar-holiday").filter({ hasText: "复活节" })).toBeVisible();
+  await expect(calendar.locator(".calendar-holiday").filter({ hasText: "清明" })).toBeVisible();
+  await categories.getByRole("button", { name: "教会节日", exact: true }).click();
+  await expect(calendar.locator(".calendar-holiday").filter({ hasText: "复活节" })).toHaveCount(0);
+  await expect(calendar.locator(".calendar-holiday").filter({ hasText: "清明" })).toBeVisible();
+  await categories.getByRole("button", { name: "教会节日", exact: true }).click();
+  await calendar.getByRole("button", { name: /^2026-04-02 / }).click();
+  await expect(calendar.locator(".calendar-holiday").filter({ hasText: "逾越节" })).toBeVisible();
+  await calendar.screenshot({ path: test.info().outputPath("calendar-holidays.png") });
   await calendar.getByRole("button", { name: "关闭日历" }).click();
   // Queue new reminders while the reader is split, reversed, and fullscreen.
   for (const mode of ["split", "right", "fullscreen"]) {
