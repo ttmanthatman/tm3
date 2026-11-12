@@ -3,12 +3,21 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import "./styles.css";
 import { APP_VERSION } from "@shared/release";
+import { getAppViewportHeight } from "./viewport";
 
 function syncViewportHeight() {
   const vv = window.visualViewport;
   const layoutHeight = Math.max(window.innerHeight, document.documentElement.clientHeight || 0);
-  const visibleHeight = vv ? Math.max(320, Math.floor(vv.height + vv.offsetTop)) : layoutHeight;
-  document.documentElement.style.setProperty("--app-height", `${Math.min(layoutHeight, visibleHeight)}px`);
+  const active = document.activeElement;
+  const editing = active instanceof HTMLElement && (
+    active.isContentEditable || active.matches("textarea, input:not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio])")
+  );
+  const standalone = window.matchMedia("(display-mode: standalone)").matches ||
+    (navigator as Navigator & { standalone?: boolean }).standalone === true;
+  const height = getAppViewportHeight({
+    layoutHeight, visualHeight: vv?.height, visualOffsetTop: vv?.offsetTop, standalone, editing
+  });
+  document.documentElement.style.setProperty("--app-height", `${height}px`);
   document.documentElement.style.setProperty("--keyboard-offset", "0px");
 }
 
@@ -16,6 +25,9 @@ syncViewportHeight();
 window.visualViewport?.addEventListener("resize", syncViewportHeight);
 window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 window.addEventListener("resize", syncViewportHeight);
+window.addEventListener("pageshow", syncViewportHeight);
+document.addEventListener("focusin", syncViewportHeight);
+document.addEventListener("focusout", syncViewportHeight);
 
 document.addEventListener(
   "gesturestart",
