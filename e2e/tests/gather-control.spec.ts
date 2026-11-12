@@ -91,6 +91,17 @@ test("an active meeting remains visible on gather and opens directly", async ({ 
   await mountGather(page, { active: true });
   const trigger = page.getByRole("button", { name: "聚", exact: true });
   await expect(trigger).toHaveAttribute("title", /正在开会/);
+  const glyph = trigger.locator(".gather-glyph");
+  await expect.poll(() => glyph.evaluate(el => getComputedStyle(el).animationPlayState)).toBe("running");
+  const initial = await glyph.evaluate(el => [getComputedStyle(el).transform, getComputedStyle(el).filter]);
+  await expect.poll(() => glyph.evaluate(el => [getComputedStyle(el).transform, getComputedStyle(el).filter])).not.toEqual(initial);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(() => glyph.evaluate(el => getComputedStyle(el).animationPlayState)).toBe("paused");
+  await page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
+  await expect.poll(() => glyph.evaluate(el => getComputedStyle(el).animationPlayState)).toBe("running");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect.poll(() => glyph.evaluate(el => getComputedStyle(el).animationName)).toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await trigger.click();
   const meeting = page.getByRole("menuitem", { name: /线上会议/ });
   await expect(meeting).toContainText("进行中");

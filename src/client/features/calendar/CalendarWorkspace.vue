@@ -7,6 +7,8 @@ import { api } from "../../api";
 import { useChatStore } from "../../store";
 import { calendarHolidays, type HolidayCategory } from "./calendarHolidays";
 import "./calendarTheme.css";
+import { calendarLunar } from "./calendarLunar";
+import { reminderEditor, reminderOffsets, type ReminderUnit } from "./calendarReminderOffsets";
 import {
   calendarInputSchema,
   wallTime,
@@ -57,6 +59,7 @@ const start = ref(""),
   until = ref(""),
   offsetText = ref("0"),
   optionText = ref("");
+const reminderUnit = ref<ReminderUnit>("minutes");
 const editScope = ref<"all" | "one" | "future">("all");
 const formError = ref(""),
   previewNote = ref("");
@@ -175,7 +178,9 @@ function openEditor(event: CalendarEventDTO | null) {
   until.value = event?.untilAt
     ? wallTime(new Date(event.untilAt), event.timeZone).slice(0, 10)
     : "";
-  offsetText.value = (event?.reminders || [0]).join(",");
+  const offsets = reminderEditor(event?.reminders || [0]);
+  offsetText.value = offsets.text;
+  reminderUnit.value = offsets.unit;
   optionText.value = event?.chainConfig?.options.join("\n") || "";
   formError.value = "";
   previewNote.value = "";
@@ -217,7 +222,7 @@ function inputValue() {
     untilAt: until.value
       ? wallTimeToDate(`${until.value}T23:59:59`, f.timeZone).toISOString()
       : null,
-    reminders: offsetText.value.split(/[,，]/).map((s) => Number(s.trim()))
+    reminders: reminderOffsets(offsetText.value, reminderUnit.value)
   };
   const result = calendarInputSchema.safeParse(data);
   if (!result.success) throw new Error(result.error.issues[0].message);
@@ -401,11 +406,12 @@ async function polish() {
             :aria-pressed="day === selectedDate"
             @click="selectedDate = day"
           >
-            <span>{{ Number(day.slice(-2)) }}</span
+            <span class="calendar-solar-day">{{ Number(day.slice(-2)) }}</span><small class="calendar-lunar-day">{{ calendarLunar(day)?.short }}</small
             ><span class="calendar-day-markers" aria-hidden="true"><i v-for="category in dayCategories(day)" :key="category.id" :class="`category-${category.id}`" /></span>
           </button>
         </div>
         <h3>{{ selectedDate }} 的日程</h3>
+        <p v-if="calendarLunar(selectedDate)" class="calendar-muted">{{ calendarLunar(selectedDate)?.full }}</p>
         <p v-if="!dayEvents.length && !dayHolidays.length && !loading" class="calendar-muted">这一天还没有可见日程。</p>
         <button
           v-for="event in dayEvents"
@@ -521,13 +527,11 @@ async function polish() {
             </select></label
           >
           <template v-if="form.reminderMode !== 'off'">
-            <label
-              >提前多少分钟提醒<input
-                v-model="offsetText"
-                placeholder="例如：0,10,1440"
-                required
-              /><small>0 表示开始时；多个时间用逗号分隔，最多 5 个。</small></label
-            >
+            <div class="calendar-two">
+              <label>提前提醒<input v-model="offsetText" :placeholder="reminderUnit === 'days' ? '例如：0,1,3' : '例如：0,10,60'" required inputmode="decimal" /></label>
+              <label>提醒单位<select v-model="reminderUnit"><option value="minutes">分钟</option><option value="days">天</option></select></label>
+            </div>
+            <small>0 表示开始时；多个时间用逗号分隔，最多 5 个，最早提前 30 天。</small>
             <p v-if="form.reminderMode === 'private'" class="calendar-muted">
               到时在聊天室内弹出提醒，无需浏览器通知权限。关闭网页后，下次进入可查看待确认提醒。
             </p>
@@ -677,7 +681,7 @@ async function polish() {
 .calendar-weekday {
   text-align: center;
   font-size: 12px;
-  color: #8a6a76;
+  color: #597782;
   padding: 5px;
 }
 .calendar-day {
@@ -685,18 +689,18 @@ async function polish() {
   min-height: 44px;
   border: 0;
   border-radius: 8px;
-  background: #fff5ed;
-  color: #553c49;
+  background: #f0f9fc;
+  color: #304f60;
   cursor: pointer;
 }
 .calendar-day.selected {
-  background: #a34e65;
+  background: #39768a;
   color: white;
 }
 .calendar-day.outside {
   opacity: 0.5;
 }
-.calendar-day.today span {
+.calendar-day.today .calendar-solar-day {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
@@ -707,6 +711,8 @@ async function polish() {
   min-height: 4px;
   margin: 3px auto 0;
 }
+.calendar-lunar-day { display: block; font-size: 10px; line-height: 1.3; color: #587781; }
+.calendar-day.selected .calendar-lunar-day { color: #f1fbff; }
 .calendar-day-markers i {
   display: block;
   width: 4px;
@@ -745,7 +751,7 @@ async function polish() {
 .calendar-category[aria-pressed="false"] {
   background: transparent;
   border-color: #d8c4cb;
-  color: #806775;
+  color: #57717e;
 }
 .calendar-category i {
   width: 6px;
@@ -769,7 +775,7 @@ async function polish() {
   text-align: left;
   padding: 12px;
   margin: 8px 0;
-  border: 1px solid #ead0ce;
+  border: 1px solid #c6dce2;
   background: #fff9f3;
   border-radius: 10px;
   cursor: pointer;
@@ -781,16 +787,16 @@ async function polish() {
 .calendar-event small,
 .calendar-role small {
   display: block;
-  color: #806775;
+  color: #57717e;
   margin-top: 5px;
 }
 .calendar-muted {
-  color: #806775;
+  color: #57717e;
   font-size: 13px;
   line-height: 1.6;
 }
 .calendar-role {
-  border-top: 1px solid #ead0ce;
+  border-top: 1px solid #c6dce2;
   padding-top: 12px;
   margin-top: 18px;
 }
@@ -815,11 +821,11 @@ async function polish() {
   min-width: 0;
   box-sizing: border-box;
   padding: 9px;
-  border: 1px solid #dcbfc7;
+  border: 1px solid #bfd5df;
   border-radius: 7px;
   font: inherit;
-  background: #fffaf6;
-  color: #553c49;
+  background: #f8fcfd;
+  color: #304f60;
 }
 .calendar-form .calendar-check {
   display: flex;
@@ -845,7 +851,7 @@ async function polish() {
   flex-wrap: wrap;
 }
 .calendar-form small {
-  color: #806775;
+  color: #57717e;
   line-height: 1.6;
 }
 .calendar-actions {

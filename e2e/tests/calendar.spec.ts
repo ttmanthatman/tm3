@@ -164,12 +164,20 @@ test("group calendar permissions, private reminders, chain ownership and global 
   const calendar = page.getByRole("dialog", { name: /· 日历/ });
   await expect(calendar).toBeVisible();
   await calendar.getByRole("button", { name: "新建日程" }).click();
-  const detail = page.getByRole("dialog", { name: "新建日程", exact: true });
+  const detail = page.getByRole("dialog", { name: /^(新建日程|日程详情)$/ });
   await expect(detail.getByLabel("提醒方式")).toHaveValue("private");
   await detail.getByLabel("标题", { exact: true }).fill("界面创建日程");
+  await detail.getByLabel("提醒单位").selectOption("days");
+  await detail.getByLabel("提前提醒", { exact: true }).fill("0,1,3");
   await detail.getByRole("button", { name: "保存日程", exact: true }).click();
   await expect(detail).toHaveCount(0);
   await expect(calendar.getByText("界面创建日程", { exact: true })).toBeVisible();
+  const createdEvent = await prisma.calendarEvent.findFirstOrThrow({ where: { title: "界面创建日程" } });
+  expect(createdEvent.reminders).toEqual([4320, 1440, 0]);
+  await calendar.getByRole("button").filter({ hasText: "界面创建日程" }).click();
+  await expect(detail.getByLabel("提醒单位")).toHaveValue("days");
+  await expect(detail.getByLabel("提前提醒", { exact: true })).toHaveValue("3,1,0");
+  await detail.getByRole("button", { name: "关闭日程详情" }).click();
   const categories = calendar.getByRole("group", { name: "日历分类" });
   for (const name of ["我们的日程", "教会节日", "犹太历节期", "中国节假日"]) {
     await expect(categories.getByRole("button", { name, exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -178,11 +186,17 @@ test("group calendar permissions, private reminders, chain ownership and global 
   await expect(calendar.getByText("界面创建日程", { exact: true })).toHaveCount(0);
   await categories.getByRole("button", { name: "我们的日程", exact: true }).click();
   await expect(calendar.getByText("界面创建日程", { exact: true })).toBeVisible();
+  const sizes = await page.evaluate(() => [".gather-glyph", ".music-player-glyph"].map(selector => {
+    const style = getComputedStyle(document.querySelector(selector)!);
+    return [style.fontSize, style.fontWeight, style.lineHeight];
+  }));
+  expect(sizes[0]).toEqual(sizes[1]);
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     const panel = calendar.locator(".calendar-panel");
     expect(await panel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBeTruthy();
     await expect(calendar.getByRole("button", { name: "关闭日历" })).toBeVisible();
+    await expect(calendar.locator(".calendar-lunar-day")).toHaveCount(42);
     await calendar.screenshot({ path: test.info().outputPath(`calendar-${width}.png`) });
   }
   // Known dates exercise the merged month markers and each built-in calendar.
@@ -198,6 +212,7 @@ test("group calendar permissions, private reminders, chain ownership and global 
   await expect(calendar.locator(".calendar-holiday").filter({ hasText: "清明" })).toBeVisible();
   await categories.getByRole("button", { name: "教会节日", exact: true }).click();
   await calendar.getByRole("button", { name: /^2026-04-02 / }).click();
+  await expect(calendar.getByText("农历二月十五", { exact: true })).toBeVisible();
   await expect(calendar.locator(".calendar-holiday").filter({ hasText: "逾越节" })).toBeVisible();
   await calendar.screenshot({ path: test.info().outputPath("calendar-holidays.png") });
   await calendar.getByRole("button", { name: "关闭日历" }).click();

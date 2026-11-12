@@ -82,7 +82,7 @@ onBeforeUnmount(() => { clearHold(); document.removeEventListener("pointerdown",
 
 <template>
   <div ref="root" class="gather-control" @keydown="keydown" @focusout="focusout">
-    <button ref="trigger" class="icon-btn gather-header-trigger" type="button" :class="{ active: menuOpen, 'meeting-active': zoom?.active }" aria-label="聚" :title="title" aria-haspopup="menu" :aria-expanded="menuOpen" @click.stop="toggleMenu" @keydown.down.stop.prevent="openMenu()" @keydown.up.stop.prevent="openMenu(true)" @keydown.enter="held = false" @keydown.space="held = false" @keydown.shift.f10.stop.prevent="openSettings" @pointerdown="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @lostpointercapture="clearHold" @touchend="endTouch" @contextmenu.prevent="openSettings">
+    <button ref="trigger" class="icon-btn gather-header-trigger" type="button" :class="{ active: menuOpen, 'meeting-active': zoom?.active, 'meeting-animate': zoom?.active && zoom?.visible }" aria-label="聚" :title="title" aria-haspopup="menu" :aria-expanded="menuOpen" @click.stop="toggleMenu" @keydown.down.stop.prevent="openMenu()" @keydown.up.stop.prevent="openMenu(true)" @keydown.enter="held = false" @keydown.space="held = false" @keydown.shift.f10.stop.prevent="openSettings" @pointerdown="begin" @pointermove="move" @pointerup="clearHold" @pointercancel="clearHold" @pointerleave="clearHold" @lostpointercapture="clearHold" @touchend="endTouch" @contextmenu.prevent="openSettings">
       <span class="gather-glyph" aria-hidden="true">聚</span>
       <span v-if="zoom?.active" class="gather-meeting-dot" role="status" aria-label="线上会议进行中"></span>
     </button>
@@ -97,9 +97,25 @@ onBeforeUnmount(() => { clearHold(); document.removeEventListener("pointerdown",
 <style scoped>
 .gather-control { position: relative; flex: 0 0 auto; }
 .gather-header-trigger { position: relative; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; }
-.gather-glyph { font-size: 22px; font-weight: 600; line-height: 1; }
-.gather-header-trigger.meeting-active { color: #246bff; }
-.gather-meeting-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: #246bff; }
+.gather-glyph { display: block; font-size: 18px; font-weight: 800; line-height: 1; transform-origin: 50% 50%; }
+.gather-header-trigger.meeting-active .gather-glyph {
+  background: linear-gradient(120deg, #d52b58, #ce7026, #a18a15, #25834c, #2773c1, #834abe, #d52b58);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+  animation: gatherRainbowBreath 2.4s ease-in-out infinite;
+  animation-play-state: paused;
+}
+.gather-header-trigger.meeting-animate .gather-glyph { animation-play-state: running; }
+@keyframes gatherRainbowBreath {
+  0%, 100% { transform: translateY(0) scale(.94); filter: hue-rotate(0deg); }
+  35% { transform: translateY(-2px) scale(1.12); filter: hue-rotate(120deg); }
+  70% { transform: translateY(1px) scale(1.02); filter: hue-rotate(240deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gather-header-trigger.meeting-active .gather-glyph { animation: none; }
+}
+.gather-meeting-dot { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: linear-gradient(135deg, #df4069, #efb74b, #408dc1, #9252b4); }
 .gather-menu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 44; width: 196px; }
 .gather-menu small { margin-left: auto; font-size: 11px; }
 </style>

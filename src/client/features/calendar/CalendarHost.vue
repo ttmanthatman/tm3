@@ -149,13 +149,13 @@ onBeforeUnmount(() => {
   padding: 0 16px;
 }
 .calendar-notice-list article {
-  border-bottom: 1px solid #ead0ce;
+  border-bottom: 1px solid #c6dce2;
   padding: 12px 0;
   overflow-wrap: anywhere;
 }
 .calendar-notice-list p {
   font-size: 13px;
-  color: #806775;
+  color: #57717e;
   line-height: 1.6;
 }
 .calendar-notice-description {
@@ -170,6 +170,6 @@ onBeforeUnmount(() => {
   padding: 16px;
 }
 .calendar-notice-actions small {
-  color: #806775;
+  color: #57717e;
 }
 </style>
