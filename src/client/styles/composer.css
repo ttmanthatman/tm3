@@ -1,6 +1,6 @@
 .composer {
   grid-row: 7;
-  padding: 8px 6px var(--composer-bottom-gap);
+  padding: 4px 3px var(--composer-bottom-gap);
   position: relative;
   display: grid;
   gap: 6px;
@@ -131,7 +131,7 @@
   width: 100%;
   display: flex;
   align-items: flex-end;
-  gap: 2px;
+  gap: 0;
   position: relative;
 }
 
@@ -283,10 +283,10 @@
 }
 
 .composer-main .composer-edge-btn {
-  width: 34px;
-  min-width: 34px;
-  height: 36px;
-  flex: 0 0 34px;
+  width: 30px;
+  min-width: 30px;
+  height: 32px;
+  flex: 0 0 30px;
   padding: 0;
 }
 

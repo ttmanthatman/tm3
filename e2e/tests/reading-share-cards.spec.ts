@@ -41,7 +41,7 @@ async function mountCards(page: Page) {
       row("long", h(Passage, { passage: { reference: "约翰福音 13:35", text: long, translation: "和合本" }, openPassage, play: play("long") })),
       row("multiple", h(Scripture, { passages, translation: "当代译本（简体）", showTranslation: true, sourceId: "cmncbs", openPassage, play: play("multiple") })),
       row("topic", h(Topic, { topic: { kind: "bible_topic", name: "彼此相爱", translation: "和合本", passages }, openPassage, play: play("topic") })),
-      row("book", h(Book, { paperSeed: "c", context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "真要有危险，一所想象出来的房子又能给你什么保护？" }, comment: "这句话一直留在我心里。" })),
+      row("book", h(Book, { paperSeed: "c", context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。" }, comment: "这句话一直留在我心里。" })),
       row("book-note", h(BookNote, { paperSeed: "a", note: { id: "fixture", bookId: 999999, bookTitle: "魔鬼家书：地狱来鸿", chapter: "第20封信", fraction: .55, quote: "我亲爱的私酷鬼", text: "停下来，认真想想这封信。", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" } })),
       row("fern", h(Book, { paperSeed: "b", context: { bookId: 999999, title: "返璞归真", chapter: "1", fraction: .2, quote: "每一个新的清晨，都是一个新的开始。" } })),
       row("bible-note", h(BibleNote, { id: "share-card-note", reference: "约翰福音 11:35" }))
@@ -106,8 +106,19 @@ async function responsiveCards(page: Page) {
       expect(await card.evaluate(el => getComputedStyle(el, "::before").transform)).toBe("none");
       expect(await card.locator(".reading-share-card-content").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       expect(await card.locator("..").evaluate((el) => getComputedStyle(el).backgroundColor)).toBe("rgba(0, 0, 0, 0)");
-      expect(await card.locator(".reading-share-plant").evaluate(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)).toBe(true);
+      if (await card.locator(".reading-share-plant").count()) expect(await card.locator(".reading-share-plant").evaluate(el => (el as HTMLImageElement).complete && (el as HTMLImageElement).naturalWidth > 0)).toBe(true);
     }
+    await expect(page.locator("#book .reading-share-plant, #fern .reading-share-plant")).toHaveCount(0);
+    const jump = page.locator("#book .book-share-inline-link");
+    await expect(jump).toHaveAttribute("href", await page.locator("#book .book-share-cover-link").getAttribute("href") as string);
+    expect(await jump.textContent()).toBe("");
+    const wraps = await page.locator("#book blockquote").evaluate(quote => {
+      const cover = quote.closest(".book-share-flow")!.querySelector(".book-share-cover-link")!.getBoundingClientRect();
+      const text = [...quote.childNodes].find(node => node.nodeType === Node.TEXT_NODE && node.textContent!.trim())!;
+      const range = document.createRange(); range.selectNodeContents(text);
+      return [...range.getClientRects()].some(rect => rect.top >= cover.bottom && rect.left < cover.left + 2);
+    });
+    expect(wraps).toBe(true);
     const cover = await page.locator("#book .book-share-cover").boundingBox();
     expect(cover!.width).toBeGreaterThanOrEqual(width === 1280 ? 96 : 76);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);

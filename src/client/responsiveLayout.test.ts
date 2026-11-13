@@ -567,8 +567,8 @@ test("voice record strip hides once a preview is ready", () => {
 test("mobile composer edge buttons stay square and align with the one-line input", () => {
   const edgeButtonRules = [...css.matchAll(/\.composer-main \.composer-edge-btn \{([^}]*)\}/g)].map((match) => match[1]);
   assert.ok(
-    edgeButtonRules.some((rule) => /width: 38px;/.test(rule) && /height: 38px;/.test(rule) && /flex(?:-basis)?: (?:0 0 )?38px;/.test(rule)),
-    "the mobile voice and trailing composer buttons should use a centered 38px square"
+    edgeButtonRules.some((rule) => /width: 32px;/.test(rule) && /height: 32px;/.test(rule) && /flex(?:-basis)?: (?:0 0 )?32px;/.test(rule)),
+    "the mobile voice and trailing composer buttons should use a compact centered 32px square"
   );
 });
 
@@ -1280,8 +1280,8 @@ test("composer swaps one compact trailing action between more and a connection-a
   assert.match(composerBar, /<button v-else class="icon-btn composer-edge-btn"[\s\S]*?aria-label="更多功能"/);
   assert.match(composerBar, /class="composer-send-status"[\s\S]*?:data-send-state="composerSendState"[\s\S]*?aria-live="polite"/);
   assert.match(app, /const canSubmitText = computed\(\(\) => canSendText\.value && socketReadyToSend\.value && !messageSendPending\.value\)/);
-  assert.match(css, /\.composer-main \{[\s\S]*?gap: 2px;/);
-  assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 34px;[\s\S]*?flex: 0 0 34px;[\s\S]*?padding: 0;/);
+  assert.match(css, /\.composer-main \{[\s\S]*?gap: 0;/);
+  assert.match(css, /\.composer-main \.composer-edge-btn \{[\s\S]*?width: 30px;[\s\S]*?flex: 0 0 30px;[\s\S]*?padding: 0;/);
   assert.match(css, /\.composer-main \.composer-send-btn:disabled \{[\s\S]*?cursor: not-allowed;[\s\S]*?opacity: 0\.48;/);
 });
 
