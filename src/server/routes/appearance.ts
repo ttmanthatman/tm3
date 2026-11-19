@@ -1,3 +1,4 @@
+import { cleanRainbowOrbit, RAINBOW_MAX_COLORS, RAINBOW_MAX_WIDTH } from "../../shared/rainbowOrbit.js";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { pipeline } from "node:stream/promises";
@@ -172,6 +173,7 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
             "prayerBubbleOtherColor",
             "flashEffect",
             "customThemes",
+            "rainbowOrbit",
             "composerPrompts",
             "composerPromptIntervalSeconds",
             "composerPromptAnimSeconds",
@@ -218,6 +220,7 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
       flashEffect: cleanFlashEffect(parseJsonField(settings.get("flashEffect"), DEFAULT_FLASH_EFFECT)),
       handwritingSettings: normalizeHandwritingGlobalSettings(parseJsonField(settings.get("handwritingSettings"), null)),
       customThemes: cleanCustomThemes(parseJsonField(settings.get("customThemes"), [])),
+      rainbowOrbit: cleanRainbowOrbit(parseJsonField(settings.get("rainbowOrbit"), null)),
       composerPrompts: settings.has("composerPrompts")
         ? cleanComposerPrompts(parseJsonField(settings.get("composerPrompts"), []))
         : [...DEFAULT_COMPOSER_PROMPTS],
@@ -415,6 +418,11 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
         prayerBubbleOtherColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         flashEffect: z.unknown().optional(),
         customThemes: z.array(z.unknown()).optional(),
+        rainbowOrbit: z.object({
+          innerWidth: z.number().int().min(0).max(RAINBOW_MAX_WIDTH),
+          outerWidth: z.number().int().min(0).max(RAINBOW_MAX_WIDTH),
+          colors: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/)).min(1).max(RAINBOW_MAX_COLORS)
+        }).strict().optional(),
         composerPrompts: z.array(z.string().max(80)).max(50).optional(),
         composerPromptIntervalSeconds: z.number().min(1).max(30).optional(),
         composerPromptAppearSeconds: z.number().min(COMPOSER_PROMPT_ANIM_MIN).max(COMPOSER_PROMPT_ANIM_MAX).optional(),
@@ -457,6 +465,7 @@ export function registerAppearanceRoutes(app: FastifyInstance, deps: AppearanceR
     if (Object.prototype.hasOwnProperty.call(body, "prayerBubbleOtherColor")) await setSetting("prayerBubbleOtherColor", cleanHexColor(body.prayerBubbleOtherColor, "#fffaf0"));
     if (Object.prototype.hasOwnProperty.call(body, "flashEffect")) await setSetting("flashEffect", JSON.stringify(cleanFlashEffect(body.flashEffect)));
     if (Object.prototype.hasOwnProperty.call(body, "customThemes")) await setSetting("customThemes", JSON.stringify(cleanCustomThemes(body.customThemes)));
+    if (body.rainbowOrbit) await setSetting("rainbowOrbit", JSON.stringify(cleanRainbowOrbit(body.rainbowOrbit)));
     if (Object.prototype.hasOwnProperty.call(body, "composerPrompts")) await setSetting("composerPrompts", JSON.stringify(cleanComposerPrompts(body.composerPrompts)));
     if (Object.prototype.hasOwnProperty.call(body, "composerPromptIntervalSeconds")) await setSetting("composerPromptIntervalSeconds", String(cleanComposerPromptIntervalSeconds(body.composerPromptIntervalSeconds)));
     if (Object.prototype.hasOwnProperty.call(body, "composerPromptAppearSeconds")) await setSetting("composerPromptAppearSeconds", String(cleanComposerPromptAppearSeconds(body.composerPromptAppearSeconds)));

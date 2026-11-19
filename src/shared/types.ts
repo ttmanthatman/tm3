@@ -1,3 +1,4 @@
+import type { RainbowOrbitSettings } from "./rainbowOrbit.js";
 import type { HandwritingGlobalSettings, HandwritingPreferencesDTO } from "./handwriting.js";
 
 export type ActorKind = "human" | "virtual" | "system";
@@ -1188,6 +1189,7 @@ export interface AppearanceDTO {
   prayerBubbleOtherColor: string;
   flashEffect: FlashEffectSettingsDTO;
   customThemes: ThemeDTO[];
+  rainbowOrbit?: RainbowOrbitSettings;
   composerPrompts: string[];
   composerPromptIntervalSeconds: number;
   composerPromptAppearSeconds: number;

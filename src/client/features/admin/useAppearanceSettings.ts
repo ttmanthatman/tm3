@@ -1,3 +1,4 @@
+import { cleanRainbowOrbit } from "@shared/rainbowOrbit";
 import { computed, ref, type Ref } from "vue";
 import type {
   AdminAttachmentDTO,
@@ -208,6 +209,7 @@ export function useAppearanceSettings(options: UseAppearanceSettingsOptions) {
     intervalSeconds: 0.4,
     transitionMode: "smooth"
   });
+  const rainbowOrbitEdit = ref(cleanRainbowOrbit());
   const composerPromptsText = ref("");
   const composerPromptIntervalEdit = ref(DEFAULT_COMPOSER_PROMPT_INTERVAL);
   const composerPromptAppearEdit = ref(DEFAULT_COMPOSER_PROMPT_APPEAR);
@@ -299,6 +301,7 @@ export function useAppearanceSettings(options: UseAppearanceSettingsOptions) {
     prayerBubbleOtherColor: loginAppearanceEdit.value.prayerBubbleOtherColor,
     flashEffect: options.cleanFlashEffectSettings(flashEffectEdit.value),
     customThemes: customThemesDraft.value.map((theme) => ({ ...theme, palette: { ...theme.palette } })),
+    rainbowOrbit: cleanRainbowOrbit(rainbowOrbitEdit.value),
     composerPrompts: cleanComposerPrompts(composerPromptsText.value.split("\n")),
     composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(composerPromptIntervalEdit.value),
     composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(composerPromptAppearEdit.value),
@@ -332,6 +335,7 @@ export function useAppearanceSettings(options: UseAppearanceSettingsOptions) {
     prayerBubbleOtherColor: store.appearance.prayerBubbleOtherColor || "#fffaf0",
     flashEffect: options.cleanFlashEffectSettings(store.appearance.flashEffect),
     customThemes: (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } })),
+    rainbowOrbit: cleanRainbowOrbit(store.appearance.rainbowOrbit),
     composerPrompts: cleanComposerPrompts(store.appearance.composerPrompts || []),
     composerPromptIntervalSeconds: cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds),
     composerPromptAppearSeconds: cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds),
@@ -531,6 +535,7 @@ export function useAppearanceSettings(options: UseAppearanceSettingsOptions) {
       transitionMode: flashEffect.transitionMode
     };
     customThemesDraft.value = (store.appearance.customThemes || []).map((theme) => ({ ...theme, palette: { ...theme.palette } }));
+    rainbowOrbitEdit.value = cleanRainbowOrbit(store.appearance.rainbowOrbit);
     composerPromptsText.value = cleanComposerPrompts(store.appearance.composerPrompts || []).join("\n");
     composerPromptIntervalEdit.value = cleanComposerPromptIntervalSeconds(store.appearance.composerPromptIntervalSeconds);
     composerPromptAppearEdit.value = cleanComposerPromptAppearSeconds(store.appearance.composerPromptAppearSeconds);
@@ -598,6 +603,7 @@ export function useAppearanceSettings(options: UseAppearanceSettingsOptions) {
     appearanceImagePicker,
     loginAppearanceEdit,
     flashEffectEdit,
+    rainbowOrbitEdit,
     composerPromptsText,
     composerPromptIntervalEdit,
     composerPromptAppearEdit,

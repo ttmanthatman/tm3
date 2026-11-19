@@ -34,6 +34,7 @@ export const DEMO_SAFE_SETTING_KEYS = new Set([
   "prayerBubbleOtherColor",
   "flashEffect",
   "customThemes",
+  "rainbowOrbit",
   "composerPrompts",
   "composerPromptIntervalSeconds",
   "composerPromptAnimSeconds",

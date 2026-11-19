@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { useChatStore } from "../../store";
+import MessageBoxDecoration from "../../components/decorations/MessageBoxDecoration.vue";
 import BottleShore from "../social/BottleShore.vue";
 import { nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
 import {
@@ -45,6 +47,7 @@ type MentionMember = {
   avatarPath?: string | null;
 };
 
+const appearanceStore = useChatStore();
 const input = defineModel<string>("input", { required: true });
 const replyTo = defineModel<MessageDTO | null>("replyTo", { required: true });
 const composerFocused = defineModel<boolean>("composerFocused", { required: true });
@@ -187,12 +190,12 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
     <div class="composer-input-shell">
       <div class="composer-main" :class="{ raised: composerPanel }">
         <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" data-voice-toggle @click="toggleVoicePanel" :disabled="recordingBusy || voiceSending" aria-label="语音消息"><Mic :size="22" /></button>
-        <div class="composer-glow-shell" :class="{ on: composerFocused }">
+        <div class="composer-glow-shell">
+          <MessageBoxDecoration kind="rainbow-orbit" :active="composerFocused" :settings="appearanceStore.appearance.rainbowOrbit" />
           <textarea
             ref="composerInput"
             v-model="input"
             rows="1"
-            :class="{ 'composer-glow': composerFocused }"
             :placeholder="composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
             @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
             @blur="composerFocused = false"

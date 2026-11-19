@@ -139,92 +139,11 @@
   align-items: center;
 }
 
-@property --composer-glow-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
-
 .composer-glow-shell {
   position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
-}
-
-/* A blurred copy of the rotating gradient sits behind the textarea, so the
-   halo radiates the border's own colors instead of a flat single-color glow. */
-.composer-glow-shell::before {
-  content: "";
-  position: absolute;
-  inset: -4px;
-  border-radius: 10px;
-  background: conic-gradient(
-    from var(--composer-glow-angle),
-    #22d3ee,
-    #a78bfa,
-    #f472b6,
-    #facc15,
-    #34d399,
-    #22d3ee
-  );
-  filter: blur(12px);
-  opacity: 0;
-  transition: opacity 0.25s ease;
-  pointer-events: none;
-}
-
-.composer-glow-shell.on::before {
-  opacity: 0.8;
-  animation: composerGlowSpin 3.2s linear infinite;
-}
-
-.composer-glow-shell textarea {
-  position: relative;
-  z-index: 1;
-}
-
-.composer textarea.composer-glow {
-  outline: none;
-  background:
-    linear-gradient(#fff, #fff) padding-box,
-    conic-gradient(
-      from var(--composer-glow-angle),
-      #22d3ee,
-      #a78bfa,
-      #f472b6,
-      #facc15,
-      #34d399,
-      #22d3ee
-    ) border-box;
-  animation: composerGlowSpin 3.2s linear infinite;
-}
-
-@keyframes composerGlowSpin {
-  to {
-    --composer-glow-angle: 360deg;
-  }
-}
-
-@supports not (background: conic-gradient(from var(--composer-glow-angle), red, blue)) {
-  .composer textarea.composer-glow {
-    background:
-      linear-gradient(#fff, #fff) padding-box,
-      linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15) border-box;
-    animation: none;
-  }
-
-  .composer-glow-shell.on::before {
-    background: linear-gradient(120deg, #22d3ee, #a78bfa, #f472b6, #facc15);
-    animation: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .composer textarea.composer-glow,
-  .composer-glow-shell.on::before {
-    animation: none;
-  }
 }
 
 .composer-prompt-overlay {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RainbowOrbitControls from "../../components/decorations/RainbowOrbitControls.vue";
 import { computed, defineAsyncComponent } from "vue";
 import type { Component, ComputedRef, Ref } from "vue";
 import {
@@ -110,6 +111,7 @@ const {
   appearanceThemeAdvancedOpen,
   loginAppearanceEdit,
   flashEffectEdit,
+  rainbowOrbitEdit,
   composerPromptsText,
   composerPromptIntervalEdit,
   composerPromptAppearEdit,
@@ -454,6 +456,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
               </template>
 
               <template v-else-if="appearanceSection === 'chat'">
+                <RainbowOrbitControls v-model="rainbowOrbitEdit" />
                 <label>聊天室壁纸</label>
                 <button class="primary-btn" @click="emit('wallpaper')">打开独立壁纸设置</button>
                 <p class="settings-note">所有成员均可贡献和设置壁纸，也可选择仅自己使用。</p>
