@@ -60,6 +60,8 @@ type BookRow = {
   coverName: string | null;
   fileSize: number;
   publicationRevision: string | null;
+  isPublished: boolean;
+  deletedAt: Date | null;
   createdAt: Date;
   createdById: number | null;
   progress: { fraction: number }[];
@@ -71,7 +73,13 @@ async function createHarness(options: { admin?: boolean } = {}) {
   let nextId = 1;
   const prisma = {
     book: {
-      findMany: async () => [...rows.values()],
+      findMany: async ({ where }: { where?: { isPublished?: boolean; deletedAt?: null } } = {}) => [...rows.values()].filter(row => !where || (row.isPublished === where.isPublished && row.deletedAt === null)),
+      updateMany: async ({ where, data }: { where: { id: number; deletedAt?: null | { not: null } }; data: Partial<BookRow> }) => {
+        const row = rows.get(where.id);
+        if (!row || (where.deletedAt === null && row.deletedAt !== null) || (where.deletedAt && row.deletedAt === null)) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      },
       findUnique: async ({ where }: { where: { id?: number } }) => rows.get(where.id ?? -1) ?? null,
       create: async ({ data, include }: { data: Record<string, unknown>; include?: unknown }) => {
         const row: BookRow = {
@@ -85,6 +93,8 @@ async function createHarness(options: { admin?: boolean } = {}) {
           publicationRevision: (data.publicationRevision as string | null) ?? null,
           createdAt: new Date(),
           createdById: (data.createdById as number | null) ?? null,
+          isPublished: true,
+          deletedAt: null,
           progress: []
         };
         rows.set(row.id, row);
@@ -404,17 +414,54 @@ test("progress endpoint upserts per-account progress", async (t) => {
   assert.equal(list.json().books[0].progress, 0.42);
 });
 
-test("delete removes book row and files on disk", async (t) => {
-  const { app, dir } = await createHarness({ admin: true });
+test("delete moves book into trash and retains row, files and progress", async (t) => {
+  const { app, dir, rows } = await createHarness({ admin: true });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const up = await upload(app, "demo.epub", await buildEpub());
   const book = up.json().book;
+  rows.get(book.id)!.progress = [{ fraction: .42 }];
 
   const del = await app.inject({ method: "DELETE", url: `/api/admin/books/${book.id}` });
   assert.equal(del.statusCode, 200);
-  assert.equal(fs.existsSync(path.join(dir, book.fileName)), false);
-  assert.equal(fs.existsSync(path.join(dir, book.coverName)), false);
+  assert.equal(fs.existsSync(path.join(dir, book.fileName)), true);
+  assert.equal(fs.existsSync(path.join(dir, book.coverName)), true);
 
   const list = await app.inject({ method: "GET", url: "/api/books" });
   assert.equal(list.json().books.length, 0);
+  assert.ok(rows.get(book.id)?.deletedAt);
+  assert.deepEqual(rows.get(book.id)?.progress, [{ fraction: .42 }]);
+  assert.equal((await app.inject(`/api/books/${book.id}/file`)).statusCode, 404);
+  assert.equal((await app.inject({ method: "PATCH", url: `/api/admin/books/${book.id}`, payload: { action: "publish" } })).statusCode, 409);
+  assert.equal((await app.inject({ method: "PATCH", url: `/api/admin/books/${book.id}`, payload: { action: "restore" } })).statusCode, 200);
+  assert.equal(rows.get(book.id)?.deletedAt, null);
+  assert.equal(rows.get(book.id)?.isPublished, false);
+  assert.equal((await app.inject({ method: "PATCH", url: `/api/admin/books/${book.id}`, payload: { action: "publish" } })).statusCode, 200);
+  const restored = (await app.inject("/api/books")).json().books;
+  assert.equal(restored[0].id, book.id);
+  assert.equal(restored[0].progress, .42);
+});
+
+
+test("unpublish and republish retain identity and bytes; ordinary readers cannot bypass visibility", async (t) => {
+  const options: { admin?: boolean } = { admin: true };
+  const { app, dir } = await createHarness(options);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const epub = await buildEpub();
+  const book = (await upload(app, "book.epub", epub)).json().book;
+  const url = `/api/admin/books/${book.id}`;
+  assert.equal((await app.inject({ method: "PATCH", url, payload: { action: "unpublish" } })).statusCode, 200);
+  assert.equal((await app.inject("/api/books")).json().books.length, 0);
+  assert.equal((await app.inject("/api/admin/books")).json().books[0].isPublished, false);
+  options.admin = undefined; // Authenticated ordinary reader.
+  for (const suffix of ["file", "cover", "notes", "notes/v2", "progress/v2"]) {
+    assert.equal((await app.inject(`/api/books/${book.id}/${suffix}`)).statusCode, 404);
+  }
+  assert.equal((await app.inject({ method: "PUT", url: `/api/books/${book.id}/progress`, payload: { fraction: .8 } })).statusCode, 404);
+  options.admin = true;
+  assert.equal((await app.inject({ method: "PATCH", url, payload: { action: "publish" } })).statusCode, 200);
+  assert.deepEqual((await app.inject(`/api/books/${book.id}/file`)).rawPayload, epub);
+  for (const action of ["purge", "", null]) assert.equal((await app.inject({ method: "PATCH", url, payload: { action } })).statusCode, 400);
+  options.admin = false;
+  assert.equal((await app.inject("/api/admin/books")).statusCode, 403);
+  for (const action of ["publish", "unpublish", "restore"]) assert.equal((await app.inject({ method: "PATCH", url, payload: { action } })).statusCode, 403);
 });

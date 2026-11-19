@@ -11,8 +11,8 @@ export function registerBookProgressRoutes(app: FastifyInstance, deps: Pick<Book
   async function bookFor(params: unknown) {
     const parsed = paramsSchema.safeParse(params);
     if (!parsed.success) throw Object.assign(new Error("图书编号无效"), { statusCode: 400 });
-    const book = await deps.prisma.book.findUnique({ where: { id: parsed.data.id }, select: { id: true, publicationRevision: true } });
-    if (!book) throw Object.assign(new Error("图书不存在"), { statusCode: 404 });
+    const book = await deps.prisma.book.findUnique({ where: { id: parsed.data.id }, select: { isPublished: true, deletedAt: true, id: true, publicationRevision: true } });
+    if (!book || book.isPublished === false || book.deletedAt) throw Object.assign(new Error("图书不存在"), { statusCode: 404 });
     return book;
   }
   app.get("/api/books/:id/progress/v2", options, async (request, reply) => {

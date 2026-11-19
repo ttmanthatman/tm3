@@ -471,6 +471,11 @@ export interface MusicLyricsResourceDTO {
   uploadedByName: string | null;
 }
 
+export interface AdminBookDTO extends BookDTO {
+  isPublished: boolean;
+  deletedAt: string | null;
+}
+
 export interface BookDTO {
   id: number;
   title: string;

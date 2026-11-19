@@ -8,6 +8,7 @@ import { z } from "zod";
 import type { BookDTO } from "../../shared/types.js";
 import { BOOK_UPLOAD_MAX_BYTES, EpubRejectedError, readEpubMeta } from "../books/epub.js";
 import { registerBookNotesRoutes } from "./bookNotes.js";
+import { registerBookManagementRoutes } from "./bookManagement.js";
 import { registerBookProgressRoutes } from "./bookProgress.js";
 
 export type BooksAuth = {
@@ -32,7 +33,7 @@ const progressSchema = z.object({
   fraction: z.number().min(0).max(1)
 });
 
-function bookDto(book: {
+export function bookDto(book: {
   id: number;
   title: string;
   author: string;
@@ -128,6 +129,7 @@ async function renderGeneratedCover(title: string, author: string, targetPath: s
 export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) {
   const { prisma, booksDir, requireAuth, requireMediaAuth, requireAdmin, authFor } = deps;
 
+  registerBookManagementRoutes(app, deps);
   registerBookNotesRoutes(app, deps);
   registerBookProgressRoutes(app, deps);
 
@@ -136,6 +138,7 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
   app.get("/api/books", { preHandler: [requireAuth] }, async (request) => {
     const auth = authFor(request);
     const books = await prisma.book.findMany({
+      where: { isPublished: true, deletedAt: null },
       orderBy: { createdAt: "desc" },
       include: { progress: { where: { accountId: auth.accountId }, select: { fraction: true } } }
     });
@@ -208,27 +211,11 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
     return reply.code(201).send({ success: true, book: bookDto(book) });
   });
 
-  app.delete("/api/admin/books/:id", { preHandler: [requireAdmin] }, async (request, reply) => {
-    const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
-    if (!params.success) return reply.code(400).send({ success: false, message: "无效的图书 ID" });
-    const book = await prisma.book.findUnique({ where: { id: params.data.id } });
-    if (!book) return reply.code(404).send({ success: false, message: "图书不存在" });
-
-    await prisma.book.delete({ where: { id: book.id } });
-    for (const name of [book.fileName, book.coverName]) {
-      if (!name) continue;
-      if (!(bookFileNameRe.test(name) || coverFileNameRe.test(name))) continue;
-      // 等待文件删除完成再响应，避免删除后文件仍短暂存在的竞态
-      await fs.promises.unlink(path.join(booksDir, name)).catch(() => { /* 文件可能已不存在 */ });
-    }
-    return { success: true };
-  });
-
   app.get("/api/books/:id/file", { preHandler: [requireMediaAuth] }, async (request, reply) => {
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ success: false, message: "无效的图书 ID" });
-    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { fileName: true } });
-    if (!book || !bookFileNameRe.test(book.fileName)) return reply.code(404).send({ success: false, message: "图书不存在" });
+    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { fileName: true, isPublished: true, deletedAt: true } });
+    if (!book || !book.isPublished || book.deletedAt || !bookFileNameRe.test(book.fileName)) return reply.code(404).send({ success: false, message: "图书不存在" });
     const filePath = path.join(booksDir, book.fileName);
     if (!fs.existsSync(filePath)) return reply.code(404).send({ success: false, message: "图书文件缺失" });
     return sendBookFile(request, reply, filePath, book.fileName);
@@ -237,8 +224,8 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
   app.get("/api/books/:id/cover", { preHandler: [requireMediaAuth] }, async (request, reply) => {
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
     if (!params.success) return reply.code(400).send({ success: false, message: "无效的图书 ID" });
-    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { coverName: true } });
-    if (!book?.coverName || !coverFileNameRe.test(book.coverName)) {
+    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { coverName: true, isPublished: true, deletedAt: true } });
+    if (!book?.coverName || ((!book.isPublished || book.deletedAt) && !authFor(request).isAdmin) || !coverFileNameRe.test(book.coverName)) {
       return reply.code(404).send({ success: false, message: "没有封面" });
     }
     const filePath = path.join(booksDir, book.coverName);
@@ -250,8 +237,8 @@ export function registerBooksRoutes(app: FastifyInstance, deps: BooksRouteDeps) 
     const params = z.object({ id: z.coerce.number().int().positive() }).safeParse(request.params);
     const body = progressSchema.safeParse(request.body);
     if (!params.success || !body.success) return reply.code(400).send({ success: false, message: "无效的进度数据" });
-    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { id: true } });
-    if (!book) return reply.code(404).send({ success: false, message: "图书不存在" });
+    const book = await prisma.book.findUnique({ where: { id: params.data.id }, select: { id: true, isPublished: true, deletedAt: true } });
+    if (!book || !book.isPublished || book.deletedAt) return reply.code(404).send({ success: false, message: "图书不存在" });
     const auth = authFor(request);
     await prisma.bookProgress.upsert({
       where: { bookId_accountId: { bookId: book.id, accountId: auth.accountId } },

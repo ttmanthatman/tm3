@@ -654,3 +654,66 @@ test("图书高亮收藏夹全局入口可换色并回到原文", async ({ page,
     await expect.poll(() => frame.evaluate(() => (CSS as typeof CSS & { highlights?: Map<string, { size: number }> }).highlights?.get("book-saved-notes-5")?.size)).toBe(1);
   } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
 });
+
+test("图书管理支持下架、删除确认、回收站恢复，并保留阅读进度和笔记", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const auth = await request.post("/api/auth/login", { data: E2E_ADMIN });
+  const headers = { Authorization: `Bearer ${(await auth.json()).token}` };
+  const title = `回收站回归${randomUUID().slice(0, 8)}`;
+  const epub = await buildEpub(title);
+  const upload = await request.post("/api/admin/books", { headers, multipart: { file: { name: "lifecycle.epub", mimeType: "application/epub+zip", buffer: epub } } });
+  expect(upload.status()).toBe(201);
+  const { book } = await upload.json();
+  const noteId = randomUUID();
+  await request.put(`/api/books/${book.id}/progress`, { headers, data: { fraction: .42 } });
+  const note = await request.put(`/api/books/${book.id}/notes/${noteId}`, { headers, data: { quote: "原文", text: "恢复后仍在的笔记", chapter: "第一章", fraction: .42 } });
+  expect(note.ok()).toBe(true);
+  await blockPublicNetwork(page);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page);
+  headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
+  await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
+  await page.getByRole("button", { name: "更多管理功能", exact: true }).click();
+  await page.getByRole("menuitem", { name: "系统设置", exact: true }).click();
+  const admin = page.getByRole("dialog", { name: "管理面板", exact: true });
+  await admin.getByRole("button", { name: /图书.*上传 EPUB/ }).click();
+  const row = page.locator(".admin-books-row").filter({ hasText: title });
+  for (const width of [360, 390, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(row).toBeInViewport();
+    const bounds = (await row.boundingBox())!;
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    await expect(row.getByRole("button", { name: `下架《${title}》` })).toBeVisible();
+    await expect(row.getByRole("button", { name: `删除《${title}》` })).toBeVisible();
+    await page.screenshot({ path: info.outputPath(`book-management-${width}.png`) });
+  }
+  await row.getByRole("button", { name: `下架《${title}》` }).click();
+  await expect(row).toHaveCount(0);
+  expect((await (await request.get("/api/books", { headers })).json()).books.some((item: { id: number }) => item.id === book.id)).toBe(false);
+  expect((await request.get(`/api/books/${book.id}/file`, { headers })).status()).toBe(404);
+  await admin.getByRole("button", { name: "已下架", exact: true }).click();
+  await row.getByRole("button", { name: `上架《${title}》` }).click();
+  await admin.getByRole("button", { name: "已上架", exact: true }).click();
+  await row.getByRole("button", { name: `删除《${title}》` }).click();
+  const confirmation = page.getByRole("dialog", { name: "移入回收站", exact: true });
+  await expect(confirmation).toContainText("文件、阅读进度和笔记均会保留");
+  await confirmation.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: `删除《${title}》` }).click();
+  await page.keyboard.press("Escape");
+  await expect(confirmation).toHaveCount(0);
+  await row.getByRole("button", { name: `删除《${title}》` }).click();
+  await confirmation.getByRole("button", { name: "确认移入回收站", exact: true }).click();
+  await expect(row).toHaveCount(0);
+  await admin.getByRole("button", { name: "回收站", exact: true }).click();
+  await row.getByRole("button", { name: `恢复《${title}》` }).click();
+  await expect(row).toHaveCount(0);
+  await admin.getByRole("button", { name: "已下架", exact: true }).click();
+  await row.getByRole("button", { name: `上架《${title}》` }).click();
+  await expect(row).toHaveCount(0);
+  const books = (await (await request.get("/api/books", { headers })).json()).books;
+  expect(books.find((item: { id: number }) => item.id === book.id)).toMatchObject({ id: book.id, fileName: book.fileName, progress: .42 });
+  expect((await (await request.get(`/api/books/${book.id}/notes`, { headers })).json()).notes).toEqual([expect.objectContaining({ id: noteId, text: "恢复后仍在的笔记" })]);
+  expect(await (await request.get(`/api/books/${book.id}/file`, { headers })).body()).toEqual(epub);
+});

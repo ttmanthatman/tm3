@@ -865,6 +865,8 @@ model EngineAction {
 }
 
 model Book {
+  isPublished Boolean @default(true) @map("is_published")
+  deletedAt DateTime? @map("deleted_at")
   id          Int      @id @default(autoincrement())
   title       String   @db.VarChar(200)
   author      String   @default("") @db.VarChar(120)

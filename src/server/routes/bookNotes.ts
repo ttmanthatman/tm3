@@ -13,8 +13,8 @@ export function registerBookNotesRoutes(app: FastifyInstance, deps: Pick<BooksRo
   const preHandler = [deps.requireAuth];
 
   async function loadBook(id: number) {
-    const book = await deps.prisma.book.findUnique({ where: { id }, select: { id: true, title: true } });
-    if (!book) throw fail(404, "图书不存在");
+    const book = await deps.prisma.book.findUnique({ where: { id }, select: { isPublished: true, deletedAt: true, id: true, title: true } });
+    if (!book || book.isPublished === false || book.deletedAt) throw fail(404, "图书不存在");
     return book;
   }
 
@@ -45,8 +45,8 @@ export function registerBookNotesRoutes(app: FastifyInstance, deps: Pick<BooksRo
     reply.header("Cache-Control", "private, no-store");
     const params = noteParamsSchema.safeParse(request.params), body = bookNoteInputV2Schema.safeParse(request.body);
     if (!params.success || !body.success) throw fail(400, "笔记信息无效");
-    const book = await deps.prisma.book.findUnique({ where: { id: params.data.id }, select: { id: true, title: true, publicationRevision: true } });
-    if (!book) throw fail(404, "图书不存在");
+    const book = await deps.prisma.book.findUnique({ where: { id: params.data.id }, select: { isPublished: true, deletedAt: true, id: true, title: true, publicationRevision: true } });
+    if (!book || book.isPublished === false || book.deletedAt) throw fail(404, "图书不存在");
     if (body.data.locator && (body.data.locator.bookId !== book.id || body.data.locator.publicationRevision !== book.publicationRevision)) throw fail(422, "图书版本不一致，请重新选择原文");
     return { note: await notes.save(deps.authFor(request).accountId, book, params.data.noteId, body.data) };
   });
