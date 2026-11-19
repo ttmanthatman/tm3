@@ -1338,11 +1338,21 @@ const RELEASE_2_15_1_NOTES = [
   "修复阅读位置冲突提示选择本机位置后不消失的问题，新增“稍后处理”，保留本机位置及冲突保护。"
 ] as const
 
+const RELEASE_2_15_2_NOTES = [
+  "书摘卡片移除植物装饰并收紧留白，正文环绕原尺寸封面，末尾图标和封面均可跳转原书位置。",
+  "收紧消息输入栏麦克风、表情与加号按钮间距。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.15.3",
+    date: "2026-11-19",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.15.2",
     date: "2026-11-13",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_15_2_NOTES
   },
   {
     version: "2.15.1",
