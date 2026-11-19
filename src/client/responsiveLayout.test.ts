@@ -1405,7 +1405,7 @@ test("forward action sheet lives outside App.vue with the modal-shell contract i
 test("media preview modal lives outside App.vue with the modal-shell contract intact", () => {
   assert.match(app, /<MediaPreviewModal\s+v-if="previewMessage"[\s\S]*?@close="closePreviewMessage"[\s\S]*?@shift-score="shiftMusicScorePreview"/);
   assert.doesNotMatch(app, /media-preview-modal/);
-  assert.match(mediaPreviewModal, /<section[\s\S]*?class="modal-shell media-preview-shell"[\s\S]*?:class="\{ image: message\.type === 'image', score: pinnedImage\?\.score \}"[\s\S]*?@click\.self="emit\('close'\)"[\s\S]*?>/);
+  assert.match(mediaPreviewModal, /<section[\s\S]*?class="modal-shell media-preview-shell"[\s\S]*?:class="\{ image: message\.type === 'image', video: isVideoMessage\(message\), score: pinnedImage\?\.score \}"[\s\S]*?@click\.self="emit\('close'\)"[\s\S]*?>/);
   assert.match(mediaPreviewModal, /aria-label="关闭预览"/);
   assert.match(mediaPreviewModal, /class="media-preview-video"[\s\S]*?controls[\s\S]*?autoplay[\s\S]*?playsinline/);
   assert.match(mediaPreviewModal, /<PdfViewer[\s\S]*?@close="emit\('close'\)"/);

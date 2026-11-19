@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { defineAsyncComponent } from "vue";
+import { computed, defineAsyncComponent, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Download, X } from "lucide-vue-next";
 import type { MessageDTO, MusicScoreDTO, MusicScorePageDTO } from "@shared/types";
 import type { PinnedImagePreview } from "./useMediaPreview";
@@ -9,7 +9,7 @@ import type { TransferProgress } from "../files/transfer";
 // Same lazy split as App.vue: PdfViewer pulls in pdfjs-dist.
 const PdfViewer = defineAsyncComponent(() => import("../../components/PdfViewer.vue"));
 
-defineProps<{
+const props = defineProps<{
   message: MessageDTO;
   pinnedImage: PinnedImagePreview | null;
   scoreTrack: { scores?: MusicScoreDTO[] } | null;
@@ -31,6 +31,14 @@ defineProps<{
   imageWheel: (event: WheelEvent) => void;
 }>();
 
+const videoAspect = ref(16 / 9);
+const videoStyle = computed(() => props.isVideoMessage(props.message) ? { "--video-aspect": String(videoAspect.value) } : undefined);
+watch(() => props.message.id, () => { videoAspect.value = 16 / 9; });
+function videoMetadata(event: Event) {
+  const video = event.target as HTMLVideoElement;
+  if (video.videoWidth > 0 && video.videoHeight > 0) videoAspect.value = video.videoWidth / video.videoHeight;
+}
+
 const emit = defineEmits<{
   close: [];
   shiftScore: [delta: number];
@@ -43,18 +51,22 @@ const emit = defineEmits<{
 <template>
   <section
     class="modal-shell media-preview-shell"
-    :class="{ image: message.type === 'image', score: pinnedImage?.score }"
+    role="dialog"
+    aria-modal="true"
+    :aria-label="isVideoMessage(message) ? '视频预览' : '附件预览'"
+    :class="{ image: message.type === 'image', video: isVideoMessage(message), score: pinnedImage?.score }"
     @click.self="emit('close')"
   >
     <div
       class="media-preview-modal"
+      :style="videoStyle"
       :class="{
         'image-preview-modal': message.type === 'image',
         'video-preview-modal': isVideoMessage(message),
         'score-preview-modal': pinnedImage?.score
       }"
     >
-      <header v-if="message.type !== 'image'" class="modal-head">
+      <header v-if="message.type !== 'image' && !isVideoMessage(message)" class="modal-head">
         <strong>{{ message.fileName || "图片预览" }}</strong>
       </header>
       <button class="preview-control preview-close" @click="emit('close')" aria-label="关闭预览">
@@ -127,6 +139,7 @@ const emit = defineEmits<{
           autoplay
           playsinline
           preload="metadata"
+          @loadedmetadata="videoMetadata"
         ></video>
         <PdfViewer
           v-else-if="isPdfMessage(message)"

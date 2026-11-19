@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MessageVideoThumbnail from "./MessageVideoThumbnail.vue";
 import PollCard from "../social/PollCard.vue";
 import { pollPayload } from "@shared/social";
 import { computed, watch } from "vue";
@@ -239,11 +240,9 @@ const emit = defineEmits<{
       <VoiceTranscript v-if="isVoiceMessage(message)" :message="message" :src="fileUrl(message)" @play="emit('voice-play', message)" />
     </template>
     <template v-else-if="isVideoMessage(message)">
-      <button class="media-file-card video-file-card" @click.stop="emit('open-attachment', message, $event)">
-        <span class="media-file-icon"><Play :size="22" /></span>
-        <span>{{ message.fileName }}</span>
-        <small>{{ compactBytes(message.fileSize) }}</small>
-      </button>
+      <p v-if="brokenAttachmentIds.has(message.id)" class="attachment-broken">转发附件已被删除</p>
+      <MessageVideoThumbnail v-else :key="fileUrl(message)" :src="fileUrl(message)" :file-name="message.fileName"
+        @open="emit('open-attachment', message, $event)" />
     </template>
     <template v-else-if="message.type === 'file'">
       <button class="file-card" data-file-card @click.stop="emit('open-attachment', message, $event)">
