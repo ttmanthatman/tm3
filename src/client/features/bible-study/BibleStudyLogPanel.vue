@@ -20,7 +20,7 @@ async function load(older = false) {
     rooms.value = older ? [...rooms.value, ...page.rooms] : page.rooms;
     before.value = page.nextBefore;
   } catch (reason) {
-    error.value = reason instanceof Error ? reason.message : "同行书房列表加载失败";
+    error.value = reason instanceof Error ? reason.message : "问答式查经列表加载失败";
   } finally {
     busy.value = false;
   }
@@ -41,11 +41,11 @@ onMounted(() => load());
       show-sender
     />
   </section>
-  <section v-else class="study-log" aria-label="同行书房列表" :aria-busy="busy">
+  <section v-else class="study-log" aria-label="问答式查经列表" :aria-busy="busy">
     <header><button class="mini-btn secondary" type="button" :disabled="busy" @click="load()">刷新书房</button></header>
     <p v-if="error" role="alert">{{ error }}</p>
-    <p v-if="busy && !rooms.length" role="status">正在读取同行书房…</p>
-    <p v-else-if="!error && !rooms.length">还没有用户进入同行书房。</p>
+    <p v-if="busy && !rooms.length" role="status">正在读取问答式查经…</p>
+    <p v-else-if="!error && !rooms.length">还没有用户进入问答式查经。</p>
     <button v-for="room in rooms" :key="room.id" class="study-room" type="button" @click="selected = room">
       <strong>{{ room.label }}</strong>
       <span>{{ room.username ? `@${room.username}` : `账号 ${room.accountId}` }}</span>

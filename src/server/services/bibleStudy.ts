@@ -2,12 +2,13 @@ import { type Prisma, type PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { BIBLE_STUDY_ASSISTANT, BIBLE_STUDY_ROOM, BIBLE_STUDY_RETRY_PREFIX, BIBLE_STUDY_RESUME_COMMANDS, BIBLE_STUDY_STAGES, bibleStudyRoomKey, type BibleStudyFailure, type BibleStudyWorkspaceState, type BibleStudyQuestion, type BibleStudyAnswerRequest } from "../../shared/bibleStudy.js";
 import { lookupBibleReference } from "../bible/lookup.js";
+import { changeStudyQuestion, numberedStudyQuestions } from "./bibleStudyActions.js";
 import { BIBLE_STUDY_PROMPT } from "./bibleStudyPrompt.js";
 import { BIBLE_STUDY_FIRST_QUESTION, bibleStudyReading } from "./bibleStudyReading.js";
 import { BibleStudyModelError, completeBibleStudyTurn, type CompleteStudyMessages } from "./bibleStudyModel.js";
 import type { QuestionAssistantChatMessage } from "./questionAssistantReply.js";
-import { BIBLE_STUDY_LOCKED_NOTE, pendingHelpSchema, pendingAnswerSchema, plainStudyText as plain, passageEvidence,
-  questionPurpose, questionText, studyQuestions, studyQuestionFromMessage, studyQuestionSchema } from "./bibleStudyQuestions.js";
+import { BIBLE_STUDY_LOCKED_NOTE, pendingHelpSchema, pendingAnswerSchema, pendingSkipSchema, studyCheckpointSchema as checkpointSchema, type StudyCheckpoint as Checkpoint, plainStudyText as plain, passageEvidence,
+  questionPurpose, questionText, studyQuestions, studyQuestionFromMessage } from "./bibleStudyQuestions.js";
 
 const stages = {
   observe: "引导指出段落的关键细节和必要的上下文。用户已能说出带经文依据的观察时，进入原意，问一个解释问题。",
@@ -19,18 +20,8 @@ const stages = {
 } as const;
 
 const stageSchema = z.enum(BIBLE_STUDY_STAGES);
-const checkpointSchema = z.object({
-  kind: z.literal("bible_study_turn"),
-  stage: z.union([stageSchema, z.literal("choose"), z.literal("complete")]),
-  reference: z.string().nullable(),
-  sessionStartId: z.number().int().positive(),
-  feedback: z.enum(["ready", "needs_detail"]).optional(),
-  feedbackDetail: z.string().max(80).optional(),
-  question: studyQuestionSchema.optional()
-});
-type Checkpoint = z.infer<typeof checkpointSchema>;
-const welcome = "欢迎来到同行书房。这里的查经答复会保存，站点管理员可以在后台查看。当前查经对话由站点配置的 AI 服务处理。你可以用匿名或假设的处境来讨论。\n\n你想查哪段经文？可以直接发经文范围，例如「马可福音 4:35-41」，也可以在范围后另起一行贴出想用的译文。";
-const substantiveAnswer = { content: { notIn: [...BIBLE_STUDY_RESUME_COMMANDS] } } satisfies Prisma.MessageWhereInput;
+const welcome = "欢迎来到问答式查经。这里的查经答复会保存，站点管理员可以在后台查看。当前查经对话由站点配置的 AI 服务处理。你可以用匿名或假设的处境来讨论。\n\n你想查哪段经文？可以直接发经文范围，例如「马可福音 4:35-41」，也可以在范围后另起一行贴出想用的译文。";
+const substantiveAnswer = { content: { notIn: ["", ...BIBLE_STUDY_RESUME_COMMANDS] } } satisfies Prisma.MessageWhereInput;
 
 const retryNote = "这一轮暂时没有生成回应，你的答复已经保存。";
 const failureSchema = z.enum(["configuration", "connection", "timeout", "unavailable", "format"]);
@@ -81,6 +72,7 @@ export function createBibleStudy(deps: {
       await tx.message.createMany({
         data: { channelId: room.id, senderActorId, clientRequestId: `bible-study-welcome:${room.id}`, content: welcome }, skipDuplicates: true
       });
+      await tx.channel.update({ where: { id: room.id }, data: { name: BIBLE_STUDY_ROOM } });
       return room.id;
     });
     return channelId;
@@ -89,7 +81,7 @@ export function createBibleStudy(deps: {
   function latestCheckpoint(channelId: number, senderActorId: number) {
     return prisma.message.findFirst({
       where: { channelId, senderActorId, payload: { path: "$.kind", equals: "bible_study_turn" } },
-      orderBy: { id: "desc" }, select: { replyToId: true, payload: true, content: true }
+      orderBy: { id: "desc" }, select: { id: true, replyToId: true, payload: true, content: true }
     });
   }
 
@@ -101,13 +93,7 @@ export function createBibleStudy(deps: {
     if (state.stage === "choose" || state.stage === "complete" || !state.reference) {
       return { progress: null, latest: state.stage === "complete" ? "complete" : null };
     }
-    const [questions, pending, recent, first] = await Promise.all([
-      prisma.message.count({
-        where: {
-          channelId, senderActorId: sender.id, replyToId: { gte: state.sessionStartId },
-          payload: { path: "$.kind", equals: "bible_study_turn" }, NOT: { content: { startsWith: BIBLE_STUDY_LOCKED_NOTE } }
-        }
-      }),
+    const [pending, recent, first] = await Promise.all([
       prisma.message.findFirst({
         where: { channelId, senderActorId: actorId, type: "text", ...substantiveAnswer, id: { gt: last.replyToId ?? 0 } },
         orderBy: { id: "asc" }, select: { id: true }
@@ -128,14 +114,14 @@ export function createBibleStudy(deps: {
     const answerRows = await prisma.message.findMany({
       where: { channelId, senderActorId: actorId, id: { gt: state.sessionStartId }, type: "text" },
       orderBy: { id: "asc" }, select: { id: true, content: true, payload: true,
-        replies: { where: { senderActorId: sender.id, payload: { path: "$.kind", equals: "bible_study_turn" } }, select: { content: true }, orderBy: { id: "asc" }, take: 1 }
+        replies: { where: { content: { not: "" }, senderActorId: sender.id, payload: { path: "$.kind", equals: "bible_study_turn" } }, select: { content: true }, orderBy: { id: "asc" }, take: 1 }
       }
     });
-    const ordered = recent.sort((a, b) => a.id - b.id);
+    const ordered = numberedStudyQuestions(recent);
     const answers = answerRows.flatMap(row => {
       const metadata = pendingAnswerSchema.safeParse(row.payload);
       const help = pendingHelpSchema.safeParse(row.payload);
-      if (help.success || isResume(row.content)) return [];
+      if (help.success || pendingSkipSchema.safeParse(row.payload).success || isResume(row.content)) return [];
       const questionId = metadata.success ? metadata.data.questionId : [...ordered].reverse().find(q => q.id < row.id)?.id;
       if (!questionId || (metadata.success && metadata.data.mode !== "answer")) return [];
       return [{ id: row.id, questionId, text: plain(row.content), response: plain(row.replies[0]?.content) || undefined }];
@@ -143,7 +129,7 @@ export function createBibleStudy(deps: {
     return {
       latest: last.content?.startsWith(BIBLE_STUDY_LOCKED_NOTE) ? "locked" : null,
       progress: {
-        stage: state.stage, reference: state.reference, questions, feedback: state.feedback ?? null, feedbackDetail: state.feedbackDetail,
+        stage: state.stage, reference: state.reference, questions: ordered.length, feedback: state.feedback ?? null, feedbackDetail: state.feedbackDetail,
         working: !!pending && queues.has(channelId),
         failure: failure ? failure.success ? failure.data.reason : "unavailable" : null,
         reading: first ? bibleStudyReading({ ...first, sender: BIBLE_STUDY_ASSISTANT }) : undefined,
@@ -212,6 +198,23 @@ export function createBibleStudy(deps: {
     } finally { submitting.delete(channelId); }
   }
 
+  async function manageQuestion(channelId: number, actorId: number, questionId: number, action: "delete" | "skip", expectedIds?: number[]) {
+    if (submitting.has(channelId) || queues.has(channelId)) return false;
+    submitting.add(channelId);
+    try {
+      const { progress: current } = await progress(channelId, actorId);
+      if (!current || current.working || current.failure) return false;
+      const senderActorId = await assistantId();
+      const checkpoint = await latestCheckpoint(channelId, senderActorId);
+      if (!checkpoint) return false;
+      const result = await changeStudyQuestion({ prisma, channelId, actorId, assistantId: senderActorId,
+        checkpoint, questions: current.questionPath, questionId, action, expectedIds });
+      if (!result) return false;
+      if (result.resume) resume(channelId, actorId); else deps.notifyProgress(channelId);
+      return true;
+    } finally { submitting.delete(channelId); }
+  }
+
   async function processNext(channelId: number, actorId: number, senderActorId: number) {
     const last = await latestCheckpoint(channelId, senderActorId);
     const previous = last ? checkpointSchema.parse(last.payload) : null;
@@ -226,13 +229,21 @@ export function createBibleStudy(deps: {
     const next: Checkpoint = newSession
       ? { kind: "bible_study_turn", stage: "choose", reference: null, sessionStartId: answer.id }
       : { ...previous };
-    let previousQuestion = newSession ? undefined : (await studyQuestions(prisma, channelId, senderActorId, next.sessionStartId, 1))[0];
+    let previousQuestion = newSession ? undefined : next.currentQuestionId
+      ? await findQuestion(channelId, senderActorId, next.sessionStartId, next.currentQuestionId)
+      : (await studyQuestions(prisma, channelId, senderActorId, next.sessionStartId))[0];
+    const skipping = pendingSkipSchema.safeParse(answer.payload);
     const directed = pendingAnswerSchema.safeParse(answer.payload);
     if (directed.success && !newSession) {
       const target = await findQuestion(channelId, senderActorId, next.sessionStartId, directed.data.questionId);
       if (!target) throw new Error("Study question target missing");
       previousQuestion = target;
       next.stage = target.stage;
+    }
+    if (skipping.success && !newSession) {
+      previousQuestion = await findQuestion(channelId, senderActorId, next.sessionStartId, skipping.data.questionId);
+      if (!previousQuestion) throw new Error("Study skip target missing");
+      next.stage = previousQuestion.stage;
     }
     const branching = directed.success && directed.data.mode === "followup";
     const helpRequest = pendingHelpSchema.safeParse(answer.payload);
@@ -244,6 +255,9 @@ export function createBibleStudy(deps: {
     }
     const wantsHint = !!previousQuestion && (helpRequest.success || /^(?:我)?(?:不知道|答不上来|没看出来|想不到)[。！!]*$/u.test(text));
     delete next.question;
+    delete next.responseOnly;
+    delete next.deleted;
+    delete next.currentQuestionId;
     const candidate = passageFrom(text);
     let content: string;
     let markdown = false;
@@ -253,6 +267,7 @@ export function createBibleStudy(deps: {
       } else {
         next.reference = candidate.normalizedReference;
         next.sessionStartId = answer.id;
+        next.questionSequence = 0;
         next.stage = "observe";
         next.question = { relation: "opening", text: BIBLE_STUDY_FIRST_QUESTION, purpose: questionPurpose("observe", "opening"), evidence: [] };
         const suppliedText = text.slice(text.indexOf("\n") + 1).trim();
@@ -264,7 +279,7 @@ export function createBibleStudy(deps: {
       }
     } else if (asksToStopOrSwitch(text) || (candidate && candidate.normalizedReference !== next.reference && !text.includes("\n"))) {
       content = `${BIBLE_STUDY_LOCKED_NOTE}\n\n我们继续看 ${next.reference}。请接着回答上一个查经问题。`;
-    } else if (!wantsHint && !branching && previousQuestion?.relation === "hint" && previousQuestion.returnToId) {
+    } else if (!wantsHint && !branching && !skipping.success && !directed.success && previousQuestion?.relation === "hint" && previousQuestion.returnToId) {
       const original = await findQuestion(channelId, senderActorId, next.sessionStartId, previousQuestion.returnToId);
       if (!original) throw new Error("Study hint target missing");
       next.question = {
@@ -288,7 +303,7 @@ ${original.text}`;
           }),
           prisma.message.findMany({
             where: {
-              channelId, senderActorId, replyToId: { gte: next.sessionStartId, lt: answerId },
+              channelId, senderActorId, content: { not: "" }, replyToId: { gte: next.sessionStartId, lt: answerId },
               payload: { path: "$.kind", equals: "bible_study_turn" }
             },
             orderBy: { id: "desc" }, take: 16, select: { replyToId: true, content: true }
@@ -308,12 +323,13 @@ ${original.text}`;
             `本次锁定：${next.reference}（${passage.translation}）。\n${passage.verses.map(verse => `${verse.reference} ${verse.text}`).join("\n")}`,
             `当前阶段：${stage}。目标：${stages[stage]}`,
             ...(directed.success ? [`当前答复明确关联问题：${previousQuestion?.text}。只承接这道题，不承接最近另一分支的问题。${branching ? "用户要在这道题下另开追问分支，只返回 ask 并保持当前阶段。" : ""}${directed.data.evidence ? `只围绕用户选定经文 ${directed.data.evidence} 提问，evidence 必须包含此范围。` : ""}`] : []),
+            ...(skipping.success ? [`用户不想回答「${previousQuestion?.text}」。只跳过这道题，保留记录和已有子问题；不要再次要求回答或把它拆小，不把跳过当作已达标。保持阶段，只返回 ask，从另一个角度提出一个新问题。`] : []),
             ...(wantsHint ? [`用户暂时答不上来。现在只做当前问题的提示。把「${previousQuestion?.text}」拆成一个更容易、可直接从经文找答案的小问题，指定一小处相关经文；只返回 ask，留在当前阶段，避免直接替用户回答原题。`] : [])
           ].join("\n\n") },
           ...(opening ? [{ role: "user" as const, content: plain(opening.content) }] : []),
           ...history,
           { role: "user", content: text }
-        ], stage, wantsHint || branching);
+        ], stage, wantsHint || branching || skipping.success);
         if (turn.action === "complete") {
           next.stage = "complete";
           content = [
@@ -322,6 +338,11 @@ ${original.text}`;
             "这次查经已完成。小结已归档。想开始下一次查经时，直接发新的经文范围。"
           ].join("\n\n");
           markdown = true;
+        } else if (turn.action === "respond") {
+          next.responseOnly = true;
+          if (previousQuestion) next.currentQuestionId = previousQuestion.id;
+          delete next.feedback; delete next.feedbackDetail;
+          content = turn.text;
         } else {
           const advanced = turn.action === "advance" && stage !== "response";
           next.feedback = advanced ? "ready" : "needs_detail";
@@ -329,7 +350,7 @@ ${original.text}`;
           else delete next.feedbackDetail;
           const nextStage = advanced ? BIBLE_STUDY_STAGES[BIBLE_STUDY_STAGES.indexOf(stage) + 1] : stage;
           next.stage = nextStage;
-          const relation: BibleStudyQuestion["relation"] = wantsHint ? "hint" : advanced ? "advance" : turn.relation ?? "deepen";
+          const relation: BibleStudyQuestion["relation"] = wantsHint ? "hint" : skipping.success ? "new_angle" : advanced ? "advance" : turn.relation ?? "deepen";
           next.question = {
             relation, text: turn.question ?? questionText(turn.text),
             purpose: turn.purpose || questionPurpose(nextStage, relation),
@@ -337,7 +358,7 @@ ${original.text}`;
             ...(wantsHint && previousQuestion ? { returnToId: previousQuestion.returnToId ?? previousQuestion.id } : {}),
             evidence: passageEvidence(next.reference!, directed.success && directed.data.evidence ? [directed.data.evidence] : turn.evidence)
           };
-          if (wantsHint) { delete next.feedback; delete next.feedbackDetail; }
+          if (wantsHint || skipping.success) { delete next.feedback; delete next.feedbackDetail; }
           content = turn.text;
         }
       } catch (error) {
@@ -351,6 +372,12 @@ ${original.text}`;
       }
     }
 
+    if (next.question) {
+      const existing = numberedStudyQuestions(await studyQuestions(prisma, channelId, senderActorId, next.sessionStartId));
+      next.questionSequence = Math.max(next.questionSequence ?? 0, ...existing.map(question => question.number), 0) + 1;
+      next.question.number = next.questionSequence;
+      if (next.question.parentId) next.question.siblingNumber = Math.max(0, ...existing.filter(question => question.parentId === next.question?.parentId).map(question => question.siblingNumber ?? 0)) + 1;
+    }
     await publish(`bible-study-turn:${answerId}`, content, { ...next, ...(markdown ? { contentFormat: "markdown" } : {}) });
     return true;
 
@@ -388,5 +415,5 @@ ${original.text}`;
     if (!queues.has(channelId)) resume(channelId, actorId);
   }
 
-  return { enter, progress, resume, retry, requestHelp, submitAnswer };
+  return { enter, progress, resume, retry, requestHelp, submitAnswer, manageQuestion };
 }

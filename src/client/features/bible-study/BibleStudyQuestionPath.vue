@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import { ChevronDown, ChevronUp, CircleHelp } from "lucide-vue-next";
-import { BIBLE_STUDY_RELATION_LABELS, type BibleStudyQuestion, type BibleStudyAnswer } from "@shared/bibleStudy";
+import { bibleStudyBranchIds, BIBLE_STUDY_RELATION_LABELS, type BibleStudyQuestion, type BibleStudyAnswer } from "@shared/bibleStudy";
 import { api } from "../../api";
+import AppModal from "../../components/ui/AppModal.vue";
 import { studyQuestionTree } from "./questionTree";
 
 const props = defineProps<{
@@ -15,6 +16,10 @@ const selectedId = ref<number>();
 const scrollRoot = ref<HTMLElement>();
 const questionsOpen = ref(true);
 const submitBusy = ref(false);
+const questionActionBusy = ref(false);
+const deleteDialogOpen = ref(false);
+const deleteTargetId = ref<number>();
+const actionError = ref("");
 const errorText = ref("");
 const drafts = ref<Record<string, string>>({});
 const retryRequest = ref<{ snapshot: string; id: string }>();
@@ -23,22 +28,33 @@ const current = computed(() => tree.value.byId.get(selectedId.value ?? 0));
 const currentAnswers = computed(() => props.answers.filter(answer => answer.questionId === selectedId.value));
 const draftKey = computed(() => String(selectedId.value));
 const draft = computed({ get: () => drafts.value[draftKey.value] ?? "", set: value => { drafts.value[draftKey.value] = value; } });
-const blocked = computed(() => props.busy || submitBusy.value);
+const blocked = computed(() => props.busy || submitBusy.value || questionActionBusy.value);
+const deleteIds = ref<number[]>([]);
+const deleteAnswerCount = computed(() => props.answers.filter(answer => deleteIds.value.includes(answer.questionId)).length);
+const deleteLabel = computed(() => tree.value.labels.get(deleteTargetId.value ?? 0));
 async function revealAnswer() {
   await nextTick();
   scrollRoot.value?.querySelector<HTMLElement>(".question-detail")?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
-watch(() => props.questions.at(-1)?.id, id => {
-  if (!id) return;
+watch(() => props.questions, (questions, previous) => {
+  const id = questions.at(-1)?.id;
+  if (!id || (current.value && id === previous?.at(-1)?.id)) return;
   selectedId.value = id;
   emit("select", id, true);
   if (questionsOpen.value) void revealAnswer();
 }, { immediate: true });
+watch(() => currentAnswers.value.map(answer => `${answer.id}:${answer.response ?? ""}`).join("|"), (value, previous) => {
+  if (value && value !== previous && currentAnswers.value.some(answer => answer.response)) {
+    questionsOpen.value = true;
+    void revealAnswer();
+  }
+});
 
 function select(id: number) {
   selectedId.value = id;
   questionsOpen.value = true;
   errorText.value = "";
+  actionError.value = "";
   emit("select", id, true);
   void revealAnswer();
 }
@@ -46,6 +62,29 @@ function toggleAnswers() {
   questionsOpen.value = !questionsOpen.value;
   if (questionsOpen.value) void revealAnswer();
 }
+function askDelete() {
+  if (!current.value || blocked.value) return;
+  deleteTargetId.value = current.value.id;
+  deleteIds.value = bibleStudyBranchIds(props.questions, current.value.id);
+  actionError.value = "";
+  deleteDialogOpen.value = true;
+}
+async function changeQuestion(action: "delete" | "skip") {
+  const id = action === "delete" ? deleteTargetId.value : current.value?.id;
+  if (!id || blocked.value) return;
+  questionActionBusy.value = true;
+  actionError.value = "";
+  try {
+    await api(`/api/bible-study/questions/${action}`, { method: "POST", body: JSON.stringify({ questionId: id,
+      ...(action === "delete" ? { expectedIds: deleteIds.value } : {})
+    }) });
+    deleteDialogOpen.value = false;
+    emit("sent");
+  } catch (error) {
+    actionError.value = error instanceof Error ? error.message : "暂时无法修改问题，请重试";
+  } finally { questionActionBusy.value = false; }
+}
+
 async function submit() {
   if (blocked.value || !current.value || !draft.value.trim()) return;
   const key = draftKey.value;
@@ -86,15 +125,21 @@ async function submit() {
           </div>
           <article v-if="questionsOpen && row.question.id === selectedId" :id="`study-question-answer-${row.question.id}`" class="question-detail" aria-label="当前问题">
             <div v-if="currentAnswers.length" class="saved-answers">
-              <div v-for="answer in currentAnswers" :key="answer.id"><p><strong>我的回答</strong> {{ answer.text }}</p><p v-if="answer.response"><strong>助手回应</strong> {{ answer.response }}</p></div>
+              <div v-for="answer in currentAnswers" :key="answer.id"><p><strong>我的回应</strong> {{ answer.text }}</p><p v-if="answer.response"><strong>助手回应</strong> {{ answer.response }}</p></div>
             </div>
             <nav v-if="current.evidence.length" class="question-evidence" aria-label="相关经文">
               <span>经文依据 ·</span><button v-for="reference in current.evidence" :key="reference" type="button" @click="emit('reference', reference)">{{ reference }}</button>
             </nav>
             <p v-if="current.relation === 'hint' && current.returnToId" class="hint-return">答完这一步，我们回到原题。</p>
+            <div class="question-actions">
+              <button type="button" :disabled="blocked || current.skipped" @click="changeQuestion('skip')">不想回答</button>
+              <button type="button" class="delete-question" :disabled="blocked" @click="askDelete">删除问题</button>
+            </div>
+            <p v-if="current.skipped" class="hint-return">已跳过这个问题，仍可追加回答或提问。</p>
+            <p v-if="actionError && !deleteDialogOpen" class="answer-error" role="alert">{{ actionError }}</p>
             <form @submit.prevent="submit">
-              <label :for="`study-answer-${current.id}`">写下你的观察</label>
-              <textarea :id="`study-answer-${current.id}`" v-model="draft" :disabled="blocked" placeholder="写下你的观察…" rows="3" maxlength="10000"></textarea>
+              <label :for="`study-answer-${current.id}`">追加回答或提问</label>
+              <textarea :id="`study-answer-${current.id}`" v-model="draft" :disabled="blocked" placeholder="追加回答或提问…" rows="3" maxlength="10000"></textarea>
               <div class="answer-actions">
                 <button v-if="current.id === questions.at(-1)?.id" type="button" :disabled="blocked" @click="emit('help')"><CircleHelp :size="16" />{{ current.relation === 'hint' ? '再给一点提示' : '答不上来' }}</button>
                 <button class="submit-answer" type="submit" :disabled="blocked || !draft.trim()">{{ submitBusy ? '保存中…' : '回答并收起' }}</button>
@@ -105,6 +150,20 @@ async function submit() {
     </ol>
     <p v-if="errorText" class="answer-error" role="alert">{{ errorText }} <button type="button" @click="emit('sent')">刷新进度</button></p>
   </section>
+  <Teleport defer to=".app-shell">
+    <AppModal :open="deleteDialogOpen" title="删除问题" :busy="questionActionBusy" @close="deleteDialogOpen = false">
+      <div class="delete-dialog-body">
+        <p>确定删除 {{ deleteLabel }} 吗？</p>
+        <p>这会同时删除它下面的全部子问题和相关回答，无法恢复。</p>
+        <p>本次包含 {{ deleteIds.length }} 道问题、{{ deleteAnswerCount }} 条已保存的回应。</p>
+        <p v-if="actionError" class="answer-error" role="alert">{{ actionError }}</p>
+        <div class="answer-actions">
+          <button type="button" :disabled="questionActionBusy" @click="deleteDialogOpen = false">取消</button>
+          <button type="button" class="confirm-delete-question" :disabled="blocked || !deleteIds.length" @click="changeQuestion('delete')">确认删除</button>
+        </div>
+      </div>
+    </AppModal>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -135,4 +194,8 @@ textarea { box-sizing: border-box; width: 100%; min-width: 0; resize: vertical; 
 .answer-actions { flex-wrap: wrap; font-size: .82rem; }
 .submit-answer { margin-inline-start: auto; background: var(--study-pine); color: #fff7dc; border-radius: 7px; padding: 8px 14px; }
 .answer-error { color: #92391b; font-size: .85rem; }
+.question-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-block: 6px; font-size: .82rem; }
+.delete-question, .confirm-delete-question { color: #973d2a; }
+.delete-dialog-body { min-width: 0; overflow-wrap: anywhere; padding: 0 18px 18px; line-height: 1.7; }
+.confirm-delete-question { border: 1px solid currentColor; padding: 6px 12px; border-radius: 6px; }
 </style>

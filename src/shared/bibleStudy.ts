@@ -1,5 +1,5 @@
 export const BIBLE_STUDY_ASSISTANT = { username: "system:bible-study", displayName: "查经助手" } as const;
-export const BIBLE_STUDY_ROOM = "同行书房";
+export const BIBLE_STUDY_ROOM = "问答式查经";
 export const BIBLE_STUDY_ROOM_KEY_PREFIX = "virtual:bible-study:";
 
 export function bibleStudyRoomKey(accountId: number) {
@@ -80,6 +80,9 @@ export type BibleStudyRelation = typeof BIBLE_STUDY_RELATIONS[number];
 
 export interface BibleStudyQuestion {
   id: number;
+  number?: number;
+  siblingNumber?: number;
+  skipped?: boolean;
   stage: BibleStudyStage;
   text: string;
   purpose: string;
@@ -107,4 +110,22 @@ export interface BibleStudyAnswerRequest {
   mode: "answer" | "followup";
   clientRequestId: string;
   evidence?: string;
+}
+
+/** Only descendants of this question, never later siblings or independent questions. */
+export function bibleStudyBranchIds(questions: BibleStudyQuestion[], questionId: number): number[] {
+  if (!questions.some(question => question.id === questionId)) return [];
+  const children = new Map<number, number[]>();
+  for (const question of questions) {
+    if (question.parentId) children.set(question.parentId, [...(children.get(question.parentId) ?? []), question.id]);
+  }
+  const seen = new Set<number>();
+  const pending = [questionId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    pending.push(...(children.get(id) ?? []));
+  }
+  return [...seen].sort((a, b) => a - b);
 }

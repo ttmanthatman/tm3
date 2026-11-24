@@ -55,6 +55,8 @@ async function load() {
   try {
     const result = await api<BibleStudyWorkspaceState>("/api/bible-study/progress");
     if (id !== request) return;
+    if (!result.progress && workspace.value.progress) emit("scripture", { questionId: selectedId.value ?? 0,
+      reference: workspace.value.progress.reference, evidence: [], automatic: true });
     workspace.value = result;
     emit("active", !!result.progress);
     loaded.value = true;
@@ -116,11 +118,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="study-workspace" :class="{ 'study-active': !!progress }" aria-label="同行书房">
+  <section class="study-workspace" :class="{ 'study-active': !!progress }" aria-label="问答式查经">
     <header class="study-header">
       <div class="study-header-line">
         <button class="study-header-button" type="button" aria-label="回到聊天室" @click="emit('leave')"><ChevronLeft :size="22" /></button>
-        <strong data-testid="active-channel-name">同行书房</strong>
+        <strong data-testid="active-channel-name">问答式查经</strong>
         <button v-if="progress" class="study-header-button collapse-progress" type="button"
           :aria-label="collapsed ? '展开查经进度' : '收起进度 5 秒'" :aria-expanded="!collapsed" @click="toggleProgress">
           <ChevronDown v-if="collapsed" :size="17" /><ChevronUp v-else :size="17" />

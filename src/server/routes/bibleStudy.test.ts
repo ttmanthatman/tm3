@@ -10,6 +10,7 @@ test("inline answers validate input and authorize the participant's own writable
   let canWrite = true;
   let accepted = true;
   const submitted: Array<{ channelId: number; actorId: number; input: BibleStudyAnswerRequest }> = [];
+  const managed: unknown[] = [];
   registerBibleStudyRoutes(app, {
     prisma: { channel: { findUnique: async ({ where }: { where: { directKey: string } }) => {
       assert.equal(where.directKey, "virtual:bible-study:7"); return { id: 70 };
@@ -17,6 +18,7 @@ test("inline answers validate input and authorize the participant's own writable
     requireAuth: async () => {}, requireAdmin: async () => {},
     authFor: () => ({ accountId: 7, actorId: 8, isAdmin: false, canPinMessages: false }),
     enter: async () => 70, progress: async () => ({ progress: null, latest: null }),
+    manageQuestion: async (...args) => { managed.push(args); return accepted; },
     retry: () => {}, requestHelp: async () => false,
     canAccessChannel: async () => true, canWriteChannel: async () => canWrite,
     submitAnswer: async (channelId, actorId, input) => { submitted.push({ channelId, actorId, input }); return accepted; }
@@ -35,5 +37,16 @@ test("inline answers validate input and authorize the participant's own writable
     assert.deepEqual(submitted[0], { channelId: 70, actorId: 8, input });
     accepted = false;
     assert.equal((await send(input)).statusCode, 409);
+    const change = (action: string, payload: Record<string, unknown>) => app.inject({ method: "POST", url: `/api/bible-study/questions/${action}`, payload });
+    assert.equal((await change("delete", { questionId: 12 })).statusCode, 400);
+    assert.equal((await change("skip", { questionId: 12, expectedIds: [12] })).statusCode, 400);
+    canWrite = false;
+    assert.equal((await change("delete", { questionId: 12, expectedIds: [12] })).statusCode, 403);
+    assert.equal(managed.length, 0);
+    canWrite = true;
+    assert.equal((await change("delete", { questionId: 12, expectedIds: [12] })).statusCode, 409);
+    accepted = true;
+    assert.equal((await change("skip", { questionId: 12 })).statusCode, 200);
+    assert.deepEqual(managed.at(-1), [70, 8, 12, "skip", undefined]);
   } finally { await app.close(); }
 });

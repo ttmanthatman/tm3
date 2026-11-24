@@ -198,7 +198,7 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
             ref="composerInput"
             v-model="input"
             rows="1"
-            :placeholder="studyRoom ? '写下你的观察…' : composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
+            :placeholder="studyRoom ? '输入经文范围…' : composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
             @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
             @blur="composerFocused = false"
             @input="onInput"

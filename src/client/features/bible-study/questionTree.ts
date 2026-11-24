@@ -4,7 +4,7 @@ export function studyQuestionTree(questions: BibleStudyQuestion[]) {
   const ordered = [...questions].sort((a, b) => a.id - b.id);
   const byId = new Map(ordered.map(question => [question.id, question]));
   const labels = new Map<number, string>();
-  const rootNumbers = new Map(ordered.map((question, index) => [question.id, `Q${index + 1}`]));
+  const rootNumbers = new Map(ordered.map((question, index) => [question.id, `Q${question.number ?? index + 1}`]));
   const paths = new Map<number, string>();
   const children = new Map<number | undefined, BibleStudyQuestion[]>();
   for (const question of ordered) {
@@ -19,7 +19,7 @@ export function studyQuestionTree(questions: BibleStudyQuestion[]) {
     const { question, depth } = pending.pop()!;
     const parentPath = paths.get(question.parentId ?? 0);
     const siblings = children.get(parentPath ? question.parentId : undefined) ?? [];
-    const path = parentPath ? `${parentPath}:${siblings.indexOf(question) + 1}` : rootNumbers.get(question.id)!;
+    const path = parentPath ? `${parentPath}:${question.siblingNumber ?? siblings.indexOf(question) + 1}` : rootNumbers.get(question.id)!;
     paths.set(question.id, path);
     const label = parentPath ? `追问${path}` : path;
     labels.set(question.id, label);

@@ -124,7 +124,7 @@ import { createAssistantToolRegistry } from "./services/assistantTools.js";
 import { registerAssistantChatFunctions } from "./services/assistantChatFunctions.js";
 import { createAssistantToolsSettingsStore, registerAssistantToolsRoutes } from "./routes/assistantTools.js";
 import { registerVirtualDirectChannelRoutes } from "./routes/virtualDirectChannels.js";
-import { BIBLE_STUDY_ROOM_KEY_PREFIX, bibleStudyMention, bibleStudyRoomKey, isBibleStudyResumeCommand, isBibleStudyRoom } from "../shared/bibleStudy.js";
+import { BIBLE_STUDY_ROOM, BIBLE_STUDY_ROOM_KEY_PREFIX, bibleStudyMention, bibleStudyRoomKey, isBibleStudyResumeCommand, isBibleStudyRoom } from "../shared/bibleStudy.js";
 import { createBibleStudy } from "./services/bibleStudy.js";
 import { BibleStudyModelError } from "./services/bibleStudyModel.js";
 import { registerBibleStudyRoutes } from "./routes/bibleStudy.js";
@@ -2331,7 +2331,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
   ]);
   return {
     id: channel.id,
-    name: directPeer?.displayName || channel.name,
+    name: isBibleStudyRoom(channel.directKey) ? BIBLE_STUDY_ROOM : directPeer?.displayName || channel.name,
     description: channel.description,
     listColor: channel.listColor,
     icon: directPeer?.avatarPath
@@ -2446,7 +2446,7 @@ async function prepareBibleStudySend(auth: AuthContext, channelId: number, type:
 registerBibleStudyRoutes(app, {
   prisma, requireAuth, requireAdmin, authFor: request => (request as AuthedRequest).auth, canAccessChannel,
   enter: enterBibleStudyRoom, progress: bibleStudy.progress, retry: bibleStudy.retry, requestHelp: bibleStudy.requestHelp,
-  submitAnswer: bibleStudy.submitAnswer, canWriteChannel: (accountId, channelId) => canWriteChannel(accountId, channelId, true)
+  submitAnswer: bibleStudy.submitAnswer, manageQuestion: bibleStudy.manageQuestion, canWriteChannel: (accountId, channelId) => canWriteChannel(accountId, channelId, true)
 });
 
 const messageSendIdempotency = createMessageSendIdempotency({
@@ -2524,7 +2524,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
           : auth.isAdmin || (!!auth.canPinMessages && channel.isDefault && canAccess);
       return {
         id: channel.id,
-        name: directPeer?.displayName || channel.name,
+        name: isBibleStudyRoom(channel.directKey) ? BIBLE_STUDY_ROOM : directPeer?.displayName || channel.name,
         description: channel.description,
         listColor: channel.listColor,
         icon: directPeer?.avatarPath
@@ -2827,7 +2827,7 @@ app.delete("/api/admin/direct-conversations/:id", { preHandler: requireAdmin }, 
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, kind: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "私聊记录不存在" });
   if (!channel.directKey || channel.kind !== "direct") return reply.code(400).send({ success: false, message: "该记录不是私聊历史" });
-  if (isBibleStudyRoom(channel.directKey)) return reply.code(409).send({ success: false, message: "查经记录会保留在同行书房" });
+  if (isBibleStudyRoom(channel.directKey)) return reply.code(409).send({ success: false, message: "查经记录会保留在问答式查经" });
 
   await deleteChannelWithAttachments(channelId);
   return { success: true };

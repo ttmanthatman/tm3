@@ -37,3 +37,11 @@ test("Q5 remains unchanged while its follow-ups become Q5:1, Q5:1:1 and Q5:2", (
   assert.deepEqual([5, 6, 7, 8].map(id => labels.get(id)), ["Q5", "追问Q5:1", "追问Q5:1:1", "追问Q5:2"]);
   assert.equal(studyQuestionTree([...questions, question(9, 5)]).labels.get(8), "追问Q5:2");
 });
+
+test("stored numbers and sibling ordinals survive removal of an earlier branch", () => {
+  const questions = [{ ...question(10), number: 5 }, { ...question(20, 10), number: 6, siblingNumber: 1 },
+    { ...question(30, 10), number: 8, siblingNumber: 2 }];
+  const labels = studyQuestionTree(questions.filter(q => q.id !== 20)).labels;
+  assert.equal(labels.get(10), "Q5");
+  assert.equal(labels.get(30), "追问Q5:2");
+});

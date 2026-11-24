@@ -161,7 +161,7 @@ export function useComposer(options: UseComposerOptions) {
       await store.loadChannels();
       if (store.currentChannelId === fromChannelId) await options.openEnteredChannel(channelId);
     } catch (error) {
-      options.messageSendStatus.value = error instanceof Error ? error.message : "同行书房打开失败";
+      options.messageSendStatus.value = error instanceof Error ? error.message : "问答式查经打开失败";
     }
   }
 

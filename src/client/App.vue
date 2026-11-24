@@ -718,7 +718,7 @@ const activityLogFilterOptions: Array<{ value: ActivityLogFilter; label: string 
   { value: "music", label: "音乐" },
   { value: "usage", label: "使用情况" },
   { value: "ai", label: "AI 问答" },
-  { value: "bibleStudy", label: "同行书房" },
+  { value: "bibleStudy", label: "问答式查经" },
   { value: "bottle", label: "漂流瓶" }
 ];
 const adminTools = useAdminTools({
@@ -3595,7 +3595,7 @@ async function openBibleStudy() {
     if (!store.channels.some(channel => channel.id === channelId)) await store.loadChannels();
     await openChannelFromList(channelId);
   } catch (error) {
-    messageSendStatus.value = error instanceof Error ? error.message : "同行书房打开失败";
+    messageSendStatus.value = error instanceof Error ? error.message : "问答式查经打开失败";
   }
 }
 

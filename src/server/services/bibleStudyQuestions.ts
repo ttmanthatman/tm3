@@ -22,8 +22,13 @@ export const studyAnswerSchema = z.object({
 export const pendingAnswerSchema = studyAnswerSchema.omit({ content: true, clientRequestId: true })
   .extend({ kind: z.literal("bible_study_answer") });
 
+export const pendingSkipSchema = z.object({ kind: z.literal("bible_study_skip"), questionId: z.number().int().positive() });
+
 export const pendingHelpSchema = z.object({ kind: z.literal("bible_study_help"), questionId: z.number().int().positive() });
 export const studyQuestionSchema = z.object({
+  number: z.number().int().positive().optional(),
+  siblingNumber: z.number().int().positive().optional(),
+  skipped: z.boolean().optional(),
   text: z.string().min(1).max(1600),
   purpose: z.string().max(160),
   relation: z.enum(BIBLE_STUDY_RELATIONS),
@@ -32,7 +37,17 @@ export const studyQuestionSchema = z.object({
   evidence: z.array(z.string().max(100)).max(6)
 });
 
-const turnMetadata = z.object({ kind: z.literal("bible_study_turn"), stage: z.enum(BIBLE_STUDY_STAGES), question: studyQuestionSchema.optional() });
+export const studyCheckpointSchema = z.object({
+  kind: z.literal("bible_study_turn"),
+  stage: z.union([z.enum(BIBLE_STUDY_STAGES), z.literal("choose"), z.literal("complete")]),
+  reference: z.string().nullable(), sessionStartId: z.number().int().positive(),
+  feedback: z.enum(["ready", "needs_detail"]).optional(), feedbackDetail: z.string().max(80).optional(),
+  question: studyQuestionSchema.optional(), responseOnly: z.boolean().optional(), deleted: z.boolean().optional(),
+  currentQuestionId: z.number().int().positive().optional(), questionSequence: z.number().int().nonnegative().optional()
+});
+export type StudyCheckpoint = z.infer<typeof studyCheckpointSchema>;
+
+const turnMetadata = z.object({ responseOnly: z.boolean().optional(), deleted: z.boolean().optional(), kind: z.literal("bible_study_turn"), stage: z.enum(BIBLE_STUDY_STAGES), question: studyQuestionSchema.optional() });
 
 export function questionText(value: string) {
   const sentences = value.trim().match(/[^。！？?!\r\n]+[？?]/gu);
@@ -41,7 +56,7 @@ export function questionText(value: string) {
 
 export function studyQuestionFromMessage(row: { id: number; content: string | null; payload: unknown }): BibleStudyQuestion | undefined {
   const parsed = turnMetadata.safeParse(row.payload);
-  if (!parsed.success || !row.content || row.content.startsWith(BIBLE_STUDY_LOCKED_NOTE)) return;
+  if (!parsed.success || parsed.data.responseOnly || parsed.data.deleted || !row.content || row.content.startsWith(BIBLE_STUDY_LOCKED_NOTE)) return;
   const { stage, question } = parsed.data;
   if (question) return { id: row.id, stage, ...question };
   const opening = row.content.endsWith(BIBLE_STUDY_FIRST_QUESTION);
@@ -56,7 +71,7 @@ export function studyQuestionFromMessage(row: { id: number; content: string | nu
 export async function studyQuestions(prisma: PrismaClient, channelId: number, senderActorId: number, sessionStartId: number, take?: number) {
   const rows = await prisma.message.findMany({
     where: {
-      channelId, senderActorId, replyToId: { gte: sessionStartId },
+      channelId, senderActorId, content: { not: "" }, replyToId: { gte: sessionStartId },
       payload: { path: "$.kind", equals: "bible_study_turn" },
       NOT: { content: { startsWith: BIBLE_STUDY_LOCKED_NOTE } }
     },

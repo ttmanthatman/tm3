@@ -5,6 +5,8 @@ import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import type { ChannelDTO, MessageDTO } from "../../src/shared/types.js";
 import type { BibleStudyProgress, BibleStudyRecordPage } from "../../src/shared/bibleStudy.js";
 
+import { bibleStudyBranchIds } from "../../src/shared/bibleStudy.js";
+
 test.use({ serviceWorkers: "block" });
 test.setTimeout(150_000);
 
@@ -26,6 +28,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
   const calls: Array<Array<{ role: string; content: string }>> = [];
   let failures = 0;
   let plainOnce = false;
+  let heldTurn: Promise<void> | null = null;
   const plainFollowUp = "你指出了门徒的反应。哪一节经文最能支持这个观察？";
   const summary = {
     action: "complete", mainPoint: "耶稣有平静风浪的权柄。", observations: "可 4:38 门徒问耶稣是否顾念他们。",
@@ -53,7 +56,14 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     const instruction = body.messages[0]?.content ?? "";
     const stage = instruction.match(/当前阶段：(\w+)/)?.[1];
     const answer = body.messages.at(-1)?.content;
-    const content = instruction.includes("用户要在这道题下另开追问分支")
+    if (answer === "等待期间不能删除") await heldTurn;
+    const content = answer === "这里的动作是什么意思？" || answer === "删除分支私密补充" || answer === "等待期间不能删除"
+      ? { action: "respond", text: `这是一段直接解释和引导：${answer}。` }
+      : answer === "请带我再观察一个细节"
+        ? { action: "ask", text: "追加后生成的新问题？", evidence: ["马可福音 4:38"] }
+      : instruction.includes("用户不想回答")
+        ? { action: "ask", text: "换一个观察角度：门徒后来做了什么？", relation: "new_angle", evidence: ["马可福音 4:41"] }
+      : instruction.includes("用户要在这道题下另开追问分支")
       ? { action: "ask", text: `围绕这个问题再观察：${answer}？`, evidence: ["马可福音 4:38"], purpose: "从选择的父问题另开分支。" }
       : instruction.includes("用户暂时答不上来")
       ? { action: "ask", text: "第 38 节中门徒问了什么？", purpose: "先找到门徒说出的那句话。", evidence: ["马可福音 4:38"] }
@@ -81,11 +91,11 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await page.getByRole("button", { name: "打开图书室" }).click();
     await expect(page.getByRole("menuitem", { name: "书架" })).toBeVisible();
     await page.getByRole("menuitem", { name: "查经" }).click();
-    await expect(page.getByTestId("active-channel-name")).toHaveText("同行书房");
+    await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
     await expect(page.getByText(/站点管理员可在后台查看/)).toBeVisible();
 
     const privateRoom = ((await (await request.get("/api/channels", { headers: member })).json()).channels as ChannelDTO[])
-      .find(row => row.name === "同行书房")!;
+      .find(row => row.name === "问答式查经")!;
     expect(privateRoom).toMatchObject({ isPrivate: true, canManage: false });
     const roomLog = `/api/admin/bible-study/rooms/${privateRoom.id}`;
     const otherRoom = await request.post("/api/messages", { headers: admin, data: { channelId: publicRoom.id, content: "@查经助手" } });
@@ -260,7 +270,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       await page.setViewportSize({ width, height: 844 });
       await closeBibleWorkspace(page);
       expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-      const field = questions.getByPlaceholder("写下你的观察…");
+      const field = questions.getByPlaceholder("追加回答或提问…");
       await expect(field).toBeVisible();
       expect((await field.boundingBox())!.width).toBeGreaterThan(width < 760 ? 230 : 350);
     }
@@ -269,6 +279,67 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await expect(questions.locator(".question-title").filter({ hasText: rootLabel }).first()).toBeVisible();
     await questions.getByRole("button", { name: "展开回答", exact: true }).click();
     await expect(questions.locator("textarea")).toBeVisible();
+
+    for (const action of ["delete", "skip"]) await page.route(`**/api/bible-study/questions/${action}`, async route => {
+      const result = await app.inject({ method: "POST", url: `/api/bible-study/questions/${action}`, headers: member, payload: route.request().postDataJSON() });
+      await route.fulfill({ status: result.statusCode, json: result.json() });
+    });
+    const selectQuestion = (text: string) => questions.locator(".question-title").filter({ hasText: text }).first().click();
+    await selectQuestion(originalQuestion.text);
+    const countBeforeReply = (await readProgress()).questions;
+    const field = questions.getByPlaceholder("追加回答或提问…");
+    await field.fill("这里的动作是什么意思？");
+    await questions.getByRole("button", { name: "回答并收起", exact: true }).click();
+    await expect(questions.locator(".saved-answers")).toContainText("这是一段直接解释和引导");
+    expect((await readProgress()).questions).toBe(countBeforeReply);
+    expect((await readProgress()).answers).toEqual(expect.arrayContaining([expect.objectContaining({ questionId: originalQuestion.id, text: "这里的动作是什么意思？", response: "这是一段直接解释和引导：这里的动作是什么意思？。" })]));
+    await field.fill("请带我再观察一个细节");
+    await questions.getByRole("button", { name: "回答并收起", exact: true }).click();
+    await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.text).toBe("追加后生成的新问题？");
+    const skipTarget = (await readProgress()).questionPath.at(-1)!;
+    await expect(questions.locator(".selected .question-title")).toContainText(skipTarget.text);
+    await expect(questions.getByRole("button", { name: "不想回答", exact: true })).toHaveCount(1);
+    await expect(questions.getByRole("button", { name: "删除问题", exact: true })).toHaveCount(1);
+    await questions.getByRole("button", { name: "不想回答", exact: true }).click();
+    await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.text).toBe("换一个观察角度：门徒后来做了什么？");
+    await expect(questions.locator(".selected .question-title")).toContainText("换一个观察角度：门徒后来做了什么？");
+    expect((await readProgress()).questionPath.find(q => q.id === skipTarget.id)?.skipped).toBe(true);
+    expect((await readProgress()).answers?.some(answer => answer.text === "我选择跳过这个问题。")).toBe(false);
+
+    await selectQuestion(firstBranch.text);
+    await field.fill("删除分支私密补充");
+    await questions.getByRole("button", { name: "回答并收起", exact: true }).click();
+    await expect(questions.locator(".saved-answers")).toContainText("删除分支私密补充");
+    const beforeDelete = await readProgress();
+    const branchIds = bibleStudyBranchIds(beforeDelete.questionPath, firstBranch.id);
+    const siblingNumber = beforeDelete.questionPath.find(q => q.id === siblingBranch.id)?.number;
+    expect((await app.inject({ method: "POST", url: "/api/bible-study/questions/delete", headers: member, payload: { questionId: firstBranch.id, expectedIds: [firstBranch.id] } })).statusCode).toBe(409);
+    expect((await app.inject({ method: "POST", url: "/api/bible-study/questions/delete", headers: admin, payload: { questionId: firstBranch.id, expectedIds: branchIds } })).statusCode).toBe(409);
+    await questions.getByRole("button", { name: "删除问题", exact: true }).click();
+    const deletion = page.getByRole("dialog", { name: "删除问题", exact: true });
+    await expect(deletion).toContainText("全部子问题和相关回答，无法恢复");
+    await expect(deletion).toContainText(`${branchIds.length} 道问题`);
+    await deletion.getByRole("button", { name: "取消", exact: true }).click();
+    expect((await readProgress()).questionPath.map(q => q.id)).toEqual(beforeDelete.questionPath.map(q => q.id));
+    await questions.getByRole("button", { name: "删除问题", exact: true }).click();
+    await deletion.getByRole("button", { name: "确认删除", exact: true }).click();
+    await expect(deletion).toHaveCount(0);
+    await expect.poll(async () => (await readProgress()).questionPath.some(q => branchIds.includes(q.id))).toBe(false);
+    const afterDelete = await readProgress();
+    expect(afterDelete.questionPath.find(q => q.id === siblingBranch.id)?.number).toBe(siblingNumber);
+    expect(afterDelete.answers?.some(answer => answer.text.includes("删除分支私密补充"))).toBe(false);
+    expect((await records()).some(row => row.content.includes("删除分支私密补充"))).toBe(false);
+
+    let releaseHeld!: () => void;
+    heldTurn = new Promise<void>(resolve => { releaseHeld = resolve; });
+    const active = afterDelete.questionPath.at(-1)!;
+    const pending = await app.inject({ method: "POST", url: "/api/bible-study/answer", headers: member,
+      payload: { questionId: active.id, content: "等待期间不能删除", mode: "answer", clientRequestId: randomUUID() } });
+    expect(pending.statusCode).toBe(202);
+    try {
+      expect((await app.inject({ method: "POST", url: "/api/bible-study/questions/delete", headers: member, payload: { questionId: active.id, expectedIds: bibleStudyBranchIds(afterDelete.questionPath, active.id) } })).statusCode).toBe(409);
+    } finally { releaseHeld(); heldTurn = null; }
+    await waitFor("这是一段直接解释和引导：等待期间不能删除");
 
     const replies = [
       ["这段借着平静风浪显出耶稣的权柄。", "interpret"],
@@ -288,7 +359,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     expect((await records()).filter(row => row.content.includes("你的答复已经保存"))).toHaveLength(1);
 
     await page.reload();
-    await expect(page.getByTestId("active-channel-name")).toHaveText("同行书房");
+    await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
     await focusChat(page);
     await expect(page.getByRole("heading", { name: "本次查经已完成" })).toBeVisible();
     for (const width of [360, 390, 1280]) {
@@ -318,7 +389,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
 
     await page.evaluate(token => localStorage.setItem("team-chat-token", token), admin.Authorization.replace("Bearer ", ""));
     await page.goto("/log");
-    await page.getByRole("button", { name: "同行书房", exact: true }).click();
+    await page.getByRole("button", { name: "问答式查经", exact: true }).click();
     await page.getByRole("button", { name: new RegExp(E2E_MEMBER.displayName) }).click();
     await expect(page.getByText(/独立上下文标记/)).toBeVisible();
 
@@ -349,6 +420,19 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     expect(savedGuestStudy.json<BibleStudyRecordPage>().records).toEqual(expect.arrayContaining([
       expect.objectContaining({ sender: "临时查经访客", content: "诗篇 23" })
     ]));
+    let remaining = await readProgress();
+    while (remaining?.questionPath.length) {
+      const questionId = remaining.questionPath[0].id;
+      const result = await app.inject({ method: "POST", url: "/api/bible-study/questions/delete", headers: member,
+        payload: { questionId, expectedIds: bibleStudyBranchIds(remaining.questionPath, questionId) } });
+      expect(result.statusCode).toBe(200);
+      remaining = await readProgress();
+    }
+    expect(remaining).toBeNull();
+    await send("诗篇 24");
+    await expect.poll(async () => (await readProgress())?.questions).toBe(1);
+    expect((await readProgress()).questionPath[0].number).toBe(1);
+
   } finally {
     await app.inject({ method: "POST", url: "/api/admin/ai-settings", headers: admin, payload: { clearApiKey: true } });
     globalThis.fetch = originalFetch;
@@ -397,7 +481,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       const reader = page.locator(".bible-workspace");
       const highlighted = reader.locator(".study-target[data-verse-key]");
       const chooseQuestion = (text: string) => questions.locator(".question-title").filter({ hasText: text }).click();
-      await expect(page.getByTestId("active-channel-name")).toHaveText("同行书房");
+      await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
       await expect(page.locator(".app-shell")).toHaveClass(/bible-split/);
       await expect(highlighted).toHaveCount(2);
       await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toBeVisible();
@@ -430,13 +514,21 @@ for (const engine of ["chromium", "webkit"] as const) {
       await expect(highlighted).toHaveCount(2);
       await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toBeVisible();
       await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toHaveCount(0);
-      const field = questions.getByPlaceholder("写下你的观察…");
+      const field = questions.getByPlaceholder("追加回答或提问…");
       await field.fill("这个分支里的草稿");
       await questions.locator(".question-detail").scrollIntoViewIfNeeded();
       await page.screenshot({ path: testInfo.outputPath(`study-split-${engine}-1280.png`), animations: "disabled" });
       for (const width of [360, 390]) {
         await page.setViewportSize({ width, height: 844 });
         await closeBibleWorkspace(page);
+        await expect(field).toHaveValue("这个分支里的草稿");
+        await questions.getByRole("button", { name: "删除问题", exact: true }).click();
+        const deletion = page.getByRole("dialog", { name: "删除问题", exact: true });
+        await expect(deletion).toContainText("全部子问题和相关回答，无法恢复");
+        expect(await deletion.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+        await expect(deletion.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+        await deletion.getByRole("button", { name: "取消", exact: true }).click();
+        await expect(deletion).toHaveCount(0);
         await expect(field).toHaveValue("这个分支里的草稿");
         await expect(page.locator(".study-workspace .study-reading")).toHaveCount(0);
         expect((await field.boundingBox())!.width).toBeGreaterThan(230);
