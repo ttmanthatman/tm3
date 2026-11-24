@@ -371,7 +371,7 @@ for (const engine of ["chromium", "webkit"] as const) {
     const progress: BibleStudyProgress = {
       stage: "observe", reference: "马可福音 14:37-39", questions: 61, feedback: null, working: false, failure: null,
       questionPath: Array.from({ length: 61 }, (_, i) => ({
-        id: i + 1, stage: "observe", text: i ? `第${i + 1}个观察问题？` : "先读整段，你注意到什么？", purpose: "找出经文中的动作。",
+        id: i + 1, stage: "observe", text: i ? `第${i + 1}个观察问题？` : "先读整段，你注意到什么？请比较门徒前后的回应，找出你认为关键的细节，并说明你是从哪一节经文看出来的。", purpose: "找出经文中的动作。",
         relation: i ? "deepen" : "opening", ...(i ? { parentId: i === 60 ? 7 : i } : {}),
         evidence: i === 0 || i === 5 ? [] : i === 59 ? ["马可福音 14:37", "马可福音 14:39"] : ["马可福音 14:38-39"]
       })),
@@ -411,6 +411,10 @@ for (const engine of ["chromium", "webkit"] as const) {
       expect(await reader.locator(".bible-resource-link:not(:disabled)").first().evaluate(element => getComputedStyle(element).color))
         .toBe(await reader.locator(".bible-topbar").evaluate(element => getComputedStyle(element).color));
       await chooseQuestion("先读整段");
+      const rootTitle = questions.locator('.question-title[aria-current="step"]');
+      const lineStarts = await rootTitle.locator(".question-text").evaluate(element => Array.from(element.getClientRects()).map(rect => rect.left));
+      expect(lineStarts.length).toBeGreaterThan(1);
+      expect(Math.abs(lineStarts[1] - (await rootTitle.boundingBox())!.x)).toBeLessThan(1);
       await expect(highlighted).toHaveCount(0);
       await expect(questions.getByRole("article", { name: "当前问题" }).getByRole("navigation", { name: "相关经文" })).toHaveCount(0);
       await chooseQuestion("第8个观察问题");
@@ -461,9 +465,24 @@ for (const engine of ["chromium", "webkit"] as const) {
       await expect(questions.locator(".question-meta, .followup-button")).toHaveCount(0);
       await expect(questions.getByText("已回答 · 查看回答", { exact: true })).toHaveCount(0);
       await expect(questions.locator(".question-kicker")).toHaveCount(1);
-      expect(await questions.locator(".path-scroll").evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
-      await questions.locator(".path-scroll").evaluate(element => { element.scrollLeft = element.scrollWidth; });
-      expect(await questions.locator(".path-scroll").evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+      await expect(questions.locator(".path-scroll")).toHaveCount(0);
+      const list = questions.locator(".path-steps");
+      const wrapBounds = await list.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return { width: element.clientWidth, scrollWidth: element.scrollWidth,
+          overflow: Array.from(element.querySelectorAll(".question-title, .question-number, .question-text, .question-detail")).flatMap(child => {
+            const rect = child.getBoundingClientRect();
+            return rect.right > bounds.right + 1 ? [{ name: child.className, right: rect.right - bounds.right, width: rect.width, lineRects: Array.from(child.getClientRects()).slice(-2).map(line => ({ left: line.left - bounds.left, right: line.right - bounds.right })) }] : [];
+          }).slice(0, 5) };
+      });
+      expect(wrapBounds.scrollWidth, JSON.stringify(wrapBounds)).toBeLessThanOrEqual(wrapBounds.width);
+      expect(await list.evaluate(element => element.scrollHeight <= element.clientHeight)).toBe(true);
+      expect(await questions.evaluate(element => getComputedStyle(element).borderInlineStartWidth)).toBe("0px");
+      const pageScroll = page.locator(".study-scroll");
+      expect(await pageScroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+      await chooseQuestion("第60个观察问题");
+      expect(await questions.locator('.question-title[aria-current="step"]').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await chooseQuestion("第9个观察问题");
       await questions.locator(".saved-answers").scrollIntoViewIfNeeded();
       await expect(questions.locator(".saved-answers")).toBeInViewport();
       await page.screenshot({ path: testInfo.outputPath(`study-questions-${engine}-390.png`), animations: "disabled" });
