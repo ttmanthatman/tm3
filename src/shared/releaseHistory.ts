@@ -1343,11 +1343,21 @@ const RELEASE_2_15_2_NOTES = [
   "收紧消息输入栏麦克风、表情与加号按钮间距。"
 ] as const
 
+const RELEASE_2_15_3_NOTES = [
+  "消息输入框新增可复用的彩虹环绕装饰，沿圆角边框匀速流动，描线与光晕颜色保持同步。",
+  "管理后台聊天室外观支持分别调节光晕内外宽度，并编辑、增删和排序最多 99 个颜色；加大默认光晕范围。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.16.0",
+    date: "2026-11-24",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.15.3",
     date: "2026-11-19",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_15_3_NOTES
   },
   {
     version: "2.15.2",
