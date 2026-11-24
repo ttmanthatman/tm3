@@ -220,6 +220,7 @@ import VirtualRolePrompts from "./features/admin/VirtualRolePrompts.vue";
 import BottleLogPanel from "./features/admin/BottleLogPanel.vue";
 import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
 import BibleStudyLogPanel from "./features/bible-study/BibleStudyLogPanel.vue";
+import { useBibleStudyNavigation } from "./features/bible-study/useBibleStudyNavigation";
 import BibleStudyWorkspace from "./features/bible-study/BibleStudyWorkspace.vue";
 import { isBibleStudyRoom } from "@shared/bibleStudy";
 import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
@@ -970,6 +971,11 @@ const bibleTopicActions: BibleTopicActions = {
   removePassages: removeBibleTopicPassages,
   share: shareBibleTopic
 };
+const { selectStudyScripture, studyBibleError } = useBibleStudyNavigation({
+  enabled: () => studyWorkspaceVisible.value,
+  workspace: bibleWorkspace, splitAvailable: bibleSplitAvailable, bibleOpen, bibleOnRight,
+  openBible: openBibleWorkspace, shrinkBible
+});
 const chatWorkspaceHidden = computed(() => bibleFullscreen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value);
 const { start: handleBibleSwipeStart, end: handleBibleSwipeEnd, cancel: cancelBibleSwipe } = createBibleSwipeNavigation({
   appearance: () => store.appearance,
@@ -5666,6 +5672,7 @@ const messageRowBindings = {
       ref="bibleWorkspace"
       :open="bibleOpen"
       :split="bibleSplit"
+      :study-mode="studyWorkspaceVisible"
       :split-available="bibleSplitAvailable"
       :layout-width="bibleSplit ? (viewportWidth - 12) * bibleSplitRatio : viewportWidth"
       @expand="expandBible"
@@ -5805,8 +5812,8 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" :class="{ 'study-pane': studyWorkspaceVisible }" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
-      <BibleStudyWorkspace v-if="studyWorkspaceVisible" :key="store.currentChannelId" :channel-id="store.currentChannelId" @leave="leaveBibleStudy" @active="studyActive = $event" />
+    <section v-if="!chatWorkspaceHidden || studyWorkspaceVisible" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" :class="{ 'study-pane': studyWorkspaceVisible }" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
+      <BibleStudyWorkspace v-if="studyWorkspaceVisible" :key="store.currentChannelId" :channel-id="store.currentChannelId" @leave="leaveBibleStudy" @active="studyActive = $event" :reader-error="studyBibleError" @scripture="selectStudyScripture" />
       <template v-else>
       <img
         v-if="wallpaperPanActive"

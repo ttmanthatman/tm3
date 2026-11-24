@@ -10,9 +10,8 @@ const props = defineProps<{
   answers: BibleStudyAnswer[];
   busy: boolean;
   feedback?: string;
-  evidence?: string;
 }>();
-const emit = defineEmits<{ select: [id: number]; sent: []; help: [] }>();
+const emit = defineEmits<{ select: [id: number, automatic: boolean]; sent: []; help: []; reference: [value: string] }>();
 const selectedId = ref<number>();
 const mode = ref<"answer" | "followup">("answer");
 const questionsOpen = ref(true);
@@ -28,7 +27,7 @@ const current = computed(() => tree.value.byId.get(selectedId.value ?? 0));
 const label = computed(() => tree.value.labels.get(selectedId.value ?? 0));
 const ancestors = computed(() => studyQuestionAncestors(props.questions, selectedId.value));
 const parent = computed(() => ancestors.value.at(-1));
-const draftKey = computed(() => `${selectedId.value}:${mode.value}:${props.evidence ?? ""}`);
+const draftKey = computed(() => `${selectedId.value}:${mode.value}`);
 const draft = computed({ get: () => drafts.value[draftKey.value] ?? "", set: value => { drafts.value[draftKey.value] = value; } });
 const blocked = computed(() => props.busy || submitBusy.value);
 const answered = computed(() => new Set(props.answers.map(answer => answer.questionId)));
@@ -36,7 +35,7 @@ watch(() => props.questions.at(-1)?.id, id => {
   if (!id) return;
   selectedId.value = id;
   mode.value = "answer";
-  emit("select", id);
+  emit("select", id, true);
 }, { immediate: true });
 
 async function select(id: number, followup = false) {
@@ -45,7 +44,7 @@ async function select(id: number, followup = false) {
   questionsOpen.value = true;
   ancestorsOpen.value = false;
   errorText.value = "";
-  emit("select", id);
+  emit("select", id, followup);
   await nextTick();
   field.value?.focus({ preventScroll: true });
 }
@@ -58,7 +57,7 @@ async function submit() {
   if (blocked.value || !current.value || !draft.value.trim()) return;
   const key = draftKey.value;
   const content = draft.value.trim();
-  const input = { questionId: current.value.id, content, mode: mode.value, ...(props.evidence ? { evidence: props.evidence } : {}) };
+  const input = { questionId: current.value.id, content, mode: mode.value };
   const snapshot = JSON.stringify(input);
   if (retryRequest.value?.snapshot !== snapshot) retryRequest.value = { snapshot, id: crypto.randomUUID() };
   submitBusy.value = true;
@@ -110,13 +109,16 @@ async function submit() {
       <article aria-label="当前问题">
         <small>{{ mode === 'followup' ? `正在追问 ${label}` : `正在回答 ${label}` }}</small>
         <h2>{{ current.text }}</h2>
-        <p v-if="current.evidence.length" class="question-evidence">经文依据 · {{ current.evidence.join('、') }}</p>
+        <nav v-if="current.evidence.length" class="question-evidence" aria-label="相关经文">
+          <span>经文依据 ·</span><button v-for="reference in current.evidence" :key="reference" type="button" @click="emit('reference', reference)">{{ reference }}</button>
+        </nav>
+        <p v-else class="question-evidence">全段观察 · 无具体经节</p>
         <p class="question-purpose"><strong>为什么问</strong> {{ current.purpose }}</p>
         <p v-if="current.relation === 'hint' && current.returnToId">答完这一步，我们回到原题。</p>
         <p v-if="feedback && current.id === questions.at(-1)?.id">上一题反馈 · {{ feedback }}</p>
       </article>
       <form @submit.prevent="submit">
-        <label :for="`study-answer-${current.id}`">{{ mode === 'followup' ? `针对 ${label} 另开一个追问分支` : '写下你的观察' }}{{ evidence ? ` · ${evidence}` : '' }}</label>
+        <label :for="`study-answer-${current.id}`">{{ mode === 'followup' ? `针对 ${label} 另开一个追问分支` : '写下你的观察' }}</label>
         <textarea :id="`study-answer-${current.id}`" ref="field" v-model="draft" :disabled="blocked" :placeholder="mode === 'followup' ? '还想从这个问题追问什么？' : '写下你的观察…'" rows="3" maxlength="10000"></textarea>
         <div class="answer-actions">
           <button v-if="current.id === questions.at(-1)?.id && mode === 'answer'" type="button" :disabled="blocked" @click="emit('help')"><CircleHelp :size="16" />{{ current.relation === 'hint' ? '再给一点提示' : '答不上来' }}</button>
@@ -148,6 +150,8 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid var(--study-pi
 .saved-answers { background: #e6ecdf; border-radius: 5px; padding: 8px; }
 .saved-answers p { margin: 0; white-space: pre-wrap; font-size: .86rem; line-height: 1.6; }
 .saved-answers p + p { margin-top: 8px; }
+.question-evidence { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; font-size: .82rem; }
+.question-evidence button { text-decoration: underline; text-underline-offset: 3px; }
 .question-detail { margin-top: 14px; }
 .parent-question { font-size: .85rem; line-height: 1.6; padding-block: 8px; border-bottom: 1px solid var(--study-line); }
 .ancestry { font-size: .8rem; }

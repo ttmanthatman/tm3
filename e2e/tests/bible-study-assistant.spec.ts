@@ -123,21 +123,8 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       const bounds = await focus.boundingBox();
       expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
     }
-    const verseText = page.locator(".reading-text");
-    await expect(verseText.locator("sup")).toHaveCount(2);
-    await page.getByRole("button", { name: "展开全段", exact: true }).click();
-    await expect(verseText.locator("sup")).toHaveCount(7);
-    await page.getByRole("button", { name: "收起经文", exact: true }).click();
-    await expect(verseText.locator("sup")).toHaveCount(2);
-    expect(await verseText.locator("p").count()).toBeLessThan(7);
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-    const reading = page.locator(".study-reading");
-    await reading.getByRole("button", { name: "复制经文" }).click({ timeout: 8000 });
-    await expect(reading.getByRole("button", { name: "已复制" })).toBeVisible();
-    const copied = await page.evaluate(() => navigator.clipboard.readText());
-    expect(copied).toContain("那天晚上");
-    expect(copied).not.toMatch(/\d|马可福音/);
-    expect(copied).not.toContain("哪一句话");
+    await expect(page.locator(".study-workspace .study-reading")).toHaveCount(0);
+    await expect(page.getByRole("article", { name: "当前问题" })).toContainText("全段观察");
     await page.getByRole("button", { name: /收起进度/ }).click();
     await expect(focus).toBeHidden();
     await expect(page.getByRole("button", { name: "展开查经进度" })).toBeVisible();
@@ -267,25 +254,20 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     expect(invalidEvidence.statusCode).toBe(409);
     await page.reload();
     await closeBibleWorkspace(page);
-    await page.getByRole("button", { name: "围绕第38节提问", exact: true }).click();
-    await expect(page.locator(".selected-passage")).toContainText("耶稣");
-    const inline = page.locator(".inline-questions");
-    await expect(inline).toContainText("问题列表");
+    const questions = page.getByRole("region", { name: "问题脉络" });
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 844 });
+      await closeBibleWorkspace(page);
       expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-      const field = inline.getByPlaceholder("写下你的观察…");
+      const field = questions.getByPlaceholder("写下你的观察…");
       await expect(field).toBeVisible();
       expect((await field.boundingBox())!.width).toBeGreaterThan(width < 760 ? 230 : 350);
-      if (width < 760) await expect.poll(() => page.locator(".channel-pane").evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
-      await inline.locator(".question-detail").scrollIntoViewIfNeeded();
-      if (width === 390 || width === 1280) await page.screenshot({ path: testInfo.outputPath(`study-inline-${width}.png`), animations: "disabled" });
     }
-    await page.getByRole("button", { name: "收起问答", exact: true }).click();
-    await expect(inline.locator("textarea")).toHaveCount(0);
-    await expect(inline.getByRole("button", { name: `继续追问 ${rootLabel}`, exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "展开问答", exact: true }).click();
-    await expect(inline.locator("textarea")).toBeVisible();
+    await questions.getByRole("button", { name: "收起问答", exact: true }).click();
+    await expect(questions.locator("textarea")).toHaveCount(0);
+    await expect(questions.getByRole("button", { name: `继续追问 ${rootLabel}`, exact: true })).toBeVisible();
+    await questions.getByRole("button", { name: "展开问答", exact: true }).click();
+    await expect(questions.locator("textarea")).toBeVisible();
 
     const replies = [
       ["这段借着平静风浪显出耶稣的权柄。", "interpret"],
@@ -373,65 +355,101 @@ test("study rooms isolate answers, resume the same passage and archive a summary
   }
 });
 
-test("WebKit keeps deep branches and the full-width composer when selecting a verse range", async ({ playwright, request }, testInfo) => {
-  const admin = await authFor(request, E2E_ADMIN);
-  const entry = await request.post("/api/bible-study/enter", { headers: admin });
-  expect(entry.ok()).toBe(true);
-  const { channelId } = await entry.json() as { channelId: number };
-  const browser = await playwright.webkit.launch();
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
-  const page = await context.newPage();
-  const progress: BibleStudyProgress = {
-    stage: "observe", reference: "马可福音 14:37-39", questions: 61, feedback: null, working: false, failure: null,
-    reading: { title: "马可福音 14:37-39", question: "看见了什么？", paragraphs: [[
-      { number: "37", text: "耶稣回来，见他们睡着了。" },
-      { number: "38", text: "总要警醒祷告，免得入了迷惑。你们心灵固然愿意，肉体却软弱了。" },
-      { number: "39", text: "耶稣又去祷告，说的话还是与先前一样。" }
-    ]] },
-    questionPath: Array.from({ length: 61 }, (_, i) => ({
-      id: i + 1, stage: "observe", text: `第${i + 1}个观察问题？`, purpose: "找出经文中的动作。",
-      relation: i ? "deepen" : "opening", ...(i ? { parentId: i === 60 ? 7 : i } : {}), evidence: ["马可福音 14:38"]
-    })),
-    answers: [{ id: 101, questionId: 8, text: "警醒祷告。", response: "这两个动作怎样联系？" }]
-  };
-  try {
-    await page.route("**/*", route => ["127.0.0.1", "localhost"].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
-    await page.route("**/api/bible-study/progress", route => route.fulfill({ json: { progress, latest: null } }));
-    const submissions: unknown[] = [];
-    await page.route("**/api/bible-study/answer", route => {
-      submissions.push(route.request().postDataJSON());
-      return route.fulfill({ status: 202, json: { accepted: true } });
-    });
-    await page.addInitScript(({ token, channelId }) => {
-      localStorage.setItem("team-chat-token", token);
-      localStorage.setItem("team-chat-current-channel", String(channelId));
-    }, { token: admin.Authorization.replace("Bearer ", ""), channelId });
-    await page.goto("/");
-    await closeBibleWorkspace(page);
-    await expect(page.getByTestId("active-channel-name")).toHaveText("同行书房");
-    const path = page.getByRole("region", { name: "问题脉络" });
-    await expect(path.locator(".question-number").filter({ hasText: /^q61$/ })).toHaveCount(1);
-    await path.getByRole("button", { name: "继续追问 q60", exact: true }).click();
-    await expect(path.locator(".parent-question")).toContainText("q59");
-    await page.getByRole("button", { name: "选择一段", exact: true }).click();
-    await page.getByRole("button", { name: "围绕第37节提问", exact: true }).click();
-    await page.getByRole("button", { name: "围绕第38节提问", exact: true }).click();
-    await expect(page.locator(".selected-passage sup")).toHaveCount(2);
-    const field = path.getByPlaceholder("还想从这个问题追问什么？");
-    await field.fill("从这里再看一个细节");
-    await expect(path.locator("label")).toContainText("马可福音 14:37-38");
-    for (const width of [360, 390, 1280]) {
-      await page.setViewportSize({ width, height: 844 });
-      expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-      expect((await field.boundingBox())!.width).toBeGreaterThan(width < 760 ? 230 : 350);
-    }
-    await path.getByRole("button", { name: "发起追问", exact: true }).click();
-    expect(submissions).toEqual([expect.objectContaining({ questionId: 60, mode: "followup", content: "从这里再看一个细节", evidence: "马可福音 14:37-38" })]);
-    await expect(field).toHaveCount(0);
-    await expect(path.locator(".question-number")).toHaveCount(61);
-    await path.getByRole("button", { name: "已回答 · 查看回答", exact: true }).click();
-    await expect(path.locator(".saved-answers")).toContainText("警醒祷告。");
-    await expect(path.locator(".saved-answers")).toContainText("这两个动作怎样联系？");
-    await page.screenshot({ path: testInfo.outputPath("study-webkit-collapsed.png"), animations: "disabled" });
-  } finally { await context.close(); await browser.close(); }
-});
+
+for (const engine of ["chromium", "webkit"] as const) {
+  test(`questions drive the split Bible without verse anchors or lost drafts (${engine})`, async ({ browser, playwright, request }, testInfo) => {
+    const admin = await authFor(request, E2E_ADMIN);
+    const entry = await request.post("/api/bible-study/enter", { headers: admin });
+    expect(entry.ok()).toBe(true);
+    const { channelId } = await entry.json() as { channelId: number };
+    const owned = engine === "webkit" ? await playwright.webkit.launch() : null;
+    const context = await (owned ?? browser).newContext({ viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", error => errors.push(error.message));
+    const progress: BibleStudyProgress = {
+      stage: "observe", reference: "马可福音 14:37-39", questions: 61, feedback: null, working: false, failure: null,
+      questionPath: Array.from({ length: 61 }, (_, i) => ({
+        id: i + 1, stage: "observe", text: i ? `第${i + 1}个观察问题？` : "先读整段，你注意到什么？", purpose: "找出经文中的动作。",
+        relation: i ? "deepen" : "opening", ...(i ? { parentId: i === 60 ? 7 : i } : {}),
+        evidence: i === 0 || i === 5 ? [] : i === 59 ? ["马可福音 14:37", "马可福音 14:39"] : ["马可福音 14:38-39"]
+      })),
+      answers: [{ id: 101, questionId: 8, text: "警醒祷告。", response: "这两个动作怎样联系？" }]
+    };
+    try {
+      await page.route("**/*", route => ["127.0.0.1", "localhost"].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+      await page.route("**/api/bible-study/progress", route => route.fulfill({ json: { progress, latest: null } }));
+      const submissions: unknown[] = [];
+      await page.route("**/api/bible-study/answer", route => {
+        submissions.push(route.request().postDataJSON());
+        return route.fulfill({ status: 202, json: { accepted: true } });
+      });
+      await page.addInitScript(({ token, channelId }) => {
+        localStorage.setItem("team-chat-token", token);
+        localStorage.setItem("team-chat-current-channel", String(channelId));
+      }, { token: admin.Authorization.replace("Bearer ", ""), channelId });
+      await page.goto("http://127.0.0.1:4173/");
+      const questions = page.getByRole("region", { name: "问题脉络" });
+      const reader = page.locator(".bible-workspace");
+      const highlighted = reader.locator(".study-target[data-verse-key]");
+      const chooseQuestion = (text: string) => questions.locator(".question-title").filter({ hasText: text }).click();
+      await expect(page.getByTestId("active-channel-name")).toHaveText("同行书房");
+      await expect(page.locator(".app-shell")).toHaveClass(/bible-split/);
+      await expect(highlighted).toHaveCount(2);
+      await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toBeVisible();
+      await expect(page.locator(".study-workspace .reading-text")).toHaveCount(0);
+      const bibleBox = (await reader.boundingBox())!;
+      const chatBox = (await page.locator(".chat-pane").boundingBox())!;
+      expect(bibleBox.x).toBeLessThan(chatBox.x);
+      expect(chatBox.width).toBeGreaterThanOrEqual(359);
+      const colors = await page.evaluate(() => [".study-header", ".bible-topbar"].map(selector => getComputedStyle(document.querySelector(selector)!).backgroundColor));
+      expect(colors[0]).toBe(colors[1]);
+      expect(await reader.locator(".bible-resource-link:not(:disabled)").first().evaluate(element => getComputedStyle(element).color))
+        .toBe(await reader.locator(".bible-topbar").evaluate(element => getComputedStyle(element).color));
+      await chooseQuestion("先读整段");
+      await expect(highlighted).toHaveCount(0);
+      await expect(questions.getByRole("article", { name: "当前问题" })).toContainText("全段观察");
+      await chooseQuestion("第8个观察问题");
+      await expect(highlighted).toHaveCount(2);
+      await reader.locator('[data-verse-key$="-14-37"]').click();
+      await expect(questions.locator('.question-title[aria-current="step"]')).toContainText("q8");
+      await expect(questions.locator(".question-number")).toHaveCount(61);
+      await expect(highlighted).toHaveCount(2);
+      await chooseQuestion("第6个观察问题");
+      await expect(highlighted).toHaveCount(0); // Parent q5 has evidence, q6 does not inherit it.
+      await questions.getByRole("button", { name: "继续追问 q60", exact: true }).click();
+      await expect(questions.locator(".parent-question")).toContainText("q59");
+      await expect(highlighted).toHaveCount(2);
+      await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toBeVisible();
+      await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toHaveCount(0);
+      const field = questions.getByPlaceholder("还想从这个问题追问什么？");
+      await field.fill("这个分支里的草稿");
+      await questions.locator(".question-detail").scrollIntoViewIfNeeded();
+      await page.screenshot({ path: testInfo.outputPath(`study-split-${engine}-1280.png`), animations: "disabled" });
+      for (const width of [360, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await closeBibleWorkspace(page);
+        await expect(field).toHaveValue("这个分支里的草稿");
+        await expect(page.locator(".study-workspace .study-reading")).toHaveCount(0);
+        expect((await field.boundingBox())!.width).toBeGreaterThan(230);
+        await questions.getByRole("navigation", { name: "相关经文" }).getByRole("button", { name: "马可福音 14:39", exact: true }).click();
+        await expect(reader).toBeVisible();
+        await expect(reader.locator('[data-verse-key$="-14-39"].study-target')).toBeVisible();
+        await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toHaveCount(0);
+        await closeBibleWorkspace(page);
+        await expect(field).toHaveValue("这个分支里的草稿");
+        await expect(questions.locator(".parent-question")).toContainText("q59");
+        expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      }
+      await questions.getByRole("button", { name: "发起追问", exact: true }).click();
+      expect(submissions).toEqual([expect.objectContaining({ questionId: 60, mode: "followup", content: "这个分支里的草稿" })]);
+      expect(submissions[0]).not.toHaveProperty("evidence"); // Reading selection never attaches questions to a verse.
+      await expect(field).toHaveCount(0);
+      await expect(questions.locator(".question-number")).toHaveCount(61);
+      await questions.getByRole("button", { name: "已回答 · 查看回答", exact: true }).click();
+      await expect(questions.locator(".saved-answers")).toContainText("警醒祷告。");
+      await page.screenshot({ path: testInfo.outputPath(`study-questions-${engine}-390.png`), animations: "disabled" });
+      expect(errors).toEqual([]);
+    } finally { await context.close(); await owned?.close(); }
+  });
+}

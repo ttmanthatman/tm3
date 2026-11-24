@@ -860,7 +860,7 @@ button.pinned-ticker-action {
   white-space: nowrap;
 }
 
-.chat-pane.study-pane {
+.chat-pane.study-pane, .bible-workspace.study-reader {
   --study-pine: #103d33;
   --study-paper: #faf6eb;
   --study-ink: #192820;
@@ -868,6 +868,7 @@ button.pinned-ticker-action {
   --study-bronze: #96600c;
   --study-line: #d5cbb8;
   --study-muted: #4e594e;
+  --study-highlight: #e6ecdf;
   background: var(--study-paper);
 }
 

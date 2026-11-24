@@ -35,15 +35,3 @@ export function studyQuestionAncestors(questions: BibleStudyQuestion[], id?: num
   }
   return ancestors;
 }
-
-export function studyQuestionVerses(questions: BibleStudyQuestion[], id?: number): string[] {
-  const chain = [...studyQuestionAncestors(questions, id), questions.find(question => question.id === id)];
-  const evidence = chain.reverse().find(question => question?.evidence.length)?.evidence ?? [];
-  return [...new Set(evidence.flatMap(reference => {
-    const match = /:(\d+)(?:[-–—](\d+))?$/.exec(reference.replace(/\s/g, ""));
-    if (!match) return [];
-    const start = Number(match[1]);
-    const end = Number(match[2] ?? match[1]);
-    return end >= start && end - start < 30 ? Array.from({ length: end - start + 1 }, (_, i) => String(start + i)) : [];
-  }))];
-}

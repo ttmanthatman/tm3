@@ -5,13 +5,12 @@ import { BIBLE_STUDY_STAGES, BIBLE_STUDY_STAGE_DETAILS, type BibleStudyFailure, 
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import AppModal from "../../components/ui/AppModal.vue";
-import { studyQuestionVerses } from "./questionTree";
-import BibleStudyReading from "./BibleStudyReading.vue";
+import type { StudyScriptureSelection } from "./useBibleStudyNavigation";
 import BibleStudyQuestionPath from "./BibleStudyQuestionPath.vue";
 import BibleStudyRecords from "./BibleStudyRecords.vue";
 
-const props = defineProps<{ channelId: number }>();
-const emit = defineEmits<{ leave: []; active: [value: boolean] }>();
+const props = defineProps<{ channelId: number; readerError?: string }>();
+const emit = defineEmits<{ leave: []; active: [value: boolean]; scripture: [value: StudyScriptureSelection] }>();
 const store = useChatStore();
 const workspace = ref<BibleStudyWorkspaceState>({ progress: null, latest: null });
 const progress = computed(() => workspace.value.progress);
@@ -28,19 +27,21 @@ const step = computed(() => progress.value ? BIBLE_STUDY_STAGES.indexOf(progress
 const stage = computed(() => progress.value ? BIBLE_STUDY_STAGE_DETAILS[progress.value.stage] : null);
 const currentQuestion = computed(() => progress.value?.questionPath.at(-1));
 const selectedId = ref<number>();
-const explicitVerses = ref<string[]>();
-const selectedVerses = computed(() => explicitVerses.value ?? studyQuestionVerses(progress.value?.questionPath ?? [], selectedId.value));
-const selectedEvidence = computed(() => {
-  if (!explicitVerses.value?.length || !progress.value) return undefined;
-  const chapter = progress.value.reference.match(/^(.+?:)\d+/)?.[1];
-  if (!chapter) return undefined;
-  return `${chapter}${explicitVerses.value[0]}${explicitVerses.value.length > 1 ? `-${explicitVerses.value.at(-1)}` : ""}`;
-});
-function selectQuestion(id: number) {
+function selectQuestion(id: number, automatic = false) {
   selectedId.value = id;
-  explicitVerses.value = undefined;
+  const question = progress.value?.questionPath.find(question => question.id === id);
+  if (question && progress.value) emit("scripture", {
+    questionId: id, reference: progress.value.reference, evidence: question.evidence, automatic
+  });
 }
-watch(() => progress.value?.questionPath.at(-1)?.id, id => { if (id) selectQuestion(id); });
+function openReference(reference: string) {
+  const id = selectedId.value ?? currentQuestion.value?.id;
+  if (id && progress.value) emit("scripture", { questionId: id, reference: progress.value.reference, evidence: [reference], automatic: false });
+}
+function openReading() {
+  const id = selectedId.value ?? currentQuestion.value?.id;
+  if (id) selectQuestion(id);
+}
 const failureText: Record<BibleStudyFailure, string> = {
   configuration: "AI 服务暂不可用。你的答复已保存，请联系管理员。",
   connection: "连接 AI 服务失败，你的答复已保存。",
@@ -140,12 +141,17 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="study-scroll">
-      <div class="study-inner" :class="{ 'with-reading': !!progress?.reading }">
+      <div class="study-inner">
         <div class="study-dialogue">
           <nav class="record-actions" aria-label="查经记录">
             <button type="button" @click="dialog = 'records'"><BookOpen :size="19" /> <span>查经记录</span><ChevronRight :size="17" /></button>
             <button type="button" @click="dialog = 'summaries'">查经小结</button>
           </nav>
+
+          <div v-if="progress" class="study-passage">
+            <span>{{ progress.reference }}</span><button type="button" @click="openReading"><BookOpen :size="16" /> 打开圣经</button>
+          </div>
+          <p v-if="readerError" class="study-notice" role="alert">{{ readerError }}</p>
 
           <div v-if="errorText" class="study-notice" role="alert">
             <span>{{ errorText }}</span><button type="button" @click="load">刷新</button>
@@ -159,7 +165,7 @@ onBeforeUnmount(() => {
             完成这段经文后就可以换题。你也可以下次回来继续。
           </div>
 
-          <BibleStudyQuestionPath v-if="progress && !progress.reading" :questions="progress.questionPath" :answers="progress.answers ?? []" :feedback="progress.feedbackDetail" :busy="actionBusy || progress.working || !!progress.failure" @select="selectQuestion" @sent="load" @help="act('help')" />
+          <BibleStudyQuestionPath v-if="progress" :questions="progress.questionPath" :answers="progress.answers ?? []" :feedback="progress.feedbackDetail" :busy="actionBusy || progress.working || !!progress.failure" @select="selectQuestion" @reference="openReference" @sent="load" @help="act('help')" />
           <section v-if="loaded && !progress" class="study-intro" aria-labelledby="study-intro-title">
             <h2 id="study-intro-title">{{ workspace.latest === 'complete' ? '本次查经已完成' : '今天想读哪一段？' }}</h2>
             <p v-if="workspace.latest === 'complete'" role="status">小结已归档。发送新的经文范围，就可以开始下一次查经。</p>
@@ -168,9 +174,6 @@ onBeforeUnmount(() => {
           </section>
           <p v-else-if="!loaded && !errorText" role="status">正在读取查经进度…</p>
         </div>
-        <BibleStudyReading v-if="progress?.reading" :key="progress.reference" :reading="progress.reading" :reference="progress.reference" :selected-verses="selectedVerses" @choose="explicitVerses = $event">
-          <BibleStudyQuestionPath :questions="progress.questionPath" :answers="progress.answers ?? []" :feedback="progress.feedbackDetail" :busy="actionBusy || progress.working || !!progress.failure" :evidence="selectedEvidence" @select="selectQuestion" @sent="load" @help="act('help')" />
-        </BibleStudyReading>
       </div>
     </div>
 
@@ -208,6 +211,8 @@ onBeforeUnmount(() => {
 .record-actions button { display: inline-flex; align-items: center; gap: 6px; justify-content: center; min-height: 41px; border: 1px solid #b7ab95; background: transparent; color: var(--study-pine); border-radius: 8px; padding: 5px 10px; font: inherit; font-size: .86rem; cursor: pointer; }
 .record-actions button:first-child { flex: 1; }
 .record-actions button:first-child span { flex: 1; text-align: start; }
+.study-passage { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--study-muted); font-size: .85rem; }
+.study-passage button { display: inline-flex; align-items: center; gap: 5px; min-height: 38px; border: 0; background: transparent; color: var(--study-pine); font: inherit; cursor: pointer; }
 .current-question { border-inline-start: 4px solid #4d6d4f; background: #e8eddb; border-radius: 10px; padding: 10px 13px 8px; overflow-wrap: anywhere; }
 .question-kicker { display: inline-block; color: var(--study-pine); background: #d4dfc2; border-radius: 7px; padding: 2px 7px; font-size: .77rem; font-weight: 700; }
 .current-question h2, .study-intro h2 { font-size: clamp(1.1rem, 3.75cqi, 1.45rem); line-height: 1.42; margin: 6px 0; color: #11372a; }

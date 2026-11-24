@@ -1,48 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, useSlots } from "vue";
+import { computed, ref } from "vue";
 import { ChevronDown, Copy, Check } from "lucide-vue-next";
 import type { BibleStudyReading } from "@shared/bibleStudy";
 
-const props = defineProps<{ reading: BibleStudyReading; reference?: string; selectedVerses?: string[] }>();
-const emit = defineEmits<{ choose: [verses: string[]] }>();
-const slots = useSlots();
+const props = defineProps<{ reading: BibleStudyReading; reference?: string }>();
 const expanded = ref(false);
-const rangeSelection = ref(false);
-let selectionStart: number | undefined;
-function choose(number: string, event: MouseEvent) {
-  const end = Number(number);
-  if ((!event.shiftKey && !rangeSelection.value) || selectionStart === undefined) selectionStart = end;
-  const start = Math.min(selectionStart, end);
-  const last = Math.max(selectionStart, end);
-  emit("choose", Array.from({ length: last - start + 1 }, (_, index) => String(start + index)));
-}
-const blocks = computed(() => {
-  const selected = new Set(props.selectedVerses ?? []);
-  const result: Array<{ key: string; fragments: BibleStudyReading["paragraphs"][number]; selected: boolean; insert: boolean }> = [];
-  let lastSelected = -1;
-  for (const [paragraphIndex, paragraph] of paragraphs.value.entries()) {
-    let block: typeof result[number] | undefined;
-    for (const fragment of paragraph) {
-      const active = !!fragment.number && selected.has(fragment.number);
-      if (!block || block.selected !== active) {
-        block = { key: `${paragraphIndex}:${fragment.number ?? result.length}`, fragments: [], selected: active, insert: false };
-        result.push(block);
-      }
-      block.fragments.push(fragment);
-      if (active) lastSelected = result.length - 1;
-    }
-  }
-  if (result.length && slots.default) result.splice(lastSelected >= 0 ? lastSelected + 1 : result.length, 0,
-    { key: "questions", fragments: [], selected: false, insert: true });
-  return result;
-});
 const excerpt = computed(() => {
   const first = props.reading.paragraphs[0] ?? [];
   return [first.slice(0, 2)];
 });
 const canExpand = computed(() => !!props.reference && (props.reading.paragraphs.length > 1 ||
   (props.reading.paragraphs[0]?.length ?? 0) > excerpt.value[0].length));
-const paragraphs = computed(() => canExpand.value && !expanded.value && !props.selectedVerses?.length ? excerpt.value : props.reading.paragraphs);
+const paragraphs = computed(() => canExpand.value && !expanded.value ? excerpt.value : props.reading.paragraphs);
 const copyState = ref<"ready" | "copied" | "failed">("ready");
 
 async function copy() {
@@ -61,22 +30,13 @@ async function copy() {
     <template v-if="reference">
       <div class="reading-kicker">本次经文</div>
       <h2 class="reading-heading">{{ reference }}</h2>
-      <div v-if="slots.default" class="reading-selection"><button class="copy-reading" type="button" :aria-pressed="rangeSelection" @click="rangeSelection = !rangeSelection; selectionStart = undefined">{{ rangeSelection ? '结束选段' : '选择一段' }}</button><small>{{ rangeSelection ? '依次点选起、止经节' : '点击经节，在原位提问' }}</small></div>
     </template>
     <strong v-else class="reading-title">{{ reading.title }}</strong>
     <div class="reading-text">
-      <template v-for="block in blocks" :key="block.key">
-        <p v-if="!block.insert" :class="{ 'selected-passage': block.selected }">
-          <template v-for="(fragment, fragmentIndex) in block.fragments" :key="fragmentIndex">
-            <button v-if="slots.default && fragment.number" type="button" class="verse-fragment" :aria-label="`围绕第${fragment.number}节提问`" :aria-pressed="selectedVerses?.includes(fragment.number) ?? false" @click="choose(fragment.number, $event)"><sup :data-number="fragment.number" aria-hidden="true"></sup>{{ fragment.text }}</button>
-            <template v-else><sup v-if="fragment.number" :data-number="fragment.number" aria-hidden="true"></sup>{{ fragment.text }}</template>
-          </template>
-        </p>
-        <div v-else class="inline-questions"><slot /></div>
-      </template>
+      <p v-for="(paragraph, index) in paragraphs" :key="index"><template v-for="(fragment, fragmentIndex) in paragraph" :key="fragmentIndex"><sup v-if="fragment.number" :data-number="fragment.number" aria-hidden="true"></sup>{{ fragment.text }}</template></p>
     </div>
     <div class="reading-actions">
-      <button v-if="canExpand && !selectedVerses?.length" class="copy-reading" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
+      <button v-if="canExpand" class="copy-reading" type="button" :aria-expanded="expanded" @click="expanded = !expanded">
         {{ expanded ? "收起经文" : "展开全段" }} <ChevronDown :size="16" />
       </button>
       <button class="copy-reading" type="button" aria-live="polite" @click.stop="copy">
@@ -107,11 +67,4 @@ sup::before { content: attr(data-number); }
 }
 .workspace-reading sup { color: var(--study-bronze); opacity: 1; }
 .workspace-reading .copy-reading { color: var(--study-pine); min-height: 40px; font-size: .86rem; }
-.reading-selection { display: flex; align-items: center; gap: 12px; color: var(--study-muted); }
-.reading-selection small { font-size: .76rem; }
-.verse-fragment { display: inline; font: inherit; color: inherit; background: transparent; border: 0; padding: 0; text-align: start; line-height: inherit; cursor: pointer; }
-.verse-fragment:focus-visible { outline: 2px solid var(--study-pine); outline-offset: 2px; }
-.selected-passage { border: 1px solid #64866a; border-radius: 8px; background: #e6ecdf; padding: 9px 12px; }
-.inline-questions { margin-block: 12px 18px; font-family: var(--font-family, system-ui, sans-serif); line-height: 1.5; }
-.workspace-reading .reading-text { border: 0; padding: 0; }
 </style>

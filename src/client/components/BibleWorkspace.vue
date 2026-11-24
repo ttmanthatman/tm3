@@ -18,6 +18,7 @@ import type {
 import type { BibleTopicDTO } from "@shared/bibleTopics";
 import type { BibleTopicActions } from "../bibleTopics";
 import { api } from "../api";
+import { bibleVerseKey } from "../bibleVerseActions";
 import { useChatStore } from "../store";
 import { createBibleSwipeNavigation } from "../features/bible/bibleSwipeNavigation";
 import type { CopyworkSource } from "@shared/bibleCopywork";
@@ -63,6 +64,7 @@ import { buildBibleSessionSharePayload } from "../bibleSessionShare";
 const props = defineProps<{
   open: boolean;
   split?: boolean;
+  studyMode?: boolean;
   splitAvailable?: boolean;
   layoutWidth?: number;
   accountId: number;
@@ -94,6 +96,7 @@ const emit = defineEmits<{
 }>();
 
 type BibleReaderPaneExpose = {
+  clearNavigationHighlight: () => void;
   openLookup: (lookup: BibleLookupDTO, pushCurrent?: boolean) => Promise<void>;
   openLocation: (location: BiblePaneLocationState, pushCurrent?: boolean) => Promise<void>;
   snapshot: () => BiblePaneState;
@@ -734,6 +737,30 @@ async function openLookupContext(lookup: BibleLookupDTO) {
   await routeLookup(lookup, activePaneId.value, [], lookup.sourceId);
 }
 
+const studyVerseKeys = ref<string[]>([]);
+let studyContextGeneration = 0;
+function clearStudyContext() {
+  studyContextGeneration++;
+  studyVerseKeys.value = [];
+  for (const pane of paneRefs.values()) pane.clearNavigationHighlight();
+}
+async function openStudyContext(lookups: BibleLookupDTO[], highlight: boolean) {
+  const generation = ++studyContextGeneration;
+  await ensureCatalog();
+  if (generation !== studyContextGeneration || !props.studyMode) return;
+  const first = lookups[0];
+  if (!first?.verses.length) return;
+  const books = new Map(allBooks.value.map(book => [book.name, book.code]));
+  studyVerseKeys.value = highlight ? lookups.flatMap(lookup => lookup.verses.flatMap(verse => {
+    const code = books.get(verse.book);
+    if (!code) throw new Error("暂时无法定位这处经文");
+    return Array.from({ length: verse.endVerse - verse.verse + 1 }, (_, i) => bibleVerseKey(code, { chapter: verse.chapter, verse: verse.verse + i }));
+  })) : [];
+  const sameBook = { ...first, verses: lookups.flatMap(lookup => lookup.verses).filter(verse => verse.book === first.verses[0].book) };
+  await routeLookup(sameBook, activePaneId.value, [], first.sourceId, activePaneId.value ?? undefined);
+  if (generation === studyContextGeneration) for (const pane of paneRefs.values()) pane.clearNavigationHighlight();
+}
+
 async function openCopyworkContext(source: CopyworkSource) {
   await ensureCatalog();
   const book = allBooks.value.find((item) => item.code === source.bookCode);
@@ -935,6 +962,7 @@ const bibleAudioTeleprompter = computed(() => ({
 }));
 
 defineExpose({
+  openStudyContext, clearStudyContext,
   openLookupContext,
   openSession,
   openCopyworkContext,
@@ -1043,7 +1071,7 @@ function showToast(message: string) {
     id="bible-workspace"
     aria-label="圣经"
     class="bible-workspace"
-    :class="{ open, split, compact: workspaceWidth <= 600, medium: workspaceWidth <= 900 }"
+    :class="{ open, split, 'study-reader': studyMode, compact: workspaceWidth <= 600, medium: workspaceWidth <= 900 }"
     :style="{ '--bible-font-size': `${bibleFontSize}px` }"
     :aria-hidden="!open"
     :inert="!open"
@@ -1164,6 +1192,7 @@ function showToast(message: string) {
           :favorites="favorites"
           :favorites-busy="favoritesBusy"
           :update-favorites="updateFavorites"
+          :study-verse-keys="studyMode ? studyVerseKeys : undefined"
           :playing-verse-key="bibleAudio.playingVerseKey"
           :audio-seekable="bibleAudioEnabled && bibleAudio.active"
           :audio-enabled="bibleAudioEnabled"
@@ -1279,4 +1308,15 @@ function showToast(message: string) {
 .bible-workspace.compact .bible-resource-link { width: 32px; height: 32px; }
 .bible-workspace.split.compact .bible-topbar { padding-bottom: 0; }
 @media (prefers-reduced-motion: reduce) { .bible-workspace { transition-duration: 1ms; } }
+.study-reader { color: var(--study-ink); background: var(--study-paper); }
+.study-reader .bible-topbar { color: #fff7dc; background: var(--study-pine); border-color: var(--study-line); }
+.study-reader .bible-topbar-button, .study-reader .bible-resource-link { color: inherit; background: #ffffff18; }
+.study-reader :deep(.bible-reader-pane), .study-reader :deep(.bible-home-pane) { color: var(--study-ink); background: var(--study-paper); }
+.study-reader :deep(.bible-pane-toolbar) { background: #fdfaf3; border-color: var(--study-line); }
+.study-reader :deep(.bible-pane-label) { color: #fff7dc; background: var(--study-pine); box-shadow: none; }
+.study-reader :deep(.bible-pane-icon), .study-reader :deep(.bible-pane-jumps select) { color: var(--study-pine); background: #e6ecdf; border-color: var(--study-line); }
+.study-reader :deep(.bible-reader-verse.study-target) { color: var(--study-pine); background: var(--study-highlight); box-shadow: 0 0 0 1px #64866a; border-radius: 4px; }
+.study-reader :deep(.bible-structure-heading), .study-reader :deep(.bible-reader-chapter > header) { color: var(--study-pine); }
+.study-reader :deep(.bible-reader-verse.selected) { background: var(--study-highlight); }
+.study-reader :deep(.bible-verse-number), .study-reader :deep(.bible-reader-verse sup) { color: var(--study-bronze); }
 </style>

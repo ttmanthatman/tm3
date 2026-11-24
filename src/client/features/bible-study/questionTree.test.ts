@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BibleStudyQuestion } from "@shared/bibleStudy";
-import { studyQuestionAncestors, studyQuestionTree, studyQuestionVerses } from "./questionTree";
+import { studyQuestionAncestors, studyQuestionTree } from "./questionTree";
 
 function question(id: number, parentId?: number): BibleStudyQuestion {
   return { id, parentId, stage: "observe", relation: parentId ? "deepen" : "opening", text: `问题${id}`, purpose: "观察", evidence: [] };
@@ -29,10 +29,4 @@ test("new main question is uppercase and malformed legacy relationships remain n
   assert.equal(studyQuestionTree(questions).rows.length, 4);
   assert.equal(studyQuestionTree(questions).labels.get(4), "Q4");
   assert.ok(studyQuestionAncestors(questions, 1).length <= questions.length);
-});
-test("verse selection inherits evidence from the nearest ancestor and supports a range", () => {
-  const root = { ...question(1), evidence: ["马可福音 14:37-39"] };
-  const child = question(2, 1);
-  assert.deepEqual(studyQuestionVerses([root, child], 2), ["37", "38", "39"]);
-  assert.deepEqual(studyQuestionVerses([root, { ...child, evidence: ["马可福音 14:38"] }], 2), ["38"]);
 });

@@ -52,6 +52,8 @@ export type BibleWorkspaceAudioHandle = {
 };
 
 export type BibleWorkspaceHandle = {
+  openStudyContext: (lookups: BibleLookupDTO[], highlight: boolean) => Promise<void>;
+  clearStudyContext: () => void;
   openLookupContext: (lookup: BibleLookupDTO) => Promise<void>;
   openCopyworkContext: (source: CopyworkSource) => Promise<void>;
   openSession: (payload: BibleSessionPayloadDTO) => Promise<void>;

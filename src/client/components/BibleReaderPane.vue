@@ -56,6 +56,7 @@ const props = defineProps<{
   favoritesBusy: boolean;
   updateFavorites: (verses: BibleFavoriteKeyDTO[], favorited: boolean, color?: string) => Promise<void>;
   /** 有声圣经正在朗读的经节，格式 `CODE-章-节`（与 data-verse-key 一致） */
+  studyVerseKeys?: string[];
   playingVerseKey?: string | null;
   /** 有声圣经处于播放会话中：点经节改为跳到该节朗读，而不是选中 */
   audioSeekable?: boolean;
@@ -441,6 +442,7 @@ function fragmentMatches(fragment: BibleChapterVerseFragmentDTO) {
 }
 
 function isTargetVerse(verse: BibleVerseLineDTO) {
+  if (props.studyVerseKeys !== undefined) return false;
   if (linkedTargetVerseKeys.value.size) {
     for (let number = verse.verse; number <= verse.endVerse; number += 1) {
       if (linkedTargetVerseKeys.value.has(bibleVerseKey(readerBook.value.code, { chapter: verse.chapter, verse: number }))) return true;
@@ -449,6 +451,14 @@ function isTargetVerse(verse: BibleVerseLineDTO) {
   }
   const target = targetVerse.value;
   return !!target && target.chapter === verse.chapter && verse.verse <= target.endVerse && verse.endVerse >= target.verse;
+}
+
+const studyTargets = computed(() => new Set(props.studyVerseKeys ?? []));
+function isStudyTarget(verse: BibleVerseLineDTO) {
+  for (let number = verse.verse; number <= verse.endVerse; number++) {
+    if (studyTargets.value.has(bibleVerseKey(readerBook.value.code, { chapter: verse.chapter, verse: number }))) return true;
+  }
+  return false;
 }
 
 function selectVerse(verse: BibleVerseLineDTO, shiftKey = false) {
@@ -613,7 +623,7 @@ function selectedLookups(): BibleLookupDTO[] {
   return selectedPassageLookups.value;
 }
 
-defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor, selectedLookups });
+defineExpose({ clearNavigationHighlight, openLookup, openLocation, snapshot, goBack, applyTranslation, restoreReadingAnchor: restoreScrollAnchor, selectedLookups });
 </script>
 
 <template>
@@ -676,7 +686,7 @@ defineExpose({ openLookup, openLocation, snapshot, goBack, applyTranslation, res
             <p v-else-if="block.type === 'paragraph'" class="bible-structure-paragraph" :class="block.style">
               <template v-for="fragment in block.fragments" :key="`${fragment.verse.reference}-${fragment.start}-${fragment.end}`"><span
                 class="bible-reader-verse"
-                :class="{ target: isTargetVerse(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse), playing: isPlayingVerse(fragment.verse) }"
+                :class="{ target: isTargetVerse(fragment.verse), 'study-target': isStudyTarget(fragment.verse), selected: isSelectedVerse(fragment.verse), favorite: isFavoriteVerse(fragment.verse), playing: isPlayingVerse(fragment.verse) }"
                 :style="favoriteVerseStyle(fragment.verse)"
                 :data-verse-key="fragment.showVerseNumber ? `${readerBook.code}-${fragment.verse.chapter}-${fragment.verse.verse}` : undefined"
                 :data-scroll-anchor="fragment.showVerseNumber ? '' : undefined"

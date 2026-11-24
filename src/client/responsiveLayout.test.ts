@@ -426,9 +426,9 @@ test("avatar and channel images are pinned to their square masks without clippin
   assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
 });
 
-test("fullscreen workspaces unmount chat visuals while state stays in the shell", () => {
+test("fullscreen workspaces unmount chat visuals and preserve the hidden study composer", () => {
   assert.match(app, /<aside v-if="!chatWorkspaceHidden" class="channel-pane"/);
-  assert.match(app, /<section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane"/);
+  assert.match(app, /<section v-if="!chatWorkspaceHidden \|\| studyWorkspaceVisible" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane"/);
   assert.match(app, /<aside v-if="!chatWorkspaceHidden" class="member-pane"/);
 });
 
