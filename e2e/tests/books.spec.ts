@@ -92,6 +92,7 @@ test("书架长按下载、独立缓存、笔记下拉及共读进度可用", as
     await login(page);
     headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
     await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("menuitem", { name: "书架" }).click();
     await page.setViewportSize({ width: 557, height: 1073 });
     await expect(page.locator(".book-shelf-invite, .book-shelf-download")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "导出笔记", exact: true })).toHaveCount(0);
@@ -211,6 +212,7 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("menuitem", { name: "书架" }).click();
     await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     const read = page.getByRole("button", { name: "阅读《移动阅读回归》" });
     await expect(read).toBeVisible();
@@ -284,6 +286,7 @@ test("桌面滚动模式的边距改变正文实际位置", async ({ browser, re
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("menuitem", { name: "书架" }).click();
     await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     await page.getByRole("button", { name: "阅读《移动阅读回归》" }).click();
     const frame = page.frameLocator('iframe[title="电子书第 1 节"]');
@@ -338,6 +341,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await login(page);
       headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
       await page.getByRole("button", { name: "打开图书室" }).click();
+      await page.getByRole("menuitem", { name: "书架" }).click();
       await bookShelfAction(page, "移动阅读回归", "邀请共读", book.id);
       const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
       await expect(invitation).toBeVisible();
@@ -500,6 +504,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.reload();
       await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
       await page.getByRole("button", { name: "打开图书室" }).click();
+      await page.getByRole("menuitem", { name: "书架" }).click();
       frame = await readingFrame(page);
       await expect(frame.locator("#tap-target")).toBeVisible();
       await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);

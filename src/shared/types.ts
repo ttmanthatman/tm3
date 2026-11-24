@@ -1,3 +1,4 @@
+import type { BibleStudyReading } from "./bibleStudy.js";
 import type { RainbowOrbitSettings } from "./rainbowOrbit.js";
 import type { HandwritingGlobalSettings, HandwritingPreferencesDTO } from "./handwriting.js";
 
@@ -173,6 +174,7 @@ export interface MessageDTO {
   createdAt: string;
   reactions?: MessageReactionsDTO;
   musicPlaylist?: MusicPlaylistDTO | null;
+  bibleStudyReading?: BibleStudyReading;
   relayText?: string;
   relayMentions?: string[];
 }

@@ -790,3 +790,28 @@ function normalizeBookStart(raw: string) {
     .replace(/陸/g, "陆")
     .replace(/創/g, "创");
 }
+
+/** Clip the translation's paragraph layout to the selected verses. */
+export function bibleStudyParagraphs(reference: string, translationId?: string) {
+  const index = indexFor(translationId);
+  const groups = new Map<string, { bookCode: string; chapter: number; verses: Set<number> }>();
+  for (const verse of versesForParsedReference(index, parseReference(reference))) {
+    const key = `${verse.book}:${verse.chapter}`;
+    const group = groups.get(key) ?? { bookCode: verse.book, chapter: verse.chapter, verses: new Set<number>() };
+    group.verses.add(verse.verse);
+    groups.set(key, group);
+  }
+  return [...groups.values()].flatMap(group => {
+    const chapter = lookupBibleChapter(group.bookCode, group.chapter, translationId);
+    return chapter.blocks.flatMap(block => {
+      if (block.type !== "paragraph") return [];
+      const fragments = block.fragments.filter(fragment => group.verses.has(fragment.verse.verse)).map(fragment => ({
+        text: fragment.text,
+        ...(fragment.showVerseNumber ? {
+          number: fragment.verse.endVerse === fragment.verse.verse ? String(fragment.verse.verse) : `${fragment.verse.verse}–${fragment.verse.endVerse}`
+        } : {})
+      }));
+      return fragments.length ? [fragments] : [];
+    });
+  });
+}

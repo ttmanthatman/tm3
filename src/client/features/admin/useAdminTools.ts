@@ -34,6 +34,8 @@ import {
   type AppearanceStyleHelpers
 } from "./useAppearanceSettings";
 
+export type ActivityLogFilter = "all" | "bottle" | "bibleStudy" | ActivityLogCategory;
+
 export type AdminPage =
   | "home"
   | "pin"
@@ -131,7 +133,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
   const adminLoginLogs = ref<AdminLoginLogDTO[]>([]);
   const adminLoginLogsBusy = ref(false);
   const adminLoginLogsMsg = ref("");
-  const activityLogFilter = ref<"all" | "bottle" | ActivityLogCategory>("all");
+  const activityLogFilter = ref<ActivityLogFilter>("all");
   const dataChannelFilter = ref(0);
   const devices = ref<DeviceSessionDTO[]>([]);
 
@@ -292,7 +294,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
   }
 
   async function loadAdminLoginLogs() {
-    if (!store.account?.isAdmin || activityLogFilter.value === "bottle") return;
+    if (!store.account?.isAdmin || (activityLogFilter.value === "bottle" || activityLogFilter.value === "bibleStudy")) return;
     adminLoginLogsBusy.value = true;
     adminLoginLogsMsg.value = "";
     try {
@@ -306,7 +308,7 @@ export function useAdminTools(options: UseAdminToolsOptions) {
     }
   }
 
-  async function setActivityLogFilter(filter: "all" | "bottle" | ActivityLogCategory) {
+  async function setActivityLogFilter(filter: ActivityLogFilter) {
     activityLogFilter.value = filter;
     await loadAdminLoginLogs();
   }

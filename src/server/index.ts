@@ -124,6 +124,10 @@ import { createAssistantToolRegistry } from "./services/assistantTools.js";
 import { registerAssistantChatFunctions } from "./services/assistantChatFunctions.js";
 import { createAssistantToolsSettingsStore, registerAssistantToolsRoutes } from "./routes/assistantTools.js";
 import { registerVirtualDirectChannelRoutes } from "./routes/virtualDirectChannels.js";
+import { BIBLE_STUDY_ROOM_KEY_PREFIX, bibleStudyMention, bibleStudyRoomKey, isBibleStudyResumeCommand, isBibleStudyRoom } from "../shared/bibleStudy.js";
+import { createBibleStudy } from "./services/bibleStudy.js";
+import { BibleStudyModelError } from "./services/bibleStudyModel.js";
+import { registerBibleStudyRoutes } from "./routes/bibleStudy.js";
 import { questionAssistantActivationAnchor, virtualAssistantStopCommand, questionAssistantDirectActivation } from "./services/questionAssistantActivation.js";
 import { assistantMessageUsesFunctions, generateQuestionAssistantReply, requestQuestionAssistantCompletion } from "./services/questionAssistantReply.js";
 import { createMusicScoreShareService } from "./services/musicScoreLibrary.js";
@@ -213,12 +217,18 @@ const PUBLIC_CHANNEL_KINDS: ChannelKind[] = ["standard", "direct"];
 // music channels are open; standard/direct channels are public or member-only.
 function channelListWhere(accountId: number, isGuest = false): Prisma.ChannelWhereInput {
   if (isGuest) {
-    return { kind: "reception", members: { some: { accountId } } };
+    return { members: { some: { accountId } }, OR: [{ kind: "reception" }, { directKey: bibleStudyRoomKey(accountId) }] };
   }
   return {
     OR: [
       { kind: "music" },
-      { kind: { in: PUBLIC_CHANNEL_KINDS }, OR: [{ isPrivate: false }, { members: { some: { accountId } } }] },
+      {
+        kind: { in: PUBLIC_CHANNEL_KINDS },
+        AND: [
+          { OR: [{ isPrivate: false }, { members: { some: { accountId } } }] },
+          { OR: [{ directKey: null }, { directKey: { not: { startsWith: BIBLE_STUDY_ROOM_KEY_PREFIX } } }, { directKey: bibleStudyRoomKey(accountId) }] }
+        ]
+      },
       { kind: "reception", members: { some: { accountId } } }
     ]
   };
@@ -889,6 +899,12 @@ async function canAccessChannel(accountId: number, channelId: number) {
     prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true, guestExpiresAt: true } })
   ]);
   if (!channel || !account) return false;
+  if (isBibleStudyRoom(channel.directKey)) {
+    if (!channel.isPrivate || channel.directKey !== bibleStudyRoomKey(accountId) ||
+        (account.isGuest && (!account.guestExpiresAt || account.guestExpiresAt <= new Date()))) return false;
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member;
+  }
   if (account.isGuest) {
     if (!account.guestExpiresAt || account.guestExpiresAt <= new Date() || channel.kind !== "reception" || !channel.receptionExpiresAt || channel.receptionExpiresAt <= new Date()) return false;
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
@@ -901,12 +917,18 @@ async function canAccessChannel(accountId: number, channelId: number) {
   return !!member;
 }
 
-async function canWriteChannel(accountId: number, channelId: number) {
+async function canWriteChannel(accountId: number, channelId: number, allowBibleStudy = false) {
   const [channel, account] = await Promise.all([
     prisma.channel.findUnique({ where: { id: channelId } }),
     prisma.account.findUnique({ where: { id: accountId }, select: { isGuest: true, guestExpiresAt: true } })
   ]);
   if (!channel || !account) return false;
+  if (isBibleStudyRoom(channel.directKey)) {
+    if (!allowBibleStudy || !channel.isPrivate || channel.directKey !== bibleStudyRoomKey(accountId) ||
+        (account.isGuest && (!account.guestExpiresAt || account.guestExpiresAt <= new Date()))) return false;
+    const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
+    return !!member && member.role !== "viewer";
+  }
   if (account.isGuest) {
     if (!account.guestExpiresAt || account.guestExpiresAt <= new Date() || channel.kind !== "reception" || !channel.receptionExpiresAt || channel.receptionExpiresAt <= new Date()) return false;
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
@@ -922,7 +944,7 @@ async function canWriteChannel(accountId: number, channelId: number) {
 async function canManageChannel(accountId: number, channelId: number) {
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true, kind: true } });
   if (!channel) return false;
-  if (channel?.kind === "aiLounge") return false;
+  if (channel.kind === "aiLounge" || isBibleStudyRoom(channel.directKey)) return false;
   if (channel.kind === "music") return musicService.canManageAccount(accountId);
   if (channel.kind === "reception") {
     const member = await prisma.channelMember.findUnique({ where: { channelId_accountId: { channelId, accountId } } });
@@ -2323,7 +2345,7 @@ async function channelDto(channelId: number, viewer?: Pick<AuthContext, "account
     directKey: channel.directKey,
     receptionExpiresAt: channel.receptionExpiresAt?.toISOString() || null,
     canManage: viewer ? await canManageChannel(viewer.accountId, channelId) : undefined,
-    canWrite: viewer ? await canWriteChannel(viewer.accountId, channelId) : undefined,
+    canWrite: viewer ? await canWriteChannel(viewer.accountId, channelId, true) : undefined,
     canPin: viewer ? await canPinChannel(viewer, channelId) : undefined,
     hasPrayerItems: prayerCount > 0,
     hasGraceItems: graceCount > 0,
@@ -2368,21 +2390,64 @@ async function createMessageFromActor(input: {
       filePath: input.filePath || null,
       fileSize: input.fileSize || null
     },
-    include: { channel: { select: { kind: true } } }
+    include: { channel: { select: { kind: true, directKey: true } } }
   });
-  const isolatedReception = message.channel.kind === "reception";
+  const isolatedChannel = message.channel.kind === "reception" || isBibleStudyRoom(message.channel.directKey);
   const suppressAiActivation = assistantActivationSuppressed(message);
   await emitMessage(message.id);
-  if (!isolatedReception && !input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
-  if (!isolatedReception && !suppressAiActivation && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
+  if (!isolatedChannel && !input.skipPush) void sendMessagePush(message.id, input.pushOrigin || "").catch((error) => app.log.warn({ error }, "message push failed"));
+  if (!isolatedChannel && !suppressAiActivation && !input.skipEngineEvent && (input.type === "text" || input.type === "chain" || input.type === "prayer")) {
     await createEngineEvent("message_created", { messageId: message.id }, input.channelId, message.id);
   }
-  if (!isolatedReception && !suppressAiActivation && !input.skipQuestionAssistant && (input.type || "text") === "text") {
+  if (!isolatedChannel && !suppressAiActivation && !input.skipQuestionAssistant && (input.type || "text") === "text") {
     void virtualDirectAssistant.trigger(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "virtual direct assistant failed"));
     void maybeTriggerQuestionAssistant(message.id).catch((error) => app.log.warn({ error, messageId: message.id }, "question assistant failed"));
   }
   return message;
 }
+
+const bibleStudy = createBibleStudy({
+  prisma,
+  emit: emitMessage,
+  complete: async (messages, mode) => {
+    const settings = await aiSettingsStore.loadAiSettings();
+    const apiKey = aiSettingsStore.decryptAiApiKey(settings.encryptedApiKey);
+    if (!apiKey || !settings.value.baseUrl || !settings.value.model) throw new BibleStudyModelError("configuration", false);
+    return requestQuestionAssistantCompletion({ ...settings.value, jsonOutput: mode === "json" }, apiKey, messages);
+  },
+  notifyProgress: channelId => io.to(`ch:${channelId}`).emit("bible-study:progress", { channelId }),
+  onError: (channelId, reason) => app.log.warn({ channelId, reason }, "Bible study response unavailable")
+});
+
+async function enterBibleStudyRoom(auth: Pick<AuthContext, "accountId" | "actorId" | "isAdmin" | "canPinMessages">) {
+  const channelId = await bibleStudy.enter(auth.accountId);
+  joinAccountChannel(auth.accountId, channelId);
+  const channel = await channelDto(channelId, auth);
+  io.to(`acct:${auth.accountId}`).emit("channel:updated", { action: "direct", channel });
+  return channelId;
+}
+
+async function prepareBibleStudySend(auth: AuthContext, channelId: number, type: string, content?: string) {
+  const source = await prisma.channel.findUnique({ where: { id: channelId }, select: { directKey: true } });
+  const inside = isBibleStudyRoom(source?.directKey);
+  const mention = type === "text" ? bibleStudyMention(plainTextFromHtml(cleanText(content), 10_000)) : null;
+  if (!inside && mention === null) return null;
+  if (!(await canWriteChannel(auth.accountId, channelId, true))) return { error: "无权在此频道发言" } as const;
+  if (type !== "text") return { error: "请用文字回复查经助手" } as const;
+  const targetId = inside ? channelId : await enterBibleStudyRoom(auth);
+  const text = mention === null ? cleanText(content) : cleanText(mention);
+  const visible = plainTextFromHtml(text);
+  if (!visible && mention === null) return { error: "查经答复不能为空" } as const;
+  const commandOnly = !visible || isBibleStudyResumeCommand(visible);
+  if (commandOnly) bibleStudy.retry(targetId, auth.actorId);
+  return { channelId: targetId, enteredChannelId: inside ? undefined : targetId, content: text, commandOnly };
+}
+
+registerBibleStudyRoutes(app, {
+  prisma, requireAuth, requireAdmin, authFor: request => (request as AuthedRequest).auth, canAccessChannel,
+  enter: enterBibleStudyRoom, progress: bibleStudy.progress, retry: bibleStudy.retry, requestHelp: bibleStudy.requestHelp,
+  submitAnswer: bibleStudy.submitAnswer, canWriteChannel: (accountId, channelId) => canWriteChannel(accountId, channelId, true)
+});
 
 const messageSendIdempotency = createMessageSendIdempotency({
   find: (actorId, clientRequestId) =>
@@ -2444,7 +2509,7 @@ app.get("/api/channels", { preHandler: requireAuth }, async (request) => {
           : null;
       const canAccess = channel.kind === "music" || !channelNeedsExplicitMembership(channel) || !!memberRole;
       const canManage =
-        channel.kind === "aiLounge"
+        channel.kind === "aiLounge" || isBibleStudyRoom(channel.directKey)
           ? false
           : channel.kind === "music"
             ? viewerCanManageMusic
@@ -2499,6 +2564,7 @@ app.get("/api/admin/channels", { preHandler: requireAdmin }, async (request) => 
     .parse(request.query);
   const directWhere = {
     kind: "direct" as const,
+    directKey: { not: { startsWith: BIBLE_STUDY_ROOM_KEY_PREFIX } },
     ...(query.q ? { name: { contains: query.q } } : {})
   };
   const includeAdminCounts = {
@@ -2671,6 +2737,19 @@ const receptionService = createReceptionService({
   deleteChannelWithAttachments,
   disconnectAccounts,
   invalidateAccounts: invalidateAuthSessionCacheByAccountIds,
+  deleteGuests: (accountIds) => prisma.$transaction(async (tx) => {
+    // Reception transcripts still expire. Only authors with saved studies need
+    // to survive the deletion of their temporary login.
+    await tx.actor.updateMany({
+      where: {
+        accountId: { in: accountIds },
+        account: { isGuest: true },
+        messages: { some: { channel: { directKey: { startsWith: BIBLE_STUDY_ROOM_KEY_PREFIX } } } }
+      },
+      data: { accountId: null, status: "deleted", avatarPath: null }
+    });
+    await tx.account.deleteMany({ where: { id: { in: accountIds }, isGuest: true } });
+  }),
   notifyRoomClosing: (channelId) => io.to(`ch:${channelId}`).emit("reception:closed", { channelId }),
   onError: (error, channelId) => app.log.error({ error, channelId }, "Failed to collect reception room")
 });
@@ -2748,6 +2827,7 @@ app.delete("/api/admin/direct-conversations/:id", { preHandler: requireAdmin }, 
   const channel = await prisma.channel.findUnique({ where: { id: channelId }, select: { id: true, directKey: true, kind: true } });
   if (!channel) return reply.code(404).send({ success: false, message: "私聊记录不存在" });
   if (!channel.directKey || channel.kind !== "direct") return reply.code(400).send({ success: false, message: "该记录不是私聊历史" });
+  if (isBibleStudyRoom(channel.directKey)) return reply.code(409).send({ success: false, message: "查经记录会保留在同行书房" });
 
   await deleteChannelWithAttachments(channelId);
   return { success: true };
@@ -3471,6 +3551,14 @@ app.post("/api/messages", { preHandler: requireAuth }, async (request, reply) =>
       chainSelection: chainSelectionSchema.optional()
     })
     .parse(request.body);
+  const study = await prepareBibleStudySend(auth, body.channelId, body.type, body.content);
+  if (study) {
+    if ("error" in study) return reply.code(403).send({ success: false, message: study.error });
+    if (study.commandOnly) return { success: true, enteredChannelId: study.enteredChannelId };
+    const saved = await createMessageFromActor({ channelId: study.channelId, actorId: auth.actorId, content: study.content, type: "text" });
+    bibleStudy.resume(study.channelId, auth.actorId);
+    return { success: true, enteredChannelId: study.enteredChannelId, message: await hydrateMessage(saved.id, auth.accountId) };
+  }
   if (!(await canWriteChannel(auth.accountId, body.channelId))) return reply.code(403).send({ success: false, message: "无权在此频道发言" });
   if (await isMusicChannel(body.channelId)) return reply.code(400).send({ success: false, message: "音乐频道只能上传 MP3 和 M4A 文件" });
   const actor = await prisma.actor.findUniqueOrThrow({ where: { id: auth.actorId } });
@@ -3812,6 +3900,9 @@ app.post("/api/messages/:messageId/recall", { preHandler: requireAuth }, async (
   if (await isMusicChannel(message.channelId)) return reply.code(400).send({ success: false, message: "请使用音乐频道的删除歌曲功能" });
   if (!(await canAccessChannel(auth.accountId, message.channelId))) return reply.code(403).send({ success: false, message: "无权访问此消息" });
   if (message.sender.accountId !== auth.accountId) return reply.code(403).send({ success: false, message: "只能撤回自己发送的消息" });
+  if (await prisma.channel.count({ where: { id: message.channelId, directKey: { startsWith: BIBLE_STUDY_ROOM_KEY_PREFIX } } })) {
+    return reply.code(409).send({ success: false, message: "查经答复会保留在本次记录中" });
+  }
   if (Date.now() - message.createdAt.getTime() > 2 * 60 * 1000) return reply.code(409).send({ success: false, message: "只能撤回 2 分钟内的消息" });
   await prisma.$transaction([
     prisma.pinnedItem.updateMany({ where: { messageId }, data: { active: false, messageId: null } }),
@@ -4513,6 +4604,9 @@ io.on("connection", async (socket: Socket) => {
     const channelId = Number(data.channelId);
     if (await canAccessChannel(currentAuth.accountId, channelId)) {
       socket.join(`ch:${channelId}`);
+      if (await prisma.channel.count({ where: { id: channelId, directKey: bibleStudyRoomKey(currentAuth.accountId) } })) {
+        bibleStudy.resume(channelId, currentAuth.actorId);
+      }
       if (!currentAuth.isGuest) void writeActivityLog({ kind: "channel_view", accountId: currentAuth.accountId, sessionId: currentAuth.sessionId, channelId });
     }
   });
@@ -4534,40 +4628,45 @@ io.on("connection", async (socket: Socket) => {
       if (body.type !== "handwriting" && typeof body.content !== "string") {
         return ack?.({ success: false, code: "not_sent", message: "消息内容无效" });
       }
+      const study = await prepareBibleStudySend(currentAuth, body.channelId, body.type, body.content);
+      if (study && "error" in study) return ack?.({ success: false, code: "not_sent", message: study.error });
+      if (study?.commandOnly) return ack?.({ success: true, enteredChannelId: study.enteredChannelId });
       const handwriting = body.type === "handwriting" ? prepareHandwritingMessage(body.payload, body.clientRequestId) : null;
-      const validatedPayload = handwriting?.payload ?? (
+      const validatedPayload = study ? undefined : handwriting?.payload ?? (
         body.type === "prayer"
           ? cleanPrayerPayload(body.payload)
           : body.type === "sermon_request"
             ? cleanSermonRequestPayload(body.payload)
             : await cleanTextMessagePayload(body.payload)
       );
-      const payload = assistantActivationPayload(body.content, validatedPayload);
+      const payload = study ? undefined : assistantActivationPayload(body.content, validatedPayload);
       // 「/听」清单的正文摘要按服务端解析后的引用重写，保证通知/回复预览与卡片一致
       const listenPlaylist = body.type === "text" ? listenPlaylistPayload(payload) : null;
       const biblePassage = body.type === "text" ? biblePassageMessagePayload(payload) : null;
-      const content = handwriting?.content ?? (biblePassage
+      const content = study?.content ?? handwriting?.content ?? (biblePassage
         ? biblePassageMessageContent(biblePassage)
         : listenPlaylist ? listenPlaylistContent(listenPlaylist.items, listenPlaylist.note) : cleanText(body.content || ""));
+      const channelId = study?.channelId ?? body.channelId;
+      const replyToId = study ? null : body.replyToId ?? null;
       const requestHash = body.clientRequestId
-        ? messageSendRequestHash({ channelId: body.channelId, content, type: body.type, payload, replyToId: body.replyToId ?? null })
+        ? messageSendRequestHash({ channelId, content, type: body.type, payload, replyToId })
         : undefined;
-      if (!(await canWriteChannel(currentAuth.accountId, body.channelId))) return ack?.({ success: false, code: "not_sent", message: "无权在此频道发言" });
-      if (await isMusicChannel(body.channelId)) return ack?.({ success: false, code: "not_sent", message: "音乐频道只能上传 MP3 和 M4A 文件" });
+      if (!study && !(await canWriteChannel(currentAuth.accountId, channelId))) return ack?.({ success: false, code: "not_sent", message: "无权在此频道发言" });
+      if (await isMusicChannel(channelId)) return ack?.({ success: false, code: "not_sent", message: "音乐频道只能上传 MP3 和 M4A 文件" });
       if (!content.replace(/<[^>]*>/g, "").trim() && !/<br\s*\/?>/i.test(content)) return ack?.({ success: false, code: "not_sent", message: "消息不能为空" });
       const prayerImageMessageId = body.type === "prayer" ? Number((payload as { imageMessageId?: unknown }).imageMessageId || 0) : 0;
       if (prayerImageMessageId && !(await isValidPrayerImageMessage(prayerImageMessageId, body.channelId))) {
         return ack?.({ success: false, code: "not_sent", message: "附带照片无效" });
       }
       const create = () => createMessageFromActor({
-        channelId: body.channelId,
+        channelId,
         actorId: currentAuth.actorId,
         clientRequestId: body.clientRequestId,
         clientRequestHash: requestHash,
         content,
         type: body.type,
         payload,
-        replyToId: body.replyToId ?? null,
+        replyToId,
         pushOrigin
       });
       const result = body.clientRequestId && requestHash
@@ -4579,16 +4678,17 @@ io.on("connection", async (socket: Socket) => {
           })
         : { state: "created" as const, messageId: (await create()).id };
       if (result.state === "conflict") return ack?.({ success: false, code: "conflict", message: "这次重试的内容与原消息不同，内容已保留" });
+      if (study) bibleStudy.resume(channelId, currentAuth.actorId);
       if (!currentAuth.isGuest && result.state === "created") {
         void writeActivityLog({
           kind: "message_sent",
           accountId: currentAuth.accountId,
           sessionId: currentAuth.sessionId,
-          channelId: body.channelId,
+          channelId,
           state: body.type
         });
       }
-      ack?.({ success: true, messageId: result.messageId, clientRequestId: body.clientRequestId, deduplicated: result.state === "replayed", message: await hydrateMessage(result.messageId, currentAuth.accountId) });
+      ack?.({ success: true, enteredChannelId: study?.enteredChannelId, messageId: result.messageId, clientRequestId: body.clientRequestId, deduplicated: result.state === "replayed", message: await hydrateMessage(result.messageId, currentAuth.accountId) });
     } catch (error) {
       ack?.({
         success: false,

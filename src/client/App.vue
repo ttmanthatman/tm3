@@ -172,7 +172,6 @@ import {
 import { formatUnreadCount } from "./unread";
 import { flushPendingPersists } from "./messageWindowCache";
 import { APP_VERSION, RELEASE_DATE, RELEASE_DEVELOPER, RELEASE_NOTES } from "@shared/release";
-import type { ActivityLogCategory } from "@shared/activityLog";
 import {
   musicMentionTokenAtCursor,
   shouldKeepMusicScoreForTrack,
@@ -216,10 +215,13 @@ import {
 } from "./features/messages/messageRendering";
 import { useMessageRendering, type MentionToast } from "./features/messages/useMessageRendering";
 import { useMusicMentionRendering } from "./features/messages/useMusicMentionRendering";
-import { useAdminTools } from "./features/admin/useAdminTools";
+import { useAdminTools, type ActivityLogFilter } from "./features/admin/useAdminTools";
 import VirtualRolePrompts from "./features/admin/VirtualRolePrompts.vue";
 import BottleLogPanel from "./features/admin/BottleLogPanel.vue";
 import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
+import BibleStudyLogPanel from "./features/bible-study/BibleStudyLogPanel.vue";
+import BibleStudyWorkspace from "./features/bible-study/BibleStudyWorkspace.vue";
+import { isBibleStudyRoom } from "@shared/bibleStudy";
 import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
 import AssistantToolsSettingsPanel from "./features/admin/AssistantToolsSettingsPanel.vue";
 import AssistantFeatureLauncher from "./features/messages/AssistantFeatureLauncher.vue";
@@ -480,6 +482,8 @@ const graceFavoriteMessages = ref<GraceFavoriteDTO[]>([]);
 const favoritesLoading = ref(false);
 const graceFavoritesLoading = ref(false);
 const showingFavoriteSurface = computed(() => showFavorites.value || showGraceFavorites.value || showBibleFavorites.value);
+const studyActive = ref(false);
+const studyWorkspaceVisible = computed(() => isBibleStudyRoom(store.currentChannel?.directKey) && !showingFavoriteSurface.value && !store.prayerOnly && !store.graceOnly);
 const showMembers = ref(false);
 const showReceptionManager = ref(false);
 const channelsCollapsed = ref(true);
@@ -707,12 +711,13 @@ const settingsTab = ref<SettingsTab>("account");
 const settingsLoadError = ref("");
 const flashEffectStep = ref(0);
 let flashEffectTimer = 0;
-const activityLogFilterOptions: Array<{ value: "all" | "bottle" | ActivityLogCategory; label: string }> = [
+const activityLogFilterOptions: Array<{ value: ActivityLogFilter; label: string }> = [
   { value: "all", label: "全部" },
   { value: "session", label: "会话" },
   { value: "music", label: "音乐" },
   { value: "usage", label: "使用情况" },
   { value: "ai", label: "AI 问答" },
+  { value: "bibleStudy", label: "同行书房" },
   { value: "bottle", label: "漂流瓶" }
 ];
 const adminTools = useAdminTools({
@@ -1298,6 +1303,7 @@ const {
   messageSendStatus,
   clearMessageSendStatus,
   sendMessage,
+  openEnteredChannel: openChannelFromList,
   openGraceComposer: (prefill) => grace.openGraceComposer(prefill),
   prayerComposerPhoto,
   uploadPrayerImage,
@@ -1343,7 +1349,7 @@ const {
   pumpMessageImagePreloads
 } = useVirtualTimeline({
   scroller,
-  isActive: () => !chatWorkspaceHidden.value,
+  isActive: () => !chatWorkspaceHidden.value && !studyWorkspaceVisible.value,
   estimateRowHeight: estimatedTimelineRowHeight,
   computeWindow: computeVirtualTimelineWindow,
   imagePreloadQueue: messageImagePreloadQueue,
@@ -3577,6 +3583,24 @@ function chooseActiveComposerSuggestion() {
   if (command) chooseSlashCommand(command);
 }
 
+async function openBibleStudy() {
+  try {
+    const { channelId } = await api<{ channelId: number }>("/api/bible-study/enter", { method: "POST" });
+    if (!store.channels.some(channel => channel.id === channelId)) await store.loadChannels();
+    await openChannelFromList(channelId);
+  } catch (error) {
+    messageSendStatus.value = error instanceof Error ? error.message : "同行书房打开失败";
+  }
+}
+
+async function leaveBibleStudy() {
+  const ordinaryChannels = store.channels.filter(channel => !isBibleStudyRoom(channel.directKey));
+  const destination = ordinaryChannels.find(channel => channel.id === store.previousChannelId)
+    ?? ordinaryChannels.find(channel => channel.isDefault) ?? ordinaryChannels[0];
+  if (destination) await openChannelFromList(destination.id);
+  else showChannels.value = true;
+}
+
 function openBookWorkspace() {
   showChannels.value = false;
   showMembers.value = false;
@@ -5102,6 +5126,7 @@ const chatHeaderBindings = computed(() => ({
   openNotificationPrompt,
   openBibleWorkspace: () => bibleOpen.value ? closeBibleWorkspace() : openBibleWorkspace(),
   openBookWorkspace,
+  openBibleStudy,
   openMusicPlayer,
   toggleCurrentMusicFavorite,
   openMusicManagerFromMiniPanel,
@@ -5538,7 +5563,7 @@ const messageRowBindings = {
           <small>会话、版本、在线时长、音乐进度、虚拟角色问答（含私聊）与漂流瓶</small>
         </div>
         <div class="login-log-actions">
-          <button v-if="activityLogFilter !== 'bottle'" class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
+          <button v-if="activityLogFilter !== 'bottle' && activityLogFilter !== 'bibleStudy'" class="mini-btn secondary" :disabled="adminLoginLogsBusy" @click="loadAdminLoginLogs">{{ adminLoginLogsBusy ? "刷新中" : "刷新" }}</button>
           <button class="mini-btn secondary" @click="returnToChat">回到聊天</button>
         </div>
       </header>
@@ -5546,7 +5571,8 @@ const messageRowBindings = {
         <nav class="activity-log-filters" aria-label="日志分类">
           <button v-for="option in activityLogFilterOptions" :key="option.value" type="button" :class="{ active: activityLogFilter === option.value }" @click="setActivityLogFilter(option.value)">{{ option.label }}</button>
         </nav>
-        <BottleLogPanel v-if="activityLogFilter === 'bottle'" />
+        <BibleStudyLogPanel v-if="activityLogFilter === 'bibleStudy'" />
+        <BottleLogPanel v-else-if="activityLogFilter === 'bottle'" />
         <template v-else>
           <p v-if="adminLoginLogsMsg" class="settings-note">{{ adminLoginLogsMsg }}</p>
           <p v-if="adminLoginLogsBusy && !adminLoginLogs.length" class="settings-note">正在加载活动日志...</p>
@@ -5779,7 +5805,9 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
+    <section v-if="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" :class="{ 'study-pane': studyWorkspaceVisible }" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
+      <BibleStudyWorkspace v-if="studyWorkspaceVisible" :key="store.currentChannelId" :channel-id="store.currentChannelId" @leave="leaveBibleStudy" @active="studyActive = $event" />
+      <template v-else>
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -6465,8 +6493,9 @@ const messageRowBindings = {
       </button>
 
       <SocialComposer :mode="socialMode" :channel-id="store.currentChannelId" @request-bottle-motion="composerBarRef?.requestBottleMotion()" @close="socialMode = null" />
+      </template>
       <ComposerBar
-        v-if="!showingFavoriteSurface && !isMusicChannel"
+        v-if="!showingFavoriteSurface && !isMusicChannel && !(studyWorkspaceVisible && studyActive)"
         :channel-id="store.currentChannelId"
         :on-bottle-reading="(active) => { bottleReading = active; }"
         :open-social="(mode) => { socialMode = mode; }"

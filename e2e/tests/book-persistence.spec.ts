@@ -69,6 +69,7 @@ test("reader reopens exact text and offers an explicit choice after another devi
   const read = async () => (await (await request.get(url, { headers })).json()).progress as BookProgressSnapshot;
   try {
     await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("menuitem", { name: "书架" }).click();
     const open = async () => { await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "阅读《精确进度回归》", exact: true }).click(); await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0); };
     await open();
     const scrollToParagraph = async (index: number) => page.locator("[data-continuous-reader]").evaluate((element, index) => {

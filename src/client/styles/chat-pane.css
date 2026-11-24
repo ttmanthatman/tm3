@@ -859,3 +859,37 @@ button.pinned-ticker-action {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.chat-pane.study-pane {
+  --study-pine: #103d33;
+  --study-paper: #faf6eb;
+  --study-ink: #192820;
+  --study-gold: #f5be55;
+  --study-bronze: #96600c;
+  --study-line: #d5cbb8;
+  --study-muted: #4e594e;
+  background: var(--study-paper);
+}
+
+.chat-pane.study-pane > :where(.composer) {
+  background: #fdfaf3;
+  color: var(--study-ink);
+  border-top: 1px solid var(--study-line);
+}
+
+.study-pane .composer-main { gap: 7px; }
+.study-pane .composer-glow-shell textarea {
+  background: #fffdf8;
+  color: var(--study-ink);
+  border: 1px solid #aaa28f;
+  border-radius: 9px;
+}
+.study-pane .composer-glow-shell textarea:focus-visible { outline: 2px solid var(--study-pine); outline-offset: 1px; }
+.study-pane .composer-main .composer-send-btn {
+  flex: 0 0 40px;
+  width: 40px;
+  min-height: 40px;
+  border-radius: 9px;
+  background: var(--study-pine);
+  color: #fff7dc;
+}

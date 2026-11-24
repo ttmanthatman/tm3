@@ -1,5 +1,6 @@
 import { computed, ref, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
+import { isBibleStudyRoom } from "@shared/bibleStudy";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 
@@ -34,6 +35,7 @@ export function useMessageRecall(options: UseMessageRecallOptions) {
   function canRemoveMessage(message: MessageDTO) {
     return message.id > 0
       && message.type !== "system"
+      && !isBibleStudyRoom(store.channels.find(channel => channel.id === message.channelId)?.directKey)
       && (options.isAdmin.value || canRecallMessage(message));
   }
 

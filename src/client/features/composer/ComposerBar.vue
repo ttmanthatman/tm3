@@ -2,7 +2,7 @@
 import { useChatStore } from "../../store";
 import MessageBoxDecoration from "../../components/decorations/MessageBoxDecoration.vue";
 import BottleShore from "../social/BottleShore.vue";
-import { nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
+import { computed, nextTick, ref, type CSSProperties, type ComponentPublicInstance } from "vue";
 import {
   AudioLines,
   ChartColumn,
@@ -26,6 +26,7 @@ import {
   X
 } from "lucide-vue-next";
 import type { MessageDTO, MusicTrackDTO } from "@shared/types";
+import { BIBLE_STUDY_ASSISTANT, BIBLE_STUDY_ROOM, isBibleStudyRoom } from "@shared/bibleStudy";
 import AvatarImage from "../../components/ui/AvatarImage.vue";
 import type { SlashCommandSuggestion } from "./useComposer";
 import type { UnconfirmedSend } from "./unconfirmedSends";
@@ -154,13 +155,14 @@ function bindPreviewAudioEl(el: Element | ComponentPublicInstance | null) {
   previewAudioEl.value = (el as HTMLAudioElement | null) ?? null;
 }
 
+const studyRoom = computed(() => isBibleStudyRoom(appearanceStore.currentChannel?.directKey));
 const bottleShore = ref<InstanceType<typeof BottleShore> | null>(null);
 defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requestMotionPermission() });
 </script>
 
 <template>
   <footer class="composer">
-    <BottleShore ref="bottleShore" v-if="channelId > 0 && !prayerOnly && !graceOnly" :key="channelId" :channel-id="channelId" @reading="onBottleReading" />
+    <BottleShore ref="bottleShore" v-if="channelId > 0 && !prayerOnly && !graceOnly && !studyRoom" :key="channelId" :channel-id="channelId" @reading="onBottleReading" />
     <div v-if="replyTo" class="reply-bar">
       <button class="icon-btn" @click="replyTo = null" aria-label="取消引用"><X :size="16" /></button>
       <span>引用 {{ replyTo.sender.displayName }}：{{ replyPreviewText(replyTo) || replyTo.type }}</span>
@@ -189,14 +191,14 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
     </div>
     <div class="composer-input-shell">
       <div class="composer-main" :class="{ raised: composerPanel }">
-        <button class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" data-voice-toggle @click="toggleVoicePanel" :disabled="recordingBusy || voiceSending" aria-label="语音消息"><Mic :size="22" /></button>
+        <button v-if="!studyRoom" class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'voice' }" data-voice-toggle @click="toggleVoicePanel" :disabled="recordingBusy || voiceSending" aria-label="语音消息"><Mic :size="22" /></button>
         <div class="composer-glow-shell">
           <MessageBoxDecoration kind="rainbow-orbit" :active="composerFocused" :settings="appearanceStore.appearance.rainbowOrbit" />
           <textarea
             ref="composerInput"
             v-model="input"
             rows="1"
-            :placeholder="composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
+            :placeholder="studyRoom ? '写下你的观察…' : composerPromptText ? '' : (prayerOnly ? '输入代祷事项' : graceOnly ? '记录一件恩典' : '')"
             @focus="composerFocused = true; focusComposer(); syncComposerCaret()"
             @blur="composerFocused = false"
             @input="onInput"
@@ -207,7 +209,7 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
           ></textarea>
         </div>
         <span
-          v-if="!input.trim() && composerPromptText"
+          v-if="!studyRoom && !input.trim() && composerPromptText"
           class="composer-prompt-overlay"
           :class="`phase-${composerPromptPhase}`"
           aria-hidden="true"
@@ -232,6 +234,7 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
           :title="composerSendStatus || '发送'"
           @click="sendText"
         ><Send :size="19" /></button>
+        <button v-else-if="studyRoom" class="send-btn composer-edge-btn composer-send-btn" type="button" disabled aria-label="发送"><Send :size="19" /></button>
         <button v-else class="icon-btn composer-edge-btn" :class="{ active: composerPanel === 'more' }" @click="toggleMorePanel" aria-label="更多功能"><Plus :size="22" /></button>
         <input ref="fileInput" class="hidden" type="file" @change="handlePickedFile" />
         <input ref="photoInput" class="hidden" type="file" accept="image/*" multiple @change="handlePickedFiles" />
@@ -286,7 +289,7 @@ defineExpose({ composerInput, requestBottleMotion: () => bottleShore.value?.requ
               <i v-if="isAccountOnline(member.accountId)" class="online-dot" aria-label="在线"></i>
             </div>
             <span>{{ member.displayName }}</span>
-            <small>{{ member.username ? `@${member.username}` : member.kind === 'virtual' ? '虚拟角色' : '频道成员' }}</small>
+            <small>{{ member.username === BIBLE_STUDY_ASSISTANT.username ? BIBLE_STUDY_ROOM : member.username ? `@${member.username}` : member.kind === 'virtual' ? '虚拟角色' : '频道成员' }}</small>
           </button>
         </template>
         <template v-else>

@@ -24,6 +24,12 @@ import { isZipArchive, unzipArchive, zipArchive, type ZipArchiveEntry } from "..
 import { AVATAR_DIR, BACKUP_DIR, BG_DIR, ROOT, STORAGE_ROOT, UPLOAD_DIR, safeUnlink, safeUnlinkMusicScore, storageFilePath } from "../storageDirs.js";
 import { THEMES } from "./appearance.js";
 import { normalizeHandwritingForStorage } from "../services/handwriting.js";
+import { BIBLE_STUDY_ROOM_KEY_PREFIX } from "../../shared/bibleStudy.js";
+
+const ordinaryChatHistory = {
+  kind: { not: "reception" },
+  OR: [{ directKey: null }, { directKey: { not: { startsWith: BIBLE_STUDY_ROOM_KEY_PREFIX } } }]
+} satisfies Prisma.ChannelWhereInput;
 
 // 导入的 ZIP 包含消息附件和头像，放宽单文件上限（全局 multipart 默认 80MB）。
 const IMPORT_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
@@ -940,7 +946,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const q = String(query.q || "").trim();
     const limit = Math.min(Math.max(Number(query.limit || 80), 1), 200);
     const where: Prisma.MessageWhereInput = {
-      channel: { kind: { not: "reception" } },
+      channel: ordinaryChatHistory,
       ...(channelId ? { channelId } : {}),
       ...(q
         ? {
@@ -978,7 +984,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
 
   app.delete("/api/admin/messages/:id", { preHandler: requireAdmin }, async (request, reply) => {
     const id = Number((request.params as { id: string }).id);
-    const message = await prisma.message.findFirst({ where: { id, channel: { kind: { not: "reception" } } }, select: { id: true, channelId: true, filePath: true } });
+    const message = await prisma.message.findFirst({ where: { id, channel: ordinaryChatHistory }, select: { id: true, channelId: true, filePath: true } });
     if (!message) return reply.code(404).send({ success: false, message: "消息不存在" });
     const deleted = await deleteMessages([message]);
     return { success: true, deleted };
@@ -995,7 +1001,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     const ids = parsedBody.success ? parsedBody.data.ids || [] : [];
     if (ids.length) {
       const messages = await prisma.message.findMany({
-        where: { id: { in: ids }, channel: { kind: { not: "reception" } } },
+        where: { id: { in: ids }, channel: ordinaryChatHistory },
         select: { id: true, channelId: true, filePath: true }
       });
       const deleted = await deleteMessages(messages);
@@ -1003,7 +1009,7 @@ export function registerAdminDataRoutes(app: FastifyInstance, deps: AdminDataRou
     }
     const channelId = Number(query.channelId || 0);
     const messages = await prisma.message.findMany({
-      where: channelId ? { channelId, channel: { kind: { not: "reception" } } } : { channel: { kind: { not: "reception" } } },
+      where: channelId ? { channelId, channel: ordinaryChatHistory } : { channel: ordinaryChatHistory },
       select: { id: true, channelId: true, filePath: true }
     });
     const deleted = await deleteMessages(messages);

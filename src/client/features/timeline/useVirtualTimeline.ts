@@ -1,5 +1,6 @@
 import { computed, ref, watch, type Ref } from "vue";
 import type { MessageDTO } from "@shared/types";
+import { BIBLE_STUDY_ASSISTANT, BIBLE_STUDY_RETRY_PREFIX } from "@shared/bibleStudy";
 import { APP_VERSION } from "@shared/release";
 import { imageDimensionsFromPayload } from "@shared/imageDimensions";
 import { useChatStore } from "../../store";
@@ -61,15 +62,17 @@ export function useVirtualTimeline(options: UseVirtualTimelineOptions) {
     // Retain the saved window without reading live messages while the chat is occluded.
     if (!options.isActive()) return previous || [];
     const rows: TimelineRow[] = [];
+    const messages = store.messages.filter(message =>
+      !(message.clientRequestId?.startsWith(BIBLE_STUDY_RETRY_PREFIX) && message.sender?.username === BIBLE_STUDY_ASSISTANT.username));
     const insertions = store.loadingInitialMessages ? new Map<number, VersionTimelineNotice[]>()
-      : versionTimelineInsertions(versionNotices.value, store.messages, store.hasOlderMessages, store.hasNewerMessages);
+      : versionTimelineInsertions(versionNotices.value, messages, store.hasOlderMessages, store.hasNewerMessages);
     function insertNotices(index: number) {
       for (const notice of insertions.get(index) || []) {
         rows.push({ kind: "version", label: `聊天室刚刚更新到版本 ${notice.version}`, id: `version-${notice.version}` });
       }
     }
     let prev: string | undefined;
-    for (const [index, message] of store.messages.entries()) {
+    for (const [index, message] of messages.entries()) {
       insertNotices(index);
       if (shouldShowSeparator(prev, message.createdAt)) rows.push({ kind: "time", label: formatSeparator(message.createdAt), id: `t-${message.id}` });
       rows.push({ kind: "message", message });

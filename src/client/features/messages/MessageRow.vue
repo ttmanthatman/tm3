@@ -28,6 +28,7 @@ import { zoomAnnouncementPayload } from "@shared/zoom";
 import ZoomAnnouncement from "../zoom/ZoomAnnouncement.vue";
 import BookNoteShareCard from "../books/BookNoteShareCard.vue";
 import { bookNoteSharePayload } from "@shared/bookNotes";
+import BibleStudyReading from "../bible-study/BibleStudyReading.vue";
 import BiblePassageShareCard from "../bible/BiblePassageShareCard.vue";
 import BibleScriptureCard from "../bible/BibleScriptureCard.vue";
 import { biblePassageMessagePayload } from "@shared/biblePassages";
@@ -180,6 +181,7 @@ const emit = defineEmits<{
     <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" :play="playScripture" />
     <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" :play="playScripture" />
     <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" :play="playScripture" />
+    <BibleStudyReading v-else-if="message.bibleStudyReading" :reading="message.bibleStudyReading" />
     <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
     <div v-else class="message-text" v-html="messageContentHtml(message)"></div>
   </template>
@@ -337,6 +339,7 @@ const emit = defineEmits<{
         <BiblePassageShareCard v-else-if="bibleShare" :paper-seed="message.clientRequestId || message.id" :passage="bibleShare" :open-passage="openBiblePassage" :play="playScripture" />
         <BiblePassageShareCard v-else-if="scriptureOnlyCard" :paper-seed="message.clientRequestId || message.id" :passage="scriptureOnlyCard" :open-passage="openBiblePassage" :play="playScripture" />
         <BibleTopicShareCard v-else-if="bibleTopicShare" :paper-seed="message.clientRequestId || message.id" :topic="bibleTopicShare" :open-passage="openBiblePassage" :play="playScripture" />
+        <BibleStudyReading v-else-if="message.bibleStudyReading" :reading="message.bibleStudyReading" />
         <div v-else-if="isMarkdownMessage(message)" class="message-text markdown-render" v-html="markdownMessageHtml(message)"></div>
         <div v-else-if="storyAnnouncementLetters(message)" class="message-text story-announcement-text">
           <span v-for="(letter, index) in storyAnnouncementLetters(message)" :key="index" :style="{ color: letter.color }">{{ letter.text }}</span>

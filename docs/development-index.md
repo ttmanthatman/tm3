@@ -217,6 +217,12 @@ Complete this checklist whenever a message effect, ambient animation, lyric disp
 - Prefer compositor-friendly `transform` and `opacity`; avoid layout-changing animation. Pausing or resuming pseudo-elements must not change message height, scroll height, or reading position.
 - Add a regression test for lifecycle and loop boundaries. For higher-risk effects, sample DOM count, `scrollHeight`, `scrollTop`, animation frames, and CPU activity in a real browser while visible, offscreen, hidden, and paused.
 
+## Bible Study Workspace
+
+- `src/client/features/bible-study/` owns the inline reading/question workspace, participant history and admin log viewer. `questionTree.ts` derives stable session-local Q/q labels from creation order, arranges branches by parent ID and caps visual indentation at two levels. Scripture selection moves the keyed question slot without remounting its composer.
+- `src/server/routes/bibleStudy.ts` authorizes room access and answer submission; `services/bibleStudy.ts` persists session checkpoints, parent question IDs, retry IDs and answer targets in message payloads. No schema change is required. Question history is complete within the current session; model requests retain a bounded recent context and explicitly identify the selected branch. Responses are private to the room owner and available through the separate administrator log routes.
+- Validation: `questionTree.test.ts`, `routes/bibleStudy.test.ts`, and isolated `e2e/tests/bible-study-assistant.spec.ts` cover deep ancestry, sibling branches, duplicate submissions, room isolation, answer recovery and mobile/desktop reading layout.
+
 ## Release Checklist
 
 - Feature pull requests add user-visible notes only to `CHANGELOG.md` under `## Unreleased`; they do not change release versions or dates.

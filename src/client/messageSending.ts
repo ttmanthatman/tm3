@@ -1,8 +1,8 @@
 import { ref } from "vue";
 
-export type MessageSendAck = { success?: boolean; message?: string; code?: "not_sent" | "conflict" };
+export type MessageSendAck = { success?: boolean; enteredChannelId?: number; message?: string; code?: "not_sent" | "conflict" };
 export type MessageSendResult =
-  | { ok: true }
+  | { ok: true; enteredChannelId?: number }
   | { ok: false; reason: "disconnected" | "busy" | "timeout" | "rejected" | "transport"; message: string; code?: "not_sent" | "conflict" };
 
 export interface MessageSendSocket {
@@ -48,7 +48,7 @@ export function useMessageSender(options: { getSocket: () => MessageSendSocket |
             finish({ ok: false, reason: "rejected", message: ack?.message || "发送失败，内容已保留，请重试", ...(ack?.code ? { code: ack.code } : {}) });
             return;
           }
-          finish({ ok: true });
+          finish(ack.enteredChannelId ? { ok: true, enteredChannelId: ack.enteredChannelId } : { ok: true });
         });
       } catch {
         finish({ ok: false, reason: "transport", message: "发送失败，内容已保留，请重试" });

@@ -6,6 +6,7 @@ export type ReceptionServiceDeps = {
   disconnectAccounts: (accountIds: number[]) => void;
   invalidateAccounts: (accountIds: number[]) => void;
   notifyRoomClosing: (channelId: number) => void;
+  deleteGuests?: (accountIds: number[]) => Promise<unknown>;
   onError?: (error: unknown, channelId?: number) => void;
 };
 
@@ -46,7 +47,8 @@ export function createReceptionService(deps: ReceptionServiceDeps) {
     ]);
     await deps.deleteChannelWithAttachments(channelId);
     if (guestIds.length) {
-      await deps.prisma.account.deleteMany({ where: { id: { in: guestIds }, isGuest: true } });
+      if (deps.deleteGuests) await deps.deleteGuests(guestIds);
+      else await deps.prisma.account.deleteMany({ where: { id: { in: guestIds }, isGuest: true } });
     }
     return true;
   }

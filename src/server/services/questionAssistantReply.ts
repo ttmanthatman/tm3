@@ -147,7 +147,7 @@ export async function generateQuestionAssistantReply(deps: {
 }
 
 export async function requestQuestionAssistantCompletion(
-  settings: Pick<AiSettingsDTO, "baseUrl" | "model"> & { thinkingEnabled?: boolean },
+  settings: Pick<AiSettingsDTO, "baseUrl" | "model"> & { thinkingEnabled?: boolean; jsonOutput?: boolean },
   apiKey: string,
   messages: QuestionAssistantChatMessage[],
   fetchImpl: typeof fetch = fetch
@@ -157,7 +157,10 @@ export async function requestQuestionAssistantCompletion(
   try {
     const response = await fetchImpl(`${settings.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
       method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: settings.model, messages, thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" }, stream: false }),
+      body: JSON.stringify({
+        model: settings.model, messages, thinking: { type: settings.thinkingEnabled ? "enabled" : "disabled" }, stream: false,
+        ...(settings.jsonOutput ? { response_format: { type: "json_object" }, max_tokens: 1600 } : {})
+      }),
       signal: controller.signal
     });
     if (!response.ok) {

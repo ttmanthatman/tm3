@@ -23,6 +23,7 @@ import {
 import { useChatStore } from "../../store";
 import { buildListenDraft, isListenDraft, LISTEN_COMMAND } from "../listen/listenComposer";
 import { listenPlaylistContent } from "@shared/listenPlaylist";
+import { BIBLE_STUDY_ASSISTANT, bibleStudyMention, isBibleStudyRoom } from "@shared/bibleStudy";
 
 type IconComponent = typeof Sparkles;
 const effectCommands: Array<{ command: string; effect: MessageEffect; label: string; hint: string; icon: IconComponent }> = [
@@ -72,6 +73,7 @@ interface UseComposerOptions {
   messageSendStatus: Ref<string>;
   clearMessageSendStatus: () => void;
   sendMessage: (payload: unknown) => Promise<MessageSendResult>;
+  openEnteredChannel: (channelId: number) => Promise<void>;
   openGraceComposer: (prefill: string) => void;
   prayerComposerPhoto: Ref<File | null>;
   uploadPrayerImage: (file: File, channelId: number) => Promise<number>;
@@ -90,6 +92,7 @@ export function useComposer(options: UseComposerOptions) {
   // Read its command after module initialization, when the composer is created.
   const listenCommand = { command: LISTEN_COMMAND, label: "一起听", hint: "写经文、@@ 选歌，按顺序组成播放清单", icon: Headphones };
   const store = useChatStore();
+  const bibleStudyRoom = computed(() => isBibleStudyRoom(store.currentChannel?.directKey));
   const unconfirmedSends = ref<UnconfirmedSend[]>([]);
   const visibleUnconfirmedSends = computed(() => unconfirmedSends.value.filter((row) => row.channelId === store.currentChannelId));
 
@@ -144,12 +147,24 @@ export function useComposer(options: UseComposerOptions) {
   async function retryUnconfirmed(row: UnconfirmedSend) {
     if (!store.account?.id || options.messageSendPending.value) return;
     const result = await options.sendMessage(row.payload);
-    if (result.ok) confirmUnconfirmed(row.clientRequestId, true);
-    else if (result.code === "not_sent" || result.code === "conflict") {
+    if (result.ok) {
+      confirmUnconfirmed(row.clientRequestId, true);
+      await openEnteredChannel(result.enteredChannelId, row.channelId);
+    } else if (result.code === "not_sent" || result.code === "conflict") {
       unconfirmedSends.value = unconfirmedSends.value.filter((item) => item.clientRequestId !== row.clientRequestId);
       persistUnconfirmed();
     }
   }
+  async function openEnteredChannel(channelId: number | undefined, fromChannelId: number) {
+    if (!channelId || store.currentChannelId !== fromChannelId) return;
+    try {
+      await store.loadChannels();
+      if (store.currentChannelId === fromChannelId) await options.openEnteredChannel(channelId);
+    } catch (error) {
+      options.messageSendStatus.value = error instanceof Error ? error.message : "同行书房打开失败";
+    }
+  }
+
   const input = options.input;
   const composerFocused = options.composerFocused;
   const selectedMusicMention = options.selectedMusicMention;
@@ -256,6 +271,7 @@ export function useComposer(options: UseComposerOptions) {
 
   const slashCommandToken = computed(() => slashCommandTokenAtCursor(input.value, composerCaret.value));
   const matchingSlashCommands = computed<SlashCommandSuggestion[]>(() => {
+    if (bibleStudyRoom.value) return [];
     const token = slashCommandToken.value;
     if (!token) return [];
     if (token.kind === "prayer-effect") {
@@ -276,9 +292,10 @@ export function useComposer(options: UseComposerOptions) {
   const mentionToken = computed(() => mentionTokenAtCursor(input.value, composerCaret.value));
   const matchingMentionMembers = computed(() => {
     const token = mentionToken.value;
-    if (!token) return [];
+    if (!token || bibleStudyRoom.value) return [];
     const query = token.query.trim().toLowerCase();
-    return store.members.filter((member) => {
+    const assistant = { ...BIBLE_STUDY_ASSISTANT, id: -1, kind: "virtual" as const };
+    return [assistant, ...store.members].filter((member) => {
       if (!member.displayName.trim()) return false;
       if (!query) return true;
       return member.displayName.toLowerCase().includes(query) || (member.username || "").toLowerCase().includes(query);
@@ -286,7 +303,7 @@ export function useComposer(options: UseComposerOptions) {
   });
   const matchingMusicMentionTracks = computed(() => {
     const token = musicMentionToken.value;
-    if (!token) return [];
+    if (!token || bibleStudyRoom.value) return [];
     const query = token.query.trim().toLowerCase();
     if (!query) return options.sortedMusicTracks();
     return options.sortedMusicTracks().filter((track) => track.title.toLowerCase().includes(query) || track.fileName.toLowerCase().includes(query));
@@ -309,6 +326,7 @@ export function useComposer(options: UseComposerOptions) {
     if (composerSuggestionIndex.value >= count) composerSuggestionIndex.value = 0;
   });
   const canSendText = computed(() => {
+    if (bibleStudyRoom.value) return !!input.value.trim();
     return !!selectedMusicMention.value || !!parseComposerText(input.value).content;
   });
   const socketReadyToSend = computed(() => store.connectionState === "connected" && store.socket?.connected === true);
@@ -402,10 +420,11 @@ export function useComposer(options: UseComposerOptions) {
     if (options.messageSendPending.value) return;
     const retry = unconfirmedSends.value.find((item) => item.channelId === store.currentChannelId && item.draft === input.value);
     if (retry) return retryUnconfirmed(retry);
-    const parsed = parseComposerText(input.value);
-    const musicMention = selectedMusicMention.value;
+    const studyText = bibleStudyRoom.value || bibleStudyMention(input.value.trim()) !== null;
+    const parsed = studyText ? { content: input.value.trim(), type: "text" as const } : parseComposerText(input.value);
+    const musicMention = studyText ? null : selectedMusicMention.value;
     // /恩典 不发文本消息：打开恩典记录弹窗，输入内容预填进弹窗。
-    if ((parsed.type === "grace" || store.graceOnly) && !musicMention) {
+    if (!studyText && (parsed.type === "grace" || store.graceOnly) && !musicMention) {
       input.value = "";
       composerSuggestionSuppressed.value = true;
       options.openGraceComposer(parsed.content);
@@ -468,16 +487,19 @@ export function useComposer(options: UseComposerOptions) {
     }
     const submittedComposerIsCurrent =
       input.value === originalInput &&
-      selectedMusicMention.value === originalMusicMention &&
+      (studyText || selectedMusicMention.value === originalMusicMention) &&
       listenMusicMentions.value === originalListenMentions &&
       replyTo.value === originalReply;
-    if (!submittedComposerIsCurrent) return;
-    input.value = composerDraftAfterSend(result, originalInput, input.value);
-    if (!result.ok) return;
-    selectedMusicMention.value = null;
-    listenMusicMentions.value = [];
-    replyTo.value = null;
-    if (prayerImageMessageId) options.clearPrayerComposerPhoto();
+    if (submittedComposerIsCurrent) {
+      input.value = composerDraftAfterSend(result, originalInput, input.value);
+      if (result.ok) {
+        selectedMusicMention.value = null;
+        listenMusicMentions.value = [];
+        replyTo.value = null;
+        if (prayerImageMessageId) options.clearPrayerComposerPhoto();
+      }
+    }
+    if (result.ok) await openEnteredChannel(result.enteredChannelId, payload.channelId);
   }
 
   function toggleMorePanel() {

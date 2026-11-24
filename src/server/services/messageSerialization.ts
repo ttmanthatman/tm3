@@ -1,3 +1,4 @@
+import { bibleStudyReading } from "./bibleStudyReading.js";
 import type { Actor, Account, Message, MessageAiSuggestion, MusicLyrics, MusicScore, MusicScorePage, PrayerAction, PrismaClient } from "@prisma/client";
 import type { AiSettingsDTO, AiSuggestionDTO, MessageDTO, PrayerStatus, VoicePayload } from "../../shared/types.js";
 import { AI_RELATED_VERSES_KIND } from "../aiSettings.js";
@@ -358,7 +359,8 @@ export function createMessageSerializationService(deps: MessageSerializationDepe
       }),
       lyrics: musicLyrics ? { id: musicLyrics.id, fileName: musicLyrics.fileName, cues: parseLyrics(musicLyrics.content, musicLyrics.fileName) } : null,
       voiceListened,
-      replyTo: message.replyTo
+      bibleStudyReading: bibleStudyReading(message),
+      replyTo: message.replyTo?.channelId === message.channelId
         ? {
             id: message.replyTo.id,
             content: plainTextPreview(message.replyTo.content || message.replyTo.fileName || "", 140),

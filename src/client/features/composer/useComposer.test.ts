@@ -45,6 +45,7 @@ function createComposerHarness(sendResult: () => Promise<{ ok: true } | { ok: fa
       sent.push(payload);
       return sendResult();
     },
+    openEnteredChannel: async () => undefined,
     openGraceComposer: (prefill: string) => {
       gracePrefills.push(prefill);
     },
