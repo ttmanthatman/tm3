@@ -1348,11 +1348,22 @@ const RELEASE_2_15_3_NOTES = [
   "管理后台聊天室外观支持分别调节光晕内外宽度，并编辑、增删和排序最多 99 个颜色；加大默认光晕范围。"
 ] as const
 
+const RELEASE_2_16_0_NOTES = [
+  "新增“同行书房”个人查经入口、阶段引导、查经记录和小结，保留独立对话与管理员查阅权限。",
+  "查经问题采用主问题 Q、追问 q 的短编号，可回到任一旧题另开分支；显示父问题与完整脉络，深层追问最多两级缩进。",
+  "选定经文后原位展开问答，回答框保持完整宽度；回答后收起内容并保留问题列表，支持展开查看已保存的回答。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.16.1",
+    date: "2026-11-24",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.16.0",
     date: "2026-11-24",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_16_0_NOTES
   },
   {
     version: "2.15.3",
