@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { closeBibleWorkspace, focusChat } from "../helpers/chat.js";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
@@ -124,7 +125,8 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
     }
     await expect(page.locator(".study-workspace .study-reading")).toHaveCount(0);
-    await expect(page.getByRole("article", { name: "当前问题" })).toContainText("全段观察");
+    await expect(page.locator(".question-kicker").first()).toHaveText("开始观察");
+    await expect(page.locator(".question-meta")).toHaveCount(0);
     await page.getByRole("button", { name: /收起进度/ }).click();
     await expect(focus).toBeHidden();
     await expect(page.getByRole("button", { name: "展开查经进度" })).toBeVisible();
@@ -192,7 +194,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await page.reload();
     await closeBibleWorkspace(page);
     await expect(page.getByRole("article", { name: "当前问题" })).toContainText("答完这一步，我们回到原题。");
-    await expect(page.getByRole("region", { name: "问题脉络" })).toContainText("把原题拆小");
+    await expect(page.getByRole("region", { name: "问题脉络" }).locator(".selected .question-number")).toContainText("追问Q3:1");
     await send("门徒问耶稣是否顾念他们。");
     await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.relation).toBe("return");
     expect((await readProgress()).questionPath.at(-1)).toMatchObject({ text: originalQuestion.text, parentId: hint.id, returnToId: originalQuestion.id });
@@ -201,8 +203,8 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await page.reload();
     await closeBibleWorkspace(page);
     const path = page.getByRole("region", { name: "问题脉络" });
-    await expect(path).toContainText("换个观察角度");
-    await expect(page.getByRole("article", { name: "当前问题" })).toContainText("补看同一段经文的结尾");
+    await expect(path.locator(".selected .question-title")).toContainText("风浪平静后");
+    await expect(path.locator(".question-meta")).toHaveCount(0);
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 844 });
       await expect(path).toBeVisible();
@@ -223,22 +225,21 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       const result = await app.inject({ method: "POST", url: "/api/bible-study/answer", headers: member, payload: route.request().postDataJSON() });
       await route.fulfill({ status: result.statusCode, json: result.json() });
     });
-    const beforeBranch = (await readProgress()).questionPath.length;
     const rootLabel = `Q${(await readProgress()).questionPath.findIndex(q => q.id === originalQuestion.id) + 1}`;
-    async function branch(label: string, text: string) {
-      await page.getByRole("button", { name: `继续追问 ${label}`, exact: true }).click();
-      await page.getByPlaceholder("还想从这个问题追问什么？").fill(text, { timeout: 10_000 });
-      await page.getByRole("button", { name: "发起追问", exact: true }).click();
+    async function branch(questionId: number, text: string) {
+      const result = await app.inject({ method: "POST", url: "/api/bible-study/answer", headers: member,
+        payload: { questionId, content: text, mode: "followup", clientRequestId: randomUUID() } });
+      expect(result.statusCode).toBe(202);
       await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.text).toContain(text);
       await page.reload();
       await closeBibleWorkspace(page);
       return (await readProgress()).questionPath.at(-1)!;
     }
-    const firstBranch = await branch(rootLabel, "另看门徒的反应");
+    const firstBranch = await branch(originalQuestion.id, "另看门徒的反应");
     expect(firstBranch.parentId).toBe(originalQuestion.id);
     expect((await readProgress()).stage).toBe(originalQuestion.stage);
-    await branch(`q${beforeBranch + 1}`, "再追一层");
-    const siblingBranch = await branch(rootLabel, "从原题另开一个角度");
+    await branch(firstBranch.id, "再追一层");
+    const siblingBranch = await branch(originalQuestion.id, "从原题另开一个角度");
     expect(siblingBranch.parentId).toBe(originalQuestion.id);
     const finalTree = (await readProgress()).questionPath;
     expect(finalTree.find(q => q.text.includes("再追一层"))?.parentId).toBe(firstBranch.id);
@@ -263,10 +264,10 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       await expect(field).toBeVisible();
       expect((await field.boundingBox())!.width).toBeGreaterThan(width < 760 ? 230 : 350);
     }
-    await questions.getByRole("button", { name: "收起问答", exact: true }).click();
+    await questions.getByRole("button", { name: "收起回答", exact: true }).click();
     await expect(questions.locator("textarea")).toHaveCount(0);
-    await expect(questions.getByRole("button", { name: `继续追问 ${rootLabel}`, exact: true })).toBeVisible();
-    await questions.getByRole("button", { name: "展开问答", exact: true }).click();
+    await expect(questions.locator(".question-title").filter({ hasText: rootLabel }).first()).toBeVisible();
+    await questions.getByRole("button", { name: "展开回答", exact: true }).click();
     await expect(questions.locator("textarea")).toBeVisible();
 
     const replies = [
@@ -374,7 +375,10 @@ for (const engine of ["chromium", "webkit"] as const) {
         relation: i ? "deepen" : "opening", ...(i ? { parentId: i === 60 ? 7 : i } : {}),
         evidence: i === 0 || i === 5 ? [] : i === 59 ? ["马可福音 14:37", "马可福音 14:39"] : ["马可福音 14:38-39"]
       })),
-      answers: [{ id: 101, questionId: 8, text: "警醒祷告。", response: "这两个动作怎样联系？" }]
+      answers: [
+        { id: 101, questionId: 8, text: "警醒祷告。", response: "这两个动作怎样联系？" },
+        { id: 102, questionId: 9, text: "这是另一个问题的回答。", response: "再看这个细节。" }
+      ]
     };
     try {
       await page.route("**/*", route => ["127.0.0.1", "localhost"].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
@@ -408,21 +412,21 @@ for (const engine of ["chromium", "webkit"] as const) {
         .toBe(await reader.locator(".bible-topbar").evaluate(element => getComputedStyle(element).color));
       await chooseQuestion("先读整段");
       await expect(highlighted).toHaveCount(0);
-      await expect(questions.getByRole("article", { name: "当前问题" })).toContainText("全段观察");
+      await expect(questions.getByRole("article", { name: "当前问题" }).getByRole("navigation", { name: "相关经文" })).toHaveCount(0);
       await chooseQuestion("第8个观察问题");
       await expect(highlighted).toHaveCount(2);
       await reader.locator('[data-verse-key$="-14-37"]').click();
-      await expect(questions.locator('.question-title[aria-current="step"]')).toContainText("q8");
+      await expect(questions.locator('.question-title[aria-current="step"]')).toContainText("追问Q1" + ":1".repeat(7));
       await expect(questions.locator(".question-number")).toHaveCount(61);
       await expect(highlighted).toHaveCount(2);
       await chooseQuestion("第6个观察问题");
       await expect(highlighted).toHaveCount(0); // Parent q5 has evidence, q6 does not inherit it.
-      await questions.getByRole("button", { name: "继续追问 q60", exact: true }).click();
-      await expect(questions.locator(".parent-question")).toContainText("q59");
+      await chooseQuestion("第60个观察问题");
+      await expect(questions.locator('.question-title[aria-current="step"] .question-number')).toHaveText("追问Q1" + ":1".repeat(59));
       await expect(highlighted).toHaveCount(2);
       await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toBeVisible();
       await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toHaveCount(0);
-      const field = questions.getByPlaceholder("还想从这个问题追问什么？");
+      const field = questions.getByPlaceholder("写下你的观察…");
       await field.fill("这个分支里的草稿");
       await questions.locator(".question-detail").scrollIntoViewIfNeeded();
       await page.screenshot({ path: testInfo.outputPath(`study-split-${engine}-1280.png`), animations: "disabled" });
@@ -438,16 +442,30 @@ for (const engine of ["chromium", "webkit"] as const) {
         await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toHaveCount(0);
         await closeBibleWorkspace(page);
         await expect(field).toHaveValue("这个分支里的草稿");
-        await expect(questions.locator(".parent-question")).toContainText("q59");
+        await expect(questions.locator('.question-title[aria-current="step"] .question-number')).toHaveText("追问Q1" + ":1".repeat(59));
         expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       }
-      await questions.getByRole("button", { name: "发起追问", exact: true }).click();
-      expect(submissions).toEqual([expect.objectContaining({ questionId: 60, mode: "followup", content: "这个分支里的草稿" })]);
+      await questions.getByRole("button", { name: "回答并收起", exact: true }).click();
+      expect(submissions).toEqual([expect.objectContaining({ questionId: 60, mode: "answer", content: "这个分支里的草稿" })]);
       expect(submissions[0]).not.toHaveProperty("evidence"); // Reading selection never attaches questions to a verse.
       await expect(field).toHaveCount(0);
       await expect(questions.locator(".question-number")).toHaveCount(61);
-      await questions.getByRole("button", { name: "已回答 · 查看回答", exact: true }).click();
+      await chooseQuestion("第8个观察问题");
       await expect(questions.locator(".saved-answers")).toContainText("警醒祷告。");
+      await expect(questions.locator(".saved-answers")).toHaveCount(1);
+      await chooseQuestion("第9个观察问题");
+      await expect(questions.locator(".saved-answers")).toContainText("这是另一个问题的回答。");
+      await expect(questions.locator(".saved-answers")).toBeInViewport();
+      await expect(questions.locator(".saved-answers")).not.toContainText("警醒祷告。");
+      await expect(questions.locator(".question-detail")).toHaveCount(1);
+      await expect(questions.locator(".question-meta, .followup-button")).toHaveCount(0);
+      await expect(questions.getByText("已回答 · 查看回答", { exact: true })).toHaveCount(0);
+      await expect(questions.locator(".question-kicker")).toHaveCount(1);
+      expect(await questions.locator(".path-scroll").evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
+      await questions.locator(".path-scroll").evaluate(element => { element.scrollLeft = element.scrollWidth; });
+      expect(await questions.locator(".path-scroll").evaluate(element => element.scrollLeft)).toBeGreaterThan(0);
+      await questions.locator(".saved-answers").scrollIntoViewIfNeeded();
+      await expect(questions.locator(".saved-answers")).toBeInViewport();
       await page.screenshot({ path: testInfo.outputPath(`study-questions-${engine}-390.png`), animations: "disabled" });
       expect(errors).toEqual([]);
     } finally { await context.close(); await owned?.close(); }

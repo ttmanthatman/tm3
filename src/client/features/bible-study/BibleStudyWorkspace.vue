@@ -165,7 +165,7 @@ onBeforeUnmount(() => {
             完成这段经文后就可以换题。你也可以下次回来继续。
           </div>
 
-          <BibleStudyQuestionPath v-if="progress" :questions="progress.questionPath" :answers="progress.answers ?? []" :feedback="progress.feedbackDetail" :busy="actionBusy || progress.working || !!progress.failure" @select="selectQuestion" @reference="openReference" @sent="load" @help="act('help')" />
+          <BibleStudyQuestionPath v-if="progress" :questions="progress.questionPath" :answers="progress.answers ?? []" :busy="actionBusy || progress.working || !!progress.failure" @select="selectQuestion" @reference="openReference" @sent="load" @help="act('help')" />
           <section v-if="loaded && !progress" class="study-intro" aria-labelledby="study-intro-title">
             <h2 id="study-intro-title">{{ workspace.latest === 'complete' ? '本次查经已完成' : '今天想读哪一段？' }}</h2>
             <p v-if="workspace.latest === 'complete'" role="status">小结已归档。发送新的经文范围，就可以开始下一次查经。</p>
