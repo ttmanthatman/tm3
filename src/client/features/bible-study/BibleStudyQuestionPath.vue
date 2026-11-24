@@ -77,7 +77,7 @@ async function submit() {
     </header>
     <div ref="scrollRoot" class="path-scroll" tabindex="0" role="region" aria-label="问题树，可横向滚动">
       <ol class="path-steps">
-        <li v-for="row in tree.rows" :key="row.question.id" :style="{ '--question-depth': row.depth }" :class="{ selected: row.question.id === selectedId }">
+        <li v-for="row in tree.rows" :key="row.question.id" :class="{ selected: row.question.id === selectedId }">
           <h3 v-if="!row.parentLabel && row.question.relation !== 'earlier'" class="question-kicker">{{ BIBLE_STUDY_RELATION_LABELS[row.question.relation] }}</h3>
           <div class="question-line">
             <button class="question-title" type="button" :aria-current="row.question.id === selectedId ? 'step' : undefined"
@@ -119,7 +119,7 @@ button:focus-visible, textarea:focus-visible, .path-scroll:focus-visible { outli
 .path-header button { font-size: .76rem; }
 .path-scroll { max-height: 70dvh; overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .path-steps { list-style: none; padding: 0; margin: 0; width: max-content; min-width: 100%; }
-.path-steps > li { margin-inline-start: calc(var(--question-depth) * 18px); padding: 10px 0; border-bottom: 1px solid var(--study-line); }
+.path-steps > li { padding: 10px 0; border-bottom: 1px solid var(--study-line); }
 .question-kicker { font-size: .75rem; font-weight: 600; color: var(--study-muted); margin: 0 0 3px; }
 .question-title { align-items: baseline; font-size: .9rem; line-height: 1.6; }
 .question-text { width: min(32rem, calc(100cqi - 125px)); min-width: 14rem; overflow-wrap: anywhere; }
