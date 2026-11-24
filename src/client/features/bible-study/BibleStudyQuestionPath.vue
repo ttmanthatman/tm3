@@ -151,7 +151,7 @@ async function submit() {
     <p v-if="errorText" class="answer-error" role="alert">{{ errorText }} <button type="button" @click="emit('sent')">刷新进度</button></p>
   </section>
   <Teleport defer to=".app-shell">
-    <AppModal :open="deleteDialogOpen" title="删除问题" :busy="questionActionBusy" @close="deleteDialogOpen = false">
+    <AppModal :open="deleteDialogOpen" title="删除问题" content-class="study-delete-modal" :busy="questionActionBusy" @close="deleteDialogOpen = false">
       <div class="delete-dialog-body">
         <p>确定删除 {{ deleteLabel }} 吗？</p>
         <p>这会同时删除它下面的全部子问题和相关回答，无法恢复。</p>
@@ -196,6 +196,7 @@ textarea { box-sizing: border-box; width: 100%; min-width: 0; resize: vertical; 
 .answer-error { color: #92391b; font-size: .85rem; }
 .question-actions { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-block: 6px; font-size: .82rem; }
 .delete-question, .confirm-delete-question { color: #973d2a; }
-.delete-dialog-body { min-width: 0; overflow-wrap: anywhere; padding: 0 18px 18px; line-height: 1.7; }
+:deep(.study-delete-modal) { grid-template-rows: auto minmax(0, 1fr); }
+.delete-dialog-body { min-width: 0; min-height: 0; overflow-y: auto; overflow-wrap: anywhere; padding: 0 18px 18px; line-height: 1.7; }
 .confirm-delete-question { border: 1px solid currentColor; padding: 6px 12px; border-radius: 6px; }
 </style>

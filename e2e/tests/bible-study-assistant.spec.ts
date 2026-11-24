@@ -527,7 +527,12 @@ for (const engine of ["chromium", "webkit"] as const) {
         await expect(deletion).toContainText("全部子问题和相关回答，无法恢复");
         expect(await deletion.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         await expect(deletion.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+        await page.setViewportSize({ width, height: 360 });
+        await deletion.getByRole("button", { name: "取消", exact: true }).scrollIntoViewIfNeeded();
+        await expect(deletion.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+        expect(await deletion.locator(".delete-dialog-body").evaluate(element => element.clientHeight < element.scrollHeight)).toBe(true);
         await deletion.getByRole("button", { name: "取消", exact: true }).click();
+        await page.setViewportSize({ width, height: 844 });
         await expect(deletion).toHaveCount(0);
         await expect(field).toHaveValue("这个分支里的草稿");
         await expect(page.locator(".study-workspace .study-reading")).toHaveCount(0);

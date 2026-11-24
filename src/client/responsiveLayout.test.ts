@@ -315,7 +315,7 @@ test("download confirmation uses a direct confirmation question", () => {
 
 test("direct chats present the peer in pairs and offer seven AI names for groups", () => {
   assert.match(server, /channel\._count\.members === 2[\s\S]*?member\.account\.id !== viewer\.accountId/);
-  assert.match(server, /name: directPeer\?\.displayName \|\| channel\.name/);
+  assert.equal([...server.matchAll(/name: isBibleStudyRoom\(channel\.directKey\) \? BIBLE_STUDY_ROOM : directPeer\?\.displayName \|\| channel\.name/g)].length, 2);
   assert.match(server, /`\/avatars\/\$\{directPeer\.avatarPath\}`/);
   assert.match(server, /"\/api\/channels\/:id\/name-suggestions"[\s\S]*?generateDirectChatNameSuggestions/);
   assert.match(server, /ensureDirectGroupDefaultName\(channelId\)[\s\S]*?emitChannelMembersChanged/);
