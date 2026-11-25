@@ -31,3 +31,5 @@
   max-height: calc(var(--panel-height) - var(--safe-top, 0px) - var(--safe-bottom, 0px) - 24px);
 }
 .app-shell.reading-layout:has(.modal-shell) > .reading-divider { visibility: hidden; }
+
+.app-shell.reading-layout:has(.modal-shell) > .reading-toolbar-reveal { display: none; }

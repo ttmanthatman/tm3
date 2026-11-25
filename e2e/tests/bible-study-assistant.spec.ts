@@ -12,6 +12,7 @@ test.setTimeout(150_000);
 
 
 async function focusStudy(page: Page) {
+  await page.locator(".reading-toolbar-reveal").hover();
   await page.getByRole("button", { name: "打开查经面板", exact: true }).click();
   await expect(page.locator(".study-workspace")).toBeVisible();
 }

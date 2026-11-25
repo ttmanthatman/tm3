@@ -165,6 +165,7 @@ test("bookshelf opens beside chat, expands and returns to split", async ({ page 
   await expect(chat).toBeVisible();
   for (const width of [360, 390]) {
     await page.setViewportSize({ width, height: 900 });
+    await page.locator(".reading-toolbar-reveal").hover();
     await page.getByRole("button", { name: "打开书架面板", exact: true }).click();
     await expect(chat).toBeHidden();
     await expect(page.getByRole("button", { name: "图书室全屏", exact: true })).toBeHidden();
@@ -677,9 +678,11 @@ for (const engine of ["chromium", "webkit"] as const) {
       await expect.poll(() => bible.locator(".bible-pane-scroll").evaluate(element => getComputedStyle(element).paddingLeft)).toBe("20px");
       await preferences.getByRole("button", { name: "关闭", exact: true }).click();
       await study.getByPlaceholder("追加回答或提问…").fill("警醒祷告");
+      await page.locator(".reading-toolbar-reveal").hover();
       await page.getByRole("button", { name: "全屏查经面板", exact: true }).click();
       await expect(book).toBeHidden();
       await expect(study.getByPlaceholder("追加回答或提问…")).toHaveValue("警醒祷告");
+      await page.locator(".reading-toolbar-reveal").hover();
       await page.getByRole("button", { name: "恢复查经面板", exact: true }).click();
       await expect(book).toBeVisible();
       await expect(bible.locator('[data-verse-key="MRK-14-38"].study-target')).toBeVisible();
@@ -694,6 +697,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       await expect(divider).toHaveAttribute("aria-valuenow", "52");
       const arrangement = page.getByRole("combobox", { name: "面板排列方式", exact: true });
       for (const value of ["columns", "rows", "grid"]) {
+        await page.locator(".reading-toolbar-reveal").hover();
         await arrangement.selectOption(value);
         for (const panel of [bible, study, book, chat]) await expect(panel).toBeVisible();
       }
@@ -701,15 +705,19 @@ for (const engine of ["chromium", "webkit"] as const) {
       await page.reload();
       for (const panel of [bible, study, book, chat]) await expect(panel).toBeVisible();
       await expect(divider).toHaveAttribute("aria-valuenow", "52");
+      await page.locator(".reading-toolbar-reveal").hover();
       await expect(arrangement).toHaveValue("grid");
+      await page.locator(".reading-toolbar-reveal").hover();
       await page.getByRole("button", { name: "关闭查经面板", exact: true }).click();
       await expect(bible.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
       await expect(bible.locator(".study-target")).toHaveCount(0);
       for (const width of [360, 390]) {
         await page.setViewportSize({ width, height: 900 });
+        await page.locator(".reading-toolbar-reveal").hover();
         await page.getByRole("button", { name: "打开书架面板", exact: true }).click();
         await expect(book).toBeVisible(); await expect(chat).toBeHidden();
         expect((await book.boundingBox())!.width).toBe(width);
+        await page.locator(".reading-toolbar-reveal").hover();
         await page.getByRole("button", { name: "打开聊天面板", exact: true }).click();
         await expect(chat).toBeVisible(); await expect(book).toBeHidden();
       }
@@ -734,3 +742,43 @@ test("study starts its own passage while the ordinary chat channel and draft sta
   expect((await chatState(page)).contents).not.toContain("诗篇 23");
   await expect(composer).toHaveValue("聊天中的草稿");
 });
+
+for (const engine of ["chromium", "webkit"] as const) {
+  test(`reading controls reveal only in the top eight pixels and scrollbars hide after use (${engine})`, async ({ browser, baseURL }) => {
+    const owned = engine === "webkit" ? await webkit.launch() : null;
+    const context = await (owned ?? browser).newContext({ baseURL, viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    try {
+      const page = await context.newPage();
+      await login(page);
+      await openReading(page);
+      await page.getByRole("button", { name: "打开图书室", exact: true }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
+      const toolbar = page.getByRole("navigation", { name: "阅读面板", exact: true });
+      await page.mouse.move(500, 50);
+      await expect(toolbar).toBeHidden();
+      expect((await page.locator(".book-workspace").boundingBox())!.y).toBe(0);
+      await page.mouse.move(500, 9);
+      await expect(toolbar).toBeHidden();
+      await page.mouse.move(500, 7);
+      await expect(toolbar).toBeVisible();
+      await page.mouse.move(500, 20);
+      await expect(toolbar).toBeVisible();
+      await page.mouse.move(500, 80);
+      await expect(toolbar).toBeHidden();
+      await page.locator(".reading-toolbar-reveal").focus();
+      await expect(toolbar).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(toolbar).toBeHidden();
+      const scroll = page.locator(".bible-reader-pane.active .bible-pane-scroll");
+      await page.locator(".chat-head").click();
+      await expect.poll(() => scroll.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("rgba(0, 0, 0, 0)");
+      await scroll.evaluate(element => { element.scrollTop += 120; });
+      await expect(scroll).toHaveAttribute("data-scroll-active", "");
+      await expect.poll(() => scroll.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("168, 148, 119");
+      await expect(scroll).not.toHaveAttribute("data-scroll-active", "");
+      await expect.poll(() => scroll.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("rgba(0, 0, 0, 0)");
+      await scroll.hover();
+      await expect.poll(() => scroll.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("168, 148, 119");
+    } finally { await context.close(); await owned?.close(); }
+  });
+}

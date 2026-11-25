@@ -52,7 +52,7 @@ export function useReadingWorkspaceLayout(options: {
   const active = computed(() => options.bookOpen.value || studyOpen.value || !chatOpen.value || arrangement.value !== "grid" || fullscreen.value === "chat");
   const single = computed(() => fullscreen.value || (!options.splitAvailable.value ? mobilePanel.value : null));
   const rects = computed(() => {
-    const width = options.viewportWidth.value, contentHeight = Math.max(0, height.value - 38);
+    const width = options.viewportWidth.value, contentHeight = Math.max(0, height.value);
     const layout = readingPanelRects(panels.value, arrangement.value, width, contentHeight, columnRatio.value, rowRatio.value);
     const full = { left: 0, top: 0, width, height: contentHeight };
     if (!options.splitAvailable.value) for (const panel of panels.value) layout[panel] = full;
@@ -67,11 +67,11 @@ export function useReadingWorkspaceLayout(options: {
   function panelStyle(panel: ReadingPanel) {
     const rect = rects.value[panel];
     if (!active.value || !rect) return {};
-    return { '--panel-left': `${rect.left}px`, '--panel-top': `${rect.top + 38}px`, '--panel-width': `${rect.width}px`, '--panel-height': `${rect.height}px` };
+    return { '--panel-left': `${rect.left}px`, '--panel-top': `${rect.top}px`, '--panel-width': `${rect.width}px`, '--panel-height': `${rect.height}px` };
   }
   const shellStyle = computed(() => {
     const chat = rects.value.chat;
-    return active.value && chat ? { '--chat-left': `${chat.left}px`, '--chat-top': `${chat.top + 38}px`, '--chat-width': `${chat.width}px`, '--chat-height': `${chat.height}px` } : {};
+    return active.value && chat ? { '--chat-left': `${chat.left}px`, '--chat-top': `${chat.top}px`, '--chat-width': `${chat.width}px`, '--chat-height': `${chat.height}px` } : {};
   });
   function focus(panel: ReadingPanel) { fullscreen.value = null; mobilePanel.value = panel; }
   function toggleFullscreen(panel: ReadingPanel) { fullscreen.value = fullscreen.value === panel ? null : panel; }
@@ -85,7 +85,7 @@ export function useReadingWorkspaceLayout(options: {
     if (!panels.value.length) chatOpen.value = true;
   }
   function resize(axis: "column" | "row", ratio: number) {
-    const extent = axis === "column" ? options.viewportWidth.value : height.value - 38;
+    const extent = axis === "column" ? options.viewportWidth.value : height.value;
     const min = Math.max(.2, Math.min(.4, (axis === "column" ? 280 : 180) / Math.max(1, extent)));
     (axis === "column" ? columnRatio : rowRatio).value = Math.max(min, Math.min(1 - min, ratio));
   }

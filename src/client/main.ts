@@ -1,3 +1,4 @@
+import { installAutoScrollbars } from "./features/workspaces/autoScrollbars";
 import { createApp } from "vue";
 import { createPinia } from "pinia";
 import App from "./App.vue";
@@ -54,4 +55,6 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-createApp(App).use(createPinia()).mount("#app");
+const app = createApp(App).use(createPinia());
+app.onUnmount(installAutoScrollbars());
+app.mount("#app");

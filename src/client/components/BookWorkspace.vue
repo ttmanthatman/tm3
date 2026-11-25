@@ -1182,22 +1182,6 @@ defineExpose({ reload: loadShelf });
 }
 .book-workspace.split { position: relative; inset: auto; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; z-index: 5; }
 
-/* Scroll thumbs stay quiet until the reader is hovered or keyboard-focused. */
-.book-workspace :deep(.book-shelf-grid),
-.book-workspace :deep(.book-continuous-scroll) { scrollbar-width: thin; scrollbar-color: transparent transparent; }
-.book-workspace :deep(.book-shelf-grid:hover),
-.book-workspace :deep(.book-shelf-grid:focus-within),
-.book-workspace :deep(.book-continuous-scroll:hover),
-.book-workspace :deep(.book-continuous-scroll:focus-within) { scrollbar-color: #a8947780 transparent; }
-.book-workspace :deep(.book-shelf-grid::-webkit-scrollbar),
-.book-workspace :deep(.book-continuous-scroll::-webkit-scrollbar) { width: 6px; }
-.book-workspace :deep(.book-shelf-grid::-webkit-scrollbar-thumb),
-.book-workspace :deep(.book-continuous-scroll::-webkit-scrollbar-thumb) { border-radius: 6px; background: transparent; }
-.book-workspace :deep(.book-shelf-grid:hover::-webkit-scrollbar-thumb),
-.book-workspace :deep(.book-shelf-grid:focus-within::-webkit-scrollbar-thumb),
-.book-workspace :deep(.book-continuous-scroll:hover::-webkit-scrollbar-thumb),
-.book-workspace :deep(.book-continuous-scroll:focus-within::-webkit-scrollbar-thumb) { background: #a8947780; }
-
 /* ---------- 书架 ---------- */
 .book-shelf { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 .book-topbar {

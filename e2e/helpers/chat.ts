@@ -10,6 +10,8 @@ export async function closeBibleWorkspace(page: Page) {
   // reload/登录后工作区可能晚一拍才挂载；等一小段时间再判定，避免 isVisible 抢跑漏关。
   await bible.waitFor({ state: "visible", timeout: 3000 }).catch(() => undefined);
   if (!await bible.isVisible()) return;
+  // Let the floating reading toolbar hide before using the Bible's own top bar.
+  await page.mouse.move(10, 100);
   await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
   await expect(bible).toBeHidden();
 }

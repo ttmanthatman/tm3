@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
 import { LayoutGrid, Maximize2, Minimize2, X } from "lucide-vue-next";
 import { READING_ARRANGEMENTS, READING_PANELS, type ReadingArrangement, type ReadingPanel } from "./useReadingWorkspaceLayout";
 const props = defineProps<{
@@ -10,6 +10,10 @@ const emit = defineEmits<{
   fourPanels: []; open: [panel: ReadingPanel]; close: [panel: ReadingPanel]; focus: [panel: ReadingPanel];
   fullscreen: [panel: ReadingPanel]; arrangement: [value: ReadingArrangement]; resize: [axis: "column" | "row", ratio: number];
 }>();
+const toolbarOpen = ref(false);
+function hideOnBlur(event: FocusEvent) {
+  if (!(event.relatedTarget instanceof Node) || !(event.currentTarget as HTMLElement).contains(event.relatedTarget)) toolbarOpen.value = false;
+}
 const threeColumns = computed(() => props.arrangement === "grid" && props.panels.length === 3);
 const dividerColumn = computed(() => threeColumns.value ? props.column * 2 / 3 : props.column);
 const vertical = computed(() => props.multiple && props.arrangement !== "rows");
@@ -18,7 +22,7 @@ let drag: { axis: "column" | "row"; pointerId: number; element: HTMLElement } | 
 function move(event: PointerEvent) {
   if (!drag || drag.pointerId !== event.pointerId) return;
   const bounds = drag.element.parentElement!.getBoundingClientRect();
-  const ratio = drag.axis === "column" ? (event.clientX - bounds.left) / props.width : (event.clientY - bounds.top - 38) / (props.height - 38);
+  const ratio = drag.axis === "column" ? (event.clientX - bounds.left) / props.width : (event.clientY - bounds.top) / props.height;
   emit("resize", drag.axis, drag.axis === "column" && threeColumns.value ? ratio * 1.5 : ratio);
 }
 function stop() {
@@ -42,6 +46,10 @@ function key(event: KeyboardEvent, axis: "column" | "row") {
 onBeforeUnmount(stop);
 </script>
 <template>
+  <div class="reading-toolbar-reveal" :class="{ open: toolbarOpen }" tabindex="0" aria-label="显示阅读面板"
+    @pointerenter="toolbarOpen = true" @pointerleave="toolbarOpen = false"
+    @pointerdown.self="event => { if (event.pointerType !== 'mouse') toolbarOpen = !toolbarOpen; }"
+    @focusin="toolbarOpen = true" @focusout="hideOnBlur" @keydown.esc.stop="toolbarOpen = false">
   <nav class="reading-toolbar" aria-label="阅读面板">
     <div v-for="panel in READING_PANELS" :key="panel.id" class="reading-tab" :class="{ selected: selected === panel.id }">
       <button type="button" :aria-pressed="panels.includes(panel.id)" :aria-label="`打开${panel.label}面板`" @click="panels.includes(panel.id) ? emit('focus', panel.id) : emit('open', panel.id)">{{ panel.label }}</button>
@@ -57,14 +65,20 @@ onBeforeUnmount(stop);
       <option v-for="item in READING_ARRANGEMENTS" :key="item.id" :value="item.id">{{ item.label }}</option>
     </select>
   </nav>
+  </div>
   <div v-if="vertical" class="reading-divider vertical" role="separator" tabindex="0" aria-label="调整面板左右比例" aria-orientation="vertical" :aria-valuenow="Math.round(column * 100)" aria-valuemin="20" aria-valuemax="80"
-    :style="{ left: `${width * dividerColumn}px`, top: '38px', height: `${height - 38}px` }"
+    :style="{ left: `${width * dividerColumn}px`, top: '0px', height: `${height}px` }"
     @pointerdown="start($event, 'column')" @pointermove="move" @pointerup="stop" @pointercancel="stop" @lostpointercapture="stop" @keydown="key($event, 'column')" @dblclick="emit('resize', 'column', .5)"></div>
   <div v-if="horizontal" class="reading-divider horizontal" role="separator" tabindex="0" aria-label="调整面板上下比例" aria-orientation="horizontal" :aria-valuenow="Math.round(row * 100)" aria-valuemin="20" aria-valuemax="80"
-    :style="{ top: `${38 + (height - 38) * row}px`, left: arrangement === 'grid' && panels.length === 3 ? `${width * column}px` : '0px' }"
+    :style="{ top: `${height * row}px`, left: arrangement === 'grid' && panels.length === 3 ? `${width * column}px` : '0px' }"
     @pointerdown="start($event, 'row')" @pointermove="move" @pointerup="stop" @pointercancel="stop" @lostpointercapture="stop" @keydown="key($event, 'row')" @dblclick="emit('resize', 'row', .5)"></div>
 </template>
 <style scoped>
+.reading-toolbar-reveal { position: absolute; inset: 0 0 auto; height: 8px; z-index: 90; }
+.reading-toolbar-reveal.open { height: 38px; }
+.reading-toolbar-reveal:focus-visible { outline: 2px solid #a87a45; outline-offset: -2px; }
+.reading-toolbar-reveal .reading-toolbar { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(-100%); }
+.reading-toolbar-reveal.open .reading-toolbar { opacity: 1; visibility: visible; pointer-events: auto; transform: translateY(0); }
 .reading-toolbar { position: absolute; inset: 0 0 auto; height: 38px; z-index: 4; display: flex; align-items: center; gap: 5px; padding: 3px 6px; background: #faf7f0; border-bottom: 1px solid #d9d1c4; color: #6d573d; overflow-x: auto; }
 .reading-tab { display: flex; align-items: center; flex-shrink: 0; border-radius: 5px; }
 .reading-tab:has([aria-pressed=true]) { background: #ece5d8; }
