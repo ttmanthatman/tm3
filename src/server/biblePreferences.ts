@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { cleanBibleReaderMargin } from "../shared/bibleReaderMargins.js";
 import type { BiblePreferencesDTO } from "../shared/types.js";
 import { cleanBibleWorkspaceState } from "./bible/workspaceState.js";
 
@@ -16,6 +17,8 @@ const DEFAULT_BIBLE_PREFERENCES: BiblePreferencesDTO = {
 export function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
   const row = value && typeof value === "object" ? (value as Partial<BiblePreferencesDTO>) : {};
   const workspace = row.workspace ? cleanBibleWorkspaceState(row.workspace) : null;
+  const fullscreenMargin = cleanBibleReaderMargin(row.fullscreenMargin);
+  const splitMargin = cleanBibleReaderMargin(row.splitMargin);
   return {
     outputFormat: BIBLE_OUTPUT_FORMATS.has(String(row.outputFormat)) ? (row.outputFormat as BiblePreferencesDTO["outputFormat"]) : DEFAULT_BIBLE_PREFERENCES.outputFormat,
     referenceLabelMode: BIBLE_REFERENCE_LABEL_MODES.has(String(row.referenceLabelMode)) ? (row.referenceLabelMode as BiblePreferencesDTO["referenceLabelMode"]) : DEFAULT_BIBLE_PREFERENCES.referenceLabelMode,
@@ -25,6 +28,8 @@ export function cleanBiblePreferences(value: unknown): BiblePreferencesDTO {
     ...(typeof row.shareConfirm === "boolean" ? { shareConfirm: row.shareConfirm } : {}),
     ...(row.defaultSearchMode === "topic" || row.defaultSearchMode === "text" ? { defaultSearchMode: row.defaultSearchMode } : {}),
     ...(typeof row.fontSize === "number" && Number.isFinite(row.fontSize) ? { fontSize: Math.min(40, Math.max(16, Math.round(row.fontSize))) } : {}),
+    ...(fullscreenMargin !== undefined ? { fullscreenMargin } : {}),
+    ...(splitMargin !== undefined ? { splitMargin } : {}),
     ...(typeof row.notesAlwaysPublic === "boolean" ? { notesAlwaysPublic: row.notesAlwaysPublic } : {}),
     ...(workspace ? { workspace } : {})
   };
@@ -41,6 +46,8 @@ export function biblePreferencesJson(value: unknown): Prisma.InputJsonObject {
     ...(preferences.shareConfirm !== undefined ? { shareConfirm: preferences.shareConfirm } : {}),
     ...(preferences.defaultSearchMode !== undefined ? { defaultSearchMode: preferences.defaultSearchMode } : {}),
     ...(preferences.fontSize !== undefined ? { fontSize: preferences.fontSize } : {}),
+    ...(preferences.fullscreenMargin !== undefined ? { fullscreenMargin: preferences.fullscreenMargin } : {}),
+    ...(preferences.splitMargin !== undefined ? { splitMargin: preferences.splitMargin } : {}),
     ...(preferences.notesAlwaysPublic !== undefined ? { notesAlwaysPublic: preferences.notesAlwaysPublic } : {}),
     ...(preferences.workspace ? { workspace: preferences.workspace as unknown as Prisma.InputJsonValue } : {})
   };

@@ -44,7 +44,7 @@ for (const profile of [{ engine: "chromium", width: 360 }, { engine: "chromium",
       await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
       headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await page.getByRole("menuitem", { name: "书架" }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
       const started = Date.now();
       // The first click reads immediately; no complete-file download or second click.
       await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "阅读《排版设置回归》", exact: true }).click();

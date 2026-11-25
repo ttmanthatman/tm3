@@ -42,15 +42,22 @@ export function provideBibleAccountState(accountId: () => number, open: () => bo
       if (id === accountId()) { refreshSequence++; history.value = []; historyError.value = ""; }
     } catch (cause) { notify(cause instanceof Error ? cause.message : "清空失败，请重试"); }
   }
-  async function savePreferences(patch: Partial<BiblePreferencesDTO>) {
+  let saveQueue = Promise.resolve();
+  let pendingSaves = 0;
+  function savePreferences(patch: Partial<BiblePreferencesDTO>) {
     const id = accountId();
-    if (preferencesBusy.value) throw new Error("偏好正在保存，请稍后重试");
+    const body = JSON.stringify({ biblePreferences: patch });
     preferenceRevision++;
+    pendingSaves++;
     preferencesBusy.value = true;
-    try {
-      const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body: JSON.stringify({ biblePreferences: patch }) });
+    const operation = saveQueue.then(async () => {
+      if (id !== accountId()) throw new Error("账号已切换，请重新保存偏好");
+      const result = await api<{ account: AccountDTO }>("/api/me/preferences", { method: "PATCH", body });
       if (id === accountId() && store.account) store.account.biblePreferences = result.account.biblePreferences;
-    } finally { preferencesBusy.value = false; }
+    });
+    // A failed request is reported to its caller; subsequent saves can still run.
+    saveQueue = operation.catch(() => {});
+    return operation.finally(() => { pendingSaves--; preferencesBusy.value = pendingSaves > 0; });
   }
   async function refreshPreferences() {
     const id = accountId(), revision = preferenceRevision;

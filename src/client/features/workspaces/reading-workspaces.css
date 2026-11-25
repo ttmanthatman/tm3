@@ -1,0 +1,33 @@
+.app-shell.reading-layout > :is(.bible-workspace, .book-workspace, .study-panel, .chat-pane)[style] {
+  position: absolute;
+  inset: auto;
+  left: var(--panel-left);
+  top: var(--panel-top);
+  width: var(--panel-width);
+  height: var(--panel-height);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  container-type: inline-size;
+}
+.app-shell.reading-layout > .chat-pane { visibility: visible; }
+.app-shell.reading-layout > :is(.channel-pane, .member-pane) {
+  position: absolute;
+  top: var(--chat-top);
+  bottom: auto;
+  height: var(--chat-height);
+  width: min(310px, var(--chat-width));
+  z-index: 40;
+  transform: none;
+}
+.app-shell.reading-layout > .channel-pane { left: var(--chat-left); }
+.app-shell.reading-layout > .member-pane { right: calc(100% - var(--chat-left) - var(--chat-width)); visibility: hidden; }
+.app-shell.reading-layout > .member-pane.open { visibility: visible; opacity: 1; pointer-events: auto; }
+.app-shell.reading-layout > .channel-pane.collapsed:not(.open) { visibility: hidden; }
+.app-shell.reading-layout > .scrim { display: block; left: var(--chat-left); top: var(--chat-top); width: var(--chat-width); height: var(--chat-height); right: auto; bottom: auto; }
+.study-panel { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; }
+.study-panel .study-workspace { grid-row: 1; }
+.app-shell.reading-layout > :is(.bible-workspace, .book-workspace) .modal-shell > :is(.small-modal, .app-modal-medium) {
+  max-height: calc(var(--panel-height) - var(--safe-top, 0px) - var(--safe-bottom, 0px) - 24px);
+}
+.app-shell.reading-layout:has(.modal-shell) > .reading-divider { visibility: hidden; }

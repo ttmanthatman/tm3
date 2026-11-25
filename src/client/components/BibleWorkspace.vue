@@ -41,6 +41,7 @@ import NoteManager from "../features/bible/notes/NoteManager.vue";
 import CopyworkManager from "../features/bible/copywork/CopyworkManager.vue";
 import BibleHomePane from "../features/bible/BibleHomePane.vue";
 import BiblePreferencesDialog from "../features/bible/BiblePreferencesDialog.vue";
+import { cleanBibleReaderMargin, BIBLE_READER_MARGIN_MIN } from "@shared/bibleReaderMargins";
 import { BIBLE_FONT_DEFAULT, bibleFontSizeStorageKey, clampBibleFontSize } from "../features/bible/bibleFont";
 import AppModal from "./ui/AppModal.vue";
 import { provideBibleAccountState } from "../features/bible/useBibleAccountState";
@@ -147,8 +148,23 @@ let persistTimer = 0;
 let catalogLoadPromise: Promise<void> | null = null;
 let componentMounted = false;
 let stateRestored = false;
+let workspaceRestorePromise: Promise<void> | null = null;
 const store = useChatStore();
 const { preferences, savePreferences } = provideBibleAccountState(() => props.accountId, () => props.open, showToast);
+const liveMargins = ref<{ fullscreenMargin: number; splitMargin: number }>({ fullscreenMargin: BIBLE_READER_MARGIN_MIN, splitMargin: BIBLE_READER_MARGIN_MIN });
+const readerMargin = computed(() => props.split ? liveMargins.value.splitMargin : liveMargins.value.fullscreenMargin);
+watch(() => props.accountId, () => {
+  if (bibleFontSizeSaveTimer) window.clearTimeout(bibleFontSizeSaveTimer);
+  bibleFontSizeSaveTimer = 0;
+  liveMargins.value = { fullscreenMargin: preferences.value?.fullscreenMargin ?? BIBLE_READER_MARGIN_MIN, splitMargin: preferences.value?.splitMargin ?? BIBLE_READER_MARGIN_MIN };
+}, { immediate: true });
+watch(() => [preferences.value?.fullscreenMargin, preferences.value?.splitMargin], () => {
+  if (!bibleFontSizeSaveTimer) liveMargins.value = { fullscreenMargin: preferences.value?.fullscreenMargin ?? BIBLE_READER_MARGIN_MIN, splitMargin: preferences.value?.splitMargin ?? BIBLE_READER_MARGIN_MIN };
+});
+function handleBibleMarginLive(key: "fullscreenMargin" | "splitMargin", value: number) {
+  liveMargins.value[key] = cleanBibleReaderMargin(value) ?? BIBLE_READER_MARGIN_MIN;
+  scheduleBibleFontSizeSave();
+}
 const { start: handleTouchStart, end: handleTouchEnd, cancel: cancelSwipe } = createBibleSwipeNavigation({
   appearance: () => store.appearance,
   blocked: () => !props.open || !!props.splitAvailable,
@@ -174,11 +190,14 @@ function handleBibleFontSizeLive(size: number) {
 
 function scheduleBibleFontSizeSave(retry = 0) {
   if (bibleFontSizeSaveTimer) window.clearTimeout(bibleFontSizeSaveTimer);
+  const accountId = props.accountId;
   bibleFontSizeSaveTimer = window.setTimeout(() => {
     bibleFontSizeSaveTimer = 0;
-    void savePreferences({ fontSize: bibleFontSize.value }).catch(() => {
+    if (accountId !== props.accountId) return;
+    void savePreferences({ fontSize: bibleFontSize.value, ...liveMargins.value }).catch(() => {
+      if (accountId !== props.accountId) return;
       if (retry < 2) scheduleBibleFontSizeSave(retry + 1);
-      else showToast("字号保存失败，请稍后重试");
+      else showToast("阅读偏好保存失败，请稍后重试");
     });
   }, 500);
 }
@@ -272,7 +291,12 @@ onBeforeUnmount(() => {
   if (bibleFontSizeSaveTimer) window.clearTimeout(bibleFontSizeSaveTimer);
 });
 
-async function restoreWorkspaceState() {
+function restoreWorkspaceState() {
+  workspaceRestorePromise = restoreWorkspaceStateContents();
+  return workspaceRestorePromise;
+}
+async function restoreWorkspaceStateContents() {
+  normalReadingState = null;
   const accountId = props.accountId;
   if (serverSyncTimer) window.clearTimeout(serverSyncTimer);
   pendingWorkspaceSyncJson = "";
@@ -361,10 +385,9 @@ function scheduleWorkspacePersistence() {
   persistTimer = window.setTimeout(persistWorkspaceState, 180);
 }
 
-function persistWorkspaceState() {
-  if (!stateRestored || !props.accountId) return;
+function currentWorkspaceState(): BibleWorkspaceState {
   const currentPanes = panes.value.map((pane) => ({ ...pane, ...paneRefs.get(pane.id)?.snapshot() }));
-  const state: BibleWorkspaceState = {
+  return {
     version: 2,
     view: view.value,
     searchMode: searchMode.value,
@@ -381,6 +404,11 @@ function persistWorkspaceState() {
     history: searchHistory.value,
     updatedAt: new Date().toISOString()
   };
+}
+let normalReadingState: BibleWorkspaceState | null = null;
+function persistWorkspaceState() {
+  if (!stateRestored || !props.accountId) return;
+  const state = normalReadingState ? { ...normalReadingState, updatedAt: new Date().toISOString() } : currentWorkspaceState();
   try {
     saveBibleWorkspaceState(window.localStorage, props.accountId, state);
   } catch {
@@ -746,8 +774,10 @@ function clearStudyContext() {
 }
 async function openStudyContext(lookups: BibleLookupDTO[], highlight: boolean) {
   const generation = ++studyContextGeneration;
+  await workspaceRestorePromise;
   await ensureCatalog();
   if (generation !== studyContextGeneration || !props.studyMode) return;
+  if (!normalReadingState && stateRestored) normalReadingState = JSON.parse(JSON.stringify(currentWorkspaceState()));
   const first = lookups[0];
   if (!first?.verses.length) return;
   const books = new Map(allBooks.value.map(book => [book.name, book.code]));
@@ -760,6 +790,30 @@ async function openStudyContext(lookups: BibleLookupDTO[], highlight: boolean) {
   await routeLookup(sameBook, activePaneId.value, [], first.sourceId, activePaneId.value ?? undefined);
   if (generation === studyContextGeneration) for (const pane of paneRefs.values()) pane.clearNavigationHighlight();
 }
+
+watch(() => props.studyMode, async enabled => {
+  if (enabled || !normalReadingState) return;
+  clearStudyContext();
+  const saved = normalReadingState;
+  normalReadingState = null;
+  panes.value = saved.panes;
+  activePaneId.value = saved.activePaneId;
+  receivingPaneId.value = saved.receivingPaneId;
+  splitOrientation.value = saved.orientation;
+  paneSizes.value = saved.paneSizes;
+  view.value = saved.view;
+  selectedBook.value = saved.selectedBook;
+  searchMode.value = saved.searchMode;
+  topicQuery.value = saved.topicQuery;
+  textQuery.value = saved.textQuery;
+  topicResult.value = saved.topicResult;
+  textResult.value = saved.textResult;
+  await nextTick();
+  for (const pane of saved.panes) {
+    if (pane.view !== "home") await paneRefs.get(pane.id)?.openLocation(pane, false);
+  }
+  persistWorkspaceState();
+});
 
 async function openCopyworkContext(source: CopyworkSource) {
   await ensureCatalog();
@@ -1072,7 +1126,7 @@ function showToast(message: string) {
     aria-label="圣经"
     class="bible-workspace"
     :class="{ open, split, 'study-reader': studyMode, compact: workspaceWidth <= 600, medium: workspaceWidth <= 900 }"
-    :style="{ '--bible-font-size': `${bibleFontSize}px` }"
+    :style="{ '--bible-font-size': `${bibleFontSize}px`, '--bible-reader-margin': `${readerMargin}px` }"
     :aria-hidden="!open"
     :inert="!open"
     @touchstart.passive="handleTouchStart"
@@ -1227,7 +1281,7 @@ function showToast(message: string) {
       </template>
     </section>
     <!-- 圣经页面内不放提词器（经文本身高亮跟随）；提词器只在只看聊天时由 App 悬浮在聊天顶端 -->
-    <BiblePreferencesDialog :open="preferencesOpen" :font-size="bibleFontSize" :lyrics-transition="bibleAudioLyricsTransition" @font-size="handleBibleFontSizeLive" @lyrics-transition="handleBibleAudioLyricsTransition" @close="preferencesOpen = false" />
+    <BiblePreferencesDialog :open="preferencesOpen" :split="split" :font-size="bibleFontSize" :lyrics-transition="bibleAudioLyricsTransition" @margin="handleBibleMarginLive" @font-size="handleBibleFontSizeLive" @lyrics-transition="handleBibleAudioLyricsTransition" @close="preferencesOpen = false" />
     <AppModal :open="!!pendingContext" title="发送上下文到哪个窗格？" content-class="bible-context-dialog" @close="pendingContext = null">
       <div class="bible-context-options"><p>检索结果会保留在原窗格。</p><button v-for="pane in panes.filter(item => item.id !== pendingContext?.sourcePaneId)" :key="pane.id" type="button" @click="chooseContextPane(pane.id)">{{ biblePaneLabel(panes.findIndex(item => item.id === pane.id)) }} 窗格 · {{ pane.view === 'home' ? '目录与检索' : pane.book.name }}</button></div>
     </AppModal>

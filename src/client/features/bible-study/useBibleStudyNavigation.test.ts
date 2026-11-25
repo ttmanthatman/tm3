@@ -18,7 +18,7 @@ function harness(desktop = true) {
   let clears = 0;
   const scope = effectScope();
   const workspace = ref({ clearStudyContext: () => { clears++; }, openStudyContext: async (lookups: BibleLookupDTO[], highlight: boolean) => { calls.push({ lookups, highlight }); } });
-  const navigation = scope.run(() => useBibleStudyNavigation({ enabled: () => enabled.value, workspace, splitAvailable, bibleOpen, bibleOnRight: ref(true), openBible: () => { bibleOpen.value = true; }, shrinkBible: () => {} }))!;
+  const navigation = scope.run(() => useBibleStudyNavigation({ enabled: () => enabled.value, workspace, splitAvailable, bibleOpen, openBible: () => { bibleOpen.value = true; }, shrinkBible: () => {} }))!;
   return { ...navigation, enabled, bibleOpen, splitAvailable, calls, clears: () => clears, stop: () => scope.stop() };
 }
 async function flush() { await nextTick(); await setImmediate(); await nextTick(); }

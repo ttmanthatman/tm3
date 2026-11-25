@@ -127,14 +127,14 @@ test("Bible preferences validate account options and preserve unrelated settings
   const { app, writes } = createHarness();
   const update = (biblePreferences: unknown) => app.inject({ method: "PATCH", url: "/api/me/preferences", headers: { authorization: "member" }, payload: { biblePreferences } });
   try {
-    const first = await update({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 24, defaultSearchMode: "text" });
+    const first = await update({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 24, defaultSearchMode: "text", fullscreenMargin: 64, splitMargin: 8 });
     assert.equal(first.statusCode, 200, first.body);
     assert.equal(first.json().account.biblePreferences.shareIncludeTranslation, true);
-    const next = await update({ fontSize: 26 });
+    const next = await update({ fontSize: 26, splitMargin: 24 });
     assert.equal(next.statusCode, 200, next.body);
-    assert.deepEqual(next.json().account.biblePreferences, biblePreferencesJson({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 26, defaultSearchMode: "text" }));
+    assert.deepEqual(next.json().account.biblePreferences, { ...biblePreferencesJson({ notesAlwaysPublic: true, outputFormat: "numberedVerses", shareIncludeTranslation: true, shareConfirm: false, fontSize: 26, defaultSearchMode: "text" }), fullscreenMargin: 64, splitMargin: 24 });
     const before = writes();
-    for (const patch of [{ shareConfirm: "false" }, { fontSize: 41 }, { fontSize: 15 }, { fontSize: 20.5 }, { defaultSearchMode: "unknown" }, { shareIncludeTranslation: null }, { notesAlwaysPublic: 1 }]) {
+    for (const patch of [{ shareConfirm: "false" }, { fontSize: 41 }, { fontSize: 15 }, { fontSize: 20.5 }, { defaultSearchMode: "unknown" }, { shareIncludeTranslation: null }, { notesAlwaysPublic: 1 }, { fullscreenMargin: 97 }, { splitMargin: 7 }, { splitMargin: 8.5 }]) {
       const invalid = await update(patch);
       assert.equal(invalid.statusCode, 400, invalid.body);
     }

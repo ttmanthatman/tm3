@@ -2,9 +2,11 @@
 import { computed, ref } from "vue";
 import { BIBLE_SPLIT_HANDLE_WIDTH, bibleSplitBounds } from "./useBibleDisplayLayout";
 
-const props = defineProps<{ ratio: number; width: number; reversed: boolean }>();
+const props = defineProps<{ ratio: number; width: number; reversed: boolean; reader: "bible" | "book" }>();
 const emit = defineEmits<{ resize: [ratio: number, snap: boolean]; swap: [] }>();
 const dragging = ref(false);
+const readerLabel = computed(() => props.reader === "book" ? "书架" : "圣经");
+const swapLabel = computed(() => `左右交换${readerLabel.value}和聊天`);
 const bounds = computed(() => bibleSplitBounds(props.width));
 let pointerId: number | null = null;
 let offset = 0;
@@ -41,14 +43,14 @@ function keydown(event: KeyboardEvent) {
 <template>
   <div class="bible-chat-separator" :class="{ dragging }" data-no-bible-swipe>
     <div class="bible-chat-resize" role="separator" tabindex="0"
-    aria-label="调整圣经和聊天宽度" aria-orientation="vertical" aria-controls="bible-workspace"
+    :aria-label="`调整${readerLabel}和聊天宽度`" aria-orientation="vertical" :aria-controls="`${reader}-workspace`"
     :aria-valuenow="Math.round(ratio * 100)" :aria-valuemin="Math.ceil(bounds.min * 100)" :aria-valuemax="Math.floor(bounds.max * 100)"
-    :aria-valuetext="`圣经${reversed ? '在右侧' : '在左侧'}，宽度 ${Math.round(ratio * 100)}%`"
+    :aria-valuetext="`${readerLabel}${reversed ? '在右侧' : '在左侧'}，宽度 ${Math.round(ratio * 100)}%`"
     @pointerdown="start" @pointermove="move" @pointerup="stop" @pointercancel="stop" @lostpointercapture="stop"
     @keydown="keydown" @dblclick="emit('resize', 0.5, false)">
       <span class="bible-chat-grip" aria-hidden="true"></span>
     </div>
-    <button class="bible-chat-swap" type="button" tabindex="0" aria-label="左右交换圣经和聊天" title="左右交换圣经和聊天"
+    <button class="bible-chat-swap" type="button" tabindex="0" :aria-label="swapLabel" :title="swapLabel"
       :disabled="dragging" @touchend.stop @click="emit('swap')"></button>
   </div>
 </template>
@@ -59,7 +61,7 @@ function keydown(event: KeyboardEvent) {
 .bible-chat-grip { width: 4px; height: 44px; border-radius: 3px; background: #a89477; }
 .bible-chat-separator:hover, .bible-chat-separator:focus-within, .bible-chat-separator.dragging { background: #e1d4bc; }
 .bible-chat-resize:focus-visible { outline: 2px solid #947044; outline-offset: -2px; }
-.bible-chat-swap { position: absolute; left: 0; top: 0; width: 100%; height: var(--bible-topbar-height); min-width: 0; padding: 0; border: 0; border-inline: 1px solid #899a7d; border-bottom: 1px solid #7d8f70; border-radius: 0; background: #a1b195; box-shadow: none; cursor: pointer; touch-action: manipulation; }
+.bible-chat-swap { position: absolute; left: 0; top: 0; width: 100%; height: var(--reader-swap-height, var(--bible-topbar-height)); min-width: 0; padding: 0; border: 0; border-inline: 1px solid #899a7d; border-bottom: 1px solid #7d8f70; border-radius: 0; background: #a1b195; box-shadow: none; cursor: pointer; touch-action: manipulation; }
 .bible-chat-swap:hover, .bible-chat-swap:focus-visible { background: #819571; }
 .bible-chat-swap:focus-visible { outline: 2px solid #415a35; outline-offset: -2px; }
 </style>

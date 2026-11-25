@@ -394,7 +394,7 @@ test("favorites render in the main chat surface and support context jumps", () =
   assert.match(app, /:class="\{ 'favorite-image-card': favorite\.message\.type === 'image' \}"/);
   assert.doesNotMatch(app, /长按任意卡片查看原消息上下文/);
   assert.match(app, /class="mini-btn secondary"[\s\S]*?openFavoriteMessage\(favorite\)[\s\S]*?查看上下文/);
-  assert.match(app, /<ComposerBar\s+v-if="!showingFavoriteSurface && !isMusicChannel && !\(studyWorkspaceVisible && studyActive\)"/);
+  assert.match(app, /<ComposerBar\s+v-if="!showingFavoriteSurface && !isMusicChannel"/);
   assert.match(composerBar, /<footer class="composer">/);
   assert.match(app, /<MusicManager[\s\S]*?embedded[\s\S]*?:tracks="musicTracks"[\s\S]*?@refresh-tracks="loadMusicTracks"/);
   assert.match(css, /\.favorites-main-list \{[\s\S]*?width: min\(620px, 100%\);/);
@@ -426,9 +426,9 @@ test("avatar and channel images are pinned to their square masks without clippin
   assert.match(css, /\.presence-avatar \{[\s\S]*?overflow: visible;/);
 });
 
-test("fullscreen workspaces unmount chat visuals and preserve the hidden study composer", () => {
+test("fullscreen reading panels keep mounted chat and study drafts while hiding their visuals", () => {
   assert.match(app, /<aside v-if="!chatWorkspaceHidden" class="channel-pane"/);
-  assert.match(app, /<section v-if="!chatWorkspaceHidden \|\| studyWorkspaceVisible" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane"/);
+  assert.match(app, /<section v-if="!chatWorkspaceHidden \|\| readingLayoutActive" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane"/);
   assert.match(app, /<aside v-if="!chatWorkspaceHidden" class="member-pane"/);
 });
 

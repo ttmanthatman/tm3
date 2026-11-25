@@ -4,7 +4,9 @@ import { BookOpen, Library } from "lucide-vue-next";
 import AppMenu from "../../components/AppMenu.vue";
 import AppMenuItem from "../../components/AppMenuItem.vue";
 
-const props = defineProps<{ openShelf: () => void; openStudy: () => void; studyActive: boolean }>();
+const props = defineProps<{
+  openShelf: () => void; openStudy: () => void; studyActive: boolean;
+}>();
 const root = ref<HTMLElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
 const open = ref(false);
@@ -19,9 +21,9 @@ async function show(last = false) {
   await nextTick();
   items().at(last ? -1 : 0)?.focus();
 }
-function select(action: () => void) {
+function select(action?: () => void) {
   close(true);
-  action();
+  action?.();
 }
 function navigate(event: KeyboardEvent) {
   if (!open.value) return;
@@ -63,5 +65,5 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside));
 </template>
 <style scoped>
 .book-header-menu { position: relative; flex: 0 0 auto; }
-.book-header-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 44; width: 132px; }
+.book-header-options { position: absolute; top: calc(100% + 6px); right: 0; z-index: 44; width: max-content; min-width: 132px; }
 </style>

@@ -69,9 +69,10 @@ test("reader reopens exact text and offers an explicit choice after another devi
   const read = async () => (await (await request.get(url, { headers })).json()).progress as BookProgressSnapshot;
   try {
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await page.getByRole("menuitem", { name: "书架" }).click();
+    await page.getByRole("menuitem", { name: "书架", exact: true }).click();
     const open = async () => { await page.locator(`[data-book-id="${book.id}"]`).getByRole("button", { name: "阅读《精确进度回归》", exact: true }).click(); await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0); };
     await open();
+    const escapeReader = () => page.locator(".book-reader").getByRole("button", { name: "‹ 书架", exact: true }).press("Escape");
     const scrollToParagraph = async (index: number) => page.locator("[data-continuous-reader]").evaluate((element, index) => {
       const frame = element.querySelector<HTMLIFrameElement>("iframe")!, doc = frame.contentDocument!, range = doc.createRange();
       range.setStart(doc.querySelector(`#p-${index}`)!.firstChild!, 0); range.setEnd(doc.querySelector(`#p-${index}`)!.firstChild!, 1);
@@ -80,7 +81,7 @@ test("reader reopens exact text and offers an explicit choice after another devi
     await scrollToParagraph(30);
     await expect.poll(async () => (await read()).locator?.quote.exact).toBe("第");
     const saved = await read(); expect(saved.locator).toBeTruthy();
-    await page.keyboard.press("Escape"); await open();
+    await escapeReader(); await open();
     await expect(page.frameLocator('iframe[title="电子书第 1 节"]').locator("#p-30")).toBeInViewport();
     // A second device advances the server without moving this open reader.
     expect((await request.put(url, { headers, data: { fraction: .9, locator: null, baseRevision: saved.revision, mutationId: randomUUID() } })).status()).toBe(200);
@@ -94,12 +95,12 @@ test("reader reopens exact text and offers an explicit choice after another devi
     await page.route(`**${url}`, route => route.request().method() === "PUT" ? route.abort("internetdisconnected") : route.continue());
     await scrollToParagraph(10);
     await expect(page.getByRole("status").filter({ hasText: "联网后重试" })).toBeVisible();
-    await page.keyboard.press("Escape"); await open();
+    await escapeReader(); await open();
     await expect(page.frameLocator('iframe[title="电子书第 1 节"]').locator("#p-10")).toBeInViewport();
     await page.unroute(`**${url}`);
     await page.getByRole("button", { name: "重试同步", exact: true }).click();
     await expect(page.getByRole("button", { name: "重试同步", exact: true })).toHaveCount(0);
     expect((await read()).locator).toBeTruthy();
-    await page.keyboard.press("Escape");
+    await escapeReader();
   } finally { await request.delete(`/api/admin/books/${book.id}`, { headers }); }
 });

@@ -773,7 +773,7 @@ defineExpose({ clearNavigationHighlight, openLookup, openLocation, snapshot, goB
 .bible-pane-label { width: 25px; height: 21px; border-radius: 6px; color: #fff8ed; background: #de7d1e; display: grid; place-items: center; font-size: 12px; font-weight: 900; box-shadow: 0 2px 6px rgba(164, 83, 12, .25); }
 /* Prepend correction must finish before painting, with a single anchor owner.
    Smooth correction otherwise fights the active native touch scroll. */
-.bible-pane-scroll { min-width: 0; min-height: 0; overflow: auto; padding: 24px max(16px, calc((100% - 760px) / 2)) 100px; overscroll-behavior: contain; overflow-anchor: none; scroll-behavior: auto; }
+.bible-pane-scroll { min-width: 0; min-height: 0; overflow: auto; padding-block: 24px 100px; padding-inline: min(25%, var(--bible-reader-margin)); overscroll-behavior: contain; overflow-anchor: none; scroll-behavior: auto; }
 .bible-reader-chapter { scroll-margin-top: 54px; padding: 10px 0 40px; }
 .bible-reader-chapter > header { margin-bottom: 20px; text-align: center; font-family: "Songti SC", "STSong", serif; }
 .bible-reader-chapter > header span { color: #947657; letter-spacing: .14em; }
@@ -823,7 +823,7 @@ defineExpose({ clearNavigationHighlight, openLookup, openLocation, snapshot, goB
   .bible-pane-icon { width: 29px; height: 30px; }
   .bible-pane-jumps select { height: 30px; padding: 0 2px; font-size: 11px; }
   .bible-pane-label { width: 22px; }
-  .bible-pane-scroll { padding: 18px 13px 94px; }
+  .bible-pane-scroll { padding-block: 18px 94px; }
   .bible-pane-verse-action { align-items: stretch; flex-direction: column; }
   .bible-pane-selection-copy { display: none; }
   .bible-pane-action-buttons { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)) auto; }

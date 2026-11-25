@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// 图书室负一屏：书架 + EPUB 阅读器。
+// 图书室：书架 + EPUB 阅读器。
 // 懒加载编排：本组件由 App.vue defineAsyncComponent 分包，进入聊天室不下载；
 // 打开书架先渲染书单（小 JSON），并行动态 import foliate-js；
 // 点按即可流式阅读；长按菜单分别提供离线缓存和 EPUB 文件下载。
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { Heart, ListTree, LoaderCircle, MessagesSquare, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
+import { Heart, ListTree, LoaderCircle, Maximize2, MessagesSquare, Minimize2, Minus, Plus, NotebookPen, Send, X } from "lucide-vue-next";
 import { FootnoteHandler } from "foliate-js/footnotes.js";
 import type { BookDTO, BookReaderPresenceDTO } from "@shared/types";
 import { api, getToken } from "../api";
@@ -52,7 +52,8 @@ import { useChatStore } from "../store";
 import NotesTransfer from "../features/notes/NotesTransfer.vue";
 import type { BookLocation, BookReadingContext } from "../features/books/bookReading";
 
-const props = defineProps<{ initialLocation?: BookLocation | null; activeChannelId?: number | null; readers?: BookReaderPresenceDTO[] }>();
+const props = defineProps<{ initialLocation?: BookLocation | null; activeChannelId?: number | null; readers?: BookReaderPresenceDTO[]; split: boolean; splitAvailable: boolean }>();
+const fullscreenLabel = computed(() => props.split ? "图书室全屏" : "缩小图书室，恢复分屏");
 const actions = ref<InstanceType<typeof BookReadingActions> | null>(null);
 const invitation = ref<BookLocation | null>(props.initialLocation ?? null);
 const invitationNotice = ref("");
@@ -140,6 +141,7 @@ watch(() => props.initialLocation, (value) => {
 
 const emit = defineEmits<{
   (e: "close"): void;
+  (e: "toggle-fullscreen"): void;
   (e: "reading-change", activity: { active: boolean; bookTitle: string | null }): void;
 }>();
 
@@ -405,7 +407,7 @@ function closeBookView() {
     clearTimeout(resizeTimer);
     resizeTimer = null;
   }
-  window.removeEventListener("resize", onWindowResize);
+  window.removeEventListener("resize", onReaderResize);
   if (view && relocateHandler) view.removeEventListener("relocate", relocateHandler);
   relocateHandler = null;
   lastPreloadIndex = -1;
@@ -519,7 +521,7 @@ async function openBook(book: BookDTO, restoreLocation?: BookLocation) {
     invitation.value = null;
     invitationNotice.value = "";
     localStorage.setItem(`${LAST_READ_KEY}.${store.account?.id ?? "guest"}`, String(book.id));
-    if (style.value.flow === "paginated") window.addEventListener("resize", onWindowResize);
+    if (style.value.flow === "paginated") window.addEventListener("resize", onReaderResize);
   } catch (error) {
     if (disposed || request !== openSequence) return;
     console.error(error);
@@ -696,11 +698,12 @@ function applyLayout() {
 }
 
 let resizeTimer: ReturnType<typeof setTimeout> | null = null;
-function onWindowResize() {
+function onReaderResize() {
   if (!view) return;
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => applyLayout(), 150);
 }
+watch(() => props.split, onReaderResize, { flush: "post" });
 
 function applyStyle() {
   persistStyle();
@@ -954,6 +957,7 @@ function onSliderInput(event: Event) {
 
 function onKeydown(event: KeyboardEvent) {
   if (!readerOpen.value || document.querySelector(".modal-shell") || (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]"))) return;
+  if (props.split && !(event.target instanceof Node && readerElement.value?.contains(event.target))) return;
   const target = view as unknown as { goLeft?(): void; goRight?(): void } | null;
   if (event.key === "ArrowLeft") target?.goLeft?.();
   else if (event.key === "ArrowRight") target?.goRight?.();
@@ -992,7 +996,7 @@ defineExpose({ reload: loadShelf });
 </script>
 
 <template>
-  <section class="book-workspace" data-book-workspace>
+  <section id="book-workspace" class="book-workspace" :class="{ split }" data-book-workspace>
     <!-- 书架 -->
     <div v-if="!readerOpen && !openingBook" class="book-shelf">
       <header class="book-topbar">
@@ -1001,6 +1005,9 @@ defineExpose({ reload: loadShelf });
         <div class="book-topbar-actions">
           <span class="book-topbar-hint">{{ books.length ? `${books.length} 本` : "" }}</span>
           <NotesTransfer v-if="store.account && !store.account.isGuest" domain="books" :account-id="store.account.id" menu @imported="noteHighlights.reload()" />
+          <button v-if="splitAvailable" class="book-topbar-btn book-layout-btn" type="button" :aria-label="fullscreenLabel" :title="fullscreenLabel" @click="emit('toggle-fullscreen')">
+            <Maximize2 v-if="split" :size="19" /><Minimize2 v-else :size="19" />
+          </button>
         </div>
       </header>
       <div v-if="shelfLoading" class="book-shelf-state"><LoaderCircle class="book-spin" :size="22" /> 正在打开书架…</div>
@@ -1057,6 +1064,9 @@ defineExpose({ reload: loadShelf });
         <div class="book-bar-group">
           <button class="book-bar-btn" type="button" :aria-label="'Aa 阅读设置'" @click="settingsOpen = !settingsOpen">Aa</button>
           <button class="book-bar-btn" type="button" :aria-label="'目录'" @click="tocOpen = true"><ListTree :size="17" /></button>
+          <button v-if="splitAvailable" class="book-bar-btn" type="button" :aria-label="fullscreenLabel" :title="fullscreenLabel" @click="emit('toggle-fullscreen')">
+            <Maximize2 v-if="split" :size="19" /><Minimize2 v-else :size="19" />
+          </button>
           <button class="book-bar-btn" type="button" @click="emitClose"><MessagesSquare :size="17" /> 聊天室</button>
         </div>
         </div>
@@ -1170,6 +1180,23 @@ defineExpose({ reload: loadShelf });
   background: #f4f1ea;
   color: #33302a;
 }
+.book-workspace.split { position: relative; inset: auto; grid-column: 1; grid-row: 1; min-width: 0; min-height: 0; z-index: 5; }
+
+/* Scroll thumbs stay quiet until the reader is hovered or keyboard-focused. */
+.book-workspace :deep(.book-shelf-grid),
+.book-workspace :deep(.book-continuous-scroll) { scrollbar-width: thin; scrollbar-color: transparent transparent; }
+.book-workspace :deep(.book-shelf-grid:hover),
+.book-workspace :deep(.book-shelf-grid:focus-within),
+.book-workspace :deep(.book-continuous-scroll:hover),
+.book-workspace :deep(.book-continuous-scroll:focus-within) { scrollbar-color: #a8947780 transparent; }
+.book-workspace :deep(.book-shelf-grid::-webkit-scrollbar),
+.book-workspace :deep(.book-continuous-scroll::-webkit-scrollbar) { width: 6px; }
+.book-workspace :deep(.book-shelf-grid::-webkit-scrollbar-thumb),
+.book-workspace :deep(.book-continuous-scroll::-webkit-scrollbar-thumb) { border-radius: 6px; background: transparent; }
+.book-workspace :deep(.book-shelf-grid:hover::-webkit-scrollbar-thumb),
+.book-workspace :deep(.book-shelf-grid:focus-within::-webkit-scrollbar-thumb),
+.book-workspace :deep(.book-continuous-scroll:hover::-webkit-scrollbar-thumb),
+.book-workspace :deep(.book-continuous-scroll:focus-within::-webkit-scrollbar-thumb) { background: #a8947780; }
 
 /* ---------- 书架 ---------- */
 .book-shelf { min-height: 0; flex: 1; display: flex; flex-direction: column; }
@@ -1198,6 +1225,8 @@ defineExpose({ reload: loadShelf });
 .book-topbar-title { font-size: 17px; font-weight: 800; }
 .book-topbar-hint { justify-self: end; color: #97836a; font-size: 12px; }
 .book-topbar-actions { justify-self: end; display: flex; align-items: center; gap: 8px; }
+.book-layout-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 8px; }
+.book-layout-btn:hover { background: rgba(90, 72, 50, .08); }
 .book-shelf-state {
   flex: 1;
   display: flex;
@@ -1211,7 +1240,7 @@ defineExpose({ reload: loadShelf });
 .book-shelf-state.error { color: #a33; }
 .book-shelf-sub { font-size: 12px; color: #a08c72; }
 .book-download-error {
-  margin: 12px max(16px, calc((100vw - 980px) / 2)) 0;
+  margin: 12px max(16px, calc((100% - 980px) / 2)) 0;
   padding: 9px 12px;
   border-radius: 9px;
   color: #9b2c2c;
@@ -1226,7 +1255,7 @@ defineExpose({ reload: loadShelf });
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
   gap: 22px 14px;
-  padding: 22px max(16px, calc((100vw - 980px) / 2)) calc(36px + var(--safe-bottom, 0px));
+  padding: 22px max(16px, calc((100% - 980px) / 2)) calc(36px + var(--safe-bottom, 0px));
   align-content: start;
 }
 .book-invitation-notice { padding: 12px; background: #f7efdf; color: #70583b; }

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, RotateCcw } from "lucide-vue-next";
 import { BIBLE_STUDY_STAGES, BIBLE_STUDY_STAGE_DETAILS, type BibleStudyFailure, type BibleStudyWorkspaceState } from "@shared/bibleStudy";
+import { useMessageSender } from "../../messageSending";
 import { api } from "../../api";
 import { useChatStore } from "../../store";
 import AppModal from "../../components/ui/AppModal.vue";
@@ -15,6 +16,19 @@ const store = useChatStore();
 const workspace = ref<BibleStudyWorkspaceState>({ progress: null, latest: null });
 const progress = computed(() => workspace.value.progress);
 const loaded = ref(false);
+const passageDraft = ref("");
+const { send, pending: passageBusy, statusMessage: passageError } = useMessageSender({ getSocket: () => store.socket });
+let pendingPassage: { content: string; id: string } | null = null;
+async function startPassage() {
+  const content = passageDraft.value.trim();
+  if (!content || passageBusy.value) return;
+  if (pendingPassage?.content !== content) pendingPassage = { content, id: crypto.randomUUID() };
+  const result = await send({ channelId: props.channelId, type: "text", content, clientRequestId: pendingPassage.id, replyToId: null });
+  if (!result.ok) return;
+  if (passageDraft.value.trim() === content) passageDraft.value = "";
+  pendingPassage = null;
+  await load();
+}
 const collapsed = ref(false);
 const dialog = ref<"records" | "summaries" | null>(null);
 const actionBusy = ref(false);
@@ -122,7 +136,7 @@ onBeforeUnmount(() => {
     <header class="study-header">
       <div class="study-header-line">
         <button class="study-header-button" type="button" aria-label="回到聊天室" @click="emit('leave')"><ChevronLeft :size="22" /></button>
-        <strong data-testid="active-channel-name">问答式查经</strong>
+        <strong>问答式查经</strong>
         <button v-if="progress" class="study-header-button collapse-progress" type="button"
           :aria-label="collapsed ? '展开查经进度' : '收起进度 5 秒'" :aria-expanded="!collapsed" @click="toggleProgress">
           <ChevronDown v-if="collapsed" :size="17" /><ChevronUp v-else :size="17" />
@@ -174,6 +188,12 @@ onBeforeUnmount(() => {
             <p v-else>发送经文范围，例如「马可福音 14:32–50」。</p>
             <p class="study-privacy">查经答复会保存，站点管理员可在后台查看。当前对话由站点配置的 AI 服务处理。</p>
           </section>
+          <form v-if="loaded && !progress" class="study-start-form" @submit.prevent="startPassage">
+            <label for="study-passage-input">输入查经经文</label>
+            <textarea id="study-passage-input" v-model="passageDraft" placeholder="例如：马可福音 14:37-39" rows="2" :disabled="passageBusy"></textarea>
+            <button type="submit" :disabled="passageBusy || !passageDraft.trim()">{{ passageBusy ? '正在开始…' : '开始查经' }}</button>
+            <p v-if="passageError" role="alert">{{ passageError }}</p>
+          </form>
           <p v-else-if="!loaded && !errorText" role="status">正在读取查经进度…</p>
         </div>
       </div>
@@ -192,6 +212,9 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.study-start-form { display: grid; gap: 8px; }
+.study-start-form textarea { width: 100%; min-height: 72px; padding: 10px; font: inherit; color: inherit; background: #fffdf6; border: 1px solid var(--study-line); border-radius: 8px; resize: vertical; }
+.study-start-form button { justify-self: end; padding: 8px 14px; border: 0; border-radius: 6px; background: var(--study-pine); color: white; cursor: pointer; }
 .study-workspace { grid-row: 1 / 7; display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; background: var(--study-paper); color: var(--study-ink); container-type: inline-size; }
 .study-active { grid-row: 1 / -1; }
 .study-header { color: #fff7dc; background: var(--study-pine); padding: var(--safe-top, 0px) 16px 12px; }

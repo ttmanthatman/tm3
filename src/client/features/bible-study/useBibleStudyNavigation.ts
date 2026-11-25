@@ -16,9 +16,9 @@ export function useBibleStudyNavigation(options: {
   workspace: Ref<Pick<BibleWorkspaceHandle, "openStudyContext" | "clearStudyContext"> | null>;
   splitAvailable: Ref<boolean>;
   bibleOpen: Ref<boolean>;
-  bibleOnRight: Ref<boolean>;
   openBible: () => void;
   shrinkBible: () => void;
+  revealReader?: () => void;
 }) {
   const selection = ref<StudyScriptureSelection | null>(null);
   const error = ref("");
@@ -39,7 +39,8 @@ export function useBibleStudyNavigation(options: {
     workspace?.clearStudyContext();
     if (!selected || !workspace || (selected.automatic && !desktop && !options.bibleOpen.value)) return;
     if (!options.bibleOpen.value) options.openBible();
-    if (desktop) { options.bibleOnRight.value = false; options.shrinkBible(); }
+    if (desktop) options.shrinkBible();
+    if (!desktop && !selected.automatic) options.revealReader?.();
     const references = [...new Set(selected.evidence)];
     // A whole-passage question clears the previous highlight without inventing a verse anchor.
     if (!references.length && openedReference === selected.reference) return;

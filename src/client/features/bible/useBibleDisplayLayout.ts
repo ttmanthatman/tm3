@@ -29,9 +29,9 @@ export function useBibleDisplayLayout(accountId: () => number | undefined) {
   const bibleSplit = computed(() => bibleOpen.value && bibleSplitAvailable.value && !expanded.value);
   const bibleFullscreen = computed(() => bibleOpen.value && !bibleSplit.value);
   const bibleSplitRatio = computed(() => clampBibleSplitRatio(preferredRatio.value, viewportWidth.value));
-  const bibleLayoutStyle = computed(() => bibleSplit.value ? {
+  const bibleLayoutStyle = computed(() => ({
     "--bible-width": `${(viewportWidth.value - BIBLE_SPLIT_HANDLE_WIDTH) * bibleSplitRatio.value}px`
-  } : {});
+  }));
 
   function resize() { viewportWidth.value = window.innerWidth; }
   if (typeof window !== "undefined") {
@@ -43,7 +43,17 @@ export function useBibleDisplayLayout(accountId: () => number | undefined) {
     expanded.value = false;
     preferredRatio.value = 0.5;
     bibleOnRight.value = false;
+    if (id) try {
+      const saved = JSON.parse(localStorage.getItem(`team-chat-bible-layout:${id}`) || "null");
+      if (saved && typeof saved.ratio === "number" && Number.isFinite(saved.ratio)) preferredRatio.value = Math.max(.1, Math.min(.9, saved.ratio));
+      bibleOnRight.value = saved?.onRight === true;
+    } catch { /* Local storage may be unavailable. */ }
   }, { immediate: true });
+  watch([preferredRatio, bibleOnRight], () => {
+    const id = accountId();
+    if (id) try { localStorage.setItem(`team-chat-bible-layout:${id}`, JSON.stringify({ ratio: preferredRatio.value, onRight: bibleOnRight.value })); }
+    catch { /* The current session still retains the layout. */ }
+  });
 
   function resizeBible(ratio: number, snap = false) {
     preferredRatio.value = clampBibleSplitRatio(ratio, viewportWidth.value, snap);

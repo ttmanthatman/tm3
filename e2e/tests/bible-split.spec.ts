@@ -52,6 +52,11 @@ test("pinned viewer stays within chat in both split orders and narrow layouts", 
       await page.setViewportSize({ width, height: 900 });
       for (let order = 0; order < (width >= 957 ? 2 : 1); order++) {
         if (order) await page.getByRole("button", { name: "左右交换圣经和聊天", exact: true }).click();
+        await expect.poll(async () => {
+          const chat = (await page.locator(".chat-pane").boundingBox())!;
+          const shell = (await viewer.boundingBox())!;
+          return Math.abs(chat.width - shell.width);
+        }).toBeLessThan(.5);
         const chat = (await page.locator(".chat-pane").boundingBox())!;
         const shell = (await viewer.boundingBox())!;
         const modal = (await page.locator(".pinned-view-modal").boundingBox())!;
@@ -95,14 +100,114 @@ async function openReading(page: Page) {
   await expect(page.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
 }
 
+test("Bible fullscreen and split margins are minimal by default and saved separately", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page);
+  await openReading(page);
+  const scroll = page.locator(".bible-reader-pane.active .bible-pane-scroll");
+  const margins = () => scroll.evaluate(element => {
+    const style = getComputedStyle(element);
+    return [style.paddingLeft, style.paddingRight];
+  });
+  const expand = page.getByRole("button", { name: "圣经全屏", exact: true });
+  const shrink = page.getByRole("button", { name: "缩小圣经，恢复分屏", exact: true });
+  expect(await margins()).toEqual(["8px", "8px"]);
+  await expand.click();
+  expect(await margins()).toEqual(["8px", "8px"]);
+  await page.getByRole("button", { name: "圣经偏好设置", exact: true }).click();
+  await page.getByRole("slider", { name: "全屏左右边距", exact: true }).fill("64");
+  await expect.poll(margins).toEqual(["64px", "64px"]);
+  await page.getByRole("slider", { name: "分屏左右边距", exact: true }).fill("24");
+  await page.getByRole("dialog", { name: "圣经偏好设置", exact: true }).getByRole("button", { name: "关闭", exact: true }).click();
+  await expect.poll(margins).toEqual(["64px", "64px"]);
+  await shrink.click();
+  expect(await margins()).toEqual(["24px", "24px"]);
+  await page.reload();
+  await expect(scroll).toBeVisible();
+  expect(await margins()).toEqual(["24px", "24px"]);
+  await expand.click();
+  expect(await margins()).toEqual(["64px", "64px"]);
+  for (const width of [360, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(expand).toBeHidden();
+    await expect(shrink).toBeHidden();
+    expect(await margins()).toEqual(["64px", "64px"]);
+  }
+});
+
+test("bookshelf opens beside chat, expands and returns to split", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page);
+  const openShelf = async () => {
+    await page.getByRole("button", { name: "打开图书室" }).click();
+    await page.getByRole("menuitem", { name: "书架", exact: true }).click();
+  };
+  await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
+  await openShelf();
+  const shelf = page.locator(".book-workspace");
+  const chat = page.locator(".chat-pane");
+  await expect(shelf).toBeVisible();
+  await expect(chat).toBeVisible();
+  const shelfBox = (await shelf.boundingBox())!;
+  const chatBox = (await chat.boundingBox())!;
+  const separatorBox = (await page.locator(".bible-chat-separator").boundingBox())!;
+  expect(shelfBox.x + shelfBox.width).toBeCloseTo(separatorBox.x, 1);
+  expect(separatorBox.x + separatorBox.width).toBeCloseTo(chatBox.x, 1);
+  expect(chatBox.x + chatBox.width).toBe(1280);
+  await page.getByRole("button", { name: "图书室全屏", exact: true }).click();
+  await expect(chat).toBeHidden();
+  expect((await shelf.boundingBox())!.width).toBe(1280);
+  await page.getByRole("button", { name: "缩小图书室，恢复分屏", exact: true }).click();
+  await expect(chat).toBeVisible();
+  await page.getByRole("button", { name: "图书室全屏", exact: true }).click();
+  await shelf.getByRole("button", { name: "关闭", exact: true }).click();
+  await openShelf();
+  await expect(chat).toBeVisible();
+  for (const width of [360, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.getByRole("button", { name: "打开书架面板", exact: true }).click();
+    await expect(chat).toBeHidden();
+    await expect(page.getByRole("button", { name: "图书室全屏", exact: true })).toBeHidden();
+    expect((await shelf.boundingBox())!.width).toBe(width);
+    expect(await shelf.evaluate(element => element.scrollWidth)).toBeLessThanOrEqual(width);
+  }
+});
+
+test("opening the shelf inserts a third column and the menu contains only reading entries", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page);
+  await openReading(page);
+  const chat = page.locator(".chat-pane");
+  await chat.locator(".composer textarea").fill("三列草稿");
+  await chat.getByRole("button", { name: "打开图书室", exact: true }).click();
+  const menu = page.getByRole("menu", { name: "图书室", exact: true });
+  await expect(menu.getByRole("menuitem")).toHaveText(["书架", "查经"]);
+  await menu.getByRole("menuitem", { name: "书架", exact: true }).click();
+  const panels = [page.locator(".bible-workspace"), page.locator(".book-workspace"), chat];
+  for (const panel of panels) await expect(panel).toBeVisible();
+  const rects = await Promise.all(panels.map(panel => panel.boundingBox()));
+  expect(rects[0]!.y).toBe(rects[1]!.y);
+  expect(rects[1]!.y).toBe(rects[2]!.y);
+  expect(rects[0]!.x + rects[0]!.width).toBeCloseTo(rects[1]!.x, 0);
+  expect(rects[1]!.x + rects[1]!.width).toBeCloseTo(rects[2]!.x, 0);
+  await expect(chat.locator(".composer textarea")).toHaveValue("三列草稿");
+  const shelf = page.locator(".book-shelf-grid");
+  if (await shelf.count()) {
+    await page.mouse.move(1270, 10);
+    await expect.poll(() => shelf.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("rgba(0, 0, 0, 0)");
+    await shelf.hover();
+    await expect.poll(() => shelf.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("168, 148, 119");
+  }
+});
+
 async function expectTopSwapAlignment(page: Page) {
-  const swap = (await page.getByRole("button", { name: "左右交换圣经和聊天", exact: true }).boundingBox())!;
-  const separator = (await page.locator(".bible-chat-separator").boundingBox())!;
-  const toolbar = (await page.locator(".bible-topbar").boundingBox())!;
-  expect(swap.x).toBeCloseTo(separator.x, 0);
-  expect(swap.width).toBeCloseTo(separator.width, 0);
-  expect(swap.y).toBeCloseTo(toolbar.y, 0);
-  expect(swap.y + swap.height).toBeCloseTo(toolbar.y + toolbar.height, 0);
+  await expect.poll(() => page.evaluate(() => {
+    const swap = document.querySelector(".bible-chat-swap")!.getBoundingClientRect();
+    const separator = document.querySelector(".bible-chat-separator")!.getBoundingClientRect();
+    const toolbar = document.querySelector(".bible-topbar")!.getBoundingClientRect();
+    return Math.max(Math.abs(swap.x - separator.x), Math.abs(swap.width - separator.width),
+      Math.abs(swap.y - toolbar.y), Math.abs(swap.bottom - toolbar.bottom));
+  })).toBeLessThan(.5);
 }
 
 for (const engine of ["chromium", "webkit"] as const) {
@@ -266,7 +371,7 @@ test("desktop split supports snapping, keyboard, drawers, fullscreen and drafts"
   await expect(page.locator(".member-pane")).toBeHidden();
   await page.screenshot({ path: "output/e2e/bible-split-desktop.png" });
   await page.reload();
-  await expectRatio(page, 0.5);
+  await expectRatio(page, 0.52);
 });
 
 test("split Bible sends a verse to the newly selected chat channel", async ({ page }) => {
@@ -467,6 +572,7 @@ for (const width of [360, 390]) {
       await page.getByRole("button", { name: "打开圣经", exact: true }).click();
       await expect(page.locator(".chat-pane")).toBeHidden();
       await expect(page.getByRole("separator", { name: "调整圣经和聊天宽度" })).toHaveCount(0);
+      await expect(page.locator(".bible-workspace")).toBeVisible();
       await openReading(page);
       await page.screenshot({ path: `output/e2e/bible-split-phone-${width}.png` });
       await page.getByRole("button", { name: "关闭圣经", exact: true }).click();
@@ -527,3 +633,104 @@ for (const engine of ["chromium", "webkit"] as const) {
     } finally { await context.close(); await owned?.close(); }
   });
 }
+
+for (const engine of ["chromium", "webkit"] as const) {
+  test(`four reading panels preserve chat, share one study reader and remember layouts (${engine})`, async ({ browser, baseURL }, info) => {
+    test.setTimeout(90_000);
+    const owned = engine === "webkit" ? await webkit.launch() : null;
+    const context = await (owned ?? browser).newContext({ baseURL, viewport: { width: 1280, height: 900 }, serviceWorkers: "block" });
+    try {
+      const page = await context.newPage();
+      await login(page);
+      await openReading(page);
+      const originalChannel = (await chatState(page)).channelId;
+      const progress = { stage: "observe", reference: "马可福音 14:37-39", questions: 1, feedback: null, working: false, failure: null,
+        questionPath: [{ id: 1, stage: "observe", text: "门徒应当怎样回应？", purpose: "观察动作", relation: "opening", evidence: ["马可福音 14:38"] }], answers: [] };
+      await page.route("**/api/bible-study/progress", route => route.fulfill({ json: { progress, latest: null } }));
+      const answers: unknown[] = [];
+      await page.route("**/api/bible-study/answer", route => { answers.push(route.request().postDataJSON()); return route.fulfill({ status: 202, json: { accepted: true } }); });
+      const composer = page.locator(".composer textarea");
+      await composer.fill("四屏聊天草稿");
+      const bible = page.locator(".bible-workspace"), study = page.locator(".study-panel"), book = page.locator(".book-workspace"), chat = page.locator(".chat-pane");
+      await chat.getByRole("button", { name: "打开图书室", exact: true }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
+      for (const panel of [bible, book, chat]) await expect(panel).toBeVisible();
+      await chat.getByRole("button", { name: "打开图书室", exact: true }).click();
+      await page.getByRole("menuitem", { name: "查经", exact: true }).click();
+      for (const panel of [bible, study, book, chat]) await expect(panel).toBeVisible();
+      await expect(page.locator(".bible-workspace")).toHaveCount(1);
+      await expect(bible.locator('[data-verse-key="MRK-14-38"].study-target')).toBeVisible();
+      await expect(composer).toHaveValue("四屏聊天草稿");
+      expect((await chatState(page)).channelId).toBe(originalChannel);
+      const rects = await Promise.all([bible, study, book, chat].map(panel => panel.boundingBox()));
+      expect(rects[0]!.x + rects[0]!.width).toBeCloseTo(rects[1]!.x, 0);
+      expect(rects[0]!.y + rects[0]!.height).toBeCloseTo(rects[2]!.y, 0);
+      expect(rects[2]!.x + rects[2]!.width).toBeCloseTo(rects[3]!.x, 0);
+      await bible.getByRole("button", { name: "圣经偏好设置", exact: true }).click();
+      const preferences = page.getByRole("dialog", { name: "圣经偏好设置", exact: true });
+      await expect(preferences.getByRole("button", { name: "关闭", exact: true })).toBeInViewport();
+      const preferenceBounds = (await preferences.locator(".bible-preferences-dialog").boundingBox())!;
+      const bibleBounds = (await bible.boundingBox())!;
+      expect(preferenceBounds.y).toBeGreaterThanOrEqual(bibleBounds.y);
+      expect(preferenceBounds.y + preferenceBounds.height).toBeLessThanOrEqual(bibleBounds.y + bibleBounds.height);
+      await preferences.getByRole("slider", { name: "分屏左右边距", exact: true }).fill("20");
+      await expect.poll(() => bible.locator(".bible-pane-scroll").evaluate(element => getComputedStyle(element).paddingLeft)).toBe("20px");
+      await preferences.getByRole("button", { name: "关闭", exact: true }).click();
+      await study.getByPlaceholder("追加回答或提问…").fill("警醒祷告");
+      await page.getByRole("button", { name: "全屏查经面板", exact: true }).click();
+      await expect(book).toBeHidden();
+      await expect(study.getByPlaceholder("追加回答或提问…")).toHaveValue("警醒祷告");
+      await page.getByRole("button", { name: "恢复查经面板", exact: true }).click();
+      await expect(book).toBeVisible();
+      await expect(bible.locator('[data-verse-key="MRK-14-38"].study-target')).toBeVisible();
+      await study.getByRole("button", { name: "回答并收起", exact: true }).click();
+      expect(answers).toHaveLength(1);
+      expect((await chatState(page)).channelId).toBe(originalChannel);
+      await chat.getByRole("button", { name: "发送", exact: true }).click();
+      await expect(composer).toHaveValue("");
+      await expect.poll(async () => (await chatState(page)).contents.includes("四屏聊天草稿")).toBe(true);
+      const divider = page.getByRole("separator", { name: "调整面板左右比例", exact: true });
+      await divider.focus(); await divider.press("ArrowRight");
+      await expect(divider).toHaveAttribute("aria-valuenow", "52");
+      const arrangement = page.getByRole("combobox", { name: "面板排列方式", exact: true });
+      for (const value of ["columns", "rows", "grid"]) {
+        await arrangement.selectOption(value);
+        for (const panel of [bible, study, book, chat]) await expect(panel).toBeVisible();
+      }
+      await page.screenshot({ path: info.outputPath(`four-panels-${engine}.png`) });
+      await page.reload();
+      for (const panel of [bible, study, book, chat]) await expect(panel).toBeVisible();
+      await expect(divider).toHaveAttribute("aria-valuenow", "52");
+      await expect(arrangement).toHaveValue("grid");
+      await page.getByRole("button", { name: "关闭查经面板", exact: true }).click();
+      await expect(bible.locator('[data-verse-key="PSA-66-1"]')).toBeVisible();
+      await expect(bible.locator(".study-target")).toHaveCount(0);
+      for (const width of [360, 390]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.getByRole("button", { name: "打开书架面板", exact: true }).click();
+        await expect(book).toBeVisible(); await expect(chat).toBeHidden();
+        expect((await book.boundingBox())!.width).toBe(width);
+        await page.getByRole("button", { name: "打开聊天面板", exact: true }).click();
+        await expect(chat).toBeVisible(); await expect(book).toBeHidden();
+      }
+    } finally { await context.close(); await owned?.close(); }
+  });
+}
+
+test("study starts its own passage while the ordinary chat channel and draft stay selected", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await login(page);
+  const channelId = (await chatState(page)).channelId;
+  const composer = page.locator(".composer textarea");
+  await composer.fill("聊天中的草稿");
+  await page.getByRole("button", { name: "打开图书室", exact: true }).click();
+  await page.getByRole("menuitem", { name: "查经", exact: true }).click();
+  const study = page.locator(".study-panel");
+  await study.getByRole("textbox", { name: "输入查经经文", exact: true }).fill("诗篇 23");
+  await study.getByRole("button", { name: "开始查经", exact: true }).click();
+  await expect(study.getByRole("region", { name: "查经进度" })).toBeVisible();
+  await expect(study).toContainText("诗篇 第23章");
+  expect((await chatState(page)).channelId).toBe(channelId);
+  expect((await chatState(page)).contents).not.toContain("诗篇 23");
+  await expect(composer).toHaveValue("聊天中的草稿");
+});

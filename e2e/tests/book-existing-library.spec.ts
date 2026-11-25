@@ -25,7 +25,7 @@ for (const [index, name] of files.entries()) {
       await page.getByRole("button", { name: "登录", exact: true }).click();
       await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await page.getByRole("menuitem", { name: "书架" }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
       await page.locator(`[data-book-id="${book.id}"] .book-card`).click();
       await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);
       const scroller = page.locator("[data-continuous-reader]");

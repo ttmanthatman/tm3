@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { Prisma, type Account, type AccountSession, type Actor, type PrismaClient } from "@prisma/client";
 import type { FastifyInstance, FastifyReply, FastifyRequest, preHandlerHookHandler } from "fastify";
 import { z } from "zod";
+import { BIBLE_READER_MARGIN_MAX, BIBLE_READER_MARGIN_MIN } from "../../shared/bibleReaderMargins.js";
 import type { AdminLoginLogKind } from "../../shared/types.js";
 import { cleanBibleWorkspaceState } from "../bible/workspaceState.js";
 import { biblePreferencesJson } from "../biblePreferences.js";
@@ -261,6 +262,8 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
             shareConfirm: z.boolean().optional(),
             defaultSearchMode: z.enum(["topic", "text"]).optional(),
             fontSize: z.number().int().min(16).max(40).optional(),
+            fullscreenMargin: z.number().int().min(BIBLE_READER_MARGIN_MIN).max(BIBLE_READER_MARGIN_MAX).optional(),
+            splitMargin: z.number().int().min(BIBLE_READER_MARGIN_MIN).max(BIBLE_READER_MARGIN_MAX).optional(),
             notesAlwaysPublic: z.boolean().optional()
           })
           .optional(),

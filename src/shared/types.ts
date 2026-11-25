@@ -1043,6 +1043,8 @@ export interface BiblePreferencesDTO {
   shareConfirm?: boolean;
   defaultSearchMode?: "topic" | "text";
   fontSize?: number;
+  fullscreenMargin?: number;
+  splitMargin?: number;
 }
 
 /** 阅读器窗格定位目标（节范围 + 文本匹配区间） */

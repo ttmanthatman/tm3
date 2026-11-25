@@ -28,7 +28,6 @@ import type { MusicSleepTimer } from "../music/useMusicSleepTimer";
 import ListenControl from "../listen/ListenControl.vue";
 import type { HeaderPlayback } from "../listen/useHeaderPlayback";
 import GatherControl from "./GatherControl.vue";
-import { isBibleStudyRoom } from "@shared/bibleStudy";
 import BookHeaderMenu from "./BookHeaderMenu.vue";
 
 // Presentation-only home of the chat header and the pinned/activity notice
@@ -52,6 +51,7 @@ const props = defineProps<{
   chatSubtitleText: string;
   showingFavoriteSurface: boolean;
   bibleOpen: boolean;
+  studyPanelOpen: boolean;
   musicPlaying: boolean;
   musicPlayer: MusicPlayer;
   headerPlayback: HeaderPlayback;
@@ -185,7 +185,9 @@ onBeforeUnmount(clearStoryHold);
       <OverflowMarquee v-if="chatSubtitleText" :text="chatSubtitleText" />
     </div>
     <button v-if="!showingFavoriteSurface" class="icon-btn bible-header-trigger" type="button" @click="openBibleWorkspace" :aria-label="bibleOpen ? '合上圣经' : '打开圣经'" :aria-pressed="bibleOpen" :title="bibleOpen ? '合上圣经' : '打开圣经'"><BibleIcon :open="bibleOpen" /></button>
-    <BookHeaderMenu v-if="!showingFavoriteSurface" :open-shelf="openBookWorkspace" :open-study="openBibleStudy" :study-active="isBibleStudyRoom(currentChannel?.directKey)" />
+    <BookHeaderMenu v-if="!showingFavoriteSurface"
+      :open-shelf="openBookWorkspace" :open-study="openBibleStudy" :study-active="studyPanelOpen"
+      />
     <SermonHub v-if="!showingFavoriteSurface" />
     <ListenControl
       v-if="!showingFavoriteSurface"

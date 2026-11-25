@@ -2,24 +2,31 @@
 // 圣经偏好设置：纸质卡片式设计语言（米色纸面 + 宋体标题 + 赭石强调色），与阅读窗格一致。
 // 字号一栏即时生效：每次调节立刻 emit 给工作区应用阅读字号并自动保存，无需点「保存偏好」。
 import { ref, watch } from "vue";
+import { BIBLE_READER_MARGIN_MAX, BIBLE_READER_MARGIN_MIN } from "@shared/bibleReaderMargins";
 import type { BiblePreferencesDTO } from "@shared/types";
 import { Minus, Plus } from "lucide-vue-next";
 import AppModal from "../../components/ui/AppModal.vue";
 import { useBibleAccountState } from "./useBibleAccountState";
 import { BIBLE_FONT_MAX, BIBLE_FONT_MIN, clampBibleFontSize } from "./bibleFont";
-const props = defineProps<{ open: boolean; fontSize: number; lyricsTransition: boolean }>();
-const emit = defineEmits<{ close: []; "font-size": [size: number]; "lyrics-transition": [value: boolean] }>();
+const props = defineProps<{ open: boolean; fontSize: number; lyricsTransition: boolean; split?: boolean }>();
+const emit = defineEmits<{ close: []; "font-size": [size: number]; "margin": [key: "fullscreenMargin" | "splitMargin", value: number]; "lyrics-transition": [value: boolean] }>();
 const { preferences, preferencesBusy, savePreferences, refreshPreferences } = useBibleAccountState();
+const marginOptions = [
+  { key: "fullscreenMargin", label: "全屏左右边距" },
+  { key: "splitMargin", label: "分屏左右边距" }
+] as const;
 const draft = ref<Partial<BiblePreferencesDTO>>({});
 const size = ref(props.fontSize);
 const error = ref("");
 const loading = ref(false);
+const marginsChanged = ref(false);
 watch(() => props.fontSize, value => { size.value = value; });
 watch(() => props.open, async (open) => {
   if (!open) return;
   error.value = "";
   loading.value = true;
   draft.value = {};
+  marginsChanged.value = false;
   size.value = props.fontSize;
   try {
     await refreshPreferences();
@@ -27,7 +34,9 @@ watch(() => props.open, async (open) => {
       shareIncludeTranslation: preferences.value?.shareIncludeTranslation ?? false,
       shareConfirm: preferences.value?.shareConfirm ?? true,
       defaultSearchMode: preferences.value?.defaultSearchMode ?? "topic",
-      notesAlwaysPublic: preferences.value?.notesAlwaysPublic ?? false
+      notesAlwaysPublic: preferences.value?.notesAlwaysPublic ?? false,
+      fullscreenMargin: preferences.value?.fullscreenMargin ?? BIBLE_READER_MARGIN_MIN,
+      splitMargin: preferences.value?.splitMargin ?? BIBLE_READER_MARGIN_MIN
     };
   } catch (cause) { error.value = cause instanceof Error ? cause.message : "偏好加载失败"; }
   finally { loading.value = false; }
@@ -41,13 +50,26 @@ function applyFontSize(value: number) {
 function handleFontSizeInput(event: Event) {
   applyFontSize(Number((event.target as HTMLInputElement).value));
 }
+function handleMarginInput(key: "fullscreenMargin" | "splitMargin", event: Event) {
+  const value = Number((event.target as HTMLInputElement).value);
+  marginsChanged.value = true;
+  draft.value[key] = value;
+  emit("margin", key, value);
+}
+async function close() {
+  if (marginsChanged.value) {
+    try { await savePreferences({ fullscreenMargin: draft.value.fullscreenMargin, splitMargin: draft.value.splitMargin }); }
+    catch (cause) { error.value = cause instanceof Error ? cause.message : "边距保存失败，请重试"; return; }
+  }
+  emit("close");
+}
 async function save() {
   try { await savePreferences({ ...draft.value, fontSize: size.value }); emit("close"); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : "保存失败，请重试"; }
 }
 </script>
 <template>
-  <AppModal :open="open" title="圣经偏好设置" :busy="preferencesBusy" content-class="bible-preferences-dialog" @close="emit('close')">
+  <AppModal :open="open" title="圣经偏好设置" :busy="preferencesBusy" content-class="bible-preferences-dialog" @close="close">
     <form class="preferences-form" @submit.prevent="save">
       <p class="preferences-hint">随账号保存，在其他设备登录后也会生效。</p>
       <p v-if="loading" role="status">正在同步偏好…</p>
@@ -70,6 +92,16 @@ async function save() {
             <button type="button" :disabled="size >= BIBLE_FONT_MAX" aria-label="增大字号" title="增大字号" @click="applyFontSize(size + 1)"><Plus :size="15" /></button>
           </div>
           <p class="font-preview" aria-hidden="true" :style="{ fontSize: `${size}px` }">你的话是我脚前的灯，是我路上的光。</p>
+          <small class="pref-note">调节即时生效，并自动保存到账号。</small>
+        </section>
+        <section class="preferences-card" aria-label="经文边距">
+          <header><h3>经文边距</h3></header>
+          <small class="pref-note">当前为{{ split ? '分屏' : '全屏' }}阅读，调节对应滑杆可预览正文。</small>
+          <label v-for="margin in marginOptions" :key="margin.key" class="margin-setting">
+            <span>{{ margin.label }}</span>
+            <output aria-hidden="true">{{ draft[margin.key] }} px</output>
+            <input :value="draft[margin.key]" @input="handleMarginInput(margin.key, $event)" type="range" :aria-label="margin.label" :min="BIBLE_READER_MARGIN_MIN" :max="BIBLE_READER_MARGIN_MAX" />
+          </label>
           <small class="pref-note">调节即时生效，并自动保存到账号。</small>
         </section>
         <section class="preferences-card" aria-label="朗读提词">
@@ -97,7 +129,7 @@ async function save() {
         </section>
         <p v-if="error" role="alert">{{ error }}</p>
         <footer>
-          <span class="preferences-footnote">字号即时生效，其余项保存后同步</span>
+          <span class="preferences-footnote">字号、边距即时生效，其余项保存后同步</span>
           <button type="submit" :disabled="preferencesBusy">{{ preferencesBusy ? '保存中…' : '保存偏好' }}</button>
         </footer>
       </template>
@@ -157,6 +189,9 @@ p[role=status] { margin: 0; color: #8b7259; }
 .font-size-slider::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: #b9582b; border: 2px solid #fffaf1; }
 .font-preview { margin: 0; padding: 10px 12px; border: 1px dashed rgba(203, 184, 155, .75); border-radius: 10px; background: #fffdf6; color: #4f3b29; font-family: "Songti SC", "STSong", serif; line-height: 1.9; text-align: center; overflow-wrap: anywhere; transition: font-size 120ms ease; }
 .pref-note { color: #8b7259; line-height: 1.55; font-size: 12px; }
+.margin-setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 10px; font-size: 13px; }
+.margin-setting output { color: #8a4a22; font-variant-numeric: tabular-nums; }
+.margin-setting input { grid-column: 1 / -1; width: 100%; min-height: 28px; margin: 0; accent-color: #b9582b; cursor: pointer; }
 .pref-switch { position: relative; display: flex; align-items: center; gap: 10px; min-height: 32px; cursor: pointer; }
 /* 真实 input 覆盖整行并完全透明：点击轨迹/文字都落在原生控件上，键盘与读屏语义不变 */
 .pref-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }

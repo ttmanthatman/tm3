@@ -222,7 +222,10 @@ import AiExchangeLogDetail from "./features/admin/AiExchangeLogDetail.vue";
 import BibleStudyLogPanel from "./features/bible-study/BibleStudyLogPanel.vue";
 import { useBibleStudyNavigation } from "./features/bible-study/useBibleStudyNavigation";
 import BibleStudyWorkspace from "./features/bible-study/BibleStudyWorkspace.vue";
-import { isBibleStudyRoom } from "@shared/bibleStudy";
+import { useStudyWorkspaceIntegration } from "./features/bible-study/useStudyWorkspaceIntegration";
+import { useReadingWorkspaceLayout, type ReadingPanel } from "./features/workspaces/useReadingWorkspaceLayout";
+import ReadingWorkspaceControls from "./features/workspaces/ReadingWorkspaceControls.vue";
+import "./features/workspaces/reading-workspaces.css";
 import AiSessionEndStamp from "./features/messages/AiSessionEndStamp.vue";
 import AssistantToolsSettingsPanel from "./features/admin/AssistantToolsSettingsPanel.vue";
 import AssistantFeatureLauncher from "./features/messages/AssistantFeatureLauncher.vue";
@@ -483,8 +486,7 @@ const graceFavoriteMessages = ref<GraceFavoriteDTO[]>([]);
 const favoritesLoading = ref(false);
 const graceFavoritesLoading = ref(false);
 const showingFavoriteSurface = computed(() => showFavorites.value || showGraceFavorites.value || showBibleFavorites.value);
-const studyActive = ref(false);
-const studyWorkspaceVisible = computed(() => isBibleStudyRoom(store.currentChannel?.directKey) && !showingFavoriteSurface.value && !store.prayerOnly && !store.graceOnly);
+const studyWorkspaceVisible = ref(false);
 const showMembers = ref(false);
 const showReceptionManager = ref(false);
 const channelsCollapsed = ref(true);
@@ -899,8 +901,8 @@ const bibleLookupCache = ref<Record<string, BibleLookupDTO | null>>({});
 const bibleLookupBusyKeys = ref<Set<string>>(new Set());
 const {
   bibleOpen,
-  bibleSplit,
-  bibleFullscreen,
+  bibleSplit: legacyBibleSplit,
+  bibleFullscreen: legacyBibleFullscreen,
   bibleSplitAvailable,
   bibleSplitRatio,
   bibleOnRight,
@@ -908,8 +910,8 @@ const {
   bibleLayoutStyle,
   viewportWidth,
   resizeBible,
-  expandBible,
-  shrinkBible,
+  expandBible: expandLegacyBible,
+  shrinkBible: shrinkLegacyBible,
   bibleTargetChannelId,
   bibleWorkspace,
   bibleReadingActivity,
@@ -955,7 +957,6 @@ const {
   showGraceFavorites,
   showBibleFavorites,
   sermonWorkspaceOpen,
-  bookWorkspaceOpen,
   saveReadPosition,
   currentChannelId: () => currentChannel.value?.id || null,
   isTapSuppressed: () => Date.now() < suppressNextTapUntil,
@@ -971,12 +972,61 @@ const bibleTopicActions: BibleTopicActions = {
   removePassages: removeBibleTopicPassages,
   share: shareBibleTopic
 };
+const readingLayout = useReadingWorkspaceLayout({
+  accountId: () => store.account?.id, bibleOpen, bookOpen: bookWorkspaceOpen,
+  splitAvailable: bibleSplitAvailable, viewportWidth, studyOpen: studyWorkspaceVisible
+});
+const { arrangement: readingArrangement, fullscreen: readingFullscreen,
+  columnRatio: readingColumnRatio, rowRatio: readingRowRatio, height: readingHeight,
+  panels: readingPanels, multiple: readingMultiple, shellStyle: readingShellStyle } = readingLayout;
+const readerChatPair = computed(() => {
+  if (!bibleSplitAvailable.value || readingArrangement.value === "rows" || readingFullscreen.value
+    || readingPanels.value.length !== 2 || !readingLayout.chatOpen.value) return null;
+  return bibleOpen.value ? "bible" : bookWorkspaceOpen.value ? "book" : null;
+});
+const bookChatSplit = computed(() => readerChatPair.value === "book");
+const readingLayoutActive = computed(() => readingLayout.active.value && !readerChatPair.value);
+const bibleSplit = computed(() => readingLayoutActive.value ? bibleOpen.value && readingMultiple.value : legacyBibleSplit.value);
+const bibleFullscreen = computed(() => readingLayoutActive.value ? bibleOpen.value && readingLayout.visible("bible") && !readingMultiple.value : legacyBibleFullscreen.value);
+const bookSplit = computed(() => bookChatSplit.value || (bookWorkspaceOpen.value && readingMultiple.value));
+const splitReader = computed(() => bookChatSplit.value ? "book" : bibleSplit.value && !readingLayoutActive.value ? "bible" : null);
+function readingPanelStyle(panel: ReadingPanel) {
+  return readingLayoutActive.value ? readingLayout.panelStyle(panel) : undefined;
+}
+const bibleAllocatedWidth = computed(() => readingLayoutActive.value
+  ? readingLayout.rects.value.bible?.width ?? viewportWidth.value
+  : bibleSplit.value ? (viewportWidth.value - 12) * bibleSplitRatio.value : viewportWidth.value);
+const chatWorkspaceHidden = computed(() => sermonWorkspaceOpen.value || (readingLayoutActive.value ? !readingLayout.visible("chat") : bibleFullscreen.value));
+function expandBible() {
+  if (readingLayoutActive.value) readingLayout.toggleFullscreen("bible");
+  else expandLegacyBible();
+}
+function shrinkBible() { readingLayout.fullscreen.value = null; shrinkLegacyBible(); }
+const { studyChannelId, studyOpenError, openBibleStudy, leaveBibleStudy, retryStudy } = useStudyWorkspaceIntegration({
+  open: studyWorkspaceVisible, openReader: openBibleWorkspace, focus: () => readingLayout.focus("study"), openChannel: openChannelFromList
+});
 const { selectStudyScripture, studyBibleError } = useBibleStudyNavigation({
   enabled: () => studyWorkspaceVisible.value,
-  workspace: bibleWorkspace, splitAvailable: bibleSplitAvailable, bibleOpen, bibleOnRight,
-  openBible: openBibleWorkspace, shrinkBible
+  workspace: bibleWorkspace, splitAvailable: bibleSplitAvailable, bibleOpen,
+  openBible: openBibleWorkspace, shrinkBible: shrinkLegacyBible, revealReader: () => readingLayout.focus("bible")
 });
-const chatWorkspaceHidden = computed(() => bibleFullscreen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value);
+function openReadingPanel(panel: ReadingPanel) {
+  if (panel === "bible") openBibleWorkspace();
+  if (panel === "book") openBookWorkspace();
+  if (panel === "study") openBibleStudy();
+  if (panel === "chat") readingLayout.chatOpen.value = true;
+  readingLayout.focus(panel);
+}
+function openFourPanels() {
+  readingLayout.chatOpen.value = true;
+  openBookWorkspace();
+  openBibleStudy();
+}
+function closeReadingPanel(panel: ReadingPanel) {
+  if (panel === "book") closeBookWorkspace();
+  if (panel === "bible") closeBibleWorkspace();
+  readingLayout.close(panel);
+}
 const { start: handleBibleSwipeStart, end: handleBibleSwipeEnd, cancel: cancelBibleSwipe } = createBibleSwipeNavigation({
   appearance: () => store.appearance,
   blocked: () => bibleOpen.value || sermonWorkspaceOpen.value || bookWorkspaceOpen.value || showAdmin.value || showSettings.value || !!previewMessage.value,
@@ -1355,7 +1405,7 @@ const {
   pumpMessageImagePreloads
 } = useVirtualTimeline({
   scroller,
-  isActive: () => !chatWorkspaceHidden.value && !studyWorkspaceVisible.value,
+  isActive: () => !chatWorkspaceHidden.value,
   estimateRowHeight: estimatedTimelineRowHeight,
   computeWindow: computeVirtualTimelineWindow,
   imagePreloadQueue: messageImagePreloadQueue,
@@ -1690,6 +1740,7 @@ watch(() => store.notificationReadError, (error) => { if (error) showGraceToast(
 watch(
   () => store.account?.id,
   (accountId, previousAccountId) => {
+    if (previousAccountId && accountId !== previousAccountId) closeBookWorkspace();
     if (previousAccountId && !accountId) void handwriting.clearAccount(previousAccountId);
     queuedMessageImagePreloads.clear();
     messageImagePreloadQueue.splice(0);
@@ -3589,35 +3640,21 @@ function chooseActiveComposerSuggestion() {
   if (command) chooseSlashCommand(command);
 }
 
-async function openBibleStudy() {
-  try {
-    const { channelId } = await api<{ channelId: number }>("/api/bible-study/enter", { method: "POST" });
-    if (!store.channels.some(channel => channel.id === channelId)) await store.loadChannels();
-    await openChannelFromList(channelId);
-  } catch (error) {
-    messageSendStatus.value = error instanceof Error ? error.message : "问答式查经打开失败";
-  }
-}
-
-async function leaveBibleStudy() {
-  const ordinaryChannels = store.channels.filter(channel => !isBibleStudyRoom(channel.directKey));
-  const destination = ordinaryChannels.find(channel => channel.id === store.previousChannelId)
-    ?? ordinaryChannels.find(channel => channel.isDefault) ?? ordinaryChannels[0];
-  if (destination) await openChannelFromList(destination.id);
-  else showChannels.value = true;
-}
-
 function openBookWorkspace() {
+  if (!bookWorkspaceOpen.value) saveReadPosition();
   showChannels.value = false;
   showMembers.value = false;
-  bibleOpen.value = false;
+  channelsCollapsed.value = true;
+  membersCollapsed.value = true;
   sermonWorkspaceOpen.value = false;
   bookWorkspaceOpen.value = true;
+  readingLayout.focus("book");
 }
 
 function closeBookWorkspace() {
   bookWorkspaceOpen.value = false;
   bookLocation.value = null;
+  readingLayout.fullscreen.value = null;
 }
 
 // 只在聊天被全屏工作区遮住时暂停，分屏仍保持聊天动效和阅读位置。
@@ -3694,6 +3731,7 @@ function openOwnSermonWorkspace() {
   showChannels.value = false;
   showMembers.value = false;
   bibleOpen.value = false;
+  closeBookWorkspace();
   sermonWorkspaceOpen.value = true;
   composerPanel.value = null;
 }
@@ -5133,6 +5171,7 @@ const chatHeaderBindings = computed(() => ({
   openBibleWorkspace: () => bibleOpen.value ? closeBibleWorkspace() : openBibleWorkspace(),
   openBookWorkspace,
   openBibleStudy,
+  studyPanelOpen: studyWorkspaceVisible.value,
   openMusicPlayer,
   toggleCurrentMusicFavorite,
   openMusicManagerFromMiniPanel,
@@ -5660,21 +5699,30 @@ const messageRowBindings = {
     </section>
   </main>
 
-  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleFullscreen, 'bible-split': bibleSplit, 'bible-right': bibleOnRight, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="[appearanceStyle, bibleLayoutStyle]">
+  <main v-else class="app-shell" :class="{ 'channels-collapsed': channelsCollapsed, 'members-collapsed': membersCollapsed, 'bible-open': bibleFullscreen && !readingLayoutActive, 'bible-split': bibleSplit && !readingLayoutActive, 'bible-right': bibleOnRight, 'book-split': bookChatSplit, 'reading-layout': readingLayoutActive, 'sermon-open': sermonWorkspaceOpen, 'music-low-power': musicPlaying && wallpaperPanActive }" :style="[appearanceStyle, splitReader ? bibleLayoutStyle : undefined, readingLayoutActive ? readingShellStyle : undefined]">
     <section v-if="staleVersionVisible" class="version-refresh-banner">
       <span>{{ staleVersionMessage }}</span>
       <button class="mini-btn secondary" @click="reloadToLatestVersion">立即刷新</button>
     </section>
 
+    <ReadingWorkspaceControls v-if="readingLayoutActive"
+      :four-panel-available="bibleSplitAvailable" @four-panels="openFourPanels"
+      :panels="readingPanels" :selected="readingFullscreen || (!bibleSplitAvailable ? readingLayout.mobilePanel.value : null)"
+      :arrangement="readingArrangement" :multiple="readingMultiple" :width="viewportWidth" :height="readingHeight"
+      :column="readingColumnRatio" :row="readingRowRatio"
+      @open="openReadingPanel" @close="closeReadingPanel" @focus="readingLayout.focus" @fullscreen="readingLayout.toggleFullscreen"
+      @arrangement="readingArrangement = $event" @resize="readingLayout.resize" />
     <NoteViewerHost @chat="closeBibleWorkspace" />
     <CopyworkViewerHost @chat="closeBibleWorkspace" />
     <BibleWorkspace
       ref="bibleWorkspace"
+      v-show="!readingLayoutActive || readingLayout.visible('bible')"
+      :style="readingPanelStyle('bible')"
       :open="bibleOpen"
       :split="bibleSplit"
       :study-mode="studyWorkspaceVisible"
       :split-available="bibleSplitAvailable"
-      :layout-width="bibleSplit ? (viewportWidth - 12) * bibleSplitRatio : viewportWidth"
+      :layout-width="bibleAllocatedWidth"
       @expand="expandBible"
       @shrink="shrinkBible"
       :account-id="store.account?.id || 0"
@@ -5696,10 +5744,28 @@ const messageRowBindings = {
       @audio-queue-ended="listenSession.handleBibleQueueEnded"
     />
 
-    <BibleChatSeparator v-if="bibleSplit" :ratio="bibleSplitRatio" :width="viewportWidth" :reversed="bibleOnRight" @resize="resizeBible" @swap="swapBibleChat" />
+    <BibleChatSeparator v-if="splitReader" :reader="splitReader" :ratio="bibleSplitRatio" :width="viewportWidth" :reversed="bibleOnRight" @resize="resizeBible" @swap="swapBibleChat" />
 
-    <BookWorkspace v-if="bookWorkspaceOpen" :initial-location="bookLocation" :active-channel-id="bibleTargetChannelId" :readers="bookReaders" @close="closeBookWorkspace" @reading-change="handleBookReadingChange" />
+    <BookWorkspace
+      v-if="bookWorkspaceOpen"
+      v-show="readingLayout.visible('book')"
+      :style="readingPanelStyle('book')"
+      :initial-location="bookLocation"
+      :active-channel-id="bibleTargetChannelId"
+      :readers="bookReaders"
+      :split="bookSplit"
+      :split-available="bibleSplitAvailable"
+      @toggle-fullscreen="readingLayout.toggleFullscreen('book')"
+      @close="closeBookWorkspace"
+      @reading-change="handleBookReadingChange"
+    />
 
+    <section v-if="studyWorkspaceVisible || studyChannelId" v-show="studyWorkspaceVisible && readingLayout.visible('study')" class="study-panel study-pane" :style="readingPanelStyle('study')">
+      <BibleStudyWorkspace v-if="studyChannelId" :channel-id="studyChannelId" :reader-error="studyBibleError" @leave="leaveBibleStudy" @scripture="selectStudyScripture" />
+      <div v-else class="study-panel-loading" role="status">
+        <p>{{ studyOpenError || '正在打开查经…' }}</p><button v-if="studyOpenError" type="button" @click="retryStudy">重试</button>
+      </div>
+    </section>
     <SermonWorkspace
       v-if="sermonWorkspaceMounted"
       :open="sermonWorkspaceOpen"
@@ -5812,9 +5878,7 @@ const messageRowBindings = {
       </footer>
     </aside>
 
-    <section v-if="!chatWorkspaceHidden || studyWorkspaceVisible" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" :class="{ 'study-pane': studyWorkspaceVisible }" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
-      <BibleStudyWorkspace v-if="studyWorkspaceVisible" :key="store.currentChannelId" :channel-id="store.currentChannelId" @leave="leaveBibleStudy" @active="studyActive = $event" :reader-error="studyBibleError" @scripture="selectStudyScripture" />
-      <template v-else>
+    <section v-if="!chatWorkspaceHidden || readingLayoutActive" v-show="!chatWorkspaceHidden" ref="chatPane" class="chat-pane" :style="readingPanelStyle('chat')" @pointerdown="handleBibleAudioPromptDismiss" @touchstart.passive="handleBibleSwipeStart" @touchend.passive="handleBibleSwipeEnd" @touchcancel.passive="cancelBibleSwipe" @dragenter="handleChatDragEnter" @dragover="handleChatDragOver" @dragleave="handleChatDragLeave" @drop="handleChatDrop">
       <img
         v-if="wallpaperPanActive"
         ref="wallpaperPanImage"
@@ -6500,9 +6564,8 @@ const messageRowBindings = {
       </button>
 
       <SocialComposer :mode="socialMode" :channel-id="store.currentChannelId" @request-bottle-motion="composerBarRef?.requestBottleMotion()" @close="socialMode = null" />
-      </template>
       <ComposerBar
-        v-if="!showingFavoriteSurface && !isMusicChannel && !(studyWorkspaceVisible && studyActive)"
+        v-if="!showingFavoriteSurface && !isMusicChannel"
         :channel-id="store.currentChannelId"
         :on-bottle-reading="(active) => { bottleReading = active; }"
         :open-social="(mode) => { socialMode = mode; }"
@@ -6567,7 +6630,7 @@ const messageRowBindings = {
       </div>
     </aside>
 
-    <div v-if="!chatWorkspaceHidden && (showChannels || showMembers || (bibleSplit && !channelsCollapsed))" class="scrim" @click="showChannels = false; showMembers = false; channelsCollapsed = true; membersCollapsed = true"></div>
+    <div v-if="!chatWorkspaceHidden && (showChannels || showMembers || ((bibleSplit || bookSplit) && !channelsCollapsed))" class="scrim" @click="showChannels = false; showMembers = false; channelsCollapsed = true; membersCollapsed = true"></div>
 
     <FriendPrograms v-if="friendProgramsOpen" :player="friendPlayer" @close="friendProgramsOpen = false" />
 

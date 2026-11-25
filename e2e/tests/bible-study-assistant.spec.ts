@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { expect, test, type APIRequestContext } from "@playwright/test";
-import { closeBibleWorkspace, focusChat } from "../helpers/chat.js";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { closeBibleWorkspace } from "../helpers/chat.js";
 import { E2E_ADMIN, E2E_CHANNELS, E2E_MEMBER } from "../seed-data.js";
 import type { ChannelDTO, MessageDTO } from "../../src/shared/types.js";
 import type { BibleStudyProgress, BibleStudyRecordPage } from "../../src/shared/bibleStudy.js";
@@ -9,6 +9,12 @@ import { bibleStudyBranchIds } from "../../src/shared/bibleStudy.js";
 
 test.use({ serviceWorkers: "block" });
 test.setTimeout(150_000);
+
+
+async function focusStudy(page: Page) {
+  await page.getByRole("button", { name: "打开查经面板", exact: true }).click();
+  await expect(page.locator(".study-workspace")).toBeVisible();
+}
 
 async function authFor(request: APIRequestContext, user: typeof E2E_ADMIN | typeof E2E_MEMBER) {
   const response = await request.post("/api/auth/login", { data: user });
@@ -89,9 +95,9 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     const syncStatus = page.getByText("消息已同步 · 实时已连接", { exact: true });
     await expect(syncStatus).toHaveCount(0, { timeout: 4000 });
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await expect(page.getByRole("menuitem", { name: "书架" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "书架", exact: true })).toBeVisible();
     await page.getByRole("menuitem", { name: "查经" }).click();
-    await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
+    await expect(page.locator(".study-header-line > strong")).toHaveText("问答式查经");
     await expect(page.getByText(/站点管理员可在后台查看/)).toBeVisible();
 
     const privateRoom = ((await (await request.get("/api/channels", { headers: member })).json()).channels as ChannelDTO[])
@@ -126,11 +132,13 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await waitFor("哪一句话或哪一个细节");
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     const focus = page.getByRole("region", { name: "查经进度" });
     await expect(focus).toContainText("观察经文");
     await expect(focus).toContainText("已问 1 题");
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 850 });
+      await focusStudy(page);
       const bounds = await focus.boundingBox();
       expect(bounds && bounds.x >= 0 && bounds.x + bounds.width <= width).toBe(true);
     }
@@ -145,6 +153,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await waitFor("需要完成后才可以换题");
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     await expect(page.getByText("完成这段经文后就可以换题。", { exact: false })).toBeVisible();
     await send("/结束");
     await expect.poll(async () => (await records()).filter(row => row.content.includes("需要完成后才可以换题")).length).toBe(2);
@@ -173,6 +182,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await page.routeWebSocket("**/socket.io/**", socket => socket.close());
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     await expect(page.getByText("AI 服务暂时繁忙或不可用，你的答复已保存。")).toBeVisible();
     plainOnce = true;
     await page.getByRole("button", { name: "重试回应" }).click();
@@ -197,12 +207,14 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     });
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     await page.getByRole("button", { name: "答不上来", exact: true }).click();
     await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.relation).toBe("hint");
     const hint = (await readProgress()).questionPath.at(-1)!;
     expect(hint).toMatchObject({ parentId: originalQuestion.id, returnToId: originalQuestion.id, evidence: ["马可福音 4:38"] });
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     await expect(page.getByRole("article", { name: "当前问题" })).toContainText("答完这一步，我们回到原题。");
     await expect(page.getByRole("region", { name: "问题脉络" }).locator(".selected .question-number")).toContainText("追问Q3:1");
     await send("门徒问耶稣是否顾念他们。");
@@ -212,6 +224,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.relation).toBe("new_angle");
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     const path = page.getByRole("region", { name: "问题脉络" });
     await expect(path.locator(".selected .question-title")).toContainText("风浪平静后");
     await expect(path.locator(".question-meta")).toHaveCount(0);
@@ -220,7 +233,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       await expect(path).toBeVisible();
       expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       if (width < 760) {
-        await expect.poll(() => page.locator(".channel-pane").evaluate(element => element.getBoundingClientRect().right)).toBeLessThanOrEqual(0);
+        await expect(page.locator(".channel-pane")).toBeHidden();
       }
       if (width === 390 || width === 1280) await page.screenshot({ path: testInfo.outputPath(`study-workspace-${width}.png`) });
     }
@@ -243,6 +256,7 @@ test("study rooms isolate answers, resume the same passage and archive a summary
       await expect.poll(async () => (await readProgress()).questionPath.at(-1)?.text).toContain(text);
       await page.reload();
       await closeBibleWorkspace(page);
+    await focusStudy(page);
       return (await readProgress()).questionPath.at(-1)!;
     }
     const firstBranch = await branch(originalQuestion.id, "另看门徒的反应");
@@ -265,10 +279,12 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     expect(invalidEvidence.statusCode).toBe(409);
     await page.reload();
     await closeBibleWorkspace(page);
+    await focusStudy(page);
     const questions = page.getByRole("region", { name: "问题脉络" });
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 844 });
       await closeBibleWorkspace(page);
+    await focusStudy(page);
       expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       const field = questions.getByPlaceholder("追加回答或提问…");
       await expect(field).toBeVisible();
@@ -359,11 +375,12 @@ test("study rooms isolate answers, resume the same passage and archive a summary
     expect((await records()).filter(row => row.content.includes("你的答复已经保存"))).toHaveLength(1);
 
     await page.reload();
-    await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
-    await focusChat(page);
+    await expect(page.locator(".study-header-line > strong")).toHaveText("问答式查经");
+    await focusStudy(page);
     await expect(page.getByRole("heading", { name: "本次查经已完成" })).toBeVisible();
     for (const width of [360, 390, 1280]) {
       await page.setViewportSize({ width, height: 850 });
+      await focusStudy(page);
       const button = page.getByRole("button", { name: "查经小结", exact: true });
       await expect(button).toBeVisible();
       await button.click({ timeout: 5000 });
@@ -481,13 +498,13 @@ for (const engine of ["chromium", "webkit"] as const) {
       const reader = page.locator(".bible-workspace");
       const highlighted = reader.locator(".study-target[data-verse-key]");
       const chooseQuestion = (text: string) => questions.locator(".question-title").filter({ hasText: text }).click();
-      await expect(page.getByTestId("active-channel-name")).toHaveText("问答式查经");
-      await expect(page.locator(".app-shell")).toHaveClass(/bible-split/);
+      await expect(page.locator(".study-header-line > strong")).toHaveText("问答式查经");
+      await expect(page.locator(".app-shell")).toHaveClass(/reading-layout/);
       await expect(highlighted).toHaveCount(2);
       await expect(reader.locator('[data-verse-key$="-14-38"].study-target')).toBeVisible();
       await expect(page.locator(".study-workspace .reading-text")).toHaveCount(0);
       const bibleBox = (await reader.boundingBox())!;
-      const chatBox = (await page.locator(".chat-pane").boundingBox())!;
+      const chatBox = (await page.locator(".study-panel").boundingBox())!;
       expect(bibleBox.x).toBeLessThan(chatBox.x);
       expect(chatBox.width).toBeGreaterThanOrEqual(359);
       const colors = await page.evaluate(() => [".study-header", ".bible-topbar"].map(selector => getComputedStyle(document.querySelector(selector)!).backgroundColor));
@@ -521,6 +538,7 @@ for (const engine of ["chromium", "webkit"] as const) {
       for (const width of [360, 390]) {
         await page.setViewportSize({ width, height: 844 });
         await closeBibleWorkspace(page);
+    await focusStudy(page);
         await expect(field).toHaveValue("这个分支里的草稿");
         await questions.getByRole("button", { name: "删除问题", exact: true }).click();
         const deletion = page.getByRole("dialog", { name: "删除问题", exact: true });
@@ -542,6 +560,7 @@ for (const engine of ["chromium", "webkit"] as const) {
         await expect(reader.locator('[data-verse-key$="-14-39"].study-target')).toBeVisible();
         await expect(reader.locator('[data-verse-key$="-14-37"].study-target')).toHaveCount(0);
         await closeBibleWorkspace(page);
+    await focusStudy(page);
         await expect(field).toHaveValue("这个分支里的草稿");
         await expect(questions.locator('.question-title[aria-current="step"] .question-number')).toHaveText("追问Q1" + ":1".repeat(59));
         expect(await page.locator(".study-workspace").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);

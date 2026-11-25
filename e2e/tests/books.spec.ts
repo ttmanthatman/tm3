@@ -92,8 +92,13 @@ test("书架长按下载、独立缓存、笔记下拉及共读进度可用", as
     await login(page);
     headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await page.getByRole("menuitem", { name: "书架" }).click();
+    await page.getByRole("menuitem", { name: "书架", exact: true }).click();
     await page.setViewportSize({ width: 557, height: 1073 });
+    const shelfGrid = page.locator(".book-shelf-grid");
+    await page.mouse.move(550, 15);
+    await expect.poll(() => shelfGrid.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("rgba(0, 0, 0, 0)");
+    await shelfGrid.hover();
+    await expect.poll(() => shelfGrid.evaluate(element => getComputedStyle(element).scrollbarColor)).toContain("168, 148, 119");
     await expect(page.locator(".book-shelf-invite, .book-shelf-download")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "导出笔记", exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "笔记导入与导出", exact: true }).click();
@@ -177,6 +182,15 @@ test("书架长按下载、独立缓存、笔记下拉及共读进度可用", as
     await expect(page.locator(".book-top")).not.toHaveClass(/bar-hidden/);
     await expect(page.getByLabel("正在共读")).toContainText("同读的朋友");
     await expect(page.locator(".book-reader-avatar")).toBeVisible();
+    const readerPane = page.locator(".book-reader");
+    const chat = page.locator(".chat-pane");
+    await expect(chat).toBeVisible();
+    await readerPane.getByRole("button", { name: "图书室全屏", exact: true }).click();
+    await expect(chat).toBeHidden();
+    await expect(frame.locator("#tap-target")).toBeVisible();
+    await readerPane.getByRole("button", { name: "缩小图书室，恢复分屏", exact: true }).click();
+    await expect(chat).toBeVisible();
+    await expect(frame.locator("#tap-target")).toBeVisible();
   } finally {
     socket.disconnect();
     for (const book of books) await request.delete(`/api/admin/books/${book.id}`, { headers });
@@ -212,7 +226,7 @@ test("iPhone 滚动控制栏、滚动边距和同页 EPUB 脚注可用", async (
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await page.getByRole("menuitem", { name: "书架" }).click();
+    await page.getByRole("menuitem", { name: "书架", exact: true }).click();
     await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     const read = page.getByRole("button", { name: "阅读《移动阅读回归》" });
     await expect(read).toBeVisible();
@@ -286,7 +300,7 @@ test("桌面滚动模式的边距改变正文实际位置", async ({ browser, re
   try {
     await login(page);
     await page.getByRole("button", { name: "打开图书室" }).click();
-    await page.getByRole("menuitem", { name: "书架" }).click();
+    await page.getByRole("menuitem", { name: "书架", exact: true }).click();
     await bookShelfAction(page, "移动阅读回归", "缓存到本机", book.id);
     await page.getByRole("button", { name: "阅读《移动阅读回归》" }).click();
     const frame = page.frameLocator('iframe[title="电子书第 1 节"]');
@@ -341,7 +355,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await login(page);
       headers.Authorization = `Bearer ${await page.evaluate(() => localStorage.getItem("team-chat-token"))}`;
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await page.getByRole("menuitem", { name: "书架" }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
       await bookShelfAction(page, "移动阅读回归", "邀请共读", book.id);
       const invitation = page.getByRole("dialog", { name: "邀请大家一起读" });
       await expect(invitation).toBeVisible();
@@ -364,9 +378,11 @@ for (const flow of ["scrolled", "paginated"] as const) {
         });
         for (const width of [360, 390, 414, 1280]) {
           await page.setViewportSize({ width, height: 900 });
-          const stage = await page.locator(".book-stage").boundingBox();
-          expect(stage!.y).toBe(44);
-          expect(stage!.y + stage!.height).toBe(866);
+          await expect.poll(() => page.locator(".book-workspace").evaluate(reader => {
+            const bounds = reader.getBoundingClientRect();
+            const stage = reader.querySelector(".book-stage")!.getBoundingClientRect();
+            return [stage.top - bounds.top, bounds.bottom - stage.bottom];
+          })).toEqual([44, 34]);
           await expect.poll(async () => (await frame.locator("#tap-target").boundingBox())?.y ?? 0).toBeGreaterThanOrEqual(44);
         }
         await page.evaluate(() => {
@@ -387,11 +403,13 @@ for (const flow of ["scrolled", "paginated"] as const) {
       if (flow === "scrolled") {
         for (const width of [360, 390]) {
           await page.setViewportSize({ width, height: 844 });
-          const fits = await toolbar.locator("button").evaluateAll((buttons) => buttons.every((button) => {
+          await expect.poll(async () => (await page.locator(".book-workspace").boundingBox())!.width).toBe(width);
+          const overflow = await toolbar.locator("button").evaluateAll((buttons) => buttons.flatMap((button) => {
             const bounds = button.getBoundingClientRect();
-            return bounds.left >= 0 && bounds.right <= window.innerWidth && button.scrollWidth <= button.clientWidth;
+            return bounds.left >= 0 && bounds.right <= window.innerWidth && button.scrollWidth <= button.clientWidth ? []
+              : [{ label: button.getAttribute("aria-label") || button.textContent, left: bounds.left, right: bounds.right, scrollWidth: button.scrollWidth, clientWidth: button.clientWidth }];
           }));
-          expect(fits).toBe(true);
+          expect(overflow).toEqual([]);
         }
       }
       await page.screenshot({ path: `output/playwright/book-selection-${flow}.png` });
@@ -504,7 +522,7 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await page.reload();
       await expect(page.getByTestId("active-channel-name")).toHaveText(E2E_CHANNELS.default);
       await page.getByRole("button", { name: "打开图书室" }).click();
-      await page.getByRole("menuitem", { name: "书架" }).click();
+      await page.getByRole("menuitem", { name: "书架", exact: true }).click();
       frame = await readingFrame(page);
       await expect(frame.locator("#tap-target")).toBeVisible();
       await expect(page.getByText("正在打开…", { exact: true })).toHaveCount(0);
