@@ -60,3 +60,64 @@ test("editing a highlight preserves its color even when note content is cleared"
   assert.deepEqual(s.deleted, []);
   s.scope.stop();
 });
+
+
+test("unfavorite removes a bare highlight and keeps written or handwritten notes", async () => {
+  for (const content of [{ text: "", handwriting: null }, { text: "感言", handwriting: null }, { text: "", handwriting: ink }]) {
+    const s = setup();
+    s.editor.edit(context, { ...note, ...content, color: "#34a853" });
+    await s.editor.unfavorite();
+    if (content.text || content.handwriting) {
+      assert.equal(s.writes[0].input.color, undefined);
+      assert.equal(s.writes[0].input.text, content.text);
+      assert.deepEqual(s.writes[0].input.handwriting, content.handwriting);
+      assert.deepEqual(s.deleted, []);
+    } else assert.deepEqual(s.deleted, [note.id]);
+    assert.equal(s.editor.context.value, null);
+    assert.deepEqual(s.changed, [1]);
+    s.scope.stop();
+  }
+});
+
+test("explicit deletion removes colored notes and preserves unsaved content on failure", async () => {
+  let attempts = 0;
+  const s = setup({ remove: async () => { if (++attempts === 1) throw new Error("离线"); return { success: true }; } });
+  s.editor.edit(context, { ...note, color: "#34a853" });
+  s.editor.text.value = "未保存的想法";
+  await s.editor.remove();
+  assert.equal(s.editor.text.value, "未保存的想法");
+  assert.equal(s.editor.color.value, "#34a853");
+  assert.equal(s.editor.error.value, "离线");
+  assert.deepEqual(s.changed, []);
+  await s.editor.remove();
+  assert.equal(s.editor.context.value, null);
+  assert.deepEqual(s.changed, [1]);
+  s.scope.stop();
+});
+
+test("failed unfavorite restores the color and can be retried", async () => {
+  const s = setup({ remove: async () => { throw new Error("离线"); } });
+  s.editor.edit(context, { ...note, text: "", color: "#34a853" });
+  await s.editor.unfavorite();
+  assert.equal(s.editor.color.value, "#34a853");
+  assert.equal(s.editor.error.value, "离线");
+  assert.equal(s.editor.context.value?.bookId, 1);
+  assert.deepEqual(s.changed, []);
+  s.scope.stop();
+});
+
+
+test("a completed deletion cannot reset or notify a different account's editor", async () => {
+  let finish!: (value: { success: true }) => void;
+  const s = setup({ remove: () => new Promise(resolve => { finish = resolve; }) });
+  s.editor.edit(context, note);
+  const pending = s.editor.remove();
+  s.account.value = 2;
+  s.editor.edit(context);
+  s.editor.text.value = "另一个账号的笔记";
+  finish({ success: true });
+  await pending;
+  assert.equal(s.editor.text.value, "另一个账号的笔记");
+  assert.deepEqual(s.changed, []);
+  s.scope.stop();
+});

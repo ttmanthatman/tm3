@@ -2,7 +2,7 @@
 import "../stories/stories.css";
 import "./bookNotes.css";
 import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue";
-import { BookOpen, NotebookPen, Send, Sparkles, X } from "lucide-vue-next";
+import { BookOpen, Heart, NotebookPen, Send, Sparkles, X } from "lucide-vue-next";
 import { BOOK_QUOTE_MAX, legacyBookNote, type BookNoteDTO, type BookNoteSharePayload } from "@shared/bookNotes";
 import { bookLocatorSchema } from "@shared/bookLocator";
 import AppModal from "../../components/ui/AppModal.vue";
@@ -46,7 +46,10 @@ const storyImage = ref<File | null>(null);
 const storyContext = ref<BookReadingContext | null>(null);
 const storyBusy = ref(false);
 const favoritesOpen = ref(false);
+const dialogLayer = ref<HTMLElement | null>(null);
 const highlightBusy = ref(false);
+const selectedColor = ref<string>(BIBLE_FAVORITE_COLOR_PRESETS[0].color);
+watch(() => props.selection, () => { selectedColor.value = BIBLE_FAVORITE_COLOR_PRESETS[0].color; });
 let highlightRequest: { key: string; id: string } | null = null;
 const selectionTooLong = computed(() => (props.selection?.quote.length || 0) > BOOK_QUOTE_MAX);
 
@@ -146,15 +149,18 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
 <template>
   <aside v-if="selection && available" class="book-selection-actions" aria-label="摘录操作" @pointerdown.prevent>
     <span>{{ selectionTooLong ? `请选择 ${BOOK_QUOTE_MAX} 字以内的文字` : `已选 ${selection.quote.length} 字` }}</span>
-    <div class="book-highlight-colors" aria-label="高亮并收藏"><span>高亮并收藏</span><button v-for="preset in BIBLE_FAVORITE_COLOR_PRESETS" :key="preset.color" type="button" :aria-label="`${preset.name}高亮并收藏`" :style="{ backgroundColor: preset.color }" :disabled="selectionTooLong || highlightBusy" @click="highlight(preset.color)"></button></div>
+    <div class="book-highlight-colors" aria-label="收藏高亮颜色"><span>选择颜色</span><button v-for="preset in BIBLE_FAVORITE_COLOR_PRESETS" :key="preset.color" type="button" :aria-label="`${preset.name}高亮`" :aria-pressed="selectedColor === preset.color" :style="{ backgroundColor: preset.color }" :disabled="selectionTooLong || highlightBusy" @click="selectedColor = preset.color"></button></div>
+    <button class="book-selection-save" type="button" :disabled="selectionTooLong || highlightBusy" @click="highlight(selectedColor)"><Heart :size="16" />{{ highlightBusy ? '收藏中…' : '收藏摘录' }}</button>
     <button type="button" :disabled="selectionTooLong" @click="edit(selection)"><NotebookPen :size="16" />做笔记</button>
     <button type="button" :disabled="selectionTooLong" @click="share(selection)"><Send :size="16" />聊天室</button>
     <button type="button" :disabled="selectionTooLong || storyBusy" @click="shareStory(selection)"><Sparkles :size="16" />我的故事</button>
     <button type="button" aria-label="取消选择" @click="emit('clear')"><X :size="16" /></button>
   </aside>
   <div v-if="notice" class="book-action-notice" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''"><X :size="14" /></button></div>
+  <Teleport to="body">
+  <div ref="dialogLayer" class="book-dialog-layer">
   <AppModal :open="!!libraryContext" title="我的阅读笔记" content-class="book-action-dialog" @close="closeLibrary">
-    <NotesTransfer v-if="available && store.account" domain="books" :account-id="store.account.id" @imported="notesImported" />
+    <NotesTransfer v-if="available && store.account" domain="books" :account-id="store.account.id" :teleport-to="dialogLayer || 'body'" @imported="notesImported" />
     <p v-if="notesBusy" role="status">正在读取笔记…</p>
     <p v-else-if="notesError" role="alert">{{ notesError }} <button v-if="libraryContext" @click="loadNotes(libraryContext)">重试</button></p>
     <p v-else-if="!notes.length">还没有笔记。长按或拖动选择正文，再点“做笔记”。</p>
@@ -184,9 +190,11 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
       <footer><button :disabled="shareBusy || !shareChannelId" @click="sendShare">{{ shareBusy ? '发送中…' : '发送到聊天室' }}</button></footer>
     </template>
   </AppModal>
-  <AppModal :open="favoritesOpen" title="图书收藏夹" content-class="book-action-dialog" @close="favoritesOpen = false; emit('favorites-changed')"><BookFavorites v-if="favoritesOpen" @navigate="favoritesOpen = false; emit('jump', $event); emit('favorites-changed')" /></AppModal>
+  <AppModal :open="favoritesOpen" title="图书收藏夹" content-class="book-action-dialog" @close="favoritesOpen = false; emit('favorites-changed')"><BookFavorites v-if="favoritesOpen" @changed="emit('notes-changed', $event)" @navigate="favoritesOpen = false; emit('jump', $event); emit('favorites-changed')" /></AppModal>
   <BookNoteEditor ref="editor" @open="noteEditorOpen = $event" @saved="notesSaved" @share="shareNote" />
   <ConfirmDialog :open="!!deleteNote" title="删除这条阅读笔记？" message="删除后无法恢复。" :busy="noteBusy" confirm-text="删除" @close="deleteNote = null" @confirm="removeNote" />
+  </div>
+  </Teleport>
   <StoryComposer v-if="storyImage && storyContext" :initial-image="storyImage" :initial-text="`读《${storyContext.title}》有感${storyContext.chapter ? '\n' + storyContext.chapter : ''}`" @close="storyImage = null; storyContext = null" @published="storyImage = null; storyContext = null; notice = '摘录已发布到我的故事'" />
 </template>
 
@@ -194,6 +202,8 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
 .book-selection-actions { position: absolute; z-index: 35; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%); width: min(460px, calc(100% - 24px)); display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; justify-content: center; align-items: center; gap: 6px; padding: 8px; background: #493b2e; color: #fff7e8; border: 1px solid #7b6248; border-radius: 12px; box-shadow: 0 5px 24px #0005; }
 .book-highlight-colors { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .book-highlight-colors span { flex: 1; }
+.book-selection-actions .book-selection-save { grid-column: 1 / -1; background: #ffe38d; color: #493b2e; }
+.book-highlight-colors button[aria-pressed="true"] { outline: 2px solid #fff; outline-offset: 2px; }
 .book-selection-actions .book-highlight-colors button { min-height: 28px; height: 28px; width: 28px; flex: 0 0 28px; padding: 0; border-radius: 50%; border-color: #fff8; }
 .book-selection-actions span { grid-column: 1 / -1; font-size: 12px; }
 .book-selection-actions button, .book-action-notice button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; border: 1px solid #d8c6a9; border-radius: 7px; padding: 6px 10px; color: #604b32; background: #f7efdf; font: inherit; cursor: pointer; }

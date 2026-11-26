@@ -6,7 +6,7 @@ import { getToken } from "../../api";
 import { exportNotesBackup, importNotesBackup, NOTES_BACKUP_MAX_BYTES, parseNotesBackup, serializeNotesBackup, type ImportResult, type NotesBackup, type NotesDomain } from "./notesBackup";
 import { notesTransferClient } from "./notesTransferClient";
 
-const props = defineProps<{ domain: NotesDomain; accountId: number; menu?: boolean }>();
+const props = defineProps<{ domain: NotesDomain; accountId: number; menu?: boolean; teleportTo?: string | HTMLElement }>();
 const emit = defineEmits<{ imported: [] }>();
 const fileInput = ref<HTMLInputElement | null>(null);
 const transferBusy = ref(false);
@@ -138,7 +138,7 @@ function close() {
     </div>
     <input ref="fileInput" type="file" accept=".json,application/json" hidden :aria-label="`选择${label}备份文件`" @change="chooseFile" />
     <p v-if="error && !transferOpen" class="transfer-error" role="alert">{{ error }}</p>
-    <Teleport to="body"><AppModal :open="transferOpen" :title="`导入${label}`" :busy="transferBusy" content-class="notes-transfer-modal" @close="close">
+    <Teleport :to="teleportTo || 'body'"><AppModal :open="transferOpen" :title="`导入${label}`" :busy="transferBusy" content-class="notes-transfer-modal" @close="close">
       <div class="transfer-body">
         <p class="file-name">{{ fileName }}</p>
         <p>文件中有 {{ backup?.notes.length ?? 0 }} 条笔记，将添加到当前账号。</p>

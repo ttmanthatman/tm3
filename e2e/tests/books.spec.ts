@@ -413,7 +413,10 @@ for (const flow of ["scrolled", "paginated"] as const) {
         }
       }
       await page.screenshot({ path: `output/playwright/book-selection-${flow}.png` });
-      await toolbar.getByRole("button", { name: "绿色高亮并收藏", exact: true }).click();
+      await toolbar.getByRole("button", { name: "绿色高亮", exact: true }).click();
+      await expect(toolbar).toBeVisible();
+      expect((await (await request.get(`/api/books/${book.id}/notes/v2`, { headers })).json()).notes).toHaveLength(0);
+      await toolbar.getByRole("button", { name: "收藏摘录", exact: true }).click();
       await expect(toolbar).toHaveCount(0);
       const favoriteList = async () => (await (await request.get(`/api/books/${book.id}/notes/v2`, { headers })).json()).notes;
       await expect.poll(async () => (await favoriteList())[0]?.color).toBe("#34a853");
@@ -480,8 +483,8 @@ for (const flow of ["scrolled", "paginated"] as const) {
       for (const width of [360, 390, 1280]) {
         await page.setViewportSize({ width, height: 844 });
         const panel = editor.locator(".book-note-editor");
-        expect(await panel.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(223, 206, 176)");
-        expect(await editor.getByLabel("笔记内容").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(241, 230, 210)");
+        expect(await panel.evaluate((element) => getComputedStyle(element).backgroundImage)).toBe("linear-gradient(145deg, rgb(74, 23, 55), rgb(154, 63, 85) 52%, rgb(228, 122, 95))");
+        expect(await editor.getByLabel("笔记内容").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 247, 237)");
         const inputBounds = (await editor.getByLabel("笔记内容").boundingBox())!;
         const bounds = (await panel.boundingBox())!;
         expect(inputBounds.width).toBeGreaterThan(bounds.width - 44);

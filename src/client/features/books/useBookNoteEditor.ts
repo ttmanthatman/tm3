@@ -11,19 +11,20 @@ export function useBookNoteEditor(options: Options) {
   const context = shallowRef<BookReadingContext | null>(null);
   const text = ref("");
   const handwriting = shallowRef<HandwritingPayload | null>(null);
+  const color = ref("");
   const busy = ref(false), error = ref("");
   let id = "", original = "", generation = 0;
   const existing = shallowRef<BookNoteDTO | null>(null);
   let alive = true;
-  const content = () => JSON.stringify([text.value, handwriting.value]);
-  const hasContent = computed(() => !!existing.value?.color || bookNoteHasContent({ text: text.value, handwriting: handwriting.value }));
-  function reset() { generation++; context.value = null; text.value = ""; handwriting.value = null; busy.value = false; error.value = ""; existing.value = null; }
+  const content = () => JSON.stringify([text.value, handwriting.value, color.value]);
+  const hasContent = computed(() => !!color.value || bookNoteHasContent({ text: text.value, handwriting: handwriting.value }));
+  function reset() { generation++; context.value = null; text.value = ""; handwriting.value = null; color.value = ""; busy.value = false; error.value = ""; existing.value = null; }
   function edit(next: BookReadingContext, note?: BookNoteDTO) {
     if (busy.value || !options.accountId()) return;
     generation++;
     context.value = { ...next }; existing.value = note ?? null;
     id = note?.id ?? crypto.randomUUID(); text.value = note?.text ?? ""; handwriting.value = note?.handwriting ?? null;
-    original = content(); error.value = "";
+    color.value = note?.color ?? ""; original = content(); error.value = "";
   }
   async function save(draft: boolean, close = true): Promise<BookNoteDTO | null> {
     const selected = context.value, accountId = options.accountId(), sequence = generation;
@@ -38,7 +39,7 @@ export function useBookNoteEditor(options: Options) {
         const locator = bookLocatorSchema.safeParse(selected.locator);
         saved = (await client.save(selected.bookId, id, {
           quote: selected.quote, chapter: selected.chapter, fraction: selected.fraction,
-          text: text.value, handwriting: handwriting.value, draft, ...(existing.value?.color ? { color: existing.value.color } : {}), ...(locator.success ? { locator: locator.data } : {})
+          text: text.value, handwriting: handwriting.value, draft, ...(color.value ? { color: color.value } : {}), ...(locator.success ? { locator: locator.data } : {})
         })).note;
       } else await client.remove(selected.bookId, id);
       if (!current()) return null;
@@ -50,7 +51,26 @@ export function useBookNoteEditor(options: Options) {
       return null;
     } finally { if (current()) busy.value = false; }
   }
+  async function remove() {
+    const selected = context.value, accountId = options.accountId(), sequence = generation;
+    if (!selected || !existing.value || !accountId || busy.value) return;
+    const current = () => alive && generation === sequence && options.accountId() === accountId;
+    busy.value = true; error.value = "";
+    try {
+      await client.remove(selected.bookId, id);
+      if (current()) { options.changed(selected.bookId); reset(); }
+    } catch (cause) {
+      if (current()) error.value = cause instanceof Error ? cause.message : "删除失败，请重试";
+    } finally { if (current()) busy.value = false; }
+  }
+  async function unfavorite() {
+    if (!color.value || busy.value) return;
+    const previous = color.value, selected = context.value;
+    color.value = "";
+    await save(false);
+    if (context.value === selected && error.value) color.value = previous;
+  }
   watch(options.accountId, reset, { flush: "sync" });
   onScopeDispose(() => { alive = false; generation++; });
-  return { context, text, handwriting, busy, error, hasContent, edit, save, reset, close: () => save(true) };
+  return { context, text, handwriting, color, existing, busy, error, hasContent, edit, save, remove, unfavorite, reset, close: () => save(true) };
 }

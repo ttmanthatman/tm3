@@ -7,7 +7,7 @@ import { useChatStore } from "../../store";
 import { bookNotesClient } from "./bookNotesClient";
 import type { BookLocation } from "./bookReading";
 
-const emit = defineEmits<{ navigate: [location: BookLocation] }>();
+const emit = defineEmits<{ navigate: [location: BookLocation]; changed: [bookId: number] }>();
 const store = useChatStore();
 const notes = ref<BookNoteDTO[]>([]), busy = ref(false), error = ref("");
 let sequence = 0;
@@ -35,6 +35,7 @@ async function update(note: BookNoteDTO, color?: string) {
     if (!color && !bookNoteHasContent(note)) await bookNotesClient.remove(note.bookId, note.id);
     else await bookNotesClient.save(note.bookId, note.id, { quote: note.quote, text: note.text, chapter: note.chapter, fraction: note.fraction, handwriting: note.handwriting, draft: note.draft, locator: note.locator, ...(color ? { color } : {}) });
     if (request !== sequence) return;
+    emit("changed", note.bookId);
     if (color) note.color = color;
     else notes.value = notes.value.filter(item => item.id !== note.id);
   } catch (cause) { if (request === sequence) error.value = cause instanceof Error ? cause.message : "图书收藏更新失败"; }
@@ -49,7 +50,7 @@ onScopeDispose(() => { sequence++; });
     <h3>图书高亮收藏</h3>
     <p v-if="error" role="alert">{{ error }} <button :disabled="busy" @click="load">重试</button></p>
     <p v-if="busy" role="status">正在处理图书收藏…</p>
-    <p v-else-if="!notes.length && !error">在图书正文中选择文字，点击颜色即可高亮并自动收藏。</p>
+    <p v-else-if="!notes.length && !error">在图书正文中选择文字，选好颜色后点击“收藏摘录”。随时可以在这里取消收藏。</p>
     <article v-for="note in notes" :key="note.id">
       <strong>《{{ note.bookTitle }}》</strong><small>{{ note.chapter }}</small>
       <blockquote :style="{ borderColor: note.color, backgroundColor: `${note.color}22` }">{{ note.quote }}</blockquote>

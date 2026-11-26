@@ -4,6 +4,7 @@ import { defineAsyncComponent, ref, shallowRef, watch } from "vue";
 import { Brush, Send, Trash2, X } from "lucide-vue-next";
 import { BOOK_NOTE_TEXT_MAX, type BookNoteDTO } from "@shared/bookNotes";
 import { HANDWRITING_DEFAULT_GLOBAL_SETTINGS, HANDWRITING_DEFAULT_PREFERENCES, type HandwritingPayload } from "@shared/handwriting";
+import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import AppModal from "../../components/ui/AppModal.vue";
 import { useChatStore } from "../../store";
 import { useHandwritingPreferences } from "../handwriting/handwritingPreferences";
@@ -13,10 +14,11 @@ import BookNoteContent from "./BookNoteContent.vue";
 const emit = defineEmits<{ saved: [bookId: number]; share: [note: BookNoteDTO]; open: [value: boolean] }>();
 const store = useChatStore();
 const editor = useBookNoteEditor({ accountId: () => store.account?.id, changed: (bookId) => emit("saved", bookId) });
-const { context, text, handwriting, busy, error, hasContent } = editor;
+const { context, text, handwriting, color, existing, busy, error, hasContent } = editor;
 const HandwritingComposer = defineAsyncComponent(() => import("../handwriting/HandwritingComposer.vue"));
 const { save: savePreferences, error: preferencesError } = useHandwritingPreferences(store);
 const handwritingOpen = ref(false);
+const deleteConfirmOpen = ref(false);
 const draftState = shallowRef<HandwritingComposerSnapshot>({ key: "", payload: null, revision: 0 });
 let inkContext: typeof context.value = null;
 let inkAccountId: number | undefined;
@@ -30,11 +32,11 @@ function changeInk(payload: HandwritingPayload | null) {
 }
 function finishInk(payload: HandwritingPayload) { changeInk(payload); handwritingOpen.value = false; }
 async function share() { const note = await editor.save(false); if (note) emit("share", note); }
-watch(context, (value) => { emit("open", !!value); if (!value) handwritingOpen.value = false; });
+watch(context, (value) => { emit("open", !!value); if (!value) { handwritingOpen.value = false; deleteConfirmOpen.value = false; } });
 defineExpose({ edit: editor.edit });
 </script>
 <template>
-  <AppModal :open="!!context" aria-label="阅读笔记" :busy="busy || handwritingOpen" content-class="book-action-dialog book-note-editor" @close="editor.close">
+  <AppModal :open="!!context" aria-label="阅读笔记" :busy="busy || handwritingOpen || deleteConfirmOpen" content-class="book-action-dialog book-note-editor" @close="editor.close">
     <template v-if="context">
       <div class="book-note-heading">
         <p>《{{ context.title }}》<span v-if="context.chapter"> · {{ context.chapter }}</span></p>
@@ -50,9 +52,15 @@ defineExpose({ edit: editor.edit });
         <button v-if="handwriting" type="button" aria-label="清除手写内容" title="清除手写内容" :disabled="busy" @click="handwriting = null"><Trash2 :size="18" /></button>
         <button class="book-note-share" type="button" aria-label="分享笔记到聊天室" title="分享笔记到聊天室" :disabled="busy || !hasContent" @click="share"><Send :size="19" /></button>
       </footer>
+      <div v-if="existing" class="book-note-manage">
+        <button v-if="color" type="button" :disabled="busy" @click="editor.unfavorite">取消收藏</button>
+        <button type="button" :disabled="busy" @click="deleteConfirmOpen = true"><Trash2 :size="16" />{{ color ? '删除笔记与收藏' : '删除笔记' }}</button>
+      </div>
+      <small v-if="color">取消收藏会移除收藏颜色，保留笔记内容。</small>
       <small>关闭时自动保存草稿；分享后所选聊天室的成员可以查看。</small>
     </template>
   </AppModal>
+  <ConfirmDialog :open="deleteConfirmOpen" title="删除这条阅读笔记？" message="将同时移除这段文字的笔记、收藏和高亮。删除后无法恢复。" :busy="busy" :error="error" confirm-text="删除" danger @close="deleteConfirmOpen = false" @confirm="editor.remove" />
   <HandwritingComposer v-if="draftState.key" :open="handwritingOpen" :account-id="store.account?.id || 0" :draft-state="draftState" :busy="busy"
     status="手写内容将保存在这条笔记中" submit-label="完成" :socket-ready="!!store.account"
     :preferences="store.account?.handwritingPreferences || HANDWRITING_DEFAULT_PREFERENCES" :preferences-error="preferencesError"
@@ -60,9 +68,10 @@ defineExpose({ edit: editor.edit });
     @draft-change="changeInk" @preferences-change="savePreferences" @close="handwritingOpen = false" @submit="finishInk" />
 </template>
 <style scoped>
-.book-note-heading { position: sticky; top: -20px; z-index: 2; display: flex; align-items: flex-start; gap: 12px; background: #dfceb0; padding: 4px 0 12px; }
+.book-note-heading { position: sticky; top: -20px; z-index: 2; display: flex; align-items: flex-start; gap: 12px; padding: 4px 0 12px; }
 .book-note-heading p { margin: 6px 0; flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.6; }
 .book-note-heading button { flex-shrink: 0; }
+.book-note-manage { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #fff3; }
 .book-note-share { margin-left: auto; }
 small { display: block; margin-top: 14px; line-height: 1.7; }
 </style>

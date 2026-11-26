@@ -12,7 +12,7 @@
 }
 
 .sermon-overlay[data-sermon-bg="aurora"] { --sermon-bg: linear-gradient(145deg, #062f3d, #124e66 48%, #33275d); }
-.sermon-overlay[data-sermon-bg="sunset"] { --sermon-bg: linear-gradient(145deg, #4a1737, #9a3f55 52%, #e47a5f); }
+.sermon-overlay[data-sermon-bg="sunset"] { --sermon-bg: var(--sunset-background); }
 .sermon-overlay[data-sermon-bg="forest"] { --sermon-bg: linear-gradient(145deg, #071f1c, #17463c 52%, #315e4e); }
 .sermon-overlay[data-sermon-bg="dawn"] { --sermon-bg: linear-gradient(145deg, #f9e9d2, #f3c9bd 52%, #c9d7ee); }
 .sermon-overlay[data-sermon-bg="dark"] { --sermon-bg: #0f172a; --sermon-fg: #f5f1e6; }

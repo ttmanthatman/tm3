@@ -51,7 +51,10 @@ async function mountCards(page: Page) {
   await page.locator(".reading-share-card").evaluateAll(async cards => {
     await Promise.all(cards.map(card => {
       const url = /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(card, "::before").borderImageSource)?.[1];
-      if (!url) throw new Error("missing card paper image");
+      if (!url) {
+        if (card.classList.contains("reading-share-book")) return Promise.resolve();
+        throw new Error("missing card paper image");
+      }
       const paper = new Image(); paper.src = url;
       return paper.decode().catch(() => { throw new Error(`paper image failed: ${url}`); });
     }));
@@ -97,6 +100,12 @@ async function responsiveCards(page: Page) {
       await expect(scripture.getByRole("button", { name: "复制经文", exact: true })).toBeVisible();
       await expect(scripture.getByRole("button", { name: "播放经文", exact: true })).toBeVisible();
     }
+    for (const id of ["book", "book-note", "fern"]) {
+      expect((await page.locator(`#${id} .reading-share-card`).boundingBox())!.width).toBeCloseTo(short.width, 0);
+      expect(await page.locator(`#${id} .reading-share-card`).evaluate(el => getComputedStyle(el, "::before").borderImageSource)).toBe("none");
+    }
+    const fonts = await page.locator("#book").evaluate(el => [".reading-share-comment", ".reading-share-quote"].map(selector => getComputedStyle(el.querySelector(selector)!).fontFamily));
+    expect(fonts[0]).not.toBe(fonts[1]);
     const plant = (await page.locator("#short .reading-share-plant").boundingBox())!;
     expect(plant.width).toBe(width <= 480 ? 40 : 50);
     expect(plant.height).toBe(width <= 480 ? 76 : 88);

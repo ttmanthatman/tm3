@@ -30,15 +30,17 @@ const href = computed(() => bookReadingUrl({ ...props.note, ...bookLocationFromM
     </ReadingShareCard>
   </div>
   <Teleport to="body">
+  <div v-if="viewerOpen" class="book-dialog-layer">
   <AppModal :open="viewerOpen" title="阅读笔记" content-class="book-action-dialog book-shared-note-paper" @close="viewerOpen = false">
     <p>《{{ note.bookTitle }}》 · {{ note.chapter }}</p>
     <blockquote>{{ note.quote }}</blockquote>
     <BookNoteContent :note="note" :active="active && viewerOpen" />
     <a :href="href" @click.stop="viewerOpen = false"><BookOpen :size="16" />回到原文</a>
   </AppModal>
+  </div>
   </Teleport>
 </template>
 <style scoped>
-.book-shared-note-paper blockquote { margin: 16px 0; padding-left: 12px; border-left: 3px solid #b49a73; white-space: pre-wrap; overflow-wrap: anywhere; }
-.book-shared-note-paper a { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; color: #604b32; min-height: 44px; }
+.book-shared-note-paper blockquote { margin: 16px 0; padding-left: 12px; border-left: 3px solid #ffe38d; white-space: pre-wrap; overflow-wrap: anywhere; }
+.book-shared-note-paper a { display: inline-flex; align-items: center; gap: 6px; margin-top: 16px; color: #fff1b8; min-height: 44px; }
 </style>

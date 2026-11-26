@@ -1,23 +1,31 @@
+.book-dialog-layer { position: fixed; inset: 0; z-index: 120; pointer-events: none; }
+.book-dialog-layer .modal-shell { pointer-events: auto; }
 .small-modal.book-action-dialog {
+  --text: #fff7ed;
   width: min(580px, 100%);
-  max-height: 88dvh;
+  max-height: min(88dvh, calc(var(--app-height) - var(--safe-top) - var(--safe-bottom) - 24px));
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: block;
   padding: 20px;
-  color: #493b2c;
-  background: #dfceb0;
+  border: 1px solid #fff3;
+  border-radius: 18px;
+  color: var(--text);
+  background: var(--sunset-background);
+  background-attachment: local;
+  box-shadow: 0 24px 80px #35142655;
 }
-.book-action-dialog .modal-head { position: sticky; top: -20px; z-index: 1; background: #dfceb0; padding-bottom: 12px; }
-.book-action-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; border: 1px solid #bca17a; border-radius: 7px; padding: 6px 10px; color: #604b32; background: #f1e6d2; font: inherit; cursor: pointer; }
+.book-action-dialog .modal-head, .book-action-dialog .book-note-heading { position: sticky; top: -20px; z-index: 2; background: #54203d; margin: -20px -20px 16px; padding: 16px 20px; border-bottom: 1px solid #fff2; }
+.book-action-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; border: 1px solid #fff5; border-radius: 10px; padding: 6px 12px; color: #fff7ed; background: #fff2; font: inherit; cursor: pointer; }
+.book-action-dialog button:hover:not(:disabled) { background: #fff3; }
 .book-action-dialog button:disabled { opacity: .5; cursor: default; }
+.book-action-dialog :focus-visible { outline: 2px solid #ffe38d; outline-offset: 3px; }
 .book-action-dialog label { display: grid; gap: 8px; margin: 14px 0; }
-.book-action-dialog select, .book-action-dialog textarea { width: 100%; min-width: 0; padding: 10px; border: 1px solid #b39b77; border-radius: 8px; font: inherit; color: #493b2c; background: #f1e6d2; }
-.book-action-dialog blockquote { margin: 12px 0; border-left: 3px solid #b49a73; padding-left: 12px; max-height: 26dvh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.book-action-dialog select, .book-action-dialog textarea { width: 100%; min-width: 0; padding: 12px; border: 1px solid #fff5; border-radius: 10px; font: inherit; color: #493340; background: #fff7ed; }
+.book-action-dialog textarea { resize: vertical; max-height: 30dvh; }
+.book-action-dialog blockquote { margin: 12px 0; border-left: 3px solid #ffe38d; padding-left: 12px; max-height: 26dvh; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: "Songti SC", "STSong", serif; line-height: 1.75; }
 .book-action-dialog footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-
-.small-modal.book-share-dialog { background: #f8fafc; color: #344254; }
-.book-share-dialog .modal-head { background: #f8fafc; }
-.book-share-dialog textarea, .book-share-dialog select { background: #fff; border-color: #c7d0dd; color: #344254; }
-.book-share-dialog textarea { resize: vertical; min-height: 92px; max-height: 25dvh; }
-.book-share-dialog label small { font-size: 12px; color: #68758a; }
-.book-share-dialog footer button { background: #b9582b; color: #fff; border-color: transparent; }
+.book-action-dialog a { color: #fff1b8; }
+.book-share-dialog textarea { min-height: 92px; max-height: 25dvh; }
+.book-share-dialog label small { font-size: 12px; }
+.book-share-dialog footer button, .book-note-editor footer > button:first-child { background: #fff0d5; color: #652c40; border-color: transparent; }
