@@ -89,7 +89,7 @@ test("grace cards reuse prayer-card structure and expose the requested actions w
 test("reception management stays off the chat startup path and keeps readable controls", () => {
   assert.match(app, /<ReceptionManager\s+v-if="showReceptionManager"/);
   assert.match(receptionManager, /placeholder="可用中文、字母，或至少 6 位数字"/);
-  assert.match(receptionManager, /\.create-card input,\.create-card select,\.room-settings input,\.room-settings select\{[^}]*font-size:16px;/);
+  assert.match(receptionManager, /\.create-card input,\s*\.create-card select,\s*\.room-settings input,\s*\.room-settings select\s*\{[^}]*font-size:\s*16px;/);
   assert.match(receptionManager, /emit\("created", result\.channel\)/);
   assert.match(app, /@created="handleReceptionCreated"[\s\S]*?@updated="handleReceptionUpdated"[\s\S]*?@deleted="handleReceptionDeleted"/);
   assert.match(store, /socket\.on\("reception:closed", \(\) => \{\s*if \(!this\.account\?\.isGuest\)/);

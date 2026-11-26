@@ -7,9 +7,10 @@ import { HANDWRITING_DEFAULT_PREFERENCES, normalizeHandwritingPreferences } from
 import { biblePreferencesJson } from "../biblePreferences.js";
 import { registerAuthRoutes } from "./auth.js";
 
-function createHarness() {
+function createHarness(options: { isGuest?: boolean } = {}) {
   let preferences = structuredClone(HANDWRITING_DEFAULT_PREFERENCES);
   let writes = 0;
+  let profile: Prisma.AccountUpdateInput | null = null;
   let transactionActive = false;
   let biblePreferences: unknown;
   const prisma = {
@@ -24,6 +25,7 @@ function createHarness() {
       update: async ({ data }: { data: Prisma.AccountUpdateInput }) => {
         if (data.handwritingPreferences !== undefined) preferences = normalizeHandwritingPreferences(data.handwritingPreferences);
         if (data.biblePreferences !== undefined) biblePreferences = data.biblePreferences;
+        if (data.displayName !== undefined) profile = data;
         writes++;
         return { id: 1, handwritingPreferences: preferences, biblePreferences };
       }
@@ -38,7 +40,7 @@ function createHarness() {
     prisma,
     requireAuth: async (request, reply) => {
       if (request.headers.authorization !== "member") return reply.code(401).send({ success: false });
-      Object.assign(request, { auth: { accountId: 1 } });
+      Object.assign(request, { auth: { accountId: 1, isGuest: options.isGuest ?? false } });
     },
     authLoginRateLimitMax: 100,
     settingBool: async (_key, fallback = false) => fallback,
@@ -53,7 +55,7 @@ function createHarness() {
     updateAccountAvatarFromUpload: async () => undefined,
     deleteOwnedReceptionRooms: async () => undefined
   });
-  return { app, writes: () => writes, preferences: () => preferences };
+  return { app, writes: () => writes, preferences: () => preferences, profile: () => profile };
 }
 
 test("theme validation completes before the preference transaction starts", async () => {
@@ -140,4 +142,24 @@ test("Bible preferences validate account options and preserve unrelated settings
     }
     assert.equal(writes(), before);
   } finally { await app.close(); }
+});
+
+
+test("profile edits retain the server-assigned visitor number for guests", async (context) => {
+  const { app, profile } = createHarness({ isGuest: true });
+  context.after(() => app.close());
+  for (const displayName of ["新称呼", "新称呼 · 访客 #1", "新称呼 · 访客 #999"]) {
+    const response = await app.inject({ method: "PATCH", url: "/api/me/profile", headers: { authorization: "member" }, payload: { displayName } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.equal(profile()?.displayName, "新称呼 · 访客 #1");
+    assert.deepEqual(profile()?.actor, { update: { displayName: "新称呼 · 访客 #1" } });
+  }
+});
+
+test("regular member profile edits keep the chosen nickname unchanged", async (context) => {
+  const { app, profile } = createHarness();
+  context.after(() => app.close());
+  const response = await app.inject({ method: "PATCH", url: "/api/me/profile", headers: { authorization: "member" }, payload: { displayName: "新称呼" } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(profile()?.displayName, "新称呼");
 });

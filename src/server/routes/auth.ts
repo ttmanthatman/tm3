@@ -8,6 +8,7 @@ import type { AdminLoginLogKind } from "../../shared/types.js";
 import { cleanBibleWorkspaceState } from "../bible/workspaceState.js";
 import { biblePreferencesJson } from "../biblePreferences.js";
 import { handwritingPreferencesJson } from "../handwritingPreferences.js";
+import { receptionGuestDisplayName } from "../receptionGuestIdentity.js";
 import { cleanThemeId } from "./appearance.js";
 
 export type AuthRouteAuthContext = {
@@ -15,6 +16,7 @@ export type AuthRouteAuthContext = {
   actorId: number;
   username: string;
   isAdmin: boolean;
+  isGuest: boolean;
   canPinMessages: boolean;
   sessionId: string;
 };
@@ -120,12 +122,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRouteDependen
     const auth = (request as AuthedAuthRequest).auth;
     const body = z.object({ displayName: z.string().trim().min(1).max(80), gender: z.enum(["female", "male", "unspecified"]).optional() }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ success: false, message: "昵称需为 1-80 个字符" });
+    const displayName = auth.isGuest ? receptionGuestDisplayName(body.data.displayName, auth.accountId) : body.data.displayName;
     const updated = await prisma.account.update({
       where: { id: auth.accountId },
       data: {
-        displayName: body.data.displayName,
+        displayName,
         gender: body.data.gender,
-        actor: { update: { displayName: body.data.displayName } }
+        actor: { update: { displayName } }
       },
       include: { actor: true }
     });

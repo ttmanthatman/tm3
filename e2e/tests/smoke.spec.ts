@@ -230,13 +230,13 @@ test("创建会客厅后，来访者只进入该房间", async ({ page }) => {
   await manager.getByLabel("名称").fill(roomName);
   await manager.getByLabel("来访口令").fill(code);
   await manager.getByLabel("有效期").selectOption("1");
-  await manager.getByText("频道列表使用自定义底色", { exact: true }).click();
-  await manager.getByLabel("会客厅列表底色").fill("#cfe8ff");
+  await expect(manager.getByText("频道列表使用自定义底色", { exact: true })).toHaveCount(0);
+  await expect(manager.locator('input[type="color"]')).toHaveCount(0);
   await manager.getByRole("button", { name: "创建会客厅", exact: true }).click();
   await expect(manager.getByText(roomName, { exact: true })).toBeVisible();
   await manager.getByRole("button", { name: "关闭", exact: true }).click();
   const roomRow = page.locator(".channel-row-wrap").filter({ hasText: roomName });
-  await expect.poll(() => roomRow.evaluate((element) => getComputedStyle(element).getPropertyValue("--channel-list-color").trim())).toBe("#cfe8ff");
+  await expect(roomRow).toBeVisible();
 
   await page.getByRole("button", { name: "退出", exact: true }).click();
   await page.getByRole("button", { name: "持来访口令进入", exact: true }).click();

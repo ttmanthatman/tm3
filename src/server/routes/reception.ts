@@ -4,6 +4,7 @@ import { Prisma, type Account, type AccountSession, type Actor, type Channel, ty
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import type { AccountDTO, AdminReceptionRoomDTO, ChannelDTO } from "../../shared/types.js";
+import { receptionGuestDisplayName } from "../receptionGuestIdentity.js";
 import {
   createReceptionInviteToken,
   readReceptionInviteToken,
@@ -272,18 +273,25 @@ export function registerReceptionRoutes(app: FastifyInstance, deps: ReceptionRou
       }
       const username = guestUsername();
       const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString("hex"), 12);
-      const account = await deps.prisma.account.create({
-        data: {
-          username,
-          passwordHash,
-          displayName: parsed.data.displayName,
-          role: "user",
-          isGuest: true,
-          guestExpiresAt: room.receptionExpiresAt,
-          actor: { create: { kind: "human", username, displayName: parsed.data.displayName } },
-          memberships: { create: [{ channelId: room.id, role: "member" }] }
-        },
-        include: { actor: true }
+      const account = await deps.prisma.$transaction(async (tx) => {
+        const guest = await tx.account.create({
+          data: {
+            username,
+            passwordHash,
+            displayName: parsed.data.displayName,
+            role: "user",
+            isGuest: true,
+            guestExpiresAt: room.receptionExpiresAt,
+            actor: { create: { kind: "human", username, displayName: parsed.data.displayName } },
+            memberships: { create: [{ channelId: room.id, role: "member" }] }
+          }
+        });
+        const displayName = receptionGuestDisplayName(parsed.data.displayName, guest.id);
+        return tx.account.update({
+          where: { id: guest.id },
+          data: { displayName, actor: { update: { displayName } } },
+          include: { actor: true }
+        });
       });
       const session = await deps.createAuthSession(account.id, request, parsed.data.deviceName, parsed.data.appVersion);
       deps.joinAccountChannel(account.id, room.id);

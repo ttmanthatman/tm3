@@ -30,26 +30,34 @@ function createRouteHarness() {
     createData: null as Record<string, unknown> | null,
     guestCreateData: null as Record<string, unknown> | null
   };
+  const guestInputs = new Map<number, Record<string, unknown>>();
   const prisma = {
+    $transaction: async (action: (tx: PrismaClient) => Promise<unknown>) => action(prisma),
     actor: { findUnique: async () => ({ id: 11 }) },
     account: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         state.guestCreateData = data;
+        const id = 99 + guestInputs.size;
+        guestInputs.set(id, data);
+        return { id };
+      },
+      update: async ({ where, data }: { where: { id: number }; data: { displayName: string } }) => {
+        const source = guestInputs.get(where.id)!;
         return {
-          id: 99,
-          username: data.username,
-          passwordHash: data.passwordHash,
+          id: where.id,
+          username: source.username,
+          passwordHash: source.passwordHash,
           displayName: data.displayName,
           role: "user",
           isGuest: true,
-          guestExpiresAt: data.guestExpiresAt,
+          guestExpiresAt: source.guestExpiresAt,
           theme: "wechat",
           biblePreferences: null,
           canPinMessages: false,
           lastLoginAt: null,
           createdAt: new Date(),
           updatedAt: new Date(),
-          actor: { id: 199, kind: "human", username: data.username, displayName: data.displayName }
+          actor: { id: where.id + 100, kind: "human", username: source.username, displayName: data.displayName }
         };
       }
     },
@@ -58,7 +66,8 @@ function createRouteHarness() {
         state.createData = data;
         return room;
       },
-      findFirst: async () => room
+      findFirst: async () => room,
+      findUnique: async ({ where }: { where: { receptionTokenHash: string } }) => where.receptionTokenHash === room.receptionTokenHash ? room : null
     }
   } as unknown as PrismaClient;
   const app = Fastify();
@@ -90,7 +99,7 @@ function createRouteHarness() {
     authFor: (request) => (request as FastifyRequest & { auth: { accountId: number; isAdmin: boolean; isGuest: boolean } }).auth,
     createAuthSession: async () => ({ id: "unused" }) as never,
     signToken: () => "unused",
-    authDto: () => ({}) as never,
+    authDto: (account) => ({ id: account.id, actorId: account.actor?.id, displayName: account.displayName, isGuest: account.isGuest }) as never,
     channelDto: async () => channelDto,
     joinAccountChannel: () => undefined,
     emitRoomUpdated: async () => undefined,
@@ -176,4 +185,35 @@ test("guests can join through a current invitation token without receiving the r
   assert.equal(state.guestCreateData?.guestExpiresAt, room.receptionExpiresAt);
   assert.deepEqual(state.guestCreateData?.memberships, { create: [{ channelId: room.id, role: "member" }] });
   assert.equal("code" in (state.guestCreateData || {}), false);
+});
+
+
+test("a shared code gives same-named visitors distinct accounts, actors and visible numbers", async (context) => {
+  const { app } = createRouteHarness();
+  context.after(() => app.close());
+  const responses = await Promise.all([1, 2].map(() => app.inject({
+    method: "POST", url: "/api/reception/join", payload: { code: "平安", displayName: "同名访客" }
+  })));
+  const accounts = responses.map(response => {
+    assert.equal(response.statusCode, 200, response.body);
+    return response.json().account as { id: number; actorId: number; displayName: string; isGuest: boolean };
+  });
+  assert.notEqual(accounts[0].id, accounts[1].id);
+  assert.notEqual(accounts[0].actorId, accounts[1].actorId);
+  assert.notEqual(accounts[0].displayName, accounts[1].displayName);
+  for (const account of accounts) {
+    assert.equal(account.displayName, `同名访客 · 访客 #${account.id}`);
+    assert.equal(account.isGuest, true);
+  }
+});
+
+test("invalid codes and expired invitations create no visitor identity", async (context) => {
+  const { app, room, state } = createRouteHarness();
+  context.after(() => app.close());
+  const invalid = await app.inject({ method: "POST", url: "/api/reception/join", payload: { code: "错误口令", displayName: "访客" } });
+  assert.equal(invalid.statusCode, 404);
+  room.receptionExpiresAt = new Date(Date.now() - 1000);
+  const expired = await app.inject({ method: "POST", url: "/api/reception/join", payload: { code: "平安", displayName: "访客" } });
+  assert.equal(expired.statusCode, 410);
+  assert.equal(state.guestCreateData, null);
 });
