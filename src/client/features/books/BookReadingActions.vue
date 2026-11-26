@@ -183,7 +183,7 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
       <BookNoteContent v-if="sharedNote" :note="sharedNote" />
       <p v-if="sharedNote">将发送当前笔记的副本，包含文字和手写内容。</p>
       <p v-else>大家点击消息中的链接，就能打开这本书的阅读位置。</p>
-      <label>分享感言（选填）<textarea v-model="shareComment" aria-label="分享感言（选填）" rows="3" maxlength="500" :disabled="shareBusy" placeholder="说说你为什么想分享…"></textarea><small>感言将单独显示在卡片上方 · {{ shareComment.length }}/500</small></label>
+      <label>分享感言（选填）<textarea v-model="shareComment" aria-label="分享感言（选填）" rows="3" maxlength="500" :disabled="shareBusy" placeholder="说说你为什么想分享…"></textarea><small>感言显示在卡片内的书摘下方 · {{ shareComment.length }}/500</small></label>
       <label>发送到聊天室<select v-model="shareChannelId" :disabled="shareBusy"><option v-for="channel in channels" :key="channel.id" :value="channel.id">{{ channel.name }}</option></select></label>
       <p v-if="!channels.length">没有可以发送的聊天室</p>
       <p v-if="shareError" role="alert">{{ shareError }}</p>

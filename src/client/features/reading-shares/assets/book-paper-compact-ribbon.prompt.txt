@@ -1,0 +1,8 @@
+Edited using the built-in GPT image generation tool from book-paper-right-ribbon.webp. Transparent PNG output converted to WebP without changing the image content. Final image: 1254 x 1254. Rendered ribbon: approximately 24 px wide and 38 px tall, fixed in the nine-slice upper-right corner.
+
+Use case: precise-object-edit.
+Edit target: supplied blank ivory paper card texture with red ribbon at top right.
+Keep the same square image size, the single ivory paper sheet, paper silhouette, subtle paper texture, transparent background, camera, color, and all paper edges. Change ONLY the top-right bookmark ribbon and restore the paper surface where its previous long tail was.
+Make the ribbon about HALF as long as the existing ribbon and about 25 percent WIDER. At the current approximately 1254 x 1254 canvas, the new ribbon should occupy roughly x=1035..1130 and y=44..185 (about 95 px wide and 140 px long), attached flush to the top paper edge. Keep it in exactly the same top-right region, no ribbons on the left.
+The ribbon must look neat, flat and smooth: muted warm red satin with a very subtle satin sheen, no woven/burlap appearance, no creases, no wrinkles, no crumples, no puckering, no ragged edges. A crisp small symmetrical V-notch at bottom, simple elegant finish, minimal shadow. Avoid a tie, bow, medal or dangling ornament. Only one ribbon.
+Restore the old ribbon's lower half to uninterrupted ivory paper matching the surroundings. No text, no symbols, no second paper layer or colored backing. Preserve actual alpha transparency outside the paper. This is a nine-slice UI card background: the entire ribbon must be confined to the upper-right 300 by 360 pixel corner region so it will stay fixed while the paper edges extend with message length.

@@ -52,12 +52,13 @@ async function mountCards(page: Page) {
       row("multiple", h(Scripture, { passages, translation: "当代译本（简体）", showTranslation: true, sourceId: "cmncbs", openPassage, play: play("multiple") })),
       row("topic", h(Topic, { topic: { kind: "bible_topic", name: "彼此相爱", translation: "和合本", passages }, openPassage, play: play("topic") })),
       row("book", h(Book, { paperSeed: "c", context: { bookId: 999999, title: "大离婚", chapter: "2", fraction: .15, quote: "福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。福音流畅的人，是按照耶稣基督的位格与作为中所成就的一切，来思考、感受和感知万事的人。" }, comment: "这句话一直留在我心里。" })),
-      row("book-note", h(BookNote, { paperSeed: "a", note: { id: "fixture", bookId: 999999, bookTitle: "魔鬼家书：地狱来鸿", chapter: "第20封信", fraction: .55, quote: "我亲爱的私酷鬼", text: "停下来，认真想想这封信。", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" } })),
+      row("book-note", h(BookNote, { paperSeed: "a", comment: "想和你分享这条读书笔记。", note: { id: "fixture", bookId: 999999, bookTitle: "魔鬼家书：地狱来鸿", chapter: "第20封信", fraction: .55, quote: "我亲爱的私酷鬼", text: "停下来，认真想想这封信。", createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z" } })),
+      row("book-short", h(Book, { context: { bookId: 999999, title: "魔鬼家书：地狱来鸿", chapter: "第28封信", fraction: .78, quote: "他若现在死了，你就失去他了。" }, comment: "魔鬼不希望一个安稳在神里的人马上死掉，那样它就失去勾引他堕落的机会了。" })),
       row("fern", h(Book, { paperSeed: "b", context: { bookId: 999999, title: "返璞归真", chapter: "1", fraction: .2, quote: "每一个新的清晨，都是一个新的开始。" } })),
       row("bible-note", h(BibleNote, { id: "share-card-note", reference: "约翰福音 11:35" }))
     ]) }).mount(document.getElementById("host")!);
   });
-  await expect(page.locator(".reading-share-card")).toHaveCount(8);
+  await expect(page.locator(".reading-share-card")).toHaveCount(9);
   await page.locator(".reading-share-card").evaluateAll(async cards => {
     await Promise.all(cards.map(card => {
       const url = /url\(["']?(.*?)["']?\)/.exec(getComputedStyle(card, "::before").borderImageSource)?.[1];
@@ -111,16 +112,33 @@ async function responsiveCards(page: Page) {
       await expect(scripture.getByRole("button", { name: "复制经文", exact: true })).toBeVisible();
       await expect(scripture.getByRole("button", { name: "播放经文", exact: true })).toBeVisible();
     }
-    for (const id of ["book", "book-note", "fern"]) {
+    for (const id of ["book", "book-note", "book-short", "fern"]) {
       expect((await page.locator(`#${id} .reading-share-card`).boundingBox())!.width).toBeCloseTo(short.width, 0);
       const paper = await page.locator(`#${id} .reading-share-card`).evaluate(el => {
         const style = getComputedStyle(el, "::before");
         return { source: style.borderImageSource, background: style.backgroundColor, slices: style.borderImageSlice, extra: getComputedStyle(el, "::after").content };
       });
-      expect(paper.source).toContain("book-paper-right-ribbon.webp");
+      expect(paper.source).toContain("book-paper-compact-ribbon.webp");
       expect(paper.background).toBe("rgba(0, 0, 0, 0)");
       expect(paper.slices).toBe("360 300 100 100 fill");
       expect(paper.extra).toBe("none");
+    }
+    for (const id of ["book", "book-short", "book-note"]) {
+      const card = page.locator(`#${id} .reading-share-card`);
+      await expect(card.locator(".reading-share-comment")).toHaveCount(1);
+      await expect(page.locator(`#${id} .reading-share-message > .reading-share-comment`)).toHaveCount(0);
+      const layout = await card.evaluate(el => {
+        const cover = el.querySelector(".book-share-cover")!.getBoundingClientRect();
+        const quote = el.querySelector(".reading-share-quote")!.getBoundingClientRect();
+        const comment = el.querySelector(".reading-share-comment")!;
+        const text = comment.getBoundingClientRect(), paper = el.getBoundingClientRect();
+        return { left: cover.left - paper.left, top: cover.top - paper.top, commentTop: text.top, afterContent: Math.max(cover.bottom, quote.bottom), bottom: paper.bottom - text.bottom, background: getComputedStyle(comment).backgroundColor };
+      });
+      expect(layout.left).toBe(width <= 480 ? 24 : 28);
+      expect(layout.top).toBe(layout.left);
+      expect(layout.commentTop).toBeGreaterThan(layout.afterContent);
+      expect(layout.bottom).toBeGreaterThanOrEqual(width <= 480 ? 24 : 28);
+      expect(layout.background).toBe("rgba(0, 0, 0, 0)");
     }
     const fonts = await page.locator("#book").evaluate(el => [".reading-share-comment", ".reading-share-quote"].map(selector => getComputedStyle(el.querySelector(selector)!).fontFamily));
     expect(fonts[0]).not.toBe(fonts[1]);
@@ -149,8 +167,10 @@ async function responsiveCards(page: Page) {
         }
       }
       expect(minX).toBeGreaterThan(raster.info.width * .7);
-      expect(maxX - minX).toBeGreaterThan(10);
-      expect(maxY - minY).toBeGreaterThan(40);
+      expect(maxX - minX).toBeGreaterThanOrEqual(20);
+      expect(maxX - minX).toBeLessThanOrEqual(28);
+      expect(maxY - minY).toBeGreaterThanOrEqual(30);
+      expect(maxY - minY).toBeLessThanOrEqual(42);
       ribbons.push({ width: maxX - minX, height: maxY - minY });
     }
     expect(ribbons[0]).toEqual(ribbons[1]);
@@ -174,6 +194,7 @@ async function responsiveCards(page: Page) {
     if (width === 1280) {
       await page.locator("#short .reading-share-card").screenshot({ path: "output/e2e/share-card-bible.png" });
       await page.locator("#book .reading-share-card").screenshot({ path: "output/e2e/share-card-book.png" });
+      await page.locator("#book-short .reading-share-card").screenshot({ path: "output/e2e/share-card-book-short.png" });
       await page.locator("#book-note .reading-share-card").screenshot({ path: "output/e2e/share-card-book-note.png" });
       await page.locator("#fern .reading-share-card").screenshot({ path: "output/e2e/share-card-fern.png" });
     }

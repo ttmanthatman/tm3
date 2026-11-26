@@ -9,7 +9,6 @@ const href = computed(() => bookReadingUrl(props.context, window.location.origin
 </script>
 <template>
   <div class="reading-share-message book-share-message">
-    <p v-if="comment" class="reading-share-comment">{{ comment }}</p>
     <ReadingShareCard kind="book" hide-plant :paper-seed="paperSeed" class="book-share-card" :text="context.quote || context.title">
       <div class="book-share-flow">
         <a class="book-share-cover-link" :href="href" :aria-label="`打开《${context.title}》原书位置`" @click.stop><BookShareCover :book-id="context.bookId" :title="context.title" /></a>
@@ -17,26 +16,26 @@ const href = computed(() => bookReadingUrl(props.context, window.location.origin
         <strong class="reading-share-heading">《{{ context.title }}》</strong>
         <small v-if="!context.quote" class="reading-share-meta">邀请人已读 {{ Math.round(context.fraction * 100) }}%</small>
         <small class="reading-share-meta">位置：{{ bookPositionLabel(context.chapter, context.fraction) }}</small>
-        <blockquote v-if="context.quote" class="reading-share-quote"><Quote class="book-share-quote-open" :size="16" aria-hidden="true" /> {{ context.quote }} <Quote class="book-share-quote-close" :size="16" aria-hidden="true" /> <a class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a></blockquote>
+        <blockquote v-if="context.quote" class="reading-share-quote"><Quote class="book-share-quote-open" :size="16" aria-hidden="true" /> {{ context.quote }} <span class="book-share-quote-tail"><Quote class="book-share-quote-close" :size="16" aria-hidden="true" /> <a class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a></span></blockquote>
         <a v-else class="book-share-inline-link" :href="href" aria-label="跳转到原书位置" title="跳转到原书位置" @click.stop><BookOpen aria-hidden="true" /></a>
       </div>
+      <p v-if="comment" class="reading-share-comment">{{ comment }}</p>
     </ReadingShareCard>
   </div>
 </template>
 
 <style scoped>
-.book-share-card :deep(.reading-share-card-content) { padding: 16px 18px 18px; }
 .book-share-flow { display: flow-root; }
 .book-share-cover-link { float: left; width: 96px; margin: 0 16px 8px 0; }
 .book-share-flow .reading-share-quote { margin: 8px 0 0; }
 .book-share-flow .reading-share-label, .book-share-flow .reading-share-heading, .book-share-flow .reading-share-meta { padding-right: 40px; }
 .book-share-quote-open { transform: rotate(180deg); }
 .book-share-quote-open, .book-share-quote-close { display: inline; vertical-align: -.1em; }
+.book-share-quote-tail { white-space: nowrap; }
 .book-share-inline-link { display: inline-flex; vertical-align: -.15em; margin-left: .2em; color: #9a4c28; text-decoration: none; }
 .book-share-inline-link svg { width: 1em; height: 1em; }
 .book-share-cover-link:focus-visible, .book-share-inline-link:focus-visible { outline: 2px solid #527bb3; outline-offset: 3px; }
 @media (max-width: 480px) {
   .book-share-cover-link { width: 76px; margin-right: 12px; }
-  .book-share-card :deep(.reading-share-card-content) { padding: 14px 16px 16px; }
 }
 </style>

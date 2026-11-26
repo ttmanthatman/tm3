@@ -7,9 +7,10 @@
 .reading-share-card-content { padding: 25px 30px 22px 40px; min-width: 0; }
 /* One nine-slice paper image: corners/ribbon stay fixed while the center and
    unmarked side edges extend with the message. No backing color or extra ribbon. */
-.reading-share-card.reading-share-book::before { border-image: url("./assets/book-paper-right-ribbon.webp") 360 300 100 100 fill / 90px 75px 25px 25px / 0 stretch; border-radius: 0; background: none; box-shadow: none; }
+.reading-share-card.reading-share-book::before { border-image: url("./assets/book-paper-compact-ribbon.webp") 360 300 100 100 fill / 72px 66px 25px 25px / 0 stretch; border-radius: 0; background: none; box-shadow: none; }
 .reading-share-plant { position: absolute; top: 9px; right: 7px; width: 50px; height: 88px; object-fit: contain; object-position: top right; pointer-events: none; user-select: none; }
-.reading-share-book .reading-share-card-content { padding: 24px 54px 24px 24px; }
+.reading-share-book .reading-share-card-content { padding: 28px; }
+.reading-share-card.reading-share-book .reading-share-comment { margin: 14px 0 0; padding: 14px 0 0; border-top: 1px solid #8a6b2e35; border-radius: 0; background: none; color: inherit; }
 .reading-share-bible .reading-share-heading, .reading-share-bible .reading-share-label { padding-right: 28px; }
 .reading-share-label { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 8px; color: #9a4c28; font-size: 12px; font-weight: 650; }
 .reading-share-heading { display: block; margin: 0 0 5px; font-size: 17px; font-weight: 700; line-height: 1.45; }
@@ -30,9 +31,11 @@
 .reading-share-book-layout { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 16px; align-items: start; }
 .reading-share-book-copy { min-width: 0; }
 .reading-share-book-layout > .reading-share-action { grid-column: 1 / -1; margin-top: 0; }
+.reading-share-book-layout > .reading-share-comment { grid-column: 1 / -1; }
+.reading-share-card.reading-share-book .reading-share-book-layout > .reading-share-comment { margin-top: 0; }
 @media (max-width: 480px) {
   .reading-share-card-content { padding: 24px 22px 20px 30px; }
-  .reading-share-book .reading-share-card-content { padding: 20px 38px 20px 18px; }
+  .reading-share-book .reading-share-card-content { padding: 24px; }
   .reading-share-plant { width: 40px; height: 76px; right: 4px; }
   .reading-share-book-layout { grid-template-columns: 76px minmax(0, 1fr); gap: 12px; }
   .reading-share-heading { font-size: 16px; }
