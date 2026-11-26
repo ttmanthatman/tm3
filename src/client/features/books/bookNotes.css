@@ -11,11 +11,11 @@
   border: 1px solid #fff3;
   border-radius: 18px;
   color: var(--text);
-  background: var(--sunset-background);
+  background: var(--book-dialog-background, var(--sunset-background));
   background-attachment: local;
   box-shadow: 0 24px 80px #35142655;
 }
-.book-action-dialog .modal-head, .book-action-dialog .book-note-heading { position: sticky; top: -20px; z-index: 2; background: #54203d; margin: -20px -20px 16px; padding: 16px 20px; border-bottom: 1px solid #fff2; }
+.book-action-dialog .modal-head, .book-action-dialog .book-note-heading { position: sticky; top: -20px; z-index: 2; background: var(--book-dialog-heading, #54203d); margin: -20px -20px 16px; padding: 16px 20px; border-bottom: 1px solid #fff2; }
 .book-action-dialog button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; border: 1px solid #fff5; border-radius: 10px; padding: 6px 12px; color: #fff7ed; background: #fff2; font: inherit; cursor: pointer; }
 .book-action-dialog button:hover:not(:disabled) { background: #fff3; }
 .book-action-dialog button:disabled { opacity: .5; cursor: default; }

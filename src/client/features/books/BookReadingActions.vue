@@ -5,7 +5,7 @@ import { computed, defineAsyncComponent, onBeforeUnmount, ref, watch } from "vue
 import { BookOpen, Heart, NotebookPen, Send, Sparkles, X } from "lucide-vue-next";
 import { BOOK_QUOTE_MAX, legacyBookNote, type BookNoteDTO, type BookNoteSharePayload } from "@shared/bookNotes";
 import { bookLocatorSchema } from "@shared/bookLocator";
-import AppModal from "../../components/ui/AppModal.vue";
+import BookDialog from "./BookDialog.vue";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
 import { useChatStore } from "../../store";
 import { useMessageSender } from "../../messageSending";
@@ -159,7 +159,7 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
   <div v-if="notice" class="book-action-notice" role="status">{{ notice }}<button aria-label="关闭提示" @click="notice = ''"><X :size="14" /></button></div>
   <Teleport to="body">
   <div ref="dialogLayer" class="book-dialog-layer">
-  <AppModal :open="!!libraryContext" title="我的阅读笔记" content-class="book-action-dialog" @close="closeLibrary">
+  <BookDialog :open="!!libraryContext" title="我的阅读笔记" content-class="book-action-dialog" @close="closeLibrary">
     <NotesTransfer v-if="available && store.account" domain="books" :account-id="store.account.id" :teleport-to="dialogLayer || 'body'" @imported="notesImported" />
     <p v-if="notesBusy" role="status">正在读取笔记…</p>
     <p v-else-if="notesError" role="alert">{{ notesError }} <button v-if="libraryContext" @click="loadNotes(libraryContext)">重试</button></p>
@@ -174,8 +174,8 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
         <button @click="deleteNote = note">删除</button>
       </footer>
     </article>
-  </AppModal>
-  <AppModal :open="!!shareContext" :title="sharedNote ? '分享笔记到聊天室' : shareContext?.quote ? '分享阅读摘录' : '邀请大家一起读'" :busy="shareBusy" content-class="book-action-dialog book-share-dialog" @close="shareContext = null">
+  </BookDialog>
+  <BookDialog :open="!!shareContext" :title="sharedNote ? '分享笔记到聊天室' : shareContext?.quote ? '分享阅读摘录' : '邀请大家一起读'" :busy="shareBusy" content-class="book-action-dialog book-share-dialog" @close="shareContext = null">
     <template v-if="shareContext">
       <p><strong>《{{ shareContext.title }}》</strong></p>
       <small>{{ shareContext.chapter }} · {{ Math.round(shareContext.fraction * 100) }}%</small>
@@ -189,8 +189,8 @@ defineExpose({ showFavorites: () => { favoritesOpen.value = true; }, share, show
       <p v-if="shareError" role="alert">{{ shareError }}</p>
       <footer><button :disabled="shareBusy || !shareChannelId" @click="sendShare">{{ shareBusy ? '发送中…' : '发送到聊天室' }}</button></footer>
     </template>
-  </AppModal>
-  <AppModal :open="favoritesOpen" title="图书收藏夹" content-class="book-action-dialog" @close="favoritesOpen = false; emit('favorites-changed')"><BookFavorites v-if="favoritesOpen" @changed="emit('notes-changed', $event)" @navigate="favoritesOpen = false; emit('jump', $event); emit('favorites-changed')" /></AppModal>
+  </BookDialog>
+  <BookDialog :open="favoritesOpen" title="图书收藏夹" content-class="book-action-dialog" @close="favoritesOpen = false; emit('favorites-changed')"><BookFavorites v-if="favoritesOpen" @changed="emit('notes-changed', $event)" @navigate="favoritesOpen = false; emit('jump', $event); emit('favorites-changed')" /></BookDialog>
   <BookNoteEditor ref="editor" @open="noteEditorOpen = $event" @saved="notesSaved" @share="shareNote" />
   <ConfirmDialog :open="!!deleteNote" title="删除这条阅读笔记？" message="删除后无法恢复。" :busy="noteBusy" confirm-text="删除" @close="deleteNote = null" @confirm="removeNote" />
   </div>

@@ -480,10 +480,12 @@ for (const flow of ["scrolled", "paginated"] as const) {
       await writer.getByRole("button", { name: "完成", exact: true }).click();
       await expect(writer).toHaveCount(0);
       await expect(editor.locator(".handwriting-message canvas")).toHaveCount(1);
+      const noteTheme = await editor.locator(".book-note-editor").evaluate(element => getComputedStyle(element).backgroundImage);
+      expect(noteTheme).toContain("linear-gradient");
       for (const width of [360, 390, 1280]) {
         await page.setViewportSize({ width, height: 844 });
         const panel = editor.locator(".book-note-editor");
-        expect(await panel.evaluate((element) => getComputedStyle(element).backgroundImage)).toBe("linear-gradient(145deg, rgb(74, 23, 55), rgb(154, 63, 85) 52%, rgb(228, 122, 95))");
+        expect(await panel.evaluate((element) => getComputedStyle(element).backgroundImage)).toBe(noteTheme);
         expect(await editor.getByLabel("笔记内容").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(255, 247, 237)");
         const inputBounds = (await editor.getByLabel("笔记内容").boundingBox())!;
         const bounds = (await panel.boundingBox())!;

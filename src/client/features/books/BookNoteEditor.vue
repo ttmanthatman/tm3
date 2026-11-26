@@ -5,7 +5,7 @@ import { Brush, Send, Trash2, X } from "lucide-vue-next";
 import { BOOK_NOTE_TEXT_MAX, type BookNoteDTO } from "@shared/bookNotes";
 import { HANDWRITING_DEFAULT_GLOBAL_SETTINGS, HANDWRITING_DEFAULT_PREFERENCES, type HandwritingPayload } from "@shared/handwriting";
 import ConfirmDialog from "../../components/ui/ConfirmDialog.vue";
-import AppModal from "../../components/ui/AppModal.vue";
+import BookDialog from "./BookDialog.vue";
 import { useChatStore } from "../../store";
 import { useHandwritingPreferences } from "../handwriting/handwritingPreferences";
 import type { HandwritingComposerSnapshot } from "../handwriting/useHandwritingComposer";
@@ -36,7 +36,7 @@ watch(context, (value) => { emit("open", !!value); if (!value) { handwritingOpen
 defineExpose({ edit: editor.edit });
 </script>
 <template>
-  <AppModal :open="!!context" aria-label="阅读笔记" :busy="busy || handwritingOpen || deleteConfirmOpen" content-class="book-action-dialog book-note-editor" @close="editor.close">
+  <BookDialog :open="!!context" aria-label="阅读笔记" :busy="busy || handwritingOpen || deleteConfirmOpen" content-class="book-action-dialog book-note-editor" @close="editor.close">
     <template v-if="context">
       <div class="book-note-heading">
         <p>《{{ context.title }}》<span v-if="context.chapter"> · {{ context.chapter }}</span></p>
@@ -59,7 +59,7 @@ defineExpose({ edit: editor.edit });
       <small v-if="color">取消收藏会移除收藏颜色，保留笔记内容。</small>
       <small>关闭时自动保存草稿；分享后所选聊天室的成员可以查看。</small>
     </template>
-  </AppModal>
+  </BookDialog>
   <ConfirmDialog :open="deleteConfirmOpen" title="删除这条阅读笔记？" message="将同时移除这段文字的笔记、收藏和高亮。删除后无法恢复。" :busy="busy" :error="error" confirm-text="删除" danger @close="deleteConfirmOpen = false" @confirm="editor.remove" />
   <HandwritingComposer v-if="draftState.key" :open="handwritingOpen" :account-id="store.account?.id || 0" :draft-state="draftState" :busy="busy"
     status="手写内容将保存在这条笔记中" submit-label="完成" :socket-ready="!!store.account"

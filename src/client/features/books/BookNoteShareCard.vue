@@ -3,7 +3,7 @@ import "./bookNotes.css";
 import { computed, ref } from "vue";
 import { ArrowRight, BookOpen, NotebookPen } from "lucide-vue-next";
 import type { BookNoteDTO } from "@shared/bookNotes";
-import AppModal from "../../components/ui/AppModal.vue";
+import BookDialog from "./BookDialog.vue";
 import ReadingShareCard from "../reading-shares/ReadingShareCard.vue";
 import BookShareCover from "./BookShareCover.vue";
 import BookNoteContent from "./BookNoteContent.vue";
@@ -31,12 +31,12 @@ const href = computed(() => bookReadingUrl({ ...props.note, ...bookLocationFromM
   </div>
   <Teleport to="body">
   <div v-if="viewerOpen" class="book-dialog-layer">
-  <AppModal :open="viewerOpen" title="阅读笔记" content-class="book-action-dialog book-shared-note-paper" @close="viewerOpen = false">
+  <BookDialog :open="viewerOpen" title="阅读笔记" content-class="book-action-dialog book-shared-note-paper" @close="viewerOpen = false">
     <p>《{{ note.bookTitle }}》 · {{ note.chapter }}</p>
     <blockquote>{{ note.quote }}</blockquote>
     <BookNoteContent :note="note" :active="active && viewerOpen" />
     <a :href="href" @click.stop="viewerOpen = false"><BookOpen :size="16" />回到原文</a>
-  </AppModal>
+  </BookDialog>
   </div>
   </Teleport>
 </template>

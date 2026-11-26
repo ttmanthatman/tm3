@@ -72,12 +72,16 @@ for (const workspaceLayer of [5, 80]) {
       document.body.append(divider);
     }, workspaceLayer);
     try {
+      let previousTheme = "";
       for (const width of [360, 390, 1280]) {
         await page.setViewportSize({ width, height: 702 });
         await page.evaluate(() => (window as LibraryWindow).bookLibraryFixture.edit());
         const editor = page.getByRole("dialog", { name: "阅读笔记", exact: true });
         await expect(editor).toBeVisible();
-        expect(await editor.locator(".book-action-dialog").evaluate(el => getComputedStyle(el).backgroundImage)).toContain("linear-gradient");
+        const theme = await editor.locator(".book-action-dialog").evaluate(el => getComputedStyle(el).backgroundImage);
+        expect(theme).toContain("linear-gradient");
+        expect(theme).not.toBe(previousTheme);
+        previousTheme = theme;
         const overlap = await editor.evaluate(el => {
           const quote = el.querySelector("blockquote")!.getBoundingClientRect();
           const topmost = document.elementFromPoint(innerWidth / 2, quote.top + quote.height / 2);
@@ -85,6 +89,7 @@ for (const workspaceLayer of [5, 80]) {
         });
         expect(overlap).toBe(true);
         await editor.getByLabel("笔记内容").fill("较长的感言。".repeat(400));
+        expect(await editor.locator(".book-action-dialog").evaluate(el => getComputedStyle(el).backgroundImage)).toBe(theme);
         await editor.locator(".book-action-dialog").evaluate(el => { el.scrollTop = el.scrollHeight; });
         const close = editor.getByRole("button", { name: "关闭", exact: true });
         await expect(close).toBeInViewport();
