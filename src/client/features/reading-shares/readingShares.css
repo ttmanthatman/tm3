@@ -5,7 +5,9 @@
 /* Separate paper and botanical layers keep plants undistorted as cards grow. */
 .reading-share-card::before { content: ""; position: absolute; z-index: -1; inset: 0; pointer-events: none; border: 0 solid transparent; border-image-source: url("./assets/bookmark-plain.webp"); border-image-slice: 190 190 80 130 fill; border-image-width: 68px 68px 28px 46px; filter: drop-shadow(0 3px 4px #49331815); }
 .reading-share-card-content { padding: 25px 30px 22px 40px; min-width: 0; }
-.reading-share-book::before { border-image: none; border-radius: 12px; background: #ffe38d; box-shadow: 0 3px 10px #49331812; }
+/* One nine-slice paper image: corners/ribbon stay fixed while the center and
+   unmarked side edges extend with the message. No backing color or extra ribbon. */
+.reading-share-card.reading-share-book::before { border-image: url("./assets/book-paper-right-ribbon.webp") 360 300 100 100 fill / 90px 75px 25px 25px / 0 stretch; border-radius: 0; background: none; box-shadow: none; }
 .reading-share-plant { position: absolute; top: 9px; right: 7px; width: 50px; height: 88px; object-fit: contain; object-position: top right; pointer-events: none; user-select: none; }
 .reading-share-book .reading-share-card-content { padding: 24px 54px 24px 24px; }
 .reading-share-bible .reading-share-heading, .reading-share-bible .reading-share-label { padding-right: 28px; }

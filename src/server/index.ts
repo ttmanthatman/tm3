@@ -65,6 +65,7 @@ import { registerMessageSearchRoutes } from "./routes/messageSearch.js";
 import { createVoiceAsrService } from "./voiceAsr.js";
 import { registerWallpaperRoutes } from "./routes/wallpaper.js";
 import { createAppearanceService, registerAppearanceRoutes, saveImageUpload } from "./routes/appearance.js";
+import { registerReadingFontRoutes } from "./routes/readingFont.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerBibleLookupRoutes } from "./routes/bibleLookup.js";
 import { registerEngineRoutes, defaultVirtualCharacterConfig } from "./routes/engine.js";
@@ -4377,6 +4378,7 @@ registerAppearanceRoutes(app, {
   io,
   applyFileValidation
 });
+registerReadingFontRoutes(app, { requireAdmin, appearance: appearanceService, io, directory: path.join(STORAGE_ROOT, "reading-fonts") });
 
 registerBibleLookupRoutes(app, {
   prisma,

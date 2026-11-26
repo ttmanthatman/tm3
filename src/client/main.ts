@@ -5,7 +5,6 @@ import App from "./App.vue";
 import "./styles.css";
 import { APP_VERSION } from "@shared/release";
 import { getAppViewportHeight } from "./viewport";
-import { initializeHandwritingFont } from "./features/settings/handwritingFont";
 
 function syncViewportHeight() {
   const vv = window.visualViewport;
@@ -56,7 +55,6 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-void initializeHandwritingFont();
 const app = createApp(App).use(createPinia());
 app.onUnmount(installAutoScrollbars());
 app.mount("#app");

@@ -1,5 +1,6 @@
 import { cleanRainbowOrbit, RAINBOW_MAX_COLORS, RAINBOW_MAX_WIDTH } from "../../shared/rainbowOrbit.js";
 import crypto from "node:crypto";
+import { parseReadingFont, READING_FONT_SETTING } from "../../shared/readingFont.js";
 import fs from "node:fs";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
@@ -148,6 +149,7 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
         key: {
           in: [
             "appTitle",
+            READING_FONT_SETTING,
             "appIconPath",
             "wallpaperPath",
             "wallpaperFit",
@@ -194,6 +196,7 @@ export function createAppearanceService(deps: { prisma: PrismaClient }) {
     const parallaxKits = cleanParallaxKits(parseJsonField(settings.get("parallaxKits"), undefined));
     return {
       appTitle: settings.get("appTitle") || DEFAULT_APP_TITLE,
+      readingFont: parseReadingFont(settings.get(READING_FONT_SETTING)),
       appIconPath: settings.get("appIconPath") || null,
       wallpaperPath: settings.get("wallpaperPath") || null,
       wallpaperFit: WALLPAPER_FITS.has(wallpaperFit) ? wallpaperFit : "cover",

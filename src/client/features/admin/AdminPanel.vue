@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import HandwritingFontSettings from "./HandwritingFontSettings.vue";
 import RainbowOrbitControls from "../../components/decorations/RainbowOrbitControls.vue";
 import { computed, defineAsyncComponent } from "vue";
 import type { Component, ComputedRef, Ref } from "vue";
@@ -456,6 +457,7 @@ const { startMessageSelectionMode, openAdminChannelMembers, wallpaperUrl, themeS
               </template>
 
               <template v-else-if="appearanceSection === 'chat'">
+                <HandwritingFontSettings />
                 <RainbowOrbitControls v-model="rainbowOrbitEdit" />
                 <label>聊天室壁纸</label>
                 <button class="primary-btn" @click="emit('wallpaper')">打开独立壁纸设置</button>

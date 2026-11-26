@@ -1,3 +1,13 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import Fastify from "fastify";
+import multipart from "@fastify/multipart";
+import { Server } from "socket.io";
+import sharp from "sharp";
+import type { PrismaClient } from "@prisma/client";
+import { createAppearanceService } from "../../src/server/routes/appearance";
+import { registerReadingFontRoutes } from "../../src/server/routes/readingFont";
 import { expect, test, webkit, type Page } from "@playwright/test";
 
 async function mountCards(page: Page) {
@@ -73,6 +83,7 @@ async function mountCards(page: Page) {
 
 async function responsiveCards(page: Page) {
   await mountCards(page);
+  await page.addStyleTag({ content: '.reading-share-card::before { border-image-source: url("/src/client/features/reading-shares/assets/bookmark-plain.webp"); }' });
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 900 });
     const short = (await page.locator("#short .reading-share-card").boundingBox())!;
@@ -102,7 +113,14 @@ async function responsiveCards(page: Page) {
     }
     for (const id of ["book", "book-note", "fern"]) {
       expect((await page.locator(`#${id} .reading-share-card`).boundingBox())!.width).toBeCloseTo(short.width, 0);
-      expect(await page.locator(`#${id} .reading-share-card`).evaluate(el => getComputedStyle(el, "::before").borderImageSource)).toBe("none");
+      const paper = await page.locator(`#${id} .reading-share-card`).evaluate(el => {
+        const style = getComputedStyle(el, "::before");
+        return { source: style.borderImageSource, background: style.backgroundColor, slices: style.borderImageSlice, extra: getComputedStyle(el, "::after").content };
+      });
+      expect(paper.source).toContain("book-paper-right-ribbon.webp");
+      expect(paper.background).toBe("rgba(0, 0, 0, 0)");
+      expect(paper.slices).toBe("360 300 100 100 fill");
+      expect(paper.extra).toBe("none");
     }
     const fonts = await page.locator("#book").evaluate(el => [".reading-share-comment", ".reading-share-quote"].map(selector => getComputedStyle(el.querySelector(selector)!).fontFamily));
     expect(fonts[0]).not.toBe(fonts[1]);
@@ -119,13 +137,23 @@ async function responsiveCards(page: Page) {
     }
     await expect(page.locator("#book .reading-share-plant, #fern .reading-share-plant")).toHaveCount(0);
     await expect(page.locator("#book .book-share-quote-open, #book .book-share-quote-close")).toHaveCount(2);
-    const ribbon = await page.locator("#book .reading-share-card").evaluate(el => {
-      const style = getComputedStyle(el, "::after");
-      const cover = el.querySelector(".book-share-cover-link")!.getBoundingClientRect();
-      return { content: style.content, left: el.getBoundingClientRect().right - parseFloat(style.right) - parseFloat(style.width), coverRight: cover.right };
-    });
-    expect(ribbon.content).toBe('""');
-    expect(ribbon.left).toBeGreaterThan(ribbon.coverRight);
+    const ribbons = [];
+    for (const id of ["book", "fern"]) {
+      const raster = await sharp(await page.locator(`#${id} .reading-share-card`).screenshot()).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+      let minX = raster.info.width, minY = raster.info.height, maxX = -1, maxY = -1;
+      for (let y = 0; y < Math.min(110, raster.info.height); y++) for (let x = 0; x < raster.info.width; x++) {
+        const at = (y * raster.info.width + x) * 4;
+        const [r, g, b] = raster.data.subarray(at, at + 3);
+        if (r > 130 && g / r < .45 && b / r < .36) {
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        }
+      }
+      expect(minX).toBeGreaterThan(raster.info.width * .7);
+      expect(maxX - minX).toBeGreaterThan(10);
+      expect(maxY - minY).toBeGreaterThan(40);
+      ribbons.push({ width: maxX - minX, height: maxY - minY });
+    }
+    expect(ribbons[0]).toEqual(ribbons[1]);
     const jump = page.locator("#book .book-share-inline-link");
     await expect(jump).toHaveAttribute("href", await page.locator("#book .book-share-cover-link").getAttribute("href") as string);
     expect(await jump.textContent()).toBe("");
@@ -309,7 +337,7 @@ test("book share comments stay separate in current and legacy messages", async (
 async function mountFontSettings(page: Page) {
   await mountCards(page);
   await page.evaluate(async () => {
-    const path = "/src/client/features/settings/HandwritingFontSettings.vue";
+    const path = "/src/client/features/admin/HandwritingFontSettings.vue";
     const source = await (await fetch(path)).text();
     const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)?.[1];
     if (!vuePath) throw new Error("missing Vue runtime");
@@ -318,12 +346,23 @@ async function mountFontSettings(page: Page) {
     const host = document.createElement("section");
     host.id = "font-settings"; host.style.cssText = "max-width:600px;padding:16px";
     document.body.prepend(host);
-    createApp({ render: () => h(Settings) }).mount(host);
+    const storePath = "/src/client/store.ts";
+    const storeSource = await (await fetch(storePath)).text();
+    const piniaPath = /from ["']([^"']*\/pinia\.js[^"']*)["']/.exec(storeSource)![1];
+    const { createPinia } = await import(piniaPath) as typeof import("pinia");
+    const { useChatStore } = await import(storePath) as typeof import("../../src/client/store");
+    createApp({ setup() {
+      const store = useChatStore();
+      store.account = { id: 1, isAdmin: true } as typeof store.account;
+      void store.loadAppearance();
+      return () => h(Settings);
+    } }).use(createPinia()).mount(host);
   });
   await expect(page.getByLabel("上传手写字体", { exact: true })).toBeEnabled();
 }
 
 test("handwriting font settings keep the fallback on invalid uploads", async ({ page }) => {
+  await page.route("**/api/settings/appearance", route => route.fulfill({ json: { readingFont: null } }));
   await mountFontSettings(page);
   const input = page.getByLabel("上传手写字体", { exact: true });
   await input.setInputFiles({ name: "invalid.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken font") });
@@ -339,7 +378,7 @@ test("handwriting font settings keep the fallback on invalid uploads", async ({ 
   }
 });
 
-test("appearance settings expose font upload inside the responsive settings panel", async ({ page }) => {
+test("personal appearance settings no longer expose a font upload", async ({ page }) => {
   await mountCards(page);
   await page.evaluate(async () => {
     const path = "/src/client/features/settings/SettingsPanel.vue";
@@ -355,33 +394,88 @@ test("appearance settings expose font upload inside the responsive settings pane
     const settings = { settingsTab: ref("appearance"), settingsLoadError: ref(""), themeOptions: computed(() => []), activeTheme: computed(() => ""), themeSwatchStyle: () => ({ background: "" }), avatarText: () => "读", closeSettingsPanel: async () => { open.value = false; } };
     createApp({ render: () => open.value ? h(Settings, { settings }) : null }).use(createPinia()).mount(host);
   });
+  await expect(page.getByLabel("上传手写字体", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭设置", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "个人设置", exact: true })).toHaveCount(0);
+});
+
+
+test("admin chat appearance contains the global font controls on mobile and desktop", async ({ page }) => {
+  await mountCards(page);
+  await page.evaluate(async () => {
+    const path = "/src/client/features/admin/AdminPanel.vue";
+    const source = await (await fetch(path)).text();
+    const vuePath = /from ["']([^"']*\/vue\.js[^"']*)["']/.exec(source)![1];
+    const { createApp, h, ref } = await import(vuePath) as typeof import("vue");
+    const storePath = "/src/client/store.ts";
+    const storeSource = await (await fetch(storePath)).text();
+    const piniaPath = /from ["']([^"']*\/pinia\.js[^"']*)["']/.exec(storeSource)![1];
+    const { createPinia } = await import(piniaPath) as typeof import("pinia");
+    const { useChatStore } = await import(storePath) as typeof import("../../src/client/store");
+    const toolsPath = "/src/client/features/admin/useAdminTools.ts";
+    const appearancePath = "/src/client/features/admin/useAppearanceSettings.ts";
+    const { useAdminTools } = await import(toolsPath) as typeof import("../../src/client/features/admin/useAdminTools");
+    const { defaultPalette } = await import(appearancePath) as typeof import("../../src/client/features/admin/useAppearanceSettings");
+    const { default: Admin } = await import(path);
+    const host = document.createElement("div"); document.body.append(host);
+    createApp({ setup() {
+      const store = useChatStore(); store.account = { id: 1, isAdmin: true } as typeof store.account;
+      const open = ref(true), noop = () => {}, done = async () => {};
+      const tools = useAdminTools({ showAdmin: open, showSettings: ref(false), showChatToolsMenu: ref(false), saveReadPosition: noop, restoreChatSurface: done, checkForUpdates: done, ensureReleaseHistory: done, pinnedNoticeText: () => "", replaceChannelSnapshot: noop, authMode: ref("login"), activePalette: () => defaultPalette, flashEffect: () => store.appearance.flashEffect, flashEffectStep: ref(0), wallpaperUrl: value => value || "", paletteStyle: () => ({}), wallpaperFitStyle: () => ({ size: "cover", repeat: "no-repeat" }), readableTextColor: () => "#000", cleanFlashEffectSettings: () => store.appearance.flashEffect });
+      tools.adminPage.value = "appearanceChat"; tools.appearanceSection.value = "chat";
+      const release = { serverVersion: ref(null), updateCheck: ref(null), updateStatus: ref(null), updateBusy: ref(false), selectedUpdateBranch: ref("main"), selectedUpdateCommit: ref(""), checkForUpdates: done, startServerUpdate: done, releaseHistory: ref([]), releaseDeveloper: ref("") };
+      return () => open.value ? h(Admin, { tools, release, actions: { startMessageSelectionMode: done, openAdminChannelMembers: done, wallpaperUrl: () => "", themeSwatchStyle: () => ({ background: "" }) } }) : null;
+    } }).use(createPinia()).mount(host);
+  });
   for (const width of [360, 390, 1280]) {
     await page.setViewportSize({ width, height: 702 });
     const upload = page.getByRole("button", { name: "上传手写字体", exact: true });
     await upload.scrollIntoViewIfNeeded();
     await expect(upload).toBeVisible();
-    await expect(page.getByRole("button", { name: "关闭设置", exact: true })).toBeVisible();
-    expect(await page.locator(".settings-modal").evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-    await page.locator(".settings-modal").screenshot({ path: `output/e2e/font-settings-panel-${width}.png` });
+    await expect(page.getByRole("button", { name: "关闭管理", exact: true })).toBeVisible();
+    expect(await page.locator(".admin-modal").evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+    await page.locator(".admin-modal").screenshot({ path: `output/e2e/global-font-admin-${width}.png` });
   }
   const chooser = page.waitForEvent("filechooser");
   const upload = page.getByRole("button", { name: "上传手写字体", exact: true });
   await upload.focus(); await upload.press("Enter");
   await (await chooser).setFiles({ name: "invalid.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken") });
   await expect(page.locator(".handwriting-font-settings [role=alert]")).toContainText("无法读取这个字体");
-  await page.getByRole("button", { name: "关闭设置", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "个人设置", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "关闭管理", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "管理面板", exact: true })).toHaveCount(0);
 });
 
-async function fontPersistence(page: Page, path: string) {
+async function globalFontApi() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "tm3-font-browser-"));
+  const settings = new Map<string, string>();
+  let failSave = false;
+  let broadcasts = 0;
+  const prisma = { setting: {
+    findMany: async () => [...settings].map(([key, value]) => ({ key, value })),
+    upsert: async ({ where, update }: { where: { key: string }; update: { value: string } }) => {
+      if (failSave) throw new Error("test save failure");
+      settings.set(where.key, update.value);
+    }
+  } } as unknown as PrismaClient;
+  const app = Fastify({ bodyLimit: 35 * 1024 * 1024 });
+  await app.register(multipart);
+  const sockets = new Server(app.server);
+  const appearance = createAppearanceService({ prisma });
+  app.get("/api/settings/appearance", () => appearance.appearanceDto());
+  registerReadingFontRoutes(app, { appearance, directory, requireAdmin: async () => {}, io: { emit: (event, payload) => { broadcasts++; sockets.emit(event, payload); } } });
+  await app.listen({ port: 3003, host: "127.0.0.1" });
+  return { failSave: (value: boolean) => { failSave = value; }, broadcasts: () => broadcasts, async close() { await new Promise<void>(resolve => sockets.close(() => resolve())); await app.close(); await fs.rm(directory, { recursive: true, force: true }); } };
+
+}
+
+async function fontPersistence(page: Page, path: string, backend: Awaited<ReturnType<typeof globalFontApi>>) {
   await mountFontSettings(page);
   await page.getByLabel("上传手写字体", { exact: true }).setInputFiles(path);
-  await expect(page.locator("#font-settings [role=status]")).toHaveText("手写字体已保存");
+  await expect(page.locator("#font-settings [role=status]")).toHaveText("全局手写字体已保存，对所有成员生效");
   const assertFont = async () => {
-    const fonts = await page.locator("#book").evaluate(el => [".reading-share-comment", ".reading-share-quote"].map(selector => getComputedStyle(el.querySelector(selector)!).fontFamily));
-    expect(fonts[0]).toContain("ReadingCommentHandwriting");
-    expect(fonts[1]).not.toContain("ReadingCommentHandwriting");
-    expect(await page.evaluate(() => document.fonts.check('20px "ReadingCommentHandwriting"', "读书感想"))).toBe(true);
+    await expect.poll(() => page.locator("#book .reading-share-comment").evaluate(el => getComputedStyle(el).fontFamily)).toContain("ReadingCommentHandwriting");
+    expect(await page.locator("#book .reading-share-quote").evaluate(el => getComputedStyle(el).fontFamily)).not.toContain("ReadingCommentHandwriting");
+    await expect.poll(() => page.evaluate(() => document.fonts.check('20px "ReadingCommentHandwriting"', "读书感想"))).toBe(true);
   };
   await assertFont();
   await page.locator("#font-settings").screenshot({ path: `output/e2e/handwriting-font-${page.context().browser()!.browserType().name()}.png` });
@@ -391,19 +485,37 @@ async function fontPersistence(page: Page, path: string) {
   await page.getByLabel("上传手写字体", { exact: true }).setInputFiles({ name: "broken.ttf", mimeType: "font/ttf", buffer: Buffer.from("broken") });
   await expect(page.locator("#font-settings [role=alert]")).toContainText("原字体已保留");
   await assertFont();
-  // A storage failure must also preserve the previously activated font.
-  await page.evaluate(() => {
-    const original = IDBObjectStore.prototype.put;
-    IDBObjectStore.prototype.put = function() {
-      IDBObjectStore.prototype.put = original;
-      throw new DOMException("test quota failure", "QuotaExceededError");
-    };
+  // A fresh member/browser has no local font upload and still reads the global font.
+  const memberContext = await page.context().browser()!.newContext({ baseURL: "http://127.0.0.1:4173" });
+  if (page.context().browser()!.browserType().name() === "chromium") await memberContext.grantPermissions(["local-network-access"]);
+  const member = await memberContext.newPage();
+  await mountCards(member);
+  await member.evaluate(async () => {
+    const storePath = "/src/client/store.ts";
+    const source = await (await fetch(storePath)).text();
+    const piniaPath = /from ["']([^"']*\/pinia\.js[^"']*)["']/.exec(source)![1];
+    const { createPinia, setActivePinia } = await import(piniaPath) as typeof import("pinia");
+    setActivePinia(createPinia());
+    const { useChatStore } = await import(storePath) as typeof import("../../src/client/store");
+    await useChatStore().loadAppearance();
+    localStorage.setItem("team-chat-token", "font-browser-fixture");
+    useChatStore().connectSocket();
   });
+  await expect.poll(() => member.evaluate(async () => { const path = "/src/client/store.ts"; const { useChatStore } = await import(path); return useChatStore().socket?.connected; })).toBe(true);
+  await expect.poll(() => member.locator("#book .reading-share-comment").evaluate(el => getComputedStyle(el).fontFamily)).toContain("ReadingCommentHandwriting");
+  const previousVersion = await member.evaluate(async () => { const path = "/src/client/store.ts"; const { useChatStore } = await import(path); return useChatStore().appearance.readingFont.id; });
+  await page.getByLabel("上传手写字体", { exact: true }).setInputFiles(path);
+  await expect(page.locator("#font-settings [role=status]")).toContainText("全局手写字体已保存");
+  await expect.poll(() => member.evaluate(async () => { const path = "/src/client/store.ts"; const { useChatStore } = await import(path); return useChatStore().appearance.readingFont.id; })).not.toBe(previousVersion);
+  backend.failSave(true);
   await page.getByLabel("上传手写字体", { exact: true }).setInputFiles(path);
   await expect(page.locator("#font-settings [role=alert]")).toBeVisible();
   await assertFont();
+  backend.failSave(false);
   await page.getByRole("button", { name: "恢复默认字体", exact: true }).click();
-  await expect(page.locator("#font-settings [role=status]")).toHaveText("已恢复默认字体");
+  await expect(page.locator("#font-settings [role=status]")).toHaveText("已为所有成员恢复默认字体");
+  await expect.poll(() => member.locator("#book .reading-share-comment").evaluate(el => getComputedStyle(el).fontFamily)).not.toContain("ReadingCommentHandwriting");
+  await memberContext.close();
   expect(await page.locator("#book .reading-share-comment").evaluate(el => getComputedStyle(el).fontFamily)).not.toContain("ReadingCommentHandwriting");
   await page.reload();
   await mountFontSettings(page);
@@ -411,13 +523,17 @@ async function fontPersistence(page: Page, path: string) {
   expect(await page.evaluate(() => [...document.fonts].some(font => font.family === "ReadingCommentHandwriting"))).toBe(false);
 }
 
-test("uploaded handwriting font loads, persists and resets in Chromium and WebKit", async ({ page }) => {
+test("global font loads for new members, persists and resets in Chromium and WebKit", async ({ page }) => {
   const path = process.env.E2E_HANDWRITING_FONT;
   test.skip(!path, "Set E2E_HANDWRITING_FONT to a local font; font files are never bundled.");
-  await fontPersistence(page, path!);
+  const backend = await globalFontApi();
+  try { await fontPersistence(page, path!, backend); expect(backend.broadcasts()).toBe(3); }
+  finally { await backend.close(); }
   const browser = await webkit.launch();
-  try { await fontPersistence(await browser.newPage({ baseURL: "http://127.0.0.1:4173" }), path!); }
-  finally { await browser.close(); }
+  const context = await browser.newContext({ baseURL: "http://127.0.0.1:4173" });
+  const webkitBackend = await globalFontApi();
+  try { await fontPersistence(await context.newPage(), path!, webkitBackend); expect(webkitBackend.broadcasts()).toBe(3); }
+  finally { await webkitBackend.close(); await browser.close(); }
 });
 
 

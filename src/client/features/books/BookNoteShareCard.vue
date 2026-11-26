@@ -15,7 +15,7 @@ const href = computed(() => bookReadingUrl({ ...props.note, ...bookLocationFromM
 <template>
   <div class="reading-share-message">
     <p v-if="comment" class="reading-share-comment">{{ comment }}</p>
-    <ReadingShareCard kind="book" :paper-seed="paperSeed" class="book-note-share-card" :text="note.text + note.quote" @click="viewerOpen = true">
+    <ReadingShareCard kind="book" hide-plant :paper-seed="paperSeed" class="book-note-share-card" :text="note.text + note.quote" @click="viewerOpen = true">
       <div class="reading-share-book-layout">
         <BookShareCover :book-id="note.bookId" :title="note.bookTitle" />
         <button class="reading-share-note-open" type="button" :aria-label="`查看阅读笔记：${note.bookTitle}`" @click.stop="viewerOpen = true">

@@ -29,8 +29,7 @@ const href = computed(() => bookReadingUrl(props.context, window.location.origin
 .book-share-flow { display: flow-root; }
 .book-share-cover-link { float: left; width: 96px; margin: 0 16px 8px 0; }
 .book-share-flow .reading-share-quote { margin: 8px 0 0; }
-.book-share-card::after { content: ""; position: absolute; top: 0; right: 16px; width: 12px; height: 34px; background: linear-gradient(90deg, #b5462d, #d56b45 48%, #b5462d); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 81%, 0 100%); pointer-events: none; }
-.book-share-flow .reading-share-label, .book-share-flow .reading-share-heading { padding-right: 22px; }
+.book-share-flow .reading-share-label, .book-share-flow .reading-share-heading, .book-share-flow .reading-share-meta { padding-right: 40px; }
 .book-share-quote-open { transform: rotate(180deg); }
 .book-share-quote-open, .book-share-quote-close { display: inline; vertical-align: -.1em; }
 .book-share-inline-link { display: inline-flex; vertical-align: -.15em; margin-left: .2em; color: #9a4c28; text-decoration: none; }

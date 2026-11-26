@@ -1,3 +1,4 @@
+import { syncHandwritingFont } from "./features/reading-shares/handwritingFont";
 import type { WallpaperState } from "@shared/wallpaper";
 import type { NotificationRead } from "@shared/notificationRead";
 import { pendingNotificationReads, queueNotificationRead, completeNotificationRead, knownNotificationReads, rememberNotificationRead } from "./features/messages/notificationReadQueue";
@@ -411,6 +412,7 @@ export const useChatStore = defineStore("chat", {
     },
     async loadAppearance() {
       this.appearance = await api<AppearanceDTO>("/api/settings/appearance").catch(() => ({ ...defaultAppearance }));
+      void syncHandwritingFont(this.appearance.readingFont);
     },
     applyNotificationRead(read: NotificationRead) {
       rememberNotificationRead(this.account?.id || 0, read);
@@ -1044,7 +1046,7 @@ export const useChatStore = defineStore("chat", {
         void this.logout(false);
       });
       socket.on("wallpaper:updated", () => { void this.loadWallpaper(); });
-      socket.on("appearance:updated", (appearance: AppearanceDTO) => { this.appearance = appearance; void this.loadWallpaper(); });
+      socket.on("appearance:updated", (appearance: AppearanceDTO) => { this.appearance = appearance; void syncHandwritingFont(appearance.readingFont); void this.loadWallpaper(); });
     }
   }
 });

@@ -1166,6 +1166,7 @@ export interface ParallaxKitDTO {
 }
 
 export interface AppearanceDTO {
+  readingFont?: import("./readingFont.js").ReadingFontDTO | null;
   bibleSwipeEnabled?: boolean;
   bibleSwipeProtectInteractions?: boolean;
   handwritingSettings?: HandwritingGlobalSettings;
