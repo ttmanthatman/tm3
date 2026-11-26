@@ -1362,11 +1362,21 @@ const RELEASE_2_16_1_NOTES = [
   "同行书房改为独立问题区，桌面查经联动分屏圣经；点击问题或经文引用定位并以书房配色高亮，面向全段的问题不绑定具体经节。"
 ] as const
 
+const RELEASE_2_16_2_NOTES = [
+  "阅读面板工具栏默认隐藏，鼠标移入顶部 8 像素时显示，移开后自动隐藏；隐藏时阅读区使用完整高度。",
+  "全站滚动条在滚动、鼠标移入或键盘聚焦时出现，空闲时隐藏。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.16.3",
+    date: "2026-11-26",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.16.2",
     date: "2026-11-25",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_16_2_NOTES
   },
   {
     version: "2.16.1",
