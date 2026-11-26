@@ -1375,11 +1375,22 @@ const RELEASE_2_16_3_NOTES = [
   "同一会客厅口令可供多人使用，每位访客显示独立昵称和编号，刷新及修改昵称时保持身份。"
 ] as const
 
+const RELEASE_2_16_4_NOTES = [
+  "书摘卡片的红色丝带移至右上角，补齐成对的空心引号，并分开显示旧版分享中的感想。",
+  "设置的“外观”页新增手写字体上传、预览与恢复默认；字体仅在当前浏览器保存，刷新后自动恢复，不随程序打包。",
+  "分享感言和读书笔记使用上传的手写字体；未上传时使用中文无衬线字体，与宋体书摘区分。"
+] as const
+
 export const RELEASE_HISTORY = [
+  {
+    version: "2.16.5",
+    date: "2026-11-26",
+    notes: RELEASE_NOTES
+  },
   {
     version: "2.16.4",
     date: "2026-11-26",
-    notes: RELEASE_NOTES
+    notes: RELEASE_2_16_4_NOTES
   },
   {
     version: "2.16.3",
